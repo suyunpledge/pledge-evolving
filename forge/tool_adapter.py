@@ -51,7 +51,50 @@ MODEL_QUIRKS: dict[str, dict[str, bool]] = {
     },
     "mimo": {
         "strip_markdown_fence": True,
+        "fix_double_encoded": True,        # MiMo 偶发 JSON 字符串套字符串
+        "close_truncated_json": True,
     },
+    "claude": {
+        # Anthropic 原生通道很稳，但经网关转译后可能出现 str 类型 input
+        "fix_double_encoded": True,
+    },
+    "gpt": {
+        # OpenAI 系：arguments 是 JSON 字符串（正常）；并行调用时 id 可能为空
+        "fix_double_encoded": True,
+    },
+    "gemini": {
+        # Gemini：args 可能是 dict（正常）或 JSON 字符串；thought_signature 丢失
+        "fix_double_encoded": True,
+        "fill_name_field": True,
+    },
+    "grok": {
+        "strip_markdown_fence": True,
+        "fix_double_encoded": True,
+    },
+    "ollama": {
+        # 本地小模型全家桶：怪癖全开
+        "strip_leading_newline": True,
+        "strip_markdown_fence": True,
+        "parse_tool_call_tags": True,
+        "fix_single_quotes": True,
+        "fix_trailing_comma": True,
+        "fix_double_encoded": True,
+        "close_truncated_json": True,
+        "parse_json_in_text": True,
+        "validate_tool_names": True,
+    },
+    "7b": {"validate_tool_names": True, "fix_double_encoded": True,
+           "close_truncated_json": True, "fix_single_quotes": True},
+    "8b": {"validate_tool_names": True, "fix_double_encoded": True,
+           "close_truncated_json": True, "fix_single_quotes": True},
+    "14b": {"validate_tool_names": True, "fix_double_encoded": True,
+            "close_truncated_json": True},
+    "small": {"validate_tool_names": True, "fix_double_encoded": True,
+              "close_truncated_json": True, "fix_single_quotes": True},
+    "phi": {"validate_tool_names": True, "fix_double_encoded": True,
+            "fix_single_quotes": True, "close_truncated_json": True},
+    "gemma": {"validate_tool_names": True, "fix_double_encoded": True,
+              "close_truncated_json": True},
 }
 
 # 匹配 ```json ... ``` 或 ``` ... ```
@@ -65,12 +108,19 @@ _LEADING_WS = re.compile(r"^[\s\n\r\t]+")
 
 
 def get_quirks(model_name: str) -> dict[str, bool]:
-    """按模型名取该模型的修复开关。"""
+    """按模型名取该模型的修复开关。
+
+    合并所有命中的档案而不是首个命中——"qwen2.5:7b" 应同时拿到
+    qwen 档和 7b 档（小模型）的修复开关。后写入的档案不覆盖已有
+    True（只增不减，修复开关取并集最安全）。
+    """
     name = (model_name or "").lower()
+    merged: dict[str, bool] = {}
     for key, quirks in MODEL_QUIRKS.items():
         if key in name:
-            return quirks
-    return {}
+            for k, v in quirks.items():
+                merged[k] = merged.get(k, False) or v
+    return merged
 
 
 # ─── L1: 清洗 ────────────────────────────────────────────
@@ -97,6 +147,67 @@ def _try_json(s: str) -> dict[str, Any] | None:
         return obj if isinstance(obj, dict) else None
     except (json.JSONDecodeError, ValueError):
         return None
+
+
+def _try_double_decode(s: str) -> dict[str, Any] | None:
+    """处理双重编码：模型输出 '"{\\"a\\": 1}"'（JSON 字符串套 JSON）。
+
+    先 json.loads 剥外层字符串，再解内层 JSON。最多剥两层。
+    """
+    cur = s
+    for _ in range(2):
+        if not (cur.startswith('"') and cur.endswith('"')):
+            break
+        try:
+            inner = json.loads(cur)
+        except (json.JSONDecodeError, ValueError):
+            break
+        if isinstance(inner, dict):
+            return inner
+        if isinstance(inner, str):
+            cur = inner.strip()
+            continue
+        break
+    obj = _try_json(cur) if cur is not s else None
+    return obj if isinstance(obj, dict) else None
+
+
+# ─── 工具名校验（小模型幻觉防线）─────────────────────────
+
+def normalize_tool_name(name: str, known_names: list[str] | None) -> str:
+    """校验并修正小模型幻觉的工具名。
+
+    已知失败模式：
+      - "functions.web_search" —— 旧 OpenAI 模板残留前缀
+      - "Web_Search" / "web-search" —— 大小写/连字符漂移
+      - "read_file(path=...)" —— 把参数写进名字里
+      - 完全编造的名字 —— 返回原名，由上层拒绝
+
+    能对上 known_names 就修正返回；对不上原样返回（不猜）。
+    """
+    if not name:
+        return name
+    n = name.strip()
+    # 剥 "functions." / "tools." 前缀
+    for prefix in ("functions.", "tools.", "function."):
+        if n.lower().startswith(prefix):
+            n = n[len(prefix):]
+    # 剥 "(...)" 参数尾巴
+    if "(" in n:
+        n = n[: n.index("(")]
+    n = n.strip()
+    if not known_names:
+        return n
+    if n in known_names:
+        return n
+    # 宽松匹配：小写 + 下划线/连字符归一
+    def canon(x: str) -> str:
+        return x.lower().replace("-", "_").replace(" ", "_")
+    target = canon(n)
+    for known in known_names:
+        if canon(known) == target:
+            return known
+    return n  # 对不上就原样返回，由上层裁决
 
 
 # ─── L3: 修复解析 ────────────────────────────────────────
@@ -240,6 +351,12 @@ def repair_arguments(
     if obj is not None:
         return validate_against_schema(obj, schema)
 
+    # L2.5 双重编码：'"{\\"a\\": 1}"' → 先解一层字符串再解 JSON
+    if quirks.get("fix_double_encoded", True):
+        obj = _try_double_decode(s)
+        if obj is not None:
+            return validate_against_schema(obj, schema)
+
     # L3 修复解析
     obj = _try_repair(s, quirks)
     if obj is not None:
@@ -312,3 +429,120 @@ def sanitize_request_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
             params.setdefault("additionalProperties", False)
         cleaned.append(t)
     return cleaned
+
+
+# ─── 消息级清洗（发往 API 前的最后防线）──────────────────
+
+def sanitize_messages(messages: list[dict[str, Any]], wire: str) -> list[dict[str, Any]]:
+    """按 wire 协议清洗消息序列，避免各家 API 的 400。
+
+    anthropic:
+      - tool_result 必须紧跟含 tool_use 的 assistant 消息（成对补齐/剔除孤儿）
+      - content 不允许空字符串 → 补占位文本
+    openai:
+      - role=tool 消息必须有 tool_call_id；孤儿 tool 消息剔除
+      - assistant.tool_calls 存在时 content 可为 null（合法），但空串要转 null
+    """
+    if wire == "anthropic":
+        return _sanitize_anthropic(messages)
+    return _sanitize_openai(messages)
+
+
+def _sanitize_openai(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    seen_call_ids: set[str] = set()
+    for msg in messages:
+        m = dict(msg)
+        role = m.get("role")
+        if role == "assistant":
+            # content 空串 → None（部分网关对 "" 和 null 处理不一致）
+            if m.get("content") == "":
+                m["content"] = None
+            for call in m.get("tool_calls") or []:
+                cid = call.get("id")
+                if cid:
+                    seen_call_ids.add(cid)
+        elif role == "tool":
+            cid = m.get("tool_call_id")
+            # 孤儿 tool 消息（前面没有对应 assistant 调用）→ 剔除
+            if cid and cid not in seen_call_ids:
+                continue
+            if not cid:
+                continue
+        out.append(m)
+    return out
+
+
+def _sanitize_anthropic(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """anthropic: 空 content 补占位；tool_use 后缺 tool_result 时补错误占位。"""
+    out: list[dict[str, Any]] = []
+    for msg in messages:
+        m = dict(msg)
+        content = m.get("content")
+        if isinstance(content, str) and not content.strip():
+            m["content"] = "..."
+        out.append(m)
+
+    fixed: list[dict[str, Any]] = []
+    i = 0
+    while i < len(out):
+        m = out[i]
+        fixed.append(m)
+        if m.get("role") != "assistant":
+            i += 1
+            continue
+        use_ids = [b.get("id") for b in (m.get("content") or [])
+                   if isinstance(b, dict) and b.get("type") == "tool_use"]
+        if not use_ids:
+            i += 1
+            continue
+        nxt = out[i + 1] if i + 1 < len(out) else None
+        result_ids = set()
+        if nxt is not None and nxt.get("role") == "user":
+            for b in nxt.get("content") or []:
+                if isinstance(b, dict) and b.get("type") == "tool_result":
+                    result_ids.add(b.get("tool_use_id"))
+        missing = [uid for uid in use_ids if uid and uid not in result_ids]
+        if missing:
+            blocks = [{"type": "tool_result", "tool_use_id": uid,
+                       "content": "[missing result: call was interrupted]",
+                       "is_error": True} for uid in missing]
+            if nxt is not None and nxt.get("role") == "user":
+                merged = dict(nxt)
+                raw_content = merged.get("content")
+                # 字符串 content 先转 text 块（list(str) 会拆成单字符！）
+                if isinstance(raw_content, str):
+                    content = [{"type": "text", "text": raw_content}]
+                elif isinstance(raw_content, list):
+                    content = list(raw_content)
+                else:
+                    content = []
+                merged["content"] = content + blocks
+                out[i + 1] = merged
+            else:
+                fixed.append({"role": "user", "content": blocks})
+        i += 1
+    return fixed
+
+
+def fill_gemini_name_fields(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Gemini 要求每条 tool 消息带 name 字段（hermes-agent #16478）。
+
+    OpenAI wire 的 role=tool 消息只有 tool_call_id；发 Gemini 兼容网关前，
+    从对应的 assistant.tool_calls 里把函数名抄过来。
+    """
+    id_to_name: dict[str, str] = {}
+    for m in messages:
+        if m.get("role") == "assistant":
+            for call in m.get("tool_calls") or []:
+                cid = call.get("id")
+                fn = (call.get("function") or {}).get("name")
+                if cid and fn:
+                    id_to_name[cid] = fn
+    out = []
+    for m in messages:
+        if m.get("role") == "tool" and "name" not in m:
+            m = dict(m)
+            m["name"] = id_to_name.get(m.get("tool_call_id") or "", "tool")
+        out.append(m)
+    return out

@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import json
 import time
+
+from .tool_adapter import fill_gemini_name_fields, sanitize_messages
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -93,6 +95,12 @@ class HttpTransport:
 
     def complete(self, provider: Provider, model: str, messages: list[dict[str, Any]],
                  **options: Any) -> tuple[str, Usage]:
+        # 发送前最后防线：按 wire 协议清洗消息序列（配对 tool_use/tool_result、
+        # 剔除孤儿 tool 消息、空 content 补占位），避免各家 API 的 400。
+        messages = sanitize_messages(messages, provider.wire)
+        # Gemini 兼容网关要求每条 tool 消息带 name（hermes-agent #16478）
+        if "gemini" in model.lower():
+            messages = fill_gemini_name_fields(messages)
         if provider.wire == "anthropic":
             system = "\n".join(str(m["content"]) for m in messages if m.get("role") == "system")
             chat = [m for m in messages if m.get("role") != "system"]
