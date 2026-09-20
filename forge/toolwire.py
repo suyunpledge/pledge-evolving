@@ -25,6 +25,12 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
+from .tool_adapter import (
+    parse_tool_call_tags,
+    repair_arguments,
+    sanitize_request_tools,
+)
+
 WIRES = ("openai", "anthropic")
 
 
@@ -80,7 +86,8 @@ def tool_declarations(specs: Iterable, wire: str = "openai") -> list[dict[str, A
                 "description": getattr(spec, "description", "") or "",
                 "input_schema": _spec_schema(spec),
             })
-    return out
+    # 发送前最后检查：空 enum / 缺 description / additionalProperties
+    return sanitize_request_tools(out)
 
 
 def parse_tool_calls(message: dict[str, Any], wire: str = "openai") -> list[ToolCall]:
@@ -95,22 +102,25 @@ def parse_tool_calls(message: dict[str, Any], wire: str = "openai") -> list[Tool
                 continue
             function = row.get("function") or {}
             raw_args = function.get("arguments")
-            if isinstance(raw_args, str):
-                try:
-                    args = json.loads(raw_args or "{}")
-                except json.JSONDecodeError:
-                    args = {"_raw": raw_args}
-            elif isinstance(raw_args, dict):
-                args = raw_args
-            else:
-                args = {}
+            # 经 tool_adapter 分层修复：清洗→解析→修复→补全→类型矫正
+            args = repair_arguments(raw_args, model_name=getattr(parse_tool_calls, "_model", ""))
             calls.append(ToolCall(id=str(row.get("id") or ""), name=str(function.get("name") or ""),
                                   args=args if isinstance(args, dict) else {}, wire="openai", raw=row))
+        if not calls:
+            # Hermes 风格降级：模型没走原生通道，把 <tool_call> 埋在 content 里
+            content_text = message.get("content") or ""
+            if isinstance(content_text, str):
+                for tag_call in parse_tool_call_tags(content_text):
+                    calls.append(ToolCall(
+                        id=str(tag_call.get("id") or ""),
+                        name=str(tag_call.get("name") or ""),
+                        args=repair_arguments(tag_call.get("arguments")),
+                        wire="openai", raw=tag_call))
         return calls
 
     for block in message.get("content") or []:
         if isinstance(block, dict) and block.get("type") == "tool_use":
-            args = block.get("input")
+            args = repair_arguments(block.get("input"))
             calls.append(ToolCall(id=str(block.get("id") or ""), name=str(block.get("name") or ""),
                                   args=args if isinstance(args, dict) else {}, wire="anthropic",
                                   raw=block))
