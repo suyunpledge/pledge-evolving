@@ -26,7 +26,7 @@ USER_LAYER_NAME = "forge.patch.json"
 # Env keys accessible to config expressions (beyond FORGE_* which is always allowed).
 # Prevents attacker-reachable config layers from exfiltrating arbitrary secrets.
 _ENV_WHITELIST: frozenset[str] = frozenset({
-    "HOME", "USER", "USERNAME", "SHELL", "PATH", "LANG", "LC_ALL",
+    "HOME", "USER", "USERNAME", "PATH", "LANG", "LC_ALL",
     "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME",
     "COMPUTERNAME", "HOSTNAME", "TERM",
 })

@@ -94,8 +94,12 @@ class Session:
 
     # -- writing ---------------------------------------------------------
     def _write_line(self, payload: dict[str, Any]) -> None:
-        with self.path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        # Use the shared file handle to avoid dual-write race conditions.
+        if self._fh is None:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self._fh = self.path.open("a", encoding="utf-8")
+        self._fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        self._fh.flush()
 
     def append(self, etype: str, **data: Any) -> Event:
         ordinal = (self.events[-1].ordinal + 1) if self.events else 1

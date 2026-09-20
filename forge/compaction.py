@@ -48,9 +48,10 @@ class ContextBudget:
                     squeezed.append(m)
                     continue
                 content = str(m.get("content", ""))
-                if len(content) > 400:
+                cap = max(self.max_chars // 20, 200)  # adaptive truncation floor
+                if len(content) > cap:
                     changed = True
-                    squeezed.append({**m, "content": content[:400]})
+                    squeezed.append({**m, "content": content[:cap]})
                 else:
                     squeezed.append(m)
             return squeezed if changed else messages

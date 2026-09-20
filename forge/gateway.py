@@ -100,6 +100,7 @@ class GatewayConfig:
         self.proxy = proxy
         self.gateway_token = gateway_token    # empty = no auth; set = bearer check
         self.max_auth_failures = max_auth_failures  # rate limit: lock out after N failures
+        self._auth_lock = threading.Lock()
         self._auth_failures: int = 0
         self._auth_locked_until: float = 0.0
 
@@ -146,23 +147,24 @@ def build_handler(cfg: GatewayConfig):
             # Optional gateway authentication with rate limiting
             if cfg.gateway_token:
                 now = time.time()
-                # Rate limit: lock out after max_auth_failures consecutive failures
-                if cfg._auth_locked_until > now:
-                    self._json(429, {"type": "error", "error": {"type": "rate_limit_error",
-                                                              "message": "too many auth failures; locked out"}})
-                    cfg.log.write(f"{self.command} {self.path} -> 429 (auth locked out)")
-                    return
-                auth = self.headers.get("Authorization", "")
-                if auth != f"Bearer {cfg.gateway_token}":
-                    cfg._auth_failures += 1
-                    if cfg._auth_failures >= cfg.max_auth_failures:
-                        cfg._auth_locked_until = now + 30.0  # 30 second lockout
-                        cfg.log.write(f"auth locked out after {cfg._auth_failures} failures")
-                    self._json(401, {"type": "error", "error": {"type": "authentication_error",
-                                                              "message": "invalid or missing gateway token"}})
-                    cfg.log.write(f"{self.command} {self.path} -> 401 (bad gateway token)")
-                    return
-                cfg._auth_failures = 0  # reset on success
+                with cfg._auth_lock:
+                    # Rate limit: lock out after max_auth_failures consecutive failures
+                    if cfg._auth_locked_until > now:
+                        self._json(429, {"type": "error", "error": {"type": "rate_limit_error",
+                                                                  "message": "too many auth failures; locked out"}})
+                        cfg.log.write(f"{self.command} {self.path} -> 429 (auth locked out)")
+                        return
+                    auth = self.headers.get("Authorization", "")
+                    if auth != f"Bearer {cfg.gateway_token}":
+                        cfg._auth_failures += 1
+                        if cfg._auth_failures >= cfg.max_auth_failures:
+                            cfg._auth_locked_until = now + 30.0  # 30 second lockout
+                            cfg.log.write(f"auth locked out after {cfg._auth_failures} failures")
+                        self._json(401, {"type": "error", "error": {"type": "authentication_error",
+                                                                  "message": "invalid or missing gateway token"}})
+                        cfg.log.write(f"{self.command} {self.path} -> 401 (bad gateway token)")
+                        return
+                    cfg._auth_failures = 0  # reset on success
             self._proxy(self._read_body())
 
         def _proxy(self, body: bytes) -> None:

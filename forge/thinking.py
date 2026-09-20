@@ -155,7 +155,7 @@ def looks_complex_heuristic(task: str) -> bool:
     """Simple heuristic: tasks with multi-step indicators or long text are complex."""
     indicators = ("分析", "审查", "重构", "优化", "设计", "实现", "对比",
                   "analyze", "review", "refactor", "optimize", "design",
-                  "implement", "compare", "compare", "架构", "框架")
+                  "implement", "compare", "架构", "框架")
     task_lower = task.lower()
     score = sum(1 for ind in indicators if ind in task_lower)
     score += len(task) // 500  # longer tasks are more complex
