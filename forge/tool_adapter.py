@@ -101,6 +101,8 @@ MODEL_QUIRKS: dict[str, dict[str, bool]] = {
 _MARKDOWN_FENCE = re.compile(r"^```(?:json)?\s*\n?(.*?)\n?\s*```\s*$", re.DOTALL)
 # 匹配 <tool_call>{...}</tool_call>
 _TOOL_CALL_TAG = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
+# 匹配 <tools>...{"name":...}...</tools>（qwen2.5-coder 风格）
+_TOOLS_XML_TAG = re.compile(r"<tools>\s*(\{.*?\})\s*</tools>", re.DOTALL)
 # 匹配裸 JSON 对象（在长文本中提取）
 _BARE_JSON = re.compile(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}")
 # 前导空白/换行
@@ -388,6 +390,18 @@ def parse_tool_call_tags(content: str) -> list[dict[str, Any]]:
     """
     calls = []
     for m in _TOOL_CALL_TAG.finditer(content or ""):
+        raw = m.group(1)
+        obj = _try_json(raw)
+        if obj is None:
+            obj = _try_repair(raw, get_quirks(""))
+        if isinstance(obj, dict) and "name" in obj:
+            calls.append({
+                "id": obj.get("id", ""),
+                "name": obj["name"],
+                "arguments": obj.get("arguments") or obj.get("parameters") or {},
+            })
+    # <tools> XML tag（qwen2.5-coder 风格）
+    for m in _TOOLS_XML_TAG.finditer(content or ""):
         raw = m.group(1)
         obj = _try_json(raw)
         if obj is None:
