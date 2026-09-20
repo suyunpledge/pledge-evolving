@@ -17,13 +17,18 @@ testable without a network.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from pathlib import Path
 
 from ..config import load_config
+from ..loop import LoopLimits, build_agent
+from ..model import ModelRouter
 from . import InboundMessage, available_channels, load_channel, session_for
 from .weixin import (
+    OPENCLAW_WEIXIN_DIR,
+    PollTimeout,
     WeixinChannel,
     find_openclaw_accounts,
     import_openclaw_account,
@@ -43,11 +48,13 @@ def _channel_rows(cfg) -> dict[str, dict]:
 
 def _compose(args):
     """Compose config with the same layer rules as the rest of the CLI."""
-    home = Path(args.home)
     from ..cli import BUNDLE_DIR
 
-    bundles = sorted(BUNDLE_DIR.glob("*.json"))
-    return load_config(home, bundles=bundles, include_user_layer=True)
+    return load_config(
+        Path(args.home),
+        bundles=sorted(BUNDLE_DIR.glob("*.json")),
+        include_user_layer=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -130,7 +137,7 @@ def cmd_channel_weixin_import(args) -> int:
         candidates = find_openclaw_accounts()
         if not candidates:
             print("no OpenClaw weixin credentials found to import.")
-            print(f"looked in: {find_openclaw_accounts.__globals__.get('OPENCLAW_WEIXIN_DIR', '')}")
+            print(f"looked in: {OPENCLAW_WEIXIN_DIR}")
             return 1
         if len(candidates) == 1:
             source = str(candidates[0])
@@ -175,10 +182,12 @@ def cmd_channel_weixin_import(args) -> int:
 # ---------------------------------------------------------------------------
 
 def cmd_channel_weixin_serve(args) -> int:
-    """Long-poll the surface, run the agent per message, reply with the report."""
-    from ..loop import LoopLimits, build_agent
-    from ..model import ModelRouter
+    """Long-poll the surface, run the agent per message, reply with the report.
 
+    The agent's shared machinery (policy, tools, memory, capabilities) is built
+    once; only the per-lane session differs between messages. Rebuilding it per
+    turn was measurably wasteful and made the loop look heavier than it is.
+    """
     cfg = _compose(args)
     rows = _channel_rows(cfg)
     conf = rows.get("weixin", {})
@@ -192,83 +201,207 @@ def cmd_channel_weixin_serve(args) -> int:
         print(f"weixin channel could not start: {exc}")
         return 1
 
-    scope = conf.get("sessionScope", "per-peer")
-    max_rounds = int(getattr(args, "max_messages", 0) or 0)
-    idle_stop = int(getattr(args, "idle_seconds", 0) or 0)
+    # Two servers on one account race for the cursor and double-reply. Refuse
+    # rather than corrupt state.
+    lock = _acquire_lock(channel.state_dir / f"{channel.cfg.account_id}.serve.lock")
+    if lock is None:
+        print(
+            f"another serve process holds the lock for account "
+            f"{channel.cfg.account_id}; stop it first (or delete the lock file "
+            f"if it is stale)."
+        )
+        return 1
 
-    # share one router across messages — building it per message would re-read
-    # config and re-resolve credentials on every turn
-    router = ModelRouter.from_config(cfg)
+    scope = conf.get("sessionScope", "per-peer")
+    max_polls = int(getattr(args, "max_messages", 0) or 0)
+    idle_stop = int(getattr(args, "idle_seconds", 0) or 0)
+    home = Path(args.home)
     workspace = Path(args.workspace or Path.cwd())
+    session_dir = home / "sessions" / "channels"
+
+    router = ModelRouter.from_config(cfg)
+    limits = LoopLimits(
+        max_steps=int(cfg.get("loop", "maxSteps", 12)),
+        max_depth=int(cfg.get("loop", "maxDepth", 2)),
+        spawn_budget=int(cfg.get("loop", "spawnBudget", 8)),
+    )
 
     print(f"weixin serve: account={channel.cfg.account_id} scope={scope}")
+    print(f"  workspace : {workspace}")
+    print(f"  sessions  : {session_dir}")
     print("polling for messages (Ctrl-C to stop)")
-    if max_rounds:
-        print(f"will stop after {max_rounds} poll(s)")
+    if max_polls:
+        print(f"  stop after {max_polls} poll(s)")
     if idle_stop:
-        print(f"will stop after {idle_stop}s of no messages")
+        print(f"  stop after {idle_stop}s idle")
 
-    handled = 0
-    polls = 0
-    started = time.monotonic()
-    last_message_at = time.monotonic()
+    stats = _ServeStats()
+    agents: dict[str, object] = {}
 
-    while True:
-        if max_rounds and polls >= max_rounds:
-            print(f"reached poll cap ({max_rounds}); stopping.")
-            break
-        if idle_stop and (time.monotonic() - last_message_at) > idle_stop:
-            print(f"idle for {idle_stop}s; stopping.")
-            break
+    try:
+        while True:
+            if max_polls and stats.polls >= max_polls:
+                print(f"reached poll cap ({max_polls}); stopping.")
+                break
+            if idle_stop and stats.idle_seconds() > idle_stop:
+                print(f"idle for {idle_stop}s; stopping.")
+                break
+
+            try:
+                messages = channel.poll(limit=10)
+            except KeyboardInterrupt:
+                print("\ninterrupted; stopping.")
+                break
+            except PollTimeout:
+                # normal: the window expired with nothing new
+                stats.polls += 1
+                continue
+            except Exception as exc:
+                print(f"poll error: {exc}", file=sys.stderr)
+                stats.polls += 1
+                stats.errors += 1
+                time.sleep(min(30, 2 * stats.consecutive_errors + 1))
+                continue
+
+            stats.consecutive_errors = 0
+            stats.polls += 1
+            stats.polls_with_messages += 1 if messages else 0
+
+            for msg in messages:
+                stats.touch()
+                key = session_for(msg, scope)
+                print(f"[{key}] {msg.peer}: {msg.text[:80]}")
+                channel.send_typing(msg.peer)  # best-effort, never raises
+
+                # one agent per lane, reused across messages in that lane
+                agent = agents.get(key)
+                if agent is None:
+                    agent = _build_lane_agent(
+                        home=home,
+                        workspace=workspace,
+                        session_dir=session_dir,
+                        session_key=key,
+                        config=cfg,
+                        router=router,
+                        limits=limits,
+                    )
+                    agents[key] = agent
+
+                try:
+                    report = agent.run(msg.text)
+                    reply = _render_report(report)
+                except Exception as exc:
+                    reply = f"[forge] 运行失败：{exc}"
+                    stats.errors += 1
+
+                try:
+                    chunks = channel.send(msg.peer, reply, group=msg.group)
+                    stats.sent += chunks
+                    stats.handled += 1
+                except Exception as exc:
+                    print(f"send failed to {msg.peer}: {exc}", file=sys.stderr)
+                    stats.send_failures += 1
+    finally:
+        _release_lock(lock)
+
+    print(stats.summary())
+    return 0 if stats.errors == 0 else 1
+
+
+class _ServeStats:
+    """Loop bookkeeping, kept out of the loop body."""
+
+    def __init__(self) -> None:
+        self.polls = 0
+        self.polls_with_messages = 0
+        self.handled = 0
+        self.sent = 0
+        self.send_failures = 0
+        self.errors = 0
+        self.consecutive_errors = 0
+        self._started = time.monotonic()
+        self._last_message = time.monotonic()
+
+    def touch(self) -> None:
+        self._last_message = time.monotonic()
+
+    def idle_seconds(self) -> float:
+        return time.monotonic() - self._last_message
+
+    def summary(self) -> str:
+        elapsed = time.monotonic() - self._started
+        return (
+            f"done: {self.handled} message(s) handled, {self.sent} chunk(s) sent, "
+            f"{self.errors} error(s), {self.send_failures} send failure(s) "
+            f"over {self.polls} poll(s) in {elapsed:.1f}s"
+        )
+
+
+def _build_lane_agent(*, home, workspace, session_dir, session_key, config, router, limits):
+    """Build one agent bound to a per-lane session file.
+
+    The session *key* separates conversations logically; giving each key its own
+    log file makes that separation real (and keeps a busy group chat from
+    burying a DM in one shared file).
+    """
+    safe = "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in session_key)
+    path = session_dir / f"{safe[:120]}.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return build_agent(
+        home=home,
+        workspace=workspace,
+        config=config,
+        router=router,
+        limits=limits,
+        session_path=path,
+    )
+
+
+def _acquire_lock(path: Path):
+    """Take an exclusive lock file, or return None if another process holds it."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        try:
+            holder = int(path.read_text(encoding="utf-8").strip() or 0)
+        except (ValueError, OSError):
+            holder = 0
+        if holder and _pid_alive(holder):
+            return None
+    path.write_text(str(os.getpid()), encoding="utf-8")
+    return path
+
+
+def _release_lock(path: Path | None) -> None:
+    if path is None:
+        return
+    try:
+        path.unlink()
+    except OSError:
+        pass
+
+
+def _pid_alive(pid: int) -> bool:
+    """Best-effort liveness check that works on Windows and POSIX."""
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import subprocess
 
         try:
-            messages = list(channel.poll(limit=10))
-        except KeyboardInterrupt:
-            print("\ninterrupted; stopping.")
-            break
-        except Exception as exc:
-            print(f"poll error: {exc}", file=sys.stderr)
-            time.sleep(2)
-            polls += 1
-            continue
-
-        polls += 1
-        for msg in messages:
-            last_message_at = time.monotonic()
-            key = session_for(msg, scope)
-            print(f"[{key}] {msg.peer}: {msg.text[:80]}")
-            try:
-                channel.send_typing(msg.peer)
-            except Exception:
-                pass
-
-            try:
-                agent = build_agent(
-                    home=Path(args.home),
-                    workspace=workspace,
-                    config=cfg,
-                    router=router,
-                    limits=LoopLimits(
-                        max_steps=int(cfg.get("loop", "maxSteps", 12)),
-                        max_depth=int(cfg.get("loop", "maxDepth", 2)),
-                        spawn_budget=int(cfg.get("loop", "spawnBudget", 8)),
-                    ),
-                )
-                report = agent.run(msg.text)
-                reply = _render_report(report)
-            except Exception as exc:
-                reply = f"[forge] 运行失败：{exc}"
-
-            try:
-                channel.send(msg.peer, reply, group=msg.group)
-            except Exception as exc:
-                print(f"send failed to {msg.peer}: {exc}", file=sys.stderr)
-                continue
-            handled += 1
-
-    elapsed = time.monotonic() - started
-    print(f"done: {handled} message(s) handled in {elapsed:.1f}s over {polls} poll(s)")
-    return 0
+            out = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+                capture_output=True, text=True, timeout=10,
+            )
+            return str(pid) in out.stdout
+        except Exception:
+            return True  # can't tell -> assume alive, safer than double-serving
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
 
 
 def _render_report(report) -> str:

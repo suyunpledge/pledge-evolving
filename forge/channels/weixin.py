@@ -42,6 +42,7 @@ import base64
 import json
 import os
 import secrets
+import socket
 import time
 import urllib.error
 import urllib.request
@@ -49,11 +50,25 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
-from . import InboundMessage, register_channel
+from . import (
+    Cursor,
+    InboundMessage,
+    SeenSet,
+    chunk_text,
+    register_channel,
+)
 
 # ---------------------------------------------------------------------------
 # protocol constants (mirrored from the iLink bot API)
 # ---------------------------------------------------------------------------
+
+class PollTimeout(RuntimeError):
+    """The long-poll window expired with no messages.
+
+    Distinct from a transport error on purpose: "nothing happened" must not be
+    reported as a failure, or every idle poll looks like an outage.
+    """
+
 
 DEFAULT_BASE_URL = "https://ilinkai.weixin.qq.com"
 ILINK_APP_ID = "bot"
@@ -104,11 +119,6 @@ def _redact(text: str, token: str) -> str:
     if token and token in text:
         return text.replace(token, "***")
     return text
-
-
-def redact_url(url: str) -> str:
-    """Drop the query string — it can carry a signature or token."""
-    return url.split("?", 1)[0]
 
 
 # ---------------------------------------------------------------------------
@@ -209,12 +219,13 @@ class WeixinChannel:
         self._token = self.cfg.resolve_token()
         self._client_version = _client_version()
         # cursor + dedup live under the state dir so a restart resumes cleanly
-        from . import Cursor, SeenSet
-
         state_root = Path(self.cfg.state_dir).expanduser() if self.cfg.state_dir else (
             Path.home() / ".forge" / "channels" / "weixin"
         )
         state_root.mkdir(parents=True, exist_ok=True)
+        # Exposed so a caller can put its own bookkeeping (e.g. a serve lock)
+        # next to the cursor it must not race with.
+        self.state_dir = state_root
         self._cursor = Cursor(state_root / f"{self.cfg.account_id}.cursor.json")
         self._seen = SeenSet(state_root / f"{self.cfg.account_id}.seen.json")
         self._typing_ticket = ""
@@ -252,7 +263,12 @@ class WeixinChannel:
         except urllib.error.HTTPError as exc:
             detail = _redact(exc.read().decode("utf-8", "replace")[:300], self._token)
             raise RuntimeError(f"{endpoint} HTTP {exc.code}: {detail}") from exc
-        except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+        except (TimeoutError, socket.timeout) as exc:
+            # A read timeout is how a long-poll says "nothing yet". It is not a
+            # failure, so it gets its own exception type the caller can tell
+            # apart from a broken connection.
+            raise PollTimeout(str(exc)) from exc
+        except (urllib.error.URLError, ConnectionError) as exc:
             raise RuntimeError(f"{endpoint} transport error: {_redact(repr(exc), self._token)}") from exc
         if not raw.strip():
             return {}
@@ -266,25 +282,46 @@ class WeixinChannel:
 
     # -- inbound -----------------------------------------------------------
 
-    def poll(self, *, limit: int = 10) -> Iterable[InboundMessage]:
-        """Long-poll once and return the normalised inbound messages.
+    # Long-poll windows: the server suggests one per response. Clamp the
+    # adopted value so a bogus suggestion cannot pin the loop either way.
+    MIN_POLL_MS = 5000
+    MAX_POLL_MS = 60_000
 
-        The cursor advances on every successful poll so a crash mid-batch does
-        not replay messages already handed to the loop. Dedup by ``msg_id``
+    def poll(self, *, limit: int = 10) -> list[InboundMessage]:
+        """Long-poll once and return normalised inbound messages.
+
+        Returns ``[]`` when the poll window expires with nothing new — that is
+        the common case and must not look like an error.
+
+        The cursor advances on every successful poll, so a crash mid-batch does
+        not replay messages already handed to the loop; dedup by ``msg_id``
         covers the remaining at-least-once window.
         """
         cursor_key = f"{self.name}:{self.cfg.account_id}"
-        resp = self._post(
-            "ilink/bot/getupdates",
-            {"get_updates_buf": self._cursor.get(cursor_key)},
-            self.cfg.poll_timeout_ms,
-        )
+        try:
+            resp = self._post(
+                "ilink/bot/getupdates",
+                {"get_updates_buf": self._cursor.get(cursor_key)},
+                self.cfg.poll_timeout_ms,
+            )
+        except PollTimeout:
+            return []
+
+        # `ret` is the envelope's general code; `errcode` is the more specific
+        # one. Either being non-zero means the batch is not trustworthy.
+        ret = resp.get("ret")
         errcode = resp.get("errcode")
-        if errcode not in (None, 0):
+        if ret not in (None, 0) or errcode not in (None, 0):
+            detail = resp.get("errmsg") or ""
             # -14 is a documented session timeout: the credential needs renewal.
             raise RuntimeError(
-                f"getupdates error {errcode}: {resp.get('errmsg', '')}"
+                f"getupdates failed ret={ret} errcode={errcode}: {detail}"
             )
+
+        # Adopt the server's suggested window for the next poll.
+        suggested = resp.get("longpolling_timeout_ms")
+        if isinstance(suggested, int) and suggested > 0:
+            self.cfg.poll_timeout_ms = max(self.MIN_POLL_MS, min(self.MAX_POLL_MS, suggested))
 
         new_cursor = resp.get("get_updates_buf")
         if isinstance(new_cursor, str) and new_cursor:
@@ -362,14 +399,18 @@ class WeixinChannel:
 
     # -- outbound ----------------------------------------------------------
 
-    def send(self, to: str, text: str, *, group: str = "") -> None:
-        """Deliver ``text`` to ``to``, chunked to the surface limit."""
-        from . import chunk_text
+    def send(self, to: str, text: str, *, group: str = "") -> int:
+        """Deliver ``text`` to ``to``, chunked to the surface limit.
 
+        Returns the number of chunks delivered, so a caller can tell "sent"
+        from "there was nothing to send".
+        """
         if not to:
             raise ValueError("send() requires a recipient")
-        for chunk in chunk_text(text, self.cfg.chunk_limit):
+        chunks = chunk_text(text, self.cfg.chunk_limit)
+        for chunk in chunks:
             self._send_one(to, chunk)
+        return len(chunks)
 
     def _send_one(self, to: str, text: str) -> None:
         body = {
@@ -425,11 +466,12 @@ class WeixinChannel:
             "base_url": self.cfg.base_url,
             "token_source": self._token_source(),
             "token_present": bool(self._token),
+            "poll_timeout_ms": self.cfg.poll_timeout_ms,
         }
         try:
             # The bot's own id is what getconfig keys on; read it from the token
             # file when available, else fall back to a config probe.
-            probe = self._trusted_user_id() or ""
+            probe = self._bot_user_id() or ""
             resp = self._post("ilink/bot/getconfig", {"ilink_user_id": probe}, 10_000)
             info["reachable"] = True
             info["ret"] = resp.get("ret")
@@ -448,7 +490,7 @@ class WeixinChannel:
             return "inline (insecure — move to env or file)"
         return "none"
 
-    def _trusted_user_id(self) -> str:
+    def _bot_user_id(self) -> str:
         """Read the bot's own user id from the token file, when one is set."""
         if not self.cfg.token_file:
             return ""
@@ -527,5 +569,4 @@ __all__ = [
     "find_openclaw_accounts",
     "import_openclaw_account",
     "OPENCLAW_WEIXIN_DIR",
-    "redact_url",
 ]

@@ -865,6 +865,7 @@ def build_agent(
     non_interactive: bool = True,
     expose: Iterable[str] | None = None,
     mount_contrib: bool = True,
+    session_path: Path | None = None,
 ) -> Agent:
     """Wire a full agent from a composed config tree.
 
@@ -873,6 +874,11 @@ def build_agent(
     resolved through the registry's alias table and handed to the Agent as an
     extension surface. A quarantined or missing module simply leaves its slot
     empty — mounting never fails the boot.
+
+    ``session_path`` overrides where this agent's event log lands. The default
+    (``home/sessions/current.jsonl``) is right for one interactive user; a chat
+    channel serving several peers passes a per-peer path so conversations do
+    not share one log.
     """
     from .tools import build_builtin_registry
 
@@ -896,7 +902,7 @@ def build_agent(
     session_dir = home / "sessions"
     from .session import Session as _Session
 
-    session = _Session(session_dir / "current.jsonl", meta={
+    session = _Session(session_path or (session_dir / "current.jsonl"), meta={
         "cwd": str(workspace),
         "model": str(config.get("model", "primary", "")),
         "policy_mode": policy.mode.value,
