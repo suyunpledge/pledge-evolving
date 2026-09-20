@@ -336,10 +336,13 @@ class WeixinChannel:
                 continue
             if self._seen.seen(msg.msg_id):
                 continue
-            self._seen.add(msg.msg_id)
+            self._seen.add(msg.msg_id, save=False)
             out.append(msg)
             if len(out) >= limit:
                 break
+        # one write per batch instead of one per message
+        if out:
+            self._seen.save()
         return out
 
     def _normalise(self, raw: dict[str, Any]) -> InboundMessage | None:

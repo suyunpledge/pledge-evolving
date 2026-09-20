@@ -164,4 +164,37 @@ assert "5 chunk(s) sent" in summary
 assert st.idle_seconds() >= 0
 print("9. serve stats: OK")
 
-print("\nAll 9 optimisation tests passed")
+# ── 9b. seen-set batching: one write per batch, not per message ─────────
+
+with tempfile.TemporaryDirectory() as td:
+    spath = Path(td) / "seen.json"
+    from forge.channels import SeenSet
+
+    s = SeenSet(spath, max_items=100)
+    writes = []
+    real_save = s.save
+
+    def counting_save():
+        writes.append(1)
+        real_save()
+
+    s.save = counting_save  # type: ignore
+
+    # deferred adds do not touch the disk
+    for i in range(5):
+        s.add(f"b{i}", save=False)
+    assert writes == [], f"save=False must not write: {len(writes)} write(s)"
+    assert s.seen("b4"), "deferred adds are still visible in memory"
+
+    # an explicit flush persists the whole batch in one write
+    s.save()
+    assert len(writes) == 1, f"expected 1 write, got {len(writes)}"
+    assert SeenSet(spath, max_items=100).seen("b4"), "batch must persist"
+
+    # default add() still writes immediately (no behaviour change for callers)
+    writes.clear()
+    s.add("single")
+    assert len(writes) == 1, "default add must still persist immediately"
+print("10. seen-set batching: OK")
+
+print("\nAll 10 optimisation tests passed")

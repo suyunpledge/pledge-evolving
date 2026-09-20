@@ -216,16 +216,22 @@ class SeenSet:
     def seen(self, msg_id: str) -> bool:
         return bool(msg_id) and msg_id in self._index
 
-    def add(self, msg_id: str) -> None:
+    def add(self, msg_id: str, *, save: bool = True) -> None:
+        """Record an id as handled.
+
+        ``save=False`` defers the disk write so a batch of adds costs one write
+        instead of one per message; call ``save()`` once when the batch is done.
+        """
         if not msg_id or msg_id in self._index:
             return
         self._items.append(msg_id)
         self._index.add(msg_id)
         # evict oldest beyond the cap
         while len(self._items) > self.max_items:
-            old = self._items.pop(0)
-            self._index.discard(old)
-        self.save()
+            oldest = self._items.pop(0)
+            self._index.discard(oldest)
+        if save:
+            self.save()
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
