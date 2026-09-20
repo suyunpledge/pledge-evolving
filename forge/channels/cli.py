@@ -337,6 +337,21 @@ class _ServeStats:
         )
 
 
+def lane_session_path(session_dir: Path, session_key: str) -> Path:
+    """Map a session key to its log file.
+
+    A key looks like ``channel:weixin:<account>:<peer>``. Colons are legal in a
+    key but not in a Windows filename, and a key can be arbitrarily long, so it
+    is sanitised and capped. The result is deterministic, which is what matters:
+    the same conversation always lands in the same file.
+
+    Extracted from ``_build_lane_agent`` so it can be tested directly rather
+    than through a copy of the same arithmetic.
+    """
+    safe = "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in session_key)
+    return Path(session_dir) / f"{safe[:120]}.jsonl"
+
+
 def _build_lane_agent(*, home, workspace, session_dir, session_key, config, router, limits):
     """Build one agent bound to a per-lane session file.
 
@@ -344,8 +359,7 @@ def _build_lane_agent(*, home, workspace, session_dir, session_key, config, rout
     log file makes that separation real (and keeps a busy group chat from
     burying a DM in one shared file).
     """
-    safe = "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in session_key)
-    path = session_dir / f"{safe[:120]}.jsonl"
+    path = lane_session_path(session_dir, session_key)
     path.parent.mkdir(parents=True, exist_ok=True)
     return build_agent(
         home=home,
