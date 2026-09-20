@@ -86,6 +86,7 @@ class GatewayConfig:
         upstream_wire: str = "anthropic",
         model_map: dict[str, str] | None = None,
         proxy: str = "",
+        gateway_token: str = "",
     ) -> None:
         self.upstream = upstream.rstrip("/")
         self.api_key = api_key
@@ -96,6 +97,7 @@ class GatewayConfig:
         self.upstream_wire = upstream_wire    # wire the *upstream* speaks
         self.model_map = model_map or {}
         self.proxy = proxy
+        self.gateway_token = gateway_token    # empty = no auth; set = bearer check
 
 
 def build_handler(cfg: GatewayConfig):
@@ -137,6 +139,14 @@ def build_handler(cfg: GatewayConfig):
             self._proxy(b"")
 
         def do_POST(self):  # noqa: N802
+            # Optional gateway authentication: empty token = no auth (backward compat)
+            if cfg.gateway_token:
+                auth = self.headers.get("Authorization", "")
+                if auth != f"Bearer {cfg.gateway_token}":
+                    self._json(401, {"type": "error", "error": {"type": "authentication_error",
+                                                              "message": "invalid or missing gateway token"}})
+                    cfg.log.write(f"{self.command} {self.path} -> 401 (bad gateway token)")
+                    return
             self._proxy(self._read_body())
 
         def _proxy(self, body: bytes) -> None:

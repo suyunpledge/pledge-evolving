@@ -225,6 +225,7 @@ class EvolutionEngine:
         checkpoints=None,
         refiner: Refiner | None = None,
         auto_apply_note_risk: str = "low",
+        workspace: Path | None = None,
     ) -> None:
         self.home = Path(home)
         self.root = self.home / "evolution"
@@ -238,6 +239,8 @@ class EvolutionEngine:
         self.checkpoints = checkpoints
         self.refiner = refiner
         self.auto_apply_note_risk = auto_apply_note_risk
+        # Sandbox boundary: if set, apply() rejects targets outside this root.
+        self._workspace = Path(workspace) if workspace else None
         self.candidates: dict[str, Candidate] = {}
         self._load()
 
@@ -413,6 +416,14 @@ class EvolutionEngine:
             raise PermissionError(f"{candidate.id} failed the evidence gate")
 
         target = Path(candidate.target)
+        # Sandbox enforcement: reject writes outside workspace boundary.
+        if self._workspace is not None:
+            try:
+                target.resolve().relative_to(self._workspace.resolve())
+            except ValueError:
+                raise PermissionError(
+                    f"{candidate.id}: target {target} escapes workspace boundary {self._workspace}"
+                )
         if self.checkpoints is not None:
             point = self.checkpoints.snapshot(f"before evolution {candidate.id}")
             if point is not None:

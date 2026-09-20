@@ -23,6 +23,14 @@ from typing import Any, Callable, Iterable
 CONFIG_NAME = "forge.config.json"
 USER_LAYER_NAME = "forge.patch.json"
 
+# Env keys accessible to config expressions (beyond FORGE_* which is always allowed).
+# Prevents attacker-reachable config layers from exfiltrating arbitrary secrets.
+_ENV_WHITELIST: frozenset[str] = frozenset({
+    "HOME", "USER", "USERNAME", "SHELL", "PATH", "LANG", "LC_ALL",
+    "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME",
+    "COMPUTERNAME", "HOSTNAME", "TERM", "SHELL",
+})
+
 
 class ConfigError(RuntimeError):
     pass
@@ -163,8 +171,16 @@ def _boot_ctx(ctx: dict[str, Any] | None) -> dict[str, Any]:
     bundle always resolved to '' — the real root cause behind the "401 auth
     header format" night (the shell-snapshot env was only half the story).
     Callers may still pass their own ctx; None now means "process env".
+
+    2026-09-20 security: env access is now whitelisted to prevent config
+    layers (attacker-reachable via plugins/overlays) from exfiltrating
+    arbitrary secrets via $expr.
     """
-    return ctx if ctx is not None else {"env": dict(os.environ)}
+    if ctx is not None:
+        return ctx
+    env = {k: v for k, v in os.environ.items()
+           if k.startswith("FORGE_") or k in _ENV_WHITELIST}
+    return {"env": env}
 
 
 class Config:

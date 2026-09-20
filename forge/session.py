@@ -63,7 +63,10 @@ class Session:
     # -- lifecycle -------------------------------------------------------
     def open(self) -> "Session":
         if not self.path.exists():
+            self._fh = self.path.open("a", encoding="utf-8")
             self._write_line({"ordinal": 0, "type": "session_meta", "ts": time.time(), **self.meta})
+        else:
+            self._fh = self.path.open("a", encoding="utf-8")
         events: list[Event] = []
         for event in self.replay():
             if event.type == "session_meta":
@@ -72,7 +75,10 @@ class Session:
                 continue
             events.append(event)
         self.events = events
-        self._fh = self.path.open("a", encoding="utf-8")
+        # _write_line already opened _fh above; if file existed, replay() closed
+        # the read handle, so we opened a fresh append handle above.  No second open.
+        if self._fh is None:
+            self._fh = self.path.open("a", encoding="utf-8")
         return self
 
     def close(self) -> None:

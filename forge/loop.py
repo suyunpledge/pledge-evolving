@@ -28,7 +28,7 @@ from typing import Any, Callable, Iterable
 
 from .capability import CapabilityLibrary
 from .checkpoint import CheckpointStore
-from .memory import ContextBudget, MemoryStore
+from .memory import ContextBudget, MemoryStore  # noqa: F401
 from .model import Completion, ModelRouter, TransportError
 from .pricing import CostLedger, cost_of, rate_for
 from .policy import Decision, Mode, Policy, WRITE_TOOLS

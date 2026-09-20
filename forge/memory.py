@@ -12,6 +12,7 @@ by a curator pass — archived, never silently deleted, and always reversible.
 from __future__ import annotations
 
 import json
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -60,6 +61,8 @@ class Entry:
 class MemoryStore:
     """One Markdown file per scope, with an embedded machine-readable block."""
 
+    _lock = threading.Lock()
+
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
         self.entries: list[Entry] = []
@@ -100,13 +103,14 @@ class MemoryStore:
                  tags: Iterable[str] = ()) -> Entry:
         if kind not in KINDS:
             raise ValueError(f"unknown memory kind {kind!r}; expected one of {KINDS}")
-        for existing in self.entries:
-            if existing.text.strip() == text.strip():
-                return existing
-        entry = Entry(kind=kind, text=text.strip(), source=source, tags=tuple(tags))
-        self.entries.append(entry)
-        self.save()
-        return entry
+        with self._lock:
+            for existing in self.entries:
+                if existing.text.strip() == text.strip():
+                    return existing
+            entry = Entry(kind=kind, text=text.strip(), source=source, tags=tuple(tags))
+            self.entries.append(entry)
+            self.save()
+            return entry
 
     def recall(self, kind: str | None = None, *, include_archived: bool = False,
                limit: int = 50) -> list[Entry]:
@@ -174,79 +178,7 @@ def _between(text: str, start: str, end: str) -> str:
     return text[i + len(start):j].strip()
 
 
-class ContextBudget:
-    """Compaction policy: keep a recent tail, summarise the rest.
-
-    OpenClaw compacts on a threshold and always preserves pinned material and
-    the running summary; the compaction event is written to the session log so
-    the decision stays auditable.
-    """
-
-    def __init__(self, *, max_chars: int = 24000, keep_tail: int = 6) -> None:
-        self.max_chars = max_chars
-        self.keep_tail = keep_tail
-
-    def size(self, messages: list[dict[str, Any]]) -> int:
-        return sum(len(str(m.get("content", ""))) for m in messages)
-
-    def should_compact(self, messages: list[dict[str, Any]]) -> bool:
-        return self.size(messages) > self.max_chars
-
-    def compact(self, messages: list[dict[str, Any]], summariser=None,
-                *, max_chars: int | None = None) -> list[dict[str, Any]]:
-        # H16 (rev.H16-3.9): an override ceiling lets the caller apply a live
-        # budget (e.g. pricing-aware tightening) without mutating the frozen
-        # construction snapshot; the gate re-check uses the same value so the
-        # compaction actually happens instead of no-op'ing behind an event.
-        gate = self.should_compact if max_chars is None else \
-            (lambda msgs: self.size(msgs) > max_chars)
-        if not gate(messages):
-            return messages
-        if len(messages) <= self.keep_tail:
-            # nothing older than the tail exists to summarise — squeeze the
-            # tail messages in place so the call still makes progress (H16:
-            # the trigger must never be allowed to no-op just because the
-            # tail IS the history). H17 (rev.H17-3.10): system prompts are
-            # PINNED material — the tool list / operating rules / permission
-            # mode must survive compaction byte-for-byte, so the squeeze
-            # skips them. If only pinned material exceeds the budget, return
-            # unchanged: compressing instructions was never the goal, and a
-            # no-op here is reported honestly via the event's shrunk flag.
-            squeezed: list[dict[str, Any]] = []
-            changed = False
-            for m in messages:
-                if str(m.get("role", "")) == "system":
-                    squeezed.append(m)
-                    continue
-                content = str(m.get("content", ""))
-                if len(content) > 400:
-                    changed = True
-                    squeezed.append({**m, "content": content[:400]})
-                else:
-                    squeezed.append(m)
-            return squeezed if changed else messages
-        # H18 (rev.H18-3.11): the system prompt is PINNED on the main path
-        # too. The old head/tail split swept the system message into the
-        # summary — after one regular compaction the provider never received
-        # a system message again (rules/permission mode gone, prompt-cache
-        # prefix invalidated at exactly the moment compaction starts saving
-        # money). Pin system messages out first; summarise the rest.
-        pinned = [m for m in messages if str(m.get("role", "")) == "system"]
-        rest = [m for m in messages if str(m.get("role", "")) != "system"]
-        head, tail = rest[: -self.keep_tail], rest[-self.keep_tail:]
-        if not head:
-            # H19 (rev.H18-3.11 receipt): boundary len == keep_tail+1 with a
-            # pinned system message leaves head empty — the "[compacted 0
-            # earlier messages]" summary used to come out LONGER than the
-            # input (+31, honest but wasteful). Short-circuit, same shape as
-            # the squeeze branch's no-op.
-            return messages
-        if summariser is None:
-            flat = " ".join(str(m.get("content", ""))[:200] for m in head)
-            summary = f"[compacted {len(head)} earlier messages] {flat[:800]}"
-        else:
-            summary = summariser(head)
-        return [*pinned, {"role": "user", "content": summary}, *tail]
+from .compaction import ContextBudget  # noqa: F401  (canonical location)
 
 
 __all__ = ["ContextBudget", "Entry", "KINDS", "MemoryStore", "RAW_END", "RAW_START"]
