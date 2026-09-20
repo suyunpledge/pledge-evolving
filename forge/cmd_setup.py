@@ -111,8 +111,8 @@ def _build_patch(provider: dict, api_key: str, custom_url: str = "", custom_mode
 
     # Provider 行
     provider_row = {
-        "id": provider["id"],
-        "name": f"provider:{provider['id']}",
+        "id": "medium",
+        "name": "provider:medium",
         "config": {
             "wire": provider.get("wire", "openai"),
             "baseURL": custom_url or provider["base_url"],
@@ -128,11 +128,11 @@ def _build_patch(provider: dict, api_key: str, custom_url: str = "", custom_mode
         "id": "model",
         "name": "model:router",
         "config": {
-            "primary": [provider["id"], custom_model or provider["model"]],
+            "primary": ["medium", custom_model or provider["model"]],
             "fallback": [],
             "routing": {
                 "strategy": "balanced",
-                "tiers": [[provider["id"], custom_model or provider["model"]]],
+                "tiers": [["lite", custom_model or provider["model"]], ["medium", custom_model or provider["model"]]],
             },
         },
     }

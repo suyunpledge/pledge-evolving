@@ -14,9 +14,9 @@ answer a different question: "which order should this *task* walk?"
 Config shape (model row, optional):
     "routing": {
         "strategy": "economy|balanced|premium",
-        "tiers": [["deepseek", "deepseek-flash"], ...],   # cheap→expensive
-        "premium": [["review", "claude-opus-5"], ...],    # 集成裁决档
-        "small":  ["deepseek", "deepseek-flash"]          # 杂务档
+        "tiers": [["lite", "model-name"], ...],            # cheap→expensive
+        "premium": [["premium", "model-name"], ...],      # 集成裁决档
+        "small":  ["lite", "model-name"]                  # 杂务档
     }
 
 Nothing here overrides the frozen contract: SmartRouter subclasses
