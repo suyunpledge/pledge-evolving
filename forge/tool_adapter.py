@@ -449,28 +449,66 @@ def sanitize_messages(messages: list[dict[str, Any]], wire: str) -> list[dict[st
 
 
 def _sanitize_openai(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """OpenAI wire: drop orphan tool msgs + inject placeholders for missing tool_call_id + null-empty-content.
+
+    OpenAI Chat-Completions hard constraint: every tool_call_id from assistant
+    must have a corresponding role=tool message or the API returns 400.
+    Two-pass scan: collect required ids, then batch-insert from back-to-front
+    immediately after each assistant to avoid index drift.
+    """
+    required_ids: set[str] = set()
+    for msg in messages:
+        if msg.get("role") == "assistant":
+            for call in msg.get("tool_calls") or []:
+                cid = call.get("id")
+                if cid:
+                    required_ids.add(cid)
+
     out: list[dict[str, Any]] = []
-    seen_call_ids: set[str] = set()
+    seen_tool_ids: set[str] = set()
+    assistant_indices: list[int] = []
+
     for msg in messages:
         m = dict(msg)
         role = m.get("role")
         if role == "assistant":
-            # content 空串 → None（部分网关对 "" 和 null 处理不一致）
             if m.get("content") == "":
                 m["content"] = None
-            for call in m.get("tool_calls") or []:
-                cid = call.get("id")
-                if cid:
-                    seen_call_ids.add(cid)
+            assistant_indices.append(len(out))
+            out.append(m)
         elif role == "tool":
             cid = m.get("tool_call_id")
-            # 孤儿 tool 消息（前面没有对应 assistant 调用）→ 剔除
-            if cid and cid not in seen_call_ids:
-                continue
-            if not cid:
-                continue
-        out.append(m)
+            if not cid or cid not in required_ids:
+                continue  # orphan
+            seen_tool_ids.add(cid)
+            out.append(m)
+        else:
+            out.append(m)
+
+    missing = required_ids - seen_tool_ids
+    if not missing:
+        return out
+
+    # back-to-front insertion so earlier indices stay valid
+    for ai in reversed(assistant_indices):
+        amsg = out[ai]
+        ids_in_msg = [c.get("id") for c in (amsg.get("tool_calls") or []) if c.get("id")]
+        lost = [cid for cid in ids_in_msg if cid in missing]
+        if not lost:
+            continue
+        placeholders = [{
+            "role": "tool",
+            "tool_call_id": cid,
+            "content": '{"error": "tool result missing: call was interrupted or dropped"}',
+        } for cid in lost]
+        # 逐个插入并递增 ai，防止索引偏移把占位插到已有 tool 结果前面
+        pos = ai + 1
+        for p in placeholders:
+            out.insert(pos, p)
+            pos += 1
+
     return out
+
 
 
 def _sanitize_anthropic(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
