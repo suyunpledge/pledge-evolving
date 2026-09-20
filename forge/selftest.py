@@ -1656,8 +1656,9 @@ def test_smart_routing() -> None:
     if _shipped:
         from .routing import _sorted_by_cost as _sbc
         _order = _sbc(_shipped)
-        check('rt:shipped-economy-first-tier-is-mimo',
-              _order[0][0] == 'mimo', str(_order))
+        # 档位重命名（lite/medium/premium）后，经济档首档是 lite（最便宜）
+        check('rt:shipped-economy-first-tier-is-lite',
+              _order[0][0] == 'lite', str(_order))
 
     # R1-2：_ModelProbe 必须读策略首档而非冻结 primary。
     _providers_rt = [Provider(name='deepseek', base_url='http://d', wire='openai'),
@@ -2792,7 +2793,7 @@ def test_cli_surface() -> None:
 
     check("d2:bundled-base-json-ships",
           pkg_bundles.is_file()
-          and any(row.get("id") == "deepseek"
+          and any(row.get("id") == "medium"
                   for row in _json.loads(pkg_bundles.read_text(encoding="utf-8"))),
           f"pkg_bundles={pkg_bundles}")
     if repo_bundles.is_file() and pkg_bundles.is_file():
@@ -2817,8 +2818,8 @@ def test_cli_surface() -> None:
     with tempfile.TemporaryDirectory() as tmp3:
         cfg_d2 = _lc(Path(tmp3), bundles=sorted(Path(_bd).glob("*.json")))
         check("d2:cli-default-bundle-resolves",
-              cfg_d2.get("deepseek", "model") == "deepseek-flash",
-              f"BUNDLE_DIR={_bd} model={cfg_d2.get('deepseek', 'model')!r}")
+              cfg_d2.get("medium", "model") == "deepseek-flash",
+              f"BUNDLE_DIR={_bd} model={cfg_d2.get('medium', 'model')!r}")
 
 
 def test_permission_profiles() -> None:

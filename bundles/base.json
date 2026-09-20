@@ -34,28 +34,28 @@
     "name": "model:router",
     "config": {
       "primary": [
-        "lite",
-        ""
+        "medium",
+        "deepseek-flash"
       ],
       "fallback": [
         [
-          "medium",
-          ""
+          "lite",
+          "claude-sonnet-5"
         ],
         [
           "premium",
-          ""
+          "claude-opus-5"
         ]
       ],
       "moa": true,
       "moaModels": [
         [
-          "lite",
-          ""
+          "medium",
+          "deepseek-flash"
         ],
         [
-          "medium",
-          ""
+          "lite",
+          "claude-sonnet-5"
         ]
       ],
       "routing": {
@@ -63,26 +63,26 @@
         "tiers": [
           [
             "lite",
-            ""
+            "claude-sonnet-5"
           ],
           [
             "medium",
-            ""
+            "deepseek-flash"
           ]
         ],
         "premium": [
           [
             "premium",
-            ""
+            "claude-opus-5"
           ]
         ],
         "small": [
-          "lite",
-          ""
+          "medium",
+          "deepseek-flash"
         ],
-        "notes": "三档智能路由（0.7.0）：tiers 按档位排序（lite=经济档，medium=均衡档），premium = 高端集成裁决档。strategy 可被 CLI --strategy 覆盖。用户通过 setup 命令配置实际 provider 后，档位名自动绑定到对应的 provider/model。"
+        "notes": "三档智能路由（0.7.0）：tiers 按成本升序（lite=经济档，medium=均衡档），premium = 高端集成裁决档。档位 id 抽象、模型名具体；用户通过 forge setup 或 forge.patch.json 把档位绑到自己的 provider。strategy 可被 CLI --strategy 覆盖。"
       },
-      "notes": "默认档位命名：lite（经济）/ medium（均衡）/ premium（高端）。用户通过 setup 命令或 forge.patch.json 绑定实际 provider。"
+      "notes": "默认档位命名：lite（经济）/ medium（均衡）/ premium（高端）。model 行的 [provider_id, model] 对要求 model 非空——空串无法解析。用户通过 setup 命令或 forge.patch.json 覆盖为真实 provider。"
     }
   },
   {
@@ -97,27 +97,27 @@
     "id": "lite",
     "name": "provider:lite",
     "config": {
-      "wire": "openai",
-      "baseURL": "https://api.deepseek.com",
+      "wire": "anthropic",
+      "baseURL": "http://127.0.0.1:8810",
       "apiKey": {
-        "$expr": "get('env.FORGE_DEEPSEEK_KEY', '')"
+        "$expr": "get('env.FORGE_LITE_KEY', 'local')"
       },
-      "model": "deepseek-flash",
-      "smallModel": "deepseek-flash",
-      "notes": "经济档 provider：按成本升序路由时首选。用户通过 setup 命令配置实际 API。"
+      "model": "claude-sonnet-5",
+      "notes": "经济档 provider（占位示例）：本地环回协议翻译网关。用户应通过 forge setup 或 forge.patch.json 覆盖为真实 provider。"
     }
   },
   {
     "id": "medium",
     "name": "provider:medium",
     "config": {
-      "wire": "anthropic",
-      "baseURL": "http://127.0.0.1:8810",
+      "wire": "openai",
+      "baseURL": "https://api.deepseek.com",
       "apiKey": {
-        "$expr": "get('env.FORGE_MIMO_KEY', 'local')"
+        "$expr": "get('env.FORGE_MEDIUM_KEY', '')"
       },
-      "model": "claude-sonnet-5",
-      "notes": "均衡档 provider：中端主力，balanced 策略默认首选。"
+      "model": "deepseek-flash",
+      "smallModel": "deepseek-flash",
+      "notes": "均衡档 provider（默认）：官方 OpenAI 兼容接口。凭据由环境变量注入（FORGE_MEDIUM_KEY），不落盘、不进日志。"
     }
   },
   {
@@ -127,10 +127,10 @@
       "wire": "anthropic",
       "baseURL": "http://127.0.0.1:8811",
       "apiKey": {
-        "$expr": "get('env.FORGE_REVIEW_KEY', 'local')"
+        "$expr": "get('env.FORGE_PREMIUM_KEY', 'local')"
       },
       "model": "claude-opus-5",
-      "notes": "高端档 provider：premium 策略的集成裁决档。"
+      "notes": "高端档 provider（占位示例）：独立审查通道。示例指向本地网关，按需替换为你自己的高成本档。"
     }
   }
 ]

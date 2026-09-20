@@ -460,6 +460,11 @@ def cmd_setup(args) -> int:
     return _impl(args)
 
 
+def cmd_channel(args) -> int:
+    from .channels.cli import cmd_channel as _impl
+    return _impl(args)
+
+
 def cmd_selftest(args) -> int:
     from .selftest import run_selftest
 
@@ -648,6 +653,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     setup = sub.add_parser("setup", help="first-run wizard: configure API keys interactively")
     setup.set_defaults(func=cmd_setup)
+
+    channel = sub.add_parser("channel", parents=[common], help="messaging channels (weixin, ...)")
+    channel.add_argument("target", nargs="?", default="list",
+                         help="channel name (e.g. weixin) or 'list'")
+    channel.add_argument("action", nargs="?", default="status",
+                         choices=["list", "status", "import", "serve"])
+    channel.add_argument("--source", default="", help="credential file to import")
+    channel.add_argument("--dest", default="", help="destination credential path")
+    channel.add_argument("--token-file", dest="token_file", default="", help="override token file for status")
+    channel.add_argument("--max-messages", dest="max_messages", type=int, default=0,
+                         help="serve: stop after N polls (0 = run forever)")
+    channel.add_argument("--idle-seconds", dest="idle_seconds", type=int, default=0,
+                         help="serve: stop after N seconds with no messages (0 = never)")
+    channel.set_defaults(func=cmd_channel)
 
     selftest = sub.add_parser("selftest", parents=[common], help="offline end-to-end verification")
     selftest.set_defaults(func=cmd_selftest)
