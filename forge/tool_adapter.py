@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import ast
+import html
 import json
 import re
 from typing import Any
@@ -395,22 +396,35 @@ def parse_tool_call_tags(content: str) -> list[dict[str, Any]]:
         if obj is None:
             obj = _try_repair(raw, get_quirks(""))
         if isinstance(obj, dict) and "name" in obj:
+            args = obj.get("arguments") or obj.get("parameters") or {}
+            # arguments 可能是 JSON 字符串（模型输出 "arguments": "{\"city\":...}"）
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except (json.JSONDecodeError, ValueError):
+                    pass
             calls.append({
                 "id": obj.get("id", ""),
                 "name": obj["name"],
-                "arguments": obj.get("arguments") or obj.get("parameters") or {},
+                "arguments": args if isinstance(args, dict) else {},
             })
     # <tools> XML tag（qwen2.5-coder 风格）
     for m in _TOOLS_XML_TAG.finditer(content or ""):
-        raw = m.group(1)
+        raw = html.unescape(m.group(1))  # &quot; → " 等 XML 实体解码
         obj = _try_json(raw)
         if obj is None:
             obj = _try_repair(raw, get_quirks(""))
         if isinstance(obj, dict) and "name" in obj:
+            args = obj.get("arguments") or obj.get("parameters") or {}
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except (json.JSONDecodeError, ValueError):
+                    pass
             calls.append({
                 "id": obj.get("id", ""),
                 "name": obj["name"],
-                "arguments": obj.get("arguments") or obj.get("parameters") or {},
+                "arguments": args if isinstance(args, dict) else {},
             })
     return calls
 
