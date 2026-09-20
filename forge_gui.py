@@ -165,6 +165,17 @@ class ForgeApp:
             pass  # 某些窗口管理器不支持
 
     # ── UI 构建 ──────────────────────────────────────────
+    def _add_hover(self, widget, normal_bg, hover_bg, normal_fg=None, hover_fg=None):
+        """为按钮添加 hover 效果。"""
+        fg = normal_fg or widget.cget("fg")
+        hfg = hover_fg or fg
+        def on_enter(e):
+            widget.configure(bg=hover_bg, fg=hfg)
+        def on_leave(e):
+            widget.configure(bg=normal_bg, fg=fg)
+        widget.bind("<Enter>", on_enter)
+        widget.bind("<Leave>", on_leave)
+
     def _build_ui(self):
         # 主容器（留内边距）
         main = tk.Frame(self.root, bg=C["bg"], padx=PAD_X, pady=PAD_Y_TOP)
@@ -232,9 +243,14 @@ class ForgeApp:
         )
         self.task_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=ENTRY_PADY)
         self.task_entry.bind("<Return>", lambda e: self._run_task())
+        self._placeholder = "输入任务，如：帮我总结 README..."
+        self._set_placeholder()
+        self.task_entry.bind("<FocusIn>", self._on_focus_in)
+        self.task_entry.bind("<FocusOut>", self._on_focus_out)
         self.task_entry.focus_set()
         self.root.bind("<Escape>", lambda e: self._on_close())
-        self.root.bind("<Control-l>", lambda e: self._clear_log())
+        self.root.bind("<Up>", lambda e: self._nav_history(-1))
+        self.root.bind("<Down>", lambda e: self._nav_history(1))
         self.root.bind("<Control-l>", lambda e: self._clear_log())
 
         # ── 按钮栏 ──
@@ -250,6 +266,7 @@ class ForgeApp:
             command=self._run_task, cursor="hand2",
         )
         self.run_btn.pack(side=tk.LEFT, padx=(0, 8))
+        self._add_hover(self.run_btn, C["accent"], C["overlay"], C["bg"], C["text"])
 
         # 停止按钮
         self.stop_btn = tk.Button(
@@ -260,6 +277,7 @@ class ForgeApp:
             command=self._stop, state=tk.DISABLED, cursor="hand2",
         )
         self.stop_btn.pack(side=tk.LEFT, padx=(0, 20))
+        self._add_hover(self.stop_btn, C["error"], C["overlay"], C["bg"], C["text"])
 
         # 辅助按钮
         for label, cmd in [("selftest", "selftest"), ("doctor", "doctor")]:
@@ -338,6 +356,8 @@ class ForgeApp:
         self.perf_frame = tk.Frame(main, bg=C["surface"], padx=14, pady=8)
 
         # 运行历史统计
+        self._task_history: list[str] = []
+        self._history_idx = -1
         self._run_times: list[float] = []
         self._run_tokens: list[int] = []
         self._run_costs: list[float] = []
@@ -406,6 +426,7 @@ class ForgeApp:
         self._running = True
         self.run_btn.configure(state=tk.DISABLED)
         self.stop_btn.configure(state=tk.NORMAL)
+        self._pulse_running()
         run_py_idx = next((i for i, v in enumerate(cmd) if v == str(RUN_PY)), -1)
         status_text = " ".join(cmd[run_py_idx + 1:]) if run_py_idx >= 0 else " ".join(cmd)
         self.status_var.set(f"运行中: {status_text}")
@@ -473,6 +494,56 @@ class ForgeApp:
                     pass
             self._append("\n■ 已终止\n", "error")
             self.status_var.set("已停止")
+
+
+    # ── Placeholder ──────────────────────────────────────
+    def _set_placeholder(self):
+        if not self.task_entry.get():
+            self.task_entry.insert(0, self._placeholder)
+            self.task_entry.configure(fg=C["muted"])
+
+    def _on_focus_in(self, event):
+        if self.task_entry.get() == self._placeholder:
+            self.task_entry.delete(0, tk.END)
+            self.task_entry.configure(fg=C["text"])
+
+    def _on_focus_out(self, event):
+        self._set_placeholder()
+
+    # ── 历史记录导航 ─────────────────────────────────────
+    def _nav_history(self, direction: int):
+        if not self._task_history:
+            return
+        current = self.task_entry.get()
+        if current != self._placeholder and current:
+            if not self._task_history or self._task_history[-1] != current:
+                self._task_history.append(current)
+        if direction == -1:
+            if self._history_idx < len(self._task_history) - 1:
+                self._history_idx += 1
+        else:
+            if self._history_idx > 0:
+                self._history_idx -= 1
+            else:
+                self._history_idx = -1
+                self.task_entry.delete(0, tk.END)
+                self._set_placeholder()
+                return
+        idx = len(self._task_history) - 1 - self._history_idx
+        self.task_entry.delete(0, tk.END)
+        self.task_entry.insert(0, self._task_history[idx])
+        self.task_entry.configure(fg=C["text"])
+
+    # ── 运行状态脉冲 ─────────────────────────────────────
+    def _pulse_running(self):
+        if not self._running:
+            return
+        current = self.status_var.get()
+        if current.endswith(" ●"):
+            self.status_var.set(current[:-2])
+        else:
+            self.status_var.set(current + " ●")
+        self.root.after(800, self._pulse_running)
 
     def _on_close(self):
         """关闭窗口时停止子进程，避免孤儿。"""
