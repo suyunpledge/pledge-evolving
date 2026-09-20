@@ -28,7 +28,7 @@ USER_LAYER_NAME = "forge.patch.json"
 _ENV_WHITELIST: frozenset[str] = frozenset({
     "HOME", "USER", "USERNAME", "SHELL", "PATH", "LANG", "LC_ALL",
     "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME",
-    "COMPUTERNAME", "HOSTNAME", "TERM", "SHELL",
+    "COMPUTERNAME", "HOSTNAME", "TERM",
 })
 
 
