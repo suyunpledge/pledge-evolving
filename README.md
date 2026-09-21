@@ -105,6 +105,26 @@ python run.py gateway --upstream https://api.deepseek.com --port 8799 --models c
 
 Zero third-party dependencies (pure standard library), Python ≥ 3.10.
 
+## Local inference services (ollama / llamacpp / mnn)
+
+A few adaptations that make a *self-hosted* engine usable are wrong for a cloud provider, so they are gated behind an optional `service` field on the provider row. Absent or unrecognised means "not local" and nothing below applies — a typo can never reroute a provider.
+
+```json
+{"id": "local", "name": "provider:local",
+ "config": {"service": "ollama", "wire": "openai",
+            "baseURL": "http://127.0.0.1:11434", "model": "qwen3:8b"}}
+```
+
+What the gate changes, and why (both measured against Ollama 0.34.0 serving qwen3:8b):
+
+| Gate | Local engine | Everything else |
+| --- | --- | --- |
+| Chat / tool-loop path | `/v1/chat/completions` (a bare `host:port` base URL gains the `/v1` segment) | `/chat/completions`, unchanged |
+| Thinking mode | `off` unless explicitly set to `on`; `smart` is downgraded | the configured mode, untouched |
+| Thinking output budget | always bounded (ceiling `LOCAL_THINKING_CAP`, overridable downward via `thinking.tokenCap`) | never touched |
+
+Reasons, in order: the native chat surface rejects a replayed `tool_calls` history with HTTP 400, so a multi-turn tool loop has to use the OpenAI-compatible path; and a small local model's contemplation can fail to converge (measured: 420 s with no answer), which a bounded output budget cuts off cheaply. Cloud providers keep their existing base path and behaviour.
+
 ## Seven frameworks → one landing spot
 
 | Source framework | Design borrowed | Landing module | Self-test anchor |
@@ -158,6 +178,7 @@ agent-forge/
 │   ├── session.py       Append-only event log + derived index + fork (Codex)
 │   ├── model.py         Provider abstraction + fallback chain + MoA (OpenCode / Hermes)
 │   ├── routing.py       Three-tier smart routing (economy / balanced / premium)
+│   ├── local_service.py  Engine gate: ollama / llamacpp / mnn get local-only paths
 │   ├── checkpoint.py    Shadow-git snapshots and rollback (Hermes)
 │   ├── loop.py          Agent main loop (OpenClaw / CodeBuddy)
 │   ├── gateway.py       Loopback protocol gateway (built and tested through this integration)

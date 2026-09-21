@@ -16,6 +16,7 @@ import json
 import threading
 import time
 
+from .local_service import chat_request_path
 from .tool_adapter import fill_gemini_name_fields, sanitize_messages
 import urllib.error
 import urllib.request
@@ -54,9 +55,22 @@ class Provider:
     small_model: str = ""
     headers: dict[str, str] = field(default_factory=dict)
     rpm: int = 0                    # >0 enables proactive throttling (requests/min)
+    # Self-hosted engine id (ollama | llamacpp | mnn), or "" for a cloud
+    # provider. Gates the local-only adaptations in local_service.py; an
+    # unrecognised value stays "" so a typo can never reroute a cloud provider.
+    service: str = ""
 
     def url(self, path: str) -> str:
         return self.base_url.rstrip("/") + path
+
+    def chat_url(self) -> str:
+        """URL for chat + tool-loop requests, service-gated.
+
+        Cloud providers keep the historical ``/chat/completions``; the three
+        self-hosted engines get the OpenAI-compatible surface, which is the
+        only one that accepts a replayed tool-call history.
+        """
+        return self.url(chat_request_path(self.service, self.wire, self.base_url))
 
     def auth_headers(self) -> dict[str, str]:
         if self.wire == "anthropic":
@@ -161,7 +175,10 @@ class HttpTransport:
                 payload["temperature"] = options["temperature"]
             if options.get("tools"):
                 payload["tools"] = options["tools"]
-            url = provider.url("/chat/completions")
+            # Service-gated: local engines (ollama / llamacpp / mnn) need the
+            # OpenAI-compatible path for tool-call replay; cloud unchanged.
+            url = provider.url(chat_request_path(provider.service, provider.wire,
+                                                provider.base_url))
 
         body = json.dumps(payload, ensure_ascii=False).encode()
         headers = {"content-type": "application/json", **provider.auth_headers(), **provider.headers}
@@ -258,6 +275,7 @@ class ModelRouter:
                 small_model=str(conf.get("smallModel", "")),
                 headers=dict(conf.get("headers") or {}),
                 rpm=int(conf.get("rpm", 0) or 0),
+                service=str(conf.get("service", "")),
             ))
         primary = cfg.get("model", "primary", None)
         chain = [tuple(pair) for pair in (cfg.get("model", "fallback", []) or [])]

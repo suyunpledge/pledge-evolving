@@ -28,6 +28,7 @@ from typing import Any, Callable, Iterable
 
 from .capability import CapabilityLibrary
 from .checkpoint import CheckpointStore
+from .local_service import resolve_thinking_mode, service_from_config, thinking_token_cap
 from .memory import ContextBudget, MemoryStore  # noqa: F401
 from .model import Completion, ModelRouter, TransportError
 from .pricing import CostLedger, cost_of, rate_for
@@ -202,6 +203,8 @@ class Agent:
         mount_warnings: Iterable[str] | None = None,
         cost_ledger: "CostLedger | None" = None,
         thinking: bool | str = False,
+        service: str = "",
+        thinking_token_cap: int | None = None,
     ) -> None:
         self.home = Path(home)
         self.workspace = Path(workspace)
@@ -245,8 +248,15 @@ class Agent:
         self.cost_ledger = cost_ledger
         # thinking.mode 三档：off / smart（按任务复杂度智能选择，判据=模块
         # 库函数 looks_complex）/ on；bool 兼容（True→on）。默认 off，成本护栏。
-        self.thinking_mode = _normalise_thinking_mode(thinking)
+        #
+        # service 门控（local_service）：自托管引擎（ollama / llamacpp / mnn）
+        # 上 smart 被降为 off——小模型的思考循环可能不收敛，不开启是最便宜的规避；
+        # 云端 provider 的配置原样透传，行为与门控前逐字节一致。
+        self.service = str(service or "").strip().lower()
+        self.thinking_mode = resolve_thinking_mode(thinking, self.service)
         self.thinking = self.thinking_mode != "off"
+        # 本地引擎 + 沉思启用时附加的输出预算上限（None = 不动请求）。
+        self._thinking_cap_configured = thinking_token_cap
         self._run_task = ""
         self._run_thinking_tokens = 0
         self._run_thinking_active = False
@@ -589,7 +599,14 @@ class Agent:
             if not msgs:
                 break
             try:
-                completion = self.router.complete(msgs, small=True)
+                # 本地引擎的沉思轮带输出预算上限：不收敛的循环在这里被切断，
+                # 而不是挂着跑到超时。云端/未知 service 返回 None，请求不变。
+                round_cap = thinking_token_cap(
+                    self.service, engaged=True, configured=self._thinking_cap_configured)
+                if round_cap is not None:
+                    completion = self.router.complete(msgs, small=True, max_tokens=round_cap)
+                else:
+                    completion = self.router.complete(msgs, small=True)
             except TransportError as exc:
                 self._emit(type="thinking_transport_error", phase=phase, error=str(exc)[:200])
                 break
@@ -943,6 +960,9 @@ def build_agent(
     # `forge cost` (cli.cmd_cost) so the two views stay one ledger.
     from .pricing import CostLedger
     ledger = CostLedger(home / "cost" / "spend.jsonl")
+    # service 门控：解析本次运行实际会用到的 provider 是哪个引擎。未知/云端 → ""，
+    # 所有门控行为退化为不生效，保证既有 provider 行行为不变。
+    service = service_from_config(config)
     # F2-2：传真实工作区，贡献模块经 api.workspace 看到沙箱边界。
     # H11：接管/保底警告转 mount_warning 事件，不再静默。
     extensions: dict[str, Any] = {}
@@ -964,8 +984,13 @@ def build_agent(
         extensions=extensions,
         mount_warnings=mount_warnings,
         cost_ledger=ledger,
-        # 三档模式来自配置树（bundle 行 thinking.mode；off/smart/on，默认 off）。
-        thinking=config.get("thinking", "mode", "off"),
+        # 三档模式来自配置树（bundle 行 thinking.mode；off/smart/on，默认 off），
+        # 再经 service 门控：本地引擎（ollama / llamacpp / mnn）上 smart→off，
+        # 云端 provider 的配置原样透传。
+        thinking=resolve_thinking_mode(
+            config.get("thinking", "mode", "off"), service),
+        service=service,
+        thinking_token_cap=config.get("thinking", "tokenCap", None),
     )
 
 

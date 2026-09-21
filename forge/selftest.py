@@ -25,6 +25,9 @@ from .checkpoint import CheckpointStore
 from .config import Config, Row, load_config, resolve
 from .gateway import GatewayConfig, serve
 from .loop import Agent, LoopLimits, build_agent, sanitise_child_output
+from .local_service import (CLOUD_CHAT_PATH, LOCAL_THINKING_CAP, OPENAI_COMPAT_CHAT_PATH,
+                            chat_request_path, is_local_service, normalise_service, profile,
+                            resolve_thinking_mode, service_from_config, thinking_token_cap)
 from .memory import ContextBudget, MemoryStore
 from .model import ModelRouter, Overloaded, Provider, RateLimited, Usage
 from .policy import Decision, Mode, Policy, Sandbox
@@ -1873,14 +1876,20 @@ def test_global_optimizations() -> None:
           "ctx" in guard_mod.EXPRESSION_ALLOWED_NAMES and "eval" in guard_mod.FORBIDDEN_CALLS)
 
     # F4-4/F4-5 文档对齐（3.2）：readme 已知边界必须显式写明读侧不受沙箱
-    # 约束与 allow 恒高于 mode 基线，防止表述回退（repo 形态下守卫）
+    # 约束与 allow 恒高于 mode 基线，防止表述回退（repo 形态下守卫）。
+    # 2026-09-21：README 主体改为英文后，守卫改为按语言各认一套等价表述——
+    # 任一语言把这两条边界写明即通过；两种表述都缺仍然是红灯。
     _root = Path(__file__).resolve().parent.parent
     readme_path = next((p for p in (_root / "README.md", _root / "readme.md") if p.is_file()),
                        _root / "README.md")
     if readme_path.is_file():
         readme_text = readme_path.read_text(encoding="utf-8")
+        _read_side = ("读取不受沙箱约束" in readme_text
+                      or "Reads are not sandboxed" in readme_text)
+        _allow_over_mode = ("恒高于 mode 基线" in readme_text
+                            or "outrank the mode baseline" in readme_text)
         check("global:readme-documents-read-side-boundary",
-              "读取不受沙箱约束" in readme_text and "恒高于 mode 基线" in readme_text,
+              _read_side and _allow_over_mode,
               "readme 已知边界缺读侧/allow 语义表述")
         # H12（3.2 回执）：readme 计数漂移——硬编码项数（350/228/80）与席位
         # 锚点计数（如 config:* (16)）每次扩断言都会过时；守卫钉死它们不再回来
@@ -3344,6 +3353,164 @@ def test_coding_mode() -> None:
 
 # ---------------------------------------------------------------------------
 
+def test_local_service() -> None:
+    """The ollama / llamacpp / mnn gate: local-only adaptations, cloud untouched.
+
+    Every adaptation here is justified by a measured failure on a self-hosted
+    engine. The assertions that matter most are the *negative* ones: a cloud
+    provider (service absent or unrecognised) must come out of the gate with
+    unchanged behaviour, or a typo would silently reroute it.
+    """
+
+    # -- 1) canonicalisation: exactly three engines are local --
+    check("localsvc:alias-ollama",
+          [normalise_service(s) for s in ("ollama", "Ollama", "OLLAMA")] == ["ollama"] * 3)
+    check("localsvc:alias-llamacpp",
+          [normalise_service(s) for s in
+           ("llamacpp", "llama.cpp", "llama_cpp", "llama-server")] == ["llamacpp"] * 4)
+    check("localsvc:alias-mnn",
+          [normalise_service(s) for s in ("mnn", "mnn-llm", "MNN")] == ["mnn"] * 3)
+
+    check("localsvc:three-local-only",
+          all(is_local_service(s) for s in ("ollama", "llamacpp", "mnn"))
+          and not any(is_local_service(s) for s in ("", None, "deepseek", "openai",
+                                                    "anthropic", "vllm", "typo-ollama")))
+
+    # An unrecognised service normalises to "" (not-local) rather than guessing:
+    # a typo must never switch a cloud provider onto local-only paths.
+    check("localsvc:unknown-normalises-empty",
+          normalise_service("my-custom-engine") == "" and normalise_service("DeepSeek") == "")
+
+    # Host-embedded spellings collapse to the canonical id; a mangled alias does not.
+    check("localsvc:host-segment-extracted",
+          normalise_service("ollama:11434") == "ollama"
+          and normalise_service("http://127.0.0.1/mnn") == "mnn"
+          and normalise_service("Ollama (local)") == "ollama",
+          f"{normalise_service('ollama:11434')!r} "
+          f"{normalise_service('http://127.0.0.1/mnn')!r} "
+          f"{normalise_service('Ollama (local)')!r}")
+    # A mangled alias must stay non-local: "maybe this is ollama" is not a
+    # safe guess when the consequence is rerouting a request.
+    check("localsvc:mangled-alias-stays-cloud",
+          normalise_service("llama-cpp-typo") == ""
+          and normalise_service("ollama-proxy") == ""
+          and normalise_service("not-ollama") == "")
+
+    # -- 2) profile: local carries the adaptations, cloud carries none --
+    oll = profile("ollama")
+    check("localsvc:profile-local-flags",
+          oll.is_local and oll.chat_path == OPENAI_COMPAT_CHAT_PATH
+          and oll.thinking_default == "off" and oll.thinking_cap == LOCAL_THINKING_CAP,
+          f"{oll}")
+    cloud = profile("deepseek")
+    check("localsvc:profile-cloud-inert",
+          not cloud.is_local and cloud.chat_path == CLOUD_CHAT_PATH
+          and cloud.thinking_default == "" and cloud.thinking_cap is None,
+          f"{cloud}")
+
+    # -- 3) request path: the measured 400 is the reason this exists --
+    # Ollama's native /api/chat rejects a replayed tool_calls history (HTTP 400);
+    # the OpenAI-compatible surface accepts the same body. A bare host:port base
+    # URL therefore has to gain the /v1 segment.
+    check("localsvc:local-bare-host-gets-v1",
+          chat_request_path("ollama", "openai", "http://127.0.0.1:11434")
+          == "/v1/chat/completions")
+    check("localsvc:local-v1-base-not-doubled",
+          chat_request_path("llamacpp", "openai", "http://127.0.0.1:8080/v1")
+          == "/chat/completions")
+    check("localsvc:cloud-path-unchanged",
+          chat_request_path("", "openai", "https://api.deepseek.com") == CLOUD_CHAT_PATH
+          and chat_request_path("deepseek", "openai", "https://api.deepseek.com")
+          == CLOUD_CHAT_PATH)
+    check("localsvc:anthropic-wire-untouched",
+          chat_request_path("ollama", "anthropic", "http://127.0.0.1:11434")
+          == "/v1/messages")
+
+    # -- 4) end-to-end through Provider: the URL the transport will actually hit --
+    local_p = Provider(name="local", base_url="http://127.0.0.1:11434",
+                       wire="openai", service="ollama")
+    cloud_p = Provider(name="cloud", base_url="https://api.deepseek.com", wire="openai")
+    check("localsvc:provider-url-local",
+          local_p.chat_url() == "http://127.0.0.1:11434/v1/chat/completions",
+          local_p.chat_url())
+    check("localsvc:provider-url-cloud",
+          cloud_p.chat_url() == "https://api.deepseek.com/chat/completions",
+          cloud_p.chat_url())
+
+    # -- 5) thinking gate --
+    # Cloud: the configured mode is returned untouched, for all three values.
+    check("localsvc:thinking-cloud-passthrough",
+          [resolve_thinking_mode(m, "deepseek") for m in ("off", "smart", "on")]
+          == ["off", "smart", "on"])
+    # Local: only an explicit "on" engages contemplation; the smart heuristic is
+    # downgraded, because a non-converging loop is expensive to detect and
+    # trivial to avoid by not starting it.
+    check("localsvc:thinking-local-smart-downgraded",
+          resolve_thinking_mode("smart", "ollama") == "off")
+    check("localsvc:thinking-local-explicit-on-kept",
+          [resolve_thinking_mode(m, s) for m, s in
+           (("on", "ollama"), ("on", "llamacpp"), ("on", "mnn"), ("off", "ollama"))]
+          == ["on", "on", "on", "off"])
+    check("localsvc:thinking-bool-compat",
+          resolve_thinking_mode(True, "ollama") == "on"
+          and resolve_thinking_mode(False, "ollama") == "off")
+
+    # -- 6) output fuse: local + engaged always bounded, everything else untouched --
+    check("localsvc:cap-local-default",
+          thinking_token_cap("ollama", engaged=True) == LOCAL_THINKING_CAP)
+    check("localsvc:cap-configured-smaller-wins",
+          thinking_token_cap("ollama", engaged=True, configured=512) == 512)
+    check("localsvc:cap-configured-larger-clamped",
+          thinking_token_cap("ollama", engaged=True, configured=99999) == LOCAL_THINKING_CAP)
+    check("localsvc:cap-cloud-none",
+          thinking_token_cap("deepseek", engaged=True) is None
+          and thinking_token_cap("deepseek", engaged=True, configured=512) is None)
+    check("localsvc:cap-not-engaged-none",
+          thinking_token_cap("ollama", engaged=False) is None)
+
+    # -- 7) Agent wiring: the gate reaches the runtime, both directions --
+    check("localsvc:agent-local-smart-off",
+          Agent(home=Path(tempfile.mkdtemp()), workspace=Path(tempfile.mkdtemp()),
+                router=None, registry=None, policy=None, memory=None, capabilities=None,
+                checkpoints=None, session=None, thinking="smart",
+                service="ollama").thinking_mode == "off")
+    check("localsvc:agent-cloud-smart-kept",
+          Agent(home=Path(tempfile.mkdtemp()), workspace=Path(tempfile.mkdtemp()),
+                router=None, registry=None, policy=None, memory=None, capabilities=None,
+                checkpoints=None, session=None, thinking="smart",
+                service="deepseek").thinking_mode == "smart")
+
+    # -- 8) config plumbing: `service` reaches the Provider, and the service of
+    # the provider the run will actually use is the one that gates behaviour.
+    def _cfg(primary: str) -> Config:
+        c = Config()
+        c.apply_patch([
+            {"id": "model", "name": "model:router",
+             "config": {"primary": [primary, "qwen3:8b"]}},
+            {"id": "local", "name": "provider:local",
+             "config": {"service": "ollama", "wire": "openai",
+                        "baseURL": "http://127.0.0.1:11434", "model": "qwen3:8b"}},
+            {"id": "cloud", "name": "provider:cloud",
+             "config": {"wire": "openai", "baseURL": "https://api.deepseek.com",
+                        "model": "deepseek-flash"}},
+        ], label="test")
+        return c
+
+    cfg = _cfg("local")
+    router = ModelRouter.from_config(cfg)
+    check("localsvc:config-service-plumbed",
+          router.providers["local"].service == "ollama"
+          and router.providers["cloud"].service == "")
+    check("localsvc:config-service-targets-primary",
+          service_from_config(cfg) == "ollama", service_from_config(cfg))
+    # Point the primary at the cloud provider: the local row is still present but
+    # must no longer gate the run.
+    check("localsvc:config-service-follows-primary",
+          service_from_config(_cfg("cloud")) == "", service_from_config(_cfg("cloud")))
+
+
+# ---------------------------------------------------------------------------
+
 def run_selftest(workspace: Path | None = None, *, verbose: bool = True) -> int:
     RESULTS.clear()
     suites = [
@@ -3355,6 +3522,7 @@ def run_selftest(workspace: Path | None = None, *, verbose: bool = True) -> int:
         test_smart_routing,
         test_native_tool_loop, test_smoke_harness_offline, test_global_optimizations,
         test_contrib_runtime_service, test_thinking_integration,
+        test_local_service,
         test_loop_and_subagents, test_cli_surface, test_permission_profiles,
         test_coding_mode,
     ]

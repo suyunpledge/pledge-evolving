@@ -44,6 +44,36 @@ PROVIDERS = [
         "wire": "anthropic",
     },
     {
+        "id": "ollama",
+        "name": "Ollama（本地推理，无需密钥）",
+        "env_key": "FORGE_OLLAMA_KEY",
+        "placeholder": "本地无需密钥（直接回车）",
+        "base_url": "http://127.0.0.1:11434",
+        "model": "qwen3:8b",
+        "wire": "openai",
+        "service": "ollama",
+    },
+    {
+        "id": "llamacpp",
+        "name": "llama.cpp server（本地推理，无需密钥）",
+        "env_key": "FORGE_LLAMACPP_KEY",
+        "placeholder": "本地无需密钥（直接回车）",
+        "base_url": "http://127.0.0.1:8080/v1",
+        "model": "",     # 用户填（llama-server 的模型名较随意）
+        "wire": "openai",
+        "service": "llamacpp",
+    },
+    {
+        "id": "mnn",
+        "name": "MNN（本地推理，无需密钥）",
+        "env_key": "FORGE_MNN_KEY",
+        "placeholder": "本地无需密钥（直接回车）",
+        "base_url": "http://127.0.0.1:8080/v1",
+        "model": "",     # 用户填
+        "wire": "openai",
+        "service": "mnn",
+    },
+    {
         "id": "custom",
         "name": "自定义（OpenAI 兼容接口）",
         "env_key": "FORGE_CUSTOM_KEY",
@@ -80,7 +110,7 @@ def _choose_provider() -> dict:
         choice = input("输入编号（1-4）> ").strip()
         if choice in ("1", "2", "3", "4"):
             return PROVIDERS[int(choice) - 1]
-        print("无效输入，请输入 1-4")
+        print(f"无效输入，请输入 1-{len(PROVIDERS)}")
 
 
 def _get_api_key(provider: dict) -> str:
@@ -91,6 +121,12 @@ def _get_api_key(provider: dict) -> str:
         use_env = input("使用这个密钥？(Y/n) > ").strip().lower()
         if use_env != "n":
             return env_val
+
+    # 本地引擎（ollama / llamacpp / mnn）在环回地址上跑，不存在密钥。
+    # 允许留空，而不是逼用户编一个假 key 塞进配置。
+    if provider.get("service"):
+        print(f"\n{provider['name']} 是本地推理引擎，默认无需密钥（直接回车跳过）：")
+        return getpass.getpass(f"  {provider['env_key']}（可留空）> ").strip()
 
     print(f"\n请输入你的 {provider['name']} API 密钥：")
     print(f"  （将保存到 ~/.forge/forge.patch.json，不会上传）")
@@ -121,6 +157,10 @@ def _build_patch(provider: dict, api_key: str, custom_url: str = "", custom_mode
             "smallModel": custom_model or provider["model"],
         },
     }
+    # 本地推理引擎（ollama / llamacpp / mnn）带上 service，`forge run` 时才会
+    # 启用本地专属路径（OpenAI 兼容端点 + 沉思预算），云端 provider 不带该键。
+    if provider.get("service"):
+        provider_row["config"]["service"] = provider["service"]
     patch.append(provider_row)
 
     # Model 行 — 把选中的 provider 设为默认。
@@ -259,7 +299,8 @@ def cmd_setup(args) -> int:
 
     # 获取密钥
     api_key = _get_api_key(provider)
-    if not api_key:
+    # 本地引擎允许空密钥；云端仍要求密钥
+    if not api_key and not provider.get("service"):
         print("❌ 未输入密钥，配置取消。")
         return 1
 
@@ -267,6 +308,14 @@ def cmd_setup(args) -> int:
     custom_url, custom_model = "", ""
     if provider["id"] == "custom":
         custom_url, custom_model = _get_custom_config()
+    elif not provider.get("model"):
+        # 本地引擎的模型名没有固定约定（llama-server / MNN 的已加载模型各异），
+        # 空模型名会让 model 行的 primary 无法解析，所以这里必须问。
+        print("\n本地引擎需要指定模型名：")
+        custom_model = input("  模型名称（如 qwen3-8b / llama-3.1-8b）> ").strip()
+        if not custom_model:
+            print("❌ 未输入模型名，配置取消。")
+            return 1
 
     # 构建并保存
     patch = _build_patch(provider, api_key, custom_url, custom_model)
