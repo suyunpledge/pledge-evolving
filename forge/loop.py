@@ -283,16 +283,32 @@ class Agent:
             index = self.capabilities.context_injection()
             if index:
                 parts.append("Capabilities available (load one only when needed):\n" + index)
-        if self.memory is not None:
-            slice_ = self.memory.context_slice(max_chars=2000)
-            if slice_:
-                parts.append("Long-term memory (bounded slice):\n" + slice_)
+        # Memory excluded from system prompt for cache alignment.
+        # See _inject_memory() — memory goes as user message.
         parts.append(f"Permission mode: {self.policy.mode.value}; sandbox: {self.policy.sandbox.value}.")
         if self.depth:
             parts.append(f"You are a subagent at depth {self.depth}; report findings, do not plan the whole job.")
         if self.extra_system:
             parts.append(self.extra_system)
         return "\n\n".join(parts)
+
+    def _inject_memory(self) -> list[dict[str, Any]]:
+        """Inject memory as a user-role message for cache alignment.
+
+        Placing memory in user-role messages (not the system prompt) means new
+        entries only grow the message tail -- the system prompt prefix stays
+        stable across rounds and cache hits.
+
+        The message is labelled so the model treats it as background context
+        rather than a user instruction.
+        """
+        if self.memory is None:
+            return []
+        slice_ = self.memory.context_slice(max_chars=2000)
+        if not slice_:
+            return []
+        return [{"role": "user", "content": f"[长期记忆上下文]\n{slice_}"}]
+
 
     # -- events ----------------------------------------------------------
     def _emit(self, **event: Any) -> None:
@@ -624,6 +640,7 @@ class Agent:
             self._mount_warnings_emitted = True
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": self.system_prompt()},
+            *self._inject_memory(),
             {"role": "user", "content": task},
         ]
         # 启动沉思（phase=thinking）：三档门控——off 不起；on 直接起；smart 由
