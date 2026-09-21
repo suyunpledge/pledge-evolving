@@ -16,6 +16,7 @@ from __future__ import annotations
 import ast
 import json
 import os
+import sys
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -205,8 +206,30 @@ class Config:
             self._upsert(Row.from_raw(op), insert=False)
         self.history.append(label)
 
+    # Keys that carry behaviour; dropping them silently via whole-row
+    # replace has bitten us twice (moaModels, routing.premium/small lost by
+    # an overlay). Notes are informational and exempt from the warning.
+    _FUNCTIONAL_KEYS = frozenset({
+        "primary", "fallback", "moa", "moaModels", "routing", "tiers",
+        "small", "premium", "strategy", "wire", "baseURL", "apiKey",
+        "model", "smallModel", "mode", "rpm", "models", "headers",
+    })
+
     def _upsert(self, row: Row, insert: bool) -> None:
         if row.id in self.rows:
+            old_row = self.rows[row.id]
+            if old_row.config and row.config:
+                dropped = (self._FUNCTIONAL_KEYS & set(old_row.config)) - set(row.config)
+                if dropped:
+                    # DSH semantics keep whole-row replace, but a functional
+                    # key vanishing between layers is almost always an
+                    # overlay that forgot to carry it. Warn loudly.
+                    print(
+                        f"[config warn] row {row.id!r}: whole-row replace dropped "
+                        f"{sorted(dropped)} (from {old_row.name!r} to {row.name!r}); "
+                        f"copy them into the overlay if the drop is unintended.",
+                        file=sys.stderr,
+                    )
             self.rows[row.id] = row  # later write wins, whole row replaced
         else:
             self.rows[row.id] = row

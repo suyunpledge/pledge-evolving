@@ -13,6 +13,7 @@ in our prompt, not a reason to burn three more providers.
 from __future__ import annotations
 
 import json
+import threading
 import time
 
 from .tool_adapter import fill_gemini_name_fields, sanitize_messages
@@ -52,6 +53,7 @@ class Provider:
     default_model: str = ""
     small_model: str = ""
     headers: dict[str, str] = field(default_factory=dict)
+    rpm: int = 0                    # >0 enables proactive throttling (requests/min)
 
     def url(self, path: str) -> str:
         return self.base_url.rstrip("/") + path
@@ -91,14 +93,45 @@ class Transport(Protocol):
                  **options: Any) -> tuple[str, Usage]: ...
 
 
+class _ProviderRateLimiter:
+    """Proactive per-provider throttle: slots reserved 60/rpm s apart.
+
+    Reservation happens under a lock; the sleep happens outside it so
+    concurrent callers queue behind each other's slots instead of piling
+    onto the same instant. rpm<=0 (default) means no throttling.
+    """
+
+    def __init__(self) -> None:
+        self._next_slot: dict[str, float] = {}
+        self._lock = threading.Lock()
+
+    def reserve(self, provider: "Provider") -> float:
+        """Reserve the next slot; returns seconds the caller must wait."""
+        if provider.rpm <= 0:
+            return 0.0
+        interval = 60.0 / provider.rpm
+        with self._lock:
+            now = time.monotonic()
+            slot = max(now, self._next_slot.get(provider.name, 0.0) + interval)
+            self._next_slot[provider.name] = slot
+            return max(0.0, slot - now)
+
+
 class HttpTransport:
     """Minimal stdlib transport for OpenAI- and Anthropic-shaped endpoints."""
 
     def __init__(self, timeout: int = 120) -> None:
         self.timeout = timeout
+        self._limiter = _ProviderRateLimiter()
 
     def complete(self, provider: Provider, model: str, messages: list[dict[str, Any]],
                  **options: Any) -> tuple[str, Usage]:
+        # Proactive throttle BEFORE the wire: providers with rpm>0 (e.g.
+        # StepFun free tier at 10 RPM) get slot-reserved so bursts die at
+        # the 429 stage far less often. No-op for rpm<=0 providers.
+        wait = self._limiter.reserve(provider)
+        if wait > 0:
+            time.sleep(wait)
         # 发送前最后防线：按 wire 协议清洗消息序列（配对 tool_use/tool_result、
         # 剔除孤儿 tool 消息、空 content 补占位），避免各家 API 的 400。
         messages = sanitize_messages(messages, provider.wire)
@@ -224,6 +257,7 @@ class ModelRouter:
                 default_model=str(conf.get("model", conf.get("defaultModel", ""))),
                 small_model=str(conf.get("smallModel", "")),
                 headers=dict(conf.get("headers") or {}),
+                rpm=int(conf.get("rpm", 0) or 0),
             ))
         primary = cfg.get("model", "primary", None)
         chain = [tuple(pair) for pair in (cfg.get("model", "fallback", []) or [])]
