@@ -22,7 +22,14 @@ from pathlib import Path
 
 sys.path.insert(0, r"C:\Users\匡溯昀\pledge-evolving")
 
-from forge.channels.cli import _acquire_lock, _release_lock, _pid_alive, _ServeStats
+from forge.channels.cli import (
+    _acquire_lock,
+    _LaneCache,
+    _pid_alive,
+    _release_lock,
+    _ServeStats,
+    _touch_lock,
+)
 from forge.channels.weixin import PollTimeout, WeixinChannel
 
 # ── 1. a poll timeout is "nothing yet", not an error ────────────────────
@@ -152,6 +159,58 @@ with tempfile.TemporaryDirectory() as td:
     _release_lock(lock_path)
 print("8. serve lock: OK")
 
+# ── 8b. lock staleness: a live PID alone must not pin the lock ──────────
+# The PID-reuse case: the process that wrote the lock died and its PID was
+# handed to someone else. The PID is "alive", but that process is not
+# heartbeating *this* lock, so the lock is stale and must be reclaimable.
+with tempfile.TemporaryDirectory() as td:
+    import time as _t
+
+    lp = Path(td) / "acct.serve.lock"
+
+    # fresh lock held by our own (live) PID -> refused
+    held = _acquire_lock(lp, stale_after=180)
+    assert held is not None
+    assert _acquire_lock(lp, stale_after=180) is None, "fresh lock + live PID must block"
+
+    # same live PID, but the heartbeat stopped long ago -> reclaimable
+    old_time = _t.time() - 10_000
+    os.utime(lp, (old_time, old_time))
+    assert _acquire_lock(lp, stale_after=180) is not None, \
+        "stale lock must be reclaimable even when the PID looks alive"
+    assert (Path(td) / "acct.serve.lock").read_text(encoding="utf-8").strip() == str(os.getpid())
+
+    # heartbeat keeps a lock fresh
+    before = lp.stat().st_mtime
+    _t.sleep(0.05)
+    _touch_lock(lp)
+    assert lp.stat().st_mtime >= before
+
+    _release_lock(lp)
+print("9. lock staleness (PID reuse): OK")
+
+# ── 8c. lane cache is bounded and evicts LRU ───────────────────────────
+from forge.channels.cli import _LaneCache
+
+cache = _LaneCache(max_size=3)
+for i in range(3):
+    cache.put(f"lane{i}", f"agent{i}")
+assert len(cache) == 3
+
+# touch lane0 so lane1 becomes the least recently used
+assert cache.get("lane0") == "agent0"
+cache.put("lane3", "agent3")            # evicts lane1
+assert cache.get("lane1") is None, "least recently used lane must be evicted"
+assert cache.get("lane0") == "agent0", "recently used lane must survive"
+assert len(cache) == 3, f"cache must stay bounded: {len(cache)}"
+
+# max_size is clamped to at least 1
+tiny = _LaneCache(max_size=0)
+tiny.put("a", 1)
+tiny.put("b", 2)
+assert len(tiny) == 1
+print("10. lane cache LRU: OK")
+
 # ── 8. stats bookkeeping ────────────────────────────────────────────────
 
 st = _ServeStats()
@@ -162,7 +221,7 @@ summary = st.summary()
 assert "2 message(s) handled" in summary
 assert "5 chunk(s) sent" in summary
 assert st.idle_seconds() >= 0
-print("9. serve stats: OK")
+print("11. serve stats: OK")
 
 # ── 9b. seen-set batching: one write per batch, not per message ─────────
 
@@ -195,6 +254,6 @@ with tempfile.TemporaryDirectory() as td:
     writes.clear()
     s.add("single")
     assert len(writes) == 1, "default add must still persist immediately"
-print("10. seen-set batching: OK")
+print("12. seen-set batching: OK")
 
-print("\nAll 10 optimisation tests passed")
+print("\nAll 12 optimisation tests passed")

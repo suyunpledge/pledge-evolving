@@ -666,6 +666,8 @@ def build_parser() -> argparse.ArgumentParser:
                          help="serve: stop after N polls (0 = run forever)")
     channel.add_argument("--idle-seconds", dest="idle_seconds", type=int, default=0,
                          help="serve: stop after N seconds with no messages (0 = never)")
+    channel.add_argument("--lane-cache", dest="lane_cache", type=int, default=128,
+                         help="serve: max per-conversation agents kept in memory")
     channel.set_defaults(func=cmd_channel)
 
     selftest = sub.add_parser("selftest", parents=[common], help="offline end-to-end verification")

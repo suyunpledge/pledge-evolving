@@ -123,17 +123,38 @@ def _build_patch(provider: dict, api_key: str, custom_url: str = "", custom_mode
     }
     patch.append(provider_row)
 
-    # Model 行 — 把选中的 provider 设为默认
+    # Model 行 — 把选中的 provider 设为默认。
+    #
+    # 注意两点：
+    # 1. apply_patch 是整行替换（DSH 语义），这里没写的键会被丢掉，所以
+    #    整行显式列出，而不是只写要改的部分。
+    # 2. tiers 只绑到用户真正配置的那个档（medium）。早期版本还塞了一个
+    #    ["lite", ...]——但 lite 的 provider 行并没有被覆盖，仍指向 base.json
+    #    里的环回占位网关，于是 --strategy economy 会打到不存在的
+    #    127.0.0.1:8810。未配置的档位不写，而不是写一个假的。
+    model_name = custom_model or provider["model"]
     model_row = {
         "id": "model",
         "name": "model:router",
         "config": {
-            "primary": ["medium", custom_model or provider["model"]],
+            "primary": ["medium", model_name],
             "fallback": [],
+            "moa": False,
+            "moaModels": [],
             "routing": {
                 "strategy": "balanced",
-                "tiers": [["lite", custom_model or provider["model"]], ["medium", custom_model or provider["model"]]],
+                "tiers": [["medium", model_name]],
+                "small": ["medium", model_name],
+                "notes": (
+                    "forge setup 生成的单档配置：只绑定 medium。"
+                    "如需 economy/premium，请手动补 lite/premium 的 provider 行，"
+                    "并把它们加进 tiers。"
+                ),
             },
+            "notes": (
+                f"由 forge setup 写入：provider medium → {model_name}。"
+                "整行替换语义意味着这里列出的就是最终值。"
+            ),
         },
     }
     patch.append(model_row)

@@ -312,7 +312,9 @@ class WeixinChannel:
         ret = resp.get("ret")
         errcode = resp.get("errcode")
         if ret not in (None, 0) or errcode not in (None, 0):
-            detail = resp.get("errmsg") or ""
+            # The server's own message goes through _redact too: it is not a
+            # path we control, so it is not assumed token-free.
+            detail = _redact(str(resp.get("errmsg") or ""), self._token)
             # -14 is a documented session timeout: the credential needs renewal.
             raise RuntimeError(
                 f"getupdates failed ret={ret} errcode={errcode}: {detail}"

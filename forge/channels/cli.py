@@ -20,6 +20,8 @@ import json
 import os
 import sys
 import time
+from collections import OrderedDict
+from typing import Any
 from pathlib import Path
 
 from ..config import load_config
@@ -236,7 +238,7 @@ def cmd_channel_weixin_serve(args) -> int:
         print(f"  stop after {idle_stop}s idle")
 
     stats = _ServeStats()
-    agents: dict[str, object] = {}
+    agents = _LaneCache(max_size=getattr(args, "lane_cache", 128))
 
     try:
         while True:
@@ -267,6 +269,9 @@ def cmd_channel_weixin_serve(args) -> int:
             stats.polls += 1
             stats.polls_with_messages += 1 if messages else 0
 
+            # heartbeat: lets another process tell we are alive (see D)
+            _touch_lock(lock)
+
             for msg in messages:
                 stats.touch()
                 key = session_for(msg, scope)
@@ -285,7 +290,7 @@ def cmd_channel_weixin_serve(args) -> int:
                         router=router,
                         limits=limits,
                     )
-                    agents[key] = agent
+                    agents.put(key, agent)
 
                 try:
                     report = agent.run(msg.text)
@@ -306,6 +311,42 @@ def cmd_channel_weixin_serve(args) -> int:
 
     print(stats.summary())
     return 0 if stats.errors == 0 else 1
+
+
+class _LaneCache:
+    """Bounded LRU of per-lane agents.
+
+    Each agent holds a session, a policy, a tool registry and (lazily) a memory
+    snapshot, so an unbounded dict grows with the number of distinct peers a
+    long-running bot has ever seen. 128 lanes covers a busy group-chat bot with
+    room to spare; the least recently served lane is dropped and rebuilt on
+    demand — cheap relative to holding every lane forever.
+
+    Eviction is safe because a lane's durable state is its session *file* on
+    disk, not the in-memory agent. A rebuilt agent reopens the same log.
+    """
+
+    def __init__(self, max_size: int = 128) -> None:
+        self._max = max(1, int(max_size))
+        self._items: OrderedDict[str, Any] = OrderedDict()
+
+    def get(self, key: str):
+        item = self._items.get(key)
+        if item is not None:
+            self._items.move_to_end(key)
+        return item
+
+    def put(self, key: str, value) -> None:
+        self._items[key] = value
+        self._items.move_to_end(key)
+        while len(self._items) > self._max:
+            self._items.popitem(last=False)
+
+    def __len__(self) -> int:
+        return len(self._items)
+
+    def keys(self):
+        return list(self._items.keys())
 
 
 class _ServeStats:
@@ -371,18 +412,59 @@ def _build_lane_agent(*, home, workspace, session_dir, session_key, config, rout
     )
 
 
-def _acquire_lock(path: Path):
-    """Take an exclusive lock file, or return None if another process holds it."""
+# A live holder refreshes its lock every poll iteration; a poll window is at
+# most 60s, so anything older than this belongs to a process that is gone (or
+# to a PID that has since been reused).
+LOCK_STALE_SECONDS = 180
+
+
+def _acquire_lock(path: Path, *, stale_after: float = LOCK_STALE_SECONDS):
+    """Take the serve lock, or return None if a live holder has it.
+
+    Liveness is "PID responds AND the lock is being refreshed". That pair fixes
+    the three ways a PID-only check gets it wrong:
+
+    * PID reused after a crash -- the new process with that PID is alive, but it
+      is not refreshing *this* lock, so the lock is stale and we take over.
+    * Another user's PID -- `os.kill(pid, 0)` raises PermissionError, so the PID
+      looks alive forever; again the stale check releases it.
+    * No way to probe PIDs at all (no tasklist, sandboxed) -- we fall back to
+      staleness alone instead of assuming alive.
+
+    Refusing to start is the safe default when a holder really is running, since
+    two servers on one account race for the cursor and double-reply.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
-        try:
-            holder = int(path.read_text(encoding="utf-8").strip() or 0)
-        except (ValueError, OSError):
-            holder = 0
-        if holder and _pid_alive(holder):
-            return None
+        pid, mtime = _read_lock(path)
+        age = time.time() - mtime if mtime else float("inf")
+        if pid and age < stale_after and _pid_alive(pid):
+            return None  # a holder that is alive and still heartbeating
     path.write_text(str(os.getpid()), encoding="utf-8")
     return path
+
+
+def _read_lock(path: Path) -> tuple[int, float]:
+    """Return ``(pid, mtime)`` from a lock file; ``(0, 0.0)`` if unreadable."""
+    try:
+        pid = int(path.read_text(encoding="utf-8").strip() or 0)
+    except (ValueError, OSError):
+        pid = 0
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        mtime = 0.0
+    return pid, mtime
+
+
+def _touch_lock(path: Path | None) -> None:
+    """Refresh the lock's heartbeat so peers can tell we are still running."""
+    if path is None:
+        return
+    try:
+        os.utime(path, None)
+    except OSError:
+        pass
 
 
 def _release_lock(path: Path | None) -> None:
