@@ -1,189 +1,189 @@
-# forge — 统一智能体框架
+# forge — A Unified Agent Framework
 
-把 **Codex / Hermes Agent / DeepSeek Harness / Claude Code / WorkBuddy(CodeBuddy) / OpenClaw / OpenCode** 七套框架里各自最值得抄的设计，收敛成一个可运行的最小内核。
+Distills the most worth-copying designs from seven different agent frameworks — **Codex / Hermes Agent / DeepSeek Harness / Claude Code / WorkBuddy (CodeBuddy) / OpenClaw / OpenCode** — into a single, runnable minimal kernel.
 
-不是概念图，是能跑的代码：`forge selftest` 离线跑全套检查（无网络、无 API Key，项数以命令实际输出为准），覆盖配置合成、权限裁决、工具延迟加载、能力信任、记忆双写、会话回放、影子快照、模型降级、协议网关与协议翻译、原生工具调用、自我迭代进化、异构联邦、贡献模块一致性闸门与跨模块集成、成本核算、子代理编排，以及静态安全线（禁网/禁子进程/禁破坏性文件 API 的表对齐不变量与四路覆盖）。
+This isn't a concept diagram, it's working code: `forge selftest` runs a full offline check suite (no network, no API keys; item counts follow the command's actual output) covering config synthesis, permission adjudication, lazy tool loading, capability trust, dual-write memory, session replay, shadow snapshots, model fallback, protocol gateway and protocol translation, native tool calling, self-evolution, heterogeneous federation, contrib-module consistency gating and cross-module integration, cost accounting, and subagent orchestration — plus a static security baseline (table-aligned invariants and four-way coverage for the no-network / no-subprocess / no-destructive-file-API bans).
 
-零第三方依赖（纯标准库），Python ≥ 3.10。
+Zero third-party dependencies (pure standard library), Python ≥ 3.10.
 
-## v2 新增（0.2.0）
+## v2 additions (0.2.0)
 
-| 模块 | 学谁 | 干什么 |
+| Module | Borrowed from | What it does |
 | --- | --- | --- |
-| `evolution.py` | **Hermes**（curator / learning / journey / checkpoints） | 信号抽取 → 候选 → 安全闸门 → 账本 → 回滚 → 代谢。long-term 目标永远要人点头 |
-| `federation.py` | 本轮自建（失败模式都是从实测里长出来的） | 异构 CLI worker 的描述符 / 派发 / 失败分类 / 输出归一 / 成本护栏 |
-| `wire.py` | Claude Code + MiMo 的协议错配 | Anthropic ↔ OpenAI 双向翻译，含 SSE 流式与工具调用增量 |
+| `evolution.py` | **Hermes** (curator / learning / journey / checkpoints) | Signal extraction → candidates → safety gate → ledger → rollback → metabolism. Long-term goals always need a human nod |
+| `federation.py` | Built from scratch this round (all failure modes grew out of real testing) | Descriptors / dispatch / failure classification / output normalization / cost guardrails for heterogeneous CLI workers |
+| `wire.py` | The protocol mismatch between Claude Code and MiMo | Bidirectional Anthropic ↔ OpenAI translation, including SSE streaming and incremental tool calls |
 
-新命令：
+New commands:
 
 ```bash
-python run.py evolution stats                # 候选池与账本概览（默认读 ~/.forge；看仓库自带数据用 --home .）
-python run.py evolution observe "以后都用中文写报告" --nominate
+python run.py evolution stats                # Candidate pool + ledger overview (defaults to ~/.forge; use --home . to see the repo's own bundled data)
+python run.py evolution observe "From now on, write reports in Chinese" --nominate
 python run.py evolution approve <id> && python run.py evolution apply <id>
-python run.py evolution rollback <id>        # 可逆
-python run.py evolution curate               # 归档过期候选（不删除）
-python run.py federation roster              # worker 队列的能力/成本/权限档（从 home 的 federation.json 读取）
+python run.py evolution rollback <id>        # Reversible
+python run.py evolution curate               # Archives expired candidates (never deletes)
+python run.py federation roster              # Capability/cost/permission profile for the worker queue (read from the home's federation.json)
 python run.py gateway --upstream https://api.example.com/v1 --upstream-wire openai \
     --model-map claude-sonnet-5=<upstream-model> --models claude-sonnet-5 --key $KEY
 ```
 
-### 自我进化的四条硬规矩
+### Four hard rules of self-evolution
 
-1. **无批准不落地**：只有 low-risk 的 `note` 类候选能自动生效；其余一律进 pending。
-2. **long-term 目标永远需要人点头**：`MEMORY.md` / `AGENTS.md` / `SOUL.md` / `USER.md` / `TOOLS.md` / `SKILL.md` 没有配置可以绕开。
-3. **写入必带出处**：目标文件里附 candidate id + 时间 + 证据引用，事后可追溯。
-4. **归档而非删除**：reject / quarantine / stale 全部可 `restore`；回滚前再快照一次。
+1. **Nothing lands without approval**: only low-risk `note`-type candidates can take effect automatically; everything else goes into pending.
+2. **Long-term goals always need a human nod**: `MEMORY.md` / `AGENTS.md` / `SOUL.md` / `USER.md` / `TOOLS.md` / `SKILL.md` have no config option to bypass this.
+3. **Every write carries provenance**: the target file gets an appended candidate id + timestamp + evidence reference, so it can be traced after the fact.
+4. **Archive, never delete**: reject / quarantine / stale are all `restore`-able; another snapshot is taken right before any rollback.
 
-## v3：代码由各家 agent 自己写（0.3.0）
+## v3: each agent writes its own module (0.3.0)
 
-新框架不是把现有 agent 串起来，而是**先冻结接口，再让每家 agent 各写一个模块，按契约把代码合到一起**。
+The new framework isn't just existing agents strung together — instead, **the interfaces are frozen first, then each agent writes its own module, and the code is merged in against the contract**.
 
-- 契约：[`CONTRACT.md`](CONTRACT.md) —— 冻结的模块 API、硬性禁令、每个 agent 的即贴任务书
-- 闸门：`forge/registry.py` —— 静态扫源码（禁网/禁子进程/禁破坏性文件 API/禁 `eval`）+ 动态加载 + 跑对方自带自检（≥ 8 条）
-- 范本：[`forge/contrib/heartbeat.py`](forge/contrib/heartbeat.py) —— 第一份入库的贡献模块，10 条自检全过
+- Contract: [`CONTRACT.md`](CONTRACT.md) — the frozen module API, hard bans, and a ready-to-paste task brief for each agent
+- Gate: `forge/registry.py` — statically scans source code (bans network/subprocess/destructive file APIs/`eval`) + dynamic loading + runs the contributed module's own self-checks (≥ 8 assertions)
+- Reference example: [`forge/contrib/heartbeat.py`](forge/contrib/heartbeat.py) — the first contrib module admitted, passing all 10 of its own self-checks
 
 ```bash
-python run.py modules validate    # 一致性截面：谁入库、谁隔离、为什么
-python run.py modules selftests   # 跑所有已入库模块自带的断言
+python run.py modules validate    # Consistency snapshot: who's in, who's isolated, and why
+python run.py modules selftests   # Runs the self-checks bundled with every admitted module
 ```
 
-隔离而非半挂载：贡献模块导入抛异常、或自检有失败、或引用了禁用库，都会被记录原因后拦住，不影响框架本体。
+Isolation, not half-mounting: if a contrib module's import throws, or its self-checks fail, or it references a banned library, it gets flagged with a reason and blocked — without affecting the core framework.
 
-## v4：向完整架构的四步（0.4.0）
+## v4: four steps toward a complete architecture (0.4.0)
 
-1. **原生工具调用**（`toolwire.py`）——主循环从「只会说文本协议」改成 **原生优先、文本兜底**：工具声明按 wire 生成，调用从原生字段解出，工具结果按同一 wire 回流并**保留调用 id**。id 很重要：下一轮请求里助手消息与工具消息必须对得上，用散文重建是猜的。
-2. **跨模块集成测试**（`selftest:test_contrib_integration`）——闸门只证明每份模块**单独**合格，这一条证明**接缝**：路由器挑中的 worker 必须是团队层投递到的那个人，调度器的到期集必须喂给同一次派发，压缩器必须和主循环对「多大算大」有同一个答案。
-3. **钩子名漂移的规范化**（`registry.HOOK_ALIASES`）——三个作者三套命名（`due_jobs` / `on_due_check`，`replay` / `on_replay`）。不要求别人改自己代码里的名字，而是用别名表解析规范名，并把漂移记成**警告**写进索引。
-4. **成本核算**（`pricing.py` + `forge cost`）——把两张真实账单反推的有效单价固化下来，让「同一件事派给谁」可以按数字决定。
+1. **Native tool calling** (`toolwire.py`) — the main loop moves from "text-protocol only" to **native-first, text-fallback**: tool declarations are generated per-wire, calls are parsed from native fields, and tool results flow back over the same wire **with the call id preserved**. The id matters: in the next request round, the assistant message and the tool message must line up — reconstructing that from prose is just guessing.
+2. **Cross-module integration tests** (`selftest:test_contrib_integration`) — the gate only proves each module is valid **in isolation**; this step proves the **seams**: the worker picked by the router must be the same one dispatched to by the team layer, the scheduler's due set must be fed to that same dispatch round, and the compactor must agree with the main loop on what counts as "too big."
+3. **Normalizing hook-name drift** (`registry.HOOK_ALIASES`) — three authors, three naming conventions (`due_jobs` / `on_due_check`, `replay` / `on_replay`). Rather than requiring everyone to rename their own code, an alias table resolves to the canonical name, and any drift is recorded as a **warning** in the index.
+4. **Cost accounting** (`pricing.py` + `forge cost`) — turns effective unit prices, reverse-derived from two real invoices, into hard numbers, so "who should this task be routed to" can be decided by the numbers.
 
 ```bash
 python run.py cost rate --models deepseek-flash,mimo-v2.5 --tokens 1273002379
-python run.py modules validate        # 现包含命名漂移警告
-python run.py selftest                # 项数以实际输出为准
+python run.py modules validate        # now includes naming-drift warnings
+python run.py selftest                # item counts follow actual output
 ```
 
-## v4.5：修复轮（2026-09-16，与对抗复验席逐轮签收）
+## v4.5: the fix rounds (2026-09-16, signed off round-by-round with an adversarial review seat)
 
-v4 交付后进入修复轮：每一轮都由独立复验席自写探针攻击、签收后才进下一轮。四个批次全清（P0/P1/P2 + H11），g3 评审账面归零：
+After v4 shipped, it went into fix rounds: each round had its own independent review seat write its own attack probes, and only passed once signed off. Four batches, all cleared; g3's review tally is back to zero:
 
-1. **静态安全线（H1–H10 关闭）**：贡献闸门从「扫 import」扩成双层闭合——别名感知 + 引用即拦 + dunder 属性表 + **表对齐不变量**（CALLS 与 FROM_NAMES 孪生双向钉死，扩表漏配提交即红灯）。根拼写六变体、`operator.attrgetter` 洗白、`os.*` 文件变更原语逐条闭环；`gate:*` 断言数以自测实际输出为准，独立探针全绿。
-2. **工具宿主声明即语义（F4-2/F4-3）**：`readOnlyHint` 经归一透传，`authorize` 接受 `spec["read_only"]` 且**声明优先于名字启发**；`server__` 前缀剥离后启发不翻转——写工具叫 `read_*` 不再绕过判定。
-3. **贡献挂载保底语义（F2-2/H11）**：`mount_contrib_extensions` 双注册表——包内 contrib 保底席位，`home/contrib` 同名模块**只有自己过闸且钩子可解析才接管**；被拒文件不再让席位静默消失，接管/保底记警告并首次 `run()` 发 `mount_warning` 事件（只发一次，不重复）。
-4. **router/teams 主键冻结（F2-3）**：worker/member 以 `id` 为主键（同一键空间），`name` 只作显示与排序；集成自检改反值构造（id ≠ name），同值掩盖从此翻红。
-5. **validate 警告行（F5-4）+ 正则清理（F5-5）**：`modules validate` 就地打印 `[warn]` 行；evolution 信号正则清除生成期串味残留。
+1. **Static security baseline (H1–H10 closed)**: the contrib gate expanded from "scan imports" to a doubly-closed layer — alias-aware + reference-triggers-block + dunder attribute table + **table-aligned invariants** (CALLS and FROM_NAMES are twin-pinned bidirectionally; an unbalanced table expansion turns the check red on commit). Six root-spelling variants, `operator.attrgetter` laundering, and every `os.*` file-mutation primitive were closed one by one; the number of `gate:*` assertions follows the actual self-test output, and the independent probes are all green.
+2. **Tool-host declarations as semantics (F4-2/F4-3)**: `readOnlyHint` is normalized and passed through, `authorize` honors `spec["read_only"]`, and the **declaration takes precedence over name heuristics** — after stripping the `server__` prefix, the heuristic no longer flips; a write tool named `read_*` can no longer sneak past the check.
+3. **Baseline semantics for contrib mounting (F2-2/H11)**: `mount_contrib_extensions` uses a dual registry — bundled contrib modules get a baseline seat, while a `home/contrib` module with the same name **only takes over if it passes the gate itself and its hooks resolve**. A rejected file no longer makes the seat silently disappear; takeover/fallback is logged as a warning and a `mount_warning` event fires on the first `run()` (fired only once, not repeatedly).
+4. **Router/teams primary keys frozen (F2-3)**: workers/members are keyed by `id` (a single keyspace), with `name` used only for display and sorting; the integration self-test now constructs counter-examples (id ≠ name), so any bug masked by coincidentally-equal values now turns red.
+5. **`validate` warning lines (F5-4) + regex cleanup (F5-5)**: `modules validate` now prints `[warn]` lines inline; leftover generation-time regex artifacts in the evolution signal matching have been cleaned up.
 
-## v0.7.0：三档模型智能路由
+## v0.7.0: three-tier smart model routing
 
-新增 `forge/routing.py`（SmartRouter，ModelRouter 子类，冻结契约零改动）。任务级选档，三种策略：
+Added `forge/routing.py` (SmartRouter, a ModelRouter subclass, with zero changes to the frozen contract). Task-level tier selection, with three strategies:
 
-| 策略 | 路由逻辑 |
+| Strategy | Routing logic |
 | --- | --- |
-| `economy` | 按有效单价升序走档（pricing.py 账单反推价），仅可重试失败才上浮；未知价保守殿后，不被当免费档打穿 |
-| `balanced` | 中端主力档首发，失败向上升级 + 冻结 chain 兑底（默认） |
-| `premium` | 两阶段流水：中端出草稿 → 高端集成裁决；集成段任何失败（含 fatal）都降级回草稿——草稿已付费不弃；消息形状严格角色交替（system/user/assistant/user），集成档只收原任务+草稿，完整对话不外流 |
+| `economy` | Walks tiers in ascending order of effective unit price (from `pricing.py`'s invoice-derived rates); only escalates on retriable failures; unknown-priced tiers are treated conservatively and placed last, so they can't be mistaken for a free tier |
+| `balanced` | Starts on the mid-tier workhorse; escalates on failure + falls back to the frozen chain as a floor (default) |
+| `premium` | Two-stage pipeline: mid-tier drafts → top-tier integrates/adjudicates; any failure in the integration stage (including fatal ones) falls back to the draft — the draft has already been paid for, so it isn't discarded; messages strictly alternate roles (system/user/assistant/user), and the integration tier only receives the original task + the draft, never the full conversation |
 
 ```bash
-python run.py run "任务" --strategy economy      # CLI 显式指定（> 配置 > 默认 balanced）
+python run.py run "task" --strategy economy      # Explicit CLI override (CLI > config > default balanced)
 ```
 
-配置在 `bundles/base.json` 的 `model.routing` 块：`tiers`（档位表，按成本序声明）、`premium`（集成裁决档）、`small`（杂务档，失败不上浮烧不到审查档）。计价表未知价=0.0 的单一权威定义见 `pricing.py` 顶部注释（routing 取保守解释、预算缩放取宽松解释，有意不同）。
+Configured under the `model.routing` block in `bundles/base.json`: `tiers` (the tier table, declared in cost order), `premium` (the integration/adjudication tier), `small` (the miscellaneous-tasks tier — failures here don't escalate, so they can't burn through the review tier). The single authoritative definition of "unknown price = 0.0" in the pricing table is documented in a comment at the top of `pricing.py` — routing interprets it conservatively while budget scaling interprets it generously, and this difference is intentional.
 
-## 快速开始
+## Quick Start
 
 ```bash
 cd agent-forge
 
-python run.py selftest            # 离线自检，项数以实际输出为准
-python run.py dump-config         # 看合成出的配置树
-python run.py doctor              # 健康/漂移/密钥检查
-python run.py capabilities list   # 能力清单
-python run.py run "读一下 README 并总结"
+python run.py selftest            # Offline self-checks, item count follows actual output
+python run.py dump-config         # View the synthesized config tree
+python run.py doctor              # Health / drift / key checks
+python run.py capabilities list   # Capability listing
+python run.py run "Read the README and summarize it"
 python run.py gateway --upstream https://api.deepseek.com --port 8799 --models claude-sonnet-5
 ```
 
-`run.py` 是必需的入口：AutoClaw 内嵌 Python 用 `._pth` 布局，`python -m forge.cli` 会报 `No module named 'forge'`（当前目录不入 `sys.path`，`PYTHONPATH` 也失效）。外面用标准 Python 时 `python -m forge.cli` 可用。
+`run.py` is the required entry point: AutoClaw's embedded Python uses a `._pth` layout, so `python -m forge.cli` fails with `No module named 'forge'` (the current directory isn't added to `sys.path`, and `PYTHONPATH` has no effect either). With a standard Python install elsewhere, `python -m forge.cli` works fine.
 
-零第三方依赖（纯标准库），Python ≥ 3.10。
+Zero third-party dependencies (pure standard library), Python ≥ 3.10.
 
-## 七套框架 → 一处落点
+## Seven frameworks → one landing spot
 
-| 借鉴对象 | 被吸收的设计 | 落点模块 | 自检锚点 |
+| Source framework | Design borrowed | Landing module | Self-test anchor |
 | --- | --- | --- | --- |
-| **DeepSeek Harness** | 空根 + 有序补丁层、按 id 后写胜、整行替换不做深合并、`dump-default` 恢复通道、`$expr` 惰性表达式 | `config.py` | `config:*` |
-| **WorkBuddy / CodeBuddy** | 二维权限（mode 基线 + allow/ask/deny 例外，deny 恒胜）、子代理权限天花板、Defer/NoDefer 延迟加载、命令级黑名单、类型化记忆双写、trace 计量 | `policy.py` `tools.py` `memory.py` | `policy:*` `tools:*` `memory:*` |
-| **Codex** | 三档沙箱绑审批、rollout JSONL 事件流（`session_meta` + ordinal）、resume/fork、派生索引版本化可重建、点路径覆盖 + 严格模式 | `policy.py` `session.py` | `session:*` |
-| **Hermes Agent** | fallback 链按错误类型触发、MoA 多槽聚合、影子 git 检查点与回滚、curator 只归档不删除、技能 provenance | `model.py` `checkpoint.py` `memory.py` | `model:*` (3) `checkpoint:*` (3) |
-| **OpenClaw** | 系统提示分层组装、上下文压缩阈值与压缩事件、记忆有界切片注入、子代理深度/预算/结果去毒、会话串行 | `loop.py` `memory.py` | `loop:*` |
-| **OpenCode** | provider 即数据（`provider[] + model + small_model`）、统一 wire 适配层、密钥不进配置文件 | `model.py` `cli.py` | `model:*` `doctor:*` |
-| **Claude Code** | CLI 输出形态（`-p` 非交互 / 结构化输出）、权限模式枚举、设置分层与覆盖 | `cli.py` `policy.py` | `cli:*` |
+| **DeepSeek Harness** | Empty root + ordered patch layers, last-write-wins by id, whole-line replacement instead of deep merge, `dump-default` recovery channel, `$expr` lazy expressions | `config.py` | `config:*` |
+| **WorkBuddy / CodeBuddy** | Two-dimensional permissions (mode baseline + allow/ask/deny exceptions, deny always wins), subagent permission ceiling, Defer/NoDefer lazy loading, command-level blacklist, typed dual-write memory, trace metering | `policy.py` `tools.py` `memory.py` | `policy:*` `tools:*` `memory:*` |
+| **Codex** | Three-tier sandbox tied to approvals, rollout JSONL event stream (`session_meta` + ordinal), resume/fork, versioned & rebuildable derived index, point-path overrides + strict mode | `policy.py` `session.py` | `session:*` |
+| **Hermes Agent** | Fallback chains triggered by error type, MoA multi-slot aggregation, shadow-git checkpoints and rollback, curator that only archives (never deletes), skill provenance | `model.py` `checkpoint.py` `memory.py` | `model:*` (3) `checkpoint:*` (3) |
+| **OpenClaw** | Layered system-prompt assembly, context-compaction thresholds and compaction events, bounded-slice memory injection, subagent depth/budget/output detoxification, serialized sessions | `loop.py` `memory.py` | `loop:*` |
+| **OpenCode** | Provider-as-data (`provider[] + model + small_model`), unified wire adapter layer, keys never live in config files | `model.py` `cli.py` | `model:*` `doctor:*` |
+| **Claude Code** | CLI output shapes (`-p` non-interactive / structured output), permission-mode enum, layered settings with overrides | `cli.py` `policy.py` | `cli:*` |
 
-设计原则、被否掉的方案、以及每一条的取舍理由见 [`DESIGN.md`](DESIGN.md)。各借鉴对象的席位锚点（`config:*` 等）计数随每轮修复增长，以 `selftest` 实际输出为准，此处不逐个硬编码。
+Design rationale, alternatives that were rejected, and the reasoning behind each trade-off are in [`DESIGN.md`](DESIGN.md). The seat-anchor counts for each source framework (e.g. `config:*`) grow with every fix round; they follow the actual `selftest` output and are intentionally not hardcoded here.
 
-## 内核长什么样
+## What the kernel looks like
 
 ```
-任务
+Task
  └─ Agent.run()                     loop.py
-      ├─ 系统提示组装  ← 能力索引 + 记忆切片 + 权限状态（都有界）
-      ├─ 上下文压缩    ← 超阈值折叠中段、保留尾部，写 compaction 事件
-      ├─ ModelRouter   ← 主模型 → 按错误类型降级链 →（可选）MoA 聚合
-      ├─ 工具调用      ← Defer 默认隐藏 → tool_search 激活 → 权限裁决 → 执行
-      │    └─ 写操作前 → CheckpointStore 影子快照
-      └─ spawn_subagent ← 独立上下文 / 深度上限 / 预算 / 权限天花板 / 输出去毒
+      ├─ System prompt assembly  ← capability index + memory slice + permission state (all bounded)
+      ├─ Context compaction      ← folds the middle section once past the threshold, keeps the tail, logs a compaction event
+      ├─ ModelRouter              ← primary model → fallback chain by error type → (optionally) MoA aggregation
+      ├─ Tool calling             ← Defer hides by default → tool_search activates → permission adjudication → execution
+      │    └─ Before write ops    → CheckpointStore shadow snapshot
+      └─ spawn_subagent           ← independent context / depth ceiling / budget / permission ceiling / output detoxification
 ```
 
-每一次决策都落进 `sessions/*.jsonl`：`session_meta`、`user_message`、`tool_decision`、`tool_call`、`subagent_spawn`、`compaction`、`checkpoint`、`assistant_message`。日志是事实，索引是缓存 —— `sessions --rebuild` 随时重建。
+Every decision is logged into `sessions/*.jsonl`: `session_meta`, `user_message`, `tool_decision`, `tool_call`, `subagent_spawn`, `compaction`, `checkpoint`, `assistant_message`. The log is the fact; the index is a cache — rebuild it anytime with `sessions --rebuild`.
 
-## 五个"不妥协"
+## Five non-negotiables
 
-1. **deny 恒胜**：无论 mode 多宽、无论子代理多大胆，显式 deny 与命令黑名单先于一切裁决。
-2. **子代理不得越权**：子代理的 mode 会被父会话天花板钳制；`plan` 父会话里的子代理不可能拿到 `bypassPermissions`。
-3. **用户层可整层摘除**：`dump-default-config` 跳过用户层，配置写坏永远不会锁死启动。
-4. **归档而非删除**：curator 只把 agent 自建知识标记为 archived，`restore` 可逆。
-5. **密钥不进配置文件**：`doctor` 会把内联 `apiKey` 直接报为告警，provider 走环境变量或环回网关。
+1. **Deny always wins**: no matter how permissive the mode or how bold the subagent, explicit deny rules and command blacklists take precedence over every other adjudication.
+2. **Subagents cannot escalate privileges**: a subagent's mode is capped by its parent session's ceiling; a subagent spawned under a `plan`-mode parent can never obtain `bypassPermissions`.
+3. **The user layer can be entirely stripped out**: `dump-default-config` skips the user layer, so a broken user config can never permanently lock out startup.
+4. **Archive, never delete**: the curator only marks agent-built knowledge as archived; `restore` is always reversible.
+5. **Keys never live in config files**: `doctor` flags an inline `apiKey` directly as a warning; providers go through environment variables or the loopback gateway.
 
-## 目录
+## Directory Layout
 
 ```
 agent-forge/
 ├── forge/
-│   ├── config.py       空根 + 补丁层合成（DSH）
-│   ├── policy.py       二维权限 + 三档沙箱 + 命令黑名单（CodeBuddy / Codex）
-│   ├── tools.py        工具注册 + 延迟加载 + ToolSearch（CodeBuddy）
-│   ├── capability.py   skills/plugins/connectors 统一契约（Hermes / Codex）
-│   ├── memory.py       类型化记忆双写 + curator（CodeBuddy / OpenClaw）
-│   ├── compaction.py   上下文压缩策略（从 memory 拆分，独立可测试）
-│   ├── subagent.py     子代理编排：派生/预算/输出净化（从 loop 拆分）
-│   ├── thinking.py     沉思引擎：预算控制/收敛判定/三档模式（从 loop 拆分）
-│   ├── session.py      追加式事件日志 + 派生索引 + fork（Codex）
-│   ├── model.py        provider 抽象 + 降级链 + MoA（OpenCode / Hermes）
-│   ├── routing.py      三档智能路由（economy / balanced / premium）
-│   ├── checkpoint.py   影子 git 快照与回滚（Hermes）
-│   ├── loop.py         agent 主循环（OpenClaw / CodeBuddy）
-│   ├── gateway.py      环回协议网关（本次集成实测产物）
-│   ├── wire.py         Anthropic ↔ OpenAI 协议翻译
-│   ├── toolwire.py     原生工具调用协议适配
-│   ├── federation.py   异构 CLI 联邦调度
-│   ├── evolution.py    自我迭代进化
-│   ├── registry.py     贡献模块注册表 + 一致性闸门
-│   ├── pricing.py      成本核算
-│   ├── guard.py        共享安全禁令表
-│   ├── smoke.py        端到端冒烟测试
-│   ├── selftest.py     离线验证套件
-│   ├── cli.py          命令行入口
-│   └── test_new_modules.py  新模块独立测试
+│   ├── config.py       Empty root + patch-layer synthesis (DSH)
+│   ├── policy.py       Two-dimensional permissions + three-tier sandbox + command blacklist (CodeBuddy / Codex)
+│   ├── tools.py         Tool registration + lazy loading + ToolSearch (CodeBuddy)
+│   ├── capability.py    Unified contract for skills/plugins/connectors (Hermes / Codex)
+│   ├── memory.py        Typed dual-write memory + curator (CodeBuddy / OpenClaw)
+│   ├── compaction.py    Context-compaction strategy (split out from memory, independently testable)
+│   ├── subagent.py      Subagent orchestration: spawning/budget/output sanitization (split out from loop)
+│   ├── thinking.py      Deliberation engine: budget control / convergence detection / three-tier mode (split out from loop)
+│   ├── session.py       Append-only event log + derived index + fork (Codex)
+│   ├── model.py         Provider abstraction + fallback chain + MoA (OpenCode / Hermes)
+│   ├── routing.py       Three-tier smart routing (economy / balanced / premium)
+│   ├── checkpoint.py    Shadow-git snapshots and rollback (Hermes)
+│   ├── loop.py          Agent main loop (OpenClaw / CodeBuddy)
+│   ├── gateway.py       Loopback protocol gateway (built and tested through this integration)
+│   ├── wire.py          Anthropic ↔ OpenAI protocol translation
+│   ├── toolwire.py      Native tool-calling protocol adapter
+│   ├── federation.py    Heterogeneous CLI federation dispatch
+│   ├── evolution.py     Self-evolution
+│   ├── registry.py      Contrib-module registry + consistency gate
+│   ├── pricing.py       Cost accounting
+│   ├── guard.py         Shared security ban table
+│   ├── smoke.py         End-to-end smoke tests
+│   ├── selftest.py      Offline verification suite
+│   ├── cli.py            Command-line entry point
+│   └── test_new_modules.py  Standalone tests for the new modules
 └── bundles/
-    └── base.json       基线配置层（provider / policy / loop / model）
+    └── base.json        Baseline config layer (provider / policy / loop / model)
 ```
 
-## 已知边界
+## Known Limitations
 
-- `gateway` 与 `model.HttpTransport` 走标准库 HTTP，没有连接池与重试退避策略；生产化需要替换 transport。
-- 权限裁决的原则是"沙箱拦截**写入**路径 + 黑名单拦截程序"，不提供内核级隔离（Windows 上要做 restricted token / ACL 才能真正关住 shell）。**读取不受沙箱约束**：`read_file` / `list_dir` / `grep` 可读工作区之外的路径（相对/绝对/`..` 均按原样解析）——读侧的收敛靠声明制（toolhost 归一时的 `read_only` 标注与 `authorize` 判定）与运行期白名单批次，不是路径沙箱；需要读隔离的场景应把读工具声明为只读并在 `deny`/`ask` 层约束。
-- `allow` 规则**恒高于 mode 基线**（deny 除外）：`read-only` 模式下显式 `allow` 一个写入类工具会放行——mode 是基线不是硬下限，这是显式语义而非缺陷；依赖 read-only 做硬隔离的场景应改用沙箱档位与 `deny` 规则。
-- `capability.install` 只做版本化目录落盘，没有签名校验；供应链审计需要外接 OSV 之类的源。
-- 记忆检索是精确匹配 + 时间/置顶排序，没有向量召回 —— 接向量库是明确的下一步。
-- `read_only` 是声明而非强制——写工具标 `read_only=True` 会绕过沙箱路径校验与 read-only 模式写门（WB-P2 authorize 声明信任缺口；当前 toolhost 未被运行时挂载，影响有限）。
-- premium 两阶段会把**草稿与原始任务**发送给集成裁决档（知情使用：配置了 premium 档即同意该数据面）；完整对话历史不会外流。
-- `mount_contrib_extensions` 的双注册表保底覆盖静态闸和钩子可解析性；运行期钩子异常的保底由 `_use_extension` 的异常捕获兜底（不回退到包内模块）——需要「坏钩子不抢位」的场景应改为运行期降级重试（复杂，登记非挂账）。
-- `teams.deliver` 的 `to` 方向只做 id 寻址（无 name→id 解析），`from` 方向支持 name 唯一归属解析——非对称设计，安全但需注意：`to` 不可用显示名。
+- `gateway` and `model.HttpTransport` use standard-library HTTP with no connection pooling or retry/backoff policy; a production deployment would need to swap in a real transport.
+- The principle behind permission adjudication is "the sandbox intercepts **write** paths + the blacklist intercepts programs," not kernel-level isolation (on Windows, true shell confinement would require restricted tokens / ACLs). **Reads are not sandboxed**: `read_file` / `list_dir` / `grep` can read paths outside the workspace (relative, absolute, or `..` — all resolved as-is). Convergence on the read side relies on declaration (the `read_only` annotation during toolhost normalization and `authorize`'s decision) and runtime allowlisting, not a path sandbox; scenarios needing read isolation should declare read tools as read-only and constrain them at the `deny`/`ask` layer.
+- **`allow` rules always outrank the mode baseline** (except deny): in `read-only` mode, an explicit `allow` rule for a write-class tool will let it through — mode is a baseline, not a hard ceiling; this is intentional semantics, not a defect. Scenarios that need read-only to be a hard isolation guarantee should use sandbox tiers and `deny` rules instead.
+- `capability.install` only does versioned directory writes with no signature verification; supply-chain auditing would need to hook into something like OSV externally.
+- Memory retrieval is exact match + recency/pinned ordering, with no vector recall — hooking up a vector store is an obvious next step.
+- `read_only` is declarative, not enforced — a write tool marked `read_only=True` will bypass both the sandbox path check and the read-only-mode write gate (a WB-P2 authorize-declaration trust gap; currently limited in impact since the toolhost isn't mounted at runtime).
+- The premium two-stage pipeline sends **the draft and the original task** to the integration/adjudication tier (informed use: configuring a premium tier implies consent to this data flow); the full conversation history is never sent out.
+- `mount_contrib_extensions`'s dual registry covers the static gate and hook resolvability as a fallback; runtime hook exceptions are caught as a fallback inside `_use_extension` (it does not fall back to the bundled module) — scenarios needing "a bad hook never takes the seat" would require runtime-degraded retry instead (complex; logged as a known gap, not implemented).
+- `teams.deliver`'s `to` direction only supports id-based addressing (no name→id resolution), while the `from` direction supports unique name-based resolution — this asymmetry is intentional and safe, but note: `to` cannot use a display name.

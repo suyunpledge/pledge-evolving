@@ -1,38 +1,38 @@
-# verify/ — 独立验证器
+# verify/ — Independent Verifier
 
-这不是作者自检的补充，而是**独立于作者**的验证。PLAN §5 把「验证标准漂移」列为三处最可能翻车的地方之一：自检项是作者写的，作者可能自己骗自己（上一轮就出现过隐藏用例写错、把 14/14 的模型判成 11/14）。这个目录存在的唯一目的是从作者手里把"证明确实发生过"这件事接管过来。
+This isn't a supplement to the author's self-checks — it's verification that is **independent of the author**. PLAN §5 lists "verification-criteria drift" as one of the three most likely places to go wrong: self-check items are written by the author, and the author can fool themselves (a previous round had a hidden test case written incorrectly, which scored a 14/14 model as 11/14). The sole purpose of this directory is to take the job of "proving it actually happened" out of the author's hands.
 
-## 它回答的三个问题
+## The three questions it answers
 
-1. **数字对不对** —— README / PLAN 里写死的自检项数、模块数、断言数，与当场实测是否一致。
-2. **证据实不实** —— 断言总数里有多少条是真正跑出来、带可核验内容的行，有多少条是闸门自己补出来的通过行。
-3. **接缝通不通** —— 各模块自己的自检都绿，不代表它们之间的数据契约对得上。这份验证器专门探接缝。
+1. **Are the numbers right?** — Whether the hardcoded self-check item counts, module counts, and assertion counts in README / PLAN match a live measurement taken right now.
+2. **Is the evidence real?** — Of all assertions, how many are lines actually executed with verifiable content, and how many are pass-lines the gate synthesized itself.
+3. **Do the seams connect?** — Each module passing its own self-checks doesn't mean their data contracts line up. This verifier is built specifically to probe the seams.
 
-## 用法
+## Usage
 
 ```bash
 cd agent-forge
-python verify/independent_audit.py          # 人读输出
-python verify/independent_audit.py --json   # 机读输出
+python verify/independent_audit.py          # human-readable output
+python verify/independent_audit.py --json   # machine-readable output
 ```
 
-退出码：`0` 全通过；`1` 有 FAIL；`2` 只有 WARN。
+Exit codes: `0` all pass; `1` there are FAILs; `2` only WARNs.
 
-## 它做了什么（六组）
+## What it does (six groups)
 
-| 组 | 内容 |
+| Group | Content |
 | --- | --- |
-| 1 | 声明 vs 实测：跑一遍 `selftest` 与 `modules validate`，把数字对上去 |
-| 2 | 证据质量：扫所有健康模块的断言行，标出"无输出 ⇒ 判 pass"的合成行；算扣除真空行后的有效密度 |
-| 3 | 闸门对抗：在临时副本里把某个模块的自检换成空实现 → 看闸门是否照样放行；再破坏一处真实行为做**正对照**，确认闸门确实会拦 |
-| 4 | 接缝：`mcp_bridge.discover` 产出的工具名，喂给 `toolhost.register_tools` 看收不收 |
-| 5 | 权限：`toolhost.authorize` 的判定依据是工具名还是模块声明；归一产物里的 `read_only` 有没有通道传进去 |
-| 6 | 钩子可达性与能力标签重合 |
+| 1 | Claims vs. measurements: run `selftest` and `modules validate`, and reconcile the numbers |
+| 2 | Evidence quality: scan the assertion lines of every healthy module, flag synthesized lines that "default to pass when there's no output", and compute effective density after subtracting vacuous lines |
+| 3 | Gate adversarial testing: in a temporary copy, replace a module's self-check with an empty implementation → see whether the gate still lets it through; then break a piece of real behavior as a **positive control** to confirm the gate does block |
+| 4 | Seams: feed the tool names produced by `mcp_bridge.discover` into `toolhost.register_tools` and see whether they're accepted |
+| 5 | Permissions: does `toolhost.authorize` decide based on the tool name or the module's declaration; does the `read_only` value in the normalized output have a channel to get through |
+| 6 | Hook reachability and capability-tag overlap |
 
-第 3 组是这份验证器的核心：**它不读作者的断言，它自己制造反例**。正对照（故意破坏实现 → 闸门应拦）与负对照（换成空测试 → 闸门不应拦）必须给出相反结论，否则说明这套闸门对"测试本身是否有效"没有判断力。
+Group 3 is the heart of this verifier: **it doesn't read the author's assertions, it manufactures its own counterexamples.** The positive control (deliberately break the implementation → the gate should block) and the negative control (swap in an empty test → the gate should not block) must yield opposite conclusions; otherwise the gate has no ability to judge "whether the test itself is valid."
 
-## 纪律
+## Discipline
 
-- **只读被验证的代码**：不写 `forge/` 下任何文件；第 3 组的改写发生在 `tempfile` 副本里。
-- **不引用作者自检的结论**：第 3、4、5 组的证据全部由本文件自己构造。
-- **测量结果照实写**：探针失败、环境缺失、结论未知，都按 WARN 记录并写明原因，不静默跳过。
+- **Only reads the code under verification**: it never writes any file under `forge/`; group 3's modifications happen inside a `tempfile` copy.
+- **Never cites the author's self-check conclusions**: the evidence for groups 3, 4, and 5 is constructed entirely by this file itself.
+- **Reports measurements as they are**: probe failures, missing environments, and unknown conclusions are all recorded as WARN with the reason written out — never silently skipped.
