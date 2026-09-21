@@ -86,6 +86,12 @@ def tool_declarations(specs: Iterable, wire: str = "openai") -> list[dict[str, A
                 "description": getattr(spec, "description", "") or "",
                 "input_schema": _spec_schema(spec),
             })
+    # Cache-alignment invariant: tool declarations must be sorted by name
+    # so the same visible set always produces the same token sequence.
+    # DSH achieves this with a configurable toolOrder; we sort alphabetically
+    # and verify below.
+    out.sort(key=lambda d: d.get("function", d).get("name", d.get("name", "")))
+
     # 发送前最后检查：空 enum / 缺 description / additionalProperties
     return sanitize_request_tools(out)
 
