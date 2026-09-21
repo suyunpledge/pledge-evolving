@@ -1,4 +1,4 @@
-"""Tool calling adapter — 针对各模型 tool calling 字段的补全与修复。
+﻿"""Tool calling adapter — 针对各模型 tool calling 字段的补全与修复。
 
 为什么需要这个模块（都是实战踩过的坑）：
 
@@ -101,12 +101,70 @@ MODEL_QUIRKS: dict[str, dict[str, bool]] = {
 # 匹配 ```json ... ``` 或 ``` ... ```
 _MARKDOWN_FENCE = re.compile(r"^```(?:json)?\s*\n?(.*?)\n?\s*```\s*$", re.DOTALL)
 # 匹配 <tool_call>{...}</tool_call>
-_TOOL_CALL_TAG = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
-# 匹配 <tools>...{"name":...}...</tools>（qwen2.5-coder 风格）
-_TOOLS_XML_TAG = re.compile(r"<tools>\s*(\{.*?\})\s*</tools>", re.DOTALL)
-# 匹配裸 JSON 对象（在长文本中提取）
-_BARE_JSON = re.compile(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}")
-# 前导空白/换行
+
+def _find_braced(text: str, start: int) -> int | None:
+    """Brace-depth matcher: finds matching '}' for '{' at text[start]."""
+    depth = 0
+    in_str = False
+    esc = False
+    for i in range(start, len(text)):
+        c = text[i]
+        if esc:
+            esc = False
+            continue
+        if c == "\\" and in_str:
+            esc = True
+            continue
+        if c == '"' and not in_str:
+            in_str = True
+        elif c == '"' and in_str:
+            in_str = False
+        elif not in_str:
+            if c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    return i
+    return None
+
+
+def _extract_braced_objs(text: str) -> list[str]:
+    """Extract all top-level {...} objects using brace-depth."""
+    objs: list[str] = []
+    i = 0
+    while i < len(text):
+        if text[i] in (" ", "\t", "\n", "\r"):
+            i += 1
+            continue
+        if text[i] != "{":
+            i += 1
+            continue
+        end = _find_braced(text, i)
+        if end is None:
+            break
+        objs.append(text[i : end + 1])
+        i = end + 1
+    return objs
+
+
+def _extract_bare_json(text: str) -> str | None:
+    """Find longest valid top-level JSON object using brace-depth."""
+    best: str | None = None
+    for i, c in enumerate(text):
+        if c == "{":
+            end = _find_braced(text, i)
+            if end is not None:
+                chunk = text[i : end + 1]
+                if chunk.startswith("{") and chunk.endswith("}"):
+                    if best is None or len(chunk) > len(best):
+                        best = chunk
+    return best
+
+
+# Keep _TOOLS_XML_TAG as regex for XML boundaries; content extracted
+# will be parsed with brace-depth fallback inside the loop.
+_TOOLS_XML_TAG = re.compile(r"<tools>(.*?)</tools>", re.DOTALL)
 _LEADING_WS = re.compile(r"^[\s\n\r\t]+")
 
 
@@ -239,6 +297,17 @@ def _try_repair(s: str, quirks: dict[str, bool]) -> dict[str, Any] | None:
     return None
 
 
+    closed = _close_json(s)
+    if closed is not None:
+        return closed
+
+
+    closed = _close_json(s)
+    if closed is not None:
+        return closed
+
+
+# ─── L4: 截断补全 ────────────────────────────────────────
 # ─── L4: 截断补全 ────────────────────────────────────────
 
 def _close_json(s: str) -> dict[str, Any] | None:
@@ -372,9 +441,10 @@ def repair_arguments(
             return validate_against_schema(obj, schema)
 
     # L5 从长文本中提取裸 JSON（部分模型把调用埋在 content 里）
-    m = _BARE_JSON.search(s)
-    if m:
-        obj = _try_json(m.group(0))
+    # 用 brace-depth 替代 regex，嵌套结构不再截断
+    bare = _extract_bare_json(s)
+    if bare is not None:
+        obj = _try_json(bare)
         if obj is not None:
             return validate_against_schema(obj, schema)
 
@@ -389,9 +459,10 @@ def parse_tool_call_tags(content: str) -> list[dict[str, Any]]:
 
     Qwen/Mistral 系（Hermes 模板）在原生工具通道失败时会降级到文本输出。
     """
-    calls = []
-    for m in _TOOL_CALL_TAG.finditer(content or ""):
-        raw = m.group(1)
+    calls: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def _add_call(raw: str) -> None:
         obj = _try_json(raw)
         if obj is None:
             obj = _try_repair(raw, get_quirks(""))
@@ -403,29 +474,38 @@ def parse_tool_call_tags(content: str) -> list[dict[str, Any]]:
                     args = json.loads(args)
                 except (json.JSONDecodeError, ValueError):
                     pass
-            calls.append({
-                "id": obj.get("id", ""),
-                "name": obj["name"],
-                "arguments": args if isinstance(args, dict) else {},
-            })
-    # <tools> XML tag（qwen2.5-coder 风格）
+            key = (obj["name"], json.dumps(args, sort_keys=True))
+            if key not in seen:
+                seen.add(key)
+                calls.append({
+                    "id": obj.get("id", ""),
+                    "name": obj["name"],
+                    "arguments": args if isinstance(args, dict) else {},
+                })
+
+    for raw in _extract_braced_objs(content or ""):
+        _add_call(raw)
+    # <tools> XML tag（qwen2.5-coder 风格）：先取 XML 内容，再 brace-depth 解析
     for m in _TOOLS_XML_TAG.finditer(content or ""):
         raw = html.unescape(m.group(1))  # &quot; → " 等 XML 实体解码
-        obj = _try_json(raw)
-        if obj is None:
-            obj = _try_repair(raw, get_quirks(""))
-        if isinstance(obj, dict) and "name" in obj:
-            args = obj.get("arguments") or obj.get("parameters") or {}
+        for chunk in _extract_braced_objs(raw):
+            _add_call(chunk)
+    # _extract_braced_objs 找不到闭合 '}' 时（截断 JSON），直接 fallback _close_json
+    if not calls:
+        closed = _close_json(content or "")
+        if closed is not None:
+            args = closed.get("arguments") or closed.get("parameters") or {}
             if isinstance(args, str):
                 try:
                     args = json.loads(args)
                 except (json.JSONDecodeError, ValueError):
                     pass
             calls.append({
-                "id": obj.get("id", ""),
-                "name": obj["name"],
+                "id": closed.get("id", ""),
+                "name": closed.get("name", ""),
                 "arguments": args if isinstance(args, dict) else {},
             })
+
     return calls
 
 
@@ -454,7 +534,7 @@ def sanitize_request_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
                         if "description" not in pspec:
                             pspec["description"] = pname
             # additionalProperties 显式 false（部分 API 要求）
-            params.setdefault("additionalProperties", False)
+            params["additionalProperties"] = False
         cleaned.append(t)
     return cleaned
 
@@ -612,3 +692,4 @@ def fill_gemini_name_fields(messages: list[dict[str, Any]]) -> list[dict[str, An
             m["name"] = id_to_name.get(m.get("tool_call_id") or "", "tool")
         out.append(m)
     return out
+
