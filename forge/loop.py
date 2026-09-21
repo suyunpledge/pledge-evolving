@@ -692,7 +692,17 @@ class Agent:
                     tools=toolwire.tool_declarations(self.registry.visible(), self.wire_hint),
                 )
             except TransportError as exc:
-                self._emit(type="model_error", error=str(exc)[:300])
+                err_msg = str(exc)[:300]
+                # Actionable hints keyed off error type
+                ra = getattr(exc, "retry_after", None)
+                if "429" in err_msg or "RateLimited" in type(exc).__name__:
+                    wait = f" (retry-after {ra:g}s)" if ra else ""
+                    err_msg += f" → rate limited{wait}: wait or switch provider"
+                elif "401" in err_msg or "Unauthorized" in err_msg:
+                    err_msg += " → check provider API key (env/overlay)"
+                elif "all providers failed" in err_msg:
+                    err_msg += " → check provider ids and overlay config"
+                self._emit(type="model_error", error=err_msg)
                 return self._finish(RunReport(text=f"[model error] {exc}", steps=steps,
                                               usage=usage_total, stopped="error", events=self.events))
             usage_total["prompt_tokens"] += completion.usage.prompt_tokens

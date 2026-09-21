@@ -29,6 +29,10 @@ class TransportError(RuntimeError):
 class RateLimited(TransportError):
     retryable = True
 
+    def __init__(self, message: str, retry_after: float | None = None):
+        super().__init__(message)
+        self.retry_after = retry_after  # seconds, parsed from Retry-After header
+
 
 class Overloaded(TransportError):
     retryable = True
@@ -135,7 +139,20 @@ class HttpTransport:
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", "replace")[:300]
             if exc.code == 429:
-                raise RateLimited(f"{provider.name}: 429 {detail}") from exc
+                # Retry-After from HTTPError.headers (case-insensitive Mapping)
+                retry_after = None
+                hdrs = getattr(exc, "headers", None) or getattr(exc, "hdrs", None)
+                if hdrs is not None:
+                    ra = hdrs.get("Retry-After")
+                    if ra:
+                        try:
+                            retry_after = float(ra)
+                        except (ValueError, TypeError):
+                            pass
+                raise RateLimited(
+                    f"{provider.name}: 429 {detail}",
+                    retry_after=retry_after,
+                ) from exc
             if exc.code in (500, 502, 503, 504, 529):
                 raise Overloaded(f"{provider.name}: {exc.code} {detail}") from exc
             raise BadRequest(f"{provider.name}: {exc.code} {detail}") from exc
@@ -266,7 +283,13 @@ class ModelRouter:
                     })
                     if not exc.retryable:
                         raise
-                    time.sleep(min(0.5 * (2 ** attempt), 4.0))
+                    if isinstance(exc, RateLimited) and exc.retry_after is not None:
+                        wait = max(float(exc.retry_after), 2.0)
+                    else:
+                        # 2s → 4s → 8s → … capped at 30s; free RPM tiers need
+                        # longer backoff than the old 0.5s/4s-cap schedule.
+                        wait = min(2.0 * (2 ** attempt), 30.0)
+                    time.sleep(wait)
         raise TransportError(f"all providers failed: {attempts}")
 
     def complete_moa(self, messages: list[dict[str, Any]], *, models: Iterable[tuple[str, str]],
