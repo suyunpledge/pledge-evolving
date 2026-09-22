@@ -120,6 +120,14 @@ def test_config() -> None:
                       {"env": {"FORGE_BASE_URL": "https://x"}}) == "https://x")
         check("config:expression-missing-key-falls-back",
               resolve({"$expr": "get('env.NOPE', 'fallback')"}, {"env": {}}) == "fallback")
+        check("config:expression-interpreter-arithmetic",
+              resolve({"$expr": "(2 + 3 * 4) == 14 and len([1, 2]) == 2"}, {}) is True)
+        check("config:expression-interpreter-collections",
+              resolve({"$expr": "{'pick': [10, 20, 30][1], 'ok': 3 in (1, 2, 3)}"}, {})
+              == {"pick": 20, "ok": True})
+        check("config:expression-interpreter-short-circuit",
+              resolve({"$expr": "false and (1 / 0)"}, {}) is False
+              and resolve({"$expr": "true or (1 / 0)"}, {}) is True)
 
         expr_cfg = Config()
         expr_cfg.apply_patch([{"id": "svc", "name": "svc", "config": {"port": {"$expr": "get('port')"}}}])
