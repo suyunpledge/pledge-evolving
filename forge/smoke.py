@@ -181,9 +181,12 @@ def run_smoke(home: Path, *, dry_run: bool = False, token: str = "",
                        f"events={len(events)}"))
     # S5 nothing escaped the sandbox root. Missing output is S2's business;
     # here we only ask "did anything land where it should not have".
+    # is_relative_to (not str.startswith): a sibling dir sharing a string
+    # prefix with root must not count as inside — this line is itself a
+    # security check, so it gets the same guard it exists to prove.
     notes_untouched = (root / "inputs" / "notes.md").read_text(encoding="utf-8") == NOTES_TEXT
     strays = [p.name for p in (root / "inputs").iterdir() if p.name != "notes.md"]
-    inside = (not summary.is_file()) or str(summary.resolve()).startswith(str(root.resolve()))
+    inside = (not summary.is_file()) or summary.resolve().is_relative_to(root.resolve())
     out.checks.append(("S5-no-sandbox-escape", notes_untouched and inside and not strays,
                        f"inputs_changed={not notes_untouched} strays={strays}"))
 
