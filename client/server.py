@@ -190,6 +190,9 @@ DELIVERY_DIRS = ("outputs", "deliveries", "reports", "dist", "build")
 DELIVERY_EXT = {".md", ".html", ".txt", ".py", ".js", ".ts", ".json", ".csv",
                 ".png", ".jpg", ".svg", ".pdf", ".docx", ".xlsx", ".pptx", ".zip"}
 FENCE_RE = re.compile(r"```(\w+)?\n(.*?)```", re.S)
+# 7fe13ed 误删唯一定义（当作重复常量），导致 import 期 NameError，客户端无法启动
+TEXT_FILE_MAX = 500_000
+TREE_DEPTH = 3
 
 def scan_delivery(workspace: Path, since: float, report_text: str) -> list[dict]:
     items: list[dict] = []
@@ -219,7 +222,7 @@ def scan_delivery(workspace: Path, since: float, report_text: str) -> list[dict]
 
 def list_files(workspace: Path, subdir: str = "", depth: int = TREE_DEPTH) -> list[dict]:
     target = (workspace / subdir).resolve()
-    if not str(target).startswith(str(workspace.resolve())):
+    if not target.is_relative_to(workspace.resolve()):
         return [{"error": "path traversal blocked"}]
     if not target.is_dir():
         return [{"error": "not a directory"}]
@@ -250,7 +253,7 @@ def _walk_files(path: Path, root: Path, out: list[dict], max_depth: int, depth: 
 
 def read_file(workspace: Path, rel_path: str) -> dict:
     target = (workspace / rel_path).resolve()
-    if not str(target).startswith(str(workspace.resolve())):
+    if not target.is_relative_to(workspace.resolve()):
         return {"error": "path traversal blocked"}
     if not target.is_file():
         return {"error": "file not found"}
@@ -549,7 +552,7 @@ class Handler(BaseHTTPRequestHandler):
         rec = STORE.create(task)
         raw_ws = payload.get("workspace") or str(ROOT / "workspace")
         workspace = Path(raw_ws).resolve()
-        if not str(workspace).startswith(str(ROOT.resolve())):
+        if not workspace.is_relative_to(ROOT.resolve()):
             self._send_json({"error": "workspace outside project root"}, 400)
             return
         workspace.mkdir(parents=True, exist_ok=True)
