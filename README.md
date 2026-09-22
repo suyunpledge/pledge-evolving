@@ -1,10 +1,10 @@
 # forge — A Unified Agent Framework
 
-Distills the most worth-copying designs from seven different agent frameworks — **Codex / Hermes Agent / DeepSeek Harness / Claude Code / WorkBuddy (CodeBuddy) / OpenClaw / OpenCode** — into a single, runnable minimal kernel.
+A standard-library-only Python agent runtime that consolidates proven design patterns from **Codex, Hermes Agent, DeepSeek Harness, Claude Code, WorkBuddy (CodeBuddy), OpenClaw, and OpenCode** into a small, runnable kernel. [中文文档](README.zh.md)
 
-This isn't a concept diagram, it's working code: `forge selftest` runs a full offline check suite (no network, no API keys; item counts follow the command's actual output) covering config synthesis, permission adjudication, lazy tool loading, capability trust, dual-write memory, session replay, shadow snapshots, model fallback, protocol gateway and protocol translation, native tool calling, self-evolution, heterogeneous federation, contrib-module consistency gating and cross-module integration, cost accounting, and subagent orchestration — plus a static security baseline (table-aligned invariants and four-way coverage for the no-network / no-subprocess / no-destructive-file-API bans).
+`forge selftest` provides an offline verification suite—requiring neither network access nor API keys. It covers configuration synthesis, permission decisions, lazy tool loading, capability trust, dual-write memory, session replay, shadow snapshots, routing and fallback, protocol translation, native tool calling, self-evolution, heterogeneous federation, contribution-module gates and integration, cost accounting, and subagent orchestration. The suite also enforces a static security baseline through table-aligned invariants and four-way coverage of the network, subprocess, and destructive-file-API prohibitions. Test counts are reported from the command's actual output.
 
-Zero third-party dependencies (pure standard library), Python ≥ 3.10.
+Requires Python 3.10 or later; no third-party Python packages are needed.
 
 ## v2 additions (0.2.0)
 
@@ -14,7 +14,7 @@ Zero third-party dependencies (pure standard library), Python ≥ 3.10.
 | `federation.py` | Built from scratch this round (all failure modes grew out of real testing) | Descriptors / dispatch / failure classification / output normalization / cost guardrails for heterogeneous CLI workers |
 | `wire.py` | The protocol mismatch between Claude Code and MiMo | Bidirectional Anthropic ↔ OpenAI translation, including SSE streaming and incremental tool calls |
 
-New commands:
+Key commands:
 
 ```bash
 python run.py evolution stats                # Candidate pool + ledger overview (defaults to ~/.forge; use --home . to see the repo's own bundled data)
@@ -27,7 +27,7 @@ python run.py gateway --upstream https://api.example.com/v1 --upstream-wire open
     --model-map claude-sonnet-5=<upstream-model> --models claude-sonnet-5 --key $KEY
 ```
 
-### Four hard rules of self-evolution
+### Four non-negotiable self-evolution rules
 
 1. **Nothing lands without approval**: only low-risk `note`-type candidates can take effect automatically; everything else goes into pending.
 2. **Long-term goals always need a human nod**: `MEMORY.md` / `AGENTS.md` / `SOUL.md` / `USER.md` / `TOOLS.md` / `SKILL.md` have no config option to bypass this.
