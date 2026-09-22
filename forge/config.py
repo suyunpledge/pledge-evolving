@@ -145,8 +145,107 @@ def _eval_expr(expr: str, ctx: dict[str, Any]) -> Any:
     namespace: dict[str, Any] = {"ctx": ctx, "true": True, "false": False, "null": None,
                                  "none": None, **_ALLOWED_CALLS}
     namespace.update({k: v for k, v in ctx.items() if not k.startswith("_")})
+
+    def evaluate(node: ast.AST) -> Any:
+        """Interpret the already-validated expression without eval/compile."""
+        if isinstance(node, ast.Expression):
+            return evaluate(node.body)
+        if isinstance(node, ast.Constant):
+            return node.value
+        if isinstance(node, ast.Name):
+            if node.id not in namespace:
+                raise ConfigError(f"expression {expr!r} references unavailable name {node.id!r}")
+            return namespace[node.id]
+        if isinstance(node, ast.List):
+            return [evaluate(item) for item in node.elts]
+        if isinstance(node, ast.Tuple):
+            return tuple(evaluate(item) for item in node.elts)
+        if isinstance(node, ast.Set):
+            return {evaluate(item) for item in node.elts}
+        if isinstance(node, ast.Dict):
+            return {evaluate(k): evaluate(v) for k, v in zip(node.keys, node.values)}
+        if isinstance(node, ast.Slice):
+            return slice(
+                evaluate(node.lower) if node.lower is not None else None,
+                evaluate(node.upper) if node.upper is not None else None,
+                evaluate(node.step) if node.step is not None else None,
+            )
+        if isinstance(node, ast.Subscript):
+            return evaluate(node.value)[evaluate(node.slice)]
+        if isinstance(node, ast.Call):
+            # Validation above guarantees a direct call to an allowlisted name.
+            func = _ALLOWED_CALLS[node.func.id]
+            args = [evaluate(arg) for arg in node.args]
+            kwargs = {kw.arg: evaluate(kw.value) for kw in node.keywords}
+            return func(*args, **kwargs)
+        if isinstance(node, ast.UnaryOp):
+            value = evaluate(node.operand)
+            if isinstance(node.op, ast.USub):
+                return -value
+            if isinstance(node.op, ast.UAdd):
+                return +value
+            if isinstance(node.op, ast.Not):
+                return not value
+        if isinstance(node, ast.BinOp):
+            left, right = evaluate(node.left), evaluate(node.right)
+            if isinstance(node.op, ast.Add):
+                return left + right
+            if isinstance(node.op, ast.Sub):
+                return left - right
+            if isinstance(node.op, ast.Mult):
+                return left * right
+            if isinstance(node.op, ast.Div):
+                return left / right
+            if isinstance(node.op, ast.FloorDiv):
+                return left // right
+            if isinstance(node.op, ast.Mod):
+                return left % right
+        if isinstance(node, ast.BoolOp):
+            if isinstance(node.op, ast.And):
+                result = evaluate(node.values[0])
+                for item in node.values[1:]:
+                    if not result:
+                        return result
+                    result = evaluate(item)
+                return result
+            result = evaluate(node.values[0])
+            for item in node.values[1:]:
+                if result:
+                    return result
+                result = evaluate(item)
+            return result
+        if isinstance(node, ast.Compare):
+            left = evaluate(node.left)
+            for op, comparator in zip(node.ops, node.comparators):
+                right = evaluate(comparator)
+                if isinstance(op, ast.Eq):
+                    ok = left == right
+                elif isinstance(op, ast.NotEq):
+                    ok = left != right
+                elif isinstance(op, ast.Lt):
+                    ok = left < right
+                elif isinstance(op, ast.LtE):
+                    ok = left <= right
+                elif isinstance(op, ast.Gt):
+                    ok = left > right
+                elif isinstance(op, ast.GtE):
+                    ok = left >= right
+                elif isinstance(op, ast.In):
+                    ok = left in right
+                elif isinstance(op, ast.NotIn):
+                    ok = left not in right
+                else:  # validation should make this unreachable
+                    raise ConfigError(f"unsupported comparison {type(op).__name__}")
+                if not ok:
+                    return False
+                left = right
+            return True
+        if isinstance(node, ast.IfExp):
+            return evaluate(node.body) if evaluate(node.test) else evaluate(node.orelse)
+        raise ConfigError(f"unsupported expression node {type(node).__name__}")
+
     try:
-        return eval(compile(tree, "<config>", "eval"), {"__builtins__": {}}, namespace)  # noqa: S307
+        return evaluate(tree)
     except ConfigError:
         raise
     except Exception as exc:
