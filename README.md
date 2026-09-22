@@ -109,6 +109,8 @@ Zero third-party dependencies (pure standard library), Python ≥ 3.10.
 
 A few adaptations that make a *self-hosted* engine usable are wrong for a cloud provider, so they are gated behind an optional `service` field on the provider row. Absent or unrecognised means "not local" and nothing below applies — a typo can never reroute a provider.
 
+The gate follows the provider `model.primary` names (or, when it is unset, the first provider carrying a default model — the same one the router will try first). An unresolvable primary resolves to "not local": an unknown must not switch the gate on.
+
 ```json
 {"id": "local", "name": "provider:local",
  "config": {"service": "ollama", "wire": "openai",

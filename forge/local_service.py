@@ -48,6 +48,12 @@ from .thinking import normalise_thinking_mode
 LOCAL_SERVICES: tuple[str, ...] = ("ollama", "llamacpp", "mnn")
 
 # Accepted spellings → canonical id. Keys are lowercased, stripped forms.
+#
+# ``"llama"`` is kept deliberately, though a bare "llama" is ambiguous (it is
+# also a model family name). The asymmetry decides it: failing to gate a real
+# local engine hands it ``/chat/completions``, which Ollama resets — a hard
+# failure — whereas over-gating needs someone to put an odd string like
+# ``"proxy/llama"`` in a field whose value is meant to be an engine id anyway.
 SERVICE_ALIASES: dict[str, str] = {
     "ollama": "ollama",
     "llama.cpp": "llamacpp",
@@ -84,9 +90,13 @@ def normalise_service(value: Any) -> str:
 
     Unknown values normalise to ``""`` (not-local) rather than raising — a
     typo must never silently switch a cloud provider onto local-only paths.
-    Host-embedded spellings are tolerated (``"ollama:11434"``,
-    ``"Ollama (local)"``), but compound tokens are *not* split on ``-``/``.``
-    so that ``"llama-cpp-typo"`` cannot match ``llamacpp``.
+
+    Matching surface: the *whole* value is tried first, then each token after
+    splitting on ``/ : ( ) [ ] , ; =`` and whitespace. So ``"ollama:11434"`` and
+    ``"http://127.0.0.1/mnn"`` resolve (the ``/`` split is what makes a
+    host-embedded name findable), while ``"llama-cpp-typo"`` does not — ``-``
+    and ``.`` are deliberately NOT separators, so a mangled alias stays whole
+    and unmatched instead of being chopped into a valid one.
     """
     key = str(value or "").strip().lower()
     if not key:
@@ -144,9 +154,13 @@ def profile(service: Any) -> ServiceProfile:
 
 
 def _has_version_suffix(base_url: str) -> bool:
-    """True when the base URL already carries a version segment."""
+    """True when the base URL already carries a version segment.
+
+    ``/api`` counts as a version segment so a base like ``.../11434/api``
+    does not become ``/api/v1/chat/completions``.
+    """
     tail = str(base_url or "").rstrip("/").lower()
-    return tail.endswith("/v1") or tail.endswith("/v1/") or tail.endswith("/api")
+    return tail.endswith("/v1") or tail.endswith("/api")
 
 
 def chat_request_path(service: Any, wire: str, base_url: str = "") -> str:
@@ -203,11 +217,28 @@ def thinking_token_cap(service: Any, *, engaged: bool,
     return LOCAL_THINKING_CAP
 
 
+def _default_model(conf: dict[str, Any]) -> str:
+    """Mirror ModelRouter's notion of a provider's default model."""
+    return str((conf or {}).get("model", (conf or {}).get("defaultModel", "")) or "")
+
+
 def service_from_config(config: Any, *, provider_id: str = "") -> str:
     """Resolve the service of the provider the run will actually use.
 
-    Prefers the provider named by ``model.primary``; falls back to scanning
-    provider rows so a config whose primary is unset still resolves.
+    The gate must key off the *same* provider ``ModelRouter._order`` will try
+    first, or a cloud run can come out of the gate with local-only behaviour
+    switched on. Three cases, all mirroring ``_order``:
+
+    1. ``model.primary`` names a provider row -> that row's service.
+    2. no ``model.primary`` -> the first provider row carrying a default model
+       (``_order``'s own fallback).
+    3. primary names an unknown row, or nothing resolves -> ``""``.
+
+    Case 3 is deliberately the empty string rather than a scan for "any row
+    that happens to declare a service": an unresolvable primary is an
+    *unknown*, and unknowns must not switch the gate on. A previous version
+    scanned, which made a cloud run (cloud primary absent, a local row present)
+    resolve to the local engine.
     """
     if config is None:
         return ""
@@ -227,17 +258,21 @@ def service_from_config(config: Any, *, provider_id: str = "") -> str:
             primary = None
         if isinstance(primary, (list, tuple)) and primary:
             target = str(primary[0])
-        else:
-            target = str(primary or "")
+        elif isinstance(primary, str):
+            # A bare string primary is malformed (ModelRouter would explode it
+            # into a character tuple). Do not pretend to know which provider it
+            # meant; treat it as unresolvable.
+            target = ""
 
     if target:
         for rid, conf in provider_rows:
             if rid == target:
                 return normalise_service((conf or {}).get("service"))
+        return ""        # primary names a row we do not have: unknown, no gate
+
     for _rid, conf in provider_rows:
-        sid = normalise_service((conf or {}).get("service"))
-        if sid:
-            return sid
+        if _default_model(conf):
+            return normalise_service((conf or {}).get("service"))
     return ""
 
 

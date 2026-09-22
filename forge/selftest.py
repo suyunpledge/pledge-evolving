@@ -42,6 +42,32 @@ def check(name: str, ok: bool, detail: str = "") -> None:
     RESULTS.append((name, bool(ok), detail))
 
 
+# Markers that turn a *mention* of a boundary into a denial of it. Kept narrow
+# on purpose: the legitimate sentence itself reads "Reads are **not**
+# sandboxed", so a bare "not" must never be a marker, or the guard would reject
+# the very wording it demands.
+_BOUNDARY_DENIALS: tuple[str, ...] = (
+    "false", "untrue", "incorrect", "misleading", "no longer",
+    "claims", "allegedly", "不成立", "是假的", "不实", "并非如此", "并非",
+)
+
+
+def boundary_stated(text: str, phrases: tuple[str, ...]) -> bool:
+    """True when one of ``phrases`` is present in a non-denying context.
+
+    Substring-presence alone was the original behaviour, and it let a sentence
+    like "the docs claim <phrase>, but that is false" satisfy the guard. Here a
+    phrase only counts when it appears on a line that does not also deny it.
+    """
+    for line in (text or "").splitlines():
+        low = line.lower()
+        if any(d in low for d in _BOUNDARY_DENIALS):
+            continue
+        if any(p in line for p in phrases):
+            return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 
 class ScriptedTransport:
@@ -1877,28 +1903,61 @@ def test_global_optimizations() -> None:
 
     # F4-4/F4-5 文档对齐（3.2）：readme 已知边界必须显式写明读侧不受沙箱
     # 约束与 allow 恒高于 mode 基线，防止表述回退（repo 形态下守卫）。
-    # 2026-09-21：README 主体改为英文后，守卫改为按语言各认一套等价表述——
-    # 任一语言把这两条边界写明即通过；两种表述都缺仍然是红灯。
+    #
+    # 2026-09-21（全栈维护师审查 ISSUE-2）三处收紧：
+    #   1. 中文留存版 README.zh.md 一并纳入——任一文件同时写明两条即通过
+    #      （旧实现只读 README.md，注释却声称「任一语言」，言行不一）；
+    #   2. 由纯子串存在性改为**非否定语境**判定——「文档声称 X，但这是假的」
+    #      这类句子不再能骗过守卫；
+    #   3. 补上守卫自身的负例断言（见下方 guard-selftest），作者与守卫之间的
+    #      信任缺口收窄一格。
     _root = Path(__file__).resolve().parent.parent
-    readme_path = next((p for p in (_root / "README.md", _root / "readme.md") if p.is_file()),
-                       _root / "README.md")
-    if readme_path.is_file():
-        readme_text = readme_path.read_text(encoding="utf-8")
-        _read_side = ("读取不受沙箱约束" in readme_text
-                      or "Reads are not sandboxed" in readme_text)
-        _allow_over_mode = ("恒高于 mode 基线" in readme_text
-                            or "outrank the mode baseline" in readme_text)
+    _readme_candidates = (_root / "README.md", _root / "readme.md", _root / "README.zh.md")
+    _read_side_phrases = ("读取不受沙箱约束", "Reads are not sandboxed")
+    _allow_over_mode_phrases = ("恒高于 mode 基线", "outrank the mode baseline")
+    _checked_readmes: list[str] = []
+    _boundary_ok = False
+    for _rp in _readme_candidates:
+        if not _rp.is_file():
+            continue
+        _checked_readmes.append(_rp.name)
+        _text = _rp.read_text(encoding="utf-8")
+        if (boundary_stated(_text, _read_side_phrases)
+                and boundary_stated(_text, _allow_over_mode_phrases)):
+            _boundary_ok = True
+            break
+    if _checked_readmes:
         check("global:readme-documents-read-side-boundary",
-              _read_side and _allow_over_mode,
-              "readme 已知边界缺读侧/allow 语义表述")
+              _boundary_ok,
+              "readme 已知边界缺读侧/allow 语义表述，或该表述处于否定语境 "
+              f"(checked={_checked_readmes})")
+        # 守卫自身的负例：证明它对「表述缺失」与「表述被否定」都能翻红，
+        # 而不是永远判绿（旧实现没有任何负例断言）。
+        check("global:readme-guard-rejects-missing",
+              not boundary_stated("nothing about sandboxes here", _read_side_phrases))
+        check("global:readme-guard-rejects-denial",
+              not boundary_stated(
+                  "The docs claim Reads are not sandboxed, but that is false.",
+                  _read_side_phrases))
+        check("global:readme-guard-accepts-assertion",
+              boundary_stated("**Reads are not sandboxed**: details follow.", _read_side_phrases))
         # H12（3.2 回执）：readme 计数漂移——硬编码项数（350/228/80）与席位
         # 锚点计数（如 config:* (16)）每次扩断言都会过时；守卫钉死它们不再回来
         # WB P2 修复：扩大拦截范围，不再只盯特定数字，任何 \d+ 项 都进不來
+        # 2026-09-21：计数守卫对每个存在的 README 都查（不只是主文件）。
         import re as _re2
+        _count_offenders = []
+        for _cp in _readme_candidates:
+            if not _cp.is_file():
+                continue
+            _ctext = _cp.read_text(encoding="utf-8")
+            if (_re2.search(r"\b\d+\s*项", _ctext)
+                    or _re2.search(r"[a-z]+:\*\s*\(\d+\)", _ctext)):
+                _count_offenders.append(_cp.name)
         check("global:readme-no-hardcoded-counts",
-              not _re2.search(r"\b\d+\s*项", readme_text)
-              and not _re2.search(r"[a-z]+:\*\s*\(\d+\)", readme_text),
-              "readme 又出现硬编码检查数/席位锚点计数（H12 回归）")
+              not _count_offenders,
+              "readme 又出现硬编码检查数/席位锚点计数（H12 回归）: "
+              f"{_count_offenders}")
 
     # T1（3.5）：前缀缓存友好化——system prompt 与工具声明在多轮之间
     # 必须字节级稳定，才能命中 Anthropic/OpenAI 的 prompt cache。
@@ -3507,6 +3566,126 @@ def test_local_service() -> None:
     # must no longer gate the run.
     check("localsvc:config-service-follows-primary",
           service_from_config(_cfg("cloud")) == "", service_from_config(_cfg("cloud")))
+
+    # -- 9) Regression: the fallback must agree with the provider ModelRouter
+    # will actually try first (review ISSUE-1). The old fallback scanned for
+    # "any row declaring a service", so this exact config -- primary absent,
+    # cloud row first, local row second -- resolved to the local engine while
+    # the run went to the cloud.
+    def _cfg_no_primary(cloud_first: bool) -> Config:
+        c = Config()
+        cloud_row = {"id": "cloud", "name": "provider:cloud",
+                     "config": {"wire": "openai", "baseURL": "https://api.deepseek.com",
+                                "model": "deepseek-flash"}}
+        local_row = {"id": "local", "name": "provider:local",
+                     "config": {"service": "ollama", "wire": "openai",
+                                "baseURL": "http://127.0.0.1:11434", "model": "qwen3:8b"}}
+        rows = [{"id": "model", "name": "model:router", "config": {}}]
+        rows += [cloud_row, local_row] if cloud_first else [local_row, cloud_row]
+        c.apply_patch(rows, label="no-primary")
+        return c
+
+    cfg_np = _cfg_no_primary(cloud_first=True)
+    router_np = ModelRouter.from_config(cfg_np)
+    order_np = router_np._order(None)
+    first_np = router_np.providers[order_np[0][0]].service if order_np else ""
+    check("localsvc:fallback-agrees-with-router",
+          service_from_config(cfg_np) == first_np == "",
+          f"config={service_from_config(cfg_np)!r} router_first={first_np!r}")
+    check("localsvc:fallback-no-gate-on-cloud-run",
+          resolve_thinking_mode("smart", service_from_config(cfg_np)) == "smart")
+    cfg_lf = _cfg_no_primary(cloud_first=False)
+    check("localsvc:fallback-local-first-still-gates",
+          service_from_config(cfg_lf) == "ollama", service_from_config(cfg_lf))
+    check("localsvc:unknown-primary-no-gate",
+          service_from_config(_cfg("ghost")) == "", service_from_config(_cfg("ghost")))
+
+    # -- 10) End-to-end: the URL a REAL transport puts on the wire (review
+    # missing-assertion #1). Function-level assertions cannot catch a caller
+    # that builds its own URL, so observe the request instead.
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from .model import HttpTransport
+
+    captured_paths: list[str] = []
+
+    class _PathProbe(BaseHTTPRequestHandler):
+        def do_POST(self):
+            captured_paths.append(self.path)
+            length = int(self.headers.get("Content-Length", 0))
+            self.rfile.read(length)
+            body = {"choices": [{"message": {"role": "assistant", "content": "ok"},
+                                 "finish_reason": "stop"}],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1}}
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(body).encode())
+
+        def log_message(self, *a):
+            pass
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), _PathProbe)
+    probe_port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        non_local = ("", "deepseek", "ollama-proxy", "not-ollama",
+                     "llama-cpp-typo", "xollama", "ollama2")
+        for svc in non_local:
+            prov = Provider(name="probe", base_url=f"http://127.0.0.1:{probe_port}",
+                            wire="openai", default_model="m", service=svc)
+            ModelRouter([prov], transport=HttpTransport(), chain=[("probe", "m")],
+                        retries_per_provider=0).complete([{"role": "user", "content": "hi"}])
+        check("localsvc:e2e-cloud-path-byte-identical",
+              captured_paths == [CLOUD_CHAT_PATH] * len(non_local),
+              f"paths={captured_paths}")
+        captured_paths.clear()
+        local_prov = Provider(name="probe", base_url=f"http://127.0.0.1:{probe_port}",
+                              wire="openai", default_model="m", service="ollama")
+        ModelRouter([local_prov], transport=HttpTransport(), chain=[("probe", "m")],
+                    retries_per_provider=0).complete([{"role": "user", "content": "hi"}])
+        check("localsvc:e2e-local-path-gated",
+              captured_paths == [OPENAI_COMPAT_CHAT_PATH],
+              f"paths={captured_paths}")
+    finally:
+        srv.shutdown()
+
+    # -- 11) The fuse has to reach the wire, not just be computed (review
+    # missing-assertion #3). A capture transport records the options the loop
+    # actually passes for the contemplation rounds.
+    from .loop import mount_contrib_extensions
+
+    class _CapProbe:
+        def __init__(self) -> None:
+            self.caps: list[Any] = []
+
+        def complete(self, provider, model, messages, **options):
+            self.caps.append(options.get("max_tokens"))
+            return ("<think>x</think>done", Usage(prompt_tokens=1, completion_tokens=1), {})
+
+    with tempfile.TemporaryDirectory() as tmp_cap:
+        ws_cap = Path(tmp_cap)
+        seats_cap = mount_contrib_extensions(home=ws_cap)
+        if seats_cap.get("thinking") is not None:
+            for svc, want_cap in (("ollama", True), ("deepseek", False)):
+                probe = _CapProbe()
+                r_cap = ModelRouter([Provider(name="m", base_url="http://x")],
+                                    transport=probe, chain=[("m", "m")],
+                                    retries_per_provider=0)
+                a_cap = Agent(home=ws_cap, workspace=ws_cap, router=r_cap,
+                              registry=build_builtin_registry(),
+                              policy=Policy(mode=Mode.PLAN, sandbox=Sandbox.WORKSPACE_WRITE,
+                                            workspace=ws_cap, non_interactive=True),
+                              limits=LoopLimits(max_steps=1), extensions=seats_cap,
+                              thinking="on", service=svc)
+                a_cap.run("分析这个任务的要点")
+                seen_caps = [c for c in probe.caps if c is not None]
+                if want_cap:
+                    check("localsvc:fuse-reaches-wire-local",
+                          bool(seen_caps) and all(c == LOCAL_THINKING_CAP for c in seen_caps),
+                          f"caps={seen_caps}")
+                else:
+                    check("localsvc:fuse-absent-on-wire-cloud",
+                          not seen_caps, f"caps={seen_caps}")
 
 
 # ---------------------------------------------------------------------------
