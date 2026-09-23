@@ -31,6 +31,12 @@ EFFECTIVE_RATES: dict[str, tuple[str, float, str]] = {
     "deepseek-v4-pro": ("CNY", 0.1595, "同上账单未拆分模型，暂共用同一有效单价"),
     "mimo-v2.5": ("CNY", 0.0754, "由 2026-09-14 账单反推（金额从略）"),
     "mimo-v2.5-pro": ("CNY", 0.0754, "同上账单未拆分型号，暂共用同一有效单价"),
+
+    # V2.6 系列（2026-09-23 上线）：能力对标 K3/GLM5.3/Qwen3.8Max，单价未变，
+    # 沿用 9/14 账单反推的 mimo 混合有效单价；三型号账单未拆分，共用同一行。
+    "mimo-v2.6-flash": ("CNY", 0.0754, "V2.6 同价（2026-09-23 用户确认），沿用 mimo 混合有效单价"),
+    "mimo-v2.6-pro": ("CNY", 0.0754, "同 mimo-v2.6-flash（V2.6 三型号账单未拆分）"),
+    "mimo-v2.6-pro-ultraspeed": ("CNY", 0.0754, "同 mimo-v2.6-flash（V2.6 三型号账单未拆分）"),
     # R1-1：claude-sonnet-5 在 forge 语境 = 环回网关的广告名，网关
     # 把它翻译成 mimo-v2.5 上游（gateway --model-map claude-sonnet-5=mimo-v2.5），
     # 上面那条账单正是经此链路产生的 → 有效单价同 mimo。0.0（审查档按次

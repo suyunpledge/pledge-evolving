@@ -745,23 +745,52 @@ class Agent:
                 # 瘦身 B：tool_call_native 不再单独成事件——wire/call_id 并入
                 # 对应的 tool_call 事件（下方合并），三元拍平为一元
             else:
-                match = TOOL_CALL_RE.search(text)
-                if not match:
-                    if self.session is not None:
-                        self._emit(type="assistant_message", content=text)
-                    return self._finish(RunReport(text=text.strip(), steps=steps, usage=usage_total,
-                                                  stopped="final", events=self.events))
-
-                prose = TOOL_CALL_RE.sub("", text).strip()
-                try:
-                    call = json.loads(match.group(1))
-                    tool_name = str(call.get("tool", ""))
-                    args = dict(call.get("args") or {})
-                except json.JSONDecodeError as exc:
-                    steps.append(Step(index=index, note=f"bad tool block: {exc}"))
+                text_calls = toolwire.parse_text_protocol_calls(text, self._run_model)
+                if not text_calls:
+                    if "{" not in text:
+                        if self.session is not None:
+                            self._emit(type="assistant_message", content=text)
+                        return self._finish(RunReport(text=text.strip(), steps=steps, usage=usage_total,
+                                                      stopped="final", events=self.events))
+                    # 有花括号却提不出合法调用块：截断/键名漂移的工具调用给一次
+                    # 自纠机会（对齐旧 bad-tool-block retry 语义）
+                    steps.append(Step(index=index, note="no valid tool call block"))
                     messages.append({"role": "assistant", "content": text})
-                    messages.append({"role": "user", "content": f"Tool block was not valid JSON: {exc}. Retry."})
+                    messages.append({"role": "user", "content":
+                                     "No valid tool call found. Emit exactly one block like "
+                                     "{\"tool\": <name>, \"args\": {...}} with a registered tool name; "
+                                     "to answer in prose, reply without braces."})
                     continue
+                # 文本协议调用：brace-depth 提取，多块全执行——模型会把并行调用
+                # 串在一条回复里（2026-09-23 MiMo V2.6 T7 实测三块串联，旧
+                # 非贪婪正则只抓第一块且嵌套 args 必截断）
+                answered_text: list[tuple[str, str, bool]] = []
+                for one in text_calls:
+                    tool_name = str(one.get("name") or "")
+                    args = dict(one.get("arguments") or {})
+                    step = Step(index=len(steps) + 1, tool=tool_name, args=args)
+                    if self.checkpoints is not None and tool_name in WRITE_TOOLS:
+                        point = self.checkpoints.snapshot(f"before {tool_name}")
+                        if point is not None:
+                            step.note = f"checkpoint {point.commit[:8]}"
+                            self._emit(type="checkpoint", commit=point.commit, label=point.label)
+                    result = self.registry.invoke(tool_name, args, self._tool_context())
+                    step.result = (result.content or result.error)[: self.limits.max_tool_result]
+                    step.decision = ("deny" if not result.ok and "denied" in result.error
+                                     else ("ok" if result.ok else "error"))
+                    steps.append(step)
+                    answered_text.append((tool_name, step.result, result.ok))
+                    authz = (result.meta or {}).get("authorization") if isinstance(result.meta, dict) else None
+                    self._emit(type="tool_call", tool=tool_name, args=args,
+                               result=step.result[:1500], ok=result.ok, decision=step.decision,
+                               step=step.index, native=False, authorization=authz)
+                messages.append({"role": "assistant", "content": text})
+                for tool_name, body, ok in answered_text:
+                    messages.append({
+                        "role": "user",
+                        "content": f"<tool_result tool=\"{tool_name}\" ok=\"{ok}\">{body}</tool_result>",
+                    })
+                continue
 
             if native_calls:
                 answered: list[tuple[toolwire.ToolCall, str, bool]] = []
@@ -789,27 +818,7 @@ class Agent:
                 messages.extend(toolwire.tool_result_messages(answered, wire))
                 continue
 
-            step = Step(index=index, tool=tool_name, args=args)
-            if self.checkpoints is not None and tool_name in WRITE_TOOLS:
-                point = self.checkpoints.snapshot(f"before {tool_name}")
-                if point is not None:
-                    step.note = f"checkpoint {point.commit[:8]}"
-                    self._emit(type="checkpoint", commit=point.commit, label=point.label)
 
-            result = self.registry.invoke(tool_name, args, self._tool_context())
-            step.result = (result.content or result.error)[: self.limits.max_tool_result]
-            step.decision = "deny" if not result.ok and "denied" in result.error else ("ok" if result.ok else "error")
-            steps.append(step)
-            authz = (result.meta or {}).get("authorization") if isinstance(result.meta, dict) else None
-            self._emit(type="tool_call", tool=tool_name, args=args,
-                       result=step.result[:1500], ok=result.ok, decision=step.decision, step=index,
-                       authorization=authz, native=False)
-
-            messages.append({"role": "assistant", "content": text})
-            messages.append({
-                "role": "user",
-                "content": f"<tool_result tool=\"{tool_name}\" ok=\"{result.ok}\">{step.result}</tool_result>",
-            })
 
         self._emit(type="loop_stop", reason="max_steps", steps=len(steps))
         return self._finish(RunReport(

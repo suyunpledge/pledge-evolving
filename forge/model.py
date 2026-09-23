@@ -233,7 +233,9 @@ class HttpTransport:
 
         from .toolwire import parse_tool_calls
 
-        calls = parse_tool_calls(message, provider.wire)
+        # model 必须透传：repair_arguments 的 MODEL_QUIRKS 按模型名开关，
+        # 丢掉它等于怪癖表永不生效（旧 _model 属性全树无写入点）。
+        calls = parse_tool_calls(message, provider.wire, model=model)
         return text, usage, {
             "tool_calls": [call.to_raw() for call in calls],
             "wire": provider.wire,

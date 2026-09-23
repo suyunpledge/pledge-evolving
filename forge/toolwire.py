@@ -29,6 +29,8 @@ from .tool_adapter import (
     parse_tool_call_tags,
     repair_arguments,
     sanitize_request_tools,
+    normalize_text_call,
+    parse_text_protocol_calls,
 )
 
 WIRES = ("openai", "anthropic")
@@ -96,8 +98,15 @@ def tool_declarations(specs: Iterable, wire: str = "openai") -> list[dict[str, A
     return sanitize_request_tools(out)
 
 
-def parse_tool_calls(message: dict[str, Any], wire: str = "openai") -> list[ToolCall]:
-    """Extract native tool calls from a response message of either shape."""
+def parse_tool_calls(message: dict[str, Any], wire: str = "openai",
+                     model: str = "") -> list[ToolCall]:
+    """Extract native tool calls from a response message of either shape.
+
+    ``model`` feeds the per-model quirk table (MODEL_QUIRKS): without it every
+    repair layer falls back to defaults and model-specific fixes never activate
+    -- the old ``parse_tool_calls._model`` attribute had no writer anywhere in
+    the tree (2026-09-23 audit), i.e. the quirk table was dead wiring.
+    """
     calls: list[ToolCall] = []
     if not isinstance(message, dict):
         return calls
@@ -109,7 +118,7 @@ def parse_tool_calls(message: dict[str, Any], wire: str = "openai") -> list[Tool
             function = row.get("function") or {}
             raw_args = function.get("arguments")
             # 经 tool_adapter 分层修复：清洗→解析→修复→补全→类型矫正
-            args = repair_arguments(raw_args, model_name=getattr(parse_tool_calls, "_model", ""))
+            args = repair_arguments(raw_args, model_name=model)
             calls.append(ToolCall(id=str(row.get("id") or ""), name=str(function.get("name") or ""),
                                   args=args if isinstance(args, dict) else {}, wire="openai", raw=row))
         if not calls:
@@ -120,13 +129,13 @@ def parse_tool_calls(message: dict[str, Any], wire: str = "openai") -> list[Tool
                     calls.append(ToolCall(
                         id=str(tag_call.get("id") or ""),
                         name=str(tag_call.get("name") or ""),
-                        args=repair_arguments(tag_call.get("arguments")),
+                        args=repair_arguments(tag_call.get("arguments"), model_name=model),
                         wire="openai", raw=tag_call))
         return calls
 
     for block in message.get("content") or []:
         if isinstance(block, dict) and block.get("type") == "tool_use":
-            args = repair_arguments(block.get("input"))
+            args = repair_arguments(block.get("input"), model_name=model)
             calls.append(ToolCall(id=str(block.get("id") or ""), name=str(block.get("name") or ""),
                                   args=args if isinstance(args, dict) else {}, wire="anthropic",
                                   raw=block))
@@ -217,6 +226,7 @@ __all__ = [
     "assistant_message",
     "openai_assistant_message",
     "parse_tool_calls",
+    "parse_text_protocol_calls",
     "summarize_calls",
     "tool_declarations",
     "tool_result_messages",

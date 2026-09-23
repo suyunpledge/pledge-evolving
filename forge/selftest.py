@@ -238,6 +238,19 @@ def test_tools() -> None:
         denied = registry.invoke("write_file", {"path": "x.txt", "content": "nope"}, ctx)
         check("tools:policy-gates-invoke", not denied.ok and "denied" in denied.error, denied.error)
         unknown = registry.invoke("nope", {}, ctx)
+        (workspace / "__pycache__").mkdir(exist_ok=True)
+        (workspace / "__pycache__" / "cached.cpython-312.pyc").write_bytes(b"repair_arguments\x00binary")
+        (workspace / "real_grep_target.py").write_text("def repair_arguments(): pass\n", encoding="utf-8")
+        g = registry.invoke("grep", {"pattern": "repair_arguments", "root": "."}, ctx)
+        check("tools:grep-skips-pycache",
+              g.ok and "__pycache__" not in g.content and "real_grep_target.py" in g.content,
+              str(g.content)[:200])
+        with tempfile.TemporaryDirectory() as outside_tmp:
+            (Path(outside_tmp) / "outside_needle.py").write_text("outside_needle = 1\n", encoding="utf-8")
+            g2 = registry.invoke("grep", {"pattern": "outside_needle", "root": outside_tmp}, ctx)
+        check("tools:grep-out-of-workspace-root-safe",
+              g2.ok and "outside_needle" in g2.content,
+              str(g2.error or g2.content)[:200])
         check("tools:unknown-tool-is-not-fatal", not unknown.ok and "unknown tool" in unknown.error)
 
 
@@ -1131,6 +1144,11 @@ def test_pricing() -> None:
     check("pricing:rates-are-documented", all(row[2] for row in EFFECTIVE_RATES.values()),
           "每条有效单价都要注明来源")
 
+    check("pricing:mimo-v26-rates-registered",
+          all(abs(rate_for(m) - 0.0754) < 1e-9 for m in
+              ("mimo-v2.6-flash", "mimo-v2.6-pro", "mimo-v2.6-pro-ultraspeed")),
+          "V2.6 三型号必须有与 v2.5 同价的有效单价")
+
 
 def test_toolwire() -> None:
     from .toolwire import (ToolCall, assistant_message, parse_tool_calls, summarize_calls,
@@ -1138,6 +1156,8 @@ def test_toolwire() -> None:
     from .tools import build_builtin_registry
 
     specs = build_builtin_registry().all_specs()
+    from .tool_adapter import get_quirks, parse_text_protocol_calls
+
     openai_decl = tool_declarations(specs[:3], "openai")
     check("toolwire:openai-declaration-shape",
           openai_decl[0]["type"] == "function" and "parameters" in openai_decl[0]["function"])
@@ -1183,6 +1203,28 @@ def test_toolwire() -> None:
 
     check("toolwire:assistant-replay-openai",
           assistant_message("t", calls, "openai")["tool_calls"][0]["id"] == "call_1")
+
+    # 2026-09-23 MiMo V2.6 契合回归（T7 实测三变体 + 多块串联 + 截断安全）
+    t7 = ('{"tool": "list_dir", "args": {"path": "bundles/"}}</function>'
+          '{"tool": "read_range", "path": "b.json", "start": 1, "end": 20}</function>'
+          '{"function": "grep", "args": {"pattern": "selftest", "root": "README.md"}}</function>')
+    blocks = parse_text_protocol_calls(t7)
+    check("toolwire:text-protocol-multi-block", len(blocks) == 3, str(blocks))
+    check("toolwire:text-protocol-block-names",
+          [b["name"] for b in blocks] == ["list_dir", "read_range", "grep"], str(blocks))
+    flat_ok = (len(blocks) == 3 and blocks[1]["name"] == "read_range"
+               and blocks[1]["arguments"] == {"path": "b.json", "start": 1, "end": 20})
+    check("toolwire:text-protocol-flat-args", flat_ok, str(blocks[1:2]))
+    check("toolwire:text-protocol-truncated-safe",
+          parse_text_protocol_calls('{"tool": "x", "args": {"a": ') == [],
+          "truncated block must not crash nor half-parse")
+    q = get_quirks("mimo-v2.6-flash")
+    check("tool_adapter:quirks-match-v26-model",
+          q.get("fix_double_encoded") is True and q.get("close_truncated_json") is True, str(q))
+    calls_model = parse_tool_calls(openai_message, "openai", model="mimo-v2.6-flash")
+    check("toolwire:model-kwarg-plumbed",
+          bool(calls_model) and calls_model[0].name == "read_file",
+          str([c.to_raw() for c in calls_model]))
     replay = assistant_message("t", calls2, "anthropic")
     check("toolwire:assistant-replay-anthropic",
           any(b.get("type") == "tool_use" and b.get("id") == "toolu_2" for b in replay["content"]))

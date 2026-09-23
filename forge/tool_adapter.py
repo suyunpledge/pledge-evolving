@@ -297,17 +297,6 @@ def _try_repair(s: str, quirks: dict[str, bool]) -> dict[str, Any] | None:
     return None
 
 
-    closed = _close_json(s)
-    if closed is not None:
-        return closed
-
-
-    closed = _close_json(s)
-    if closed is not None:
-        return closed
-
-
-# ─── L4: 截断补全 ────────────────────────────────────────
 # ─── L4: 截断补全 ────────────────────────────────────────
 
 def _close_json(s: str) -> dict[str, Any] | None:
@@ -452,6 +441,88 @@ def repair_arguments(
     return {"_raw": raw_args[:2000]}
 
 
+
+# ─── 文本协议调用块：键名归一 ────────────────────────────
+# 保留键 = 不属于业务参数的结构键；平铺参数形态靠它把剩余键收进 args。
+_CALL_RESERVED_KEYS = frozenset({"id", "name", "tool", "function", "type",
+                                 "arguments", "parameters", "args"})
+
+
+def normalize_text_call(obj: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
+    """把文本协议调用块归一成 (name, args)；不是调用块返回 None。
+
+    实测三种真实变体（2026-09-23 MiMo V2.6 并行任务 T7）：
+      {"tool": "list_dir", "args": {...}}          -- tool 键 + args 包裹
+      {"tool": "read_range", "path": ..., "start"}  -- tool 键 + 参数平铺
+      {"function": "grep", "args": {...}}           -- function 键
+    旧实现只认 name 键 + arguments/parameters 包裹，三块全部被丢弃，
+    导致模型并行调用被静默吞掉（0 次执行、rc=0 假成功）。
+    """
+    name = obj.get("name") or obj.get("tool")
+    fn = obj.get("function")
+    if not name:
+        # OpenAI 风格 function 字段：字符串即名字，字典则取其 name
+        if isinstance(fn, str):
+            name = fn
+        elif isinstance(fn, dict):
+            name = fn.get("name")
+            if obj.get("arguments") is None and fn.get("arguments") is not None:
+                obj = {**obj, "arguments": fn["arguments"]}
+    if not isinstance(name, str) or not name.strip():
+        return None
+    args = obj.get("arguments")
+    if args is None:
+        args = obj.get("parameters")
+    if args is None:
+        args = obj.get("args")
+    if isinstance(args, str):
+        # arguments 可能是 JSON 字符串（"arguments": "{\"city\":...}"）
+        try:
+            args = json.loads(args)
+        except (json.JSONDecodeError, ValueError):
+            pass
+    if not isinstance(args, dict):
+        # 平铺参数形态：除结构键外的顶层键即参数
+        args = {k: v for k, v in obj.items() if k not in _CALL_RESERVED_KEYS}
+    return name.strip(), args
+
+
+def parse_text_protocol_calls(text: str, model_name: str = "") -> list[dict[str, Any]]:
+    """从文本协议回复中提取全部工具调用块（brace-depth，不截断嵌套）。
+
+    替代 loop 旧的单块非贪婪正则：
+      * 非贪婪 ``\\{.*?\\}`` 在嵌套 args 的第一个 ``}`` 处截断 -> loads 失败
+        -> 白白 retry；``}</function>{...}`` 多块串联只能抓第一块；
+      * 实测部分场景 search 直接 miss，调用块被当最终文本返回 -> 静默失败。
+    本函数用 _extract_braced_objs（brace-depth + 字符串转义）提取，逐块解析 +
+    normalize_text_call 归一键名，多块全部返回；与 parse_tool_call_tags 同形
+    （每项 {"id", "name", "arguments"}）。
+    """
+    if not text or "{" not in text:
+        return []
+    quirks = get_quirks(model_name)
+    calls: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for raw in _extract_braced_objs(text):
+        obj = _try_json(raw)
+        if obj is None:
+            obj = _try_repair(raw, quirks)
+        if obj is None and quirks.get("close_truncated_json", True):
+            obj = _close_json(raw)
+        if not isinstance(obj, dict):
+            continue
+        parsed = normalize_text_call(obj)
+        if parsed is None:
+            continue
+        name, args = parsed
+        key = (name, json.dumps(args, sort_keys=True))
+        if key in seen:
+            continue
+        seen.add(key)
+        calls.append({"id": str(obj.get("id") or ""), "name": name, "arguments": args})
+    return calls
+
+
 # ─── Hermes 风格 <tool_call> 提取 ────────────────────────
 
 def parse_tool_call_tags(content: str) -> list[dict[str, Any]]:
@@ -466,22 +537,17 @@ def parse_tool_call_tags(content: str) -> list[dict[str, Any]]:
         obj = _try_json(raw)
         if obj is None:
             obj = _try_repair(raw, get_quirks(""))
-        if isinstance(obj, dict) and "name" in obj:
-            args = obj.get("arguments") or obj.get("parameters") or {}
-            # arguments 可能是 JSON 字符串（模型输出 "arguments": "{\"city\":...}"）
-            if isinstance(args, str):
-                try:
-                    args = json.loads(args)
-                except (json.JSONDecodeError, ValueError):
-                    pass
-            key = (obj["name"], json.dumps(args, sort_keys=True))
-            if key not in seen:
-                seen.add(key)
-                calls.append({
-                    "id": obj.get("id", ""),
-                    "name": obj["name"],
-                    "arguments": args if isinstance(args, dict) else {},
-                })
+        if not isinstance(obj, dict):
+            return
+        parsed = normalize_text_call(obj)
+        if parsed is None:
+            return
+        name, args = parsed
+        key = (name, json.dumps(args, sort_keys=True))
+        if key not in seen:
+            seen.add(key)
+            calls.append({"id": obj.get("id", ""), "name": name,
+                           "arguments": args})
 
     for raw in _extract_braced_objs(content or ""):
         _add_call(raw)
@@ -494,17 +560,11 @@ def parse_tool_call_tags(content: str) -> list[dict[str, Any]]:
     if not calls:
         closed = _close_json(content or "")
         if closed is not None:
-            args = closed.get("arguments") or closed.get("parameters") or {}
-            if isinstance(args, str):
-                try:
-                    args = json.loads(args)
-                except (json.JSONDecodeError, ValueError):
-                    pass
-            calls.append({
-                "id": closed.get("id", ""),
-                "name": closed.get("name", ""),
-                "arguments": args if isinstance(args, dict) else {},
-            })
+            parsed = normalize_text_call(closed)
+            if parsed is not None:
+                name, args = parsed
+                calls.append({"id": str(closed.get("id", "") or ""),
+                               "name": name, "arguments": args})
 
     return calls
 

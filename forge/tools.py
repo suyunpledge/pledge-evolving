@@ -246,16 +246,34 @@ def build_builtin_registry(
     def grep(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         import re
 
+        # 排除缓存/版本控制目录与二进制产物：pyc 里的字符串常量会命中任意
+        # 源码 pattern（2026-09-23 实测 T4 结果四行全是 .pyc 假命中，把真
+        # 正的源码命中挤出 100 条窗口）。
+        skip_dirs = {"__pycache__", ".git", "node_modules", ".venv", "venv"}
+        skip_suffixes = {".pyc", ".pyo", ".pyd"}
         pattern = re.compile(str(args.get("pattern", "")))
         root = _resolve(ctx.workspace, args.get("root", "."))
         hits: list[str] = []
         for path in sorted(root.rglob("*")):
-            if not path.is_file() or path.stat().st_size > 512_000:
+            if not path.is_file() or path.suffix in skip_suffixes:
+                continue
+            if any(part in skip_dirs for part in path.parts):
+                continue
+            try:
+                if path.stat().st_size > 512_000:
+                    continue
+            except OSError:
                 continue
             try:
                 for number, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
                     if pattern.search(line):
-                        hits.append(f"{path.relative_to(ctx.workspace)}:{number}: {line.strip()[:160]}")
+                        # root 可指向 workspace 外（绝对路径）时 relative_to 会抛
+                        # ValueError 让整个工具崩掉（实测 2 次）；越界回退绝对路径。
+                        try:
+                            shown: Any = path.relative_to(ctx.workspace)
+                        except ValueError:
+                            shown = path
+                        hits.append(f"{shown}:{number}: {line.strip()[:160]}")
                         if len(hits) >= 100:
                             raise StopIteration
             except StopIteration:
@@ -414,7 +432,9 @@ def build_builtin_registry(
         s = max(1, int(args.get("start", 1)))
         e = min(len(lines), int(args.get("end", len(lines))))
         if not lines or s > e:
-            return ToolResult(ok=False, error=f"empty range {s}-{e} (file has {len(lines)} lines)")
+            return ToolResult(ok=False, error=(
+                f"range {s}-{e} is out of bounds: file has {len(lines)} lines; "
+                f"valid range is 1-{len(lines)}"))
         body = "\n".join(f"{i}\t{lines[i - 1]}" for i in range(s, e + 1))
         return ToolResult(ok=True, content=body, meta={"lines": len(lines), "start": s, "end": e})
 
