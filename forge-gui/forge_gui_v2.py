@@ -24,6 +24,7 @@ import json
 import os
 import platform
 import queue
+import re
 import subprocess
 import sys
 import threading
@@ -42,6 +43,7 @@ from config_model import (  # noqa: E402
     normalize,
     save_user_layer,
 )
+from secret_store import env_for, load as _load_secrets  # noqa: E402
 from forge_client import (  # noqa: E402
     ChatMessage,
     ForgeGatewayClient,
@@ -349,7 +351,7 @@ class ForgeGuiApp:
                  fg=C["text"], font=FONT_SMALL, anchor=tk.W, padx=20)
         self.status_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True)
         self.path_lbl = tk.Label(
-            bot, text=f"{'forge 目录已就绪' if self.run_py else '未找到 run.py'}",
+            bot, text=self._status_label_text(),
             bg=C["bg"], fg=C["muted"], font=FONT_SMALL, padx=12,
         )
         self.path_lbl.pack(side=tk.RIGHT)
@@ -441,6 +443,12 @@ class ForgeGuiApp:
                   activebackground=C["border"], activeforeground=C["text"],
                   font=FONT_UI, relief=tk.FLAT, padx=12, pady=6,
                   command=self._clear_input, cursor="hand2"
+                  ).pack(side=tk.LEFT, padx=(8, 0))
+        # 从 AutoClaw 用户层导入 provider（一次把 18 个 provider 写进 forge 用户层 + 密钥库）
+        tk.Button(btn_bar, text="从 AutoClaw 导入", bg=C["surface2"], fg=C["accent"],
+                  activebackground=C["accent_soft"], activeforeground=C["accent"],
+                  font=FONT_UI, relief=tk.FLAT, padx=12, pady=6,
+                  command=self._import_from_autoclaw, cursor="hand2"
                   ).pack(side=tk.LEFT, padx=(8, 0))
         tk.Label(btn_bar, text="Ctrl + Enter 整理", bg=C["bg"],
                  fg=C["muted"], font=FONT_SMALL).pack(side=tk.RIGHT)
@@ -1028,6 +1036,101 @@ class ForgeGuiApp:
         self.send_entry.focus_set()
         self._set_status(f"已粘贴 {len(text)} 字符到输入框", "info")
 
+
+    def _status_label_text(self) -> str:
+        parts = []
+        if self.run_py:
+            parts.append("forge 目录已就绪")
+        else:
+            parts.append("未找到 run.py")
+        try:
+            secrets = _load_secrets()
+            parts.append("密钥库 " + str(len(secrets)) + " 项" if secrets else "密钥库为空")
+        except Exception:
+            parts.append("密钥库 ?")
+        return "  ·  ".join(parts)
+
+    def _update_status_label(self):
+        try:
+            self.path_lbl.configure(text=self._status_label_text())
+        except Exception:
+            pass
+
+    def _import_from_autoclaw(self):
+        """从 ~/.openclaw-autoclaw/openclaw.json 抓所有 provider，一次写入
+        forge 用户层与密钥库。可用模型数量立即翻倍。
+        """
+        src = Path.home() / ".openclaw-autoclaw" / "openclaw.json"
+        if not src.is_file():
+            self._set_status(f"找不到 AutoClaw 配置：{src}", "error")
+            return
+        try:
+            data = json.loads(src.read_text(encoding="utf-8"))
+        except Exception as exc:
+            self._set_status(f"AutoClaw 配置解析失败：{exc}", "error")
+            return
+        providers = (data.get("models") or {}).get("providers") or {}
+        if not providers:
+            self._set_status("AutoClaw 配置里没有 provider", "warn")
+            return
+        rows = list(self.user_rows)
+        by_id = {r.get("id"): r for r in rows if r.get("id")}
+        env_pairs = []
+        skipped_placeholder = 0
+        for pid, pconf in providers.items():
+            bk = (pconf.get("baseUrl") or pconf.get("baseURL") or "").rstrip("/")
+            ak = pconf.get("apiKey") or ""
+            if not bk:
+                continue
+            models = pconf.get("models") or []
+            if not models:
+                continue
+            mid = models[0].get("name") or models[0].get("id") or "default"
+            if ak == "autoclaw-internal-proxy" or not ak or ak.startswith("Bearer "):
+                skipped_placeholder += 1
+                continue
+            # safe_id 用「短前缀-6位hash」避免 UUID 类 id 截断后撞名
+            raw_id = str(pid).lower()
+            import hashlib as _hl
+            short = re.sub(r"[^a-z0-9_-]+", "_", raw_id).strip("_-")[:24]
+            tag = _hl.md5(raw_id.encode()).hexdigest()[:6]
+            safe_id = (short + "_" + tag)[:40] or "provider"
+            env_name = "FORGE_" + safe_id.upper().replace("-", "_") + "_KEY"
+            row = by_id.get(safe_id)
+            if row is None:
+                row = {"id": safe_id, "name": f"provider:{safe_id}"}
+                rows.append(row)
+                by_id[safe_id] = row
+            conf = dict(row.get("config") or {})
+            conf["wire"] = "openai"
+            conf["baseURL"] = bk
+            conf["apiKey"] = {"$expr": f"get('env.{env_name}', '')"}
+            conf["model"] = mid
+            conf.setdefault("smallModel", mid)
+            row["config"] = conf
+            env_pairs.append((safe_id, ak, env_name))
+        try:
+            save_user_layer(self.home, rows)
+        except (OSError, ValueError) as exc:
+            self._set_status(f"写入用户层失败：{exc}", "error")
+            return
+        try:
+            from secret_store import save as _save_secrets
+            cur = _load_secrets()
+            for safe_id, ak, _env in env_pairs:
+                cur[safe_id] = ak
+            _save_secrets(cur)
+        except Exception as exc:
+            self._set_status(f"密钥库写入失败：{exc}", "error")
+            return
+        self.user_rows = rows
+        self._refresh_provider_list()
+        self._update_status_label()
+        self._set_status(
+            f"已从 AutoClaw 导入 {len(env_pairs)} 个 provider（密钥写进 ~/.forge/secrets.json 不进日志；跳过 {skipped_placeholder} 个占位）",
+            "ok",
+        )
+
     # ── 占位提示 ──
     def _editor_is_dirty(self):
         text = "" if self._placeholder_visible else self.input_text.get("1.0", "end-1c").strip()
@@ -1294,8 +1397,8 @@ class ForgeGuiApp:
         self.gateway_url = f"http://127.0.0.1:{port}"
         self.client.base_url = self.gateway_url
 
-        # 探活：如果有 forge 环境变量 KEY，沿用；否则加空占位让 gateway 自己去找
-        env = os.environ.copy()
+        # 探活：secret_store（GUI 本地密钥库）注入 env，gateway 子进程继承
+        env = {**os.environ, **env_for()}
         # 启动 gateway 子进程
         cmd = [sys.executable, str(self.run_py), "gateway",
                "--upstream", "openai",  # 默认走 openai 协议（用户可改）
