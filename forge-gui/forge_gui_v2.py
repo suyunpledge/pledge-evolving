@@ -83,6 +83,8 @@ C = {
     "error_soft": "#fdeeee",
     "ok": "#2f9e5b",
     "ok_soft": "#eaf6ef",
+    "link": "#3b7dd8",
+    "link_soft": "#e8f0fb",
     "info": "#4e7db7",
     "info_soft": "#eef3fa",
     "input_bg": "#ffffff",       # theme-input-bg
@@ -175,7 +177,27 @@ def _find_run_py() -> Path | None:
     return None
 
 
-def _probe_user_layer() -> Path:
+def _suggest_models(base_url: str) -> list[str]:
+    """按 baseURL 域名给出该家常用的 API model id（都是官方真名）。"""
+    hints = {
+        "api.deepseek.com": ["deepseek-chat", "deepseek-reasoner", "deepseek-flash", "deepseek-pro"],
+        "open.bigmodel.cn": ["GLM-5.3", "glm-4.7", "glm-4.6-air"],
+        "api.moonshot.cn": ["kimi-k2", "kimi-k2-turbo", "kimi-latest"],
+        "dashscope.aliyuncs.com": ["qwen3-max", "qwen-flash", "qwen-plus", "qwen-turbo"],
+        "api.stepfun.com": ["step-3.5-flash", "step-2-16k", "step-1v-8k"],
+        "api.minimaxi.com": ["MiniMax-M2", "MiniMax-Text-01", "minimax-01"],
+        "ark.cn-beijing.volces.com": ["doubao-seed-1-6-250615", "doubao-1-5-pro-32k-250115"],
+        "api.xiaomimimo.com": ["mimo", "mimo-pro", "mimo-pro-ultra"],
+        "api.tbox.cn": ["bailing-v1", "bailing-pro"],
+        "api.qnaigc.com": ["gpt-5.2", "claude-sonnet-4-5", "gpt-5.2-mini"],
+    }
+    for host, models in hints.items():
+        if host in base_url:
+            return models
+    return []
+
+
+def _probe_user_layer() -> Path | None:
     """~/.forge/forge.patch.json（forge 默认 home）。"""
     DEFAULT_FORGE_HOME.mkdir(parents=True, exist_ok=True)
     return DEFAULT_FORGE_HOME / "forge.patch.json"
@@ -394,8 +416,50 @@ class ForgeGuiApp:
         )
         self.provider_list.pack(fill=tk.BOTH, expand=True)
         self.provider_list.bind("<<ListboxSelect>>", self._on_provider_select)
-        tk.Label(left, text="选择条目可载入编辑区", bg=C["surface"],
+        tk.Label(left, text="选择条目可载入编辑区；下方可直接改模型名", bg=C["surface"],
                  fg=C["muted"], font=FONT_SMALL).pack(anchor=tk.W, pady=(12, 0))
+
+        # ── 模型快捷编辑面板 ──
+        self.model_edit_frame = tk.Frame(left, bg=C["input_bg"], highlightthickness=1,
+                                         highlightbackground=C["border"])
+        self.model_edit_frame.pack(fill=tk.X, pady=(10, 0), ipadx=10, ipady=8)
+        tk.Label(self.model_edit_frame, text="模型快捷编辑", bg=C["input_bg"], fg=C["text"],
+                 font=FONT_UI_BOLD).pack(anchor=tk.W)
+        self.model_edit_target = tk.Label(self.model_edit_frame, text="（先在列表选中 provider）",
+                                          bg=C["input_bg"], fg=C["muted"], font=FONT_SMALL,
+                                          wraplength=240, justify=tk.LEFT)
+        self.model_edit_target.pack(anchor=tk.W, pady=(2, 6))
+        entry_row = tk.Frame(self.model_edit_frame, bg=C["input_bg"])
+        entry_row.pack(fill=tk.X)
+        self.model_edit_var = tk.StringVar()
+        self.model_edit_entry = tk.Entry(entry_row, textvariable=self.model_edit_var,
+                                         bg=C["bg"], fg=C["text"], insertbackground=C["accent"],
+                                         font=FONT_MONO, relief=tk.FLAT,
+                                         highlightthickness=1, highlightbackground=C["border"],
+                                         highlightcolor=C["accent"])
+        self.model_edit_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=4)
+        self.model_apply_btn = tk.Button(entry_row, text="应用", bg=C["accent"], fg="#ffffff",
+                                         activebackground=C["accent_hover"], activeforeground="#ffffff",
+                                         font=FONT_UI_BOLD, relief=tk.FLAT, padx=10, pady=3,
+                                         command=self._apply_model_edit, cursor="hand2",
+                                         state=tk.DISABLED)
+        self.model_apply_btn.pack(side=tk.LEFT, padx=(6, 0))
+        # 常用模型 chips（按 baseURL 域名给建议）
+        self.model_chips_frame = tk.Frame(self.model_edit_frame, bg=C["input_bg"])
+        self.model_chips_frame.pack(fill=tk.X, pady=(6, 0))
+        self.model_edit_entry.bind("<Return>", lambda _e: self._apply_model_edit())
+        # 探活按钮
+        probe_row = tk.Frame(self.model_edit_frame, bg=C["input_bg"])
+        probe_row.pack(fill=tk.X, pady=(6, 0))
+        self.model_probe_btn = tk.Button(probe_row, text="测试此 provider", bg=C["surface2"], fg=C["link"],
+                                         activebackground=C["link_soft"], activeforeground=C["link"],
+                                         font=FONT_UI, relief=tk.FLAT, padx=8, pady=2,
+                                         command=self._probe_selected_provider, cursor="hand2",
+                                         state=tk.DISABLED)
+        self.model_probe_btn.pack(side=tk.LEFT)
+        self.model_probe_var = tk.StringVar(value="")
+        tk.Label(probe_row, textvariable=self.model_probe_var, bg=C["input_bg"],
+                 fg=C["muted"], font=FONT_SMALL).pack(side=tk.LEFT, padx=(8, 0))
         tk.Button(left, text="打开用户层目录  ↗", bg=C["surface2"], fg=C["text"],
                   activebackground=C["border"], activeforeground=C["text"],
                   font=FONT_UI, relief=tk.FLAT, padx=12, pady=6,
@@ -1234,6 +1298,101 @@ class ForgeGuiApp:
         self._set_warnings([])
         self.save_btn.configure(state=tk.DISABLED)
         self._set_status(f"已加载 {row.get('id', '?')} 到输入区，可编辑后重新整理", "info")
+        self._sync_model_editor(row)
+
+    def _sync_model_editor(self, row: dict | None):
+        """列表选中变化时，更新左下角「模型快捷编辑」面板。"""
+        conf = (row or {}).get("config") or {}
+        is_provider = "baseURL" in conf
+        self._model_edit_row_id = (row or {}).get("id")
+        self.model_edit_target.configure(
+            text=(f"{self._model_edit_row_id}\n{(conf.get('baseURL') or '')[:60]}" if is_provider
+                  else "（非 provider 条目）"),
+            fg=C["text"] if is_provider else C["muted"])
+        self.model_edit_var.set(conf.get("model", "") if is_provider else "")
+        self.model_apply_btn.configure(state=tk.NORMAL if is_provider else tk.DISABLED)
+        self.model_probe_btn.configure(state=tk.NORMAL if is_provider else tk.DISABLED)
+        self.model_probe_var.set("")
+        # chips
+        for w in self.model_chips_frame.winfo_children():
+            w.destroy()
+        if is_provider:
+            suggestions = _suggest_models(conf.get("baseURL") or "")
+            if suggestions:
+                chip_row = tk.Frame(self.model_chips_frame, bg=C["input_bg"])
+                chip_row.pack(anchor=tk.W)
+                tk.Label(chip_row, text="常用:", bg=C["input_bg"], fg=C["muted"],
+                         font=FONT_SMALL).pack(side=tk.LEFT, padx=(0, 4))
+                for m in suggestions:
+                    tk.Button(chip_row, text=m, bg=C["surface2"], fg=C["link"],
+                              activebackground=C["link_soft"], activeforeground=C["link"],
+                              font=FONT_SMALL, relief=tk.FLAT, padx=7, pady=1,
+                              command=lambda mm=m: (self.model_edit_var.set(mm), self._apply_model_edit()),
+                              cursor="hand2").pack(side=tk.LEFT, padx=(3, 0))
+
+    def _apply_model_edit(self):
+        """把模型快捷编辑框的值写进 user_rows 并保存。"""
+        rid = getattr(self, "_model_edit_row_id", None)
+        if not rid:
+            return
+        row = next((r for r in self.user_rows if r.get("id") == rid), None)
+        if not row or "baseURL" not in (row.get("config") or {}):
+            self._set_status("选中的不是 provider 条目", "warn")
+            return
+        new_model = self.model_edit_var.get().strip()
+        if not new_model:
+            self._set_status("模型名不能为空", "warn")
+            return
+        row["config"]["model"] = new_model
+        row["config"].setdefault("smallModel", new_model)
+        try:
+            save_user_layer(self.home, self.user_rows)
+        except (OSError, ValueError) as exc:
+            self._set_status(f"保存失败：{exc}", "error")
+            return
+        self._refresh_provider_list()
+        self._sync_model_editor(row)
+        self._set_status(f"{rid} 的模型已改为 {new_model}（smallModel 同步）", "ok")
+
+    def _probe_selected_provider(self):
+        """用密钥库里的 key 真实打一发 /chat/completions，结果写在面板上。"""
+        rid = getattr(self, "_model_edit_row_id", None)
+        if not rid:
+            return
+        row = next((r for r in self.user_rows if r.get("id") == rid), None)
+        if not row:
+            return
+        conf = row["config"]
+        key = _load_secrets().get(rid, "")
+        model = conf.get("model") or self.model_edit_var.get().strip()
+        self.model_probe_var.set("请求中…")
+        self.model_probe_btn.configure(state=tk.DISABLED)
+
+        def worker():
+            import urllib.request
+            import urllib.error
+            url = conf["baseURL"].rstrip("/") + "/chat/completions"
+            body = json.dumps({"model": model, "messages": [{"role": "user", "content": "1+1=?"}], "max_tokens": 30}).encode()
+            headers = {"Content-Type": "application/json", "Authorization": "Bearer " + key}
+            req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+            try:
+                with urllib.request.urlopen(req, timeout=20) as resp:
+                    j = json.loads(resp.read().decode())
+                    reply = (j.get("choices") or [{}])[0].get("message", {}).get("content", "")
+                    done(f"HTTP {resp.status} · {reply[:30]!r}", True)
+            except urllib.error.HTTPError as e:
+                detail = e.read().decode(errors="replace")[:120].replace("\n", " ")
+                done(f"HTTP {e.code} · {detail}", False)
+            except Exception as e:
+                done(f"{type(e).__name__}: {e}", False)
+
+        def done(text, ok):
+            def apply():
+                self.model_probe_var.set(text)
+                self.model_probe_btn.configure(state=tk.NORMAL)
+            self._post_ui(apply)
+
+        threading.Thread(target=worker, daemon=True).start()
 
     # ── 矫治 + 预览 ──
     def _do_organize(self):
