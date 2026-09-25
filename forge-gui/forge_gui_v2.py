@@ -840,10 +840,11 @@ class ForgeGuiApp:
                  highlightcolor=C["accent"]).pack(side=tk.LEFT, ipady=3, ipadx=4)
 
         self.clear_chat_btn = tk.Button(
-            ctrl, text="清空对话", command=self._clear_chat,
-            bg=C["bg"], fg=C["muted"], activebackground=C["surface2"],
-            activeforeground=C["text"], font=FONT_SMALL, relief=tk.FLAT,
-            bd=0, padx=12, pady=3, cursor="hand2")
+            ctrl, text="＋ 新对话", command=self._clear_chat,
+            bg=C["surface"], fg=C["text"], activebackground=C["surface2"],
+            activeforeground=C["accent"], font=FONT_UI, relief=tk.FLAT,
+            bd=0, padx=14, pady=5, cursor="hand2",
+            highlightthickness=1, highlightbackground=C["border"])
         self.clear_chat_btn.pack(side=tk.RIGHT)
 
         # ── 对话区（白卡 + 细分隔线）──
@@ -867,12 +868,26 @@ class ForgeGuiApp:
         self.chat_text.tag_configure("empty_body", foreground=C["muted"],
                                       font=FONT_SMALL, justify="center",
                                       spacing1=2, spacing3=2)
+        # 气泡（对照 AutoClaw：用户右对齐浅橙、AI 左对齐浅灰）
         self.chat_text.tag_configure("bubble_user", background=C["msg_user_bg"],
-                                      lmargin1=10, lmargin2=10, rmargin=10,
-                                      spacing1=6, spacing3=6)
+                                      lmargin1=220, lmargin2=220, rmargin=14,
+                                      spacing1=8, spacing3=8, justify="right")
         self.chat_text.tag_configure("bubble_agent", background=C["msg_agent_bg"],
-                                      lmargin1=10, lmargin2=10, rmargin=10,
-                                      spacing1=6, spacing3=6)
+                                      lmargin1=14, lmargin2=14, rmargin=220,
+                                      spacing1=4, spacing3=8)
+        self.chat_text.tag_configure("error_bubble", background=C["error_soft"],
+                                      foreground=C["error"],
+                                      lmargin1=14, lmargin2=14, rmargin=220,
+                                      spacing1=8, spacing3=8)
+        self.chat_text.tag_configure("msg_meta", foreground=C["ter"],
+                                      font=FONT_SMALL, spacing1=10, spacing3=2,
+                                      lmargin1=14)
+        self.chat_text.tag_configure("msg_meta_right", foreground=C["ter"],
+                                      font=FONT_SMALL, spacing1=10, spacing3=2,
+                                      lmargin1=220, justify="right")
+        self.chat_text.tag_configure("agent_head", foreground=C["subtext"],
+                                      font=FONT_UI_BOLD, spacing1=10, spacing3=2,
+                                      lmargin1=14)
         self._hide_chat_scrollbar()
         self._show_chat_empty_state()
 
@@ -1695,9 +1710,9 @@ class ForgeGuiApp:
         # 垂直居中：空态用等量空白 + 居中段落
         self.chat_text.insert(tk.END, "\n" * 6)
         self.chat_text.insert(tk.END, "开始新对话\n", "empty_title")
-        self.chat_text.insert(tk.END, "选择模型 → 确认 gateway 在线 → 在下方输入消息\n", "empty_body")
+        self.chat_text.insert(tk.END, "右上启动 gateway，选择模型后在下方输入消息\n", "empty_body")
         self.chat_text.insert(tk.END,
-                              "左下「沉思」可切换 关闭 / 智能 / 开启。", "empty_body")
+                              "输入卡左下可切换「沉思」：关闭 / 智能 / 开启", "empty_body")
         self.chat_text.configure(state=tk.DISABLED)
         self._chat_empty = True
 
@@ -1710,6 +1725,9 @@ class ForgeGuiApp:
         self._set_status("对话已清空", "info")
 
     def _append_chat(self, role: str, text: str):
+        """对照 AutoClaw 气泡样式渲染一条消息。
+        用户 = 右对齐浅橙气泡 + 时间戳；AI = 「Forge」头部 + 浅灰气泡；错误 = 浅红标签。
+        """
         self.chat_text.configure(state=tk.NORMAL)
         if self._chat_empty:
             self.chat_text.delete("1.0", tk.END)
@@ -1717,17 +1735,26 @@ class ForgeGuiApp:
             self._show_chat_scrollbar()
         if self.chat_text.index("end-1c") != "1.0":
             self.chat_text.insert(tk.END, "\n\n")
-        label = {"你": "你", "assistant": "Forge", "error": "错误"}.get(role, role)
-        self.chat_text.insert(tk.END, f"{label}\n", "user" if role == "你" else role)
-        if text:
-            self.chat_text.insert(tk.END, text)
+        stamp = time.strftime("%H:%M")
+        if role == "你":
+            self.chat_text.insert(tk.END, f"你 · {stamp}\n", "msg_meta_right")
+            if text:
+                self.chat_text.insert(tk.END, f" {text} ", "bubble_user")
+        elif role == "error":
+            self.chat_text.insert(tk.END, f"错误 · {stamp}\n", "msg_meta")
+            if text:
+                self.chat_text.insert(tk.END, f" {text} ", "error_bubble")
+        else:
+            self.chat_text.insert(tk.END, "Forge\n", "agent_head")
+            if text:
+                self.chat_text.insert(tk.END, f" {text} ", "bubble_agent")
         self.chat_text.see(tk.END)
         self.chat_text.configure(state=tk.DISABLED)
 
     def _append_stream_delta(self, piece: str):
         follow_output = self.chat_text.yview()[1] >= 0.98
         self.chat_text.configure(state=tk.NORMAL)
-        self.chat_text.insert(tk.END, piece)
+        self.chat_text.insert(tk.END, piece, "bubble_agent")
         if follow_output:
             self.chat_text.see(tk.END)
         self.chat_text.configure(state=tk.DISABLED)
