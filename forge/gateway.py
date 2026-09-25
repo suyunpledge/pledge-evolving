@@ -88,6 +88,8 @@ class GatewayConfig:
         proxy: str = "",
         gateway_token: str = "",
         max_auth_failures: int = 5,
+        registry=None,
+        workspace: str = "",
     ) -> None:
         self.upstream = upstream.rstrip("/")
         self.api_key = api_key
@@ -100,6 +102,11 @@ class GatewayConfig:
         self.proxy = proxy
         self.gateway_token = gateway_token    # empty = no auth; set = bearer check
         self.max_auth_failures = max_auth_failures  # rate limit: lock out after N failures
+        # -- tool bridge: optional forge ToolRegistry + workspace root.
+        # When attached, GET /v1/tools lists OpenAI function schemas and
+        # POST /v1/tools/call executes a tool through the full policy gate.
+        self.registry = registry
+        self.workspace = Path(workspace) if workspace else Path.cwd()
         self._auth_lock = threading.Lock()
         self._auth_failures: int = 0
         self._auth_locked_until: float = 0.0
@@ -138,8 +145,48 @@ def build_handler(cfg: GatewayConfig):
                 })
                 cfg.log.write(f"GET {self.path} -> local model list ({len(cfg.models)} ids)")
                 return
+            if route == "/v1/tools":
+                if cfg.registry is None:
+                    self._json(404, {"type": "error",
+                                     "error": {"type": "not_found",
+                                               "message": "tool registry not attached to this gateway"}})
+                    return
+                specs = cfg.registry.callable_specs()
+                tools = []
+                for spec in specs:
+                    props = {}
+                    required = []
+                    for key, val in (spec.schema or {}).items():
+                        props[key] = {"type": val, "description": key}
+                    required = [k for k, v in (spec.schema or {}).items()
+                                if not k.startswith("_")]
+                    tools.append({
+                        "type": "function",
+                        "function": {
+                            "name": f"forge_{spec.name}",
+                            "description": spec.description,
+                            "parameters": {
+                                "type": "object",
+                                "properties": props,
+                                "required": required,
+                                "additionalProperties": False,
+                            },
+                        },
+                        "x-forge-meta": {
+                            "read_only": spec.read_only,
+                            "deferred": spec.is_deferred,
+                            "tags": list(spec.tags),
+                        },
+                    },
+                    )
+                self._json(200, {"object": "list", "data": tools})
+                cfg.log.write(f"GET {self.path} -> tool list ({len(tools)} tools)")
+                return
             if route in ("/health", ""):
-                self._json(200, {"ok": True, "upstream": cfg.upstream})
+                health: dict[str, Any] = {"ok": True, "upstream": cfg.upstream}
+                if cfg.registry is not None:
+                    health["tools"] = len(cfg.registry.callable_specs())
+                self._json(200, health)
                 return
             self._proxy(b"")
 
@@ -165,7 +212,73 @@ def build_handler(cfg: GatewayConfig):
                         cfg.log.write(f"{self.command} {self.path} -> 401 (bad gateway token)")
                         return
                     cfg._auth_failures = 0  # reset on success
+            route = self.path.split("?")[0].rstrip("/")
+            if route == "/v1/tools/call":
+                self._tool_call(self._read_body())
+                return
             self._proxy(self._read_body())
+
+        def _tool_call(self, body: bytes) -> None:
+            """Execute one forge tool through the full policy gate.
+
+            Body: {"name": "read_file", "arguments": {"path": "x.py"}}
+            The name may arrive with or without the forge_ prefix.
+            """
+            from .policy import Policy
+            from .tools import ToolContext
+
+            if cfg.registry is None:
+                self._json(404, {"type": "error",
+                                 "error": {"type": "not_found",
+                                           "message": "tool registry not attached"}})
+                return
+            try:
+                payload = json.loads(body.decode("utf-8", "replace") or "{}")
+            except json.JSONDecodeError as exc:
+                self._json(400, {"type": "error",
+                                 "error": {"type": "invalid_request_error",
+                                           "message": f"bad json: {exc}"}})
+                return
+            name = str(payload.get("name", "")).strip()
+            if name.startswith("forge_"):
+                name = name[len("forge_"):]
+            arguments = payload.get("arguments") or {}
+            if not isinstance(arguments, dict):
+                self._json(400, {"type": "error",
+                                 "error": {"type": "invalid_request_error",
+                                           "message": "'arguments' must be an object"}})
+                return
+            # deferred tools must be activated before use; do it implicitly so
+            # remote callers don't need a separate activation round-trip, but
+            # log it (activation widens the session surface).
+            spec = None
+            for s in cfg.registry.all_specs():
+                if s.name == name:
+                    spec = s
+                    break
+            if spec is None:
+                self._json(404, {"type": "error",
+                                 "error": {"type": "not_found", "message": f"unknown tool: {name}"}})
+                return
+            if spec.is_deferred:
+                cfg.registry.activate(name)
+                cfg.log.write(f"TOOLCALL implicit activation: {name}")
+            policy = Policy(workspace=cfg.workspace)
+            ctx = ToolContext(policy=policy, workspace=cfg.workspace,
+                              extras={"registry": cfg.registry})
+            cfg.log.write(f"TOOLCALL {name} args={json.dumps(arguments, ensure_ascii=False)[:200]}")
+            try:
+                result = cfg.registry.invoke(name, arguments, ctx)
+            except Exception as exc:  # never kill the handler
+                self._json(500, {"type": "error",
+                                 "error": {"type": "api_error", "message": f"{type(exc).__name__}: {exc}"}})
+                return
+            self._json(200, {
+                "ok": result.ok,
+                "content": result.content,
+                "error": result.error,
+                "meta": result.meta,
+            })
 
         def _proxy(self, body: bytes) -> None:
             translating = cfg.upstream_wire == "openai" and self.path.split("?")[0].rstrip("/").endswith("/messages")

@@ -125,6 +125,15 @@ class ToolRegistry:
     def all_specs(self) -> list[ToolSpec]:
         return sorted(self._specs.values(), key=lambda s: s.name)
 
+    def callable_specs(self) -> list[ToolSpec]:
+        """All non-hidden tools including deferred ones.
+
+        Remote bridges (gateway /v1/tools) need the full surface: deferred
+        tools are activated implicitly at call time, so hiding them from the
+        listing would make them uncallable from outside.
+        """
+        return [s for s in self.all_specs() if not self._hidden(s.name)]
+
     def search(self, query: str, limit: int = 5) -> list[ToolSpec]:
         query = (query or "").strip().lower()
         hits: list[tuple[int, ToolSpec]] = []
@@ -282,15 +291,36 @@ def build_builtin_registry(
 
     @reg.tool(
         "write_file",
-        "Write UTF-8 text to a file. Gated by the sandbox and permission mode.",
+        "Write UTF-8 text to a file (append mode optional). Gated by the sandbox and permission mode.",
         read_only=False,
-        schema={"path": "string", "content": "string"},
+        schema={"path": "string", "content": "string", "append": "boolean"},
     )
     def write_file(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         path = _resolve(ctx.workspace, args.get("path", ""))
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(str(args.get("content", "")), encoding="utf-8")
-        return ToolResult(ok=True, content=f"wrote {len(str(args.get('content','')))} bytes to {path}")
+        content = str(args.get("content", ""))
+        if args.get("append"):
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(content)
+            return ToolResult(ok=True, content=f"appended {len(content)} bytes to {path}")
+        path.write_text(content, encoding="utf-8")
+        return ToolResult(ok=True, content=f"wrote {len(content)} bytes to {path}")
+
+    @reg.tool(
+        "delete_file",
+        "Delete a file inside the workspace (sandbox-gated, audit-friendly "
+        "alternative to shell rm). Refuses directories.",
+        read_only=False,
+        schema={"path": "string"},
+    )
+    def delete_file(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+        path = _resolve(ctx.workspace, args.get("path", ""))
+        if path.is_dir():
+            return ToolResult(ok=False, error=f"is a directory (use shell for dirs): {path}")
+        if not path.is_file():
+            return ToolResult(ok=False, error=f"not a file: {path}")
+        path.unlink()
+        return ToolResult(ok=True, content=f"deleted {path}")
 
     @reg.tool(
         "edit_file",
@@ -525,6 +555,221 @@ def build_builtin_registry(
         kind = args.get("kind")
         entries = store.recall(kind=kind)
         return ToolResult(ok=True, content="\n".join(f"- [{e.kind}] {e.text}" for e in entries) or "(empty)")
+
+    # ---- cross-framework aligned tools (schema-compatible with Always) ----
+    # web_search / fetch_url 参数与 ai-platform tools.ts 的 web_search /
+    # fetch_webpage 逐字段对齐——模型在两个框架间切换零成本。
+
+    @reg.tool(
+        "web_search",
+        "Search the web (Bing + Baidu aggregated, Sogou/Yahoo fallback). "
+        "site: all/zhihu/xiaohongshu/baidu/bing/weixin.",
+        deferred=True,
+        tags=("web", "search", "network"),
+        schema={"query": "string", "num": "integer", "site": "string"},
+    )
+    def web_search(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+        query = str(args.get("query", "")).strip()
+        if not query:
+            return ToolResult(ok=False, error="web_search needs a non-empty 'query'")
+        num = min(int(args.get("num", 5) or 5), 10)
+        site = str(args.get("site", "all") or "all")
+        base = ctx.extras.get("web_search")
+        if base is None:
+            return ToolResult(ok=False,
+                              error="web_search backend not attached; set extras['web_search']")
+        try:
+            results = base(query=query, num=num, site=site)
+        except Exception as exc:
+            return ToolResult(ok=False, error=f"web_search failed: {exc}")
+        if not results:
+            return ToolResult(ok=True, content="(no results)")
+        lines = []
+        for i, r in enumerate(results, 1):
+            lines.append(f"{i}. {r.get('title','')}")
+            if r.get("url"):
+                lines.append(f"   {r['url']}")
+            if r.get("snippet"):
+                lines.append(f"   {r['snippet'][:200]}")
+        return ToolResult(ok=True, content="\n".join(lines), meta={"count": len(results)})
+
+    @reg.tool(
+        "fetch_url",
+        "Fetch a URL and extract readable text (HTML tags stripped). "
+        "Aligned with Always fetch_webpage (url + max_chars).",
+        deferred=True,
+        tags=("web", "fetch", "network"),
+        schema={"url": "string", "max_chars": "integer"},
+    )
+    def fetch_url(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+        url = str(args.get("url", "")).strip()
+        if not url.startswith(("http://", "https://")):
+            return ToolResult(ok=False, error="fetch_url needs an http(s) URL")
+        max_chars = min(int(args.get("max_chars", 5000) or 5000), 50000)
+        fetcher = ctx.extras.get("fetch_url")
+        if fetcher is None:
+            return ToolResult(ok=False,
+                              error="fetch_url backend not attached; set extras['fetch_url']")
+        try:
+            title, body = fetcher(url=url, max_chars=max_chars)
+        except Exception as exc:
+            return ToolResult(ok=False, error=f"fetch_url failed: {exc}")
+        head = f"# {title}\n\n" if title else ""
+        return ToolResult(ok=True, content=(head + body)[:max_chars],
+                          meta={"url": url, "chars": len(head + body)})
+
+    @reg.tool(
+        "datetime",
+        "Current local time, timezone conversion, or duration between two times. "
+        "Aligned with Always datetime tool.",
+        no_defer=True,
+        tags=("time", "utility"),
+        schema={"action": "string", "value": "string", "to_tz": "string", "other": "string"},
+    )
+    def datetime_tool(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+        from datetime import datetime as _dt, timezone as _tz
+
+        action = str(args.get("action", "now") or "now")
+        try:
+            if action == "now":
+                now = _dt.now().astimezone()
+                return ToolResult(ok=True, content=now.strftime("%Y-%m-%d %H:%M:%S %z (%A)"))
+            if action == "convert":
+                raw = str(args.get("value", ""))
+                to_tz = str(args.get("to_tz", "UTC"))
+                from zoneinfo import ZoneInfo
+                dt = _dt.fromisoformat(raw).replace(tzinfo=_tz.utc) if "+" not in raw and "Z" not in raw.upper() else _dt.fromisoformat(raw)
+                converted = dt.astimezone(ZoneInfo(to_tz))
+                return ToolResult(ok=True, content=converted.strftime("%Y-%m-%d %H:%M:%S %z"))
+            if action == "diff":
+                a = _dt.fromisoformat(str(args.get("value", "")))
+                b = _dt.fromisoformat(str(args.get("other", "")))
+                delta = abs(b - a)
+                days = delta.days
+                hours, rem = divmod(delta.seconds, 3600)
+                minutes = rem // 60
+                return ToolResult(ok=True,
+                                  content=f"{days} days {hours} hours {minutes} minutes")
+            return ToolResult(ok=False, error=f"unknown action: {action} (now/convert/diff)")
+        except Exception as exc:
+            return ToolResult(ok=False, error=f"datetime failed: {exc}")
+
+    @reg.tool(
+        "calculator",
+        "Safe math expression evaluator (recursive descent, no eval). "
+        "Aligned with Always calculator.",
+        no_defer=True,
+        tags=("math", "utility"),
+        schema={"expression": "string"},
+    )
+    def calculator(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+        expr = str(args.get("expression", "")).strip()
+        if not expr:
+            return ToolResult(ok=False, error="calculator needs an 'expression'")
+        import math as _math
+
+        def _tokenize(s: str) -> list[str]:
+            tokens: list[str] = []
+            i = 0
+            while i < len(s):
+                c = s[i]
+                if c.isspace():
+                    i += 1
+                    continue
+                if c.isdigit() or (c == "." and i + 1 < len(s) and s[i + 1].isdigit()):
+                    j = i
+                    while j < len(s) and (s[j].isdigit() or s[j] == "."):
+                        j += 1
+                    tokens.append(s[i:j])
+                    i = j
+                elif c.isalpha():
+                    j = i
+                    while j < len(s) and (s[j].isalnum() or s[j] == "_"):
+                        j += 1
+                    tokens.append(s[i:j])
+                    i = j
+                else:
+                    tokens.append(c)
+                    i += 1
+            return tokens
+
+        funcs = {
+            "sin": _math.sin, "cos": _math.cos, "tan": _math.tan,
+            "sqrt": _math.sqrt, "abs": abs, "log": _math.log,
+            "log10": _math.log10, "exp": _math.exp, "floor": _math.floor,
+            "ceil": _math.ceil, "round": round,
+        }
+        consts = {"pi": _math.pi, "e": _math.e}
+        tokens = _tokenize(expr)
+
+        def parse_expr(pos: int) -> tuple[float, int]:
+            left, pos = parse_term(pos)
+            while pos < len(tokens) and tokens[pos] in ("+", "-"):
+                op = tokens[pos]
+                right, pos = parse_term(pos + 1)
+                left = left + right if op == "+" else left - right
+            return left, pos
+
+        def parse_term(pos: int) -> tuple[float, int]:
+            left, pos = parse_factor(pos)
+            while pos < len(tokens) and tokens[pos] in ("*", "/", "%"):
+                op = tokens[pos]
+                right, pos = parse_factor(pos + 1)
+                if op == "*":
+                    left *= right
+                elif op == "/":
+                    if right == 0:
+                        raise ZeroDivisionError("division by zero")
+                    left /= right
+                else:
+                    left %= right
+            return left, pos
+
+        def parse_factor(pos: int) -> tuple[float, int]:
+            base, pos = parse_unary(pos)
+            if pos < len(tokens) and tokens[pos] == "^":
+                exp, pos = parse_factor(pos + 1)
+                return base ** exp, pos
+            return base, pos
+
+        def parse_unary(pos: int) -> tuple[float, int]:
+            if pos < len(tokens) and tokens[pos] == "-":
+                val, pos = parse_unary(pos + 1)
+                return -val, pos
+            return parse_atom(pos)
+
+        def parse_atom(pos: int) -> tuple[float, int]:
+            tok = tokens[pos]
+            if tok == "(":
+                val, pos = parse_expr(pos + 1)
+                if pos >= len(tokens) or tokens[pos] != ")":
+                    raise ValueError("unbalanced parentheses")
+                return val, pos + 1
+            if tok in consts:
+                return consts[tok], pos + 1
+            if tok in funcs:
+                if pos + 1 < len(tokens) and tokens[pos + 1] == "(":
+                    val, pos = parse_expr(pos + 2)
+                    if pos >= len(tokens) or tokens[pos] != ")":
+                        raise ValueError("unbalanced parentheses")
+                    return funcs[tok](val), pos + 1
+                raise ValueError(f"function {tok} needs parentheses")
+            try:
+                return float(tok), pos + 1
+            except ValueError:
+                raise ValueError(f"unexpected token: {tok}")
+
+        try:
+            value, end = parse_expr(0)
+            if end != len(tokens):
+                raise ValueError(f"trailing tokens from {tokens[end:]}")
+            if value == int(value):
+                shown = str(int(value))
+            else:
+                shown = repr(value)
+            return ToolResult(ok=True, content=f"{expr} = {shown}", meta={"value": value})
+        except Exception as exc:
+            return ToolResult(ok=False, error=f"calculator failed: {exc}")
 
     return reg
 

@@ -124,7 +124,7 @@ DEFAULT_DENY_PATTERNS = (
     r"rmtree\b",
 )
 
-WRITE_TOOLS = {"write_file", "edit_file", "apply_patch", "shell_exec", "notebook_edit"}
+WRITE_TOOLS = {"write_file", "edit_file", "apply_patch", "shell_exec", "notebook_edit", "delete_file"}
 
 
 @dataclass(frozen=True)
