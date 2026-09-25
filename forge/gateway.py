@@ -299,7 +299,14 @@ def build_handler(cfg: GatewayConfig):
                 self._proxy_translated(body)
                 return
 
-            url = cfg.upstream + self.path
+            # self.path 是客户端的 OpenAI 兼容路径（/v1/chat/completions），
+            # 这个 /v1 是 gateway 自己的协议前缀，upstream 通常没有它——
+            # 但有些上游（bigmodel.cn/api/coding/paas/v4）的 chat 端点确实在
+            # 末尾不是 /v1；为避免 /v4/v1/chat/completions 这种双前缀，总是剥掉。
+            stripped = self.path
+            if stripped.startswith("/v1/"):
+                stripped = stripped[len("/v1"):]
+            url = cfg.upstream + stripped
             headers = {k: v for k, v in self.headers.items() if k.lower() not in HOP_BY_HOP}
             headers.pop("Authorization", None)
             headers.pop("x-api-key", None)

@@ -310,7 +310,7 @@ def cmd_gateway(args) -> int:
         )
     cfg = GatewayConfig(
         upstream=args.upstream,
-        api_key=args.key or "",
+        api_key=args.api_key or os.environ.get("FORGE_GATEWAY_KEY", ""),
         port=args.port,
         models=[m.strip() for m in (args.models or "").split(",") if m.strip()],
         log_path=Path(args.log) if args.log else None,
@@ -626,6 +626,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     gateway = sub.add_parser("gateway", parents=[common], help="loopback protocol gateway")
     gateway.add_argument("--upstream", required=True)
+    gateway.add_argument("--api-key", default="",
+                         help="上游 Authorization key；为空时读 env FORGE_GATEWAY_KEY")
     gateway.add_argument("--tools", action="store_true",
                          help="serve /v1/tools + /v1/tools/call using the builtin "
                               "registry under the composed policy (fail-closed)")

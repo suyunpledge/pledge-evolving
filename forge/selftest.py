@@ -465,7 +465,7 @@ def test_gateway() -> None:
         with urllib.request.urlopen(request, timeout=5) as response:
             json.loads(response.read())
         check("gateway:no-doubled-v1-prefix",
-              seen and seen[-1] == "/v1/messages", f"forwarded {seen[-1] if seen else 'nothing'}")
+              seen and seen[-1] == "/messages", f"forwarded {seen[-1] if seen else 'nothing'}")
     finally:
         gateway.shutdown()
         upstream.shutdown()
