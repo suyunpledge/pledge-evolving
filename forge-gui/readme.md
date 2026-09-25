@@ -10,6 +10,10 @@
 | 配置编辑 | 粘贴地址+密钥 → 自动整理 → 保存到 `~/.forge/forge.patch.json` |
 | 交互客户端 | 启停 gateway → 与模型对话（流式输出）|
 
+界面按 AutoClaw 的设计语言重做：浅色底（`#f5f5f5` / 白卡）、品牌橙 `#fc5d1e`、
+圆角输入卡（22px pill）、细分隔线 `#e5e5e5`、圆形发送按钮、输入卡下方一行小字说明。
+配色 / 圆角 / 阴影 token 直接取自 AutoClaw `app.asar` 的 `--theme-*` 变量，两边视觉同源。
+
 ## 安装
 
 零依赖——只要求 Python 3.10+（系统 Python 自带 tkinter）。
@@ -76,6 +80,19 @@ forge 启动时从环境变量读。
 
 Provider 列表与编辑区之间的分隔线可以拖动；提示与环境变量区可滚动查看。修改输入后，需要重新整理才能保存新的预览。
 
+### 沉思模式（输入卡工具条）
+
+输入框左下角有「◎ 沉思 · ⋯」胶囊，点击后在三档之间切换，写入用户层的 `thinking` 行：
+
+| 档位 | 值 | 含义 |
+|---|---|---|
+| 关闭 | `off` | 不启用沉思（默认）|
+| 智能 | `smart` | 按任务复杂度自动决定 |
+| 开启 | `on` | 始终启用沉思 |
+
+对应 forge 自己的 `thinking.mode`：设置后 `forge run` 任务即时生效，
+已在运行的服务需重启才读取新配置。非「关闭」时胶囊变浅橙底表示激活。
+
 ### 功能开关
 
 **功能开关** 是独立页面，列表可滚动，标题可折叠。可以直接选择并保存：
@@ -135,7 +152,10 @@ python -m unittest test_gui_review -v  # 需桌面：配置保护、布局、开
 | 想改什么 | 改哪里 |
 |---|---|
 | 矫治规则（接受更多形态 / 更严） | `config_model.py` 的 `normalize()` + `_normalize_provider_row()` |
-| GUI 配色 / 字体 / 字号 | `forge_gui_v2.py` 顶部 `C` / `FONT_*` 常量 |
+| GUI 配色 / 字体 / 字号 | `forge_gui_v2.py` 顶部 `C` / `FONT_*` 常量（注释标了 AutoClaw 来源）|
+| 圆角半径 | 同文件 `R_PANEL / R_CARD / R_PILL / R_MD / R_SM` |
+| 输入卡内部布局 | `_layout_input_card()`（Canvas 内手排：输入行 / 提示 / 工具条 / 圆形按钮）|
+| 沉思三档 | `THINKING_LABELS` / `THINKING_CHOICES` + `_set_thinking_mode()` |
 | 标签页 / 布局 | `_build_ui()` + `_build_manage_tab()` / `_build_client_tab()` |
 | Gateway 启动参数 | `_start_gateway()`（默认 `--upstream openai`，可以加 `--model-map` 等） |
 | 客户端超时 | `ForgeGatewayClient(timeout=60.0)` |

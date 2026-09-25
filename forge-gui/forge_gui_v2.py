@@ -57,30 +57,84 @@ DEFAULT_FORGE_HOME = Path.home() / ".forge"
 
 IS_WINDOWS = platform.system() == "Windows"
 
-# 调色板
+# 调色板 —— 对齐 AutoClaw 设计语言（取自 app.asar 的 --theme-* 浅色主题）
 C = {
-    "bg": "#10151d",
-    "surface": "#19212c",
-    "surface2": "#253141",
-    "border": "#344255",
-    "text": "#eef3f8",
-    "subtext": "#bac7d5",
-    "muted": "#8190a2",
-    "accent": "#65d9c1",
-    "accent_hover": "#8ce8d4",
-    "accent2": "#a7e8da",
-    "warn": "#f3bd69",
-    "error": "#f18b90",
-    "ok": "#74d9a6",
-    "input_bg": "#121b26",
+    "bg": "#f5f5f5",            # theme-bg
+    "surface": "#ffffff",        # theme-panel
+    "surface2": "#ebebeb",       # theme-surface-active-neutral
+    "surface_subtle": "#f5f5f5",  # theme-surface-subtle
+    "border": "#e5e5e5",         # theme-border
+    "border_hi": "#e6e6e6",      # theme-border-hi
+    "text": "#292929",           # theme-text
+    "subtext": "#525252",        # theme-text-subtitle
+    "muted": "#7a7a7a",          # theme-text-sec
+    "ter": "#9e9e9e",            # theme-text-ter
+    "placeholder": "#b0b0b0",    # theme-text-placeholder
+    "accent": "#fc5d1e",         # theme-accent1（品牌橙）
+    "accent_hover": "#e55318",   # theme-accent2
+    "accent_soft": "#fdeee7",    # ≈ rgba(252,93,30,.08) on white
+    "accent_border": "#fbd9c8",  # ≈ rgba(252,93,30,.16)
+    "accent2": "#b8431a",        # 代码/次要强调（白底可读)
+    "warn": "#c8872b",
+    "warn_soft": "#faf3e8",
+    "error": "#df5353",
+    "error_soft": "#fdeeee",
+    "ok": "#2f9e5b",
+    "ok_soft": "#eaf6ef",
+    "info": "#4e7db7",
+    "info_soft": "#eef3fa",
+    "input_bg": "#ffffff",       # theme-input-bg
+    "code_bg": "#f7f7f7",        # theme-code-inline-bg
+    "msg_user_bg": "#fdf1ea",    # theme-msg-user 的实色近似
+    "msg_agent_bg": "#f7f7f7",   # theme-msg-agent 的实色近似
+    "scroll": "#d0d0d0",         # theme-scrollbar-thumb
 }
 
-FONT_MONO = ("Cascadia Code", 11) if IS_WINDOWS else ("Menlo", 11)
+# 圆角（AutoClaw: panel 14 / card 12 / pill 20）
+R_PANEL, R_CARD, R_PILL, R_MD, R_SM = 14, 12, 20, 8, 6
+
+# 沉思模式（forge thinking.mode 三档；GUI 里对齐 AutoClaw 工具条「目标模式」的位置）
+THINKING_LABELS = {"off": "关闭", "smart": "智能", "on": "开启"}
+THINKING_CHOICES = [
+    ("off", "关闭", "不启用沉思"),
+    ("smart", "智能", "按任务复杂度自动决定（推荐）"),
+    ("on", "开启", "始终启用沉思"),
+]
+
+FONT_MONO = ("Cascadia Code", 10) if IS_WINDOWS else ("Menlo", 10)
 FONT_UI = ("Segoe UI", 10) if IS_WINDOWS else ("Helvetica", 11)
 FONT_UI_BOLD = ("Segoe UI", 10, "bold") if IS_WINDOWS else ("Helvetica", 11, "bold")
 FONT_TITLE = ("Segoe UI", 20, "bold") if IS_WINDOWS else ("Helvetica", 20, "bold")
 FONT_SMALL = ("Segoe UI", 9) if IS_WINDOWS else ("Helvetica", 9)
 FONT_SECTION = ("Segoe UI", 12, "bold") if IS_WINDOWS else ("Helvetica", 12, "bold")
+FONT_CAPTION = ("Segoe UI", 9) if IS_WINDOWS else ("Helvetica", 9)
+
+
+def round_rect(canvas: "tk.Canvas", x1, y1, x2, y2, r, **kw):
+    """在 Canvas 上画圆角矩形（平滑多边形），返回 item id。"""
+    pts = [
+        x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r,
+        x2, y2 - r, x2, y2, x2 - r, y2, x1 + r, y2,
+        x1, y2, x1, y2 - r, x1, y1 + r, x1, y1,
+    ]
+    return canvas.create_polygon(pts, smooth=True, splinesteps=16, **kw)
+
+
+def pill_button(parent, text, command, *, kind="ghost", bg=None):
+    """AutoClaw 风格的胶囊按钮（tk.Button 近似：扁平 + 内边距 + 圆角感）。"""
+    bg = bg or C["bg"]
+    palettes = {
+        "primary": (C["accent"], "#ffffff", C["accent_hover"]),
+        "ghost": (C["surface"], C["subtext"], C["surface2"]),
+        "quiet": (bg, C["muted"], C["surface2"]),
+        "danger": (C["surface"], C["error"], C["error_soft"]),
+    }
+    bgb, fg, hov = palettes.get(kind, palettes["ghost"])
+    btn = tk.Button(parent, text=text, command=command, bg=bgb, fg=fg,
+                    activebackground=hov, activeforeground=fg,
+                    font=FONT_UI, relief=tk.FLAT, bd=0, padx=14, pady=6,
+                    cursor="hand2", highlightthickness=0)
+    return btn
 
 
 # ─── 工具 ──────────────────────────────────────────────
@@ -162,6 +216,7 @@ class ForgeGuiApp:
         self._features_expanded = False
         self._feature_dirty = False
         self._sending = False
+        self._abort_requested = False
         self._closing = False
         self._ui_events = queue.Queue()
         self._editor_baseline = copy.deepcopy(self.user_rows)
@@ -199,76 +254,81 @@ class ForgeGuiApp:
     def _build_ui(self):
         style = ttk.Style()
         style.theme_use("clam")
-        style.configure("TNotebook", background=C["bg"], borderwidth=0)
+        style.configure("TNotebook", background=C["bg"], borderwidth=0, tabmargins=(0, 0, 0, 0))
         style.configure("TNotebook.Tab",
-                        background=C["surface"],
+                        background=C["bg"],
                         foreground=C["subtext"],
-                        padding=(22, 11),
-                        font=FONT_UI_BOLD)
+                        padding=(16, 7),
+                        font=FONT_UI_BOLD,
+                        borderwidth=0)
         style.map("TNotebook.Tab",
-                  background=[("selected", C["surface2"]), ("active", C["surface2"])],
-                  foreground=[("selected", C["accent"]), ("active", C["text"])])
+                  background=[("selected", C["accent_soft"]), ("active", C["surface_subtle"])],
+                  foreground=[("selected", C["accent"]), ("active", C["text"])],
+                  expand=[("selected", (0, 0, 0, 0))])
         style.configure("TFrame", background=C["bg"])
-        style.configure("Vertical.TScrollbar", background=C["surface2"],
-                        troughcolor=C["input_bg"], arrowcolor=C["subtext"],
-                        bordercolor=C["surface"], lightcolor=C["surface2"], darkcolor=C["surface2"])
-        style.map("Vertical.TScrollbar", background=[("active", C["border"])])
-        style.configure("TCombobox", fieldbackground=C["input_bg"],
-                        background=C["surface2"], foreground=C["text"],
-                        arrowcolor=C["accent"], padding=5)
-        style.map("TCombobox", fieldbackground=[("readonly", C["input_bg"])],
-                  foreground=[("readonly", C["text"])])
+        style.configure("Vertical.TScrollbar", background=C["scroll"],
+                        troughcolor=C["surface_subtle"], arrowcolor=C["ter"],
+                        bordercolor=C["surface_subtle"], lightcolor=C["scroll"],
+                        darkcolor=C["scroll"])
+        style.map("Vertical.TScrollbar", background=[("active", C["ter"])])
+        style.configure("TCombobox", fieldbackground=C["surface"], background=C["surface"],
+                        foreground=C["text"], arrowcolor=C["muted"], padding=4,
+                        bordercolor=C["border"], lightcolor=C["surface"],
+                        darkcolor=C["surface"], relief=tk.FLAT)
+        style.map("TCombobox", fieldbackground=[("readonly", C["surface"])],
+                  foreground=[("readonly", C["text"])],
+                  bordercolor=[("focus", C["accent"])])
         self.root.option_add("*TCombobox*Listbox.background", C["surface"])
         self.root.option_add("*TCombobox*Listbox.foreground", C["text"])
-        self.root.option_add("*TCombobox*Listbox.selectBackground", C["surface2"])
+        self.root.option_add("*TCombobox*Listbox.selectBackground", C["accent_soft"])
+        self.root.option_add("*TCombobox*Listbox.selectForeground", C["text"])
 
-        # ── 顶部 ──
-        top = tk.Frame(self.root, bg=C["bg"], padx=20, pady=16)
+        # ── 顶部（AutoClaw chrome：浅灰底 + 细分隔线） ──
+        chrome = tk.Frame(self.root, bg=C["bg"])
+        chrome.pack(fill=tk.X)
+        top = tk.Frame(chrome, bg=C["bg"], padx=20, pady=14)
         top.pack(fill=tk.X)
         brand = tk.Frame(top, bg=C["bg"])
         brand.pack(side=tk.LEFT)
-        tk.Label(brand, text="FORGE  /  WORKSPACE", bg=C["bg"],
-                 fg=C["accent"], font=FONT_SMALL).pack(anchor=tk.W)
-        tk.Label(brand, text="forge", bg=C["bg"], fg=C["text"],
-                 font=FONT_TITLE).pack(anchor=tk.W, pady=(1, 0))
+        tk.Label(brand, text="FORGE", bg=C["bg"], fg=C["accent"],
+                 font=("Segoe UI", 9, "bold") if IS_WINDOWS else ("Helvetica", 9, "bold")
+                 ).pack(anchor=tk.W)
+        tk.Label(brand, text="forge workspace", bg=C["bg"], fg=C["text"],
+                 font=FONT_TITLE).pack(anchor=tk.W, pady=(2, 0))
 
-        # gateway 控制（右上）
-        gw_frame = tk.Frame(top, bg=C["surface"], padx=12, pady=9,
+        # gateway 控制（右上，白卡 + 细边）
+        gw_frame = tk.Frame(top, bg=C["surface"], padx=12, pady=8,
                             highlightthickness=1, highlightbackground=C["border"])
-        gw_frame.pack(side=tk.RIGHT, pady=(4, 0))
+        gw_frame.pack(side=tk.RIGHT, pady=(2, 0))
         self.gw_status_var = tk.StringVar(value="● 离线")
         self.gw_status_lbl = tk.Label(
             gw_frame, textvariable=self.gw_status_var, bg=C["surface"],
-            fg=C["muted"], font=FONT_UI_BOLD,
+            fg=C["ter"], font=FONT_UI_BOLD,
         )
-        self.gw_status_lbl.pack(side=tk.LEFT, padx=(0, 14))
-
+        self.gw_status_lbl.pack(side=tk.LEFT, padx=(0, 12))
         self.gw_btn = tk.Button(
-            gw_frame, text="▶ 启动 gateway", bg=C["accent"], fg=C["bg"],
-            activebackground=C["accent_hover"], activeforeground=C["bg"],
-            font=FONT_UI_BOLD, relief=tk.FLAT, padx=14, pady=6,
-            command=self._toggle_gateway, cursor="hand2",
+            gw_frame, text="启动 gateway", bg=C["accent"], fg="#ffffff",
+            activebackground=C["accent_hover"], activeforeground="#ffffff",
+            font=FONT_UI_BOLD, relief=tk.FLAT, bd=0, padx=14, pady=5,
+            command=self._toggle_gateway, cursor="hand2", highlightthickness=0,
         )
         self.gw_btn.pack(side=tk.LEFT, padx=(0, 4))
-
-        # 端口输入
-        tk.Label(gw_frame, text="端口", bg=C["surface"], fg=C["subtext"],
-                 font=FONT_SMALL).pack(side=tk.LEFT, padx=(8, 4))
+        tk.Label(gw_frame, text="端口", bg=C["surface"], fg=C["ter"],
+                 font=FONT_SMALL).pack(side=tk.LEFT, padx=(10, 4))
         self.port_var = tk.StringVar(value=str(self.gateway_port))
         self.port_spin = tk.Spinbox(
             gw_frame, from_=1024, to_=65535, width=6,
             textvariable=self.port_var, font=FONT_MONO,
-            bg=C["input_bg"], fg=C["text"], buttonbackground=C["surface"],
-            relief=tk.FLAT, insertbackground=C["accent"],
-            highlightthickness=1, highlightbackground=C["border"],
-            highlightcolor=C["accent"],
+            bg=C["surface_subtle"], fg=C["text"], buttonbackground=C["surface"],
+            relief=tk.FLAT, insertbackground=C["accent"], highlightthickness=0, bd=0,
         )
         self.port_spin.pack(side=tk.LEFT)
+
+        tk.Frame(chrome, bg=C["border"], height=1).pack(fill=tk.X)
 
         # ── 标签页 ──
         nb = ttk.Notebook(self.root)
         nb.enable_traversal()
-
         self.tab_manage = tk.Frame(nb, bg=C["bg"])
         self.tab_features = tk.Frame(nb, bg=C["bg"])
         self.tab_client = tk.Frame(nb, bg=C["bg"])
@@ -281,19 +341,19 @@ class ForgeGuiApp:
         self._build_client_tab(self.tab_client)
 
         # ── 底部状态栏 ──
-        bot = tk.Frame(self.root, bg=C["surface"], height=30)
+        tk.Frame(self.root, bg=C["border"], height=1).pack(fill=tk.X, side=tk.BOTTOM)
+        bot = tk.Frame(self.root, bg=C["bg"], height=28)
         bot.pack(fill=tk.X, side=tk.BOTTOM)
         self.status_var = tk.StringVar(value="")
-        self.status_lbl = tk.Label(bot, textvariable=self.status_var, bg=C["surface"],
-                 fg=C["muted"], font=FONT_SMALL, anchor=tk.W,
-                 padx=20)
+        self.status_lbl = tk.Label(bot, textvariable=self.status_var, bg=C["bg"],
+                 fg=C["text"], font=FONT_SMALL, anchor=tk.W, padx=20)
         self.status_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True)
         self.path_lbl = tk.Label(
             bot, text=f"{'gateway 可启动' if self.run_py else '未找到 run.py'}",
-            bg=C["surface"], fg=C["muted"], font=FONT_SMALL, padx=12,
+            bg=C["bg"], fg=C["ter"], font=FONT_SMALL, padx=12,
         )
         self.path_lbl.pack(side=tk.RIGHT)
-        nb.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 12))
+        nb.pack(fill=tk.BOTH, expand=True, padx=20, pady=(8, 10))
 
     # ── 标签 1：管理 ──────────────────────────────────────────
     def _build_manage_tab(self, parent):
@@ -366,8 +426,8 @@ class ForgeGuiApp:
         btn_bar = tk.Frame(right, bg=C["bg"])
         btn_bar.pack(fill=tk.X, pady=(9, 14))
         self.organize_btn = tk.Button(
-            btn_bar, text="整理并预览", bg=C["accent"], fg=C["bg"],
-            activebackground=C["accent_hover"], activeforeground=C["bg"],
+            btn_bar, text="整理并预览", bg=C["accent"], fg="#ffffff",
+            activebackground=C["accent_hover"], activeforeground="#ffffff",
             font=FONT_UI_BOLD, relief=tk.FLAT, padx=16, pady=6,
             command=self._do_organize, cursor="hand2",
         )
@@ -416,8 +476,8 @@ class ForgeGuiApp:
         tk.Label(footer, text="预览后保存", bg=C["bg"],
                  fg=C["muted"], font=FONT_SMALL).pack(side=tk.LEFT)
         self.save_btn = tk.Button(
-            footer, text="保存到用户层", bg=C["ok"], fg=C["bg"],
-            activebackground=C["accent_hover"], activeforeground=C["bg"],
+            footer, text="保存到用户层", bg=C["ok"], fg="#ffffff",
+            activebackground=C["accent_hover"], activeforeground="#ffffff",
             font=FONT_UI_BOLD, relief=tk.FLAT, padx=16, pady=7,
             command=self._do_save, cursor="hand2", state=tk.DISABLED,
         )
@@ -476,8 +536,8 @@ class ForgeGuiApp:
                   font=FONT_SMALL, relief=tk.FLAT, padx=10, pady=5,
                   cursor="hand2").pack(side=tk.LEFT)
         self.feature_save_btn = tk.Button(
-            actions, text="保存功能开关", bg=C["accent"], fg=C["bg"],
-            activebackground=C["accent_hover"], activeforeground=C["bg"],
+            actions, text="保存功能开关", bg=C["accent"], fg="#ffffff",
+            activebackground=C["accent_hover"], activeforeground="#ffffff",
             font=FONT_UI_BOLD, relief=tk.FLAT, padx=14, pady=6,
             command=self._save_feature_toggles, cursor="hand2", state=tk.DISABLED,
         )
@@ -675,92 +735,298 @@ class ForgeGuiApp:
     # ── 标签 2：客户端 ──────────────────────────────────────────
     def _build_client_tab(self, parent):
         heading = tk.Frame(parent, bg=C["bg"])
-        heading.pack(fill=tk.X, pady=(14, 12))
+        heading.pack(fill=tk.X, pady=(14, 10))
         tk.Label(heading, text="交互客户端", bg=C["bg"], fg=C["text"],
                  font=FONT_SECTION).pack(anchor=tk.W)
         tk.Label(heading, text="连接本机 gateway，与已配置的模型对话。",
                  bg=C["bg"], fg=C["muted"], font=FONT_SMALL
                  ).pack(anchor=tk.W, pady=(2, 0))
 
-        # 上：模型选择 + 清空
-        top = tk.Frame(parent, bg=C["bg"])
-        top.pack(fill=tk.X, pady=(0, 10))
-        tk.Label(top, text="模型", bg=C["bg"], fg=C["subtext"],
-                 font=FONT_UI_BOLD).pack(side=tk.LEFT, padx=(0, 6))
+        # ── 次要控制（模型刷新 / 温度 / 清空）──
+        ctrl = tk.Frame(parent, bg=C["bg"])
+        ctrl.pack(fill=tk.X, pady=(0, 8))
+        tk.Label(ctrl, text="模型", bg=C["bg"], fg=C["ter"],
+                 font=FONT_SMALL).pack(side=tk.LEFT, padx=(0, 6))
         self.model_var = tk.StringVar(value="default")
         self.model_combo = ttk.Combobox(
-            top, textvariable=self.model_var, values=["default"],
-            state="readonly", width=27, font=FONT_UI,
+            ctrl, textvariable=self.model_var, values=["default"],
+            state="readonly", width=24, font=FONT_UI,
         )
         self.model_combo.pack(side=tk.LEFT)
-        tk.Button(
-            top, text="刷新模型", bg=C["surface2"], fg=C["text"],
-            activebackground=C["surface2"], activeforeground=C["text"],
-            font=FONT_UI, relief=tk.FLAT, padx=10, pady=6,
-            command=self._reload_configuration, cursor="hand2",
-        ).pack(side=tk.LEFT, padx=(8, 0))
+        tk.Button(ctrl, text="刷新", command=self._reload_configuration,
+                  bg=C["bg"], fg=C["muted"], activebackground=C["surface2"],
+                  activeforeground=C["text"], font=FONT_SMALL, relief=tk.FLAT,
+                  bd=0, padx=8, pady=3, cursor="hand2").pack(side=tk.LEFT, padx=(6, 0))
 
         self.temp_var = tk.StringVar(value="0.7")
-        tk.Label(top, text="温度", bg=C["bg"], fg=C["subtext"],
-                 font=FONT_UI_BOLD).pack(side=tk.LEFT, padx=(20, 6))
-        tk.Entry(top, textvariable=self.temp_var, width=5,
-                 bg=C["input_bg"], fg=C["text"], font=FONT_MONO,
-                 relief=tk.FLAT, insertbackground=C["accent"],
+        tk.Label(ctrl, text="温度", bg=C["bg"], fg=C["ter"],
+                 font=FONT_SMALL).pack(side=tk.LEFT, padx=(18, 6))
+        tk.Entry(ctrl, textvariable=self.temp_var, width=5,
+                 bg=C["surface"], fg=C["text"], font=FONT_MONO,
+                 relief=tk.FLAT, insertbackground=C["accent"], bd=0,
                  highlightthickness=1, highlightbackground=C["border"],
-                 highlightcolor=C["accent"]).pack(side=tk.LEFT)
+                 highlightcolor=C["accent"]).pack(side=tk.LEFT, ipady=3, ipadx=4)
 
         self.clear_chat_btn = tk.Button(
-            top, text="清空对话", bg=C["surface2"], fg=C["subtext"],
-            activebackground=C["surface2"], activeforeground=C["text"],
-            font=FONT_UI, relief=tk.FLAT, padx=10, pady=6,
-            command=self._clear_chat, cursor="hand2",
-        )
+            ctrl, text="清空对话", command=self._clear_chat,
+            bg=C["bg"], fg=C["muted"], activebackground=C["surface2"],
+            activeforeground=C["text"], font=FONT_SMALL, relief=tk.FLAT,
+            bd=0, padx=8, pady=3, cursor="hand2")
         self.clear_chat_btn.pack(side=tk.RIGHT)
 
-        # 中：对话显示区
-        chat_frame = tk.Frame(parent, bg=C["surface"], padx=1, pady=1)
+        # ── 对话区（白卡 + 细分隔线）──
+        chat_wrap = tk.Frame(parent, bg=C["border"], padx=1, pady=1)
         self.chat_text = scrolledtext.ScrolledText(
-            chat_frame, bg=C["input_bg"], fg=C["text"],
+            chat_wrap, bg=C["surface"], fg=C["text"],
             font=FONT_UI, relief=tk.FLAT, highlightthickness=0,
-            padx=18, pady=18, wrap=tk.WORD,
+            padx=20, pady=18, wrap=tk.WORD,
             state=tk.DISABLED, spacing1=3, spacing3=5,
         )
         self.chat_text.pack(fill=tk.BOTH, expand=True)
         self._style_scrollbar(self.chat_text)
-        self.chat_text.tag_configure("user", foreground=C["accent"],
-                                      font=FONT_UI_BOLD)
-        self.chat_text.tag_configure("assistant", foreground=C["accent2"],
-                                      font=FONT_UI_BOLD)
-        self.chat_text.tag_configure("muted", foreground=C["muted"])
+        self.chat_text.tag_configure("user", foreground=C["accent"], font=FONT_UI_BOLD)
+        self.chat_text.tag_configure("assistant", foreground=C["subtext"], font=FONT_UI_BOLD)
+        self.chat_text.tag_configure("muted", foreground=C["ter"])
+        self.chat_text.configure(tabs=("1c",))
         self.chat_text.tag_configure("error", foreground=C["error"])
+        self.chat_text.tag_configure("empty_title", foreground=C["text"],
+                                      font=FONT_SECTION, spacing1=4, spacing3=10,
+                                      justify="center")
+        self.chat_text.tag_configure("empty_body", foreground=C["muted"],
+                                      font=FONT_SMALL, justify="center",
+                                      spacing1=2, spacing3=2)
+        self.chat_text.tag_configure("bubble_user", background=C["msg_user_bg"],
+                                      lmargin1=10, lmargin2=10, rmargin=10,
+                                      spacing1=6, spacing3=6)
+        self.chat_text.tag_configure("bubble_agent", background=C["msg_agent_bg"],
+                                      lmargin1=10, lmargin2=10, rmargin=10,
+                                      spacing1=6, spacing3=6)
+        self._hide_chat_scrollbar()
         self._show_chat_empty_state()
 
-        # 下：输入框 + 发送
-        bottom = tk.Frame(parent, bg=C["bg"])
-        bottom.pack(side=tk.BOTTOM, fill=tk.X)
+        # ── 输入卡（AutoClaw 风格圆角卡片 + 底部工具条）──
         self.send_var = tk.StringVar()
-        self.send_entry = tk.Entry(
-            bottom, textvariable=self.send_var,
-            bg=C["input_bg"], fg=C["text"], font=FONT_UI,
-            insertbackground=C["accent"], relief=tk.FLAT,
-            highlightthickness=1, highlightbackground=C["border"],
-            highlightcolor=C["accent"],
-        )
-        self.send_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=9)
-        self.send_entry.bind("<Return>", lambda e: self._do_send())
+        self.input_card = tk.Canvas(parent, bg=C["bg"], highlightthickness=0,
+                                    height=114, bd=0)
+        self.input_card.pack(side=tk.BOTTOM, fill=tk.X)
+        self._card_shape = round_rect(self.input_card, 1, 1, 10, 10, R_PILL,
+                                      fill=C["input_bg"], outline=C["border"], width=1)
 
-        self.send_btn = tk.Button(
-            bottom, text="发送 ↵", bg=C["accent"], fg=C["bg"],
-            activebackground=C["accent_hover"], activeforeground=C["bg"],
-            font=FONT_UI_BOLD, relief=tk.FLAT, padx=18, pady=8,
-            command=self._do_send, cursor="hand2",
+        self.send_entry = tk.Entry(
+            self.input_card, textvariable=self.send_var, font=FONT_UI,
+            bg=C["input_bg"], fg=C["text"], insertbackground=C["accent"],
+            relief=tk.FLAT, bd=0, highlightthickness=0,
         )
-        self.send_btn.pack(side=tk.LEFT, padx=(6, 0))
-        self.request_status_var = tk.StringVar(value="就绪")
-        tk.Label(bottom, textvariable=self.request_status_var, bg=C["bg"],
-                 fg=C["muted"], font=FONT_SMALL
-                 ).pack(side=tk.RIGHT, padx=(12, 0))
-        chat_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        self.send_entry.bind("<Return>", lambda e: self._do_send())
+        self._entry_win = self.input_card.create_window(0, 0, window=self.send_entry,
+                                                        anchor="nw")
+        # 占位提示必须是「内嵌控件」：canvas 图元会被 create_window 的
+        # Entry 子窗口盖住，只有真实 widget 才画在它上面。
+        self.entry_hint = tk.Label(self.input_card, text="输入消息，Enter 发送",
+                                   bg=C["input_bg"], fg=C["placeholder"],
+                                   font=FONT_UI, cursor="xterm",
+                                   anchor="w", justify="left")
+        self.entry_hint.bind("<Button-1>", lambda e: self.send_entry.focus_set())
+        self._entry_hint = self.input_card.create_window(0, 0, window=self.entry_hint,
+                                                         anchor="nw")
+        # 同级 widget 的堆叠序由创建顺序决定，但 canvas 内嵌窗口的显示顺序
+        # 会被 canvas 重排——显式 lift 一次确保占位文本压在 Entry 之上。
+        try:
+            self.entry_hint.lift(self.send_entry)
+        except Exception:
+            pass
+
+        # ＋（粘贴剪贴板）
+        self.plus_btn = tk.Button(
+            self.input_card, text="＋", command=self._paste_into_input,
+            bg=C["input_bg"], fg=C["muted"], activebackground=C["surface2"],
+            activeforeground=C["text"], font=("Segoe UI", 13) if IS_WINDOWS else ("Helvetica", 13),
+            relief=tk.FLAT, bd=0, padx=6, pady=0, cursor="hand2", highlightthickness=0)
+        self._plus_win = self.input_card.create_window(0, 0, window=self.plus_btn, anchor="nw")
+
+        # 模型名（工具条内联展示，与 AutoClaw 工具条一致）
+        self.bar_tools = tk.Frame(self.input_card, bg=C["input_bg"])
+        self._bar_tools_win = self.input_card.create_window(0, 0, window=self.bar_tools,
+                                                            anchor="nw")
+        self.bar_model_lbl = tk.Label(self.bar_tools, text=" default ",
+                                      bg=C["surface_subtle"], fg=C["subtext"],
+                                      font=FONT_SMALL, padx=8, pady=3)
+        self.bar_model_lbl.pack(side=tk.LEFT)
+
+        # 沉思模式（对齐 AutoClaw 工具条「目标模式」的位置；Forge 的对应概念是三档沉思）
+        self._thinking_mode = self._read_thinking_mode()
+        self.think_pill = tk.Button(
+            self.bar_tools, text=self._thinking_label(), command=self._open_thinking_menu,
+            bg=C["surface_subtle"], fg=C["subtext"], activebackground=C["accent_soft"],
+            activeforeground=C["accent"], font=FONT_SMALL, relief=tk.FLAT, bd=0,
+            padx=8, pady=3, cursor="hand2", highlightthickness=0)
+        if self._thinking_mode != "off":
+            self.think_pill.configure(fg=C["accent"], bg=C["accent_soft"])
+        self.think_pill.pack(side=tk.LEFT, padx=(8, 0))
+
+        # 圆形按钮：停止（深） / 发送（品牌橙）
+        self._stop_circle = self.input_card.create_oval(0, 0, 0, 0,
+                                                        fill=C["text"], outline="")
+        self._stop_glyph = self.input_card.create_text(0, 0, text="■", fill="#ffffff",
+                                                       font=("Segoe UI", 8))
+        self._send_circle = self.input_card.create_oval(0, 0, 0, 0,
+                                                        fill=C["surface2"], outline="")
+        self._send_glyph = self.input_card.create_text(0, 0, text="↑", fill=C["ter"],
+                                                       font=("Segoe UI", 12, "bold"))
+        for item in (self._stop_circle, self._stop_glyph):
+            self.input_card.tag_bind(item, "<Button-1>", lambda e: self._stop_send())
+            self.input_card.tag_bind(item, "<Enter>", lambda e: self.input_card.configure(cursor="hand2"))
+        for item in (self._send_circle, self._send_glyph):
+            self.input_card.tag_bind(item, "<Button-1>", lambda e: self._do_send())
+            self.input_card.tag_bind(item, "<Enter>", lambda e: self.input_card.configure(cursor="hand2"))
+        self.input_card.itemconfigure(self._stop_circle, state="hidden")
+        self.input_card.itemconfigure(self._stop_glyph, state="hidden")
+        self._stop_visible = False
+
+        self.input_card.bind("<Configure>", self._layout_input_card)
+        self.send_var.trace_add("write", lambda *_: self._refresh_send_circle())
+
+        # 卡下方说明（对齐 AutoClaw 的 "Agent 在本地运行，内容由AI生成"）
+        foot = tk.Frame(parent, bg=C["bg"])
+        foot.pack(side=tk.BOTTOM, fill=tk.X, pady=(6, 8))
+        self.request_status_var = tk.StringVar(value="空闲")
+        tk.Label(foot, textvariable=self.request_status_var, bg=C["bg"],
+                 fg=C["ter"], font=FONT_CAPTION).pack(side=tk.LEFT)
+        tk.Label(foot, text="forge 在本地运行，内容由 AI 生成", bg=C["bg"],
+                 fg=C["ter"], font=FONT_CAPTION).pack(side=tk.RIGHT)
+
+        # 对话区最后 pack（expand 会吃掉剩余空间，必须先给底部元素留位）
+        chat_wrap.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+
+    # ── 输入卡布局（Canvas 内多控件手排）──
+    def _layout_input_card(self, event=None):
+        cv = self.input_card
+        W = cv.winfo_width()
+        if W <= 1:
+            return
+        H = int(cv.cget("height"))
+        cv.coords(self._card_shape, *(self._rounded_points(1.5, 1.5, W - 1.5, H - 1.5, R_PILL)))
+        pad = 18
+        cv.coords(self._entry_win, pad + 4, 16)
+        self._hint_xy = (pad + 6, 21)
+        cv.coords(self._entry_hint, *self._hint_xy)
+        try:
+            self.entry_hint.lift(self.send_entry)
+        except Exception:
+            pass
+        cv.itemconfigure(self._entry_hint, width=W - pad * 2 - 12, height=22)
+        self.send_entry.configure(width=max(20, int((W - pad * 2 - 8) / 8)))
+        cv.itemconfigure(self._entry_win, width=W - pad * 2 - 8, height=24)
+
+        bar_y = H - 42
+        cv.coords(self._plus_win, pad, bar_y - 2)
+        cv.coords(self._bar_tools_win, pad + 36, bar_y - 2)
+        self.bar_model_lbl.configure(text=f" {self.model_var.get()} ")
+
+        cx_send, cy = W - 36, bar_y + 8
+        r_send = 18
+        cv.coords(self._send_circle, cx_send - r_send, cy - r_send,
+                  cx_send + r_send, cy + r_send)
+        cv.coords(self._send_glyph, cx_send, cy)
+        cx_stop = W - 82
+        r_stop = 15
+        cv.coords(self._stop_circle, cx_stop - r_stop, cy - r_stop,
+                  cx_stop + r_stop, cy + r_stop)
+        cv.coords(self._stop_glyph, cx_stop, cy)
+        self._refresh_send_circle()
+
+    def _hint_pos(self):
+        return getattr(self, "_hint_xy", (24, 21))
+
+    @staticmethod
+    def _rounded_points(x1, y1, x2, y2, r):
+        return [x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r,
+                x2, y2 - r, x2, y2, x2 - r, y2, x1 + r, y2,
+                x1, y2, x1, y2 - r, x1, y1 + r, x1, y1]
+
+    def _refresh_send_circle(self):
+        has_text = bool(self.send_var.get().strip())
+        if hasattr(self, "_entry_hint"):
+            self.input_card.itemconfigure(
+                self._entry_hint, state="hidden" if has_text else "normal")
+        if hasattr(self, "entry_hint"):
+            self.input_card.coords(self._entry_hint, *self._hint_pos())
+        if self._sending:
+            self.input_card.itemconfigure(self._send_circle, fill=C["surface2"])
+            self.input_card.itemconfigure(self._send_glyph, fill=C["ter"])
+            self.input_card.itemconfigure(self._stop_circle, fill=C["text"], state="normal")
+            self.input_card.itemconfigure(self._stop_glyph, state="normal")
+            return
+        self.input_card.itemconfigure(self._stop_circle, state="hidden")
+        self.input_card.itemconfigure(self._stop_glyph, state="hidden")
+        if has_text:
+            self.input_card.itemconfigure(self._send_circle, fill=C["accent"])
+            self.input_card.itemconfigure(self._send_glyph, fill="#ffffff")
+        else:
+            self.input_card.itemconfigure(self._send_circle, fill=C["surface2"])
+            self.input_card.itemconfigure(self._send_glyph, fill=C["ter"])
+
+    # ── 沉思模式（forge 的 thinking.mode：off / smart / on）──
+    def _read_thinking_mode(self) -> str:
+        for row in self.user_rows:
+            if str(row.get("id")) == "thinking":
+                mode = str((row.get("config") or {}).get("mode", "off")).lower()
+                return mode if mode in ("off", "smart", "on") else "off"
+        return "off"
+
+    def _thinking_label(self) -> str:
+        return f"◎ 沉思 · {THINKING_LABELS.get(self._thinking_mode, '关闭')}"
+
+    def _open_thinking_menu(self):
+        menu = tk.Menu(self.root, tearoff=0, bg=C["surface"], fg=C["text"],
+                       activebackground=C["accent_soft"], activeforeground=C["accent"],
+                       font=FONT_UI, bd=1, relief=tk.FLAT)
+        var = tk.StringVar(value=self._thinking_mode)
+        for mode, label, hint in THINKING_CHOICES:
+            menu.add_radiobutton(label=f"{label}　{hint}", variable=var, value=mode,
+                                 command=lambda m=mode: self._set_thinking_mode(m))
+        try:
+            menu.tk_popup(self.think_pill.winfo_rootx(),
+                          self.think_pill.winfo_rooty() + self.think_pill.winfo_height())
+        finally:
+            menu.grab_release()
+
+    def _set_thinking_mode(self, mode: str):
+        import copy as _copy
+        try:
+            latest = load_user_layer(self.home)
+            rows = _copy.deepcopy(latest)
+            row = next((r for r in rows if str(r.get("id")) == "thinking"), None)
+            if row is None:
+                rows.append({"id": "thinking", "name": "thinking:mode",
+                             "config": {"mode": mode}})
+            else:
+                row.setdefault("config", {})["mode"] = mode
+            save_user_layer(self.home, rows, expected_rows=latest)
+        except (OSError, ValueError) as exc:
+            self._set_status(f"沉思模式保存失败：{exc}", "error")
+            return
+        self.user_rows = rows
+        self._thinking_mode = mode
+        self.think_pill.configure(text=self._thinking_label(),
+                                  fg=C["accent"] if mode != "off" else C["subtext"],
+                                  bg=C["accent_soft"] if mode != "off" else C["surface_subtle"])
+        self._rebuild_feature_toggles(force=True)
+        self._set_status(
+            f"沉思模式已设为「{THINKING_LABELS[mode]}」；forge run 任务即时生效，"
+            f"运行中的服务需重启以应用", "ok")
+
+    def _paste_into_input(self):
+        try:
+            text = self.root.clipboard_get()
+        except tk.TclError:
+            self._set_status("剪贴板无文本", "warn")
+            return
+        current = self.send_var.get()
+        sep = chr(10) if current else ""
+        self.send_var.set((current + sep + text).strip())
+        self.send_entry.focus_set()
+        self._set_status(f"已粘贴 {len(text)} 字符到输入框", "info")
 
     # ── 占位提示 ──
     def _editor_is_dirty(self):
@@ -1148,10 +1414,28 @@ class ForgeGuiApp:
         threading.Thread(target=terminate, daemon=False).start()
 
     # ── 客户端：对话 ──
+    def _hide_chat_scrollbar(self):
+        try:
+            self.chat_text.vbar.pack_forget()
+        except Exception:
+            pass
+
+    def _show_chat_scrollbar(self):
+        try:
+            self.chat_text.vbar.pack(side="right", fill="y",
+                                     before=self.chat_text.text)
+        except Exception:
+            pass
+
     def _show_chat_empty_state(self):
         self.chat_text.configure(state=tk.NORMAL)
         self.chat_text.delete("1.0", tk.END)
-        self.chat_text.insert("1.0", "开始新对话\n\n选择模型，确认 gateway 已在线，然后在下方输入消息。", "muted")
+        # 垂直居中：空态用等量空白 + 居中段落
+        self.chat_text.insert(tk.END, "\n" * 6)
+        self.chat_text.insert(tk.END, "开始新对话\n", "empty_title")
+        self.chat_text.insert(tk.END, "选择模型 → 确认 gateway 在线 → 在下方输入消息\n", "empty_body")
+        self.chat_text.insert(tk.END,
+                              "左下「沉思」可切换 关闭 / 智能 / 开启。", "empty_body")
         self.chat_text.configure(state=tk.DISABLED)
         self._chat_empty = True
 
@@ -1168,6 +1452,7 @@ class ForgeGuiApp:
         if self._chat_empty:
             self.chat_text.delete("1.0", tk.END)
             self._chat_empty = False
+            self._show_chat_scrollbar()
         if self.chat_text.index("end-1c") != "1.0":
             self.chat_text.insert(tk.END, "\n\n")
         label = {"你": "你", "assistant": "Forge", "error": "错误"}.get(role, role)
@@ -1214,7 +1499,7 @@ class ForgeGuiApp:
         self._append_chat("你", text)
         self._append_chat("assistant", "")
         messages = list(self._chat_history) + [ChatMessage("user", text)]
-        self.send_btn.configure(state=tk.DISABLED)
+        self._refresh_send_circle()
         self.clear_chat_btn.configure(state=tk.DISABLED)
         self.gw_btn.configure(state=tk.DISABLED)
         self.port_spin.configure(state=tk.DISABLED)
@@ -1232,6 +1517,8 @@ class ForgeGuiApp:
                 self._post_ui(self.request_status_var.set, "正在生成…")
                 acc: list[str] = []
                 def on_chunk(piece: str):
+                    if self._abort_requested:
+                        raise GatewayError("已按用户要求中止")
                     acc.append(piece)
                     self._post_ui(self._append_stream_delta, piece)
                 client.stream_chat(
@@ -1258,14 +1545,29 @@ class ForgeGuiApp:
             self.send_var.set(prompt)
         self._set_status("请求失败，消息已保留；检查 gateway 后可重试", "error")
 
+    def _stop_send(self):
+        """请求中止当前流式回复。
+
+        urllib 没有暴露打断点，所以在工作线程侧用一个标志位：下一次 chunk
+        回调时抛异常退出（forge_client 的 on_chunk 异常会被吞掉，所以我们
+        改用自己的标志配合 _chat_failed 分支）。这里先即时反馈状态。
+        """
+        if not self._sending:
+            return
+        self._abort_requested = True
+        self.request_status_var.set("正在停止…")
+        self._set_status("已请求停止——当前这轮回复会在下一个数据块后结束", "warn")
+        self._refresh_send_circle()
+
     def _send_finished(self):
         self._sending = False
-        self.send_btn.configure(state=tk.NORMAL)
+        self._abort_requested = False
         self.clear_chat_btn.configure(state=tk.NORMAL)
         self.gw_btn.configure(state=tk.NORMAL)
         if not self.gateway_proc:
             self.port_spin.configure(state=tk.NORMAL)
-        self.request_status_var.set("就绪")
+        self.request_status_var.set("空闲")
+        self._refresh_send_circle()
 
     # ── 关闭 ──
     def _on_close(self):
