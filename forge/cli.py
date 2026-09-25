@@ -290,6 +290,24 @@ def _parse_model_map(raw: str) -> dict[str, str]:
 def cmd_gateway(args) -> int:
     from .gateway import GatewayConfig, serve
 
+    # --tools: attach the builtin registry + the REAL composed policy so the
+    # gateway can serve /v1/tools and /v1/tools/call under the user's actual
+    # permission config (profile presets included). Without --tools the
+    # gateway behaves exactly as before (pure proxy, tool endpoints 404).
+    registry = None
+    bridge_policy = None
+    if getattr(args, "tools", False):
+        from .policy import Policy
+        from .tools import build_builtin_registry
+
+        composed = _compose(args)
+        _apply_profile(args, composed)
+        registry = build_builtin_registry()
+        bridge_policy = Policy.from_config(
+            composed,
+            workspace=Path(args.workspace or Path.cwd()),
+            non_interactive=True,  # headless bridge: unresolved ASK -> DENY
+        )
     cfg = GatewayConfig(
         upstream=args.upstream,
         api_key=args.key or "",
@@ -298,6 +316,9 @@ def cmd_gateway(args) -> int:
         log_path=Path(args.log) if args.log else None,
         upstream_wire=args.upstream_wire,
         model_map=_parse_model_map(args.model_map),
+        registry=registry,
+        workspace=str(Path(args.workspace or Path.cwd())),
+        policy=bridge_policy,
     )
     server = serve(cfg)
     try:
@@ -605,6 +626,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     gateway = sub.add_parser("gateway", parents=[common], help="loopback protocol gateway")
     gateway.add_argument("--upstream", required=True)
+    gateway.add_argument("--tools", action="store_true",
+                         help="serve /v1/tools + /v1/tools/call using the builtin "
+                              "registry under the composed policy (fail-closed)")
     gateway.add_argument("--key", default="")
     gateway.add_argument("--port", type=int, default=8799)
     gateway.add_argument("--models", default="")

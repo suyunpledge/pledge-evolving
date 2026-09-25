@@ -90,6 +90,7 @@ class GatewayConfig:
         max_auth_failures: int = 5,
         registry=None,
         workspace: str = "",
+        policy=None,
     ) -> None:
         self.upstream = upstream.rstrip("/")
         self.api_key = api_key
@@ -107,6 +108,11 @@ class GatewayConfig:
         # POST /v1/tools/call executes a tool through the full policy gate.
         self.registry = registry
         self.workspace = Path(workspace) if workspace else Path.cwd()
+        # Tool-bridge policy: MUST come from the composed user config (never a
+        # bare Policy() default — that silently re-permissions the bridge).
+        # Headless gateway has nobody to approve an ASK, so non_interactive
+        # stays True: unresolved ASK collapses to DENY, same as `forge run`.
+        self.policy = policy
         self._auth_lock = threading.Lock()
         self._auth_failures: int = 0
         self._auth_locked_until: float = 0.0
@@ -224,7 +230,6 @@ def build_handler(cfg: GatewayConfig):
             Body: {"name": "read_file", "arguments": {"path": "x.py"}}
             The name may arrive with or without the forge_ prefix.
             """
-            from .policy import Policy
             from .tools import ToolContext
 
             if cfg.registry is None:
@@ -263,8 +268,16 @@ def build_handler(cfg: GatewayConfig):
             if spec.is_deferred:
                 cfg.registry.activate(name)
                 cfg.log.write(f"TOOLCALL implicit activation: {name}")
-            policy = Policy(workspace=cfg.workspace)
-            ctx = ToolContext(policy=policy, workspace=cfg.workspace,
+            if cfg.policy is None:
+                # fail-closed: a gateway started without a policy must not
+                # execute tools under invented default permissions
+                self._json(503, {"type": "error",
+                                 "error": {"type": "api_error",
+                                           "message": "tool bridge disabled: no policy attached "
+                                                      "(start gateway with --registry/--profile so the "
+                                                      "bridge inherits the real permission config)"}})
+                return
+            ctx = ToolContext(policy=cfg.policy, workspace=cfg.workspace,
                               extras={"registry": cfg.registry})
             cfg.log.write(f"TOOLCALL {name} args={json.dumps(arguments, ensure_ascii=False)[:200]}")
             try:

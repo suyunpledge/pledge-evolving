@@ -3730,6 +3730,174 @@ def test_local_service() -> None:
                           not seen_caps, f"caps={seen_caps}")
 
 
+def test_tool_bridge_invariants() -> None:
+    """Tool-bridge execution integrity + permission integrity.
+
+    Locked invariants (the fake-pass and ASK-bypass class of bugs die here):
+      INV1 DENY never executes
+      INV2 unresolved ASK never executes on the headless bridge
+      INV3 ALLOW executes
+      INV4 parse failures are failures, never ok=True
+      INV5 every invocation carries meta.authorization (auditable)
+      INV6 a gateway without an attached policy refuses tool calls (fail-closed)
+    """
+    import json as _json
+    import threading as _threading
+    import urllib.request as _ureq
+    from .gateway import GatewayConfig, serve as _gw_serve
+    from .policy import Mode, Sandbox
+    from .tools import build_builtin_registry
+
+    with tempfile.TemporaryDirectory() as tmp:
+        ws = Path(tmp)
+        # marker file must never appear unless ALLOW let the write through
+        marker = ws / "marker.txt"
+        reg = build_builtin_registry()
+
+        def make_policy(mode: Mode):
+            from .policy import Policy
+            return Policy(mode=mode, sandbox=Sandbox.WORKSPACE_WRITE,
+                          workspace=ws, non_interactive=True)
+
+        # ---- direct registry-level invariants (no HTTP) ----
+        from .tools import ToolContext
+
+        def run_tool(mode, name, args):
+            pol = make_policy(mode)
+            ctx = ToolContext(policy=pol, workspace=ws, extras={"registry": reg})
+            return reg.invoke(name, args, ctx)
+
+        # INV2: DEFAULT mode -> write is ASK -> non_interactive collapses to DENY
+        r = run_tool(Mode.DEFAULT, "write_file",
+                     {"path": "marker.txt", "content": "x"})
+        check("bridge:inv2-ask-collapses-to-deny",
+              not r.ok and "denied by policy" in r.error, f"ok={r.ok} err={r.error}")
+        check("bridge:inv2-marker-absent", not marker.exists())
+
+        # INV3: acceptEdits -> write allowed (workspace inside)
+        r = run_tool(Mode.ACCEPT_EDITS, "write_file",
+                     {"path": "marker.txt", "content": "x"})
+        check("bridge:inv3-allow-executes", r.ok and marker.exists(),
+              f"ok={r.ok} err={r.error}")
+        marker.unlink()
+
+        # INV1: explicit deny beats everything
+        from .policy import Policy as _P
+        pol = _P(mode=Mode.BYPASS, sandbox=Sandbox.FULL_ACCESS, workspace=ws,
+                 allow=(), ask=(), deny=("write_file",), non_interactive=True)
+        ctx = ToolContext(policy=pol, workspace=ws, extras={"registry": reg})
+        r = reg.invoke("write_file", {"path": "marker.txt", "content": "x"}, ctx)
+        check("bridge:inv1-deny-wins-over-bypass",
+              not r.ok and marker.exists() is False, f"ok={r.ok}")
+
+        # INV1b: destructive command pattern denied even when shell is allowed
+        pol2 = _P(mode=Mode.BYPASS, sandbox=Sandbox.FULL_ACCESS, workspace=ws,
+                  non_interactive=True)
+        ctx2 = ToolContext(policy=pol2, workspace=ws, extras={"registry": reg})
+        r = ctx2.policy.evaluate("shell_exec", args={"command": "rm -rf /"})
+        check("bridge:inv1b-destructive-pattern-denied", str(r) == "Decision.DENY", str(r))
+
+        # INV5: authorization always recorded
+        r = run_tool(Mode.ACCEPT_EDITS, "calculator", {"expression": "1+1"})
+        check("bridge:inv5-authorization-in-meta",
+              r.ok and r.meta.get("authorization") in ("allow", "ask"),
+              f"meta={r.meta}")
+
+        # ---- HTTP-level invariants (through the real gateway handler) ----
+        port = _free_port()
+        cfg = GatewayConfig(upstream="http://127.0.0.1:1", port=port,
+                            models=["m"], registry=reg, workspace=str(ws),
+                            policy=make_policy(Mode.DEFAULT))
+        server = _gw_serve(cfg)
+        t = _threading.Thread(target=server.serve_forever, daemon=True)
+        t.start()
+        try:
+            import time as _time
+            _time.sleep(0.2)
+            base = f"http://127.0.0.1:{port}"
+
+            def call(name, args):
+                req = _ureq.Request(
+                    f"{base}/v1/tools/call",
+                    data=_json.dumps({"name": name, "arguments": args}).encode(),
+                    headers={"Content-Type": "application/json"}, method="POST")
+                try:
+                    with _ureq.urlopen(req, timeout=10) as resp:
+                        return resp.status, _json.loads(resp.read().decode())
+                except Exception as exc:  # noqa: BLE001
+                    code = getattr(exc, "code", 0)
+                    body = getattr(exc, "read", lambda: b"")()
+                    try:
+                        return code, _json.loads(body.decode())
+                    except Exception:
+                        return code, {"raw": str(exc)}
+
+            # INV2 over HTTP: write under DEFAULT -> denied, file absent
+            code, body = call("write_file", {"path": "marker.txt", "content": "x"})
+            check("bridge:http-inv2-ask-denied",
+                  code == 200 and body.get("ok") is False
+                  and "denied by policy" in body.get("error", ""),
+                  f"code={code} body={str(body)[:120]}")
+            check("bridge:http-inv2-file-absent", not marker.exists())
+
+            # INV3 over HTTP: calculator under DEFAULT is read-only -> allowed
+            code, body = call("calculator", {"expression": "6*7"})
+            check("bridge:http-inv3-allowed",
+                  code == 200 and body.get("ok") and "= 42" in body.get("content", ""),
+                  f"code={code}")
+
+            # INV4: malformed arguments -> 400, never ok
+            req = _ureq.Request(
+                f"{base}/v1/tools/call",
+                data=b"{not json", headers={"Content-Type": "application/json"},
+                method="POST")
+            try:
+                with _ureq.urlopen(req, timeout=10) as resp:
+                    code = resp.status
+            except Exception as exc:  # noqa: BLE001
+                code = getattr(exc, "code", 0)
+            check("bridge:http-inv4-bad-json-is-400", code == 400, f"code={code}")
+
+            # INV4b: arguments 非对象 -> 400
+            code, body = call("read_file", "not-an-object")
+            check("bridge:http-inv4b-args-type-400", code == 400, f"code={code}")
+
+            # INV6: no-policy gateway refuses (fail-closed)
+            port2 = _free_port()
+            cfg2 = GatewayConfig(upstream="http://127.0.0.1:1", port=port2,
+                                 models=["m"], registry=reg, workspace=str(ws),
+                                 policy=None)
+            server2 = _gw_serve(cfg2)
+            t2 = _threading.Thread(target=server2.serve_forever, daemon=True)
+            t2.start()
+            _time.sleep(0.2)
+            try:
+                req = _ureq.Request(
+                    f"http://127.0.0.1:{port2}/v1/tools/call",
+                    data=_json.dumps({"name": "read_file",
+                                      "arguments": {"path": "x"}}).encode(),
+                    headers={"Content-Type": "application/json"}, method="POST")
+                try:
+                    with _ureq.urlopen(req, timeout=10) as resp:
+                        code2 = resp.status
+                except Exception as exc:  # noqa: BLE001
+                    code2 = getattr(exc, "code", 0)
+                check("bridge:http-inv6-no-policy-503", code2 == 503, f"code={code2}")
+            finally:
+                server2.shutdown()
+        finally:
+            server.shutdown()
+
+
+def _free_port() -> int:
+    import socket as _socket
+    s = _socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
+
 # ---------------------------------------------------------------------------
 
 def run_selftest(workspace: Path | None = None, *, verbose: bool = True) -> int:
@@ -3746,6 +3914,7 @@ def run_selftest(workspace: Path | None = None, *, verbose: bool = True) -> int:
         test_local_service,
         test_loop_and_subagents, test_cli_surface, test_permission_profiles,
         test_coding_mode,
+        test_tool_bridge_invariants,
     ]
     for suite in suites:
         try:
