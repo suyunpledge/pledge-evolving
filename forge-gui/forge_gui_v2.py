@@ -349,8 +349,8 @@ class ForgeGuiApp:
                  fg=C["text"], font=FONT_SMALL, anchor=tk.W, padx=20)
         self.status_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True)
         self.path_lbl = tk.Label(
-            bot, text=f"{'gateway 可启动' if self.run_py else '未找到 run.py'}",
-            bg=C["bg"], fg=C["ter"], font=FONT_SMALL, padx=12,
+            bot, text=f"{'forge 目录已就绪' if self.run_py else '未找到 run.py'}",
+            bg=C["bg"], fg=C["muted"], font=FONT_SMALL, padx=12,
         )
         self.path_lbl.pack(side=tk.RIGHT)
         nb.pack(fill=tk.BOTH, expand=True, padx=20, pady=(8, 10))
@@ -771,7 +771,7 @@ class ForgeGuiApp:
             ctrl, text="清空对话", command=self._clear_chat,
             bg=C["bg"], fg=C["muted"], activebackground=C["surface2"],
             activeforeground=C["text"], font=FONT_SMALL, relief=tk.FLAT,
-            bd=0, padx=8, pady=3, cursor="hand2")
+            bd=0, padx=12, pady=3, cursor="hand2")
         self.clear_chat_btn.pack(side=tk.RIGHT)
 
         # ── 对话区（白卡 + 细分隔线）──
@@ -862,7 +862,7 @@ class ForgeGuiApp:
             padx=8, pady=3, cursor="hand2", highlightthickness=0)
         if self._thinking_mode != "off":
             self.think_pill.configure(fg=C["accent"], bg=C["accent_soft"])
-        self.think_pill.pack(side=tk.LEFT, padx=(8, 0))
+        self.think_pill.pack(side=tk.LEFT, padx=(10, 0))
 
         # 圆形按钮：停止（深） / 发送（品牌橙）
         self._stop_circle = self.input_card.create_oval(0, 0, 0, 0,
@@ -920,7 +920,7 @@ class ForgeGuiApp:
 
         bar_y = H - 42
         cv.coords(self._plus_win, pad, bar_y - 2)
-        cv.coords(self._bar_tools_win, pad + 36, bar_y - 2)
+        cv.coords(self._bar_tools_win, pad + 38, bar_y - 2)
         self.bar_model_lbl.configure(text=f" {self.model_var.get()} ")
 
         cx_send, cy = W - 36, bar_y + 8
@@ -953,7 +953,7 @@ class ForgeGuiApp:
             self.input_card.coords(self._entry_hint, *self._hint_pos())
         if self._sending:
             self.input_card.itemconfigure(self._send_circle, fill=C["surface2"])
-            self.input_card.itemconfigure(self._send_glyph, fill=C["ter"])
+            self.input_card.itemconfigure(self._send_glyph, fill=C["muted"])
             self.input_card.itemconfigure(self._stop_circle, fill=C["text"], state="normal")
             self.input_card.itemconfigure(self._stop_glyph, state="normal")
             return
@@ -964,7 +964,7 @@ class ForgeGuiApp:
             self.input_card.itemconfigure(self._send_glyph, fill="#ffffff")
         else:
             self.input_card.itemconfigure(self._send_circle, fill=C["surface2"])
-            self.input_card.itemconfigure(self._send_glyph, fill=C["ter"])
+            self.input_card.itemconfigure(self._send_glyph, fill=C["muted"])
 
     # ── 沉思模式（forge 的 thinking.mode：off / smart / on）──
     def _read_thinking_mode(self) -> str:
@@ -1264,7 +1264,7 @@ class ForgeGuiApp:
             self._set_status("所选目录不包含 run.py，请选择 Forge 根目录", "error")
             return
         self.run_py = candidate
-        self.path_lbl.configure(text="gateway 可启动")
+        self.path_lbl.configure(text="forge 目录已就绪")
         self._set_status(f"本次会话使用 Forge：{folder}", "ok")
 
     def _toggle_gateway(self):
