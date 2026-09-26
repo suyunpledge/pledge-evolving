@@ -196,6 +196,61 @@ def save_desktop_config(**updates) -> None:
         pass
 
 
+def _asset_dirs() -> list[Path]:
+    """界面资源可能所在目录（打包后在 _MEIPASS，源码态在模块旁）。"""
+    dirs: list[Path] = []
+    if FROZEN:
+        base = Path(getattr(sys, "_MEIPASS", ""))
+        if str(base):
+            dirs.append(base / "assets")
+    dirs.append(HERE / "assets")
+    dirs.append(APP_DIR / "assets")
+    return dirs
+
+
+def _asset_path(name: str) -> Path | None:
+    for d in _asset_dirs():
+        try:
+            p = d / name
+            if p.is_file():
+                return p
+        except OSError:
+            continue
+    return None
+
+
+def load_brand_logo(target_px: int):
+    """加载品牌标志为 tk.PhotoImage（无 PIL 依赖：只用预生成 PNG + 整数缩放）。
+
+    返回 (image, keep_alive)；找不到资源时返回 (None, None)，调用方回退到程序化绘制。
+    """
+    # 预生成尺寸：52 / 78 / 104；挑最接近的整数倍（zoom 放大、subsample 缩小）
+    for size in (104, 78, 52):
+        path = _asset_path(f"forge-logo-{size}.png")
+        if path is None:
+            continue
+        try:
+            img = tk.PhotoImage(file=str(path))
+        except tk.TclError:
+            continue
+        if size >= target_px:
+            factor = max(1, round(size / target_px))
+            if factor > 1:
+                try:
+                    img = img.subsample(factor, factor)
+                except tk.TclError:
+                    pass
+        else:
+            factor = max(1, round(target_px / size))
+            if factor > 1:
+                try:
+                    img = img.zoom(factor, factor)
+                except tk.TclError:
+                    pass
+        return img, img
+    return None, None
+
+
 def _python_exe() -> str:
     """跑 run.py 用的解释器。
 
@@ -434,6 +489,13 @@ class ForgeGuiApp:
 
     # ── 顶栏 ──────────────────────────────────────────────
     def _build_topbar(self):
+        # 品牌头像（对话消息里的 Forge 头像）：注入给 chat_widgets
+        try:
+            av_img, av_keep = load_brand_logo(30)
+            if av_img is not None:
+                cw.set_brand_avatar(av_img, av_keep)
+        except Exception:
+            pass
         chrome = tk.Frame(self.root, bg=C["bg"])
         chrome.pack(fill=tk.X)
         bar = tk.Frame(chrome, bg=C["bg"], height=56)
@@ -443,14 +505,24 @@ class ForgeGuiApp:
         # 品牌区
         brand = tk.Frame(bar, bg=C["bg"])
         brand.pack(side=tk.LEFT, padx=(16, 10))
-        logo = tk.Canvas(brand, width=26, height=26, bg=C["bg"],
-                         highlightthickness=0, bd=0)
-        round_rect(logo, 0, 0, 25, 25, 8, fill=C["accent"], outline="")
-        logo.create_polygon(2, 2, 20, 2, 2, 20, smooth=True, splinesteps=10,
-                            fill="#6D63F0", outline="")
-        logo.create_text(13, 13, text="F", fill="#FFFFFF",
-                         font=(theme.UI_FAMILY, 12, "bold"))
-        logo.pack(side=tk.LEFT, padx=(0, 10))
+        brand_img, brand_keep = load_brand_logo(26)
+        if brand_img is not None:
+            role = getattr(theme, "C", None)
+            holder = tk.Frame(brand, bg=C["bg"])
+            holder.pack(side=tk.LEFT, padx=(0, 10))
+            shown = tk.Label(holder, image=brand_img, bg=C["bg"], bd=0,
+                             highlightthickness=0)
+            shown.pack()
+            self._brand_logo_refs = (brand_img, brand_keep, holder, shown)
+        else:
+            logo = tk.Canvas(brand, width=26, height=26, bg=C["bg"],
+                             highlightthickness=0, bd=0)
+            round_rect(logo, 0, 0, 25, 25, 8, fill=C["accent"], outline="")
+            logo.create_polygon(2, 2, 20, 2, 2, 20, smooth=True, splinesteps=10,
+                                fill="#6D63F0", outline="")
+            logo.create_text(13, 13, text="F", fill="#FFFFFF",
+                             font=(theme.UI_FAMILY, 12, "bold"))
+            logo.pack(side=tk.LEFT, padx=(0, 10))
         brand_txt = tk.Frame(brand, bg=C["bg"])
         brand_txt.pack(side=tk.LEFT)
         tk.Label(brand_txt, text="FORGE", bg=C["bg"], fg=C["text"],
@@ -2878,6 +2950,24 @@ def _diagnose() -> int:
         "config_path": str(_desktop_config_path()),
         "config_data": load_desktop_config(),
     }
+    # 品牌标志是否随包带上了（打包态最容易漏的资源）
+    try:
+        logo_path = None
+        for n in ("forge-logo-104.png", "forge-logo-78.png", "forge-logo-52.png"):
+            found = _asset_path(n)
+            if found is not None:
+                logo_path = found
+                break
+        info["brand_logo"] = str(logo_path) if logo_path else ""
+        info["brand_logo_ok"] = bool(logo_path)
+        if logo_path is not None:
+            root = tk.Tk()
+            root.withdraw()
+            img, _keep = load_brand_logo(26)
+            info["brand_logo_px"] = f"{img.width()}x{img.height()}" if img else ""
+            root.destroy()
+    except Exception as exc:
+        info["brand_logo_error"] = f"{type(exc).__name__}: {exc}"
     text = json.dumps(info, ensure_ascii=False, indent=2)
     try:
         print(text)

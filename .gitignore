@@ -28,3 +28,6 @@ Thumbs.db
 # forge 桌面应用：本机运行时状态（记住的 Forge 目录等）
 forge-desktop.json
 forge-diagnose.json
+
+# forge 桌面应用：图标预览（make_icon.py 派生产物）
+forge-gui/desktop/forge.png

@@ -30,6 +30,17 @@ from gui_theme import (
 
 MAX_BUBBLE_WIDTH = 620
 
+# 品牌头像（由主程序在启动时注入；未注入时回退到 Indigo 圆角方 + F）
+_BRAND_AVATAR = None
+_BRAND_AVATAR_KEEP = None
+
+
+def set_brand_avatar(image, keep_alive=None):
+    """注入品牌头像位图（tk.PhotoImage）。主程序从 assets 加载后调用。"""
+    global _BRAND_AVATAR, _BRAND_AVATAR_KEEP
+    _BRAND_AVATAR = image
+    _BRAND_AVATAR_KEEP = keep_alive if keep_alive is not None else image
+
 
 # ─── 可滚动区域 ────────────────────────────────────────────
 
@@ -499,7 +510,7 @@ class AgentMessage(tk.Frame):
         head = tk.Frame(self, bg=base)
         head.pack(fill=tk.X)
         avatar(head, size=30, glyph=glyph, fill=C["accent"], shape="rounded",
-               bg=base).pack(side=tk.LEFT, padx=(0, 8))
+               bg=base, image=_BRAND_AVATAR).pack(side=tk.LEFT, padx=(0, 8))
         tk.Label(head, text=name, bg=base, fg=C["text"], font=FONT_UI_BOLD).pack(side=tk.LEFT)
         tk.Label(head, text=ts or time.strftime("%H:%M"), bg=base, fg=C["muted"],
                  font=FONT_CAPTION).pack(side=tk.LEFT, padx=(8, 0))

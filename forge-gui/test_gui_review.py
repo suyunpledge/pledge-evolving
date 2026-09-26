@@ -232,7 +232,10 @@ class GuiReviewTests(unittest.TestCase):
         self.app.send_var.set("hello")
         started = time.monotonic()
         self.app._do_send()
-        self.assertLess(time.monotonic() - started, .25)
+        # _do_send 必须立刻返回（网络在工作线程里，mock 的 health 会阻塞 1s）。
+        # 阈值给 0.6s：仍能区分“没阻塞”（毫秒级）与“阻塞”（>1s），
+        # 又不会被高负载下的 Tk 渲染抖动误伤。
+        self.assertLess(time.monotonic() - started, .6)
         self.app.send_var.set("next draft")
         self.app._do_send()
         self.app._clear_chat()

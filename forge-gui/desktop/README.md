@@ -9,7 +9,7 @@
 powershell -NoProfile -ExecutionPolicy Bypass -File desktop\build-desktop.ps1
 ```
 
-产物：`desktop/dist/forge-desktop.exe`（约 12 MB，内置 Python 运行时 + tkinter）。
+产物：`desktop/dist/forge-desktop.exe`（约 11.8 MB，内置 Python 运行时 + tkinter + 品牌资源）。
 
 ## 依赖（仅构建期）
 
@@ -17,50 +17,73 @@ powershell -NoProfile -ExecutionPolicy Bypass -File desktop\build-desktop.ps1
 |---|---|
 | Python 3.10+ | 构建环境（**必须带 tkinter**，即官方安装版，不是内嵌版） |
 | PyInstaller ≥ 6 | 打包 |
-| Pillow | 生成图标（`make_icon.py`） |
+| Pillow | 生成图标与界面标志（`make_icon.py`） |
 
-运行期不需要 Python、不需要第三方库——exe 自带解释器。
+运行期不需要 Python 外的任何依赖——exe 自带解释器与 tkinter。
 
 ## 文件说明
 
 | 文件 | 作用 |
 |---|---|
-| `make_icon.py` | 生成多尺寸 `forge.ico`（Indigo 底 + 白色 F，与应用内品牌一致） |
-| `forge-desktop.spec` | PyInstaller 配方：单文件、无控制台、排除用不到的重型包 |
-| `build-desktop.ps1` | 一键构建（生成图标 → 打包 → 校验） |
-| `forge.ico` | 已生成的图标（改品牌时重跑 `make_icon.py`） |
+| `forge-logo.png` | **品牌原图**（正方形、黑底）。换标志改这张，然后重跑 `make_icon.py` |
+| `make_icon.py` | 从原图生成 `forge.ico`（多尺寸应用图标）+ `../assets/forge-logo-*.png`（界面用，黑底已抠透明） |
+| `forge-desktop.spec` | PyInstaller 配方：单文件、无控制台、内嵌 `assets/*.png`、排除用不到的重型包 |
+| `build-desktop.ps1` | 一键构建（探测构建 Python → 生成图标/资源 → 打包 → SHA256 → 冒烟启动） |
+| `forge.ico` | 已生成的应用图标 |
+
+## 换标志怎么做
+
+1. 用新图替换 `desktop/forge-logo.png`（正方形最好，黑底或透明底都行；脚本会按内容自动裁正方形）
+2. 跑 `python desktop/make_icon.py`（若换了文件名，把路径作为参数传入）
+3. 重新打包：`powershell -File desktop\build-desktop.ps1 -SkipIcon`
+
+脚本会一并更新三处品牌位置：
+- **应用图标**：`forge.ico`（黑底圆角磁贴 + 居中标志，7 档尺寸 16→256）
+- **界面顶栏标志**：`assets/forge-logo-{52,78,104}.png`（黑底抠透明，按 DPI 选最接近的尺寸）
+- **对话里的 Forge 头像**：同一张界面资源（由主程序注入 `chat_widgets.set_brand_avatar`）
+
+原图缺失时自动回退到程序化绘制的 Indigo「F」图标，构建不会失败。
 
 ## 打包后与「Python 运行」的差异（已在代码里处理）
 
-桌面版多了一层运行环境差异，`forge_gui_v2.py` 里已做兼容：
-
-1. **找 Forge 仓库**：exe 旁边没有 `run.py`，所以探测顺序改为
-   `FORGE_REPO` 环境变量 → exe 同目录记住的路径（`forge-desktop.json`）→
-   exe 同级与上层 → 用户目录下的 `pledge-evolving` / `forge` → `.openclaw/tmp` 副本。
-   在 GUI 里点「选择 Forge 目录」后会把选择**写进 `forge-desktop.json` 记住**，下次免选。
+1. **找 Forge 仓库**：exe 旁边没有 `run.py`，探测顺序为 `FORGE_REPO` 环境变量 →
+   exe 同目录记住的路径（`forge-desktop.json`）→ exe 同级与上层 → 用户目录下的
+   `pledge-evolving` / `forge` → `.openclaw/tmp` 副本。在 GUI 里点「选择 Forge 目录」
+   后会把选择**写进 `forge-desktop.json` 记住**，下次免选。
 
 2. **找解释器跑 `run.py`**：打包后 `sys.executable` 是 GUI 自己（直接拿去跑
-   `run.py gateway` 会又弹一个 GUI）。所以改为 `_python_exe()`：
-   `FORGE_PYTHON` 环境变量 → 用户安装目录的 Python3*（`%LOCALAPPDATA%\Programs\Python`、
-   `C:\Python3*`）→ PATH 上的 `python`。**桌面版需要机器上装有 Python**（forge 是 Python 框架，
-   跑 `run.py` 必须有解释器）；没装时启动 gateway / 跑任务会失败并在状态栏提示。
+   `run.py gateway` 会又弹一个 GUI）。所以用 `_python_exe()`：`FORGE_PYTHON` 环境变量 →
+   用户安装目录的 Python3*（`%LOCALAPPDATA%\Programs\Python`、`C:\Python3*`）→ PATH。
+   **桌面版需要机器上装有 Python**（forge 是 Python 框架，跑 `run.py` 必须有解释器）。
 
-3. **配置落点**：`forge-desktop.json` 优先写在 exe 同目录；目录不可写时退到 `~/.forge/`。
+3. **资源定位**：界面标志在 `_MEIPASS/assets`（打包态）或 `forge-gui/assets`（源码态），
+   由 `_asset_path()` / `load_brand_logo()` 统一处理。运行期只用 `tk.PhotoImage`，
+   **不依赖 Pillow**（尺寸靠预生成的整数倍 + subsample/zoom）。
+
+4. **配置落点**：`forge-desktop.json` 优先写在 exe 同目录；目录不可写时退到 `~/.forge/`。
 
 ## 自检
 
 ```powershell
-# 语法与探测逻辑（不打包也能验）
-python -c "import sys; sys.argv=['x']; sys.path.insert(0,'.'); import forge_gui_v2 as g; print(g._find_run_py(), g._python_exe())"
+# 环境与资源诊断（打包态最容易漏的就是这里）
+forge-desktop.exe --diagnose        # 生成 exe 旁的 forge-diagnose.json
+python forge-gui\forge_gui_v2.py --diagnose   # 源码态同样可用
+```
 
-# 跑 GUI 单元与回归测试（需桌面）
-python -m unittest test_gui_review -v
-python -m unittest test_interactions -v
+诊断输出含 `python_exe` / `run_py` / `brand_logo` / `brand_logo_ok` / `brand_logo_px`，
+可用来判断「解释器是否找对、仓库是否找到、品牌资源是否打进去了」。
+
+GUI 回归测试：
+
+```powershell
+python -m unittest test_gui_review -v      # 18 项
+python -m unittest test_interactions -v    # 17 项
 ```
 
 ## 已知取舍
 
-- **单文件模式**首次启动有约 1–3 秒解包时间（exe 内部的 Python 运行时解到临时目录）；
-  想更快可以改 spec 为 one-dir（`EXE` 不接收 `a.binaries/a.datas`，改用 `COLLECT`）。
+- **单文件模式**首次启动有约 1–3 秒解包时间（exe 内部的运行时解到临时目录）；
+  想更快可改 spec 为 one-dir。
 - 未做安装包（Inno Setup / MSI）与代码签名；内部分发够用，外发需自行签名避免 SmartScreen 提示。
-- 图标为程序化生成，若要换设计稿直接替换 `forge.ico` 后重新打包。
+- 3D 细节丰富的标志在 16px 下会糊成一团橙色——这是位图缩放的固有代价；
+  若要求小尺寸清晰，需要另做一版简化图形。

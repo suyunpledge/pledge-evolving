@@ -348,11 +348,15 @@ def attach_tooltip(widget, text: str):
 
 
 def avatar(parent, *, size=32, glyph="F", fg="#FFFFFF", fill=None,
-           shape="rounded", bg=None):
-    """头像：圆形（用户）或圆角方（Forge，带渐变高光）。"""
+           shape="rounded", bg=None, image=None):
+    """头像：圆形（用户）或圆角方（Forge）。给 image 时直接画该位图（品牌标志）。"""
     base = bg or _bg_of(parent)
     cv = tk.Canvas(parent, width=size, height=size, bg=base,
                    highlightthickness=0, bd=0)
+    if image is not None:
+        cv.create_image(size / 2, size / 2, image=image)
+        cv.image = image          # 防 GC
+        return cv
     fill = fill or C["accent"]
     if shape == "circle":
         cv.create_oval(0, 0, size - 1, size - 1, fill=fill, outline="")

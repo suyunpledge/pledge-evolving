@@ -38,7 +38,8 @@ a = Analysis(
     [str(GUI_DIR / "forge_gui_v2.py")],
     pathex=[str(GUI_DIR)],
     binaries=[],
-    datas=[],
+    # 界面资源（品牌标志）。打包后由 _MEIPASS/assets 提供。
+    datas=[(str(GUI_DIR / "assets" / "*.png"), "assets")],
     hiddenimports=HIDDEN,
     hookspath=[],
     hooksconfig={},
