@@ -299,6 +299,10 @@ def build_handler(cfg: GatewayConfig):
                 self._proxy_translated(body)
                 return
 
+            # 客户端请求的是「友好模型名」（如 mimo），上游只认真实 id
+            # （如 mimo-v2.6-flash）。有映射就改写请求体里的 model。
+            body = self._apply_model_map(body)
+
             # self.path 是客户端的 OpenAI 兼容路径（/v1/chat/completions），
             # 这个 /v1 是 gateway 自己的协议前缀，upstream 通常没有它——
             # 但有些上游（bigmodel.cn/api/coding/paas/v4）的 chat 端点确实在
@@ -354,6 +358,28 @@ def build_handler(cfg: GatewayConfig):
                 self._json(502, {"type": "error", "error": {"type": "api_error", "message": str(exc)}})
 
         # -- anthropic client in, openai upstream ------------------------
+        def _apply_model_map(self, body: bytes) -> bytes:
+            """按 cfg.model_map 把请求体里的 model 换成上游真实名；无映射则原样返回。"""
+            if not body or not cfg.model_map:
+                return body
+            if "json" not in (self.headers.get("Content-Type") or "").lower():
+                return body
+            try:
+                payload = json.loads(body.decode("utf-8", "replace") or "{}")
+            except (ValueError, UnicodeDecodeError):
+                return body
+            if not isinstance(payload, dict):
+                return body
+            requested = payload.get("model")
+            if requested is None:
+                return body
+            mapped = cfg.model_map.get(str(requested))
+            if not mapped or mapped == requested:
+                return body
+            payload["model"] = mapped
+            cfg.log.write(f"MODEL-MAP {requested} -> {mapped}")
+            return json.dumps(payload, ensure_ascii=False).encode("utf-8")
+
         def _proxy_translated(self, body: bytes) -> None:
             from .wire import OpenAIStreamTranslator, anthropic_to_openai_request, openai_to_anthropic_response
 

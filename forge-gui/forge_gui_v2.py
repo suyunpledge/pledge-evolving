@@ -54,6 +54,7 @@ from forge_client import (  # noqa: E402
 )
 from interaction_model import (read_attachment, compose_prompt, task_command, task_outcome,
                                select_provider, gateway_settings)
+from interaction_model import model_label as served_model_label
 
 import chat_widgets as cw  # noqa: E402
 import gui_theme as theme  # noqa: E402
@@ -434,6 +435,7 @@ class ForgeGuiApp:
         self._gateway_autostarted = False
         self._autostart_after_id = None
         self._restart_pending = False
+        self._suppress_model_trace = False
         self.gateway_port = 8799
         self.gateway_url = f"http://127.0.0.1:{self.gateway_port}"
         self.client = ForgeGatewayClient(self.gateway_url)
@@ -550,6 +552,8 @@ class ForgeGuiApp:
         # 像 AutoClaw 一样：打开窗口就把 gateway 拉起来（等 UI 建好再起，
         # 免得抢启动时间、也免得状态栏还没就绪）。
         # FORGE_NO_AUTOSTART=1 可关闭（测试用）。
+        # 切模型 → 必要时换 provider（gateway 一次只服务一个上游）
+        self.model_var.trace_add("write", self._on_model_changed)
         if _autostart_enabled():
             self._autostart_after_id = self.root.after(400, self._autostart_gateway)
 
@@ -2223,7 +2227,11 @@ class ForgeGuiApp:
             models = pconf.get("models") or []
             if not models:
                 continue
-            mid = models[0].get("name") or models[0].get("id") or "default"
+            # 关键：name 是显示名（如 mimo），id 才是 API 真实模型名
+            # （如 mimo-v2.6-flash）。发给上游的必须是 id。
+            entry = models[0] if isinstance(models[0], dict) else {}
+            mid = str(entry.get("id") or entry.get("name") or "default")
+            friendly = str(entry.get("name") or "").strip()
             if ak == "autoclaw-internal-proxy" or not ak or ak.startswith("Bearer "):
                 skipped_placeholder += 1
                 continue
@@ -2244,6 +2252,11 @@ class ForgeGuiApp:
             conf["baseURL"] = bk
             conf["apiKey"] = {"$expr": f"get('env.{env_name}', '')"}
             conf["model"] = mid
+            # UI 显示友好名；与真实 id 不同才写，避免冗余字段
+            if friendly and friendly != mid:
+                conf["modelLabel"] = friendly
+            else:
+                conf.pop("modelLabel", None)
             conf.setdefault("smallModel", mid)
             row["config"] = conf
             env_pairs.append((safe_id, ak, env_name))
@@ -2322,8 +2335,12 @@ class ForgeGuiApp:
             conf = r.get("config", {})
             if "baseURL" in conf:
                 model = conf.get("model", "")
+                label = conf.get("modelLabel") or model
                 state = "关闭" if r.get("disabled") else "开启"
-                display.append(f"[{state}] {rid}  ·  {model or '未指定模型'}")
+                # 有友好名时顺带显示真实 id，方便排查「上游不认模型」这类问题
+                shown = (f"{label}  ({model})" if label and model and label != model
+                         else (label or "未指定模型"))
+                display.append(f"[{state}] {rid}  ·  {shown}")
             else:
                 # 非 provider 行
                 keys = ", ".join(list(conf.keys())[:3])
@@ -2338,13 +2355,18 @@ class ForgeGuiApp:
         models = []
         for r in rows:
             if "baseURL" in r.get("config", {}) and not r.get("disabled"):
-                m = r["config"].get("model") or r.get("id")
+                m = r["config"].get("modelLabel") or r["config"].get("model") or r.get("id")
                 if m and m not in models:
                     models.append(m)
         models = ["default"] + [m for m in models if m and m != "default"]
         self.model_combo.configure(values=models)
         if models and self.model_var.get() not in models:
-            self.model_var.set(models[0])
+            # 程序化回落不算「用户切模型」，别触发 gateway 重启
+            self._suppress_model_trace = True
+            try:
+                self.model_var.set(models[0])
+            finally:
+                self._suppress_model_trace = False
         self._rebuild_feature_toggles()
 
     def _on_provider_select(self, _=None):
@@ -2606,6 +2628,29 @@ class ForgeGuiApp:
         self.path_lbl.configure(text="forge 目录已就绪")
         self._set_status(f"已记住 Forge 目录：{folder}", "ok")
 
+    def _on_model_changed(self, *_args):
+        """下拉换模型：若目标 provider 与当前 gateway 的不同，自动重启 gateway。
+
+        gateway 是单上游代理（一个 --upstream + 一份 model-map），所以换 provider
+        必须重启，否则客户端会用新模型名去打旧上游（表现为 400 unsupported model）。
+        """
+        if self._suppress_model_trace or self._closing:
+            return
+        if self._sending:
+            self._set_status("正在生成回复，模型切换会在本轮结束后生效", "info")
+            return
+        if not (self.gateway_proc and self.gateway_proc.poll() is None):
+            return                      # 没在跑就不用管，下次启动自然用新模型
+        new_label = self.model_var.get()
+        current = getattr(self, "_gateway_provider", None) or {}
+        if served_model_label(current) == new_label:
+            return
+        target = select_provider(self.user_rows, new_label)
+        if target is None:
+            return
+        self._set_status(f"切换模型为 {new_label}，正在重启 gateway …", "info")
+        self._restart_gateway()
+
     def _autostart_gateway(self):
         """窗口打开后的首次自动启动（失败不弹框，只提示）。"""
         self._autostart_after_id = None
@@ -2690,11 +2735,18 @@ class ForgeGuiApp:
             self._gateway_down("未配置可用 Provider，未启动")
             return
         env["FORGE_GATEWAY_KEY"] = upstream_key
+        # 客户端看到的模型名（= UI 下拉里的那个，可能是友好别名），
+        # 与上游真实模型名分开：别名发给客户端，真实名由 --model-map 替换。
+        served_model = served_model_label(upstream) or upstream_model
+        model_map = (f"{served_model}={upstream_model}"
+                     if served_model and served_model != upstream_model else "")
         # Keep credentials in the child environment, never command-line arguments.
         cmd = [_python_exe(), str(self.run_py), "gateway",
                "--upstream", upstream_url, "--upstream-wire", "openai",
-               "--client-wire", "openai", "--models", upstream_model,
+               "--client-wire", "openai", "--models", served_model,
                "--port", str(port), "--home", str(self.home)]
+        if model_map:
+            cmd.extend(["--model-map", model_map])
 
         if port_in_use(port):
             self._set_status(f"端口 {port} 仍被占用，gateway 可能启动失败", "warn")

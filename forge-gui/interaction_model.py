@@ -51,12 +51,26 @@ def task_outcome(code, report, cancelled=False):
     return "进程已退出", "warn"
 
 
+def model_label(provider):
+    """客户端/UI 看到的模型名：有 modelLabel 用标签，否则退回 model。"""
+    if not provider:
+        return "default"
+    return str(provider.get("modelLabel") or provider.get("model") or "default")
+
+
 def select_provider(rows, model="default"):
+    """按「UI 里的模型名」选 provider。
+
+    model 可能是友好标签（modelLabel），也可能是真实模型 id（model）——
+    AutoClaw 导入的行两者都存在，手动配置的行只有 model。
+    """
     providers = [r.get("config", {}) for r in rows if not r.get("disabled")
                  and r.get("config", {}).get("baseURL") and r.get("config", {}).get("model")]
     if model == "default":
         return providers[0] if providers else None
-    return next((p for p in providers if p["model"] == model), None)
+    return next((p for p in providers
+                 if p["model"] == model
+                 or str(p.get("modelLabel") or "") == model), None)
 
 
 def gateway_settings(provider, environment):

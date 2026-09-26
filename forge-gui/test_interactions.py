@@ -14,7 +14,7 @@ from unittest.mock import Mock, patch
 import forge_gui_v2 as gui
 import workspace as ws
 from forge_client import ChatMessage, ForgeGatewayClient, GenerationCancelled
-from interaction_model import (read_attachment, compose_prompt, task_command, task_outcome,
+from interaction_model import (model_label,read_attachment, compose_prompt, task_command, task_outcome,
                                gateway_settings, select_provider)
 
 
@@ -31,6 +31,34 @@ class ContractTests(unittest.TestCase):
         self.assertIsNone(select_provider(rows, "disabled"))
         with self.assertRaises(ValueError):
             gateway_settings(dict(provider, wire="anthropic"), {"TEST_KEY": "test"})
+
+    def test_model_label_and_provider_selection_follow_display_name(self):
+        """UI 显示友好名、上游用真实 id —— 两者必须在选择器里都能对上。"""
+        row = {"id": "p1", "config": {"wire": "openai",
+                                      "baseURL": "https://example.invalid/v1",
+                                      "model": "mimo-v2.6-flash",
+                                      "modelLabel": "mimo",
+                                      "apiKey": {"$expr": "get('env.K', '')"}}}
+        rows = [row]
+        # 下拉里是友好名，选择器必须能按友好名找到这一行
+        self.assertEqual(model_label(row["config"]), "mimo")
+        self.assertIs(select_provider(rows, "mimo"), row["config"])
+        # 真实 id 也要能对上（手动配置的行没有 label）
+        self.assertIs(select_provider(rows, "mimo-v2.6-flash"), row["config"])
+        # gateway_settings 返回的第三个值必须是「上游真实名」，不是友好名
+        _url, _key, upstream_model = gateway_settings(row["config"], {"K": "k"})
+        self.assertEqual(upstream_model, "mimo-v2.6-flash")
+        self.assertNotEqual(upstream_model, model_label(row["config"]))
+
+    def test_gateway_model_map_rewrites_alias_to_real_id(self):
+        """--model-map mimo=mimo-v2.6-flash 的解析，以及改写后的请求体形状。"""
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from forge.cli import _parse_model_map
+        mapping = _parse_model_map("mimo=mimo-v2.6-flash, A = b ")
+        self.assertEqual(mapping, {"mimo": "mimo-v2.6-flash", "A": "b"})
+        self.assertEqual(_parse_model_map(""), {})
+        # 无 "=" 的片段应被忽略而不是崩掉
+        self.assertEqual(_parse_model_map("nonsense"), {})
 
     def test_cli_forwards_client_wire_without_changing_legacy_default(self):
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
