@@ -155,12 +155,19 @@ class GuiInteractionTests(unittest.TestCase):
         with patch.object(gui, "DEFAULT_FORGE_HOME", Path(self.tmp.name)), \
              patch.object(gui, "_find_run_py", return_value=None), \
              patch.object(gui.ForgeGuiApp, "_repo_root", return_value=Path(self.tmp.name)), \
-             patch.object(gui.ForgeGuiApp, "_start_sysmon"):
+             patch.object(gui.ForgeGuiApp, "_start_sysmon"), \
+             patch.object(gui, "_autostart_enabled", return_value=False):
             self.app = gui.ForgeGuiApp(self.root)
 
     def tearDown(self):
         self.app._closing = True
-        self.root.after_cancel(self.app._event_poll)
+        for attr in ("_autostart_after_id", "_event_poll"):
+            aid = getattr(self.app, attr, None)
+            if aid is not None:
+                try:
+                    self.root.after_cancel(aid)
+                except (tk.TclError, ValueError):
+                    pass
         self.root.destroy()
         self.tmp.cleanup()
         self.assertEqual(self.errors, [])

@@ -196,6 +196,15 @@ def save_desktop_config(**updates) -> None:
         pass
 
 
+def _autostart_enabled() -> bool:
+    """gateway 是否在打开窗口时自动启动（默认开；FORGE_NO_AUTOSTART=1 关闭）。
+
+    独立成函数是为了让测试能 mock 掉，避免测试里真起 gateway 子进程。
+    """
+    return os.environ.get("FORGE_NO_AUTOSTART", "").strip() not in (
+        "1", "true", "yes", "on")
+
+
 def _asset_dirs() -> list[Path]:
     """界面资源可能所在目录（打包后在 _MEIPASS，源码态在模块旁）。"""
     dirs: list[Path] = []
@@ -217,6 +226,41 @@ def _asset_path(name: str) -> Path | None:
         except OSError:
             continue
     return None
+
+
+def kill_process_tree(proc, timeout: float = 5.0) -> None:
+    """杀掉进程及其全部子进程。
+
+    必须杀树：gateway 会派生子进程，只 kill 父进程会让子进程逃逸并占住端口，
+    下次启动就会「端口被占用」——而且窗口关了服务还在后台跑。
+    """
+    if proc is None:
+        return
+    try:
+        alive = proc.poll() is None
+    except Exception:
+        alive = False
+    if not alive:
+        return
+    if IS_WINDOWS:
+        try:
+            subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                           capture_output=True, timeout=timeout,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            return
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    # 非 Windows 或 taskkill 不可用：先温和后强硬
+    try:
+        proc.terminate()
+        try:
+            proc.wait(timeout=2)
+            return
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=2)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
 
 
 def load_brand_logo(target_px: int):
@@ -373,6 +417,12 @@ class ForgeGuiApp:
             self.user_rows = []
             self._load_error = str(exc)
         self.gateway_proc: subprocess.Popen | None = None
+        # 常驻语义：打开即自启；掉了自动拉起；用户主动停才不复起
+        self._gateway_user_stopped = False
+        self._gateway_restart_times: list[float] = []
+        self._gateway_autostarted = False
+        self._autostart_after_id = None
+        self._restart_pending = False
         self.gateway_port = 8799
         self.gateway_url = f"http://127.0.0.1:{self.gateway_port}"
         self.client = ForgeGatewayClient(self.gateway_url)
@@ -486,6 +536,11 @@ class ForgeGuiApp:
         self._show_view("chat")
         self._refresh_history()
         self._start_sysmon()
+        # 像 AutoClaw 一样：打开窗口就把 gateway 拉起来（等 UI 建好再起，
+        # 免得抢启动时间、也免得状态栏还没就绪）。
+        # FORGE_NO_AUTOSTART=1 可关闭（测试用）。
+        if _autostart_enabled():
+            self._autostart_after_id = self.root.after(400, self._autostart_gateway)
 
     # ── 顶栏 ──────────────────────────────────────────────
     def _build_topbar(self):
@@ -614,6 +669,18 @@ class ForgeGuiApp:
                                 relief=tk.FLAT, bd=0, padx=10, pady=2,
                                 cursor="hand2", highlightthickness=0)
         self.gw_btn.pack(side=tk.LEFT)
+        # 常驻语义下主按钮=确保运行；停止放在右键菜单里
+        self._gw_menu = tk.Menu(self.root, tearoff=0, bg=C["surface"],
+                                fg=C["text"], activebackground=C["accent_soft"],
+                                activeforeground=C["accent_text"],
+                                font=FONT_SMALL, bd=1, relief=tk.FLAT)
+        self._gw_menu.add_command(label="⟳  重启 gateway",
+                                  command=self._toggle_gateway)
+        self._gw_menu.add_separator()
+        self._gw_menu.add_command(label="■  停止 gateway",
+                                  command=self._stop_gateway_from_menu)
+        self.gw_btn.bind("<Button-3>", self._popup_gw_menu)
+        attach_tooltip(self.gw_btn, "打开即自动启动；左键重启，右键可停止")
 
     # ── 左侧栏 ────────────────────────────────────────────
     def _make_nav_item(self, parent, key: str, label: str, glyph: str, *, big=False):
@@ -2528,32 +2595,79 @@ class ForgeGuiApp:
         self.path_lbl.configure(text="forge 目录已就绪")
         self._set_status(f"已记住 Forge 目录：{folder}", "ok")
 
-    def _toggle_gateway(self):
-        if self._sending:
+    def _autostart_gateway(self):
+        """窗口打开后的首次自动启动（失败不弹框，只提示）。"""
+        self._autostart_after_id = None
+        if self._closing:
+            return
+        try:
+            if not self.root.winfo_exists():
+                return
+        except tk.TclError:
             return
         if self.gateway_proc and self.gateway_proc.poll() is None:
-            self._stop_gateway()
+            return
+        self._gateway_autostarted = True
+        self._start_gateway(autostart=True)
+
+    def _toggle_gateway(self):
+        """主按钮 = 确保 gateway 在运行：在线则重启，离线则启动。"""
+        if self._sending:
+            self._set_status("正在生成回复，稍后再操作 gateway", "info")
+            return
+        if self.gateway_proc and self.gateway_proc.poll() is None:
+            self._restart_gateway()
         else:
             self._start_gateway()
 
-    def _start_gateway(self):
+    def _restart_gateway(self):
+        """重启：先停（标记为程序性停止，不触发自动拉起），停完再启动。"""
+        if not (self.gateway_proc and self.gateway_proc.poll() is None):
+            self._start_gateway()
+            return
+        self._gateway_user_stopped = True       # 防止 stop 过程被自动拉起打断
+        self._restart_pending = True
+        self._stop_gateway()
+
+    def _stop_gateway_from_menu(self):
+        """用户主动停止：之后不再自动拉起，直到再次启动。"""
+        self._gateway_user_stopped = True
+        self._restart_pending = False
+        self._stop_gateway()
+        self._set_status("gateway 已手动停止（再次点击「启动」可恢复）", "warn")
+
+    def _start_gateway(self, autostart: bool = False):
         if self.gateway_proc and self.gateway_proc.poll() is None:
             return
         if not self.run_py:
+            if autostart:
+                # 自动启动场景不弹目录选择框，只提示
+                self._gateway_down("未找到 Forge 目录（请点「选择 Forge 目录」后再启动）")
+                self._set_status("未找到 Forge 目录，gateway 未自动启动；"
+                                 "配置好目录后会自动重试", "warn")
+                return
             self._choose_forge_repo()
             if not self.run_py:
                 return
+        # 走到这里表示确实要启动：清掉「用户停过」的标记
+        self._gateway_user_stopped = False
         try:
             port = int(self.port_var.get())
         except ValueError:
             self._set_status("端口须为 1024–65535 的整数", "warn")
+            self._gateway_down("端口非法，未启动")
             return
         if not 1024 <= port <= 65535:
             self._set_status("端口须为 1024–65535 的整数", "warn")
+            self._gateway_down("端口非法，未启动")
             return
         self.gateway_port = port
         self.gateway_url = f"http://127.0.0.1:{port}"
         self.client.base_url = self.gateway_url
+
+        # 端口如果被「本程序遗留的 gateway」占着，先清掉——否则新进程起不来，
+        # 而健康检查会连到旧进程，UI 显示「在线」却用的是过期配置。
+        self._clear_stale_gateway_on_port(port)
 
         # 探活：secret_store（GUI 本地密钥库）注入 env，gateway 子进程继承
         env = {**os.environ, **env_for()}
@@ -2562,6 +2676,7 @@ class ForgeGuiApp:
             upstream_url, upstream_key, upstream_model = gateway_settings(upstream, env)
         except ValueError as exc:
             self._set_status(str(exc), "warn")
+            self._gateway_down("未配置可用 Provider，未启动")
             return
         env["FORGE_GATEWAY_KEY"] = upstream_key
         # Keep credentials in the child environment, never command-line arguments.
@@ -2583,6 +2698,7 @@ class ForgeGuiApp:
             self._gateway_provider = copy.deepcopy(upstream)
         except Exception as e:
             self._set_status(f"启动失败：{e}", "error")
+            self._gateway_down("启动失败")
             return
 
         self.gw_status_var.set("● 启动中")
@@ -2599,6 +2715,60 @@ class ForgeGuiApp:
             if "baseURL" in conf and "model" in conf and not r.get("disabled"):
                 return conf
         return None
+
+    def _clear_stale_gateway_on_port(self, port: int) -> None:
+        """若目标端口被一个「forge gateway」进程占着，先把它请走（含子进程）。
+
+        整个函数对异常免疫：这段是尽力而为的清理，任何失败都不该影响启动流程
+        （测试环境里 subprocess 常被 mock，更不该把异常抛给调用方）。
+        """
+        try:
+            self._clear_stale_gateway_on_port_inner(port)
+        except Exception:
+            pass
+
+    def _clear_stale_gateway_on_port_inner(self, port: int) -> None:
+        if not IS_WINDOWS:
+            return
+        try:
+            out = subprocess.run(
+                ["powershell", "-NoProfile", "-Command",
+                 f"(Get-NetTCPConnection -LocalPort {port} -State Listen "
+                 f"-ErrorAction SilentlyContinue | Select-Object -First 1 "
+                 f"-ExpandProperty OwningProcess)"],
+                capture_output=True, text=True, timeout=8,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout.strip()
+        except (OSError, subprocess.TimeoutExpired):
+            return
+        if not out.isdigit():
+            return
+        pid = int(out)
+        try:
+            info = subprocess.run(
+                ["powershell", "-NoProfile", "-Command",
+                 f"(Get-CimInstance Win32_Process -Filter \"ProcessId={pid}\" "
+                 f"-ErrorAction SilentlyContinue).CommandLine"],
+                capture_output=True, text=True, timeout=8,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
+        except (OSError, subprocess.TimeoutExpired):
+            return
+        if "run.py" not in (info or "") or "gateway" not in (info or ""):
+            # 不是我们的 gateway，别动（可能是用户自己的服务）
+            self._set_status(f"端口 {port} 被其它程序占用（PID {pid}），gateway 可能起不来", "warn")
+            return
+        try:
+            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
+                           capture_output=True, timeout=8,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            self._push_terminal(f"[gateway] 已清理占用端口 {port} 的旧进程（PID {pid}）")
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
+    def _popup_gw_menu(self, event):
+        try:
+            self._gw_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self._gw_menu.grab_release()
 
     def _gateway_watchdog(self, proc, probe):
         """只向主线程提交状态；旧进程的回调不能覆盖新进程。"""
@@ -2627,35 +2797,65 @@ class ForgeGuiApp:
             self._post_ui(self._gateway_exited, proc)
 
     def _gateway_exited(self, proc):
-        if self.gateway_proc is proc and proc.poll() is not None:
-            self._gateway_down(f"进程已退出（代码 {proc.returncode}）")
+        if self.gateway_proc is not proc or proc.poll() is None:
+            return
+        code = proc.returncode
+        self._gateway_down(f"进程已退出（代码 {code}）")
+        if self._closing or self._gateway_user_stopped:
+            return
+        if getattr(self, "_restart_pending", False):
+            # 这是「重启」流程里的停止，紧接着启动
+            self._restart_pending = False
+            try:
+                self._autostart_after_id = self.root.after(300, self._autostart_gateway)
+            except tk.TclError:
+                pass
+            return
+        # 意外退出 → 自动拉起（60 秒内最多 5 次，退避递增）
+        now = time.monotonic()
+        self._gateway_restart_times = [t for t in self._gateway_restart_times
+                                       if now - t < 60]
+        if len(self._gateway_restart_times) >= 5:
+            self._set_status("gateway 反复退出，已暂停自动重启；请检查配置/端口占用", "error")
+            return
+        self._gateway_restart_times.append(now)
+        delay = min(30, 2 ** len(self._gateway_restart_times))
+        self.gw_status_var.set(f"● 重启中({delay}s)")
+        self._set_status(f"gateway 退出（代码 {code}），{delay} 秒后自动重启", "warn")
+        try:
+            self._autostart_after_id = self.root.after(
+                int(delay * 1000), self._autostart_gateway)
+        except tk.TclError:
+            pass
 
     def _gateway_stop_failed(self, proc):
         if self.gateway_proc is proc:
-            self.gw_btn.configure(state=tk.NORMAL, text="■ 停止 gateway")
+            self.gw_btn.configure(state=tk.NORMAL, text="⟳ 重启")
             self.gw_status_var.set("● 停止失败")
             self._set_status("未能停止 gateway，请重试", "error")
 
     def _gateway_timeout(self, proc):
         if self.gateway_proc is proc and proc.poll() is None:
             self.gw_status_var.set("● 未就绪")
-            self.gw_btn.configure(text="■ 停止 gateway", bg=C["error"],
+            self.gw_status_lbl.configure(fg=C["warn"])
+            self.gw_btn.configure(text="⟳ 重启", bg=C["accent"],
                                   state=tk.DISABLED if self._sending else tk.NORMAL)
-            self._set_status("gateway 启动未就绪，请停止后检查配置再重试", "warn")
+            self._set_status("gateway 启动未就绪；可点「重启」重试，或检查端口/配置", "warn")
 
     def _gateway_up(self, proc):
         if self.gateway_proc is not proc or proc.poll() is not None:
             return
         self.gw_status_var.set(f"● 在线 ({self.gateway_port})")
         self.gw_status_lbl.configure(fg=C["ok"])
-        self.gw_btn.configure(text="■ 停止 gateway", bg=C["error"],
+        self.gw_btn.configure(text="⟳ 重启", bg=C["surface2"], fg=C["body"],
                               state=tk.DISABLED if self._sending else tk.NORMAL)
+        self.port_spin.configure(state=tk.DISABLED if self._sending else tk.NORMAL)
         self._set_status(f"gateway 在线：{self.gateway_url}", "ok")
 
     def _gateway_down(self, reason: str = "已停止"):
         self.gw_status_var.set("● 离线")
         self.gw_status_lbl.configure(fg=C["muted"])
-        self.gw_btn.configure(text="▶ 启动 gateway", bg=C["accent"],
+        self.gw_btn.configure(text="▶ 启动", bg=C["accent"], fg="#FFFFFF",
                               state=tk.DISABLED if self._sending else tk.NORMAL)
         self.port_spin.configure(state=tk.DISABLED if self._sending else tk.NORMAL)
         self._set_status(f"gateway {reason}", "warn")
@@ -2666,19 +2866,17 @@ class ForgeGuiApp:
             return
         proc = self.gateway_proc
         self.gw_btn.configure(state=tk.DISABLED, text="停止中…")
+        self._stopping_proc = proc
         self.gw_status_var.set("● 停止中")
         def terminate():
             try:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                    proc.wait(timeout=3)
-            except (OSError, subprocess.TimeoutExpired):
-                pass
+                kill_process_tree(proc)
             finally:
-                self._post_ui(self._gateway_exited if proc.poll() is not None
+                try:
+                    gone = proc.poll() is not None
+                except Exception:
+                    gone = True
+                self._post_ui(self._gateway_exited if gone
                               else self._gateway_stop_failed, proc)
         threading.Thread(target=terminate, daemon=False).start()
 
@@ -2917,6 +3115,12 @@ class ForgeGuiApp:
                 "有未保存的修改", "功能开关或编辑内容尚未保存。要放弃这些修改并退出吗？", parent=self.root):
             return
         self._closing = True
+        if self._autostart_after_id is not None:
+            try:
+                self.root.after_cancel(self._autostart_after_id)
+            except (tk.TclError, ValueError):
+                pass
+            self._autostart_after_id = None
         self._cancel_event.set()
         self._stop_task()
         self._archive_current_session()

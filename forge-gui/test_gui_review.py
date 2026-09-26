@@ -84,7 +84,8 @@ class GuiReviewTests(unittest.TestCase):
         self.home = Path(self.tmp.name)
         save_user_layer(self.home, sample_rows())
         self.root = tk.Tk()
-        with patch.object(gui, "DEFAULT_FORGE_HOME", self.home), patch.object(gui, "_find_run_py", return_value=None):
+        with patch.object(gui, "DEFAULT_FORGE_HOME", self.home), patch.object(gui, "_find_run_py", return_value=None), \
+             patch.object(gui, "_autostart_enabled", return_value=False):
             self.app = gui.ForgeGuiApp(self.root)
         self.errors = []
         self.root.report_callback_exception = lambda *args: self.errors.append(args)
@@ -92,10 +93,13 @@ class GuiReviewTests(unittest.TestCase):
 
     def tearDown(self):
         self.app._closing = True
-        try:
-            self.root.after_cancel(self.app._event_poll)
-        except Exception:
-            pass
+        for attr in ("_autostart_after_id", "_event_poll"):
+            aid = getattr(self.app, attr, None)
+            if aid is not None:
+                try:
+                    self.root.after_cancel(aid)
+                except (tk.TclError, ValueError):
+                    pass
         if getattr(self.app, "_sysmon", None) is not None:
             self.app._sysmon.stop()
         self.root.destroy()
