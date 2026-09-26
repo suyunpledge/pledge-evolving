@@ -25,6 +25,7 @@ import platform
 import queue
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import threading
@@ -226,6 +227,16 @@ def _asset_path(name: str) -> Path | None:
         except OSError:
             continue
     return None
+
+
+def port_in_use(port: int, host: str = "127.0.0.1", timeout: float = 0.35) -> bool:
+    """快速判断端口是否已被监听（微秒级，不启子进程）。"""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(timeout)
+            return sock.connect_ex((host, port)) == 0
+    except OSError:
+        return False
 
 
 def kill_process_tree(proc, timeout: float = 5.0) -> None:
@@ -2685,7 +2696,10 @@ class ForgeGuiApp:
                "--client-wire", "openai", "--models", upstream_model,
                "--port", str(port), "--home", str(self.home)]
 
-        self._set_status(f"启动 gateway：{' '.join(cmd[-4:])} ...", "info")
+        if port_in_use(port):
+            self._set_status(f"端口 {port} 仍被占用，gateway 可能启动失败", "warn")
+        else:
+            self._set_status(f"启动 gateway：{' '.join(cmd[-4:])} ...", "info")
 
         kwargs = dict(stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                       text=True, encoding="utf-8", errors="replace", cwd=str(self.run_py.parent))
@@ -2729,6 +2743,9 @@ class ForgeGuiApp:
 
     def _clear_stale_gateway_on_port_inner(self, port: int) -> None:
         if not IS_WINDOWS:
+            return
+        # 先做零成本判断：端口空着就直接返回，不必去问 Windows
+        if not port_in_use(port):
             return
         try:
             out = subprocess.run(
