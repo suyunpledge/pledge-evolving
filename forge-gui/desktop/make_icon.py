@@ -129,6 +129,12 @@ def make_icon(master: Image.Image, size: int) -> Image.Image:
 
 def main() -> int:
     src = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_SOURCE
+    # 防降质：输入必须是原始位图，绝不能拿生成出来的 .ico 当源
+    # （否则每跑一次就把上一步的图标再裁一遍，分辨率逐轮缩水）。
+    if src.suffix.lower() == ".ico":
+        print(f"拒绝：{src.name} 是生成产物，不能当输入图。"
+              f"请传原始品牌图，或省略参数使用 {DEFAULT_SOURCE.name}")
+        return 2
     use_brand = src.is_file()
 
     if use_brand:
@@ -136,6 +142,8 @@ def main() -> int:
         master = square_crop(raw)
         print(f"source : {src}  ({raw.size[0]}x{raw.size[1]})")
         print(f"cropped: {master.size[0]}x{master.size[1]}  -> {DEFAULT_SOURCE.name}")
+        # 只在显式给了外部源图时才回写 master；默认路径（无参数）不覆盖，
+        # 避免「读 master → 裁 → 写回 master」这种自发收敛降质。
         if src.resolve() != DEFAULT_SOURCE.resolve():
             master.save(DEFAULT_SOURCE)
             print(f"  saved master: {DEFAULT_SOURCE}")

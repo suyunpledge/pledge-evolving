@@ -56,7 +56,8 @@ Write-Host "构建 Python: $py" -ForegroundColor Cyan
 
 if (-not $SkipIcon) {
     Write-Host "`n[1/3] 生成图标 ..." -ForegroundColor Cyan
-    & $py (Join-Path $DesktopDir "make_icon.py") (Join-Path $DesktopDir "forge.ico")
+    # 注意：不要传 forge.ico 作参数——那是生成产物，会被当成输入图导致降质
+    & $py (Join-Path $DesktopDir "make_icon.py")
     if ($LASTEXITCODE -ne 0) { throw "图标生成失败" }
 } else {
     Write-Host "`n[1/3] 跳过图标生成" -ForegroundColor DarkGray
