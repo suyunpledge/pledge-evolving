@@ -1,18 +1,31 @@
-# forge 图形界面 v2
+# forge 图形界面 v3（深色三栏）
 
 把 `forge` 命令行框架包成一个开箱即用的桌面应用。
 
-**三个标签页**：
+**版式**：顶栏（品牌 + 主导航 + CPU/GPU/RAM + Gateway）/ 左栏 200px（新建对话 +
+主导航 + 最近对话）/ 中间视图 / **右侧可收起工作区** / 底部状态栏。
 
-| 标签 | 作用 |
-|---|---|
-| 功能开关 | 查看和修改用户层中的启用状态，单独保存开关草稿 |
-| 配置编辑 | 粘贴地址+密钥 → 自动整理 → 保存到 `~/.forge/forge.patch.json` |
-| 交互客户端 | 启停 gateway → 与模型对话（流式输出）|
+**导航与视图**：
 
-界面按 AutoClaw 的设计语言重做：浅色底（`#f5f5f5` / 白卡）、品牌橙 `#fc5d1e`、
-圆角输入卡（22px pill）、细分隔线 `#e5e5e5`、圆形发送按钮、输入卡下方一行小字说明。
-配色 / 圆角 / 阴影 token 直接取自 AutoClaw `app.asar` 的 `--theme-*` 变量，两边视觉同源。
+| 导航 | 视图 | 作用 |
+|---|---|---|
+| 对话 | chat | 连本机 gateway 与模型对话（消息气泡 / 计划步骤 / 工具调用卡 / 完成块 / 输入卡）|
+| 任务 | task | 用 `run.py run <task> --json` 跑任务，把 steps 渲染成执行步骤与工具行 |
+| 工具集 | tools | 功能开关（Provider 启用、MOA、通道开关等，草稿式保存）|
+| 配置 | config | 粘贴地址+密钥 → 整理 → 预览 → 保存到 `~/.forge/forge.patch.json` |
+| 文件与项目 | — | 打开右栏工作区（文件树）|
+| Agents / 知识库 / 演化 | stub | 规划中的面板，写明会接入哪些 forge 能力 |
+
+**右栏工作区**（默认收起，顶栏「▤ 工作区」或消息里的「打开工作区」展开）：
+文件树（git 状态徽章）/ 变更（chip 筛选 + `+X −Y`）/ 代码（行号槽 + Python 高亮 +
+滚动同步）/ diff（`git diff` 行级着色）/ 预览（Markdown、HTML 源码、图片缩略图）/
+终端（gateway 输出回显）。
+
+**设计系统**：`gui_theme.py` 是唯一样式来源（深色背景层级 `#0B0B10 → #0E0E13 →
+#111117 → #15151C → #1A1A22`，主色 Indigo `#4F46E5` / 亮态 `#6366F1`，语义色
+`#22C55E`/`#F59E0B`/`#EF4444`，圆角、间距、字体与绘制原语都在这里）。
+`chat_widgets.py` 负责消息渲染，`workspace.py` 负责右栏，`sysmon.py` 负责顶栏指标。
+配色不再是参考 AutoClaw 浅色主题的那一套。
 
 ## 安装
 
@@ -127,13 +140,18 @@ Provider 列表与编辑区之间的分隔线可以拖动；提示与环境变�
 
 ```
 forge-gui/
-├── forge_gui_v2.py     # 主 GUI（管理面 + 客户端）
+├── forge_gui_v2.py     # 主 GUI（外壳 + 左栏 + 对话/任务/工具/配置视图）
+├── gui_theme.py        # 设计系统：配色 / 字体 / 圆角 / 绘制原语 / 代码高亮
+├── chat_widgets.py     # 消息渲染：气泡、角色徽章、步骤、工具卡、完成块、输入卡
+├── workspace.py        # 右栏工作区：文件树 / 变更 / 代码 / diff / 预览 / 终端
+├── sysmon.py           # 顶栏 CPU / RAM / GPU 采样（ctypes，零依赖）
 ├── config_model.py     # 配置模型 + 内置格式矫治器
 ├── forge_client.py     # 与 gateway 通信的 OpenAI 兼容客户端
 ├── test_config_model.py  # 矫治器单元测试
 ├── test_forge_client.py  # 客户端单元测试（mock gateway）
 ├── test_integration.py   # 端到端集成测试
-└── README.md
+├── test_gui_review.py    # GUI 回归（配置保护、布局可达性、异步交互）
+└── readme.md
 ```
 
 ## 测试
@@ -142,8 +160,11 @@ forge-gui/
 python3 test_config_model.py    # 矫治器（13 正向 + 2 负向 + 合并 + 启发式）
 python3 test_forge_client.py    # 客户端（5 个：health/非流式/流式/不可达/错误传播）
 python3 test_integration.py     # 端到端（矫治 → 保存 → 客户端 → mock 对话）
-python -m unittest test_gui_review -v  # 需桌面：配置保护、布局、开关及异步交互回归
+python -m unittest test_gui_review -v  # 需桌面：18 项（配置保护、视图可达性、异步交互）
 ```
+
+改版后另做了两项不靠肉眼的手工核对：控件树扫描（所有 bg 必须落在 `gui_theme.C`
+的 token 上，当前 0 例外）与整窗截图核对（顶栏/左栏/对话/工作区版式、行号与语法色）。
 
 不需要 GUI 显示、不需要真实 forge、不需要真实模型 API——mock gateway 用本地 socket 模拟。
 
@@ -151,14 +172,30 @@ python -m unittest test_gui_review -v  # 需桌面：配置保护、布局、开
 
 | 想改什么 | 改哪里 |
 |---|---|
+| 配色 / 字体 / 圆角 / 间距 | `gui_theme.py` 顶部 `C` / `FONT_*` / `R_*`（唯一样式来源）|
+| 顶栏 / 左栏 / 导航项 | `forge_gui_v2.py` 的 `NAV_ITEMS` + `_build_topbar()` / `_build_sidebar()` |
+| 视图切换与新面板 | `_build_views()` / `_show_view()` / `_build_stub_view()` |
+| 消息气泡 / 步骤 / 工具卡 | `chat_widgets.py`（`UserMessage` / `AgentMessage` / `ToolCard` / `StepList`）|
+| 输入卡（占位、工具条、模型、发送） | `chat_widgets.py` 的 `InputCard` |
+| 右栏工作区（树 / 代码 / diff / 预览） | `workspace.py`（`WorkspacePanel`） |
+| 顶栏指标采样 | `sysmon.py`（`SysMon(callback, interval)`）|
+| 任务视图 | `_build_task_view()` / `_run_task()` / `_task_finished()` |
+| 最近对话持久化 | `_sessions_path()` / `_archive_current_session()` / `_load_session()` |
 | 矫治规则（接受更多形态 / 更严） | `config_model.py` 的 `normalize()` + `_normalize_provider_row()` |
-| GUI 配色 / 字体 / 字号 | `forge_gui_v2.py` 顶部 `C` / `FONT_*` 常量（注释标了 AutoClaw 来源）|
-| 圆角半径 | 同文件 `R_PANEL / R_CARD / R_PILL / R_MD / R_SM` |
-| 输入卡内部布局 | `_layout_input_card()`（Canvas 内手排：输入行 / 提示 / 工具条 / 圆形按钮）|
 | 沉思三档 | `THINKING_LABELS` / `THINKING_CHOICES` + `_set_thinking_mode()` |
-| 标签页 / 布局 | `_build_ui()` + `_build_manage_tab()` / `_build_client_tab()` |
 | Gateway 启动参数 | `_start_gateway()`（默认 `--upstream openai`，可以加 `--model-map` 等） |
 | 客户端超时 | `ForgeGatewayClient(timeout=60.0)` |
+
+## 本次改版的取舍（对照参考稿）
+
+| 参考稿 | 现状 | 说明 |
+|---|---|---|
+| 无边框圆角窗口 + 自绘 `− □ ×` | 保留系统标题栏 | 无边框会丢任务栏图标与系统贴靠/缩放，可用性代价大于视觉收益 |
+| 代码编辑器右侧 minimap | 未做 | Tkinter 画缩略图收益低；改动集中在编辑器本身的滚动与高亮 |
+| 预览面板显示「App 缩略图」 | 显示真实文件内容 | 预览面板按扩展名渲染 md / HTML 源码 / 图片缩略图 / 文本，比缩略图更有用 |
+| 顶栏 `CPU/GPU/RAM` | 真实采样 | CPU 用 `GetSystemTimes`、内存用 `GlobalMemoryStatusEx`、GPU 走 `nvidia-smi`；取不到显示 `—` |
+| Agents / 知识库 / 演化 面板 | 占位页 | 写明各自会接入 registry / memory+curator / iteration-ledger，尚未实现 |
+| 「任务」视图的计划步骤 | 真实数据 | 来自 `run.py run --json` 的 `steps[]`（tool / decision / note），不是演示文案 |
 
 ## 已知限制
 

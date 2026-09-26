@@ -1,17 +1,16 @@
-"""forge 图形界面 v2：管理面 + 交互客户端双标签。
+"""forge 图形界面 v3：深色三栏桌面端（对话 / 任务 / 侧栏 / 可收起工作区）。
 
-管理面：
-  - 配置列表与功能开关（来自当前用户层）
-  - "添加 Provider" 面板：粘贴 JSON / 文本 → 矫治器自动整理 → 预览 → 保存
-  - 环境变量助手：列出矫治后需要的 env，复制就能用
-  - 启停 gateway（一键起 OpenAI 兼容 loopback）
+设计对照参考稿：
+    · 顶栏 56px：品牌 FORGE · v0.7.0 · Agent Framework + 主导航
+      + 右侧 CPU/GPU/RAM 指标与 Gateway 状态卡
+    · 左侧栏 200px：＋新建对话 / 主导航 / 最近对话
+    · 中栏：对话（消息气泡·计划步骤·工具调用卡·完成块·输入卡）/
+      任务（forge run 步骤）/ 工具（功能开关）/ 配置（配置编辑）
+    · 右栏工作区（默认收起）：文件树 / 变更 / 代码 / diff / 预览 / 终端
+    · 底部：状态栏
 
-交互客户端：
-  - chat 风格的对话列表
-  - 流式输出
-  - 模型选择（来自已启用 Provider 的 model 字段）
-
-零依赖：仅用 tkinter（Python 自带）+ 本仓 config_model.py + forge_client.py。
+零依赖：tkinter（Python 自带）+ 本仓 config_model.py / forge_client.py /
+secret_store.py / gui_theme.py / chat_widgets.py / workspace.py / sysmon.py。
 
 启动：
     python forge_gui_v2.py           # 有控制台
@@ -50,54 +49,77 @@ from forge_client import (  # noqa: E402
     GatewayError,
 )
 
+import chat_widgets as cw  # noqa: E402
+import gui_theme as theme  # noqa: E402
+from gui_theme import (  # noqa: E402
+    C,
+    FONT_CAPTION,
+    FONT_MICRO,
+    FONT_MONO,
+    FONT_MONO_SM,
+    FONT_SECTION,
+    FONT_SMALL,
+    FONT_TITLE,
+    FONT_UI,
+    FONT_UI_BOLD,
+    R_CARD,
+    R_MD,
+    R_PANEL,
+    R_PILL,
+    R_SM,
+    RoundedCard,
+    apply_ttk_theme,
+    attach_tooltip,
+    badge,
+    circle_button,
+    dot,
+    glyph_button,
+    pill_button,
+    progress_bar,
+    round_rect,
+    rounded_points,
+    style_scrollbar,
+)
+try:  # 工作区面板（右栏）
+    from workspace import WorkspacePanel  # noqa: E402
+except Exception as _ws_exc:  # pragma: no cover - 面板缺失时 GUI 仍可运行
+    WorkspacePanel = None  # type: ignore[assignment]
+    _WS_IMPORT_ERROR = str(_ws_exc)
+else:
+    _WS_IMPORT_ERROR = ""
+try:  # 系统资源采样（顶栏指标）
+    from sysmon import SysMon  # noqa: E402
+except Exception as _sm_exc:  # pragma: no cover
+    SysMon = None  # type: ignore[assignment]
+    _SM_IMPORT_ERROR = str(_sm_exc)
+else:
+    _SM_IMPORT_ERROR = ""
+
 # ─── 常量 ──────────────────────────────────────────────
 
-WINDOW_SIZE = "1220x800"
-MIN_SIZE = (940, 700)
+APP_VERSION = "0.7.0"
+WINDOW_SIZE = "1440x900"
+MIN_SIZE = (1120, 720)
 FORGE_REPO_HINT = os.environ.get("FORGE_REPO", "").strip()
 DEFAULT_FORGE_HOME = Path.home() / ".forge"
 
 IS_WINDOWS = platform.system() == "Windows"
 
-# 调色板 —— 对齐 AutoClaw 设计语言（取自 app.asar 的 --theme-* 浅色主题）
-C = {
-    "bg": "#f5f5f5",            # theme-bg
-    "surface": "#ffffff",        # theme-panel
-    "surface2": "#ebebeb",       # theme-surface-active-neutral
-    "surface_subtle": "#f5f5f5",  # theme-surface-subtle
-    "border": "#e5e5e5",         # theme-border
-    "border_hi": "#e6e6e6",      # theme-border-hi
-    "text": "#292929",           # theme-text
-    "subtext": "#525252",        # theme-text-subtitle
-    "muted": "#7a7a7a",          # theme-text-sec
-    "ter": "#9e9e9e",            # theme-text-ter
-    "placeholder": "#b0b0b0",    # theme-text-placeholder
-    "accent": "#fc5d1e",         # theme-accent1（品牌橙）
-    "accent_hover": "#e55318",   # theme-accent2
-    "accent_soft": "#fdeee7",    # ≈ rgba(252,93,30,.08) on white
-    "accent_border": "#fbd9c8",  # ≈ rgba(252,93,30,.16)
-    "accent2": "#b8431a",        # 代码/次要强调（白底可读)
-    "warn": "#c8872b",
-    "warn_soft": "#faf3e8",
-    "error": "#df5353",
-    "error_soft": "#fdeeee",
-    "ok": "#2f9e5b",
-    "ok_soft": "#eaf6ef",
-    "link": "#3b7dd8",
-    "link_soft": "#e8f0fb",
-    "info": "#4e7db7",
-    "info_soft": "#eef3fa",
-    "input_bg": "#ffffff",       # theme-input-bg
-    "code_bg": "#f7f7f7",        # theme-code-inline-bg
-    "msg_user_bg": "#fdf1ea",    # theme-msg-user 的实色近似
-    "msg_agent_bg": "#f7f7f7",   # theme-msg-agent 的实色近似
-    "scroll": "#d0d0d0",         # theme-scrollbar-thumb
-}
+# 主导航（顶栏与侧栏共用；key -> (标签, 图标)）
+NAV_ITEMS = [
+    ("chat", "对话", "▣"),
+    ("task", "任务", "☑"),
+    ("agents", "Agents", "⬡"),
+    ("tools", "工具集", "✱"),
+    ("knowledge", "知识库", "▤"),
+    ("evolution", "演化", "⑂"),
+    ("files", "文件与项目", "⌂"),
+    ("config", "配置", "⚙"),
+]
+NAV_LABEL = {key: label for key, label, _g in NAV_ITEMS}
+NAV_GLYPH = {key: glyph for key, _l, glyph in NAV_ITEMS}
 
-# 圆角（AutoClaw: panel 14 / card 12 / pill 20）
-R_PANEL, R_CARD, R_PILL, R_MD, R_SM = 14, 12, 20, 8, 6
-
-# 沉思模式（forge thinking.mode 三档；GUI 里对齐 AutoClaw 工具条「目标模式」的位置）
+# 沉思模式（forge thinking.mode 三档；GUI 里对齐参考稿输入卡的工具条）
 THINKING_LABELS = {"off": "关闭", "smart": "智能", "on": "开启"}
 THINKING_CHOICES = [
     ("off", "关闭", "不启用沉思"),
@@ -105,42 +127,19 @@ THINKING_CHOICES = [
     ("on", "开启", "始终启用沉思"),
 ]
 
-FONT_MONO = ("Cascadia Code", 10) if IS_WINDOWS else ("Menlo", 10)
-FONT_UI = ("Segoe UI", 10) if IS_WINDOWS else ("Helvetica", 11)
-FONT_UI_BOLD = ("Segoe UI", 10, "bold") if IS_WINDOWS else ("Helvetica", 11, "bold")
-FONT_TITLE = ("Segoe UI", 20, "bold") if IS_WINDOWS else ("Helvetica", 20, "bold")
-FONT_SMALL = ("Segoe UI", 9) if IS_WINDOWS else ("Helvetica", 9)
-FONT_SECTION = ("Segoe UI", 12, "bold") if IS_WINDOWS else ("Helvetica", 12, "bold")
-FONT_CAPTION = ("Segoe UI", 9) if IS_WINDOWS else ("Helvetica", 9)
+# 任务视图的策略档位（对应 forge run 的 routing strategy）
+STRATEGY_CHOICES = [
+    ("economy", "省钱", "只用便宜模型"),
+    ("balanced", "均衡", "默认：按任务难度选模型"),
+    ("premium", "强力", "优先用最强模型"),
+]
 
 
-def round_rect(canvas: "tk.Canvas", x1, y1, x2, y2, r, **kw):
-    """在 Canvas 上画圆角矩形（平滑多边形），返回 item id。"""
-    pts = [
-        x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r,
-        x2, y2 - r, x2, y2, x2 - r, y2, x1 + r, y2,
-        x1, y2, x1, y2 - r, x1, y1 + r, x1, y1,
-    ]
-    return canvas.create_polygon(pts, smooth=True, splinesteps=16, **kw)
+# ─── 向后兼容的小工具（历史上这些名字定义在本文件里）──────────
 
 
-def pill_button(parent, text, command, *, kind="ghost", bg=None):
-    """AutoClaw 风格的胶囊按钮（tk.Button 近似：扁平 + 内边距 + 圆角感）。"""
-    bg = bg or C["bg"]
-    palettes = {
-        "primary": (C["accent"], "#ffffff", C["accent_hover"]),
-        "ghost": (C["surface"], C["subtext"], C["surface2"]),
-        "quiet": (bg, C["muted"], C["surface2"]),
-        "danger": (C["surface"], C["error"], C["error_soft"]),
-    }
-    bgb, fg, hov = palettes.get(kind, palettes["ghost"])
-    btn = tk.Button(parent, text=text, command=command, bg=bgb, fg=fg,
-                    activebackground=hov, activeforeground=fg,
-                    font=FONT_UI, relief=tk.FLAT, bd=0, padx=14, pady=6,
-                    cursor="hand2", highlightthickness=0)
-    return btn
-
-
+def _rounded_points(x1, y1, x2, y2, r):
+    return rounded_points(x1, y1, x2, y2, r)
 # ─── 工具 ──────────────────────────────────────────────
 
 
@@ -210,7 +209,7 @@ class ForgeGuiApp:
 
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("forge — 图形界面（管理 + 客户端）")
+        self.root.title(f"forge — v{APP_VERSION}（对话 · 任务 · 工作区）")
         self.root.geometry(WINDOW_SIZE)
         self.root.minsize(*MIN_SIZE)
         self.root.configure(bg=C["bg"])
@@ -236,6 +235,13 @@ class ForgeGuiApp:
         self._organized_input = ""
         self._editor_clean_text = ""
         self._chat_history: list[ChatMessage] = []
+        self._session_id = f"s{int(time.time() * 1000)}"
+        self._agent_msg = None
+        self._task_msg = None
+        self._task_proc = None
+        self._task_running = False
+        self._task_started = 0.0
+        self._sysmon = None
         self._feature_entries: list[dict] = []
         self._features_expanded = False
         self._feature_dirty = False
@@ -275,109 +281,858 @@ class ForgeGuiApp:
                               troughcolor=C["input_bg"], relief=tk.FLAT,
                               bd=0, highlightthickness=0, width=10)
 
+    # ── UI 构造 ──────────────────────────────────────────
+    @staticmethod
+    def _style_scrollbar(widget):
+        style_scrollbar(widget)
+
     def _build_ui(self):
-        style = ttk.Style()
-        style.theme_use("clam")
-        style.configure("TNotebook", background=C["bg"], borderwidth=0, tabmargins=(0, 0, 0, 0))
-        style.configure("TNotebook.Tab",
-                        background=C["bg"],
-                        foreground=C["subtext"],
-                        padding=(16, 7),
-                        font=FONT_UI_BOLD,
-                        borderwidth=0)
-        style.map("TNotebook.Tab",
-                  background=[("selected", C["accent_soft"]), ("active", C["surface_subtle"])],
-                  foreground=[("selected", C["accent"]), ("active", C["text"])],
-                  expand=[("selected", (0, 0, 0, 0))])
-        style.configure("TFrame", background=C["bg"])
-        style.configure("Vertical.TScrollbar", background=C["scroll"],
-                        troughcolor=C["surface_subtle"], arrowcolor=C["ter"],
-                        bordercolor=C["surface_subtle"], lightcolor=C["scroll"],
-                        darkcolor=C["scroll"])
-        style.map("Vertical.TScrollbar", background=[("active", C["ter"])])
-        style.configure("TCombobox", fieldbackground=C["surface"], background=C["surface"],
-                        foreground=C["text"], arrowcolor=C["muted"], padding=4,
-                        bordercolor=C["border"], lightcolor=C["surface"],
-                        darkcolor=C["surface"], relief=tk.FLAT)
-        style.map("TCombobox", fieldbackground=[("readonly", C["surface"])],
-                  foreground=[("readonly", C["text"])],
-                  bordercolor=[("focus", C["accent"])])
-        self.root.option_add("*TCombobox*Listbox.background", C["surface"])
-        self.root.option_add("*TCombobox*Listbox.foreground", C["text"])
-        self.root.option_add("*TCombobox*Listbox.selectBackground", C["accent_soft"])
-        self.root.option_add("*TCombobox*Listbox.selectForeground", C["text"])
+        apply_ttk_theme(self.root)
 
-        # ── 顶部（AutoClaw chrome：浅灰底 + 细分隔线） ──
-        chrome = tk.Frame(self.root, bg=C["bg"])
-        chrome.pack(fill=tk.X)
-        top = tk.Frame(chrome, bg=C["bg"], padx=20, pady=14)
-        top.pack(fill=tk.X)
-        brand = tk.Frame(top, bg=C["bg"])
-        brand.pack(side=tk.LEFT)
-        tk.Label(brand, text="FORGE", bg=C["bg"], fg=C["accent"],
-                 font=("Segoe UI", 9, "bold") if IS_WINDOWS else ("Helvetica", 9, "bold")
-                 ).pack(anchor=tk.W)
-        tk.Label(brand, text="forge workspace", bg=C["bg"], fg=C["text"],
-                 font=FONT_TITLE).pack(anchor=tk.W, pady=(2, 0))
+        self._nav_widgets: dict[str, list] = {}
+        self._views: dict[str, tk.Frame] = {}
+        self._active_view = "chat"
+        self._ws_packed = False
+        self._metric_labels: dict[str, tk.Label] = {}
+        self._metric_bars: dict[str, tk.Canvas] = {}
 
-        # gateway 控制（右上，白卡 + 细边）
-        gw_frame = tk.Frame(top, bg=C["surface"], padx=12, pady=8,
-                            highlightthickness=1, highlightbackground=C["border"])
-        gw_frame.pack(side=tk.RIGHT, pady=(2, 0))
-        self.gw_status_var = tk.StringVar(value="● 离线")
-        self.gw_status_lbl = tk.Label(
-            gw_frame, textvariable=self.gw_status_var, bg=C["surface"],
-            fg=C["ter"], font=FONT_UI_BOLD,
-        )
-        self.gw_status_lbl.pack(side=tk.LEFT, padx=(0, 12))
-        self.gw_btn = tk.Button(
-            gw_frame, text="启动 gateway", bg=C["accent"], fg="#ffffff",
-            activebackground=C["accent_hover"], activeforeground="#ffffff",
-            font=FONT_UI_BOLD, relief=tk.FLAT, bd=0, padx=14, pady=5,
-            command=self._toggle_gateway, cursor="hand2", highlightthickness=0,
-        )
-        self.gw_btn.pack(side=tk.LEFT, padx=(0, 4))
-        tk.Label(gw_frame, text="端口", bg=C["surface"], fg=C["ter"],
-                 font=FONT_SMALL).pack(side=tk.LEFT, padx=(10, 4))
-        self.port_var = tk.StringVar(value=str(self.gateway_port))
-        self.port_spin = tk.Spinbox(
-            gw_frame, from_=1024, to_=65535, width=6,
-            textvariable=self.port_var, font=FONT_MONO,
-            bg=C["surface_subtle"], fg=C["text"], buttonbackground=C["surface"],
-            relief=tk.FLAT, insertbackground=C["accent"], highlightthickness=0, bd=0,
-        )
-        self.port_spin.pack(side=tk.LEFT)
+        # ── 顶部标题栏（品牌 + 主导航 + 指标 + gateway）──
+        self._build_topbar()
 
-        tk.Frame(chrome, bg=C["border"], height=1).pack(fill=tk.X)
+        # ── 主体：左侧栏 | 中栏视图 | 右栏工作区 ──
+        body = tk.Frame(self.root, bg=C["bg"])
+        body.pack(fill=tk.BOTH, expand=True)
 
-        # ── 标签页 ──
-        nb = ttk.Notebook(self.root)
-        nb.enable_traversal()
-        self.tab_manage = tk.Frame(nb, bg=C["bg"])
-        self.tab_features = tk.Frame(nb, bg=C["bg"])
-        self.tab_client = tk.Frame(nb, bg=C["bg"])
-        nb.add(self.tab_features, text="功能开关")
-        nb.add(self.tab_manage, text="配置编辑")
-        nb.add(self.tab_client, text="交互客户端")
+        self._build_sidebar(body)
 
-        self._build_feature_panel(self.tab_features)
-        self._build_manage_tab(self.tab_manage)
-        self._build_client_tab(self.tab_client)
+        self.split = tk.PanedWindow(body, orient=tk.HORIZONTAL, bg=C["border"],
+                                    sashwidth=6, sashrelief=tk.FLAT, bd=0,
+                                    handlepad=0, opaqueresize=True)
+        self.split.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        center = tk.Frame(self.split, bg=C["chat"])
+        self.center = center
+        self.split.add(center, minsize=520, stretch="always")
+
+        self._build_views(center)
+        self._build_workspace()
 
         # ── 底部状态栏 ──
         tk.Frame(self.root, bg=C["border"], height=1).pack(fill=tk.X, side=tk.BOTTOM)
         bot = tk.Frame(self.root, bg=C["bg"], height=28)
         bot.pack(fill=tk.X, side=tk.BOTTOM)
+        bot.pack_propagate(False)
         self.status_var = tk.StringVar(value="")
         self.status_lbl = tk.Label(bot, textvariable=self.status_var, bg=C["bg"],
-                 fg=C["text"], font=FONT_SMALL, anchor=tk.W, padx=20)
+                                   fg=C["body"], font=FONT_CAPTION, anchor=tk.W,
+                                   padx=16)
         self.status_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self.path_lbl = tk.Label(
-            bot, text=self._status_label_text(),
-            bg=C["bg"], fg=C["muted"], font=FONT_SMALL, padx=12,
-        )
+        self.path_lbl = tk.Label(bot, text=self._status_label_text(), bg=C["bg"],
+                                 fg=C["muted"], font=FONT_CAPTION, padx=12)
         self.path_lbl.pack(side=tk.RIGHT)
-        nb.pack(fill=tk.BOTH, expand=True, padx=20, pady=(8, 10))
+
+        self._show_view("chat")
+        self._refresh_history()
+        self._start_sysmon()
+
+    # ── 顶栏 ──────────────────────────────────────────────
+    def _build_topbar(self):
+        chrome = tk.Frame(self.root, bg=C["bg"])
+        chrome.pack(fill=tk.X)
+        bar = tk.Frame(chrome, bg=C["bg"], height=56)
+        bar.pack(fill=tk.X)
+        bar.pack_propagate(False)
+
+        # 品牌区
+        brand = tk.Frame(bar, bg=C["bg"])
+        brand.pack(side=tk.LEFT, padx=(16, 10))
+        logo = tk.Canvas(brand, width=26, height=26, bg=C["bg"],
+                         highlightthickness=0, bd=0)
+        round_rect(logo, 0, 0, 25, 25, 8, fill=C["accent"], outline="")
+        logo.create_polygon(2, 2, 20, 2, 2, 20, smooth=True, splinesteps=10,
+                            fill="#6D63F0", outline="")
+        logo.create_text(13, 13, text="F", fill="#FFFFFF",
+                         font=(theme.UI_FAMILY, 12, "bold"))
+        logo.pack(side=tk.LEFT, padx=(0, 10))
+        brand_txt = tk.Frame(brand, bg=C["bg"])
+        brand_txt.pack(side=tk.LEFT)
+        tk.Label(brand_txt, text="FORGE", bg=C["bg"], fg=C["text"],
+                 font=theme.FONT_BRAND).pack(anchor=tk.W)
+        sub = tk.Frame(brand_txt, bg=C["bg"])
+        sub.pack(anchor=tk.W)
+        tk.Label(sub, text="Agent Framework", bg=C["bg"], fg=C["ter"],
+                 font=FONT_MICRO).pack(side=tk.LEFT)
+        tk.Label(sub, text=f"v{APP_VERSION}", bg=C["surface2"], fg=C["muted"],
+                 font=FONT_MICRO, padx=5).pack(side=tk.LEFT, padx=(6, 0))
+
+        # 主导航
+        nav = tk.Frame(bar, bg=C["bg"])
+        nav.pack(side=tk.LEFT, padx=(22, 0))
+        for key, label, glyph in NAV_ITEMS:
+            holder, btn = self._make_nav_item(nav, key, label, glyph, big=True)
+            holder.pack(side=tk.LEFT, padx=(0, 6))
+
+        # 右侧：工作区开关 + gateway 卡 + 指标
+        right = tk.Frame(bar, bg=C["bg"])
+        right.pack(side=tk.RIGHT, padx=(0, 14))
+        self.ws_toggle_btn = pill_button(right, "▤ 工作区", self._toggle_workspace,
+                                         kind="ghost", bg=C["bg"], font=FONT_SMALL,
+                                         padx=12)
+        self.ws_toggle_btn.pack(side=tk.LEFT, padx=(0, 10))
+        self._build_gateway_card(right)
+        for key, text in (("cpu", "CPU"), ("gpu", "GPU"), ("ram", "RAM")):
+            self._build_metric(right, key, text)
+
+        tk.Frame(chrome, bg=C["border"], height=1).pack(fill=tk.X)
+
+    def _build_metric(self, parent, key: str, text: str):
+        box = tk.Frame(parent, bg=C["bg"])
+        box.pack(side=tk.LEFT, padx=(0, 12))
+        row = tk.Frame(box, bg=C["bg"])
+        row.pack(anchor=tk.W)
+        tk.Label(row, text=text, bg=C["bg"], fg=C["muted"],
+                 font=FONT_MICRO).pack(side=tk.LEFT)
+        value = tk.Label(row, text="—", bg=C["bg"], fg=C["body"], font=FONT_MICRO)
+        value.pack(side=tk.LEFT, padx=(4, 0))
+        self._metric_labels[key] = value
+        bar = progress_bar(box, 0, width=30, height=3)
+        bar.pack(anchor=tk.W, pady=(2, 0))
+        self._metric_bars[key] = bar
+
+    def _set_bar(self, canvas: tk.Canvas, pct):
+        try:
+            canvas.delete("all")
+            w, h = int(canvas.cget("width")), int(canvas.cget("height"))
+            round_rect(canvas, 0, 0, w, h, h / 2, fill=C["border_hi"], outline="")
+            if pct:
+                filled = max(2, int(w * max(0.0, min(100.0, float(pct))) / 100.0))
+                round_rect(canvas, 0, 0, filled, h, h / 2, fill=C["accent_hover"],
+                           outline="")
+        except (tk.TclError, ValueError):
+            pass
+
+    def _build_gateway_card(self, parent):
+        card = tk.Frame(parent, bg=C["surface2"], padx=10, pady=4,
+                        highlightthickness=1, highlightbackground=C["border_hi"])
+        card.pack(side=tk.LEFT, padx=(0, 12))
+        self.gw_status_var = tk.StringVar(value="● 离线")
+        self.gw_status_lbl = tk.Label(card, textvariable=self.gw_status_var,
+                                      bg=C["surface2"], fg=C["muted"],
+                                      font=FONT_SMALL)
+        self.gw_status_lbl.pack(side=tk.LEFT, padx=(0, 8))
+        tk.Label(card, text="Gateway", bg=C["surface2"], fg=C["ter"],
+                 font=FONT_MICRO).pack(side=tk.LEFT)
+        self.port_var = tk.StringVar(value=str(self.gateway_port))
+        self.port_spin = tk.Spinbox(card, from_=1024, to_=65535, width=5,
+                                    textvariable=self.port_var, font=FONT_MONO_SM,
+                                    bg=C["surface2"], fg=C["body"], bd=0,
+                                    buttonbackground=C["surface2"], relief=tk.FLAT,
+                                    insertbackground=C["accent"],
+                                    highlightthickness=0, justify=tk.CENTER)
+        self.port_spin.pack(side=tk.LEFT, padx=(4, 8))
+        self.gw_btn = tk.Button(card, text="▶ 启动", command=self._toggle_gateway,
+                                bg=C["accent"], fg="#FFFFFF",
+                                activebackground=C["accent_hover"],
+                                activeforeground="#FFFFFF", font=FONT_MICRO,
+                                relief=tk.FLAT, bd=0, padx=10, pady=2,
+                                cursor="hand2", highlightthickness=0)
+        self.gw_btn.pack(side=tk.LEFT)
+
+    # ── 左侧栏 ────────────────────────────────────────────
+    def _make_nav_item(self, parent, key: str, label: str, glyph: str, *, big=False):
+        holder = tk.Frame(parent, bg=C["bg"] if big else C["sidebar"],
+                          highlightthickness=1,
+                          highlightbackground=C["bg"] if big else C["sidebar"])
+        text = f"{glyph}  {label}" if not big else f"{glyph} {label}"
+        btn = tk.Button(holder, text=text, command=lambda k=key: self._nav_click(k),
+                        bg=holder["bg"], fg=C["ter"], activebackground=C["hover"],
+                        activeforeground=C["text"],
+                        font=FONT_SMALL if not big else FONT_UI,
+                        relief=tk.FLAT, bd=0, padx=10 if not big else 12,
+                        pady=4, cursor="hand2", highlightthickness=0, anchor=tk.W)
+        btn.pack(fill=tk.X)
+        self._nav_widgets.setdefault(key, []).append((holder, btn))
+        return holder, btn
+
+    def _build_sidebar(self, parent):
+        side = tk.Frame(parent, bg=C["sidebar"], width=200)
+        side.pack(side=tk.LEFT, fill=tk.Y)
+        side.pack_propagate(False)
+        self.sidebar = side
+
+        new_btn = pill_button(side, "＋  新建对话", self._new_session, kind="primary",
+                              bg=C["sidebar"], font=FONT_UI, padx=0)
+        new_btn.pack(fill=tk.X, padx=12, pady=(14, 12))
+
+        nav_host = tk.Frame(side, bg=C["sidebar"])
+        nav_host.pack(fill=tk.X, padx=6)
+        for key, label, glyph in NAV_ITEMS:
+            holder, _btn = self._make_nav_item(nav_host, key, label, glyph)
+            holder.pack(fill=tk.X, pady=1)
+
+        head = tk.Frame(side, bg=C["sidebar"])
+        head.pack(fill=tk.X, padx=14, pady=(16, 6))
+        tk.Label(head, text="最近对话", bg=C["sidebar"], fg=C["muted"],
+                 font=FONT_MICRO).pack(side=tk.LEFT)
+        glyph_button(head, "⌗", self._toggle_session_search, bg=C["sidebar"],
+                     fg=C["muted"], size=12, tooltip="搜索对话").pack(side=tk.RIGHT)
+        self._search_visible = False
+        self.session_search_var = tk.StringVar()
+        self.session_search = tk.Entry(side, textvariable=self.session_search_var,
+                                       bg=C["surface2"], fg=C["text"], bd=0,
+                                       relief=tk.FLAT, insertbackground=C["accent"],
+                                       font=FONT_SMALL, highlightthickness=1,
+                                       highlightbackground=C["border_hi"],
+                                       highlightcolor=C["accent"])
+        self.session_search_var.trace_add("write", lambda *_: self._refresh_history())
+
+        self.history_area = cw.ScrollArea(side, bg=C["sidebar"], pady=2)
+        self.history_area.pack(fill=tk.BOTH, expand=True, padx=6)
+        self.history_box = self.history_area.inner
+
+        more = tk.Label(side, text="•••   更多 …", bg=C["sidebar"], fg=C["muted"],
+                        font=FONT_SMALL, anchor=tk.W, padx=14, pady=10,
+                        cursor="hand2")
+        more.pack(side=tk.BOTTOM, fill=tk.X)
+        more.bind("<Button-1>", lambda _e: self._set_status(
+            "更多功能（Agents / 知识库 / 演化）在主体中查看", "info"))
+
+        tk.Frame(parent, bg=C["border"], width=1).pack(side=tk.LEFT, fill=tk.Y)
+
+    def _toggle_session_search(self):
+        self._search_visible = not self._search_visible
+        if self._search_visible:
+            self.session_search.pack(fill=tk.X, padx=12, pady=(0, 6))
+            self.session_search.focus_set()
+        else:
+            self.session_search_var.set("")
+            self.session_search.pack_forget()
+        self._refresh_history()
+
+    # ── 视图切换 ──────────────────────────────────────────
+    def _build_views(self, center):
+        self.tab_client = tk.Frame(center, bg=C["chat"])
+        self._build_client_tab(self.tab_client)
+
+        self.tab_task = tk.Frame(center, bg=C["chat"])
+        self._build_task_view(self.tab_task)
+
+        self.tab_features = tk.Frame(center, bg=C["bg"])
+        host = tk.Frame(self.tab_features, bg=C["bg"], padx=20, pady=2)
+        host.pack(fill=tk.BOTH, expand=True)
+        self._build_feature_panel(host)
+
+        self.tab_manage = tk.Frame(center, bg=C["bg"])
+        host2 = tk.Frame(self.tab_manage, bg=C["bg"], padx=20, pady=2)
+        host2.pack(fill=tk.BOTH, expand=True)
+        self._build_manage_tab(host2)
+
+        self._views = {
+            "chat": self.tab_client,
+            "task": self.tab_task,
+            "tools": self.tab_features,
+            "config": self.tab_manage,
+        }
+        for key in ("agents", "knowledge", "evolution", "files"):
+            frame = tk.Frame(center, bg=C["bg"])
+            self._build_stub_view(frame, key)
+            self._views[key] = frame
+
+    STUB_TEXT = {
+        "agents": ("Agents", "forge 的 Agent 注册表与子 Agent 调度",
+                   ("registry.py 里的成员定义", "subagent 派发与回执",
+                    "多模型协作（MOA）编排"),
+                   "Agent 面板会把 registry 里的成员、能力与最近一次调度画出来。"),
+        "knowledge": ("知识库", "长期记忆与策展（memory / curator）",
+                      ("会话记忆切片", "策展器打分与淘汰", "分级检索接入"),
+                      "知识库面板会列出现有记忆条目、来源与最近命中。"),
+        "evolution": ("演化", "自演化迭代账本（evolution / iteration-ledger）",
+                      ("迭代记录与指标", "能力包升级", "回归对比"),
+                      "演化面板会把 iteration-ledger.jsonl 画成时间线。"),
+        "files": ("文件与项目", "在右侧工作区里浏览与改动项目文件",
+                  ("文件树 / 变更 / 代码 / diff / 预览 / 终端",),
+                  "点上方按钮或调用「打开工作区」即可展开右栏。"),
+    }
+
+    def _build_stub_view(self, parent, key: str):
+        title, subtitle, bullets, note = self.STUB_TEXT.get(key, (key, "", (), ""))
+        wrap = tk.Frame(parent, bg=C["bg"])
+        wrap.pack(fill=tk.BOTH, expand=True, padx=24, pady=24)
+        card = RoundedCard(wrap, radius=R_PANEL, fill=C["surface"],
+                           outline=C["border_hi"], padx=22, pady=20, bg=C["bg"])
+        card.pack(fill=tk.X)
+        head = tk.Frame(card.content, bg=C["surface"])
+        head.pack(fill=tk.X)
+        tk.Label(head, text=f"{NAV_GLYPH.get(key, '●')}  {title}", bg=C["surface"],
+                 fg=C["text"], font=FONT_TITLE).pack(side=tk.LEFT)
+        badge(head, "规划中", tone="muted", bg=C["surface"]).pack(side=tk.LEFT, padx=(10, 0))
+        tk.Label(card.content, text=subtitle, bg=C["surface"], fg=C["ter"],
+                 font=FONT_SMALL, anchor=tk.W, justify=tk.LEFT,
+                 wraplength=680).pack(fill=tk.X, pady=(6, 10))
+        for item in bullets:
+            row = tk.Frame(card.content, bg=C["surface"])
+            row.pack(fill=tk.X, pady=2)
+            tk.Label(row, text="•", bg=C["surface"], fg=C["accent2"],
+                     font=FONT_UI_BOLD, width=2).pack(side=tk.LEFT)
+            tk.Label(row, text=item, bg=C["surface"], fg=C["body"],
+                     font=FONT_SMALL).pack(side=tk.LEFT)
+        tk.Label(card.content, text=note, bg=C["surface"], fg=C["muted"],
+                 font=FONT_SMALL, anchor=tk.W, justify=tk.LEFT,
+                 wraplength=680).pack(fill=tk.X, pady=(10, 0))
+        actions = tk.Frame(card.content, bg=C["surface"])
+        actions.pack(fill=tk.X, pady=(14, 0))
+        if key == "files":
+            pill_button(actions, "打开工作区", lambda: self._open_workspace("file_tree"),
+                        kind="primary", bg=C["surface"]).pack(side=tk.LEFT)
+        else:
+            pill_button(actions, "回到对话", lambda: self._show_view("chat"),
+                        kind="primary", bg=C["surface"]).pack(side=tk.LEFT)
+            pill_button(actions, "打开工作区", lambda: self._open_workspace("file_tree"),
+                        kind="ghost", bg=C["surface"]).pack(side=tk.LEFT, padx=(8, 0))
+
+    def _nav_click(self, key: str):
+        if key == "files":
+            self._show_view("chat")
+            self._open_workspace("file_tree")
+            self._set_nav_active("files")
+            return
+        self._show_view(key)
+
+    def _show_view(self, key: str):
+        if key not in self._views:
+            key = "chat"
+        for other, frame in self._views.items():
+            if other != key:
+                frame.pack_forget()
+        self._views[key].pack(fill=tk.BOTH, expand=True)
+        self._active_view = key
+        self._set_nav_active(key)
+        if key == "config":
+            self._update_status_label()
+
+    def _set_nav_active(self, key: str):
+        for nav_key, widgets in self._nav_widgets.items():
+            active = nav_key == key
+            for holder, btn in widgets:
+                try:
+                    base = holder.master.cget("bg")
+                except Exception:
+                    base = C["bg"]
+                bg = C["sel"] if active else base
+                holder.configure(bg=bg,
+                                 highlightbackground=C["sel_border"] if active else base)
+                btn.configure(bg=bg, fg=C["text"] if active else C["ter"],
+                              activebackground=C["hover"] if active else base,
+                              activeforeground=C["text"])
+
+    # ── 右栏工作区 ────────────────────────────────────────
+    def _repo_root(self) -> Path:
+        if self.run_py:
+            return self.run_py.parent
+        return HERE.parent
+
+    def _build_workspace(self):
+        self.workspace = None
+        self.ws_holder = tk.Frame(self.split, bg=C["bg"])
+        if WorkspacePanel is None:
+            self._ws_error = _WS_IMPORT_ERROR or "workspace 模块未安装"
+            return
+        self._ws_error = ""
+        try:
+            self.workspace = WorkspacePanel(self.ws_holder, app=self,
+                                            repo_root=self._repo_root(),
+                                            on_close=self._close_workspace)
+        except Exception as exc:  # pragma: no cover
+            self.workspace = None
+            self._ws_error = str(exc)
+
+    def _open_workspace(self, tab: str = "file_tree"):
+        if self.workspace is None:
+            self._set_status(f"工作区面板不可用：{self._ws_error}", "warn")
+            return
+        if not self._ws_packed:
+            try:
+                self.split.add(self.ws_holder, minsize=420, width=640,
+                               stretch="never")
+                self._ws_packed = True
+            except tk.TclError:
+                pass
+        try:
+            self.workspace.show()
+            if not self.workspace.winfo_ismapped():
+                self.workspace.pack(fill=tk.BOTH, expand=True)
+        except Exception as exc:  # pragma: no cover
+            self._set_status(f"打开工作区失败：{exc}", "error")
+            return
+        if tab == "changes":
+            self.workspace.open_changes()
+        elif tab != "file_tree":
+            try:
+                self.workspace.open_file_tree()
+            except Exception:
+                pass
+        try:
+            self.workspace.refresh()
+        except Exception:
+            pass
+        self.ws_toggle_btn.configure(text="▤ 收起工作区")
+
+    def _close_workspace(self):
+        if self.workspace is not None:
+            try:
+                self.workspace.hide()
+            except Exception:
+                pass
+        if self._ws_packed:
+            try:
+                self.split.forget(self.ws_holder)
+            except tk.TclError:
+                pass
+            self._ws_packed = False
+        try:
+            self.ws_toggle_btn.configure(text="▤ 工作区")
+        except (tk.TclError, AttributeError):
+            pass
+
+    def _toggle_workspace(self):
+        if self._ws_packed:
+            self._close_workspace()
+        else:
+            self._open_workspace("file_tree")
+
+    # ── 顶栏指标 ──────────────────────────────────────────
+    def _start_sysmon(self):
+        self._sysmon = None
+        if SysMon is None:
+            for key, value in self._metric_labels.items():
+                value.configure(text="—")
+            return
+        try:
+            self._sysmon = SysMon(lambda payload: self._post_ui(self._on_metrics, payload),
+                                  interval=2.0)
+            self._sysmon.start()
+        except Exception as exc:  # pragma: no cover
+            self._sysmon = None
+            self._set_status(f"系统指标不可用：{exc}", "warn")
+
+    def _on_metrics(self, payload: dict):
+        mapping = {"cpu": "cpu", "ram": "ram_pct", "gpu": "gpu"}
+        for key, src in mapping.items():
+            label = self._metric_labels.get(key)
+            bar = self._metric_bars.get(key)
+            if label is None:
+                continue
+            value = (payload or {}).get(src)
+            if value is None:
+                label.configure(text="—")
+                if bar is not None:
+                    self._set_bar(bar, 0)
+                continue
+            label.configure(text=f"{float(value):.0f}%")
+            if bar is not None:
+                self._set_bar(bar, value)
+        gpu_name = (payload or {}).get("gpu_name")
+        if gpu_name and not getattr(self, "_gpu_tip_done", False):
+            self._gpu_tip_done = True
+            attach_tooltip(self._metric_labels["gpu"], f"显卡：{gpu_name}")
+
+    # ── 最近对话（会话持久化）─────────────────────────────
+    def _sessions_path(self) -> Path:
+        root = Path(self.home)
+        try:
+            gui_dir = root / "gui"
+            gui_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return root / "gui-sessions.json"
+        return gui_dir / "sessions.json"
+
+    def _load_sessions(self) -> list[dict]:
+        path = self._sessions_path()
+        if not path.is_file():
+            return []
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return []
+        sessions = data.get("sessions") if isinstance(data, dict) else data
+        if not isinstance(sessions, list):
+            return []
+        return [s for s in sessions if isinstance(s, dict)]
+
+    def _write_sessions(self, sessions: list[dict]):
+        try:
+            payload = {"sessions": sessions[:40]}
+            self._sessions_path().write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        except OSError as exc:
+            self._set_status(f"会话记录保存失败：{exc}", "warn")
+
+    def _session_title(self) -> str:
+        for msg in self._chat_history:
+            if msg.role == "user" and msg.content.strip():
+                first = msg.content.strip().splitlines()[0]
+                return first if len(first) <= 26 else first[:26] + "…"
+        return "新对话"
+
+    def _archive_current_session(self):
+        history = list(getattr(self, "_chat_history", []) or [])
+        if not history:
+            return
+        sid = getattr(self, "_session_id", None) or f"s{int(time.time() * 1000)}"
+        sessions = self._load_sessions()
+        entry = {
+            "id": sid,
+            "title": self._session_title(),
+            "updated": time.time(),
+            "messages": [{"role": m.role, "content": m.content} for m in history],
+        }
+        sessions = [s for s in sessions if s.get("id") != sid]
+        sessions.insert(0, entry)
+        self._write_sessions(sessions)
+
+    def _refresh_history(self):
+        box = getattr(self, "history_box", None)
+        if box is None:
+            return
+        for child in box.winfo_children():
+            child.destroy()
+        query = (self.session_search_var.get() if hasattr(self, "session_search_var")
+                 else "").strip().lower()
+        sessions = self._load_sessions()
+        if query:
+            sessions = [s for s in sessions if query in str(s.get("title", "")).lower()]
+        if not sessions:
+            tk.Label(box, text="还没有历史对话" if not query else "没有匹配的对话",
+                     bg=C["sidebar"], fg=C["muted"], font=FONT_MICRO,
+                     anchor=tk.W, padx=10, pady=8).pack(fill=tk.X)
+            return
+        active_id = getattr(self, "_session_id", None)
+        for session in sessions[:14]:
+            sid = str(session.get("id", ""))
+            active = sid == active_id
+            row = tk.Frame(box, bg=C["sel"] if active else C["sidebar"],
+                           cursor="hand2",
+                           highlightthickness=1,
+                           highlightbackground=C["sel_border"] if active else C["sidebar"])
+            row.pack(fill=tk.X, pady=1, padx=2)
+            tk.Label(row, text="▣", bg=row["bg"], fg=C["accent2"],
+                     font=FONT_MICRO).pack(side=tk.LEFT, padx=(8, 6), pady=4)
+            tk.Label(row, text=str(session.get("title", "未命名对话")), bg=row["bg"],
+                     fg=C["text"] if active else C["subtext"], font=FONT_SMALL,
+                     anchor=tk.W).pack(side=tk.LEFT, fill=tk.X, expand=True, pady=4)
+            for widget in (row, *row.winfo_children()):
+                widget.bind("<Button-1>", lambda _e, s=sid: self._load_session(s))
+
+    def _new_session(self):
+        if self._sending:
+            self._set_status("正在生成回复，完成后可新建对话", "info")
+            return
+        self._archive_current_session()
+        self._chat_history.clear()
+        self._session_id = f"s{int(time.time() * 1000)}"
+        if hasattr(self, "chat_area"):
+            self.chat_area.show_empty()
+        try:
+            self.chat_title_var.set("新对话")
+            self.chat_sub_var.set("在下方输入消息，或切到「任务」用 forge run 跑一个任务")
+        except AttributeError:
+            pass
+        self._refresh_history()
+        self._set_status("已新建对话", "info")
+
+    def _load_session(self, sid: str):
+        if self._sending:
+            self._set_status("正在生成回复，完成后可切换对话", "info")
+            return
+        session = next((s for s in self._load_sessions() if str(s.get("id")) == sid), None)
+        if session is None:
+            return
+        self._chat_history = [ChatMessage(str(m.get("role", "user")),
+                                          str(m.get("content", "")))
+                              for m in session.get("messages", []) if isinstance(m, dict)]
+        self._session_id = sid
+        if hasattr(self, "chat_area"):
+            self.chat_area.clear()
+            for msg in self._chat_history:
+                if msg.role == "user":
+                    self.chat_area.add_user(msg.content)
+                elif msg.content.strip():
+                    agent = self.chat_area.add_agent()
+                    agent.render_markdown(msg.content)
+        try:
+            self.chat_title_var.set(str(session.get("title", "对话")))
+            self.chat_sub_var.set("从历史对话载入 · 继续在下方输入即可")
+        except AttributeError:
+            pass
+        self._refresh_history()
+        self._set_status(f"已载入对话：{session.get('title', '')}", "info")
+
+    # ── 任务视图（forge run）───────────────────────────────
+    def _build_task_view(self, parent):
+        head = tk.Frame(parent, bg=C["chat"])
+        head.pack(fill=tk.X, padx=20, pady=(16, 10))
+        tk.Label(head, text="任务", bg=C["chat"], fg=C["text"],
+                 font=FONT_TITLE).pack(side=tk.LEFT)
+        tk.Label(head, text="  forge run", bg=C["chat"], fg=C["muted"],
+                 font=FONT_MICRO).pack(side=tk.LEFT, padx=(8, 0), pady=(4, 0))
+        tk.Button(head, text="＋ 新建任务", command=self._clear_task_view,
+                  bg=C["chat"], fg=C["ter"], activebackground=C["hover"],
+                  activeforeground=C["text"], font=FONT_SMALL, relief=tk.FLAT, bd=0,
+                  padx=10, pady=3, cursor="hand2",
+                  highlightthickness=1, highlightbackground=C["border_hi"]
+                  ).pack(side=tk.RIGHT)
+        tk.Label(parent, text="输入任务 → forge 在自己工作区里跑（可写文件、跑命令），"
+                              "右侧工作区可看代码、diff 与预览。",
+                 bg=C["chat"], fg=C["ter"], font=FONT_SMALL, anchor=tk.W,
+                 justify=tk.LEFT, wraplength=760).pack(fill=tk.X, padx=20)
+        tk.Frame(parent, bg=C["border"], height=1).pack(fill=tk.X, pady=(10, 0))
+
+        ctl = tk.Frame(parent, bg=C["chat"])
+        ctl.pack(fill=tk.X, padx=20, pady=(12, 8))
+        self.task_var = tk.StringVar()
+        entry = tk.Entry(ctl, textvariable=self.task_var, bg=C["input_bg"],
+                         fg=C["text"], insertbackground=C["accent"], font=FONT_UI,
+                         relief=tk.FLAT, bd=0, highlightthickness=1,
+                         highlightbackground=C["border_hi"], highlightcolor=C["accent"])
+        entry.pack(fill=tk.X, ipady=7, ipadx=8)
+        entry.bind("<Return>", lambda _e: self._run_task())
+
+        row = tk.Frame(ctl, bg=C["chat"])
+        row.pack(fill=tk.X, pady=(8, 0))
+        tk.Label(row, text="策略", bg=C["chat"], fg=C["muted"],
+                 font=FONT_MICRO).pack(side=tk.LEFT, padx=(0, 6))
+        self._strategy_row = tk.Frame(row, bg=C["chat"])
+        self._strategy_row.pack(side=tk.LEFT)
+        self._task_strategy = "balanced"
+        self._render_strategy_chips()
+        self.task_stop_btn = pill_button(row, "■ 停止", self._stop_task, kind="danger",
+                                         bg=C["chat"])
+        self.task_stop_btn.pack(side=tk.RIGHT)
+        self.task_run_btn = pill_button(row, "▶ 运行任务", self._run_task,
+                                        kind="primary", bg=C["chat"], font=FONT_UI)
+        self.task_run_btn.pack(side=tk.RIGHT, padx=(0, 8))
+        pill_button(row, "▤ 打开工作区", lambda: self._open_workspace("file_tree"),
+                    kind="ghost", bg=C["chat"]).pack(side=tk.RIGHT, padx=(0, 8))
+
+        self.task_area = cw.MessageArea(parent, bg=C["chat"])
+        self.task_area.pack(fill=tk.BOTH, expand=True)
+        self.task_area.show_empty("还没有任务",
+                                  ("输入任务后回车，forge 会在自己工作区里执行",
+                                   "执行步骤、工具调用与产出都会显示在这里"))
+
+    def _render_strategy_chips(self):
+        row = getattr(self, "_strategy_row", None)
+        if row is None:
+            return
+        for child in row.winfo_children():
+            child.destroy()
+        for value, label, hint in STRATEGY_CHOICES:
+            chip = theme.chip(row, label, selected=(value == self._task_strategy),
+                              command=lambda v=value: self._set_task_strategy(v))
+            chip.pack(side=tk.LEFT, padx=(0, 6))
+            attach_tooltip(chip, hint)
+
+    def _set_task_strategy(self, value: str):
+        self._task_strategy = value
+        self._render_strategy_chips()
+
+    def _clear_task_view(self):
+        if getattr(self, "_task_running", False):
+            self._set_status("任务正在运行，先停止再新建", "info")
+            return
+        self.task_area.show_empty("还没有任务",
+                                  ("输入任务后回车，forge 会在自己工作区里执行",
+                                   "执行步骤、工具调用与产出都会显示在这里"))
+
+    def _run_task(self):
+        if getattr(self, "_task_running", False):
+            return
+        task = self.task_var.get().strip()
+        if not task:
+            self._set_status("请输入任务内容", "warn")
+            return
+        if not self.run_py:
+            self._choose_forge_repo()
+            if not self.run_py:
+                return
+        self.task_area.clear()
+        self.task_area.add_user(task)
+        label = next((l for v, l, _h in STRATEGY_CHOICES if v == self._task_strategy),
+                     self._task_strategy)
+        self._task_msg = self.task_area.add_agent(role="Planner",
+                                                  subtitle=f"策略：{label} · 工作区：{self.run_py.parent}")
+        self._task_msg.stream_text("正在执行 forge run …")
+        self._task_msg.set_status("运行中…")
+        self._task_running = True
+        self._task_started = time.time()
+        self.task_run_btn.configure(state=tk.DISABLED)
+        self._set_status(f"任务已下发：{task[:40]}", "info")
+
+        cmd = [sys.executable, str(self.run_py), "run", task, "--json",
+               "--profile", self._task_strategy]
+        env = {**os.environ, **env_for()}
+        cwd = str(self.run_py.parent)
+
+        def worker():
+            try:
+                proc = subprocess.Popen(cmd, cwd=cwd, env=env,
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                        text=True, encoding="utf-8",
+                                        errors="replace")
+                self._task_proc = proc
+                out, err = proc.communicate()
+                self._post_ui(self._task_finished, proc.returncode, out, err)
+            except Exception as exc:  # pragma: no cover
+                self._post_ui(self._task_failed, f"{type(exc).__name__}: {exc}")
+
+        self._task_proc = None
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _stop_task(self):
+        proc = getattr(self, "_task_proc", None)
+        if not getattr(self, "_task_running", False) or proc is None:
+            return
+        try:
+            proc.terminate()
+        except OSError:
+            pass
+        self._set_status("已请求停止任务", "warn")
+
+    @staticmethod
+    def _parse_task_output(out: str) -> dict | None:
+        text = (out or "").strip()
+        if not text:
+            return None
+        candidates = [text]
+        start = text.find("{")
+        end = text.rfind("}")
+        if start != -1 and end > start:
+            candidates.append(text[start:end + 1])
+        for chunk in candidates:
+            try:
+                data = json.loads(chunk)
+            except ValueError:
+                continue
+            if isinstance(data, dict):
+                return data
+        return None
+
+    def _task_failed(self, message: str):
+        self._task_running = False
+        self.task_run_btn.configure(state=tk.NORMAL)
+        if getattr(self, "_task_msg", None) is not None:
+            self._task_msg.set_status("")
+            self._task_msg.add_note(f"任务未能完成：{message}", tone="error")
+        self._set_status(f"任务失败：{message}", "error")
+
+    def _task_finished(self, code: int, out: str, err: str):
+        self._task_running = False
+        self.task_run_btn.configure(state=tk.NORMAL)
+        elapsed = max(0.0, time.time() - getattr(self, "_task_started", time.time()))
+        msg = getattr(self, "_task_msg", None)
+        data = self._parse_task_output(out)
+        if msg is None:
+            self._set_status("任务结束（视图已切换）", "info")
+            return
+        msg.set_status("")
+
+        if isinstance(data, dict):
+            steps = data.get("steps") or []
+            if steps:
+                rows = []
+                for step in steps:
+                    if not isinstance(step, dict):
+                        continue
+                    note = str(step.get("note") or step.get("decision") or "")
+                    rows.append({
+                        "name": str(step.get("tool") or f"step {step.get('index', '?')}"),
+                        "desc": note[:80],
+                        "elapsed": f"#{step.get('index', '')}",
+                        "ok": str(step.get("decision", "ok")) not in ("error", "failed"),
+                    })
+                msg.add_tool_card(rows, title="执行步骤")
+            text = str(data.get("text") or "").strip()
+            if text:
+                msg.render_markdown(text)
+            elif not steps:
+                msg.render_markdown("（本次没有返回文本）")
+            usage = data.get("usage") or {}
+            parts = [f"退出码 {code}", f"用时 {elapsed:.1f}s"]
+            if isinstance(usage, dict):
+                tokens = usage.get("total_tokens") or usage.get("tokens")
+                if tokens:
+                    parts.append(f"tokens {tokens}")
+            if data.get("stopped"):
+                parts.append("提前停止")
+            msg.add_note(" · ".join(parts), tone="ok" if code == 0 else "warn")
+        else:
+            raw = (out or "").strip() or (err or "").strip() or "（没有输出）"
+            msg.render_markdown(raw)
+            msg.add_note(f"退出码 {code} · 用时 {elapsed:.1f}s（未能解析结构化结果）",
+                         tone="ok" if code == 0 else "error")
+        if err and isinstance(data, dict):
+            tail = err.strip().splitlines()[-4:]
+            if tail:
+                msg.add_note("stderr：\n" + "\n".join(tail), tone="muted")
+
+        # 面向工作区的动作
+        changed = self._changed_file_count()
+        actions = []
+        if changed is None:
+            actions.append({"label": "查看修改的文件", "kind": "primary",
+                            "command": lambda: self._open_workspace("changes")})
+        elif changed > 0:
+            actions.append({"label": f"查看修改的文件 ({changed})", "kind": "primary",
+                            "command": lambda: self._open_workspace("changes")})
+        actions.append({"label": "打开工作区", "command": lambda: self._open_workspace("file_tree")})
+        if changed:
+            actions.append({"label": "预览效果", "command": lambda: self._open_workspace("preview")})
+        msg.add_actions(actions)
+
+        if self.workspace is not None:
+            try:
+                self.workspace.refresh()
+            except Exception:
+                pass
+            self._push_terminal(f"[task] 退出码 {code} · 用时 {elapsed:.1f}s · {self._task_strategy}")
+        self._set_status(f"任务结束（退出码 {code}，用时 {elapsed:.1f}s）",
+                         "ok" if code == 0 else "warn")
+
+    def _changed_file_count(self):
+        """尽量从工作区面板拿改动数量；拿不到就返回 None。"""
+        ws = getattr(self, "workspace", None)
+        if ws is None:
+            return None
+        for attr in ("changes_count", "changed_count"):
+            fn = getattr(ws, attr, None)
+            if callable(fn):
+                try:
+                    return int(fn())
+                except Exception:
+                    return None
+        for attr in ("_changes", "changes"):
+            data = getattr(ws, attr, None)
+            if isinstance(data, list):
+                return len(data)
+            if isinstance(data, dict):
+                return len(data)
+        return None
+
+    def _push_terminal(self, line: str):
+        ws = getattr(self, "workspace", None)
+        if ws is None:
+            return
+        try:
+            ws.push_terminal(line)
+        except Exception:
+            pass
+    @staticmethod
+    def _tint_scrolledtext(widget, bg: str):
+        """scrolledtext 的外层 Frame 默认是系统灰，跟着主题上色。"""
+        try:
+            widget.master.configure(bg=bg)
+        except Exception:
+            pass
 
     # ── 标签 1：管理 ──────────────────────────────────────────
     def _build_manage_tab(self, parent):
@@ -480,6 +1235,7 @@ class ForgeGuiApp:
         )
         self.input_text.pack(fill=tk.X)
         self._style_scrollbar(self.input_text)
+        self._tint_scrolledtext(self.input_text, C["input_bg"])
         self._input_placeholder = "粘贴配置或输入内容，例如：\nbaseURL: https://api.example.com/v1\napiKey: sk-…\nmodel: example-model"
         self._placeholder_visible = True
         self.input_text.insert("1.0", self._input_placeholder)
@@ -530,6 +1286,7 @@ class ForgeGuiApp:
             wrap=tk.NONE, state=tk.DISABLED,
         )
         self._style_scrollbar(self.preview_text)
+        self._tint_scrolledtext(self.preview_text, C["input_bg"])
         warn_head = tk.Frame(right, bg=C["bg"])
         tk.Label(warn_head, text="提示与环境变量", bg=C["bg"],
                  fg=C["subtext"], font=FONT_UI_BOLD).pack(side=tk.LEFT)
@@ -544,6 +1301,7 @@ class ForgeGuiApp:
             wrap=tk.WORD, state=tk.DISABLED,
         )
         self._style_scrollbar(self.warn_text)
+        self._tint_scrolledtext(self.warn_text, C["surface"])
         footer = tk.Frame(right_host, bg=C["bg"], padx=14)
         tk.Label(footer, text="预览后保存", bg=C["bg"],
                  fg=C["muted"], font=FONT_SMALL).pack(side=tk.LEFT)
@@ -804,255 +1562,107 @@ class ForgeGuiApp:
         self.feature_feedback_var.set("已保存。请重启正在运行的 Forge / 通道服务，让新设置生效。")
         self._set_status("功能开关已保存；运行中的服务需重启以应用", "ok")
 
-    # ── 标签 2：客户端 ──────────────────────────────────────────
+    # ── 视图：对话 ────────────────────────────────────────
     def _build_client_tab(self, parent):
-        heading = tk.Frame(parent, bg=C["bg"])
-        heading.pack(fill=tk.X, pady=(14, 10))
-        tk.Label(heading, text="交互客户端", bg=C["bg"], fg=C["text"],
-                 font=FONT_SECTION).pack(anchor=tk.W)
-        tk.Label(heading, text="连接本机 gateway，与已配置的模型对话。",
-                 bg=C["bg"], fg=C["muted"], font=FONT_SMALL
-                 ).pack(anchor=tk.W, pady=(2, 0))
-
-        # ── 次要控制（模型刷新 / 温度 / 清空）──
-        ctrl = tk.Frame(parent, bg=C["bg"])
-        ctrl.pack(fill=tk.X, pady=(0, 8))
-        tk.Label(ctrl, text="模型", bg=C["bg"], fg=C["ter"],
-                 font=FONT_SMALL).pack(side=tk.LEFT, padx=(0, 6))
-        self.model_var = tk.StringVar(value="default")
-        self.model_combo = ttk.Combobox(
-            ctrl, textvariable=self.model_var, values=["default"],
-            state="readonly", width=24, font=FONT_UI,
-        )
-        self.model_combo.pack(side=tk.LEFT)
-        tk.Button(ctrl, text="刷新", command=self._reload_configuration,
-                  bg=C["bg"], fg=C["muted"], activebackground=C["surface2"],
-                  activeforeground=C["text"], font=FONT_SMALL, relief=tk.FLAT,
-                  bd=0, padx=8, pady=3, cursor="hand2").pack(side=tk.LEFT, padx=(6, 0))
-
-        self.temp_var = tk.StringVar(value="0.7")
-        tk.Label(ctrl, text="温度", bg=C["bg"], fg=C["ter"],
-                 font=FONT_SMALL).pack(side=tk.LEFT, padx=(18, 6))
-        tk.Entry(ctrl, textvariable=self.temp_var, width=5,
-                 bg=C["surface"], fg=C["text"], font=FONT_MONO,
-                 relief=tk.FLAT, insertbackground=C["accent"], bd=0,
-                 highlightthickness=1, highlightbackground=C["border"],
-                 highlightcolor=C["accent"]).pack(side=tk.LEFT, ipady=3, ipadx=4)
-
-        self.clear_chat_btn = tk.Button(
-            ctrl, text="＋ 新对话", command=self._clear_chat,
-            bg=C["surface"], fg=C["text"], activebackground=C["surface2"],
-            activeforeground=C["accent"], font=FONT_UI, relief=tk.FLAT,
-            bd=0, padx=14, pady=5, cursor="hand2",
-            highlightthickness=1, highlightbackground=C["border"])
-        self.clear_chat_btn.pack(side=tk.RIGHT)
-
-        # ── 对话区（白卡 + 细分隔线）──
-        chat_wrap = tk.Frame(parent, bg=C["border"], padx=1, pady=1)
-        self.chat_text = scrolledtext.ScrolledText(
-            chat_wrap, bg=C["surface"], fg=C["text"],
-            font=FONT_UI, relief=tk.FLAT, highlightthickness=0,
-            padx=20, pady=18, wrap=tk.WORD,
-            state=tk.DISABLED, spacing1=3, spacing3=5,
-        )
-        self.chat_text.pack(fill=tk.BOTH, expand=True)
-        self._style_scrollbar(self.chat_text)
-        self.chat_text.tag_configure("user", foreground=C["accent"], font=FONT_UI_BOLD)
-        self.chat_text.tag_configure("assistant", foreground=C["subtext"], font=FONT_UI_BOLD)
-        self.chat_text.tag_configure("muted", foreground=C["ter"])
-        self.chat_text.configure(tabs=("1c",))
-        self.chat_text.tag_configure("error", foreground=C["error"])
-        self.chat_text.tag_configure("empty_title", foreground=C["text"],
-                                      font=FONT_SECTION, spacing1=4, spacing3=10,
-                                      justify="center")
-        self.chat_text.tag_configure("empty_body", foreground=C["muted"],
-                                      font=FONT_SMALL, justify="center",
-                                      spacing1=2, spacing3=2)
-        # 气泡（对照 AutoClaw：用户右对齐浅橙、AI 左对齐浅灰）
-        self.chat_text.tag_configure("bubble_user", background=C["msg_user_bg"],
-                                      lmargin1=220, lmargin2=220, rmargin=14,
-                                      spacing1=8, spacing3=8, justify="right")
-        self.chat_text.tag_configure("bubble_agent", background=C["msg_agent_bg"],
-                                      lmargin1=14, lmargin2=14, rmargin=220,
-                                      spacing1=4, spacing3=8)
-        self.chat_text.tag_configure("error_bubble", background=C["error_soft"],
-                                      foreground=C["error"],
-                                      lmargin1=14, lmargin2=14, rmargin=220,
-                                      spacing1=8, spacing3=8)
-        self.chat_text.tag_configure("msg_meta", foreground=C["ter"],
-                                      font=FONT_SMALL, spacing1=10, spacing3=2,
-                                      lmargin1=14)
-        self.chat_text.tag_configure("msg_meta_right", foreground=C["ter"],
-                                      font=FONT_SMALL, spacing1=10, spacing3=2,
-                                      lmargin1=220, justify="right")
-        self.chat_text.tag_configure("agent_head", foreground=C["subtext"],
-                                      font=FONT_UI_BOLD, spacing1=10, spacing3=2,
-                                      lmargin1=14)
-        self._hide_chat_scrollbar()
-        self._show_chat_empty_state()
-
-        # ── 输入卡（AutoClaw 风格圆角卡片 + 底部工具条）──
-        self.send_var = tk.StringVar()
-        self.input_card = tk.Canvas(parent, bg=C["bg"], highlightthickness=0,
-                                    height=114, bd=0)
-        self.input_card.pack(side=tk.BOTTOM, fill=tk.X)
-        self._card_shape = round_rect(self.input_card, 1, 1, 10, 10, R_PILL,
-                                      fill=C["input_bg"], outline=C["border"], width=1)
-
-        self.send_entry = tk.Entry(
-            self.input_card, textvariable=self.send_var, font=FONT_UI,
-            bg=C["input_bg"], fg=C["text"], insertbackground=C["accent"],
-            relief=tk.FLAT, bd=0, highlightthickness=0,
-        )
-        self.send_entry.bind("<Return>", lambda e: self._do_send())
-        self._entry_win = self.input_card.create_window(0, 0, window=self.send_entry,
-                                                        anchor="nw")
-        # 占位提示必须是「内嵌控件」：canvas 图元会被 create_window 的
-        # Entry 子窗口盖住，只有真实 widget 才画在它上面。
-        self.entry_hint = tk.Label(self.input_card, text="输入消息，Enter 发送",
-                                   bg=C["input_bg"], fg=C["placeholder"],
-                                   font=FONT_UI, cursor="xterm",
-                                   anchor="w", justify="left")
-        self.entry_hint.bind("<Button-1>", lambda e: self.send_entry.focus_set())
-        self._entry_hint = self.input_card.create_window(0, 0, window=self.entry_hint,
-                                                         anchor="nw")
-        # 同级 widget 的堆叠序由创建顺序决定，但 canvas 内嵌窗口的显示顺序
-        # 会被 canvas 重排——显式 lift 一次确保占位文本压在 Entry 之上。
-        try:
-            self.entry_hint.lift(self.send_entry)
-        except Exception:
-            pass
-
-        # ＋（粘贴剪贴板）
-        self.plus_btn = tk.Button(
-            self.input_card, text="＋", command=self._paste_into_input,
-            bg=C["input_bg"], fg=C["muted"], activebackground=C["surface2"],
-            activeforeground=C["text"], font=("Segoe UI", 13) if IS_WINDOWS else ("Helvetica", 13),
-            relief=tk.FLAT, bd=0, padx=6, pady=0, cursor="hand2", highlightthickness=0)
-        self._plus_win = self.input_card.create_window(0, 0, window=self.plus_btn, anchor="nw")
-
-        # 模型名（工具条内联展示，与 AutoClaw 工具条一致）
-        self.bar_tools = tk.Frame(self.input_card, bg=C["input_bg"])
-        self._bar_tools_win = self.input_card.create_window(0, 0, window=self.bar_tools,
-                                                            anchor="nw")
-        self.bar_model_lbl = tk.Label(self.bar_tools, text=" default ",
-                                      bg=C["surface_subtle"], fg=C["subtext"],
-                                      font=FONT_SMALL, padx=8, pady=3)
-        self.bar_model_lbl.pack(side=tk.LEFT)
-
-        # 沉思模式（对齐 AutoClaw 工具条「目标模式」的位置；Forge 的对应概念是三档沉思）
         self._thinking_mode = self._read_thinking_mode()
-        self.think_pill = tk.Button(
-            self.bar_tools, text=self._thinking_label(), command=self._open_thinking_menu,
-            bg=C["surface_subtle"], fg=C["subtext"], activebackground=C["accent_soft"],
-            activeforeground=C["accent"], font=FONT_SMALL, relief=tk.FLAT, bd=0,
-            padx=8, pady=3, cursor="hand2", highlightthickness=0)
-        if self._thinking_mode != "off":
-            self.think_pill.configure(fg=C["accent"], bg=C["accent_soft"])
-        self.think_pill.pack(side=tk.LEFT, padx=(10, 0))
+        head = tk.Frame(parent, bg=C["chat"])
+        head.pack(fill=tk.X, padx=20, pady=(16, 10))
+        left = tk.Frame(head, bg=C["chat"])
+        left.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        title_row = tk.Frame(left, bg=C["chat"])
+        title_row.pack(anchor=tk.W, fill=tk.X)
+        self.chat_title_var = tk.StringVar(value="新对话")
+        tk.Label(title_row, textvariable=self.chat_title_var, bg=C["chat"],
+                 fg=C["text"], font=FONT_TITLE).pack(side=tk.LEFT)
+        glyph_button(title_row, "✎", self._rename_session, bg=C["chat"],
+                     fg=C["ter"], size=10, tooltip="重命名对话").pack(side=tk.LEFT,
+                                                                   padx=(8, 0))
+        self.chat_sub_var = tk.StringVar(
+            value="连接本机 gateway 与已配置模型对话；右侧工作区可看代码、diff 与预览。")
+        tk.Label(left, textvariable=self.chat_sub_var, bg=C["chat"], fg=C["ter"],
+                 font=FONT_SMALL, anchor=tk.W, justify=tk.LEFT,
+                 wraplength=720).pack(anchor=tk.W, pady=(3, 0))
 
-        # 圆形按钮：停止（深） / 发送（品牌橙）
-        self._stop_circle = self.input_card.create_oval(0, 0, 0, 0,
-                                                        fill=C["text"], outline="")
-        self._stop_glyph = self.input_card.create_text(0, 0, text="■", fill="#ffffff",
-                                                       font=("Segoe UI", 8))
-        self._send_circle = self.input_card.create_oval(0, 0, 0, 0,
-                                                        fill=C["surface2"], outline="")
-        self._send_glyph = self.input_card.create_text(0, 0, text="↑", fill=C["ter"],
-                                                       font=("Segoe UI", 12, "bold"))
-        for item in (self._stop_circle, self._stop_glyph):
-            self.input_card.tag_bind(item, "<Button-1>", lambda e: self._stop_send())
-            self.input_card.tag_bind(item, "<Enter>", lambda e: self.input_card.configure(cursor="hand2"))
-        for item in (self._send_circle, self._send_glyph):
-            self.input_card.tag_bind(item, "<Button-1>", lambda e: self._do_send())
-            self.input_card.tag_bind(item, "<Enter>", lambda e: self.input_card.configure(cursor="hand2"))
-        self.input_card.itemconfigure(self._stop_circle, state="hidden")
-        self.input_card.itemconfigure(self._stop_glyph, state="hidden")
-        self._stop_visible = False
+        right = tk.Frame(head, bg=C["chat"])
+        right.pack(side=tk.RIGHT, anchor=tk.N)
+        self.clear_chat_btn = pill_button(right, "＋ 新对话", self._new_session,
+                                          kind="ghost", bg=C["chat"])
+        self.clear_chat_btn.pack(side=tk.RIGHT)
+        glyph_button(right, "⋯", lambda: self._set_status(
+            "更多：/ 命令、附件与上下文注入在后续版本接入", "info"),
+            bg=C["chat"], fg=C["ter"], size=13, tooltip="更多").pack(side=tk.RIGHT,
+                                                                     padx=(0, 4))
+        temp_box = tk.Frame(right, bg=C["chat"])
+        temp_box.pack(side=tk.RIGHT, padx=(0, 10))
+        self.temp_var = tk.StringVar(value="0.7")
+        tk.Label(temp_box, text="温度", bg=C["chat"], fg=C["muted"],
+                 font=FONT_MICRO).pack(side=tk.LEFT, padx=(0, 4))
+        tk.Entry(temp_box, textvariable=self.temp_var, width=4, bg=C["surface2"],
+                 fg=C["body"], font=FONT_MONO_SM, relief=tk.FLAT, bd=0,
+                 insertbackground=C["accent"], highlightthickness=1,
+                 highlightbackground=C["border_hi"],
+                 highlightcolor=C["accent"]).pack(side=tk.LEFT, ipady=2)
 
-        self.input_card.bind("<Configure>", self._layout_input_card)
-        self.send_var.trace_add("write", lambda *_: self._refresh_send_circle())
+        tk.Frame(parent, bg=C["border"], height=1).pack(fill=tk.X)
 
-        # 卡下方说明（对齐 AutoClaw 的 "Agent 在本地运行，内容由AI生成"）
-        foot = tk.Frame(parent, bg=C["bg"])
-        foot.pack(side=tk.BOTTOM, fill=tk.X, pady=(6, 8))
+        self.chat_area = cw.MessageArea(parent, bg=C["chat"])
+        self.chat_area.pack(fill=tk.BOTH, expand=True)
+        self._chat_empty = True
+
+        # 模型选择器（放进输入卡右组，保持 pill 观感）
+        self.model_var = tk.StringVar(value="default")
+        self.model_combo = None  # 由 _make_model_picker 在输入卡里建
+
+        self.input_card = cw.InputCard(
+            parent, bg=C["chat"],
+            placeholder="输入消息，或输入 / 使用命令...",
+            on_send=self._do_send,
+            on_stop=self._stop_send,
+            on_paste=self._paste_into_input,
+            on_model=self._open_model_menu,
+            model_var=self.model_var,
+            on_thinking=self._open_thinking_menu,
+            thinking_text=self._thinking_label(),
+            footer_left="空闲",
+            model_widget=self._make_model_picker,
+        )
+        self.input_card.pack(fill=tk.X, side=tk.BOTTOM)
+        self.send_entry = self.input_card.entry
+        self.send_var = self.input_card.send_var
+        self.think_pill = self.input_card.think_pill
         self.request_status_var = tk.StringVar(value="空闲")
-        tk.Label(foot, textvariable=self.request_status_var, bg=C["bg"],
-                 fg=C["ter"], font=FONT_CAPTION).pack(side=tk.LEFT)
-        tk.Label(foot, text="forge 在本地运行，内容由 AI 生成", bg=C["bg"],
-                 fg=C["ter"], font=FONT_CAPTION).pack(side=tk.RIGHT)
+        self.chat_area.show_empty()
 
-        # 对话区最后 pack（expand 会吃掉剩余空间，必须先给底部元素留位）
-        chat_wrap.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+    def _make_model_picker(self, host):
+        """把模型下拉做成输入卡右组里的一个 pill 观感控件。"""
+        self.model_combo = ttk.Combobox(host, textvariable=self.model_var,
+                                        values=["default"], state="readonly",
+                                        width=15, font=FONT_SMALL)
+        self.model_combo.pack(side=tk.LEFT, padx=(0, 8))
+        attach_tooltip(self.model_combo, "选择模型（来自已启用的 Provider）")
+        return self.model_combo
 
-    # ── 输入卡布局（Canvas 内多控件手排）──
-    def _layout_input_card(self, event=None):
-        cv = self.input_card
-        W = cv.winfo_width()
-        if W <= 1:
-            return
-        H = int(cv.cget("height"))
-        cv.coords(self._card_shape, *(self._rounded_points(1.5, 1.5, W - 1.5, H - 1.5, R_PILL)))
-        pad = 18
-        cv.coords(self._entry_win, pad + 4, 16)
-        self._hint_xy = (pad + 6, 21)
-        cv.coords(self._entry_hint, *self._hint_xy)
+    def _open_model_menu(self):
+        """点标题栏模型胶囊时的兜底：直接聚焦模型下拉。"""
         try:
-            self.entry_hint.lift(self.send_entry)
-        except Exception:
+            self.model_combo.focus_set()
+            self.model_combo.event_generate("<Button-1>")
+        except tk.TclError:
             pass
-        cv.itemconfigure(self._entry_hint, width=W - pad * 2 - 12, height=22)
-        self.send_entry.configure(width=max(20, int((W - pad * 2 - 8) / 8)))
-        cv.itemconfigure(self._entry_win, width=W - pad * 2 - 8, height=24)
 
-        bar_y = H - 42
-        cv.coords(self._plus_win, pad, bar_y - 2)
-        cv.coords(self._bar_tools_win, pad + 38, bar_y - 2)
-        self.bar_model_lbl.configure(text=f" {self.model_var.get()} ")
-
-        cx_send, cy = W - 36, bar_y + 8
-        r_send = 18
-        cv.coords(self._send_circle, cx_send - r_send, cy - r_send,
-                  cx_send + r_send, cy + r_send)
-        cv.coords(self._send_glyph, cx_send, cy)
-        cx_stop = W - 82
-        r_stop = 15
-        cv.coords(self._stop_circle, cx_stop - r_stop, cy - r_stop,
-                  cx_stop + r_stop, cy + r_stop)
-        cv.coords(self._stop_glyph, cx_stop, cy)
-        self._refresh_send_circle()
-
-    def _hint_pos(self):
-        return getattr(self, "_hint_xy", (24, 21))
-
-    @staticmethod
-    def _rounded_points(x1, y1, x2, y2, r):
-        return [x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r,
-                x2, y2 - r, x2, y2, x2 - r, y2, x1 + r, y2,
-                x1, y2, x1, y2 - r, x1, y1 + r, x1, y1]
-
-    def _refresh_send_circle(self):
-        has_text = bool(self.send_var.get().strip())
-        if hasattr(self, "_entry_hint"):
-            self.input_card.itemconfigure(
-                self._entry_hint, state="hidden" if has_text else "normal")
-        if hasattr(self, "entry_hint"):
-            self.input_card.coords(self._entry_hint, *self._hint_pos())
-        if self._sending:
-            self.input_card.itemconfigure(self._send_circle, fill=C["surface2"])
-            self.input_card.itemconfigure(self._send_glyph, fill=C["muted"])
-            self.input_card.itemconfigure(self._stop_circle, fill=C["text"], state="normal")
-            self.input_card.itemconfigure(self._stop_glyph, state="normal")
+    def _rename_session(self):
+        from tkinter import simpledialog
+        current = self.chat_title_var.get()
+        try:
+            name = simpledialog.askstring("重命名对话", "对话名称：",
+                                          initialvalue=current, parent=self.root)
+        except tk.TclError:
             return
-        self.input_card.itemconfigure(self._stop_circle, state="hidden")
-        self.input_card.itemconfigure(self._stop_glyph, state="hidden")
-        if has_text:
-            self.input_card.itemconfigure(self._send_circle, fill=C["accent"])
-            self.input_card.itemconfigure(self._send_glyph, fill="#ffffff")
-        else:
-            self.input_card.itemconfigure(self._send_circle, fill=C["surface2"])
-            self.input_card.itemconfigure(self._send_glyph, fill=C["muted"])
-
+        if name and name.strip():
+            self.chat_title_var.set(name.strip())
+            self._archive_current_session()
+            self._refresh_history()
+            self._set_status(f"对话已重命名为「{name.strip()}」", "ok")
     # ── 沉思模式（forge 的 thinking.mode：off / smart / on）──
     def _read_thinking_mode(self) -> str:
         for row in self.user_rows:
@@ -1095,9 +1705,8 @@ class ForgeGuiApp:
             return
         self.user_rows = rows
         self._thinking_mode = mode
-        self.think_pill.configure(text=self._thinking_label(),
-                                  fg=C["accent"] if mode != "off" else C["subtext"],
-                                  bg=C["accent_soft"] if mode != "off" else C["surface_subtle"])
+        self.input_card.set_thinking_text(self._thinking_label())
+        self.think_pill.configure(bg=C["accent_soft"] if mode != "off" else C["input_bg"])
         self._rebuild_feature_toggles(force=True)
         self._set_status(
             f"沉思模式已设为「{THINKING_LABELS[mode]}」；forge run 任务即时生效，"
@@ -1627,8 +2236,11 @@ class ForgeGuiApp:
     def _drain_gateway_log(self, proc):
         try:
             if proc.stdout:
-                for _line in proc.stdout:
-                    pass  # 持续排空管道，避免服务被日志堵住，也避免覆盖操作反馈。
+                for line in proc.stdout:
+                    # 持续排空管道（避免服务被日志堵住），同时把日志喂给右栏终端
+                    text = (line or "").rstrip()
+                    if text:
+                        self._post_ui(self._push_terminal, text)
                 proc.stdout.close()
             proc.wait()
         finally:
@@ -1692,29 +2304,33 @@ class ForgeGuiApp:
 
     # ── 客户端：对话 ──
     def _hide_chat_scrollbar(self):
+        """保留旧接口：消息区自己管滚动条显隐。"""
+
+    def _show_chat_scrollbar(self):
+        """保留旧接口。"""
+
+    def _refresh_send_circle(self):
         try:
-            self.chat_text.vbar.pack_forget()
+            self.input_card._sync_send_state()
         except Exception:
             pass
 
-    def _show_chat_scrollbar(self):
+    def _set_request_status(self, text: str):
         try:
-            self.chat_text.vbar.pack(side="right", fill="y",
-                                     before=self.chat_text.text)
+            self.input_card.set_status(text)
+        except Exception:
+            pass
+        try:
+            self.request_status_var.set(text)
         except Exception:
             pass
 
     def _show_chat_empty_state(self):
-        self.chat_text.configure(state=tk.NORMAL)
-        self.chat_text.delete("1.0", tk.END)
-        # 垂直居中：空态用等量空白 + 居中段落
-        self.chat_text.insert(tk.END, "\n" * 6)
-        self.chat_text.insert(tk.END, "开始新对话\n", "empty_title")
-        self.chat_text.insert(tk.END, "右上启动 gateway，选择模型后在下方输入消息\n", "empty_body")
-        self.chat_text.insert(tk.END,
-                              "输入卡左下可切换「沉思」：关闭 / 智能 / 开启", "empty_body")
-        self.chat_text.configure(state=tk.DISABLED)
         self._chat_empty = True
+        self._agent_msg = None
+        area = getattr(self, "chat_area", None)
+        if area is not None:
+            area.show_empty()
 
     def _clear_chat(self):
         if self._sending:
@@ -1725,39 +2341,29 @@ class ForgeGuiApp:
         self._set_status("对话已清空", "info")
 
     def _append_chat(self, role: str, text: str):
-        """对照 AutoClaw 气泡样式渲染一条消息。
-        用户 = 右对齐浅橙气泡 + 时间戳；AI = 「Forge」头部 + 浅灰气泡；错误 = 浅红标签。
-        """
-        self.chat_text.configure(state=tk.NORMAL)
-        if self._chat_empty:
-            self.chat_text.delete("1.0", tk.END)
-            self._chat_empty = False
-            self._show_chat_scrollbar()
-        if self.chat_text.index("end-1c") != "1.0":
-            self.chat_text.insert(tk.END, "\n\n")
-        stamp = time.strftime("%H:%M")
+        """追加一条消息；assistant 返回消息对象供流式写入。"""
+        area = getattr(self, "chat_area", None)
+        if area is None:
+            return None
+        self._chat_empty = False
         if role == "你":
-            self.chat_text.insert(tk.END, f"你 · {stamp}\n", "msg_meta_right")
-            if text:
-                self.chat_text.insert(tk.END, f" {text} ", "bubble_user")
-        elif role == "error":
-            self.chat_text.insert(tk.END, f"错误 · {stamp}\n", "msg_meta")
-            if text:
-                self.chat_text.insert(tk.END, f" {text} ", "error_bubble")
-        else:
-            self.chat_text.insert(tk.END, "Forge\n", "agent_head")
-            if text:
-                self.chat_text.insert(tk.END, f" {text} ", "bubble_agent")
-        self.chat_text.see(tk.END)
-        self.chat_text.configure(state=tk.DISABLED)
+            return area.add_user(text)
+        if role == "error":
+            return area.add_notice(text, tone="error", title="错误")
+        msg = area.add_agent()
+        if text:
+            msg.stream_text(text)
+        return msg
 
     def _append_stream_delta(self, piece: str):
-        follow_output = self.chat_text.yview()[1] >= 0.98
-        self.chat_text.configure(state=tk.NORMAL)
-        self.chat_text.insert(tk.END, piece, "bubble_agent")
+        msg = getattr(self, "_agent_msg", None)
+        area = getattr(self, "chat_area", None)
+        if msg is None or area is None:
+            return
+        follow_output = area.scroll.near_bottom()
+        msg.append_stream(piece)
         if follow_output:
-            self.chat_text.see(tk.END)
-        self.chat_text.configure(state=tk.DISABLED)
+            area.scroll.scroll_to_end()
 
     def _do_send(self):
         if self._sending:
@@ -1785,14 +2391,17 @@ class ForgeGuiApp:
             self.client.base_url = self.gateway_url
         self._sending = True
         self.send_var.set("")
-        self._append_chat("你", text)
-        self._append_chat("assistant", "")
+        self._chat_empty = False
+        self.chat_area.add_user(text)
+        self._agent_msg = self.chat_area.add_agent()
+        self._agent_msg.set_status("生成中…")
+        self._agent_msg.stream_text("")
         messages = list(self._chat_history) + [ChatMessage("user", text)]
-        self._refresh_send_circle()
+        self.input_card.set_busy(True)
         self.clear_chat_btn.configure(state=tk.DISABLED)
         self.gw_btn.configure(state=tk.DISABLED)
         self.port_spin.configure(state=tk.DISABLED)
-        self.request_status_var.set("正在连接…")
+        self._set_request_status("正在连接…")
         self._set_status(f"请求 → {self.model_var.get()} …", "info")
 
         model = self.model_var.get()
@@ -1803,13 +2412,15 @@ class ForgeGuiApp:
                 ok, msg = client.health()
                 if not ok:
                     raise GatewayError(f"gateway 未连接：{msg}。请先启动 gateway 后重试。")
-                self._post_ui(self.request_status_var.set, "正在生成…")
+                self._post_ui(self._set_request_status, "正在生成…")
                 acc: list[str] = []
+
                 def on_chunk(piece: str):
                     if self._abort_requested:
                         raise GatewayError("已按用户要求中止")
                     acc.append(piece)
                     self._post_ui(self._append_stream_delta, piece)
+
                 client.stream_chat(
                     messages, model=model,
                     temperature=temp, on_chunk=on_chunk,
@@ -1826,10 +2437,32 @@ class ForgeGuiApp:
 
     def _chat_succeeded(self, messages, full):
         self._chat_history = messages + [ChatMessage("assistant", full)]
+        msg = getattr(self, "_agent_msg", None)
+        if msg is not None:
+            msg.set_status("")
+            msg.render_markdown(full or "（空回复）")
+            actions = [{"label": "打开工作区",
+                        "command": lambda: self._open_workspace("file_tree")}]
+            changed = self._changed_file_count()
+            if isinstance(changed, int) and changed > 0:
+                actions.insert(0, {"label": f"查看修改的文件 ({changed})",
+                                   "kind": "primary",
+                                   "command": lambda: self._open_workspace("changes")})
+                actions.append({"label": "预览效果",
+                                "command": lambda: self._open_workspace("preview")})
+            msg.add_actions(actions)
+        self._archive_current_session()
+        self._refresh_history()
         self._set_status("回复完成", "ok")
 
     def _chat_failed(self, message, prompt):
-        self._append_chat("error", message)
+        msg = getattr(self, "_agent_msg", None)
+        if msg is not None:
+            msg.set_status("")
+            msg.add_note(f"请求失败：{message}", tone="error")
+        area = getattr(self, "chat_area", None)
+        if area is not None:
+            area.add_notice(message, tone="error", title="gateway 请求失败")
         if not self.send_var.get():
             self.send_var.set(prompt)
         self._set_status("请求失败，消息已保留；检查 gateway 后可重试", "error")
@@ -1838,33 +2471,44 @@ class ForgeGuiApp:
         """请求中止当前流式回复。
 
         urllib 没有暴露打断点，所以在工作线程侧用一个标志位：下一次 chunk
-        回调时抛异常退出（forge_client 的 on_chunk 异常会被吞掉，所以我们
-        改用自己的标志配合 _chat_failed 分支）。这里先即时反馈状态。
+        回调时抛异常退出。这里先即时反馈状态。
         """
         if not self._sending:
             return
         self._abort_requested = True
-        self.request_status_var.set("正在停止…")
+        self._set_request_status("正在停止…")
         self._set_status("已请求停止——当前这轮回复会在下一个数据块后结束", "warn")
         self._refresh_send_circle()
 
     def _send_finished(self):
         self._sending = False
         self._abort_requested = False
+        try:
+            self.input_card.set_busy(False)
+        except Exception:
+            pass
         self.clear_chat_btn.configure(state=tk.NORMAL)
         self.gw_btn.configure(state=tk.NORMAL)
         if not self.gateway_proc:
             self.port_spin.configure(state=tk.NORMAL)
-        self.request_status_var.set("空闲")
+        self._set_request_status("空闲")
         self._refresh_send_circle()
-
     # ── 关闭 ──
     def _on_close(self):
         if (self._feature_dirty or self._editor_is_dirty() or self._pending_rows) and not messagebox.askyesno(
                 "有未保存的修改", "功能开关或编辑内容尚未保存。要放弃这些修改并退出吗？", parent=self.root):
             return
         self._closing = True
-        self.root.after_cancel(self._event_poll)
+        self._archive_current_session()
+        try:
+            self.root.after_cancel(self._event_poll)
+        except (tk.TclError, ValueError):
+            pass
+        if self._sysmon is not None:
+            try:
+                self._sysmon.stop()
+            except Exception:
+                pass
         self._stop_gateway()
         self.root.destroy()
 

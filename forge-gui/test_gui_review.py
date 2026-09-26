@@ -92,7 +92,12 @@ class GuiReviewTests(unittest.TestCase):
 
     def tearDown(self):
         self.app._closing = True
-        self.root.after_cancel(self.app._event_poll)
+        try:
+            self.root.after_cancel(self.app._event_poll)
+        except Exception:
+            pass
+        if getattr(self.app, "_sysmon", None) is not None:
+            self.app._sysmon.stop()
         self.root.destroy()
         self.tmp.cleanup()
         self.assertEqual(self.errors, [])
@@ -156,11 +161,12 @@ class GuiReviewTests(unittest.TestCase):
 
     def test_minimum_layout_has_reachable_controls_and_scrollable_editor(self):
         self.root.geometry("940x700")
+        self.app._show_view("tools")
         self.root.update()
         self.assertTrue(self.app.feature_save_btn.winfo_ismapped())
         self.assertTrue(self.app.status_lbl.winfo_ismapped())
         self.assertGreater(self.app.feature_canvas.winfo_height(), 100)
-        self.app.tab_manage.master.select(self.app.tab_manage)
+        self.app._show_view("config")
         self.root.update()
         self.assertTrue(self.app.save_btn.winfo_ismapped())
         self.assertGreater(self.app.preview_text.winfo_height(), 80)
@@ -203,6 +209,7 @@ class GuiReviewTests(unittest.TestCase):
     def test_many_switches_remain_scrollable_and_save_visible(self):
         self.app.user_rows += [{"id": f"feature:{i}", "config": {"enabled": True}} for i in range(30)]
         self.app._rebuild_feature_toggles(force=True)
+        self.app._show_view("tools")
         self.root.geometry("940x700")
         self.root.update()
         self.assertTrue(self.app.feature_save_btn.winfo_ismapped())
@@ -214,6 +221,7 @@ class GuiReviewTests(unittest.TestCase):
         release = threading.Event()
         calls = []
         class Client:
+            base_url = "http://127.0.0.1:8799"
             def health(self):
                 release.wait(1)
                 return True, "ok"
@@ -236,6 +244,7 @@ class GuiReviewTests(unittest.TestCase):
 
     def test_failure_keeps_retry_text_without_polluting_history(self):
         class Client:
+            base_url = "http://127.0.0.1:8799"
             def health(self): return False, "test offline"
         self.app.client = Client()
         self.app.send_var.set("retry this")
