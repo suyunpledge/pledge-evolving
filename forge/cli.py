@@ -315,6 +315,7 @@ def cmd_gateway(args) -> int:
         models=[m.strip() for m in (args.models or "").split(",") if m.strip()],
         log_path=Path(args.log) if args.log else None,
         upstream_wire=args.upstream_wire,
+        wire=getattr(args, "client_wire", "anthropic"),
         model_map=_parse_model_map(args.model_map),
         registry=registry,
         workspace=str(Path(args.workspace or Path.cwd())),
@@ -637,6 +638,8 @@ def build_parser() -> argparse.ArgumentParser:
     gateway.add_argument("--log")
     gateway.add_argument("--upstream-wire", choices=["anthropic", "openai"], default="anthropic",
                          help="wire format the upstream speaks; 'openai' enables translation")
+    gateway.add_argument("--client-wire", choices=["anthropic", "openai"], default="anthropic",
+                         help="client wire format; selects the upstream authentication header for direct proxying")
     gateway.add_argument("--model-map", default="",
                          help="requested=upstream pairs, e.g. claude-sonnet-5=mimo-v2.5")
     gateway.set_defaults(func=cmd_gateway)

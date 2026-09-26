@@ -34,6 +34,7 @@ from __future__ import annotations
 import os
 import math
 import subprocess
+import time
 import sys
 import tkinter as tk
 import webbrowser
@@ -494,6 +495,7 @@ class WorkspacePanel(tk.Frame):
         self._hidden = True
         self._terminal_buffer = ""
         self._sash_placed = False
+        self._sash_retries = 0
 
         self._build_topbar()
         self._build_tabbar()
@@ -507,7 +509,8 @@ class WorkspacePanel(tk.Frame):
             self.refresh()
         except Exception:
             pass
-        self.bind("<Configure>", self._place_sashes_once)
+        self.bind("<Configure>", lambda _e: self._place_sashes_once())
+        self._vp.bind("<Configure>", lambda _e: self._place_sashes_once())
 
     # ─── 顶栏 ──────────────────────────────────────────────
 
@@ -588,20 +591,39 @@ class WorkspacePanel(tk.Frame):
         self._build_bottom_band(self._band_bottom)
 
     def _place_sashes_once(self, _event=None):
-        if self._sash_placed:
-            return
+        # 按 11:5:4 比例摆两根 sash。
+        # 注意两个坑：(1) 首帧高度连续变化（1 → 中间值 → 最终值）；
+        # (2) 在 Configure 事件流里 sash_place 可能被后续布局 pass 覆盖，
+        #     需要延时“校验-重放”一到两拍才能落定。
         h = self._vp.winfo_height()
         if h < 200:
+            retries = getattr(self, "_sash_retries", 0)
+            if retries < 60:
+                self._sash_retries = retries + 1
+                self.after(80, self._place_sashes_once)
             return
-        total = sum(_BAND_WEIGHTS)
-        y1 = int(h * _BAND_WEIGHTS[0] / total)
-        y2 = int(h * (_BAND_WEIGHTS[0] + _BAND_WEIGHTS[1]) / total)
+        expected = (int(h * _BAND_WEIGHTS[0] / sum(_BAND_WEIGHTS)),
+                    int(h * (_BAND_WEIGHTS[0] + _BAND_WEIGHTS[1]) / sum(_BAND_WEIGHTS)))
         try:
-            self._vp.sash_place(0, 0, y1)
-            self._vp.sash_place(1, 0, y2)
+            current = (self._vp.sash_coord(0)[1], self._vp.sash_coord(1)[1])
+        except tk.TclError:
+            current = expected
+        settled = (abs(current[0] - expected[0]) <= 4
+                   and abs(current[1] - expected[1]) <= 4)
+        settle_until = getattr(self, "_sash_settle_until", 0)
+        if settled and getattr(self, "_ratio_applied_h", -1) == h:
+            if time.monotonic() < settle_until:
+                self.after(150, self._place_sashes_once)
+            return
+        self._ratio_applied_h = h
+        try:
+            self._vp.sash_place(0, 0, expected[0])
+            self._vp.sash_place(1, 0, expected[1])
         except tk.TclError:
             pass
         self._sash_placed = True
+        if time.monotonic() < settle_until:
+            self.after(150, self._place_sashes_once)
 
     # ── 上区：文件树 | 代码 | minimap ──
     def _build_top_band(self, band: tk.Frame):
@@ -905,7 +927,10 @@ class WorkspacePanel(tk.Frame):
             self.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
             self._hidden = False
             self._sash_placed = False
-            # 让 _vp 先获得有效高度，再算 sash 位置
+            self._sash_retries = 0
+            self._ratio_applied_h = -1
+            # 首次显示后 2 秒内做“放置 + 校验”，抵抗 Tk 布局 pass 的覆盖
+            self._sash_settle_until = time.monotonic() + 2.0
             self.after(40, self._place_sashes_once)
 
     def hide(self):
