@@ -27,6 +27,7 @@ import re
 import subprocess
 import sys
 import threading
+import tempfile
 import time
 import tkinter as tk
 from pathlib import Path
@@ -47,7 +48,10 @@ from forge_client import (  # noqa: E402
     ChatMessage,
     ForgeGatewayClient,
     GatewayError,
+    GenerationCancelled,
 )
+from interaction_model import (read_attachment, compose_prompt, task_command, task_outcome,
+                               select_provider, gateway_settings)
 
 import chat_widgets as cw  # noqa: E402
 import gui_theme as theme  # noqa: E402
@@ -235,6 +239,10 @@ class ForgeGuiApp:
         self._organized_input = ""
         self._editor_clean_text = ""
         self._chat_history: list[ChatMessage] = []
+        self._attachments = []
+        self._include_history = True
+        self._session_custom_title = ""
+        self._cancel_event = threading.Event()
         self._session_id = f"s{int(time.time() * 1000)}"
         self._agent_msg = None
         self._task_msg = None
@@ -312,7 +320,7 @@ class ForgeGuiApp:
 
         center = tk.Frame(self.split, bg=C["chat"])
         self.center = center
-        self.split.add(center, minsize=520, stretch="always")
+        self.split.add(center, minsize=380, stretch="always")
 
         self._build_views(center)
         self._build_workspace()
@@ -330,6 +338,7 @@ class ForgeGuiApp:
         self.path_lbl = tk.Label(bot, text=self._status_label_text(), bg=C["bg"],
                                  fg=C["muted"], font=FONT_CAPTION, padx=12)
         self.path_lbl.pack(side=tk.RIGHT)
+        bot.pack_configure(before=body)
 
         self._show_view("chat")
         self._refresh_history()
@@ -369,6 +378,8 @@ class ForgeGuiApp:
         nav = tk.Frame(bar, bg=C["bg"])
         nav.pack(side=tk.LEFT, padx=(22, 0))
         for key, label, glyph in NAV_ITEMS:
+            if key not in ("chat", "task", "tools", "config"):
+                continue
             holder, btn = self._make_nav_item(nav, key, label, glyph, big=True)
             holder.pack(side=tk.LEFT, padx=(0, 6))
 
@@ -382,6 +393,12 @@ class ForgeGuiApp:
         self._build_gateway_card(right)
         for key, text in (("cpu", "CPU"), ("gpu", "GPU"), ("ram", "RAM")):
             self._build_metric(right, key, text)
+        def fit_topbar(event):
+            if event.width < 1360:
+                nav.pack_forget()
+            elif not nav.winfo_manager():
+                nav.pack(side=tk.LEFT, padx=(10, 0), before=right)
+        bar.bind("<Configure>", fit_topbar)
 
         tk.Frame(chrome, bg=C["border"], height=1).pack(fill=tk.X)
 
@@ -502,7 +519,7 @@ class ForgeGuiApp:
     def _toggle_session_search(self):
         self._search_visible = not self._search_visible
         if self._search_visible:
-            self.session_search.pack(fill=tk.X, padx=12, pady=(0, 6))
+            self.session_search.pack(fill=tk.X, padx=12, pady=(0, 6), before=self.history_area)
             self.session_search.focus_set()
         else:
             self.session_search_var.set("")
@@ -762,17 +779,28 @@ class ForgeGuiApp:
         sessions = data.get("sessions") if isinstance(data, dict) else data
         if not isinstance(sessions, list):
             return []
-        return [s for s in sessions if isinstance(s, dict)]
+        return [s for s in sessions if isinstance(s, dict)
+                and isinstance(s.get("messages", []), list)]
 
     def _write_sessions(self, sessions: list[dict]):
+        temp_path = None
         try:
             payload = {"sessions": sessions[:40]}
-            self._sessions_path().write_text(
-                json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            path = self._sessions_path()
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                             prefix=".sessions-", delete=False) as stream:
+                temp_path = Path(stream.name)
+                json.dump(payload, stream, ensure_ascii=False, indent=2)
+            os.replace(temp_path, path)
         except OSError as exc:
             self._set_status(f"会话记录保存失败：{exc}", "warn")
+        finally:
+            if temp_path is not None:
+                temp_path.unlink(missing_ok=True)
 
     def _session_title(self) -> str:
+        if self._session_custom_title:
+            return self._session_custom_title
         for msg in self._chat_history:
             if msg.role == "user" and msg.content.strip():
                 first = msg.content.strip().splitlines()[0]
@@ -834,6 +862,11 @@ class ForgeGuiApp:
             return
         self._archive_current_session()
         self._chat_history.clear()
+        self._attachments.clear()
+        self._session_custom_title = ""
+        self._include_history = True
+        self.send_var.set("")
+        self._update_context_summary()
         self._session_id = f"s{int(time.time() * 1000)}"
         if hasattr(self, "chat_area"):
             self.chat_area.show_empty()
@@ -849,13 +882,23 @@ class ForgeGuiApp:
         if self._sending:
             self._set_status("正在生成回复，完成后可切换对话", "info")
             return
+        if sid == self._session_id:
+            return
         session = next((s for s in self._load_sessions() if str(s.get("id")) == sid), None)
         if session is None:
             return
+        self._archive_current_session()
         self._chat_history = [ChatMessage(str(m.get("role", "user")),
                                           str(m.get("content", "")))
-                              for m in session.get("messages", []) if isinstance(m, dict)]
+                              for m in session.get("messages", []) if isinstance(m, dict)
+                              and m.get("role") in ("user", "assistant")
+                              and isinstance(m.get("content"), str)]
         self._session_id = sid
+        self._session_custom_title = str(session.get("title", "对话"))
+        self._attachments.clear()
+        self.send_var.set("")
+        self._include_history = True
+        self._update_context_summary()
         if hasattr(self, "chat_area"):
             self.chat_area.clear()
             for msg in self._chat_history:
@@ -902,21 +945,23 @@ class ForgeGuiApp:
         entry.pack(fill=tk.X, ipady=7, ipadx=8)
         entry.bind("<Return>", lambda _e: self._run_task())
 
-        row = tk.Frame(ctl, bg=C["chat"])
-        row.pack(fill=tk.X, pady=(8, 0))
-        tk.Label(row, text="策略", bg=C["chat"], fg=C["muted"],
+        strategy_row = tk.Frame(ctl, bg=C["chat"])
+        strategy_row.pack(fill=tk.X, pady=(8, 0))
+        tk.Label(strategy_row, text="策略", bg=C["chat"], fg=C["muted"],
                  font=FONT_MICRO).pack(side=tk.LEFT, padx=(0, 6))
-        self._strategy_row = tk.Frame(row, bg=C["chat"])
+        self._strategy_row = tk.Frame(strategy_row, bg=C["chat"])
         self._strategy_row.pack(side=tk.LEFT)
         self._task_strategy = "balanced"
         self._render_strategy_chips()
+        row = tk.Frame(ctl, bg=C["chat"])
+        row.pack(fill=tk.X, pady=(8, 0))
         self.task_stop_btn = pill_button(row, "■ 停止", self._stop_task, kind="danger",
                                          bg=C["chat"])
         self.task_stop_btn.pack(side=tk.RIGHT)
         self.task_run_btn = pill_button(row, "▶ 运行任务", self._run_task,
                                         kind="primary", bg=C["chat"], font=FONT_UI)
         self.task_run_btn.pack(side=tk.RIGHT, padx=(0, 8))
-        pill_button(row, "▤ 打开工作区", lambda: self._open_workspace("file_tree"),
+        pill_button(row, "▤ 工作区", lambda: self._open_workspace("file_tree"),
                     kind="ghost", bg=C["chat"]).pack(side=tk.RIGHT, padx=(0, 8))
 
         self.task_area = cw.MessageArea(parent, bg=C["chat"])
@@ -938,6 +983,9 @@ class ForgeGuiApp:
             attach_tooltip(chip, hint)
 
     def _set_task_strategy(self, value: str):
+        if self._task_running:
+            self._set_status("任务运行中；策略修改将在结束后开放", "info")
+            return
         self._task_strategy = value
         self._render_strategy_chips()
 
@@ -964,17 +1012,18 @@ class ForgeGuiApp:
         self.task_area.add_user(task)
         label = next((l for v, l, _h in STRATEGY_CHOICES if v == self._task_strategy),
                      self._task_strategy)
-        self._task_msg = self.task_area.add_agent(role="Planner",
+        self._task_msg = self.task_area.add_agent(role="任务执行",
                                                   subtitle=f"策略：{label} · 工作区：{self.run_py.parent}")
-        self._task_msg.stream_text("正在执行 forge run …")
+        self._task_msg.stream_text("正在执行 forge run；实际工具记录将在任务返回后显示。")
         self._task_msg.set_status("运行中…")
         self._task_running = True
+        self._task_cancel_event = threading.Event()
+        self._running_strategy = self._task_strategy
         self._task_started = time.time()
         self.task_run_btn.configure(state=tk.DISABLED)
         self._set_status(f"任务已下发：{task[:40]}", "info")
 
-        cmd = [sys.executable, str(self.run_py), "run", task, "--json",
-               "--profile", self._task_strategy]
+        cmd = task_command(sys.executable, self.run_py, self.home, task, self._task_strategy)
         env = {**os.environ, **env_for()}
         cwd = str(self.run_py.parent)
 
@@ -983,8 +1032,11 @@ class ForgeGuiApp:
                 proc = subprocess.Popen(cmd, cwd=cwd, env=env,
                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                         text=True, encoding="utf-8",
-                                        errors="replace")
+                                        errors="replace",
+                                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
                 self._task_proc = proc
+                if self._task_cancel_event.is_set():
+                    self._terminate_task_process(proc)
                 out, err = proc.communicate()
                 self._post_ui(self._task_finished, proc.returncode, out, err)
             except Exception as exc:  # pragma: no cover
@@ -995,13 +1047,29 @@ class ForgeGuiApp:
 
     def _stop_task(self):
         proc = getattr(self, "_task_proc", None)
-        if not getattr(self, "_task_running", False) or proc is None:
+        if not getattr(self, "_task_running", False):
+            return
+        self._task_cancel_event.set()
+        if proc is not None:
+            threading.Thread(target=self._terminate_task_process, args=(proc,), daemon=False).start()
+        self._set_status("已请求停止任务", "warn")
+
+    @staticmethod
+    def _terminate_task_process(proc):
+        if proc.poll() is not None:
             return
         try:
-            proc.terminate()
-        except OSError:
-            pass
-        self._set_status("已请求停止任务", "warn")
+            if IS_WINDOWS:
+                subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                               timeout=5, creationflags=subprocess.CREATE_NO_WINDOW)
+            if proc.poll() is None:
+                proc.terminate()
+        except (OSError, subprocess.TimeoutExpired):
+            try:
+                proc.terminate()
+            except OSError:
+                pass
 
     @staticmethod
     def _parse_task_output(out: str) -> dict | None:
@@ -1024,22 +1092,28 @@ class ForgeGuiApp:
 
     def _task_failed(self, message: str):
         self._task_running = False
+        self._task_proc = None
         self.task_run_btn.configure(state=tk.NORMAL)
         if getattr(self, "_task_msg", None) is not None:
             self._task_msg.set_status("")
+            self._task_msg.stream_text("")
             self._task_msg.add_note(f"任务未能完成：{message}", tone="error")
         self._set_status(f"任务失败：{message}", "error")
 
     def _task_finished(self, code: int, out: str, err: str):
         self._task_running = False
+        self._task_proc = None
         self.task_run_btn.configure(state=tk.NORMAL)
         elapsed = max(0.0, time.time() - getattr(self, "_task_started", time.time()))
         msg = getattr(self, "_task_msg", None)
         data = self._parse_task_output(out)
+        cancelled = getattr(self, "_task_cancel_event", threading.Event()).is_set()
+        outcome, tone = task_outcome(code, data, cancelled)
         if msg is None:
             self._set_status("任务结束（视图已切换）", "info")
             return
         msg.set_status("")
+        msg.stream_text("")
 
         if isinstance(data, dict):
             steps = data.get("steps") or []
@@ -1051,15 +1125,16 @@ class ForgeGuiApp:
                     note = str(step.get("note") or step.get("decision") or "")
                     rows.append({
                         "name": str(step.get("tool") or f"step {step.get('index', '?')}"),
-                        "desc": note[:80],
+                        "desc": str(step.get("decision") or "未知") + " · " + note[:35],
+                        "detail": str(step.get("result") or note),
                         "elapsed": f"#{step.get('index', '')}",
-                        "ok": str(step.get("decision", "ok")) not in ("error", "failed"),
+                        "ok": step.get("decision") == "ok",
                     })
                 msg.add_tool_card(rows, title="执行步骤")
             text = str(data.get("text") or "").strip()
             if text:
                 msg.render_markdown(text)
-            elif not steps:
+            else:
                 msg.render_markdown("（本次没有返回文本）")
             usage = data.get("usage") or {}
             parts = [f"退出码 {code}", f"用时 {elapsed:.1f}s"]
@@ -1067,41 +1142,41 @@ class ForgeGuiApp:
                 tokens = usage.get("total_tokens") or usage.get("tokens")
                 if tokens:
                     parts.append(f"tokens {tokens}")
-            if data.get("stopped"):
-                parts.append("提前停止")
-            msg.add_note(" · ".join(parts), tone="ok" if code == 0 else "warn")
+            parts.insert(0, outcome)
+            msg.add_note(" · ".join(parts), tone=tone)
         else:
             raw = (out or "").strip() or (err or "").strip() or "（没有输出）"
             msg.render_markdown(raw)
             msg.add_note(f"退出码 {code} · 用时 {elapsed:.1f}s（未能解析结构化结果）",
-                         tone="ok" if code == 0 else "error")
+                         tone=tone)
         if err and isinstance(data, dict):
             tail = err.strip().splitlines()[-4:]
             if tail:
                 msg.add_note("stderr：\n" + "\n".join(tail), tone="muted")
 
         # 面向工作区的动作
+        if self.workspace is not None:
+            self.workspace.refresh()
         changed = self._changed_file_count()
         actions = []
         if changed is None:
-            actions.append({"label": "查看修改的文件", "kind": "primary",
+            actions.append({"label": "查看仓库变更", "kind": "primary",
                             "command": lambda: self._open_workspace("changes")})
         elif changed > 0:
-            actions.append({"label": f"查看修改的文件 ({changed})", "kind": "primary",
+            actions.append({"label": f"仓库变更 ({changed})", "kind": "primary",
                             "command": lambda: self._open_workspace("changes")})
         actions.append({"label": "打开工作区", "command": lambda: self._open_workspace("file_tree")})
+        if isinstance(data, dict):
+            actions.extend(self._file_actions(str(data.get("text") or "")))
         if changed:
-            actions.append({"label": "预览效果", "command": lambda: self._open_workspace("preview")})
+            actions.append({"label": "预览选中文件", "command": lambda: self._open_workspace("preview")})
         msg.add_actions(actions)
 
         if self.workspace is not None:
-            try:
-                self.workspace.refresh()
-            except Exception:
-                pass
-            self._push_terminal(f"[task] 退出码 {code} · 用时 {elapsed:.1f}s · {self._task_strategy}")
-        self._set_status(f"任务结束（退出码 {code}，用时 {elapsed:.1f}s）",
-                         "ok" if code == 0 else "warn")
+            self._push_terminal(f"[task] {outcome} · 退出码 {code} · 用时 {elapsed:.1f}s")
+            self._push_terminal((out + "\n" + err)[-100000:])
+        msg.add_note("仓库变更包含原有未提交内容，不代表全部由本次任务产生。")
+        self._set_status(f"{outcome}（退出码 {code}，用时 {elapsed:.1f}s）", tone)
 
     def _changed_file_count(self):
         """尽量从工作区面板拿改动数量；拿不到就返回 None。"""
@@ -1584,17 +1659,18 @@ class ForgeGuiApp:
                                                                    padx=(8, 0))
         self.chat_sub_var = tk.StringVar(
             value="连接本机 gateway 与已配置模型对话；右侧工作区可看代码、diff 与预览。")
-        tk.Label(left, textvariable=self.chat_sub_var, bg=C["chat"], fg=C["ter"],
+        subtitle = tk.Label(parent, textvariable=self.chat_sub_var, bg=C["chat"], fg=C["ter"],
                  font=FONT_SMALL, anchor=tk.W, justify=tk.LEFT,
-                 wraplength=720).pack(anchor=tk.W, pady=(3, 0))
+                 wraplength=520)
+        subtitle.pack(fill=tk.X, padx=20, pady=(0, 8))
+        subtitle.bind("<Configure>", lambda event: subtitle.configure(wraplength=max(160, event.width)))
 
         right = tk.Frame(head, bg=C["chat"])
-        right.pack(side=tk.RIGHT, anchor=tk.N)
+        right.pack(side=tk.RIGHT, anchor=tk.N, before=left)
         self.clear_chat_btn = pill_button(right, "＋ 新对话", self._new_session,
                                           kind="ghost", bg=C["chat"])
         self.clear_chat_btn.pack(side=tk.RIGHT)
-        glyph_button(right, "⋯", lambda: self._set_status(
-            "更多：/ 命令、附件与上下文注入在后续版本接入", "info"),
+        glyph_button(right, "⋯", self._open_commands,
             bg=C["chat"], fg=C["ter"], size=13, tooltip="更多").pack(side=tk.RIGHT,
                                                                      padx=(0, 4))
         temp_box = tk.Frame(right, bg=C["chat"])
@@ -1611,7 +1687,6 @@ class ForgeGuiApp:
         tk.Frame(parent, bg=C["border"], height=1).pack(fill=tk.X)
 
         self.chat_area = cw.MessageArea(parent, bg=C["chat"])
-        self.chat_area.pack(fill=tk.BOTH, expand=True)
         self._chat_empty = True
 
         # 模型选择器（放进输入卡右组，保持 pill 观感）
@@ -1630,8 +1705,15 @@ class ForgeGuiApp:
             thinking_text=self._thinking_label(),
             footer_left="空闲",
             model_widget=self._make_model_picker,
+            on_attach=self._attach_files,
+            on_context=self._open_context,
+            on_commands=self._open_commands,
         )
         self.input_card.pack(fill=tk.X, side=tk.BOTTOM)
+        self.context_summary = tk.StringVar(value="历史上下文：开启 · 附件：0")
+        tk.Label(parent, textvariable=self.context_summary, bg=C["chat"], fg=C["ter"],
+                 font=FONT_MICRO, anchor="w", padx=12).pack(fill=tk.X, side=tk.BOTTOM)
+        self.chat_area.pack(fill=tk.BOTH, expand=True)
         self.send_entry = self.input_card.entry
         self.send_var = self.input_card.send_var
         self.think_pill = self.input_card.think_pill
@@ -1642,7 +1724,7 @@ class ForgeGuiApp:
         """把模型下拉做成输入卡右组里的一个 pill 观感控件。"""
         self.model_combo = ttk.Combobox(host, textvariable=self.model_var,
                                         values=["default"], state="readonly",
-                                        width=15, font=FONT_SMALL)
+                                        width=13, font=FONT_SMALL)
         self.model_combo.pack(side=tk.LEFT, padx=(0, 8))
         attach_tooltip(self.model_combo, "选择模型（来自已启用的 Provider）")
         return self.model_combo
@@ -1664,10 +1746,132 @@ class ForgeGuiApp:
         except tk.TclError:
             return
         if name and name.strip():
+            self._session_custom_title = name.strip()
             self.chat_title_var.set(name.strip())
             self._archive_current_session()
             self._refresh_history()
             self._set_status(f"对话已重命名为「{name.strip()}」", "ok")
+
+    def _update_context_summary(self):
+        self.context_summary.set(
+            f"历史上下文：{'开启' if self._include_history else '关闭'} · "
+            f"本轮文本附件：{len(self._attachments)}")
+
+    def _attach_files(self):
+        if self._sending:
+            self._set_status("本轮正在生成，结束后可修改附件", "info")
+            return
+        paths = filedialog.askopenfilenames(parent=self.root, title="添加 UTF-8 文本附件",
+                                            initialdir=str(self._repo_root()))
+        for path in paths:
+            try:
+                item = read_attachment(path)
+                pending = [a for a in self._attachments if a["path"] != item["path"]] + [item]
+                compose_prompt(self.send_var.get(), pending)
+                self._attachments = pending
+            except (OSError, ValueError) as exc:
+                self._set_status(f"{Path(path).name}：{exc}", "warn")
+                break
+        self._update_context_summary()
+
+    def _open_context(self):
+        dialog = tk.Toplevel(self.root)
+        dialog.title("本轮上下文 · 发送前可检查")
+        dialog.geometry("720x540")
+        dialog.transient(self.root)
+        dialog.configure(bg=C["chat"])
+        use_history = tk.BooleanVar(value=self._include_history)
+        preview = scrolledtext.ScrolledText(dialog, wrap="word", bg=C["input_bg"],
+                                            fg=C["text"], font=FONT_MONO_SM)
+        def refresh():
+            self._include_history = use_history.get()
+            self._update_context_summary()
+            selected = self._chat_history if self._include_history else []
+            try:
+                prompt = compose_prompt(self.send_var.get(), self._attachments)
+            except ValueError as exc:
+                prompt = str(exc)
+            payload = [{"role": m.role, "content": m.content} for m in selected]
+            payload.append({"role": "user", "content": prompt})
+            preview.configure(state=tk.NORMAL)
+            preview.delete("1.0", tk.END)
+            preview.insert("1.0", json.dumps(payload, ensure_ascii=False, indent=2))
+            preview.configure(state=tk.DISABLED)
+        tk.Checkbutton(dialog, text="发送当前会话的历史消息", variable=use_history,
+                       command=refresh, bg=C["chat"], fg=C["text"], selectcolor=C["surface2"],
+                       state=tk.DISABLED if self._sending else tk.NORMAL).pack(anchor="w", padx=12, pady=8)
+        tk.Label(dialog, text="附件以添加时的文本快照发送。下方展示消息角色及实际内容。",
+                 bg=C["chat"], fg=C["ter"]).pack(anchor="w", padx=12)
+        items = tk.Frame(dialog, bg=C["chat"])
+        items.pack(fill=tk.X, padx=12, pady=6)
+        for attachment in list(self._attachments):
+            row = tk.Frame(items, bg=C["chat"])
+            row.pack(fill=tk.X)
+            tk.Label(row, text=Path(attachment["path"]).name, bg=C["chat"],
+                     fg=C["text"]).pack(side=tk.LEFT)
+            def remove(item=attachment, widget=row):
+                if item in self._attachments:
+                    self._attachments.remove(item)
+                widget.destroy()
+                refresh()
+            tk.Button(row, text="移除", command=remove,
+                      state=tk.DISABLED if self._sending else tk.NORMAL).pack(side=tk.RIGHT)
+        preview.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
+        refresh()
+
+    def _open_commands(self):
+        menu = tk.Menu(self.root, tearoff=False, bg=C["surface2"], fg=C["text"])
+        for label, command in (
+                ("/new  新对话", self._new_session),
+                ("/workspace  展开 / 收起工作区", self._toggle_workspace),
+                ("/changes  仓库变更", lambda: self._open_workspace("changes")),
+                ("/context  检查发送上下文", self._open_context),
+                ("/tools  功能开关", lambda: self._show_view("tools")),
+                ("/task  切到任务执行", lambda: self._show_view("task"))):
+            menu.add_command(label=label, command=command)
+        try:
+            menu.tk_popup(self.root.winfo_pointerx(), self.root.winfo_pointery())
+        finally:
+            menu.grab_release()
+
+    def _run_local_command(self, text):
+        command, _, argument = text.partition(" ")
+        commands = {"/new": self._new_session, "/workspace": self._toggle_workspace,
+                    "/changes": lambda: self._open_workspace("changes"),
+                    "/context": self._open_context,
+                    "/tools": lambda: self._show_view("tools"),
+                    "/help": self._open_commands}
+        if command == "/task":
+            self.task_var.set(argument.strip())
+            self._show_view("task")
+            self.send_var.set("")
+            return True
+        if command in commands and not argument.strip():
+            self.send_var.set("")
+            commands[command]()
+            return True
+        return False
+
+    def _file_actions(self, text):
+        """Only link existing files mentioned by the real response, within this project."""
+        root = self._repo_root().resolve()
+        actions, seen = [], set()
+        for candidate in re.findall(r"`([^`\n]+)`", text):
+            try:
+                path = (root / candidate).resolve()
+                if not path.is_relative_to(root) or not path.is_file() or path in seen:
+                    continue
+            except (OSError, ValueError):
+                continue
+            seen.add(path)
+            def open_file(target=path):
+                self._open_workspace("file_tree")
+                if self.workspace is not None:
+                    self.workspace.open_file(target)
+            actions.append({"label": f"打开 {path.name}", "command": open_file})
+            if len(actions) == 3:
+                break
+        return actions
     # ── 沉思模式（forge 的 thinking.mode：off / smart / on）──
     def _read_thinking_mode(self) -> str:
         for row in self.user_rows:
@@ -1677,7 +1881,7 @@ class ForgeGuiApp:
         return "off"
 
     def _thinking_label(self) -> str:
-        return f"◎ 沉思 · {THINKING_LABELS.get(self._thinking_mode, '关闭')}"
+        return f"任务沉思 · {THINKING_LABELS.get(self._thinking_mode, '关闭')}"
 
     def _open_thinking_menu(self):
         menu = tk.Menu(self.root, tearoff=0, bg=C["surface"], fg=C["text"],
@@ -1694,6 +1898,9 @@ class ForgeGuiApp:
             menu.grab_release()
 
     def _set_thinking_mode(self, mode: str):
+        if self._feature_dirty:
+            self._set_status("请先保存或还原功能开关的修改，再切换任务沉思", "warn")
+            return
         import copy as _copy
         try:
             latest = load_user_layer(self.home)
@@ -2144,8 +2351,8 @@ class ForgeGuiApp:
 
     # ── Gateway 启停 ──
     def _choose_forge_repo(self):
-        if self.gateway_proc or self._sending:
-            self._set_status("请在请求结束、gateway 停止后切换 Forge 目录", "warn")
+        if self.gateway_proc or self._sending or self._task_running:
+            self._set_status("请在任务与请求结束、gateway 停止后切换 Forge 目录", "warn")
             return
         folder = filedialog.askdirectory(title="选择包含 run.py 的 Forge 目录", parent=self.root)
         if not folder:
@@ -2155,6 +2362,8 @@ class ForgeGuiApp:
             self._set_status("所选目录不包含 run.py，请选择 Forge 根目录", "error")
             return
         self.run_py = candidate
+        if self.workspace is not None:
+            self.workspace.set_repo_root(candidate.parent)
         self.path_lbl.configure(text="forge 目录已就绪")
         self._set_status(f"本次会话使用 Forge：{folder}", "ok")
 
@@ -2187,14 +2396,18 @@ class ForgeGuiApp:
 
         # 探活：secret_store（GUI 本地密钥库）注入 env，gateway 子进程继承
         env = {**os.environ, **env_for()}
-        # 启动 gateway 子进程
+        upstream = select_provider(self.user_rows, self.model_var.get())
+        try:
+            upstream_url, upstream_key, upstream_model = gateway_settings(upstream, env)
+        except ValueError as exc:
+            self._set_status(str(exc), "warn")
+            return
+        env["FORGE_GATEWAY_KEY"] = upstream_key
+        # Keep credentials in the child environment, never command-line arguments.
         cmd = [sys.executable, str(self.run_py), "gateway",
-               "--upstream", "openai",  # 默认走 openai 协议（用户可改）
-               "--port", str(port)]
-        # 用上游模型映射：默认 → fallback 链第一个 provider
-        upstream = self._first_active_provider()
-        if upstream:
-            cmd.extend(["--model-map", f"default={upstream['model']}"])
+               "--upstream", upstream_url, "--upstream-wire", "openai",
+               "--client-wire", "openai", "--models", upstream_model,
+               "--port", str(port), "--home", str(self.home)]
 
         self._set_status(f"启动 gateway：{' '.join(cmd[-4:])} ...", "info")
 
@@ -2206,6 +2419,7 @@ class ForgeGuiApp:
             )
         try:
             self.gateway_proc = subprocess.Popen(cmd, env=env, **kwargs)
+            self._gateway_provider = copy.deepcopy(upstream)
         except Exception as e:
             self._set_status(f"启动失败：{e}", "error")
             return
@@ -2376,6 +2590,13 @@ class ForgeGuiApp:
         text = self.send_var.get().strip()
         if not text:
             return
+        if self._run_local_command(text):
+            return
+        try:
+            prompt = compose_prompt(text, self._attachments)
+        except ValueError as exc:
+            self._set_status(str(exc), "warn")
+            return
         try:
             temp = float(self.temp_var.get())
         except ValueError:
@@ -2395,13 +2616,17 @@ class ForgeGuiApp:
             self.gateway_url = f"http://127.0.0.1:{port}"
             self.client.base_url = self.gateway_url
         self._sending = True
+        self._abort_requested = False
+        self._cancel_event = threading.Event()
+        cancel_event = self._cancel_event
         self.send_var.set("")
         self._chat_empty = False
-        self.chat_area.add_user(text)
+        self.chat_area.add_user(prompt)
         self._agent_msg = self.chat_area.add_agent()
         self._agent_msg.set_status("生成中…")
         self._agent_msg.stream_text("")
-        messages = list(self._chat_history) + [ChatMessage("user", text)]
+        messages = (list(self._chat_history) if self._include_history else []) + [ChatMessage("user", prompt)]
+        retained_history = list(self._chat_history) + [ChatMessage("user", prompt)]
         self.input_card.set_busy(True)
         self.clear_chat_btn.configure(state=tk.DISABLED)
         self.gw_btn.configure(state=tk.DISABLED)
@@ -2410,6 +2635,15 @@ class ForgeGuiApp:
         self._set_status(f"请求 → {self.model_var.get()} …", "info")
 
         model = self.model_var.get()
+        if self.gateway_proc is not None and getattr(self, "_gateway_provider", None):
+            provider = select_provider(self.user_rows, model)
+            running = self._gateway_provider
+            if provider is None or any(provider.get(k) != running.get(k)
+                                       for k in ("baseURL", "wire", "apiKey")):
+                self._chat_failed("所选模型的 Provider 与正在运行的 Gateway 不同，请停止并重新启动 Gateway", text)
+                self._send_finished()
+                return
+            model = str(provider["model"])
         client = self.client
 
         def worker():
@@ -2417,21 +2651,27 @@ class ForgeGuiApp:
                 ok, msg = client.health()
                 if not ok:
                     raise GatewayError(f"gateway 未连接：{msg}。请先启动 gateway 后重试。")
+                if cancel_event.is_set():
+                    raise GenerationCancelled("已停止生成")
                 self._post_ui(self._set_request_status, "正在生成…")
                 acc: list[str] = []
 
                 def on_chunk(piece: str):
-                    if self._abort_requested:
-                        raise GatewayError("已按用户要求中止")
+                    if cancel_event.is_set():
+                        raise GenerationCancelled("已停止生成")
                     acc.append(piece)
                     self._post_ui(self._append_stream_delta, piece)
 
                 client.stream_chat(
                     messages, model=model,
-                    temperature=temp, on_chunk=on_chunk,
+                    temperature=temp, on_chunk=on_chunk, cancel_event=cancel_event,
                 )
                 full = "".join(acc)
-                self._post_ui(self._chat_succeeded, messages, full)
+                if cancel_event.is_set():
+                    raise GenerationCancelled("已停止生成")
+                self._post_ui(self._chat_succeeded, retained_history, full, text)
+            except GenerationCancelled:
+                self._post_ui(self._chat_cancelled, text)
             except Exception as e:
                 error_text = f"{type(e).__name__}: {e}"
                 self._post_ui(self._chat_failed, error_text, text)
@@ -2440,27 +2680,38 @@ class ForgeGuiApp:
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _chat_succeeded(self, messages, full):
+    def _chat_succeeded(self, messages, full, original_prompt=None):
+        if self._abort_requested:
+            self._chat_cancelled(original_prompt if original_prompt is not None else messages[-1].content)
+            return
         self._chat_history = messages + [ChatMessage("assistant", full)]
+        self._attachments.clear()
+        self._update_context_summary()
+        self.chat_title_var.set(self._session_title())
         msg = getattr(self, "_agent_msg", None)
         if msg is not None:
             msg.set_status("")
             msg.render_markdown(full or "（空回复）")
             actions = [{"label": "打开工作区",
                         "command": lambda: self._open_workspace("file_tree")}]
-            changed = self._changed_file_count()
-            if isinstance(changed, int) and changed > 0:
-                actions.insert(0, {"label": f"查看修改的文件 ({changed})",
-                                   "kind": "primary",
-                                   "command": lambda: self._open_workspace("changes")})
-                actions.append({"label": "预览效果",
-                                "command": lambda: self._open_workspace("preview")})
+            actions.extend(self._file_actions(full))
             msg.add_actions(actions)
         self._archive_current_session()
         self._refresh_history()
         self._set_status("回复完成", "ok")
 
+    def _chat_cancelled(self, prompt):
+        if self._agent_msg is not None:
+            self._agent_msg.set_status("")
+            self._agent_msg.add_note("已停止。未完成回复未加入后续上下文。", tone="warn")
+        if not self.send_var.get():
+            self.send_var.set(prompt)
+        self._set_status("已停止生成，原消息已保留", "warn")
+
     def _chat_failed(self, message, prompt):
+        if self._abort_requested:
+            self._chat_cancelled(prompt)
+            return
         msg = getattr(self, "_agent_msg", None)
         if msg is not None:
             msg.set_status("")
@@ -2481,8 +2732,9 @@ class ForgeGuiApp:
         if not self._sending:
             return
         self._abort_requested = True
+        self._cancel_event.set()
         self._set_request_status("正在停止…")
-        self._set_status("已请求停止——当前这轮回复会在下一个数据块后结束", "warn")
+        self._set_status("已请求停止；等待网络返回或超时，期间不会发送新请求", "warn")
         self._refresh_send_circle()
 
     def _send_finished(self):
@@ -2504,6 +2756,8 @@ class ForgeGuiApp:
                 "有未保存的修改", "功能开关或编辑内容尚未保存。要放弃这些修改并退出吗？", parent=self.root):
             return
         self._closing = True
+        self._cancel_event.set()
+        self._stop_task()
         self._archive_current_session()
         try:
             self.root.after_cancel(self._event_poll)

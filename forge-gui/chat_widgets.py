@@ -390,6 +390,7 @@ class ToolCard(tk.Frame):
         base = bg or C["chat"]
         super().__init__(parent, bg=base)
         self._expanded = expanded
+        self._title_text = title
         head = tk.Frame(self, bg=base)
         head.pack(fill=tk.X, pady=(6, 2))
         self._arrow = tk.Label(head, text="⌃" if expanded else "⌄", bg=base,
@@ -408,6 +409,8 @@ class ToolCard(tk.Frame):
         self.rows.pack(fill=tk.X)
         for row in rows or []:
             self.add_row(row)
+        if not expanded:
+            self._card.pack_forget()
 
     def toggle(self):
         self._expanded = not self._expanded
@@ -433,7 +436,11 @@ class ToolCard(tk.Frame):
         if row.get("elapsed"):
             tk.Label(wrap, text=row["elapsed"], bg=bgc, fg=C["muted"],
                      font=FONT_MONO_SM).pack(side=tk.RIGHT)
-        self._title.configure(text=f"调用工具 ({len(self.rows.winfo_children())})")
+        if row.get("detail"):
+            attach_tooltip(wrap, row["detail"])
+            for child in wrap.winfo_children():
+                attach_tooltip(child, row["detail"])
+        self._title.configure(text=f"{self._title_text} ({len(self.rows.winfo_children())})")
 
 
 class ActionRow(tk.Frame):
@@ -614,7 +621,7 @@ class MessageArea(tk.Frame):
     # -- 空态 --
     def show_empty(self, title="开始新对话",
                    lines=("右上启动 gateway，选好模型后在下方输入消息",
-                          "输入卡左下可切换「沉思」：关闭 / 智能 / 开启")):
+                          "可添加文本附件；执行工具请使用「任务」")):
         self.clear()
         box = tk.Frame(self.scroll.inner, bg=self._bg)
         box.pack(fill=tk.X, pady=(60, 0))
@@ -698,7 +705,8 @@ class InputCard(tk.Frame):
                  on_send=None, on_stop=None, on_paste=None, on_model=None,
                  models=None, model_var=None, thinking_text="◎ 沉思 · 关闭",
                  on_thinking=None, footer_left=None, footer_right=None,
-                 attach_button=True, model_widget=None):
+                 attach_button=True, model_widget=None,
+                 on_attach=None, on_context=None, on_commands=None):
         base = bg or C["chat"]
         super().__init__(parent, bg=base)
         self._on_send = on_send
@@ -713,7 +721,7 @@ class InputCard(tk.Frame):
 
         entry_host = tk.Frame(inner, bg=C["input_bg"])
         entry_host.pack(fill=tk.X)
-        self.entry = tk.Entry(entry_host, textvariable=self.send_var, font=FONT_UI,
+        self.entry = tk.Text(entry_host, height=3, wrap="word", font=FONT_UI,
                               bg=C["input_bg"], fg=C["text"],
                               insertbackground=C["accent"], relief=tk.FLAT, bd=0,
                               highlightthickness=0)
@@ -723,7 +731,11 @@ class InputCard(tk.Frame):
                               cursor="xterm")
         self._hint.place(x=1, y=2)
         self._hint.bind("<Button-1>", lambda _e: self.entry.focus_set())
-        self.entry.bind("<Return>", lambda _e: self._fire_send())
+        self.entry.bind("<Return>", self._enter)
+        self.entry.bind("<Shift-Return>", lambda _e: None)
+        self._syncing = False
+        self.entry.bind("<<Modified>>", self._text_changed)
+        self.send_var.trace_add("write", self._var_changed)
         self.send_var.trace_add("write", lambda *_: self._sync_hint())
         self.entry.bind("<FocusIn>", lambda _e: self._sync_hint())
         self.entry.bind("<FocusOut>", lambda _e: self._sync_hint())
@@ -749,12 +761,8 @@ class InputCard(tk.Frame):
                                         fill=C["surface2"], outline=C["border_hi"],
                                         fg=C["subtext"], font=FONT_SMALL,
                                         command=on_thinking, bg=C["input_bg"],
-                                        tooltip="沉思模式：关闭 / 智能 / 开启")
+                                        tooltip="Forge 任务的沉思配置；普通 gateway 对话不执行任务沉思")
         self.think_pill.pack(side=tk.LEFT, padx=(0, 8))
-        self._mic = tk.Label(right, text="◉", bg=C["input_bg"], fg=C["subtext"],
-                             font=FONT_SECTION, cursor="hand2")
-        self._mic.pack(side=tk.LEFT, padx=(0, 8))
-        attach_tooltip(self._mic, "语音输入（预留）")
         self.send_circle = circle_button(right, "↑", self._fire_send, size=30,
                                          kind="muted", bg=C["input_bg"],
                                          tooltip="发送（Enter）")
@@ -765,19 +773,21 @@ class InputCard(tk.Frame):
         self._busy = False
         self.stop_circle.pack_forget()
 
-        left = tk.Frame(bar, bg=C["input_bg"])
-        left.pack(side=tk.LEFT)
+        left = tk.Frame(inner, bg=C["input_bg"])
+        left.pack(fill=tk.X, pady=(8, 0))
         self.plus = circle_button(left, "＋", on_paste or (lambda: None), size=26,
                                   kind="muted", bg=C["input_bg"], glyph_size=11,
                                   tooltip="粘贴剪贴板")
         self.plus.pack(side=tk.LEFT, padx=(0, 8))
         if attach_button:
-            for text, tip in (("附件", "附件（预留）"), ("Context", "上下文（预留）"),
-                              ("/ 命令", "斜杠命令（预留）")):
+            for text, tip, callback in (
+                    ("附件", "添加本轮发送的文本文件", on_attach),
+                    ("上下文", "查看历史与附件，检查本轮实际发送内容", on_context),
+                    ("/ 命令", "打开本地命令菜单", on_commands)):
                 pill = rounded_label(left, text, fill=C["surface2"],
                                      outline=C["border_hi"], fg=C["subtext"],
                                      font=FONT_MICRO, bg=C["input_bg"],
-                                     tooltip=tip)
+                                     tooltip=tip, command=callback)
                 pill.pack(side=tk.LEFT, padx=(0, 6))
 
         foot = tk.Frame(self, bg=base)
@@ -785,7 +795,7 @@ class InputCard(tk.Frame):
         self.footer_left = tk.Label(foot, text=footer_left or "空闲", bg=base,
                                     fg=C["muted"], font=FONT_CAPTION)
         self.footer_left.pack(side=tk.LEFT)
-        self.footer_right = tk.Label(foot, text=footer_right or "forge 在本地运行，内容由 AI 生成",
+        self.footer_right = tk.Label(foot, text=footer_right or "Enter 发送 · Shift+Enter 换行",
                                      bg=base, fg=C["muted"], font=FONT_CAPTION)
         self.footer_right.pack(side=tk.RIGHT)
 
@@ -793,6 +803,29 @@ class InputCard(tk.Frame):
         self._sync_send_state()
 
     # -- 交互 --
+    def _enter(self, event):
+        if event.state & 1:
+            return None
+        self._fire_send()
+        return "break"
+
+    def _text_changed(self, _event=None):
+        if self.entry.edit_modified():
+            if not self._syncing:
+                self._syncing = True
+                self.send_var.set(self.entry.get("1.0", "end-1c"))
+                self._syncing = False
+            self.entry.edit_modified(False)
+
+    def _var_changed(self, *_):
+        if self._syncing:
+            return
+        self._syncing = True
+        self.entry.delete("1.0", tk.END)
+        self.entry.insert("1.0", self.send_var.get())
+        self.entry.edit_modified(False)
+        self._syncing = False
+
     def _fire_send(self):
         if self._busy:
             return
@@ -828,10 +861,11 @@ class InputCard(tk.Frame):
     def set_busy(self, busy: bool):
         self._busy = busy
         if busy:
+            self.send_circle.pack_forget()
             self.stop_circle.pack(side=tk.LEFT)
-            circle_button_state(self.send_circle, "muted")
         else:
             self.stop_circle.pack_forget()
+            self.send_circle.pack(side=tk.LEFT)
             self._sync_send_state()
 
     def set_model_text(self, text: str):

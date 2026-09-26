@@ -32,6 +32,7 @@
 from __future__ import annotations
 
 import os
+import math
 import subprocess
 import sys
 import tkinter as tk
@@ -83,9 +84,10 @@ _MINIMAP_W = 64                     # minimap 宽
 
 def _run_git(repo: Path, *args: str, timeout: float = 5.0) -> str:
     try:
-        proc = subprocess.run(["git", "-C", str(repo), *args],
+        proc = subprocess.run(["git", "-C", str(repo), "-c", "core.quotepath=false", *args],
                               capture_output=True, text=True, timeout=timeout,
-                              encoding="utf-8", errors="replace")
+                              encoding="utf-8", errors="replace",
+                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         return ""
     if proc.returncode != 0:
@@ -112,7 +114,8 @@ def _resolve_path(repo: Path | None, p: str | os.PathLike) -> Path | None:
         return path
 
 
-def _scan_tree(root: Path, *, max_depth: int = 8) -> list[dict[str, Any]]:
+def _scan_tree(root: Path, *, max_depth: int = 8, expanded=None,
+               max_nodes: int = 2000) -> list[dict[str, Any]]:
     """目录优先、名字次之的扁平节点列表。"""
     nodes: list[dict[str, Any]] = []
 
@@ -131,6 +134,8 @@ def _scan_tree(root: Path, *, max_depth: int = 8) -> list[dict[str, Any]]:
                 return (True, entry.name.lower())
         entries.sort(key=_sort_key)
         for entry in entries:
+            if len(nodes) >= max_nodes:
+                break
             try:
                 name = entry.name
                 is_dir = entry.is_dir()
@@ -139,7 +144,14 @@ def _scan_tree(root: Path, *, max_depth: int = 8) -> list[dict[str, Any]]:
                         continue
                     nodes.append({"path": entry, "name": name,
                                   "is_dir": True, "depth": depth})
-                    _walk(entry, depth + 1)
+                    def _is_link(e: Path) -> bool:
+                        try:
+                            return e.is_symlink()
+                        except OSError:
+                            return True
+                    if (not _is_link(entry) and
+                            (expanded is None or str(entry) in expanded)):
+                        _walk(entry, depth + 1)
                 else:
                     if name.endswith(_SKIP_SUFFIXES):
                         continue
@@ -155,17 +167,16 @@ def _scan_tree(root: Path, *, max_depth: int = 8) -> list[dict[str, Any]]:
 
 
 def _git_status_map(repo: Path) -> dict[str, str]:
-    out = _run_git(repo, "status", "--porcelain")
+    out = _run_git(repo, "status", "--porcelain=v1", "-z", "--untracked-files=all")
     result: dict[str, str] = {}
-    for line in out.splitlines():
+    records = iter(out.split("\0"))
+    for line in records:
         if len(line) < 4:
             continue
         code = line[:2]
-        path = line[3:].strip()
-        if path.startswith('"') and path.endswith('"'):
-            path = path[1:-1]
-        if " -> " in path:
-            path = path.split(" -> ", 1)[1].strip()
+        path = line[3:]
+        if "R" in code or "C" in code:
+            next(records, None)  # -z reports destination first, then source.
         result[path.replace("\\", "/")] = code.strip() or "?"
     return result
 
@@ -183,13 +194,20 @@ def _count_lines(path: Path, limit: int = 20000) -> int:
         return 0
 
 
+def _git_diff(repo: Path, *options: str, path=None) -> str:
+    tail = ["--", str(path)] if path is not None else ["--"]
+    base = ["diff", "--no-ext-diff", "--no-textconv", "--no-color", "--no-renames", *options]
+    if _run_git(repo, "rev-parse", "--verify", "HEAD").strip():
+        return _run_git(repo, *base, "HEAD", *tail)
+    return (_run_git(repo, *base, "--cached", *tail)
+            + _run_git(repo, *base, *tail))
+
+
 def _git_diff_numstat(repo: Path) -> dict[str, tuple[int, int]]:
-    out = _run_git(repo, "diff", "--numstat", "HEAD")
-    if not out:
-        out = _run_git(repo, "diff", "--numstat")
+    out = _git_diff(repo, "--numstat", "-z")
     result: dict[str, tuple[int, int]] = {}
-    for line in out.splitlines():
-        parts = line.split("\t")
+    for line in out.split("\0"):
+        parts = line.split("\t", 2)
         if len(parts) < 3:
             continue
         a, d, path = parts[0], parts[1], parts[2]
@@ -198,7 +216,9 @@ def _git_diff_numstat(repo: Path) -> dict[str, tuple[int, int]]:
             removed = int(d) if d != "-" else 0
         except ValueError:
             added = removed = 0
-        result[path.replace("\\", "/")] = (added, removed)
+        key = path.replace("\\", "/")
+        previous = result.get(key, (0, 0))
+        result[key] = (previous[0] + added, previous[1] + removed)
     # 未跟踪文件按「整文件新增」计
     for path, code in _git_status_map(repo).items():
         if code.startswith("?") and path not in result:
@@ -298,15 +318,8 @@ class _FileRow(tk.Frame):
         self._icon_lbl = tk.Label(inner, text=icon, bg=base, fg=C["subtext"],
                                   font=FONT_MICRO)
         self._icon_lbl.pack(side=tk.LEFT, padx=(0, 5))
-        # pack 顺序注意：RIGHT 侧的徽章/统计必须先 pack，
-        # 否则会被 name 的 expand=True 挤掉（pack 先到先得）。
-        if status:
-            color = self._STATUS_COLORS.get(status[:1].upper(), C["muted"])
-            self._status_lbl = tk.Label(inner, text=status[:1].upper(), bg=base,
-                                        fg=color, font=FONT_MICRO, width=2)
-            self._status_lbl.pack(side=tk.RIGHT)
-        else:
-            self._status_lbl = None
+        # pack 顺序：徽章/统计（RIGHT 侧）必须在 name 之前，
+        # 否则会被 name 的 expand=True 挤掉。所有子 widget 都放 inner 里。
         if added is not None or removed is not None:
             stats = tk.Frame(inner, bg=base)
             stats.pack(side=tk.RIGHT, padx=(4, 0))
@@ -314,6 +327,13 @@ class _FileRow(tk.Frame):
                      font=FONT_MONO_XS).pack(side=tk.LEFT)
             tk.Label(stats, text=f"−{removed or 0}", bg=base, fg=C["diff_del"],
                      font=FONT_MONO_XS).pack(side=tk.LEFT, padx=(4, 0))
+        if status:
+            color = self._STATUS_COLORS.get(status[:1].upper(), C["muted"])
+            self._status_lbl = tk.Label(inner, text=status[:1].upper(), bg=base,
+                                        fg=color, font=FONT_MICRO, width=2)
+            self._status_lbl.pack(side=tk.RIGHT, padx=(2, 0))
+        else:
+            self._status_lbl = None
         self._name_lbl = tk.Label(inner, text=name, bg=base, fg=C["body"],
                                   font=FONT_SMALL, anchor="w")
         self._name_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True)
@@ -327,13 +347,19 @@ class _FileRow(tk.Frame):
             self._on_click(self)
 
     def _paint(self, bg: str, fg: str):
+        # 染色外层 + inner + inner 内所有子 widget（含 stats / status 徽章）
         self.configure(bg=bg)
-        for w in (self._arrow_lbl, self._icon_lbl, self._name_lbl):
-            w.configure(bg=bg)
-            if w is self._name_lbl:
-                w.configure(fg=fg)
-        if self._status_lbl is not None:
-            self._status_lbl.configure(bg=bg)
+        for child in self.winfo_children():
+            try:
+                child.configure(bg=bg)
+                for sub in child.winfo_children():
+                    try:
+                        sub.configure(bg=bg)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        self._name_lbl.configure(fg=fg)
 
     def _on_enter(self, _e=None):
         self._paint(C["hover"], C["text"])
@@ -466,6 +492,7 @@ class WorkspacePanel(tk.Frame):
         self._git_status: dict[str, str] = {}
         self._git_numstat: dict[str, tuple[int, int]] = {}
         self._hidden = True
+        self._terminal_buffer = ""
         self._sash_placed = False
 
         self._build_topbar()
@@ -780,16 +807,8 @@ class WorkspacePanel(tk.Frame):
         tk.Label(dhead, textvariable=self._diff_total_var, bg=C["bg"],
                  fg=C["subtext"], font=FONT_MONO_XS).pack(side=tk.LEFT,
                                                            padx=(PAD_S, 0))
-        split_btn = pill_button(dhead, "分栏视图", lambda: None, kind="quiet",
-                                font=FONT_MICRO)
-        split_btn.configure(state=tk.DISABLED)
-        attach_tooltip(split_btn, "分栏视图暂未实现")
-        split_btn.pack(side=tk.RIGHT, padx=PAD_S)
-        list_btn = pill_button(dhead, "列表视图", lambda: None, kind="quiet",
-                               font=FONT_MICRO)
-        list_btn.configure(state=tk.DISABLED)
-        attach_tooltip(list_btn, "列表视图（当前）")
-        list_btn.pack(side=tk.RIGHT, padx=(0, PAD_XS))
+        tk.Label(dhead, text="统一 Diff · 含暂存", bg=C["bg"], fg=C["ter"],
+                 font=FONT_MICRO).pack(side=tk.RIGHT, padx=PAD_S)
 
         diff_body = tk.Frame(right, bg=C["code_bg"])
         diff_body.pack(fill=tk.BOTH, expand=True)
@@ -883,10 +902,11 @@ class WorkspacePanel(tk.Frame):
 
     def show(self):
         if self._hidden:
-            self.pack(side=tk.RIGHT, fill=tk.Y)
+            self.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
             self._hidden = False
             self._sash_placed = False
-            self.after_idle(self.refresh)
+            # 让 _vp 先获得有效高度，再算 sash 位置
+            self.after(40, self._place_sashes_once)
 
     def hide(self):
         if not self._hidden:
@@ -932,21 +952,30 @@ class WorkspacePanel(tk.Frame):
                                  self._code_text.yview_moveto(0)))
 
     def show_diff(self, path=None):
+        # Render diff only; never touch the open code view.
         if path is not None:
             resolved = _resolve_path(self._repo_root, path)
             if resolved is not None:
                 self._current_diff_file = resolved
+            else:
+                self._set_status("invalid file path", "warn")
+                return
+        else:
+            self._current_diff_file = None
         self._render_diff(self._current_diff_file)
         self._focus_band_for_tab("diff")
 
     def push_terminal(self, text: str):
+        self._terminal_buffer = (self._terminal_buffer + text.rstrip("\n") + "\n")[-100000:]
         widget = getattr(self, "_term_text", None)
         if widget is None or not widget.winfo_exists():
             return
         try:
             widget.configure(state=tk.NORMAL, fg=C["body"])
-            widget.insert(tk.END, text if text.endswith("\n") else text + "\n")
+            widget.delete("1.0", tk.END)
+            widget.insert(tk.END, self._terminal_buffer)
             widget.see(tk.END)
+            widget.configure(state=tk.DISABLED)
         except tk.TclError:
             pass
 
@@ -973,6 +1002,7 @@ class WorkspacePanel(tk.Frame):
         self._refresh_changes()
         self._update_tab_counts()
         self._update_breadcrumb()
+        # refresh 只扫描文件树 + git；当前打开文件的重渲染由调用方按需触发。
         if self._current_file is not None:
             self._update_tabs_file()
 
@@ -1028,7 +1058,7 @@ class WorkspacePanel(tk.Frame):
             child.destroy()
         self._file_tree_rows.clear()
         try:
-            nodes = _scan_tree(self._repo_root)
+            nodes = _scan_tree(self._repo_root, expanded=self._expanded_dirs)
         except Exception as exc:
             tk.Label(body, text=f"扫描失败：{exc}", bg=C["bg"],
                      fg=C["muted"], font=FONT_SMALL).pack(anchor="w",
@@ -1041,8 +1071,6 @@ class WorkspacePanel(tk.Frame):
             path: Path = node["path"]
             name = node["name"]
             is_dir = node["is_dir"]
-            if is_dir and depth > 0 and str(path) not in self._expanded_dirs:
-                continue
             status = ""
             if not is_dir:
                 try:
@@ -1110,7 +1138,7 @@ class WorkspacePanel(tk.Frame):
                      font=FONT_SMALL).pack(anchor="w", padx=PAD_S, pady=PAD_S)
             return
         for code, path, added, removed in sorted(rows, key=lambda r: r[1]):
-            display = _shorten_path(path)
+            display = Path(path).name
             row = _FileRow(body, depth=0, icon="📄", name=display, status=code,
                            added=added, removed=removed,
                            on_click=lambda _r=None, p=path: self.show_diff(p))
@@ -1224,11 +1252,15 @@ class WorkspacePanel(tk.Frame):
             return
         if path is not None:
             self._diff_title_var.set(self._rel_label(path))
-            out = _run_git(self._repo_root, "diff", "--", str(path))
+            out = _git_diff(self._repo_root, path=path)
             if not out:
                 # 未跟踪的新文件：整文件按新增渲染
                 try:
-                    raw = path.read_text(encoding="utf-8", errors="replace")
+                    if not self._git_status.get(self._rel_label(path), "").startswith("?"):
+                        raw = ""
+                    else:
+                        with path.open("rb") as stream:
+                            raw = stream.read(_MAX_FILE_BYTES).decode("utf-8", errors="replace")
                 except OSError:
                     raw = ""
                 if raw:
@@ -1245,7 +1277,7 @@ class WorkspacePanel(tk.Frame):
                 return
         else:
             self._diff_title_var.set("diff（全部）")
-            out = _run_git(self._repo_root, "diff")
+            out = _git_diff(self._repo_root)
             if not out:
                 text.insert("1.0",
                             "工作区没有已跟踪文件的改动\n"
@@ -1255,7 +1287,7 @@ class WorkspacePanel(tk.Frame):
                 return
         first_hunk = None
         idx = 0
-        for line in out.splitlines():
+        for line in out[:_MAX_FILE_BYTES].splitlines()[:_MAX_FILE_LINES]:
             idx += 1
             if line.startswith(("+++", "---", "diff --git", "index ")):
                 tag = "meta"
@@ -1322,8 +1354,9 @@ class WorkspacePanel(tk.Frame):
                     activebackground=C["scroll"], relief=tk.FLAT,
                     bd=0, highlightthickness=0, width=8)
                 self._term_text.configure(yscrollcommand=self._term_vbar.set)
-                self._term_text.insert("1.0",
-                                       "gateway / 任务输出会显示在这里\n")
+                self._term_text.insert("1.0", self._terminal_buffer or
+                                       "任务 / gateway 输出日志（只读）\n")
+                self._term_text.configure(state=tk.DISABLED)
             self._preview_text.pack_forget()
             self._prev_vbar.pack_forget()
             if self._preview_canvas is not None:
@@ -1370,6 +1403,10 @@ class WorkspacePanel(tk.Frame):
             pass
 
     def _preview_write(self, text: str):
+        if self._preview_canvas is not None:
+            self._preview_canvas.pack_forget()
+        self._prev_vbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self._preview_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self._preview_text.configure(state=tk.NORMAL)
         self._preview_text.delete("1.0", tk.END)
         self._preview_text.insert("1.0", text)
@@ -1384,6 +1421,14 @@ class WorkspacePanel(tk.Frame):
         path = self._current_file
         if path is None:
             self._set_status("没有可打开的文件", "warn")
+            return
+        # A code preview must not execute a .py/.bat/.ps1 file via file association.
+        if os.name == "nt" and path.suffix.lower() not in {
+                ".html", ".htm", ".svg", ".png", ".gif", ".jpg", ".jpeg", ".webp", ".bmp", ".pdf"}:
+            try:
+                subprocess.Popen(["notepad.exe", str(path)])
+            except OSError as exc:
+                self._set_status(f"无法打开文本预览：{exc}", "error")
             return
         opener = getattr(self._app, "_open_path", None)
         if callable(opener):
@@ -1407,11 +1452,15 @@ class WorkspacePanel(tk.Frame):
         suffix = path.suffix.lower()
         image_exts = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
         if suffix in image_exts and sub in ("预览", "图像"):
-            if self._show_image_preview(path):
-                return
+            self._show_image_preview(path)
+            return
         # 文本类
         try:
-            data = path.read_bytes()
+            if path.stat().st_size > _MAX_FILE_BYTES:
+                self._preview_write("文件超过 400 KiB，内嵌预览已跳过；可在新窗口打开。")
+                return
+            with path.open("rb") as stream:
+                data = stream.read(_MAX_FILE_BYTES)
         except OSError as exc:
             self._preview_write(f"无法读取：{exc}")
             return
@@ -1441,6 +1490,9 @@ class WorkspacePanel(tk.Frame):
         if target is None:
             return False
         try:
+            if target.stat().st_size > 20 * 1024 * 1024:
+                self._preview_write("图片超过 20 MiB，请在新窗口打开。")
+                return False
             img = tk.PhotoImage(file=str(target))
         except (tk.TclError, OSError):
             if path is None:
@@ -1452,8 +1504,7 @@ class WorkspacePanel(tk.Frame):
             return path is None
         w, h = img.width(), img.height()
         max_w, max_h = 620, 320
-        factor = max(1, int(max(max_w / max(w, 1), max_h / max(h, 1)) ** -1)) \
-            if max(w, h) > max(max_w, max_h) else 1
+        factor = max(1, math.ceil(max(w / max_w, h / max_h)))
         try:
             if factor > 1:
                 img = img.subsample(factor)

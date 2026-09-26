@@ -173,7 +173,7 @@ class RoundedCard(tk.Frame):
         self._cv = tk.Canvas(self, bg=outer_bg, highlightthickness=0, bd=0,
                              height=1, width=1)
         self._cv.pack(fill=tk.BOTH, expand=True)
-        self.content = tk.Frame(self, bg=self._fill)
+        self.content = tk.Frame(self._cv, bg=self._fill)
         self._win = self._cv.create_window(0, 0, window=self.content, anchor="nw")
         self._shape = None
         self._cv.bind("<Configure>", self._on_canvas)

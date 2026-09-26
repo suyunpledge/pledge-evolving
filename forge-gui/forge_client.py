@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import socket
 import ssl
+import threading
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -39,6 +40,10 @@ class CompletionResult:
 
 
 class GatewayError(RuntimeError):
+    pass
+
+
+class GenerationCancelled(GatewayError):
     pass
 
 
@@ -120,8 +125,14 @@ class ForgeGatewayClient:
     # ── 流式（SSE） ──
     def stream_chat(self, messages: list[ChatMessage], model: str = "default",
                     temperature: float = 0.7,
-                    on_chunk: Callable[[str], None] | None = None
+                    on_chunk: Callable[[str], None] | None = None,
+                    cancel_event: threading.Event | None = None
                     ) -> CompletionResult:
+        def check_cancelled():
+            if cancel_event is not None and cancel_event.is_set():
+                raise GenerationCancelled("已停止生成")
+
+        check_cancelled()
         body = {
             "model": model,
             "messages": [m.to_dict() for m in messages],
@@ -134,6 +145,7 @@ class ForgeGatewayClient:
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 for line in resp:
+                    check_cancelled()
                     raw = line.decode("utf-8", errors="replace").rstrip("\n")
                     if not raw.startswith("data:"):
                         continue
@@ -152,16 +164,14 @@ class ForgeGatewayClient:
                         if piece:
                             full_text_parts.append(piece)
                             if on_chunk:
-                                try:
-                                    on_chunk(piece)
-                                except Exception:
-                                    pass  # 回调异常不能断流
+                                on_chunk(piece)
         except urllib.error.HTTPError as e:
             err_body = e.read().decode("utf-8", errors="replace")[:500]
             raise GatewayError(f"HTTP {e.code}: {err_body}") from e
         except (urllib.error.URLError, socket.timeout) as e:
             raise GatewayError(f"网络错误：{e}") from e
 
+        check_cancelled()
         return CompletionResult(
             text="".join(full_text_parts),
             model=model_name or model,
