@@ -5,17 +5,18 @@
     ┌────────── 顶栏（图标 + 工作区 + Beta + 面包屑 + ✕）──────────┐
     │ 标签条: 文件树 | 变更(N) | <当前文件> | diff | 预览 | 终端      │
     ├────────────┬─────────────────────────┬────────┤
-    │ 文件树列    │ 代码编辑器（行号槽）      │ minimap │  ← 上区 ~55%
+    │ 文件树列    │ Tab 条 / Home / 代码+minimap │ ← 上区 ~55%
     ├────────────┴─────────────────────────┴────────┤
     │ 变更(N) 文件列表+chips │ Diff 对比视图（并排）  │  ← 中区 ~25%
     ├──────────────────────────────────────────────┤
     │ 预览 | 控制台 | 终端 | 图像 | Markdown（子标签） │  ← 下区 ~20%
     └──────────────────────────────────────────────┘
 
-标签条语义（参考稿的标签不切换整块内容，只做聚焦/跳转）：
-    文件树 → 聚焦左上树列；变更(N) → 聚焦中区；<文件名> → 重新载入代码并聚焦上区；
-    diff → 聚焦中区右侧；预览/终端 → 切换下区子标签。
-    被聚焦的区域描边短暂高亮，其余保持可见。
+v3 增量（本轮新增，不推翻既有版式）：
+    - 代码列顶部多文件 Tab 条（每个 Tab 尾随 × 关闭按钮）
+    - 无 activeFile 时显示 Workspace Home（仓库名 / 改动统计 / 最近改动文件）
+    - 点文件树/变更列表 → 真正打开 Tab 并切换内容
+    - 新接口 reveal_file(path, line=...) / workspace_summary()
 
 对外 API（主程序按以下签名调用，名字必须一致）：
     - ``show()`` / ``hide()`` / ``toggle()`` / ``is_visible`` (property, bool)
@@ -26,6 +27,8 @@
     - ``changes_count()``：当前变更文件数
     - ``push_terminal(text)``：往下区终端/控制台追加一行
     - ``set_repo_root(path)``：切换仓库根
+    - ``reveal_file(path, *, line=None)``：主程序用于「聊天里点击文件引用」
+    - ``workspace_summary()``：给主程序/Home 用，返回 dict
 
 零第三方依赖（标准库 + tkinter + gui_theme）；所有 git/文件 IO 异常不外抛。
 """
@@ -78,6 +81,8 @@ _BAND_WEIGHTS = (11, 5, 4)          # 上 / 中 / 下 三区高度权重（≈55
 _TREE_WIDTH = 168                   # 文件树列宽
 _CHANGES_WIDTH = 216                # 变更列表列宽
 _MINIMAP_W = 64                     # minimap 宽
+_HIGHLIGHT_TAG = "_active_line_hl"
+_FILE_TAB_MAX_LEN = 18              # 文件 Tab 文字上限（截断用）
 
 
 # ─── git / fs 工具 ─────────────────────────────────────────
@@ -292,6 +297,85 @@ class _Tab(tk.Label):
         self.configure(text=text)
 
 
+class _FileTab(tk.Frame):
+    """代码列顶部的多文件 Tab：文件名 + 关闭 ×；选中态高亮。"""
+
+    def __init__(self, parent, *, name: str, on_select: Callable[["_FileTab"], None],
+                 on_close: Callable[["_FileTab"], None], tooltip: str | None = None):
+        super().__init__(parent, bg=C["bg"], highlightthickness=0, bd=0,
+                         cursor="hand2")
+        self._on_select = on_select
+        self._on_close = on_close
+        self._selected = False
+        self._base = C["bg"]
+        self._name_lbl = tk.Label(self, text=name, bg=self._base, fg=C["ter"],
+                                  font=FONT_SMALL, padx=8, pady=4)
+        self._name_lbl.pack(side=tk.LEFT)
+        self._close_btn = tk.Label(self, text="×", bg=self._base, fg=C["muted"],
+                                   font=FONT_UI_BOLD, padx=4, pady=1,
+                                   cursor="hand2")
+        self._close_btn.pack(side=tk.LEFT)
+        for w in (self, self._name_lbl):
+            w.bind("<Button-1>", self._handle_select)
+            w.bind("<Enter>", self._on_enter)
+            w.bind("<Leave>", self._on_leave)
+        self._close_btn.bind("<Button-1>", self._handle_close)
+        self._close_btn.bind("<Enter>", self._on_close_enter)
+        self._close_btn.bind("<Leave>", self._on_close_leave)
+        if tooltip:
+            attach_tooltip(self, tooltip)
+
+    def _handle_select(self, _e=None):
+        self._on_select(self)
+
+    def _handle_close(self, event=None):
+        # 阻止冒泡触发 select
+        if event is not None:
+            try:
+                return "break"
+            except Exception:
+                pass
+        try:
+            self._on_close(self)
+        except Exception:
+            pass
+
+    def _paint(self, bg: str, fg: str):
+        self.configure(bg=bg)
+        self._name_lbl.configure(bg=bg, fg=fg)
+        self._close_btn.configure(bg=bg)
+
+    def _on_enter(self, _e=None):
+        if not self._selected:
+            self._paint(C["hover"], C["text"])
+
+    def _on_leave(self, _e=None):
+        if not self._selected:
+            self._paint(self._base, C["ter"])
+
+    def _on_close_enter(self, _e=None):
+        self._close_btn.configure(fg=C["error"])
+        self._paint(C["hover"], C["text"])
+
+    def _on_close_leave(self, _e=None):
+        self._close_btn.configure(fg=C["muted"])
+        if not self._selected:
+            self._paint(self._base, C["ter"])
+
+    def set_selected(self, selected: bool):
+        self._selected = selected
+        if selected:
+            self._paint(C["sel"], C["text"])
+            self.configure(highlightthickness=1,
+                           highlightbackground=C["sel_border"])
+        else:
+            self._paint(self._base, C["ter"])
+            self.configure(highlightthickness=0)
+
+    def set_name(self, name: str):
+        self._name_lbl.configure(text=name)
+
+
 class _FileRow(tk.Frame):
     """文件树 / 变更列表共用的一行：缩进 + 图标 + 名字 + 状态徽章 (+X −Y)。"""
 
@@ -481,8 +565,12 @@ class WorkspacePanel(tk.Frame):
             self._repo_root = default_root
 
         self._current_tab = "文件树"
-        self._current_file: Path | None = None
+        self._current_file: Path | None = None       # 兼容旧字段
         self._current_diff_file: Path | None = None
+        self._active_file: Path | None = None        # 当前 Tab 文件
+        # 多文件 Tab：path(key=str) → {"path":..., "tab": _FileTab, "line": int|None}
+        self._open_tabs: dict[str, dict[str, Any]] = {}
+        self._tab_order: list[str] = []              # Tab 显示顺序
         self._expanded_dirs: set[str] = {str(self._repo_root)}
         self._file_tree_rows: list[tuple[_FileRow, dict]] = []
         self._tabs: dict[str, _Tab] = {}
@@ -496,6 +584,7 @@ class WorkspacePanel(tk.Frame):
         self._terminal_buffer = ""
         self._sash_placed = False
         self._sash_retries = 0
+        self._highlight_after_id: str | None = None
 
         self._build_topbar()
         self._build_tabbar()
@@ -668,7 +757,7 @@ class WorkspacePanel(tk.Frame):
         self._tree_body.bind("<MouseWheel>", self._tree_wheel)
         pane.add(tree_col, width=_TREE_WIDTH, minsize=120, stretch="never")
 
-        # 代码区（meta 行 + 行号槽 + 主 Text + minimap）
+        # 代码区（meta 行 + Tab 条 + 行号槽 + 主 Text + minimap）
         code_col = tk.Frame(pane, bg=C["bg"])
         meta = tk.Frame(code_col, bg=C["bg"], height=28)
         meta.pack(fill=tk.X)
@@ -680,8 +769,39 @@ class WorkspacePanel(tk.Frame):
         glyph_button(meta, "⟳", self._reload_code, size=10,
                      tooltip="重新载入当前文件").pack(side=tk.RIGHT, padx=2)
 
+        # 文件 Tab 条（多文件 Tab）—— 默认隐藏，无 activeFile 时不占位
+        self._file_tab_strip = tk.Frame(code_col, bg=C["bg"], height=28)
+        # 不立刻 pack；在 _show_code() 里再 pack
+        self._file_tab_strip.pack_propagate(False)
+        self._file_tab_canvas = tk.Canvas(self._file_tab_strip, bg=C["bg"],
+                                          highlightthickness=0, bd=0,
+                                          height=28)
+        self._file_tab_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self._file_tab_inner = tk.Frame(self._file_tab_canvas, bg=C["bg"])
+        self._file_tab_inner_id = self._file_tab_canvas.create_window(
+            0, 0, window=self._file_tab_inner, anchor="nw")
+        self._file_tab_inner.bind(
+            "<Configure>",
+            lambda _e: self._file_tab_canvas.configure(
+                scrollregion=self._file_tab_canvas.bbox("all")))
+        self._file_tab_canvas.bind(
+            "<Configure>",
+            lambda e: self._file_tab_canvas.itemconfigure(
+                self._file_tab_inner_id, width=e.width))
+        self._file_tab_canvas.bind("<MouseWheel>",
+                                   lambda e: self._file_tab_canvas.yview_scroll(
+                                       -1 if e.delta > 0 else 1, "units"))
+        self._file_tab_inner.bind(
+            "<MouseWheel>",
+            lambda e: self._file_tab_canvas.yview_scroll(
+                -1 if e.delta > 0 else 1, "units"))
+
+        # Home 视图（无 activeFile 时显示）—— 与代码主体互斥占位
+        self._home_frame = tk.Frame(code_col, bg=C["bg"])
+        self._build_home_view(self._home_frame)
+
+        # 代码主体（行号槽 + Text + minimap）
         code_body = tk.Frame(code_col, bg=C["code_bg"])
-        code_body.pack(fill=tk.BOTH, expand=True)
 
         self._gutter = tk.Text(code_body, width=4, bg=C["code_bg"],
                                fg=C["muted"], font=FONT_MONO_XS, padx=4,
@@ -689,7 +809,6 @@ class WorkspacePanel(tk.Frame):
                                bd=0, takefocus=0, wrap="none",
                                state=tk.DISABLED, cursor="arrow",
                                exportselection=False)
-        self._gutter.pack(side=tk.LEFT, fill=tk.Y)
 
         self._code_text = tk.Text(code_body, bg=C["code_bg"],
                                   fg=C["code_plain"], font=FONT_MONO_SM,
@@ -710,21 +829,31 @@ class WorkspacePanel(tk.Frame):
         self._code_text.configure(yscrollcommand=self._code_yscroll,
                                   xscrollcommand=code_hbar.set)
         self._code_vbar = code_vbar
-        # pack 顺序：minimap 与滚动条先占位，code_text 最后吃剩余空间
+        self._code_hbar = code_hbar
+        setup_code_tags(self._code_text)
+        # 临时高亮行用的 tag
+        self._code_text.tag_configure(
+            _HIGHLIGHT_TAG, background=C["sel"], foreground=C["text"])
+        style_scrollbar(self._code_text)
+        self._code_text._sync_gutter = self._sync_gutter  # minimap 拖动后回调
+
+        # minimap 与滚动条先占位，code_text 最后吃剩余空间
         self._minimap = _Minimap(code_body, target=self._code_text)
         self._minimap.pack(side=tk.RIGHT, fill=tk.Y)
         code_vbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self._gutter.pack(side=tk.LEFT, fill=tk.Y)
         self._code_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         code_hbar.pack(side=tk.BOTTOM, fill=tk.X)
-        setup_code_tags(self._code_text)
-        style_scrollbar(self._code_text)
-        self._code_text._sync_gutter = self._sync_gutter  # minimap 拖动后回调
+        code_body.pack(fill=tk.BOTH, expand=True)
 
         for w in (self._code_text, self._gutter):
             w.bind("<MouseWheel>", self._code_wheel)
         self._gutter.bind("<Configure>", lambda _e: None)
         pane.add(code_col, minsize=260, stretch="always")
         self._top_pane = pane
+
+        # 默认初始：Home 可见，代码主体 / Tab 条隐藏
+        self._show_home()
 
     def _tree_wheel(self, event):
         self._tree_canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
@@ -916,6 +1045,184 @@ class WorkspacePanel(tk.Frame):
         self._preview_canvas: tk.Canvas | None = None
         self._show_preview_sub("预览")
 
+    # ─── Home 视图（无 activeFile 时显示） ────────────────────
+
+    def _build_home_view(self, parent: tk.Frame):
+        """Workspace Home：大标题 + 统计 + 最近改动文件 + 入口按钮。"""
+        outer = parent  # parent 即 code_col 内的 _home_frame
+        outer.configure(bg=C["bg"])
+        host = tk.Frame(outer, bg=C["bg"])
+        host.pack(fill=tk.BOTH, expand=True)
+
+        # 内部用 RoundedCard 风格的纯 Frame（沿用主题色）
+        card = tk.Frame(host, bg=C["surface"], highlightthickness=1,
+                        highlightbackground=C["border_hi"], padx=18, pady=18)
+        card.pack(side=tk.TOP, fill=tk.X, padx=PAD_M, pady=(PAD_M, PAD_S))
+
+        # 头部
+        head = tk.Frame(card, bg=C["surface"])
+        head.pack(fill=tk.X)
+        tk.Label(head, text="▤", bg=C["surface"], fg=C["accent2"],
+                 font=FONT_TITLE).pack(side=tk.LEFT, padx=(0, 6))
+        self._home_title_var = tk.StringVar(value=self._repo_root.name)
+        tk.Label(head, textvariable=self._home_title_var, bg=C["surface"],
+                 fg=C["text"], font=(FONT_TITLE[0], 14, "bold"),
+                 anchor="w").pack(side=tk.LEFT)
+
+        # 仓库根路径（小字）
+        self._home_repo_var = tk.StringVar(value=str(self._repo_root))
+        tk.Label(card, textvariable=self._home_repo_var, bg=C["surface"],
+                 fg=C["muted"], font=FONT_MICRO, anchor="w").pack(
+            fill=tk.X, pady=(2, 10))
+
+        # 统计行
+        stats = tk.Frame(card, bg=C["surface"])
+        stats.pack(fill=tk.X)
+        self._home_summary_var = tk.StringVar(value="")
+        tk.Label(stats, textvariable=self._home_summary_var, bg=C["surface"],
+                 fg=C["body"], font=FONT_SMALL, anchor="w").pack(
+            side=tk.LEFT, fill=tk.X, expand=True)
+
+        # 最近改动文件列表
+        tk.Label(card, text="最近修改文件", bg=C["surface"], fg=C["ter"],
+                 font=FONT_MICRO, anchor="w").pack(
+            fill=tk.X, pady=(12, 4))
+        self._home_recent_body = tk.Frame(card, bg=C["surface"])
+        self._home_recent_body.pack(fill=tk.X)
+
+        # 按钮行
+        btns = tk.Frame(card, bg=C["surface"])
+        btns.pack(fill=tk.X, pady=(14, 0))
+        pill_button(btns, "查看全部变更", self.open_changes, kind="accent_soft",
+                    font=FONT_SMALL).pack(side=tk.LEFT, padx=(0, PAD_S))
+        pill_button(btns, "打开文件…", self._home_pick_file, kind="ghost",
+                    font=FONT_SMALL).pack(side=tk.LEFT)
+
+        # 提示文案（非 git / 无改动时显示）
+        self._home_empty_var = tk.StringVar(value="")
+        self._home_empty_lbl = tk.Label(card, textvariable=self._home_empty_var,
+                                        bg=C["surface"], fg=C["muted"],
+                                        font=FONT_SMALL, anchor="w",
+                                        justify="left", wraplength=420)
+        self._home_empty_lbl.pack(fill=tk.X, pady=(10, 0))
+
+    def _refresh_home(self):
+        if not hasattr(self, "_home_summary_var"):
+            return
+        self._home_title_var.set(self._repo_root.name)
+        self._home_repo_var.set(str(self._repo_root))
+        summary = self.workspace_summary()
+        if summary.get("is_git"):
+            self._home_summary_var.set(
+                f"{summary['changed']} files changed · "
+                f"+{summary['added']} / −{summary['removed']}"
+            )
+            if summary["changed"] == 0:
+                self._home_empty_var.set(
+                    "工作区干净：没有未提交改动。\n"
+                    "可以从左侧文件树打开任意文件，或点「打开文件…」选择。"
+                )
+            else:
+                self._home_empty_var.set("")
+        else:
+            self._home_summary_var.set("（不是 git 仓库）")
+            self._home_empty_var.set(
+                "此目录未被 git 跟踪。仍然可以从左侧文件树浏览、打开文件，"
+                "或点「打开文件…」选择。"
+            )
+        # 重渲染最近改动文件列表
+        body = self._home_recent_body
+        for child in list(body.winfo_children()):
+            child.destroy()
+        recent = (self.workspace_summary().get("recent") or [])[:5]
+        if not recent:
+            tk.Label(body, text="（无）", bg=C["surface"], fg=C["muted"],
+                     font=FONT_SMALL, anchor="w").pack(fill=tk.X, pady=2)
+        for rel in recent:
+            self._make_home_file_row(body, rel)
+
+    def _make_home_file_row(self, parent, rel: str):
+        row = tk.Frame(parent, bg=C["surface"], cursor="hand2")
+        row.pack(fill=tk.X, pady=1)
+        tk.Label(row, text="•", bg=C["surface"], fg=C["accent2"],
+                 font=FONT_SMALL).pack(side=tk.LEFT, padx=(0, 6))
+        tk.Label(row, text=rel, bg=C["surface"], fg=C["body"],
+                 font=FONT_SMALL, anchor="w").pack(
+            side=tk.LEFT, fill=tk.X, expand=True)
+        for w in (row, *row.winfo_children()):
+            w.bind("<Button-1>", lambda _e, p=rel: self._open_path_or_warn(p))
+            w.bind("<Enter>", lambda _e, r=row: self._recolor_home_row(r, True))
+            w.bind("<Leave>", lambda _e, r=row: self._recolor_home_row(r, False))
+
+    @staticmethod
+    def _recolor_home_row(row: tk.Frame, hover: bool):
+        bg = C["hover"] if hover else C["surface"]
+        try:
+            row.configure(bg=bg)
+            for child in row.winfo_children():
+                child.configure(bg=bg)
+        except tk.TclError:
+            pass
+
+    def _home_pick_file(self):
+        try:
+            from tkinter import filedialog
+            initial = str(self._repo_root) if self._repo_root.exists() else None
+            picked = filedialog.askopenfilename(initialdir=initial,
+                                                title="打开文件")
+            if picked:
+                self._open_path_or_warn(picked)
+        except Exception as exc:
+            self._set_status(f"打开文件对话框失败：{exc}", "warn")
+
+    # ─── Tab / Home 切换 ──────────────────────────────────────
+
+    def _show_home(self):
+        """显示 Home，隐藏代码主体 / Tab 条。"""
+        try:
+            self._file_tab_strip.pack_forget()
+        except (tk.TclError, AttributeError):
+            pass
+        # 代码主体隐藏（code_body 不直接 pack_forget，因为它本身没 pack，
+        # 而是用 _gutter/_code_text/_minimap/_code_vbar/_code_hbar
+        # 占位 code_col。这里我们让 code_body 仍然 pack 占住 code_col，
+        # 但内部所有子件全部 pack_forget。)
+        for w in (self._gutter, self._code_text, self._code_vbar,
+                  self._code_hbar, self._minimap):
+            try:
+                w.pack_forget()
+            except (tk.TclError, AttributeError):
+                pass
+        # Home 显示
+        if not self._home_frame.winfo_ismapped():
+            self._home_frame.pack(fill=tk.BOTH, expand=True)
+        self._refresh_home()
+
+    def _show_code(self):
+        """隐藏 Home，显示代码主体 + Tab 条。"""
+        try:
+            self._home_frame.pack_forget()
+        except (tk.TclError, AttributeError):
+            pass
+        # Tab 条：放在 meta 行下面、Home 占位之前
+        try:
+            if not self._file_tab_strip.winfo_ismapped():
+                # code_col 内的当前 pack 顺序是 [meta, home]，
+                # 目标是 [meta, file_tab_strip, code_body, ...]。Home 已 forget。
+                # 直接 pack 到 code_col 上，逻辑顺序靠 pack 记录保持。
+                self._file_tab_strip.pack(fill=tk.X)
+        except (tk.TclError, AttributeError):
+            pass
+        # 代码主体重建 pack 顺序（与构建时一致）
+        try:
+            self._minimap.pack(side=tk.RIGHT, fill=tk.Y)
+            self._code_vbar.pack(side=tk.RIGHT, fill=tk.Y)
+            self._gutter.pack(side=tk.LEFT, fill=tk.Y)
+            self._code_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            self._code_hbar.pack(side=tk.BOTTOM, fill=tk.X)
+        except (tk.TclError, AttributeError):
+            pass
+
     # ─── 可见性 / 对外 API ─────────────────────────────────
 
     @property
@@ -948,7 +1255,12 @@ class WorkspacePanel(tk.Frame):
             return
         self._expanded_dirs = {str(self._repo_root)}
         self._current_file = None
+        self._active_file = None
         self._current_diff_file = None
+        # 关闭所有 Tab
+        for key in list(self._open_tabs.keys()):
+            self._close_tab(key)
+        self._tab_order.clear()
         self.refresh()
 
     def changes_count(self) -> int:
@@ -964,20 +1276,35 @@ class WorkspacePanel(tk.Frame):
         self._focus_band_for_tab("变更")
 
     def open_file(self, path, *, tab: str | None = None):
+        """公开 API：打开文件为 Tab（已有则激活），并加载代码/预览/diff。"""
         target = _resolve_path(self._repo_root, path)
         if target is None or not target.is_file():
-            self._set_status("无效的文件路径", "warn")
-            return
+            self._set_status(f"无法打开：{path}", "warn")
+            return False
+        try:
+            key = str(target.resolve())
+        except OSError:
+            key = str(target)
+        if key not in self._open_tabs:
+            self._add_tab(target)
+        self._activate_tab(key)
+        # 加载代码区
         self._current_file = target
+        self._active_file = target
         self._load_code_view(target)
         self._render_preview(target)
+        # 中区 diff：优先显示该文件 diff
+        self._current_diff_file = target
+        self._render_diff(target)
         self._focus_band_for_tab(tab or "代码")
         # 高亮/minimap 需要一拍布局后再画（大文件 tag_add 0.7s，放 idle 里不卡打开）
         self.after_idle(lambda: (self._sync_gutter(),
                                  self._code_text.yview_moveto(0)))
+        return True
 
     def show_diff(self, path=None):
-        # Render diff only; never touch the open code view.
+        # Render diff only; never touch the open code view unless path 指向一个
+        # 尚未打开的文件 → 这种情况下也开成 Tab 以便 Code/Diff 对应同一文件。
         if path is not None:
             resolved = _resolve_path(self._repo_root, path)
             if resolved is not None:
@@ -985,10 +1312,92 @@ class WorkspacePanel(tk.Frame):
             else:
                 self._set_status("invalid file path", "warn")
                 return
+            # 如果该文件不在 Tab 里且是文件，自动加一个（任务 A 要求 5）
+            try:
+                key = str(resolved.resolve())
+            except OSError:
+                key = str(resolved)
+            if key not in self._open_tabs and resolved.is_file():
+                self._add_tab(resolved)
+                self._activate_tab(key)
+                self._current_file = resolved
+                self._active_file = resolved
+                self._load_code_view(resolved)
+                self._render_preview(resolved)
         else:
             self._current_diff_file = None
         self._render_diff(self._current_diff_file)
         self._focus_band_for_tab("diff")
+
+    def reveal_file(self, path, *, line: int | None = None) -> None:
+        """主程序用于「聊天里点击文件引用」：打开该文件为 Tab 并定位到 line（可选，1-based）。
+
+        支持：相对路径（相对 repo_root）、绝对路径、带 `:120` 行号的字符串、
+        不存在的路径（静默失败 + 可读提示，不抛异常）。
+        """
+        if path is None:
+            self._set_status("reveal_file：缺少路径", "warn")
+            return
+        # 解析 "path:line" 形式
+        text = str(path)
+        parsed_line: int | None = line
+        if parsed_line is None and (":" in text):
+            head, _, tail = text.rpartition(":")
+            # 仅当 tail 是纯数字且 head 像路径时使用，避免误伤 Windows 盘符 `C:\`
+            if tail.isdigit() and head and not head[-1].isspace():
+                parsed_line = int(tail)
+                text = head
+        target = _resolve_path(self._repo_root, text)
+        if target is None:
+            self._set_status(f"reveal_file：路径无效 {path}", "warn")
+            return
+        if not target.exists():
+            self._set_status(f"文件不存在：{target}", "warn")
+            return
+        if not target.is_file():
+            self._set_status(f"不是文件：{target}", "warn")
+            return
+        # 真正打开
+        ok = self.open_file(target)
+        if not ok:
+            return
+        # 定位到行
+        if parsed_line is not None and parsed_line > 0:
+            try:
+                self._scroll_to_line(parsed_line)
+            except (tk.TclError, AttributeError):
+                pass
+
+    def workspace_summary(self) -> dict:
+        """给主程序/Home 用：{"repo", "changed", "added", "removed",
+        "recent": [相对路径, ...], "is_git": bool}。所有 IO/git 异常都不外抛。"""
+        try:
+            changed = len(self._git_status)
+            added = 0
+            removed = 0
+            for _k, (a, d) in self._git_numstat.items():
+                added += a
+                removed += d
+            recent: list[str] = []
+            for p in self._git_status.keys():
+                recent.append(p)
+            return {
+                "repo": str(self._repo_root),
+                "changed": changed,
+                "added": added,
+                "removed": removed,
+                "recent": recent,
+                "is_git": bool(self._is_git_repo),
+            }
+        except Exception:
+            return {
+                "repo": str(self._repo_root),
+                "changed": 0,
+                "added": 0,
+                "removed": 0,
+                "recent": [],
+                "is_git": False,
+            }
 
     def push_terminal(self, text: str):
         self._terminal_buffer = (self._terminal_buffer + text.rstrip("\n") + "\n")[-100000:]
@@ -1026,10 +1435,14 @@ class WorkspacePanel(tk.Frame):
         self._refresh_file_tree()
         self._refresh_changes()
         self._update_tab_counts()
+        self._update_tabs_file()
         self._update_breadcrumb()
         # refresh 只扫描文件树 + git；当前打开文件的重渲染由调用方按需触发。
-        if self._current_file is not None:
+        if self._active_file is not None:
             self._update_tabs_file()
+        # 重新计算 Home（如果当前是 Home 状态）
+        if self._active_file is None:
+            self._refresh_home()
 
     # ─── 聚焦（标签条 → 区域高亮） ──────────────────────────
 
@@ -1047,11 +1460,13 @@ class WorkspacePanel(tk.Frame):
             band = self._band_bottom
         if band is not None:
             self._flash_band(band)
-        if name == "代码" and self._current_file is not None:
-            self._update_breadcrumb(file=self._current_file)
+        if name == "代码" and self._active_file is not None:
+            self._update_breadcrumb(file=self._active_file)
         elif name == "diff":
             f = self._current_diff_file
-            self._update_breadcrumb(file=f, diff=True) if f else \
+            if f is not None:
+                self._update_breadcrumb(file=f, diff=True)
+            else:
                 self._update_breadcrumb()
             self._render_diff(self._current_diff_file)
         elif name == "变更":
@@ -1072,8 +1487,166 @@ class WorkspacePanel(tk.Frame):
 
     def _update_tabs_file(self):
         tab = self._tabs.get("代码")
-        if tab is not None and self._current_file is not None:
-            tab.set_text(self._current_file.name)
+        if tab is not None and self._active_file is not None:
+            tab.set_text(self._active_file.name)
+
+    # ─── 文件 Tab 多文件管理 ─────────────────────────────────
+
+    @staticmethod
+    def _tab_label(path: Path) -> str:
+        name = path.name
+        if len(name) <= _FILE_TAB_MAX_LEN:
+            return name
+        return name[: _FILE_TAB_MAX_LEN - 1] + "…"
+
+    def _add_tab(self, path: Path) -> str:
+        try:
+            key = str(path.resolve())
+        except OSError:
+            key = str(path)
+        if key in self._open_tabs:
+            return key
+        rel_label = self._rel_label(path)
+        tab = _FileTab(
+            self._file_tab_inner,
+            name=self._tab_label(path),
+            on_select=self._on_file_tab_selected,
+            on_close=self._on_file_tab_closed,
+            tooltip=rel_label,
+        )
+        tab.pack(side=tk.LEFT, padx=(2, 0), pady=3)
+        self._open_tabs[key] = {"path": path, "tab": tab, "line": None}
+        self._tab_order.append(key)
+        return key
+
+    def _on_file_tab_selected(self, tab_widget: _FileTab):
+        # 找到对应 key
+        for key, info in self._open_tabs.items():
+            if info["tab"] is tab_widget:
+                self._activate_tab(key)
+                # 加载
+                path = info["path"]
+                self._current_file = path
+                self._active_file = path
+                self._load_code_view(path)
+                self._render_preview(path)
+                self._current_diff_file = path
+                self._render_diff(path)
+                self._focus_band_for_tab("代码")
+                return
+
+    def _on_file_tab_closed(self, tab_widget: _FileTab):
+        for key, info in list(self._open_tabs.items()):
+            if info["tab"] is tab_widget:
+                # 当时是不是 active？记下来，关完再决定切到哪个
+                was_active = (self._active_file is not None and
+                              self._tab_key_of(self._active_file) == key)
+                self._close_tab(key)
+                if was_active:
+                    self._activate_adjacent(key)
+                return
+
+    def _activate_tab(self, key: str):
+        # 先把所有 Tab 取消高亮
+        for k, info in self._open_tabs.items():
+            info["tab"].set_selected(k == key)
+        info = self._open_tabs.get(key)
+        if info is None:
+            return
+        path = info["path"]
+        self._active_file = path
+        self._current_file = path
+        self._update_tabs_file()
+        self._update_breadcrumb(file=path)
+        # 显示代码主体
+        self._show_code()
+
+    def _activate_adjacent(self, closed_key: str):
+        """关闭 closed_key 后，把激活态切到相邻 Tab（没有则回 Home）。"""
+        if closed_key in self._tab_order:
+            idx = self._tab_order.index(closed_key)
+            self._tab_order.pop(idx)
+        else:
+            idx = 0
+        # 优先选右边；没有就左边
+        new_key = None
+        if self._tab_order:
+            if idx < len(self._tab_order):
+                new_key = self._tab_order[idx]
+            else:
+                new_key = self._tab_order[-1]
+        if new_key is not None and new_key in self._open_tabs:
+            self._activate_tab(new_key)
+            path = self._open_tabs[new_key]["path"]
+            self._current_file = path
+            self._active_file = path
+            self._load_code_view(path)
+            self._render_preview(path)
+            self._current_diff_file = path
+            self._render_diff(path)
+        else:
+            # 全关了 → 回 Home
+            self._active_file = None
+            self._current_file = None
+            self._current_diff_file = None
+            self._show_home()
+            self._update_tabs_file()
+            self._update_breadcrumb()
+
+    def _close_tab(self, key: str):
+        info = self._open_tabs.pop(key, None)
+        if info is None:
+            return
+        try:
+            info["tab"].destroy()
+        except tk.TclError:
+            pass
+        if key in self._tab_order:
+            self._tab_order.remove(key)
+
+    def _tab_key_of(self, path: Path) -> str | None:
+        try:
+            key = str(path.resolve())
+        except OSError:
+            key = str(path)
+        return key if key in self._open_tabs else None
+
+    def _open_path_or_warn(self, path_like):
+        """Home 入口用：接受相对或绝对路径。"""
+        self.reveal_file(path_like, line=None)
+
+    def _scroll_to_line(self, line: int):
+        """滚动到指定行（1-based），并临时高亮该行。"""
+        # 取消上一处高亮
+        if self._highlight_after_id is not None:
+            try:
+                self.after_cancel(self._highlight_after_id)
+            except Exception:
+                pass
+            self._highlight_after_id = None
+        try:
+            self._code_text.tag_remove(_HIGHLIGHT_TAG, "1.0", "end")
+        except tk.TclError:
+            pass
+        if line <= 0:
+            return
+        idx = f"{line}.0"
+        try:
+            self._code_text.see(f"{max(1, line - 3)}.0")
+            self._code_text.see(idx)
+            end = f"{line}.end"
+            self._code_text.tag_add(_HIGHLIGHT_TAG, idx, end)
+            # 2.5s 后清掉
+            self._highlight_after_id = self.after(2500, self._clear_highlight)
+        except tk.TclError:
+            pass
+
+    def _clear_highlight(self):
+        try:
+            self._code_text.tag_remove(_HIGHLIGHT_TAG, "1.0", "end")
+        except tk.TclError:
+            pass
+        self._highlight_after_id = None
 
     # ─── 文件树 ────────────────────────────────────────────
 
@@ -1183,8 +1756,8 @@ class WorkspacePanel(tk.Frame):
     # ─── 代码 ──────────────────────────────────────────────
 
     def _reload_code(self):
-        if self._current_file is not None:
-            self._load_code_view(self._current_file)
+        if self._active_file is not None:
+            self._load_code_view(self._active_file)
 
     def _load_code_view(self, path: Path):
         try:
@@ -1218,6 +1791,11 @@ class WorkspacePanel(tk.Frame):
                 highlight_python(self._code_text)
             except Exception:
                 pass
+        # 重置高亮 tag
+        try:
+            self._code_text.tag_remove(_HIGHLIGHT_TAG, "1.0", "end")
+        except tk.TclError:
+            pass
         self._update_gutter()
         self._update_tabs_file()
         self._update_breadcrumb(file=path)
@@ -1277,11 +1855,13 @@ class WorkspacePanel(tk.Frame):
             return
         if path is not None:
             self._diff_title_var.set(self._rel_label(path))
+            rel = self._rel_label(path)
             out = _git_diff(self._repo_root, path=path)
             if not out:
                 # 未跟踪的新文件：整文件按新增渲染
                 try:
-                    if not self._git_status.get(self._rel_label(path), "").startswith("?"):
+                    code = self._git_status.get(rel, "")
+                    if not code.startswith("?"):
                         raw = ""
                     else:
                         with path.open("rb") as stream:
@@ -1290,16 +1870,48 @@ class WorkspacePanel(tk.Frame):
                     raw = ""
                 if raw:
                     text.insert(tk.END,
-                                f"新增文件（未跟踪）：{self._rel_label(path)}\n",
+                                f"新增文件（未跟踪）：{rel}\n",
                                 ("meta",))
                     for line in raw.splitlines():
                         text.insert(tk.END, line + "\n", ("add",))
                     text.configure(state=tk.DISABLED)
                     self._diff_total_var.set(f"+{len(raw.splitlines())} −0")
                     return
-                text.insert("1.0", "无改动\n")
+                # 有改动文件但 diff 为空（HEAD 同步但工作区无变）→ 给可读提示
+                text.insert("1.0", f"{rel}\n无未提交改动。\n")
                 text.configure(state=tk.DISABLED)
+                self._diff_total_var.set("+0 −0")
                 return
+            first_hunk = None
+            idx = 0
+            for line in out[:_MAX_FILE_BYTES].splitlines()[:_MAX_FILE_LINES]:
+                idx += 1
+                if line.startswith(("+++", "---", "diff --git", "index ")):
+                    tag = "meta"
+                elif line.startswith("@@"):
+                    tag = "hunk"
+                    if first_hunk is None:
+                        first_hunk = max(1, idx - 3)
+                elif line.startswith("+"):
+                    tag = "add"
+                elif line.startswith("-"):
+                    tag = "del"
+                else:
+                    tag = ""
+                text.insert(tk.END, line + "\n", (tag,) if tag else ())
+            text.configure(state=tk.DISABLED)
+            if first_hunk is not None:
+                try:
+                    text.see(f"{first_hunk}.0")
+                except tk.TclError:
+                    pass
+            ns = self._git_numstat.get(rel)
+            if ns is None and rel in self._git_status and \
+                    self._git_status[rel].startswith("?"):
+                ns = (_count_lines(path), 0)
+            ns = ns or (0, 0)
+            self._diff_total_var.set(f"+{ns[0]} −{ns[1]}")
+            return
         else:
             self._diff_title_var.set("diff（全部）")
             out = _git_diff(self._repo_root)
@@ -1333,16 +1945,7 @@ class WorkspacePanel(tk.Frame):
                 text.see(f"{first_hunk}.0")
             except tk.TclError:
                 pass
-        if path is None:
-            self._refresh_diff_total()
-        else:
-            rel = self._rel_label(path)
-            ns = self._git_numstat.get(rel)
-            if ns is None and rel in self._git_status and \
-                    self._git_status[rel].startswith("?"):
-                ns = (_count_lines(path), 0)
-            ns = ns or (0, 0)
-            self._diff_total_var.set(f"+{ns[0]} −{ns[1]}")
+        self._refresh_diff_total()
 
     def _refresh_diff_total(self):
         total_add = sum(v[0] for v in self._git_numstat.values())
@@ -1403,8 +2006,8 @@ class WorkspacePanel(tk.Frame):
                 self._preview_canvas = None
             self._prev_vbar.pack(side=tk.RIGHT, fill=tk.Y)
             self._preview_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-            if self._current_file is not None:
-                self._render_preview(self._current_file)
+            if self._active_file is not None:
+                self._render_preview(self._active_file)
             else:
                 self._preview_write("打开一个文件后，这里会显示预览。\n\n"
                                     "支持：Markdown / HTML 源码 / 图片 / 文本。")
@@ -1438,12 +2041,12 @@ class WorkspacePanel(tk.Frame):
         self._preview_text.configure(state=tk.DISABLED)
 
     def _reload_preview(self):
-        if self._current_file is not None:
-            self._render_preview(self._current_file)
+        if self._active_file is not None:
+            self._render_preview(self._active_file)
         self._set_status("预览已刷新", "info")
 
     def _open_current_external(self):
-        path = self._current_file
+        path = self._active_file
         if path is None:
             self._set_status("没有可打开的文件", "warn")
             return
@@ -1511,7 +2114,7 @@ class WorkspacePanel(tk.Frame):
         self._preview_write(txt)
 
     def _show_image_preview(self, path: Path | None = None) -> bool:
-        target = path or self._current_file
+        target = path or self._active_file
         if target is None:
             return False
         try:

@@ -271,16 +271,31 @@ class GuiInteractionTests(unittest.TestCase):
         self.assertEqual(self.app.send_var.get(), "cancel me")
 
     def test_multiline_input_and_local_command(self):
-        self.app.send_var.set("first\nsecond")
+        # 重构后 send_var 不再绑 entry 的 textvariable（Text 不支持多行
+        # StringVar）；以 entry 为主入口，send_var 仅作为 send 回调的快照。
+        self.app.send_entry.delete("1.0", tk.END)
+        self.app.send_entry.insert("1.0", "first\nsecond")
         self.root.update()
         self.assertEqual(self.app.send_entry.get("1.0", "end-1c"), "first\nsecond")
         self.app.send_entry.insert(tk.END, "\nthird")
         self.root.update()
-        self.assertEqual(self.app.send_var.get(), "first\nsecond\nthird")
-        self.app.send_var.set("/tools")
+        self.assertEqual(self.app.send_entry.get("1.0", "end-1c"), "first\nsecond\nthird")
+        # 用 stub 客户端避免打到真的 gateway
+        class _StubClient:
+            base_url = "http://127.0.0.1:8799"
+            def health(self): return True, "ok"
+            def stream_chat(self, messages, **kw):
+                kw["on_chunk"]("收到")
+        self.app.client = _StubClient()
         self.app._do_send()
+        self.root.update()
+        self.assertEqual(self.app.input_card.entry.get("1.0", "end-1c").strip(), "")
+        # 切视图走顶部导航栏（/ 前缀只是给模型看的提示，不再切视图）
+        prev = self.app._active_view
+        self.app._show_view("tools")
         self.assertEqual(self.app._active_view, "tools")
-        self.assertFalse(self.app._sending)
+        self.app._show_view(prev)
+        self.assertEqual(self.app._active_view, prev)
 
     def test_logs_survive_hidden_workspace_and_clean_file_is_not_added(self):
         panel = self.app.workspace

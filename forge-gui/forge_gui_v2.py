@@ -60,6 +60,7 @@ import chat_widgets as cw  # noqa: E402
 import gui_theme as theme  # noqa: E402
 from gui_theme import (  # noqa: E402
     C,
+    FONT_MONO_XS,
     FONT_CAPTION,
     FONT_MICRO,
     FONT_MONO,
@@ -84,6 +85,7 @@ from gui_theme import (  # noqa: E402
     pill_button,
     progress_bar,
     round_rect,
+    rounded_label,
     rounded_points,
     style_scrollbar,
 )
@@ -205,6 +207,45 @@ def _autostart_enabled() -> bool:
     """
     return os.environ.get("FORGE_NO_AUTOSTART", "").strip() not in (
         "1", "true", "yes", "on")
+
+
+def split_file_ref(ref: str) -> tuple[str, int | None]:
+    """把聊天里的文件引用拆成 (路径, 行号)。
+
+    支持：`forge/loop.py`、`forge/loop.py:120`、`forge/loop.py:120-140`、
+    markdown 链接 `[forge/loop.py](forge/loop.py)`（取括号里的目标）。
+    """
+    text = (ref or "").strip()
+    if text.startswith("[") and "](" in text and text.endswith(")"):
+        text = text[text.index("](") + 2:-1].strip()
+    line: int | None = None
+    head, sep, tail = text.rpartition(":")
+    if sep and head and tail:
+        first = tail.split("-", 1)[0].strip()
+        if first.isdigit():
+            text = head
+            line = int(first)
+    return text, line
+
+
+def relative_to_repo(ws, path: str) -> str | None:
+    """把路径换算成「相对工作区仓库根」的正斜杠路径；失败返回 None。"""
+    try:
+        root = None
+        summary_fn = getattr(ws, "workspace_summary", None)
+        if callable(summary_fn):
+            root = summary_fn().get("repo")
+        if not root:
+            root = str(getattr(ws, "_repo_root", "") or "")
+        if not root:
+            return None
+        candidate = Path(path)
+        if not candidate.is_absolute():
+            candidate = Path(root) / candidate
+        resolved = candidate.resolve()
+        return str(resolved.relative_to(Path(root).resolve())).replace("\\", "/")
+    except Exception:
+        return None
 
 
 def _asset_dirs() -> list[Path]:
@@ -546,6 +587,10 @@ class ForgeGuiApp:
         self.path_lbl.pack(side=tk.RIGHT)
         bot.pack_configure(before=body)
 
+        try:
+            cw.set_file_link_handler(self._open_file_ref)
+        except AttributeError:
+            pass
         self._show_view("chat")
         self._refresh_history()
         self._start_sysmon()
@@ -612,17 +657,38 @@ class ForgeGuiApp:
                 continue
             holder, btn = self._make_nav_item(nav, key, label, glyph, big=True)
             holder.pack(side=tk.LEFT, padx=(0, 6))
+        # 其余入口（Agents / 知识库 / 演化 / 文件与项目）收进「更多」菜单：
+        # 侧栏原本有一份重复的导航列表，两份并存是「重复入口」的主要来源。
+        self._more_menu = tk.Menu(self.root, tearoff=0, bg=C["surface"],
+                                  fg=C["text"], activebackground=C["accent_soft"],
+                                  activeforeground=C["accent_text"],
+                                  font=FONT_SMALL, bd=1, relief=tk.FLAT)
+        for key, label, glyph in NAV_ITEMS:
+            if key in ("chat", "task", "tools", "config"):
+                continue
+            self._more_menu.add_command(label=f"{glyph}  {label}",
+                                        command=lambda k=key: self._nav_click(k))
+        self._more_btn = pill_button(nav, "更多 ▾", self._popup_more_menu,
+                                     kind="quiet", bg=C["bg"], font=FONT_SMALL,
+                                     padx=8)
+        self._more_btn.pack(side=tk.LEFT, padx=(4, 0))
 
-        # 右侧：工作区开关 + gateway 卡 + 指标
+        # 右侧：工作区开关 + 统一状态集群
         right = tk.Frame(bar, bg=C["bg"])
         right.pack(side=tk.RIGHT, padx=(0, 14))
         self.ws_toggle_btn = pill_button(right, "▤ 工作区", self._toggle_workspace,
-                                         kind="ghost", bg=C["bg"], font=FONT_SMALL,
-                                         padx=12)
-        self.ws_toggle_btn.pack(side=tk.LEFT, padx=(0, 10))
-        self._build_gateway_card(right)
+                                         kind="quiet", bg=C["bg"], font=FONT_SMALL,
+                                         padx=10)
+        self.ws_toggle_btn.pack(side=tk.LEFT, padx=(0, 12))
+        # 运行状态（Gateway + CPU/GPU/RAM）统一收进一个弱化的集群里，
+        # 它们是全局背景信息，不该和导航抢视觉权重。
+        self._status_cluster = tk.Frame(right, bg=C["bg"], padx=10, pady=3,
+                                        highlightthickness=1,
+                                        highlightbackground=C["border"])
+        self._status_cluster.pack(side=tk.LEFT)
+        self._build_gateway_card(self._status_cluster)
         for key, text in (("cpu", "CPU"), ("gpu", "GPU"), ("ram", "RAM")):
-            self._build_metric(right, key, text)
+            self._build_metric(self._status_cluster, key, text)
         def fit_topbar(event):
             if event.width < 1360:
                 nav.pack_forget()
@@ -639,10 +705,10 @@ class ForgeGuiApp:
         row.pack(anchor=tk.W)
         tk.Label(row, text=text, bg=C["bg"], fg=C["muted"],
                  font=FONT_MICRO).pack(side=tk.LEFT)
-        value = tk.Label(row, text="—", bg=C["bg"], fg=C["body"], font=FONT_MICRO)
+        value = tk.Label(row, text="—", bg=C["bg"], fg=C["ter"], font=FONT_MICRO)
         value.pack(side=tk.LEFT, padx=(4, 0))
         self._metric_labels[key] = value
-        bar = progress_bar(box, 0, width=30, height=3)
+        bar = progress_bar(box, 0, width=22, height=2)
         bar.pack(anchor=tk.W, pady=(2, 0))
         self._metric_bars[key] = bar
 
@@ -653,35 +719,35 @@ class ForgeGuiApp:
             round_rect(canvas, 0, 0, w, h, h / 2, fill=C["border_hi"], outline="")
             if pct:
                 filled = max(2, int(w * max(0.0, min(100.0, float(pct))) / 100.0))
-                round_rect(canvas, 0, 0, filled, h, h / 2, fill=C["accent_hover"],
+                round_rect(canvas, 0, 0, filled, h, h / 2, fill=C["border_hi"],
                            outline="")
         except (tk.TclError, ValueError):
             pass
 
     def _build_gateway_card(self, parent):
-        card = tk.Frame(parent, bg=C["surface2"], padx=10, pady=4,
-                        highlightthickness=1, highlightbackground=C["border_hi"])
-        card.pack(side=tk.LEFT, padx=(0, 12))
+        # 降权：状态集群里的一小块，不再单独占一张有边框的卡
+        card = tk.Frame(parent, bg=C["bg"])
+        card.pack(side=tk.LEFT, padx=(0, 10))
         self.gw_status_var = tk.StringVar(value="● 离线")
         self.gw_status_lbl = tk.Label(card, textvariable=self.gw_status_var,
-                                      bg=C["surface2"], fg=C["muted"],
-                                      font=FONT_SMALL)
-        self.gw_status_lbl.pack(side=tk.LEFT, padx=(0, 8))
-        tk.Label(card, text="Gateway", bg=C["surface2"], fg=C["ter"],
+                                      bg=C["bg"], fg=C["muted"],
+                                      font=FONT_MICRO)
+        self.gw_status_lbl.pack(side=tk.LEFT, padx=(0, 5))
+        tk.Label(card, text="Gateway", bg=C["bg"], fg=C["muted"],
                  font=FONT_MICRO).pack(side=tk.LEFT)
         self.port_var = tk.StringVar(value=str(self.gateway_port))
         self.port_spin = tk.Spinbox(card, from_=1024, to_=65535, width=5,
-                                    textvariable=self.port_var, font=FONT_MONO_SM,
-                                    bg=C["surface2"], fg=C["body"], bd=0,
-                                    buttonbackground=C["surface2"], relief=tk.FLAT,
+                                    textvariable=self.port_var, font=FONT_MONO_XS,
+                                    bg=C["bg"], fg=C["ter"], bd=0,
+                                    buttonbackground=C["bg"], relief=tk.FLAT,
                                     insertbackground=C["accent"],
                                     highlightthickness=0, justify=tk.CENTER)
         self.port_spin.pack(side=tk.LEFT, padx=(4, 8))
         self.gw_btn = tk.Button(card, text="▶ 启动", command=self._toggle_gateway,
-                                bg=C["accent"], fg="#FFFFFF",
-                                activebackground=C["accent_hover"],
-                                activeforeground="#FFFFFF", font=FONT_MICRO,
-                                relief=tk.FLAT, bd=0, padx=10, pady=2,
+                                bg=C["bg"], fg=C["accent_text"],
+                                activebackground=C["hover"],
+                                activeforeground=C["text"], font=FONT_MICRO,
+                                relief=tk.FLAT, bd=0, padx=7, pady=1,
                                 cursor="hand2", highlightthickness=0)
         self.gw_btn.pack(side=tk.LEFT)
         # 常驻语义下主按钮=确保运行；停止放在右键菜单里
@@ -723,12 +789,7 @@ class ForgeGuiApp:
                               bg=C["sidebar"], font=FONT_UI, padx=0)
         new_btn.pack(fill=tk.X, padx=12, pady=(14, 12))
 
-        nav_host = tk.Frame(side, bg=C["sidebar"])
-        nav_host.pack(fill=tk.X, padx=6)
-        for key, label, glyph in NAV_ITEMS:
-            holder, _btn = self._make_nav_item(nav_host, key, label, glyph)
-            holder.pack(fill=tk.X, pady=1)
-
+        # 侧栏只负责「会话」：导航已经在顶部，别重复列一遍
         head = tk.Frame(side, bg=C["sidebar"])
         head.pack(fill=tk.X, padx=14, pady=(16, 6))
         tk.Label(head, text="最近对话", bg=C["sidebar"], fg=C["muted"],
@@ -1887,6 +1948,8 @@ class ForgeGuiApp:
     # ── 视图：对话 ────────────────────────────────────────
     def _build_client_tab(self, parent):
         self._thinking_mode = self._read_thinking_mode()
+        # model_var 需要早于会话头创建（模型 chip 要显示它）
+        self.model_var = tk.StringVar(value="default")
         head = tk.Frame(parent, bg=C["chat"])
         head.pack(fill=tk.X, padx=20, pady=(16, 10))
         left = tk.Frame(head, bg=C["chat"])
@@ -1899,41 +1962,38 @@ class ForgeGuiApp:
         glyph_button(title_row, "✎", self._rename_session, bg=C["chat"],
                      fg=C["ter"], size=10, tooltip="重命名对话").pack(side=tk.LEFT,
                                                                    padx=(8, 0))
-        self.chat_sub_var = tk.StringVar(
-            value="连接本机 gateway 与已配置模型对话；右侧工作区可看代码、diff 与预览。")
-        subtitle = tk.Label(parent, textvariable=self.chat_sub_var, bg=C["chat"], fg=C["ter"],
-                 font=FONT_SMALL, anchor=tk.W, justify=tk.LEFT,
+        self.chat_sub_var = tk.StringVar(value="")
+        subtitle = tk.Label(parent, textvariable=self.chat_sub_var, bg=C["chat"], fg=C["muted"],
+                 font=FONT_MICRO, anchor=tk.W, justify=tk.LEFT,
                  wraplength=520)
         subtitle.pack(fill=tk.X, padx=20, pady=(0, 8))
         subtitle.bind("<Configure>", lambda event: subtitle.configure(wraplength=max(160, event.width)))
 
+        # 会话头只保留：标题 + 当前模型 + 设置。温度等高级参数收进 ⚙ 菜单，
+        # 「新对话」的主入口在左侧栏（这里只留一个低调的 ＋）。
         right = tk.Frame(head, bg=C["chat"])
         right.pack(side=tk.RIGHT, anchor=tk.N, before=left)
-        self.clear_chat_btn = pill_button(right, "＋ 新对话", self._new_session,
-                                          kind="ghost", bg=C["chat"])
-        self.clear_chat_btn.pack(side=tk.RIGHT)
-        glyph_button(right, "⋯", self._open_commands,
-            bg=C["chat"], fg=C["ter"], size=13, tooltip="更多").pack(side=tk.RIGHT,
-                                                                     padx=(0, 4))
-        temp_box = tk.Frame(right, bg=C["chat"])
-        temp_box.pack(side=tk.RIGHT, padx=(0, 10))
         self.temp_var = tk.StringVar(value="0.7")
-        tk.Label(temp_box, text="温度", bg=C["chat"], fg=C["muted"],
-                 font=FONT_MICRO).pack(side=tk.LEFT, padx=(0, 4))
-        tk.Entry(temp_box, textvariable=self.temp_var, width=4, bg=C["surface2"],
-                 fg=C["body"], font=FONT_MONO_SM, relief=tk.FLAT, bd=0,
-                 insertbackground=C["accent"], highlightthickness=1,
-                 highlightbackground=C["border_hi"],
-                 highlightcolor=C["accent"]).pack(side=tk.LEFT, ipady=2)
+        glyph_button(right, "⚙", self._popup_session_menu, bg=C["chat"],
+                     fg=C["ter"], size=12,
+                     tooltip="会话设置（温度 / 沉思 / 上下文）").pack(side=tk.RIGHT)
+        self.clear_chat_btn = pill_button(right, "＋", self._new_session,
+                                         kind="quiet", bg=C["chat"], padx=8)
+        self.clear_chat_btn.pack(side=tk.RIGHT, padx=(0, 2))
+        self.model_chip = rounded_label(
+            right, f"▣ {self.model_var.get()}",
+            fill=C["surface2"], outline=C["border_hi"], fg=C["subtext"],
+            font=FONT_MICRO, bg=C["chat"], command=self._open_model_menu,
+            tooltip="当前模型（点击切换）")
+        self.model_chip.pack(side=tk.RIGHT, padx=(0, 8))
 
         tk.Frame(parent, bg=C["border"], height=1).pack(fill=tk.X)
 
         self.chat_area = cw.MessageArea(parent, bg=C["chat"])
         self._chat_empty = True
 
-        # 模型选择器（放进输入卡右组，保持 pill 观感）
-        self.model_var = tk.StringVar(value="default")
-        self.model_combo = None  # 由 _make_model_picker 在输入卡里建
+        # 模型选择器（在输入卡底栏里，由 _make_model_picker 建）
+        self.model_combo = None
 
         self.input_card = cw.InputCard(
             parent, bg=C["chat"],
@@ -2360,6 +2420,7 @@ class ForgeGuiApp:
                     models.append(m)
         models = ["default"] + [m for m in models if m and m != "default"]
         self.model_combo.configure(values=models)
+        self._sync_model_chip()
         if models and self.model_var.get() not in models:
             # 程序化回落不算「用户切模型」，别触发 gateway 重启
             self._suppress_model_trace = True
@@ -2628,6 +2689,15 @@ class ForgeGuiApp:
         self.path_lbl.configure(text="forge 目录已就绪")
         self._set_status(f"已记住 Forge 目录：{folder}", "ok")
 
+    def _sync_model_chip(self):
+        chip = getattr(self, "model_chip", None)
+        if chip is None:
+            return
+        try:
+            chip.set_text(f"▣ {self.model_var.get()}")
+        except Exception:
+            pass
+
     def _on_model_changed(self, *_args):
         """下拉换模型：若目标 provider 与当前 gateway 的不同，自动重启 gateway。
 
@@ -2643,6 +2713,7 @@ class ForgeGuiApp:
             return                      # 没在跑就不用管，下次启动自然用新模型
         new_label = self.model_var.get()
         current = getattr(self, "_gateway_provider", None) or {}
+        self._sync_model_chip()
         if served_model_label(current) == new_label:
             return
         target = select_provider(self.user_rows, new_label)
@@ -2832,6 +2903,96 @@ class ForgeGuiApp:
             self._push_terminal(f"[gateway] 已清理占用端口 {port} 的旧进程（PID {pid}）")
         except (OSError, subprocess.TimeoutExpired):
             pass
+
+    def _popup_more_menu(self, event=None):
+        try:
+            x = self._more_btn.winfo_rootx()
+            y = self._more_btn.winfo_rooty() + self._more_btn.winfo_height() + 2
+            self._more_menu.tk_popup(x, y)
+        finally:
+            try:
+                self._more_menu.grab_release()
+            except tk.TclError:
+                pass
+
+    def _popup_session_menu(self, event=None):
+        """会话设置：温度、沉思、上下文都在这里，别占会话头的横向空间。"""
+        menu = tk.Menu(self.root, tearoff=0, bg=C["surface"], fg=C["text"],
+                       activebackground=C["accent_soft"],
+                       activeforeground=C["accent_text"], font=FONT_SMALL,
+                       bd=1, relief=tk.FLAT)
+        temp_menu = tk.Menu(menu, tearoff=0, bg=C["surface"], fg=C["text"],
+                            activebackground=C["accent_soft"],
+                            activeforeground=C["accent_text"], font=FONT_SMALL)
+        for value in ("0.2", "0.5", "0.7", "1.0", "1.5"):
+            temp_menu.add_command(
+                label=f"{value}{'  ✓' if self.temp_var.get() == value else ''}",
+                command=lambda v=value: self._set_temperature(v))
+        menu.add_cascade(label=f"温度  ({self.temp_var.get()})", menu=temp_menu)
+        menu.add_separator()
+        for value, label, hint in THINKING_CHOICES:
+            mark = "  ✓" if self._thinking_mode == value else ""
+            menu.add_command(label=f"沉思 · {label}{mark}",
+                             command=lambda v=value: self._set_thinking_mode(v))
+        menu.add_separator()
+        menu.add_command(label="上下文 / 附件…", command=self._open_context)
+        menu.add_command(label="命令…", command=self._open_commands)
+        menu.add_command(label="打开配置", command=lambda: self._show_view("config"))
+        owner = getattr(self, "clear_chat_btn", None)
+        try:
+            if owner is not None:
+                x = owner.winfo_rootx()
+                y = owner.winfo_rooty() + owner.winfo_height() + 2
+            else:
+                x, y = self.root.winfo_pointerxy()
+            menu.tk_popup(x, y)
+        finally:
+            try:
+                menu.grab_release()
+            except tk.TclError:
+                pass
+
+    def _set_temperature(self, value: str):
+        self.temp_var.set(value)
+        self._set_status(f"温度已设为 {value}", "info")
+
+    def _open_file_ref(self, ref: str) -> bool:
+        """聊天里点到文件引用：展开工作区 → 打开该文件 → 有改动则同时显示 diff。"""
+        if not ref:
+            return False
+        ws = getattr(self, "workspace", None)
+        if ws is None:
+            self._set_status("工作区面板不可用，无法打开该文件", "warn")
+            return False
+        target, line = split_file_ref(ref)
+        self._open_workspace("file_tree")
+        opened = False
+        for call in ("reveal_file", "open_file"):
+            fn = getattr(ws, call, None)
+            if not callable(fn):
+                continue
+            try:
+                if call == "reveal_file":
+                    fn(target, line=line)
+                else:
+                    fn(target)
+                opened = True
+                break
+            except Exception:
+                continue
+        if not opened:
+            self._set_status(f"无法在工作区打开 {target}", "warn")
+            return False
+        # 有未提交改动时优先给 diff（用户点引用多半就是想看改了什么）
+        try:
+            rel = relative_to_repo(ws, target)
+            summary = ws.workspace_summary()
+            if rel and rel in set(summary.get("recent") or []):
+                ws.show_diff(rel)
+                self._set_status(f"{rel} 有未提交改动，已显示 diff", "info")
+        except Exception:
+            pass
+        return True
 
     def _popup_gw_menu(self, event):
         try:
@@ -3047,6 +3208,12 @@ class ForgeGuiApp:
         self._abort_requested = False
         self._cancel_event = threading.Event()
         cancel_event = self._cancel_event
+        # 重构后 send_var 不再绑 entry.textvariable，要分别清空。
+        try:
+            if self.input_card is not None and self.input_card.entry is not None:
+                self.input_card.entry.delete("1.0", tk.END)
+        except (tk.TclError, AttributeError):
+            pass
         self.send_var.set("")
         self._chat_empty = False
         self.chat_area.add_user(prompt)

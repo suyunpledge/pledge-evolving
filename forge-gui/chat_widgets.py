@@ -1,36 +1,46 @@
-"""对话区渲染组件（深色主题）。
+"""对话区渲染组件（深色主题，重构版：交互与视觉）。
 
-给 `forge_gui_v2.py` 的「对话」和「任务」两个视图复用：
+模块内 API 表面（forge_gui_v2.py 在用，不要改签名）：
+    MessageArea      可滚动消息列表
+        .add_user / .add_agent / .add_notice / .add_label / .clear /
+        .show_empty / .scroll(.at_bottom/.near_bottom/.scroll_to_end) /
+        ._count / .inner
+    UserMessage      右侧气泡（自适应宽度，已修历史 1px 压扁 bug）
+    AgentMessage     左侧富文本回复，支持正文+折叠 trace
+        .set_status / .stream_text / .append_stream / .render_markdown /
+        .add_steps / .add_tool_card / .add_note / .add_actions / .body
+    InputCard        底部 Composer
+        .entry / .send_var / .think_pill / .send_circle / .stop_circle /
+        .set_busy / .set_model_text / .set_thinking_text / .set_status /
+        .focus_entry / ._sync_send_state
+    模块级
+        .set_brand_avatar(image, keep_alive=None)
+        .set_file_link_handler(handler)
 
-    MessageArea      可滚动消息列表（空态、跟随滚动、追加消息）
-    UserMessage      用户消息（圆形头像 + 气泡）
-    AgentMessage     Forge 消息（圆角方头像 + 角色徽章 + 丰富正文）
-    ToolCard         「调用工具 (n)」折叠卡片（工具名 / 说明 / 耗时 / 勾）
-    StepList         编号执行步骤（编号圆圈 + 标题 + 说明 + 耗时 + 绿勾）
-    CompletionBlock  「已完成」收尾块（正文 + 特性清单 + 动作按钮）
-    InputCard        底部输入卡（占位提示 + 工具条 + 模型胶囊 + 圆形发送）
-
-正文渲染：`render_blocks()` 做轻量 Markdown（段落 / 标题 / 有序无序列表 /
-待办勾选 / 引用 / 代码块 / 行内 **加粗** 与 `代码`），全部落到 tkinter
-原生控件上，零第三方依赖。
+正文渲染：轻量 Markdown（段落 / 标题 / 有序无序列表 / 待办勾选 / 引用 /
+代码块 / 行内 **加粗** / `行内代码` / 文件路径 → 可点击链接）。代码块
+内不识别文件路径。
 """
 from __future__ import annotations
 
 import re
 import time
 import tkinter as tk
+from typing import Callable, Optional
 
 from gui_theme import (
-    C, FONT_CAPTION, FONT_MICRO, FONT_MONO, FONT_MONO_SM, FONT_SECTION,
+    C, FONT_CAPTION, FONT_MICRO, FONT_MONO, FONT_MONO_SM, FONT_MONO_XS, FONT_SECTION,
     FONT_SMALL, FONT_TITLE, FONT_UI, FONT_UI_BOLD, R_CARD, R_MD, R_PILL,
     RoundedCard, attach_tooltip, avatar, badge, circle_button, circle_button_state,
     dot, glyph_button, highlight_python, round_rect, rounded_label,
     setup_code_tags, style_scrollbar,
 )
 
-MAX_BUBBLE_WIDTH = 620
+MAX_BUBBLE_WIDTH = 620          # 长文本在此宽度换行（用户/Agent 都走这个）
+USER_AUTOSIZE_PAD_X = 14
+USER_AUTOSIZE_PAD_Y = 10
 
-# 品牌头像（由主程序在启动时注入；未注入时回退到 Indigo 圆角方 + F）
+# ─── 品牌头像（由主程序启动时注入） ─────────────────────────
 _BRAND_AVATAR = None
 _BRAND_AVATAR_KEEP = None
 
@@ -40,6 +50,31 @@ def set_brand_avatar(image, keep_alive=None):
     global _BRAND_AVATAR, _BRAND_AVATAR_KEEP
     _BRAND_AVATAR = image
     _BRAND_AVATAR_KEEP = keep_alive if keep_alive is not None else image
+
+
+# ─── 文件引用 handler（任务 D） ─────────────────────────────
+# 调用方约定：handler(path_str: str) -> bool；返回 True 表示已处理。
+_FILE_LINK_HANDLER: Optional[Callable[[str], bool]] = None
+
+
+def set_file_link_handler(handler: Optional[Callable[[str], bool]]):
+    """注册文件链接处理器。传 None 时点击静默无操作。"""
+    global _FILE_LINK_HANDLER
+    _FILE_LINK_HANDLER = handler
+
+
+# 形如 `forge/loop.py`、`forge-gui/workspace.py`、`src/lib/rate-limit.ts`
+# 可选带行号 / 行号范围；也允许被 markdown 链接 [text](path) 包裹。
+_FILE_LINK_RE = re.compile(
+    r"(?P<md>\[(?P<md_text>[^\]]+)\]\((?P<md_path>[^)\s]+)\)"  # [text](path)
+    r"|(?P<path>[A-Za-z0-9_./-]+/[A-Za-z0-9_./\-]+\.[A-Za-z0-9]+"
+    r"(?::[0-9]+(?:-[0-9]+)?)?))"
+)
+
+
+def _looks_like_markdown_or_path(token: str) -> bool:
+    """识别 token 是否像文件路径（含行号）或被 markdown 链接包裹的路径。"""
+    return bool(_FILE_LINK_RE.fullmatch(token)) or _FILE_LINK_RE.search(token)
 
 
 # ─── 可滚动区域 ────────────────────────────────────────────
@@ -71,7 +106,6 @@ class ScrollArea(tk.Frame):
         self.bind("<Enter>", self._grab_wheel)
         self.bind("<Leave>", self._release_wheel)
 
-    # -- 滚动 --
     def _on_scroll(self, first, last):
         if float(last) - float(first) >= 0.999:
             if self._bar_visible:
@@ -98,7 +132,6 @@ class ScrollArea(tk.Frame):
     def _release_wheel(self, _e=None):
         self.canvas.unbind_all("<MouseWheel>")
 
-    # -- 状态 --
     def at_bottom(self) -> bool:
         try:
             return self.canvas.yview()[1] >= 0.98
@@ -120,10 +153,10 @@ class ScrollArea(tk.Frame):
 
 
 class InlineText(tk.Text):
-    """自动高度的只读 Text：支持 **加粗** 与 `行内代码`。"""
+    """自动高度的只读 Text：支持 **加粗**、`行内代码` 与可点击文件链接。"""
 
     def __init__(self, parent, *, bg=None, fg=None, font=None, width=None,
-                 wrap=tk.WORD):
+                 wrap=tk.WORD, on_link=None):
         base = bg or C["chat"]
         super().__init__(parent, wrap=wrap, bg=base, fg=fg or C["body"],
                          font=font or FONT_UI, relief=tk.FLAT, bd=0,
@@ -134,13 +167,24 @@ class InlineText(tk.Text):
         self.tag_configure("code", font=FONT_MONO_SM, background=C["code_bg"],
                            foreground=C["code_str"])
         self.tag_configure("muted", foreground=C["subtext"])
+        self.tag_configure("file_link", foreground=C["accent2"],
+                           underline=True, font=font or FONT_UI)
         self._base_bg = base
+        self._on_link = on_link
         if width:
             self.configure(width=width)
         self.bind("<Configure>", self._fit_height)
+        self.bind("<Motion>", self._motion)
+        self.bind("<Leave>", lambda _e: self.configure(cursor="arrow"))
+        self.bind("<Button-1>", self._click)
         self.configure(state=tk.DISABLED)
         self._last_h = 1
+        self.tag_bind("file_link", "<Enter>",
+                      lambda _e: self.configure(cursor="hand2"))
+        self.tag_bind("file_link", "<Leave>",
+                      lambda _e: self.configure(cursor="arrow"))
 
+    # -- 高度自适应 --
     def _fit_height(self, _event=None):
         self.after_idle(self._recompute)
 
@@ -160,11 +204,23 @@ class InlineText(tk.Text):
             pass
 
     def set_segments(self, segs):
-        """segs: [(text, tag|None), ...]"""
+        """segs 是 (text, tag|None|iterable) 列表，自动识别文件链接。"""
         self.configure(state=tk.NORMAL)
         self.delete("1.0", tk.END)
         for text, tag in segs:
-            self.insert(tk.END, text, tag or ())
+            if not text:
+                continue
+            extra_tag = ("file_link",) if tag is None else (
+                tag + ("file_link",) if isinstance(tag, tuple)
+                else (tag, "file_link")
+            )
+            ordered = _split_text_into_plain_and_links(text)
+            for piece, is_link in ordered:
+                chosen_tag = extra_tag if is_link else (
+                    tuple(t for t in (extra_tag if isinstance(extra_tag, tuple) else (extra_tag,))
+                          if t != "file_link")
+                )
+                self.insert(tk.END, piece, chosen_tag)
         self.configure(state=tk.DISABLED)
         self._last_h = -1
         self.after_idle(self._recompute)
@@ -174,10 +230,87 @@ class InlineText(tk.Text):
 
     def append_text(self, text, tag=None):
         self.configure(state=tk.NORMAL)
-        self.insert(tk.END, text, tag or ())
+        if not text:
+            pass
+        else:
+            extra_tag = ("file_link",) if tag is None else (
+                tag + ("file_link",) if isinstance(tag, tuple)
+                else (tag, "file_link")
+            )
+            ordered = _split_text_into_plain_and_links(text)
+            for piece, is_link in ordered:
+                chosen_tag = extra_tag if is_link else (
+                    tuple(t for t in (extra_tag if isinstance(extra_tag, tuple) else (extra_tag,))
+                          if t != "file_link")
+                )
+                self.insert(tk.END, piece, chosen_tag)
         self.configure(state=tk.DISABLED)
         self._last_h = -1
         self.after_idle(self._recompute)
+
+    # -- 链接交互 --
+    def _motion(self, event):
+        try:
+            idx = self.index(f"@{event.x},{event.y}")
+            for tag in self.tag_names(idx):
+                if tag == "file_link":
+                    self.configure(cursor="hand2")
+                    return
+        except tk.TclError:
+            pass
+        self.configure(cursor="arrow")
+
+    def _click(self, event):
+        try:
+            idx = self.index(f"@{event.x},{event.y}")
+        except tk.TclError:
+            return
+        for tag in self.tag_names(idx):
+            if tag == "file_link":
+                # 走到 file_link 区间起点以拿到完整 token
+                start = self.index(f"{idx} wordstart")
+                end = self.index(f"{idx} wordend")
+                token = self.get(start, end).strip()
+                if self._on_link:
+                    self._on_link(token)
+                else:
+                    _dispatch_file_link(token)
+                return "break"
+        return None
+
+
+def _split_text_into_plain_and_links(text: str):
+    """把文本切成 (片段, 是否链接) 段。在 markdown 链接场合只用 md_path。"""
+    segs = []
+    i = 0
+    for m in _FILE_LINK_RE.finditer(text):
+        s, e = m.span()
+        if s > i:
+            segs.append((text[i:s], False))
+        if m.group("md_path"):
+            # [text](path)：用 path 作为可点击区域；显示原文可保留 md 文本
+            segs.append((m.group("md"), True))
+        else:
+            segs.append((m.group("path"), True))
+        i = e
+    if i < len(text):
+        segs.append((text[i:], False))
+    return segs or [(text, False)]
+
+
+def _dispatch_file_link(token: str):
+    if _FILE_LINK_HANDLER is None:
+        return
+    path = token
+    # 处理 markdown 包裹 [text](path) 时取括号内路径
+    md = _FILE_LINK_RE.fullmatch(token)
+    if md and md.group("md_path"):
+        path = md.group("md_path")
+    try:
+        _FILE_LINK_HANDLER(path)
+    except Exception:
+        # handler 自己负责容错，这里吞掉避免破坏渲染链
+        pass
 
 
 _INLINE_RE = re.compile(r"(\*\*[^*]+\*\*|`[^`]+`)")
@@ -206,7 +339,7 @@ _QUOTE_RE = re.compile(r"^\s*>\s?(.*)$")
 
 
 def parse_blocks(text: str):
-    """轻量 Markdown → 块列表（不追求完整语法，够读就行）。"""
+    """轻量 Markdown → 块列表。"""
     blocks = []
     lines = (text or "").split("\n")
     i = 0
@@ -331,6 +464,7 @@ def render_blocks(parent, text, *, bg=None, max_width=None,
             t.set_segments(inline_segments(block["text"]))
             t.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 0))
         elif kind == "code":
+            # 代码块不识别文件链接：用不签名 InlineText 的 _on_link 的 Text 直接渲染。
             card = RoundedCard(host, radius=R_MD, fill=C["code_bg"],
                                outline=C["border_hi"], padx=10, pady=8, bg=base)
             card.pack(fill=tk.X, pady=6)
@@ -339,34 +473,176 @@ def render_blocks(parent, text, *, bg=None, max_width=None,
                          highlightthickness=0, wrap=tk.NONE, height=1)
             tx.insert("1.0", block["text"])
             setup_code_tags(tx, font=FONT_MONO_SM)
-            if (block.get("lang") or "") in ("", "py", "python") or (block.get("lang") or "").startswith("py"):
+            lang = block.get("lang") or ""
+            if lang in ("", "py", "python") or lang.startswith("py"):
                 try:
                     highlight_python(tx)
                 except Exception:
                     pass
-            lines = max(1, len(block["text"].split("\n")))
-            tx.configure(height=min(lines, 24), state=tk.DISABLED)
+            line_count = max(1, len(block["text"].split("\n")))
+            tx.configure(height=min(line_count, 24), state=tk.DISABLED)
             tx.pack(fill=tk.X)
         elif kind == "hr":
             tk.Frame(host, bg=C["border"], height=1).pack(fill=tk.X, pady=6)
     return host
 
 
-# ─── 消息块 ────────────────────────────────────────────────
+# ─── 消息块（折叠版） ──────────────────────────────────────
+
+
+def _auto_wrap(text: str, seg_list) -> str:
+    """根据 seg_list[(label, unit_seconds)] 拼出 'N 个工具 · Xs'。"""
+    n = len(seg_list)
+    if n == 0:
+        return "0 个工具"
+    parts = [f"{n} 个工具"]
+    seconds = 0.0
+    for _, unit in seg_list:
+        if isinstance(unit, (int, float)):
+            seconds += float(unit)
+    if seconds > 0:
+        # 1.2s / 0.45s / 12s
+        if seconds >= 10:
+            parts.append(f"{seconds:.0f}s")
+        else:
+            parts.append(f"{seconds:.1f}s")
+    return " · ".join(parts)
+
+
+def _guess_seconds_from_row(row: dict) -> float:
+    """从 ToolCard/StepList 行 dict 推断秒数（数字 elapsed）。"""
+    e = row.get("elapsed_s")
+    if isinstance(e, (int, float)):
+        return float(e)
+    e = row.get("elapsed")
+    if isinstance(e, (int, float)):
+        return float(e)
+    # 字符串格式暂不解析（如 '2.4s' / '#1'）——保守不计入总秒数
+    return 0.0
+
+
+class ToolCard(tk.Frame):
+    """「调用工具 (n)」折叠卡片：默认折叠，点摘要展开明细。"""
+
+    def __init__(self, parent, *, title="调用工具", rows=None, bg=None,
+                 expanded=False):
+        base = bg or C["chat"]
+        super().__init__(parent, bg=base)
+        self._expanded = bool(expanded)
+        self._title_text = title
+
+        # 摘要行（永远可见，最弱视觉）
+        self._summary = tk.Frame(self, bg=base, cursor="hand2")
+        self._summary.pack(fill=tk.X, pady=(8, 2))
+        self._summary.bind("<Button-1>", lambda _e: self.toggle())
+        self._arrow = tk.Label(self._summary, text="▸", bg=base, fg=C["ter"],
+                               font=FONT_MONO_SM, cursor="hand2")
+        self._arrow.pack(side=tk.LEFT, padx=(0, 6))
+        self._arrow.bind("<Button-1>", lambda _e: self.toggle())
+        self._summary_label = tk.Label(self._summary, text="", bg=base,
+                                       fg=C["muted"], font=FONT_CAPTION,
+                                       cursor="hand2", anchor="w")
+        self._summary_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self._summary_label.bind("<Button-1>", lambda _e: self.toggle())
+
+        # 明细容器（按需显示）
+        card = RoundedCard(self, radius=R_CARD, fill=C["surface2"],
+                           outline=C["border_hi"], padx=10, pady=8, bg=base)
+        self._card = card
+        self._card_host = card  # alias
+        self.rows_frame = tk.Frame(card.content, bg=C["surface2"])
+        self.rows_frame.pack(fill=tk.X)
+        self._row_specs: list[tuple[str, float]] = []
+        rows = rows or []
+        for row in rows:
+            self.add_row(row)
+
+        if self._expanded:
+            card.pack(fill=tk.X, pady=(2, 4))
+        # 计算摘要文字
+        self._refresh_summary()
+
+    # -- 摘要 --
+    def _refresh_summary(self):
+        n = len(self._row_specs)
+        secs = sum(s for _, s in self._row_specs)
+        text = f"使用了 {n} 个工具"
+        if secs > 0:
+            if secs >= 10:
+                text += f" · {secs:.0f}s"
+            else:
+                text += f" · {secs:.1f}s"
+        self._summary_label.configure(text=text)
+
+    # -- 折叠 --
+    def toggle(self):
+        self._expanded = not self._expanded
+        self._arrow.configure(text="▾" if self._expanded else "▸")
+        if self._expanded:
+            self._card.pack(fill=tk.X, pady=(2, 4))
+        else:
+            self._card.pack_forget()
+
+    def add_row(self, row: dict):
+        bgc = C["surface2"]
+        wrap = tk.Frame(self.rows_frame, bg=bgc)
+        wrap.pack(fill=tk.X, pady=1)
+        ok = row.get("ok", True)
+        tk.Label(wrap, text="✓" if ok else "✕", bg=bgc,
+                 fg=C["ok"] if ok else C["error"],
+                 font=FONT_SMALL, width=2).pack(side=tk.LEFT)
+        tk.Label(wrap, text=row.get("name", ""), bg=bgc, fg=C["accent2"],
+                 font=FONT_MONO_SM).pack(side=tk.LEFT)
+        desc = row.get("desc")
+        if desc:
+            tk.Label(wrap, text=desc, bg=bgc, fg=C["ter"], font=FONT_SMALL,
+                     anchor="w", justify=tk.LEFT).pack(side=tk.LEFT, padx=(10, 6))
+        if row.get("elapsed"):
+            tk.Label(wrap, text=str(row["elapsed"]), bg=bgc, fg=C["muted"],
+                     font=FONT_MONO_SM).pack(side=tk.RIGHT)
+        if row.get("detail"):
+            attach_tooltip(wrap, row["detail"])
+            for child in wrap.winfo_children():
+                attach_tooltip(child, row["detail"])
+        # 记录 (label, seconds) 以便摘要显示耗时
+        self._row_specs.append((row.get("name", ""), _guess_seconds_from_row(row)))
 
 
 class StepList(tk.Frame):
-    """编号执行步骤（参考稿「1 分析现有 GUI 结构 / 2m 14s ✓」）。"""
+    """执行步骤列表（默认折叠，摘要行显示总数）。"""
 
-    def __init__(self, parent, items, *, bg=None):
+    def __init__(self, parent, items, *, bg=None, expanded=False):
         base = bg or C["chat"]
         super().__init__(parent, bg=base)
-        for item in items:
-            self.add(item)
+        self._expanded = bool(expanded)
+        self._items = items or []
 
-    def add(self, item: dict):
+        # 摘要行
+        self._summary = tk.Frame(self, bg=base, cursor="hand2")
+        self._summary.pack(fill=tk.X, pady=(6, 2))
+        self._summary.bind("<Button-1>", lambda _e: self.toggle())
+        self._arrow = tk.Label(self._summary, text="▸", bg=base, fg=C["ter"],
+                               font=FONT_MONO_SM, cursor="hand2")
+        self._arrow.pack(side=tk.LEFT, padx=(0, 6))
+        self._arrow.bind("<Button-1>", lambda _e: self.toggle())
+        n = len(self._items)
+        self._summary_label = tk.Label(self._summary,
+                                       text=f"执行步骤 {n} 步",
+                                       bg=base, fg=C["muted"], font=FONT_CAPTION,
+                                       cursor="hand2", anchor="w")
+        self._summary_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self._summary_label.bind("<Button-1>", lambda _e: self.toggle())
+
+        # 明细容器
+        self._detail = tk.Frame(self, bg=base)
+        if self._expanded:
+            self._detail.pack(fill=tk.X, pady=(2, 0))
+        for item in self._items:
+            self._add_detail_row(item)
+
+    def _add_detail_row(self, item: dict):
         base = self["bg"]
-        row = tk.Frame(self, bg=base)
+        row = tk.Frame(self._detail, bg=base)
         row.pack(fill=tk.X, pady=3)
         idx = tk.Canvas(row, width=18, height=18, bg=base, highlightthickness=0, bd=0)
         idx.create_oval(0, 0, 17, 17, fill=C["sel"], outline=C["sel_border"])
@@ -384,7 +660,7 @@ class StepList(tk.Frame):
         right = tk.Frame(row, bg=base)
         right.pack(side=tk.RIGHT, anchor="n")
         if item.get("elapsed"):
-            tk.Label(right, text=item["elapsed"], bg=base, fg=C["muted"],
+            tk.Label(right, text=str(item["elapsed"]), bg=base, fg=C["muted"],
                      font=FONT_MONO_SM).pack(side=tk.LEFT, padx=(0, 8))
         if item.get("done", True):
             chk = tk.Canvas(right, width=14, height=14, bg=base,
@@ -393,69 +669,17 @@ class StepList(tk.Frame):
             chk.create_text(7, 7, text="✓", fill="#0B0B10", font=FONT_MICRO)
             chk.pack(side=tk.LEFT)
 
-
-class ToolCard(tk.Frame):
-    """「调用工具 (n)」折叠卡片。"""
-
-    def __init__(self, parent, *, title="调用工具", rows=None, bg=None, expanded=True):
-        base = bg or C["chat"]
-        super().__init__(parent, bg=base)
-        self._expanded = expanded
-        self._title_text = title
-        head = tk.Frame(self, bg=base)
-        head.pack(fill=tk.X, pady=(6, 2))
-        self._arrow = tk.Label(head, text="⌃" if expanded else "⌄", bg=base,
-                               fg=C["ter"], font=FONT_SMALL, cursor="hand2")
-        self._arrow.pack(side=tk.LEFT, padx=(0, 6))
-        self._title = tk.Label(head, text=f"{title} ({len(rows or [])})", bg=base,
-                               fg=C["text"], font=FONT_UI_BOLD)
-        self._title.pack(side=tk.LEFT)
-        for w in (self._arrow, self._title, head):
-            w.bind("<Button-1>", lambda _e: self.toggle())
-        card = RoundedCard(self, radius=R_CARD, fill=C["surface2"],
-                           outline=C["border_hi"], padx=10, pady=8, bg=base)
-        card.pack(fill=tk.X, pady=(2, 4))
-        self._card = card
-        self.rows = tk.Frame(card.content, bg=C["surface2"])
-        self.rows.pack(fill=tk.X)
-        for row in rows or []:
-            self.add_row(row)
-        if not expanded:
-            self._card.pack_forget()
-
     def toggle(self):
         self._expanded = not self._expanded
-        self._arrow.configure(text="⌃" if self._expanded else "⌄")
+        self._arrow.configure(text="▾" if self._expanded else "▸")
         if self._expanded:
-            self._card.pack(fill=tk.X, pady=(2, 4))
+            self._detail.pack(fill=tk.X, pady=(2, 0))
         else:
-            self._card.pack_forget()
-
-    def add_row(self, row: dict):
-        bgc = C["surface2"]
-        wrap = tk.Frame(self.rows, bg=bgc)
-        wrap.pack(fill=tk.X, pady=1)
-        tk.Label(wrap, text="✓" if row.get("ok", True) else "✕", bg=bgc,
-                 fg=C["ok"] if row.get("ok", True) else C["error"],
-                 font=FONT_SMALL, width=2).pack(side=tk.LEFT)
-        tk.Label(wrap, text=row.get("name", ""), bg=bgc, fg=C["accent2"],
-                 font=FONT_MONO_SM).pack(side=tk.LEFT)
-        desc = row.get("desc")
-        if desc:
-            tk.Label(wrap, text=desc, bg=bgc, fg=C["ter"], font=FONT_SMALL,
-                     anchor="w", justify=tk.LEFT).pack(side=tk.LEFT, padx=(10, 6))
-        if row.get("elapsed"):
-            tk.Label(wrap, text=row["elapsed"], bg=bgc, fg=C["muted"],
-                     font=FONT_MONO_SM).pack(side=tk.RIGHT)
-        if row.get("detail"):
-            attach_tooltip(wrap, row["detail"])
-            for child in wrap.winfo_children():
-                attach_tooltip(child, row["detail"])
-        self._title.configure(text=f"{self._title_text} ({len(self.rows.winfo_children())})")
+            self._detail.pack_forget()
 
 
 class ActionRow(tk.Frame):
-    """消息底部动作按钮组（查看修改的文件 / 打开工作区 / 预览效果 …）。"""
+    """消息底部动作按钮组。"""
 
     def __init__(self, parent, actions, *, bg=None):
         base = bg or C["chat"]
@@ -474,32 +698,55 @@ class ActionRow(tk.Frame):
             btn.pack(side=tk.LEFT, padx=(0, 8))
 
 
-# ─── 消息 ──────────────────────────────────────────────────
+# ─── 消息：用户与 Agent ────────────────────────────────────
 
 
 class UserMessage(tk.Frame):
+    """右侧气泡用户消息（已修复 1px 压扁 bug：autosize_width=True）。
+
+    整行容器 fill=tk.X；气泡用 anchor="e" 靠右；头像+名+时间是同一行。
+    """
+
     def __init__(self, parent, text, *, bg=None, ts=None, name="你"):
         base = bg or C["chat"]
         super().__init__(parent, bg=base)
+
+        # head 行：名字 + 时间 靠右（以便头像与气泡视觉对齐）
         head = tk.Frame(self, bg=base)
         head.pack(fill=tk.X)
-        avatar(head, size=28, glyph="你", fill="#2A2A38", shape="circle",
-               bg=base).pack(side=tk.LEFT, padx=(0, 8))
-        tk.Label(head, text=name, bg=base, fg=C["text"], font=FONT_UI_BOLD).pack(side=tk.LEFT)
+        # 名字靠右
         tk.Label(head, text=ts or time.strftime("%H:%M"), bg=base, fg=C["muted"],
-                 font=FONT_CAPTION).pack(side=tk.LEFT, padx=(8, 0))
+                 font=FONT_CAPTION).pack(side=tk.RIGHT, padx=(8, 0))
+        tk.Label(head, text=name, bg=base, fg=C["subtext"], font=FONT_CAPTION,
+                 anchor="e").pack(side=tk.RIGHT)
+        # 占位 spacer（左）与头像，用来把气泡挤到右侧
+        spacer = tk.Frame(head, bg=base)
+        spacer.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        spacer_l = tk.Frame(spacer, bg=base)
+        spacer_l.pack(side=tk.RIGHT)
+        av = avatar(spacer_l, size=26, glyph="你", fill="#2A2A38", shape="circle",
+                    bg=base)
+        av.pack(side=tk.RIGHT, padx=(8, 0))
 
-        card = RoundedCard(self, radius=R_CARD, fill=C["surface"],
-                           outline=C["border_hi"], padx=14, pady=10, bg=base)
-        card.pack(anchor="w", pady=(6, 0))
-        label = tk.Label(card.content, text=text, bg=C["surface"], fg=C["body"],
-                         font=FONT_UI, justify=tk.LEFT, anchor="w",
-                         wraplength=MAX_BUBBLE_WIDTH - 40)
-        label.pack(fill=tk.X)
+        # 气泡（autosize_width=True 修历史 bug）
+        bubble_host = tk.Frame(self, bg=base)
+        bubble_host.pack(fill=tk.X, anchor="e", pady=(4, 0))
+        card = RoundedCard(bubble_host, radius=R_CARD, fill=C["msg_user_bg"],
+                           outline=C["border_hi"],
+                           padx=USER_AUTOSIZE_PAD_X, pady=USER_AUTOSIZE_PAD_Y,
+                           bg=base, autosize_width=True)
+        card.pack(anchor="e")
+        self._card = card
+        # 文字 label：撑开气泡。wraplength 设上限，让长文本真的换行
+        max_text = MAX_BUBBLE_WIDTH - USER_AUTOSIZE_PAD_X * 2 - 16
+        self.label = tk.Label(card.content, text=text, bg=C["msg_user_bg"],
+                              fg=C["body"], font=FONT_UI, justify=tk.LEFT,
+                              anchor="w", wraplength=max_text)
+        self.label.pack(anchor="w")
 
 
 class AgentMessage(tk.Frame):
-    """Forge 的回复：头像 + 名字 + 角色徽章 + 正文（可流式） + 富块。"""
+    """Forge 的回复：头像 + 名字 + 角色徽章 + 正文 + trace（可折叠）。"""
 
     def __init__(self, parent, *, bg=None, name="Forge", role=None, ts=None,
                  glyph="F", subtitle=None):
@@ -507,9 +754,11 @@ class AgentMessage(tk.Frame):
         super().__init__(parent, bg=base)
         self._bg = base
         self._max_width = MAX_BUBBLE_WIDTH
+
+        # head 行：avatar + 名字 + 时间(降权) + 角色徽章 + 状态（右对齐）
         head = tk.Frame(self, bg=base)
         head.pack(fill=tk.X)
-        avatar(head, size=30, glyph=glyph, fill=C["accent"], shape="rounded",
+        avatar(head, size=28, glyph=glyph, fill=C["accent"], shape="rounded",
                bg=base, image=_BRAND_AVATAR).pack(side=tk.LEFT, padx=(0, 8))
         tk.Label(head, text=name, bg=base, fg=C["text"], font=FONT_UI_BOLD).pack(side=tk.LEFT)
         tk.Label(head, text=ts or time.strftime("%H:%M"), bg=base, fg=C["muted"],
@@ -518,32 +767,34 @@ class AgentMessage(tk.Frame):
         if role:
             self._role_badge = badge(head, f"⚡ {role}", tone="accent_soft", bg=base)
             self._role_badge.pack(side=tk.LEFT, padx=(8, 0))
-        self._status = tk.Label(head, text="", bg=base, fg=C["ter"], font=FONT_SMALL)
+        self._status = tk.Label(head, text="", bg=base, fg=C["muted"], font=FONT_CAPTION)
         self._status.pack(side=tk.RIGHT)
+
         self.subtitle = None
         if subtitle:
             self.subtitle = tk.Label(self, text=subtitle, bg=base, fg=C["ter"],
                                      font=FONT_SMALL, anchor="w", justify=tk.LEFT,
                                      wraplength=MAX_BUBBLE_WIDTH)
             self.subtitle.pack(fill=tk.X, pady=(4, 0))
+
+        # 正文（最高视觉优先级）
         self.body = tk.Frame(self, bg=base)
         self.body.pack(fill=tk.X, pady=(6, 0))
         self._stream = None
 
-    # -- 状态行 --
     def set_status(self, text: str):
-        self._status.configure(text=text)
+        self._status.configure(text=text or "")
 
-    def set_role(self, role: str | None):
+    def set_role(self, role):
         if role and self._role_badge is None:
-            self._role_badge = badge(self.body.master, f"⚡ {role}", tone="accent_soft",
-                                     bg=self._bg)
+            self._role_badge = badge(self.body.master, f"⚡ {role}",
+                                     tone="accent_soft", bg=self._bg)
             self._role_badge.pack(side=tk.LEFT, padx=(8, 0))
         elif self._role_badge is not None and not role:
             self._role_badge.destroy()
             self._role_badge = None
 
-    # -- 正文 --
+    # -- 正文（流式 & markdown）--
     def stream_text(self, text: str):
         if self._stream is None:
             self._stream = InlineText(self.body, bg=self._bg)
@@ -557,11 +808,35 @@ class AgentMessage(tk.Frame):
         self._stream.append_text(piece)
 
     def render_markdown(self, text: str):
+        # 注释要求：「如果 AgentMessage 里既渲染正文又渲染工具/步骤，确保正文始终在最上、
+        # trace 折叠块在正文下方，且有轻微分组」。
+        # 我们每次 render_markdown：若已有 trace，加细分割线，重新顺序正文/trace。
         if self._stream is not None:
             self._stream.destroy()
             self._stream = None
         host = render_blocks(self.body, text, bg=self._bg)
-        host.pack(fill=tk.X)
+        host.pack(fill=tk.X, in_=self.body, side=tk.TOP)
+        # 已有 trace？保持顺序：Body 段在最上 → 分割线 → 现有 trace 块
+        self._reorder_body_with_trace()
+
+    def _reorder_body_with_trace(self):
+        """如有 trace 容器，重新排布：正文 block(s) → 分割线 → trace。"""
+        if not getattr(self, "_trace_container", None):
+            return
+        if not self._trace_container.winfo_exists():
+            return
+        # 把分割线（如果还没有）插在最后正文段和 trace 之间
+        if not getattr(self, "_trace_divider", None) or not self._trace_divider.winfo_exists():
+            self._trace_divider = tk.Frame(self.body, bg=C["border"], height=1)
+        # 让所有 w 在 body 里按当前 pack 顺序重新插入
+        # tk 没有公开 reorder API；这里简化为「再次 pack_forget + pack」按目标顺序
+        # 但因为正文 host 由 render_blocks 创建，我们只在「正文在 trace 上方」已经成立时再保证。
+        # —— 默认情况正文先 render、trace 后 add，pack 顺序天然正确；
+        # 这里补一个分割线 ID + 在 trace 顶部 pack
+        try:
+            self._trace_divider.pack(fill=tk.X, pady=(8, 4), before=self._trace_container)
+        except tk.TclError:
+            self._trace_divider.pack(fill=tk.X, pady=(8, 4))
 
     def add_widget(self, factory):
         widget = factory(self.body)
@@ -569,29 +844,63 @@ class AgentMessage(tk.Frame):
         return widget
 
     def add_steps(self, items, *, title="执行步骤"):
+        # 若有 title，先放一个微弱的小标题
+        host_frame = self._ensure_trace_host()
         if title:
-            tk.Label(self.body, text=title, bg=self._bg, fg=C["text"],
-                     font=FONT_UI_BOLD, anchor="w").pack(fill=tk.X, pady=(8, 2))
-        steps = StepList(self.body, items, bg=self._bg)
+            head_row = tk.Frame(host_frame, bg=self._bg)
+            head_row.pack(fill=tk.X, pady=(6, 2))
+            tk.Label(head_row, text=title, bg=self._bg, fg=C["muted"],
+                     font=FONT_CAPTION, anchor="w").pack(side=tk.LEFT)
+        steps = StepList(host_frame, items, bg=self._bg, expanded=False)
         steps.pack(fill=tk.X)
+        self._trace_container = host_frame
+        self._reorder_body_with_trace()
         return steps
 
-    def add_tool_card(self, rows, *, title="调用工具", expanded=True):
-        card = ToolCard(self.body, title=title, rows=rows, bg=self._bg,
-                        expanded=expanded)
+    def add_tool_card(self, rows, *, title="调用工具", expanded=False):
+        host_frame = self._ensure_trace_host()
+        if title:
+            head_row = tk.Frame(host_frame, bg=self._bg)
+            head_row.pack(fill=tk.X, pady=(6, 2))
+            tk.Label(head_row, text=title, bg=self._bg, fg=C["muted"],
+                     font=FONT_CAPTION, anchor="w").pack(side=tk.LEFT)
+        card = ToolCard(host_frame, title=title, rows=rows, bg=self._bg,
+                        expanded=bool(expanded))
         card.pack(fill=tk.X)
+        self._trace_container = host_frame
+        self._reorder_body_with_trace()
         return card
 
+    def _ensure_trace_host(self):
+        """第一次 add_steps/add_tool_card 时创建 trace 容器。"""
+        host = getattr(self, "_trace_host", None)
+        if host is None or not host.winfo_exists():
+            host = tk.Frame(self.body, bg=self._bg)
+            host.pack(fill=tk.X)
+            self._trace_host = host
+        return host
+
     def add_note(self, text: str, *, tone="muted"):
-        colors = {"muted": C["ter"], "ok": C["ok"], "error": C["error"],
-                  "warn": C["warn"]}
-        tk.Label(self.body, text=text, bg=self._bg, fg=colors.get(tone, C["ter"]),
-                 font=FONT_SMALL, anchor="w", justify=tk.LEFT,
+        # add_note 不属于正文/trace，更接近「提示」：降权 + 小字 + 紧贴 trace 之后
+        host_frame = getattr(self, "_trace_host", None)
+        if host_frame is None or not host_frame.winfo_exists():
+            host_frame = self._ensure_trace_host()
+        colors = {"muted": C["muted"], "ok": C["ok"], "error": C["error"],
+                  "warn": C["warn"], "info": C["info"]}
+        tk.Label(host_frame, text=text, bg=self._bg,
+                 fg=colors.get(tone, C["muted"]),
+                 font=FONT_CAPTION, anchor="w", justify=tk.LEFT,
                  wraplength=self._max_width).pack(fill=tk.X, pady=(4, 0))
 
     def add_actions(self, actions):
-        row = ActionRow(self.body, actions, bg=self._bg)
-        row.pack(fill=tk.X, pady=(8, 0))
+        # 动作按钮单独一个 host，靠底部（不被 trace 折叠吸收）
+        if not hasattr(self, "_action_row_packed"):
+            self._action_row_packed = False
+        host = tk.Frame(self, bg=self._bg)
+        host.pack(fill=tk.X, pady=(8, 0))
+        row = ActionRow(host, actions, bg=self._bg)
+        row.pack(fill=tk.X)
+        self._action_row_packed = True
         return row
 
 
@@ -629,7 +938,6 @@ class MessageArea(tk.Frame):
         self._count = 0
         self.show_empty()
 
-    # -- 空态 --
     def show_empty(self, title="开始新对话",
                    lines=("右上启动 gateway，选好模型后在下方输入消息",
                           "可添加文本附件；执行工具请使用「任务」")):
@@ -652,9 +960,7 @@ class MessageArea(tk.Frame):
     def empty(self) -> bool:
         return self._count == 0
 
-    # -- 追加 --
     def _prepare(self):
-        """（保留钩子）子类/调用方可扩展。"""
         if self._empty is not None:
             self._empty.destroy()
             self._empty = None
@@ -666,30 +972,25 @@ class MessageArea(tk.Frame):
 
     def add_user(self, text, *, ts=None):
         following = self.scroll.at_bottom()
-        if self._empty is not None:
-            self._empty.destroy()
-            self._empty = None
+        self._prepare()
         msg = UserMessage(self.scroll.inner, text, bg=self._bg, ts=ts)
-        msg.pack(fill=tk.X, pady=(10, 0), anchor="e")
+        msg.pack(fill=tk.X, pady=(10, 0))
         self._finish(following)
         return msg
 
-    def add_agent(self, *, role=None, ts=None, name="Forge", glyph="F", subtitle=None):
+    def add_agent(self, *, role=None, ts=None, name="Forge", glyph="F",
+                  subtitle=None):
         following = self.scroll.at_bottom()
-        if self._empty is not None:
-            self._empty.destroy()
-            self._empty = None
+        self._prepare()
         msg = AgentMessage(self.scroll.inner, bg=self._bg, name=name, role=role,
                            ts=ts, glyph=glyph, subtitle=subtitle)
-        msg.pack(fill=tk.X, pady=(16, 0), anchor="w")
+        msg.pack(fill=tk.X, pady=(16, 0))
         self._finish(following)
         return msg
 
     def add_notice(self, text, *, tone="error", title=None):
         following = self.scroll.at_bottom()
-        if self._empty is not None:
-            self._empty.destroy()
-            self._empty = None
+        self._prepare()
         msg = NoticeMessage(self.scroll.inner, text, bg=self._bg, tone=tone,
                             title=title)
         msg.pack(fill=tk.X, pady=(12, 0))
@@ -706,23 +1007,25 @@ class MessageArea(tk.Frame):
         return lbl
 
 
-# ─── 输入卡 ────────────────────────────────────────────────
+# ─── 输入卡（Composer） ────────────────────────────────────
 
 
 class InputCard(tk.Frame):
-    """底部输入卡（参考稿 5.4：占位提示 + 工具条 + 模型胶囊 + 圆形发送）。"""
+    """底部 Composer：左 + 号 → 主输入区 → 次级小按钮 → 底栏：模型 / 沉思 / ⚙ / 发送。"""
 
     def __init__(self, parent, *, bg=None, placeholder="输入消息，或输入 / 使用命令...",
                  on_send=None, on_stop=None, on_paste=None, on_model=None,
                  models=None, model_var=None, thinking_text="◎ 沉思 · 关闭",
                  on_thinking=None, footer_left=None, footer_right=None,
                  attach_button=True, model_widget=None,
-                 on_attach=None, on_context=None, on_commands=None):
+                 on_attach=None, on_context=None, on_commands=None,
+                 on_settings=None):
         base = bg or C["chat"]
         super().__init__(parent, bg=base)
         self._on_send = on_send
         self._on_stop = on_stop
         self._thinking_text = thinking_text
+        self._on_settings = on_settings
         self.send_var = tk.StringVar()
 
         card = RoundedCard(self, radius=R_CARD, fill=C["input_bg"],
@@ -730,8 +1033,36 @@ class InputCard(tk.Frame):
         card.pack(fill=tk.X)
         inner = card.content
 
-        entry_host = tk.Frame(inner, bg=C["input_bg"])
-        entry_host.pack(fill=tk.X)
+        # ─── 顶行：＋ 加号 + 次级小按钮（左） + 主输入区（中） ─────────────
+        top_row = tk.Frame(inner, bg=C["input_bg"])
+        top_row.pack(fill=tk.X)
+
+        left_bar = tk.Frame(top_row, bg=C["input_bg"])
+        left_bar.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 8))
+
+        # ＋ 按钮（on_attach 优先；缺省回落到 on_paste，保持旧行为）
+        plus_cb = on_attach if on_attach is not None else (on_paste or (lambda: None))
+        self.plus = circle_button(left_bar, "＋", plus_cb, size=28,
+                                  kind="muted", bg=C["input_bg"], glyph_size=11,
+                                  tooltip="附件 / 剪贴板")
+        self.plus.pack(side=tk.TOP, pady=(2, 6))
+        # 次级小按钮：上下文、命令（弱化，小字）
+        if attach_button:
+            sec_row = tk.Frame(left_bar, bg=C["input_bg"])
+            sec_row.pack(side=tk.TOP, anchor="w")
+            for text, tip, callback in (
+                    ("上下文", "查看历史与附件，检查本轮实际发送内容", on_context),
+                    ("/ 命令", "打开本地命令菜单", on_commands)):
+                pill = rounded_label(sec_row, text, fill=C["input_bg"],
+                                    outline="", fg=C["subtext"], font=FONT_MICRO,
+                                    bg=C["input_bg"], tooltip=tip,
+                                    command=callback, radius=R_PILL, padx=6,
+                                    pady=2)
+                pill.pack(side=tk.TOP, anchor="w", pady=(0, 2))
+
+        # 主输入区
+        entry_host = tk.Frame(top_row, bg=C["input_bg"])
+        entry_host.pack(side=tk.LEFT, fill=tk.X, expand=True)
         self.entry = tk.Text(entry_host, height=3, wrap="word", font=FONT_UI,
                               bg=C["input_bg"], fg=C["text"],
                               insertbackground=C["accent"], relief=tk.FLAT, bd=0,
@@ -746,11 +1077,11 @@ class InputCard(tk.Frame):
         self.entry.bind("<Shift-Return>", lambda _e: None)
         self._syncing = False
         self.entry.bind("<<Modified>>", self._text_changed)
-        self.send_var.trace_add("write", self._var_changed)
         self.send_var.trace_add("write", lambda *_: self._sync_hint())
         self.entry.bind("<FocusIn>", lambda _e: self._sync_hint())
         self.entry.bind("<FocusOut>", lambda _e: self._sync_hint())
 
+        # ─── 底栏：模型 + 沉思 + ⚙ + 发送（右组） ─────────────────────────
         bar = tk.Frame(inner, bg=C["input_bg"])
         bar.pack(fill=tk.X, pady=(10, 0))
 
@@ -774,6 +1105,17 @@ class InputCard(tk.Frame):
                                         command=on_thinking, bg=C["input_bg"],
                                         tooltip="Forge 任务的沉思配置；普通 gateway 对话不执行任务沉思")
         self.think_pill.pack(side=tk.LEFT, padx=(0, 8))
+
+        # ⚙ 设置按钮（可选）
+        if on_settings is not None:
+            self.settings_btn = glyph_button(right, "⚙", on_settings, bg=C["input_bg"],
+                                             fg=C["subtext"], size=11,
+                                             hover=C["hover"], tooltip="设置")
+            self.settings_btn.pack(side=tk.LEFT, padx=(0, 8))
+        else:
+            self.settings_btn = None
+
+        # 发送 / 停止（同一物理位置，set_busy 切换）
         self.send_circle = circle_button(right, "↑", self._fire_send, size=30,
                                          kind="muted", bg=C["input_bg"],
                                          tooltip="发送（Enter）")
@@ -784,30 +1126,16 @@ class InputCard(tk.Frame):
         self._busy = False
         self.stop_circle.pack_forget()
 
-        left = tk.Frame(inner, bg=C["input_bg"])
-        left.pack(fill=tk.X, pady=(8, 0))
-        self.plus = circle_button(left, "＋", on_paste or (lambda: None), size=26,
-                                  kind="muted", bg=C["input_bg"], glyph_size=11,
-                                  tooltip="粘贴剪贴板")
-        self.plus.pack(side=tk.LEFT, padx=(0, 8))
-        if attach_button:
-            for text, tip, callback in (
-                    ("附件", "添加本轮发送的文本文件", on_attach),
-                    ("上下文", "查看历史与附件，检查本轮实际发送内容", on_context),
-                    ("/ 命令", "打开本地命令菜单", on_commands)):
-                pill = rounded_label(left, text, fill=C["surface2"],
-                                     outline=C["border_hi"], fg=C["subtext"],
-                                     font=FONT_MICRO, bg=C["input_bg"],
-                                     tooltip=tip, command=callback)
-                pill.pack(side=tk.LEFT, padx=(0, 6))
-
+        # 提示行（footer）—— 放到 InputCard 自带的 foot，不属于 inner card
         foot = tk.Frame(self, bg=base)
         foot.pack(fill=tk.X, pady=(6, 2))
         self.footer_left = tk.Label(foot, text=footer_left or "空闲", bg=base,
                                     fg=C["muted"], font=FONT_CAPTION)
         self.footer_left.pack(side=tk.LEFT)
-        self.footer_right = tk.Label(foot, text=footer_right or "Enter 发送 · Shift+Enter 换行",
-                                     bg=base, fg=C["muted"], font=FONT_CAPTION)
+        if footer_right is None:
+            footer_right = "Enter 发送 · Shift+Enter 换行"
+        self.footer_right = tk.Label(foot, text=footer_right, bg=base,
+                                     fg=C["muted"], font=FONT_CAPTION)
         self.footer_right.pack(side=tk.RIGHT)
 
         self._sync_hint()
@@ -815,7 +1143,7 @@ class InputCard(tk.Frame):
 
     # -- 交互 --
     def _enter(self, event):
-        if event.state & 1:
+        if event.state & 1:                # Shift
             return None
         self._fire_send()
         return "break"
@@ -825,17 +1153,8 @@ class InputCard(tk.Frame):
             if not self._syncing:
                 self._syncing = True
                 self.send_var.set(self.entry.get("1.0", "end-1c"))
+                self.entry.edit_modified(False)
                 self._syncing = False
-            self.entry.edit_modified(False)
-
-    def _var_changed(self, *_):
-        if self._syncing:
-            return
-        self._syncing = True
-        self.entry.delete("1.0", tk.END)
-        self.entry.insert("1.0", self.send_var.get())
-        self.entry.edit_modified(False)
-        self._syncing = False
 
     def _fire_send(self):
         if self._busy:
