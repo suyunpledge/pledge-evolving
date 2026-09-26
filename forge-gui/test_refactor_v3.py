@@ -1,4 +1,4 @@
-"""本轮重构的行为验收测试（对应重构规格第 10 条）。
+"""本轮重构的行为验收测试（原 10 项 + 3 项结构性回归）。
 
 验收口径是「行为」而不是「长得像设计稿」：
   1. 用户发消息后正文立即可见
@@ -11,6 +11,9 @@
   8. 输入区明显比之前简洁（结构性断言）
   9. 技术状态不抢过聊天正文的视觉优先级
  10. 没有删除现有 Gateway / 工具 / 任务等能力
+ 11. Activity Bar 与 contextual Sidebar 彻底分层
+ 12. 详细 telemetry 默认收起
+ 13. 窄窗口优先收起辅助区
 
 运行：
     python -m unittest test_refactor_v3 -v     # 需桌面
@@ -158,7 +161,7 @@ class RefactorAcceptance(unittest.TestCase):
         code = getattr(ws, "_code_text", None)
         self.assertIsNotNone(code, "工作区没有代码控件")
         shown = code.get("1.0", "4.0")
-        on_disk = "".join(target.open(encoding="utf-8").readlines()[:3])
+        on_disk = "".join(target.read_text(encoding="utf-8").splitlines(keepends=True)[:3])
         self.assertTrue(shown.strip(), "点文件后代码区仍是空的")
         self.assertEqual(shown.split("\n")[0], on_disk.split("\n")[0],
                          "显示内容与磁盘文件不一致")
@@ -277,6 +280,82 @@ class RefactorAcceptance(unittest.TestCase):
         self.assertTrue(hasattr(self.app, "gw_status_var"))
         self.assertTrue(hasattr(self.app, "task_var"))
         self.assertTrue(callable(getattr(self.app, "_run_task", None)))
+
+    # ── 11. Activity Bar 与 contextual Sidebar 真正分层 ──
+    def test_activity_bar_and_contextual_sidebar_are_separate(self):
+        self.assertEqual(len(self.app._activity_markers), len(gui.NAV_ITEMS))
+        self.assertLess(self.app.activity_bar.winfo_width(),
+                        self.app.sidebar.winfo_width())
+        chat_panel = self.app._sidebar_panels["chat"]
+        task_panel = self.app._sidebar_panels["task"]
+        self.assertTrue(chat_panel.winfo_ismapped())
+        self.app._show_view("task")
+        self.pump(0.2)
+        self.assertFalse(chat_panel.winfo_ismapped())
+        self.assertTrue(task_panel.winfo_ismapped())
+
+    # ── 12. 详细 telemetry 默认收起 ──
+    def test_secondary_telemetry_is_disclosed_on_demand(self):
+        self.assertFalse(self.app._telemetry_panel.winfo_ismapped())
+        self.app._toggle_telemetry()
+        self.pump(0.1)
+        self.assertTrue(self.app._telemetry_panel.winfo_ismapped())
+        self.app._toggle_telemetry()
+        self.pump(0.1)
+        self.assertFalse(self.app._telemetry_panel.winfo_ismapped())
+
+    def test_workspace_open_keeps_long_messages_and_composer_inside_conversation(self):
+        msg = self.app.chat_area.add_user("请检查布局并保持文件与对话均可阅读。" * 50)
+        self.app._open_workspace()
+        self.pump(0.3)
+        right = self.app.center.winfo_rootx() + self.app.center.winfo_width()
+        for widget in (msg.label, self.app.model_combo, self.app.think_pill,
+                       self.app.input_card.send_circle):
+            self.assertTrue(widget.winfo_ismapped())
+            self.assertLessEqual(widget.winfo_rootx() + widget.winfo_width(), right)
+            self.assertGreaterEqual(widget.winfo_width(), widget.winfo_reqwidth() - 2)
+        self.assertGreater(msg.label.winfo_height(), 40)
+
+    def test_workspace_auxiliary_navigation_and_file_tabs_remain_usable(self):
+        self.app._open_workspace()
+        self.pump(0.3)
+        ws = self.app.workspace
+        self.assertFalse(ws._changes_col.winfo_ismapped())
+        ws.open_changes()
+        self.pump(0.1)
+        self.assertTrue(ws._changes_col.winfo_ismapped())
+        ws._toggle_changes_nav()
+        self.pump(0.1)
+        self.assertFalse(ws._changes_col.winfo_ismapped())
+        self.assertEqual(len(ws._vp.panes()), 3)
+        ws.open_file(gui.HERE / "gui_theme.py")
+        self.pump(0.3)
+        self.assertTrue(ws._file_tab_strip.winfo_ismapped())
+        self.assertLess(ws._file_tab_strip.winfo_rooty(), ws._code_text.winfo_rooty())
+
+    # ── 13. 窄窗口优先收起辅助区，不挤压 Conversation ──
+    def test_narrow_window_auto_collapses_auxiliary_regions(self):
+        self.app._open_workspace("file_tree")
+        self.pump(0.3)
+        self.root.geometry("1120x720")
+        self.root.update_idletasks()
+        self.app._apply_responsive_layout()
+        self.assertFalse(self.app._sidebar_visible)
+        self.assertTrue(self.app._ws_packed)
+        self.assertGreaterEqual(self.app.center.winfo_width(), 500)
+
+        self.root.geometry("940x700")
+        self.root.update_idletasks()
+        self.app._apply_responsive_layout()
+        self.assertFalse(self.app._ws_packed)
+        self.assertTrue(self.app._workspace_auto_hidden)
+
+        self.root.geometry("1440x900")
+        self.root.update_idletasks()
+        self.app._apply_responsive_layout()
+        self.root.update_idletasks()
+        self.assertTrue(self.app._ws_packed)
+        self.assertTrue(self.app._sidebar_visible)
 
 
 if __name__ == "__main__":

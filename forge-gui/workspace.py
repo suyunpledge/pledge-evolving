@@ -43,6 +43,7 @@ import tkinter as tk
 import webbrowser
 from pathlib import Path
 from typing import Any, Callable
+from chat_widgets import ScrollArea
 
 _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
@@ -60,7 +61,6 @@ from gui_theme import (  # noqa: E402
     PAD_S,
     PAD_XS,
     attach_tooltip,
-    badge,
     divider,
     glyph_button,
     gutter_lines,
@@ -582,13 +582,21 @@ class WorkspacePanel(tk.Frame):
         self._git_numstat: dict[str, tuple[int, int]] = {}
         self._hidden = True
         self._terminal_buffer = ""
+        self._tree_nav_visible = True
+        self._changes_nav_visible = True
+        self._tree_auto_collapsed = False
+        self._changes_auto_collapsed = False
         self._sash_placed = False
         self._sash_retries = 0
+        self._sash_after_ids: set[str] = set()
+        self._transient_after_ids: set[str] = set()
         self._highlight_after_id: str | None = None
 
         self._build_topbar()
         self._build_tabbar()
         self._build_bands()
+        # Diff 保持为中段主体，Changed Files 是按需展开的辅助导航。
+        self._set_changes_nav_visible(False)
 
         self.pack_propagate(False)
         self.configure(width=640)
@@ -598,13 +606,14 @@ class WorkspacePanel(tk.Frame):
             self.refresh()
         except Exception:
             pass
-        self.bind("<Configure>", lambda _e: self._place_sashes_once())
+        self.bind("<Configure>", self._on_workspace_configure)
         self._vp.bind("<Configure>", lambda _e: self._place_sashes_once())
+        self.bind("<Destroy>", self._cancel_sash_retries, add="+")
 
     # ─── 顶栏 ──────────────────────────────────────────────
 
     def _build_topbar(self):
-        top = tk.Frame(self, bg=C["bg"], height=40)
+        top = tk.Frame(self, bg=C["bg"], height=36)
         top.pack(side=tk.TOP, fill=tk.X)
         top.pack_propagate(False)
         left = tk.Frame(top, bg=C["bg"])
@@ -613,7 +622,6 @@ class WorkspacePanel(tk.Frame):
                  font=FONT_TITLE).pack(side=tk.LEFT, padx=(0, PAD_XS))
         tk.Label(left, text="工作区", bg=C["bg"], fg=C["text"],
                  font=(FONT_TITLE[0], 12, "bold")).pack(side=tk.LEFT)
-        badge(left, "Beta", tone="accent").pack(side=tk.LEFT, padx=(PAD_S, 0))
         crumb = tk.Frame(top, bg=C["bg"])
         crumb.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=PAD_S)
         self._crumb_lbl = tk.Label(crumb, textvariable=self._breadcrumb_var,
@@ -622,7 +630,33 @@ class WorkspacePanel(tk.Frame):
         self._crumb_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True)
         close_btn = glyph_button(top, "✕", self._request_close, tooltip="收起工作区")
         close_btn.pack(side=tk.RIGHT, padx=PAD_S)
+        self._changes_nav_btn = glyph_button(
+            top, "⑂", self._toggle_changes_nav, size=11,
+            tooltip="显示 / 隐藏变更列表")
+        self._changes_nav_btn.pack(side=tk.RIGHT, padx=(0, 2))
+        self._tree_nav_btn = glyph_button(
+            top, "☷", self._toggle_tree_nav, size=11,
+            tooltip="显示 / 隐藏文件树")
+        self._tree_nav_btn.pack(side=tk.RIGHT, padx=(0, 2))
         divider(self).pack(side=tk.TOP, fill=tk.X)
+
+    def _on_workspace_configure(self, _event=None):
+        self._place_sashes_once()
+        width = self.winfo_width()
+        if width < 560:
+            if self._tree_nav_visible:
+                self._tree_auto_collapsed = True
+                self._set_tree_nav_visible(False)
+            if self._changes_nav_visible:
+                self._changes_auto_collapsed = True
+                self._set_changes_nav_visible(False)
+        elif width >= 620:
+            if self._tree_auto_collapsed:
+                self._tree_auto_collapsed = False
+                self._set_tree_nav_visible(True)
+            if self._changes_auto_collapsed:
+                self._changes_auto_collapsed = False
+                self._set_changes_nav_visible(True)
 
     def _request_close(self):
         if self._on_close is not None:
@@ -689,7 +723,7 @@ class WorkspacePanel(tk.Frame):
             retries = getattr(self, "_sash_retries", 0)
             if retries < 60:
                 self._sash_retries = retries + 1
-                self.after(80, self._place_sashes_once)
+                self._schedule_sash_retry(80)
             return
         expected = (int(h * _BAND_WEIGHTS[0] / sum(_BAND_WEIGHTS)),
                     int(h * (_BAND_WEIGHTS[0] + _BAND_WEIGHTS[1]) / sum(_BAND_WEIGHTS)))
@@ -702,7 +736,7 @@ class WorkspacePanel(tk.Frame):
         settle_until = getattr(self, "_sash_settle_until", 0)
         if settled and getattr(self, "_ratio_applied_h", -1) == h:
             if time.monotonic() < settle_until:
-                self.after(150, self._place_sashes_once)
+                self._schedule_sash_retry(150)
             return
         self._ratio_applied_h = h
         try:
@@ -712,7 +746,40 @@ class WorkspacePanel(tk.Frame):
             pass
         self._sash_placed = True
         if time.monotonic() < settle_until:
-            self.after(150, self._place_sashes_once)
+            self._schedule_sash_retry(150)
+
+    def _schedule_sash_retry(self, delay: int):
+        """跟踪延时校验，避免 Workspace 销毁后 Tcl 继续调用旧命令。"""
+        if not self.winfo_exists():
+            return
+        if self._sash_after_ids:
+            return
+        token = None
+
+        def run():
+            if token is not None:
+                self._sash_after_ids.discard(token)
+            if self.winfo_exists():
+                self._place_sashes_once()
+
+        token = self.after(delay, run)
+        self._sash_after_ids.add(token)
+
+    def _cancel_sash_retries(self, event=None):
+        if event is not None and event.widget is not self:
+            return
+        for token in tuple(self._sash_after_ids):
+            try:
+                self.after_cancel(token)
+            except tk.TclError:
+                pass
+        self._sash_after_ids.clear()
+        for token in tuple(self._transient_after_ids):
+            try:
+                self.after_cancel(token)
+            except tk.TclError:
+                pass
+        self._transient_after_ids.clear()
 
     # ── 上区：文件树 | 代码 | minimap ──
     def _build_top_band(self, band: tk.Frame):
@@ -756,6 +823,7 @@ class WorkspacePanel(tk.Frame):
         self._tree_canvas.bind("<MouseWheel>", self._tree_wheel)
         self._tree_body.bind("<MouseWheel>", self._tree_wheel)
         pane.add(tree_col, width=_TREE_WIDTH, minsize=120, stretch="never")
+        self._tree_col = tree_col
 
         # 代码区（meta 行 + Tab 条 + 行号槽 + 主 Text + minimap）
         code_col = tk.Frame(pane, bg=C["bg"])
@@ -787,13 +855,14 @@ class WorkspacePanel(tk.Frame):
         self._file_tab_canvas.bind(
             "<Configure>",
             lambda e: self._file_tab_canvas.itemconfigure(
-                self._file_tab_inner_id, width=e.width))
+                self._file_tab_inner_id,
+                width=max(e.width, self._file_tab_inner.winfo_reqwidth())))
         self._file_tab_canvas.bind("<MouseWheel>",
-                                   lambda e: self._file_tab_canvas.yview_scroll(
+                                   lambda e: self._file_tab_canvas.xview_scroll(
                                        -1 if e.delta > 0 else 1, "units"))
         self._file_tab_inner.bind(
             "<MouseWheel>",
-            lambda e: self._file_tab_canvas.yview_scroll(
+            lambda e: self._file_tab_canvas.xview_scroll(
                 -1 if e.delta > 0 else 1, "units"))
 
         # Home 视图（无 activeFile 时显示）—— 与代码主体互斥占位
@@ -802,6 +871,7 @@ class WorkspacePanel(tk.Frame):
 
         # 代码主体（行号槽 + Text + minimap）
         code_body = tk.Frame(code_col, bg=C["code_bg"])
+        self._code_body = code_body
 
         self._gutter = tk.Text(code_body, width=4, bg=C["code_bg"],
                                fg=C["muted"], font=FONT_MONO_XS, padx=4,
@@ -850,10 +920,30 @@ class WorkspacePanel(tk.Frame):
             w.bind("<MouseWheel>", self._code_wheel)
         self._gutter.bind("<Configure>", lambda _e: None)
         pane.add(code_col, minsize=260, stretch="always")
+        self._code_col = code_col
         self._top_pane = pane
 
         # 默认初始：Home 可见，代码主体 / Tab 条隐藏
         self._show_home()
+
+    def _set_tree_nav_visible(self, visible: bool):
+        if visible == self._tree_nav_visible:
+            return
+        try:
+            if visible:
+                self._top_pane.add(self._tree_col, before=self._code_col,
+                                   width=_TREE_WIDTH, minsize=120, stretch="never")
+                self._tree_nav_btn.configure(fg=C["ter"])
+            else:
+                self._top_pane.forget(self._tree_col)
+                self._tree_nav_btn.configure(fg=C["muted"])
+            self._tree_nav_visible = visible
+        except tk.TclError:
+            pass
+
+    def _toggle_tree_nav(self):
+        self._tree_auto_collapsed = False
+        self._set_tree_nav_visible(not self._tree_nav_visible)
 
     def _tree_wheel(self, event):
         self._tree_canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
@@ -944,6 +1034,7 @@ class WorkspacePanel(tk.Frame):
         self._changes_canvas.bind("<MouseWheel>", self._changes_wheel)
         self._changes_body.bind("<MouseWheel>", self._changes_wheel)
         pane.add(left, width=_CHANGES_WIDTH, minsize=150, stretch="never")
+        self._changes_col = left
 
         # 右：diff 视图
         right = tk.Frame(pane, bg=C["bg"])
@@ -981,7 +1072,28 @@ class WorkspacePanel(tk.Frame):
         style_scrollbar(self._diff_text)
         self._diff_text.configure(state=tk.DISABLED)
         pane.add(right, minsize=240, stretch="always")
+        self._diff_col = right
         self._mid_pane = pane
+
+    def _set_changes_nav_visible(self, visible: bool):
+        if visible == self._changes_nav_visible:
+            return
+        try:
+            if visible:
+                self._mid_pane.add(self._changes_col, before=self._diff_col,
+                                   width=_CHANGES_WIDTH, minsize=150,
+                                   stretch="never")
+                self._changes_nav_btn.configure(fg=C["ter"])
+            else:
+                self._mid_pane.forget(self._changes_col)
+                self._changes_nav_btn.configure(fg=C["muted"])
+            self._changes_nav_visible = visible
+        except tk.TclError:
+            pass
+
+    def _toggle_changes_nav(self):
+        self._changes_auto_collapsed = False
+        self._set_changes_nav_visible(not self._changes_nav_visible)
 
     def _changes_wheel(self, event):
         self._changes_canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
@@ -1017,10 +1129,10 @@ class WorkspacePanel(tk.Frame):
 
         actions = tk.Frame(top, bg=C["bg"])
         actions.pack(side=tk.RIGHT, padx=PAD_S)
-        pill_button(actions, "⟳ 刷新", self._reload_preview, kind="quiet",
-                    font=FONT_MICRO).pack(side=tk.RIGHT, padx=(PAD_XS, 0))
-        pill_button(actions, "↗ 在新窗口打开", self._open_current_external,
-                    kind="quiet", font=FONT_MICRO).pack(side=tk.RIGHT)
+        glyph_button(actions, "⟳", self._reload_preview, size=10,
+                     tooltip="刷新预览").pack(side=tk.RIGHT, padx=(PAD_XS, 0))
+        glyph_button(actions, "↗", self._open_current_external, size=10,
+                     tooltip="在新窗口打开").pack(side=tk.RIGHT)
 
         self._preview_host = tk.Frame(band, bg=C["sidebar"])
         self._preview_host.pack(fill=tk.BOTH, expand=True, padx=PAD_S,
@@ -1051,48 +1163,48 @@ class WorkspacePanel(tk.Frame):
         """Workspace Home：大标题 + 统计 + 最近改动文件 + 入口按钮。"""
         outer = parent  # parent 即 code_col 内的 _home_frame
         outer.configure(bg=C["bg"])
-        host = tk.Frame(outer, bg=C["bg"])
-        host.pack(fill=tk.BOTH, expand=True)
+        self._home_scroll = ScrollArea(outer, bg=C["bg"])
+        self._home_scroll.pack(fill=tk.BOTH, expand=True)
+        host = self._home_scroll.inner
 
         # 内部用 RoundedCard 风格的纯 Frame（沿用主题色）
-        card = tk.Frame(host, bg=C["surface"], highlightthickness=1,
-                        highlightbackground=C["border_hi"], padx=18, pady=18)
+        card = tk.Frame(host, bg=C["bg"], highlightthickness=0, padx=12, pady=12)
         card.pack(side=tk.TOP, fill=tk.X, padx=PAD_M, pady=(PAD_M, PAD_S))
 
         # 头部
-        head = tk.Frame(card, bg=C["surface"])
+        head = tk.Frame(card, bg=C["bg"])
         head.pack(fill=tk.X)
-        tk.Label(head, text="▤", bg=C["surface"], fg=C["accent2"],
+        tk.Label(head, text="▤", bg=C["bg"], fg=C["accent2"],
                  font=FONT_TITLE).pack(side=tk.LEFT, padx=(0, 6))
         self._home_title_var = tk.StringVar(value=self._repo_root.name)
-        tk.Label(head, textvariable=self._home_title_var, bg=C["surface"],
-                 fg=C["text"], font=(FONT_TITLE[0], 14, "bold"),
+        tk.Label(head, textvariable=self._home_title_var, bg=C["bg"],
+                 fg=C["text"], font=FONT_TITLE,
                  anchor="w").pack(side=tk.LEFT)
 
         # 仓库根路径（小字）
         self._home_repo_var = tk.StringVar(value=str(self._repo_root))
-        tk.Label(card, textvariable=self._home_repo_var, bg=C["surface"],
+        tk.Label(card, textvariable=self._home_repo_var, bg=C["bg"],
                  fg=C["muted"], font=FONT_MICRO, anchor="w").pack(
             fill=tk.X, pady=(2, 10))
 
         # 统计行
-        stats = tk.Frame(card, bg=C["surface"])
+        stats = tk.Frame(card, bg=C["bg"])
         stats.pack(fill=tk.X)
         self._home_summary_var = tk.StringVar(value="")
-        tk.Label(stats, textvariable=self._home_summary_var, bg=C["surface"],
+        tk.Label(stats, textvariable=self._home_summary_var, bg=C["bg"],
                  fg=C["body"], font=FONT_SMALL, anchor="w").pack(
             side=tk.LEFT, fill=tk.X, expand=True)
 
         # 最近改动文件列表
-        tk.Label(card, text="最近修改文件", bg=C["surface"], fg=C["ter"],
+        tk.Label(card, text="最近修改文件", bg=C["bg"], fg=C["ter"],
                  font=FONT_MICRO, anchor="w").pack(
             fill=tk.X, pady=(12, 4))
-        self._home_recent_body = tk.Frame(card, bg=C["surface"])
+        self._home_recent_body = tk.Frame(card, bg=C["bg"])
         self._home_recent_body.pack(fill=tk.X)
 
         # 按钮行
-        btns = tk.Frame(card, bg=C["surface"])
-        btns.pack(fill=tk.X, pady=(14, 0))
+        btns = tk.Frame(card, bg=C["bg"])
+        btns.pack(fill=tk.X, pady=(10, 8), before=self._home_recent_body)
         pill_button(btns, "查看全部变更", self.open_changes, kind="accent_soft",
                     font=FONT_SMALL).pack(side=tk.LEFT, padx=(0, PAD_S))
         pill_button(btns, "打开文件…", self._home_pick_file, kind="ghost",
@@ -1101,7 +1213,7 @@ class WorkspacePanel(tk.Frame):
         # 提示文案（非 git / 无改动时显示）
         self._home_empty_var = tk.StringVar(value="")
         self._home_empty_lbl = tk.Label(card, textvariable=self._home_empty_var,
-                                        bg=C["surface"], fg=C["muted"],
+                                        bg=C["bg"], fg=C["muted"],
                                         font=FONT_SMALL, anchor="w",
                                         justify="left", wraplength=420)
         self._home_empty_lbl.pack(fill=tk.X, pady=(10, 0))
@@ -1136,17 +1248,17 @@ class WorkspacePanel(tk.Frame):
             child.destroy()
         recent = (self.workspace_summary().get("recent") or [])[:5]
         if not recent:
-            tk.Label(body, text="（无）", bg=C["surface"], fg=C["muted"],
+            tk.Label(body, text="（无）", bg=C["bg"], fg=C["muted"],
                      font=FONT_SMALL, anchor="w").pack(fill=tk.X, pady=2)
         for rel in recent:
             self._make_home_file_row(body, rel)
 
     def _make_home_file_row(self, parent, rel: str):
-        row = tk.Frame(parent, bg=C["surface"], cursor="hand2")
+        row = tk.Frame(parent, bg=C["bg"], cursor="hand2")
         row.pack(fill=tk.X, pady=1)
-        tk.Label(row, text="•", bg=C["surface"], fg=C["accent2"],
+        tk.Label(row, text="•", bg=C["bg"], fg=C["accent2"],
                  font=FONT_SMALL).pack(side=tk.LEFT, padx=(0, 6))
-        tk.Label(row, text=rel, bg=C["surface"], fg=C["body"],
+        tk.Label(row, text=rel, bg=C["bg"], fg=C["body"],
                  font=FONT_SMALL, anchor="w").pack(
             side=tk.LEFT, fill=tk.X, expand=True)
         for w in (row, *row.winfo_children()):
@@ -1156,7 +1268,7 @@ class WorkspacePanel(tk.Frame):
 
     @staticmethod
     def _recolor_home_row(row: tk.Frame, hover: bool):
-        bg = C["hover"] if hover else C["surface"]
+        bg = C["hover"] if hover else C["bg"]
         try:
             row.configure(bg=bg)
             for child in row.winfo_children():
@@ -1193,6 +1305,7 @@ class WorkspacePanel(tk.Frame):
                 w.pack_forget()
             except (tk.TclError, AttributeError):
                 pass
+        self._code_body.pack_forget()
         # Home 显示
         if not self._home_frame.winfo_ismapped():
             self._home_frame.pack(fill=tk.BOTH, expand=True)
@@ -1202,6 +1315,8 @@ class WorkspacePanel(tk.Frame):
         """隐藏 Home，显示代码主体 + Tab 条。"""
         try:
             self._home_frame.pack_forget()
+            self._code_body.pack_forget()
+            self._code_hbar.pack_forget()
         except (tk.TclError, AttributeError):
             pass
         # Tab 条：放在 meta 行下面、Home 占位之前
@@ -1220,6 +1335,7 @@ class WorkspacePanel(tk.Frame):
             self._gutter.pack(side=tk.LEFT, fill=tk.Y)
             self._code_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
             self._code_hbar.pack(side=tk.BOTTOM, fill=tk.X)
+            self._code_body.pack(fill=tk.BOTH, expand=True)
         except (tk.TclError, AttributeError):
             pass
 
@@ -1238,7 +1354,7 @@ class WorkspacePanel(tk.Frame):
             self._ratio_applied_h = -1
             # 首次显示后 2 秒内做“放置 + 校验”，抵抗 Tk 布局 pass 的覆盖
             self._sash_settle_until = time.monotonic() + 2.0
-            self.after(40, self._place_sashes_once)
+            self._schedule_sash_retry(40)
 
     def hide(self):
         if not self._hidden:
@@ -1270,9 +1386,13 @@ class WorkspacePanel(tk.Frame):
             return 0
 
     def open_file_tree(self):
+        self._tree_auto_collapsed = False
+        self._set_tree_nav_visible(True)
         self._focus_band_for_tab("文件树")
 
     def open_changes(self):
+        self._changes_auto_collapsed = False
+        self._set_changes_nav_visible(True)
         self._focus_band_for_tab("变更")
 
     def open_file(self, path, *, tab: str | None = None):
@@ -1447,6 +1567,10 @@ class WorkspacePanel(tk.Frame):
     # ─── 聚焦（标签条 → 区域高亮） ──────────────────────────
 
     def _focus_band_for_tab(self, name: str):
+        if name == "文件树":
+            self._set_tree_nav_visible(True)
+        elif name == "变更":
+            self._set_changes_nav_visible(True)
         self._current_tab = name
         for key, tab in self._tabs.items():
             tab.set_selected(key == name)
@@ -1475,8 +1599,16 @@ class WorkspacePanel(tk.Frame):
     def _flash_band(self, band: tk.Frame):
         try:
             band.configure(highlightbackground=C["accent"])
-            band.after(900, lambda: band.winfo_exists() and
-                       band.configure(highlightbackground=C["bg"]))
+            token = None
+
+            def clear():
+                if token is not None:
+                    self._transient_after_ids.discard(token)
+                if band.winfo_exists():
+                    band.configure(highlightbackground=C["bg"])
+
+            token = band.after(900, clear)
+            self._transient_after_ids.add(token)
         except tk.TclError:
             pass
 

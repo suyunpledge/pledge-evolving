@@ -27,6 +27,7 @@ IS_WINDOWS = platform.system() == "Windows"
 C: dict[str, str] = {
     # 背景层级
     "bg": "#0E0E13",
+    "activity": "#09090D",
     "sidebar": "#0B0B10",
     "chat": "#111117",
     "surface": "#1A1A22",
@@ -354,9 +355,17 @@ def avatar(parent, *, size=32, glyph="F", fg="#FFFFFF", fill=None,
     cv = tk.Canvas(parent, width=size, height=size, bg=base,
                    highlightthickness=0, bd=0)
     if image is not None:
-        cv.create_image(size / 2, size / 2, image=image)
-        cv.image = image          # 防 GC
-        return cv
+        try:
+            # PhotoImage 与创建它的 Tcl interpreter 绑定。GUI 单测会
+            # 连续创建/销毁多个 Tk 根窗口，模块级品牌图可能因此成为
+            # “尚有 Python 引用、但 Tcl image 已不存在”的旧对象。
+            # 真实应用只有一个根窗口；这里降级成绘制头像，
+            # 让组件在多 root 环境中也保持可用。
+            cv.create_image(size / 2, size / 2, image=image)
+            cv.image = image          # 防 GC
+            return cv
+        except tk.TclError:
+            pass
     fill = fill or C["accent"]
     if shape == "circle":
         cv.create_oval(0, 0, size - 1, size - 1, fill=fill, outline="")
@@ -395,8 +404,8 @@ def circle_button(parent, glyph, command, *, size=30, kind="primary", bg=None,
     txt = cv.create_text(size / 2, size / 2, text=glyph, fill=fg,
                          font=(UI_FAMILY, glyph_size or max(9, int(size * 0.38)), "bold"))
     cv.bind("<Button-1>", lambda _e: command())
-    cv.bind("<Enter>", lambda _e: cv.itemconfigure(oval, fill=hov))
-    cv.bind("<Leave>", lambda _e: cv.itemconfigure(oval, fill=fill))
+    cv.bind("<Enter>", lambda _e: cv.itemconfigure(oval, fill=cv._palette[1]))
+    cv.bind("<Leave>", lambda _e: cv.itemconfigure(oval, fill=cv._palette[0]))
     if tooltip:
         attach_tooltip(cv, tooltip)
     cv._palette = (fill, hov)  # type: ignore[attr-defined]

@@ -1,9 +1,9 @@
-"""forge 图形界面 v3：深色三栏桌面端（对话 / 任务 / 侧栏 / 可收起工作区）。
+"""forge 图形界面 v3：Agent-native 四层桌面工作区。
 
-设计对照参考稿：
-    · 顶栏 56px：品牌 FORGE · v0.7.0 · Agent Framework + 主导航
-      + 右侧 CPU/GPU/RAM 指标与 Gateway 状态卡
-    · 左侧栏 200px：＋新建对话 / 主导航 / 最近对话
+设计结构：
+    · 顶栏：品牌 / 当前项目 / 必要运行状态；详细 telemetry 按需展开
+    · Activity Bar：窄导航轨，只表达一级位置
+    · Sidebar：只显示当前一级功能的上下文
     · 中栏：对话（消息气泡·计划步骤·工具调用卡·完成块·输入卡）/
       任务（forge run 步骤）/ 工具（功能开关）/ 配置（配置编辑）
     · 右栏工作区（默认收起）：文件树 / 变更 / 代码 / diff / 预览 / 终端
@@ -108,7 +108,12 @@ else:
 
 APP_VERSION = "0.7.0"
 WINDOW_SIZE = "1440x900"
-MIN_SIZE = (1120, 720)
+MIN_SIZE = (940, 700)
+ACTIVITY_WIDTH = 54
+SIDEBAR_WIDTH = 220
+SIDEBAR_COLLAPSE_AT = 1240
+WORKSPACE_COLLAPSE_AT = 1080
+WORKSPACE_RESTORE_AT = 1320
 FORGE_REPO_HINT = os.environ.get("FORGE_REPO", "").strip()
 DEFAULT_FORGE_HOME = Path.home() / ".forge"
 
@@ -508,7 +513,7 @@ class ForgeGuiApp:
 
         self._build_ui()
         self._refresh_provider_list()
-        self._set_status(self._load_error or "就绪 · 开关选择后需保存；运行中的服务需重启以读取新配置",
+        self._set_status(self._load_error or "就绪",
                          "error" if self._load_error else "info")
         self._event_poll = self.root.after(40, self._drain_ui_events)
 
@@ -548,6 +553,12 @@ class ForgeGuiApp:
         self._views: dict[str, tk.Frame] = {}
         self._active_view = "chat"
         self._ws_packed = False
+        self._last_workspace_tab = "file_tree"
+        self._workspace_auto_hidden = False
+        self._sidebar_visible = True
+        self._sidebar_user_hidden = False
+        self._sidebar_auto_hidden = False
+        self._responsive_after_id = None
         self._metric_labels: dict[str, tk.Label] = {}
         self._metric_bars: dict[str, tk.Canvas] = {}
 
@@ -567,7 +578,7 @@ class ForgeGuiApp:
 
         center = tk.Frame(self.split, bg=C["chat"])
         self.center = center
-        self.split.add(center, minsize=380, stretch="always")
+        self.split.add(center, minsize=500, stretch="always")
 
         self._build_views(center)
         self._build_workspace()
@@ -594,6 +605,8 @@ class ForgeGuiApp:
         self._show_view("chat")
         self._refresh_history()
         self._start_sysmon()
+        self.root.bind("<Configure>", self._on_root_configure, add="+")
+        self.root.bind("<Destroy>", self._cancel_responsive_callback, add="+")
         # 像 AutoClaw 一样：打开窗口就把 gateway 拉起来（等 UI 建好再起，
         # 免得抢启动时间、也免得状态栏还没就绪）。
         # FORGE_NO_AUTOSTART=1 可关闭（测试用）。
@@ -613,99 +626,104 @@ class ForgeGuiApp:
             pass
         chrome = tk.Frame(self.root, bg=C["bg"])
         chrome.pack(fill=tk.X)
-        bar = tk.Frame(chrome, bg=C["bg"], height=56)
+        self._chrome = chrome
+        bar = tk.Frame(chrome, bg=C["bg"], height=50)
         bar.pack(fill=tk.X)
         bar.pack_propagate(False)
 
         # 品牌区
         brand = tk.Frame(bar, bg=C["bg"])
-        brand.pack(side=tk.LEFT, padx=(16, 10))
-        brand_img, brand_keep = load_brand_logo(26)
+        brand.pack(side=tk.LEFT, padx=(14, 12))
+        brand_img, brand_keep = load_brand_logo(24)
         if brand_img is not None:
-            role = getattr(theme, "C", None)
             holder = tk.Frame(brand, bg=C["bg"])
-            holder.pack(side=tk.LEFT, padx=(0, 10))
+            holder.pack(side=tk.LEFT, padx=(0, 8))
             shown = tk.Label(holder, image=brand_img, bg=C["bg"], bd=0,
                              highlightthickness=0)
             shown.pack()
             self._brand_logo_refs = (brand_img, brand_keep, holder, shown)
         else:
-            logo = tk.Canvas(brand, width=26, height=26, bg=C["bg"],
+            logo = tk.Canvas(brand, width=24, height=24, bg=C["bg"],
                              highlightthickness=0, bd=0)
-            round_rect(logo, 0, 0, 25, 25, 8, fill=C["accent"], outline="")
-            logo.create_polygon(2, 2, 20, 2, 2, 20, smooth=True, splinesteps=10,
+            round_rect(logo, 0, 0, 23, 23, 7, fill=C["accent"], outline="")
+            logo.create_polygon(2, 2, 18, 2, 2, 18, smooth=True, splinesteps=10,
                                 fill="#6D63F0", outline="")
-            logo.create_text(13, 13, text="F", fill="#FFFFFF",
-                             font=(theme.UI_FAMILY, 12, "bold"))
-            logo.pack(side=tk.LEFT, padx=(0, 10))
-        brand_txt = tk.Frame(brand, bg=C["bg"])
-        brand_txt.pack(side=tk.LEFT)
-        tk.Label(brand_txt, text="FORGE", bg=C["bg"], fg=C["text"],
-                 font=theme.FONT_BRAND).pack(anchor=tk.W)
-        sub = tk.Frame(brand_txt, bg=C["bg"])
-        sub.pack(anchor=tk.W)
-        tk.Label(sub, text="Agent Framework", bg=C["bg"], fg=C["ter"],
-                 font=FONT_MICRO).pack(side=tk.LEFT)
-        tk.Label(sub, text=f"v{APP_VERSION}", bg=C["surface2"], fg=C["muted"],
-                 font=FONT_MICRO, padx=5).pack(side=tk.LEFT, padx=(6, 0))
+            logo.create_text(12, 12, text="F", fill="#FFFFFF",
+                             font=(theme.UI_FAMILY, 11, "bold"))
+            logo.pack(side=tk.LEFT, padx=(0, 8))
+        tk.Label(brand, text="FORGE", bg=C["bg"], fg=C["text"],
+                 font=(theme.UI_FAMILY, 12, "bold")).pack(side=tk.LEFT)
 
-        # 主导航
-        nav = tk.Frame(bar, bg=C["bg"])
-        nav.pack(side=tk.LEFT, padx=(22, 0))
-        for key, label, glyph in NAV_ITEMS:
-            if key not in ("chat", "task", "tools", "config"):
-                continue
-            holder, btn = self._make_nav_item(nav, key, label, glyph, big=True)
-            holder.pack(side=tk.LEFT, padx=(0, 6))
-        # 其余入口（Agents / 知识库 / 演化 / 文件与项目）收进「更多」菜单：
-        # 侧栏原本有一份重复的导航列表，两份并存是「重复入口」的主要来源。
+        self._project_chip = tk.Frame(bar, bg=C["surface2"], padx=9, pady=4)
+        self._project_chip.pack(side=tk.LEFT, padx=(8, 0))
+        tk.Label(self._project_chip, text="◇", bg=C["surface2"], fg=C["accent2"],
+                 font=FONT_SMALL).pack(side=tk.LEFT, padx=(0, 5))
+        self._project_name_var = tk.StringVar(value=self._repo_root().name)
+        tk.Label(self._project_chip, textvariable=self._project_name_var,
+                 bg=C["surface2"], fg=C["subtext"], font=FONT_SMALL).pack(side=tk.LEFT)
+
+        # 保留「更多」能力合约，可见入口移到 Activity Bar 底部。
         self._more_menu = tk.Menu(self.root, tearoff=0, bg=C["surface"],
                                   fg=C["text"], activebackground=C["accent_soft"],
                                   activeforeground=C["accent_text"],
                                   font=FONT_SMALL, bd=1, relief=tk.FLAT)
-        for key, label, glyph in NAV_ITEMS:
-            if key in ("chat", "task", "tools", "config"):
-                continue
-            self._more_menu.add_command(label=f"{glyph}  {label}",
-                                        command=lambda k=key: self._nav_click(k))
-        self._more_btn = pill_button(nav, "更多 ▾", self._popup_more_menu,
-                                     kind="quiet", bg=C["bg"], font=FONT_SMALL,
-                                     padx=8)
-        self._more_btn.pack(side=tk.LEFT, padx=(4, 0))
-
-        # 右侧：工作区开关 + 统一状态集群
+        self._more_menu.add_command(label="状态详情",
+                                    command=self._toggle_telemetry)
+        self._more_menu.add_command(label="收起 / 展开侧边栏",
+                                    command=self._toggle_sidebar)
+        # 右侧只保留 Workspace 与必要运行状态。
         right = tk.Frame(bar, bg=C["bg"])
         right.pack(side=tk.RIGHT, padx=(0, 14))
         self.ws_toggle_btn = pill_button(right, "▤ 工作区", self._toggle_workspace,
                                          kind="quiet", bg=C["bg"], font=FONT_SMALL,
                                          padx=10)
-        self.ws_toggle_btn.pack(side=tk.LEFT, padx=(0, 12))
-        # 运行状态（Gateway + CPU/GPU/RAM）统一收进一个弱化的集群里，
-        # 它们是全局背景信息，不该和导航抢视觉权重。
-        self._status_cluster = tk.Frame(right, bg=C["bg"], padx=10, pady=3,
-                                        highlightthickness=1,
-                                        highlightbackground=C["border"])
-        self._status_cluster.pack(side=tk.LEFT)
-        self._build_gateway_card(self._status_cluster)
+        self.ws_toggle_btn.pack(side=tk.LEFT, padx=(0, 10))
+        self.gw_status_var = tk.StringVar(value="● 离线")
+        self.gw_status_lbl = tk.Label(right, textvariable=self.gw_status_var,
+                                      bg=C["bg"], fg=C["muted"], font=FONT_CAPTION)
+        self.gw_status_lbl.pack(side=tk.LEFT, padx=(0, 6))
+        self._telemetry_btn = pill_button(right, "状态 ▾", self._toggle_telemetry,
+                                          kind="quiet", bg=C["bg"],
+                                          font=FONT_CAPTION, padx=7)
+        self._telemetry_btn.pack(side=tk.LEFT)
+
+        # 详细 telemetry 默认收起，但 Gateway 控制和资源读数仍保留。
+        self._telemetry_panel = tk.Frame(chrome, bg=C["sidebar"], height=38)
+        self._telemetry_panel.pack_propagate(False)
+        detail = tk.Frame(self._telemetry_panel, bg=C["sidebar"])
+        detail.pack(side=tk.RIGHT, padx=14)
+        self._build_gateway_card(detail)
         for key, text in (("cpu", "CPU"), ("gpu", "GPU"), ("ram", "RAM")):
-            self._build_metric(self._status_cluster, key, text)
+            self._build_metric(detail, key, text)
+        self._telemetry_expanded = False
         def fit_topbar(event):
-            if event.width < 1360:
-                nav.pack_forget()
-            elif not nav.winfo_manager():
-                nav.pack(side=tk.LEFT, padx=(10, 0), before=right)
+            if event.width < 1180:
+                self._project_chip.pack_forget()
+            elif not self._project_chip.winfo_manager():
+                self._project_chip.pack(side=tk.LEFT, padx=(8, 0), after=brand)
         bar.bind("<Configure>", fit_topbar)
 
-        tk.Frame(chrome, bg=C["border"], height=1).pack(fill=tk.X)
+        self._topbar_divider = tk.Frame(chrome, bg=C["border"], height=1)
+        self._topbar_divider.pack(fill=tk.X)
+
+    def _toggle_telemetry(self):
+        self._telemetry_expanded = not self._telemetry_expanded
+        if self._telemetry_expanded:
+            self._telemetry_panel.pack(fill=tk.X, before=self._topbar_divider)
+            self._telemetry_btn.configure(text="状态 ▴")
+        else:
+            self._telemetry_panel.pack_forget()
+            self._telemetry_btn.configure(text="状态 ▾")
 
     def _build_metric(self, parent, key: str, text: str):
-        box = tk.Frame(parent, bg=C["bg"])
+        base = parent.cget("bg")
+        box = tk.Frame(parent, bg=base)
         box.pack(side=tk.LEFT, padx=(0, 12))
-        row = tk.Frame(box, bg=C["bg"])
+        row = tk.Frame(box, bg=base)
         row.pack(anchor=tk.W)
-        tk.Label(row, text=text, bg=C["bg"], fg=C["muted"],
+        tk.Label(row, text=text, bg=base, fg=C["muted"],
                  font=FONT_MICRO).pack(side=tk.LEFT)
-        value = tk.Label(row, text="—", bg=C["bg"], fg=C["ter"], font=FONT_MICRO)
+        value = tk.Label(row, text="—", bg=base, fg=C["ter"], font=FONT_MICRO)
         value.pack(side=tk.LEFT, padx=(4, 0))
         self._metric_labels[key] = value
         bar = progress_bar(box, 0, width=22, height=2)
@@ -725,26 +743,26 @@ class ForgeGuiApp:
             pass
 
     def _build_gateway_card(self, parent):
-        # 降权：状态集群里的一小块，不再单独占一张有边框的卡
-        card = tk.Frame(parent, bg=C["bg"])
+        # 降权：展开状态带里的一小块，不单独占一张卡。
+        base = parent.cget("bg")
+        card = tk.Frame(parent, bg=base)
         card.pack(side=tk.LEFT, padx=(0, 10))
-        self.gw_status_var = tk.StringVar(value="● 离线")
-        self.gw_status_lbl = tk.Label(card, textvariable=self.gw_status_var,
-                                      bg=C["bg"], fg=C["muted"],
-                                      font=FONT_MICRO)
-        self.gw_status_lbl.pack(side=tk.LEFT, padx=(0, 5))
-        tk.Label(card, text="Gateway", bg=C["bg"], fg=C["muted"],
+        self.gw_detail_status_lbl = tk.Label(card, textvariable=self.gw_status_var,
+                                             bg=base, fg=C["muted"],
+                                             font=FONT_MICRO)
+        self.gw_detail_status_lbl.pack(side=tk.LEFT, padx=(0, 5))
+        tk.Label(card, text="Gateway", bg=base, fg=C["muted"],
                  font=FONT_MICRO).pack(side=tk.LEFT)
         self.port_var = tk.StringVar(value=str(self.gateway_port))
         self.port_spin = tk.Spinbox(card, from_=1024, to_=65535, width=5,
                                     textvariable=self.port_var, font=FONT_MONO_XS,
-                                    bg=C["bg"], fg=C["ter"], bd=0,
-                                    buttonbackground=C["bg"], relief=tk.FLAT,
+                                    bg=base, fg=C["ter"], bd=0,
+                                    buttonbackground=base, relief=tk.FLAT,
                                     insertbackground=C["accent"],
                                     highlightthickness=0, justify=tk.CENTER)
         self.port_spin.pack(side=tk.LEFT, padx=(4, 8))
         self.gw_btn = tk.Button(card, text="▶ 启动", command=self._toggle_gateway,
-                                bg=C["bg"], fg=C["accent_text"],
+                                bg=base, fg=C["accent_text"],
                                 activebackground=C["hover"],
                                 activeforeground=C["text"], font=FONT_MICRO,
                                 relief=tk.FLAT, bd=0, padx=7, pady=1,
@@ -764,33 +782,69 @@ class ForgeGuiApp:
         attach_tooltip(self.gw_btn, "打开即自动启动；左键重启，右键可停止")
 
     # ── 左侧栏 ────────────────────────────────────────────
-    def _make_nav_item(self, parent, key: str, label: str, glyph: str, *, big=False):
-        holder = tk.Frame(parent, bg=C["bg"] if big else C["sidebar"],
-                          highlightthickness=1,
-                          highlightbackground=C["bg"] if big else C["sidebar"])
-        text = f"{glyph}  {label}" if not big else f"{glyph} {label}"
-        btn = tk.Button(holder, text=text, command=lambda k=key: self._nav_click(k),
-                        bg=holder["bg"], fg=C["ter"], activebackground=C["hover"],
-                        activeforeground=C["text"],
-                        font=FONT_SMALL if not big else FONT_UI,
-                        relief=tk.FLAT, bd=0, padx=10 if not big else 12,
-                        pady=4, cursor="hand2", highlightthickness=0, anchor=tk.W)
-        btn.pack(fill=tk.X)
+    def _make_activity_item(self, parent, key: str, label: str, glyph: str):
+        """Activity Bar 的单一一级入口：图标表达位置，文字收进 tooltip。"""
+        holder = tk.Frame(parent, bg=C["activity"], width=ACTIVITY_WIDTH,
+                          height=42)
+        holder.pack_propagate(False)
+        marker = tk.Frame(holder, bg=C["activity"], width=2)
+        marker.pack(side=tk.LEFT, fill=tk.Y)
+        btn = tk.Button(holder, text=glyph, command=lambda k=key: self._nav_click(k),
+                        bg=C["activity"], fg=C["ter"],
+                        activebackground=C["hover"], activeforeground=C["text"],
+                        font=(theme.UI_FAMILY, 14), relief=tk.FLAT, bd=0,
+                        cursor="hand2", highlightthickness=0)
+        btn.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        attach_tooltip(btn, label)
+        btn.bind("<Enter>", lambda _e, k=key: self._paint_activity(k, hover=True), add="+")
+        btn.bind("<Leave>", lambda _e, k=key: self._paint_activity(k), add="+")
         self._nav_widgets.setdefault(key, []).append((holder, btn))
-        return holder, btn
+        self._activity_markers[key] = marker
+        return holder
+
+    def _paint_activity(self, key, *, hover=False):
+        active = key == getattr(self, "_active_nav", "chat")
+        bg = C["sel"] if active else C["hover"] if hover else C["activity"]
+        for holder, btn in self._nav_widgets.get(key, []):
+            holder.configure(bg=bg)
+            btn.configure(bg=bg, fg=C["text"] if active or hover else C["ter"])
 
     def _build_sidebar(self, parent):
-        side = tk.Frame(parent, bg=C["sidebar"], width=200)
+        # 一级导航与二级内容物理分离：轨道永远窄，Sidebar 可收起。
+        rail = tk.Frame(parent, bg=C["activity"], width=ACTIVITY_WIDTH)
+        rail.pack(side=tk.LEFT, fill=tk.Y)
+        rail.pack_propagate(False)
+        self.activity_bar = rail
+        self._activity_markers: dict[str, tk.Frame] = {}
+        for key, label, glyph in NAV_ITEMS:
+            item = self._make_activity_item(rail, key, label, glyph)
+            item.pack(fill=tk.X, pady=(4 if key == "chat" else 0, 0))
+
+        rail_bottom = tk.Frame(rail, bg=C["activity"])
+        rail_bottom.pack(side=tk.BOTTOM, fill=tk.X, pady=(0, 6))
+        self._more_btn = glyph_button(rail_bottom, "⋯", self._popup_more_menu,
+                                      bg=C["activity"], fg=C["muted"], size=14,
+                                      tooltip="更多")
+        self._more_btn.pack(fill=tk.X)
+        self.sidebar_toggle_btn = glyph_button(
+            rail_bottom, "≪", self._toggle_sidebar, bg=C["activity"],
+            fg=C["muted"], size=12, tooltip="收起 / 展开侧边栏")
+        self.sidebar_toggle_btn.pack(fill=tk.X)
+
+        side = tk.Frame(parent, bg=C["sidebar"], width=SIDEBAR_WIDTH)
         side.pack(side=tk.LEFT, fill=tk.Y)
         side.pack_propagate(False)
         self.sidebar = side
 
-        new_btn = pill_button(side, "＋  新建对话", self._new_session, kind="primary",
+        self._sidebar_panels: dict[str, tk.Frame] = {}
+        chat_panel = tk.Frame(side, bg=C["sidebar"])
+        self._sidebar_panels["chat"] = chat_panel
+
+        new_btn = pill_button(chat_panel, "＋  新建对话", self._new_session, kind="primary",
                               bg=C["sidebar"], font=FONT_UI, padx=0)
         new_btn.pack(fill=tk.X, padx=12, pady=(14, 12))
 
-        # 侧栏只负责「会话」：导航已经在顶部，别重复列一遍
-        head = tk.Frame(side, bg=C["sidebar"])
+        head = tk.Frame(chat_panel, bg=C["sidebar"])
         head.pack(fill=tk.X, padx=14, pady=(16, 6))
         tk.Label(head, text="最近对话", bg=C["sidebar"], fg=C["muted"],
                  font=FONT_MICRO).pack(side=tk.LEFT)
@@ -798,7 +852,7 @@ class ForgeGuiApp:
                      fg=C["muted"], size=12, tooltip="搜索对话").pack(side=tk.RIGHT)
         self._search_visible = False
         self.session_search_var = tk.StringVar()
-        self.session_search = tk.Entry(side, textvariable=self.session_search_var,
+        self.session_search = tk.Entry(chat_panel, textvariable=self.session_search_var,
                                        bg=C["surface2"], fg=C["text"], bd=0,
                                        relief=tk.FLAT, insertbackground=C["accent"],
                                        font=FONT_SMALL, highlightthickness=1,
@@ -806,18 +860,51 @@ class ForgeGuiApp:
                                        highlightcolor=C["accent"])
         self.session_search_var.trace_add("write", lambda *_: self._refresh_history())
 
-        self.history_area = cw.ScrollArea(side, bg=C["sidebar"], pady=2)
+        self.history_area = cw.ScrollArea(chat_panel, bg=C["sidebar"], pady=2)
         self.history_area.pack(fill=tk.BOTH, expand=True, padx=6)
         self.history_box = self.history_area.inner
 
-        more = tk.Label(side, text="•••   更多 …", bg=C["sidebar"], fg=C["muted"],
-                        font=FONT_SMALL, anchor=tk.W, padx=14, pady=10,
-                        cursor="hand2")
-        more.pack(side=tk.BOTTOM, fill=tk.X)
-        more.bind("<Button-1>", lambda _e: self._set_status(
-            "更多功能（Agents / 知识库 / 演化）在主体中查看", "info"))
+        # 其他一级功能各有自己的上下文 Sidebar，不复制主视图控件。
+        for key, label, glyph in NAV_ITEMS:
+            if key == "chat":
+                continue
+            panel = self._build_context_sidebar(side, key, label, glyph)
+            self._sidebar_panels[key] = panel
+        chat_panel.pack(fill=tk.BOTH, expand=True)
 
-        tk.Frame(parent, bg=C["border"], width=1).pack(side=tk.LEFT, fill=tk.Y)
+    def _build_context_sidebar(self, parent, key: str, label: str, glyph: str):
+        descriptions = {
+            "task": "编排与执行 forge run",
+            "agents": "Agent 成员与调度上下文",
+            "tools": "当前环境的能力与开关",
+            "knowledge": "记忆、策展与检索",
+            "evolution": "迭代账本与回归对比",
+            "files": "项目文件由 Workspace 承载",
+            "config": "Provider、模型与 Gateway 配置",
+        }
+        panel = tk.Frame(parent, bg=C["sidebar"])
+        head = tk.Frame(panel, bg=C["sidebar"])
+        head.pack(fill=tk.X, padx=14, pady=(18, 8))
+        tk.Label(head, text=glyph, bg=C["sidebar"], fg=C["accent2"],
+                 font=FONT_SECTION).pack(side=tk.LEFT, padx=(0, 8))
+        tk.Label(head, text=label, bg=C["sidebar"], fg=C["text"],
+                 font=FONT_SECTION).pack(side=tk.LEFT)
+        tk.Label(panel, text=descriptions.get(key, ""), bg=C["sidebar"],
+                 fg=C["muted"], font=FONT_SMALL, justify=tk.LEFT,
+                 anchor="w", wraplength=SIDEBAR_WIDTH - 28).pack(
+            fill=tk.X, padx=14, pady=(0, 18))
+        section = tk.Label(panel, text="当前视图", bg=C["sidebar"],
+                           fg=C["muted"], font=FONT_MICRO, anchor="w")
+        section.pack(fill=tk.X, padx=14, pady=(0, 6))
+        row = tk.Frame(panel, bg=C["sel"], padx=10, pady=8)
+        row.pack(fill=tk.X, padx=8)
+        tk.Label(row, text=label, bg=C["sel"], fg=C["text"],
+                 font=FONT_SMALL, anchor="w").pack(fill=tk.X)
+        if key == "files":
+            pill_button(panel, "打开 Workspace", lambda: self._open_workspace("file_tree"),
+                        kind="accent_soft", bg=C["sidebar"]).pack(
+                fill=tk.X, padx=12, pady=(18, 0))
+        return panel
 
     def _toggle_session_search(self):
         self._search_visible = not self._search_visible
@@ -828,6 +915,73 @@ class ForgeGuiApp:
             self.session_search_var.set("")
             self.session_search.pack_forget()
         self._refresh_history()
+
+    def _show_sidebar_for(self, key: str):
+        panel = self._sidebar_panels.get(key) or self._sidebar_panels.get("chat")
+        for other in self._sidebar_panels.values():
+            if other is not panel:
+                other.pack_forget()
+        if panel is not None and not panel.winfo_manager():
+            panel.pack(fill=tk.BOTH, expand=True)
+
+    def _set_sidebar_visible(self, visible: bool, *, automatic=False):
+        if visible == self._sidebar_visible:
+            return
+        if visible:
+            self.sidebar.pack(side=tk.LEFT, fill=tk.Y, after=self.activity_bar)
+            self.sidebar_toggle_btn.configure(text="≪")
+        else:
+            self.sidebar.pack_forget()
+            self.sidebar_toggle_btn.configure(text="≫")
+        self._sidebar_visible = visible
+        if not automatic:
+            self._sidebar_user_hidden = not visible
+            self._sidebar_auto_hidden = False
+
+    def _toggle_sidebar(self):
+        self._set_sidebar_visible(not self._sidebar_visible)
+
+    def _on_root_configure(self, event):
+        if event.widget is not self.root or self._closing:
+            return
+        if self._responsive_after_id is not None:
+            try:
+                self.root.after_cancel(self._responsive_after_id)
+            except (tk.TclError, ValueError):
+                pass
+        self._responsive_after_id = self.root.after(100, self._apply_responsive_layout)
+
+    def _cancel_responsive_callback(self, event=None):
+        if event is not None and event.widget is not self.root:
+            return
+        if self._responsive_after_id is not None:
+            try:
+                self.root.after_cancel(self._responsive_after_id)
+            except (tk.TclError, ValueError):
+                pass
+            self._responsive_after_id = None
+
+    def _apply_responsive_layout(self):
+        self._responsive_after_id = None
+        if self._closing or not self.root.winfo_exists():
+            return
+        width = self.root.winfo_width()
+        should_hide_sidebar = width < SIDEBAR_COLLAPSE_AT or (
+            self._ws_packed and width < WORKSPACE_RESTORE_AT)
+        if should_hide_sidebar and self._sidebar_visible:
+            self._sidebar_auto_hidden = True
+            self._set_sidebar_visible(False, automatic=True)
+        elif (not should_hide_sidebar and self._sidebar_auto_hidden
+              and not self._sidebar_user_hidden):
+            self._sidebar_auto_hidden = False
+            self._set_sidebar_visible(True, automatic=True)
+
+        if width < WORKSPACE_COLLAPSE_AT and self._ws_packed:
+            self._workspace_auto_hidden = True
+            self._close_workspace(automatic=True)
+        elif width >= WORKSPACE_RESTORE_AT and self._workspace_auto_hidden:
+            self._workspace_auto_hidden = False
+            self._open_workspace(self._last_workspace_tab, automatic=True)
 
     # ── 视图切换 ──────────────────────────────────────────
     def _build_views(self, center):
@@ -915,6 +1069,7 @@ class ForgeGuiApp:
             self._show_view("chat")
             self._open_workspace("file_tree")
             self._set_nav_active("files")
+            self._show_sidebar_for("files")
             return
         self._show_view(key)
 
@@ -927,10 +1082,12 @@ class ForgeGuiApp:
         self._views[key].pack(fill=tk.BOTH, expand=True)
         self._active_view = key
         self._set_nav_active(key)
+        self._show_sidebar_for(key)
         if key == "config":
             self._update_status_label()
 
     def _set_nav_active(self, key: str):
+        self._active_nav = key
         for nav_key, widgets in self._nav_widgets.items():
             active = nav_key == key
             for holder, btn in widgets:
@@ -942,8 +1099,11 @@ class ForgeGuiApp:
                 holder.configure(bg=bg,
                                  highlightbackground=C["sel_border"] if active else base)
                 btn.configure(bg=bg, fg=C["text"] if active else C["ter"],
-                              activebackground=C["hover"] if active else base,
+                              activebackground=C["hover"],
                               activeforeground=C["text"])
+            marker = getattr(self, "_activity_markers", {}).get(nav_key)
+            if marker is not None:
+                marker.configure(bg=C["accent"] if active else C["activity"])
 
     # ── 右栏工作区 ────────────────────────────────────────
     def _repo_root(self) -> Path:
@@ -966,10 +1126,13 @@ class ForgeGuiApp:
             self.workspace = None
             self._ws_error = str(exc)
 
-    def _open_workspace(self, tab: str = "file_tree"):
+    def _open_workspace(self, tab: str = "file_tree", *, automatic=False):
         if self.workspace is None:
             self._set_status(f"工作区面板不可用：{self._ws_error}", "warn")
             return
+        self._last_workspace_tab = tab
+        if not automatic:
+            self._workspace_auto_hidden = False
         if not self._ws_packed:
             try:
                 self.split.add(self.ws_holder, minsize=420, width=640,
@@ -1001,8 +1164,9 @@ class ForgeGuiApp:
         except Exception:
             pass
         self.ws_toggle_btn.configure(text="▤ 收起工作区")
+        self.root.after_idle(self._apply_responsive_layout)
 
-    def _close_workspace(self):
+    def _close_workspace(self, *, automatic=False):
         if self.workspace is not None:
             try:
                 self.workspace.hide()
@@ -1014,6 +1178,8 @@ class ForgeGuiApp:
             except tk.TclError:
                 pass
             self._ws_packed = False
+        if not automatic:
+            self._workspace_auto_hidden = False
         try:
             self.ws_toggle_btn.configure(text="▤ 工作区")
         except (tk.TclError, AttributeError):
@@ -1023,7 +1189,7 @@ class ForgeGuiApp:
         if self._ws_packed:
             self._close_workspace()
         else:
-            self._open_workspace("file_tree")
+            self._open_workspace(self._last_workspace_tab)
 
     # ── 顶栏指标 ──────────────────────────────────────────
     def _start_sysmon(self):
@@ -1148,7 +1314,7 @@ class ForgeGuiApp:
             active = sid == active_id
             row = tk.Frame(box, bg=C["sel"] if active else C["sidebar"],
                            cursor="hand2",
-                           highlightthickness=1,
+                           highlightthickness=0,
                            highlightbackground=C["sel_border"] if active else C["sidebar"])
             row.pack(fill=tk.X, pady=1, padx=2)
             tk.Label(row, text="▣", bg=row["bg"], fg=C["accent2"],
@@ -1158,6 +1324,15 @@ class ForgeGuiApp:
                      anchor=tk.W).pack(side=tk.LEFT, fill=tk.X, expand=True, pady=4)
             for widget in (row, *row.winfo_children()):
                 widget.bind("<Button-1>", lambda _e, s=sid: self._load_session(s))
+                widget.bind("<Enter>", lambda _e, r=row, a=active: self._paint_history(r, a, True))
+                widget.bind("<Leave>", lambda _e, r=row, a=active: self._paint_history(r, a, False))
+
+    @staticmethod
+    def _paint_history(row, active, hover):
+        bg = C["sel"] if active else C["hover"] if hover else C["sidebar"]
+        row.configure(bg=bg)
+        for child in row.winfo_children():
+            child.configure(bg=bg)
 
     def _new_session(self):
         if self._sending:
@@ -1966,7 +2141,12 @@ class ForgeGuiApp:
         subtitle = tk.Label(parent, textvariable=self.chat_sub_var, bg=C["chat"], fg=C["muted"],
                  font=FONT_MICRO, anchor=tk.W, justify=tk.LEFT,
                  wraplength=520)
-        subtitle.pack(fill=tk.X, padx=20, pady=(0, 8))
+        def fit_subtitle(*_):
+            if self.chat_sub_var.get():
+                subtitle.pack(fill=tk.X, padx=20, pady=(0, 8), after=head)
+            else:
+                subtitle.pack_forget()
+        self.chat_sub_var.trace_add("write", fit_subtitle)
         subtitle.bind("<Configure>", lambda event: subtitle.configure(wraplength=max(160, event.width)))
 
         # 会话头只保留：标题 + 当前模型 + 设置。温度等高级参数收进 ⚙ 菜单，
@@ -1980,14 +2160,8 @@ class ForgeGuiApp:
         self.clear_chat_btn = pill_button(right, "＋", self._new_session,
                                          kind="quiet", bg=C["chat"], padx=8)
         self.clear_chat_btn.pack(side=tk.RIGHT, padx=(0, 2))
-        self.model_chip = rounded_label(
-            right, f"▣ {self.model_var.get()}",
-            fill=C["surface2"], outline=C["border_hi"], fg=C["subtext"],
-            font=FONT_MICRO, bg=C["chat"], command=self._open_model_menu,
-            tooltip="当前模型（点击切换）")
-        self.model_chip.pack(side=tk.RIGHT, padx=(0, 8))
+        self.model_chip = None  # 模型选择统一放在 Composer。
 
-        tk.Frame(parent, bg=C["border"], height=1).pack(fill=tk.X)
 
         self.chat_area = cw.MessageArea(parent, bg=C["chat"])
         self._chat_empty = True
@@ -2011,10 +2185,10 @@ class ForgeGuiApp:
             on_context=self._open_context,
             on_commands=self._open_commands,
         )
-        self.input_card.pack(fill=tk.X, side=tk.BOTTOM)
+        self.input_card.pack(fill=tk.X, side=tk.BOTTOM, padx=20, pady=(0, 6))
         self.context_summary = tk.StringVar(value="历史上下文：开启 · 附件：0")
         tk.Label(parent, textvariable=self.context_summary, bg=C["chat"], fg=C["ter"],
-                 font=FONT_MICRO, anchor="w", padx=12).pack(fill=tk.X, side=tk.BOTTOM)
+                 font=FONT_MICRO, anchor="w", padx=20).pack(fill=tk.X, side=tk.BOTTOM)
         self.chat_area.pack(fill=tk.BOTH, expand=True)
         self.send_entry = self.input_card.entry
         self.send_var = self.input_card.send_var
@@ -3068,6 +3242,7 @@ class ForgeGuiApp:
         if self.gateway_proc is proc and proc.poll() is None:
             self.gw_status_var.set("● 未就绪")
             self.gw_status_lbl.configure(fg=C["warn"])
+            self.gw_detail_status_lbl.configure(fg=C["warn"])
             self.gw_btn.configure(text="⟳ 重启", bg=C["accent"],
                                   state=tk.DISABLED if self._sending else tk.NORMAL)
             self._set_status("gateway 启动未就绪；可点「重启」重试，或检查端口/配置", "warn")
@@ -3077,6 +3252,7 @@ class ForgeGuiApp:
             return
         self.gw_status_var.set(f"● 在线 ({self.gateway_port})")
         self.gw_status_lbl.configure(fg=C["ok"])
+        self.gw_detail_status_lbl.configure(fg=C["ok"])
         self.gw_btn.configure(text="⟳ 重启", bg=C["surface2"], fg=C["body"],
                               state=tk.DISABLED if self._sending else tk.NORMAL)
         self.port_spin.configure(state=tk.DISABLED if self._sending else tk.NORMAL)
@@ -3085,6 +3261,7 @@ class ForgeGuiApp:
     def _gateway_down(self, reason: str = "已停止"):
         self.gw_status_var.set("● 离线")
         self.gw_status_lbl.configure(fg=C["muted"])
+        self.gw_detail_status_lbl.configure(fg=C["muted"])
         self.gw_btn.configure(text="▶ 启动", bg=C["accent"], fg="#FFFFFF",
                               state=tk.DISABLED if self._sending else tk.NORMAL)
         self.port_spin.configure(state=tk.DISABLED if self._sending else tk.NORMAL)
@@ -3351,6 +3528,12 @@ class ForgeGuiApp:
                 "有未保存的修改", "功能开关或编辑内容尚未保存。要放弃这些修改并退出吗？", parent=self.root):
             return
         self._closing = True
+        if self._responsive_after_id is not None:
+            try:
+                self.root.after_cancel(self._responsive_after_id)
+            except (tk.TclError, ValueError):
+                pass
+            self._responsive_after_id = None
         if self._autostart_after_id is not None:
             try:
                 self.root.after_cancel(self._autostart_after_id)

@@ -36,7 +36,7 @@ from gui_theme import (
     setup_code_tags, style_scrollbar,
 )
 
-MAX_BUBBLE_WIDTH = 620          # 长文本在此宽度换行（用户/Agent 都走这个）
+MAX_BUBBLE_WIDTH = 740          # 中央 Conversation 是主体，长文允许更宽的阅读行
 USER_AUTOSIZE_PAD_X = 14
 USER_AUTOSIZE_PAD_Y = 10
 
@@ -566,7 +566,7 @@ class ToolCard(tk.Frame):
     def _refresh_summary(self):
         n = len(self._row_specs)
         secs = sum(s for _, s in self._row_specs)
-        text = f"使用了 {n} 个工具"
+        text = f"工具调用 · {n} 项"
         if secs > 0:
             if secs >= 10:
                 text += f" · {secs:.0f}s"
@@ -588,8 +588,8 @@ class ToolCard(tk.Frame):
         wrap = tk.Frame(self.rows_frame, bg=bgc)
         wrap.pack(fill=tk.X, pady=1)
         ok = row.get("ok", True)
-        tk.Label(wrap, text="✓" if ok else "✕", bg=bgc,
-                 fg=C["ok"] if ok else C["error"],
+        tk.Label(wrap, text="✓" if ok else "⚠", bg=bgc,
+                 fg=C["ok"] if ok else C["warn"],
                  font=FONT_SMALL, width=2).pack(side=tk.LEFT)
         tk.Label(wrap, text=row.get("name", ""), bg=bgc, fg=C["accent2"],
                  font=FONT_MONO_SM).pack(side=tk.LEFT)
@@ -743,6 +743,12 @@ class UserMessage(tk.Frame):
                               fg=C["body"], font=FONT_UI, justify=tk.LEFT,
                               anchor="w", wraplength=max_text)
         self.label.pack(anchor="w")
+        self.bind("<Configure>", self._fit_bubble)
+
+    def _fit_bubble(self, event):
+        # Workspace 打开后行宽变小，气泡必须重新换行，而不是裁掉正文。
+        available = max(80, event.width - USER_AUTOSIZE_PAD_X * 2 - 16)
+        self.label.configure(wraplength=min(MAX_BUBBLE_WIDTH - 44, available))
 
 
 class AgentMessage(tk.Frame):
@@ -844,13 +850,7 @@ class AgentMessage(tk.Frame):
         return widget
 
     def add_steps(self, items, *, title="执行步骤"):
-        # 若有 title，先放一个微弱的小标题
         host_frame = self._ensure_trace_host()
-        if title:
-            head_row = tk.Frame(host_frame, bg=self._bg)
-            head_row.pack(fill=tk.X, pady=(6, 2))
-            tk.Label(head_row, text=title, bg=self._bg, fg=C["muted"],
-                     font=FONT_CAPTION, anchor="w").pack(side=tk.LEFT)
         steps = StepList(host_frame, items, bg=self._bg, expanded=False)
         steps.pack(fill=tk.X)
         self._trace_container = host_frame
@@ -859,11 +859,6 @@ class AgentMessage(tk.Frame):
 
     def add_tool_card(self, rows, *, title="调用工具", expanded=False):
         host_frame = self._ensure_trace_host()
-        if title:
-            head_row = tk.Frame(host_frame, bg=self._bg)
-            head_row.pack(fill=tk.X, pady=(6, 2))
-            tk.Label(head_row, text=title, bg=self._bg, fg=C["muted"],
-                     font=FONT_CAPTION, anchor="w").pack(side=tk.LEFT)
         card = ToolCard(host_frame, title=title, rows=rows, bg=self._bg,
                         expanded=bool(expanded))
         card.pack(fill=tk.X)
@@ -932,22 +927,25 @@ class MessageArea(tk.Frame):
         base = bg or C["chat"]
         super().__init__(parent, bg=base)
         self._bg = base
-        self.scroll = ScrollArea(self, bg=base, padx=18, pady=16)
+        self.scroll = ScrollArea(self, bg=base, padx=18, pady=18)
         self.scroll.pack(fill=tk.BOTH, expand=True)
         self._empty = None
         self._count = 0
         self.show_empty()
 
-    def show_empty(self, title="开始新对话",
-                   lines=("右上启动 gateway，选好模型后在下方输入消息",
-                          "可添加文本附件；执行工具请使用「任务」")):
+    def show_empty(self, title="从一个目标开始",
+                   lines=("描述你想解决的问题，或添加文件作为上下文。",
+                          "执行工具请选择左侧「任务」；连接信息在右上「状态」。")):
         self.clear()
         box = tk.Frame(self.scroll.inner, bg=self._bg)
         box.pack(fill=tk.X, pady=(60, 0))
         tk.Label(box, text=title, bg=self._bg, fg=C["text"], font=FONT_TITLE).pack()
         for line in lines:
-            tk.Label(box, text=line, bg=self._bg, fg=C["muted"],
-                     font=FONT_SMALL).pack(pady=(4, 0))
+            label = tk.Label(box, text=line, bg=self._bg, fg=C["ter"],
+                             font=FONT_SMALL, wraplength=500, justify=tk.CENTER)
+            label.pack(fill=tk.X, pady=(8, 0))
+            label.bind("<Configure>", lambda e, w=label: w.configure(
+                wraplength=max(80, e.width - 16)))
         self._empty = box
 
     def clear(self):
@@ -1011,7 +1009,7 @@ class MessageArea(tk.Frame):
 
 
 class InputCard(tk.Frame):
-    """底部 Composer：左 + 号 → 主输入区 → 次级小按钮 → 底栏：模型 / 沉思 / ⚙ / 发送。"""
+    """底部 Composer：输入是主体，低频控制统一收进水平工具栏。"""
 
     def __init__(self, parent, *, bg=None, placeholder="输入消息，或输入 / 使用命令...",
                  on_send=None, on_stop=None, on_paste=None, on_model=None,
@@ -1045,21 +1043,8 @@ class InputCard(tk.Frame):
         self.plus = circle_button(left_bar, "＋", plus_cb, size=28,
                                   kind="muted", bg=C["input_bg"], glyph_size=11,
                                   tooltip="附件 / 剪贴板")
-        self.plus.pack(side=tk.TOP, pady=(2, 6))
+        self.plus.pack(side=tk.TOP, pady=(2, 0))
         # 次级小按钮：上下文、命令（弱化，小字）
-        if attach_button:
-            sec_row = tk.Frame(left_bar, bg=C["input_bg"])
-            sec_row.pack(side=tk.TOP, anchor="w")
-            for text, tip, callback in (
-                    ("上下文", "查看历史与附件，检查本轮实际发送内容", on_context),
-                    ("/ 命令", "打开本地命令菜单", on_commands)):
-                pill = rounded_label(sec_row, text, fill=C["input_bg"],
-                                    outline="", fg=C["subtext"], font=FONT_MICRO,
-                                    bg=C["input_bg"], tooltip=tip,
-                                    command=callback, radius=R_PILL, padx=6,
-                                    pady=2)
-                pill.pack(side=tk.TOP, anchor="w", pady=(0, 2))
-
         # 主输入区
         entry_host = tk.Frame(top_row, bg=C["input_bg"])
         entry_host.pack(side=tk.LEFT, fill=tk.X, expand=True)
@@ -1084,9 +1069,30 @@ class InputCard(tk.Frame):
         # ─── 底栏：模型 + 沉思 + ⚙ + 发送（右组） ─────────────────────────
         bar = tk.Frame(inner, bg=C["input_bg"])
         bar.pack(fill=tk.X, pady=(10, 0))
+        bar.grid_columnconfigure(0, weight=1)
+        self._toolbar = bar
+        self._low_controls = None
+
+        # 低频操作收进水平工具栏，让输入框成为清晰的视觉主体。
+        if attach_button:
+            low = tk.Frame(bar, bg=C["input_bg"])
+            low.grid(row=0, column=0, sticky="w")
+            self._low_controls = low
+            for text, tip, callback in (
+                    ("上下文", "查看历史与附件，检查本轮实际发送内容", on_context),
+                    ("/ 命令", "打开本地命令菜单", on_commands)):
+                pill = rounded_label(low, text, fill=C["input_bg"], outline="",
+                                     fg=C["muted"], font=FONT_MICRO,
+                                     bg=C["input_bg"], tooltip=tip,
+                                     command=callback, radius=R_PILL, padx=6,
+                                     pady=2)
+                pill.pack(side=tk.LEFT, padx=(0, 4))
 
         right = tk.Frame(bar, bg=C["input_bg"])
-        right.pack(side=tk.RIGHT)
+        right.grid(row=0, column=1, sticky="e")
+        self._primary_controls = right
+        self._toolbar_compact = None
+        bar.bind("<Configure>", self._fit_toolbar)
         self.model_var = model_var or tk.StringVar(value="default")
         if model_widget is not None:
             self.model_pill = None
@@ -1133,7 +1139,7 @@ class InputCard(tk.Frame):
                                     fg=C["muted"], font=FONT_CAPTION)
         self.footer_left.pack(side=tk.LEFT)
         if footer_right is None:
-            footer_right = "Enter 发送 · Shift+Enter 换行"
+            footer_right = "Enter ↵  ·  Shift+Enter 换行"
         self.footer_right = tk.Label(foot, text=footer_right, bg=base,
                                      fg=C["muted"], font=FONT_CAPTION)
         self.footer_right.pack(side=tk.RIGHT)
@@ -1142,6 +1148,22 @@ class InputCard(tk.Frame):
         self._sync_send_state()
 
     # -- 交互 --
+    def _fit_toolbar(self, event):
+        low = self._low_controls
+        if low is None:
+            return
+        need = low.winfo_reqwidth() + self._primary_controls.winfo_reqwidth() + 12
+        compact = event.width < need
+        if compact == self._toolbar_compact:
+            return
+        self._toolbar_compact = compact
+        if compact:
+            low.grid_configure(row=1, column=0, columnspan=2, pady=(6, 0))
+            self._primary_controls.grid_configure(row=0, column=0, columnspan=2)
+        else:
+            low.grid_configure(row=0, column=0, columnspan=1, pady=0)
+            self._primary_controls.grid_configure(row=0, column=1, columnspan=1)
+
     def _enter(self, event):
         if event.state & 1:                # Shift
             return None
