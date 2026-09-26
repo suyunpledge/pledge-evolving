@@ -666,7 +666,12 @@ class ForgeGuiApp:
             return
         if tab == "changes":
             self.workspace.open_changes()
-        elif tab != "file_tree":
+        elif tab == "preview":
+            try:
+                self.workspace._set_preview_sub("预览")
+            except Exception:
+                pass
+        else:
             try:
                 self.workspace.open_file_tree()
             except Exception:

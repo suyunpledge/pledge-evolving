@@ -1,31 +1,33 @@
-"""forge 桌面端 · 右侧「工作区」面板。
+"""forge 桌面端 · 右侧「工作区」面板（v2：三段堆叠布局）。
 
-职责：
-    - 仓库浏览（文件树 + git 状态徽章）
-    - 变更总览（chip 筛选 + +X/-Y 统计）
-    - 代码查看（行号槽 + Python 高亮 + 滚动同步）
-    - diff 视图（git diff 行级着色）
-    - 预览（图片缩略图 / Markdown 轻量渲染 / 文本 / HTML 源码）
-    - 终端（gateway 输出回显）
+对照参考稿的版式（关键区别：三个区域**同时可见、上下堆叠**，不是标签页互斥切换）：
 
-设计口径：
-    - 完全复用 ``gui_theme`` 的配色 ``C``、字体 ``FONT_*``、圆角 ``R_*`` 与绘制
-      原语（``RoundedCard``、``pill_button``、``chip``、``badge``、``glyph_button``、
-      ``setup_code_tags``、``highlight_python``、``gutter_lines``、``human_size``、
-      ``style_scrollbar``），不另造一套 token。
-    - 零第三方依赖（标准库 + tkinter + gui_theme）。
-    - 所有 IO（git / 文件系统）必须 try/except，绝不让异常冒到 UI。
-    - 导入期不执行 git/文件扫描，只在 ``__init__`` / ``refresh`` 时按需触发。
+    ┌────────── 顶栏（图标 + 工作区 + Beta + 面包屑 + ✕）──────────┐
+    │ 标签条: 文件树 | 变更(N) | <当前文件> | diff | 预览 | 终端      │
+    ├────────────┬─────────────────────────┬────────┤
+    │ 文件树列    │ 代码编辑器（行号槽）      │ minimap │  ← 上区 ~55%
+    ├────────────┴─────────────────────────┴────────┤
+    │ 变更(N) 文件列表+chips │ Diff 对比视图（并排）  │  ← 中区 ~25%
+    ├──────────────────────────────────────────────┤
+    │ 预览 | 控制台 | 终端 | 图像 | Markdown（子标签） │  ← 下区 ~20%
+    └──────────────────────────────────────────────┘
+
+标签条语义（参考稿的标签不切换整块内容，只做聚焦/跳转）：
+    文件树 → 聚焦左上树列；变更(N) → 聚焦中区；<文件名> → 重新载入代码并聚焦上区；
+    diff → 聚焦中区右侧；预览/终端 → 切换下区子标签。
+    被聚焦的区域描边短暂高亮，其余保持可见。
 
 对外 API（主程序按以下签名调用，名字必须一致）：
     - ``show()`` / ``hide()`` / ``toggle()`` / ``is_visible`` (property, bool)
-    - ``open_file(path, *, tab=None)``：切到代码标签并加载文件
-    - ``show_diff(path=None)``：切到 diff 标签；给 path 就渲染该文件的 diff
-    - ``open_changes()``：切到「变更」标签
-    - ``open_file_tree()``：切到「文件树」标签
+    - ``open_file(path, *, tab=None)``：代码区载入该文件（tab 兼容旧调用，忽略内容）
+    - ``show_diff(path=None)``：中区 diff 渲染该文件（None=全部）
+    - ``open_changes()`` / ``open_file_tree()``：聚焦对应区域
     - ``refresh()``：重新扫描文件树 + git 状态
-    - ``push_terminal(text)``：往终端追加一行
+    - ``changes_count()``：当前变更文件数
+    - ``push_terminal(text)``：往下区终端/控制台追加一行
     - ``set_repo_root(path)``：切换仓库根
+
+零第三方依赖（标准库 + tkinter + gui_theme）；所有 git/文件 IO 异常不外抛。
 """
 from __future__ import annotations
 
@@ -35,78 +37,55 @@ import sys
 import tkinter as tk
 import webbrowser
 from pathlib import Path
-from tkinter import scrolledtext
-from typing import Any, Callable, Iterable
+from typing import Any, Callable
 
-# 复用设计系统（绝对 import，避开相对路径陷阱）
 _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
 from gui_theme import (  # noqa: E402
     C,
-    FONT_GLYPH,
     FONT_MICRO,
-    FONT_MONO,
     FONT_MONO_SM,
     FONT_MONO_XS,
     FONT_SMALL,
     FONT_TITLE,
-    FONT_UI,
     FONT_UI_BOLD,
-    PAD_L,
     PAD_M,
     PAD_S,
     PAD_XS,
-    R_SM,
     attach_tooltip,
     badge,
-    chip,
     divider,
     glyph_button,
     gutter_lines,
     highlight_python,
     human_size,
     pill_button,
+    round_rect,
     setup_code_tags,
     style_scrollbar,
 )
 
-# 截断阈值（超大文件不全读）
 _MAX_FILE_BYTES = 400 * 1024
 _MAX_FILE_LINES = 4000
-# 不扫描的目录（与 ``git status`` 行为对齐）
-_SKIP_DIRS = {".git", "__pycache__", "node_modules", ".venv", "dist", "build"}
+_SKIP_DIRS = {".git", "__pycache__", "node_modules", ".venv", "venv", "dist",
+              "build", ".mypy_cache", ".pytest_cache", ".ruff_cache", ".openclaw"}
 _SKIP_SUFFIXES = (".pyc", ".pyo")
+_BAND_WEIGHTS = (11, 5, 4)          # 上 / 中 / 下 三区高度权重（≈55/25/20）
+_TREE_WIDTH = 168                   # 文件树列宽
+_CHANGES_WIDTH = 216                # 变更列表列宽
+_MINIMAP_W = 64                     # minimap 宽
 
 
-# ─── 工具 ───────────────────────────────────────────────────
+# ─── git / fs 工具 ─────────────────────────────────────────
 
 
-def _bg_of(widget) -> str:
-    """Best-effort 父背景取色（tkinter 默认灰底是深色主题大敌）。"""
+def _run_git(repo: Path, *args: str, timeout: float = 5.0) -> str:
     try:
-        return widget.cget("bg")
-    except Exception:
-        return C["bg"]
-
-
-def _humanize_command(text: str) -> str:
-    """给 git 输出做极简高亮片段，返回 ``(prefix, rest)``。"""
-    return text  # 占位；保留接口以便以后扩展
-
-
-def _run_git(repo: Path, *args: str, timeout: float = 4.0) -> str:
-    """同步跑 git 命令并返回 stdout；任何异常一律返回空串。"""
-    try:
-        proc = subprocess.run(
-            ["git", "-C", str(repo), *args],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            encoding="utf-8",
-            errors="replace",
-        )
+        proc = subprocess.run(["git", "-C", str(repo), *args],
+                              capture_output=True, text=True, timeout=timeout,
+                              encoding="utf-8", errors="replace")
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         return ""
     if proc.returncode != 0:
@@ -114,8 +93,11 @@ def _run_git(repo: Path, *args: str, timeout: float = 4.0) -> str:
     return proc.stdout or ""
 
 
+def _git_is_repo(repo: Path) -> bool:
+    return bool(_run_git(repo, "rev-parse", "--show-toplevel", timeout=2.0).strip())
+
+
 def _resolve_path(repo: Path | None, p: str | os.PathLike) -> Path | None:
-    """把 ``p``（绝对或相对 ``repo``）解析为绝对 Path，失败返回 None。"""
     if p is None:
         return None
     try:
@@ -123,16 +105,15 @@ def _resolve_path(repo: Path | None, p: str | os.PathLike) -> Path | None:
     except (TypeError, ValueError):
         return None
     if not path.is_absolute() and repo is not None:
-        path = (repo / path).resolve()
-    return path
+        path = (repo / path)
+    try:
+        return path.resolve()
+    except OSError:
+        return path
 
 
 def _scan_tree(root: Path, *, max_depth: int = 8) -> list[dict[str, Any]]:
-    """递归扫目录树，返回排序后的节点列表（目录优先，名字其次）。
-
-    节点结构：
-        ``{"path": Path, "name": str, "is_dir": bool, "depth": int}``
-    """
+    """目录优先、名字次之的扁平节点列表。"""
     nodes: list[dict[str, Any]] = []
 
     def _walk(d: Path, depth: int) -> None:
@@ -140,21 +121,26 @@ def _scan_tree(root: Path, *, max_depth: int = 8) -> list[dict[str, Any]]:
             return
         try:
             entries = list(d.iterdir())
-        except (PermissionError, OSError, FileNotFoundError):
+        except (PermissionError, OSError):
             return
-        # 目录优先 / 名字次之
-        entries.sort(key=lambda x: (not x.is_dir(follow_symlinks=False),
-                                    x.name.lower()))
+        # 目录优先 / 名字次之（is_dir 不带 follow_symlinks：3.12 及以下没有该参数）
+        def _sort_key(entry: Path):
+            try:
+                return (not entry.is_dir(), entry.name.lower())
+            except OSError:
+                return (True, entry.name.lower())
+        entries.sort(key=_sort_key)
         for entry in entries:
             try:
                 name = entry.name
-                if entry.is_dir(follow_symlinks=False):
+                is_dir = entry.is_dir()
+                if is_dir:
                     if name in _SKIP_DIRS:
                         continue
                     nodes.append({"path": entry, "name": name,
                                   "is_dir": True, "depth": depth})
                     _walk(entry, depth + 1)
-                elif entry.is_file(follow_symlinks=False):
+                else:
                     if name.endswith(_SKIP_SUFFIXES):
                         continue
                     nodes.append({"path": entry, "name": name,
@@ -169,35 +155,37 @@ def _scan_tree(root: Path, *, max_depth: int = 8) -> list[dict[str, Any]]:
 
 
 def _git_status_map(repo: Path) -> dict[str, str]:
-    """解析 ``git status --porcelain`` 为 ``{相对路径: 状态码}``。
-
-    状态码来自 porcelain v1 第一列：``M/A/D/R/C/U/?/?`` 等；空表示未变更。
-    """
     out = _run_git(repo, "status", "--porcelain")
     result: dict[str, str] = {}
     for line in out.splitlines():
         if len(line) < 4:
             continue
         code = line[:2]
-        # 形如 "XY filename"；XY 中第二格是暂存，第一格是工作区
-        # 对修改展示：M 工作区、MM 工作区+暂存、A/D 等
         path = line[3:].strip()
-        # 处理 rename（``R  old -> new``）
+        if path.startswith('"') and path.endswith('"'):
+            path = path[1:-1]
         if " -> " in path:
             path = path.split(" -> ", 1)[1].strip()
-        result[path.replace("\\", "/")] = code
+        result[path.replace("\\", "/")] = code.strip() or "?"
     return result
 
 
-def _git_diff_numstat(repo: Path, *,
-                       against: str = "HEAD") -> dict[str, tuple[int, int]]:
-    """``git diff --numstat`` → ``{path: (added, removed)}``。
+def _count_lines(path: Path, limit: int = 20000) -> int:
+    try:
+        with open(path, "rb") as f:
+            n = 0
+            for _ in f:
+                n += 1
+                if n >= limit:
+                    break
+            return n
+    except OSError:
+        return 0
 
-    失败回落到 ``git diff --numstat``（无 ``HEAD`` 的初始仓库也能跑）。
-    未跟踪文件按 ``+lines -0`` 计。
-    """
-    out = _run_git(repo, "diff", "--numstat", against)
-    if not out and against == "HEAD":
+
+def _git_diff_numstat(repo: Path) -> dict[str, tuple[int, int]]:
+    out = _run_git(repo, "diff", "--numstat", "HEAD")
+    if not out:
         out = _run_git(repo, "diff", "--numstat")
     result: dict[str, tuple[int, int]] = {}
     for line in out.splitlines():
@@ -205,82 +193,57 @@ def _git_diff_numstat(repo: Path, *,
         if len(parts) < 3:
             continue
         a, d, path = parts[0], parts[1], parts[2]
-        if a == "-" or d == "-":  # 二进制
-            try:
-                added, removed = int(a) if a != "-" else 0, int(d) if d != "-" else 0
-            except ValueError:
-                added = removed = 0
-        else:
-            try:
-                added, removed = int(a), int(d)
-            except ValueError:
-                added = removed = 0
-        result[path.replace("\\", "/")] = (added, removed)
-
-    # 未跟踪文件（``??``）按行数计
-    untracked = [k for k, v in _git_status_map(repo).items()
-                 if v.strip().startswith("?")]
-    for path in untracked:
-        full = (repo / path)
         try:
-            lines = sum(1 for _ in full.read_bytes().splitlines())
-        except OSError:
-            lines = 0
-        result[path] = (lines, 0)
+            added = int(a) if a != "-" else 0
+            removed = int(d) if d != "-" else 0
+        except ValueError:
+            added = removed = 0
+        result[path.replace("\\", "/")] = (added, removed)
+    # 未跟踪文件按「整文件新增」计
+    for path, code in _git_status_map(repo).items():
+        if code.startswith("?") and path not in result:
+            full = repo / path
+            if full.is_file():
+                result[path] = (_count_lines(full), 0)
     return result
 
 
-def _git_is_repo(repo: Path) -> bool:
-    out = _run_git(repo, "rev-parse", "--show-toplevel", timeout=2.0)
-    return bool(out.strip())
+def _shorten_path(path: str, max_len: int = 26) -> str:
+    """长路径中间截断：保头保尾，例如 a/very/long/path.py → a/…/path.py。"""
+    if len(path) <= max_len:
+        return path
+    parts = path.split("/")
+    if len(parts) >= 2:
+        head, tail = parts[0], parts[-1]
+        if len(head) + len(tail) + 4 <= max_len:
+            return f"{head}/…/{tail}"
+    return path[:max_len - 1] + "…"
 
 
 def _strip_md(text: str) -> str:
-    """极简 Markdown 渲染：去掉 ``#``/``**``/``>`` 记号 + 链接转 ``text``。"""
-    import re
-
-    lines: list[str] = []
-    for raw in text.splitlines():
-        line = raw.rstrip()
-        if line.startswith("######"):
-            lines.append(("  " + line.lstrip("#").strip()).upper())
-        elif line.startswith("#####"):
-            lines.append("  " + line.lstrip("#").strip())
-        elif line.startswith("####"):
-            lines.append(("  " + line.lstrip("#").strip()).upper())
-        elif line.startswith("###"):
-            lines.append(line.lstrip("#").strip().upper())
-        elif line.startswith("##"):
-            lines.append(line.lstrip("#").strip().upper())
-        elif line.startswith("#"):
-            lines.append(line.lstrip("#").strip().upper())
-        elif line.startswith(">"):
-            lines.append("│ " + line.lstrip(">").strip())
-        elif line.startswith("- "):
-            lines.append("• " + line[2:])
-        elif re.match(r"^\d+\.\s", line):
-            lines.append(line)
-        else:
-            # 链接 [text](url) → text
-            line = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", line)
-            # 强调符号剥掉
-            line = line.replace("**", "").replace("__", "")
-            lines.append(line)
-    return "\n".join(lines)
+    """极简 Markdown 去记号（预览用）。"""
+    out = []
+    for line in text.splitlines():
+        s = line
+        if s.lstrip().startswith("#"):
+            s = s.lstrip("#").strip()
+        s = s.replace("**", "").replace("`", "")
+        if s.lstrip().startswith("> "):
+            s = "│ " + s.lstrip()[2:]
+        out.append(s)
+    return "\n".join(out)
 
 
-# ─── 标签按钮 ─────────────────────────────────────────────
+# ─── 内部小组件 ────────────────────────────────────────────
 
 
 class _Tab(tk.Label):
-    """顶部标签条上的可点击标签。"""
+    """标签条上的一枚标签（选中态：#1E1E2A 底 + #34344A 描边）。"""
 
     def __init__(self, parent, text: str, *, on_click: Callable[["_Tab"], None]):
-        super().__init__(
-            parent, text=text, font=FONT_SMALL, padx=PAD_M, pady=6,
-            bg=C["bg"], fg=C["ter"], cursor="hand2",
-            highlightthickness=1, highlightbackground=C["border"],
-        )
+        super().__init__(parent, text=text, bg=C["bg"], fg=C["ter"],
+                         font=FONT_SMALL, padx=10, pady=5, cursor="hand2",
+                         highlightthickness=1, highlightbackground=C["bg"])
         self._on_click = on_click
         self._selected = False
         self.bind("<Button-1>", self._click)
@@ -288,10 +251,7 @@ class _Tab(tk.Label):
         self.bind("<Leave>", self._on_leave)
 
     def _click(self, _e=None):
-        try:
-            self._on_click(self)
-        except Exception:
-            pass
+        self._on_click(self)
 
     def _on_enter(self, _e=None):
         if not self._selected:
@@ -301,189 +261,642 @@ class _Tab(tk.Label):
         if not self._selected:
             self.configure(bg=C["bg"], fg=C["ter"])
 
-    def set_selected(self, selected: bool) -> None:
+    def set_selected(self, selected: bool):
         self._selected = selected
-        if selected:
-            self.configure(bg=C["sel"], fg=C["text"],
-                           highlightbackground=C["sel_border"])
-        else:
-            self.configure(bg=C["bg"], fg=C["ter"],
-                           highlightbackground=C["border"])
+        self.configure(bg=C["sel"] if selected else C["bg"],
+                       fg=C["text"] if selected else C["ter"],
+                       highlightbackground=C["sel_border"] if selected else C["bg"])
+
+    def set_text(self, text: str):
+        self.configure(text=text)
 
 
 class _FileRow(tk.Frame):
-    """文件树 / 变更列表的一行（图标 + 名字 + git 徽章 + +X/-Y）。"""
+    """文件树 / 变更列表共用的一行：缩进 + 图标 + 名字 + 状态徽章 (+X −Y)。"""
+
+    _STATUS_COLORS = {"M": C["git_m"], "A": C["git_a"], "?": C["git_a"],
+                      "D": C["git_d"], "R": C["git_u"], "U": C["git_u"]}
 
     def __init__(self, parent, *, depth: int = 0, indent: int = 14,
-                 icon: str = "📄", name: str = "", status: str = "",
+                 icon: str, name: str, status: str = "",
                  added: int | None = None, removed: int | None = None,
                  expandable: bool = False, expanded: bool = False,
-                 on_click: Callable[["_FileRow"], None] | None = None,
-                 on_toggle: Callable[["_FileRow"], None] | None = None):
-        super().__init__(parent, bg=C["bg"], highlightthickness=0, bd=0)
+                 on_click: Callable | None = None, bg: str | None = None):
+        base = bg or C["bg"]
+        super().__init__(parent, bg=base, cursor="hand2",
+                         highlightthickness=0)
+        self._base = base
         self._on_click = on_click
-        self._on_toggle = on_toggle
-        self._expanded = expanded
-        self._expandable = expandable
-        self._status = status
+        self._depth = depth
+        inner = tk.Frame(self, bg=base)
+        inner.pack(fill=tk.X, padx=(6 + depth * indent, 6), pady=1)
 
-        prefix = "    " * depth
-        glyph = ("▾ " if expandable and expanded
-                 else "▸ " if expandable else "  ")
-        self._toggle_lbl = tk.Label(
-            self, text=prefix + glyph + icon + " ", bg=C["bg"], fg=C["body"],
-            font=FONT_MONO_SM, anchor="w", padx=0, pady=2,
-        )
-        self._toggle_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        if on_click is not None:
-            self._toggle_lbl.configure(cursor="hand2")
-            self._toggle_lbl.bind("<Button-1>", self._handle_click)
-        if on_toggle is not None and expandable:
-            self._toggle_lbl.bind("<Double-Button-1>", lambda _e: on_toggle(self))
-        self._toggle_lbl.bind("<Enter>", self._on_enter)
-        self._toggle_lbl.bind("<Leave>", self._on_leave)
-
-        self._name_lbl = tk.Label(self, text=name, bg=C["bg"], fg=C["body"],
-                                  font=FONT_SMALL, anchor="w", padx=0, pady=2)
-        self._name_lbl.pack(side=tk.LEFT)
-        if on_click is not None:
-            self._name_lbl.configure(cursor="hand2")
-            self._name_lbl.bind("<Button-1>", self._handle_click)
-            self._name_lbl.bind("<Enter>", self._on_enter)
-            self._name_lbl.bind("<Leave>", self._on_leave)
-
+        arrow = "▾" if expanded else ("▸" if expandable else " ")
+        self._arrow_lbl = tk.Label(inner, text=arrow, bg=base, fg=C["muted"],
+                                   font=FONT_MICRO, width=2)
+        self._arrow_lbl.pack(side=tk.LEFT)
+        self._icon_lbl = tk.Label(inner, text=icon, bg=base, fg=C["subtext"],
+                                  font=FONT_MICRO)
+        self._icon_lbl.pack(side=tk.LEFT, padx=(0, 5))
+        # pack 顺序注意：RIGHT 侧的徽章/统计必须先 pack，
+        # 否则会被 name 的 expand=True 挤掉（pack 先到先得）。
         if status:
-            self._badge = badge(self, status,
-                                tone={"M": "warn",
-                                      "A": "ok",
-                                      "D": "error",
-                                      "?": "ok",
-                                      "U": "muted",
-                                      "R": "info"}.get(status[0], "muted"))
-            self._badge.pack(side=tk.LEFT, padx=(PAD_S, 0))
+            color = self._STATUS_COLORS.get(status[:1].upper(), C["muted"])
+            self._status_lbl = tk.Label(inner, text=status[:1].upper(), bg=base,
+                                        fg=color, font=FONT_MICRO, width=2)
+            self._status_lbl.pack(side=tk.RIGHT)
         else:
-            self._badge = None
-
+            self._status_lbl = None
         if added is not None or removed is not None:
-            num = f"+{added or 0} −{removed or 0}"
-            self._stats_lbl = tk.Label(self, text=num, bg=C["bg"],
-                                       fg=C["ok"] if (added and not removed)
-                                       else C["error"] if (removed and not added)
-                                       else C["subtext"],
-                                       font=FONT_MONO_XS, padx=0, pady=2)
-            self._stats_lbl.pack(side=tk.RIGHT, padx=(PAD_M, PAD_S))
-        else:
-            self._stats_lbl = None
+            stats = tk.Frame(inner, bg=base)
+            stats.pack(side=tk.RIGHT, padx=(4, 0))
+            tk.Label(stats, text=f"+{added or 0}", bg=base, fg=C["diff_add"],
+                     font=FONT_MONO_XS).pack(side=tk.LEFT)
+            tk.Label(stats, text=f"−{removed or 0}", bg=base, fg=C["diff_del"],
+                     font=FONT_MONO_XS).pack(side=tk.LEFT, padx=(4, 0))
+        self._name_lbl = tk.Label(inner, text=name, bg=base, fg=C["body"],
+                                  font=FONT_SMALL, anchor="w")
+        self._name_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        for w in (self, inner, self._arrow_lbl, self._icon_lbl, self._name_lbl):
+            w.bind("<Button-1>", self._handle_click)
+            w.bind("<Enter>", self._on_enter)
+            w.bind("<Leave>", self._on_leave)
 
     def _handle_click(self, _e=None):
         if self._on_click is not None:
-            try:
-                self._on_click(self)
-            except Exception:
-                pass
+            self._on_click(self)
+
+    def _paint(self, bg: str, fg: str):
+        self.configure(bg=bg)
+        for w in (self._arrow_lbl, self._icon_lbl, self._name_lbl):
+            w.configure(bg=bg)
+            if w is self._name_lbl:
+                w.configure(fg=fg)
+        if self._status_lbl is not None:
+            self._status_lbl.configure(bg=bg)
 
     def _on_enter(self, _e=None):
-        for w in (self, self._toggle_lbl, self._name_lbl):
-            try:
-                w.configure(bg=C["hover"])
-            except tk.TclError:
-                pass
+        self._paint(C["hover"], C["text"])
 
     def _on_leave(self, _e=None):
-        for w in (self, self._toggle_lbl, self._name_lbl):
-            try:
-                w.configure(bg=C["bg"])
-            except tk.TclError:
-                pass
+        self._paint(self._base, C["body"])
 
-    def set_highlight(self, on: bool) -> None:
-        for w in (self, self._toggle_lbl, self._name_lbl):
-            try:
-                w.configure(bg=C["sel"] if on else C["bg"])
-            except tk.TclError:
-                pass
+    def set_highlight(self, on: bool):
+        if on:
+            self._paint(C["sel"], C["text"])
+            self.configure(highlightthickness=1,
+                           highlightbackground=C["sel_border"])
+        else:
+            self._paint(self._base, C["body"])
+            self.configure(highlightthickness=0)
+
+
+class _Minimap(tk.Canvas):
+    """代码缩略图：每行一根 1-2px 彩条 + 可视区域框；点击/拖动跳转。"""
+
+    LINE_H = 2
+    MAX_LINES = 400
+
+    def __init__(self, parent, *, target: tk.Text, width: int = _MINIMAP_W):
+        super().__init__(parent, width=width, bg=C["sidebar"],
+                         highlightthickness=0, bd=0, cursor="hand2")
+        self._target = target
+        self._mw = width
+        self._dragging = False
+        self.bind("<Button-1>", self._on_press)
+        self.bind("<B1-Motion>", self._on_press)
+        self.bind("<Configure>", lambda _e: self.redraw())
+
+    # -- 数据 --
+    def redraw(self):
+        self.delete("all")
+        h = self.winfo_height()
+        if h < 10:
+            return
+        try:
+            content = self._target.get("1.0", "end-1c")
+        except tk.TclError:
+            return
+        lines = content.splitlines()
+        if not lines:
+            return
+        step = max(1, len(lines) // self.MAX_LINES)
+        view = self._target.yview()
+        scale = h / max(1, len(lines))
+        y = 1
+        for i in range(0, len(lines), step):
+            color = self._line_color(lines[i])
+            indent = len(lines[i]) - len(lines[i].lstrip())
+            x1 = 6 + min(indent, 24)
+            x2 = self._mw - 6
+            if lines[i].strip():
+                # 长度感：按内容长度收缩右端，更像 minimap
+                frac = min(1.0, len(lines[i].strip()) / 90.0)
+                x2 = max(x1 + 4, int(x1 + (self._mw - 12 - x1) * (0.35 + 0.65 * frac)))
+                self.create_line(x1, y, x2, y, fill=color, width=self.LINE_H)
+            y += self.LINE_H + 1
+            if y > h - 4:
+                break
+        # 可视区域框
+        top = max(0, int(view[0] * h))
+        bottom = max(top + 8, int(view[1] * h))
+        self.create_rectangle(2, top, self._mw - 2, bottom,
+                              outline=C["sel_border"], fill="#FFFFFF",
+                              stipple="gray12")
+
+    @staticmethod
+    def _line_color(line: str) -> str:
+        s = line.strip()
+        if s.startswith("#"):
+            return C["code_comment"]
+        if s.startswith(("def ", "class ", "async def")):
+            return C["code_fn"]
+        if s.startswith(("import ", "from ", "@")):
+            return C["code_kw"]
+        if '"' in s or "'" in s:
+            return C["code_str"]
+        return "#3A3A48"
+
+    # -- 交互 --
+    def _on_press(self, event):
+        h = max(1, self.winfo_height())
+        frac = min(1.0, max(0.0, (event.y - 4) / h))
+        try:
+            self._target.yview_moveto(frac)
+            gutter = getattr(self._target, "_sync_gutter", None)
+            if callable(gutter):
+                gutter()
+        except tk.TclError:
+            pass
+        self.redraw()
 
 
 # ─── 主面板 ────────────────────────────────────────────────
 
 
 class WorkspacePanel(tk.Frame):
-    """右侧工作区面板（深色三栏 IDE 风格）。"""
+    """右侧工作区（三段堆叠：代码区 / 变更+diff / 预览）。"""
 
     _TAB_NAMES = ("文件树", "变更", "代码", "diff", "预览", "终端")
 
-    def __init__(self, parent, app: Any = None, *, repo_root: str | os.PathLike
-                 | None = None, on_close: Callable[[], None] | None = None,
-                 **kw: Any):
+    def __init__(self, parent, app: Any = None, *,
+                 repo_root: str | os.PathLike | None = None,
+                 on_close: Callable[[], None] | None = None, **kw: Any):
         super().__init__(parent, bg=C["bg"], highlightthickness=0, bd=0, **kw)
         self._app = app
         self._on_close = on_close
 
-        # ─── 仓库根（默认 = 本文件上层） ────────────────────
-        default_root = _HERE.parent  # forge-gui/.. → forge-gui-work/
+        default_root = _HERE.parent
         try:
-            self._repo_root: Path = Path(repo_root).resolve() if repo_root \
-                else default_root
+            self._repo_root: Path = (Path(repo_root).resolve() if repo_root
+                                     else default_root)
         except (OSError, ValueError):
             self._repo_root = default_root
 
-        # ─── 内部状态 ───────────────────────────────────────
-        self._current_tab: str = "文件树"
+        self._current_tab = "文件树"
         self._current_file: Path | None = None
         self._current_diff_file: Path | None = None
-        self._file_tree_rows: list[tuple[_FileRow, dict[str, Any]]] = []
-        self._expanded_dirs: set[str] = set()  # 用绝对路径字符串
-        self._expanded_dirs.add(str(self._repo_root))  # 默认展开根
+        self._expanded_dirs: set[str] = {str(self._repo_root)}
+        self._file_tree_rows: list[tuple[_FileRow, dict]] = []
         self._tabs: dict[str, _Tab] = {}
         self._breadcrumb_var = tk.StringVar(value=self._repo_root.name)
         self._preview_subtab_var = tk.StringVar(value="预览")
-        self._diff_view_var = tk.StringVar(value="列表视图")
         self._filter_var = tk.StringVar(value="全部文件")
-        self._is_git_repo: bool = False
+        self._is_git_repo = False
+        self._git_status: dict[str, str] = {}
+        self._git_numstat: dict[str, tuple[int, int]] = {}
+        self._hidden = True
+        self._sash_placed = False
 
-        # ─── 顶栏 + 标签条 + 内容区 ──────────────────────────
         self._build_topbar()
         self._build_tabbar()
-        self._build_content()
-        self._build_preview_subtab()
-        self._build_diff_header()
+        self._build_bands()
 
-        self._hidden = True
         self.pack_propagate(False)
-        self.configure(width=620)
-        # 默认隐藏（主程序显式调用 ``show()`` 才出现）
+        self.configure(width=640)
         self.pack_forget()
 
-        # 首屏扫描
         try:
             self.refresh()
         except Exception:
             pass
+        self.bind("<Configure>", self._place_sashes_once)
 
-    # ─── 对外属性 / 切换 ────────────────────────────────────
+    # ─── 顶栏 ──────────────────────────────────────────────
+
+    def _build_topbar(self):
+        top = tk.Frame(self, bg=C["bg"], height=40)
+        top.pack(side=tk.TOP, fill=tk.X)
+        top.pack_propagate(False)
+        left = tk.Frame(top, bg=C["bg"])
+        left.pack(side=tk.LEFT, padx=(PAD_M, PAD_S))
+        tk.Label(left, text="▤", bg=C["bg"], fg=C["accent2"],
+                 font=FONT_TITLE).pack(side=tk.LEFT, padx=(0, PAD_XS))
+        tk.Label(left, text="工作区", bg=C["bg"], fg=C["text"],
+                 font=(FONT_TITLE[0], 12, "bold")).pack(side=tk.LEFT)
+        badge(left, "Beta", tone="accent").pack(side=tk.LEFT, padx=(PAD_S, 0))
+        crumb = tk.Frame(top, bg=C["bg"])
+        crumb.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=PAD_S)
+        self._crumb_lbl = tk.Label(crumb, textvariable=self._breadcrumb_var,
+                                   bg=C["bg"], fg=C["ter"], font=FONT_SMALL,
+                                   anchor="w")
+        self._crumb_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        close_btn = glyph_button(top, "✕", self._request_close, tooltip="收起工作区")
+        close_btn.pack(side=tk.RIGHT, padx=PAD_S)
+        divider(self).pack(side=tk.TOP, fill=tk.X)
+
+    def _request_close(self):
+        if self._on_close is not None:
+            try:
+                self._on_close()
+                return
+            except Exception:
+                pass
+        self.hide()
+
+    # ─── 标签条 ────────────────────────────────────────────
+
+    def _build_tabbar(self):
+        bar = tk.Frame(self, bg=C["bg"], height=34)
+        bar.pack(side=tk.TOP, fill=tk.X)
+        bar.pack_propagate(False)
+        self._tabbar = bar
+
+        def _click(t: _Tab):
+            name = next((k for k, v in self._tabs.items() if v is t), None)
+            if name:
+                self._focus_band_for_tab(name)
+
+        for name in self._TAB_NAMES:
+            t = _Tab(bar, name, on_click=_click)
+            t.pack(side=tk.LEFT, padx=(PAD_XS, 0), pady=3)
+            self._tabs[name] = t
+        self._tabs["文件树"].set_selected(True)
+        self._current_tab = "文件树"
+        divider(self).pack(side=tk.TOP, fill=tk.X)
+
+    # ─── 三段主体 ──────────────────────────────────────────
+
+    def _build_bands(self):
+        self._vp = tk.PanedWindow(self, orient=tk.VERTICAL, bg=C["border"],
+                                  sashwidth=5, sashrelief=tk.FLAT, bd=0,
+                                  opaqueresize=True)
+        self._vp.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+        self._band_top = tk.Frame(self._vp, bg=C["bg"],
+                                  highlightthickness=1,
+                                  highlightbackground=C["bg"])
+        self._band_mid = tk.Frame(self._vp, bg=C["bg"],
+                                  highlightthickness=1,
+                                  highlightbackground=C["bg"])
+        self._band_bottom = tk.Frame(self._vp, bg=C["bg"],
+                                     highlightthickness=1,
+                                     highlightbackground=C["bg"])
+        self._vp.add(self._band_top, minsize=140, stretch="always")
+        self._vp.add(self._band_mid, minsize=110, stretch="always")
+        self._vp.add(self._band_bottom, minsize=90, stretch="always")
+
+        self._build_top_band(self._band_top)
+        self._build_mid_band(self._band_mid)
+        self._build_bottom_band(self._band_bottom)
+
+    def _place_sashes_once(self, _event=None):
+        if self._sash_placed:
+            return
+        h = self._vp.winfo_height()
+        if h < 200:
+            return
+        total = sum(_BAND_WEIGHTS)
+        y1 = int(h * _BAND_WEIGHTS[0] / total)
+        y2 = int(h * (_BAND_WEIGHTS[0] + _BAND_WEIGHTS[1]) / total)
+        try:
+            self._vp.sash_place(0, 0, y1)
+            self._vp.sash_place(1, 0, y2)
+        except tk.TclError:
+            pass
+        self._sash_placed = True
+
+    # ── 上区：文件树 | 代码 | minimap ──
+    def _build_top_band(self, band: tk.Frame):
+        pane = tk.PanedWindow(band, orient=tk.HORIZONTAL, bg=C["border"],
+                              sashwidth=5, sashrelief=tk.FLAT, bd=0,
+                              opaqueresize=True)
+        pane.pack(fill=tk.BOTH, expand=True)
+
+        # 文件树列
+        tree_col = tk.Frame(pane, bg=C["bg"])
+        tree_head = tk.Frame(tree_col, bg=C["bg"], height=28)
+        tree_head.pack(fill=tk.X)
+        tree_head.pack_propagate(False)
+        tk.Label(tree_head, text="文件树", bg=C["bg"], fg=C["ter"],
+                 font=FONT_MICRO).pack(side=tk.LEFT, padx=PAD_S)
+        glyph_button(tree_head, "⟳", self.refresh, size=10,
+                     tooltip="重新扫描").pack(side=tk.RIGHT, padx=2)
+        tree_host = tk.Frame(tree_col, bg=C["bg"])
+        tree_host.pack(fill=tk.BOTH, expand=True)
+        self._tree_canvas = tk.Canvas(tree_host, bg=C["bg"],
+                                      highlightthickness=0, bd=0)
+        tree_vbar = tk.Scrollbar(tree_host, orient=tk.VERTICAL,
+                                 command=self._tree_canvas.yview,
+                                 bg=C["surface2"], troughcolor=C["bg"],
+                                 activebackground=C["scroll"], relief=tk.FLAT,
+                                 bd=0, highlightthickness=0, width=8)
+        self._tree_canvas.configure(yscrollcommand=tree_vbar.set)
+        tree_vbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self._tree_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self._tree_body = tk.Frame(self._tree_canvas, bg=C["bg"])
+        self._tree_win = self._tree_canvas.create_window(
+            0, 0, window=self._tree_body, anchor="nw")
+        self._tree_body.bind(
+            "<Configure>",
+            lambda _e: self._tree_canvas.configure(
+                scrollregion=self._tree_canvas.bbox("all")))
+        self._tree_canvas.bind(
+            "<Configure>",
+            lambda e: self._tree_canvas.itemconfigure(self._tree_win,
+                                                      width=e.width))
+        self._tree_canvas.bind("<MouseWheel>", self._tree_wheel)
+        self._tree_body.bind("<MouseWheel>", self._tree_wheel)
+        pane.add(tree_col, width=_TREE_WIDTH, minsize=120, stretch="never")
+
+        # 代码区（meta 行 + 行号槽 + 主 Text + minimap）
+        code_col = tk.Frame(pane, bg=C["bg"])
+        meta = tk.Frame(code_col, bg=C["bg"], height=28)
+        meta.pack(fill=tk.X)
+        meta.pack_propagate(False)
+        self._code_meta_var = tk.StringVar(value="未打开文件")
+        tk.Label(meta, textvariable=self._code_meta_var, bg=C["bg"],
+                 fg=C["subtext"], font=FONT_MICRO, anchor="w").pack(
+            side=tk.LEFT, fill=tk.X, expand=True, padx=PAD_S)
+        glyph_button(meta, "⟳", self._reload_code, size=10,
+                     tooltip="重新载入当前文件").pack(side=tk.RIGHT, padx=2)
+
+        code_body = tk.Frame(code_col, bg=C["code_bg"])
+        code_body.pack(fill=tk.BOTH, expand=True)
+
+        self._gutter = tk.Text(code_body, width=4, bg=C["code_bg"],
+                               fg=C["muted"], font=FONT_MONO_XS, padx=4,
+                               pady=3, relief=tk.FLAT, highlightthickness=0,
+                               bd=0, takefocus=0, wrap="none",
+                               state=tk.DISABLED, cursor="arrow",
+                               exportselection=False)
+        self._gutter.pack(side=tk.LEFT, fill=tk.Y)
+
+        self._code_text = tk.Text(code_body, bg=C["code_bg"],
+                                  fg=C["code_plain"], font=FONT_MONO_SM,
+                                  wrap="none", relief=tk.FLAT,
+                                  highlightthickness=0, bd=0, takefocus=0,
+                                  cursor="arrow", exportselection=False,
+                                  padx=8, pady=3, spacing1=1, spacing3=1)
+        code_vbar = tk.Scrollbar(code_body, orient=tk.VERTICAL,
+                                 command=self._code_vscroll,
+                                 bg=C["surface2"], troughcolor=C["code_bg"],
+                                 activebackground=C["scroll"], relief=tk.FLAT,
+                                 bd=0, highlightthickness=0, width=8)
+        code_hbar = tk.Scrollbar(code_col, orient=tk.HORIZONTAL,
+                                 command=self._code_text.xview,
+                                 bg=C["surface2"], troughcolor=C["code_bg"],
+                                 activebackground=C["scroll"], relief=tk.FLAT,
+                                 bd=0, highlightthickness=0, width=8)
+        self._code_text.configure(yscrollcommand=self._code_yscroll,
+                                  xscrollcommand=code_hbar.set)
+        self._code_vbar = code_vbar
+        # pack 顺序：minimap 与滚动条先占位，code_text 最后吃剩余空间
+        self._minimap = _Minimap(code_body, target=self._code_text)
+        self._minimap.pack(side=tk.RIGHT, fill=tk.Y)
+        code_vbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self._code_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        code_hbar.pack(side=tk.BOTTOM, fill=tk.X)
+        setup_code_tags(self._code_text)
+        style_scrollbar(self._code_text)
+        self._code_text._sync_gutter = self._sync_gutter  # minimap 拖动后回调
+
+        for w in (self._code_text, self._gutter):
+            w.bind("<MouseWheel>", self._code_wheel)
+        self._gutter.bind("<Configure>", lambda _e: None)
+        pane.add(code_col, minsize=260, stretch="always")
+        self._top_pane = pane
+
+    def _tree_wheel(self, event):
+        self._tree_canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
+        return "break"
+
+    def _code_wheel(self, event):
+        self._code_text.yview_scroll(-1 if event.delta > 0 else 1, "units")
+        self._sync_gutter()
+        return "break"
+
+    def _code_vscroll(self, *args):
+        self._code_text.yview(*args)
+        self._sync_gutter()
+
+    def _code_yscroll(self, *args):
+        try:
+            self._code_vbar.set(*args)
+        except tk.TclError:
+            pass
+        self._sync_gutter()
+
+    def _sync_gutter(self):
+        try:
+            frac = self._code_text.yview()[0]
+            self._gutter.configure(state=tk.NORMAL)
+            self._gutter.yview_moveto(frac)
+            self._gutter.configure(state=tk.DISABLED)
+            self._minimap.redraw()
+        except (tk.TclError, AttributeError):
+            pass
+
+    # ── 中区：变更列表 | diff ──
+    def _build_mid_band(self, band: tk.Frame):
+        pane = tk.PanedWindow(band, orient=tk.HORIZONTAL, bg=C["border"],
+                              sashwidth=5, sashrelief=tk.FLAT, bd=0,
+                              opaqueresize=True)
+        pane.pack(fill=tk.BOTH, expand=True)
+
+        # 左：变更列表
+        left = tk.Frame(pane, bg=C["bg"])
+        head = tk.Frame(left, bg=C["bg"], height=30)
+        head.pack(fill=tk.X)
+        head.pack_propagate(False)
+        tk.Label(head, text="⑂", bg=C["bg"], fg=C["accent2"],
+                 font=FONT_SMALL).pack(side=tk.LEFT, padx=(PAD_S, 4))
+        self._changes_title_var = tk.StringVar(value="变更 (0)")
+        tk.Label(head, textvariable=self._changes_title_var, bg=C["bg"],
+                 fg=C["text"], font=FONT_UI_BOLD).pack(side=tk.LEFT)
+        self._changes_total_var = tk.StringVar(value="+0 −0")
+        self._total_lbl = tk.Label(head, textvariable=self._changes_total_var,
+                                   bg=C["bg"], fg=C["subtext"],
+                                   font=FONT_MONO_XS)
+        self._total_lbl.pack(side=tk.LEFT, padx=(PAD_S, 0))
+
+        chips = tk.Frame(left, bg=C["bg"])
+        chips.pack(fill=tk.X, padx=PAD_S, pady=(2, 4))
+        chips.grid_columnconfigure(0, weight=1)
+        chips.grid_columnconfigure(1, weight=1)
+        self._filter_chips: dict[str, tk.Label] = {}
+        for i, name in enumerate(("全部文件", "已修改", "新增", "已删除")):
+            c = self._make_filter_chip(chips, name)
+            c.grid(row=i // 2, column=i % 2, sticky="ew", padx=(0, PAD_XS),
+                   pady=1)
+            self._filter_chips[name] = c
+
+        list_host = tk.Frame(left, bg=C["bg"])
+        list_host.pack(fill=tk.BOTH, expand=True)
+        self._changes_canvas = tk.Canvas(list_host, bg=C["bg"],
+                                         highlightthickness=0, bd=0)
+        ch_vbar = tk.Scrollbar(list_host, orient=tk.VERTICAL,
+                               command=self._changes_canvas.yview,
+                               bg=C["surface2"], troughcolor=C["bg"],
+                               activebackground=C["scroll"], relief=tk.FLAT,
+                               bd=0, highlightthickness=0, width=8)
+        self._changes_canvas.configure(yscrollcommand=ch_vbar.set)
+        ch_vbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self._changes_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self._changes_body = tk.Frame(self._changes_canvas, bg=C["bg"])
+        win = self._changes_canvas.create_window(
+            0, 0, window=self._changes_body, anchor="nw")
+        self._changes_body.bind(
+            "<Configure>",
+            lambda _e: self._changes_canvas.configure(
+                scrollregion=self._changes_canvas.bbox("all")))
+        self._changes_canvas.bind(
+            "<Configure>",
+            lambda e: self._changes_canvas.itemconfigure(win, width=e.width))
+        self._changes_canvas.bind("<MouseWheel>", self._changes_wheel)
+        self._changes_body.bind("<MouseWheel>", self._changes_wheel)
+        pane.add(left, width=_CHANGES_WIDTH, minsize=150, stretch="never")
+
+        # 右：diff 视图
+        right = tk.Frame(pane, bg=C["bg"])
+        dhead = tk.Frame(right, bg=C["bg"], height=30)
+        dhead.pack(fill=tk.X)
+        dhead.pack_propagate(False)
+        self._diff_title_var = tk.StringVar(value="diff")
+        tk.Label(dhead, textvariable=self._diff_title_var, bg=C["bg"],
+                 fg=C["text"], font=FONT_UI_BOLD, anchor="w").pack(
+            side=tk.LEFT, padx=PAD_S)
+        self._diff_total_var = tk.StringVar(value="+0 −0")
+        tk.Label(dhead, textvariable=self._diff_total_var, bg=C["bg"],
+                 fg=C["subtext"], font=FONT_MONO_XS).pack(side=tk.LEFT,
+                                                           padx=(PAD_S, 0))
+        split_btn = pill_button(dhead, "分栏视图", lambda: None, kind="quiet",
+                                font=FONT_MICRO)
+        split_btn.configure(state=tk.DISABLED)
+        attach_tooltip(split_btn, "分栏视图暂未实现")
+        split_btn.pack(side=tk.RIGHT, padx=PAD_S)
+        list_btn = pill_button(dhead, "列表视图", lambda: None, kind="quiet",
+                               font=FONT_MICRO)
+        list_btn.configure(state=tk.DISABLED)
+        attach_tooltip(list_btn, "列表视图（当前）")
+        list_btn.pack(side=tk.RIGHT, padx=(0, PAD_XS))
+
+        diff_body = tk.Frame(right, bg=C["code_bg"])
+        diff_body.pack(fill=tk.BOTH, expand=True)
+        self._diff_text = tk.Text(diff_body, bg=C["code_bg"],
+                                  fg=C["code_plain"], font=FONT_MONO_SM,
+                                  wrap="none", relief=tk.FLAT,
+                                  highlightthickness=0, bd=0, takefocus=0,
+                                  cursor="arrow", padx=6, pady=3,
+                                  spacing1=1, spacing3=1)
+        diff_vbar = tk.Scrollbar(diff_body, orient=tk.VERTICAL,
+                                 command=self._diff_text.yview,
+                                 bg=C["surface2"], troughcolor=C["code_bg"],
+                                 activebackground=C["scroll"], relief=tk.FLAT,
+                                 bd=0, highlightthickness=0, width=8)
+        self._diff_text.configure(yscrollcommand=diff_vbar.set)
+        diff_vbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self._diff_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        setup_code_tags(self._diff_text)
+        style_scrollbar(self._diff_text)
+        self._diff_text.configure(state=tk.DISABLED)
+        pane.add(right, minsize=240, stretch="always")
+        self._mid_pane = pane
+
+    def _changes_wheel(self, event):
+        self._changes_canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
+        return "break"
+
+    def _make_filter_chip(self, parent, name: str):
+        selected = name == self._filter_var.get()
+        c = tk.Label(parent, text=name, padx=7, pady=2, font=FONT_MICRO,
+                     cursor="hand2", highlightthickness=1,
+                     bg=C["accent_soft"] if selected else C["surface2"],
+                     fg=C["accent_text"] if selected else C["ter"],
+                     highlightbackground=C["accent"] if selected
+                     else C["border_hi"])
+        c.bind("<Button-1>", lambda _e, n=name: self._set_filter(n))
+        return c
+
+    # ── 下区：预览 / 控制台 / 终端 / 图像 / Markdown ──
+    def _build_bottom_band(self, band: tk.Frame):
+        top = tk.Frame(band, bg=C["bg"], height=30)
+        top.pack(fill=tk.X)
+        top.pack_propagate(False)
+        sub_holder = tk.Frame(top, bg=C["bg"])
+        sub_holder.pack(side=tk.LEFT, padx=PAD_S)
+        self._preview_subs: dict[str, tk.Label] = {}
+        for name in ("预览", "控制台", "终端", "图像", "Markdown"):
+            lbl = tk.Label(sub_holder, text=name, bg=C["bg"],
+                           fg=C["text"] if name == "预览" else C["ter"],
+                           font=FONT_SMALL, padx=8, pady=4, cursor="hand2")
+            lbl.pack(side=tk.LEFT)
+            lbl.bind("<Button-1>", lambda _e, n=name: self._set_preview_sub(n))
+            self._preview_subs[name] = lbl
+        self._sub_underline = tk.Frame(band, bg=C["accent"], height=2)
+
+        actions = tk.Frame(top, bg=C["bg"])
+        actions.pack(side=tk.RIGHT, padx=PAD_S)
+        pill_button(actions, "⟳ 刷新", self._reload_preview, kind="quiet",
+                    font=FONT_MICRO).pack(side=tk.RIGHT, padx=(PAD_XS, 0))
+        pill_button(actions, "↗ 在新窗口打开", self._open_current_external,
+                    kind="quiet", font=FONT_MICRO).pack(side=tk.RIGHT)
+
+        self._preview_host = tk.Frame(band, bg=C["sidebar"])
+        self._preview_host.pack(fill=tk.BOTH, expand=True, padx=PAD_S,
+                                pady=(2, PAD_S))
+        self._preview_text = tk.Text(self._preview_host, bg=C["code_bg"],
+                                     fg=C["code_plain"], font=FONT_MONO_SM,
+                                     wrap="word", relief=tk.FLAT,
+                                     highlightthickness=0, bd=0, takefocus=0,
+                                     cursor="arrow", padx=8, pady=6)
+        prev_vbar = tk.Scrollbar(self._preview_host, orient=tk.VERTICAL,
+                                 command=self._preview_text.yview,
+                                 bg=C["surface2"], troughcolor=C["code_bg"],
+                                 activebackground=C["scroll"], relief=tk.FLAT,
+                                 bd=0, highlightthickness=0, width=8)
+        self._preview_text.configure(yscrollcommand=prev_vbar.set)
+        self._prev_vbar = prev_vbar
+        prev_vbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self._preview_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        setup_code_tags(self._preview_text)
+        style_scrollbar(self._preview_text)
+        self._preview_text.configure(state=tk.DISABLED)
+        self._preview_canvas: tk.Canvas | None = None
+        self._show_preview_sub("预览")
+
+    # ─── 可见性 / 对外 API ─────────────────────────────────
 
     @property
     def is_visible(self) -> bool:
         return not self._hidden
 
-    def show(self) -> None:
+    def show(self):
         if self._hidden:
-            self.pack(side=tk.RIGHT, fill=tk.Y, padx=(1, 0))
+            self.pack(side=tk.RIGHT, fill=tk.Y)
             self._hidden = False
-            try:
-                self.refresh()
-            except Exception:
-                pass
+            self._sash_placed = False
+            self.after_idle(self.refresh)
 
-    def hide(self) -> None:
+    def hide(self):
         if not self._hidden:
             self.pack_forget()
             self._hidden = True
 
-    def toggle(self) -> None:
+    def toggle(self):
         self.hide() if self.is_visible else self.show()
 
-    def set_repo_root(self, path: str | os.PathLike) -> None:
+    def set_repo_root(self, path):
         try:
             self._repo_root = Path(path).resolve()
         except (OSError, ValueError):
@@ -491,64 +904,59 @@ class WorkspacePanel(tk.Frame):
         self._expanded_dirs = {str(self._repo_root)}
         self._current_file = None
         self._current_diff_file = None
-        try:
-            self.refresh()
-        except Exception:
-            pass
-
-    # ─── 对外 API ───────────────────────────────────────────
-
-    def open_file_tree(self) -> None:
-        self._switch_tab("文件树")
-
-    def open_changes(self) -> None:
-        self._switch_tab("变更")
-
-    def open_file(self, path: str | os.PathLike, *, tab: str | None = None
-                  ) -> None:
-        target = _resolve_path(self._repo_root, path)
-        if target is None:
-            self._set_status("无效的文件路径", "warn")
-            return
-        self._current_file = target
-        self._current_tab = tab or "代码"
-        self._switch_tab(self._current_tab)
-        self._load_code_view(target)
-
-    def show_diff(self, path: str | os.PathLike | None = None) -> None:
-        if path is not None:
-            resolved = _resolve_path(self._repo_root, path)
-            if resolved is not None:
-                self._current_diff_file = resolved
-        self._switch_tab("diff")
-        self._render_diff(self._current_diff_file)
-
-    def push_terminal(self, text: str) -> None:
-        """追加一行到终端标签（gateway 输出会来这里）。"""
-        widget = getattr(self, "_term_text", None)
-        if widget is None or not widget.winfo_exists():
-            return
-        try:
-            widget.insert(tk.END, text if text.endswith("\n") else text + "\n")
-            widget.see(tk.END)
-        except tk.TclError:
-            pass
+        self.refresh()
 
     def changes_count(self) -> int:
-        """当前有改动的文件数（git status 条目数；非 git 仓返回 0）。"""
         try:
             return len(self._git_status)
         except Exception:
             return 0
 
-    def refresh(self) -> None:
-        """重新扫描文件树 + git 状态。"""
+    def open_file_tree(self):
+        self._focus_band_for_tab("文件树")
+
+    def open_changes(self):
+        self._focus_band_for_tab("变更")
+
+    def open_file(self, path, *, tab: str | None = None):
+        target = _resolve_path(self._repo_root, path)
+        if target is None or not target.is_file():
+            self._set_status("无效的文件路径", "warn")
+            return
+        self._current_file = target
+        self._load_code_view(target)
+        self._render_preview(target)
+        self._focus_band_for_tab(tab or "代码")
+        # 高亮/minimap 需要一拍布局后再画（大文件 tag_add 0.7s，放 idle 里不卡打开）
+        self.after_idle(lambda: (self._sync_gutter(),
+                                 self._code_text.yview_moveto(0)))
+
+    def show_diff(self, path=None):
+        if path is not None:
+            resolved = _resolve_path(self._repo_root, path)
+            if resolved is not None:
+                self._current_diff_file = resolved
+        self._render_diff(self._current_diff_file)
+        self._focus_band_for_tab("diff")
+
+    def push_terminal(self, text: str):
+        widget = getattr(self, "_term_text", None)
+        if widget is None or not widget.winfo_exists():
+            return
+        try:
+            widget.configure(state=tk.NORMAL, fg=C["body"])
+            widget.insert(tk.END, text if text.endswith("\n") else text + "\n")
+            widget.see(tk.END)
+        except tk.TclError:
+            pass
+
+    def refresh(self):
         repo = self._repo_root
+        self._is_git_repo = False
         try:
             self._is_git_repo = _git_is_repo(repo)
         except Exception:
-            self._is_git_repo = False
-
+            pass
         if self._is_git_repo:
             try:
                 self._git_status = _git_status_map(repo)
@@ -561,450 +969,104 @@ class WorkspacePanel(tk.Frame):
         else:
             self._git_status = {}
             self._git_numstat = {}
-
         self._refresh_file_tree()
         self._refresh_changes()
-        self._refresh_diff_total()
+        self._update_tab_counts()
         self._update_breadcrumb()
+        if self._current_file is not None:
+            self._update_tabs_file()
 
-    # ─── 内部：构建 ─────────────────────────────────────────
+    # ─── 聚焦（标签条 → 区域高亮） ──────────────────────────
 
-    def _build_topbar(self) -> None:
-        top = tk.Frame(self, bg=C["bg"], height=40, highlightthickness=0, bd=0)
-        top.pack(side=tk.TOP, fill=tk.X)
-        top.pack_propagate(False)
-
-        left = tk.Frame(top, bg=C["bg"], highlightthickness=0, bd=0)
-        left.pack(side=tk.LEFT, padx=(PAD_M, PAD_S))
-
-        tk.Label(left, text="▤", bg=C["bg"], fg=C["accent"], font=FONT_TITLE
-                 ).pack(side=tk.LEFT, padx=(0, PAD_XS))
-        tk.Label(left, text="工作区", bg=C["bg"], fg=C["text"],
-                 font=(FONT_UI[0], 14, "bold")).pack(side=tk.LEFT)
-        badge(left, "Beta", tone="accent").pack(side=tk.LEFT,
-                                                padx=(PAD_S, 0))
-
-        # 面包屑
-        crumb = tk.Frame(top, bg=C["bg"], highlightthickness=0, bd=0)
-        crumb.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=PAD_S)
-        self._crumb_lbl = tk.Label(
-            crumb, textvariable=self._breadcrumb_var, bg=C["bg"], fg=C["ter"],
-            font=FONT_SMALL, anchor="w")
-        self._crumb_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True)
-
-        # 关闭按钮
-        glyph_button(top, "✕", self.hide).pack(side=tk.RIGHT, padx=PAD_S)
-
-        # 1px 下边界
-        divider(top).pack(side=tk.BOTTOM, fill=tk.X)
-
-    def _build_tabbar(self) -> None:
-        bar = tk.Frame(self, bg=C["bg"], height=34, highlightthickness=0, bd=0)
-        bar.pack(side=tk.TOP, fill=tk.X)
-        bar.pack_propagate(False)
-
-        def _click(t: _Tab) -> None:
-            self._switch_tab(t.cget("text").split(" (")[0])
-
-        for name in self._TAB_NAMES:
-            t = _Tab(bar, name, on_click=_click)
-            t.pack(side=tk.LEFT, padx=(PAD_XS, 0))
-            self._tabs[name] = t
-        divider(self).pack(side=tk.TOP, fill=tk.X)
-
-    def _build_content(self) -> None:
-        body = tk.Frame(self, bg=C["bg"], highlightthickness=0, bd=0)
-        body.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-        self._body = body
-
-        # ─ 文件树 ────────────────────────────────────────────
-        tree = tk.Frame(body, bg=C["bg"], highlightthickness=0, bd=0)
-        self._tab_frames = {"文件树": tree}
-
-        tree_top = tk.Frame(tree, bg=C["bg"], highlightthickness=0, bd=0,
-                            height=32)
-        tree_top.pack(side=tk.TOP, fill=tk.X)
-        tree_top.pack_propagate(False)
-        tk.Label(tree_top, text="文件树", bg=C["bg"], fg=C["ter"],
-                 font=FONT_SMALL).pack(side=tk.LEFT, padx=PAD_M)
-        pill_button(tree_top, "刷新", self.refresh, kind="quiet"
-                    ).pack(side=tk.RIGHT, padx=PAD_S)
-
-        self._tree_canvas_frame = tk.Frame(tree, bg=C["bg"],
-                                           highlightthickness=0, bd=0)
-        self._tree_canvas_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-        self._tree_empty_lbl = tk.Label(
-            tree, text="不是 git 仓库或无文件", bg=C["bg"], fg=C["muted"],
-            font=FONT_SMALL)
-        self._tree_body = tk.Frame(self._tree_canvas_frame, bg=C["bg"],
-                                   highlightthickness=0, bd=0)
-        self._tree_body.pack(fill=tk.BOTH, expand=True)
-
-        # ─ 变更 ──────────────────────────────────────────────
-        changes = tk.Frame(body, bg=C["bg"], highlightthickness=0, bd=0)
-        self._tab_frames["变更"] = changes
-        self._changes_total_lbl = tk.Label(
-            changes, text="共 0 个变更", bg=C["bg"], fg=C["subtext"],
-            font=FONT_SMALL, anchor="w", padx=PAD_M)
-        self._changes_total_lbl.pack(side=tk.TOP, fill=tk.X, pady=(PAD_S, 0))
-
-        chip_bar = tk.Frame(changes, bg=C["bg"], highlightthickness=0, bd=0)
-        chip_bar.pack(side=tk.TOP, fill=tk.X, padx=PAD_M, pady=PAD_S)
-        self._filter_chips: dict[str, tk.Label] = {}
-        for name in ("全部文件", "已修改", "新增", "已删除"):
-            c = chip(chip_bar, name, selected=(name == "全部文件"),
-                     command=lambda n=name: self._set_filter(n))
-            c.pack(side=tk.LEFT, padx=(0, PAD_XS))
-            self._filter_chips[name] = c
-
-        self._changes_body = tk.Frame(changes, bg=C["bg"],
-                                      highlightthickness=0, bd=0)
-        self._changes_body.pack(side=tk.TOP, fill=tk.BOTH, expand=True,
-                                padx=PAD_M)
-
-        # ─ 代码 ──────────────────────────────────────────────
-        code = tk.Frame(body, bg=C["bg"], highlightthickness=0, bd=0)
-        self._tab_frames["代码"] = code
-        self._code_meta_var = tk.StringVar(value="未打开文件")
-        tk.Label(code, textvariable=self._code_meta_var, bg=C["bg"],
-                 fg=C["subtext"], font=FONT_SMALL, anchor="w",
-                 padx=PAD_M).pack(side=tk.TOP, fill=tk.X, pady=(PAD_S, 0))
-
-        code_body = tk.Frame(code, bg=C["code_bg"], highlightthickness=0, bd=0)
-        code_body.pack(side=tk.TOP, fill=tk.BOTH, expand=True,
-                       padx=PAD_M, pady=(PAD_S, PAD_M))
-        code_body.pack_propagate(False)
-
-        # 行号槽（独立 Text，纵向滚动同步）
-        gutter = tk.Text(
-            code_body, width=4, bg=C["code_bg"], fg=C["muted"],
-            font=FONT_MONO_XS, padx=4, pady=4,
-            relief=tk.FLAT, highlightthickness=0, bd=0, takefocus=0,
-            wrap="none", state=tk.DISABLED, cursor="arrow",
-            exportselection=False)
-        gutter.pack(side=tk.LEFT, fill=tk.Y)
-        self._gutter = gutter
-
-        # 主 Text
-        main_text = tk.Text(
-            code_body, bg=C["code_bg"], fg=C["code_plain"],
-            font=FONT_MONO_SM, wrap="none",
-            relief=tk.FLAT, highlightthickness=0, bd=0,
-            takefocus=0, cursor="arrow",
-            exportselection=False)
-        main_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        # 水平滚动条
-        hbar = tk.Scrollbar(code_body, orient=tk.HORIZONTAL,
-                            command=main_text.xview, bg=C["surface2"],
-                            troughcolor=C["chat"], activebackground=C["scroll"],
-                            relief=tk.FLAT, bd=0, highlightthickness=0)
-        main_text.configure(xscrollcommand=hbar.set)
-        hbar.pack(side=tk.BOTTOM, fill=tk.X)
-        # 垂直滚动条（ttk 主题）
-        vbar = tk.Scrollbar(code_body, orient=tk.VERTICAL,
-                            command=self._on_vscroll, bg=C["surface2"],
-                            troughcolor=C["chat"], activebackground=C["scroll"],
-                            relief=tk.FLAT, bd=0, highlightthickness=0)
-        main_text.configure(yscrollcommand=vbar.set)
-        vbar.pack(side=tk.RIGHT, fill=tk.Y)
-        style_scrollbar(main_text)
-
-        setup_code_tags(main_text)
-        self._code_text = main_text
-
-        # ─ diff ──────────────────────────────────────────────
-        diff = tk.Frame(body, bg=C["bg"], highlightthickness=0, bd=0)
-        self._tab_frames["diff"] = diff
-        diff_body = tk.Frame(diff, bg=C["bg"], highlightthickness=0, bd=0)
-        diff_body.pack(side=tk.TOP, fill=tk.BOTH, expand=True,
-                       padx=PAD_M, pady=(PAD_S, PAD_M))
-        diff_text = tk.Text(
-            diff_body, bg=C["code_bg"], fg=C["code_plain"],
-            font=FONT_MONO_SM, wrap="none",
-            relief=tk.FLAT, highlightthickness=0, bd=0,
-            takefocus=0, cursor="arrow")
-        diff_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        diff_vbar = tk.Scrollbar(diff_body, orient=tk.VERTICAL,
-                                 command=diff_text.yview,
-                                 bg=C["surface2"], troughcolor=C["chat"],
-                                 activebackground=C["scroll"],
-                                 relief=tk.FLAT, bd=0, highlightthickness=0)
-        diff_vbar.pack(side=tk.RIGHT, fill=tk.Y)
-        style_scrollbar(diff_text)
-        setup_code_tags(diff_text)
-        diff_text.configure(state=tk.DISABLED)
-        self._diff_text = diff_text
-        self._diff_total_var = tk.StringVar(value="+0 −0")
-
-        # ─ 预览 ──────────────────────────────────────────────
-        preview = tk.Frame(body, bg=C["bg"], highlightthickness=0, bd=0)
-        self._tab_frames["预览"] = preview
-        preview_body = tk.Frame(preview, bg=C["bg"], highlightthickness=0, bd=0)
-        preview_body.pack(side=tk.TOP, fill=tk.BOTH, expand=True,
-                           padx=PAD_M, pady=(PAD_S, PAD_M))
-        preview_text = tk.Text(
-            preview_body, bg=C["code_bg"], fg=C["code_plain"],
-            font=FONT_MONO_SM, wrap="word",
-            relief=tk.FLAT, highlightthickness=0, bd=0,
-            takefocus=0, cursor="arrow")
-        preview_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        preview_vbar = tk.Scrollbar(preview_body, orient=tk.VERTICAL,
-                                    command=preview_text.yview,
-                                    bg=C["surface2"], troughcolor=C["chat"],
-                                    activebackground=C["scroll"],
-                                    relief=tk.FLAT, bd=0, highlightthickness=0)
-        preview_vbar.pack(side=tk.RIGHT, fill=tk.Y)
-        style_scrollbar(preview_text)
-        setup_code_tags(preview_text)
-        preview_text.configure(state=tk.DISABLED)
-        self._preview_text = preview_text
-        self._preview_canvas_holder: tk.Frame | None = None
-
-        # ─ 终端 ──────────────────────────────────────────────
-        term = tk.Frame(body, bg=C["bg"], highlightthickness=0, bd=0)
-        self._tab_frames["终端"] = term
-        term_body = tk.Frame(term, bg=C["code_bg"], highlightthickness=0, bd=0)
-        term_body.pack(side=tk.TOP, fill=tk.BOTH, expand=True,
-                       padx=PAD_M, pady=(PAD_S, PAD_M))
-        term_text = tk.Text(
-            term_body, bg=C["code_bg"], fg=C["body"],
-            font=FONT_MONO_SM, wrap="none",
-            relief=tk.FLAT, highlightthickness=0, bd=0,
-            takefocus=0, cursor="arrow")
-        term_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        term_vbar = tk.Scrollbar(term_body, orient=tk.VERTICAL,
-                                 command=term_text.yview,
-                                 bg=C["surface2"], troughcolor=C["chat"],
-                                 activebackground=C["scroll"],
-                                 relief=tk.FLAT, bd=0, highlightthickness=0)
-        term_vbar.pack(side=tk.RIGHT, fill=tk.Y)
-        style_scrollbar(term_text)
-        term_text.insert("1.0", "gateway 输出会显示在这里\n")
-        term_text.configure(fg=C["muted"])
-        self._term_text = term_text
-
-    def _build_preview_subtab(self) -> None:
-        """预览标签内部的子标签条 + 右上角按钮。"""
-        preview = self._tab_frames["预览"]
-        # 顶部一行
-        top = tk.Frame(preview, bg=C["bg"], height=34, highlightthickness=0,
-                       bd=0)
-        top.pack(side=tk.TOP, fill=tk.X, padx=PAD_M, pady=(PAD_S, 0))
-        top.pack_propagate(False)
-
-        sub = tk.Frame(top, bg=C["bg"], highlightthickness=0, bd=0)
-        sub.pack(side=tk.LEFT)
-
-        def _make_sub(name: str) -> tk.Label:
-            lbl = tk.Label(sub, text=name, bg=C["bg"], fg=C["ter"],
-                           font=FONT_SMALL, padx=PAD_S, pady=4, cursor="hand2")
-            lbl.bind("<Button-1>", lambda _e, n=name: self._set_preview_sub(n))
-            lbl.bind("<Enter>", lambda _e, w=lbl: w.configure(fg=C["text"]))
-            lbl.bind("<Leave>",
-                     lambda _e, w=lbl, n=name: w.configure(
-                         fg=C["text"] if self._preview_subtab_var.get() == n
-                         else C["ter"]))
-            return lbl
-
-        for name in ("预览", "控制台", "终端", "图像", "Markdown"):
-            _make_sub(name).pack(side=tk.LEFT)
-
-        # 右侧两个按钮
-        actions = tk.Frame(top, bg=C["bg"], highlightthickness=0, bd=0)
-        actions.pack(side=tk.RIGHT)
-        self._open_external_btn = pill_button(
-            actions, "在新窗口打开", self._open_current_external,
-            kind="quiet")
-        self._open_external_btn.pack(side=tk.RIGHT, padx=(PAD_XS, 0))
-        self._refresh_btn = pill_button(
-            actions, "刷新", self._reload_preview, kind="quiet")
-        self._refresh_btn.pack(side=tk.RIGHT, padx=(PAD_XS, 0))
-
-        # 子标签下划线（占位；颜色在 _set_preview_sub 切换）
-        self._sub_underline = tk.Frame(self._tab_frames["预览"], bg=C["accent"],
-                                       height=2)
-        self._sub_underline.place_forget()  # 第一次画完再定位
-        self._preview_sub_holder = top  # 用于下划线定位
-
-    def _build_diff_header(self) -> None:
-        """diff 标签的顶部（标题 + 视图切换）。"""
-        diff = self._tab_frames["diff"]
-        top = tk.Frame(diff, bg=C["bg"], height=32, highlightthickness=0, bd=0)
-        top.pack(side=tk.TOP, fill=tk.X, padx=PAD_M, pady=(PAD_S, 0))
-        top.pack_propagate(False)
-
-        self._diff_title_var = tk.StringVar(value="变更")
-        tk.Label(top, textvariable=self._diff_title_var, bg=C["bg"],
-                 fg=C["text"], font=FONT_UI_BOLD, anchor="w"
-                 ).pack(side=tk.LEFT)
-        tk.Label(top, textvariable=self._diff_total_var, bg=C["bg"],
-                 fg=C["subtext"], font=FONT_MONO_XS
-                 ).pack(side=tk.LEFT, padx=(PAD_S, 0))
-
-        # 右侧：列表视图 / 分栏视图（分栏 disabled + tooltip）
-        right = tk.Frame(top, bg=C["bg"], highlightthickness=0, bd=0)
-        right.pack(side=tk.RIGHT)
-        self._list_view_btn = pill_button(
-            right, "列表视图", lambda: None, kind="quiet")
-        self._list_view_btn.configure(state=tk.DISABLED)
-        attach_tooltip(self._list_view_btn, "列表视图（当前）")
-        self._list_view_btn.pack(side=tk.RIGHT, padx=(PAD_XS, 0))
-        self._split_view_btn = pill_button(
-            right, "分栏视图", lambda: None, kind="quiet")
-        self._split_view_btn.configure(state=tk.DISABLED)
-        attach_tooltip(self._split_view_btn, "分栏视图暂未实现")
-        self._split_view_btn.pack(side=tk.RIGHT, padx=(PAD_XS, 0))
-
-    # ─── 内部：行为 ─────────────────────────────────────────
-
-    def _on_vscroll(self, *args: Any) -> None:
-        """主 Text 滚动 → 同步行号槽。"""
-        try:
-            self._code_text.yview_moveto(args[0])
-            self._gutter.yview_moveto(args[0])
-        except (tk.TclError, IndexError):
-            pass
-
-    def _set_status(self, msg: str, level: str = "info") -> None:
-        setter = getattr(self._app, "_set_status", None) if self._app else None
-        if callable(setter):
-            try:
-                setter(msg, level)
-            except Exception:
-                pass
-
-    def _switch_tab(self, name: str) -> None:
-        if name not in self._tab_frames:
-            return
+    def _focus_band_for_tab(self, name: str):
         self._current_tab = name
-        for n, frame in self._tab_frames.items():
-            try:
-                if n == name:
-                    frame.pack(fill=tk.BOTH, expand=True)
-                else:
-                    frame.pack_forget()
-            except tk.TclError:
-                pass
-        for n, tab in self._tabs.items():
-            tab.set_selected(n == name)
-        # 同步面包屑 / 状态
+        for key, tab in self._tabs.items():
+            tab.set_selected(key == name)
+        band = {"文件树": self._band_top, "代码": self._band_top,
+                "变更": self._band_mid, "diff": self._band_mid}.get(name)
+        if name == "预览":
+            self._set_preview_sub("预览")
+            band = self._band_bottom
+        elif name == "终端":
+            self._set_preview_sub("终端")
+            band = self._band_bottom
+        if band is not None:
+            self._flash_band(band)
         if name == "代码" and self._current_file is not None:
             self._update_breadcrumb(file=self._current_file)
-        elif name == "diff" and self._current_diff_file is not None:
-            self._update_breadcrumb(file=self._current_diff_file, diff=True)
-        else:
+        elif name == "diff":
+            f = self._current_diff_file
+            self._update_breadcrumb(file=f, diff=True) if f else \
+                self._update_breadcrumb()
+            self._render_diff(self._current_diff_file)
+        elif name == "变更":
             self._update_breadcrumb()
 
-    def _set_filter(self, name: str) -> None:
-        self._filter_var.set(name)
-        for n, c in self._filter_chips.items():
-            c.configure(bg=C["accent_soft"] if n == name else C["surface2"],
-                        fg=C["accent_text"] if n == name else C["ter"],
-                        highlightbackground=C["accent"] if n == name
-                        else C["border_hi"])
-        self._refresh_changes()
-
-    def _set_preview_sub(self, name: str) -> None:
-        self._preview_subtab_var.set(name)
-        # 重新渲染当前文件
-        if self._current_file is not None:
-            self._render_preview(self._current_file)
-
-    def _update_breadcrumb(self, *, file: Path | None = None,
-                           diff: bool = False) -> None:
-        repo = self._repo_root
+    def _flash_band(self, band: tk.Frame):
         try:
-            rel_root = repo.relative_to(repo.parent.parent) \
-                if repo.parent.parent else repo
-        except ValueError:
-            rel_root = repo
-        parts = [repo.name]
-        if file is not None:
-            try:
-                rel = file.resolve().relative_to(repo.resolve())
-                parts.extend(rel.parts)
-            except ValueError:
-                parts.append(file.name)
-        text = " › ".join(parts)
-        self._breadcrumb_var.set(text)
+            band.configure(highlightbackground=C["accent"])
+            band.after(900, lambda: band.winfo_exists() and
+                       band.configure(highlightbackground=C["bg"]))
+        except tk.TclError:
+            pass
 
-    # ─── 文件树 ─────────────────────────────────────────────
+    def _update_tab_counts(self):
+        tab = self._tabs.get("变更")
+        if tab is not None:
+            tab.set_text(f"变更 ({len(self._git_status)})")
 
-    def _refresh_file_tree(self) -> None:
+    def _update_tabs_file(self):
+        tab = self._tabs.get("代码")
+        if tab is not None and self._current_file is not None:
+            tab.set_text(self._current_file.name)
+
+    # ─── 文件树 ────────────────────────────────────────────
+
+    def _refresh_file_tree(self):
         body = self._tree_body
         for child in list(body.winfo_children()):
             child.destroy()
         self._file_tree_rows.clear()
-
-        repo = self._repo_root
         try:
-            nodes = _scan_tree(repo)
+            nodes = _scan_tree(self._repo_root)
         except Exception as exc:
             tk.Label(body, text=f"扫描失败：{exc}", bg=C["bg"],
                      fg=C["muted"], font=FONT_SMALL).pack(anchor="w",
-                                                          padx=PAD_M,
-                                                          pady=PAD_M)
+                                                          padx=PAD_S,
+                                                          pady=PAD_S)
             return
-
-        if not nodes or len(nodes) <= 1:
-            tk.Label(body, text="（无文件）", bg=C["bg"],
-                     fg=C["muted"], font=FONT_SMALL).pack(anchor="w",
-                                                          padx=PAD_M,
-                                                          pady=PAD_M)
-            return
-
-        # 顶层根节点隐藏（已经在面包屑显示），从深度 1 开始
-        rows_container = body
+        repo = self._repo_root
         for node in nodes[1:]:
-            depth = node["depth"] - 1  # 把根目录的 1 层缩进吃掉
+            depth = node["depth"] - 1
             path: Path = node["path"]
             name = node["name"]
             is_dir = node["is_dir"]
-
-            # 跳过未展开的子树（但要保留根的直接子）
             if is_dir and depth > 0 and str(path) not in self._expanded_dirs:
                 continue
-
-            # 状态徽章（仅文件）
             status = ""
             if not is_dir:
                 try:
-                    rel = path.resolve().relative_to(repo.resolve())
-                    rel_str = str(rel).replace("\\", "/")
-                    status = self._git_status.get(rel_str, "")
+                    rel = str(path.resolve().relative_to(repo.resolve())) \
+                        .replace("\\", "/")
+                    status = self._git_status.get(rel, "")
                 except (ValueError, OSError):
                     status = ""
-
-            icon = ("📁" if is_dir
-                    else "🐍" if name.endswith(".py")
-                    else "📄" if name.endswith(".md")
+            icon = ("📁" if is_dir else "🐍" if name.endswith(".py")
                     else "📄")
-
-            def _on_row(_r: _FileRow = None, p: Path = path,
-                        d: bool = is_dir, n: str = name) -> None:
-                if d:
-                    self._toggle_dir(p)
-                else:
-                    self.open_file(p)
-
-            def _on_dir_toggle(_r: _FileRow = None, p: Path = path) -> None:
-                self._toggle_dir(p)
-
             row = _FileRow(
-                rows_container,
-                depth=max(0, depth),
-                icon=icon, name=name,
-                status=status,
-                expandable=is_dir,
+                body, depth=max(0, depth), icon=icon, name=name,
+                status=status, expandable=is_dir,
                 expanded=str(path) in self._expanded_dirs,
-                on_click=_on_row,
-                on_toggle=_on_dir_toggle,
+                on_click=(lambda _r=None, p=path, d=is_dir:
+                          self._toggle_dir(p) if d else self.open_file(p)),
             )
-            row.pack(fill=tk.X, anchor="w", padx=(PAD_S, PAD_S),
-                     pady=max(0, (depth == 0) - 1))
+            row.pack(fill=tk.X)
             self._file_tree_rows.append((row, node))
+        if not self._file_tree_rows:
+            tk.Label(body, text="（空目录）", bg=C["bg"], fg=C["muted"],
+                     font=FONT_SMALL).pack(anchor="w", padx=PAD_S, pady=PAD_S)
 
-    def _toggle_dir(self, path: Path) -> None:
+    def _toggle_dir(self, path: Path):
         key = str(path)
         if key in self._expanded_dirs:
             self._expanded_dirs.discard(key)
@@ -1015,82 +1077,70 @@ class WorkspacePanel(tk.Frame):
         except Exception:
             pass
 
-    # ─── 变更 ───────────────────────────────────────────────
+    # ─── 变更列表 ──────────────────────────────────────────
 
-    def _refresh_changes(self) -> None:
+    def _refresh_changes(self):
         body = self._changes_body
         for child in list(body.winfo_children()):
             child.destroy()
-
         if not self._is_git_repo:
             tk.Label(body, text="不是 git 仓库", bg=C["bg"], fg=C["muted"],
-                     font=FONT_SMALL).pack(anchor="w", pady=PAD_M)
-            self._changes_total_lbl.configure(text="不是 git 仓库")
+                     font=FONT_SMALL).pack(anchor="w", padx=PAD_S, pady=PAD_S)
+            self._changes_title_var.set("变更 (0)")
+            self._changes_total_var.set("+0 −0")
             return
-
-        repo = self._repo_root
-        status = self._git_status
-        numstat = self._git_numstat
-
-        # 按当前 filter 筛选
         cur = self._filter_var.get()
         rows: list[tuple[str, str, int, int]] = []
-        for path, code in status.items():
-            primary = code.strip()[:1] or "?"
+        for path, code in self._git_status.items():
+            primary = (code or "?")[:1].upper()
             if cur == "已修改" and primary != "M":
                 continue
             if cur == "新增" and primary not in ("A", "?"):
                 continue
             if cur == "已删除" and primary != "D":
                 continue
-            added, removed = numstat.get(path, (0, 0))
-            rows.append((code.strip() or "?", path, added, removed))
-
-        # 顶部统计
+            added, removed = self._git_numstat.get(path, (0, 0))
+            rows.append((primary, path, added, removed))
+        self._changes_title_var.set(f"变更 ({len(rows)})")
         total_add = sum(r[2] for r in rows)
         total_del = sum(r[3] for r in rows)
-        self._diff_total_var.set(f"+{total_add} −{total_del}")
-        self._changes_total_lbl.configure(
-            text=f"共 {len(rows)} 个变更 · +{total_add} −{total_del}"
-        )
-
+        self._changes_total_var.set(f"+{total_add} −{total_del}")
         if not rows:
             tk.Label(body, text="无变更", bg=C["bg"], fg=C["muted"],
-                     font=FONT_SMALL).pack(anchor="w", pady=PAD_M)
+                     font=FONT_SMALL).pack(anchor="w", padx=PAD_S, pady=PAD_S)
             return
+        for code, path, added, removed in sorted(rows, key=lambda r: r[1]):
+            display = _shorten_path(path)
+            row = _FileRow(body, depth=0, icon="📄", name=display, status=code,
+                           added=added, removed=removed,
+                           on_click=lambda _r=None, p=path: self.show_diff(p))
+            attach_tooltip(row, path)
+            row.pack(fill=tk.X)
 
-        for code, path, added, removed in rows:
-            row = _FileRow(
-                body,
-                depth=0,
-                icon="📄",
-                name=path,
-                status=code or "?",
-                added=added, removed=removed,
-                on_click=lambda _r=None, p=path: self.show_diff(p),
-            )
-            row.pack(fill=tk.X, anchor="w", pady=max(0, 0))
+    def _set_filter(self, name: str):
+        self._filter_var.set(name)
+        for n, c in self._filter_chips.items():
+            selected = n == name
+            c.configure(bg=C["accent_soft"] if selected else C["surface2"],
+                        fg=C["accent_text"] if selected else C["ter"],
+                        highlightbackground=C["accent"] if selected
+                        else C["border_hi"])
+        self._refresh_changes()
 
-    def _refresh_diff_total(self) -> None:
-        if self._is_git_repo and hasattr(self, "_diff_total_var"):
-            numstat = getattr(self, "_git_numstat", {})
-            total_add = sum(v[0] for v in numstat.values())
-            total_del = sum(v[1] for v in numstat.values())
-            self._diff_total_var.set(f"+{total_add} −{total_del}")
+    # ─── 代码 ──────────────────────────────────────────────
 
-    # ─── 代码 ───────────────────────────────────────────────
+    def _reload_code(self):
+        if self._current_file is not None:
+            self._load_code_view(self._current_file)
 
-    def _load_code_view(self, path: Path) -> None:
+    def _load_code_view(self, path: Path):
         try:
             data = path.read_bytes()
-        except (OSError, FileNotFoundError) as exc:
+        except OSError as exc:
             self._code_meta_var.set(f"无法读取：{exc}")
             self._set_code_text(f"无法读取文件：{exc}")
-            self._update_gutter()
             return
-
         size = len(data)
-        truncated = False
         try:
             text = data.decode("utf-8")
             encoding = "utf-8"
@@ -1100,19 +1150,15 @@ class WorkspacePanel(tk.Frame):
                 encoding = "gbk"
             except UnicodeDecodeError:
                 text = data.decode("utf-8", errors="replace")
-                encoding = "utf-8 (含替换)"
-
+                encoding = "utf-8(replace)"
         lines = text.splitlines()
+        truncated = False
         if size > _MAX_FILE_BYTES or len(lines) > _MAX_FILE_LINES:
             truncated = True
             lines = lines[:_MAX_FILE_LINES]
-
-        # 行号 / meta
-        rel_str = self._rel_label(path)
         note = "（已截断）" if truncated else ""
         self._code_meta_var.set(
-            f"{rel_str} · {human_size(size)} · {encoding}{note}"
-        )
+            f"{self._rel_label(path)} · {human_size(size)} · {encoding}{note}")
         self._set_code_text("\n".join(lines), truncate_hint=truncated)
         if path.suffix.lower() == ".py":
             try:
@@ -1120,279 +1166,336 @@ class WorkspacePanel(tk.Frame):
             except Exception:
                 pass
         self._update_gutter()
+        self._update_tabs_file()
         self._update_breadcrumb(file=path)
 
-    def _set_code_text(self, content: str, *, truncate_hint: bool = False) \
-            -> None:
+    def _set_code_text(self, content: str, *, truncate_hint: bool = False):
         text = self._code_text
         text.configure(state=tk.NORMAL)
         text.delete("1.0", tk.END)
         text.insert("1.0", content)
         if truncate_hint:
-            text.insert(tk.END, "\n\n…（文件过大，仅显示前 "
-                             f"{_MAX_FILE_LINES} 行）")
+            text.insert(tk.END, f"\n\n…（文件过大，仅显示前 {_MAX_FILE_LINES} 行）")
         text.configure(state=tk.DISABLED)
 
-    def _update_gutter(self) -> None:
+    def _update_gutter(self):
         try:
-            width = max(3, len(str(self._code_text.index('end-1c')
-                                   .split('.')[0])) + 1)
+            n = int(self._code_text.index("end-1c").split(".")[0])
+            width = max(3, len(str(n)) + 1)
         except tk.TclError:
             width = 4
         self._gutter.configure(width=width, state=tk.NORMAL)
         self._gutter.delete("1.0", tk.END)
         self._gutter.insert("1.0", gutter_lines(self._code_text,
-                                                 gutter_width=width - 1))
-        # 让 gutter 的滚动位置对齐主 Text
-        try:
-            self._gutter.yview_moveto(self._code_text.yview()[0])
-        except (tk.TclError, IndexError):
-            pass
+                                                gutter_width=width - 1))
         self._gutter.configure(state=tk.DISABLED)
+        self._sync_gutter()
 
     def _rel_label(self, path: Path) -> str:
         try:
             return str(path.resolve().relative_to(self._repo_root.resolve())) \
                 .replace("\\", "/")
-        except ValueError:
+        except (ValueError, OSError):
             return path.name
 
-    # ─── diff ───────────────────────────────────────────────
+    def _update_breadcrumb(self, *, file: Path | None = None,
+                           diff: bool = False):
+        parts = [self._repo_root.name]
+        if file is not None:
+            try:
+                rel = file.resolve().relative_to(self._repo_root.resolve())
+                parts.extend(rel.parts)
+            except (ValueError, OSError):
+                parts.append(file.name)
+        if diff:
+            parts.append("diff")
+        self._breadcrumb_var.set(" › ".join(parts))
 
-    def _render_diff(self, path: Path | None) -> None:
+    # ─── diff ──────────────────────────────────────────────
+
+    def _render_diff(self, path: Path | None):
         text = self._diff_text
         text.configure(state=tk.NORMAL)
         text.delete("1.0", tk.END)
-
-        repo = self._repo_root
         if not self._is_git_repo:
             text.insert("1.0", "（不是 git 仓库）")
             text.configure(state=tk.DISABLED)
-            self._diff_title_var.set("变更")
+            self._diff_title_var.set("diff")
             return
-
-        args = ["diff"]
         if path is not None:
-            args.extend(["--", str(path)])
             self._diff_title_var.set(self._rel_label(path))
-        else:
-            self._diff_title_var.set("变更")
-
-        out = _run_git(repo, *args)
-        if not out and path is None:
-            text.insert("1.0", "无改动\n")
-            text.configure(state=tk.DISABLED)
-            return
-        if not out and path is not None:
-            # 未跟踪的新文件：git diff 为空，按「整文件新增」渲染
-            try:
-                raw = path.read_text(encoding="utf-8", errors="replace")
-            except (OSError, UnicodeDecodeError):
-                raw = ""
-            if raw:
-                text.insert(tk.END, f"新增文件（未跟踪）：{self._rel_label(path)}\n", ("meta",))
-                for line in raw.splitlines():
-                    text.insert(tk.END, line + "\n", ("add",))
+            out = _run_git(self._repo_root, "diff", "--", str(path))
+            if not out:
+                # 未跟踪的新文件：整文件按新增渲染
+                try:
+                    raw = path.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    raw = ""
+                if raw:
+                    text.insert(tk.END,
+                                f"新增文件（未跟踪）：{self._rel_label(path)}\n",
+                                ("meta",))
+                    for line in raw.splitlines():
+                        text.insert(tk.END, line + "\n", ("add",))
+                    text.configure(state=tk.DISABLED)
+                    self._diff_total_var.set(f"+{len(raw.splitlines())} −0")
+                    return
+                text.insert("1.0", "无改动\n")
                 text.configure(state=tk.DISABLED)
-                self._diff_total_var.set(f"+{len(raw.splitlines())} −0")
                 return
-            text.insert("1.0", "无改动\n")
-            text.configure(state=tk.DISABLED)
-            return
-
-        lines = out.splitlines()
-        for i, line in enumerate(lines, start=1):
-            tag = ""
-            if line.startswith("+++") or line.startswith("---"):
+        else:
+            self._diff_title_var.set("diff（全部）")
+            out = _run_git(self._repo_root, "diff")
+            if not out:
+                text.insert("1.0",
+                            "工作区没有已跟踪文件的改动\n"
+                            "（未跟踪的新文件请从左侧列表点开）\n")
+                text.configure(state=tk.DISABLED)
+                self._refresh_diff_total()
+                return
+        first_hunk = None
+        idx = 0
+        for line in out.splitlines():
+            idx += 1
+            if line.startswith(("+++", "---", "diff --git", "index ")):
                 tag = "meta"
             elif line.startswith("@@"):
                 tag = "hunk"
-            elif line.startswith("diff --git") or line.startswith("index "):
-                tag = "meta"
+                if first_hunk is None:
+                    first_hunk = max(1, idx - 3)
             elif line.startswith("+"):
                 tag = "add"
             elif line.startswith("-"):
                 tag = "del"
-            start = f"{i}.0"
-            end = f"{i}.end"
-            if tag:
-                text.insert(tk.END, line + "\n", (tag,))
             else:
-                text.insert(tk.END, line + "\n")
+                tag = ""
+            text.insert(tk.END, line + "\n", (tag,) if tag else ())
         text.configure(state=tk.DISABLED)
-
-        # 总计
+        if first_hunk is not None:
+            try:
+                text.see(f"{first_hunk}.0")
+            except tk.TclError:
+                pass
         if path is None:
             self._refresh_diff_total()
         else:
             rel = self._rel_label(path)
-            ns = self._git_numstat.get(rel, (0, 0))
+            ns = self._git_numstat.get(rel)
+            if ns is None and rel in self._git_status and \
+                    self._git_status[rel].startswith("?"):
+                ns = (_count_lines(path), 0)
+            ns = ns or (0, 0)
             self._diff_total_var.set(f"+{ns[0]} −{ns[1]}")
 
-    # ─── 预览 ───────────────────────────────────────────────
+    def _refresh_diff_total(self):
+        total_add = sum(v[0] for v in self._git_numstat.values())
+        total_del = sum(v[1] for v in self._git_numstat.values())
+        self._diff_total_var.set(f"+{total_add} −{total_del}")
 
-    def _reload_preview(self) -> None:
+    # ─── 预览 ──────────────────────────────────────────────
+
+    def _set_preview_sub(self, name: str):
+        self._preview_subtab_var.set(name)
+        for n, lbl in self._preview_subs.items():
+            sel = n == name
+            lbl.configure(fg=C["text"] if sel else C["ter"])
+        self._show_preview_sub(name)
+        if name in ("预览", "终端"):
+            self._current_tab = name
+            for key, tab in self._tabs.items():
+                tab.set_selected(key == name)
+
+    def _show_preview_sub(self, name: str):
+        """终端/控制台切到终端 Text；其余切到预览内容宿主。"""
+        if name in ("终端", "控制台"):
+            if getattr(self, "_term_text", None) is None:
+                self._term_text = tk.Text(self._preview_host, bg=C["code_bg"],
+                                          fg=C["muted"], font=FONT_MONO_SM,
+                                          wrap="none", relief=tk.FLAT,
+                                          highlightthickness=0, bd=0,
+                                          takefocus=0, cursor="arrow",
+                                          padx=8, pady=6)
+                self._term_vbar = tk.Scrollbar(
+                    self._preview_host, orient=tk.VERTICAL,
+                    command=self._term_text.yview,
+                    bg=C["surface2"], troughcolor=C["code_bg"],
+                    activebackground=C["scroll"], relief=tk.FLAT,
+                    bd=0, highlightthickness=0, width=8)
+                self._term_text.configure(yscrollcommand=self._term_vbar.set)
+                self._term_text.insert("1.0",
+                                       "gateway / 任务输出会显示在这里\n")
+            self._preview_text.pack_forget()
+            self._prev_vbar.pack_forget()
+            if self._preview_canvas is not None:
+                self._preview_canvas.pack_forget()
+            self._term_vbar.pack(side=tk.RIGHT, fill=tk.Y)
+            self._term_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            self._update_preview_underline()
+            return
+        if getattr(self, "_term_text", None) is not None:
+            self._term_text.pack_forget()
+            self._term_vbar.pack_forget()
+        if name == "图像":
+            self._preview_text.pack_forget()
+            self._prev_vbar.pack_forget()
+            self._show_image_preview()
+        else:
+            if self._preview_canvas is not None:
+                self._preview_canvas.pack_forget()
+                self._preview_canvas = None
+            self._prev_vbar.pack(side=tk.RIGHT, fill=tk.Y)
+            self._preview_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            if self._current_file is not None:
+                self._render_preview(self._current_file)
+            else:
+                self._preview_write("打开一个文件后，这里会显示预览。\n\n"
+                                    "支持：Markdown / HTML 源码 / 图片 / 文本。")
+        self._update_preview_underline()
+
+    def _update_preview_underline(self):
+        try:
+            self._sub_underline.place_forget()
+            name = self._preview_subtab_var.get()
+            lbl = self._preview_subs.get(name)
+            if lbl is None:
+                return
+            lbl.update_idletasks()
+            x = lbl.winfo_rootx() - self.winfo_rootx()
+            w = lbl.winfo_width()
+            y = lbl.winfo_rooty() - self.winfo_rooty() + lbl.winfo_height()
+            self._sub_underline.place(in_=self, x=x, y=y - 2,
+                                      width=max(8, w), height=2)
+            self._sub_underline.lift()
+        except tk.TclError:
+            pass
+
+    def _preview_write(self, text: str):
+        self._preview_text.configure(state=tk.NORMAL)
+        self._preview_text.delete("1.0", tk.END)
+        self._preview_text.insert("1.0", text)
+        self._preview_text.configure(state=tk.DISABLED)
+
+    def _reload_preview(self):
         if self._current_file is not None:
             self._render_preview(self._current_file)
+        self._set_status("预览已刷新", "info")
 
-    def _open_current_external(self) -> None:
+    def _open_current_external(self):
         path = self._current_file
         if path is None:
             self._set_status("没有可打开的文件", "warn")
             return
-        url = path.resolve().as_uri()
-        # 优先 app._open_path；回落到 webbrowser.open / os.startfile
         opener = getattr(self._app, "_open_path", None)
         if callable(opener):
             try:
-                opener(str(path))
+                opener(path)
                 return
             except Exception:
                 pass
         try:
-            webbrowser.open(url)
+            webbrowser.open(path.resolve().as_uri())
         except Exception:
             try:
                 os.startfile(str(path))  # type: ignore[attr-defined]
             except Exception as exc:
                 self._set_status(f"无法打开：{exc}", "error")
 
-    def _render_preview(self, path: Path) -> None:
-        # 拆掉之前可能的图像 holder
-        for child in list(self._tab_frames["预览"].winfo_children()):
-            if child is self._preview_sub_holder:
-                continue
-        # 先清空 Text + 隐藏图像区
-        self._preview_text.configure(state=tk.NORMAL)
-        self._preview_text.delete("1.0", tk.END)
-        # 删除旧的 canvas holder
-        for child in list(self._tab_frames["预览"].winfo_children()):
-            if getattr(child, "_aip_canvas_holder", False):
-                child.destroy()
-
-        suffix = path.suffix.lower()
-        # 图像：渲染缩略图（PNG/GIF/BMP 走 PhotoImage，其它格式给出提示）
-        image_exts = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
-        if suffix in image_exts and self._preview_subtab_var.get() in (
-                "预览", "图像"):
-            holder = tk.Frame(self._tab_frames["预览"], bg=C["code_bg"],
-                              highlightthickness=0, bd=0)
-            holder._aip_canvas_holder = True  # type: ignore[attr-defined]
-            holder.pack(side=tk.TOP, fill=tk.BOTH, expand=True,
-                        padx=PAD_M, pady=(0, PAD_M))
-            canvas = tk.Canvas(holder, bg=C["code_bg"], highlightthickness=0,
-                               bd=0)
-            canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-            ok = self._draw_image_thumbnail(canvas, path)
-            if ok:
-                self._preview_text.configure(state=tk.DISABLED)
-                return
-            # 退化：提示 + 文件信息
-            self._preview_text.insert("1.0",
-                                      f"该格式需在新窗口打开\n\n"
-                                      f"文件：{path}\n大小：{human_size(self._safe_size(path))}\n")
-            self._preview_text.configure(state=tk.DISABLED)
+    def _render_preview(self, path: Path):
+        sub = self._preview_subtab_var.get()
+        if sub in ("终端", "控制台"):
             return
-
-        # Markdown / HTML：读文本
+        suffix = path.suffix.lower()
+        image_exts = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
+        if suffix in image_exts and sub in ("预览", "图像"):
+            if self._show_image_preview(path):
+                return
+        # 文本类
         try:
             data = path.read_bytes()
-            size = len(data)
         except OSError as exc:
-            self._preview_text.insert("1.0", f"无法读取：{exc}")
-            self._preview_text.configure(state=tk.DISABLED)
+            self._preview_write(f"无法读取：{exc}")
             return
-
-        sub = self._preview_subtab_var.get()
         if suffix in {".html", ".htm", ".svg"}:
-            try:
-                txt = data.decode("utf-8")
-            except UnicodeDecodeError:
-                txt = data.decode("utf-8", errors="replace")
-            self._preview_text.insert("1.0",
-                                      f"{txt}\n\n（HTML/SVG 源码 · 可在新窗口打开）")
-            self._preview_text.configure(state=tk.DISABLED)
+            txt = data.decode("utf-8", errors="replace")
+            self._preview_write(txt + "\n\n（HTML/SVG 源码 · 可点「在新窗口打开」）")
             return
-
         if suffix == ".md" and sub in ("预览", "Markdown"):
-            try:
-                txt = data.decode("utf-8")
-            except UnicodeDecodeError:
-                txt = data.decode("utf-8", errors="replace")
-            self._preview_text.insert("1.0", _strip_md(txt))
-            self._preview_text.configure(state=tk.DISABLED)
+            self._preview_write(_strip_md(data.decode("utf-8", errors="replace")))
             return
-
-        # 其它文本
+        if suffix == ".py":
+            self._preview_write(data.decode("utf-8", errors="replace"))
+            return
         try:
             txt = data.decode("utf-8")
         except UnicodeDecodeError:
             try:
                 txt = data.decode("gbk")
             except UnicodeDecodeError:
-                self._preview_text.insert(
-                    "1.0", f"二进制文件 · {human_size(size)} · 可在新窗口打开")
-                self._preview_text.configure(state=tk.DISABLED)
+                self._preview_write(
+                    f"二进制文件 · {human_size(len(data))} · 可在新窗口打开")
                 return
-        self._preview_text.insert("1.0", txt)
-        self._preview_text.configure(state=tk.DISABLED)
+        self._preview_write(txt)
 
-    def _draw_image_thumbnail(self, canvas: tk.Canvas, path: Path) -> bool:
-        """返回 True 表示成功在 Canvas 上画了缩略图。"""
-        try:
-            img = tk.PhotoImage(file=str(path))
-        except (tk.TclError, OSError):
+    def _show_image_preview(self, path: Path | None = None) -> bool:
+        target = path or self._current_file
+        if target is None:
             return False
+        try:
+            img = tk.PhotoImage(file=str(target))
+        except (tk.TclError, OSError):
+            if path is None:
+                self._preview_write("当前文件不是可显示的图片。\n"
+                                    "（PhotoImage 支持 PNG/GIF/PPM；"
+                                    "JPG/WebP 请点「在新窗口打开」）")
+            else:
+                self._preview_write("该格式无法内嵌显示，请点「在新窗口打开」。")
+            return path is None
         w, h = img.width(), img.height()
-        max_w, max_h = 640, 360
-        scale = min(1.0, max_w / max(w, 1), max_h / max(h, 1))
-        if scale < 1.0:
-            # PhotoImage 只支持整数缩小倍数
-            factor = max(1, int(round(1 / scale)))
-            try:
+        max_w, max_h = 620, 320
+        factor = max(1, int(max(max_w / max(w, 1), max_h / max(h, 1)) ** -1)) \
+            if max(w, h) > max(max_w, max_h) else 1
+        try:
+            if factor > 1:
                 img = img.subsample(factor)
-            except tk.TclError:
-                pass
-        canvas.delete("all")
-        canvas.create_image(10, 10, image=img, anchor="nw")
-        canvas.image = img  # type: ignore[attr-defined]  # 防 GC
-        # 让 canvas 自适应
-        canvas.configure(width=img.width() + 20, height=img.height() + 20)
+        except tk.TclError:
+            pass
+        self._preview_text.pack_forget()
+        self._prev_vbar.pack_forget()
+        if self._preview_canvas is None:
+            self._preview_canvas = tk.Canvas(self._preview_host,
+                                             bg=C["sidebar"],
+                                             highlightthickness=0, bd=0)
+        self._preview_canvas.delete("all")
+        self._preview_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self._preview_canvas.create_image(10, 10, image=img, anchor="nw")
+        self._preview_canvas.image = img  # 防 GC
         return True
 
-    @staticmethod
-    def _safe_size(path: Path) -> int:
-        try:
-            return path.stat().st_size
-        except OSError:
-            return 0
+    # ─── 状态 ──────────────────────────────────────────────
+
+    def _set_status(self, msg: str, level: str = "info"):
+        setter = getattr(self._app, "_set_status", None) if self._app else None
+        if callable(setter):
+            try:
+                setter(msg, level)
+            except Exception:
+                pass
 
 
 # ─── 入口（无头冒烟） ──────────────────────────────────────
 
 
-def _selftest(repo: str | None = None) -> None:
-    """无 tk 弹窗的冒烟：构造 → 各种 API → 销毁。"""
+def _selftest(repo: str | None = None):
     root = tk.Tk()
     root.withdraw()
     try:
-        # 没指定就用本仓库父目录下的 pledge-evolving
         rr = repo or r"C:\Users\匡溯昀\pledge-evolving"
         panel = WorkspacePanel(root, repo_root=rr)
-        # 各 API 路径走一遍
-        for fn in (panel.show,
-                   panel.open_file_tree,
-                   panel.open_changes,
-                   panel.refresh,
-                   lambda: panel.show_diff(),
-                   panel.hide):
-            try:
-                fn()
-                root.update()
-            except Exception as exc:
-                print(f"step {fn!r} failed: {exc}")
-
-        # 找一个 .py 文件走 open_file
+        panel.show()
+        for fn in (panel.open_file_tree, panel.open_changes, panel.refresh,
+                   lambda: panel.show_diff(), panel.hide):
+            fn()
+            root.update()
         sample = None
         repo_path = Path(rr)
         if repo_path.exists():
@@ -1404,19 +1507,14 @@ def _selftest(repo: str | None = None) -> None:
                 sample = p
                 break
         if sample is not None:
-            try:
-                panel.open_file(sample)
-                root.update()
-            except Exception as exc:
-                print(f"open_file failed: {exc}")
-
-        try:
-            panel.push_terminal("test")
+            panel.open_file(sample)
             root.update()
-        except Exception as exc:
-            print(f"push_terminal failed: {exc}")
-
-        print("selftest ok")
+        panel.push_terminal("test")
+        panel._set_preview_sub("终端")
+        panel._set_preview_sub("图像")
+        panel._set_preview_sub("预览")
+        root.update()
+        print("selftest ok; changes:", panel.changes_count())
     finally:
         try:
             root.destroy()
@@ -1424,8 +1522,7 @@ def _selftest(repo: str | None = None) -> None:
             pass
 
 
-def _selftest_non_git() -> None:
-    """把 repo_root 指到非 git 目录，验证不会崩。"""
+def _selftest_non_git():
     import tempfile
     tmp = tempfile.mkdtemp(prefix="ws_nongit_")
     root = tk.Tk()
@@ -1433,13 +1530,10 @@ def _selftest_non_git() -> None:
     try:
         panel = WorkspacePanel(root, repo_root=tmp)
         panel.show()
-        for fn in (panel.open_file_tree, panel.open_changes,
-                   panel.refresh, panel.hide):
-            try:
-                fn()
-                root.update()
-            except Exception as exc:
-                print(f"non-git step {fn!r} failed: {exc}")
+        for fn in (panel.open_file_tree, panel.open_changes, panel.refresh,
+                   panel.hide):
+            fn()
+            root.update()
         print("non-git ok")
     finally:
         try:
@@ -1454,12 +1548,10 @@ if __name__ == "__main__":
     elif "--selftest-non-git" in sys.argv:
         _selftest_non_git()
     else:
-        # 简单可视化启动（一般不在这里跑，留给主程序调用）
         r = tk.Tk()
         r.title("WorkspacePanel 预览")
         r.configure(bg=C["bg"])
-        r.geometry("640x720+50+50")
+        r.geometry("680x860+50+50")
         ws = WorkspacePanel(r, repo_root=r"C:\Users\匡溯昀\pledge-evolving")
         ws.show()
-        ws.open_file_tree()
         r.mainloop()
