@@ -24,6 +24,7 @@ import os
 import platform
 import queue
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -107,6 +108,12 @@ MIN_SIZE = (1120, 720)
 FORGE_REPO_HINT = os.environ.get("FORGE_REPO", "").strip()
 DEFAULT_FORGE_HOME = Path.home() / ".forge"
 
+# 打包成桌面应用（PyInstaller）后：__file__ 指向临时解包目录，
+# 资源与配置要相对「exe 所在目录」定位。
+FROZEN = bool(getattr(sys, "frozen", False))
+APP_DIR = Path(sys.executable).resolve().parent if FROZEN else HERE
+DESKTOP_CONFIG_NAME = "forge-desktop.json"
+
 IS_WINDOWS = platform.system() == "Windows"
 
 # 主导航（顶栏与侧栏共用；key -> (标签, 图标)）
@@ -156,23 +163,104 @@ def _setup_dpi():
             pass
 
 
+def _desktop_config_path() -> Path:
+    """桌面应用的本地配置（记住 Forge 目录等）：优先 exe 同目录，否则 ~/.forge。"""
+    try:
+        if os.access(str(APP_DIR), os.W_OK):
+            return APP_DIR / DESKTOP_CONFIG_NAME
+    except OSError:
+        pass
+    DEFAULT_FORGE_HOME.mkdir(parents=True, exist_ok=True)
+    return DEFAULT_FORGE_HOME / DESKTOP_CONFIG_NAME
+
+
+def load_desktop_config() -> dict:
+    path = _desktop_config_path()
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_desktop_config(**updates) -> None:
+    path = _desktop_config_path()
+    data = load_desktop_config()
+    data.update(updates)
+    try:
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2),
+                        encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _python_exe() -> str:
+    """跑 run.py 用的解释器。
+
+    打包后 sys.executable 是 GUI 自己（再带上 run.py 参数会又开一个窗口），
+    所以必须另找一个真正的 Python：FORGE_PYTHON → py launcher → PATH →
+    常见安装目录。
+    """
+    if not FROZEN and sys.executable:
+        return sys.executable
+    # 1) 显式指定优先
+    env_py = os.environ.get("FORGE_PYTHON", "").strip()
+    if env_py and Path(env_py).is_file():
+        return env_py
+    # 2) 用户自己装的 Python（比 PATH 更可靠——PATH 上可能挂着别的内嵌解释器）
+    for base in (Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Python",
+                 Path("C:/"),
+                 Path(os.environ.get("ProgramFiles", "C:/Program Files"))):
+        try:
+            if not base.is_dir():
+                continue
+            for sub in sorted(base.glob("Python3*"), reverse=True):
+                for name in ("python.exe", "python3.exe"):
+                    exe = sub / name
+                    if exe.is_file():
+                        return str(exe)
+        except OSError:
+            continue
+    # 3) PATH
+    for cand in ("python", "python3"):
+        found = shutil.which(cand)
+        if found:
+            return found
+    return "python"
+
+
 def _find_run_py() -> Path | None:
-    """探测 run.py：env FORGE_REPO → 同级 → 上 3 层 → 常见副本（限深）。"""
+    """探测 run.py。
+
+    顺序：env FORGE_REPO → 桌面配置记住的目录 → exe/脚本同级与上层 →
+    常见位置（用户目录下的 pledge-evolving 等）→ .openclaw/tmp 副本。
+    """
     if FORGE_REPO_HINT:
         p = Path(FORGE_REPO_HINT) / "run.py"
         if p.is_file():
             return p
-    here = HERE
-    p = here / "run.py"
-    if p.is_file():
-        return p
-    for parent in [here.parent, here.parent.parent, here.parent.parent.parent]:
-        p = parent / "run.py"
+    saved = str(load_desktop_config().get("forge_repo", "")).strip()
+    if saved:
+        p = Path(saved) / "run.py"
         if p.is_file():
             return p
-    # 最后扫一下常见的 .openclaw/tmp 副本——限深 4 层、防卡死
+    for base in (APP_DIR, HERE):
+        p = base / "run.py"
+        if p.is_file():
+            return p
+        for parent in (base.parent, base.parent.parent, base.parent.parent.parent):
+            p = parent / "run.py"
+            if p.is_file():
+                return p
+    home = Path.home()
+    for name in ("pledge-evolving", "forge", "forge-repo"):
+        p = home / name / "run.py"
+        if p.is_file():
+            return p
     try:
-        for candidate in Path(Path.home() / ".openclaw-autoclaw").glob("forge-*/run.py"):
+        for candidate in (home / ".openclaw-autoclaw").glob("forge-*/run.py"):
             if candidate.is_file():
                 return candidate
     except OSError:
@@ -1023,7 +1111,7 @@ class ForgeGuiApp:
         self.task_run_btn.configure(state=tk.DISABLED)
         self._set_status(f"任务已下发：{task[:40]}", "info")
 
-        cmd = task_command(sys.executable, self.run_py, self.home, task, self._task_strategy)
+        cmd = task_command(_python_exe(), self.run_py, self.home, task, self._task_strategy)
         env = {**os.environ, **env_for()}
         cwd = str(self.run_py.parent)
 
@@ -2364,8 +2452,9 @@ class ForgeGuiApp:
         self.run_py = candidate
         if self.workspace is not None:
             self.workspace.set_repo_root(candidate.parent)
+        save_desktop_config(forge_repo=str(candidate.parent))
         self.path_lbl.configure(text="forge 目录已就绪")
-        self._set_status(f"本次会话使用 Forge：{folder}", "ok")
+        self._set_status(f"已记住 Forge 目录：{folder}", "ok")
 
     def _toggle_gateway(self):
         if self._sending:
@@ -2404,7 +2493,7 @@ class ForgeGuiApp:
             return
         env["FORGE_GATEWAY_KEY"] = upstream_key
         # Keep credentials in the child environment, never command-line arguments.
-        cmd = [sys.executable, str(self.run_py), "gateway",
+        cmd = [_python_exe(), str(self.run_py), "gateway",
                "--upstream", upstream_url, "--upstream-wire", "openai",
                "--client-wire", "openai", "--models", upstream_model,
                "--port", str(port), "--home", str(self.home)]
@@ -2775,7 +2864,35 @@ class ForgeGuiApp:
 # ─── 入口 ──────────────────────────────────────────────
 
 
+def _diagnose() -> int:
+    """打印/落盘运行环境诊断（打包后无控制台时看 exe 旁的 forge-diagnose.json）。"""
+    info = {
+        "version": APP_VERSION,
+        "frozen": FROZEN,
+        "app_dir": str(APP_DIR),
+        "module_dir": str(HERE),
+        "sys_executable": sys.executable,
+        "python_exe": _python_exe(),
+        "run_py": str(_find_run_py() or ""),
+        "forge_home": str(DEFAULT_FORGE_HOME),
+        "config_path": str(_desktop_config_path()),
+        "config_data": load_desktop_config(),
+    }
+    text = json.dumps(info, ensure_ascii=False, indent=2)
+    try:
+        print(text)
+    except Exception:
+        pass
+    try:
+        (APP_DIR / "forge-diagnose.json").write_text(text, encoding="utf-8")
+    except OSError:
+        pass
+    return 0
+
+
 def main():
+    if "--diagnose" in sys.argv:
+        raise SystemExit(_diagnose())
     _setup_dpi()
     root = tk.Tk()
     app = ForgeGuiApp(root)

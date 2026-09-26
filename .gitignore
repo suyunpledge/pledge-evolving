@@ -24,3 +24,7 @@ Thumbs.db
 .openclaw/
 *.pyc
 .forge/ 
+
+# forge 桌面应用：本机运行时状态（记住的 Forge 目录等）
+forge-desktop.json
+forge-diagnose.json
