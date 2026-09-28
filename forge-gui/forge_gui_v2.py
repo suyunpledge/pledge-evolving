@@ -57,7 +57,8 @@ from interaction_model import (read_attachment, compose_prompt, task_command, ta
 from interaction_model import model_label as served_model_label
 
 import chat_widgets as cw  # noqa: E402
-import brand_marks  # noqa: E402
+import brand_marks
+import provider_catalog as catalog  # noqa: E402
 import gui_theme as theme  # noqa: E402
 from model_picker import ModelPicker  # noqa: E402
 from gui_theme import (  # noqa: E402
@@ -2036,6 +2037,12 @@ class ForgeGuiApp:
                   font=FONT_UI, relief=tk.FLAT, padx=12, pady=6,
                   command=self._import_from_autoclaw, cursor="hand2"
                   ).pack(side=tk.LEFT, padx=(8, 0))
+        # 供应商目录：19 家常见厂商 + 各自的套餐/订阅端点，点一下填模板
+        tk.Button(btn_bar, text="供应商目录", bg=C["surface2"], fg=C["link"],
+                  activebackground=C["link_soft"], activeforeground=C["link"],
+                  font=FONT_UI, relief=tk.FLAT, padx=12, pady=6,
+                  command=self._open_provider_catalog, cursor="hand2"
+                  ).pack(side=tk.LEFT, padx=(8, 0))
         tk.Label(btn_bar, text="Ctrl + Enter 整理", bg=C["bg"],
                  fg=C["muted"], font=FONT_SMALL).pack(side=tk.RIGHT)
 
@@ -2465,6 +2472,121 @@ class ForgeGuiApp:
         return None
 
     # ── 一键配置：采样温度 ──────────────────────────────
+    # ── 供应商目录（含套餐端点）──────────────────────────
+    def _open_provider_catalog(self, query: str = "") -> None:
+        """列出每个供应商及其各种接入方式，选中即填好配置模板。
+
+        对标 Cherry Studio / Chatbox：不让用户在空白框里猜 baseURL。
+        同一家的标准 API 与订阅套餐（Coding Plan 等）**分开列**，因为端点不同。
+        这里只填 baseURL / wire / model，**不碰密钥**。
+        """
+        dialog = tk.Toplevel(self.root)
+        dialog.title("供应商目录")
+        dialog.geometry("820x640")
+        dialog.transient(self.root)
+        dialog.configure(bg=C["bg"])
+        dialog.minsize(620, 460)
+
+        head = tk.Frame(dialog, bg=C["bg"], padx=20, pady=16)
+        head.pack(fill=tk.X)
+        tk.Label(head, text="供应商目录", bg=C["bg"], fg=C["text"],
+                 font=FONT_TITLE).pack(anchor=tk.W)
+        tk.Label(head, text="每个供应商单独一条；标准 API 与订阅套餐分开列。"
+                            "点一行即把 baseURL / wire 填进下面的输入框，你再补 apiKey。",
+                 bg=C["bg"], fg=C["muted"], font=FONT_SMALL,
+                 wraplength=740, justify=tk.LEFT).pack(anchor=tk.W, pady=(2, 10))
+
+        search_row = tk.Frame(head, bg=C["bg"])
+        search_row.pack(fill=tk.X)
+        search_var = tk.StringVar(value=query)
+        entry = tk.Entry(search_row, textvariable=search_var, bg=C["input_bg"],
+                         fg=C["text"], insertbackground=C["accent"], font=FONT_UI,
+                         relief=tk.FLAT, highlightthickness=1,
+                         highlightbackground=C["border_hi"],
+                         highlightcolor=C["accent"])
+        entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=5)
+        tk.Label(search_row, text="搜名称 / 别名 / 域名", bg=C["bg"],
+                 fg=C["muted"], font=FONT_SMALL).pack(side=tk.LEFT, padx=(8, 0))
+
+        listing = cw.ScrollArea(dialog, bg=C["surface"], padx=0, pady=0)
+        listing.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 12))
+
+        footer = tk.Frame(dialog, bg=C["bg"], padx=20, pady=10)
+        footer.pack(fill=tk.X)
+        tk.Label(footer, text="「待确认」= 该地址我没核到一手来源，若报错请以官网控制台为准",
+                 bg=C["bg"], fg=C["muted"], font=FONT_CAPTION).pack(side=tk.LEFT)
+        tk.Button(footer, text="关闭", bg=C["surface2"], fg=C["text"],
+                  activebackground=C["border"], activeforeground=C["text"],
+                  font=FONT_UI, relief=tk.FLAT, padx=14, pady=5,
+                  command=dialog.destroy, cursor="hand2").pack(side=tk.RIGHT)
+
+        def pick(preset, plan):
+            snippet = catalog.config_snippet(preset, plan)
+            self._clear_placeholder()
+            self.input_text.delete("1.0", tk.END)
+            self.input_text.insert("1.0", snippet)
+            self.input_text.focus_set()
+            self._set_status(
+                f"已填入 {preset.name} · {plan.label} 的模板，补上 apiKey 后点「整理并预览」",
+                "ok")
+            try:
+                dialog.grab_release()
+            except tk.TclError:
+                pass
+            dialog.destroy()
+
+        def render(*_args):
+            for child in list(listing.inner.winfo_children()):
+                child.destroy()
+            hits = catalog.find(search_var.get())
+            if not hits:
+                tk.Label(listing.inner, text="没有匹配的供应商", bg=C["surface"],
+                         fg=C["muted"], font=FONT_UI, pady=24).pack()
+                return
+            for preset in hits:
+                card = tk.Frame(listing.inner, bg=C["surface"],
+                                highlightthickness=1,
+                                highlightbackground=C["border"])
+                card.pack(fill=tk.X, pady=(0, 8))
+                top = tk.Frame(card, bg=C["surface"], padx=12, pady=8)
+                top.pack(fill=tk.X)
+                icon, keep = brand_marks.mark_icon(preset.brand or None, 16)
+                if icon is not None:
+                    holder = tk.Label(top, image=icon, bg=C["surface"])
+                    holder.image = icon
+                    holder.pack(side=tk.LEFT, padx=(0, 7))
+                tk.Label(top, text=preset.name, bg=C["surface"], fg=C["text"],
+                         font=FONT_UI_BOLD).pack(side=tk.LEFT)
+                tone = {"user-config": C["ok"], "docs": C["muted"]}.get(
+                    preset.source, C["warn"])
+                tk.Label(top, text=f"· {preset.source_label}", bg=C["surface"],
+                         fg=tone, font=FONT_MICRO).pack(side=tk.LEFT, padx=(7, 0))
+                if preset.docs:
+                    tk.Label(top, text=preset.docs, bg=C["surface"], fg=C["muted"],
+                             font=FONT_CAPTION).pack(side=tk.RIGHT)
+                plans_row = tk.Frame(card, bg=C["surface"], padx=12)
+                plans_row.pack(fill=tk.X, pady=(0, 9))
+                for plan in preset.plans:
+                    chip = tk.Button(
+                        plans_row, text=plan.label, bg=C["surface2"], fg=C["text"],
+                        activebackground=C["accent_soft"], activeforeground=C["accent"],
+                        font=FONT_MICRO, relief=tk.FLAT, padx=9, pady=3,
+                        cursor="hand2",
+                        command=lambda p=preset, pl=plan: pick(p, pl))
+                    chip.pack(side=tk.LEFT, padx=(0, 6))
+                    if plan.note:
+                        attach_tooltip(chip, f"{plan.base_url}\n{plan.note}")
+                    else:
+                        attach_tooltip(chip, plan.base_url)
+
+        search_var.trace_add("write", lambda *_: render())
+        entry.bind("<Escape>", lambda _e: dialog.destroy())
+        render()
+        try:
+            dialog.grab_set()
+        except tk.TclError:
+            pass
+
     def _current_temperature_preset(self) -> str:
         """看当前所有 provider 写的是什么温度；不一致就返回空串（不设置）。"""
         values = set()

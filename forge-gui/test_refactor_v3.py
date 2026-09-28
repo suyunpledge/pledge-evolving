@@ -760,6 +760,69 @@ class RefactorAcceptance(unittest.TestCase):
         self.assertIn("服务端默认", sampling.describe("claude-sonnet-4-5",
                                                     "anthropic", 0.7))
 
+    # ── 24. 供应商目录（含套餐端点）────────────────────────
+    def test_provider_catalog_lists_every_provider_and_plan(self):
+        import provider_catalog as catalog
+        # 用户点名的供应商都要在
+        names = " ".join(p.name for p in catalog.PRESETS)
+        for wanted in ("七牛", "硅基流动", "深度求索", "Anthropic", "Google",
+                       "OpenAI", "xAI", "智谱", "千问", "月之暗面",
+                       "MiniMax"):
+            with self.subTest(wanted=wanted):
+                self.assertIn(wanted, names)
+        # MiniMax 国内 / Global 必须分成两条
+        self.assertIn("minimax", catalog.BY_KEY)
+        self.assertIn("minimax_global", catalog.BY_KEY)
+        # 每家至少一个接入方式，且都有 https 地址
+        for preset in catalog.PRESETS:
+            with self.subTest(provider=preset.key):
+                self.assertTrue(preset.plans, f"{preset.key} 没有任何接入方式")
+                for plan in preset.plans:
+                    self.assertTrue(plan.base_url.startswith("https://"),
+                                    f"{preset.key}/{plan.label} 地址不合法")
+                    self.assertIn(plan.wire, ("openai", "anthropic"))
+        # 订阅套餐要单独列，而不是和标准 API 混成一档
+        zhipu = catalog.BY_KEY["zhipu"]
+        labels = [pl.label for pl in zhipu.plans]
+        self.assertIn("Coding Plan", labels)
+        self.assertIn("标准 API", labels)
+        self.assertNotEqual(
+            catalog.BY_KEY["zhipu"].plans[0].base_url,
+            catalog.BY_KEY["zhipu"].plans[1].base_url,
+            "标准 API 与 Coding Plan 的端点必须不同")
+        # Kimi Code 订阅双协议
+        kimi = catalog.BY_KEY["moonshot"]
+        wires = {pl.wire for pl in kimi.plans}
+        self.assertEqual(wires, {"openai", "anthropic"})
+        # 未核实的要如实标注，不能装作已核对
+        self.assertTrue(any(p.source == catalog.SOURCE_UNVERIFIED
+                            for p in catalog.PRESETS))
+        # 搜索能按别名命中
+        self.assertIn("moonshot", [p.key for p in catalog.find("kimi")])
+        self.assertIn("qiniu", [p.key for p in catalog.find("七牛")])
+        # 生成的模板含 baseURL/wire，且**绝不含密钥**
+        snippet = catalog.config_snippet(*catalog.all_plans()[0])
+        self.assertIn("baseURL:", snippet)
+        self.assertIn("wire:", snippet)
+        self.assertNotIn("sk-", snippet)
+
+    def test_claude_five_series_never_sends_sampling_params(self):
+        """Claude 只有 5 系（没有 6 系）：一律不发 temperature / top_p。"""
+        import forge.sampling as sampling
+        for model in ("claude-opus-5-5", "claude-sonnet-5", "claude-5-luna",
+                      "claude-sonnet-4-5"):
+            with self.subTest(model=model):
+                self.assertIsNone(sampling.resolve(model, "openai", 0.7))
+                self.assertIsNone(sampling.resolve(model, "anthropic", 0.7))
+                self.assertIn("服务端默认",
+                              sampling.describe(model, "anthropic", 0.7))
+        # GPT 才有 6 系（gpt-6 / gpt-6-sol），只认默认温度
+        for model in ("gpt-6", "gpt-6-sol", "sol", "kimi-k3", "kimi-k2.6"):
+            with self.subTest(model=model):
+                self.assertIsNone(sampling.resolve(model, "openai", 0.7))
+        # 普通模型仍可用 0.7
+        self.assertEqual(sampling.resolve("deepseek-v4", "openai", 0.7), 0.7)
+
     def test_workspace_auxiliary_navigation_and_file_tabs_remain_usable(self):
         self.app._open_workspace()
         self.pump(0.3)

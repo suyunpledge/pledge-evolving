@@ -18,14 +18,15 @@ from __future__ import annotations
 AGENT_TEMPERATURE = 0.7
 DEFAULT_TEMPERATURE = 1.0
 
-# 只接受默认温度的模型（子串匹配，大小写与空格不敏感）。
+# 只接受默认温度的模型（子串匹配，大小写/空格/连字符不敏感）。
 # 传别的值会被拒或忽略，因此这些一律不发 temperature。
+#
+# 注意：**Claude 没有 6 系**（只有 5 系，如 claude-opus-5-5 / claude-sonnet-5），
+# GPT 才有 6 系（gpt-6-sol）。Claude 不论哪个版本都不发采样参数，
+# 由下面的 "claude" 规则统一覆盖，所以这里不必再列。
 DEFAULT_ONLY_MODELS: tuple[str, ...] = (
-    "gpt-6",
-    "claude-6",
-    "claude-6-luna",
-    "claude6",
-    "sol",              # Sol
+    "gpt-6",            # 含 gpt-6-sol
+    "sol",              # 单独署名的 Sol
     "kimi-k3",
     "kimi-k2.6",
 )
@@ -62,10 +63,13 @@ def requires_default_temperature(model: object) -> bool:
 
 
 def allows_temperature(model: object, wire: object = "openai") -> bool:
-    """当前 (模型, 协议) 组合能不能带 temperature。"""
+    """当前 (模型, 协议) 组合能不能带 temperature。
+
+    Claude 一律不发：不论走 anthropic 原生协议还是 openai 兼容中转，
+    也不论 4.x / 5.x——服务端只接受默认采样参数。
+    """
     if str(wire or "").strip().lower() in NO_SAMPLING_WIRES:
         return False
-    # 模型名带 claude 的（包括走 openai 兼容中转的 Claude）同样不发采样参数。
     if "claude" in _norm(model):
         return False
     if requires_default_temperature(model):
@@ -101,9 +105,7 @@ def describe(model: object, wire: object = "openai",
              requested: object = None) -> str:
     """给界面用的一句话说明：这个模型现在会用什么温度、为什么。"""
     name = str(model or "").strip() or "当前模型"
-    if str(wire or "").strip().lower() in NO_SAMPLING_WIRES:
-        return f"{name}（Claude 协议）不使用 temperature / top_p，走服务端默认"
-    if "claude" in _norm(model):
+    if str(wire or "").strip().lower() in NO_SAMPLING_WIRES or "claude" in _norm(model):
         return f"{name} 系列不支持 temperature / top_p，走服务端默认"
     if requires_default_temperature(model):
         return f"{name} 只支持默认温度 1.0"
