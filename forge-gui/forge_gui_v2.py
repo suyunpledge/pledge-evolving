@@ -1952,6 +1952,35 @@ class ForgeGuiApp:
         self.model_probe_var = tk.StringVar(value="")
         tk.Label(probe_row, textvariable=self.model_probe_var, bg=C["input_bg"],
                  fg=C["muted"], font=FONT_SMALL).pack(side=tk.LEFT, padx=(8, 0))
+        # 两条路径：① 一键配置（下面选温度即可）；② 手写配置文件（直改用户层 JSON，所有参数自己控）。
+        one_click = tk.Frame(left, bg=C["input_bg"])
+        one_click.pack(fill=tk.X, pady=(12, 0))
+        tk.Label(one_click, text="一键配置 · 采样温度", bg=C["input_bg"],
+                 fg=C["text"], font=FONT_UI_BOLD).pack(anchor=tk.W)
+        tk.Label(one_click,
+                 text="Agent 场景 0.7 更稳；只接受默认温度的模型（GPT-6 / Claude 6 / "
+                      "Sol / Kimi K3 / K2.6）会自动跳过；Claude 协议不发任何采样参数。",
+                 bg=C["input_bg"], fg=C["muted"], font=FONT_SMALL,
+                 wraplength=330, justify=tk.LEFT).pack(anchor=tk.W, pady=(2, 6))
+        temp_row = tk.Frame(one_click, bg=C["input_bg"])
+        temp_row.pack(anchor=tk.W)
+        self.temperature_var = tk.StringVar(value=self._current_temperature_preset())
+        self._temperature_buttons = {}
+        for value, label in (("0.7", "0.7 · 均衡"), ("1.0", "1.0 · 保守"),
+                             ("", "不设置")):
+            btn = tk.Button(
+                temp_row, text=label, bg=C["surface2"], fg=C["text"],
+                activebackground=C["accent_soft"], activeforeground=C["accent"],
+                font=FONT_UI, relief=tk.FLAT, padx=10, pady=4, cursor="hand2",
+                command=lambda v=value: self._apply_temperature_preset(v))
+            btn.pack(side=tk.LEFT, padx=(0, 6))
+            self._temperature_buttons[value] = btn
+        self._paint_temperature_buttons()
+        tk.Button(one_click, text="手写配置文件（所有参数自己控）  ↗",
+                  bg=C["surface2"], fg=C["link"],
+                  activebackground=C["link_soft"], activeforeground=C["link"],
+                  font=FONT_UI, relief=tk.FLAT, padx=10, pady=4, cursor="hand2",
+                  command=self._open_user_layer_file).pack(anchor=tk.W, pady=(8, 0))
         tk.Button(left, text="打开用户层目录  ↗", bg=C["surface2"], fg=C["text"],
                   activebackground=C["border"], activeforeground=C["text"],
                   font=FONT_UI, relief=tk.FLAT, padx=12, pady=6,
@@ -2434,6 +2463,73 @@ class ForgeGuiApp:
             if str(row.get("id")) == "model" or str(row.get("name")) == "model:router":
                 return row
         return None
+
+    # ── 一键配置：采样温度 ──────────────────────────────
+    def _current_temperature_preset(self) -> str:
+        """看当前所有 provider 写的是什么温度；不一致就返回空串（不设置）。"""
+        values = set()
+        for row in self.user_rows:
+            conf = row.get("config") or {}
+            if "baseURL" not in conf:
+                continue
+            raw = conf.get("temperature")
+            values.add("" if raw in (None, "") else f"{float(raw):g}")
+        if len(values) == 1:
+            return next(iter(values))
+        return ""
+
+    def _paint_temperature_buttons(self) -> None:
+        current = self.temperature_var.get()
+        for value, btn in getattr(self, "_temperature_buttons", {}).items():
+            selected = value == current
+            btn.configure(bg=C["accent_soft"] if selected else C["surface2"],
+                          fg=C["accent"] if selected else C["text"],
+                          font=FONT_UI_BOLD if selected else FONT_UI)
+
+    def _apply_temperature_preset(self, value: str) -> bool:
+        """一键把温度写到所有 provider 行。
+
+        空串 = 不写这个字段（走服务端默认）。真正「能不能发」由 forge.sampling
+        在发请求时决定：只接受默认温度的模型、以及 Claude 协议，都会自动跳过。
+        """
+        try:
+            latest = load_user_layer(self.home)
+        except (OSError, ValueError) as exc:
+            self._set_status(f"读取配置失败：{exc}", "error")
+            return False
+        rows = copy.deepcopy(latest)
+        touched = 0
+        for row in rows:
+            conf = row.get("config")
+            if not isinstance(conf, dict) or "baseURL" not in conf:
+                continue
+            if value == "":
+                if conf.pop("temperature", None) is not None:
+                    touched += 1
+            elif conf.get("temperature") != float(value):
+                conf["temperature"] = float(value)
+                touched += 1
+        if touched:
+            try:
+                save_user_layer(self.home, rows, expected_rows=latest)
+            except (OSError, ValueError) as exc:
+                self._set_status(f"温度写入失败：{exc}", "error")
+                return False
+            self.user_rows = rows
+        self.temperature_var.set(value)
+        self._paint_temperature_buttons()
+        label = {"0.7": "0.7（均衡，Agent 推荐）", "1.0": "1.0（保守）"}.get(
+            value, "不设置（走服务端默认）")
+        self._set_status(f"采样温度已设为{label}；共更新 {touched} 个 provider", "ok")
+        return True
+
+    def _open_user_layer_file(self) -> None:
+        """手写配置：直接打开用户层 JSON（所有参数自己控）。"""
+        path = Path(self.home) / "forge.patch.json"
+        if not path.exists():
+            self._set_status(f"用户层文件不存在：{path}", "warn")
+            return
+        self._open_path(path)
 
     def _set_router_strategy(self, strategy: str) -> bool:
         """把智能路由策略写回 model:router（以前只能看，不能改）。

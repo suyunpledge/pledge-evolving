@@ -30,6 +30,8 @@ from unittest.mock import Mock, patch
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
 sys.path.insert(0, str(HERE))
+# forge 包在仓库根（GUI 本身用不到，但采样策略的断言要直接引用）
+sys.path.insert(0, str(REPO))
 
 import chat_widgets as cw  # noqa: E402
 import brand_marks  # noqa: E402
@@ -687,6 +689,76 @@ class RefactorAcceptance(unittest.TestCase):
         hints = {v: h for v, _l, h in gui.STRATEGY_CHOICES}
         self.assertIn("升级", hints["base"])
         self.assertNotIn("只用", hints["base"])
+
+    # ── 23. 一键配置：采样温度（全部 mock，不碰真实配置文件）─────
+    def test_one_click_temperature_preset(self):
+        import forge.sampling as sampling
+        rows = [
+            {"id": "medium", "name": "provider:medium", "config": {
+                "wire": "openai", "baseURL": "https://api.deepseek.com",
+                "model": "deepseek-v4",
+                "apiKey": {"$expr": "get('env.K', '')"}}},
+            {"id": "claude_p", "name": "provider:claude", "config": {
+                "wire": "anthropic", "baseURL": "https://api.anthropic.com",
+                "model": "claude-sonnet-4-5",
+                "apiKey": {"$expr": "get('env.C', '')"}}},
+            {"id": "model", "name": "model:router", "config": {
+                "primary": ["medium", "deepseek-v4"], "fallback": []}},
+        ]
+        self.app.user_rows = rows
+
+        def _capture(value, current=None):
+            """用假的保存/读取跑一遍 handler，返回实际生效的行。
+
+            「不设置」在本来就没有 temperature 时无事可写（不会调用保存），
+            这时返回当前行即可——产品行为就是这样，测试要跟着它走。
+            """
+            current = rows if current is None else current
+            snapshot = [dict(r, config=dict(r["config"])) for r in current]
+            with patch.object(gui, "load_user_layer",
+                              return_value=[dict(r, config=dict(r["config"]))
+                                            for r in snapshot]), \
+                 patch.object(gui, "save_user_layer") as save:
+                self.assertTrue(self.app._apply_temperature_preset(value))
+            if save.called:
+                return save.call_args.args[1]
+            return snapshot
+
+        written = _capture("0.7")
+        temps = {r["id"]: (r.get("config") or {}).get("temperature")
+                 for r in written if "baseURL" in (r.get("config") or {})}
+        self.assertEqual(temps, {"medium": 0.7, "claude_p": 0.7})
+        # 其它键必须原样保留（温度只是多一个字段）
+        medium = next(r for r in written if r["id"] == "medium")
+        self.assertEqual(medium["config"]["model"], "deepseek-v4")
+        self.assertIn("apiKey", medium["config"])
+
+        written = _capture("1.0")
+        temps = {r["id"]: (r.get("config") or {}).get("temperature")
+                 for r in written if "baseURL" in (r.get("config") or {})}
+        self.assertEqual(temps, {"medium": 1.0, "claude_p": 1.0})
+
+        # 「不设置」= 把字段摘掉，回到服务端默认（从「已设 1.0」的状态出发）
+        seeded = [dict(r, config=dict(r["config"], temperature=1.0))
+                  for r in written]
+        cleared = _capture("", current=seeded)
+        temps = {r["id"]: (r.get("config") or {}).get("temperature")
+                 for r in cleared if "baseURL" in (r.get("config") or {})}
+        self.assertEqual(temps, {"medium": None, "claude_p": None})
+        # 本来就没有 temperature 时，「不设置」应当是空操作（不写盘）
+        again = _capture("", current=cleared)
+        temps = {r["id"]: (r.get("config") or {}).get("temperature")
+                 for r in again if "baseURL" in (r.get("config") or {})}
+        self.assertEqual(temps, {"medium": None, "claude_p": None})
+
+        # 发送层最终裁决：Claude 与只认默认温度的模型都拿不到 temperature
+        self.assertIsNone(sampling.resolve("claude-sonnet-4-5", "anthropic", 0.7))
+        self.assertIsNone(sampling.resolve("gpt-6", "openai", 0.7))
+        self.assertEqual(sampling.resolve("deepseek-v4", "openai", 0.7), 0.7)
+        # 文案与行为一致
+        self.assertIn("1.0", sampling.describe("gpt-6", "openai", 0.7))
+        self.assertIn("服务端默认", sampling.describe("claude-sonnet-4-5",
+                                                    "anthropic", 0.7))
 
     def test_workspace_auxiliary_navigation_and_file_tabs_remain_usable(self):
         self.app._open_workspace()

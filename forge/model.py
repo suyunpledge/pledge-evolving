@@ -18,6 +18,7 @@ import time
 
 from .local_service import chat_request_path
 from .tool_adapter import fill_gemini_name_fields, sanitize_messages
+from . import sampling
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -44,6 +45,17 @@ class BadRequest(TransportError):
     retryable = False
 
 
+def _as_temperature(raw: Any) -> float | None:
+    """配置里的 temperature 容错转 float；空/非法值一律当作「不设置」。"""
+    if raw is None or raw == "":
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if 0.0 <= value <= 2.0 else None
+
+
 @dataclass
 class Provider:
     name: str
@@ -55,6 +67,9 @@ class Provider:
     small_model: str = ""
     headers: dict[str, str] = field(default_factory=dict)
     rpm: int = 0                    # >0 enables proactive throttling (requests/min)
+    # 该 provider 的采样温度（来自配置行）。None = 不发送，走服务端默认。
+    # 最终发不发还要过 sampling 策略：Claude 协议与只认默认值的模型一律不发。
+    temperature: float | None = None
     # Self-hosted engine id (ollama | llamacpp | mnn), or "" for a cloud
     # provider. Gates the local-only adaptations in local_service.py; an
     # unrecognised value stays "" so a typo can never reroute a cloud provider.
@@ -164,6 +179,9 @@ class HttpTransport:
                 payload["system"] = system
             if options.get("tools"):
                 payload["tools"] = options["tools"]
+            # Claude 协议只认 model / max_tokens / messages / system / tools：
+            # 采样参数一律摘掉（带上去会 400）。
+            sampling.strip_extra_params(payload, model, provider.wire)
             url = provider.url("/v1/messages")
         else:
             payload = {
@@ -171,10 +189,15 @@ class HttpTransport:
                 "messages": messages,
                 "max_tokens": int(options.get("max_tokens", 2048)),
             }
-            if options.get("temperature") is not None:
-                payload["temperature"] = options["temperature"]
+            requested = options.get("temperature")
+            if requested is None:
+                requested = provider.temperature
+            effective = sampling.resolve(model, provider.wire, requested)
+            if effective is not None:
+                payload["temperature"] = effective
             if options.get("tools"):
                 payload["tools"] = options["tools"]
+            sampling.strip_extra_params(payload, model, provider.wire)
             # Service-gated: local engines (ollama / llamacpp / mnn) need the
             # OpenAI-compatible path for tool-call replay; cloud unchanged.
             url = provider.url(chat_request_path(provider.service, provider.wire,
@@ -278,6 +301,7 @@ class ModelRouter:
                 headers=dict(conf.get("headers") or {}),
                 rpm=int(conf.get("rpm", 0) or 0),
                 service=str(conf.get("service", "")),
+                temperature=_as_temperature(conf.get("temperature")),
             ))
         primary = cfg.get("model", "primary", None)
         chain = [tuple(pair) for pair in (cfg.get("model", "fallback", []) or [])]

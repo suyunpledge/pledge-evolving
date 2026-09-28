@@ -32,6 +32,7 @@ from .memory import ContextBudget, MemoryStore
 from .model import ModelRouter, Overloaded, Provider, RateLimited, Usage
 from .policy import Decision, Mode, Policy, Sandbox
 from .pricing import cost_of, rate_for
+from . import sampling as _sampling
 from .session import Session, SessionIndex
 from .tools import build_builtin_registry
 
@@ -1730,7 +1731,38 @@ def test_smart_routing() -> None:
         from .routing import _sorted_by_cost as _sbc
         _order = _sbc(_shipped)
         # 档位重命名（lite/medium/premium）后，经济档首档是 lite（最便宜）
-        check('rt:shipped-base-first-tier-is-lite',
+        # ── 采样参数策略 ───────────────────────────────────────────
+    # Claude 协议只认 model/max_tokens/messages/system/tools：采样参数一律不发。
+    check("sampling:claude-gets-no-temperature",
+          _sampling.resolve("claude-sonnet-4-5", "anthropic", 0.7) is None
+          and _sampling.resolve("claude-opus-5", "openai", 0.7) is None)
+    # 只接受默认温度（1.0）的模型：不发这个字段，让服务端用默认。
+    check("sampling:default-only-models-skip",
+          all(_sampling.resolve(m, "openai", 0.7) is None for m in
+              ("gpt-6", "gpt-6-sol", "sol", "claude-6", "claude-6-luna",
+               "kimi-k3", "kimi-k2.6")),
+          "GPT-6 / Claude 6 / Sol / Kimi K3 / K2.6 不应带 temperature")
+    # 普通模型：0.7 与 1.0 都能用；不设就不发。
+    check("sampling:agent-temperature-applies",
+          _sampling.resolve("deepseek-v4", "openai", 0.7) == 0.7
+          and _sampling.resolve("qwen3.8-max", "openai", 1.0) == 1.0
+          and _sampling.resolve("GLM5.3", "openai", 0.7) == 0.7
+          and _sampling.resolve("deepseek-v4", "openai", None) is None)
+    # 越界/非法值一律不发（不把脏值送到上游）。
+    check("sampling:rejects-out-of-range",
+          _sampling.resolve("m", "openai", 9.9) is None
+          and _sampling.resolve("m", "openai", -1) is None
+          and _sampling.resolve("m", "openai", "abc") is None)
+    # 额外采样参数按协议剥离。
+    check("sampling:strips-extra-params",
+          _sampling.strip_extra_params(
+              {"model": "m", "temperature": 0.7, "top_p": 0.9, "top_k": 40},
+              "claude-6", "openai") == {"model": "m"}
+          and _sampling.strip_extra_params(
+              {"model": "m", "temperature": 0.7}, "deepseek-v4",
+              "openai") == {"model": "m", "temperature": 0.7})
+
+    check('rt:shipped-base-first-tier-is-lite',
               _order[0][0] == 'lite', str(_order))
 
     # R1-2：_ModelProbe 必须读策略首档而非冻结 primary。

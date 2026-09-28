@@ -213,6 +213,7 @@ class Config:
         "primary", "fallback", "moa", "moaModels", "routing", "tiers",
         "small", "premium", "strategy", "wire", "baseURL", "apiKey",
         "model", "smallModel", "mode", "rpm", "models", "headers",
+        "temperature",
     })
 
     def _upsert(self, row: Row, insert: bool) -> None:
