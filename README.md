@@ -6,6 +6,25 @@ A standard-library-only Python agent runtime that consolidates proven design pat
 
 Requires Python 3.10 or later; no third-party Python packages are needed.
 
+## Architecture at a glance
+
+```mermaid
+flowchart TD
+    A["Task via CLI or desktop"] --> B["Agent loop · prompt + bounded memory"]
+    B --> C["Smart routing · economy / balanced / premium"]
+    C --> D["Model call · native tools, text fallback"]
+    D --> E{"Need a tool or subagent?"}
+    E -- Tool --> F["Lazy discovery → permission decision"]
+    F -- Allowed write --> G["Shadow snapshot → execute tool"]
+    F -- Denied --> B
+    E -- Subagent --> H["Isolated context · capped budget and permissions"]
+    G --> B
+    H --> B
+    E -- Complete --> I["Answer + replayable session log"]
+```
+
+**What changes:** one runtime coordinates model selection, tool access, subagents, memory, and session history. Write tools pass through policy checks and a pre-write checkpoint; the append-only event log records decisions for replay. The protocol gateway and approved self-evolution path are additional entry points and lifecycle features described below.
+
 ## v2 additions (0.2.0)
 
 | Module | Borrowed from | What it does |
