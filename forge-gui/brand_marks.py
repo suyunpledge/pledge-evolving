@@ -122,6 +122,14 @@ BRANDS: tuple[Brand, ...] = (
           aliases=("ollama",),
           domains=("11434",),
           id_prefixes=("ollama",)),
+    Brand("siliconflow", "硅基流动 SiliconFlow", "siliconcloud", "#6E29F6",
+          aliases=("siliconflow", "siliconcloud", "硅基流动"),
+          domains=("siliconflow.cn", "siliconflow.com"),
+          id_prefixes=("siliconflow", "siliconcloud")),
+    Brand("qiniu", "七牛云", "qiniu", "#1664FF",
+          aliases=("qiniu", "七牛", "七牛云", "qnaigc"),
+          domains=("qiniu.com", "qnaigc.com"),
+          id_prefixes=("qiniu", "qnaigc")),
 )
 
 BY_KEY: dict[str, Brand] = {b.key: b for b in BRANDS}

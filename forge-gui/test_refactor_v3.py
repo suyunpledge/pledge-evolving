@@ -830,6 +830,17 @@ class RefactorAcceptance(unittest.TestCase):
         # 搜索能按别名命中
         self.assertIn("moonshot", [p.key for p in catalog.find("kimi")])
         self.assertIn("qiniu", [p.key for p in catalog.find("七牛")])
+        # 目录里每一家都必须能拿到品牌图标，且位图四档齐全
+        # （这次就是靠这条发现 siliconflow / qiniu 没图标、另有 4 家键名对不上）
+        for preset in catalog.PRESETS:
+            with self.subTest(provider=preset.key):
+                self.assertTrue(preset.brand,
+                                f"{preset.key} 没指定品牌")
+                for size in (16, 20, 24, 32):
+                    self.assertIsNotNone(
+                        brand_marks.mark_path(preset.brand, size),
+                        f"{preset.key} 缺 {size}px 图标（brand={preset.brand}）")
+
         # 生成的模板含 baseURL/wire，且**绝不含密钥**
         snippet = catalog.config_snippet(*catalog.all_plans()[0])
         self.assertIn("baseURL:", snippet)

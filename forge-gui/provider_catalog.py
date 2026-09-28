@@ -78,7 +78,7 @@ PRESETS: tuple[ProviderPreset, ...] = (
         ),
     ),
     ProviderPreset(
-        "zhipu", "智谱 BigModel", "zhipu",
+        "zhipu", "智谱 BigModel", "glm",
         aliases=("zhipu", "bigmodel", "glm", "智谱"),
         source=SOURCE_USER, docs="https://open.bigmodel.cn",
         plans=(
@@ -126,7 +126,7 @@ PRESETS: tuple[ProviderPreset, ...] = (
         ),
     ),
     ProviderPreset(
-        "siliconflow", "硅基流动 SiliconFlow", "",
+        "siliconflow", "硅基流动 SiliconFlow", "siliconflow",
         aliases=("siliconflow", "硅基流动"),
         source=SOURCE_CONFIRMED, docs="https://cloud.siliconflow.cn",
         plans=(
@@ -135,7 +135,7 @@ PRESETS: tuple[ProviderPreset, ...] = (
         ),
     ),
     ProviderPreset(
-        "qiniu", "七牛云 AI 推理", "",
+        "qiniu", "七牛云 AI 推理", "qiniu",
         aliases=("qiniu", "七牛", "七牛云"),
         source=SOURCE_DOCS, docs="https://developer.qiniu.com",
         plans=(
@@ -158,7 +158,7 @@ PRESETS: tuple[ProviderPreset, ...] = (
         ),
     ),
     ProviderPreset(
-        "xiaomi", "小米 MIMO", "xiaomimimo",
+        "xiaomi", "小米 MIMO", "mimo",
         aliases=("mimo", "xiaomi", "小米"),
         source=SOURCE_USER, docs="https://api.xiaomimimo.com",
         plans=(
@@ -176,7 +176,7 @@ PRESETS: tuple[ProviderPreset, ...] = (
         ),
     ),
     ProviderPreset(
-        "antling", "蚂蚁百灵 Ling", "antgroup",
+        "antling", "蚂蚁百灵 Ling", "ling",
         aliases=("ling", "百灵", "bailing", "tbox"),
         source=SOURCE_USER, docs="https://api.tbox.cn",
         plans=(
@@ -194,7 +194,7 @@ PRESETS: tuple[ProviderPreset, ...] = (
         ),
     ),
     ProviderPreset(
-        "openai", "OpenAI", "openai",
+        "openai", "OpenAI", "chatgpt",
         aliases=("openai", "chatgpt", "gpt"),
         source=SOURCE_USER, docs="https://platform.openai.com",
         plans=(
