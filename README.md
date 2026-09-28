@@ -15,7 +15,7 @@ flowchart TD
     C --> D["Model call · native tools, text fallback"]
     D --> E{"Need a tool or subagent?"}
     E -- Tool --> F["Lazy discovery → permission decision"]
-    F -- Allowed write --> G["Shadow snapshot → execute tool"]
+    F -- Allowed --> G["Execute tool · snapshot before writes"]
     F -- Denied --> B
     E -- Subagent --> H["Isolated context · capped budget and permissions"]
     G --> B
