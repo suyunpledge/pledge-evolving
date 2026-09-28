@@ -9,18 +9,20 @@ Requires Python 3.10 or later; no third-party Python packages are needed.
 ## Architecture at a glance
 
 ```mermaid
-flowchart TD
-    A["Task via CLI or desktop"] --> B["Agent loop · prompt + bounded memory"]
-    B --> C["Smart routing · economy / balanced / premium"]
-    C --> D["Model call · native tools, text fallback"]
-    D --> E{"Need a tool or subagent?"}
-    E -- Tool --> F["Lazy discovery → permission decision"]
-    F -- Allowed --> G["Execute tool · snapshot before writes"]
-    F -- Denied --> B
-    E -- Subagent --> H["Isolated context · capped budget and permissions"]
-    G --> B
-    H --> B
-    E -- Complete --> I["Answer + replayable session log"]
+flowchart TB
+    R(("Forge agent runtime")) --- A(("Context"))
+    A --- A1(("Task + prompt"))
+    A --- A2(("Bounded memory"))
+    R --- B(("Model"))
+    B --- B1(("Cost-aware routing"))
+    B --- B2(("Native tools / fallback"))
+    R --- C(("Actions"))
+    C --- C1(("Tool permissions"))
+    C1 --- C2(("Snapshot before writes"))
+    C --- C3(("Capped subagents"))
+    R --- D(("Outcome"))
+    D --- D1(("Answer"))
+    D --- D2(("Replayable event log"))
 ```
 
 **What changes:** one runtime coordinates model selection, tool access, subagents, memory, and session history. Write tools pass through policy checks and a pre-write checkpoint; the append-only event log records decisions for replay. The protocol gateway and approved self-evolution path are additional entry points and lifecycle features described below.
