@@ -794,9 +794,39 @@ class RefactorAcceptance(unittest.TestCase):
         kimi = catalog.BY_KEY["moonshot"]
         wires = {pl.wire for pl in kimi.plans}
         self.assertEqual(wires, {"openai", "anthropic"})
-        # 未核实的要如实标注，不能装作已核对
-        self.assertTrue(any(p.source == catalog.SOURCE_UNVERIFIED
-                            for p in catalog.PRESETS))
+        # 来源要如实分层：用户确认 > 本机配置 > 官方文档 > 待确认
+        self.assertTrue(any(p.source == catalog.SOURCE_CONFIRMED
+                            for p in catalog.PRESETS), "应有用户确认的条目")
+        self.assertTrue(any(pl.effective_source(p) == catalog.SOURCE_UNVERIFIED
+                            for p, pl in catalog.all_plans()),
+                        "未核实的端点必须标「待确认」，不能装作已核对")
+        # 用不了的方式要置灰（usable=False），不能生成装不上的模板
+        unusable = [(p.key, pl.label) for p, pl in catalog.all_plans()
+                    if not getattr(pl, "usable", True)]
+        self.assertTrue(unusable, "应有明确标记为不可用的接入方式")
+        for key, _label in unusable:
+            with self.subTest(provider=key):
+                self.assertEqual(key, "google")
+        with self.assertRaises(ValueError):
+            preset, plan = next((p, pl) for p, pl in catalog.all_plans()
+                                if not getattr(pl, "usable", True))
+            catalog.config_snippet(preset, plan)
+        # 用户直接给定的地址必须原样落库
+        expected = {
+            ("minimax_global", "https://api.minimax.io/v1"),
+            ("siliconflow", "https://api.siliconflow.com/v1"),
+            ("siliconflow", "https://api.siliconflow.cn/v1"),
+            ("xai", "https://api.x.ai/v1"),
+            ("spark", "https://spark-api-open.xf-yun.com/v1"),
+            ("hunyuan", "https://api.hunyuan.cloud.tencent.com/v1"),
+            ("sensenova", "https://token.sensenova.cn/v1"),
+            ("sensenova", "https://api.sensenova.cn/compatible-mode/v2"),
+            ("google", "https://generativelanguage.googleapis.com"),
+        }
+        have = {(p.key, pl.base_url) for p, pl in catalog.all_plans()}
+        for item in expected:
+            with self.subTest(item=item):
+                self.assertIn(item, have)
         # 搜索能按别名命中
         self.assertIn("moonshot", [p.key for p in catalog.find("kimi")])
         self.assertIn("qiniu", [p.key for p in catalog.find("七牛")])

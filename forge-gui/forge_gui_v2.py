@@ -2557,7 +2557,9 @@ class ForgeGuiApp:
                     holder.pack(side=tk.LEFT, padx=(0, 7))
                 tk.Label(top, text=preset.name, bg=C["surface"], fg=C["text"],
                          font=FONT_UI_BOLD).pack(side=tk.LEFT)
-                tone = {"user-config": C["ok"], "docs": C["muted"]}.get(
+                tone = {catalog.SOURCE_CONFIRMED: C["ok"],
+                        catalog.SOURCE_USER: C["ok"],
+                        catalog.SOURCE_DOCS: C["muted"]}.get(
                     preset.source, C["warn"])
                 tk.Label(top, text=f"· {preset.source_label}", bg=C["surface"],
                          fg=tone, font=FONT_MICRO).pack(side=tk.LEFT, padx=(7, 0))
@@ -2567,17 +2569,29 @@ class ForgeGuiApp:
                 plans_row = tk.Frame(card, bg=C["surface"], padx=12)
                 plans_row.pack(fill=tk.X, pady=(0, 9))
                 for plan in preset.plans:
+                    # usable=False：本框架用不了（协议不支持）——置灰且不可点，
+                    # 而不是给一份装不上的模板。
+                    usable = getattr(plan, "usable", True)
                     chip = tk.Button(
-                        plans_row, text=plan.label, bg=C["surface2"], fg=C["text"],
-                        activebackground=C["accent_soft"], activeforeground=C["accent"],
+                        plans_row,
+                        text=plan.label if usable else f"{plan.label}",
+                        bg=C["surface2"] if usable else C["input_bg"],
+                        fg=C["text"] if usable else C["placeholder"],
+                        activebackground=C["accent_soft"],
+                        activeforeground=C["accent"],
                         font=FONT_MICRO, relief=tk.FLAT, padx=9, pady=3,
-                        cursor="hand2",
-                        command=lambda p=preset, pl=plan: pick(p, pl))
+                        cursor="hand2" if usable else "arrow",
+                        state=tk.NORMAL if usable else tk.DISABLED,
+                        command=(lambda p=preset, pl=plan: pick(p, pl))
+                        if usable else None)
                     chip.pack(side=tk.LEFT, padx=(0, 6))
+                    tip = plan.base_url
                     if plan.note:
-                        attach_tooltip(chip, f"{plan.base_url}\n{plan.note}")
-                    else:
-                        attach_tooltip(chip, plan.base_url)
+                        tip = f"{plan.base_url}\n{plan.note}"
+                    plan_source = plan.effective_source(preset)
+                    if plan_source == catalog.SOURCE_UNVERIFIED:
+                        tip += "\n（该地址标记为待确认）"
+                    attach_tooltip(chip, tip)
 
         search_var.trace_add("write", lambda *_: render())
         entry.bind("<Escape>", lambda _e: dialog.destroy())

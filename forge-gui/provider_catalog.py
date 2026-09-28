@@ -17,11 +17,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-SOURCE_USER = "user-config"
-SOURCE_DOCS = "docs"
-SOURCE_UNVERIFIED = "unverified"
+SOURCE_CONFIRMED = "confirmed"     # 用户直接给定的地址（最权威）
+SOURCE_USER = "user-config"        # 取自本机正在用的配置
+SOURCE_DOCS = "docs"               # 官方文档 / 官方仓库说明
+SOURCE_UNVERIFIED = "unverified"   # 未核到一手来源
 
 SOURCE_LABEL = {
+    SOURCE_CONFIRMED: "用户确认",
     SOURCE_USER: "本机配置在用",
     SOURCE_DOCS: "官方文档",
     SOURCE_UNVERIFIED: "待确认",
@@ -30,12 +32,22 @@ SOURCE_LABEL = {
 
 @dataclass(frozen=True)
 class Plan:
-    """一个接入方式（标准 API / 订阅套餐 / 兼容协议）。"""
+    """一个接入方式（标准 API / 订阅套餐 / 兼容协议）。
+
+    ``usable=False`` 表示这个地址**本框架用不了**（例如协议不被支持），
+    界面上会置灰并说明原因——不生成一份配了也跑不通的模板。
+    ``source`` 为空表示继承所属供应商的 ``source``。
+    """
 
     label: str
     base_url: str
     wire: str = "openai"
     note: str = ""
+    usable: bool = True
+    source: str = ""
+
+    def effective_source(self, preset) -> str:
+        return self.source or preset.source
 
 
 @dataclass(frozen=True)
@@ -108,17 +120,18 @@ PRESETS: tuple[ProviderPreset, ...] = (
     ProviderPreset(
         "minimax_global", "MiniMax Global", "minimax",
         aliases=("minimax global", "minimax.io"),
-        source=SOURCE_UNVERIFIED, docs="https://platform.minimax.io",
+        source=SOURCE_CONFIRMED, docs="https://platform.minimax.io",
         plans=(
-            Plan("标准 API", "https://api.minimax.io/v1", note="海外站，待你确认"),
+            Plan("标准 API", "https://api.minimax.io/v1"),
         ),
     ),
     ProviderPreset(
         "siliconflow", "硅基流动 SiliconFlow", "",
         aliases=("siliconflow", "硅基流动"),
-        source=SOURCE_UNVERIFIED, docs="https://cloud.siliconflow.cn",
+        source=SOURCE_CONFIRMED, docs="https://cloud.siliconflow.cn",
         plans=(
-            Plan("OpenAI 兼容", "https://api.siliconflow.cn/v1", note="待你确认"),
+            Plan("OpenAI 兼容（海外）", "https://api.siliconflow.com/v1"),
+            Plan("OpenAI 兼容（国内备选）", "https://api.siliconflow.cn/v1"),
         ),
     ),
     ProviderPreset(
@@ -191,46 +204,57 @@ PRESETS: tuple[ProviderPreset, ...] = (
     ProviderPreset(
         "google", "Google Gemini", "gemini",
         aliases=("google", "gemini", "googleai"),
-        source=SOURCE_UNVERIFIED, docs="https://aistudio.google.com",
+        source=SOURCE_CONFIRMED, docs="https://aistudio.google.com",
         plans=(
-            Plan("OpenAI 兼容", "https://generativelanguage.googleapis.com/v1beta/openai",
-                 note="待你确认"),
+            # 原生协议：forge 的 wire 只支持 openai / anthropic，选了也跑不通——
+            # 置灰并说清原因，比给一份装不上的模板诚实。
+            Plan("原生协议（本框架不支持）",
+                 "https://generativelanguage.googleapis.com",
+                 usable=False,
+                 note="原生 generateContent 协议：完整形式为 "
+                      "/v1beta/models/<model>:generateContent。forge 的 wire "
+                      "只支持 openai / anthropic，无法直连此端点"),
+            Plan("OpenAI 兼容端点",
+                 "https://generativelanguage.googleapis.com/v1beta/openai",
+                 source=SOURCE_UNVERIFIED,
+                 note="需核实。另：Vertex AI 的 OpenAI 兼容端点需要 GCP 项目，"
+                      "不适合普通 API Key 直连"),
         ),
     ),
     ProviderPreset(
         "xai", "xAI Grok", "grok",
         aliases=("xai", "grok"),
-        source=SOURCE_UNVERIFIED, docs="https://console.x.ai",
+        source=SOURCE_CONFIRMED, docs="https://console.x.ai",
         plans=(
-            Plan("标准 API", "https://api.x.ai/v1", note="待你确认"),
+            Plan("标准 API", "https://api.x.ai/v1"),
         ),
     ),
     # ── 其他常见 ──────────────────────────────────────────
     ProviderPreset(
         "spark", "讯飞星火", "spark",
         aliases=("spark", "iflytek", "星火", "讯飞"),
-        source=SOURCE_UNVERIFIED, docs="https://console.xfyun.cn",
+        source=SOURCE_CONFIRMED, docs="https://console.xfyun.cn",
         plans=(
-            Plan("OpenAI 兼容", "https://spark-api-open.xf-yun.com/v1",
-                 note="待你确认"),
+            Plan("OpenAI 兼容 HTTP 接口", "https://spark-api-open.xf-yun.com/v1",
+                 note="旧版 WebSocket 协议 wss://spark-api.xf-yun.com/v4.0/chat "
+                      "不是 OpenAI SDK 可用的 base URL"),
         ),
     ),
     ProviderPreset(
         "hunyuan", "腾讯混元", "hunyuan",
         aliases=("hunyuan", "混元", "tencent"),
-        source=SOURCE_UNVERIFIED, docs="https://cloud.tencent.com/product/hunyuan",
+        source=SOURCE_CONFIRMED, docs="https://cloud.tencent.com/product/hunyuan",
         plans=(
-            Plan("OpenAI 兼容", "https://api.hunyuan.cloud.tencent.com/v1",
-                 note="待你确认"),
+            Plan("OpenAI 兼容", "https://api.hunyuan.cloud.tencent.com/v1"),
         ),
     ),
     ProviderPreset(
-        "sensenova", "商汤日日新", "sensenova",
-        aliases=("sensenova", "日日新", "商汤"),
-        source=SOURCE_UNVERIFIED, docs="https://platform.sensenova.cn",
+        "sensenova", "商汤日日新 SenseNova", "sensenova",
+        aliases=("sensenova", "日日新", "商汤", "sensechat"),
+        source=SOURCE_CONFIRMED, docs="https://platform.sensenova.cn",
         plans=(
-            Plan("OpenAI 兼容", "https://api.sensenova.cn/compatible-mode/v1",
-                 note="待你确认"),
+            Plan("Token 计划（推荐）", "https://token.sensenova.cn/v1"),
+            Plan("标准兼容模式", "https://api.sensenova.cn/compatible-mode/v2"),
         ),
     ),
 )
@@ -253,6 +277,8 @@ def config_snippet(preset: ProviderPreset, plan: Plan,
 
     只带 baseURL / wire / model，**不带任何密钥**——密钥由用户自己填或走密钥面板。
     """
+    if not plan.usable:
+        raise ValueError("该接入方式本框架不可用，不应生成模板")
     lines = [
         f"# 供应商：{preset.name} · {plan.label}",
         f"baseURL: {plan.base_url}",
@@ -260,8 +286,11 @@ def config_snippet(preset: ProviderPreset, plan: Plan,
     ]
     if plan.note:
         lines.append(f"# 备注：{plan.note}")
-    if preset.source == SOURCE_UNVERIFIED:
+    source = plan.effective_source(preset)
+    if source == SOURCE_UNVERIFIED:
         lines.append("# 注意：该地址未经核实，若报错请以官网控制台为准")
+    elif source == SOURCE_CONFIRMED:
+        lines.append("# 地址已由使用者确认")
     lines.append("model: " + (model or ""))
     lines.append("apiKey: ")
     return "\n".join(lines)
