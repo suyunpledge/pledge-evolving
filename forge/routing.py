@@ -3,17 +3,17 @@
 The frozen router (model.py) answers "walk this fixed order". The strategies
 answer a different question: "which order should this *task* walk?"
 
-  economy   最便宜可用档优先。按有效单价升序逐档尝试，只在可重试失败时上浮。
+  base      最便宜可用档优先。按有效单价升序逐档尝试，只在可重试失败时上浮。
             未知价（0.0）取保守解释 = 最贵殿后（见 pricing.EFFECTIVE_RATES
             顶部注释的单一权威定义；loop._pricing_scale 是宽松解释，二者有意不同）。
-  balanced  中端主力档首发，失败后向上升级到更高档（现有 chain 兼容）。
+  medium    中端主力档首发，失败后向上升级到更高档（现有 chain 兼容）。
   premium   两阶段流水：中端出草稿 → 高端集成裁决。集成段任何失败（含 fatal）
             都降级回草稿——草稿已付费，集成段再贵也没有沉没更多；fatal 只在
             草稿段 raise（那时还没有任何产出）。
 
 Config shape (model row, optional):
     "routing": {
-        "strategy": "economy|balanced|premium",
+        "strategy": "base|medium|premium",        # 旧名 economy/balanced 仍可识别
         "tiers": [["lite", "model-name"], ...],            # cheap→expensive
         "premium": [["premium", "model-name"], ...],      # 集成裁决档
         "small":  ["lite", "model-name"]                  # 杂务档
@@ -24,7 +24,7 @@ ModelRouter, reuses its retry/fallback semantics per hop, and stays a drop-in
 replacement for Agent/loop (same .complete() signature).
 
 R1-2 (rev.R2-0.7.0): SmartRouter overrides _order(None) so _ModelProbe reads
-the STRATEGY-first tier (economy = cheapest priced tier), not the frozen
+the STRATEGY-first tier (base = cheapest priced tier), not the frozen
 primary — the compaction budget now scales off the tier actually drafted
 first. With tiers still empty (no routing block), _order falls back to the
 frozen primary + chain, unchanged.
@@ -55,7 +55,22 @@ from .model import (
 )
 from .pricing import rate_for
 
-STRATEGIES = ("economy", "balanced", "premium")
+STRATEGIES = ("base", "medium", "premium")
+
+# 兼容旧名：0.7.0 之前写作 economy / balanced。配置里若还留着旧名，
+# 按新名解释（base ← economy、medium ← balanced），不报错也不静默降级。
+LEGACY_STRATEGIES = {"economy": "base", "balanced": "medium"}
+
+
+def normalize_strategy(value: object) -> str:
+    """把 strategy 值规范成 base / medium / premium。
+
+    ``None`` 或无法识别的值返回 ``""``，由调用方决定警告与兜底。
+    """
+    name = str(value or "").strip()
+    if name in STRATEGIES:
+        return name
+    return LEGACY_STRATEGIES.get(name, "")
 
 # R2-2: single-element tier pairs are rejected at parse time (later writes
 # win per DSH semantics, so a bad literal must fail loudly, not silently).
@@ -78,16 +93,20 @@ def _pair(value: Any, where: str) -> tuple[str, str] | None:
 class RoutingConfig:
     """Validated view of the ``model.routing`` config block (R2-2)."""
 
-    strategy: str = "balanced"
+    strategy: str = "medium"
     tiers: list[tuple[str, str]] = field(default_factory=list)
     premium: list[tuple[str, str]] = field(default_factory=list)
     small: tuple[str, str] | None = None
     warnings: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
-        if self.strategy not in STRATEGIES:
-            self.warnings.append(f"unknown strategy {self.strategy!r} -> balanced")
-            self.strategy = "balanced"
+        normalized = normalize_strategy(self.strategy)
+        if not normalized:
+            self.warnings.append(f"unknown strategy {self.strategy!r} -> medium")
+            normalized = "medium"
+        elif normalized != self.strategy:
+            self.warnings.append(f"legacy strategy {self.strategy!r} -> {normalized}")
+        self.strategy = normalized
         # R2-2: strict pair validation. A bad literal raises with the row
         # path in the message; malformed small degrades to None (chore calls
         # then fall through to the normal path instead of per-character
@@ -117,7 +136,7 @@ class RoutingConfig:
             return cls(strategy=value)
         if isinstance(value, dict):
             return cls(
-                strategy=str(value.get("strategy", "balanced")),
+                strategy=str(value.get("strategy", "medium")),
                 tiers=list(value.get("tiers") or []),
                 premium=list(value.get("premium") or []),
                 small=tuple(value["small"]) if value.get("small") else None,
@@ -155,9 +174,9 @@ def _sorted_by_cost(tiers: list[tuple[str, str]]) -> list[tuple[str, str]]:
 class SmartRouter(ModelRouter):
     """Three-task-strategy router. Drop-in ModelRouter replacement.
 
-    economy:   walk tiers cheapest-first (pricing.py rates), retryable
+    base:      walk tiers cheapest-first (pricing.py rates), retryable
                failures only advance to the next tier.
-    balanced:  first tier first (中端主力), then climb tiers on retryable
+    medium:    first tier first (中端主力), then climb tiers on retryable
                failure — a generalisation of the frozen fixed chain.
     premium:   two-stage pipeline. Stage 1 drafts on the FIRST (mid) tier;
                stage 2 lets the PREMIUM tier integrate/adjudicate the draft
@@ -167,7 +186,7 @@ class SmartRouter(ModelRouter):
                finisher is about THAT request, not the draft). Fatal only
                raises in the DRAFT stage, where nothing has been produced.
 
-    Unknown strategies fall back to balanced (logged in attempts).
+    Unknown strategies fall back to medium (logged in attempts).
     """
 
     def __init__(self, providers: Iterable[Provider], *, transport: Any = None,
@@ -208,7 +227,7 @@ class SmartRouter(ModelRouter):
     # must be the strategy-first tier, not the frozen primary.
     def _order(self, primary: tuple[str, str] | None) -> list[tuple[str, str]]:
         if primary is None and self.routing.tiers:
-            if self.routing.strategy == "economy":
+            if self.routing.strategy == "base":
                 return self._economy_order()
             return list(self.routing.tiers)
         return super()._order(primary)
@@ -235,7 +254,7 @@ class SmartRouter(ModelRouter):
         # normal strategy (honest: chores ride the main tier, visible in
         # attempts via the strategy label).
 
-        if strategy == "economy":
+        if strategy == "base":
             return self._complete_economy(messages, **options)
         if strategy == "premium":
             return self._complete_premium(messages, **options)
@@ -290,20 +309,20 @@ class SmartRouter(ModelRouter):
         order = self._economy_order()
         if not order:
             return super().complete(messages, small=False, **options)
-        completion, _ = self._walk(order, messages, "economy", **options)
+        completion, _ = self._walk(order, messages, "base", **options)
         return completion
 
     def _complete_balanced(self, messages: list[dict[str, Any]], **options: Any) -> Completion:
         order = self._balanced_order()
         if not order:
             return super().complete(messages, small=False, **options)
-        completion, _ = self._walk(order, messages, "balanced", **options)
+        completion, _ = self._walk(order, messages, "medium", **options)
         return completion
 
     def _complete_premium(self, messages: list[dict[str, Any]], **options: Any) -> Completion:
         drafters, finishers = self._premium_pair()
         if not drafters or not finishers:
-            # 配置不全 = 退回 balanced 语义（诚实降级，不假装走了两阶段）。
+            # 配置不全 = 退回 medium 语义（诚实降级，不假装走了两阶段）。
             attempts = [{"strategy": "premium", "status": "degraded",
                          "reason": "missing drafters or finishers"}]
             completion = self._complete_balanced(messages, **options)

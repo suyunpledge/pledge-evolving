@@ -59,7 +59,7 @@
         ]
       ],
       "routing": {
-        "strategy": "balanced",
+        "strategy": "medium",
         "tiers": [
           [
             "lite",

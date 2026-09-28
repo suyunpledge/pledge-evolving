@@ -15,7 +15,7 @@ subagent    子代理编排：派生/预算/输出净化（从 loop 拆分）
 thinking    沉思引擎：预算控制/收敛判定/三档模式（从 loop 拆分）
 session     追加式事件日志 + 派生索引 + resume/fork（Codex rollout）
 model       provider 抽象 + 分级供给（fallback 链 / MoA）（OpenCode / Hermes）
-routing     三档智能路由：economy 最低成本 / balanced 中端 / premium 高端搭配（0.7.0 新增）
+routing     三档智能路由：base 最低成本 / medium 中端 / premium 高端搭配（0.7.0 新增）
 local_service  本地推理引擎门控：ollama / llamacpp / mnn 专属适配，云端不变
 checkpoint  影子 git 快照与回滚（Hermes）
 loop        agent 主循环 + 子代理编排与权限天花板（OpenClaw / CodeBuddy）

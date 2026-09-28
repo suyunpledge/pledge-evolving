@@ -13,7 +13,9 @@
 
 import sys
 
-sys.path.insert(0, r"C:\Users\匡溯昀\pledge-evolving")
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from forge.cmd_setup import PROVIDERS, _build_patch
 

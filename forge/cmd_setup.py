@@ -170,7 +170,7 @@ def _build_patch(provider: dict, api_key: str, custom_url: str = "", custom_mode
     #    整行显式列出，而不是只写要改的部分。
     # 2. tiers 只绑到用户真正配置的那个档（medium）。早期版本还塞了一个
     #    ["lite", ...]——但 lite 的 provider 行并没有被覆盖，仍指向 base.json
-    #    里的环回占位网关，于是 --strategy economy 会打到不存在的
+    #    里的环回占位网关，于是 --strategy base 会打到不存在的
     #    127.0.0.1:8810。未配置的档位不写，而不是写一个假的。
     model_name = custom_model or provider["model"]
     model_row = {
@@ -182,12 +182,12 @@ def _build_patch(provider: dict, api_key: str, custom_url: str = "", custom_mode
             "moa": False,
             "moaModels": [],
             "routing": {
-                "strategy": "balanced",
+                "strategy": "medium",
                 "tiers": [["medium", model_name]],
                 "small": ["medium", model_name],
                 "notes": (
                     "forge setup 生成的单档配置：只绑定 medium。"
-                    "如需 economy/premium，请手动补 lite/premium 的 provider 行，"
+                    "如需 base/premium，请手动补 lite/premium 的 provider 行，"
                     "并把它们加进 tiers。"
                 ),
             },

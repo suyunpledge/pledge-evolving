@@ -1535,7 +1535,7 @@ def test_smoke_harness_offline() -> None:
 
 
 def test_smart_routing() -> None:
-    """0.7.0 三档智能路由：economy / balanced / premium + 边界与降级。"""
+    """0.7.0 三档智能路由：base / medium / premium + 边界与降级。"""
     from .routing import RoutingConfig, SmartRouter, _sorted_by_cost
     from .loop import _ModelProbe
     from .model import BadRequest
@@ -1559,63 +1559,65 @@ def test_smart_routing() -> None:
             return f"ans-{key}", Usage(prompt_tokens=10, completion_tokens=5), {}
 
     cfg_block = {
-        "strategy": "balanced",
+        "strategy": "medium",
         "tiers": [["deepseek", "deepseek-flash"], ["mimo", "mimo-v2.5"]],
         "premium": [["review", "claude-opus-5"]],
         "small": ["deepseek", "deepseek-flash"],
     }
     routing = RoutingConfig.from_value(cfg_block)
-    check("rt:config-parse", routing.strategy == "balanced"
+    check("rt:config-parse", routing.strategy == "medium"
           and routing.tiers == [("deepseek", "deepseek-flash"), ("mimo", "mimo-v2.5")]
           and routing.small == ("deepseek", "deepseek-flash"), repr(routing.to_raw()))
-    check("rt:config-tolerant", RoutingConfig.from_value("economy").strategy == "economy"
-          and RoutingConfig.from_value(None).strategy == "balanced"
-          and RoutingConfig.from_value(42).strategy == "balanced")
+    # 旧名（economy/balanced）仍可读，但统一规范成新名 base/medium
+    check("rt:config-tolerant", RoutingConfig.from_value("economy").strategy == "base"
+          and RoutingConfig.from_value("balanced").strategy == "medium"
+          and RoutingConfig.from_value(None).strategy == "medium"
+          and RoutingConfig.from_value(42).strategy == "medium")
     check("rt:config-bad-strategy-falls-back",
-          RoutingConfig(strategy="nope").strategy == "balanced")
+          RoutingConfig(strategy="nope").strategy == "medium")
 
-    # economy：按有效单价升序 mimo(0.0754) < deepseek(0.1595)，review 未知价排最后。
+    # base：按有效单价升序 mimo(0.0754) < deepseek(0.1595)，review 未知价排最后。
     order = _sorted_by_cost([("deepseek", "deepseek-flash"), ("review", "claude-opus-5"),
                              ("mimo", "mimo-v2.5")])
-    check("rt:economy-order-by-rate", order == [("mimo", "mimo-v2.5"),
+    check("rt:base-order-by-rate", order == [("mimo", "mimo-v2.5"),
                                                  ("deepseek", "deepseek-flash"),
                                                  ("review", "claude-opus-5")], str(order))
 
     router = SmartRouter(providers, transport=Transport(),
-                         routing=RoutingConfig(strategy="economy", tiers=cfg_block["tiers"]))
+                         routing=RoutingConfig(strategy="base", tiers=cfg_block["tiers"]))
     completion = router.complete([{"role": "user", "content": "hi"}])
-    check("rt:economy-cheapest-first", completion.text == "ans-mimo"
-          and calls[-1] == "mimo" and completion.attempts[-1]["strategy"] == "economy",
+    check("rt:base-cheapest-first", completion.text == "ans-mimo"
+          and calls[-1] == "mimo" and completion.attempts[-1]["strategy"] == "base",
           str(completion.attempts))
 
-    # economy 上浮：最便宜档可重试失败 → 下一档。
+    # base 上浮：最便宜档可重试失败 → 下一档。
     calls.clear()
     fail_first["mimo"] = 2  # 初次重试也失败，正好耗尽 1+1 次
     router = SmartRouter(providers, transport=Transport(),
-                         routing=RoutingConfig(strategy="economy", tiers=cfg_block["tiers"]))
+                         routing=RoutingConfig(strategy="base", tiers=cfg_block["tiers"]))
     completion = router.complete([{"role": "user", "content": "hi"}])
-    check("rt:economy-climbs-on-retryable", completion.text == "ans-deepseek"
+    check("rt:base-climbs-on-retryable", completion.text == "ans-deepseek"
           and calls == ["mimo", "mimo", "deepseek"], str(calls))
 
-    # balanced：中端主力首发，失败后升级。
+    # medium：中端主力首发，失败后升级。
     calls.clear()
     fail_first.clear()
     router = SmartRouter(providers, transport=Transport(),
-                         routing=RoutingConfig(strategy="balanced", tiers=cfg_block["tiers"]))
+                         routing=RoutingConfig(strategy="medium", tiers=cfg_block["tiers"]))
     completion = router.complete([{"role": "user", "content": "hi"}])
-    check("rt:balanced-first-tier-first", completion.text == "ans-deepseek" and calls == ["deepseek"],
+    check("rt:medium-first-tier-first", completion.text == "ans-deepseek" and calls == ["deepseek"],
           str(calls))
     calls.clear()
     fail_first["deepseek"] = 2
     completion = router.complete([{"role": "user", "content": "hi"}])
-    check("rt:balanced-climbs", completion.text == "ans-mimo"
+    check("rt:medium-climbs", completion.text == "ans-mimo"
           and calls == ["deepseek", "deepseek", "mimo"], str(calls))
 
     # small 杂务档：不消耗主档。
     calls.clear()
     fail_first.clear()
     router = SmartRouter(providers, transport=Transport(),
-                         routing=RoutingConfig(strategy="economy", tiers=cfg_block["tiers"],
+                         routing=RoutingConfig(strategy="base", tiers=cfg_block["tiers"],
                                                small=("deepseek", "deepseek-flash")))
     router.complete([{"role": "user", "content": "chore"}], small=True)
     check("rt:small-tier-direct", calls == ["deepseek"], str(calls))
@@ -1667,7 +1669,7 @@ def test_smart_routing() -> None:
     check("rt:premium-graceful-degrade", completion.text == "ans-deepseek"
           and completion.aggregated is False, str(completion.attempts))
 
-    # premium 配置不全 → 诚实降级为 balanced 语义。
+    # premium 配置不全 → 诚实降级为 medium 语义。
     calls.clear()
     fail_first.clear()
     router = SmartRouter(providers, transport=Transport(),
@@ -1679,7 +1681,7 @@ def test_smart_routing() -> None:
     # 显式 primary 点名 = 冻结语义直通，不吃策略。
     calls.clear()
     router = SmartRouter(providers, transport=Transport(),
-                         routing=RoutingConfig(strategy="economy", tiers=cfg_block["tiers"]))
+                         routing=RoutingConfig(strategy="base", tiers=cfg_block["tiers"]))
     completion = router.complete([{"role": "user", "content": "hi"}], primary=("review", "claude-opus-5"))
     check("rt:explicit-primary-bypasses", calls == ["review"], str(calls))
 
@@ -1689,11 +1691,11 @@ def test_smart_routing() -> None:
                       "config": {"wire": "openai", "baseURL": "http://d", "model": "deepseek-flash"}},
                      {"id": "model", "name": "model:router",
                       "config": {"primary": ["deepseek", "deepseek-flash"],
-                                 "routing": {"strategy": "economy",
+                                 "routing": {"strategy": "base",
                                              "tiers": [["deepseek", "deepseek-flash"]]}}}],
                     label="rt-test")
     smart = SmartRouter.from_config(cfg)
-    check("rt:from-config-wiring", smart.routing.strategy == "economy"
+    check("rt:from-config-wiring", smart.routing.strategy == "base"
           and smart.routing.tiers == [("deepseek", "deepseek-flash")]
           and smart.primary == ("deepseek", "deepseek-flash"), repr(smart.routing.to_raw()))
 
@@ -1708,34 +1710,34 @@ def test_smart_routing() -> None:
     _mr = _cfg.row('model')
     _before = dict(_mr.config)
     _rc = dict(_before.get('routing') or {})
-    _rc['strategy'] = 'economy'
+    _rc['strategy'] = 'base'
     _merged = dict(_before)
     _merged['routing'] = _rc
     _cfg.apply_patch([{'id': 'model', 'name': 'model:router', 'config': _merged}],
-                     label='strategy:economy')
+                     label='strategy:base')
     _after = _cfg.row('model').config
     check('rt:cli-strategy-merge-keeps-model-row',
           _after.get('primary') == _before.get('primary')
           and _after.get('fallback') == _before.get('fallback')
           and _after.get('moa') == _before.get('moa')
-          and (_after.get('routing') or {}).get('strategy') == 'economy',
+          and (_after.get('routing') or {}).get('strategy') == 'base',
           f"primary={_after.get('primary')} moa={_after.get('moa')}")
 
-    # R1-1：shipped bundle 的 economy 首档必须是 mimo（claude-sonnet-5 现已
+    # R1-1：shipped bundle 的 base 首档必须是 mimo（claude-sonnet-5 现已
     # 有价 0.0754 < deepseek 0.1595）——把「配置-计价脱节」钉死在自检里。
     _shipped = [tuple(t) for t in (_before.get('routing') or {}).get('tiers', [])]
     if _shipped:
         from .routing import _sorted_by_cost as _sbc
         _order = _sbc(_shipped)
         # 档位重命名（lite/medium/premium）后，经济档首档是 lite（最便宜）
-        check('rt:shipped-economy-first-tier-is-lite',
+        check('rt:shipped-base-first-tier-is-lite',
               _order[0][0] == 'lite', str(_order))
 
     # R1-2：_ModelProbe 必须读策略首档而非冻结 primary。
     _providers_rt = [Provider(name='deepseek', base_url='http://d', wire='openai'),
                      Provider(name='mimo', base_url='http://m', wire='openai')]
     _smart = _SR(_providers_rt,
-                 routing=RoutingConfig(strategy='economy',
+                 routing=RoutingConfig(strategy='base',
                                        tiers=[('mimo', 'claude-sonnet-5'),
                                               ('deepseek', 'deepseek-flash')]),
                  primary=('deepseek', 'deepseek-flash'))
@@ -1811,7 +1813,7 @@ def test_smart_routing() -> None:
             raise Overloaded('503')
 
     _rt = SmartRouter(providers, transport=SmallDown(),
-                      routing=RoutingConfig(strategy='balanced', tiers=cfg_block['tiers'],
+                      routing=RoutingConfig(strategy='medium', tiers=cfg_block['tiers'],
                                             small=('deepseek', 'deepseek-flash')))
     check('rt:small-never-climbs-chain',
           _raises(lambda: _rt.complete([{'role': 'user', 'content': 'chore'}], small=True))

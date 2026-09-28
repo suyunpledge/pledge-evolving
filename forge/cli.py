@@ -74,7 +74,7 @@ def cmd_run(args) -> int:
         args.profile = "balanced"
         args.i_know = True  # balanced 不需要确认门，仅避免默认值缺参
     cfg = _compose(args)
-    # --strategy 显式传参 > 配置层 model.routing.strategy > 默认 balanced。
+    # --strategy 显式传参 > 配置层 model.routing.strategy > 默认 medium。
     # 注意：apply_patch 是整行替换（DSH 语义），必须先取原 model 行合并，
     # 否则 primary/fallback/moa 全部被冲掉。
     strategy = getattr(args, "strategy", None)
@@ -582,8 +582,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--json", action="store_true")
     run.add_argument("--verbose", action="store_true")
     run.add_argument("--strategy", choices=list(STRATEGIES), default=argparse.SUPPRESS,
-                     help="model routing strategy: economy=cheapest-tier-first, "
-                          "balanced=mid-tier-first (default), premium=mid-draft + "
+                     help="model routing strategy: base=cheapest-tier-first, "
+                          "medium=mid-tier-first (default), premium=mid-draft + "
                           "top-tier integration")
     run.add_argument("--thinking", choices=list(THINKING_MODES), default=argparse.SUPPRESS,
                      help="contemplation mode: off=never (default), "

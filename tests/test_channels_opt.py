@@ -20,7 +20,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-sys.path.insert(0, r"C:\Users\匡溯昀\pledge-evolving")
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from forge.channels.cli import (
     _acquire_lock,
