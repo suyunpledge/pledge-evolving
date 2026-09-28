@@ -74,9 +74,12 @@ C: dict[str, str] = {
     "placeholder": "#6B6B78",
     "comment": "#5C6370",
 
-    # 消息
-    "msg_user_bg": "#1A1A22",
-    "msg_agent_bg": "#111117",
+    # 消息气泡：两侧要能看出「谁在说」，又不能让深色界面变花。
+    # user 带一点主色倾向（“我说的话”），agent 用中性面；两者都配一道 hairline 描边。
+    "msg_user_bg": "#232134",
+    "msg_agent_bg": "#1A1A22",
+    "msg_user_border": "#3A3560",
+    "msg_agent_border": "#26262F",
 
     # 代码高亮（One Dark 近似）
     "code_kw": "#C678DD",
@@ -107,6 +110,13 @@ C: dict[str, str] = {
 R_WINDOW, R_PANEL, R_CARD, R_PILL, R_MD, R_SM = 12, 12, 10, 8, 8, 6
 PAD_XS, PAD_S, PAD_M, PAD_L, PAD_XL = 4, 8, 12, 16, 20
 
+# 交互尺寸：所有主按钮、图标热区与浮层以此为基线，避免页面各写一套。
+CONTROL_HEIGHT = 32
+ICON_SIZE = 16
+ICON_HIT_SIZE = 32
+OVERLAY_WIDTH = 448
+FOCUS_WIDTH = 1
+
 # ─── 字体 ──────────────────────────────────────────────────
 # 参考稿用 Inter / JetBrains Mono；本机没有，退回 Windows 自带等价字体
 # （Segoe UI / Microsoft YaHei UI 承担拉丁+中文，Cascadia Code 承担等宽）。
@@ -115,20 +125,57 @@ UI_FAMILY = "Segoe UI" if IS_WINDOWS else "Helvetica"
 CJK_FAMILY = "Microsoft YaHei UI" if IS_WINDOWS else UI_FAMILY
 MONO_FAMILY = "Cascadia Code" if IS_WINDOWS else "Menlo"
 
-FONT_UI = (UI_FAMILY, 10)
-FONT_UI_BOLD = (UI_FAMILY, 10, "bold")
-FONT_UI_MED = (UI_FAMILY, 10, "normal")
-FONT_TITLE = (UI_FAMILY, 13, "bold")
-FONT_SECTION = (UI_FAMILY, 11, "bold")
-FONT_SMALL = (UI_FAMILY, 9)
-FONT_CAPTION = (UI_FAMILY, 8)
-FONT_MICRO = (UI_FAMILY, 7)
+FONT_UI = (UI_FAMILY, 11)
+FONT_UI_BOLD = (UI_FAMILY, 11, "bold")
+FONT_UI_MED = (UI_FAMILY, 11, "normal")
+FONT_TITLE = (UI_FAMILY, 15, "bold")
+FONT_SECTION = (UI_FAMILY, 12, "bold")
+FONT_SMALL = (UI_FAMILY, 10)
+FONT_CAPTION = (UI_FAMILY, 9)
+FONT_MICRO = (UI_FAMILY, 8)
 FONT_BRAND = (UI_FAMILY, 15, "bold")
-FONT_MONO = (MONO_FAMILY, 10)
-FONT_MONO_SM = (MONO_FAMILY, 9)
-FONT_MONO_XS = (MONO_FAMILY, 8)
-FONT_MONO_BOLD = (MONO_FAMILY, 10, "bold")
+FONT_MONO = (MONO_FAMILY, 11)
+FONT_MONO_SM = (MONO_FAMILY, 10)
+FONT_MONO_XS = (MONO_FAMILY, 9)
+FONT_MONO_BOLD = (MONO_FAMILY, 11, "bold")
 FONT_GLYPH = (UI_FAMILY, 11)
+
+# 彩色表情：界面里的表情/图标不再用单色 dingbat 字形（那些会渲染成一条白线），
+# 改用真正的 emoji 码位 + 系统 emoji 字体，在 Windows 上才会出彩色。
+EMOJI_FAMILY = "Segoe UI Emoji" if IS_WINDOWS else "Apple Color Emoji"
+FONT_EMOJI = (EMOJI_FAMILY, 13)
+FONT_EMOJI_SM = (EMOJI_FAMILY, 11)
+FONT_EMOJI_XS = (EMOJI_FAMILY, 9)
+
+_EMOJI_LO = 0x1F000
+_EMOJI_HI = 0x1FAFF
+_MISC_SYMBOL_LO = 0x2600          # ☀ ☑ ⚙ 等：Segoe UI Emoji 里也是彩色的
+_MISC_SYMBOL_HI = 0x27BF
+_VS16 = 0xFE0F                    # 变体选择符-16（强制彩色呈现）
+
+def is_emoji(text: str) -> bool:
+    """判断一段短文本是否应当用 emoji 字体渲染。
+
+    只对短字形（图标位）判定；长文本走正常字体，避免正文里混进 emoji 字体导致
+    中英文基线跳变。码位落在 emoji 区或常见符号区，或带变体选择符，都算。
+    """
+    if not text or len(text) > 3:
+        return False
+    for ch in text:
+        cp = ord(ch)
+        if cp == _VS16 or _EMOJI_LO <= cp <= _EMOJI_HI:
+            return True
+        if _MISC_SYMBOL_LO <= cp <= _MISC_SYMBOL_HI:
+            return True
+    return False
+
+
+def emoji_font(text: str, size: int | None = None):
+    """给 emoji 字形挑字体；不是 emoji 就返回正常 UI 字体。"""
+    if not is_emoji(text):
+        return (UI_FAMILY, size) if size else FONT_GLYPH
+    base = size if size is not None else FONT_EMOJI[1]
+    return (EMOJI_FAMILY, base)
 
 
 # ─── 绘制原语 ──────────────────────────────────────────────
@@ -266,6 +313,7 @@ def pill_button(parent, text, command, *, kind="ghost", bg=None, height=None,
                     font=font or FONT_SMALL, relief=tk.FLAT, bd=0,
                     padx=padx, pady=3, cursor="hand2", highlightthickness=0,
                     state=state)
+    btn.configure(disabledforeground=C["muted"])
     if width:
         btn.configure(width=width)
     if height:
@@ -315,7 +363,7 @@ def glyph_button(parent, glyph, command, *, bg=None, fg=None, size=13,
     btn = tk.Button(parent, text=glyph, command=command, bg=base,
                     fg=fg or C["ter"], activebackground=hover or C["hover"],
                     activeforeground=C["text"], font=(UI_FAMILY, size),
-                    relief=tk.FLAT, bd=0, padx=6, pady=1, cursor="hand2",
+                    relief=tk.FLAT, bd=0, padx=8, pady=4, cursor="hand2",
                     highlightthickness=0)
     if tooltip:
         attach_tooltip(btn, tooltip)
@@ -348,6 +396,124 @@ def attach_tooltip(widget, text: str):
     widget.bind("<Button-1>", hide, add="+")
 
 
+def position_popover(pop, anchor, width, height, *, prefer_above=False, align_right=False):
+    """Tk geometry 与 winfo 已使用相同的屏幕单位，不能再次按 DPI 除算。"""
+    owner = anchor.winfo_toplevel()
+    left, top = owner.winfo_rootx(), owner.winfo_rooty()
+    right, bottom = left + owner.winfo_width(), top + owner.winfo_height()
+    width = max(1, min(width, owner.winfo_width() - 16))
+    height = max(1, min(height, owner.winfo_height() - 16))
+    x = anchor.winfo_rootx()
+    if align_right:
+        x += anchor.winfo_width() - width
+    below = anchor.winfo_rooty() + anchor.winfo_height() + 6
+    above = anchor.winfo_rooty() - height - 6
+    y = above if prefer_above or below + height > bottom - 8 else below
+    x = max(left + 8, min(x, right - width - 8))
+    y = max(top + 8, min(y, bottom - height - 8))
+    pop.geometry(f"{width}x{height}{int(x):+d}{int(y):+d}")
+
+
+def show_popover_menu(anchor, items, *, title=None, width=300, prefer_above=False):
+    """统一的产品化菜单浮层。
+
+    ``items`` 是 ``{label, detail?, command?, selected?, danger?, separator?}``
+    列表。它替代 Composer 主路径上的原生 ``tk.Menu``，并统一 hover、选中态、
+    留白与弱化说明文字。返回 Toplevel，方便测试和调用方主动关闭。
+    """
+    previous = getattr(anchor, "_forge_popover", None)
+    if previous is not None:
+        try:
+            previous.destroy()
+        except tk.TclError:
+            pass
+    pop = tk.Toplevel(anchor)
+    pop.withdraw()
+    pop.overrideredirect(True)
+    pop.configure(bg=C["border_hi"])
+    anchor._forge_popover = pop
+    shell = tk.Frame(pop, bg=C["surface"], padx=8, pady=8)
+    shell.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
+    if title:
+        tk.Label(shell, text=title, bg=C["surface"], fg=C["subtext"],
+                 font=FONT_CAPTION, anchor="w").pack(fill=tk.X, padx=8, pady=(4, 7))
+
+    def close():
+        if getattr(anchor, "_forge_popover", None) is pop:
+            anchor._forge_popover = None
+        try:
+            pop.grab_release()
+        except tk.TclError:
+            pass
+        try:
+            pop.destroy()
+        except tk.TclError:
+            pass
+
+    for item in items:
+        if item.get("separator"):
+            tk.Frame(shell, bg=C["border"], height=1).pack(fill=tk.X, pady=5)
+            continue
+        selected = bool(item.get("selected"))
+        base = C["sel"] if selected else C["surface"]
+        row = tk.Frame(shell, bg=base, cursor="hand2", padx=9, pady=6)
+        row.pack(fill=tk.X, pady=1)
+        marker = tk.Frame(row, bg=C["accent"] if selected else base, width=2)
+        marker.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 8))
+        text = tk.Frame(row, bg=base, cursor="hand2")
+        text.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        label = tk.Label(text, text=str(item.get("label", "")), bg=base,
+                         fg=C["error"] if item.get("danger") else C["text"],
+                         font=FONT_SMALL, anchor="w", cursor="hand2")
+        label.pack(fill=tk.X)
+        detail = None
+        if item.get("detail"):
+            detail = tk.Label(text, text=str(item["detail"]), bg=base,
+                              fg=C["muted"], font=FONT_MICRO, anchor="w",
+                              cursor="hand2")
+            detail.pack(fill=tk.X, pady=(2, 0))
+
+        def paint(bg, widgets=(row, marker, text, label, detail), is_selected=selected):
+            for widget in widgets:
+                if widget is None:
+                    continue
+                widget.configure(bg=C["accent"] if widget is marker and is_selected else bg)
+
+        def invoke(_event=None, command=item.get("command")):
+            close()
+            if callable(command):
+                command()
+            return "break"
+
+        for widget in (row, marker, text, label, detail):
+            if widget is None:
+                continue
+            widget.bind("<Enter>", lambda _e, fn=paint: fn(C["hover"]))
+            widget.bind("<Leave>", lambda _e, fn=paint, b=base: fn(b))
+            widget.bind("<Button-1>", invoke)
+
+    pop.bind("<Escape>", lambda _e: close())
+    def maybe_close(_event=None):
+        try:
+            px, py = anchor.winfo_pointerxy()
+            x, y = pop.winfo_rootx(), pop.winfo_rooty()
+            inside = x <= px < x + pop.winfo_width() and y <= py < y + pop.winfo_height()
+        except tk.TclError:
+            inside = False
+        if not inside:
+            close()
+    pop.bind("<Button-1>", maybe_close, add="+")
+    pop.update_idletasks()
+    position_popover(pop, anchor, width, pop.winfo_reqheight(), prefer_above=prefer_above)
+    pop.deiconify()
+    try:
+        pop.grab_set()
+        pop.focus_set()
+    except tk.TclError:
+        pass
+    return pop
+
+
 def avatar(parent, *, size=32, glyph="F", fg="#FFFFFF", fill=None,
            shape="rounded", bg=None, image=None):
     """头像：圆形（用户）或圆角方（Forge）。给 image 时直接画该位图（品牌标志）。"""
@@ -376,7 +542,8 @@ def avatar(parent, *, size=32, glyph="F", fg="#FFFFFF", fill=None,
         cv.create_polygon(2, 2, size - 6, 2, 2, size - 6,
                           smooth=True, splinesteps=12, fill="#6D63F0", outline="")
     cv.create_text(size / 2, size / 2, text=glyph, fill=fg,
-                   font=(UI_FAMILY, max(8, int(size * 0.42)), "bold"))
+                   font=(emoji_font(glyph) if is_emoji(glyph)
+                         else (UI_FAMILY, max(8, int(size * 0.42)), "bold")))
     return cv
 
 

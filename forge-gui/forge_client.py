@@ -87,7 +87,8 @@ class ForgeGatewayClient:
 
     # ── 非流式 ──
     def chat(self, messages: list[ChatMessage], model: str = "default",
-             temperature: float = 0.7, max_tokens: int | None = None) -> CompletionResult:
+             temperature: float = 0.7, max_tokens: int | None = None,
+             reasoning_effort: str | None = None) -> CompletionResult:
         body = {
             "model": model,
             "messages": [m.to_dict() for m in messages],
@@ -96,6 +97,8 @@ class ForgeGatewayClient:
         }
         if max_tokens:
             body["max_tokens"] = max_tokens
+        if reasoning_effort:
+            body["reasoning_effort"] = reasoning_effort
         req = self._request("POST", "/v1/chat/completions", body)
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
@@ -125,6 +128,7 @@ class ForgeGatewayClient:
     # ── 流式（SSE） ──
     def stream_chat(self, messages: list[ChatMessage], model: str = "default",
                     temperature: float = 0.7,
+                    reasoning_effort: str | None = None,
                     on_chunk: Callable[[str], None] | None = None,
                     cancel_event: threading.Event | None = None
                     ) -> CompletionResult:
@@ -139,6 +143,8 @@ class ForgeGatewayClient:
             "temperature": temperature,
             "stream": True,
         }
+        if reasoning_effort:
+            body["reasoning_effort"] = reasoning_effort
         req = self._request("POST", "/v1/chat/completions", body)
         full_text_parts: list[str] = []
         model_name = ""

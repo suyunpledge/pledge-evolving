@@ -21,6 +21,8 @@ HIDDEN = [
     "forge_client",
     "secret_store",
     "interaction_model",
+    "brand_marks",
+    "model_picker",
 ]
 
 # 运行期用不到的重量级包，排掉可显著减小体积
@@ -38,8 +40,12 @@ a = Analysis(
     [str(GUI_DIR / "forge_gui_v2.py")],
     pathex=[str(GUI_DIR)],
     binaries=[],
-    # 界面资源（品牌标志）。打包后由 _MEIPASS/assets 提供。
-    datas=[(str(GUI_DIR / "assets" / "*.png"), "assets")],
+    # 界面资源（品牌标志 + 模型厂商标识）。打包后由 _MEIPASS/assets 提供。
+    # 注意：brands/ 是子目录，*.png 通配不会递归，必须单独列一条。
+    datas=[
+        (str(GUI_DIR / "assets" / "*.png"), "assets"),
+        (str(GUI_DIR / "assets" / "brands" / "*.png"), "assets/brands"),
+    ],
     hiddenimports=HIDDEN,
     hookspath=[],
     hooksconfig={},

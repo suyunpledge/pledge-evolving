@@ -643,14 +643,14 @@ class WorkspacePanel(tk.Frame):
     def _on_workspace_configure(self, _event=None):
         self._place_sashes_once()
         width = self.winfo_width()
-        if width < 560:
+        if width < 700:
             if self._tree_nav_visible:
                 self._tree_auto_collapsed = True
                 self._set_tree_nav_visible(False)
             if self._changes_nav_visible:
                 self._changes_auto_collapsed = True
                 self._set_changes_nav_visible(False)
-        elif width >= 620:
+        elif width >= 760:
             if self._tree_auto_collapsed:
                 self._tree_auto_collapsed = False
                 self._set_tree_nav_visible(True)
@@ -2300,7 +2300,7 @@ def _selftest(repo: str | None = None):
     root = tk.Tk()
     root.withdraw()
     try:
-        rr = repo or r"C:\Users\匡溯昀\pledge-evolving"
+        rr = repo or str(Path(__file__).resolve().parent.parent)
         panel = WorkspacePanel(root, repo_root=rr)
         panel.show()
         for fn in (panel.open_file_tree, panel.open_changes, panel.refresh,
@@ -2363,6 +2363,6 @@ if __name__ == "__main__":
         r.title("WorkspacePanel 预览")
         r.configure(bg=C["bg"])
         r.geometry("680x860+50+50")
-        ws = WorkspacePanel(r, repo_root=r"C:\Users\匡溯昀\pledge-evolving")
+        ws = WorkspacePanel(r, repo_root=str(Path(__file__).resolve().parent.parent))
         ws.show()
         r.mainloop()

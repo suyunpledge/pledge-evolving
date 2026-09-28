@@ -32,7 +32,7 @@ from gui_theme import (
     C, FONT_CAPTION, FONT_MICRO, FONT_MONO, FONT_MONO_SM, FONT_MONO_XS, FONT_SECTION,
     FONT_SMALL, FONT_TITLE, FONT_UI, FONT_UI_BOLD, R_CARD, R_MD, R_PILL,
     RoundedCard, attach_tooltip, avatar, badge, circle_button, circle_button_state,
-    dot, glyph_button, highlight_python, round_rect, rounded_label,
+    dot, emoji_font, glyph_button, highlight_python, round_rect, rounded_label,
     setup_code_tags, style_scrollbar,
 )
 
@@ -449,9 +449,9 @@ def render_blocks(parent, text, *, bg=None, max_width=None,
         elif kind == "todo":
             row = tk.Frame(host, bg=base)
             row.pack(fill=tk.X, pady=1)
-            mark = "✓" if block["done"] else "○"
+            mark = "✅" if block["done"] else "⬜"
             color = C["ok"] if block["done"] else C["muted"]
-            tk.Label(row, text=mark, bg=base, fg=color, font=FONT_UI_BOLD,
+            tk.Label(row, text=mark, bg=base, fg=color, font=emoji_font(mark),
                      width=2).pack(side=tk.LEFT)
             t = InlineText(row, bg=base)
             t.set_segments(inline_segments(block["text"]))
@@ -588,9 +588,10 @@ class ToolCard(tk.Frame):
         wrap = tk.Frame(self.rows_frame, bg=bgc)
         wrap.pack(fill=tk.X, pady=1)
         ok = row.get("ok", True)
-        tk.Label(wrap, text="✓" if ok else "⚠", bg=bgc,
+        mark = "✅" if ok else "⚠️"
+        tk.Label(wrap, text=mark, bg=bgc,
                  fg=C["ok"] if ok else C["warn"],
-                 font=FONT_SMALL, width=2).pack(side=tk.LEFT)
+                 font=emoji_font(mark, 10), width=2).pack(side=tk.LEFT)
         tk.Label(wrap, text=row.get("name", ""), bg=bgc, fg=C["accent2"],
                  font=FONT_MONO_SM).pack(side=tk.LEFT)
         desc = row.get("desc")
@@ -701,6 +702,78 @@ class ActionRow(tk.Frame):
 # ─── 消息：用户与 Agent ────────────────────────────────────
 
 
+class AgentStatusIndicator(tk.Frame):
+    """Forge 状态：品牌化 glyph + 低权重文字，替代临时“表情”。"""
+
+    ACTIVE_WORDS = ("生成", "思考", "规划", "读取", "执行", "运行", "编辑", "连接")
+
+    def __init__(self, parent, *, bg):
+        super().__init__(parent, bg=bg)
+        self._base = bg
+        self._after_id = None
+        self._phase = 0
+        self.canvas = tk.Canvas(self, width=18, height=18, bg=bg,
+                                highlightthickness=0, bd=0)
+        self.canvas.pack(side=tk.LEFT, padx=(0, 5))
+        self.label = tk.Label(self, text="", bg=bg, fg=C["muted"],
+                              font=FONT_CAPTION)
+        self.label.pack(side=tk.LEFT)
+        self.pack_forget()
+        self.bind("<Destroy>", self._on_destroy, add="+")
+
+    def _on_destroy(self, event=None):
+        if event is not None and event.widget is not self:
+            return
+        if self._after_id is not None:
+            try:
+                self.after_cancel(self._after_id)
+            except tk.TclError:
+                pass
+            self._after_id = None
+
+    def set(self, text: str):
+        text = str(text or "")
+        self.label.configure(text=text)
+        if not text:
+            self.pack_forget()
+            self._on_destroy()
+            return
+        if not self.winfo_manager():
+            self.pack(side=tk.RIGHT)
+        lowered = text.lower()
+        if any(word in lowered for word in self.ACTIVE_WORDS):
+            self._tick()
+        else:
+            self._on_destroy()
+            color = C["error"] if any(w in lowered for w in ("失败", "错误")) else C["ok"]
+            self._draw_static(color)
+
+    def _draw_logo(self, color: str):
+        self.canvas.delete("all")
+        self.canvas.create_polygon(9, 1, 17, 9, 9, 17, 1, 9,
+                                   fill=color, outline="")
+        self.canvas.create_polygon(9, 5, 13, 9, 9, 13, 5, 9,
+                                   fill=self._base, outline="")
+
+    def _draw_static(self, color: str):
+        self._draw_logo(color)
+        self.canvas.create_oval(13, 1, 17, 5, fill=color, outline="")
+
+    def _tick(self):
+        self._on_destroy()
+        colors = (C["accent2"], C["accent"], C["accent_hover"])
+        self._draw_logo(colors[self._phase % len(colors)])
+        for idx in range(3):
+            color = C["accent_text"] if idx == self._phase % 3 else C["muted"]
+            self.canvas.create_oval(2 + idx * 5, 14, 5 + idx * 5, 17,
+                                    fill=color, outline="")
+        self._phase += 1
+        try:
+            self._after_id = self.after(320, self._tick)
+        except tk.TclError:
+            self._after_id = None
+
+
 class UserMessage(tk.Frame):
     """右侧气泡用户消息（已修复 1px 压扁 bug：autosize_width=True）。
 
@@ -732,7 +805,7 @@ class UserMessage(tk.Frame):
         bubble_host = tk.Frame(self, bg=base)
         bubble_host.pack(fill=tk.X, anchor="e", pady=(4, 0))
         card = RoundedCard(bubble_host, radius=R_CARD, fill=C["msg_user_bg"],
-                           outline=C["border_hi"],
+                           outline=C["msg_user_border"],
                            padx=USER_AUTOSIZE_PAD_X, pady=USER_AUTOSIZE_PAD_Y,
                            bg=base, autosize_width=True)
         card.pack(anchor="e")
@@ -758,12 +831,16 @@ class AgentMessage(tk.Frame):
                  glyph="F", subtitle=None):
         base = bg or C["chat"]
         super().__init__(parent, bg=base)
-        self._bg = base
+        self._base = base
+        # 正文气孔用独立底色：head 行在对话底色上，正文落在气孔里。
+        # （以前 agent 侧根本没有气孔，整条时间线是平的。）
+        self._bg = C["msg_agent_bg"]
         self._max_width = MAX_BUBBLE_WIDTH
 
         # head 行：avatar + 名字 + 时间(降权) + 角色徽章 + 状态（右对齐）
         head = tk.Frame(self, bg=base)
         head.pack(fill=tk.X)
+        self._head = head
         avatar(head, size=28, glyph=glyph, fill=C["accent"], shape="rounded",
                bg=base, image=_BRAND_AVATAR).pack(side=tk.LEFT, padx=(0, 8))
         tk.Label(head, text=name, bg=base, fg=C["text"], font=FONT_UI_BOLD).pack(side=tk.LEFT)
@@ -773,8 +850,8 @@ class AgentMessage(tk.Frame):
         if role:
             self._role_badge = badge(head, f"⚡ {role}", tone="accent_soft", bg=base)
             self._role_badge.pack(side=tk.LEFT, padx=(8, 0))
-        self._status = tk.Label(head, text="", bg=base, fg=C["muted"], font=FONT_CAPTION)
-        self._status.pack(side=tk.RIGHT)
+        self._status_indicator = AgentStatusIndicator(head, bg=base)
+        self._status = self._status_indicator.label  # 保留旧测试/调用方可见属性
 
         self.subtitle = None
         if subtitle:
@@ -783,18 +860,43 @@ class AgentMessage(tk.Frame):
                                      wraplength=MAX_BUBBLE_WIDTH)
             self.subtitle.pack(fill=tk.X, pady=(4, 0))
 
-        # 正文（最高视觉优先级）
-        self.body = tk.Frame(self, bg=base)
-        self.body.pack(fill=tk.X, pady=(6, 0))
+        # 正文气孔：圆角卡 + hairline 描边，跟用户侧对称。整体宽度跟随对话列，
+        # 这样代码块/工具卡/表格都能拿到完整宽度（不为了「抱得紧」把内容压窄）。
+        self._bubble_host = tk.Frame(self, bg=base)
+        self._bubble_host.pack(fill=tk.X, anchor="w", pady=(6, 0))
+        self._bubble = RoundedCard(self._bubble_host, radius=R_CARD,
+                                   fill=self._bg, outline=C["msg_agent_border"],
+                                   padx=USER_AUTOSIZE_PAD_X,
+                                   pady=USER_AUTOSIZE_PAD_Y, bg=base)
+        # 跟随列宽（fill=X）而不是抱紧内容：里面的 markdown 标签带 wraplength 上限，
+        # 列窄时靠 fill=X 让它们重新折行，不会横向溢出。
+        self._bubble.pack(fill=tk.X)
+        self.body = tk.Frame(self._bubble.content, bg=self._bg)
+        self.body.pack(fill=tk.X)
+        # RoundedCard 靠 content 的 <Configure> 反推高度；正文是后来才填进去的，
+        # 在 fill=X 模式下这条链会断（画布高度停在 1，内容不 mapped）。
+        # 这里由 body/host 直接驱动高度，不依赖那条隐式链。
+        self._bubble_host.bind("<Configure>", self._sync_bubble_height)
+        self.body.bind("<Configure>", self._sync_bubble_height)
         self._stream = None
 
+    def _sync_bubble_height(self, _event=None):
+        try:
+            need = self.body.winfo_reqheight() + USER_AUTOSIZE_PAD_Y * 2
+            cv = self._bubble._cv
+            if abs(cv.winfo_reqheight() - need) > 1:
+                cv.configure(height=max(1, need))
+            self._bubble._on_canvas()
+        except tk.TclError:
+            pass
+
     def set_status(self, text: str):
-        self._status.configure(text=text or "")
+        self._status_indicator.set(text)
 
     def set_role(self, role):
         if role and self._role_badge is None:
-            self._role_badge = badge(self.body.master, f"⚡ {role}",
-                                     tone="accent_soft", bg=self._bg)
+            self._role_badge = badge(self._head, f"⚡ {role}",
+                                     tone="accent_soft", bg=self._base)
             self._role_badge.pack(side=tk.LEFT, padx=(8, 0))
         elif self._role_badge is not None and not role:
             self._role_badge.destroy()
@@ -935,10 +1037,11 @@ class MessageArea(tk.Frame):
 
     def show_empty(self, title="从一个目标开始",
                    lines=("描述你想解决的问题，或添加文件作为上下文。",
-                          "执行工具请选择左侧「任务」；连接信息在右上「状态」。")):
+                          "执行工具请选择左侧「任务」；连接信息在右上「状态」。"),
+                   actions=()):
         self.clear()
         box = tk.Frame(self.scroll.inner, bg=self._bg)
-        box.pack(fill=tk.X, pady=(60, 0))
+        box.pack(fill=tk.X, pady=(32, 0))
         tk.Label(box, text=title, bg=self._bg, fg=C["text"], font=FONT_TITLE).pack()
         for line in lines:
             label = tk.Label(box, text=line, bg=self._bg, fg=C["ter"],
@@ -946,6 +1049,28 @@ class MessageArea(tk.Frame):
             label.pack(fill=tk.X, pady=(8, 0))
             label.bind("<Configure>", lambda e, w=label: w.configure(
                 wraplength=max(80, e.width - 16)))
+        if actions:
+            choices = tk.Frame(box, bg=self._bg)
+            choices.pack(pady=(18, 0))
+            for title, detail, callback in actions:
+                row = tk.Frame(choices, bg=self._bg, padx=14, pady=6,
+                               cursor="hand2")
+                row.pack(fill=tk.X, pady=(0, 3))
+                label = tk.Label(row, text=title, bg=self._bg, fg=C["body"],
+                                 font=FONT_SMALL, anchor="w", cursor="hand2")
+                label.pack(fill=tk.X)
+                hint = tk.Label(row, text=detail, bg=self._bg, fg=C["muted"],
+                                font=FONT_CAPTION, anchor="w", justify=tk.LEFT,
+                                cursor="hand2")
+                hint.pack(fill=tk.X, pady=(2, 0))
+                for widget in (row, label, hint):
+                    widget.bind("<Button-1>", lambda _e, fn=callback: fn())
+                    widget.bind("<Enter>", lambda _e, r=row, l=label, h=hint: (
+                        r.configure(bg=C["hover"]), l.configure(bg=C["hover"]),
+                        h.configure(bg=C["hover"])))
+                    widget.bind("<Leave>", lambda _e, r=row, l=label, h=hint: (
+                        r.configure(bg=self._bg), l.configure(bg=self._bg),
+                        h.configure(bg=self._bg)))
         self._empty = box
 
     def clear(self):
@@ -1029,26 +1154,22 @@ class InputCard(tk.Frame):
         card = RoundedCard(self, radius=R_CARD, fill=C["input_bg"],
                            outline=C["border_hi"], padx=12, pady=10, bg=base)
         card.pack(fill=tk.X)
+        self._card = card
         inner = card.content
 
         # ─── 顶行：＋ 加号 + 次级小按钮（左） + 主输入区（中） ─────────────
         top_row = tk.Frame(inner, bg=C["input_bg"])
         top_row.pack(fill=tk.X)
 
-        left_bar = tk.Frame(top_row, bg=C["input_bg"])
-        left_bar.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 8))
+        # 附件入口在底栏；输入正文从同一条左边线开始。
 
         # ＋ 按钮（on_attach 优先；缺省回落到 on_paste，保持旧行为）
         plus_cb = on_attach if on_attach is not None else (on_paste or (lambda: None))
-        self.plus = circle_button(left_bar, "＋", plus_cb, size=28,
-                                  kind="muted", bg=C["input_bg"], glyph_size=11,
-                                  tooltip="附件 / 剪贴板")
-        self.plus.pack(side=tk.TOP, pady=(2, 0))
         # 次级小按钮：上下文、命令（弱化，小字）
         # 主输入区
         entry_host = tk.Frame(top_row, bg=C["input_bg"])
         entry_host.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self.entry = tk.Text(entry_host, height=3, wrap="word", font=FONT_UI,
+        self.entry = tk.Text(entry_host, height=2, wrap="word", font=FONT_UI,
                               bg=C["input_bg"], fg=C["text"],
                               insertbackground=C["accent"], relief=tk.FLAT, bd=0,
                               highlightthickness=0)
@@ -1062,9 +1183,10 @@ class InputCard(tk.Frame):
         self.entry.bind("<Shift-Return>", lambda _e: None)
         self._syncing = False
         self.entry.bind("<<Modified>>", self._text_changed)
+        self.entry.bind("<Configure>", lambda _e: self._resize_entry())
         self.send_var.trace_add("write", lambda *_: self._sync_hint())
-        self.entry.bind("<FocusIn>", lambda _e: self._sync_hint())
-        self.entry.bind("<FocusOut>", lambda _e: self._sync_hint())
+        self.entry.bind("<FocusIn>", lambda _e: self._set_focus(True))
+        self.entry.bind("<FocusOut>", lambda _e: self._set_focus(False))
 
         # ─── 底栏：模型 + 沉思 + ⚙ + 发送（右组） ─────────────────────────
         bar = tk.Frame(inner, bg=C["input_bg"])
@@ -1073,14 +1195,21 @@ class InputCard(tk.Frame):
         self._toolbar = bar
         self._low_controls = None
 
+        attachments = tk.Frame(bar, bg=C["input_bg"])
+        attachments.grid(row=0, column=0, sticky="w")
+        self._low_controls = attachments
+        self.plus = circle_button(attachments, "＋", plus_cb, size=28,
+                                  kind="muted", bg=C["input_bg"], glyph_size=11,
+                                  tooltip="添加附件")
+        self.plus.pack(side=tk.LEFT, padx=(0, 5))
+
         # 低频操作收进水平工具栏，让输入框成为清晰的视觉主体。
         if attach_button:
-            low = tk.Frame(bar, bg=C["input_bg"])
-            low.grid(row=0, column=0, sticky="w")
+            low = attachments
             self._low_controls = low
             for text, tip, callback in (
                     ("上下文", "查看历史与附件，检查本轮实际发送内容", on_context),
-                    ("/ 命令", "打开本地命令菜单", on_commands)):
+                    ("⋯", "工具与命令", on_commands)):
                 pill = rounded_label(low, text, fill=C["input_bg"], outline="",
                                      fg=C["muted"], font=FONT_MICRO,
                                      bg=C["input_bg"], tooltip=tip,
@@ -1148,6 +1277,20 @@ class InputCard(tk.Frame):
         self._sync_send_state()
 
     # -- 交互 --
+    def _resize_entry(self):
+        """按显示行增长，长输入保留内部滚动，不把时间线挤出屏幕。"""
+        try:
+            count = self.entry.count("1.0", "end", "displaylines")
+            rows = max(2, min(7, int(count[0]) if count else 2))
+            if int(self.entry.cget("height")) != rows:
+                self.entry.configure(height=rows)
+        except tk.TclError:
+            pass
+
+    def _set_focus(self, focused: bool):
+        self._card.set_fill(C["input_bg"], C["accent"] if focused else C["border_hi"])
+        self._sync_hint()
+
     def _fit_toolbar(self, event):
         low = self._low_controls
         if low is None:
@@ -1203,6 +1346,7 @@ class InputCard(tk.Frame):
         except tk.TclError:
             pass
         self._sync_send_state()
+        self._resize_entry()
 
     def _sync_send_state(self):
         if self._busy:

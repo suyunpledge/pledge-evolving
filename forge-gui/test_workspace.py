@@ -1,9 +1,9 @@
-"""test_workspace.py —— WorkspacePanel 交互重构自检。
+r"""test_workspace.py —— WorkspacePanel 交互重构自检。
 
 跑法（必须用系统 Python 312，因为 AutoClaw 内嵌 python 没有 tkinter）：
 
-    cd C:\\Users\\匡溯昀\\pledge-evolving\\forge-gui
-    "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe" test_workspace.py
+    cd <repo>\forge-gui
+    "%LOCALAPPDATA%\Programs\Python\Python312\python.exe" test_workspace.py
 
 覆盖点（与任务书对齐）：
     1. 点文件树真的能看到内容
@@ -32,8 +32,8 @@ from workspace import (  # noqa: E402
     WorkspacePanel,
 )
 
-# 真实仓库根（用于 git 仓库场景）
-REAL_REPO = r"C:\Users\匡溯昀\pledge-evolving"
+# 真实仓库根（用于 git 仓库场景）：从文件位置反推，不写死个人路径
+REAL_REPO = str(Path(__file__).resolve().parent.parent)
 
 PASSED: list[str] = []
 FAILED: list[tuple[str, str]] = []

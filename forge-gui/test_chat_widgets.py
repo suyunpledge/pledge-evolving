@@ -5,7 +5,7 @@ r"""chat_widgets.py 自检。
 必须先 `update()` 才有真值。
 
 跑法：
-    "C:\Users\匡溯昀\AppData\Local\Programs\Python\Python312\python.exe" \
+    "%LOCALAPPDATA%\Programs\Python\Python312\python.exe" \
         test_chat_widgets.py
 """
 from __future__ import annotations
@@ -129,6 +129,25 @@ class MessageImmediateVisibility(unittest.TestCase):
                              "add_user 后正文 Label 不应为空")
             # 气泡宽度也应该 > 0
             self.assertGreater(m._card.winfo_width(), 0)
+        finally:
+            root.destroy()
+
+    def test_agent_status_uses_forge_indicator_and_cleans_up(self):
+        root = _area()
+        try:
+            area = cw.MessageArea(root)
+            area.pack(fill=tk.BOTH, expand=True)
+            agent = area.add_agent()
+            agent.set_status("正在读取文件…")
+            _flush(root)
+            self.assertTrue(agent._status_indicator.winfo_ismapped())
+            self.assertGreater(len(agent._status_indicator.canvas.find_all()), 0)
+            agent.set_status("已完成")
+            _flush(root)
+            self.assertEqual(agent._status.cget("text"), "已完成")
+            agent.set_status("")
+            _flush(root)
+            self.assertFalse(agent._status_indicator.winfo_ismapped())
         finally:
             root.destroy()
 
@@ -360,6 +379,24 @@ def _first_code_text_in_body(agent):
 
 
 class ComposerApi(unittest.TestCase):
+    def test_input_grows_and_shrinks_without_losing_text(self):
+        root = _area()
+        try:
+            card = cw.InputCard(root)
+            card.pack(fill=tk.X)
+            _flush(root)
+            self.assertEqual(int(card.entry.cget("height")), 2)
+            draft = "\n".join(f"目标 {i}" for i in range(15))
+            card.entry.insert("1.0", draft)
+            _flush(root)
+            self.assertEqual(int(card.entry.cget("height")), 7)
+            self.assertEqual(card.send_var.get(), draft)
+            card.entry.delete("1.0", "end")
+            _flush(root)
+            self.assertEqual(int(card.entry.cget("height")), 2)
+        finally:
+            root.destroy()
+
     def test_basic_attributes(self):
         root = _area()
         try:

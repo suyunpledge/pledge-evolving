@@ -25,14 +25,75 @@ import time
 import tkinter as tk
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
 sys.path.insert(0, str(HERE))
 
 import chat_widgets as cw  # noqa: E402
+import brand_marks  # noqa: E402
+import gui_theme as theme  # noqa: E402
+import reasoning_slider as rs  # noqa: E402
 import forge_gui_v2 as gui  # noqa: E402
+
+
+class BrandMarkTests(unittest.TestCase):
+    """品牌标志识别：纯逻辑，不需要桌面。"""
+
+    CASES = (
+        ("mimo", "mimo"), ("mimopro-ultra", "mimo"),
+        ("deepseekflash", "deepseek"), ("deepseek-v4-pro", "deepseek"),
+        ("千问max", "qwen"), ("qwen3.8-flash", "qwen"),
+        ("Kimi-k2.6", "kimi"), ("moonshot-v1", "kimi"),
+        ("豆包", "doubao"), ("doubao-seed-evolving", "doubao"),
+        ("MiniMax", "minimax"), ("claude", "claude"), ("claude-opus-5-5", "claude"),
+        ("gpt", "chatgpt"), ("gpt-6-sol", "chatgpt"),
+        ("GLM5.3", "glm"), ("glm-5.3", "glm"),
+        ("Step-3.5-Flash-2603", "stepfun"),
+        ("百灵", "ling"), ("ling-3.0-flash", "ling"),
+        ("muse-spark", "muse"), ("grok-4", "grok"), ("gemini-3-pro", "gemini"),
+        ("spark-4.0", "spark"),
+    )
+
+    def test_detects_brand_from_model_name(self):
+        for model, expected in self.CASES:
+            with self.subTest(model=model):
+                brand = brand_marks.detect(model=model)
+                self.assertIsNotNone(brand, f"{model} 未识别出品牌")
+                self.assertEqual(brand.key, expected)
+
+    def test_detects_brand_from_upstream_domain(self):
+        cases = (
+            ("some-unknown-model", "https://api.moonshot.cn/v1", "kimi"),
+            ("some-unknown-model", "https://open.bigmodel.cn/api/coding/paas/v4", "glm"),
+            ("some-unknown-model", "https://api.minimaxi.com/v1", "minimax"),
+            ("some-unknown-model", "https://ark.cn-beijing.volces.com/api/plan/v3", "doubao"),
+            ("some-unknown-model", "https://api.xiaomimimo.com/v1", "mimo"),
+        )
+        for model, url, expected in cases:
+            with self.subTest(url=url):
+                brand = brand_marks.detect(model=model, base_url=url)
+                self.assertIsNotNone(brand, f"{url} 未识别")
+                self.assertEqual(brand.key, expected)
+
+    def test_provider_row_uses_its_own_model_field(self):
+        row = {"baseURL": "https://api.stepfun.com/step_plan/v1", "model": "step-5-preview"}
+        brand = brand_marks.detect(provider=row)
+        self.assertIsNotNone(brand)
+        self.assertEqual(brand.key, "stepfun")
+
+    def test_unknown_model_yields_no_brand(self):
+        self.assertIsNone(brand_marks.detect(model="zzz-unmapped-9k"))
+        self.assertEqual(brand_marks.label_for(model="zzz-unmapped-9k"), "")
+
+    def test_generated_assets_exist_for_every_brand(self):
+        missing = []
+        for brand in brand_marks.BRANDS:
+            for size in (16, 20, 24, 32):
+                if brand_marks.mark_path(brand, size) is None:
+                    missing.append(f"{brand.key}-{size}")
+        self.assertEqual(missing, [], f"缺少位图：{missing}")
 
 
 def find(widget, predicate, out=None):
@@ -241,6 +302,53 @@ class RefactorAcceptance(unittest.TestCase):
         self.assertIn(card, ancestors, "模型选择器不在输入卡内部")
         self.assertGreater(card.send_circle.winfo_rootx(), card.entry.winfo_rootx())
 
+    def test_model_picker_keeps_combobox_compat_and_shows_brand_mark(self):
+        """模型选择器：兼容旧接口（values 读写），且当前模型带厂商标志。"""
+        picker = self.app.model_combo
+        picker.configure(values=["default", "mimo", "千问max"])
+        self.assertEqual(list(picker["values"]), ["default", "mimo", "千问max"])
+        self.assertEqual(list(picker.cget("values")), ["default", "mimo", "千问max"])
+        self.assertEqual(picker.get(), self.app.model_var.get())
+        self.assertEqual(picker.brand_of("千问max").key, "qwen")
+        self.app.model_var.set("千问max")
+        self.pump(0.1)
+        self.assertTrue(picker._icon.winfo_ismapped(), "已知模型应显示厂商标志")
+        self.assertEqual(picker._text.cget("text"), "千问max")
+        self.app.model_var.set("zzz-unmapped-9k")
+        self.pump(0.1)
+        self.assertFalse(picker._icon.winfo_ismapped())
+
+    def test_model_picker_product_surface_uses_real_router_and_filters(self):
+        picker = self.app.model_combo
+        providers = {
+            "cloud-fast": {"model": "cloud-fast", "baseURL": "https://api.example.com/v1"},
+            "local-code": {"model": "local-code", "baseURL": "http://127.0.0.1:11434/v1"},
+            "default": {"model": "cloud-fast", "baseURL": "https://api.example.com/v1"},
+        }
+        picker._provider_lookup = lambda model: providers.get(model)
+        picker._router_lookup = lambda: {
+            "primary": ["cloud", "cloud-fast"],
+            "routing": {"strategy": "medium", "tiers": [["cloud", "cloud-fast"]]},
+        }
+        picker.configure(values=["default", "cloud-fast", "local-code"])
+        picker.open_menu()
+        self.pump(0.2)
+        self.assertEqual(picker._popup.winfo_width(), min(448, picker.winfo_screenwidth() - 16))
+        pop = picker._popup
+        self.assertLessEqual(abs(pop.winfo_rootx() + pop.winfo_width() -
+                                 picker.winfo_rootx() - picker.winfo_width()), 2)
+        self.assertLessEqual(abs(picker.winfo_rooty() -
+                                 pop.winfo_rooty() - pop.winfo_height() - 6), 2)
+        self.assertEqual(picker._recommended_models(), {"cloud-fast"})
+        picker._set_filter("local")
+        self.pump(0.1)
+        self.assertEqual([value for value, _row in picker._rows], ["local-code"])
+        picker._favorites.add("cloud-fast")
+        picker._set_filter("favorites")
+        self.pump(0.1)
+        self.assertEqual([value for value, _row in picker._rows], ["cloud-fast"])
+        picker.close_menu()
+
     # ── 9. 技术状态不抢正文 ──
     def test_tech_status_does_not_outweigh_body(self):
         import tkinter.font as tkfont
@@ -284,6 +392,9 @@ class RefactorAcceptance(unittest.TestCase):
     # ── 11. Activity Bar 与 contextual Sidebar 真正分层 ──
     def test_activity_bar_and_contextual_sidebar_are_separate(self):
         self.assertEqual(len(self.app._activity_markers), len(gui.NAV_ITEMS))
+        for key in ("agents", "knowledge", "evolution", "files"):
+            self.assertFalse(self.app._nav_widgets[key][0][0].winfo_ismapped(),
+                             f"占位视图 {key} 不应占用主轨道")
         self.assertLess(self.app.activity_bar.winfo_width(),
                         self.app.sidebar.winfo_width())
         chat_panel = self.app._sidebar_panels["chat"]
@@ -292,7 +403,31 @@ class RefactorAcceptance(unittest.TestCase):
         self.app._show_view("task")
         self.pump(0.2)
         self.assertFalse(chat_panel.winfo_ismapped())
-        self.assertTrue(task_panel.winfo_ismapped())
+        self.assertFalse(self.app._sidebar_visible,
+                         "无辅助内容的任务视图应把宽度留给时间线")
+        self.app._toggle_sidebar()
+        self.pump(0.1)
+        self.assertTrue(task_panel.winfo_ismapped(), "用户仍可按需展开侧栏")
+
+    def test_start_actions_lead_to_real_workflows(self):
+        self.assertEqual(self.app._active_view, "chat")
+        task_action = find(self.app.chat_area, lambda w: w.winfo_class() == "Label"
+                           and str(w.cget("text")) == "交给 Forge 一个任务")
+        self.assertEqual(len(task_action), 1)
+        task_action[0].event_generate("<Button-1>")
+        self.pump(0.1)
+        self.assertEqual(self.app._active_view, "task")
+        self.assertLess(self.app.task_area.winfo_rooty(),
+                        self.app.task_run_btn.winfo_rooty(),
+                        "任务输入应位于时间线底部")
+
+        self.app._show_view("chat")
+        workspace_action = find(self.app.chat_area, lambda w: w.winfo_class() == "Label"
+                                and str(w.cget("text")) == "查看项目工作区")
+        self.assertEqual(len(workspace_action), 1)
+        workspace_action[0].event_generate("<Button-1>")
+        self.pump(0.2)
+        self.assertTrue(self.app._ws_packed)
 
     # ── 12. 详细 telemetry 默认收起 ──
     def test_secondary_telemetry_is_disclosed_on_demand(self):
@@ -309,12 +444,249 @@ class RefactorAcceptance(unittest.TestCase):
         self.app._open_workspace()
         self.pump(0.3)
         right = self.app.center.winfo_rootx() + self.app.center.winfo_width()
-        for widget in (msg.label, self.app.model_combo, self.app.think_pill,
+        for widget in (msg.label, self.app.model_combo, self.app.session_menu_btn,
                        self.app.input_card.send_circle):
             self.assertTrue(widget.winfo_ismapped())
             self.assertLessEqual(widget.winfo_rootx() + widget.winfo_width(), right)
             self.assertGreaterEqual(widget.winfo_width(), widget.winfo_reqwidth() - 2)
         self.assertGreater(msg.label.winfo_height(), 40)
+
+    def test_history_search_reaches_older_sessions_and_focuses_input(self):
+        sessions = [{"id": f"past-{i}", "title": f"历史条目 {i}",
+                     "updated": time.time() - i * 86400,
+                     "messages": [{"role": "user", "content": f"历史问题 {i}"}]}
+                    for i in range(25)]
+        with patch.object(self.app, "_load_sessions", return_value=sessions), \
+             patch.object(self.app, "_archive_current_session"):
+            self.app._refresh_history()
+            self.assertIn("历史条目 24", label_texts(self.app.history_box))
+            self.app._conversation_shortcut("search")
+            self.app.session_search_var.set("条目 24")
+            self.pump(.1)
+            self.assertIn("历史条目 24", label_texts(self.app.history_box))
+            self.assertNotIn("历史条目 0", label_texts(self.app.history_box))
+            self.root.focus_force()
+            self.app._load_session("past-24")
+            self.pump(.1)
+            self.assertEqual(self.app.chat_title_var.get(), "历史条目 24")
+            self.assertEqual(self.root.focus_get(), self.app.send_entry)
+
+    def test_model_picker_combines_model_and_five_thinking_levels(self):
+        self.assertFalse(self.app.think_pill.winfo_ismapped())
+        self.app.model_combo.open_menu()
+        self.pump(.1)
+        slider = getattr(self.app.model_combo, "_thinking_slider", None)
+        self.assertIsNotNone(slider, "打开弹层后应显示思考强度滑杆")
+        self.assertIsInstance(slider, rs.ReasoningSlider)
+        # 是「滑杆」而不是一排点选按钮：可拖动取值，且弹层保持打开
+        self.assertIs(self.app.model_combo._thinking_widgets, slider.label_widgets)
+        self.assertEqual(list(slider.stops),
+                         ["off", "low", "medium", "high", "contemplate"])
+        labels = [label.cget("text") for _host, label in slider.label_widgets.values()]
+        with patch.object(gui, "save_desktop_config"), \
+             patch.object(self.app, "_set_thinking_mode", return_value=True):
+            slider.set_index(len(slider.stops) - 1)
+            self.pump(.05)
+            self.assertIsNotNone(self.app.model_combo._popup,
+                                 "slider must not close the popup")
+            self.assertEqual(slider.current_value(), "contemplate")
+            self.assertEqual(self.app.reasoning_var.get(), "contemplate")
+            slider.step(-1)
+            self.pump(.05)
+            self.assertEqual(slider.current_value(), "high")
+            slider.set_index(0)
+            self.pump(.05)
+            self.assertEqual(slider.current_index(), 0)
+            slider.reset()
+            self.pump(.05)
+            self.assertEqual(slider.current_value(), "medium")
+            self.assertTrue(slider.canvas.find_withtag("slider-card"))
+            self.assertTrue(slider.canvas.find_withtag("slider-track-active"))
+            self.assertTrue(slider.canvas.find_withtag("slider-thumb"))
+            self.assertEqual(slider.canvas.itemcget(
+                slider.canvas.find_withtag("slider-model")[0], "text"),
+                self.app.model_combo._current_model_label())
+        self.assertEqual(labels, ["Light", "Standard", "Deep", "Intense", "Scrutiny"])
+        self.app.model_combo.close_menu()
+        with patch.object(self.app, "_set_thinking_mode", return_value=True) as set_mode, \
+             patch.object(gui, "save_desktop_config") as save:
+            self.app._thinking_mode = "off"
+            self.assertTrue(self.app._set_reasoning_effort("high"))
+            set_mode.assert_called_once_with("smart", announce=False)
+            save.assert_called_once_with(reasoning_effort="high")
+            self.assertEqual(self.app.reasoning_var.get(), "high")
+            self.assertIn("思考强度 · Intense", self.app.model_combo._thinking_text.cget("text"))
+
+    # ── 15. 侧边栏可见名称 + 彩色 emoji ──────────────────────
+    def test_activity_bar_shows_names_and_colour_emoji(self):
+        labels = {}
+        for key, entries in self.app._activity_labels.items():
+            for _icon, text in entries:
+                labels[key] = text.cget("text")
+        for key in gui.PRIMARY_NAV:
+            self.assertEqual(labels.get(key), gui.NAV_LABEL[key],
+                             f"{key} 的侧边栏入口应显示名称")
+        # 图标必须是真 emoji（配 emoji 字体才出彩色），不是单色 dingbat
+        for _key, label, glyph in gui.NAV_ITEMS:
+            with self.subTest(glyph=glyph):
+                self.assertTrue(theme.is_emoji(glyph), f"{glyph} 不是 emoji 字形")
+                self.assertEqual(theme.emoji_font(glyph)[0], theme.EMOJI_FAMILY)
+        self.assertTrue(theme.is_emoji("💬") and not theme.is_emoji("▣"))
+        # 轨道仍要窄于 Sidebar（一级/二级分层不变）
+        self.assertLess(self.app.activity_bar.winfo_width(),
+                        self.app.sidebar.winfo_width())
+
+    # ── 16. 对话两侧都有气泡 ────────────────────────────────
+    def test_both_sides_of_conversation_have_bubbles(self):
+        user = self.app.chat_area.add_user("用户消息")
+        agent = self.app.chat_area.add_agent()
+        agent.render_markdown("回复正文。")
+        self.pump(0.3)
+        self.assertEqual(user._card._fill, theme.C["msg_user_bg"])
+        self.assertEqual(user._card._outline, theme.C["msg_user_border"])
+        bubble = getattr(agent, "_bubble", None)
+        self.assertIsNotNone(bubble, "agent 回复也应有气泡")
+        self.assertEqual(bubble._fill, theme.C["msg_agent_bg"])
+        self.assertEqual(bubble._outline, theme.C["msg_agent_border"])
+        # 两种气泡底色必须不同，否则「谁在说」看不出来
+        self.assertNotEqual(theme.C["msg_user_bg"], theme.C["msg_agent_bg"])
+        self.assertTrue(agent.body.winfo_ismapped(), "气泡内正文必须可见")
+        self.assertGreater(agent.body.winfo_height(), 1)
+        # 气泡不能横向溢出对话列
+        self.assertLessEqual(bubble.winfo_width(),
+                             max(1, agent._bubble_host.winfo_width()))
+
+    # ── 17. 智能路由可被用户控制并落盘 ──────────────────────
+    def test_router_strategy_is_user_controllable(self):
+        self.app.model_combo.open_menu()
+        self.pump(0.2)
+        chips = self.app.model_combo._router_chips
+        self.assertEqual(set(chips), {"base", "medium", "premium"})
+        before = self.app.model_combo._current_router_strategy()
+        target = "premium" if before != "premium" else "base"
+        with patch.object(gui, "save_user_layer") as save:
+            self.assertTrue(self.app._set_router_strategy(target))
+            save.assert_called_once()
+        self.assertEqual(self.app._task_strategy, target)
+        self.assertEqual(self.app.model_combo._current_router_strategy(), target)
+        # 选完不关弹层（还能接着调模型 / 思考强度）
+        self.assertIsNotNone(self.app.model_combo._popup)
+        self.app.model_combo.close_menu()
+        # 非法策略拒绝
+        self.assertFalse(self.app._set_router_strategy("nonsense"))
+
+    # ── 18. API 密钥面板 ────────────────────────────────────
+    def test_api_key_panel_lists_and_masks_providers(self):
+        targets = self.app._key_targets()
+        self.assertTrue(targets, "应能列出需要密钥的 provider")
+        self.assertEqual(self.app._masked_key("sk-abcdef123456"), "sk-abc…3456")
+        self.assertEqual(self.app._masked_key(""), "")
+        before = len(self.root.winfo_children())
+        self.app._open_api_keys()
+        self.pump(0.3)
+        dialogs = [w for w in self.root.winfo_children()
+                   if w.winfo_class() == "Toplevel"]
+        self.assertTrue(dialogs, "API 密钥面板应能打开")
+        self.assertIn("已配置", self.app.key_status_var.get())
+        for d in dialogs:
+            try:
+                d.grab_release()
+                d.destroy()
+            except Exception:
+                pass
+        self.assertGreaterEqual(len(self.root.winfo_children()), before)
+
+    # ── 19. 自启重试的失败路径（评审 P1/P2）──────────────────
+    def test_gateway_timeout_kills_the_real_process_and_counts_the_attempt(self):
+        """超时清理要传进程对象（不是 pid），且超时也算一次尝试。"""
+        proc = Mock()
+        proc.poll.return_value = None
+        self.app.gateway_proc = proc
+        self.app._gateway_autostarted = True
+        self.app._gateway_user_stopped = False
+        self.app._autostart_attempts = 0
+        with patch.object(gui, "kill_process_tree") as kill, \
+             patch.object(self.app, "_schedule_autostart_retry") as retry:
+            self.app._gateway_timeout(proc)
+        # 关键：传的是进程对象；传 pid 会让 kill_process_tree 内部 proc.poll() 抛错
+        kill.assert_called_once()
+        self.assertIs(kill.call_args.args[0], proc)
+        # 超时也要计入尝试次数，否则退避索引为 -1（取到最后一档）且永不封顶
+        self.assertEqual(self.app._autostart_attempts, 1)
+        retry.assert_called_once()
+
+    def test_user_stop_cancels_a_queued_autostart_retry(self):
+        """用户在本轮重试排队后按了停止：定时器到点也不能再拉起 gateway。"""
+        self.app._gateway_user_stopped = True
+        self.app._autostart_attempts = 1
+        with patch.object(self.app, "_start_gateway") as start:
+            self.app._autostart_gateway()
+        start.assert_not_called()
+
+    def test_retry_backoff_index_is_never_negative(self):
+        """_autostart_attempts=0 时不能索引到最后一档。"""
+        self.app._gateway_user_stopped = False
+        self.app._autostart_attempts = 0
+        seen = []
+        with patch.object(gui, "_autostart_enabled", return_value=True), \
+             patch.object(self.app, "root") as root:
+            root.after.side_effect = lambda ms, fn: seen.append(ms / 1000.0)
+            self.app._schedule_autostart_retry("probe")
+        self.assertEqual(seen, [gui.AUTOSTART_RETRY_DELAYS[0]])
+
+    # ── 20. 密钥面板与配置引用必须一致（评审 P1）──────────────
+    def test_api_key_panel_repairs_a_mismatched_env_ref(self):
+        """整理器生成的随机引用（FORGE_KEY_XXXX）应在保存后被改写为面板注入的名字。"""
+        rid = "custom__probe"
+        canonical = self.app._canonical_key_env(rid)
+        self.assertTrue(canonical.startswith("FORGE_") and canonical.endswith("_KEY"))
+        row = {"id": rid, "name": f"provider:{rid}", "config": {
+            "wire": "openai", "baseURL": "https://api.example.com/v1",
+            "model": "probe-1",
+            "apiKey": {"$expr": "get('env.FORGE_KEY_DEADBE', '')"}}}
+        self.app.user_rows = [row] + [
+            r for r in self.app.user_rows if str(r.get("id")) != rid]
+        self.assertEqual(self.app._key_env_name(row["config"]), "FORGE_KEY_DEADBE")
+        with patch.object(gui, "load_user_layer", return_value=[row.copy()]), \
+             patch.object(gui, "save_user_layer") as save:
+            repaired = self.app._repair_key_ref(rid)
+        self.assertTrue(repaired, "引用不一致时必须改写")
+        saved = save.call_args.args[1]
+        target = next(r for r in saved if r["id"] == rid)
+        self.assertEqual(self.app._key_env_name(target["config"]), canonical)
+        # 已经一致时不再重复改写
+        with patch.object(gui, "load_user_layer",
+                          return_value=[target]), \
+             patch.object(gui, "save_user_layer") as save2:
+            self.assertFalse(self.app._repair_key_ref(rid))
+        save2.assert_not_called()
+
+    # ── 21. 路由保存失败不得显示为已选中（评审 P2）────────────
+    def test_router_chip_reverts_when_save_fails(self):
+        self.app.model_combo.open_menu()
+        self.pump(0.2)
+        picker = self.app.model_combo
+        before = picker._current_router_strategy()
+        other = "base" if before != "base" else "premium"
+        # 必须拦 picker 持有的那个回调（它是在构造时绑定的）；
+        # patch 实例方法拦不住，会真的走保存——那会写到真实配置。
+        # 再叠一层 save_user_layer 兼底，确保测试不会改动磁盘。
+        with patch.object(picker, "_on_router_strategy", return_value=False) as cb, \
+             patch.object(gui, "save_user_layer") as save:
+            picker._pick_router(other)
+        self.pump(0.1)
+        cb.assert_called_once_with(other)
+        save.assert_not_called()
+        # 失败后胶囊高亮必须回到真实策略，而不是所点的那一档
+        self.assertEqual(picker._current_router_strategy(), before)
+        self.assertIn(before, picker._router_heading.cget("text"))
+        picker.close_menu()
+
+    # ── 22. Base 说明与真实行为一致（评审 P2）─────────────────
+    def test_base_strategy_hint_matches_climb_behaviour(self):
+        hints = {v: h for v, _l, h in gui.STRATEGY_CHOICES}
+        self.assertIn("升级", hints["base"])
+        self.assertNotIn("只用", hints["base"])
 
     def test_workspace_auxiliary_navigation_and_file_tabs_remain_usable(self):
         self.app._open_workspace()
