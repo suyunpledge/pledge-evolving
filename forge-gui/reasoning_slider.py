@@ -20,14 +20,18 @@ import tkinter as tk
 
 from gui_theme import C, FONT_CAPTION, FONT_MICRO, FONT_UI_BOLD, round_rect
 
-TRACK_HEIGHT = 14
-CARD_HEIGHT = 126
+TRACK_HEIGHT = 20
+CARD_HEIGHT = 132
 CARD_RADIUS = 14
 TRACK_Y = 78
 KNOB_RADIUS = 13
 PAD_X = KNOB_RADIUS + 12
 MINI_WIDTH = 34
 MINI_HEIGHT = 10
+
+# 轨道加粗后，刻度点/微光/端帽要同比放大，否则细节会显得浮在粗轨上。
+TICK_RADIUS = 2.0
+SPARKLE_SCALE = 1.3
 
 GRADIENT_START = "#5865F2"
 GRADIENT_MID = "#7C3AED"
@@ -332,6 +336,7 @@ class ReasoningSlider(tk.Frame):
                     (.78, -3, 1.0), (.88, 1, .7))
         for ratio, dy, size in sparkles:
             sx = pad + span * ratio
+            size *= SPARKLE_SCALE
             if sx < knob_x - KNOB_RADIUS:
                 c.create_oval(sx - size, TRACK_Y + dy - size,
                               sx + size, TRACK_Y + dy + size,
@@ -342,7 +347,8 @@ class ReasoningSlider(tk.Frame):
         for i in range(len(self.stops)):
             sx = self._x_for(i)
             if abs(sx - knob_x) > KNOB_RADIUS:
-                c.create_oval(sx - 1.3, TRACK_Y - 1.3, sx + 1.3, TRACK_Y + 1.3,
+                c.create_oval(sx - TICK_RADIUS, TRACK_Y - TICK_RADIUS,
+                              sx + TICK_RADIUS, TRACK_Y + TICK_RADIUS,
                               fill="#A5A0D8" if i <= index else C["muted"],
                               outline="", tags=("slider-stop",))
 
@@ -425,7 +431,7 @@ class MiniReasoningTrack(tk.Canvas):
         knob_x = pad + (span * current / (len(self._values) - 1)
                         if len(self._values) > 1 else 0)
         self.create_line(pad, mid, width - pad, mid, fill=C["border_hi"],
-                         width=2, capstyle=tk.ROUND)
+                         width=3, capstyle=tk.ROUND)
         if knob_x > pad + 0.5:
             x = int(pad)
             span = max(1.0, width - pad * 2)
