@@ -35,6 +35,7 @@ sys.path.insert(0, str(REPO))
 
 import chat_widgets as cw  # noqa: E402
 import brand_marks  # noqa: E402
+import decor  # noqa: E402
 import gui_theme as theme  # noqa: E402
 import reasoning_slider as rs  # noqa: E402
 import forge_gui_v2 as gui  # noqa: E402
@@ -864,6 +865,39 @@ class RefactorAcceptance(unittest.TestCase):
         # 普通模型仍可用 0.7
         self.assertEqual(sampling.resolve("deepseek-v4", "openai", 0.7), 0.7)
 
+
+
+    def test_empty_state_shows_decorated_banner(self):
+        """欢迎屏应挂上主视觉画布（decor 标签、可见、不越界）。"""
+        import json as _json
+        app = self.app
+        app.chat_area.show_empty()
+        self.pump(0.2)
+
+        def walk(w, acc):
+            try:
+                if w.winfo_class() == "Canvas":
+                    tagged = w.find_withtag("decor")
+                    if tagged:
+                        acc.append(w)
+            except Exception:
+                pass
+            for c in w.winfo_children():
+                walk(c, acc)
+
+        found = []
+        walk(app.chat_area, found)
+        self.assertTrue(found, "欢迎屏应有带 decor 标签的画布")
+        hero = found[0]
+        self.assertTrue(hero.winfo_ismapped(), "主视觉必须可见")
+        self.assertGreater(len(hero.find_withtag("decor")), 100)
+        for i in hero.find_all():
+            b = hero.bbox(i)
+            if b:
+                self.assertLessEqual(b[2], hero.winfo_width() + 1)
+                self.assertLessEqual(b[3], hero.winfo_height() + 1)
+
+
     def test_workspace_auxiliary_navigation_and_file_tabs_remain_usable(self):
         self.app._open_workspace()
         self.pump(0.3)
@@ -882,6 +916,8 @@ class RefactorAcceptance(unittest.TestCase):
         self.assertLess(ws._file_tab_strip.winfo_rooty(), ws._code_text.winfo_rooty())
 
     # ── 13. 窄窗口优先收起辅助区，不挤压 Conversation ──
+
+
     def test_narrow_window_auto_collapses_auxiliary_regions(self):
         self.app._open_workspace("file_tree")
         self.pump(0.3)
@@ -908,3 +944,82 @@ class RefactorAcceptance(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class DecorTests(unittest.TestCase):
+    """装饰图案库：Tk 原生、无动画、颜色向背景渐混。"""
+
+    def setUp(self):
+        self.host = tk.Tk()
+        self.host.withdraw()
+
+    def tearDown(self):
+        self.host.destroy()
+
+    def test_primitives_draw_soft_and_deterministic(self):
+        bg = "#0E0E12"
+        c = tk.Canvas(self.host, width=300, height=100, bg=bg,
+                      highlightthickness=0)
+        n = decor.dot_grid(c, 5, 5, 295, 95, bg=bg)
+        self.assertGreaterEqual(n, 60)
+        fills = {c.itemcget(i, "fill") for i in c.find_all()}
+        self.assertEqual(len(fills), 2, "点阵应有两种深度")
+        self.assertNotIn(bg, fills, "点阵颜色不能等于背景（否则不可见）")
+
+        c2 = tk.Canvas(self.host, width=200, height=160, bg=bg,
+                       highlightthickness=0)
+        decor.soft_orb(c2, 100, 80, 60, bg=bg, layers=9, core="#EDE9FE")
+        rings = sorted(c2.find_all(), key=lambda i: c2.bbox(i)[2] - c2.bbox(i)[0])
+        fills2 = [c2.itemcget(i, "fill") for i in rings
+                  if c2.itemcget(i, "fill") != "#EDE9FE"]
+
+        def bgness(hexcolor):
+            fg = (0x7C, 0x3A, 0xED)
+            bgc = (0x0E, 0x0E, 0x12)
+            h = tuple(int(hexcolor[i:i + 2], 16) for i in (1, 3, 5))
+            df = sum(abs(h[k] - fg[k]) for k in range(3))
+            db = sum(abs(h[k] - bgc[k]) for k in range(3))
+            return db / max(1, df + db)
+
+        ratios = [bgness(f) for f in fills2]
+        self.assertTrue(all(ratios[k] > ratios[k + 1]
+                            for k in range(len(ratios) - 1)),
+                        "光晕必须由外到内单调变浓: %s" % ratios)
+        for i in c2.find_all():
+            b = c2.bbox(i)
+            self.assertGreaterEqual(b[0], 0)
+            self.assertLessEqual(b[2], 200)
+
+        # 星座可复现：同 seed 两次坐标一致
+        c3 = tk.Canvas(self.host, width=300, height=160, bg=bg,
+                       highlightthickness=0)
+        c4 = tk.Canvas(self.host, width=300, height=160, bg=bg,
+                       highlightthickness=0)
+        decor.constellation(c3, 15, 10, 285, 150, bg=bg, count=9, seed=7)
+        decor.constellation(c4, 15, 10, 285, 150, bg=bg, count=9, seed=7)
+        a = [c3.coords(i) for i in c3.find_all()]
+        b = [c4.coords(i) for i in c4.find_all()]
+        self.assertEqual(a, b)
+
+    def test_hero_banner_stays_inside_and_layered(self):
+        bg = "#0E0E12"
+        banner = decor.hero_banner(self.host, 640, 220, bg=bg)
+        self.assertEqual((int(banner["width"]), int(banner["height"])),
+                         (640, 220))
+        items = banner.find_all()
+        self.assertGreater(len(items), 100, "组合画应有足量元素")
+        kinds = {}
+        for i in items:
+            kinds[banner.type(i)] = kinds.get(banner.type(i), 0) + 1
+        self.assertGreater(kinds.get("oval", 0), 20)
+        self.assertGreaterEqual(kinds.get("line", 0), 6)
+        for i in items:
+            b = banner.bbox(i)
+            if b:
+                self.assertGreaterEqual(b[0], -1, "元素不能超出画布")
+                self.assertGreaterEqual(b[1], -1)
+                self.assertLessEqual(b[2], 641)
+                self.assertLessEqual(b[3], 221)
+
+
+

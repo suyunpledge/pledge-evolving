@@ -28,6 +28,7 @@ import time
 import tkinter as tk
 from typing import Callable, Optional
 
+import decor
 from gui_theme import (
     C, FONT_CAPTION, FONT_MICRO, FONT_MONO, FONT_MONO_SM, FONT_MONO_XS, FONT_SECTION,
     FONT_SMALL, FONT_TITLE, FONT_UI, FONT_UI_BOLD, R_CARD, R_MD, R_PILL,
@@ -1041,7 +1042,13 @@ class MessageArea(tk.Frame):
                    actions=()):
         self.clear()
         box = tk.Frame(self.scroll.inner, bg=self._bg)
-        box.pack(fill=tk.X, pady=(32, 0))
+        box.pack(fill=tk.X, pady=(28, 0))
+        # 欢迎屏主视觉：柔光球 + 星座 + 点阵的组合画（Tk 原生，无动画）
+        try:
+            banner = decor.hero_banner(box, 560, 170, bg=self._bg)
+            banner.pack(pady=(0, 14))
+        except tk.TclError:
+            banner = None
         tk.Label(box, text=title, bg=self._bg, fg=C["text"], font=FONT_TITLE).pack()
         for line in lines:
             label = tk.Label(box, text=line, bg=self._bg, fg=C["ter"],
