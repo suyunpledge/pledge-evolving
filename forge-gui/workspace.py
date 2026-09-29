@@ -49,6 +49,7 @@ _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
+import decor
 from gui_theme import (  # noqa: E402
     C,
     FONT_MICRO,
@@ -1174,8 +1175,17 @@ class WorkspacePanel(tk.Frame):
         # 头部
         head = tk.Frame(card, bg=C["bg"])
         head.pack(fill=tk.X)
-        tk.Label(head, text="▤", bg=C["bg"], fg=C["accent2"],
-                 font=FONT_TITLE).pack(side=tk.LEFT, padx=(0, 6))
+        # 仓库图标：柔光球代替原来的单色 ▤ 字符
+        try:
+            repo_icon = tk.Canvas(head, width=34, height=34, bg=C["bg"],
+                                  highlightthickness=0, bd=0)
+            decor.soft_orb(repo_icon, 17, 17, 15, bg=C["bg"],
+                           fg=C["accent2"], layers=7, core=C["accent2"])
+            decor.dot_grid(repo_icon, 4, 4, 30, 30, bg=C["bg"], fg=C["accent2"],
+                           step=13, r=0.7)
+            repo_icon.pack(side=tk.LEFT, padx=(0, 8))
+        except tk.TclError:
+            pass
         self._home_title_var = tk.StringVar(value=self._repo_root.name)
         tk.Label(head, textvariable=self._home_title_var, bg=C["bg"],
                  fg=C["text"], font=FONT_TITLE,
