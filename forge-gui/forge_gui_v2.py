@@ -364,39 +364,54 @@ def port_in_use(port: int, host: str = "127.0.0.1", timeout: float = 0.35) -> bo
         return False
 
 
-def kill_process_tree(proc, timeout: float = 5.0) -> None:
+def kill_process_tree(proc, timeout: float = 5.0) -> bool:
     """杀掉进程及其全部子进程。
 
     必须杀树：gateway 会派生子进程，只 kill 父进程会让子进程逃逸并占住端口，
     下次启动就会「端口被占用」——而且窗口关了服务还在后台跑。
+
+    返回进程是否已经退出。Windows 的 taskkill 即使失败也只会给非零退出码，
+    不会抛异常，所以必须检查 returncode，并继续走 Popen 的 terminate/kill 回退。
     """
     if proc is None:
-        return
+        return True
     try:
         alive = proc.poll() is None
     except Exception:
-        alive = False
+        return False
     if not alive:
-        return
+        return True
     if IS_WINDOWS:
         try:
-            subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
-                           capture_output=True, timeout=timeout,
-                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-            return
+            result = subprocess.run(
+                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                capture_output=True, timeout=timeout,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                check=False)
+            if result.returncode == 0:
+                try:
+                    proc.wait(timeout=min(2.0, max(0.2, timeout)))
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
+                if proc.poll() is not None:
+                    return True
         except (OSError, subprocess.TimeoutExpired):
             pass
-    # 非 Windows 或 taskkill 不可用：先温和后强硬
+    # 非 Windows、taskkill 失败或 taskkill 返回后进程仍在：先温和后强硬。
     try:
         proc.terminate()
         try:
             proc.wait(timeout=2)
-            return
+            return proc.poll() is not None
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait(timeout=2)
     except (OSError, subprocess.TimeoutExpired):
         pass
+    try:
+        return proc.poll() is not None
+    except Exception:
+        return False
 
 
 def load_brand_logo(target_px: int):
@@ -1546,7 +1561,7 @@ class ForgeGuiApp:
                 if msg.role == "user":
                     self.chat_area.add_user(msg.content)
                 elif msg.content.strip():
-                    agent = self.chat_area.add_agent()
+                    agent = self.chat_area.add_agent(app=self)
                     agent.render_markdown(msg.content)
         try:
             self.chat_title_var.set(str(session.get("title", "对话")))
@@ -1684,11 +1699,14 @@ class ForgeGuiApp:
 
         def worker():
             try:
+                task_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                if IS_WINDOWS:
+                    task_flags |= getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
                 proc = subprocess.Popen(cmd, cwd=cwd, env=env,
                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                         text=True, encoding="utf-8",
                                         errors="replace",
-                                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                                        creationflags=task_flags)
                 self._task_proc = proc
                 if self._task_cancel_event.is_set():
                     self._terminate_task_process(proc)
@@ -1711,20 +1729,9 @@ class ForgeGuiApp:
 
     @staticmethod
     def _terminate_task_process(proc):
-        if proc.poll() is not None:
-            return
-        try:
-            if IS_WINDOWS:
-                subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                               timeout=5, creationflags=subprocess.CREATE_NO_WINDOW)
-            if proc.poll() is None:
-                proc.terminate()
-        except (OSError, subprocess.TimeoutExpired):
-            try:
-                proc.terminate()
-            except OSError:
-                pass
+        # 任务和 gateway 共用同一套经过校验的进程树清理；只 terminate 父进程
+        # 会让工具子进程留在后台，表现为 Forge 已关但进程仍杀不掉。
+        return kill_process_tree(proc)
 
     @staticmethod
     def _parse_task_output(out: str) -> dict | None:
@@ -3773,13 +3780,27 @@ class ForgeGuiApp:
         """用户主动停止：之后不再自动拉起，直到再次启动。"""
         self._gateway_user_stopped = True
         self._restart_pending = False
+        self._cancel_autostart_timer()
         self._stop_gateway()
         self._set_status("gateway 已手动停止（再次点击「启动」可恢复）", "warn")
+
+    def _cancel_autostart_timer(self) -> None:
+        timer = self._autostart_after_id
+        self._autostart_after_id = None
+        if timer is None:
+            return
+        try:
+            self.root.after_cancel(timer)
+        except (tk.TclError, ValueError):
+            pass
 
     def _start_gateway(self, autostart: bool = False) -> bool:
         """拉起 gateway。返回是否真的起了进程（供自启重试判断）。"""
         if self._closing:
             # 关窗过程中可能有延迟定时器刚到点；别在退出路上又拉一个进程出来。
+            return False
+        if autostart and self._gateway_user_stopped:
+            # 防住「重试回调已进入、用户刚好点击停止」的竞态。
             return False
         if self.gateway_proc and self.gateway_proc.poll() is None:
             return True
@@ -4033,15 +4054,18 @@ class ForgeGuiApp:
             return
         code = proc.returncode
         self._gateway_down(f"进程已退出（代码 {code}）")
-        if self._closing or self._gateway_user_stopped:
+        if self._closing:
             return
         if getattr(self, "_restart_pending", False):
             # 这是「重启」流程里的停止，紧接着启动
             self._restart_pending = False
+            self._gateway_user_stopped = False
             try:
                 self._autostart_after_id = self.root.after(300, self._autostart_gateway)
             except tk.TclError:
                 pass
+            return
+        if self._gateway_user_stopped:
             return
         # 意外退出 → 自动拉起（60 秒内最多 5 次，退避递增）
         now = time.monotonic()
@@ -4237,7 +4261,7 @@ class ForgeGuiApp:
         self.send_var.set("")
         self._chat_empty = False
         self.chat_area.add_user(prompt)
-        self._agent_msg = self.chat_area.add_agent()
+        self._agent_msg = self.chat_area.add_agent(app=self)
         self._agent_msg.set_status("生成中…")
         self._agent_msg.stream_text("")
         messages = (list(self._chat_history) if self._include_history else []) + [ChatMessage("user", prompt)]
@@ -4375,20 +4399,21 @@ class ForgeGuiApp:
                 "有未保存的修改", "功能开关或编辑内容尚未保存。要放弃这些修改并退出吗？", parent=self.root):
             return
         self._closing = True
+        try:
+            self.model_combo.close_menu()
+        except (AttributeError, tk.TclError):
+            pass
         if self._responsive_after_id is not None:
             try:
                 self.root.after_cancel(self._responsive_after_id)
             except (tk.TclError, ValueError):
                 pass
             self._responsive_after_id = None
-        if self._autostart_after_id is not None:
-            try:
-                self.root.after_cancel(self._autostart_after_id)
-            except (tk.TclError, ValueError):
-                pass
-            self._autostart_after_id = None
+        self._cancel_autostart_timer()
         self._cancel_event.set()
-        self._stop_task()
+        task_cancel = getattr(self, "_task_cancel_event", None)
+        if task_cancel is not None:
+            task_cancel.set()
         self._archive_current_session()
         try:
             self.root.after_cancel(self._event_poll)
@@ -4399,8 +4424,49 @@ class ForgeGuiApp:
                 self._sysmon.stop()
             except Exception:
                 pass
-        self._stop_gateway()
-        self.root.destroy()
+        processes = []
+        for proc in (getattr(self, "_task_proc", None), self.gateway_proc):
+            try:
+                alive = proc is not None and proc.poll() is None
+            except Exception:
+                alive = False
+            if alive and all(existing is not proc for existing in processes):
+                processes.append(proc)
+        if not processes:
+            self.root.destroy()
+            return
+
+        # 先把整个 Forge 界面（包括浮层）从桌面上拿走，再在后台完成有界清理。
+        # 主循环保留到子进程确认退出，避免 root 一毁掉，清理回调也跟着消失。
+        try:
+            self.root.withdraw()
+        except tk.TclError:
+            pass
+        finished = threading.Event()
+
+        def terminate_children():
+            try:
+                for proc in processes:
+                    if not kill_process_tree(proc):
+                        # 极短重试处理 taskkill 返回和 Popen 状态刷新之间的窗口。
+                        kill_process_tree(proc, timeout=2.0)
+            finally:
+                finished.set()
+
+        def finish_close():
+            if not finished.is_set():
+                try:
+                    self.root.after(40, finish_close)
+                except tk.TclError:
+                    pass
+                return
+            try:
+                self.root.destroy()
+            except tk.TclError:
+                pass
+
+        threading.Thread(target=terminate_children, daemon=False).start()
+        finish_close()
 
 
 # ─── 入口 ──────────────────────────────────────────────

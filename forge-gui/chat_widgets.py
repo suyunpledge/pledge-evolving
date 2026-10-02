@@ -828,8 +828,8 @@ class UserMessage(tk.Frame):
 class AgentMessage(tk.Frame):
     """Forge 的回复：头像 + 名字 + 角色徽章 + 正文 + trace（可折叠）。"""
 
-    def __init__(self, parent, *, bg=None, name="Forge", role=None, ts=None,
-                 glyph="F", subtitle=None):
+    def __init__(self, parent, *, app=None, bg=None, name="Forge", role=None,
+                 ts=None, glyph="F", subtitle=None):
         base = bg or C["chat"]
         super().__init__(parent, bg=base)
         self._base = base
@@ -837,6 +837,8 @@ class AgentMessage(tk.Frame):
         # （以前 agent 侧根本没有气孔，整条时间线是平的。）
         self._bg = C["msg_agent_bg"]
         self._max_width = MAX_BUBBLE_WIDTH
+        self._app = app          # 给 ghost 操作条的重生成/赞踩用
+        self._action_row = None
 
         # head 行：avatar + 名字 + 时间(降权) + 角色徽章 + 状态（右对齐）
         head = tk.Frame(self, bg=base)
@@ -970,12 +972,92 @@ class AgentMessage(tk.Frame):
         return card
 
     def _ensure_trace_host(self):
-        """第一次 add_steps/add_tool_card 时创建 trace 容器。"""
+        """第一次 add_steps/add_tool_card 时创建 trace 容器，并附 ghost 操作条。"""
         host = getattr(self, "_trace_host", None)
         if host is None or not host.winfo_exists():
             host = tk.Frame(self.body, bg=self._bg)
             host.pack(fill=tk.X)
             self._trace_host = host
+        self._ensure_action_row()
+        return host
+
+    def _ensure_action_row(self):
+        """消息下方 ghost 操作条：复制 / 重生成 / 赞 / 踩。
+
+        仅 UI：赞/踩暂不落库；重生成调主程序的 _retry_last_agent（若无则静默）。
+        整行靠左；常规态 fg=muted，hover 才变 text，不抢正文视觉优先级。
+        """
+        if getattr(self, "_action_row", None) is not None:
+            return self._action_row
+        host = tk.Frame(self, bg=self._base)
+        host.pack(fill=tk.X, anchor="w", pady=(2, 0))
+
+        def _copy():
+            try:
+                parts = []
+                for child in self.body.winfo_children():
+                    def walk(w):
+                        try:
+                            for sub in w.winfo_children():
+                                walk(sub)
+                        except tk.TclError:
+                            pass
+                        try:
+                            cls = w.winfo_class()
+                        except tk.TclError:
+                            cls = ""
+                        if cls == "Text":
+                            try:
+                                v = w.get("1.0", "end-1c").rstrip()
+                                if v:
+                                    parts.append(v)
+                            except tk.TclError:
+                                pass
+                        elif cls == "Label":
+                            try:
+                                t = w.cget("text")
+                                if t and isinstance(t, str) and t.strip():
+                                    parts.append(t)
+                            except tk.TclError:
+                                pass
+                    walk(child)
+                content = "\n".join(parts).strip() or "(消息没有可复制文本)"
+                self.clipboard_clear()
+                self.clipboard_append(content)
+            except tk.TclError:
+                pass
+
+        def _retry():
+            app = getattr(self, "_app", None)
+            if app is not None and callable(getattr(app, "_retry_last_agent", None)):
+                try:
+                    app._retry_last_agent(self)
+                except Exception:
+                    pass
+
+        def _vote(value: str):
+            app = getattr(self, "_app", None)
+            if app is not None and callable(getattr(app, "_set_status", None)):
+                try:
+                    app._set_status(f"反馈：{value}（UI only，未落库）", "info")
+                except Exception:
+                    pass
+
+        actions = [
+            ("⧉", "复制", _copy),
+            ("⟳", "重生成", _retry),
+            ("👍", "赞", lambda: _vote("赞")),
+            ("👎", "踩", lambda: _vote("踩")),
+        ]
+        for glyph, tip, cmd in actions:
+            btn = tk.Label(host, text=glyph, bg=self._base, fg=C["muted"],
+                           font=FONT_SMALL, cursor="hand2", padx=4)
+            btn.pack(side=tk.LEFT, padx=1)
+            btn.bind("<Button-1>", lambda _e, c=cmd: c())
+            btn.bind("<Enter>", lambda _e, b=btn: b.configure(fg=C["text"]))
+            btn.bind("<Leave>", lambda _e, b=btn: b.configure(fg=C["muted"]))
+            attach_tooltip(btn, tip)
+        self._action_row = host
         return host
 
     def add_note(self, text: str, *, tone="muted"):
@@ -1109,11 +1191,11 @@ class MessageArea(tk.Frame):
         return msg
 
     def add_agent(self, *, role=None, ts=None, name="Forge", glyph="F",
-                  subtitle=None):
+                  subtitle=None, app=None):
         following = self.scroll.at_bottom()
         self._prepare()
-        msg = AgentMessage(self.scroll.inner, bg=self._bg, name=name, role=role,
-                           ts=ts, glyph=glyph, subtitle=subtitle)
+        msg = AgentMessage(self.scroll.inner, app=app, bg=self._bg, name=name,
+                           role=role, ts=ts, glyph=glyph, subtitle=subtitle)
         msg.pack(fill=tk.X, pady=(16, 0))
         self._finish(following)
         return msg

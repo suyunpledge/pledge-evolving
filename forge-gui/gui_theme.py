@@ -26,24 +26,24 @@ IS_WINDOWS = platform.system() == "Windows"
 
 C: dict[str, str] = {
     # 背景层级
-    "bg": "#0E0E13",
-    "activity": "#09090D",
-    "sidebar": "#0B0B10",
-    "chat": "#111117",
-    "surface": "#1A1A22",
-    "surface2": "#15151C",
-    "surface_subtle": "#15151C",
-    "hover": "#1E1E2A",
-    "sel": "#1E1E2A",
-    "code_bg": "#0D0D12",
-    "input_bg": "#16161C",
+    "bg": "#141414",            # 主背景（暖灰黑）
+    "activity": "#0F0F0F",
+    "sidebar": "#1C1C1C",
+    "chat": "#141414",
+    "surface": "#232323",
+    "surface2": "#1C1C1C",
+    "surface_subtle": "#1F1F1F",
+    "hover": "#262626",
+    "sel": "#262626",
+    "code_bg": "#1A1A1A",
+    "input_bg": "#1F1F1F",
     "black": "#000000",
 
     # 线条
-    "border": "#23232C",
-    "border_hi": "#2A2A34",
-    "sel_border": "#34344A",
-    "scroll": "#3A3A46",
+    "border": "#2A2A2A",
+    "border_hi": "#333333",
+    "sel_border": "#3A3A3A",
+    "scroll": "#3A3A3A",
 
     # 主色
     "accent": "#4F46E5",
@@ -76,8 +76,12 @@ C: dict[str, str] = {
 
     # 消息气泡：两侧要能看出「谁在说」，又不能让深色界面变花。
     # user 带一点主色倾向（“我说的话”），agent 用中性面；两者都配一道 hairline 描边。
-    "msg_user_bg": "#232134",
-    "msg_agent_bg": "#1A1A22",
+    "msg_user_bg": "#2EAE56",         # 微信绿（暗端）
+    "msg_user_fg": "#FFFFFF",          # 用户气泡文字（白）
+    "msg_agent_bg": "#2A2A2A",         # AI 深灰气泡
+    "msg_agent_fg": "#E8E8E8",         # AI 气泡文字（浅灰）
+    "msg_user_bg_old": "#232134",
+    "msg_agent_bg_old": "#1A1A22",
     "msg_user_border": "#3A3560",
     "msg_agent_border": "#26262F",
 
@@ -178,7 +182,12 @@ def emoji_font(text: str, size: int | None = None):
     return (EMOJI_FAMILY, base)
 
 
-# ─── 绘制原语 ──────────────────────────────────────────────
+# 颜色常量（独立于 token 的 rgba，Canvas / 头像等需要时用）
+WECHAT_GREEN = (149, 236, 105, 255)     # #95EC69（亮端，UI 强调）
+WECHAT_GREEN_DARK = (46, 174, 86, 255)   # #2EAE56（暗端，气泡底）
+
+
+# ─── 绘制原语 ───────────────────────────────────────────────────────────────────────────────────────────
 
 
 def rounded_points(x1, y1, x2, y2, r):
