@@ -567,7 +567,8 @@ class ToolCard(tk.Frame):
     def _refresh_summary(self):
         n = len(self._row_specs)
         secs = sum(s for _, s in self._row_specs)
-        text = f"工具调用 · {n} 项"
+        # 尊重 title（如「子 Agent 分工」「Agent 集群」），默认仍是「调用工具」
+        text = f"{getattr(self, '_title_text', None) or '调用工具'} · {n} 项"
         if secs > 0:
             if secs >= 10:
                 text += f" · {secs:.0f}s"

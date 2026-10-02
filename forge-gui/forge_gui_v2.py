@@ -55,6 +55,7 @@ from forge_client import (  # noqa: E402
 from interaction_model import (read_attachment, compose_prompt, task_command, task_outcome,
                                select_provider, gateway_settings)
 from interaction_model import model_label as served_model_label
+import sub_agent as team   # 子 Agent 分工 + Agent 集群（移植自 AI Platform）
 
 import chat_widgets as cw  # noqa: E402
 import brand_marks
@@ -1321,8 +1322,287 @@ class ForgeGuiApp:
         }
         for key in ("agents", "knowledge", "evolution", "files"):
             frame = tk.Frame(center, bg=C["bg"])
-            self._build_stub_view(frame, key)
+            if key == "agents":
+                # agents 视图 = 真实配置面板（集群/分工/记忆模式）
+                self._build_agents_team_panel(frame)
+            else:
+                self._build_stub_view(frame, key)
             self._views[key] = frame
+
+    # ── agents 视图：Agent 集群与子 Agent 分工配置面板 ──
+    def _build_agents_team_panel(self, parent):
+        """真实配置面板（替换占位 stub）。
+
+        数据存 ~/.forge/agent-cluster.json（sub_agent.load_config/save_config）。
+        模型下拉直接显示 provider 的真模型 id（与运行时直发上游一致）。
+        """
+        cfg = team.load_config()
+        self._team_cfg = cfg
+
+        holder = tk.Frame(parent, bg=C["bg"])
+        holder.pack(fill=tk.BOTH, expand=True)
+        # 可滚动（面板可能很高）
+        canvas = tk.Canvas(holder, bg=C["bg"], highlightthickness=0, bd=0)
+        vbar = tk.Scrollbar(holder, orient=tk.VERTICAL, command=canvas.yview,
+                            bg=C["surface2"], troughcolor=C["bg"],
+                            relief=tk.FLAT, bd=0, highlightthickness=0, width=8)
+        canvas.configure(yscrollcommand=vbar.set)
+        vbar.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        body = tk.Frame(canvas, bg=C["bg"])
+        win = canvas.create_window((0, 0), window=body, anchor="nw")
+        body.bind("<Configure>",
+                  lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>",
+                    lambda e: canvas.itemconfigure(win, width=e.width))
+        canvas.bind("<MouseWheel>", lambda e: canvas.yview_scroll(
+            -1 if e.delta > 0 else 1, "units"))
+        self._agents_panel_canvas = canvas
+
+        # ── 所有 provider 的真模型 id（去重，作为下拉候选项）──
+        model_ids: list[str] = []
+        for r in self.user_rows:
+            conf = r.get("config") or {}
+            if "baseURL" in conf and conf.get("model"):
+                mid = str(conf["model"])
+                if mid not in model_ids:
+                    model_ids.append(mid)
+        if not model_ids:
+            model_ids = ["（先在配置里添加 Provider）"]
+
+        # ── 头部说明 ──
+        tk.Label(body, text="Agent 集群与分工",
+                 bg=C["bg"], fg=C["text"], font=FONT_TITLE,
+                 anchor="w").pack(fill=tk.X, padx=20, pady=(18, 2))
+        tk.Label(body,
+                 text="把一轮请求拆给多个 worker 并行跑，再汇总注入主对话。"
+                      "分工与集群互斥（同开会双份消耗）。核心逻辑移植自 AI Platform。",
+                 bg=C["bg"], fg=C["muted"], font=FONT_SMALL, anchor="w",
+                 wraplength=640, justify=tk.LEFT).pack(fill=tk.X, padx=20,
+                                                        pady=(0, 12))
+
+        # ── 1) Agent 集群 ──
+        card1 = RoundedCard(body, radius=R_CARD, fill=C["surface"],
+                            outline=C["border_hi"], padx=16, pady=14, bg=C["bg"])
+        card1.pack(fill=tk.X, padx=20, pady=(0, 12))
+        c1 = card1.content
+        head1 = tk.Frame(c1, bg=C["surface"])
+        head1.pack(fill=tk.X)
+        tk.Label(head1, text="Agent 集群", bg=C["surface"], fg=C["text"],
+                 font=FONT_SECTION).pack(side=tk.LEFT)
+        tk.Label(head1, text="多路同构编程方案并行，主模型综合对比",
+                 bg=C["surface"], fg=C["muted"],
+                 font=FONT_SMALL).pack(side=tk.LEFT, padx=(10, 0))
+        self._team_cluster_var = tk.BooleanVar(
+            value=bool(cfg["cluster"].get("enabled")))
+        tk.Checkbutton(head1, text="启用", variable=self._team_cluster_var,
+                       bg=C["surface"], fg=C["text"], selectcolor=C["sel"],
+                       activebackground=C["surface"], activeforeground=C["text"],
+                       font=FONT_SMALL).pack(side=tk.RIGHT)
+
+        count_row = tk.Frame(c1, bg=C["surface"])
+        count_row.pack(fill=tk.X, pady=(8, 4))
+        tk.Label(count_row, text="路数", bg=C["surface"], fg=C["ter"],
+                 font=FONT_SMALL).pack(side=tk.LEFT, padx=(0, 8))
+        self._team_cluster_count = tk.IntVar(
+            value=max(1, min(4, int(cfg["cluster"].get("count") or 2))))
+        for n in (1, 2, 3, 4):
+            tk.Radiobutton(count_row, text=str(n), variable=self._team_cluster_count,
+                           value=n, bg=C["surface"], fg=C["text"],
+                           selectcolor=C["sel"], activebackground=C["surface"],
+                           activeforeground=C["text"], font=FONT_SMALL).pack(
+                side=tk.LEFT, padx=(0, 6))
+        tk.Label(count_row, text="（每路可选不同模型）", bg=C["surface"],
+                 fg=C["muted"], font=FONT_MICRO).pack(side=tk.LEFT)
+
+        # 每路模型下拉（最多 4 路，按当前 count 显示）
+        self._team_lane_combo: list[ttk.Combobox] = []
+        lanes_cfg = list(cfg["cluster"].get("lanes") or [])
+        lane_box = tk.Frame(c1, bg=C["surface"])
+        lane_box.pack(fill=tk.X, pady=(4, 0))
+        for i in range(4):
+            row = tk.Frame(lane_box, bg=C["surface"])
+            row.pack(fill=tk.X, pady=1)
+            tk.Label(row, text=f"方案 {i + 1}", bg=C["surface"], fg=C["ter"],
+                     font=FONT_SMALL, width=8, anchor="w").pack(side=tk.LEFT)
+            var = tk.StringVar()
+            lane = lanes_cfg[i] if i < len(lanes_cfg) else {}
+            initial = lane.get("model") or (model_ids[0] if model_ids else "")
+            var.set(initial)
+            combo = ttk.Combobox(row, textvariable=var, values=model_ids,
+                                 state="readonly", font=FONT_SMALL)
+            combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
+            self._team_lane_combo.append(combo)
+            self._team_lane_combo[-1]._model_var = var  # 取值用
+
+        # ── 2) 子 Agent 分工 ──
+        card2 = RoundedCard(body, radius=R_CARD, fill=C["surface"],
+                            outline=C["border_hi"], padx=16, pady=14, bg=C["bg"])
+        card2.pack(fill=tk.X, padx=20, pady=(0, 12))
+        c2 = card2.content
+        head2 = tk.Frame(c2, bg=C["surface"])
+        head2.pack(fill=tk.X)
+        tk.Label(head2, text="子 Agent 分工", bg=C["surface"], fg=C["text"],
+                 font=FONT_SECTION).pack(side=tk.LEFT)
+        tk.Label(head2, text="每个预设 = 一个并行 worker（温度固定 0.3）",
+                 bg=C["surface"], fg=C["muted"], font=FONT_SMALL).pack(
+            side=tk.LEFT, padx=(10, 0))
+        self._team_subs_var = tk.BooleanVar(
+            value=bool(cfg["sub_agents"].get("enabled")))
+        tk.Checkbutton(head2, text="启用", variable=self._team_subs_var,
+                       bg=C["surface"], fg=C["text"], selectcolor=C["sel"],
+                       activebackground=C["surface"], activeforeground=C["text"],
+                       font=FONT_SMALL).pack(side=tk.RIGHT)
+
+        self._team_preset_rows: list[dict] = []
+        preset_box = tk.Frame(c2, bg=C["surface"])
+        preset_box.pack(fill=tk.X, pady=(8, 4))
+        self._team_preset_box = preset_box
+
+        # 新增行按钮（从模板 + 空白）
+        btn_row = tk.Frame(c2, bg=C["surface"])
+        btn_row.pack(fill=tk.X, pady=(6, 0))
+        pill_button(btn_row, "＋ 从模板添加", self._team_add_from_template,
+                    kind="ghost", bg=C["surface"], font=FONT_SMALL).pack(
+            side=tk.LEFT, padx=(0, 6))
+        pill_button(btn_row, "＋ 空白预设", lambda: self._team_add_preset(
+            {"id": f"sub-{int(time.time())}", "role": "worker",
+             "system_prompt": "直接给出要点，保持简洁。"}),
+            kind="ghost", bg=C["surface"], font=FONT_SMALL).pack(side=tk.LEFT)
+
+        # 载入已有预设
+        for preset in list(cfg["sub_agents"].get("presets") or []):
+            self._team_add_preset(preset)
+
+        # ── 3) 记忆模式 ──
+        card3 = RoundedCard(body, radius=R_CARD, fill=C["surface"],
+                            outline=C["border_hi"], padx=16, pady=12, bg=C["bg"])
+        card3.pack(fill=tk.X, padx=20, pady=(0, 12))
+        c3 = card3.content
+        mem_row = tk.Frame(c3, bg=C["surface"])
+        mem_row.pack(fill=tk.X)
+        tk.Label(mem_row, text="记忆模式", bg=C["surface"], fg=C["text"],
+                 font=FONT_SECTION).pack(side=tk.LEFT)
+        self._team_mem_var = tk.StringVar(
+            value=cfg.get("memory_mode") or "isolated")
+        for val, tip in (("isolated", "隔离：子任务只看分工任务，最省 token"),
+                         ("unified", "统一：注入最近对话背景")):
+            tk.Radiobutton(mem_row, text=val, variable=self._team_mem_var,
+                           value=val, bg=C["surface"], fg=C["text"],
+                           selectcolor=C["sel"], activebackground=C["surface"],
+                           activeforeground=C["text"],
+                           font=FONT_SMALL).pack(side=tk.LEFT, padx=(10, 0))
+            attach_tooltip(mem_row.winfo_children()[-1], tip)
+
+        # ── 4) 保存 ──
+        foot = tk.Frame(body, bg=C["bg"])
+        foot.pack(fill=tk.X, padx=20, pady=(4, 24))
+        pill_button(foot, "保存配置", self._team_save, kind="primary",
+                    bg=C["bg"], font=FONT_UI).pack(side=tk.LEFT)
+        tk.Label(foot, text="配置文件：~/.forge/agent-cluster.json",
+                 bg=C["bg"], fg=C["muted"], font=FONT_MICRO).pack(
+            side=tk.LEFT, padx=(12, 0))
+
+    def _team_add_preset(self, preset: dict):
+        """分工预设一行：role + 模型下拉 + prompt + 删除。"""
+        box = self._team_preset_box
+        row = tk.Frame(box, bg=C["surface"], highlightthickness=1,
+                       highlightbackground=C["border_hi"])
+        row.pack(fill=tk.X, pady=2)
+        model_ids = [r.get("config", {}).get("model", "")
+                     for r in self.user_rows
+                     if "baseURL" in (r.get("config") or {})
+                     and r.get("config", {}).get("model")]
+        model_ids = list(dict.fromkeys(model_ids)) or ["（无 Provider）"]
+
+        top = tk.Frame(row, bg=C["surface"])
+        top.pack(fill=tk.X, padx=8, pady=(6, 2))
+        tk.Label(top, text="角色", bg=C["surface"], fg=C["muted"],
+                 font=FONT_MICRO).pack(side=tk.LEFT, padx=(0, 4))
+        role_var = tk.StringVar(value=str(preset.get("role") or "worker"))
+        tk.Entry(top, textvariable=role_var, width=14, bg=C["input_bg"],
+                 fg=C["text"], font=FONT_SMALL, relief=tk.FLAT, bd=0,
+                 insertbackground=C["accent"], highlightthickness=1,
+                 highlightbackground=C["border_hi"],
+                 highlightcolor=C["accent"]).pack(side=tk.LEFT, ipady=2,
+                                                  padx=(0, 8))
+        tk.Label(top, text="模型", bg=C["surface"], fg=C["muted"],
+                 font=FONT_MICRO).pack(side=tk.LEFT, padx=(0, 4))
+        model_var = tk.StringVar(value=str(preset.get("model") or model_ids[0]))
+        combo = ttk.Combobox(top, textvariable=model_var, values=model_ids,
+                             state="readonly", width=24, font=FONT_SMALL)
+        combo.pack(side=tk.LEFT, padx=(0, 6))
+        tk.Checkbutton(top, text="跑", variable=tk.BooleanVar(
+            value=bool(preset.get("enabled", True))), bg=C["surface"],
+            fg=C["text"], selectcolor=C["sel"], activebackground=C["surface"],
+            font=FONT_SMALL).pack(side=tk.RIGHT)
+        del_btn = glyph_button(top, "✕", lambda r=row: r.destroy(),
+                               bg=C["surface"], fg=C["muted"], size=10,
+                               tooltip="删除这条预设")
+        del_btn.pack(side=tk.RIGHT, padx=(0, 4))
+
+        prompt_var = tk.StringVar(value=str(preset.get("system_prompt") or ""))
+        tk.Label(row, text="P", bg=C["surface"], fg=C["muted"],
+                 font=FONT_MICRO).pack(side=tk.LEFT, padx=(8, 2), pady=6)
+        tk.Entry(row, textvariable=prompt_var, bg=C["input_bg"], fg=C["text"],
+                 font=FONT_SMALL, relief=tk.FLAT, bd=0,
+                 insertbackground=C["accent"], highlightthickness=1,
+                 highlightbackground=C["border_hi"],
+                 highlightcolor=C["accent"]).pack(side=tk.LEFT, fill=tk.X,
+                                                  expand=True, padx=(0, 8),
+                                                  ipady=2, pady=(0, 6))
+        self._team_preset_rows.append(
+            {"id": str(preset.get("id") or f"sub-{len(self._team_preset_rows)}"),
+             "role_var": role_var, "model_var": model_var,
+             "prompt_var": prompt_var, "row": row})
+
+    def _team_add_from_template(self):
+        cfg = self._team_cfg
+        templates = list(cfg.get("templates") or [])
+        added = [t for t in templates
+                 if not any(r["role_var"].get() == t["role"]
+                            for r in self._team_preset_rows)]
+        if not added:
+            self._set_status("模板都已添加（或没有预设模板）", "info")
+            return
+        self._team_add_preset(dict(added[0]))
+        self._set_status(f"已添加模板：{added[0]['role']}（可继续添加）", "ok")
+
+    def _team_save(self):
+        cfg = team.load_config()
+        # 集群
+        lanes = []
+        for i, combo in enumerate(self._team_lane_combo):
+            if i < self._team_cluster_count.get():
+                lanes.append({"model": combo._model_var.get()})
+        cfg["cluster"] = {"enabled": bool(self._team_cluster_var.get()),
+                          "count": int(self._team_cluster_count.get()),
+                          "lanes": lanes}
+        # 分工（从仍存在的行读取）
+        presets = []
+        for row in self._team_preset_rows:
+            try:
+                if not row["row"].winfo_exists():
+                    continue
+            except tk.TclError:
+                continue
+            presets.append({
+                "id": row["id"],
+                "role": row["role_var"].get().strip() or "worker",
+                "system_prompt": row["prompt_var"].get(),
+                "model": row["model_var"].get(),
+                "enabled": True,
+            })
+        cfg["sub_agents"] = {"enabled": bool(self._team_subs_var.get()),
+                             "presets": presets}
+        cfg["memory_mode"] = self._team_mem_var.get()
+        team.save_config(cfg)
+        self._team_cfg = cfg
+        self._set_status(
+            f"已保存：集群 {'开' if cfg['cluster']['enabled'] else '关'}"
+            f"（{cfg['cluster']['count']} 路）· 分工 "
+            f"{'开' if cfg['sub_agents']['enabled'] else '关'}"
+            f"（{len(presets)} 预设）· 记忆 {cfg['memory_mode']}", "ok")
 
     STUB_TEXT = {
         "agents": ("Agents", "forge 的 Agent 注册表与子 Agent 调度",
@@ -4390,6 +4670,139 @@ class ForgeGuiApp:
         if follow_output:
             area.scroll.scroll_to_end()
 
+    # ── Agent 集群 / 子 Agent 分工（移植自 AI Platform） ──
+
+    def _plan_sidecars(self, cfg: dict, prompt: str) -> dict | None:
+        """决定本轮要不要跑 sidecar；返回计划或 None。
+
+        语义照抄 route.ts：
+          - 子 Agent 分工开启且有预设 → 走分工
+          - 否则集群开启 → 走集群（1-4 路同构方案）
+          - 两者都开时分工优先（互斥，防双份注入）
+        """
+        try:
+            subs = team.enabled_sub_agent_presets(cfg)
+        except Exception:
+            subs = []
+        if subs:
+            context = None
+            if cfg.get("memory_mode") == "unified":
+                context = self._agent_shared_context()
+            return {"kind": "sub", "presets": subs, "context": context}
+        cluster = cfg.get("cluster") or {}
+        if cluster.get("enabled"):
+            context = None
+            if cfg.get("memory_mode") == "unified":
+                context = self._agent_shared_context()
+            return {"kind": "cluster", "count": int(cluster.get("count") or 2),
+                    "lanes": list(cluster.get("lanes") or []), "context": context}
+        return None
+
+    @staticmethod
+    def _find_provider_by_model(user_rows: list[dict], model_id: str):
+        """按真实模型 id 反查 provider config（子任务模型可能属于另一家）。"""
+        if not model_id:
+            return None
+        for row in user_rows:
+            conf = row.get("config") or {}
+            if "baseURL" in conf and str(conf.get("model")) == model_id:
+                if not row.get("disabled"):
+                    return conf
+        return None
+
+    def _agent_shared_context(self) -> str:
+        """unified 记忆模式：把最近对话拼成共享上下文（简单摘要，不打模型）。"""
+        lines = []
+        for msg in list(self._chat_history)[-6:]:
+            who = "用户" if msg.role == "user" else "Forge"
+            lines.append(f"{who}: {msg.content[:400]}")
+        return "（最近对话背景）\n" + "\n".join(lines) if lines else ""
+
+    def _run_sidecars(self, plan: dict, cfg: dict, cancel_event) -> str:
+        """在 worker 线程里执行子任务；返回注入文本（"" 表示无注入）。
+
+        返回前把每路状态用 _post_ui 刷到聊天消息行上（工具卡片形式）。
+        """
+        env = {**os.environ, **env_for()}
+        default_provider = select_provider(self.user_rows, self.model_var.get())
+        try:
+            default_model = str((default_provider or {}).get("model") or "")
+        except Exception:
+            default_model = ""
+        kind = plan["kind"]
+        context = plan.get("context")
+
+        if kind == "sub":
+            agents = team.build_sub_agents(plan["presets"],
+                                           self._last_sidecar_prompt,
+                                           context_text=context)
+            if not agents:
+                return ""
+            # 模型反查 provider：preset 指定的模型可能属于另一家 provider
+            for a in agents:
+                if a.provider is None:
+                    a.provider = self._find_provider_by_model(
+                        self.user_rows, a.model_name) or default_provider
+                    if a.provider is None and a.model_name:
+                        # 模型不属于任何已配置 provider：回落主模型，
+                        # 避免把 A 家模型名发到 B 家的 baseURL
+                        a.model_name = None
+            self._post_ui(self._set_request_status,
+                          f"子任务并行 {len(agents)} 路…")
+            results = team.run_sub_agents(agents, env,
+                                          default_provider=default_provider,
+                                          default_model=default_model)
+            injection = team.sub_agent_injection(results)
+        else:
+            lanes = []
+            for lane in plan.get("lanes") or []:
+                provider_id = lane.get("provider")
+                provider = None
+                if provider_id:
+                    provider = next(
+                        (r.get("config") for r in self.user_rows
+                         if r.get("id") == provider_id and "baseURL" in
+                         (r.get("config") or {})), None)
+                lane_model = lane.get("model") or ""
+                if lane_model and provider is None:
+                    provider = self._find_provider_by_model(
+                        self.user_rows, lane_model)
+                    if provider is None:
+                        lane_model = ""   # 回落主模型，保持 model/provider 一致
+                lanes.append({"provider": provider, "model": lane_model})
+            self._post_ui(self._set_request_status,
+                          f"Agent 集群 {plan['count']} 路并行…")
+            results = team.run_cluster(
+                self._last_sidecar_prompt, plan["count"], lanes, env,
+                default_provider=default_provider,
+                default_model=default_model, context_text=context)
+            injection = team.cluster_injection(results)
+
+        if cancel_event is not None and cancel_event.is_set():
+            return ""
+        # UI：把每路结果做成工具卡片挂在本轮消息上
+        rows = []
+        for r in results:
+            rows.append({
+                "name": f"{r.role}",
+                "desc": (r.model_used or default_model) +
+                        ("" if r.ok else f" · {r.error[:60]}"),
+                "elapsed": f"{r.duration_ms / 1000:.1f}s",
+                "ok": r.ok,
+            })
+        title = ("子 Agent 分工" if kind == "sub" else "Agent 集群")
+        self._post_ui(self._post_sidecar_card, title, rows)
+        return injection if any(r.ok for r in results) else ""
+
+    def _post_sidecar_card(self, title: str, rows: list[dict]):
+        msg = getattr(self, "_agent_msg", None)
+        if msg is None or not rows:
+            return
+        try:
+            msg.add_tool_card(rows, title=title, expanded=False)
+        except Exception:
+            pass
+
     def _do_send(self):
         if self._sending:
             return
@@ -4433,6 +4846,7 @@ class ForgeGuiApp:
             pass
         self.send_var.set("")
         self._chat_empty = False
+        self._last_sidecar_prompt = prompt   # compose 后的完整 prompt（含附件）
         self.chat_area.add_user(prompt)
         self._agent_msg = self.chat_area.add_agent(app=self)
         self._agent_msg.set_status("生成中…")
@@ -4447,6 +4861,10 @@ class ForgeGuiApp:
         self._set_status(f"请求 → {self.model_var.get()} …", "info")
 
         model = self.model_var.get()
+        # ── Agent 集群 / 子 Agent 分工（移植自 AI Platform sub-agent.ts）──
+        # 分工优先，与集群互斥（照抄 route.ts：同开会双份子调用+双份注入）。
+        team_cfg = team.load_config()
+        sidecar_plan = self._plan_sidecars(team_cfg, prompt)
         if self.gateway_proc is not None and getattr(self, "_gateway_provider", None):
             provider = select_provider(self.user_rows, model)
             running = self._gateway_provider
@@ -4465,6 +4883,19 @@ class ForgeGuiApp:
                     raise GatewayError(f"gateway 未连接：{msg}。请先启动 gateway 后重试。")
                 if cancel_event.is_set():
                     raise GenerationCancelled("已停止生成")
+                # 子任务并行（阻塞 worker 线程即可，不卡 UI；UI 状态由 _post_ui 刷）
+                if sidecar_plan is not None:
+                    if cancel_event.is_set():
+                        raise GenerationCancelled("已停止生成")
+                    injection = self._run_sidecars(sidecar_plan, team_cfg,
+                                                   cancel_event)
+                    if injection:
+                        # 插入本轮 messages 的最后一条 user 之前（AI Platform 协议）
+                        insert_at = max(0, len(messages) - 1)
+                        messages.insert(insert_at,
+                                        ChatMessage("system", injection))
+                    if cancel_event.is_set():
+                        raise GenerationCancelled("已停止生成")
                 self._post_ui(self._set_request_status, "正在生成…")
                 acc: list[str] = []
 
