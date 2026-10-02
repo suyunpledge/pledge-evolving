@@ -352,6 +352,20 @@ class RefactorAcceptance(unittest.TestCase):
         self.assertEqual([value for value, _row in picker._rows], ["cloud-fast"])
         picker.close_menu()
 
+    def test_model_picker_is_owned_and_dismisses_when_forge_loses_focus(self):
+        """模型/思考浮层不能成为跨应用置顶、抢输入的独立窗口。"""
+        picker = self.app.model_combo
+        picker.open_menu()
+        self.pump(0.1)
+        pop = picker._popup
+        self.assertIsNotNone(pop)
+        self.assertEqual(str(pop.transient()), self.root._w)
+        self.assertFalse(bool(pop.attributes("-topmost")))
+        self.assertEqual(pop.grab_current(), None, "模型浮层不应独占全局输入")
+        with patch.object(self.root, "focus_displayof", return_value=None):
+            picker._dismiss_if_background()
+        self.assertIsNone(picker._popup, "Forge 退到后台时浮层必须立即收起")
+
     # ── 9. 技术状态不抢正文 ──
     def test_tech_status_does_not_outweigh_body(self):
         import tkinter.font as tkfont
@@ -393,13 +407,37 @@ class RefactorAcceptance(unittest.TestCase):
         self.assertTrue(callable(getattr(self.app, "_run_task", None)))
 
     # ── 11. Activity Bar 与 contextual Sidebar 真正分层 ──
-    def test_activity_bar_and_contextual_sidebar_are_separate(self):
-        self.assertEqual(len(self.app._activity_markers), len(gui.NAV_ITEMS))
-        for key in ("agents", "knowledge", "evolution", "files"):
-            self.assertFalse(self.app._nav_widgets[key][0][0].winfo_ismapped(),
-                             f"占位视图 {key} 不应占用主轨道")
-        self.assertLess(self.app.activity_bar.winfo_width(),
-                        self.app.sidebar.winfo_width())
+    def test_sidebar_is_single_column_concept_layout(self):
+        # 概念图：单栏侧栏。主导航只占 3 项（对话/任务/工具集），
+        # 其余入口在「⋯ 更多」菜单与底部「⚙ 设置」里。
+        self.assertEqual(set(self.app._activity_markers), {"chat", "task", "tools"})
+        self.assertEqual(len(self.app._activity_markers), 3)
+        # 占位视图不占主导航（走更多菜单）
+        for key in ("agents", "knowledge", "evolution", "files", "config"):
+            entries = self.app._nav_widgets.get(key)
+            if entries:
+                for holder, _inner in entries:
+                    self.assertFalse(holder.winfo_ismapped(),
+                                     f"{key} 不应出现在主导航区")
+        # 窄轨道已移除（不 pack，宽度 0），侧栏是唯一的左栏
+        self.assertLessEqual(self.app.activity_bar.winfo_width(), 1)
+        # 侧栏底部有 设置 / 关于 / 收起 / 模型 pill
+        texts = []
+
+        def walk(w):
+            for c in w.winfo_children():
+                try:
+                    if c.winfo_class() in ("Label", "Button"):
+                        t = str(c.cget("text"))
+                        if t and t.strip():
+                            texts.append(t)
+                except Exception:
+                    pass
+                walk(c)
+        walk(self.app._sidebar_panels["chat"])
+        blob = " | ".join(texts)
+        for need in ("设置", "关于", "▣", "新建对话", "智能体", "最近对话"):
+            self.assertIn(need, blob, f"侧栏缺少 {need}")
         chat_panel = self.app._sidebar_panels["chat"]
         task_panel = self.app._sidebar_panels["task"]
         self.assertTrue(chat_panel.winfo_ismapped())
@@ -521,23 +559,23 @@ class RefactorAcceptance(unittest.TestCase):
             self.assertIn("思考强度 · Intense", self.app.model_combo._thinking_text.cget("text"))
 
     # ── 15. 侧边栏可见名称 + 彩色 emoji ──────────────────────
-    def test_activity_bar_shows_names_and_colour_emoji(self):
+    def test_sidebar_nav_shows_names_and_colour_emoji(self):
         labels = {}
         for key, entries in self.app._activity_labels.items():
             for _icon, text in entries:
                 labels[key] = text.cget("text")
-        for key in gui.PRIMARY_NAV:
+        # 主导航 3 项（单栏侧栏）显示名称
+        for key in ("chat", "task", "tools"):
             self.assertEqual(labels.get(key), gui.NAV_LABEL[key],
-                             f"{key} 的侧边栏入口应显示名称")
+                             f"{key} 的侧栏导航应显示名称")
         # 图标必须是真 emoji（配 emoji 字体才出彩色），不是单色 dingbat
         for _key, label, glyph in gui.NAV_ITEMS:
             with self.subTest(glyph=glyph):
                 self.assertTrue(theme.is_emoji(glyph), f"{glyph} 不是 emoji 字形")
                 self.assertEqual(theme.emoji_font(glyph)[0], theme.EMOJI_FAMILY)
         self.assertTrue(theme.is_emoji("💬") and not theme.is_emoji("▣"))
-        # 轨道仍要窄于 Sidebar（一级/二级分层不变）
-        self.assertLess(self.app.activity_bar.winfo_width(),
-                        self.app.sidebar.winfo_width())
+        # 单栏：无窄轨道
+        self.assertLessEqual(self.app.activity_bar.winfo_width(), 1)
 
     # ── 16. 对话两侧都有气泡 ────────────────────────────────
     def test_both_sides_of_conversation_have_bubbles(self):
@@ -625,6 +663,57 @@ class RefactorAcceptance(unittest.TestCase):
         with patch.object(self.app, "_start_gateway") as start:
             self.app._autostart_gateway()
         start.assert_not_called()
+
+    def test_user_stop_cancels_timer_and_autostart_cannot_race_it(self):
+        timer = self.root.after(10_000, lambda: None)
+        self.app._autostart_after_id = timer
+        self.app.gateway_proc = None
+        self.app._stop_gateway_from_menu()
+        self.assertIsNone(self.app._autostart_after_id)
+        with patch.object(gui.subprocess, "Popen") as popen:
+            self.assertFalse(self.app._start_gateway(autostart=True))
+        popen.assert_not_called()
+
+    def test_failed_taskkill_falls_back_and_waits_for_process_exit(self):
+        class FakeProcess:
+            pid = 4242
+
+            def __init__(self):
+                self.alive = True
+                self.terminated = False
+
+            def poll(self):
+                return None if self.alive else 0
+
+            def terminate(self):
+                self.terminated = True
+                self.alive = False
+
+            def kill(self):
+                self.alive = False
+
+            def wait(self, timeout=None):
+                self.alive = False
+                return 0
+
+        proc = FakeProcess()
+        with patch.object(gui, "IS_WINDOWS", True), \
+             patch.object(gui.subprocess, "run", return_value=Mock(returncode=1)):
+            self.assertTrue(gui.kill_process_tree(proc))
+        self.assertTrue(proc.terminated, "taskkill 非零退出时必须继续走 Popen 回退")
+
+    def test_restart_stop_path_really_schedules_a_new_gateway(self):
+        proc = Mock(returncode=0)
+        proc.poll.return_value = 0
+        self.app.gateway_proc = proc
+        self.app._gateway_user_stopped = True
+        self.app._restart_pending = True
+        callbacks = []
+        with patch.object(self.root, "after", side_effect=lambda _ms, fn: callbacks.append(fn) or "timer"):
+            self.app._gateway_exited(proc)
+        self.assertFalse(self.app._restart_pending)
+        self.assertFalse(self.app._gateway_user_stopped)
+        self.assertEqual(callbacks, [self.app._autostart_gateway])
 
     def test_retry_backoff_index_is_never_negative(self):
         """_autostart_attempts=0 时不能索引到最后一档。"""

@@ -83,6 +83,7 @@ from gui_theme import (  # noqa: E402
     attach_tooltip,
     badge,
     circle_button,
+    divider,
     dot,
     emoji_font,
     glyph_button,
@@ -929,7 +930,7 @@ class ForgeGuiApp:
 
     def _paint_activity(self, key, *, hover=False):
         active = key == getattr(self, "_active_nav", "chat")
-        bg = C["sel"] if active else C["hover"] if hover else C["activity"]
+        bg = C["sel"] if active else C["hover"] if hover else C["sidebar"]
         fg = C["text"] if active or hover else C["ter"]
         for holder, inner in self._nav_widgets.get(key, []):
             holder.configure(bg=bg)
@@ -939,33 +940,12 @@ class ForgeGuiApp:
             text.configure(bg=bg, fg=fg)
 
     def _build_sidebar(self, parent):
-        # 一级导航与二级内容物理分离：轨道永远窄，Sidebar 可收起。
-        rail = tk.Frame(parent, bg=C["activity"], width=ACTIVITY_WIDTH)
-        rail.pack(side=tk.LEFT, fill=tk.Y)
-        rail.pack_propagate(False)
-        self.activity_bar = rail
+        # 概念图：单栏侧栏（无窄轨道）。rail/Activity Bar 已移除，
+        # 但保留 self.activity_bar 与两个 dict 引用（其他方法仍会读）。
+        rail = tk.Frame(parent, bg=C["sidebar"], width=0)
+        self.activity_bar = rail          # 保留引用，不 pack（宽度 0）
         self._activity_markers: dict[str, tk.Frame] = {}
-        self._activity_labels = {}
-        for key, label, glyph in NAV_ITEMS:
-            if key == "config":
-                continue
-            item = self._make_activity_item(rail, key, label, glyph)
-            if key in PRIMARY_NAV:
-                item.pack(fill=tk.X, pady=(4 if key == "chat" else 0, 0))
-
-        rail_bottom = tk.Frame(rail, bg=C["activity"])
-        rail_bottom.pack(side=tk.BOTTOM, fill=tk.X, pady=(0, 6))
-        settings_item = self._make_activity_item(
-            rail_bottom, "config", NAV_LABEL["config"], NAV_GLYPH["config"])
-        settings_item.pack(fill=tk.X, pady=(0, 3))
-        self._more_btn = glyph_button(rail_bottom, "⋯", self._popup_more_menu,
-                                      bg=C["activity"], fg=C["muted"], size=14,
-                                      tooltip="更多")
-        self._more_btn.pack(fill=tk.X)
-        self.sidebar_toggle_btn = glyph_button(
-            rail_bottom, "≪", self._toggle_sidebar, bg=C["activity"],
-            fg=C["muted"], size=12, tooltip="收起 / 展开侧边栏")
-        self.sidebar_toggle_btn.pack(fill=tk.X)
+        self._activity_labels: dict[str, list] = {}
 
         side = tk.Frame(parent, bg=C["sidebar"], width=SIDEBAR_WIDTH)
         side.pack(side=tk.LEFT, fill=tk.Y)
@@ -976,37 +956,213 @@ class ForgeGuiApp:
         chat_panel = tk.Frame(side, bg=C["sidebar"])
         self._sidebar_panels["chat"] = chat_panel
 
-        new_btn = pill_button(chat_panel, "＋  新建对话", self._new_session, kind="quiet",
-                              bg=C["sidebar"], font=FONT_UI, padx=0)
-        new_btn.pack(fill=tk.X, padx=12, pady=(14, 12))
+        # ── 1) 顶部：＋ 新建对话 ──
+        new_btn = pill_button(chat_panel, "＋  新建对话", self._new_session,
+                              kind="quiet", bg=C["sidebar"], font=FONT_UI, padx=0)
+        new_btn.pack(fill=tk.X, padx=12, pady=(14, 10))
 
+        # ── 2) 主导航（概念图只展示 3 项，其余入口走「⋯ 更多」）──
+        nav_host = tk.Frame(chat_panel, bg=C["sidebar"])
+        nav_host.pack(fill=tk.X, padx=6, pady=(0, 4))
+        for key in ("chat", "task", "tools"):
+            holder = self._make_side_nav(nav_host, key, NAV_LABEL[key],
+                                         NAV_GLYPH[key])
+            holder.pack(fill=tk.X, pady=1)
+        # 更多入口：Agents / 知识库 / 演化 / 文件与项目 / 配置
+        more_holder = self._make_side_nav_more(chat_panel)
+        more_holder.pack(fill=tk.X, padx=6, pady=(2, 6))
+
+        divider(chat_panel, bg=C["border"]).pack(fill=tk.X, padx=12, pady=(4, 2))
+
+        # ── 3) 智能体分组（扫描 ~/.openclaw-autoclaw/agents/）──
+        self._build_agents_group(chat_panel)
+
+        divider(chat_panel, bg=C["border"]).pack(fill=tk.X, padx=12, pady=(2, 2))
+
+        # ── 4) 最近对话（时间分组）──
         head = tk.Frame(chat_panel, bg=C["sidebar"])
-        head.pack(fill=tk.X, padx=14, pady=(16, 6))
+        head.pack(fill=tk.X, padx=14, pady=(8, 4))
         tk.Label(head, text="最近对话", bg=C["sidebar"], fg=C["muted"],
                  font=FONT_MICRO).pack(side=tk.LEFT)
         glyph_button(head, "搜索", self._toggle_session_search, bg=C["sidebar"],
-                     fg=C["muted"], size=9, tooltip="搜索对话 · Ctrl+K").pack(side=tk.RIGHT)
+                     fg=C["muted"], size=9, tooltip="搜索对话 · Ctrl+K").pack(
+            side=tk.RIGHT)
         self._search_visible = False
         self.session_search_var = tk.StringVar()
-        self.session_search = tk.Entry(chat_panel, textvariable=self.session_search_var,
-                                       bg=C["surface2"], fg=C["text"], bd=0,
-                                       relief=tk.FLAT, insertbackground=C["accent"],
-                                       font=FONT_SMALL, highlightthickness=1,
-                                       highlightbackground=C["border_hi"],
-                                       highlightcolor=C["accent"])
+        self.session_search = tk.Entry(
+            chat_panel, textvariable=self.session_search_var,
+            bg=C["surface2"], fg=C["text"], bd=0, relief=tk.FLAT,
+            insertbackground=C["accent"], font=FONT_SMALL, highlightthickness=1,
+            highlightbackground=C["border_hi"], highlightcolor=C["accent"])
         self.session_search_var.trace_add("write", lambda *_: self._refresh_history())
 
         self.history_area = cw.ScrollArea(chat_panel, bg=C["sidebar"], pady=2)
         self.history_area.pack(fill=tk.BOTH, expand=True, padx=6)
         self.history_box = self.history_area.inner
 
-        # 其他一级功能各有自己的上下文 Sidebar，不复制主视图控件。
+        # ── 5) 底部固定：模型选择 + 设置 + 关于 + 收起 ──
+        divider(chat_panel, bg=C["border"]).pack(fill=tk.X, padx=12, side=tk.BOTTOM)
+        bottom = tk.Frame(chat_panel, bg=C["sidebar"])
+        bottom.pack(fill=tk.X, padx=10, pady=(6, 8), side=tk.BOTTOM)
+
+        model_row = tk.Frame(bottom, bg=C["sidebar"])
+        model_row.pack(fill=tk.X, pady=(0, 6))
+        # 模型 pill：点击聚焦输入卡的模型下拉（真控件只有一处，避免两处不同步）
+        self.side_model_pill = pill_button(
+            model_row, f"▣ {self.model_var.get()}" if hasattr(self, "model_var")
+            else "▣ default",
+            self._open_model_menu, kind="quiet", bg=C["surface2"],
+            font=FONT_SMALL, padx=8)
+        self.side_model_pill.pack(fill=tk.X)
+        attach_tooltip(self.side_model_pill, "当前模型 · 点击切换")
+
+        tools_row = tk.Frame(bottom, bg=C["sidebar"])
+        tools_row.pack(fill=tk.X)
+        pill_button(tools_row, "⚙ 设置", lambda: self._show_view("config"),
+                    kind="quiet", bg=C["sidebar"], font=FONT_MICRO,
+                    padx=8).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        pill_button(tools_row, "ⓘ 关于", self._show_about, kind="quiet",
+                    bg=C["sidebar"], font=FONT_MICRO, padx=8).pack(
+            side=tk.LEFT, fill=tk.X, expand=True, padx=(4, 0))
+        self.sidebar_toggle_btn = glyph_button(
+            tools_row, "≪", self._toggle_sidebar, bg=C["sidebar"],
+            fg=C["muted"], size=11, tooltip="收起 / 展开侧边栏")
+        self.sidebar_toggle_btn.pack(side=tk.RIGHT)
+
+        # 其他一级功能各有自己的上下文 Sidebar（切视图时显示）。
         for key, label, glyph in NAV_ITEMS:
             if key == "chat":
                 continue
             panel = self._build_context_sidebar(side, key, label, glyph)
             self._sidebar_panels[key] = panel
         chat_panel.pack(fill=tk.BOTH, expand=True)
+
+        # _more_btn 保留引用（_popup_more_menu 读它的坐标）
+        self._more_btn = more_holder
+
+    def _make_side_nav(self, parent, key: str, label: str, glyph: str):
+        """单栏导航行：图标 + 名称（概念图样式，选中态底色块）。"""
+        holder = tk.Frame(parent, bg=C["sidebar"], cursor="hand2")
+        inner = tk.Frame(holder, bg=C["sidebar"])
+        inner.pack(fill=tk.X, padx=6, pady=1)
+        icon = tk.Label(inner, text=glyph, bg=C["sidebar"], fg=C["ter"],
+                        font=emoji_font(glyph, 13), width=2, anchor="center")
+        icon.pack(side=tk.LEFT)
+        text = tk.Label(inner, text=label, bg=C["sidebar"], fg=C["ter"],
+                        font=FONT_SMALL, anchor="w")
+        text.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 0))
+        attach_tooltip(icon, label)
+        attach_tooltip(text, label)
+        for widget in (holder, inner, icon, text):
+            widget.bind("<Button-1>", lambda _e, k=key: self._nav_click(k))
+            widget.bind("<Enter>",
+                        lambda _e, k=key: self._paint_activity(k, hover=True))
+            widget.bind("<Leave>", lambda _e, k=key: self._paint_activity(k))
+            widget.configure(cursor="hand2")
+        self._nav_widgets.setdefault(key, []).append((holder, inner))
+        self._activity_labels.setdefault(key, []).append((icon, text))
+        # 选中态 marker：与 _set_nav_active 兼容
+        marker = tk.Frame(holder, bg=C["sidebar"], width=2)
+        marker.pack(side=tk.LEFT, fill=tk.Y)
+        self._activity_markers[key] = marker
+        return holder
+
+    def _make_side_nav_more(self, parent):
+        """「⋯ 更多」行：打开菜单（Agents / 知识库 / 演化 / 文件与项目 / 配置）。"""
+        holder = tk.Frame(parent, bg=C["sidebar"], cursor="hand2")
+        inner = tk.Frame(holder, bg=C["sidebar"])
+        inner.pack(fill=tk.X, padx=6, pady=1)
+        icon = tk.Label(inner, text="⋯", bg=C["sidebar"], fg=C["muted"],
+                        font=FONT_SMALL, width=2, anchor="center")
+        icon.pack(side=tk.LEFT)
+        text = tk.Label(inner, text="更多", bg=C["sidebar"], fg=C["muted"],
+                        font=FONT_SMALL, anchor="w")
+        text.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 0))
+        attach_tooltip(text, "Agents / 知识库 / 演化 / 文件与项目 / 配置")
+
+        def popup(_event=None):
+            menu = getattr(self, "_more_menu", None)
+            if menu is None:
+                return
+            try:
+                x = holder.winfo_rootx()
+                y = holder.winfo_rooty() + holder.winfo_height()
+                menu.tk_popup(x, y)
+            finally:
+                try:
+                    menu.grab_release()
+                except tk.TclError:
+                    pass
+        for widget in (holder, inner, icon, text):
+            widget.bind("<Button-1>", popup)
+            widget.configure(cursor="hand2")
+        return holder
+
+    def _build_agents_group(self, parent):
+        """侧栏「智能体」分组：扫描 agents 目录列出行；+ 添加智能体。"""
+        section = tk.Frame(parent, bg=C["sidebar"])
+        section.pack(fill=tk.X, padx=14, pady=(6, 4))
+        tk.Label(section, text="智能体", bg=C["sidebar"], fg=C["muted"],
+                 font=FONT_MICRO).pack(side=tk.LEFT)
+        plus = tk.Label(section, text="＋", bg=C["sidebar"], fg=C["muted"],
+                        font=FONT_MICRO, cursor="hand2")
+        plus.pack(side=tk.RIGHT)
+        plus.bind("<Button-1>", lambda _e: self._prompt_create_agent())
+        attach_tooltip(plus, "添加智能体")
+
+        list_box = tk.Frame(parent, bg=C["sidebar"])
+        list_box.pack(fill=tk.X, padx=6)
+        self._agents_list_frame = list_box
+
+        agents_root = Path.home() / ".openclaw-autoclaw" / "agents"
+        try:
+            children = sorted([q for q in agents_root.iterdir() if q.is_dir()],
+                              key=lambda q: q.name.lower())
+        except OSError:
+            children = []
+        shown = children[:8]
+        for q in shown:
+            row = tk.Frame(list_box, bg=C["sidebar"], cursor="hand2")
+            row.pack(fill=tk.X, pady=1, padx=2)
+            tk.Label(row, text="⬡", bg=C["sidebar"], fg=C["accent2"],
+                     font=emoji_font("⬡", 12)).pack(side=tk.LEFT, padx=(8, 6))
+            tk.Label(row, text=q.name, bg=C["sidebar"], fg=C["subtext"],
+                     font=FONT_SMALL, anchor="w").pack(side=tk.LEFT, pady=3,
+                                                       fill=tk.X, expand=True)
+            attach_tooltip(row, str(q))
+            for w in (row, *row.winfo_children()):
+                w.bind("<Button-1>",
+                       lambda _e, path=str(q): self._show_agent_info(path))
+                w.bind("<Enter>", lambda _e, r=row: r.configure(bg=C["hover"]))
+                w.bind("<Leave>", lambda _e, r=row: r.configure(bg=C["sidebar"]))
+        if len(children) > len(shown):
+            more = tk.Label(list_box, text=f"… 还有 {len(children) - len(shown)} 个",
+                            bg=C["sidebar"], fg=C["muted"], font=FONT_MICRO,
+                            anchor="w", padx=8, cursor="hand2")
+            more.pack(fill=tk.X, pady=2)
+            more.bind("<Button-1>", lambda _e: self._nav_click("agents"))
+        if not children:
+            tk.Label(list_box, text="还没有智能体", bg=C["sidebar"],
+                     fg=C["muted"], font=FONT_MICRO, anchor="w",
+                     padx=8).pack(fill=tk.X, pady=4)
+        add = tk.Label(list_box, text="＋ 添加智能体", bg=C["sidebar"],
+                       fg=C["ter"], font=FONT_MICRO, anchor="w", padx=8,
+                       cursor="hand2")
+        add.pack(fill=tk.X, pady=(4, 2))
+        add.bind("<Button-1>", lambda _e: self._prompt_create_agent())
+
+    def _show_about(self):
+        try:
+            from tkinter import messagebox
+            messagebox.showinfo(
+                "关于 forge",
+                f"forge v{APP_VERSION}\n"
+                f"Agent Framework · 深色工作台\n\n"
+                f"仓库：{self._repo_root()}\n"
+                f"Gateway：{self.gateway_url if self.gateway_proc else '未启动'}",
+                parent=self.root)
+        except Exception:
+            self._set_status(f"forge v{APP_VERSION}", "info")
 
     def _build_context_sidebar(self, parent, key: str, label: str, glyph: str):
         descriptions = {
@@ -1080,7 +1236,7 @@ class ForgeGuiApp:
         if visible == self._sidebar_visible:
             return
         if visible:
-            self.sidebar.pack(side=tk.LEFT, fill=tk.Y, after=self.activity_bar)
+            self.sidebar.pack(side=tk.LEFT, fill=tk.Y)
             self.sidebar_toggle_btn.configure(text="≪")
         else:
             self.sidebar.pack_forget()
@@ -1258,11 +1414,11 @@ class ForgeGuiApp:
                 inner.configure(bg=bg)
             fg = C["text"] if active else C["ter"]
             for icon, text in self._activity_labels.get(nav_key, []):
-                icon.configure(bg=C["sel"] if active else C["activity"], fg=fg)
-                text.configure(bg=C["sel"] if active else C["activity"], fg=fg)
+                icon.configure(bg=C["sel"] if active else C["sidebar"], fg=fg)
+                text.configure(bg=C["sel"] if active else C["sidebar"], fg=fg)
             marker = getattr(self, "_activity_markers", {}).get(nav_key)
             if marker is not None:
-                marker.configure(bg=C["accent"] if active else C["activity"])
+                marker.configure(bg=C["accent"] if active else C["sidebar"])
 
     # ── 右栏工作区 ────────────────────────────────────────
     def _repo_root(self) -> Path:
@@ -1415,6 +1571,12 @@ class ForgeGuiApp:
         try:
             payload = {"sessions": sessions[:40]}
             path = self._sessions_path()
+            # 写前给现有文件留 .bak（上次快照），防止误覆盖丢历史
+            try:
+                if path.is_file() and path.stat().st_size > 0:
+                    shutil.copy2(path, path.with_suffix(".json.bak"))
+            except OSError:
+                pass
             with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
                                              prefix=".sessions-", delete=False) as stream:
                 temp_path = Path(stream.name)
@@ -1475,7 +1637,18 @@ class ForgeGuiApp:
                 age = max(0, now - float(session.get("updated", 0)))
             except (ValueError, TypeError):
                 age = float("inf")
-            group = "最近 24 小时" if age < 86400 else "过去 7 天" if age < 604800 else "更早"
+            import datetime as _dt
+            _today = _dt.date.today()
+            _d = _dt.datetime.fromtimestamp(float(session.get("updated", 0))).date() \
+                if session.get("updated") else None
+            if _d == _today:
+                group = "今天"
+            elif _d == _today - _dt.timedelta(days=1):
+                group = "昨天"
+            elif age < 604800:
+                group = "最近 7 天"
+            else:
+                group = "更早"
             if group != last_group and not query:
                 tk.Label(box, text=group, bg=C["sidebar"], fg=C["muted"],
                          font=FONT_MICRO, anchor="w", padx=12, pady=7).pack(fill=tk.X)
