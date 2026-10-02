@@ -32,6 +32,7 @@ import threading
 import tempfile
 import time
 import tkinter as tk
+from ui_icons import IconCanvas, IconButton, icon_image
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
@@ -136,8 +137,7 @@ AUTOSTART_RETRY_DELAYS = (1.5, 3.0, 6.0, 12.0, 20.0)
 IS_WINDOWS = platform.system() == "Windows"
 
 # 主导航（顶栏与侧栏共用；key -> (标签, 图标)）
-# 图标用真正的 emoji 码位（配 Segoe UI Emoji 字体才会出彩色）。
-# 之前用的是 ▣ ☑ ⬡ ✱ 这类 dingbat 字形，在深色界面上就是一条单色白线。
+# Navigation icons are semantic vectors, independent of the system emoji font.
 NAV_ITEMS = [
     ("chat", "对话", "💬"),
     ("task", "任务", "✅"),
@@ -416,7 +416,7 @@ def kill_process_tree(proc, timeout: float = 5.0) -> bool:
         return False
 
 
-def load_brand_logo(target_px: int):
+def load_brand_logo(target_px: int, master=None):
     """加载品牌标志为 tk.PhotoImage（无 PIL 依赖：只用预生成 PNG + 整数缩放）。
 
     返回 (image, keep_alive)；找不到资源时返回 (None, None)，调用方回退到程序化绘制。
@@ -427,7 +427,7 @@ def load_brand_logo(target_px: int):
         if path is None:
             continue
         try:
-            img = tk.PhotoImage(file=str(path))
+            img = tk.PhotoImage(master=master, file=str(path))
         except tk.TclError:
             continue
         if size >= target_px:
@@ -728,7 +728,7 @@ class ForgeGuiApp:
     def _build_topbar(self):
         # 品牌头像（对话消息里的 Forge 头像）：注入给 chat_widgets
         try:
-            av_img, av_keep = load_brand_logo(30)
+            av_img, av_keep = load_brand_logo(30, master=self.root)
             if av_img is not None:
                 cw.set_brand_avatar(av_img, av_keep)
         except Exception:
@@ -743,7 +743,7 @@ class ForgeGuiApp:
         # 品牌区
         brand = tk.Frame(bar, bg=C["bg"])
         brand.pack(side=tk.LEFT, padx=(14, 12))
-        brand_img, brand_keep = load_brand_logo(24)
+        brand_img, brand_keep = load_brand_logo(24, master=self.root)
         if brand_img is not None:
             holder = tk.Frame(brand, bg=C["bg"])
             holder.pack(side=tk.LEFT, padx=(0, 8))
@@ -765,8 +765,8 @@ class ForgeGuiApp:
 
         self._project_chip = tk.Frame(bar, bg=C["surface2"], padx=9, pady=4)
         self._project_chip.pack(side=tk.LEFT, padx=(8, 0))
-        tk.Label(self._project_chip, text="◇", bg=C["surface2"], fg=C["accent2"],
-                 font=FONT_SMALL).pack(side=tk.LEFT, padx=(0, 5))
+        IconCanvas(self._project_chip, "files", size=18, bg=C["surface2"], fg=C["accent2"]).pack(
+            side=tk.LEFT, padx=(0, 5))
         self._project_name_var = tk.StringVar(value=self._repo_root().name)
         tk.Label(self._project_chip, textvariable=self._project_name_var,
                  bg=C["surface2"], fg=C["subtext"], font=FONT_SMALL).pack(side=tk.LEFT)
@@ -797,7 +797,7 @@ class ForgeGuiApp:
         self.gw_status_lbl = tk.Label(right, textvariable=self.gw_status_var,
                                       bg=C["bg"], fg=C["muted"], font=FONT_CAPTION)
         self.gw_status_lbl.pack(side=tk.LEFT, padx=(0, 6))
-        self._telemetry_btn = pill_button(right, "状态 ▾", self._toggle_telemetry,
+        self._telemetry_btn = pill_button(right, "▾ 状态", self._toggle_telemetry,
                                           kind="quiet", bg=C["bg"],
                                           font=FONT_CAPTION, padx=7)
         self._telemetry_btn.pack(side=tk.LEFT)
@@ -825,10 +825,10 @@ class ForgeGuiApp:
         self._telemetry_expanded = not self._telemetry_expanded
         if self._telemetry_expanded:
             self._telemetry_panel.pack(fill=tk.X, before=self._topbar_divider)
-            self._telemetry_btn.configure(text="状态 ▴")
+            self._telemetry_btn.configure(text="▴ 状态")
         else:
             self._telemetry_panel.pack_forget()
-            self._telemetry_btn.configure(text="状态 ▾")
+            self._telemetry_btn.configure(text="▾ 状态")
 
     def _build_metric(self, parent, key: str, text: str):
         base = parent.cget("bg")
@@ -876,7 +876,7 @@ class ForgeGuiApp:
                                     insertbackground=C["accent"],
                                     highlightthickness=0, justify=tk.CENTER)
         self.port_spin.pack(side=tk.LEFT, padx=(4, 8))
-        self.gw_btn = tk.Button(card, text="▶ 启动", command=self._toggle_gateway,
+        self.gw_btn = IconButton(card, text="▶ 启动", command=self._toggle_gateway,
                                 bg=base, fg=C["accent_text"],
                                 activebackground=C["hover"],
                                 activeforeground=C["text"], font=FONT_MICRO,
@@ -888,10 +888,10 @@ class ForgeGuiApp:
                                 fg=C["text"], activebackground=C["accent_soft"],
                                 activeforeground=C["accent_text"],
                                 font=FONT_SMALL, bd=1, relief=tk.FLAT)
-        self._gw_menu.add_command(label="⟳  重启 gateway",
+        self._gw_menu.add_command(label="重启 gateway", image=icon_image(self.root, "refresh"), compound=tk.LEFT,
                                   command=self._toggle_gateway)
         self._gw_menu.add_separator()
-        self._gw_menu.add_command(label="■  停止 gateway",
+        self._gw_menu.add_command(label="停止 gateway", image=icon_image(self.root, "stop"), compound=tk.LEFT,
                                   command=self._stop_gateway_from_menu)
         self.gw_btn.bind("<Button-3>", self._popup_gw_menu)
         attach_tooltip(self.gw_btn, "打开即自动启动；左键重启，右键可停止")
@@ -910,8 +910,7 @@ class ForgeGuiApp:
         marker.pack(side=tk.LEFT, fill=tk.Y)
         inner = tk.Frame(holder, bg=C["activity"])
         inner.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(9, 6))
-        icon = tk.Label(inner, text=glyph, bg=C["activity"], fg=C["ter"],
-                        font=emoji_font(glyph, 13), width=2, anchor="center")
+        icon = IconCanvas(inner, key, size=20, bg=C["activity"], fg=C["ter"])
         icon.pack(side=tk.LEFT)
         text = tk.Label(inner, text=label, bg=C["activity"], fg=C["ter"],
                         font=FONT_SMALL, anchor="w")
@@ -1046,8 +1045,7 @@ class ForgeGuiApp:
         holder = tk.Frame(parent, bg=C["sidebar"], cursor="hand2")
         inner = tk.Frame(holder, bg=C["sidebar"])
         inner.pack(fill=tk.X, padx=6, pady=1)
-        icon = tk.Label(inner, text=glyph, bg=C["sidebar"], fg=C["ter"],
-                        font=emoji_font(glyph, 13), width=2, anchor="center")
+        icon = IconCanvas(inner, key, size=20, bg=C["sidebar"], fg=C["ter"])
         icon.pack(side=tk.LEFT)
         text = tk.Label(inner, text=label, bg=C["sidebar"], fg=C["ter"],
                         font=FONT_SMALL, anchor="w")
@@ -1073,8 +1071,7 @@ class ForgeGuiApp:
         holder = tk.Frame(parent, bg=C["sidebar"], cursor="hand2")
         inner = tk.Frame(holder, bg=C["sidebar"])
         inner.pack(fill=tk.X, padx=6, pady=1)
-        icon = tk.Label(inner, text="⋯", bg=C["sidebar"], fg=C["muted"],
-                        font=FONT_SMALL, width=2, anchor="center")
+        icon = IconCanvas(inner, "more", size=20, bg=C["sidebar"], fg=C["muted"])
         icon.pack(side=tk.LEFT)
         text = tk.Label(inner, text="更多", bg=C["sidebar"], fg=C["muted"],
                         font=FONT_SMALL, anchor="w")
@@ -1105,8 +1102,8 @@ class ForgeGuiApp:
         section.pack(fill=tk.X, padx=14, pady=(6, 4))
         tk.Label(section, text="智能体", bg=C["sidebar"], fg=C["muted"],
                  font=FONT_MICRO).pack(side=tk.LEFT)
-        plus = tk.Label(section, text="＋", bg=C["sidebar"], fg=C["muted"],
-                        font=FONT_MICRO, cursor="hand2")
+        plus = IconCanvas(section, "plus", size=16, bg=C["sidebar"], fg=C["subtext"],
+                          command=lambda: self._prompt_create_agent())
         plus.pack(side=tk.RIGHT)
         plus.bind("<Button-1>", lambda _e: self._prompt_create_agent())
         attach_tooltip(plus, "添加智能体")
@@ -1125,8 +1122,8 @@ class ForgeGuiApp:
         for q in shown:
             row = tk.Frame(list_box, bg=C["sidebar"], cursor="hand2")
             row.pack(fill=tk.X, pady=1, padx=2)
-            tk.Label(row, text="⬡", bg=C["sidebar"], fg=C["accent2"],
-                     font=emoji_font("⬡", 12)).pack(side=tk.LEFT, padx=(8, 6))
+            IconCanvas(row, "model", size=18, bg=C["sidebar"], fg=C["accent2"]).pack(
+                side=tk.LEFT, padx=(8, 6))
             tk.Label(row, text=q.name, bg=C["sidebar"], fg=C["subtext"],
                      font=FONT_SMALL, anchor="w").pack(side=tk.LEFT, pady=3,
                                                        fill=tk.X, expand=True)
@@ -1146,11 +1143,10 @@ class ForgeGuiApp:
             tk.Label(list_box, text="还没有智能体", bg=C["sidebar"],
                      fg=C["muted"], font=FONT_MICRO, anchor="w",
                      padx=8).pack(fill=tk.X, pady=4)
-        add = tk.Label(list_box, text="＋ 添加智能体", bg=C["sidebar"],
-                       fg=C["ter"], font=FONT_MICRO, anchor="w", padx=8,
-                       cursor="hand2")
+        add = IconButton(list_box, text="＋ 添加智能体", bg=C["sidebar"], fg=C["ter"],
+                         font=FONT_MICRO, anchor="w", padx=8, relief=tk.FLAT, bd=0,
+                         cursor="hand2", command=lambda: self._prompt_create_agent())
         add.pack(fill=tk.X, pady=(4, 2))
-        add.bind("<Button-1>", lambda _e: self._prompt_create_agent())
 
     def _show_about(self):
         try:
@@ -1178,8 +1174,7 @@ class ForgeGuiApp:
         panel = tk.Frame(parent, bg=C["sidebar"])
         head = tk.Frame(panel, bg=C["sidebar"])
         head.pack(fill=tk.X, padx=14, pady=(18, 8))
-        tk.Label(head, text=glyph, bg=C["sidebar"], fg=C["accent2"],
-                 font=emoji_font(glyph, 15)).pack(side=tk.LEFT, padx=(0, 8))
+        IconCanvas(head, key, size=22, bg=C["sidebar"], fg=C["accent2"]).pack(side=tk.LEFT, padx=(0, 8))
         tk.Label(head, text=label, bg=C["sidebar"], fg=C["text"],
                  font=FONT_SECTION).pack(side=tk.LEFT)
         tk.Label(panel, text=descriptions.get(key, ""), bg=C["sidebar"],
@@ -1629,8 +1624,8 @@ class ForgeGuiApp:
         card.pack(fill=tk.X)
         head = tk.Frame(card.content, bg=C["surface"])
         head.pack(fill=tk.X)
-        tk.Label(head, text=f"{NAV_GLYPH.get(key, '●')}  {title}", bg=C["surface"],
-                 fg=C["text"], font=emoji_font(NAV_GLYPH.get(key, "●"), 15)).pack(side=tk.LEFT)
+        IconCanvas(head, key, size=24, bg=C["surface"], fg=C["accent2"]).pack(side=tk.LEFT, padx=(0, 8))
+        tk.Label(head, text=title, bg=C["surface"], fg=C["text"], font=FONT_TITLE).pack(side=tk.LEFT)
         badge(head, "规划中", tone="muted", bg=C["surface"]).pack(side=tk.LEFT, padx=(10, 0))
         tk.Label(card.content, text=subtitle, bg=C["surface"], fg=C["ter"],
                  font=FONT_SMALL, anchor=tk.W, justify=tk.LEFT,
@@ -2046,7 +2041,7 @@ class ForgeGuiApp:
         head.pack(fill=tk.X, padx=20, pady=(16, 10))
         tk.Label(head, text="任务", bg=C["chat"], fg=C["text"],
                  font=FONT_TITLE).pack(side=tk.LEFT)
-        tk.Button(head, text="＋ 新建任务", command=self._clear_task_view,
+        IconButton(head, text="＋ 新建任务", command=self._clear_task_view,
                   bg=C["chat"], fg=C["ter"], activebackground=C["hover"],
                   activeforeground=C["text"], font=FONT_SMALL, relief=tk.FLAT, bd=0,
                   padx=10, pady=3, cursor="hand2",
@@ -2437,12 +2432,12 @@ class ForgeGuiApp:
             btn.pack(side=tk.LEFT, padx=(0, 6))
             self._temperature_buttons[value] = btn
         self._paint_temperature_buttons()
-        tk.Button(one_click, text="手写配置文件（所有参数自己控）  ↗",
+        IconButton(one_click, text="手写配置文件（所有参数自己控）", icon="external",
                   bg=C["surface2"], fg=C["link"],
                   activebackground=C["link_soft"], activeforeground=C["link"],
                   font=FONT_UI, relief=tk.FLAT, padx=10, pady=4, cursor="hand2",
                   command=self._open_user_layer_file).pack(anchor=tk.W, pady=(8, 0))
-        tk.Button(left, text="打开用户层目录  ↗", bg=C["surface2"], fg=C["text"],
+        IconButton(left, text="打开用户层目录", icon="external", bg=C["surface2"], fg=C["text"],
                   activebackground=C["border"], activeforeground=C["text"],
                   font=FONT_UI, relief=tk.FLAT, padx=12, pady=6,
                   command=lambda: self._open_path(self.home), cursor="hand2"
@@ -3276,7 +3271,7 @@ class ForgeGuiApp:
 
         head = tk.Frame(dialog, bg=C["bg"], padx=20, pady=16)
         head.pack(fill=tk.X)
-        tk.Label(head, text="🔑", bg=C["bg"], font=theme.FONT_EMOJI_SM).pack(
+        IconCanvas(head, "key", size=22, bg=C["bg"], fg=C["accent2"]).pack(
             side=tk.LEFT, padx=(0, 8))
         tk.Label(head, text="API 密钥", bg=C["bg"], fg=C["text"],
                  font=FONT_TITLE).pack(side=tk.LEFT)

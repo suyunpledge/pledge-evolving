@@ -40,6 +40,7 @@ import subprocess
 import time
 import sys
 import tkinter as tk
+from ui_icons import IconCanvas
 import webbrowser
 from pathlib import Path
 from typing import Any, Callable
@@ -312,9 +313,8 @@ class _FileTab(tk.Frame):
         self._name_lbl = tk.Label(self, text=name, bg=self._base, fg=C["ter"],
                                   font=FONT_SMALL, padx=8, pady=4)
         self._name_lbl.pack(side=tk.LEFT)
-        self._close_btn = tk.Label(self, text="×", bg=self._base, fg=C["muted"],
-                                   font=FONT_UI_BOLD, padx=4, pady=1,
-                                   cursor="hand2")
+        self._close_btn = IconCanvas(self, "close", size=16, bg=self._base, fg=C["muted"],
+                                     command=self._handle_close)
         self._close_btn.pack(side=tk.LEFT)
         for w in (self, self._name_lbl):
             w.bind("<Button-1>", self._handle_select)
@@ -398,11 +398,11 @@ class _FileRow(tk.Frame):
         inner.pack(fill=tk.X, padx=(6 + depth * indent, 6), pady=1)
 
         arrow = "▾" if expanded else ("▸" if expandable else " ")
-        self._arrow_lbl = tk.Label(inner, text=arrow, bg=base, fg=C["muted"],
-                                   font=FONT_MICRO, width=2)
+        self._arrow_lbl = IconCanvas(inner, "chevron_down" if expanded else "chevron_right" if expandable else "",
+                                     size=14, bg=base, fg=C["muted"])
         self._arrow_lbl.pack(side=tk.LEFT)
-        self._icon_lbl = tk.Label(inner, text=icon, bg=base, fg=C["subtext"],
-                                  font=FONT_MICRO)
+        self._icon_lbl = IconCanvas(inner, icon, size=18, bg=base,
+                                   fg=C["accent2"] if icon == "🐍" else C["warn"] if icon == "📁" else C["subtext"])
         self._icon_lbl.pack(side=tk.LEFT, padx=(0, 5))
         # pack 顺序：徽章/统计（RIGHT 侧）必须在 name 之前，
         # 否则会被 name 的 expand=True 挤掉。所有子 widget 都放 inner 里。
@@ -619,8 +619,7 @@ class WorkspacePanel(tk.Frame):
         top.pack_propagate(False)
         left = tk.Frame(top, bg=C["bg"])
         left.pack(side=tk.LEFT, padx=(PAD_M, PAD_S))
-        tk.Label(left, text="▤", bg=C["bg"], fg=C["accent2"],
-                 font=FONT_TITLE).pack(side=tk.LEFT, padx=(0, PAD_XS))
+        IconCanvas(left, "workspace", size=22, bg=C["bg"], fg=C["accent2"]).pack(side=tk.LEFT, padx=(0, PAD_XS))
         tk.Label(left, text="工作区", bg=C["bg"], fg=C["text"],
                  font=(FONT_TITLE[0], 12, "bold")).pack(side=tk.LEFT)
         crumb = tk.Frame(top, bg=C["bg"])
@@ -988,8 +987,7 @@ class WorkspacePanel(tk.Frame):
         head = tk.Frame(left, bg=C["bg"], height=30)
         head.pack(fill=tk.X)
         head.pack_propagate(False)
-        tk.Label(head, text="⑂", bg=C["bg"], fg=C["accent2"],
-                 font=FONT_SMALL).pack(side=tk.LEFT, padx=(PAD_S, 4))
+        IconCanvas(head, "diff", size=18, bg=C["bg"], fg=C["accent2"]).pack(side=tk.LEFT, padx=(PAD_S, 4))
         self._changes_title_var = tk.StringVar(value="变更 (0)")
         tk.Label(head, textvariable=self._changes_title_var, bg=C["bg"],
                  fg=C["text"], font=FONT_UI_BOLD).pack(side=tk.LEFT)

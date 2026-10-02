@@ -26,9 +26,12 @@ from __future__ import annotations
 import re
 import time
 import tkinter as tk
+from tkinter import font as tkfont
+import math
 from typing import Callable, Optional
 
 import decor
+from ui_icons import IconCanvas, emoji_image, emoji_parts, draw_icon
 from gui_theme import (
     C, FONT_CAPTION, FONT_MICRO, FONT_MONO, FONT_MONO_SM, FONT_MONO_XS, FONT_SECTION,
     FONT_SMALL, FONT_TITLE, FONT_UI, FONT_UI_BOLD, R_CARD, R_MD, R_PILL,
@@ -172,9 +175,15 @@ class InlineText(tk.Text):
                            underline=True, font=font or FONT_UI)
         self._base_bg = base
         self._on_link = on_link
+        self._emoji_names = {}
+        self._emoji_references = []
+        self._recompute_job = None
+        self.bind("<Control-c>", self._copy_selection)
+        self.bind("<<Copy>>", self._copy_selection)
         if width:
             self.configure(width=width)
         self.bind("<Configure>", self._fit_height)
+        self.bind("<Destroy>", self._cancel_recompute, add="+")
         self.bind("<Motion>", self._motion)
         self.bind("<Leave>", lambda _e: self.configure(cursor="arrow"))
         self.bind("<Button-1>", self._click)
@@ -187,9 +196,24 @@ class InlineText(tk.Text):
 
     # -- 高度自适应 --
     def _fit_height(self, _event=None):
-        self.after_idle(self._recompute)
+        self._schedule_recompute()
+
+    def _schedule_recompute(self):
+        if self._recompute_job is None:
+            self._recompute_job = self.after_idle(self._recompute)
+
+    def _cancel_recompute(self, event=None):
+        if event is not None and event.widget is not self:
+            return
+        if self._recompute_job is not None:
+            try:
+                self.after_cancel(self._recompute_job)
+            except tk.TclError:
+                pass
+            self._recompute_job = None
 
     def _recompute(self):
+        self._recompute_job = None
         try:
             if not self.winfo_exists():
                 return
@@ -197,6 +221,11 @@ class InlineText(tk.Text):
             res = self.count("1.0", "end", "displaylines")
             n = res[0] if isinstance(res, (tuple, list)) else res
             n = max(1, int(n or 1))
+            if self._emoji_names:
+                pixels = self.count("1.0", "end", "ypixels")
+                if pixels:
+                    line_height = tkfont.Font(root=self, font=self.cget("font")).metrics("linespace")
+                    n = max(n, math.ceil(pixels[0] / max(1, line_height)))
             if n != self._last_h:
                 self._last_h = n
                 self.configure(height=n)
@@ -208,6 +237,8 @@ class InlineText(tk.Text):
         """segs 是 (text, tag|None|iterable) 列表，自动识别文件链接。"""
         self.configure(state=tk.NORMAL)
         self.delete("1.0", tk.END)
+        self._emoji_names.clear()
+        self._emoji_references.clear()
         for text, tag in segs:
             if not text:
                 continue
@@ -221,10 +252,10 @@ class InlineText(tk.Text):
                     tuple(t for t in (extra_tag if isinstance(extra_tag, tuple) else (extra_tag,))
                           if t != "file_link")
                 )
-                self.insert(tk.END, piece, chosen_tag)
+                self._insert_display(piece, chosen_tag)
         self.configure(state=tk.DISABLED)
         self._last_h = -1
-        self.after_idle(self._recompute)
+        self._schedule_recompute()
 
     def set_text(self, text, tag=None):
         self.set_segments([(text, tag)])
@@ -244,10 +275,41 @@ class InlineText(tk.Text):
                     tuple(t for t in (extra_tag if isinstance(extra_tag, tuple) else (extra_tag,))
                           if t != "file_link")
                 )
-                self.insert(tk.END, piece, chosen_tag)
+                self._insert_display(piece, chosen_tag)
         self.configure(state=tk.DISABLED)
         self._last_h = -1
-        self.after_idle(self._recompute)
+        self._schedule_recompute()
+
+    def _insert_display(self, text, tags):
+        # Keep file links and inline code as literal text; their indices/meaning
+        # must not be changed by an image renderer.
+        if "code" in tags or "file_link" in tags:
+            self.insert(tk.END, text, tags)
+            return
+        self.tag_configure("emoji_text", font=emoji_font("😀", 11))
+        for part, is_emoji in emoji_parts(text):
+            image = emoji_image(self, part) if is_emoji else None
+            if image is None:
+                self.insert(tk.END, part, tags + (("emoji_text",) if is_emoji else ()))
+            else:
+                name = self.image_create("end-1c", image=image, align="center",
+                                         name=f"emoji-{len(self._emoji_names)}", padx=1)
+                self._emoji_names[name] = part
+                self._emoji_references.append(image)
+
+    def display_text(self, start="1.0", end="end-1c"):
+        """Recover original Unicode, including emoji represented by images."""
+        return "".join(value if kind == "text" else self._emoji_names.get(value, "")
+                       for kind, value, _index in self.dump(start, end, text=True, image=True))
+
+    def _copy_selection(self, _event=None):
+        try:
+            text = self.display_text("sel.first", "sel.last")
+        except tk.TclError:
+            return "break"
+        self.clipboard_clear()
+        self.clipboard_append(text)
+        return "break"
 
     # -- 链接交互 --
     def _motion(self, event):
@@ -420,9 +482,13 @@ def render_blocks(parent, text, *, bg=None, max_width=None,
         kind = block["type"]
         if kind == "h":
             f = FONT_TITLE if block["level"] <= 2 else FONT_SECTION
-            tk.Label(host, text=block["text"], bg=base, fg=C["text"], font=f,
-                     anchor="w", justify=tk.LEFT, wraplength=wrap).pack(
-                fill=tk.X, pady=(8, 3))
+            if any(is_emoji for _part, is_emoji in emoji_parts(block["text"])):
+                heading = InlineText(host, bg=base, fg=C["text"], font=f)
+                heading.set_text(block["text"])
+            else:
+                heading = tk.Label(host, text=block["text"], bg=base, fg=C["text"], font=f,
+                                   anchor="w", justify=tk.LEFT, wraplength=wrap)
+            heading.pack(fill=tk.X, pady=(8, 3))
         elif kind == "p":
             t = InlineText(host, bg=base)
             t.set_segments(inline_segments(block["text"]))
@@ -452,8 +518,8 @@ def render_blocks(parent, text, *, bg=None, max_width=None,
             row.pack(fill=tk.X, pady=1)
             mark = "✅" if block["done"] else "⬜"
             color = C["ok"] if block["done"] else C["muted"]
-            tk.Label(row, text=mark, bg=base, fg=color, font=emoji_font(mark),
-                     width=2).pack(side=tk.LEFT)
+            IconCanvas(row, "check_circle" if block["done"] else "stop", size=18,
+                       bg=base, fg=color).pack(side=tk.LEFT, padx=(0, 8))
             t = InlineText(row, bg=base)
             t.set_segments(inline_segments(block["text"]))
             t.pack(side=tk.LEFT, fill=tk.X, expand=True)
@@ -536,8 +602,7 @@ class ToolCard(tk.Frame):
         self._summary = tk.Frame(self, bg=base, cursor="hand2")
         self._summary.pack(fill=tk.X, pady=(8, 2))
         self._summary.bind("<Button-1>", lambda _e: self.toggle())
-        self._arrow = tk.Label(self._summary, text="▸", bg=base, fg=C["ter"],
-                               font=FONT_MONO_SM, cursor="hand2")
+        self._arrow = IconCanvas(self._summary, "chevron_right", size=16, bg=base, fg=C["ter"])
         self._arrow.pack(side=tk.LEFT, padx=(0, 6))
         self._arrow.bind("<Button-1>", lambda _e: self.toggle())
         self._summary_label = tk.Label(self._summary, text="", bg=base,
@@ -591,9 +656,8 @@ class ToolCard(tk.Frame):
         wrap.pack(fill=tk.X, pady=1)
         ok = row.get("ok", True)
         mark = "✅" if ok else "⚠️"
-        tk.Label(wrap, text=mark, bg=bgc,
-                 fg=C["ok"] if ok else C["warn"],
-                 font=emoji_font(mark, 10), width=2).pack(side=tk.LEFT)
+        IconCanvas(wrap, "check_circle" if ok else "warning", size=18, bg=bgc,
+                   fg=C["ok"] if ok else C["warn"]).pack(side=tk.LEFT, padx=(0, 6))
         tk.Label(wrap, text=row.get("name", ""), bg=bgc, fg=C["accent2"],
                  font=FONT_MONO_SM).pack(side=tk.LEFT)
         desc = row.get("desc")
@@ -624,8 +688,7 @@ class StepList(tk.Frame):
         self._summary = tk.Frame(self, bg=base, cursor="hand2")
         self._summary.pack(fill=tk.X, pady=(6, 2))
         self._summary.bind("<Button-1>", lambda _e: self.toggle())
-        self._arrow = tk.Label(self._summary, text="▸", bg=base, fg=C["ter"],
-                               font=FONT_MONO_SM, cursor="hand2")
+        self._arrow = IconCanvas(self._summary, "chevron_right", size=16, bg=base, fg=C["ter"])
         self._arrow.pack(side=tk.LEFT, padx=(0, 6))
         self._arrow.bind("<Button-1>", lambda _e: self.toggle())
         n = len(self._items)
@@ -669,7 +732,7 @@ class StepList(tk.Frame):
             chk = tk.Canvas(right, width=14, height=14, bg=base,
                             highlightthickness=0, bd=0)
             chk.create_oval(0, 0, 13, 13, fill=C["ok"], outline="")
-            chk.create_text(7, 7, text="✓", fill="#0B0B10", font=FONT_MICRO)
+            draw_icon(chk, "check", size=14, fg="#0B0B10")
             chk.pack(side=tk.LEFT)
 
     def toggle(self):
@@ -776,6 +839,36 @@ class AgentStatusIndicator(tk.Frame):
             self._after_id = None
 
 
+class EmojiLabel(InlineText):
+    """Read-only text bubble with inline emoji and Label-compatible text/wrapping."""
+    def __init__(self, parent, *, text, wraplength, **kwargs):
+        self._source_text, self._wraplength = text, wraplength
+        self._measure_font = tkfont.Font(root=parent, font=FONT_UI)
+        super().__init__(parent, width=self._text_width(parent), **kwargs)
+        self.set_text(text)
+
+    def _text_width(self, master):
+        pixels = sum(26 if emoji and emoji_image(master, part) is not None
+                     else self._measure_font.measure(part) for part, emoji in emoji_parts(self._source_text))
+        pixels = min(self._wraplength, max(24, pixels))
+        return max(2, math.ceil(pixels / max(1, self._measure_font.measure("0"))))
+
+    def cget(self, key):
+        if key == "text":
+            return self._source_text
+        if key == "wraplength":
+            return self._wraplength
+        return super().cget(key)
+
+    def configure(self, cnf=None, **kwargs):
+        if "wraplength" in kwargs:
+            self._wraplength = kwargs.pop("wraplength")
+            kwargs["width"] = self._text_width(self)
+        return super().configure(cnf, **kwargs) if cnf is not None else super().configure(**kwargs)
+
+    config = configure
+
+
 class UserMessage(tk.Frame):
     """右侧气泡用户消息（已修复 1px 压扁 bug：autosize_width=True）。
 
@@ -814,9 +907,13 @@ class UserMessage(tk.Frame):
         self._card = card
         # 文字 label：撑开气泡。wraplength 设上限，让长文本真的换行
         max_text = MAX_BUBBLE_WIDTH - USER_AUTOSIZE_PAD_X * 2 - 16
-        self.label = tk.Label(card.content, text=text, bg=C["msg_user_bg"],
-                              fg=C["body"], font=FONT_UI, justify=tk.LEFT,
-                              anchor="w", wraplength=max_text)
+        if any(is_emoji for _part, is_emoji in emoji_parts(text)):
+            self.label = EmojiLabel(card.content, text=text, bg=C["msg_user_bg"],
+                                    fg=C["body"], wraplength=max_text)
+        else:
+            self.label = tk.Label(card.content, text=text, bg=C["msg_user_bg"],
+                                  fg=C["body"], font=FONT_UI, justify=tk.LEFT,
+                                  anchor="w", wraplength=max_text)
         self.label.pack(anchor="w")
         self.bind("<Configure>", self._fit_bubble)
 
@@ -1009,7 +1106,8 @@ class AgentMessage(tk.Frame):
                             cls = ""
                         if cls == "Text":
                             try:
-                                v = w.get("1.0", "end-1c").rstrip()
+                                v = (w.display_text() if isinstance(w, InlineText)
+                                     else w.get("1.0", "end-1c")).rstrip()
                                 if v:
                                     parts.append(v)
                             except tk.TclError:
@@ -1051,10 +1149,8 @@ class AgentMessage(tk.Frame):
             ("👎", "踩", lambda: _vote("踩")),
         ]
         for glyph, tip, cmd in actions:
-            btn = tk.Label(host, text=glyph, bg=self._base, fg=C["muted"],
-                           font=FONT_SMALL, cursor="hand2", padx=4)
+            btn = IconCanvas(host, glyph, size=20, bg=self._base, fg=C["subtext"], command=cmd)
             btn.pack(side=tk.LEFT, padx=1)
-            btn.bind("<Button-1>", lambda _e, c=cmd: c())
             btn.bind("<Enter>", lambda _e, b=btn: b.configure(fg=C["text"]))
             btn.bind("<Leave>", lambda _e, b=btn: b.configure(fg=C["muted"]))
             attach_tooltip(btn, tip)

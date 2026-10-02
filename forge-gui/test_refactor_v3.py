@@ -436,8 +436,17 @@ class RefactorAcceptance(unittest.TestCase):
                 walk(c)
         walk(self.app._sidebar_panels["chat"])
         blob = " | ".join(texts)
-        for need in ("设置", "关于", "▣", "新建对话", "智能体", "最近对话"):
+        # 注：模型 pill 的 ▣ 字形已由 ui_icons 自绘图标接管（Codex 图标化改造），
+        # 这里断言「有模型行」（pill 文字=当前模型名）而非字形本身。
+        for need in ("设置", "关于", "新建对话", "智能体", "最近对话"):
             self.assertIn(need, blob, f"侧栏缺少 {need}")
+        has_model_pill = any(
+            t.strip() in ("default", "mimo", "mimopro") or
+            (t and any(t == m for m in ()))  # 模型名随配置变化，只验证存在性
+            for t in texts)
+        self.assertTrue(
+            getattr(self.app, "side_model_pill", None) is not None or
+            has_model_pill, "侧栏底部缺少模型 pill")
         chat_panel = self.app._sidebar_panels["chat"]
         task_panel = self.app._sidebar_panels["task"]
         self.assertTrue(chat_panel.winfo_ismapped())

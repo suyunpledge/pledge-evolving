@@ -19,6 +19,7 @@ from __future__ import annotations
 import platform
 import tkinter as tk
 from tkinter import ttk
+from ui_icons import IconButton, IconCanvas, draw_icon, icon_key, split_icon_text, emoji_image
 
 IS_WINDOWS = platform.system() == "Windows"
 
@@ -144,8 +145,8 @@ FONT_MONO_XS = (MONO_FAMILY, 9)
 FONT_MONO_BOLD = (MONO_FAMILY, 11, "bold")
 FONT_GLYPH = (UI_FAMILY, 11)
 
-# 彩色表情：界面里的表情/图标不再用单色 dingbat 字形（那些会渲染成一条白线），
-# 改用真正的 emoji 码位 + 系统 emoji 字体，在 Windows 上才会出彩色。
+# This is a text fallback; Tk does not reliably render Windows color emoji fonts.
+# UI icons use vectors, and supported message emoji use bundled PNG atlases.
 EMOJI_FAMILY = "Segoe UI Emoji" if IS_WINDOWS else "Apple Color Emoji"
 FONT_EMOJI = (EMOJI_FAMILY, 13)
 FONT_EMOJI_SM = (EMOJI_FAMILY, 11)
@@ -317,7 +318,7 @@ def pill_button(parent, text, command, *, kind="ghost", bg=None, height=None,
     }
     bgb, fg, hovbg, hovfg = palettes.get(kind, palettes["ghost"])
     label = f"{icon} {text}".strip() if icon else text
-    btn = tk.Button(parent, text=label, command=command, bg=bgb, fg=fg,
+    btn = IconButton(parent, text=label, command=command, bg=bgb, fg=fg,
                     activebackground=hovbg, activeforeground=hovfg,
                     font=font or FONT_SMALL, relief=tk.FLAT, bd=0,
                     padx=padx, pady=3, cursor="hand2", highlightthickness=0,
@@ -369,7 +370,7 @@ def glyph_button(parent, glyph, command, *, bg=None, fg=None, size=13,
                  hover=None, tooltip=None):
     """无边框的图标按钮（用于 ✕ / ⋯ / ⟳ 之类）。"""
     base = bg or _bg_of(parent)
-    btn = tk.Button(parent, text=glyph, command=command, bg=base,
+    btn = IconButton(parent, text=glyph, command=command, bg=base,
                     fg=fg or C["ter"], activebackground=hover or C["hover"],
                     activeforeground=C["text"], font=(UI_FAMILY, size),
                     relief=tk.FLAT, bd=0, padx=8, pady=4, cursor="hand2",
@@ -550,7 +551,14 @@ def avatar(parent, *, size=32, glyph="F", fg="#FFFFFF", fill=None,
         # 左上高光：一块更亮的圆角三角，模拟参考稿的紫色渐变
         cv.create_polygon(2, 2, size - 6, 2, 2, size - 6,
                           smooth=True, splinesteps=12, fill="#6D63F0", outline="")
-    cv.create_text(size / 2, size / 2, text=glyph, fill=fg,
+    bitmap = emoji_image(cv, glyph, size=24) if is_emoji(glyph) else None
+    if glyph == "你":
+        draw_icon(cv, "user", x=4, y=4, size=size-8, fg=fg)
+    elif bitmap is not None:
+        cv.create_image(size/2, size/2, image=bitmap)
+        cv.image = bitmap
+    else:
+        cv.create_text(size / 2, size / 2, text=glyph, fill=fg,
                    font=(emoji_font(glyph) if is_emoji(glyph)
                          else (UI_FAMILY, max(8, int(size * 0.42)), "bold")))
     return cv
@@ -577,8 +585,17 @@ def circle_button(parent, glyph, command, *, size=30, kind="primary", bg=None,
     cv = tk.Canvas(parent, width=size, height=size, bg=base,
                    highlightthickness=0, bd=0, cursor="hand2")
     oval = cv.create_oval(0, 0, size - 1, size - 1, fill=fill, outline="")
-    txt = cv.create_text(size / 2, size / 2, text=glyph, fill=fg,
-                         font=(UI_FAMILY, glyph_size or max(9, int(size * 0.38)), "bold"))
+    icon = icon_key(glyph)
+    if icon:
+        icon_size = max(14, size-12)
+        draw_icon(cv, icon, x=(size-icon_size)/2, y=(size-icon_size)/2, size=icon_size, fg=fg, tag="glyph")
+        txt = "glyph"
+    else:
+        txt = cv.create_text(size / 2, size / 2, text=glyph, fill=fg,
+                             font=(UI_FAMILY, glyph_size or max(9, int(size * 0.38)), "bold"))
+    cv._icon_name = icon
+    cv._icon_size = max(14, size-12)
+    cv._button_size = size
     cv.bind("<Button-1>", lambda _e: command())
     cv.bind("<Enter>", lambda _e: cv.itemconfigure(oval, fill=cv._palette[1]))
     cv.bind("<Leave>", lambda _e: cv.itemconfigure(oval, fill=cv._palette[0]))
@@ -599,7 +616,12 @@ def circle_button_state(cv, kind: str):
     }
     fill, fg, hov = palettes.get(kind, palettes["primary"])
     cv.itemconfigure(cv._oval, fill=fill)          # type: ignore[attr-defined]
-    cv.itemconfigure(cv._glyph, fill=fg)           # type: ignore[attr-defined]
+    if getattr(cv, "_icon_name", None):
+        cv.delete("glyph")
+        offset = (cv._button_size-cv._icon_size)/2
+        draw_icon(cv, cv._icon_name, x=offset, y=offset, size=cv._icon_size, fg=fg, tag="glyph")
+    else:
+        cv.itemconfigure(cv._glyph, fill=fg)
     cv._palette = (fill, hov)                      # type: ignore[attr-defined]
 
 
@@ -745,20 +767,28 @@ def rounded_label(parent, text, *, fill=None, outline=None, fg=None, font=None,
     from tkinter import font as tkfont
     base = bg or _bg_of(parent)
     fnt = tkfont.Font(font=font or FONT_SMALL)
-    w = fnt.measure(text) + padx * 2
-    h = fnt.metrics("linespace") + pady * 2
+    icon, label = split_icon_text(text)
+    w = fnt.measure(label) + padx * 2 + (24 if icon else 0)
+    h = max(fnt.metrics("linespace"), 20 if icon else 0) + pady * 2
     cv = tk.Canvas(parent, width=w, height=h, bg=base, highlightthickness=0, bd=0)
     fill_c = fill or C["surface2"]
     shape = round_rect(cv, 0.5, 0.5, w - 0.5, h - 0.5, radius, fill=fill_c,
                        outline=outline or "", width=1)
-    txt = cv.create_text(w / 2, h / 2, text=text, fill=fg or C["body"], font=font or FONT_SMALL)
+    txt = cv.create_text(padx + (24 if icon else 0), h / 2, text=label, anchor="w",
+                         fill=fg or C["body"], font=font or FONT_SMALL)
+    if icon:
+        draw_icon(cv, icon, x=padx, y=(h-20)/2, size=20, fg=fg or C["body"])
 
     def set_text(new):
-        cv.itemconfigure(txt, text=new)
-        nw = tkfont.Font(font=font or FONT_SMALL).measure(new) + padx * 2
+        icon, label = split_icon_text(new)
+        cv.itemconfigure(txt, text=label)
+        nw = fnt.measure(label) + padx * 2 + (24 if icon else 0)
         cv.configure(width=nw)
-        cv.coords(txt, nw / 2, h / 2)
+        cv.coords(txt, padx + (24 if icon else 0), h / 2)
         cv.coords(shape, *rounded_points(0.5, 0.5, nw - 0.5, h - 0.5, radius))
+        cv.delete("icon")
+        if icon:
+            draw_icon(cv, icon, x=padx, y=(h-20)/2, size=20, fg=fg or C["body"])
 
     cv.set_text = set_text  # type: ignore[attr-defined]
     if command is not None:

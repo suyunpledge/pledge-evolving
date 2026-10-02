@@ -23,6 +23,7 @@ HIDDEN = [
     "interaction_model",
     "brand_marks",
     "model_picker",
+    "ui_icons",
 ]
 
 # 运行期用不到的重量级包，排掉可显著减小体积
@@ -45,6 +46,8 @@ a = Analysis(
     datas=[
         (str(GUI_DIR / "assets" / "*.png"), "assets"),
         (str(GUI_DIR / "assets" / "brands" / "*.png"), "assets/brands"),
+        (str(GUI_DIR / "assets" / "ui" / "*.png"), "assets/ui"),
+        (str(GUI_DIR / "assets" / "ui" / "manifest.json"), "assets/ui"),
     ],
     hiddenimports=HIDDEN,
     hookspath=[],

@@ -5,6 +5,7 @@
 同时保留旧 Combobox 使用到的最小兼容面，避免影响既有 GUI 合约。
 """
 from __future__ import annotations
+from ui_icons import IconCanvas, draw_icon
 
 import math
 import tkinter as tk
@@ -89,6 +90,9 @@ class ModelPicker(tk.Frame):
         self._router_chips: dict[str, tuple[tk.Frame, tk.Label]] = {}
         self._router_heading: tk.Label | None = None
         self._router_detail: tk.Label | None = None
+        self._popup_owner: tk.Misc | None = None
+        self._popup_bindings: list[tuple[tk.Misc, str, str]] = []
+        self._dismiss_after_id: str | None = None
 
         self._body = tk.Frame(self, bg=base)
         self._body.pack(padx=8, pady=4)
@@ -106,8 +110,7 @@ class ModelPicker(tk.Frame):
         self._text.pack(fill=tk.X)
         # 思考强度：文字 + 一枚小滑杆示意（体现「第几档」，不接交互）
         self._thinking_row = tk.Frame(self._labels, bg=base)
-        self._thinking_emoji = tk.Label(self._thinking_row, text="🧠", bg=base,
-                                        font=FONT_EMOJI_XS)
+        self._thinking_emoji = IconCanvas(self._thinking_row, "model", size=14, bg=base, fg=C["accent2"])
         self._thinking_text = tk.Label(self._thinking_row, bg=base, fg=C["muted"],
                                        font=FONT_MICRO, anchor="w")
         self._thinking_mini: MiniReasoningTrack | None = None
@@ -237,11 +240,7 @@ class ModelPicker(tk.Frame):
         self._fallback.configure(bg=base)
         self._fallback.delete("all")
         color = brand.color if brand is not None else C["accent2"]
-        self._fallback.create_oval(1, 1, ITEM_ICON - 1, ITEM_ICON - 1,
-                                   fill=C["surface2"], outline=color, width=1)
-        letter = (brand.label if brand else "F")[:1].upper()
-        self._fallback.create_text(ITEM_ICON / 2, ITEM_ICON / 2, text=letter,
-                                   fill=color, font=(FONT_MICRO[0], 8, "bold"))
+        draw_icon(self._fallback, "model", x=1, y=1, size=ITEM_ICON-2, fg=color)
 
     def _set_hover(self, on: bool) -> None:
         if self._popup is not None:
@@ -314,11 +313,16 @@ class ModelPicker(tk.Frame):
         pop.withdraw()
         pop.overrideredirect(True)
         pop.configure(bg=C["border_hi"])
+        owner = self.winfo_toplevel()
         try:
-            pop.attributes("-topmost", True)
+            # 这是 Forge 内部的浮层，不是系统级悬浮窗。绑定 owner 后它只会压在
+            # Forge 上方；切到其它应用或最小化 Forge 时不会继续挡在桌面前面。
+            pop.transient(owner)
+            pop.attributes("-topmost", False)
         except tk.TclError:
             pass
         self._popup = pop
+        self._popup_owner = owner
         self._keep = [k for k in self._keep if k is not None]
 
         shell = tk.Frame(pop, bg=C["surface"], padx=12, pady=12)
@@ -395,6 +399,7 @@ class ModelPicker(tk.Frame):
                                                                   "units"), "break")[-1])
         pop.bind("<Escape>", lambda _e: self.close_menu())
         pop.bind("<Button-1>", self._maybe_close)
+        self._bind_popup_lifecycle(pop, owner)
         self._rebuild_list()
 
         pop.update_idletasks()
@@ -402,10 +407,80 @@ class ModelPicker(tk.Frame):
                          min(PICKER_MAX_HEIGHT, pop.winfo_reqheight()), align_right=True)
         pop.deiconify()
         try:
-            pop.grab_set()
+            # 由用户点击打开时，把键盘焦点明确交给浮层；否则在某些 Windows/Tk
+            # 环境中 focus_set 只记录逻辑焦点，随后的后台检查会把它误判为失焦。
+            pop.focus_force()
             search.focus_set()
         except tk.TclError:
             pass
+
+    def _bind_popup_lifecycle(self, pop: tk.Toplevel, owner: tk.Misc) -> None:
+        """让浮层服从主窗口生命周期，而不是成为粘在桌面上的置顶窗口。"""
+        bindings = (
+            (owner, "<FocusOut>", self._queue_background_dismiss),
+            (pop, "<FocusOut>", self._queue_background_dismiss),
+            (owner, "<Unmap>", self._owner_unmapped),
+            (owner, "<ButtonPress-1>", self._owner_clicked),
+        )
+        for widget, sequence, callback in bindings:
+            try:
+                funcid = widget.bind(sequence, callback, add="+")
+            except tk.TclError:
+                continue
+            if funcid:
+                self._popup_bindings.append((widget, sequence, funcid))
+
+    def _owner_unmapped(self, event=None) -> None:
+        # Windows 最小化主窗口时，overrideredirect 浮层不会总是自动隐藏。
+        # Toplevel 是其全部后代的 bindtag；子控件 pack_forget 也会把 Unmap
+        # 冒泡到这里，只有主窗口自己被隐藏/最小化才应关闭浮层。
+        if (event is not None and self._popup_owner is not None and
+                str(getattr(event, "widget", "")) != str(self._popup_owner)):
+            return
+        self.close_menu()
+
+    def _owner_clicked(self, _event=None) -> None:
+        # 不使用 grab：这样切换到其它应用不会被 Forge 抢回输入。
+        # owner 的任意其它位置被点击时，模型浮层应像普通下拉框一样收起。
+        self.close_menu()
+
+    def _queue_background_dismiss(self, _event=None) -> None:
+        owner = self._popup_owner
+        if self._popup is None or owner is None:
+            return
+        if self._dismiss_after_id is not None:
+            try:
+                owner.after_cancel(self._dismiss_after_id)
+            except (tk.TclError, ValueError):
+                pass
+        try:
+            # 焦点从按钮移入浮层也会产生 FocusOut，稍后检查可区分应用内
+            # 转移和真正切到后台。
+            self._dismiss_after_id = owner.after(80, self._dismiss_if_background)
+        except tk.TclError:
+            self.close_menu()
+
+    def _dismiss_if_background(self) -> None:
+        self._dismiss_after_id = None
+        pop = self._popup
+        owner = self._popup_owner
+        if pop is None or owner is None:
+            return
+        try:
+            if str(owner.wm_state()) in {"iconic", "withdrawn"}:
+                self.close_menu()
+                return
+            focused = owner.focus_displayof()
+            if focused is None:
+                self.close_menu()
+                return
+            focused_top = focused.winfo_toplevel()
+            # focus_displayof() 可能为同一个 Tk 路径构造新的 Python 包装对象，
+            # 因此比较 widget path，不能依赖对象 identity。
+            if str(focused_top) not in {str(owner), str(pop)}:
+                self.close_menu()
+        except tk.TclError:
+            self.close_menu()
 
     def _build_thinking_section(self, parent) -> None:
         section = tk.Frame(parent, bg=C["surface"])
@@ -455,7 +530,7 @@ class ModelPicker(tk.Frame):
         body.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         line = tk.Frame(body, bg=C["accent_soft"])
         line.pack(fill=tk.X)
-        tk.Label(line, text="🧭", bg=C["accent_soft"], font=FONT_EMOJI_XS).pack(
+        IconCanvas(line, "evolution", size=18, bg=C["accent_soft"], fg=C["accent_text"]).pack(
             side=tk.LEFT, padx=(0, 6))
         self._router_heading = tk.Label(
             line, text=f"Forge Auto · {strategy}", bg=C["accent_soft"],
@@ -617,11 +692,7 @@ class ModelPicker(tk.Frame):
         else:
             cv = tk.Canvas(box, width=size, height=size, bg=bg, highlightthickness=0, bd=0)
             color = brand.color if brand else C["accent2"]
-            cv.create_oval(1, 1, size - 1, size - 1, fill=C["surface2"],
-                           outline=color, width=1)
-            cv.create_text(size / 2, size / 2,
-                           text=((brand.label if brand else "F")[:1].upper()),
-                           fill=color, font=(FONT_MICRO[0], 8, "bold"))
+            draw_icon(cv, "model", x=1, y=1, size=size-2, fg=color)
             cv.place(relx=.5, rely=.5, anchor="center")
         return box
 
@@ -779,6 +850,20 @@ class ModelPicker(tk.Frame):
     def close_menu(self) -> None:
         pop = self._popup
         self._popup = None
+        owner = self._popup_owner
+        self._popup_owner = None
+        if self._dismiss_after_id is not None and owner is not None:
+            try:
+                owner.after_cancel(self._dismiss_after_id)
+            except (tk.TclError, ValueError):
+                pass
+        self._dismiss_after_id = None
+        for widget, sequence, funcid in self._popup_bindings:
+            try:
+                widget.unbind(sequence, funcid)
+            except tk.TclError:
+                pass
+        self._popup_bindings.clear()
         self._rows = []
         self._list_inner = None
         self._search_var = None
@@ -786,10 +871,6 @@ class ModelPicker(tk.Frame):
         self._thinking_widgets.clear()
         if pop is None:
             return
-        try:
-            pop.grab_release()
-        except tk.TclError:
-            pass
         try:
             pop.destroy()
         except tk.TclError:

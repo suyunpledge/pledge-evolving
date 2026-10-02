@@ -100,6 +100,14 @@ python -m unittest test_gui_review -v      # 18 项
 python -m unittest test_interactions -v    # 17 项
 ```
 
+## 2026-10-02 图标与表情修正
+
+- 保留 Forge 主图标；导航、文件树、工具状态及操作按钮使用统一的 45 种矢量图标。
+- Windows Tk 无法稳定绘制彩色 emoji，因此消息中 1382 个受支持的单字符表情使用预生成的彩色 PNG；复制仍还原原始 Unicode 文本，代码和链接保持原文。
+- 未收录的组合表情（例如部分肤色、旗帜和 ZWJ 序列）保留原始文本，不替换为不同的表情；这些序列的显示仍取决于系统字体。
+- `make_ui_assets.py` 在构建时使用 Pillow 和系统 emoji 字体生成资源，运行时仅依赖 Tk。构建脚本自动执行该步骤，spec 同时打包图集和索引。
+- 验证命令：`python -m unittest test_ui_icons test_chat_widgets -v`。
+
 ## 已知取舍
 
 - **单文件模式**首次启动有约 1–3 秒解包时间（exe 内部的运行时解到临时目录）；

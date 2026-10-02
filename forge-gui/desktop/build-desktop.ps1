@@ -74,6 +74,10 @@ if (-not $SkipBrandMarks) {
     Write-Host "`n[2/4] 跳过品牌标志生成" -ForegroundColor DarkGray
 }
 
+Write-Host "`n生成功能图标与表情资源 ..." -ForegroundColor Cyan
+& $py (Join-Path $DesktopDir "make_ui_assets.py")
+if ($LASTEXITCODE -ne 0) { throw "功能图标与表情资源生成失败" }
+
 if ($Clean) {
     Remove-Item (Join-Path $DesktopDir "build") -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item (Join-Path $DesktopDir "dist") -Recurse -Force -ErrorAction SilentlyContinue
@@ -115,18 +119,35 @@ function Get-GatewayPids {
         Select-Object -ExpandProperty ProcessId)
 }
 $gwBefore = Get-GatewayPids
+$desktopBefore = @(
+    Get-Process -Name forge-desktop -ErrorAction SilentlyContinue |
+        Where-Object { $_.Path -eq $exe } |
+        Select-Object -ExpandProperty Id
+)
 
 $env:FORGE_NO_AUTOSTART = '1'
-$proc = Start-Process -FilePath $exe -PassThru
+$proc = Start-Process -FilePath $exe -PassThru -WindowStyle Hidden
 $title = ""
 for ($i = 0; $i -lt 10; $i++) {
     Start-Sleep -Seconds 2
     $main = Get-Process -Name forge-desktop -ErrorAction SilentlyContinue |
-        Where-Object { $_.MainWindowTitle } | Select-Object -First 1
+        Where-Object { $_.Path -eq $exe -and $desktopBefore -notcontains $_.Id -and
+                       $_.MainWindowTitle -like "forge *" } | Select-Object -First 1
     if ($main) { $title = $main.MainWindowTitle; break }
     if ($proc.HasExited) { break }
 }
-Get-Process -Name forge-desktop -ErrorAction SilentlyContinue | Stop-Process -Force
+# PyInstaller one-file 会先启动一个很快退出的引导 PID，再派生真正的 GUI PID。
+# 因此按「构建前后新增 PID + 精确 exe 路径」回收；不能按进程名清场，避免
+# 把用户从桌面或其它构建目录启动的 Forge 一并强制退出。
+$smokePids = @(
+    Get-Process -Name forge-desktop -ErrorAction SilentlyContinue |
+        Where-Object { $_.Path -eq $exe -and $desktopBefore -notcontains $_.Id } |
+        Select-Object -ExpandProperty Id
+)
+foreach ($smokePid in $smokePids) {
+    Stop-Process -Id $smokePid -Force -ErrorAction SilentlyContinue
+    Wait-Process -Id $smokePid -ErrorAction SilentlyContinue
+}
 Remove-Item Env:\FORGE_NO_AUTOSTART -ErrorAction SilentlyContinue
 # 只收掉本次冒烟新增的 gateway；之前就在跑的一律不动
 # 注意：不能用 $pid 作循环变量——PowerShell 里它是只读自动变量（当前进程 ID），
