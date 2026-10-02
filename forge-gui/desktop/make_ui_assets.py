@@ -17,26 +17,55 @@ from ui_icons import ICONS, PALETTE
 OUT = GUI / "assets" / "ui"
 
 
+def _grad_color(color, y_frac):
+    """垂直渐变：上部提亮 12%，下部压暗 10%（金属拉丝质感）。
+
+    color 兼容 "#RRGGBB" 字符串或 (r,g,b) 元组。
+    """
+    if isinstance(color, str):
+        r, g, b = (int(color[i:i + 2], 16) for i in (1, 3, 5))
+    else:
+        r, g, b = color[0], color[1], color[2]
+    if y_frac < 0.5:
+        k = 1.0 + 0.12 * (1.0 - y_frac * 2)
+    else:
+        k = 1.0 - 0.10 * (y_frac * 2 - 1)
+    return (min(255, int(r * k)), min(255, int(g * k)), min(255, int(b * k)))
+
+
 def icon_tile(shapes, size, color):
-    scale = 4
+    """8x 超采样 + 逐段垂直渐变描边 + 圆头接点 + LANCZOS 缩回。
+
+    对比旧版（4x + 平色）：边缘更平滑，笔画有上亮下暗的金属光泽。
+    """
+    scale = 8
     factor = size * scale / 24
     tile = Image.new("RGBA", (size * scale, size * scale))
     draw = ImageDraw.Draw(tile)
     width = max(1, round(1.7 * factor))
+    total_h = size * scale
     for kind, coords in shapes:
         points = [v * factor for v in coords]
         if kind in ("line", "poly"):
             pairs = list(zip(points[::2], points[1::2]))
             if kind == "poly":
                 pairs.append(pairs[0])
-            draw.line(pairs, fill=color, width=width, joint="curve")
-            for x, y in pairs:
-                radius = width / 2
-                draw.ellipse((x-radius, y-radius, x+radius, y+radius), fill=color)
+            for seg in range(len(pairs) - 1):
+                (x0, y0), (x1, y1) = pairs[seg], pairs[seg + 1]
+                mid_y = (y0 + y1) / 2 / max(1, total_h)
+                seg_color = _grad_color(color, mid_y)
+                draw.line([(x0, y0), (x1, y1)], fill=seg_color, width=width)
+                for x, y in ((x0, y0), (x1, y1)):
+                    radius = width / 2
+                    draw.ellipse((x - radius, y - radius, x + radius, y + radius),
+                                 fill=seg_color)
         elif kind == "circle":
-            draw.ellipse(points, outline=color, width=width)
+            ys = points[1] / max(1, total_h)
+            draw.ellipse(points, outline=_grad_color(color, ys), width=width)
         else:
-            draw.rounded_rectangle(points, radius=2 * factor, outline=color, width=width)
+            ys = points[1] / max(1, total_h)
+            draw.rounded_rectangle(points, radius=2 * factor,
+                                   outline=_grad_color(color, ys), width=width)
     return tile.resize((size, size), Image.Resampling.LANCZOS)
 
 
@@ -50,7 +79,7 @@ def atlas(tiles, size, path):
 def generate():
     OUT.mkdir(parents=True, exist_ok=True)
     manifest = {"icons": {name: index for index, name in enumerate(ICONS)}, "emoji": {}}
-    for size in (20, 24):
+    for size in (20, 24, 28):
         for key, color in PALETTE.items():
             atlas([icon_tile(shapes, size, color) for shapes in ICONS.values()], size,
                   OUT / f"icons-{key}-{size}.png")
@@ -77,7 +106,7 @@ def generate():
         if signature(char) == missing or not font.getmask(char).getbbox():
             continue
         supported.append(char)
-    for size in (24, 32):
+    for size in (20, 24, 32):
         tiles = []
         for char in supported:
             scratch = Image.new("RGBA", (180, 180))

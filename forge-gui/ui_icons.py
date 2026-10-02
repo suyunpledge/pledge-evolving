@@ -37,6 +37,8 @@ ICONS = {
     "chevron_left": [("line", (15, 5, 8, 12, 15, 19))],
     "chevron_down": [("line", (5, 9, 12, 16, 19, 9))],
     "chevron_up": [("line", (5, 15, 12, 8, 19, 15))],
+    "hexagram": [("line", (5, 5, 19, 5)), ("line", (8, 12, 11, 12)),
+                 ("line", (13, 12, 16, 12)), ("line", (5, 19, 19, 19))],
     "refresh": [("line", (20, 9, 17, 5, 12, 3, 7, 5, 4, 9, 4, 14, 7, 19, 12, 21, 17, 19, 20, 15)),
                 ("line", (20, 3, 20, 9, 14, 9))],
     "external": [("line", (13, 3, 21, 3, 21, 11)), ("line", (21, 3, 11, 13)),
@@ -81,7 +83,7 @@ ALIASES = {
     "⟳": "refresh", "↗": "external", "☷": "sidebar", "☰": "sidebar", "▤": "workspace",
     "⑂": "diff", "✓": "check", "✔": "check", "⚠": "warning", "⚠️": "warning",
     "❌": "error", "✗": "error", "ℹ": "info", "⧉": "copy", "👍": "thumb_up", "👎": "thumb_down",
-    "📎": "paperclip", "🔑": "key", "▣": "model", "⬡": "model", "✎": "edit", "🖼": "image",
+    "📎": "paperclip", "🔑": "key", "▣": "model", "⬡": "model", "☷": "hexagram", "✎": "edit", "🖼": "image",
     "📋": "task", "💾": "save",
 }
 
@@ -208,7 +210,7 @@ def icon_image(master, name, *, size=20, fg="#9A9AA8"):
         except ValueError:
             return 0
     color = min(PALETTE, key=lambda key: distance(PALETTE[key]))
-    size = 20 if size <= 20 else 24
+    size = 20 if size <= 20 else 24 if size <= 24 else 28
     return _tile(master, f"icons-{color}-{size}.png", index, size)
 
 
@@ -297,4 +299,5 @@ def emoji_image(master, cluster, *, size=24):
     index = _metadata()["emoji"].get(normalized)
     if index is None:
         return None
-    return _tile(master, f"emoji-{24 if size <= 24 else 32}.png", index, 24 if size <= 24 else 32)
+    size = 20 if size <= 20 else 24 if size <= 24 else 32
+    return _tile(master, f"emoji-{size}.png", index, size)
