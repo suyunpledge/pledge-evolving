@@ -35,7 +35,7 @@ from ui_icons import IconCanvas, emoji_image, emoji_parts, draw_icon
 from gui_theme import (
     C, FONT_CAPTION, FONT_MICRO, FONT_MONO, FONT_MONO_SM, FONT_MONO_XS, FONT_SECTION,
     FONT_SMALL, FONT_TITLE, FONT_UI, FONT_UI_BOLD, R_CARD, R_MD, R_PILL,
-    RoundedCard, attach_tooltip, avatar, badge, circle_button, circle_button_state,
+    RoundedCard, attach_tooltip, avatar, badge, bind_keyboard_action, circle_button, circle_button_state,
     dot, emoji_font, glyph_button, highlight_python, round_rect, rounded_label,
     setup_code_tags, style_scrollbar,
 )
@@ -167,6 +167,9 @@ class InlineText(tk.Text):
                          highlightthickness=0, padx=0, pady=0, height=1,
                          cursor="arrow", insertwidth=0, spacing1=1, spacing3=1,
                          selectbackground=C["accent_soft"])
+        # 右侧视觉余量：tk 裁剪边界=widget 边缘，给 6px 缓冲避免字/emoji 贴边被切
+        self.configure(padx=0, pady=0)
+        self._right_pad = 6
         self.tag_configure("b", font=FONT_UI_BOLD, foreground=C["text"])
         self.tag_configure("code", font=FONT_MONO_SM, background=C["code_bg"],
                            foreground=C["code_str"])
@@ -292,8 +295,14 @@ class InlineText(tk.Text):
             if image is None:
                 self.insert(tk.END, part, tags + (("emoji_text",) if is_emoji else ()))
             else:
+                # 行末 emoji 裁切修复：tk 的 word-wrap 不把行内 image 计入换行
+                # 测量，行末 emoji 会被挤出可视区。前后插 U+200B 零宽空格让
+                # wrap 引擎把 emoji 当文字处理；padx=0 不额外占宽。
+                self.insert(tk.END, "\u200b", tags)
                 name = self.image_create("end-1c", image=image, align="center",
-                                         name=f"emoji-{len(self._emoji_names)}", padx=1)
+                                         name=f"emoji-{len(self._emoji_names)}",
+                                         padx=0)
+                self.insert(tk.END, "\u200b", tags)
                 self._emoji_names[name] = part
                 self._emoji_references.append(image)
 
@@ -745,7 +754,11 @@ class StepList(tk.Frame):
 
 
 class ActionRow(tk.Frame):
-    """消息底部动作按钮组。"""
+    """消息底部动作按钮组（紧凑，不横贯整行）。
+
+    旧版是整条横贯的边框条，视觉上像通知栏/坏掉的输入框。改为紧凑
+    按钮组：primary 有底色，其余 ghost，整组靠左、宽度贴合内容。
+    """
 
     def __init__(self, parent, actions, *, bg=None):
         base = bg or C["chat"]
@@ -754,17 +767,17 @@ class ActionRow(tk.Frame):
             kind = action.get("kind", "ghost")
             btn = tk.Button(self, text=action.get("label", ""),
                             command=action.get("command"),
-                            bg=C["accent"] if kind == "primary" else C["chat"],
+                            bg=C["accent"] if kind == "primary" else C["surface2"],
                             fg="#FFFFFF" if kind == "primary" else C["body"],
-                            activebackground=C["accent_hover"] if kind == "primary" else C["hover"],
-                            activeforeground="#FFFFFF" if kind == "primary" else C["text"],
-                            font=FONT_SMALL, relief=tk.FLAT, bd=0, padx=12, pady=5,
-                            cursor="hand2", highlightthickness=1,
-                            highlightbackground=C["accent"] if kind == "primary" else C["border_hi"])
-            btn.pack(side=tk.LEFT, padx=(0, 8))
-
-
-# ─── 消息：用户与 Agent ────────────────────────────────────
+                            activebackground=(C["accent_hover"] if kind == "primary"
+                                              else C["hover"]),
+                            activeforeground=("#FFFFFF" if kind == "primary"
+                                              else C["text"]),
+                            font=FONT_SMALL, relief=tk.FLAT, bd=0, padx=12, pady=4,
+                            cursor="hand2", highlightthickness=0,
+                            overrelief=tk.FLAT)
+            btn.pack(side=tk.LEFT, padx=(0, 8), pady=2)
+        # 整组靠左、不填充 —— 消除「一整条横贯屏幕」的感觉
 
 
 class AgentStatusIndicator(tk.Frame):
@@ -1221,14 +1234,15 @@ class MessageArea(tk.Frame):
                    actions=()):
         self.clear()
         box = tk.Frame(self.scroll.inner, bg=self._bg)
-        box.pack(fill=tk.X, pady=(28, 0))
+        box.pack(fill=tk.X, pady=(14, 12))
         # 欢迎屏主视觉：柔光球 + 星座 + 点阵的组合画（Tk 原生，无动画）
         try:
-            banner = decor.hero_banner(box, 560, 170, bg=self._bg)
-            banner.pack(pady=(0, 14))
+            banner = decor.hero_banner(box, 480, 112, bg=self._bg)
+            banner.pack(pady=(0, 10))
         except tk.TclError:
             banner = None
-        tk.Label(box, text=title, bg=self._bg, fg=C["text"], font=FONT_TITLE).pack()
+        title_label = tk.Label(box, text=title, bg=self._bg, fg=C["text"], font=FONT_TITLE)
+        title_label.pack()
         for line in lines:
             label = tk.Label(box, text=line, bg=self._bg, fg=C["ter"],
                              font=FONT_SMALL, wraplength=500, justify=tk.CENTER)
@@ -1237,26 +1251,61 @@ class MessageArea(tk.Frame):
                 wraplength=max(80, e.width - 16)))
         if actions:
             choices = tk.Frame(box, bg=self._bg)
-            choices.pack(pady=(18, 0))
-            for title, detail, callback in actions:
-                row = tk.Frame(choices, bg=self._bg, padx=14, pady=6,
+            choices.pack(fill=tk.X, padx=24, pady=(18, 0))
+            action_rows = []
+            for index, (title, detail, callback) in enumerate(actions):
+                row = tk.Frame(choices, bg=C["surface2"], padx=12, pady=10,
                                cursor="hand2")
-                row.pack(fill=tk.X, pady=(0, 3))
-                label = tk.Label(row, text=title, bg=self._bg, fg=C["body"],
+                label = tk.Label(row, text=title, bg=C["surface2"],
+                                 fg=C["accent_text"] if index == 0 else C["body"],
                                  font=FONT_SMALL, anchor="w", cursor="hand2")
                 label.pack(fill=tk.X)
-                hint = tk.Label(row, text=detail, bg=self._bg, fg=C["muted"],
+                hint = tk.Label(row, text=detail, bg=C["surface2"], fg=C["muted"],
                                 font=FONT_CAPTION, anchor="w", justify=tk.LEFT,
                                 cursor="hand2")
                 hint.pack(fill=tk.X, pady=(2, 0))
+                bind_keyboard_action(row, callback)
+                action_rows.append((row, label, hint))
                 for widget in (row, label, hint):
                     widget.bind("<Button-1>", lambda _e, fn=callback: fn())
                     widget.bind("<Enter>", lambda _e, r=row, l=label, h=hint: (
                         r.configure(bg=C["hover"]), l.configure(bg=C["hover"]),
                         h.configure(bg=C["hover"])))
                     widget.bind("<Leave>", lambda _e, r=row, l=label, h=hint: (
-                        r.configure(bg=self._bg), l.configure(bg=self._bg),
-                        h.configure(bg=self._bg)))
+                        r.configure(bg=C["surface2"]), l.configure(bg=C["surface2"]),
+                        h.configure(bg=C["surface2"])))
+
+            def fit_choices(event):
+                columns = len(action_rows) if event.width >= 720 else 1
+                for col in range(len(action_rows)):
+                    choices.grid_columnconfigure(col, weight=1 if col < columns else 0,
+                                                 uniform="actions" if col < columns else "")
+                width = max(120, event.width // columns - 42)
+                for index, (row, label, hint) in enumerate(action_rows):
+                    row.grid(row=index // columns, column=index % columns,
+                             sticky="nsew", padx=4, pady=4)
+                    label.configure(wraplength=width)
+                    hint.configure(wraplength=width)
+
+            choices.bind("<Configure>", fit_choices)
+            # Pack/grid needs an initial size before the first Configure event.
+            for index, (row, label, hint) in enumerate(action_rows):
+                row.grid(row=index, column=0, sticky="ew", pady=4)
+
+        def fit_banner(event):
+            if banner is None:
+                return
+            if event.height < 450 or event.width < 520:
+                banner.pack_forget()
+            elif not banner.winfo_manager():
+                banner.pack(pady=(0, 10), before=title_label)
+
+        binding = self.scroll.canvas.bind("<Configure>", fit_banner, add="+")
+        # The callback belongs to this empty state, not to later conversation views.
+        def forget_banner(event):
+            if event.widget is box:
+                self.scroll.canvas.unbind("<Configure>", binding)
+        box.bind("<Destroy>", forget_banner, add="+")
         self._empty = box
 
     def clear(self):
@@ -1370,21 +1419,22 @@ class InputCard(tk.Frame):
         self._syncing = False
         self.entry.bind("<<Modified>>", self._text_changed)
         self.entry.bind("<Configure>", lambda _e: self._resize_entry())
-        self.send_var.trace_add("write", lambda *_: self._sync_hint())
+        self.send_var.trace_add("write", self._sync_from_var)
         self.entry.bind("<FocusIn>", lambda _e: self._set_focus(True))
         self.entry.bind("<FocusOut>", lambda _e: self._set_focus(False))
 
-        # ─── 底栏：模型 + 沉思 + ⚙ + 发送（右组） ─────────────────────────
+        # ─── 底栏：左 = 低频工具（＋附件·上下文·命令），右 = 高频组（模型·发送）──
+        # 用 place 而不是 grid：窄窗时 grid 会被 entry 撑大 column 0、挤掉右列；
+        # 绝对贴右永远有效，宽度由 right 组内容决定（必要时 _fit_toolbar 收拢）。
         bar = tk.Frame(inner, bg=C["input_bg"])
         bar.pack(fill=tk.X, pady=(10, 0))
-        bar.grid_columnconfigure(0, weight=1)
         self._toolbar = bar
         self._low_controls = None
 
         attachments = tk.Frame(bar, bg=C["input_bg"])
-        attachments.grid(row=0, column=0, sticky="w")
+        attachments.pack(side=tk.LEFT)
         self._low_controls = attachments
-        self.plus = circle_button(attachments, "＋", plus_cb, size=28,
+        self.plus = circle_button(attachments, "＋", plus_cb, size=32,
                                   kind="muted", bg=C["input_bg"], glyph_size=11,
                                   tooltip="添加附件")
         self.plus.pack(side=tk.LEFT, padx=(0, 5))
@@ -1395,16 +1445,16 @@ class InputCard(tk.Frame):
             self._low_controls = low
             for text, tip, callback in (
                     ("上下文", "查看历史与附件，检查本轮实际发送内容", on_context),
-                    ("⋯", "工具与命令", on_commands)):
+                    ("⋯ 命令", "工具与命令", on_commands)):
                 pill = rounded_label(low, text, fill=C["input_bg"], outline="",
-                                     fg=C["muted"], font=FONT_MICRO,
+                                     fg=C["subtext"], font=FONT_CAPTION,
                                      bg=C["input_bg"], tooltip=tip,
                                      command=callback, radius=R_PILL, padx=6,
                                      pady=2)
                 pill.pack(side=tk.LEFT, padx=(0, 4))
 
         right = tk.Frame(bar, bg=C["input_bg"])
-        right.grid(row=0, column=1, sticky="e")
+        right.place(relx=1.0, rely=0.0, anchor="ne", x=-2, y=0)
         self._primary_controls = right
         self._toolbar_compact = None
         bar.bind("<Configure>", self._fit_toolbar)
@@ -1437,14 +1487,16 @@ class InputCard(tk.Frame):
             self.settings_btn = None
 
         # 发送 / 停止（同一物理位置，set_busy 切换）
-        self.send_circle = circle_button(right, "↑", self._fire_send, size=30,
+        self.send_circle = circle_button(right, "↑", self._fire_send, size=36,
                                          kind="muted", bg=C["input_bg"],
                                          tooltip="发送（Enter）")
-        self.send_circle.pack(side=tk.LEFT)
-        self.stop_circle = circle_button(right, "■", self._fire_stop, size=30,
+        self.send_circle.pack(side=tk.RIGHT)
+        self.stop_circle = circle_button(right, "■", self._fire_stop, size=36,
                                          kind="danger", bg=C["input_bg"],
                                          tooltip="停止生成")
         self._busy = False
+        self._stopping = False
+        self._toolbar_shrunk = []
         self.stop_circle.pack_forget()
 
         # 提示行（footer）—— 放到 InputCard 自带的 foot，不属于 inner card
@@ -1478,20 +1530,55 @@ class InputCard(tk.Frame):
         self._sync_hint()
 
     def _fit_toolbar(self, event):
-        low = self._low_controls
-        if low is None:
-            return
-        need = low.winfo_reqwidth() + self._primary_controls.winfo_reqwidth() + 12
-        compact = event.width < need
-        if compact == self._toolbar_compact:
-            return
-        self._toolbar_compact = compact
-        if compact:
-            low.grid_configure(row=1, column=0, columnspan=2, pady=(6, 0))
-            self._primary_controls.grid_configure(row=0, column=0, columnspan=2)
-        else:
-            low.grid_configure(row=0, column=0, columnspan=1, pady=0)
-            self._primary_controls.grid_configure(row=0, column=1, columnspan=1)
+        """右侧组组内收拢（永远 place 贴右，不做一级折两行）。
+
+        收拢顺序：沉思 pill → ⚙ → 模型 pill（发送/停止永藏不了）。
+        目的：任何窗口宽度下发送按钮都不被挤掉。
+        """
+        group = self._primary_controls
+        group.update_idletasks()
+        avail = max(120, event.width - 16)
+
+        def _shrinkables():
+            out = []
+            think = getattr(self, "think_pill", None)
+            if think is not None:
+                out.append(("think", think))
+            settings = getattr(self, "settings_btn", None)
+            if settings is not None:
+                out.append(("settings", settings))
+            mp = getattr(self, "model_pill", None)
+            if mp is not None:
+                out.append(("model", mp))
+            if getattr(self, "model_widget", None) is not None:
+                out.append(("model_combo", self.model_widget))
+            return out
+
+        shrunk = list(getattr(self, "_toolbar_shrunk", []))
+        # 先恢复全部；think_pill 默认该是 pack_forget（forge_gui_v2.__init__ 处），
+        # 收拢后不要 pack 回来（除非产品决策显式显示）。其他按原 side 回。
+        for key, widget in shrunk:
+            try:
+                if key == "think":
+                    pass  # 默认 hidden，不 pack 回
+                elif key == "settings":
+                    widget.pack(side=tk.LEFT)
+                elif key == "model":
+                    widget.pack(side=tk.LEFT, padx=(0, 8))
+                elif key == "model_combo":
+                    widget.pack(side=tk.LEFT, padx=(0, 8))
+            except tk.TclError:
+                pass
+        shrunk = []
+        for key, widget in _shrinkables():
+            if group.winfo_reqwidth() <= avail:
+                break
+            try:
+                widget.pack_forget()
+                shrunk.append((key, widget))
+            except tk.TclError:
+                pass
+        self._toolbar_shrunk = shrunk
 
     def _enter(self, event):
         if event.state & 1:                # Shift
@@ -1507,15 +1594,37 @@ class InputCard(tk.Frame):
                 self.entry.edit_modified(False)
                 self._syncing = False
 
+    def _sync_from_var(self, *_args):
+        # Restored messages and local commands must also update the visible draft.
+        if not self._syncing:
+            value = self.send_var.get()
+            if self.entry.get("1.0", "end-1c") != value:
+                self._syncing = True
+                try:
+                    self.entry.delete("1.0", "end")
+                    self.entry.insert("1.0", value)
+                    self.entry.edit_modified(False)
+                finally:
+                    self._syncing = False
+        self._sync_hint()
+
     def _fire_send(self):
-        if self._busy:
+        if self._busy or not self.send_var.get().strip():
             return
         if self._on_send:
             self._on_send()
 
     def _fire_stop(self):
+        if self._stopping or not self._busy:
+            return
+        self.set_stopping()
         if self._on_stop:
             self._on_stop()
+
+    def set_stopping(self):
+        self._stopping = True
+        circle_button_state(self.stop_circle, "muted", enabled=False)
+        self.set_status("正在停止…")
 
     def _sync_hint(self):
         try:
@@ -1538,16 +1647,18 @@ class InputCard(tk.Frame):
         if self._busy:
             return
         has_text = bool(self.send_var.get().strip())
-        circle_button_state(self.send_circle, "primary" if has_text else "muted")
+        circle_button_state(self.send_circle, "primary" if has_text else "muted", enabled=has_text)
 
     def set_busy(self, busy: bool):
         self._busy = busy
+        self._stopping = False
         if busy:
+            circle_button_state(self.stop_circle, "danger", enabled=True)
             self.send_circle.pack_forget()
-            self.stop_circle.pack(side=tk.LEFT)
+            self.stop_circle.pack(side=tk.RIGHT)
         else:
             self.stop_circle.pack_forget()
-            self.send_circle.pack(side=tk.LEFT)
+            self.send_circle.pack(side=tk.RIGHT)
             self._sync_send_state()
 
     def set_model_text(self, text: str):
@@ -1566,7 +1677,7 @@ class InputCard(tk.Frame):
             pass
 
     def set_status(self, text: str):
-        self.footer_left.configure(text=text)
+        self.footer_left.configure(text=text, fg=C["warn"] if self._stopping else C["subtext"])
 
     def focus_entry(self):
         self.entry.focus_set()

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import sys
 import time
+import tempfile
 import tkinter as tk
 import unittest
 from pathlib import Path
@@ -39,6 +40,8 @@ import decor  # noqa: E402
 import gui_theme as theme  # noqa: E402
 import reasoning_slider as rs  # noqa: E402
 import forge_gui_v2 as gui  # noqa: E402
+import secret_store
+import sub_agent
 
 
 class BrandMarkTests(unittest.TestCase):
@@ -139,6 +142,28 @@ class RefactorAcceptance(unittest.TestCase):
         cls.repo = REPO
 
     def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="forge-acceptance-")
+        self.addCleanup(self.tmp.cleanup)
+        home = Path(self.tmp.name)
+        for target, field, value in (
+            (gui, "DEFAULT_FORGE_HOME", home),
+            (secret_store, "SECRETS_FILE", home / "secrets.json"),
+        ):
+            guard = patch.object(target, field, value)
+            guard.start()
+            self.addCleanup(guard.stop)
+        for target, field, value in (
+            (gui, "_desktop_config_path", home / "desktop.json"),
+            (sub_agent, "config_path", home / "agent-cluster.json"),
+        ):
+            guard = patch.object(target, field, return_value=value)
+            guard.start()
+            self.addCleanup(guard.stop)
+        gui.save_user_layer(home, [
+            {"id": "review", "config": {"wire": "openai", "baseURL": "https://example.invalid/v1", "model": "review-model", "apiKey": {"$expr": "get('env.FORGE_REVIEW_KEY', '')"}}},
+            {"id": "model", "config": {"primary": ["review", "review-model"], "routing": {"strategy": "medium"}}},
+        ])
+        secret_store.save({"review": "sk-review-test-only-value"})
         self.root = tk.Tk()
         self.root.geometry("1440x900")
         self.errors = []
@@ -185,7 +210,7 @@ class RefactorAcceptance(unittest.TestCase):
         class Client:
             base_url = "http://127.0.0.1:8799"
 
-            def health(self):
+            def health(self, **_kwargs):
                 return True, "ok"
 
             def stream_chat(self, messages, **kw):
@@ -438,7 +463,7 @@ class RefactorAcceptance(unittest.TestCase):
         blob = " | ".join(texts)
         # 注：模型 pill 的 ▣ 字形已由 ui_icons 自绘图标接管（Codex 图标化改造），
         # 这里断言「有模型行」（pill 文字=当前模型名）而非字形本身。
-        for need in ("设置", "关于", "新建对话", "智能体", "最近对话"):
+        for need in ("设置", "关于", "新建对话", "智能体", "历史记录"):
             self.assertIn(need, blob, f"侧栏缺少 {need}")
         has_model_pill = any(
             t.strip() in ("default", "mimo", "mimopro") or
