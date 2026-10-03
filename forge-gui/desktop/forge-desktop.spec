@@ -19,11 +19,14 @@ HIDDEN = [
     "sysmon",
     "config_model",
     "forge_client",
+    "http_transport",
+    "sub_agent",
     "secret_store",
     "interaction_model",
     "brand_marks",
     "model_picker",
     "ui_icons",
+    "plugin_market",
 ]
 
 # 运行期用不到的重量级包，排掉可显著减小体积
@@ -48,6 +51,8 @@ a = Analysis(
         (str(GUI_DIR / "assets" / "brands" / "*.png"), "assets/brands"),
         (str(GUI_DIR / "assets" / "ui" / "*.png"), "assets/ui"),
         (str(GUI_DIR / "assets" / "ui" / "manifest.json"), "assets/ui"),
+        # 插件市场的内置离线目录（打包后 plugin_market 从 _MEIPASS 读）
+        (str(GUI_DIR / "catalog.builtin.json"), "."),
     ],
     hiddenimports=HIDDEN,
     hookspath=[],

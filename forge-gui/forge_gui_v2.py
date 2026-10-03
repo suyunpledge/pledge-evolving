@@ -105,6 +105,19 @@ except Exception as _ws_exc:  # pragma: no cover - 面板缺失时 GUI 仍可运
     _WS_IMPORT_ERROR = str(_ws_exc)
 else:
     _WS_IMPORT_ERROR = ""
+try:  # 插件市场 / 工具市场（缺失时工具集视图退化为只读提示）
+    from plugin_market import (  # noqa: E402
+        KIND_LABELS,
+        Marketplace,
+        build_tool_catalog,
+    )
+    _MARKET_IMPORT_ERROR = ""
+except Exception as _mk_exc:  # pragma: no cover
+    Marketplace = None  # type: ignore[assignment]
+    build_tool_catalog = None  # type: ignore[assignment]
+    KIND_LABELS = {}  # type: ignore[assignment]
+    _MARKET_IMPORT_ERROR = str(_mk_exc)
+
 try:  # 系统资源采样（顶栏指标）
     from sysmon import SysMon  # noqa: E402
 except Exception as _sm_exc:  # pragma: no cover
@@ -674,6 +687,7 @@ class ForgeGuiApp:
         self._activity_labels: dict[str, list] = {}
         self._views: dict[str, tk.Frame] = {}
         self._active_view = "chat"
+        self._view_history = []
         self._ws_packed = False
         self._last_workspace_tab = "file_tree"
         self._workspace_auto_hidden = False
@@ -703,12 +717,13 @@ class ForgeGuiApp:
         self.center = center
         self.split.add(center, minsize=500, stretch="always")
 
+        self._build_view_navigation(center)
         self._build_views(center)
         self._build_workspace()
 
         # ── 底部状态栏 ──
         tk.Frame(self.root, bg=C["border"], height=1).pack(fill=tk.X, side=tk.BOTTOM)
-        bot = tk.Frame(self.root, bg=C["bg"], height=28)
+        bot = tk.Frame(self.root, bg=C["bg"], height=theme.ui_px(self.root, 28))
         bot.pack(fill=tk.X, side=tk.BOTTOM)
         bot.pack_propagate(False)
         self.status_var = tk.StringVar(value="")
@@ -733,6 +748,8 @@ class ForgeGuiApp:
         self.root.bind("<Control-n>", lambda _e: self._conversation_shortcut("new"))
         self.root.bind("<Control-k>", lambda _e: self._conversation_shortcut("search"))
         self.root.bind("<Control-l>", lambda _e: self._conversation_shortcut("input"))
+        self.root.bind("<Alt-Left>", self._navigate_back, add="+")
+        self.root.bind("<Escape>", self._navigation_escape, add="+")
         # 像 AutoClaw 一样：打开窗口就把 gateway 拉起来（等 UI 建好再起，
         # 免得抢启动时间、也免得状态栏还没就绪）。
         # FORGE_NO_AUTOSTART=1 可关闭（测试用）。
@@ -756,7 +773,7 @@ class ForgeGuiApp:
         chrome = tk.Frame(self.root, bg=C["bg"])
         chrome.pack(fill=tk.X)
         self._chrome = chrome
-        bar = tk.Frame(chrome, bg=C["bg"], height=50)
+        bar = tk.Frame(chrome, bg=C["bg"], height=theme.ui_px(self.root, 50))
         bar.pack(fill=tk.X)
         bar.pack_propagate(False)
 
@@ -972,7 +989,7 @@ class ForgeGuiApp:
         self._activity_markers: dict[str, tk.Frame] = {}
         self._activity_labels: dict[str, list] = {}
 
-        side = tk.Frame(parent, bg=C["sidebar"], width=SIDEBAR_WIDTH)
+        side = tk.Frame(parent, bg=C["sidebar"], width=theme.ui_px(parent, SIDEBAR_WIDTH))
         side.pack(side=tk.LEFT, fill=tk.Y)
         side.pack_propagate(False)
         self.sidebar = side
@@ -990,6 +1007,8 @@ class ForgeGuiApp:
         # ── 2) 主导航（概念图只展示 3 项，其余入口走「⋯ 更多」）──
         nav_host = tk.Frame(chat_panel, bg=C["sidebar"])
         nav_host.pack(fill=tk.X, padx=6, pady=(0, 4))
+        tk.Label(nav_host, text="功能导航", bg=C["sidebar"], fg=C["muted"],
+                 font=FONT_MICRO, anchor="w").pack(fill=tk.X, padx=8, pady=(2, 6))
         for key in ("chat", "task", "tools"):
             holder = self._make_side_nav(nav_host, key, NAV_LABEL[key],
                                          NAV_GLYPH[key])
@@ -998,17 +1017,18 @@ class ForgeGuiApp:
         more_holder = self._make_side_nav_more(chat_panel)
         more_holder.pack(fill=tk.X, padx=6, pady=(2, 6))
 
-        divider(chat_panel, bg=C["border"]).pack(fill=tk.X, padx=12, pady=(4, 2))
+        # 导航与历史之间：全宽分隔线 + 上下留白（视觉分层，别混成一块）
 
         # ── 3) 智能体分组（扫描 ~/.openclaw-autoclaw/agents/）──
         self._build_agents_group(chat_panel)
 
-        divider(chat_panel, bg=C["border"]).pack(fill=tk.X, padx=12, pady=(2, 2))
+        divider(chat_panel, bg=C["border_hi"]).pack(fill=tk.X, padx=0, pady=(12, 6))
 
         # ── 4) 最近对话（时间分组）──
         head = tk.Frame(chat_panel, bg=C["sidebar"])
-        head.pack(fill=tk.X, padx=14, pady=(8, 4))
-        tk.Label(head, text="最近对话", bg=C["sidebar"], fg=C["muted"],
+        head.pack(fill=tk.X, padx=14, pady=(10, 4))
+        # 分组标题强化，跟导航项形成层级差
+        tk.Label(head, text="历史记录", bg=C["sidebar"], fg=C["ter"],
                  font=FONT_MICRO).pack(side=tk.LEFT)
         glyph_button(head, "搜索", self._toggle_session_search, bg=C["sidebar"],
                      fg=C["muted"], size=9, tooltip="搜索对话 · Ctrl+K").pack(
@@ -1022,7 +1042,7 @@ class ForgeGuiApp:
             highlightbackground=C["border_hi"], highlightcolor=C["accent"])
         self.session_search_var.trace_add("write", lambda *_: self._refresh_history())
 
-        self.history_area = cw.ScrollArea(chat_panel, bg=C["sidebar"], pady=2)
+        self.history_area = cw.ScrollArea(chat_panel, bg=C["sidebar_history"], pady=6)
         self.history_area.pack(fill=tk.BOTH, expand=True, padx=6)
         self.history_box = self.history_area.inner
 
@@ -1345,6 +1365,62 @@ class ForgeGuiApp:
             self._open_workspace(self._last_workspace_tab, automatic=True)
 
     # ── 视图切换 ──────────────────────────────────────────
+    def _build_view_navigation(self, center):
+        """Keep an exit outside each page's scrolling/collapsible content."""
+        bar = self.view_navigation = tk.Frame(center, bg=C["surface2"], padx=12, pady=6)
+        bar.grid_columnconfigure(1, weight=1)
+        self.view_back_btn = glyph_button(bar, "◀ 返回对话", self._navigate_back,
+                                          bg=C["surface2"], fg=C["text"], size=10,
+                                          tooltip="返回上一页 · Alt+←；保留当前编辑内容")
+        self.view_back_btn.grid(row=0, column=0, sticky="w", padx=(0, 12))
+        self.view_title_var = tk.StringVar()
+        self.view_title_label = tk.Label(bar, textvariable=self.view_title_var,
+                                         bg=C["surface2"], fg=C["muted"], font=FONT_CAPTION,
+                                         anchor="w")
+        self.view_title_label.grid(row=0, column=1, sticky="ew")
+        self.view_chat_btn = glyph_button(bar, "💬 回到对话", self._return_to_chat,
+                                          bg=C["surface2"], fg=C["text"], size=10,
+                                          tooltip="回到当前对话 · Esc；不新建或清空对话")
+        self.view_chat_btn.grid(row=0, column=2, sticky="e", padx=(8, 0))
+
+    def _sync_view_navigation(self):
+        files_mode = self._active_view == "chat" and self._active_nav == "files"
+        if self._active_view == "chat" and not files_mode:
+            self.view_navigation.pack_forget()
+            return
+        target = "chat" if files_mode or not self._view_history else self._view_history[-1]
+        self.view_back_btn.configure(text=f"◀ 返回{NAV_LABEL.get(target, '对话')}")
+        self.view_title_var.set(NAV_LABEL.get("files" if files_mode else self._active_view, ""))
+        if target != "chat":
+            self.view_chat_btn.grid()
+        else:
+            self.view_chat_btn.grid_remove()
+        self.view_navigation.pack(fill=tk.X, before=self._views[self._active_view])
+
+    def _navigate_back(self, _event=None):
+        if self.root.grab_current() is not None:
+            return None
+        if self._active_view == "chat":
+            if self._active_nav == "files":
+                self._return_to_chat()
+                return "break"
+            return None
+        target = self._view_history.pop() if self._view_history else "chat"
+        self._show_view(target, record_history=False)
+        return "break"
+
+    def _return_to_chat(self):
+        self._view_history.clear()
+        self._show_view("chat", record_history=False)
+
+    def _navigation_escape(self, event):
+        if self.root.grab_current() is not None or event.widget.winfo_toplevel() is not self.root:
+            return None
+        if self._active_view != "chat" or self._active_nav == "files":
+            self._return_to_chat()
+            return "break"
+        return None
+
     def _build_views(self, center):
         self.tab_client = tk.Frame(center, bg=C["chat"])
         self._build_client_tab(self.tab_client)
@@ -1353,7 +1429,25 @@ class ForgeGuiApp:
         self._build_task_view(self.tab_task)
 
         self.tab_features = tk.Frame(center, bg=C["bg"])
-        host = tk.Frame(self.tab_features, bg=C["bg"], padx=20, pady=2)
+        # 工具集视图 = 两个并列 tab：市场（新增）/ 功能开关（原有）。
+        # 默认停在功能开关，保持既有行为与测试断言不变。
+        seg = tk.Frame(self.tab_features, bg=C["bg"], padx=20)
+        seg.pack(fill=tk.X, pady=(10, 0))
+        self._tools_tab_buttons = {}
+        for key, label in (("market", "🛒 市场"), ("features", "⚙ 功能开关")):
+            btn = pill_button(seg, label, lambda k=key: self._switch_tools_tab(k),
+                              kind="ghost", bg=C["bg"])
+            btn.pack(side=tk.LEFT, padx=(0, 8))
+            self._tools_tab_buttons[key] = btn
+        self._tools_tab = "features"
+
+        # 市场面板惰性构建：没点开「市场」tab 之前一个控件都不建，
+        # 默认路径（功能开关）保持与加市场之前完全一样的开销。
+        self.market_holder = tk.Frame(self.tab_features, bg=C["bg"])
+        self._market_built = False
+
+        self.feature_holder = tk.Frame(self.tab_features, bg=C["bg"], padx=20, pady=2)
+        host = self.feature_holder
         host.pack(fill=tk.BOTH, expand=True)
         self._build_feature_panel(host)
 
@@ -1730,6 +1824,322 @@ class ForgeGuiApp:
                   "点上方按钮或调用「打开工作区」即可展开右栏。"),
     }
 
+
+    # ── 工具集视图：市场（插件 + 工具）─────────────────────────
+
+    def _switch_tools_tab(self, key: str):
+        """在市场 / 功能开关之间切换（默认功能开关，改这里不影响默认值）。"""
+        if key not in ("market", "features"):
+            return
+        self._tools_tab = key
+        for name, holder in (("market", self.market_holder),
+                             ("features", self.feature_holder)):
+            if name == key:
+                holder.pack(fill=tk.BOTH, expand=True)
+            else:
+                holder.pack_forget()
+        for name, btn in getattr(self, "_tools_tab_buttons", {}).items():
+            btn.configure(bg=C["surface2"] if name == key else C["bg"],
+                          fg=C["text"] if name == key else C["ter"])
+        if key == "market":
+            if not getattr(self, "_market_built", False):
+                self._build_market_panel(self.market_holder)
+                self._market_built = True
+            self._refresh_market()
+
+    def _market_obj(self):
+        """惰性拿市场单例；模块缺失时返回 None（视图退化为提示）。"""
+        if Marketplace is None:
+            return None
+        obj = getattr(self, "_market_singleton", None)
+        if obj is None:
+            try:
+                obj = Marketplace()
+            except Exception as exc:  # pragma: no cover
+                self._set_status(f"市场初始化失败：{exc}", "error")
+                return None
+            self._market_singleton = obj
+        return obj
+
+    def _build_market_panel(self, parent):
+        """市场面板骨架：统计行 + 筛选行 + 滚动列表（内容由 _refresh_market 填）。"""
+        head = tk.Frame(parent, bg=C["bg"], padx=20)
+        head.pack(fill=tk.X, pady=(10, 0))
+        self.market_stat_var = tk.StringVar(value="市场未载入")
+        tk.Label(head, textvariable=self.market_stat_var, bg=C["bg"], fg=C["subtext"],
+                 font=FONT_SMALL).pack(side=tk.LEFT)
+        pill_button(head, "打开插件目录", self._open_plugins_dir,
+                    kind="quiet", bg=C["bg"]).pack(side=tk.RIGHT)
+        pill_button(head, "刷新", lambda: self._refresh_market(force=True),
+                    kind="ghost", bg=C["bg"]).pack(side=tk.RIGHT, padx=(0, 8))
+
+        filt = tk.Frame(parent, bg=C["bg"], padx=20)
+        filt.pack(fill=tk.X, pady=(8, 0))
+        self.market_query_var = tk.StringVar(value="")
+        self.market_query_var.trace_add(
+            "write", lambda *_: self._refresh_market())
+        entry = tk.Entry(filt, textvariable=self.market_query_var, bg=C["surface2"],
+                         fg=C["text"], insertbackground=C["accent"], relief=tk.FLAT,
+                         font=FONT_SMALL, width=22)
+        entry.pack(side=tk.LEFT, ipady=3)
+        tk.Label(filt, text="搜索插件", bg=C["bg"], fg=C["muted"],
+                 font=FONT_MICRO).pack(side=tk.LEFT, padx=(6, 12))
+        self.market_kind_var = tk.StringVar(value="全部")
+        # 挂 trace 而不是靠在按钮 lambda 里刷新：任何途径改这个变量（按钮、
+        # 快捷键、代码）都会立刻重绘，不会出现「筛选变了列表没变」。
+        self.market_kind_var.trace_add("write", lambda *_: self._refresh_market())
+        kinds = ["全部"] + [KIND_LABELS.get(k, k) for k in ("tool", "theme", "panel", "integration")]
+        for label in kinds:
+            pill_button(filt, label, lambda v=label: self.market_kind_var.set(v),
+                        kind="ghost", bg=C["bg"]).pack(side=tk.LEFT, padx=(0, 6))
+
+        viewport = tk.Frame(parent, bg=C["bg"])
+        viewport.pack(fill=tk.BOTH, expand=True, padx=20, pady=(10, 14))
+        canvas = tk.Canvas(viewport, bg=C["bg"], highlightthickness=0, width=1, height=1)
+        scrollbar = ttk.Scrollbar(viewport, orient=tk.VERTICAL, command=canvas.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        self.market_list = tk.Frame(canvas, bg=C["bg"])
+        self._market_window = canvas.create_window(0, 0, window=self.market_list, anchor="nw")
+        self.market_list.bind("<Configure>", lambda _e: canvas.configure(
+            scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda e: canvas.itemconfigure(
+            self._market_window, width=e.width))
+        canvas.bind("<MouseWheel>", lambda e: (canvas.yview_scroll(
+            -1 if e.delta > 0 else 1, "units"), "break")[1])
+        self.market_canvas = canvas
+
+    @staticmethod
+    def _port_open(host: str, port: int, timeout: float = 0.3) -> bool:
+        """0.3s 内能建 TCP 连接就算在听——避免半死网关拖住界面。"""
+        try:
+            with socket.create_connection((host, port), timeout=timeout):
+                return True
+        except OSError:
+            return False
+
+    def _refresh_market(self, force: bool = False):
+        """重建市场列表：插件分区 + 工具分区。"""
+        if not getattr(self, "_market_built", False):
+            return
+        if not hasattr(self, "market_list"):
+            return
+        market = self._market_obj()
+        for child in self.market_list.winfo_children():
+            child.destroy()
+        if market is None:
+            tk.Label(self.market_list,
+                     text=f"市场模块不可用：{_MARKET_IMPORT_ERROR or '未知原因'}",
+                     bg=C["bg"], fg=C["warn"], font=FONT_SMALL).pack(anchor=tk.W)
+            self.market_stat_var.set("市场不可用")
+            return
+
+        try:
+            items = market.catalog()
+            summary = market.summary()
+        except Exception as exc:  # pragma: no cover
+            tk.Label(self.market_list, text=f"读取市场失败：{exc}", bg=C["bg"],
+                     fg=C["error"], font=FONT_SMALL).pack(anchor=tk.W)
+            return
+
+        self.market_stat_var.set(
+            f"已启用 {summary['enabled']} · 已安装 {summary['installed']} · "
+            f"共 {summary['total']} 条 · 源 {summary['region']}"
+            + ("（离线）" if not summary["sources"] else ""))
+
+        query = (self.market_query_var.get() if hasattr(self, "market_query_var") else "").strip().lower()
+        want = self.market_kind_var.get() if hasattr(self, "market_kind_var") else "全部"
+
+        def match(plugin):
+            if want != "全部" and plugin.kind_label != want:
+                return False
+            if not query:
+                return True
+            blob = " ".join([plugin.id, plugin.name, plugin.summary,
+                             plugin.author, " ".join(plugin.tags)]).lower()
+            return query in blob
+
+        shown = [p for p in items if match(p)]
+        tk.Label(self.market_list, text="插件", bg=C["bg"], fg=C["ter"],
+                 font=FONT_UI_BOLD).pack(anchor=tk.W, pady=(0, 6))
+        if not shown:
+            tk.Label(self.market_list, text="没有匹配的插件——换个关键词，或清掉类型筛选。",
+                     bg=C["bg"], fg=C["muted"], font=FONT_SMALL).pack(anchor=tk.W)
+        for plugin in shown:
+            self._market_plugin_card(plugin)
+
+        self._market_tool_section(market)
+
+    def _market_plugin_card(self, plugin):
+        card = RoundedCard(self.market_list, radius=R_PANEL, fill=C["surface"],
+                           outline=C["border_hi"], padx=16, pady=12, bg=C["bg"])
+        card.pack(fill=tk.X, pady=(0, 8))
+        body = card.content
+
+        top = tk.Frame(body, bg=C["surface"])
+        top.pack(fill=tk.X)
+        tk.Label(top, text=plugin.icon, bg=C["surface"], fg=C["text"],
+                 font=FONT_TITLE).pack(side=tk.LEFT, padx=(0, 8))
+        tk.Label(top, text=plugin.name, bg=C["surface"], fg=C["text"],
+                 font=FONT_UI_BOLD).pack(side=tk.LEFT)
+        tk.Label(top, text=f"v{plugin.version}", bg=C["surface"], fg=C["muted"],
+                 font=FONT_MICRO).pack(side=tk.LEFT, padx=(6, 0))
+        badge(top, plugin.kind_label, tone="muted", bg=C["surface"]).pack(side=tk.LEFT, padx=(8, 0))
+        if plugin.source == "builtin":
+            badge(top, "内置", tone="muted", bg=C["surface"]).pack(side=tk.LEFT, padx=(4, 0))
+        if plugin.enabled:
+            badge(top, "已启用", tone="ok", bg=C["surface"]).pack(side=tk.LEFT, padx=(4, 0))
+        elif plugin.installed:
+            badge(top, "已安装", tone="accent_soft", bg=C["surface"]).pack(side=tk.LEFT, padx=(4, 0))
+        if plugin.needs_ack:
+            badge(top, "待确认", tone="warn", bg=C["surface"]).pack(side=tk.LEFT, padx=(4, 0))
+
+        if plugin.summary:
+            tk.Label(body, text=plugin.summary, bg=C["surface"], fg=C["body"],
+                     font=FONT_SMALL, anchor=tk.W, justify=tk.LEFT,
+                     wraplength=760).pack(fill=tk.X, pady=(6, 2))
+        meta = " · ".join(x for x in (plugin.author, plugin.homepage) if x)
+        if meta:
+            tk.Label(body, text=meta, bg=C["surface"], fg=C["muted"],
+                     font=FONT_MICRO, anchor=tk.W).pack(fill=tk.X)
+        if plugin.permissions:
+            tk.Label(body, text="权限：" + "、".join(plugin.permission_labels()),
+                     bg=C["surface"], fg=C["warn"] if plugin.executes_code else C["subtext"],
+                     font=FONT_MICRO, anchor=tk.W, justify=tk.LEFT,
+                     wraplength=760).pack(fill=tk.X, pady=(2, 0))
+        if plugin.error:
+            tk.Label(body, text=f"清单有问题：{plugin.error}", bg=C["surface"],
+                     fg=C["error"], font=FONT_MICRO, anchor=tk.W).pack(fill=tk.X)
+
+        actions = tk.Frame(body, bg=C["surface"])
+        actions.pack(fill=tk.X, pady=(10, 0))
+        pid = plugin.id
+        if plugin.needs_ack:
+            pill_button(actions, "确认信任", lambda: self._market_action(pid, "ack"),
+                        kind="primary", bg=C["surface"]).pack(side=tk.LEFT)
+        if not plugin.installed:
+            pill_button(actions, "安装", lambda: self._market_action(pid, "install"),
+                        kind="primary", bg=C["surface"]).pack(side=tk.LEFT)
+        elif not plugin.enabled:
+            pill_button(actions, "启用", lambda: self._market_action(pid, "enable"),
+                        kind="ok" if not plugin.needs_ack else "ghost",
+                        bg=C["surface"]).pack(side=tk.LEFT)
+        else:
+            pill_button(actions, "禁用", lambda: self._market_action(pid, "disable"),
+                        kind="ghost", bg=C["surface"]).pack(side=tk.LEFT)
+        if plugin.installed:
+            pill_button(actions, "卸载", lambda: self._market_action(pid, "uninstall"),
+                        kind="danger", bg=C["surface"]).pack(side=tk.LEFT, padx=(8, 0))
+        if plugin.executes_code:
+            tk.Label(actions, text="会执行本机代码", bg=C["surface"], fg=C["warn"],
+                     font=FONT_MICRO).pack(side=tk.LEFT, padx=(10, 0))
+
+    def _market_tool_section(self, market):
+        """工具市场：网关工具桥暴露的工具 + 已启用插件声明的工具。"""
+        divider(self.market_list, color=C["border_hi"], bg=C["bg"]).pack(
+            fill=tk.X, pady=(10, 10))
+        names, err = self._gateway_tool_names()
+        entries = build_tool_catalog(names, market) if build_tool_catalog else []
+        tk.Label(self.market_list, text=f"工具（{len(entries)}）", bg=C["bg"],
+                 fg=C["ter"], font=FONT_UI_BOLD).pack(anchor=tk.W)
+        if err:
+            tk.Label(self.market_list, text=f"工具桥未就绪：{err}", bg=C["bg"],
+                     fg=C["warn"], font=FONT_MICRO, anchor=tk.W,
+                     justify=tk.LEFT, wraplength=760).pack(fill=tk.X, pady=(2, 4))
+        if not entries:
+            tk.Label(self.market_list,
+                     text="还没有可用工具。启动网关时带上 --tools，或在上面启用「网关工具桥」。",
+                     bg=C["bg"], fg=C["muted"], font=FONT_SMALL).pack(anchor=tk.W)
+            return
+        grid = tk.Frame(self.market_list, bg=C["bg"])
+        grid.pack(fill=tk.X, pady=(6, 0))
+        grid.grid_columnconfigure(0, weight=0)
+        grid.grid_columnconfigure(1, weight=1)
+        for row, tool in enumerate(entries):
+            name_lbl = tk.Label(grid, text=tool.name, bg=C["bg"], fg=C["text"],
+                                font=FONT_MONO or FONT_SMALL, anchor=tk.W)
+            name_lbl.grid(row=row, column=0, sticky="w", padx=(0, 12), pady=1)
+            desc = tool.summary or ("插件提供" if tool.source == "plugin" else "网关工具")
+            tone = C["warn"] if tool.danger else C["subtext"]
+            mark = "⚠ " if tool.danger else ""
+            tk.Label(grid, text=f"{mark}{desc}", bg=C["bg"], fg=tone,
+                     font=FONT_MICRO, anchor=tk.W).grid(row=row, column=1, sticky="w", pady=1)
+
+    def _gateway_tool_names(self):
+        """从网关工具桥取工具名。返回 (names|None, 错误说明)。
+
+        先做端口快检：网关「半死」（端口在听但不响应）时直接调 list_tools
+        会卡满 HTTP 超时，把界面拖住。0.3s 探不到就立刻返回提示。
+        """
+        client = getattr(self, "client", None)
+        if client is None or not hasattr(client, "list_tools"):
+            return None, "客户端不支持工具桥"
+        base = getattr(client, "base_url", "") or ""
+        m = re.search(r"://([^/:]+)(?::(\d+))?", base)
+        host = m.group(1) if m else "127.0.0.1"
+        port = int(m.group(2)) if (m and m.group(2)) else 8799
+        if not self._port_open(host, port):
+            return None, f"网关未在 {host}:{port} 上监听"
+        try:
+            raw = client.list_tools()
+        except Exception as exc:
+            return None, str(exc)[:160]
+        names = []
+        for item in raw if isinstance(raw, list) else []:
+            fn = item.get("function") if isinstance(item, dict) else None
+            name = (fn or item).get("name") if isinstance(fn or item, dict) else None
+            if name:
+                names.append(str(name))
+        return names, ""
+
+    def _market_action(self, pid: str, action: str):
+        """安装 / 启用 / 禁用 / 卸载 / 确认信任。"""
+        market = self._market_obj()
+        if market is None:
+            self._set_status("市场模块不可用", "error")
+            return
+        try:
+            if action == "install":
+                market.install_from_catalog(pid)
+                self._set_status(f"已安装 {pid}（未启用）", "ok")
+            elif action == "ack":
+                if not messagebox.askyesno(
+                        "确认信任插件",
+                        f"「{pid}」声明会执行本机代码。\n\n"
+                        "确认后它才可能被启用。指纹随版本或权限变化会自动失效。\n\n"
+                        "确认信任？"):
+                    return
+                market.ack(pid)
+                self._set_status(f"已确认信任 {pid}", "ok")
+            elif action == "enable":
+                market.enable(pid)
+                self._set_status(f"已启用 {pid}", "ok")
+            elif action == "disable":
+                market.disable(pid)
+                self._set_status(f"已禁用 {pid}", "info")
+            elif action == "uninstall":
+                if not messagebox.askyesno(
+                        "卸载插件",
+                        f"卸载「{pid}」？\n\n"
+                        "插件目录会移到 marketplace/trash 下，可手动恢复。"):
+                    return
+                market.uninstall(pid)
+                self._set_status(f"已卸载 {pid}", "info")
+        except Exception as exc:
+            self._set_status(f"{action} 失败：{exc}", "error")
+        self._refresh_market()
+
+    def _open_plugins_dir(self):
+        market = self._market_obj()
+        if market is None:
+            return
+        try:
+            market.plugins_dir.mkdir(parents=True, exist_ok=True)
+            os.startfile(str(market.plugins_dir))  # noqa: S606 - Windows 桌面端
+        except Exception as exc:
+            self._set_status(f"打开插件目录失败：{exc}", "error")
+
     def _build_stub_view(self, parent, key: str):
         title, subtitle, bullets, note = self.STUB_TEXT.get(key, (key, "", (), ""))
         wrap = tk.Frame(parent, bg=C["bg"])
@@ -1772,12 +2182,16 @@ class ForgeGuiApp:
             self._open_workspace("file_tree")
             self._set_nav_active("files")
             self._show_sidebar_for("files")
+            self._sync_view_navigation()
             return
         self._show_view(key)
 
-    def _show_view(self, key: str):
+    def _show_view(self, key: str, *, record_history=True):
         if key not in self._views:
             key = "chat"
+        if record_history and key != self._active_view and self._active_view in self._views:
+            self._view_history.append(self._active_view)
+            self._view_history = self._view_history[-32:]
         for other, frame in self._views.items():
             if other != key:
                 frame.pack_forget()
@@ -1786,6 +2200,7 @@ class ForgeGuiApp:
         self._sidebar_force_open = False
         self._set_nav_active(key)
         self._show_sidebar_for(key)
+        self._sync_view_navigation()
         self._apply_responsive_layout()
         if key == "config":
             self._update_status_label()
@@ -2007,6 +2422,7 @@ class ForgeGuiApp:
         box = getattr(self, "history_box", None)
         if box is None:
             return
+        history_bg = box.cget("bg")
         for child in box.winfo_children():
             child.destroy()
         query = (self.session_search_var.get() if hasattr(self, "session_search_var")
@@ -2016,7 +2432,7 @@ class ForgeGuiApp:
             sessions = [s for s in sessions if query in str(s.get("title", "")).lower()]
         if not sessions:
             tk.Label(box, text="还没有历史对话" if not query else "没有匹配的对话",
-                     bg=C["sidebar"], fg=C["muted"], font=FONT_MICRO,
+                     bg=history_bg, fg=C["muted"], font=FONT_MICRO,
                      anchor=tk.W, padx=10, pady=8).pack(fill=tk.X)
             return
         active_id = getattr(self, "_session_id", None)
@@ -2040,15 +2456,16 @@ class ForgeGuiApp:
             else:
                 group = "更早"
             if group != last_group and not query:
-                tk.Label(box, text=group, bg=C["sidebar"], fg=C["muted"],
+                tk.Label(box, text=group, bg=history_bg, fg=C["muted"],
                          font=FONT_MICRO, anchor="w", padx=12, pady=7).pack(fill=tk.X)
                 last_group = group
             sid = str(session.get("id", ""))
             active = sid == active_id
-            row = tk.Frame(box, bg=C["sel"] if active else C["sidebar"],
+            row = tk.Frame(box, bg=C["sel"] if active else history_bg,
                            cursor="hand2",
                            highlightthickness=0,
-                           highlightbackground=C["sel_border"] if active else C["sidebar"])
+                           highlightbackground=C["sel_border"] if active else history_bg)
+            row._history_base = history_bg
             row.pack(fill=tk.X, pady=1, padx=2)
             marker = tk.Frame(row, bg=C["accent"] if active else row["bg"], width=2)
             marker.pack(side=tk.LEFT, fill=tk.Y)
@@ -2066,7 +2483,7 @@ class ForgeGuiApp:
 
     @staticmethod
     def _paint_history(row, active, hover):
-        bg = C["sel"] if active else C["hover"] if hover else C["sidebar"]
+        bg = C["sel"] if active else C["hover"] if hover else getattr(row, "_history_base", C["sidebar_history"])
         row.configure(bg=bg)
         for child in row.winfo_children():
             child.configure(bg=bg)
@@ -2137,10 +2554,15 @@ class ForgeGuiApp:
 
     # ── 任务视图（forge run）───────────────────────────────
     def _show_chat_start(self):
-        """用真实入口填补首次打开的空白，不代替用户自动发送请求。"""
+        """空态 = 上下文感知的工作简报：仓库、变更规模、可做的事。
+
+        只有一轮对话时中间大半是深灰空区——把它利用起来；产生对话后自动消失。
+        """
+        lines = []
+        lines.append("你可以让我审查更改、运行测试、解释代码，或描述一个新目标。")
         self.chat_area.show_empty(
             "今天想完成什么？",
-            ("描述目标、添加文件，然后与 Forge 一起推进。",),
+            tuple(lines),
             actions=(
                 ("开始对话", "提问、讨论方案或梳理需求",
                  self.input_card.focus_entry),
@@ -2150,6 +2572,47 @@ class ForgeGuiApp:
                  lambda: self._open_workspace("file_tree")),
             ),
         )
+        self._refresh_work_context()
+
+    def _context_suggestions(self):
+        def draft(text):
+            if self._sending:
+                self._set_status("正在生成回复，结束后可准备下一条消息", "info")
+                return
+            if self.send_var.get().strip():
+                self.input_card.focus_entry()
+                self._set_status("已有未发送草稿，请先编辑或发送当前内容", "info")
+                return
+            self.send_var.set(text)
+            self.input_card.focus_entry()
+        return (("审查更改", lambda: draft("请审查当前工作区的实际更改，并说明问题和建议。")),
+                ("运行测试", lambda: draft("请运行当前项目已有的测试，并报告真实结果。")),
+                ("解释代码", lambda: draft("请先查看当前项目的 README，再解释项目结构和主要代码。")))
+
+    def _refresh_work_context(self):
+        repo = self.run_py.parent if self.run_py else None
+        generation = self._work_context_generation = getattr(self, "_work_context_generation", 0) + 1
+        self.chat_area.set_work_context(repo.name if repo else None, actions=self._context_suggestions())
+        if repo is None or WorkspacePanel is None:
+            return
+
+        def worker():
+            from workspace import _git_is_repo, _git_status_map
+            try:
+                changed = len(_git_status_map(repo)) if _git_is_repo(repo) else None
+            except (OSError, ValueError):
+                changed = None
+            self._post_ui(apply, changed)
+
+        def apply(changed):
+            if generation == self._work_context_generation and self.run_py and self.run_py.parent == repo:
+                self.chat_area.set_work_context(repo.name, changed, actions=self._context_suggestions())
+        threading.Thread(target=worker, daemon=True, name="Forge-context-snapshot").start()
+
+    def _on_workspace_snapshot(self, repo, changed):
+        if self.run_py and self.run_py.parent == repo:
+            self._work_context_generation = getattr(self, "_work_context_generation", 0) + 1
+            self.chat_area.set_work_context(repo.name, changed, actions=self._context_suggestions())
 
     def _build_task_view(self, parent):
         head = tk.Frame(parent, bg=C["chat"])
@@ -2385,10 +2848,10 @@ class ForgeGuiApp:
         changed = self._changed_file_count()
         actions = []
         if changed is None:
-            actions.append({"label": "查看仓库变更", "kind": "primary",
+            actions.append({"label": "📑 查看仓库变更", "kind": "primary",
                             "command": lambda: self._open_workspace("changes")})
         elif changed > 0:
-            actions.append({"label": f"仓库变更 ({changed})", "kind": "primary",
+            actions.append({"label": f"📑 仓库变更 ({changed})", "kind": "primary",
                             "command": lambda: self._open_workspace("changes")})
         actions.append({"label": "打开工作区", "command": lambda: self._open_workspace("file_tree")})
         if isinstance(data, dict):
@@ -2982,6 +3445,9 @@ class ForgeGuiApp:
         self.send_var = self.input_card.send_var
         self.think_pill = self.input_card.think_pill
         self.think_pill.pack_forget()  # 任务专属控制仍可从会话菜单进入。
+        self.model_var.trace_add("write", lambda *_: self._sync_composer_metadata())
+        self.reasoning_var.trace_add("write", lambda *_: self._sync_composer_metadata())
+        self._sync_composer_metadata()
         self.request_status_var = tk.StringVar(value="空闲")
         self._show_chat_start()
 
@@ -3006,10 +3472,23 @@ class ForgeGuiApp:
             thinking_var=self.reasoning_var,
             thinking_choices=REASONING_CHOICES,
             on_thinking=self._set_reasoning_effort,
+            show_thinking=False,
         )
         self.model_combo.pack(side=tk.LEFT, padx=(0, 8))
         attach_tooltip(self.model_combo, "选择模型（来自已启用的 Provider）")
         return self.model_combo
+
+    def _sync_composer_metadata(self):
+        if not hasattr(self, "input_card"):
+            return
+        model = self.model_var.get()
+        provider = select_provider(self.user_rows, model)
+        brand = brand_marks.detect(model=model, provider=provider) if provider else None
+        row = next((row for row in self.user_rows if row.get("config") == provider), None)
+        name = brand.label if brand else str(row.get("id")) if row else "未配置"
+        effort = self.reasoning_var.get()
+        mode = "标准" if effort == "off" else REASONING_LABELS.get(effort, effort)
+        self.input_card.set_metadata(provider=name, mode=mode)
 
     def _on_model_picked(self, value: str) -> None:
         """从下拉里选中一个模型：model_var 的 trace 负责后续（必要时重启 gateway）。"""
@@ -3052,6 +3531,7 @@ class ForgeGuiApp:
         """
         dialog = tk.Toplevel(self.root)
         dialog.title("供应商目录")
+        dialog.bind("<Escape>", lambda _event: dialog.destroy() or "break")
         dialog.geometry("820x640")
         dialog.transient(self.root)
         dialog.configure(bg=C["bg"])
@@ -3164,7 +3644,7 @@ class ForgeGuiApp:
                     attach_tooltip(chip, tip)
 
         search_var.trace_add("write", lambda *_: render())
-        entry.bind("<Escape>", lambda _e: dialog.destroy())
+        entry.bind("<Escape>", lambda _e: dialog.destroy() or "break")
         render()
         try:
             dialog.grab_set()
@@ -3379,6 +3859,7 @@ class ForgeGuiApp:
         from secret_store import save as _save_secrets
         dialog = tk.Toplevel(self.root)
         dialog.title("API 密钥")
+        dialog.bind("<Escape>", lambda _event: dialog.destroy() or "break")
         dialog.geometry("760x600")
         dialog.transient(self.root)
         dialog.configure(bg=C["bg"])
@@ -3589,9 +4070,14 @@ class ForgeGuiApp:
     def _open_context(self):
         dialog = tk.Toplevel(self.root)
         dialog.title("本轮上下文 · 发送前可检查")
+        dialog.bind("<Escape>", lambda _event: dialog.destroy() or "break")
         dialog.geometry("720x540")
         dialog.transient(self.root)
         dialog.configure(bg=C["chat"])
+        footer = tk.Frame(dialog, bg=C["chat"])
+        footer.pack(side=tk.BOTTOM, fill=tk.X, padx=12, pady=10)
+        self.context_close_btn = pill_button(footer, "关闭", dialog.destroy, kind="quiet", bg=C["chat"])
+        self.context_close_btn.pack(side=tk.RIGHT)
         use_history = tk.BooleanVar(value=self._include_history)
         preview = scrolledtext.ScrolledText(dialog, wrap="word", bg=C["input_bg"],
                                             fg=C["text"], font=FONT_MONO_SM)
@@ -3967,6 +4453,7 @@ class ForgeGuiApp:
         models = ["default"] + [m for m in models if m and m != "default"]
         self.model_combo.configure(values=models)
         self._sync_model_chip()
+        self._sync_composer_metadata()
         if models and self.model_var.get() not in models:
             # 程序化回落不算「用户切模型」，别触发 gateway 重启
             self._suppress_model_trace = True
@@ -4244,6 +4731,7 @@ class ForgeGuiApp:
             self._set_status("所选目录不包含 run.py，请选择 Forge 根目录", "error")
             return
         self.run_py = candidate
+        self._refresh_work_context()
         if self.workspace is not None:
             self.workspace.set_repo_root(candidate.parent)
         saved = save_desktop_config(forge_repo=str(candidate.parent))

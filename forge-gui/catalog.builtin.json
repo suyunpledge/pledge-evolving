@@ -1,0 +1,250 @@
+{
+  "catalogVersion": 1,
+  "generatedAt": "2026-10-03",
+  "note": "随程序分发的离线目录。不联网即可浏览；远程源需用户显式添加。",
+  "entries": [
+    {
+      "id": "theme-wechat-dark",
+      "name": "微信暗色主题",
+      "version": "1.2.0",
+      "kind": "theme",
+      "icon": "🌙",
+      "summary": "暖灰黑底 + 微信绿气泡，聊天气泡按「用户绿 / AI 深灰」分层",
+      "description": "深色背景（#141414 / 侧栏 #1C1C1C），用户消息用微信绿 #2EAE56 配白字，AI 回复用 #2A2A2A 配浅灰字。消息行提供复制/重生成/赞踩的 ghost 操作。",
+      "author": "Forge 内置",
+      "permissions": [
+        "ui:theme"
+      ],
+      "provides": {
+        "theme": "wechat-dark"
+      },
+      "tags": [
+        "主题",
+        "深色",
+        "微信风"
+      ],
+      "requires": {
+        "forge": ">=0.7.0"
+      }
+    },
+    {
+      "id": "theme-console-minimal",
+      "name": "极简控制台主题",
+      "version": "0.9.1",
+      "kind": "theme",
+      "icon": "⬛",
+      "summary": "纯黑底 + 等宽字，尽量少装饰，适合长时间盯代码",
+      "description": "去掉圆角与渐变描边，正文统一等宽字体，强调色降饱和。信息密度优先。",
+      "author": "Forge 内置",
+      "permissions": [
+        "ui:theme"
+      ],
+      "provides": {
+        "theme": "console-minimal"
+      },
+      "tags": [
+        "主题",
+        "极简",
+        "等宽"
+      ],
+      "requires": {
+        "forge": ">=0.7.0"
+      }
+    },
+    {
+      "id": "tool-gateway-bridge",
+      "name": "网关工具桥",
+      "version": "1.1.0",
+      "kind": "integration",
+      "icon": "🌉",
+      "summary": "让 Forge 能读写文件、跑命令、搜代码——Forge 说「无法访问电脑」就是它没开",
+      "description": "把 run.py gateway 的工具集（read_file / write_file / edit_file / list_dir / grep / shell_exec 等）暴露给模型。启动网关时需带 --tools 与 --workspace，权限档 balanced。",
+      "author": "Forge 内置",
+      "permissions": [
+        "workspace:read",
+        "workspace:write",
+        "shell:exec"
+      ],
+      "provides": {
+        "tools": [
+          "read_file",
+          "write_file",
+          "edit_file",
+          "list_dir",
+          "grep",
+          "shell_exec",
+          "datetime"
+        ],
+        "gateway_flag": "--tools"
+      },
+      "tags": [
+        "集成",
+        "工具桥",
+        "必需"
+      ],
+      "requires": {
+        "forge": ">=0.7.0"
+      }
+    },
+    {
+      "id": "panel-agent-cluster",
+      "name": "Agent 集群面板",
+      "version": "1.0.0",
+      "kind": "panel",
+      "icon": "🤖",
+      "summary": "1-4 路子 Agent 并行干活（调研/摘要/批判/编码四模板）",
+      "description": "把一次提问拆给多个子 Agent 并行处理，温度固定 0.3，结果按 1500/6000 字截断注入。分工模式与集群模式互斥，默认全关以免烧额度。",
+      "author": "Forge 内置",
+      "permissions": [
+        "model:call"
+      ],
+      "provides": {
+        "panels": [
+          "agents"
+        ],
+        "config": "agent-cluster.json"
+      },
+      "tags": [
+        "面板",
+        "多 Agent",
+        "并行"
+      ],
+      "requires": {
+        "forge": ">=0.7.0"
+      }
+    },
+    {
+      "id": "panel-sysmon",
+      "name": "系统监控面板",
+      "version": "1.0.2",
+      "kind": "panel",
+      "icon": "📈",
+      "summary": "顶栏实时显示 CPU / 内存 / 网关进程状态",
+      "description": "轻量采样，不引入第三方库。异常时在状态栏给提示，正常运行时不占注意力。",
+      "author": "Forge 内置",
+      "permissions": [],
+      "provides": {
+        "panels": [
+          "sysmon"
+        ]
+      },
+      "tags": [
+        "面板",
+        "监控"
+      ],
+      "requires": {
+        "forge": ">=0.7.0"
+      }
+    },
+    {
+      "id": "integration-hierarchical-retrieval",
+      "name": "分级检索接入",
+      "version": "0.5.0",
+      "kind": "integration",
+      "icon": "🗂️",
+      "summary": "对话前按话题检索长期记忆并注入，对话后自动入库（服务挂了静默降级）",
+      "description": "对接本地分级检索服务（默认 127.0.0.1:8000）。嵌入模型 bge-m3，阈值 0.55/0.55/0.62。服务不可用时不影响正常对话。",
+      "author": "Forge 内置",
+      "permissions": [
+        "net:outbound"
+      ],
+      "provides": {
+        "endpoints": [
+          "/retrieve",
+          "/ingest"
+        ],
+        "port": 8000
+      },
+      "tags": [
+        "集成",
+        "记忆",
+        "检索"
+      ],
+      "requires": {
+        "forge": ">=0.7.0"
+      }
+    },
+    {
+      "id": "tool-web-search",
+      "name": "联网搜索",
+      "version": "0.6.0",
+      "kind": "tool",
+      "icon": "🔎",
+      "summary": "给模型一个搜索工具，需要时自己查资料",
+      "description": "走已配置的搜索服务商。注意：本机按流量计费，启用前先评估用量。",
+      "author": "Forge 内置",
+      "permissions": [
+        "net:outbound"
+      ],
+      "provides": {
+        "tools": [
+          "web_search",
+          "open_link"
+        ]
+      },
+      "tags": [
+        "工具",
+        "联网",
+        "注意流量"
+      ],
+      "requires": {
+        "forge": ">=0.7.0"
+      }
+    },
+    {
+      "id": "tool-git-inspect",
+      "name": "Git 检视工具",
+      "version": "0.4.0",
+      "kind": "tool",
+      "icon": "🌿",
+      "summary": "只读的 git status / diff / log，让模型看懂仓库当前状态",
+      "description": "只做读取，不会 commit / push。要把改动写回仓库仍需人工确认。",
+      "author": "Forge 内置",
+      "permissions": [
+        "workspace:read"
+      ],
+      "provides": {
+        "tools": [
+          "git_status",
+          "git_diff",
+          "git_log"
+        ]
+      },
+      "tags": [
+        "工具",
+        "Git",
+        "只读"
+      ],
+      "requires": {
+        "forge": ">=0.7.0"
+      }
+    },
+    {
+      "id": "tool-custom-script",
+      "name": "自定义脚本工具（示例）",
+      "version": "0.1.0",
+      "kind": "tool",
+      "icon": "🐍",
+      "summary": "演示用：会执行本机 Python，安装时必须显式确认信任",
+      "description": "这条条目专门用来说明安全口径——它声明 executes_code=true，所以不能从目录一键安装，必须在界面上确认权限指纹后才会进入可启用状态。指纹随版本或权限变化而失效。",
+      "author": "Forge 内置（示例）",
+      "permissions": [
+        "shell:exec",
+        "workspace:write"
+      ],
+      "executes_code": true,
+      "provides": {
+        "tools": [
+          "run_script"
+        ]
+      },
+      "tags": [
+        "示例",
+        "需确认"
+      ],
+      "requires": {
+        "forge": ">=0.7.0"
+      }
+    }
+  ]
+}
