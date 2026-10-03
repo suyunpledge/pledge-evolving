@@ -31,13 +31,13 @@ import math
 from typing import Callable, Optional
 
 import decor
-from ui_icons import IconCanvas, emoji_image, emoji_parts, draw_icon
+from ui_icons import IconButton, IconCanvas, emoji_image, emoji_parts, draw_icon
 from gui_theme import (
     C, FONT_CAPTION, FONT_MICRO, FONT_MONO, FONT_MONO_SM, FONT_MONO_XS, FONT_SECTION,
-    FONT_SMALL, FONT_TITLE, FONT_UI, FONT_UI_BOLD, R_CARD, R_MD, R_PILL,
+    FONT_SMALL, FONT_TITLE, FONT_UI, FONT_UI_BOLD, R_BUBBLE, R_CARD, R_MD, R_PILL,
     RoundedCard, attach_tooltip, avatar, badge, bind_keyboard_action, circle_button, circle_button_state,
     dot, emoji_font, glyph_button, highlight_python, round_rect, rounded_label,
-    setup_code_tags, style_scrollbar,
+    setup_code_tags, style_scrollbar, ui_px, text_width, bind_wrap,
 )
 
 MAX_BUBBLE_WIDTH = 740          # 中央 Conversation 是主体，长文允许更宽的阅读行
@@ -167,9 +167,10 @@ class InlineText(tk.Text):
                          highlightthickness=0, padx=0, pady=0, height=1,
                          cursor="arrow", insertwidth=0, spacing1=1, spacing3=1,
                          selectbackground=C["accent_soft"])
-        # 右侧视觉余量：tk 裁剪边界=widget 边缘，给 6px 缓冲避免字/emoji 贴边被切
-        self.configure(padx=0, pady=0)
-        self._right_pad = 6
+        self._measure_font = tkfont.Font(root=self, font=self.cget("font"))
+        # Font descent supplies the optical inset at every DPI. Width and
+        # wrapping still come from the allocated parent, never a fixed gutter.
+        self.configure(padx=max(1, self._measure_font.metrics("descent")), pady=0)
         self.tag_configure("b", font=FONT_UI_BOLD, foreground=C["text"])
         self.tag_configure("code", font=FONT_MONO_SM, background=C["code_bg"],
                            foreground=C["code_str"])
@@ -220,19 +221,12 @@ class InlineText(tk.Text):
         try:
             if not self.winfo_exists():
                 return
-            self.configure(state=tk.NORMAL)
-            res = self.count("1.0", "end", "displaylines")
-            n = res[0] if isinstance(res, (tuple, list)) else res
-            n = max(1, int(n or 1))
-            if self._emoji_names:
-                pixels = self.count("1.0", "end", "ypixels")
-                if pixels:
-                    line_height = tkfont.Font(root=self, font=self.cget("font")).metrics("linespace")
-                    n = max(n, math.ceil(pixels[0] / max(1, line_height)))
+            pixels = int(self.tk.call(self._w, "count", "-update", "-ypixels", "1.0", "end"))
+            line_height = self._measure_font.metrics("linespace")
+            n = max(1, math.ceil(pixels / max(1, line_height)))
             if n != self._last_h:
                 self._last_h = n
                 self.configure(height=n)
-            self.configure(state=tk.DISABLED)
         except tk.TclError:
             pass
 
@@ -291,18 +285,13 @@ class InlineText(tk.Text):
             return
         self.tag_configure("emoji_text", font=emoji_font("😀", 11))
         for part, is_emoji in emoji_parts(text):
-            image = emoji_image(self, part) if is_emoji else None
+            image = emoji_image(self, part, size=self._measure_font.metrics("linespace")) if is_emoji else None
             if image is None:
                 self.insert(tk.END, part, tags + (("emoji_text",) if is_emoji else ()))
             else:
-                # 行末 emoji 裁切修复：tk 的 word-wrap 不把行内 image 计入换行
-                # 测量，行末 emoji 会被挤出可视区。前后插 U+200B 零宽空格让
-                # wrap 引擎把 emoji 当文字处理；padx=0 不额外占宽。
-                self.insert(tk.END, "\u200b", tags)
                 name = self.image_create("end-1c", image=image, align="center",
                                          name=f"emoji-{len(self._emoji_names)}",
                                          padx=0)
-                self.insert(tk.END, "\u200b", tags)
                 self._emoji_names[name] = part
                 self._emoji_references.append(image)
 
@@ -498,6 +487,8 @@ def render_blocks(parent, text, *, bg=None, max_width=None,
                 heading = tk.Label(host, text=block["text"], bg=base, fg=C["text"], font=f,
                                    anchor="w", justify=tk.LEFT, wraplength=wrap)
             heading.pack(fill=tk.X, pady=(8, 3))
+            if isinstance(heading, tk.Label):
+                bind_wrap(heading)
         elif kind == "p":
             t = InlineText(host, bg=base)
             t.set_segments(inline_segments(block["text"]))
@@ -557,7 +548,18 @@ def render_blocks(parent, text, *, bg=None, max_width=None,
                     pass
             line_count = max(1, len(block["text"].split("\n")))
             tx.configure(height=min(line_count, 24), state=tk.DISABLED)
+            sx = tk.Scrollbar(card.content, orient=tk.HORIZONTAL, command=tx.xview)
+            tx.configure(xscrollcommand=sx.set)
             tx.pack(fill=tk.X)
+            sx.pack(fill=tk.X)
+            if line_count > 24:
+                sy = tk.Scrollbar(card.content, orient=tk.VERTICAL, command=tx.yview)
+                tx.configure(yscrollcommand=sy.set)
+                tx.pack_forget()
+                sx.pack_forget()
+                sx.pack(side=tk.BOTTOM, fill=tk.X)
+                sy.pack(side=tk.RIGHT, fill=tk.Y)
+                tx.pack(fill=tk.BOTH, expand=True)
         elif kind == "hr":
             tk.Frame(host, bg=C["border"], height=1).pack(fill=tk.X, pady=6)
     return host
@@ -763,9 +765,13 @@ class ActionRow(tk.Frame):
     def __init__(self, parent, actions, *, bg=None):
         base = bg or C["chat"]
         super().__init__(parent, bg=base)
+        self._buttons = []
         for action in actions:
             kind = action.get("kind", "ghost")
-            btn = tk.Button(self, text=action.get("label", ""),
+            label = action.get("label", "")
+            if label == "打开工作区":
+                label = "📁 打开工作区"
+            btn = IconButton(self, text=label,
                             command=action.get("command"),
                             bg=C["accent"] if kind == "primary" else C["surface2"],
                             fg="#FFFFFF" if kind == "primary" else C["body"],
@@ -776,8 +782,19 @@ class ActionRow(tk.Frame):
                             font=FONT_SMALL, relief=tk.FLAT, bd=0, padx=12, pady=4,
                             cursor="hand2", highlightthickness=0,
                             overrelief=tk.FLAT)
-            btn.pack(side=tk.LEFT, padx=(0, 8), pady=2)
-        # 整组靠左、不填充 —— 消除「一整条横贯屏幕」的感觉
+            self._buttons.append(btn)
+            btn.grid(row=0, column=len(self._buttons)-1, sticky="w", padx=(0, 8), pady=2)
+        self.bind("<Configure>", self._flow)
+
+    def _flow(self, event):
+        row, column, used = 0, 0, 0
+        for button in self._buttons:
+            size = button.winfo_reqwidth() + 8
+            if used and used + size > event.width:
+                row, column, used = row + 1, 0, 0
+            button.grid(row=row, column=column, sticky="w", padx=(0, 8), pady=2)
+            used += size
+            column += 1
 
 
 class AgentStatusIndicator(tk.Frame):
@@ -861,8 +878,7 @@ class EmojiLabel(InlineText):
         self.set_text(text)
 
     def _text_width(self, master):
-        pixels = sum(26 if emoji and emoji_image(master, part) is not None
-                     else self._measure_font.measure(part) for part, emoji in emoji_parts(self._source_text))
+        pixels = text_width(master, self._source_text)
         pixels = min(self._wraplength, max(24, pixels))
         return max(2, math.ceil(pixels / max(1, self._measure_font.measure("0"))))
 
@@ -894,46 +910,41 @@ class UserMessage(tk.Frame):
 
         # head 行：名字 + 时间 靠右（以便头像与气泡视觉对齐）
         head = tk.Frame(self, bg=base)
-        head.pack(fill=tk.X)
-        # 名字靠右
-        tk.Label(head, text=ts or time.strftime("%H:%M"), bg=base, fg=C["muted"],
-                 font=FONT_CAPTION).pack(side=tk.RIGHT, padx=(8, 0))
+        head.pack(anchor="e")
+        avatar(head, size=ui_px(self, 26), glyph="你", fill="#2A2A38", shape="circle",
+               bg=base).pack(side=tk.LEFT, padx=(0, ui_px(self, 8)))
         tk.Label(head, text=name, bg=base, fg=C["subtext"], font=FONT_CAPTION,
-                 anchor="e").pack(side=tk.RIGHT)
-        # 占位 spacer（左）与头像，用来把气泡挤到右侧
-        spacer = tk.Frame(head, bg=base)
-        spacer.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        spacer_l = tk.Frame(spacer, bg=base)
-        spacer_l.pack(side=tk.RIGHT)
-        av = avatar(spacer_l, size=26, glyph="你", fill="#2A2A38", shape="circle",
-                    bg=base)
-        av.pack(side=tk.RIGHT, padx=(8, 0))
+                 anchor="e").pack(side=tk.LEFT)
+        tk.Label(head, text=ts or time.strftime("%H:%M"), bg=base, fg=C["muted"],
+                 font=FONT_CAPTION).pack(side=tk.LEFT, padx=(ui_px(self, 8), 0))
 
         # 气泡（autosize_width=True 修历史 bug）
         bubble_host = tk.Frame(self, bg=base)
         bubble_host.pack(fill=tk.X, anchor="e", pady=(4, 0))
-        card = RoundedCard(bubble_host, radius=R_CARD, fill=C["msg_user_bg"],
+        card = RoundedCard(bubble_host, radius=R_BUBBLE, fill=C["msg_user_bg"],
                            outline=C["msg_user_border"],
-                           padx=USER_AUTOSIZE_PAD_X, pady=USER_AUTOSIZE_PAD_Y,
+                           padx=ui_px(self, USER_AUTOSIZE_PAD_X), pady=ui_px(self, USER_AUTOSIZE_PAD_Y),
                            bg=base, autosize_width=True)
         card.pack(anchor="e")
         self._card = card
         # 文字 label：撑开气泡。wraplength 设上限，让长文本真的换行
-        max_text = MAX_BUBBLE_WIDTH - USER_AUTOSIZE_PAD_X * 2 - 16
+        max_text = ui_px(self, MAX_BUBBLE_WIDTH) - card._padx * 2
         if any(is_emoji for _part, is_emoji in emoji_parts(text)):
             self.label = EmojiLabel(card.content, text=text, bg=C["msg_user_bg"],
-                                    fg=C["body"], wraplength=max_text)
+                                    fg=C["msg_user_fg"], wraplength=max_text)
         else:
             self.label = tk.Label(card.content, text=text, bg=C["msg_user_bg"],
-                                  fg=C["body"], font=FONT_UI, justify=tk.LEFT,
+                                  fg=C["msg_user_fg"], font=FONT_UI, justify=tk.LEFT,
                                   anchor="w", wraplength=max_text)
         self.label.pack(anchor="w")
         self.bind("<Configure>", self._fit_bubble)
 
     def _fit_bubble(self, event):
         # Workspace 打开后行宽变小，气泡必须重新换行，而不是裁掉正文。
-        available = max(80, event.width - USER_AUTOSIZE_PAD_X * 2 - 16)
-        self.label.configure(wraplength=min(MAX_BUBBLE_WIDTH - 44, available))
+        available = max(1, event.width - self._card._padx * 2)
+        wrap = min(ui_px(self, MAX_BUBBLE_WIDTH) - self._card._padx * 2, available)
+        self._card.set_content_width(limit=wrap)
+        self.label.configure(wraplength=wrap)
 
 
 class AgentMessage(tk.Frame):
@@ -950,13 +961,16 @@ class AgentMessage(tk.Frame):
         self._max_width = MAX_BUBBLE_WIDTH
         self._app = app          # 给 ghost 操作条的重生成/赞踩用
         self._action_row = None
+        self._text_source = ""
+        self._has_details = False
 
         # head 行：avatar + 名字 + 时间(降权) + 角色徽章 + 状态（右对齐）
         head = tk.Frame(self, bg=base)
         head.pack(fill=tk.X)
         self._head = head
-        avatar(head, size=28, glyph=glyph, fill=C["accent"], shape="rounded",
-               bg=base, image=_BRAND_AVATAR).pack(side=tk.LEFT, padx=(0, 8))
+        self._avatar = avatar(head, size=ui_px(self, 28), glyph=glyph, fill=C["accent"], shape="rounded",
+                              bg=base, image=_BRAND_AVATAR)
+        self._avatar.pack(side=tk.LEFT, padx=(0, ui_px(self, 8)))
         tk.Label(head, text=name, bg=base, fg=C["text"], font=FONT_UI_BOLD).pack(side=tk.LEFT)
         tk.Label(head, text=ts or time.strftime("%H:%M"), bg=base, fg=C["muted"],
                  font=FONT_CAPTION).pack(side=tk.LEFT, padx=(8, 0))
@@ -977,26 +991,37 @@ class AgentMessage(tk.Frame):
         # 正文气孔：圆角卡 + hairline 描边，跟用户侧对称。整体宽度跟随对话列，
         # 这样代码块/工具卡/表格都能拿到完整宽度（不为了「抱得紧」把内容压窄）。
         self._bubble_host = tk.Frame(self, bg=base)
-        self._bubble_host.pack(fill=tk.X, anchor="w", pady=(6, 0))
-        self._bubble = RoundedCard(self._bubble_host, radius=R_CARD,
+        self._bubble_host.pack(fill=tk.X, anchor="w", padx=(ui_px(self, 36), 0), pady=(6, 0))
+        self._bubble = RoundedCard(self._bubble_host, radius=R_BUBBLE,
                                    fill=self._bg, outline=C["msg_agent_border"],
-                                   padx=USER_AUTOSIZE_PAD_X,
-                                   pady=USER_AUTOSIZE_PAD_Y, bg=base)
+                                   padx=ui_px(self, USER_AUTOSIZE_PAD_X),
+                                   pady=ui_px(self, USER_AUTOSIZE_PAD_Y), bg=base, autosize_width=True)
         # 跟随列宽（fill=X）而不是抱紧内容：里面的 markdown 标签带 wraplength 上限，
         # 列窄时靠 fill=X 让它们重新折行，不会横向溢出。
-        self._bubble.pack(fill=tk.X)
+        self._bubble.pack(anchor="w")
         self.body = tk.Frame(self._bubble.content, bg=self._bg)
         self.body.pack(fill=tk.X)
         # RoundedCard 靠 content 的 <Configure> 反推高度；正文是后来才填进去的，
         # 在 fill=X 模式下这条链会断（画布高度停在 1，内容不 mapped）。
         # 这里由 body/host 直接驱动高度，不依赖那条隐式链。
-        self._bubble_host.bind("<Configure>", self._sync_bubble_height)
+        self._bubble_host.bind("<Configure>", self._fit_content)
         self.body.bind("<Configure>", self._sync_bubble_height)
         self._stream = None
 
+    def _fit_content(self, _event=None):
+        available = max(1, self._bubble_host.winfo_width() - self._bubble._padx * 2)
+        font = tkfont.Font(root=self, font=FONT_UI)
+        readable = font.measure("0" * 78)
+        limit = max(1, min(available, readable))
+        preferred = (limit if self._has_details else
+                     max(ui_px(self, 48), text_width(self, self._text_source) + font.metrics("descent") * 2))
+        self._max_width = limit
+        self._bubble.set_content_width(preferred, limit=limit)
+        self._sync_bubble_height()
+
     def _sync_bubble_height(self, _event=None):
         try:
-            need = self.body.winfo_reqheight() + USER_AUTOSIZE_PAD_Y * 2
+            need = self.body.winfo_reqheight() + self._bubble._pady * 2
             cv = self._bubble._cv
             if abs(cv.winfo_reqheight() - need) > 1:
                 cv.configure(height=max(1, need))
@@ -1018,26 +1043,37 @@ class AgentMessage(tk.Frame):
 
     # -- 正文（流式 & markdown）--
     def stream_text(self, text: str):
+        self._text_source = text
         if self._stream is None:
             self._stream = InlineText(self.body, bg=self._bg)
             self._stream.pack(fill=tk.X)
         self._stream.set_text(text)
+        self._fit_content()
 
     def append_stream(self, piece: str):
+        self._text_source += piece
         if self._stream is None:
             self._stream = InlineText(self.body, bg=self._bg)
             self._stream.pack(fill=tk.X)
         self._stream.append_text(piece)
+        self._fit_content()
 
     def render_markdown(self, text: str):
+        self._text_source = text
+        self._has_details = self._has_details or any(block["type"] in ("code", "li", "oli", "quote", "task") for block in parse_blocks(text))
         # 注释要求：「如果 AgentMessage 里既渲染正文又渲染工具/步骤，确保正文始终在最上、
         # trace 折叠块在正文下方，且有轻微分组」。
         # 我们每次 render_markdown：若已有 trace，加细分割线，重新顺序正文/trace。
         if self._stream is not None:
             self._stream.destroy()
             self._stream = None
-        host = render_blocks(self.body, text, bg=self._bg)
-        host.pack(fill=tk.X, in_=self.body, side=tk.TOP)
+        previous = getattr(self, "_body_host", None)
+        if previous is not None:
+            previous.destroy()
+        host = self._body_host = render_blocks(self.body, text, bg=self._bg)
+        trace = getattr(self, "_trace_host", None)
+        host.pack(fill=tk.X, in_=self.body, side=tk.TOP, **({"before": trace} if trace is not None else {}))
+        self._fit_content()
         # 已有 trace？保持顺序：Body 段在最上 → 分割线 → 现有 trace 块
         self._reorder_body_with_trace()
 
@@ -1084,6 +1120,8 @@ class AgentMessage(tk.Frame):
 
     def _ensure_trace_host(self):
         """第一次 add_steps/add_tool_card 时创建 trace 容器，并附 ghost 操作条。"""
+        self._has_details = True
+        self._fit_content()
         host = getattr(self, "_trace_host", None)
         if host is None or not host.winfo_exists():
             host = tk.Frame(self.body, bg=self._bg)
@@ -1177,18 +1215,20 @@ class AgentMessage(tk.Frame):
             host_frame = self._ensure_trace_host()
         colors = {"muted": C["muted"], "ok": C["ok"], "error": C["error"],
                   "warn": C["warn"], "info": C["info"]}
-        tk.Label(host_frame, text=text, bg=self._bg,
+        label = tk.Label(host_frame, text=text, bg=self._bg,
                  fg=colors.get(tone, C["muted"]),
                  font=FONT_CAPTION, anchor="w", justify=tk.LEFT,
-                 wraplength=self._max_width).pack(fill=tk.X, pady=(4, 0))
+                 wraplength=self._max_width)
+        label.pack(fill=tk.X, pady=(4, 0))
+        bind_wrap(label)
 
     def add_actions(self, actions):
         # 动作按钮单独一个 host，靠底部（不被 trace 折叠吸收）
         if not hasattr(self, "_action_row_packed"):
             self._action_row_packed = False
-        host = tk.Frame(self, bg=self._bg)
-        host.pack(fill=tk.X, pady=(8, 0))
-        row = ActionRow(host, actions, bg=self._bg)
+        host = tk.Frame(self, bg=self._base)
+        host.pack(fill=tk.X, padx=(ui_px(self, 36), 0), pady=(8, 0))
+        row = ActionRow(host, actions, bg=self._base)
         row.pack(fill=tk.X)
         self._action_row_packed = True
         return row
@@ -1226,6 +1266,12 @@ class MessageArea(tk.Frame):
         self.scroll.pack(fill=tk.BOTH, expand=True)
         self._empty = None
         self._count = 0
+        self._work_context = None
+        self._context_hint = None
+        self._context_actions = ()
+        self._context_var = tk.StringVar(value="")
+        self.scroll.canvas.bind("<Configure>", self._fit_context_hint, add="+")
+        self.scroll.inner.bind("<Configure>", self._fit_context_hint, add="+")
         self.show_empty()
 
     def show_empty(self, title="从一个目标开始",
@@ -1243,6 +1289,10 @@ class MessageArea(tk.Frame):
             banner = None
         title_label = tk.Label(box, text=title, bg=self._bg, fg=C["text"], font=FONT_TITLE)
         title_label.pack()
+        context = tk.Label(box, textvariable=self._context_var, bg=self._bg,
+                           fg=C["subtext"], font=FONT_SMALL, justify=tk.CENTER)
+        context.pack(fill=tk.X, pady=(8, 0))
+        bind_wrap(context)
         for line in lines:
             label = tk.Label(box, text=line, bg=self._bg, fg=C["ter"],
                              font=FONT_SMALL, wraplength=500, justify=tk.CENTER)
@@ -1313,18 +1363,58 @@ class MessageArea(tk.Frame):
             child.destroy()
         self._empty = None
         self._count = 0
+        self._context_hint = None
+
+    def set_work_context(self, repo, changed=None, *, actions=()):
+        self._work_context = repo
+        self._context_actions = actions
+        text = f"当前工作区：{repo}" if repo else "尚未选择工作区"
+        if repo and changed is not None:
+            text += f" · {changed} 个文件有修改" if changed else " · 工作区没有未提交修改"
+        self._context_var.set(text)
+        self._fit_context_hint()
+
+    def _fit_context_hint(self, _event=None):
+        if self._empty is not None or not self._work_context or not 0 < self._count <= 2:
+            if self._context_hint is not None:
+                self._context_hint.pack_forget()
+            return
+        if self._context_hint is None:
+            box = self._context_hint = tk.Frame(self.scroll.inner, bg=C["surface_subtle"], padx=14, pady=12)
+            label = tk.Label(box, textvariable=self._context_var, bg=C["surface_subtle"], fg=C["subtext"],
+                             font=FONT_SMALL, justify=tk.LEFT, anchor="w")
+            label.pack(fill=tk.X)
+            bind_wrap(label)
+            actions = ActionRow(box, [{"label": title, "command": callback} for title, callback in self._context_actions],
+                                bg=C["surface_subtle"])
+            actions.pack(fill=tk.X, pady=(8, 0))
+            hint = tk.Label(box, text="选择建议会填入草稿，确认后再发送。", bg=C["surface_subtle"],
+                            fg=C["muted"], font=FONT_CAPTION, anchor="w", justify=tk.LEFT)
+            hint.pack(fill=tk.X, pady=(4, 0))
+            bind_wrap(hint)
+        required = sum(child.winfo_reqheight() for child in self.scroll.inner.winfo_children()
+                       if child is not self._context_hint)
+        room = self.scroll.canvas.winfo_height() - required - int(self.scroll.inner.cget("pady")) * 2
+        if room >= self._context_hint.winfo_reqheight() + 24:
+            if not self._context_hint.winfo_manager():
+                self._context_hint.pack(fill=tk.X, pady=(24, 0))
+        else:
+            self._context_hint.pack_forget()
 
     @property
     def empty(self) -> bool:
         return self._count == 0
 
     def _prepare(self):
+        if self._context_hint is not None:
+            self._context_hint.pack_forget()
         if self._empty is not None:
             self._empty.destroy()
             self._empty = None
 
     def _finish(self, following):
         self._count += 1
+        self._fit_context_hint()
         if following:
             self.scroll.scroll_to_end()
 
@@ -1368,6 +1458,82 @@ class MessageArea(tk.Frame):
 # ─── 输入卡（Composer） ────────────────────────────────────
 
 
+
+
+class TeamTogglePill(tk.Frame):
+    """Agent 集群/分工三态开关（底栏胶囊）。
+
+    三态循环：off → auto → on → off
+      off  「智能体：关」      —— 单模型直答（默认，不烧额外额度）
+      auto 「智能体：AI 决断」 —— 本地启发式判断该不该并行（零成本）
+      on   「智能体：开」      —— 按集群/分工配置强制并行
+    点击循环切换；右键直接弹出三选一菜单。
+    """
+
+    MODES = ("off", "auto", "on")
+    LABELS = {"off": "智能体：关", "auto": "智能体：AI 决断", "on": "智能体：开"}
+    COLORS = {   # (bg, fg)
+        "off":  ("input_bg", "subtext"),
+        "auto": ("accent_soft", "accent"),
+        "on":   ("ok", "#0B0B10"),
+    }
+
+    def __init__(self, parent, *, mode: str = "off", on_change=None, bg=None):
+        base = bg or _bg_of(parent)
+        super().__init__(parent, bg=base)
+        self._mode = mode if mode in self.MODES else "off"
+        self._on_change = on_change
+        self._btn = rounded_label(
+            self, text=self.LABELS[self._mode], fill=C["input_bg"],
+            outline=C["border_hi"], fg=C["subtext"], font=FONT_CAPTION,
+            bg=base, command=self._cycle, radius=R_PILL, padx=8, pady=2,
+            tooltip="Agent 集群/分工：关=单模型；开=按配置并行；AI 决断=模型按问题自行判断")
+        self._btn.pack()
+        self._apply_mode_color()
+        # 右键直达指定档位
+        menu = tk.Menu(self, tearoff=0, bg=C["surface"], fg=C["text"],
+                       activebackground=C["hover"], activeforeground=C["accent"])
+        for m in self.MODES:
+            menu.add_command(label=self.LABELS[m],
+                             command=lambda mm=m: self.set_mode(mm))
+        self._menu = menu
+        for w in (self, self._btn):
+            w.bind("<Button-3>", lambda _e: self._menu.tk_popup(_e.x_root, _e.y_root))
+
+    # ── 状态 ────────────────────────────────────────────────────────
+
+    def mode(self) -> str:
+        return self._mode
+
+    def set_mode(self, mode: str) -> None:
+        if mode not in self.MODES or mode == self._mode:
+            return
+        self._mode = mode
+        self._btn.set_text(self.LABELS[mode])   # rounded_label 是 Canvas，用 set_text
+        self._apply_mode_color()
+        if self._on_change is not None:
+            try:
+                self._on_change(mode)
+            except Exception:
+                pass
+
+    def _cycle(self) -> None:
+        i = self.MODES.index(self._mode)
+        self.set_mode(self.MODES[(i + 1) % len(self.MODES)])
+
+    def _apply_mode_color(self) -> None:
+        bg_key, fg_raw = self.COLORS[self._mode]
+        bg_c = C[bg_key]
+        fg_c = C.get(fg_raw, fg_raw)   # "#0B0B10" 这类字面色直接用
+        for item in self._btn.find_all():
+            itype = self._btn.type(item)
+            if itype == "polygon":
+                self._btn.itemconfigure(item, fill=bg_c,
+                                        outline=C["border_hi"] if self._mode == "off" else "")
+            elif itype == "text":
+                self._btn.itemconfigure(item, fill=fg_c)
+
+
 class InputCard(tk.Frame):
     """底部 Composer：输入是主体，低频控制统一收进水平工具栏。"""
 
@@ -1377,7 +1543,7 @@ class InputCard(tk.Frame):
                  on_thinking=None, footer_left=None, footer_right=None,
                  attach_button=True, model_widget=None,
                  on_attach=None, on_context=None, on_commands=None,
-                 on_settings=None):
+                 on_settings=None, on_team_change=None, team_mode="off"):
         base = bg or C["chat"]
         super().__init__(parent, bg=base)
         self._on_send = on_send
@@ -1386,7 +1552,7 @@ class InputCard(tk.Frame):
         self._on_settings = on_settings
         self.send_var = tk.StringVar()
 
-        card = RoundedCard(self, radius=R_CARD, fill=C["input_bg"],
+        card = RoundedCard(self, radius=R_BUBBLE, fill=C["input_bg"],
                            outline=C["border_hi"], padx=12, pady=10, bg=base)
         card.pack(fill=tk.X)
         self._card = card
@@ -1423,18 +1589,16 @@ class InputCard(tk.Frame):
         self.entry.bind("<FocusIn>", lambda _e: self._set_focus(True))
         self.entry.bind("<FocusOut>", lambda _e: self._set_focus(False))
 
-        # ─── 底栏：左 = 低频工具（＋附件·上下文·命令），右 = 高频组（模型·发送）──
-        # 用 place 而不是 grid：窄窗时 grid 会被 entry 撑大 column 0、挤掉右列；
-        # 绝对贴右永远有效，宽度由 right 组内容决定（必要时 _fit_toolbar 收拢）。
+        # Second layer: attachments, context and commands.
         bar = tk.Frame(inner, bg=C["input_bg"])
         bar.pack(fill=tk.X, pady=(10, 0))
-        self._toolbar = bar
+        self._tools_row = bar
         self._low_controls = None
 
         attachments = tk.Frame(bar, bg=C["input_bg"])
         attachments.pack(side=tk.LEFT)
         self._low_controls = attachments
-        self.plus = circle_button(attachments, "＋", plus_cb, size=32,
+        self.plus = circle_button(attachments, "＋", plus_cb, size=ui_px(self, 28),
                                   kind="muted", bg=C["input_bg"], glyph_size=11,
                                   tooltip="添加附件")
         self.plus.pack(side=tk.LEFT, padx=(0, 5))
@@ -1445,7 +1609,7 @@ class InputCard(tk.Frame):
             self._low_controls = low
             for text, tip, callback in (
                     ("上下文", "查看历史与附件，检查本轮实际发送内容", on_context),
-                    ("⋯ 命令", "工具与命令", on_commands)):
+                    ("/ 命令", "工具与命令", on_commands)):
                 pill = rounded_label(low, text, fill=C["input_bg"], outline="",
                                      fg=C["subtext"], font=FONT_CAPTION,
                                      bg=C["input_bg"], tooltip=tip,
@@ -1453,45 +1617,72 @@ class InputCard(tk.Frame):
                                      pady=2)
                 pill.pack(side=tk.LEFT, padx=(0, 4))
 
-        right = tk.Frame(bar, bg=C["input_bg"])
-        right.place(relx=1.0, rely=0.0, anchor="ne", x=-2, y=0)
+        # ── Agent 集群/分工三态开关（关 / AI 决断 / 开）──
+        self.team_pill = TeamTogglePill(low if attach_button else bar,
+                                        mode=team_mode, on_change=on_team_change,
+                                        bg=C["input_bg"])
+        self.team_pill.pack(side=tk.LEFT, padx=(4, 0))
+
+        # Third layer: real provider/model/mode. Sending has its own column,
+        # so metadata can wrap without overlapping or hiding the send button.
+        state_row = tk.Frame(inner, bg=C["input_bg"])
+        state_row.pack(fill=tk.X, pady=(8, 0))
+        self._toolbar = state_row
+        state_row.grid_columnconfigure(0, weight=1)
+        metadata = self._metadata = tk.Frame(state_row, bg=C["input_bg"])
+        metadata.grid(row=0, column=0, sticky="ew", padx=(0, 8))
+        self.provider_var = tk.StringVar(value="Provider：未配置")
+        self.provider_label = tk.Label(metadata, textvariable=self.provider_var,
+                                       font=FONT_CAPTION, bg=C["input_bg"], fg=C["muted"], anchor="w")
+        self.provider_label.grid(row=0, column=0, sticky="w", padx=(0, 8))
+        model_host = self._model_host = tk.Frame(metadata, bg=C["input_bg"])
+        model_host.grid(row=0, column=1, sticky="ew", padx=(0, 8))
+        metadata.grid_columnconfigure(1, weight=1)
+        self.mode_var = tk.StringVar(value="模式：标准")
+        self.mode_pill = glyph_button(metadata, "模式：标准", on_thinking or (lambda: None),
+                                      bg=C["input_bg"], fg=C["subtext"], size=10,
+                                      tooltip="当前思考强度；点击调整，实际支持能力取决于模型")
+        self.mode_pill.grid(row=0, column=2, sticky="e")
+        right = tk.Frame(state_row, bg=C["input_bg"])
+        right.grid(row=0, column=1, sticky="ne")
         self._primary_controls = right
         self._toolbar_compact = None
-        bar.bind("<Configure>", self._fit_toolbar)
+        state_row.bind("<Configure>", self._fit_toolbar)
         self.model_var = model_var or tk.StringVar(value="default")
         if model_widget is not None:
             self.model_pill = None
-            self.model_widget = model_widget(right)
+            self.model_widget = model_widget(model_host)
+            self.model_widget.pack_configure(padx=0)
         else:
             self.model_widget = None
-            self.model_pill = rounded_label(right, f"▣ {self.model_var.get()}",
+            self.model_pill = rounded_label(model_host, f"▣ {self.model_var.get()}",
                                             fill=C["sel"], outline=C["sel_border"],
                                             fg=C["body"], font=FONT_SMALL,
                                             command=on_model, bg=C["input_bg"],
                                             tooltip="切换模型")
-            self.model_pill.pack(side=tk.LEFT, padx=(0, 8))
-        self.think_pill = rounded_label(right, thinking_text,
+            self.model_pill.pack(fill=tk.X)
+        # Compatibility accessor: mode is visibly represented by mode_pill.
+        self.think_pill = rounded_label(model_host, thinking_text,
                                         fill=C["surface2"], outline=C["border_hi"],
                                         fg=C["subtext"], font=FONT_SMALL,
                                         command=on_thinking, bg=C["input_bg"],
                                         tooltip="Forge 任务的沉思配置；普通 gateway 对话不执行任务沉思")
-        self.think_pill.pack(side=tk.LEFT, padx=(0, 8))
 
         # ⚙ 设置按钮（可选）
         if on_settings is not None:
-            self.settings_btn = glyph_button(right, "⚙", on_settings, bg=C["input_bg"],
+            self.settings_btn = glyph_button(bar, "⚙", on_settings, bg=C["input_bg"],
                                              fg=C["subtext"], size=11,
                                              hover=C["hover"], tooltip="设置")
-            self.settings_btn.pack(side=tk.LEFT, padx=(0, 8))
+            self.settings_btn.pack(side=tk.RIGHT)
         else:
             self.settings_btn = None
 
         # 发送 / 停止（同一物理位置，set_busy 切换）
-        self.send_circle = circle_button(right, "↑", self._fire_send, size=36,
+        self.send_circle = circle_button(right, "↑", self._fire_send, size=ui_px(self, 36),
                                          kind="muted", bg=C["input_bg"],
                                          tooltip="发送（Enter）")
         self.send_circle.pack(side=tk.RIGHT)
-        self.stop_circle = circle_button(right, "■", self._fire_stop, size=36,
+        self.stop_circle = circle_button(right, "■", self._fire_stop, size=ui_px(self, 36),
                                          kind="danger", bg=C["input_bg"],
                                          tooltip="停止生成")
         self._busy = False
@@ -1513,13 +1704,38 @@ class InputCard(tk.Frame):
 
         self._sync_hint()
         self._sync_send_state()
+        parent.bind("<Configure>", lambda _event: self._resize_entry(), add="+")
+        self.bind("<Configure>", lambda _event: self._resize_entry(), add="+")
 
     # -- 交互 --
     def _resize_entry(self):
         """按显示行增长，长输入保留内部滚动，不把时间线挤出屏幕。"""
         try:
             count = self.entry.count("1.0", "end", "displaylines")
-            rows = max(2, min(7, int(count[0]) if count else 2))
+            parent_height = self.master.winfo_height()
+            max_rows = 7
+            minimum = 2
+            timeline = next((child for child in self.master.winfo_children() if isinstance(child, MessageArea)), None)
+            if parent_height > 1 and timeline is not None:
+                line_height = tkfont.Font(root=self, font=self.entry.cget("font")).metrics("linespace")
+                def padding(widget, key):
+                    info = widget.pack_info()
+                    raw = info.get(key, 0)
+                    values = raw if isinstance(raw, tuple) else widget.tk.splitlist(str(raw))
+                    nums = [int(value) for value in values]
+                    return sum(nums) if len(nums) > 1 else nums[0] * 2
+                reserve = max(ui_px(self, 80), int(parent_height * .3))
+                siblings = sum(child.winfo_reqheight() + padding(child, "pady") + padding(child, "ipady")
+                               for child in self.master.winfo_children()
+                               if child not in (self, timeline) and child.winfo_manager() == "pack")
+                chrome = sum(widget.winfo_reqheight() + padding(widget, "pady")
+                             for widget in (self._tools_row, self._toolbar, self.footer_left.master))
+                chrome += self._card._pady * 2 + padding(self, "pady") + padding(self.entry, "ipady")
+                chrome += int(self.entry.cget("pady")) * 2 + int(self.entry.cget("borderwidth")) * 2
+                budget = parent_height - reserve - siblings - chrome
+                max_rows = max(1, min(7, budget // max(1, line_height)))
+                minimum = min(2, max_rows)
+            rows = max(minimum, min(max_rows, int(count[0]) if count else 2))
             if int(self.entry.cget("height")) != rows:
                 self.entry.configure(height=rows)
         except tk.TclError:
@@ -1530,55 +1746,43 @@ class InputCard(tk.Frame):
         self._sync_hint()
 
     def _fit_toolbar(self, event):
-        """右侧组组内收拢（永远 place 贴右，不做一级折两行）。
+        """Reflow metadata using measured widths, preserving every control."""
+        canvas_width = self._card._cv.winfo_width()
+        if canvas_width <= 1:
+            return
+        content_width = max(1, canvas_width - self._card._padx * 2)
+        signature = (content_width, self.provider_var.get(), self.mode_var.get(),
+                     self.provider_label.winfo_reqwidth(), self.mode_pill.winfo_reqwidth(),
+                     self._primary_controls.winfo_reqwidth())
+        if signature == getattr(self, "_toolbar_signature", None):
+            return
+        self._toolbar_signature = signature
+        available = max(1, content_width - self._primary_controls.winfo_reqwidth() - 8)
+        fixed = self.provider_label.winfo_reqwidth() + self.mode_pill.winfo_reqwidth() + 16
+        compact = available < fixed + ui_px(self, 150)
+        if compact != self._toolbar_compact:
+            self._toolbar_compact = compact
+            self._metadata.grid_columnconfigure(1, weight=0 if compact else 1)
+            self._metadata.grid_columnconfigure(0, weight=1 if compact else 0)
+            if compact:
+                self._model_host.grid(row=0, column=0, columnspan=3, sticky="ew", padx=0, pady=(0, 4))
+                self.provider_label.grid(row=1, column=0, columnspan=2, sticky="w")
+                self.mode_pill.grid(row=1, column=2, sticky="e")
+            else:
+                self.provider_label.grid(row=0, column=0, columnspan=1, sticky="w")
+                self._model_host.grid(row=0, column=1, columnspan=1, sticky="ew", padx=(0, 8), pady=0)
+                self.mode_pill.grid(row=0, column=2, sticky="e")
+        budget = available if compact else max(1, available - fixed)
+        if self.model_widget is not None and hasattr(self.model_widget, "set_width_budget"):
+            self.model_widget.set_width_budget(budget)
+        elif self.model_pill is not None:
+            self.model_pill.configure(width=budget)
 
-        收拢顺序：沉思 pill → ⚙ → 模型 pill（发送/停止永藏不了）。
-        目的：任何窗口宽度下发送按钮都不被挤掉。
-        """
-        group = self._primary_controls
-        group.update_idletasks()
-        avail = max(120, event.width - 16)
-
-        def _shrinkables():
-            out = []
-            think = getattr(self, "think_pill", None)
-            if think is not None:
-                out.append(("think", think))
-            settings = getattr(self, "settings_btn", None)
-            if settings is not None:
-                out.append(("settings", settings))
-            mp = getattr(self, "model_pill", None)
-            if mp is not None:
-                out.append(("model", mp))
-            if getattr(self, "model_widget", None) is not None:
-                out.append(("model_combo", self.model_widget))
-            return out
-
-        shrunk = list(getattr(self, "_toolbar_shrunk", []))
-        # 先恢复全部；think_pill 默认该是 pack_forget（forge_gui_v2.__init__ 处），
-        # 收拢后不要 pack 回来（除非产品决策显式显示）。其他按原 side 回。
-        for key, widget in shrunk:
-            try:
-                if key == "think":
-                    pass  # 默认 hidden，不 pack 回
-                elif key == "settings":
-                    widget.pack(side=tk.LEFT)
-                elif key == "model":
-                    widget.pack(side=tk.LEFT, padx=(0, 8))
-                elif key == "model_combo":
-                    widget.pack(side=tk.LEFT, padx=(0, 8))
-            except tk.TclError:
-                pass
-        shrunk = []
-        for key, widget in _shrinkables():
-            if group.winfo_reqwidth() <= avail:
-                break
-            try:
-                widget.pack_forget()
-                shrunk.append((key, widget))
-            except tk.TclError:
-                pass
-        self._toolbar_shrunk = shrunk
+    def set_metadata(self, *, provider, mode):
+        self.provider_var.set(f"Provider：{provider}")
+        self.mode_var.set(f"模式：{mode}")
+        self.mode_pill.configure(text=self.mode_var.get())
+        self._fit_toolbar(type("Size", (), {"width": self._toolbar.winfo_width()})())
 
     def _enter(self, event):
         if event.state & 1:                # Shift

@@ -3555,6 +3555,8 @@ class ForgeGuiApp:
             on_attach=self._attach_files,
             on_context=self._open_context,
             on_commands=self._open_commands,
+            on_team_change=self._on_team_mode_changed,
+            team_mode=self._load_team_mode(),
         )
         self.input_card.pack(fill=tk.X, side=tk.BOTTOM, padx=20, pady=(0, 6))
         self.context_summary = tk.StringVar(value="历史上下文：开启 · 附件：0")
@@ -5580,6 +5582,37 @@ class ForgeGuiApp:
 
     # ── Agent 集群 / 子 Agent 分工（移植自 AI Platform） ──
 
+    # ── 底栏三态开关（关 / AI 决断 / 开）──────────────────────
+
+    def _load_team_mode(self) -> str:
+        try:
+            cfg = load_desktop_config()
+        except Exception:
+            return "off"
+        mode = (cfg or {}).get("team_mode", "off")
+        return mode if mode in ("off", "auto", "on") else "off"
+
+    def _on_team_mode_changed(self, mode: str) -> None:
+        try:
+            save_desktop_config(team_mode=mode)
+        except Exception:
+            pass
+        label = {"off": "关（单模型直答）", "auto": "AI 决断（按问题自行判断）",
+                 "on": "开（按集群/分工配置并行）"}.get(mode, mode)
+        self._set_status(f"Agent 协作模式：{label}", "info")
+
+    #: AI 决断的本地启发式（零成本、零额外请求）：命中「需要多视角」的语言特征
+    #: 或足够长的复合问题才并行。宁可漏并行，不可滥并行（额度纪律）。
+    _AUTO_HINTS = ("对比", "评测", "评估", "调研", "全面", "多角度", "多方案",
+                   "审查", "评审", "利弊", "优劣", "几种", "哪些方案", "设计一下",
+                   "架构", "选型", "compile", "review", "compare", "trade-off",
+                   "调研报告", "深度")
+
+    def _auto_should_parallel(self, prompt: str) -> bool:
+        if len(prompt) >= 120:
+            return True
+        return any(h in prompt for h in self._AUTO_HINTS)
+
     def _plan_sidecars(self, cfg: dict, prompt: str) -> dict | None:
         """决定本轮要不要跑 sidecar；返回计划或 None。
 
@@ -5587,7 +5620,17 @@ class ForgeGuiApp:
           - 子 Agent 分工开启且有预设 → 走分工
           - 否则集群开启 → 走集群（1-4 路同构方案）
           - 两者都开时分工优先（互斥，防双份注入）
+
+        三态开关在原语义之前裁决：
+          off  → 恒 None（单模型直答，配置再开也不跑）
+          auto → 本地启发式判断该不该并行（不额外调模型，零成本）
+          on   → 按集群/分工配置强制走
         """
+        mode = getattr(self, "_team_mode", "off")
+        if mode == "off":
+            return None
+        if mode == "auto" and not self._auto_should_parallel(prompt):
+            return None
         try:
             subs = team.enabled_sub_agent_presets(cfg)
         except Exception:

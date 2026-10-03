@@ -4,13 +4,9 @@
 `forge_gui_v2.py`、`workspace.py`、`chat_widgets.py` 全部从这里取，
 避免三处各写一套 token。
 
-设计口径（对照参考稿实测）：
-    背景层级    #000000 底 → #0B0B10 侧栏 → #0E0E13 主背景 → #111117 对话面板
-                → #15151C 二级卡片 → #1A1A22 卡片/气泡 → #1E1E2A 选中态
-    线条        #23232C 分隔线 / #2A2A34 卡片描边 / #34344A 选中描边
-    主色        #4F46E5（Indigo），亮态 #6366F1，次级 #7C7CF0
-    语义色      成功 #22C55E / 警告 #F59E0B / 危险 #EF4444
-    文字        #E9E9F0 标题 / #D2D2DC 正文 / #9A9AA8 次要 / #6B6B78 弱化
+暖灰深色层级搭配 Indigo 操作色；绿色气泡区分用户消息。
+正文与必要说明优先保证对比度。自绘控件提供键盘激活和可见焦点，
+常用操作保持足够热区，工具提示延迟出现并随控件销毁而清理。
 
 零依赖：只用 tkinter（Python 自带）。
 """
@@ -19,6 +15,7 @@ from __future__ import annotations
 import platform
 import tkinter as tk
 from tkinter import ttk
+from tkinter import font as tkfont
 from ui_icons import IconButton, IconCanvas, draw_icon, icon_key, split_icon_text, emoji_image
 
 IS_WINDOWS = platform.system() == "Windows"
@@ -30,12 +27,13 @@ C: dict[str, str] = {
     "bg": "#141414",            # 主背景（暖灰黑）
     "activity": "#0F0F0F",
     "sidebar": "#1C1C1C",
+    "sidebar_history": "#171717",
     "chat": "#141414",
     "surface": "#232323",
     "surface2": "#1C1C1C",
     "surface_subtle": "#1F1F1F",
     "hover": "#262626",
-    "sel": "#262626",
+    "sel": "#2B2940",
     "code_bg": "#1A1A1A",
     "input_bg": "#1F1F1F",
     "black": "#000000",
@@ -70,21 +68,21 @@ C: dict[str, str] = {
     "text": "#E9E9F0",
     "body": "#D2D2DC",
     "subtext": "#9A9AA8",
-    "muted": "#6B6B78",
+    "muted": "#9595A3",
     "ter": "#8A8A96",
-    "placeholder": "#6B6B78",
+    "placeholder": "#9595A3",
     "comment": "#5C6370",
 
     # 消息气泡：两侧要能看出「谁在说」，又不能让深色界面变花。
     # user 带一点主色倾向（“我说的话”），agent 用中性面；两者都配一道 hairline 描边。
-    "msg_user_bg": "#2EAE56",         # 微信绿（暗端）
+    "msg_user_bg": "#206D3B",         # 保留绿色角色区分，白色正文有足够对比度
     "msg_user_fg": "#FFFFFF",          # 用户气泡文字（白）
     "msg_agent_bg": "#2A2A2A",         # AI 深灰气泡
     "msg_agent_fg": "#E8E8E8",         # AI 气泡文字（浅灰）
     "msg_user_bg_old": "#232134",
     "msg_agent_bg_old": "#1A1A22",
-    "msg_user_border": "#3A3560",
-    "msg_agent_border": "#26262F",
+    "msg_user_border": "#34834E",
+    "msg_agent_border": "#383838",
 
     # 代码高亮（One Dark 近似）
     "code_kw": "#C678DD",
@@ -113,6 +111,8 @@ C: dict[str, str] = {
 # ─── 圆角 / 间距 ───────────────────────────────────────────
 
 R_WINDOW, R_PANEL, R_CARD, R_PILL, R_MD, R_SM = 12, 12, 10, 8, 8, 6
+# 钝角圆角（对话气泡 / 底部输入卡专用）：比 R_CARD 大 8px，视觉更圆钝柔和。
+R_BUBBLE = 18
 PAD_XS, PAD_S, PAD_M, PAD_L, PAD_XL = 4, 8, 12, 16, 20
 
 # 交互尺寸：所有主按钮、图标热区与浮层以此为基线，避免页面各写一套。
@@ -144,6 +144,50 @@ FONT_MONO_SM = (MONO_FAMILY, 10)
 FONT_MONO_XS = (MONO_FAMILY, 9)
 FONT_MONO_BOLD = (MONO_FAMILY, 11, "bold")
 FONT_GLYPH = (UI_FAMILY, 11)
+
+
+def ui_px(widget, value):
+    """Convert 96-DPI layout units to the current Tk pixel scale."""
+    return max(1, round(value * float(widget.tk.call("tk", "scaling")) * 72 / 96))
+
+
+def text_width(widget, text, font=FONT_UI):
+    """Measure rendered text and emoji in pixels, without character rounding."""
+    from ui_icons import emoji_parts
+    measure = tkfont.Font(root=widget, font=font)
+    widths = []
+    for line in text.split("\n"):
+        width = 0
+        for part, is_emoji in emoji_parts(line):
+            bitmap = emoji_image(widget, part, size=measure.metrics("linespace")) if is_emoji else None
+            width += bitmap.width() if bitmap is not None else measure.measure(part)
+        widths.append(width)
+    return max(widths, default=0)
+
+
+def bind_wrap(label):
+    """Wrap inside a label's actual allocated width, including its own insets."""
+    def fit(event):
+        inset = sum(int(label.cget(key)) for key in ("padx", "borderwidth", "highlightthickness")) * 2
+        width = max(1, event.width - inset)
+        if int(label.cget("wraplength")) != width:
+            label.configure(wraplength=width)
+    label.bind("<Configure>", fit, add="+")
+    return label
+
+
+def elide(widget, text, width, font=FONT_SMALL):
+    measure = tkfont.Font(root=widget, font=font)
+    if measure.measure(text) <= width:
+        return text
+    lo, hi = 0, len(text)
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if measure.measure(text[:mid] + "…") <= width:
+            lo = mid
+        else:
+            hi = mid - 1
+    return text[:lo] + "…" if width >= measure.measure("…") else ""
 
 # This is a text fallback; Tk does not reliably render Windows color emoji fonts.
 # UI icons use vectors, and supported message emoji use bundled PNG atlases.
@@ -228,6 +272,9 @@ class RoundedCard(tk.Frame):
         self._outline = outline
         self._padx, self._pady = padx, pady
         self._autosize_width = autosize_width
+        self._content_width_limit = None
+        self._preferred_content_width = None
+        self._draw_job = None
         self._cv = tk.Canvas(self, bg=outer_bg, highlightthickness=0, bd=0,
                              height=1, width=1)
         self._cv.pack(fill=tk.BOTH, expand=True)
@@ -236,6 +283,7 @@ class RoundedCard(tk.Frame):
         self._shape = None
         self._cv.bind("<Configure>", self._on_canvas)
         self.content.bind("<Configure>", self._on_content)
+        self.bind("<Destroy>", self._cancel_draw, add="+")
         if on_click is not None:
             for w in (self, self._cv, self.content):
                 w.bind("<Button-1>", lambda _e: on_click())
@@ -247,8 +295,7 @@ class RoundedCard(tk.Frame):
         if w <= 1:
             return
         self._cv.coords(self._win, self._padx, self._pady)
-        if not self._autosize_width:
-            self._cv.itemconfigure(self._win, width=max(1, w - self._padx * 2))
+        self._cv.itemconfigure(self._win, width=max(1, w - self._padx * 2))
         self._draw(w, max(1, self._cv.winfo_height()))
 
     def _on_content(self, _event=None):
@@ -257,13 +304,34 @@ class RoundedCard(tk.Frame):
             if abs(self._cv.winfo_reqheight() - need_h) > 1:
                 self._cv.configure(height=need_h)
             if self._autosize_width:
-                need_w = self.content.winfo_reqwidth() + self._padx * 2
+                desired = self._preferred_content_width or self.content.winfo_reqwidth()
+                if self._content_width_limit is not None:
+                    desired = min(desired, self._content_width_limit)
+                need_w = max(1, desired) + self._padx * 2
                 if abs(self._cv.winfo_reqwidth() - need_w) > 1:
                     self._cv.configure(width=need_w)
-            self._cv.after_idle(lambda: self._draw(self._cv.winfo_width(),
-                                                   self._cv.winfo_height()))
+            if self._draw_job is None:
+                self._draw_job = self.after_idle(self._draw_later)
         except tk.TclError:
             pass
+
+    def set_content_width(self, preferred=None, *, limit=None):
+        """Pixel allocation for bubbles; the inner Canvas window follows it."""
+        if (preferred, limit) == (self._preferred_content_width, self._content_width_limit):
+            return
+        self._preferred_content_width = preferred
+        self._content_width_limit = limit
+        self._on_content()
+
+    def _draw_later(self):
+        self._draw_job = None
+        if self.winfo_exists():
+            self._draw(self._cv.winfo_width(), self._cv.winfo_height())
+
+    def _cancel_draw(self, event):
+        if event.widget is self and self._draw_job is not None:
+            self.after_cancel(self._draw_job)
+            self._draw_job = None
 
     def _draw(self, w, h):
         if w <= 2 or h <= 2:
@@ -321,7 +389,8 @@ def pill_button(parent, text, command, *, kind="ghost", bg=None, height=None,
     btn = IconButton(parent, text=label, command=command, bg=bgb, fg=fg,
                     activebackground=hovbg, activeforeground=hovfg,
                     font=font or FONT_SMALL, relief=tk.FLAT, bd=0,
-                    padx=padx, pady=3, cursor="hand2", highlightthickness=0,
+                    padx=padx, pady=5, cursor="hand2", highlightthickness=1,
+                    highlightbackground=base, highlightcolor=C["accent2"],
                     state=state)
     btn.configure(disabledforeground=C["muted"])
     if width:
@@ -374,36 +443,74 @@ def glyph_button(parent, glyph, command, *, bg=None, fg=None, size=13,
                     fg=fg or C["ter"], activebackground=hover or C["hover"],
                     activeforeground=C["text"], font=(UI_FAMILY, size),
                     relief=tk.FLAT, bd=0, padx=8, pady=4, cursor="hand2",
-                    highlightthickness=0)
+                    highlightthickness=1, highlightbackground=base,
+                    highlightcolor=C["accent2"])
     if tooltip:
         attach_tooltip(btn, tooltip)
     return btn
 
 
+def bind_keyboard_action(widget, command):
+    """Give custom clickable controls the same keyboard contract as buttons."""
+    widget.configure(takefocus=1, highlightthickness=1,
+                     highlightbackground=widget.cget("bg"),
+                     highlightcolor=C["accent2"])
+
+    def invoke(_event=None):
+        if getattr(widget, "_enabled", True):
+            command()
+        return "break"
+
+    widget.bind("<Return>", invoke)
+    widget.bind("<space>", invoke)
+
+
 def attach_tooltip(widget, text: str):
-    tip = {"win": None}
+    # A delay avoids covering nearby controls while the pointer is travelling.
+    tip = {"win": None, "after": None}
+    owner = widget._root()
 
     def show(_e=None):
-        if tip["win"] is not None:
+        tip["after"] = None
+        if tip["win"] is not None or not widget.winfo_exists():
             return
         win = tk.Toplevel(widget)
         win.wm_overrideredirect(True)
         win.configure(bg=C["border_hi"])
-        tk.Label(win, text=text, bg=C["surface"], fg=C["body"], font=FONT_MICRO,
-                 padx=8, pady=4).pack(padx=1, pady=1)
+        tk.Label(win, text=text, bg=C["surface"], fg=C["body"], font=FONT_CAPTION,
+                 wraplength=360, justify=tk.LEFT,
+                 padx=10, pady=6).pack(padx=1, pady=1)
         x = widget.winfo_rootx() + 12
         y = widget.winfo_rooty() + widget.winfo_height() + 6
-        win.wm_geometry(f"+{x}+{y}")
+        win.update_idletasks()
+        # Virtual-root bounds also account for monitors to the left of the main one.
+        left, top = widget.winfo_vrootx(), widget.winfo_vrooty()
+        x = max(left, min(x, left + widget.winfo_vrootwidth() - win.winfo_reqwidth()))
+        bottom = top + widget.winfo_vrootheight()
+        if y + win.winfo_reqheight() > bottom:
+            y = widget.winfo_rooty() - win.winfo_reqheight() - 6
+        win.wm_geometry(f"{x:+d}{max(top, y):+d}")
         tip["win"] = win
 
     def hide(_e=None):
+        if tip["after"] is not None:
+            owner.after_cancel(tip["after"])
+            tip["after"] = None
         if tip["win"] is not None:
-            tip["win"].destroy()
+            if tip["win"].winfo_exists():
+                tip["win"].destroy()
             tip["win"] = None
 
-    widget.bind("<Enter>", show, add="+")
+    def schedule(_e=None):
+        hide()
+        tip["after"] = owner.after(450, show)
+
+    widget.bind("<Enter>", schedule, add="+")
+    widget.bind("<FocusIn>", schedule, add="+")
+    widget.bind("<FocusOut>", hide, add="+")
     widget.bind("<Leave>", hide, add="+")
     widget.bind("<Button-1>", hide, add="+")
+    widget.bind("<Destroy>", lambda event: hide() if event.widget is widget else None, add="+")
 
 
 def position_popover(pop, anchor, width, height, *, prefer_above=False, align_right=False):
@@ -460,6 +567,7 @@ def show_popover_menu(anchor, items, *, title=None, width=300, prefer_above=Fals
         except tk.TclError:
             pass
 
+    rows = []
     for item in items:
         if item.get("separator"):
             tk.Frame(shell, bg=C["border"], height=1).pack(fill=tk.X, pady=5)
@@ -468,6 +576,7 @@ def show_popover_menu(anchor, items, *, title=None, width=300, prefer_above=Fals
         base = C["sel"] if selected else C["surface"]
         row = tk.Frame(shell, bg=base, cursor="hand2", padx=9, pady=6)
         row.pack(fill=tk.X, pady=1)
+        rows.append(row)
         marker = tk.Frame(row, bg=C["accent"] if selected else base, width=2)
         marker.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 8))
         text = tk.Frame(row, bg=base, cursor="hand2")
@@ -495,6 +604,8 @@ def show_popover_menu(anchor, items, *, title=None, width=300, prefer_above=Fals
                 command()
             return "break"
 
+        bind_keyboard_action(row, invoke)
+
         for widget in (row, marker, text, label, detail):
             if widget is None:
                 continue
@@ -502,7 +613,24 @@ def show_popover_menu(anchor, items, *, title=None, width=300, prefer_above=Fals
             widget.bind("<Leave>", lambda _e, fn=paint, b=base: fn(b))
             widget.bind("<Button-1>", invoke)
 
-    pop.bind("<Escape>", lambda _e: close())
+    def dismiss(_event=None):
+        close()
+        try:
+            anchor.focus_set()
+        except tk.TclError:
+            pass
+        return "break"
+
+    def move_focus(delta):
+        focused = pop.focus_get()
+        index = rows.index(focused) if focused in rows else -1
+        if rows:
+            rows[(index + delta) % len(rows)].focus_set()
+        return "break"
+
+    pop.bind("<Escape>", dismiss)
+    pop.bind("<Down>", lambda _e: move_focus(1))
+    pop.bind("<Up>", lambda _e: move_focus(-1))
     def maybe_close(_event=None):
         try:
             px, py = anchor.winfo_pointerxy()
@@ -518,7 +646,7 @@ def show_popover_menu(anchor, items, *, title=None, width=300, prefer_above=Fals
     pop.deiconify()
     try:
         pop.grab_set()
-        pop.focus_set()
+        (rows[0] if rows else pop).focus_set()
     except tk.TclError:
         pass
     return pop
@@ -596,8 +724,10 @@ def circle_button(parent, glyph, command, *, size=30, kind="primary", bg=None,
     cv._icon_name = icon
     cv._icon_size = max(14, size-12)
     cv._button_size = size
-    cv.bind("<Button-1>", lambda _e: command())
-    cv.bind("<Enter>", lambda _e: cv.itemconfigure(oval, fill=cv._palette[1]))
+    cv._enabled = True
+    bind_keyboard_action(cv, command)
+    cv.bind("<Button-1>", lambda _e: command() if cv._enabled else None)
+    cv.bind("<Enter>", lambda _e: cv.itemconfigure(oval, fill=cv._palette[1]) if cv._enabled else None)
     cv.bind("<Leave>", lambda _e: cv.itemconfigure(oval, fill=cv._palette[0]))
     if tooltip:
         attach_tooltip(cv, tooltip)
@@ -607,7 +737,7 @@ def circle_button(parent, glyph, command, *, size=30, kind="primary", bg=None,
     return cv
 
 
-def circle_button_state(cv, kind: str):
+def circle_button_state(cv, kind: str, *, enabled=None):
     """切换圆形按钮状态（primary/muted/danger）。"""
     palettes = {
         "primary": (C["accent"], "#FFFFFF", C["accent_hover"]),
@@ -623,6 +753,9 @@ def circle_button_state(cv, kind: str):
     else:
         cv.itemconfigure(cv._glyph, fill=fg)
     cv._palette = (fill, hov)                      # type: ignore[attr-defined]
+    if enabled is not None:
+        cv._enabled = bool(enabled)
+        cv.configure(takefocus=int(cv._enabled), cursor="hand2" if cv._enabled else "arrow")
 
 
 # ─── 滚动 / ttk 主题 ───────────────────────────────────────
@@ -769,7 +902,8 @@ def rounded_label(parent, text, *, fill=None, outline=None, fg=None, font=None,
     fnt = tkfont.Font(font=font or FONT_SMALL)
     icon, label = split_icon_text(text)
     w = fnt.measure(label) + padx * 2 + (24 if icon else 0)
-    h = max(fnt.metrics("linespace"), 20 if icon else 0) + pady * 2
+    h = max(CONTROL_HEIGHT if command else 0,
+            max(fnt.metrics("linespace"), 20 if icon else 0) + pady * 2)
     cv = tk.Canvas(parent, width=w, height=h, bg=base, highlightthickness=0, bd=0)
     fill_c = fill or C["surface2"]
     shape = round_rect(cv, 0.5, 0.5, w - 0.5, h - 0.5, radius, fill=fill_c,
@@ -792,6 +926,7 @@ def rounded_label(parent, text, *, fill=None, outline=None, fg=None, font=None,
 
     cv.set_text = set_text  # type: ignore[attr-defined]
     if command is not None:
+        bind_keyboard_action(cv, command)
         cv.bind("<Button-1>", lambda _e: command())
         cv.configure(cursor="hand2")
     if tooltip:
