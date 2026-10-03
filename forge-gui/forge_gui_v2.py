@@ -111,11 +111,13 @@ try:  # 插件市场 / 工具市场（缺失时工具集视图退化为只读提
         Marketplace,
         build_tool_catalog,
     )
+    from plugin_runtime import PluginRuntime  # noqa: E402
     _MARKET_IMPORT_ERROR = ""
 except Exception as _mk_exc:  # pragma: no cover
     Marketplace = None  # type: ignore[assignment]
     build_tool_catalog = None  # type: ignore[assignment]
     KIND_LABELS = {}  # type: ignore[assignment]
+    PluginRuntime = None  # type: ignore[assignment]
     _MARKET_IMPORT_ERROR = str(_mk_exc)
 
 try:  # 系统资源采样（顶栏指标）
@@ -1861,6 +1863,36 @@ class ForgeGuiApp:
             self._market_singleton = obj
         return obj
 
+    def _plugin_runtime_obj(self):
+        """插件运行时单例（与市场共用生命周期）。模块缺失返回 None。"""
+        if PluginRuntime is None:
+            return None
+        market = self._market_obj()
+        if market is None:
+            return None
+        rt = getattr(self, "_plugin_runtime_singleton", None)
+        if rt is None:
+            rt = PluginRuntime(market)
+            self._plugin_runtime_singleton = rt
+        return rt
+
+    def _reload_plugin_tools(self):
+        """按 enabled 状态重载插件工具；返回 (schemas, runtime)。
+
+        schemas 直接拼进 tools 参数；runtime 用于在 worker 里执行插件工具。
+        任何失败都返回 ([], None)，不阻断正常对话。
+        """
+        rt = self._plugin_runtime_obj()
+        if rt is None:
+            return [], None
+        try:
+            report = rt.reload()
+        except Exception:
+            return [], None
+        for pid, err in report.errors:
+            self._set_status(f"插件 {pid} 加载失败：{err}", "warn")
+        return rt.openai_schemas(), rt
+
     def _build_market_panel(self, parent):
         """市场面板骨架：统计行 + 筛选行 + 滚动列表（内容由 _refresh_market 填）。"""
         head = tk.Frame(parent, bg=C["bg"], padx=20)
@@ -2040,7 +2072,16 @@ class ForgeGuiApp:
         divider(self.market_list, color=C["border_hi"], bg=C["bg"]).pack(
             fill=tk.X, pady=(10, 10))
         names, err = self._gateway_tool_names()
-        entries = build_tool_catalog(names, market) if build_tool_catalog else []
+        # 插件运行时实际注册的工具（register() 出来的）也进市场视图
+        runtime_rows = []
+        rt = self._plugin_runtime_obj()
+        if rt is not None:
+            for tool_name in rt.names():
+                info = rt.tools.get(tool_name)
+                if info is not None:
+                    runtime_rows.append((tool_name, info.plugin_id, info.plugin_id))
+        entries = (build_tool_catalog(names, market, runtime_tools=runtime_rows)
+                   if build_tool_catalog else [])
         tk.Label(self.market_list, text=f"工具（{len(entries)}）", bg=C["bg"],
                  fg=C["ter"], font=FONT_UI_BOLD).pack(anchor=tk.W)
         if err:
@@ -5613,18 +5654,29 @@ class ForgeGuiApp:
                                         ChatMessage("system", injection))
                     if cancel_event.is_set():
                         raise GenerationCancelled("已停止生成")
-                # ── 工具桥：本轮请求带 tools，模型发起的 tool_calls 就地执行 ──
+                # ── 工具桥 + 插件工具：合并成一份 tools 给模型 ──
+                # 网关工具（bridge）：/v1/tools 拉取，走 gateway 执行
                 tools = None
                 try:
                     tools = client.list_tools() or None
                 except Exception:
                     # 老 gateway / 未开 --tools：按无工具模式对话（保持旧行为）
                     tools = None
+                # 插件工具（runtime）：enabled 且已 ack 的插件 register() 出来的
+                plugin_schemas, plugin_rt = self._reload_plugin_tools()
+                if plugin_schemas:
+                    tools = list(tools or []) + plugin_schemas
                 if cancel_event.is_set():
                     raise GenerationCancelled("已停止生成")
-                if tools:
+                n_bridge = len(tools or []) - len(plugin_schemas or [])
+                parts = []
+                if n_bridge > 0:
+                    parts.append(f"网关 {n_bridge}")
+                if plugin_schemas:
+                    parts.append(f"插件 {len(plugin_schemas)}")
+                if parts:
                     self._post_ui(self._set_request_status,
-                                  f"已加载 {len(tools)} 个工具，正在生成…")
+                                  f"已加载 {' + '.join(parts)} 工具，正在生成…")
                 else:
                     self._post_ui(self._set_request_status, "正在生成…")
                 acc: list[str] = []
@@ -5672,7 +5724,11 @@ class ForgeGuiApp:
                         if not isinstance(args, dict):
                             args = {"value": args}
                         try:
-                            resp = client.call_tool(name, args)
+                            # 插件工具优先本地执行（网关不知道插件工具的存在）
+                            if plugin_rt is not None and plugin_rt.has(name):
+                                resp = plugin_rt.call(name, args)
+                            else:
+                                resp = client.call_tool(name, args)
                             ok_flag = bool(resp.get("ok")) if isinstance(resp, dict) else True
                             body_text = json.dumps(resp, ensure_ascii=False)
                         except Exception as tool_exc:

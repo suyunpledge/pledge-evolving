@@ -657,11 +657,16 @@ TOOL_SUMMARY_HINTS = {
 
 
 def build_tool_catalog(gateway_tools: Iterable[str] | None,
-                       marketplace: Marketplace | None = None) -> list[ToolEntry]:
-    """工具市场 = 网关工具桥的工具 + 插件声明的工具。
+                       marketplace: Marketplace | None = None,
+                       runtime_tools: list[tuple[str, str, str]] | None = None,
+                       ) -> list[ToolEntry]:
+    """工具市场 = 网关工具桥的工具 + 插件声明的工具 + 插件运行时的工具。
 
+    runtime_tools：[(name, plugin_id, plugin_name), ...]，来自 PluginRuntime
+    实际 register() 出来的可执行工具——这部分不在 provides 里（provides 是
+    静态声明，runtime 是代码注册的），市场视图两边都要显示。
     gateway_tools 为 None 表示桥不可用（未启动/没开 --tools）——这时仍返回
-    插件声明的工具，UI 再单独提示桥状态，不要因为一半拿不到就整表空掉。
+    插件工具，UI 再单独提示桥状态，不要因为一半拿不到就整表空掉。
     """
     entries: list[ToolEntry] = []
     seen: set[str] = set()
@@ -690,6 +695,15 @@ def build_tool_catalog(gateway_tools: Iterable[str] | None,
                     summary=f"来自插件「{plugin.name}」",
                     danger=classify_tool(tool),
                 ))
+    for name, plugin_id, plugin_name in (runtime_tools or []):
+        if name in seen:
+            continue
+        seen.add(name)
+        entries.append(ToolEntry(
+            name=name, source="plugin", plugin_id=plugin_id,
+            summary=f"来自插件「{plugin_name}」",
+            danger=classify_tool(name),
+        ))
     return sorted(entries, key=lambda e: (e.source != "gateway", e.name))
 
 
