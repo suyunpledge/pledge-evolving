@@ -995,6 +995,7 @@ class ForgeGuiApp:
         side.pack(side=tk.LEFT, fill=tk.Y)
         side.pack_propagate(False)
         self.sidebar = side
+        self._sidebar_pack_options = side.pack_info()
 
         self._sidebar_panels: dict[str, tk.Frame] = {}
         chat_panel = tk.Frame(side, bg=C["sidebar"])
@@ -1307,9 +1308,12 @@ class ForgeGuiApp:
         if visible == self._sidebar_visible:
             return
         if visible:
-            self.sidebar.pack(side=tk.LEFT, fill=tk.Y)
+            # pack_forget discards both options and position. Reuse the same
+            # widget/dock options before the permanent main split, as at startup.
+            self.sidebar.pack(**self._sidebar_pack_options, before=self.split)
             self.sidebar_toggle_btn.configure(text="≪")
         else:
+            self._sidebar_pack_options = self.sidebar.pack_info()
             self.sidebar.pack_forget()
             self.sidebar_toggle_btn.configure(text="≫")
         self._sidebar_visible = visible
@@ -2972,13 +2976,53 @@ class ForgeGuiApp:
         split.add(left, minsize=240, width=310)
         split.add(right_host, minsize=480)
 
-        tk.Label(left, text="用户配置", bg=C["surface"], fg=C["text"],
+        # ── 左栏三区：head（固定）→ list（撑满独立滚动）→ actions（固定底部）──
+        # 之前 Provider 列表拿 35px、底部按钮被挤出首屏（实测「打开用户层目录」
+        # 被压成 1x1），核心入口不能随配置数量增长消失。
+        head = tk.Frame(left, bg=C["surface"])
+        head.pack(fill=tk.X)
+        tk.Label(head, text="用户配置", bg=C["surface"], fg=C["text"],
                  font=FONT_SECTION).pack(anchor=tk.W)
+        count_row = tk.Frame(head, bg=C["surface"])
+        count_row.pack(fill=tk.X, pady=(2, 8))
         self.provider_count_var = tk.StringVar(value="0 条用户配置")
-        tk.Label(left, textvariable=self.provider_count_var, bg=C["surface"],
-                 fg=C["muted"], font=FONT_SMALL).pack(anchor=tk.W, pady=(2, 12))
+        tk.Label(count_row, textvariable=self.provider_count_var, bg=C["surface"],
+                 fg=C["muted"], font=FONT_SMALL).pack(side=tk.LEFT)
+        tk.Label(count_row, text="选择条目载入右侧编辑", bg=C["surface"],
+                 fg=C["muted"], font=FONT_SMALL).pack(side=tk.RIGHT)
+        # 搜索 / 筛选（对显示名与真实 id 都匹配）
+        search_row = tk.Frame(head, bg=C["surface"])
+        search_row.pack(fill=tk.X, pady=(0, 10))
+        self._search_active = False   # 占位符状态不算过滤（否则初始列表全被滤空）
+        self.provider_search_var = tk.StringVar()
+        self.provider_search_var.trace_add("write", lambda *_: self._filter_provider_list())
+        search_entry = tk.Entry(search_row, textvariable=self.provider_search_var,
+                                bg=C["input_bg"], fg=C["text"],
+                                insertbackground=C["accent"], font=FONT_SMALL,
+                                relief=tk.FLAT, highlightthickness=1,
+                                highlightbackground=C["border"],
+                                highlightcolor=C["accent"])
+        search_entry.pack(fill=tk.X, ipady=4)
+        self._provider_search_placeholder = "🔍 搜索名称 / 模型 / ID"
+        self._provider_search_entry = search_entry
+        search_entry.insert(0, self._provider_search_placeholder)
+        search_entry.configure(fg=C["placeholder"])
+        search_entry.bind("<FocusIn>", self._provider_search_focus_in)
+        search_entry.bind("<FocusOut>", self._provider_search_focus_out)
+        # pill_button 用 placeholder 色画不出图标，直接普通按钮；占位在 FocusIn 清掉
+        pill_button(head, "＋ 新建 Provider", self._new_provider,
+                    kind="ghost", bg=C["surface"]).pack(fill=tk.X, pady=(0, 0))
+
+        # list 区 + 底部固定区：用垂直 PanedWindow 分割。
+        # 纯 pack expand 有个坑：Listbox reqh 声明大了会把 bottom 全挤出可视区，
+        # 声明小了又只分到几十像素。PanedWindow 两全：list 撑满剩余、bottom 恒在。
+        body_split = tk.PanedWindow(left, orient=tk.VERTICAL, bg=C["border"],
+                                    sashwidth=5, sashrelief=tk.FLAT, bd=0)
+        body_split.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
+
+        list_holder = tk.Frame(body_split, bg=C["surface"])
         self.provider_list = tk.Listbox(
-            left, bg=C["input_bg"], fg=C["text"],
+            list_holder, bg=C["input_bg"], fg=C["text"],
             selectbackground=C["surface2"], selectforeground=C["accent"],
             font=FONT_UI, relief=tk.FLAT, highlightthickness=1,
             highlightbackground=C["border"], highlightcolor=C["accent"],
@@ -2986,16 +3030,23 @@ class ForgeGuiApp:
         )
         self.provider_list.pack(fill=tk.BOTH, expand=True)
         self.provider_list.bind("<<ListboxSelect>>", self._on_provider_select)
-        tk.Label(left, text="选择条目可载入编辑区；下方可直接改模型名", bg=C["surface"],
-                 fg=C["muted"], font=FONT_SMALL).pack(anchor=tk.W, pady=(12, 0))
-        pill_button(left, "API 密钥", self._open_api_keys, kind="accent_soft",
-                    bg=C["surface"], icon="\U0001F511").pack(
-            fill=tk.X, pady=(10, 0))
+        self._provider_rows_all = []   # (原始 index, 显示文本)，搜索过滤用
 
-        # ── 模型快捷编辑面板 ──
-        self.model_edit_frame = tk.Frame(left, bg=C["input_bg"], highlightthickness=1,
+        actions = tk.Frame(body_split, bg=C["surface"])
+        body_split.add(list_holder, minsize=120, height=420, stretch="always")
+        body_split.add(actions, minsize=140, stretch="never")
+        pill_button(actions, "API 密钥", self._open_api_keys, kind="accent_soft",
+                    bg=C["surface"], icon="\U0001F511").pack(
+            fill=tk.X)
+
+        # ── 模型快捷编辑面板 + 一键温度：迁到右侧主区顶部（清单 #2 左挤右空）──
+        # 这两块是「编辑功能」，右侧才是查看/编辑/操作的地方；左栏只留选择与导航。
+        # 右侧 JSON 流水线原样保留（编辑器基线契约不破坏），只是上方多一条工具条。
+        self.model_edit_frame = tk.Frame(right, bg=C["surface"], highlightthickness=1,
                                          highlightbackground=C["border"])
-        self.model_edit_frame.pack(fill=tk.X, pady=(10, 0), ipadx=10, ipady=8)
+        # 插在标题之前：side=TOP 首个 pack 的在最上
+        # 此刻 right 还没有别的子控件，side=TOP 即为最上；标题/流水线在其后 pack
+        self.model_edit_frame.pack(side=tk.TOP, fill=tk.X, pady=(0, 10), ipadx=10, ipady=8)
         tk.Label(self.model_edit_frame, text="模型快捷编辑", bg=C["input_bg"], fg=C["text"],
                  font=FONT_UI_BOLD).pack(anchor=tk.W)
         self.model_edit_target = tk.Label(self.model_edit_frame, text="（先在列表选中 provider）",
@@ -3004,19 +3055,21 @@ class ForgeGuiApp:
         self.model_edit_target.pack(anchor=tk.W, pady=(2, 6))
         entry_row = tk.Frame(self.model_edit_frame, bg=C["input_bg"])
         entry_row.pack(fill=tk.X)
+        entry_row.grid_columnconfigure(0, weight=1)
         self.model_edit_var = tk.StringVar()
         self.model_edit_entry = tk.Entry(entry_row, textvariable=self.model_edit_var,
                                          bg=C["bg"], fg=C["text"], insertbackground=C["accent"],
                                          font=FONT_MONO, relief=tk.FLAT,
                                          highlightthickness=1, highlightbackground=C["border"],
                                          highlightcolor=C["accent"])
-        self.model_edit_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=4)
+        self.model_edit_entry.grid(row=0, column=0, sticky="ew", ipady=4)
+        # 按钮 grid 自然宽：之前 pack 在扩张 Entry 后面被挤成 8px 紫条
         self.model_apply_btn = tk.Button(entry_row, text="应用", bg=C["accent"], fg="#ffffff",
                                          activebackground=C["accent_hover"], activeforeground="#ffffff",
                                          font=FONT_UI_BOLD, relief=tk.FLAT, padx=10, pady=3,
                                          command=self._apply_model_edit, cursor="hand2",
                                          state=tk.DISABLED)
-        self.model_apply_btn.pack(side=tk.LEFT, padx=(6, 0))
+        self.model_apply_btn.grid(row=0, column=1, padx=(6, 0))
         # 常用模型 chips（按 baseURL 域名给建议）
         self.model_chips_frame = tk.Frame(self.model_edit_frame, bg=C["input_bg"])
         self.model_chips_frame.pack(fill=tk.X, pady=(6, 0))
@@ -3033,40 +3086,60 @@ class ForgeGuiApp:
         self.model_probe_var = tk.StringVar(value="")
         tk.Label(probe_row, textvariable=self.model_probe_var, bg=C["input_bg"],
                  fg=C["muted"], font=FONT_SMALL).pack(side=tk.LEFT, padx=(8, 0))
-        # 两条路径：① 一键配置（下面选温度即可）；② 手写配置文件（直改用户层 JSON，所有参数自己控）。
-        one_click = tk.Frame(left, bg=C["input_bg"])
-        one_click.pack(fill=tk.X, pady=(12, 0))
-        tk.Label(one_click, text="一键配置 · 采样温度", bg=C["input_bg"],
-                 fg=C["text"], font=FONT_UI_BOLD).pack(anchor=tk.W)
-        tk.Label(one_click,
-                 text="Agent 场景 0.7 更稳；只接受默认温度的模型（GPT-6 / Claude 6 / "
-                      "Sol / Kimi K3 / K2.6）会自动跳过；Claude 协议不发任何采样参数。",
+        # 两条路径：① 一键配置（选温度）；② 手写配置文件。放底部 actions 区上方。
+        one_click = tk.Frame(right, bg=C["surface"], highlightthickness=1,
+                             highlightbackground=C["border"])
+        one_click.pack(side=tk.TOP, fill=tk.X, pady=(0, 10), ipadx=10, ipady=8)
+        # 标题行可点折叠：默认收起只占一行，列表永远有空间（底部固定区之前吃掉
+        # 318px 把 Listbox 压回 35px——折叠后 ~90px）。
+        oc_head = tk.Frame(one_click, bg=C["input_bg"])
+        oc_head.pack(fill=tk.X)
+        self._temp_expanded = False
+        self.temp_toggle_var = tk.StringVar(value="▸ 一键配置 · 采样温度")
+        self.temp_summary_var = tk.StringVar(value="")
+        tk.Button(oc_head, textvariable=self.temp_toggle_var,
+                  bg=C["input_bg"], fg=C["text"], font=FONT_UI_BOLD,
+                  relief=tk.FLAT, bd=0, padx=0, pady=2, anchor=tk.W,
+                  command=self._toggle_temp_panel, cursor="hand2",
+                  ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        tk.Label(oc_head, textvariable=self.temp_summary_var, bg=C["input_bg"],
+                 fg=C["muted"], font=FONT_SMALL).pack(side=tk.RIGHT)
+        oc_body = tk.Frame(one_click, bg=C["input_bg"])
+        tk.Label(oc_body,
+                 text="Agent 场景 0.7 更稳；只接受默认温度的模型会自动跳过；"
+                      "Claude 协议不发任何采样参数。",
                  bg=C["input_bg"], fg=C["muted"], font=FONT_SMALL,
                  wraplength=330, justify=tk.LEFT).pack(anchor=tk.W, pady=(2, 6))
-        temp_row = tk.Frame(one_click, bg=C["input_bg"])
-        temp_row.pack(anchor=tk.W)
+        temp_row = tk.Frame(oc_body, bg=C["input_bg"])
+        temp_row.pack(fill=tk.X, pady=(2, 0))
+        temp_row.grid_columnconfigure(0, weight=1, uniform="temp")
+        temp_row.grid_columnconfigure(1, weight=1, uniform="temp")
+        temp_row.grid_columnconfigure(2, weight=1, uniform="temp")
         self.temperature_var = tk.StringVar(value=self._current_temperature_preset())
         self._temperature_buttons = {}
-        for value, label in (("0.7", "0.7 · 均衡"), ("1.0", "1.0 · 保守"),
-                             ("", "不设置")):
+        for col, (value, label) in enumerate((("0.7", "0.7 · 均衡"),
+                                              ("1.0", "1.0 · 保守"),
+                                              ("", "不设置"))):
             btn = tk.Button(
                 temp_row, text=label, bg=C["surface2"], fg=C["text"],
                 activebackground=C["accent_soft"], activeforeground=C["accent"],
-                font=FONT_UI, relief=tk.FLAT, padx=10, pady=4, cursor="hand2",
+                font=FONT_UI, relief=tk.FLAT, padx=8, pady=4, cursor="hand2",
                 command=lambda v=value: self._apply_temperature_preset(v))
-            btn.pack(side=tk.LEFT, padx=(0, 6))
+            # grid + sticky=ew：三颗等宽，永远不会被挤成细条（清单 #4/#11）
+            btn.grid(row=0, column=col, sticky="ew", padx=(0, 6) if col < 2 else 0)
             self._temperature_buttons[value] = btn
         self._paint_temperature_buttons()
-        IconButton(one_click, text="手写配置文件（所有参数自己控）", icon="external",
+        IconButton(oc_body, text="手写配置文件（所有参数自己控）", icon="external",
                   bg=C["surface2"], fg=C["link"],
                   activebackground=C["link_soft"], activeforeground=C["link"],
                   font=FONT_UI, relief=tk.FLAT, padx=10, pady=4, cursor="hand2",
                   command=self._open_user_layer_file).pack(anchor=tk.W, pady=(8, 0))
-        IconButton(left, text="打开用户层目录", icon="external", bg=C["surface2"], fg=C["text"],
+        self._temp_body = oc_body   # 默认不 pack = 折叠
+        IconButton(actions, text="打开用户层目录", icon="external", bg=C["surface2"], fg=C["text"],
                   activebackground=C["border"], activeforeground=C["text"],
                   font=FONT_UI, relief=tk.FLAT, padx=12, pady=6,
                   command=lambda: self._open_path(self.home), cursor="hand2"
-                  ).pack(anchor=tk.W, pady=(10, 0))
+                  ).pack(fill=tk.X, pady=(8, 0))
 
         tk.Label(right, text="添加或编辑配置", bg=C["bg"], fg=C["text"],
                  font=FONT_SECTION).pack(anchor=tk.W)
@@ -3106,8 +3179,9 @@ class ForgeGuiApp:
                   font=FONT_UI, relief=tk.FLAT, padx=12, pady=6,
                   command=self._paste_clipboard, cursor="hand2"
                   ).pack(side=tk.LEFT, padx=(8, 0))
-        tk.Button(btn_bar, text="清空", bg=C["surface2"], fg=C["subtext"],
-                  activebackground=C["border"], activeforeground=C["text"],
+        # 破坏性操作（清空输入区）用红色文字区分，不和普通操作混一层级（清单 #6）
+        tk.Button(btn_bar, text="清空", bg=C["surface2"], fg=C["error"],
+                  activebackground=C["error_soft"], activeforeground=C["error"],
                   font=FONT_UI, relief=tk.FLAT, padx=12, pady=6,
                   command=self._clear_input, cursor="hand2"
                   ).pack(side=tk.LEFT, padx=(8, 0))
@@ -3711,6 +3785,21 @@ class ForgeGuiApp:
             return next(iter(values))
         return ""
 
+    def _toggle_temp_panel(self):
+        self._temp_expanded = not getattr(self, "_temp_expanded", False)
+        arrow = "▾" if self._temp_expanded else "▸"
+        self.temp_toggle_var.set(f"{arrow} 一键配置 · 采样温度")
+        if self._temp_expanded:
+            self._temp_body.pack(fill=tk.X, pady=(4, 0))
+        else:
+            self._temp_body.pack_forget()
+        self._update_temp_summary()
+
+    def _update_temp_summary(self):
+        current = self.temperature_var.get()
+        label = {"0.7": "0.7 均衡", "1.0": "1.0 保守"}.get(current, "不设置")
+        self.temp_summary_var.set(f"当前 {label}")
+
     def _paint_temperature_buttons(self) -> None:
         current = self.temperature_var.get()
         for value, btn in getattr(self, "_temperature_buttons", {}).items():
@@ -3718,6 +3807,8 @@ class ForgeGuiApp:
             btn.configure(bg=C["accent_soft"] if selected else C["surface2"],
                           fg=C["accent"] if selected else C["text"],
                           font=FONT_UI_BOLD if selected else FONT_UI)
+        if getattr(self, "temp_summary_var", None) is not None:
+            self._update_temp_summary()
 
     def _apply_temperature_preset(self, value: str) -> bool:
         """一键把温度写到所有 provider 行。
@@ -4465,6 +4556,76 @@ class ForgeGuiApp:
         self.status_lbl.configure(fg=color)
 
     # ── Provider 列表 ──
+    # ── Provider 搜索过滤 + 新建（配置层改造 P1）──────────────
+
+    def _provider_search_focus_in(self, _event=None):
+        if self._provider_search_entry.get() == self._provider_search_placeholder:
+            self._provider_search_entry.delete(0, tk.END)
+            self._provider_search_entry.configure(fg=C["text"])
+        self._search_active = True
+
+    def _provider_search_focus_out(self, _event=None):
+        if not self._provider_search_entry.get():
+            self._search_active = False
+            self._provider_search_entry.insert(0, self._provider_search_placeholder)
+            self._provider_search_entry.configure(fg=C["placeholder"])
+            self._filter_provider_list()
+
+    def _filter_provider_list(self):
+        """按搜索词过滤 Provider 列表（匹配显示名 / 真实 id / 模型名）。"""
+        if not hasattr(self, "provider_list"):
+            return
+        if not getattr(self, "_search_active", False):
+            return   # 占位符状态 = 不过滤
+        query = self.provider_search_var.get().strip().lower()
+        self.provider_list.delete(0, tk.END)
+        shown = 0
+        for idx, text in getattr(self, "_provider_rows_all", []):
+            if query and query not in text.lower():
+                continue
+            self.provider_list.insert(tk.END, text)
+            shown += 1
+        if not shown:
+            suffix = "（无匹配）" if query else "（空）"
+            self.provider_list.insert(tk.END, f"暂无用户配置 {suffix}")
+        # 保持选中项在过滤后仍可见
+        try:
+            cur = self._last_selected_provider_index
+        except AttributeError:
+            return
+        if cur is not None and query:
+            for vis_i, (orig_i, _t) in enumerate(
+                    [x for x in self._provider_rows_all
+                     if not query or query in x[1].lower()]):
+                if orig_i == cur:
+                    self.provider_list.selection_clear(0, tk.END)
+                    self.provider_list.selection_set(vis_i)
+                    break
+
+    def _new_provider(self):
+        """新建 Provider：在右侧编辑区放一个最小模板，走原有整理→保存流水线。"""
+        template = json.dumps({
+            "id": f"custom__{time.strftime('%Y%m%d%H%M%S')}",
+            "config": {
+                "baseURL": "https://api.example.com/v1",
+                "apiKey": "sk-…",
+                "model": "model-name",
+                "modelLabel": "显示名",
+            },
+        }, ensure_ascii=False, indent=2)
+        if self._editor_is_dirty() and not messagebox.askyesno(
+                "编辑内容尚未保存", "新建会替换当前编辑内容。要放弃未保存的编辑吗？",
+                parent=self.root):
+            return
+        self.input_text.delete("1.0", tk.END)
+        self.input_text.insert("1.0", template)
+        self.input_text.configure(fg=C["text"])
+        self._placeholder_visible = False
+        self._set_status("已生成模板：改好 baseURL / apiKey / model 后点「整理并预览」再保存",
+                         "info")
+        self._set_preview("")
+        self._set_warnings([])
+
     def _refresh_provider_list(self):
         rows = list(self.user_rows)
         # 总是显示 model / policy 行用于参考
@@ -4484,11 +4645,21 @@ class ForgeGuiApp:
                 # 非 provider 行
                 keys = ", ".join(list(conf.keys())[:3])
                 display.append(f"{rid}  ·  {keys or '元数据'}")
+        # 维护全量行（(原始 index, 文本)），供搜索过滤用；再按当前词过滤展示
+        self._provider_rows_all = list(enumerate(display))
         self.provider_list.delete(0, tk.END)
-        for d in display:
+        query = ""
+        if getattr(self, "_search_active", False):
+            query = self.provider_search_var.get().strip().lower()
+        shown = 0
+        for _idx, d in self._provider_rows_all:
+            if query and query not in d.lower():
+                continue
             self.provider_list.insert(tk.END, d)
-        if not display:
-            self.provider_list.insert(tk.END, "暂无用户配置")
+            shown += 1
+        if not shown:
+            suffix = "（无匹配）" if query else ""
+            self.provider_list.insert(tk.END, f"暂无用户配置 {suffix}".rstrip())
         self.provider_count_var.set(f"{len(rows)} 条用户配置")
         # 模型下拉
         models = []
