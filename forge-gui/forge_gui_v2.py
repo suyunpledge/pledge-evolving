@@ -1856,7 +1856,7 @@ class ForgeGuiApp:
         obj = getattr(self, "_market_singleton", None)
         if obj is None:
             try:
-                obj = Marketplace()
+                obj = Marketplace(home=self.home)
             except Exception as exc:  # pragma: no cover
                 self._set_status(f"市场初始化失败：{exc}", "error")
                 return None
@@ -1876,7 +1876,7 @@ class ForgeGuiApp:
             self._plugin_runtime_singleton = rt
         return rt
 
-    def _reload_plugin_tools(self):
+    def _reload_plugin_tools(self, *, reserved_names=()):
         """按 enabled 状态重载插件工具；返回 (schemas, runtime)。
 
         schemas 直接拼进 tools 参数；runtime 用于在 worker 里执行插件工具。
@@ -1886,11 +1886,11 @@ class ForgeGuiApp:
         if rt is None:
             return [], None
         try:
-            report = rt.reload()
+            report = rt.reload(reserved_names=reserved_names)
         except Exception:
             return [], None
         for pid, err in report.errors:
-            self._set_status(f"插件 {pid} 加载失败：{err}", "warn")
+            self._post_ui(self._set_status, f"插件 {pid} 加载失败：{err}", "warn")
         return rt.openai_schemas(), rt
 
     def _build_market_panel(self, parent):
@@ -2145,13 +2145,19 @@ class ForgeGuiApp:
                 market.install_from_catalog(pid)
                 self._set_status(f"已安装 {pid}（未启用）", "ok")
             elif action == "ack":
+                plugin = market.find(pid)
+                if plugin is None or not plugin.installed or plugin.error:
+                    raise ValueError("插件尚未安装或文件无效")
+                reviewed_fingerprint = plugin.ack_of()
                 if not messagebox.askyesno(
                         "确认信任插件",
-                        f"「{pid}」声明会执行本机代码。\n\n"
-                        "确认后它才可能被启用。指纹随版本或权限变化会自动失效。\n\n"
+                        f"确认信任「{pid}」的当前文件和权限。\n\n"
+                        f"版本：{plugin.version}\n权限：{'、'.join(plugin.permission_labels()) or '未声明'}\n\n"
+                        "代码插件可以访问本机资源；此确认不是系统沙箱。\n"
+                        "文件、清单、权限或工具声明变化后需重新确认。\n\n"
                         "确认信任？"):
                     return
-                market.ack(pid)
+                market.ack(pid, expected_fingerprint=reviewed_fingerprint)
                 self._set_status(f"已确认信任 {pid}", "ok")
             elif action == "enable":
                 market.enable(pid)
@@ -5663,7 +5669,9 @@ class ForgeGuiApp:
                     # 老 gateway / 未开 --tools：按无工具模式对话（保持旧行为）
                     tools = None
                 # 插件工具（runtime）：enabled 且已 ack 的插件 register() 出来的
-                plugin_schemas, plugin_rt = self._reload_plugin_tools()
+                bridge_names = {str((item.get("function") or {}).get("name", ""))
+                                for item in (tools or []) if isinstance(item, dict)}
+                plugin_schemas, plugin_rt = self._reload_plugin_tools(reserved_names=bridge_names)
                 if plugin_schemas:
                     tools = list(tools or []) + plugin_schemas
                 if cancel_event.is_set():
@@ -5724,8 +5732,10 @@ class ForgeGuiApp:
                         if not isinstance(args, dict):
                             args = {"value": args}
                         try:
-                            # 插件工具优先本地执行（网关不知道插件工具的存在）
-                            if plugin_rt is not None and plugin_rt.has(name):
+                            # The gateway owns its names even if a stale runtime claims them.
+                            if name in bridge_names:
+                                resp = client.call_tool(name, args)
+                            elif plugin_rt is not None and plugin_rt.has(name):
                                 resp = plugin_rt.call(name, args)
                             else:
                                 resp = client.call_tool(name, args)
@@ -5971,6 +5981,10 @@ def _diagnose() -> int:
 
 
 def main():
+    if "--forge-plugin-worker" in sys.argv:
+        from plugin_worker import worker_main
+        index = sys.argv.index("--forge-plugin-worker")
+        raise SystemExit(worker_main(sys.argv[index + 1:]))
     if "--diagnose" in sys.argv:
         raise SystemExit(_diagnose())
     _setup_dpi()

@@ -19,8 +19,8 @@ def make_plugin(market: pm.Marketplace, pid: str, *, body: str,
                 **manifest) -> Path:
     """用**传入的 market 实例**落一个带代码体的插件并安装+ack+启用。
 
-    注意：Marketplace 的内存状态不跨实例共享，所以这里必须用调用方的
-    实例操作，否则 ack/enable 只写进了临时副本（实测踩过）。
+    状态按家目录加锁并从磁盘刷新；不同 Marketplace 实例也能看到相同状态。
+    这里使用调用方实例，便于检查每一步生命周期。
     """
     home = market.home
     src = home / "_src" / pid
