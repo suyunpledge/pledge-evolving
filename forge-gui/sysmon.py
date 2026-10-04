@@ -296,6 +296,9 @@ def _query_gpu_windows() -> Optional[Dict[str, Optional[object]]]:
             text=True,
             timeout=2.0,
             shell=False,
+            # Capturing output does not suppress a console on Windows. This
+            # recurring probe also runs inside the windowed/PyInstaller GUI.
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except (FileNotFoundError, PermissionError, OSError, subprocess.TimeoutExpired):
         with _GPU_STATE["lock"]:

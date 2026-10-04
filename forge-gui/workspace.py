@@ -36,7 +36,9 @@ from __future__ import annotations
 
 import os
 import math
+import queue
 import subprocess
+import threading
 import time
 import sys
 import tkinter as tk
@@ -44,7 +46,7 @@ from ui_icons import IconCanvas
 import webbrowser
 from pathlib import Path
 from typing import Any, Callable
-from chat_widgets import ScrollArea
+from chat_widgets import ScrollArea, ActionRow
 
 _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
@@ -54,6 +56,7 @@ import decor
 from gui_theme import (  # noqa: E402
     C,
     FONT_MICRO,
+    FONT_CAPTION,
     FONT_MONO_SM,
     FONT_MONO_XS,
     FONT_SMALL,
@@ -72,6 +75,7 @@ from gui_theme import (  # noqa: E402
     round_rect,
     setup_code_tags,
     style_scrollbar,
+    ui_px, bind_wrap, elide,
 )
 
 _MAX_FILE_BYTES = 400 * 1024
@@ -79,7 +83,7 @@ _MAX_FILE_LINES = 4000
 _SKIP_DIRS = {".git", "__pycache__", "node_modules", ".venv", "venv", "dist",
               "build", ".mypy_cache", ".pytest_cache", ".ruff_cache", ".openclaw"}
 _SKIP_SUFFIXES = (".pyc", ".pyo")
-_BAND_WEIGHTS = (11, 5, 4)          # 上 / 中 / 下 三区高度权重（≈55/25/20）
+_BAND_WEIGHTS = (9, 7, 4)           # 上 / 中 / 下：45% / 35% / 20%
 _TREE_WIDTH = 168                   # 文件树列宽
 _CHANGES_WIDTH = 216                # 变更列表列宽
 _MINIMAP_W = 64                     # minimap 宽
@@ -211,7 +215,7 @@ def _git_diff(repo: Path, *options: str, path=None) -> str:
             + _run_git(repo, *base, *tail))
 
 
-def _git_diff_numstat(repo: Path) -> dict[str, tuple[int, int]]:
+def _git_diff_numstat(repo: Path, status=None) -> dict[str, tuple[int, int]]:
     out = _git_diff(repo, "--numstat", "-z")
     result: dict[str, tuple[int, int]] = {}
     for line in out.split("\0"):
@@ -228,7 +232,7 @@ def _git_diff_numstat(repo: Path) -> dict[str, tuple[int, int]]:
         previous = result.get(key, (0, 0))
         result[key] = (previous[0] + added, previous[1] + removed)
     # 未跟踪文件按「整文件新增」计
-    for path, code in _git_status_map(repo).items():
+    for path, code in (status if status is not None else _git_status_map(repo)).items():
         if code.startswith("?") and path not in result:
             full = repo / path
             if full.is_file():
@@ -568,6 +572,9 @@ class WorkspacePanel(tk.Frame):
         self._current_tab = "文件树"
         self._current_file: Path | None = None       # 兼容旧字段
         self._current_diff_file: Path | None = None
+        self._diff_requested = False
+        self._user_sash_fractions = None
+        self._sash_dragging = False
         self._active_file: Path | None = None        # 当前 Tab 文件
         # 多文件 Tab：path(key=str) → {"path":..., "tab": _FileTab, "line": int|None}
         self._open_tabs: dict[str, dict[str, Any]] = {}
@@ -592,6 +599,10 @@ class WorkspacePanel(tk.Frame):
         self._sash_after_ids: set[str] = set()
         self._transient_after_ids: set[str] = set()
         self._highlight_after_id: str | None = None
+        self._io_results = queue.Queue()
+        self._io_jobs = {}
+        self._io_poll_id = None
+        self._destroyed = False
 
         self._build_topbar()
         self._build_tabbar()
@@ -604,7 +615,7 @@ class WorkspacePanel(tk.Frame):
         self.pack_forget()
 
         try:
-            self.refresh()
+            self.refresh_async() if app is not None else self.refresh()
         except Exception:
             pass
         self.bind("<Configure>", self._on_workspace_configure)
@@ -614,7 +625,7 @@ class WorkspacePanel(tk.Frame):
     # ─── 顶栏 ──────────────────────────────────────────────
 
     def _build_topbar(self):
-        top = tk.Frame(self, bg=C["bg"], height=36)
+        top = tk.Frame(self, bg=C["bg"], height=ui_px(self, 36))
         top.pack(side=tk.TOP, fill=tk.X)
         top.pack_propagate(False)
         left = tk.Frame(top, bg=C["bg"])
@@ -643,14 +654,14 @@ class WorkspacePanel(tk.Frame):
     def _on_workspace_configure(self, _event=None):
         self._place_sashes_once()
         width = self.winfo_width()
-        if width < 700:
+        if width < ui_px(self, 700):
             if self._tree_nav_visible:
                 self._tree_auto_collapsed = True
                 self._set_tree_nav_visible(False)
             if self._changes_nav_visible:
                 self._changes_auto_collapsed = True
                 self._set_changes_nav_visible(False)
-        elif width >= 760:
+        elif width >= ui_px(self, 760):
             if self._tree_auto_collapsed:
                 self._tree_auto_collapsed = False
                 self._set_tree_nav_visible(True)
@@ -670,7 +681,7 @@ class WorkspacePanel(tk.Frame):
     # ─── 标签条 ────────────────────────────────────────────
 
     def _build_tabbar(self):
-        bar = tk.Frame(self, bg=C["bg"], height=34)
+        bar = tk.Frame(self, bg=C["bg"], height=ui_px(self, 34))
         bar.pack(side=tk.TOP, fill=tk.X)
         bar.pack_propagate(False)
         self._tabbar = bar
@@ -692,8 +703,12 @@ class WorkspacePanel(tk.Frame):
 
     def _build_bands(self):
         self._vp = tk.PanedWindow(self, orient=tk.VERTICAL, bg=C["border"],
-                                  sashwidth=5, sashrelief=tk.FLAT, bd=0,
-                                  opaqueresize=True)
+                                  sashwidth=ui_px(self, 7), sashrelief=tk.FLAT, bd=0,
+                                  showhandle=True, handlesize=ui_px(self, 6),
+                                  sashcursor="sb_v_double_arrow", opaqueresize=True)
+        self._vp.bind("<ButtonPress-1>", self._start_sash_drag, add="+")
+        self._vp.bind("<ButtonRelease-1>", self._finish_sash_drag, add="+")
+        attach_tooltip(self._vp, "拖动分隔线，调整代码、Diff 和预览区域的高度")
         self._vp.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
         self._band_top = tk.Frame(self._vp, bg=C["bg"],
@@ -714,6 +729,8 @@ class WorkspacePanel(tk.Frame):
         self._build_bottom_band(self._band_bottom)
 
     def _place_sashes_once(self, _event=None):
+        if self._sash_dragging:
+            return
         # 按 11:5:4 比例摆两根 sash。
         # 注意两个坑：(1) 首帧高度连续变化（1 → 中间值 → 最终值）；
         # (2) 在 Configure 事件流里 sash_place 可能被后续布局 pass 覆盖，
@@ -725,8 +742,13 @@ class WorkspacePanel(tk.Frame):
                 self._sash_retries = retries + 1
                 self._schedule_sash_retry(80)
             return
-        expected = (int(h * _BAND_WEIGHTS[0] / sum(_BAND_WEIGHTS)),
-                    int(h * (_BAND_WEIGHTS[0] + _BAND_WEIGHTS[1]) / sum(_BAND_WEIGHTS)))
+        if self._user_sash_fractions is not None:
+            expected = tuple(round(h * fraction) for fraction in self._user_sash_fractions)
+            if getattr(self, "_ratio_applied_h", -1) != h:
+                self._sash_settle_until = time.monotonic() + .5
+        else:
+            expected = (int(h * _BAND_WEIGHTS[0] / sum(_BAND_WEIGHTS)),
+                        int(h * (_BAND_WEIGHTS[0] + _BAND_WEIGHTS[1]) / sum(_BAND_WEIGHTS)))
         try:
             current = (self._vp.sash_coord(0)[1], self._vp.sash_coord(1)[1])
         except tk.TclError:
@@ -736,7 +758,7 @@ class WorkspacePanel(tk.Frame):
         settle_until = getattr(self, "_sash_settle_until", 0)
         if settled and getattr(self, "_ratio_applied_h", -1) == h:
             if time.monotonic() < settle_until:
-                self._schedule_sash_retry(150)
+                self._schedule_sash_retry(40 if self._user_sash_fractions is not None else 150)
             return
         self._ratio_applied_h = h
         try:
@@ -745,8 +767,22 @@ class WorkspacePanel(tk.Frame):
         except tk.TclError:
             pass
         self._sash_placed = True
-        if time.monotonic() < settle_until:
-            self._schedule_sash_retry(150)
+        if self._user_sash_fractions is not None or time.monotonic() < settle_until:
+            self._schedule_sash_retry(40 if self._user_sash_fractions is not None else 150)
+
+    def _start_sash_drag(self, event):
+        hit = self._vp.identify(event.x, event.y)
+        self._sash_dragging = bool(hit and hit[-1] in ("sash", "handle"))
+        if self._sash_dragging:
+            self._sash_settle_until = 0
+
+    def _finish_sash_drag(self, _event=None):
+        if not self._sash_dragging:
+            return
+        self._sash_dragging = False
+        height = max(1, self._vp.winfo_height())
+        self._user_sash_fractions = tuple(self._vp.sash_coord(i)[1] / height for i in (0, 1))
+        self._ratio_applied_h = height
 
     def _schedule_sash_retry(self, delay: int):
         """跟踪延时校验，避免 Workspace 销毁后 Tcl 继续调用旧命令。"""
@@ -768,6 +804,10 @@ class WorkspacePanel(tk.Frame):
     def _cancel_sash_retries(self, event=None):
         if event is not None and event.widget is not self:
             return
+        self._destroyed = True
+        if self._io_poll_id is not None:
+            self.after_cancel(self._io_poll_id)
+            self._io_poll_id = None
         for token in tuple(self._sash_after_ids):
             try:
                 self.after_cancel(token)
@@ -790,12 +830,12 @@ class WorkspacePanel(tk.Frame):
 
         # 文件树列
         tree_col = tk.Frame(pane, bg=C["bg"])
-        tree_head = tk.Frame(tree_col, bg=C["bg"], height=28)
+        tree_head = tk.Frame(tree_col, bg=C["bg"], height=ui_px(self, 28))
         tree_head.pack(fill=tk.X)
         tree_head.pack_propagate(False)
         tk.Label(tree_head, text="文件树", bg=C["bg"], fg=C["ter"],
                  font=FONT_MICRO).pack(side=tk.LEFT, padx=PAD_S)
-        glyph_button(tree_head, "⟳", self.refresh, size=10,
+        glyph_button(tree_head, "⟳", self.refresh_async, size=10,
                      tooltip="重新扫描").pack(side=tk.RIGHT, padx=2)
         tree_host = tk.Frame(tree_col, bg=C["bg"])
         tree_host.pack(fill=tk.BOTH, expand=True)
@@ -827,7 +867,7 @@ class WorkspacePanel(tk.Frame):
 
         # 代码区（meta 行 + Tab 条 + 行号槽 + 主 Text + minimap）
         code_col = tk.Frame(pane, bg=C["bg"])
-        meta = tk.Frame(code_col, bg=C["bg"], height=28)
+        meta = tk.Frame(code_col, bg=C["bg"], height=ui_px(self, 28))
         meta.pack(fill=tk.X)
         meta.pack_propagate(False)
         self._code_meta_var = tk.StringVar(value="未打开文件")
@@ -838,12 +878,12 @@ class WorkspacePanel(tk.Frame):
                      tooltip="重新载入当前文件").pack(side=tk.RIGHT, padx=2)
 
         # 文件 Tab 条（多文件 Tab）—— 默认隐藏，无 activeFile 时不占位
-        self._file_tab_strip = tk.Frame(code_col, bg=C["bg"], height=28)
+        self._file_tab_strip = tk.Frame(code_col, bg=C["bg"], height=ui_px(self, 28))
         # 不立刻 pack；在 _show_code() 里再 pack
         self._file_tab_strip.pack_propagate(False)
         self._file_tab_canvas = tk.Canvas(self._file_tab_strip, bg=C["bg"],
                                           highlightthickness=0, bd=0,
-                                          height=28)
+                                          height=ui_px(self, 28))
         self._file_tab_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self._file_tab_inner = tk.Frame(self._file_tab_canvas, bg=C["bg"])
         self._file_tab_inner_id = self._file_tab_canvas.create_window(
@@ -984,7 +1024,7 @@ class WorkspacePanel(tk.Frame):
 
         # 左：变更列表
         left = tk.Frame(pane, bg=C["bg"])
-        head = tk.Frame(left, bg=C["bg"], height=30)
+        head = tk.Frame(left, bg=C["bg"], height=ui_px(self, 30))
         head.pack(fill=tk.X)
         head.pack_propagate(False)
         IconCanvas(head, "diff", size=18, bg=C["bg"], fg=C["accent2"]).pack(side=tk.LEFT, padx=(PAD_S, 4))
@@ -1037,7 +1077,7 @@ class WorkspacePanel(tk.Frame):
 
         # 右：diff 视图
         right = tk.Frame(pane, bg=C["bg"])
-        dhead = tk.Frame(right, bg=C["bg"], height=30)
+        dhead = tk.Frame(right, bg=C["bg"], height=ui_px(self, 30))
         dhead.pack(fill=tk.X)
         dhead.pack_propagate(False)
         self._diff_title_var = tk.StringVar(value="diff")
@@ -1070,6 +1110,21 @@ class WorkspacePanel(tk.Frame):
         setup_code_tags(self._diff_text)
         style_scrollbar(self._diff_text)
         self._diff_text.configure(state=tk.DISABLED)
+        self._diff_empty = ScrollArea(diff_body, bg=C["code_bg"], padx=12, pady=8)
+        empty = self._diff_empty.inner
+        title = tk.Label(empty, text="选择文件查看 Diff", bg=C["code_bg"], fg=C["body"],
+                         font=FONT_UI_BOLD, anchor="w", justify=tk.LEFT)
+        title.pack(fill=tk.X, pady=(0, 6))
+        bind_wrap(title)
+        self._diff_empty_title = title
+        self._diff_empty_actions = ActionRow(empty, [{"label": "浏览更改", "command": self.open_changes}], bg=C["code_bg"])
+        self._diff_empty_actions.pack(fill=tk.X)
+        self._diff_empty_detail = tk.StringVar()
+        detail = tk.Label(empty, textvariable=self._diff_empty_detail, bg=C["code_bg"], fg=C["muted"],
+                          font=FONT_CAPTION, anchor="w", justify=tk.LEFT)
+        detail.pack(fill=tk.X, pady=(6, 0))
+        bind_wrap(detail)
+        self._show_diff_empty()
         pane.add(right, minsize=240, stretch="always")
         self._diff_col = right
         self._mid_pane = pane
@@ -1111,7 +1166,7 @@ class WorkspacePanel(tk.Frame):
 
     # ── 下区：预览 / 控制台 / 终端 / 图像 / Markdown ──
     def _build_bottom_band(self, band: tk.Frame):
-        top = tk.Frame(band, bg=C["bg"], height=30)
+        top = tk.Frame(band, bg=C["bg"], height=ui_px(self, 30))
         top.pack(fill=tk.X)
         top.pack_propagate(False)
         sub_holder = tk.Frame(top, bg=C["bg"])
@@ -1191,9 +1246,10 @@ class WorkspacePanel(tk.Frame):
 
         # 仓库根路径（小字）
         self._home_repo_var = tk.StringVar(value=str(self._repo_root))
-        tk.Label(card, textvariable=self._home_repo_var, bg=C["bg"],
-                 fg=C["muted"], font=FONT_MICRO, anchor="w").pack(
-            fill=tk.X, pady=(2, 10))
+        path_label = tk.Label(card, textvariable=self._home_repo_var, bg=C["bg"],
+                             fg=C["muted"], font=FONT_MICRO, anchor="w", justify=tk.LEFT)
+        path_label.pack(fill=tk.X, pady=(2, 10))
+        bind_wrap(path_label)
 
         # 统计行
         stats = tk.Frame(card, bg=C["bg"])
@@ -1299,6 +1355,10 @@ class WorkspacePanel(tk.Frame):
 
     def _show_home(self):
         """显示 Home，隐藏代码主体 / Tab 条。"""
+        diff_job = self._io_jobs.get("diff")
+        if diff_job is not None:
+            diff_job["generation"] += 1
+            diff_job["pending"] = None
         try:
             self._file_tab_strip.pack_forget()
         except (tk.TclError, AttributeError):
@@ -1382,10 +1442,14 @@ class WorkspacePanel(tk.Frame):
         self._active_file = None
         self._current_diff_file = None
         # 关闭所有 Tab
+        self._diff_requested = False
         for key in list(self._open_tabs.keys()):
             self._close_tab(key)
         self._tab_order.clear()
-        self.refresh()
+        for job in self._io_jobs.values():
+            job["generation"] += 1
+            job["pending"] = None
+        self.refresh_async() if self._app is not None else self.refresh()
 
     def changes_count(self) -> int:
         try:
@@ -1431,6 +1495,7 @@ class WorkspacePanel(tk.Frame):
         return True
 
     def show_diff(self, path=None):
+        self._diff_requested = True
         # Render diff only; never touch the open code view unless path 指向一个
         # 尚未打开的文件 → 这种情况下也开成 Tab 以便 Code/Diff 对应同一文件。
         if path is not None:
@@ -1541,26 +1606,81 @@ class WorkspacePanel(tk.Frame):
         except tk.TclError:
             pass
 
+    def _submit_io(self, kind, work, apply, request_key=None):
+        """One worker per kind, latest queued request wins; workers never call Tk."""
+        if self._destroyed:
+            return
+        job = self._io_jobs.setdefault(kind, {"generation": 0, "running": False, "pending": None})
+        if request_key is not None and job["running"] and job.get("key") == request_key:
+            return
+        job["key"] = request_key
+        job["generation"] += 1
+        job["pending"] = (job["generation"], work, apply)
+        if not job["running"]:
+            self._launch_io(kind, job)
+        if self._io_poll_id is None:
+            self._io_poll_id = self.after(30, self._poll_io)
+
+    def _launch_io(self, kind, job):
+        generation, work, apply = job["pending"]
+        job["pending"] = None
+        job["running"] = True
+
+        def worker():
+            try:
+                result, error = work(), None
+            except Exception as exc:
+                result, error = None, exc
+            self._io_results.put((kind, generation, apply, result, error))
+
+        threading.Thread(target=worker, daemon=True, name=f"Workspace-{kind}").start()
+
+    def _poll_io(self):
+        self._io_poll_id = None
+        if self._destroyed:
+            return
+        while True:
+            try:
+                kind, generation, apply, result, error = self._io_results.get_nowait()
+            except queue.Empty:
+                break
+            job = self._io_jobs[kind]
+            job["running"] = False
+            if generation == job["generation"]:
+                try:
+                    if error is None:
+                        apply(result)
+                    else:
+                        self._set_status(f"工作区读取失败：{error}", "warn")
+                except Exception:
+                    self._root().report_callback_exception(*sys.exc_info())
+            if job["pending"] is not None:
+                self._launch_io(kind, job)
+        if any(job["running"] for job in self._io_jobs.values()):
+            self._io_poll_id = self.after(30, self._poll_io)
+
+    @staticmethod
+    def _read_snapshot(repo, expanded):
+        is_git = _git_is_repo(repo)
+        status = _git_status_map(repo) if is_git else {}
+        numstat = _git_diff_numstat(repo, status) if is_git else {}
+        return is_git, status, numstat, _scan_tree(repo, expanded=expanded)
+
+    def refresh_async(self):
+        repo, expanded = self._repo_root, set(self._expanded_dirs)
+        self._submit_io("refresh", lambda: self._read_snapshot(repo, expanded), self._apply_snapshot)
+
     def refresh(self):
-        repo = self._repo_root
-        self._is_git_repo = False
-        try:
-            self._is_git_repo = _git_is_repo(repo)
-        except Exception:
-            pass
-        if self._is_git_repo:
-            try:
-                self._git_status = _git_status_map(repo)
-            except Exception:
-                self._git_status = {}
-            try:
-                self._git_numstat = _git_diff_numstat(repo)
-            except Exception:
-                self._git_numstat = {}
-        else:
-            self._git_status = {}
-            self._git_numstat = {}
-        self._refresh_file_tree()
+        """Synchronous compatibility API; desktop actions use refresh_async()."""
+        job = self._io_jobs.get("refresh")
+        if job is not None:
+            job["generation"] += 1
+            job["pending"] = None
+        self._apply_snapshot(self._read_snapshot(self._repo_root, set(self._expanded_dirs)))
+
+    def _apply_snapshot(self, snapshot):
+        self._is_git_repo, self._git_status, self._git_numstat, nodes = snapshot
+        self._refresh_file_tree(nodes)
         self._refresh_changes()
         self._update_tab_counts()
         self._update_tabs_file()
@@ -1571,6 +1691,13 @@ class WorkspacePanel(tk.Frame):
         # 重新计算 Home（如果当前是 Home 状态）
         if self._active_file is None:
             self._refresh_home()
+        elif self._app is not None:
+            self._render_diff(self._current_diff_file)
+        if not self._diff_requested and self._current_diff_file is None:
+            self._show_diff_empty()
+        notify = getattr(self._app, "_on_workspace_snapshot", None)
+        if callable(notify):
+            notify(self._repo_root, len(self._git_status) if self._is_git_repo else None)
 
     # ─── 聚焦（标签条 → 区域高亮） ──────────────────────────
 
@@ -1595,6 +1722,7 @@ class WorkspacePanel(tk.Frame):
         if name == "代码" and self._active_file is not None:
             self._update_breadcrumb(file=self._active_file)
         elif name == "diff":
+            self._diff_requested = True
             f = self._current_diff_file
             if f is not None:
                 self._update_breadcrumb(file=f, diff=True)
@@ -1790,13 +1918,14 @@ class WorkspacePanel(tk.Frame):
 
     # ─── 文件树 ────────────────────────────────────────────
 
-    def _refresh_file_tree(self):
+    def _refresh_file_tree(self, nodes=None):
         body = self._tree_body
         for child in list(body.winfo_children()):
             child.destroy()
         self._file_tree_rows.clear()
         try:
-            nodes = _scan_tree(self._repo_root, expanded=self._expanded_dirs)
+            if nodes is None:
+                nodes = _scan_tree(self._repo_root, expanded=self._expanded_dirs)
         except Exception as exc:
             tk.Label(body, text=f"扫描失败：{exc}", bg=C["bg"],
                      fg=C["muted"], font=FONT_SMALL).pack(anchor="w",
@@ -1839,7 +1968,7 @@ class WorkspacePanel(tk.Frame):
         else:
             self._expanded_dirs.add(key)
         try:
-            self._refresh_file_tree()
+            self.refresh_async() if self._app is not None else self._refresh_file_tree()
         except Exception:
             pass
 
@@ -1984,24 +2113,80 @@ class WorkspacePanel(tk.Frame):
 
     # ─── diff ──────────────────────────────────────────────
 
-    def _render_diff(self, path: Path | None):
+    def _show_diff_empty(self):
+        if not hasattr(self, "_diff_empty"):
+            return
+        count = len(self._git_status)
+        if not self._is_git_repo:
+            title = "暂无 Git Diff"
+            detail = "此目录不是 Git 仓库。你仍可以打开真实文件查看代码。"
+        elif count:
+            title = "选择文件查看 Diff"
+            detail = f"工作区有 {count} 个文件修改。选择变更列表中的文件；拖动分隔线可调整区域高度。"
+        else:
+            title = "工作区暂无改动"
+            detail = "当前没有未提交的变更。打开文件查看代码，或刷新工作区读取新状态。"
+        self._diff_empty_title.configure(text=title)
+        self._diff_empty_detail.set(detail)
+        self._diff_empty_actions.destroy()
+        button = ({"label": "浏览更改", "command": self.open_changes} if self._is_git_repo and count else
+                  {"label": "📁 打开文件…", "command": self._home_pick_file})
+        self._diff_empty_actions = ActionRow(self._diff_empty.inner, [button], bg=C["code_bg"])
+        self._diff_empty_actions.pack(fill=tk.X, after=self._diff_empty_title)
+        self._diff_empty.place(x=0, y=0, relwidth=1, relheight=1)
+
+    def _render_diff(self, path: Path | None, *, loaded=None):
+        if path is None and not self._diff_requested:
+            self._show_diff_empty()
+            return
+        self._diff_empty.place_forget()
+        if self._app is not None and loaded is None:
+            repo = self._repo_root
+            is_git = self._is_git_repo
+            rel = self._rel_label(path) if path is not None else ""
+            untracked = self._git_status.get(rel, "").startswith("?")
+
+            def read_diff():
+                out = _git_diff(repo, path=path) if is_git else ""
+                raw = ""
+                if path is not None and untracked and not out:
+                    try:
+                        with path.open("rb") as stream:
+                            raw = stream.read(_MAX_FILE_BYTES).decode("utf-8", errors="replace")
+                    except OSError:
+                        pass
+                return out, raw
+
+            self._diff_title_var.set(rel or "diff（全部）")
+            self._diff_text.configure(state=tk.NORMAL)
+            self._diff_text.delete("1.0", tk.END)
+            self._diff_text.insert("1.0", "正在读取实际 Diff…")
+            self._diff_text.configure(state=tk.DISABLED)
+            refresh_generation = self._io_jobs.get("refresh", {}).get("generation", 0)
+            self._submit_io("diff", read_diff, lambda result: self._render_diff(path, loaded=result),
+                            request_key=(repo, path, refresh_generation))
+            return
         text = self._diff_text
         text.configure(state=tk.NORMAL)
         text.delete("1.0", tk.END)
         if not self._is_git_repo:
-            text.insert("1.0", "（不是 git 仓库）")
+            text.insert("1.0", "🔍 此目录不是 git 仓库\n"
+                               "没有变更或 Diff 可以显示；仍可从左侧文件树打开文件。")
             text.configure(state=tk.DISABLED)
             self._diff_title_var.set("diff")
+            self._show_diff_empty()
             return
         if path is not None:
             self._diff_title_var.set(self._rel_label(path))
             rel = self._rel_label(path)
-            out = _git_diff(self._repo_root, path=path)
+            out = loaded[0] if loaded is not None else _git_diff(self._repo_root, path=path)
             if not out:
                 # 未跟踪的新文件：整文件按新增渲染
                 try:
                     code = self._git_status.get(rel, "")
-                    if not code.startswith("?"):
+                    if loaded is not None:
+                        raw = loaded[1]
+                    elif not code.startswith("?"):
                         raw = ""
                     else:
                         with path.open("rb") as stream:
@@ -2018,7 +2203,8 @@ class WorkspacePanel(tk.Frame):
                     self._diff_total_var.set(f"+{len(raw.splitlines())} −0")
                     return
                 # 有改动文件但 diff 为空（HEAD 同步但工作区无变）→ 给可读提示
-                text.insert("1.0", f"{rel}\n无未提交改动。\n")
+                text.insert("1.0", f"📄 {rel}\n✅ 该文件没有未提交改动"
+                                   "（可能与暂存区一致或已全部提交）。\n")
                 text.configure(state=tk.DISABLED)
                 self._diff_total_var.set("+0 −0")
                 return
@@ -2048,19 +2234,21 @@ class WorkspacePanel(tk.Frame):
             ns = self._git_numstat.get(rel)
             if ns is None and rel in self._git_status and \
                     self._git_status[rel].startswith("?"):
-                ns = (_count_lines(path), 0)
+                ns = (len(loaded[1].splitlines()) if loaded is not None else _count_lines(path), 0)
             ns = ns or (0, 0)
             self._diff_total_var.set(f"+{ns[0]} −{ns[1]}")
             return
         else:
             self._diff_title_var.set("diff（全部）")
-            out = _git_diff(self._repo_root)
+            out = loaded[0] if loaded is not None else _git_diff(self._repo_root)
             if not out:
                 text.insert("1.0",
-                            "工作区没有已跟踪文件的改动\n"
-                            "（未跟踪的新文件请从左侧列表点开）\n")
+                            "✅ 工作区干净\n"
+                            "没有未提交的改动。\n"
+                            "新文件会出现在左侧「变更」列表；选中任意文件即可在此查看其 Diff。\n")
                 text.configure(state=tk.DISABLED)
                 self._refresh_diff_total()
+                self._show_diff_empty()
                 return
         first_hunk = None
         idx = 0

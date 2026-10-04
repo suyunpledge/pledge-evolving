@@ -12,6 +12,8 @@ Derived state (an index, per session projections) is versioned and rebuildable
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -32,13 +34,15 @@ class Event:
 
     def to_line(self) -> str:
         return json.dumps(
-            {"ordinal": self.ordinal, "type": self.type, "ts": self.ts, **self.data},
+            {**self.data, "ordinal": self.ordinal, "type": self.type, "ts": self.ts},
             ensure_ascii=False,
         )
 
     @staticmethod
     def from_line(line: str) -> "Event":
         raw = json.loads(line)
+        if not isinstance(raw, dict):
+            raise ValueError("session record must be an object")
         ordinal = int(raw.pop("ordinal", 0))
         etype = str(raw.pop("type", "unknown"))
         ts = float(raw.pop("ts", time.time()))
@@ -54,6 +58,7 @@ class Session:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.events: list[Event] = []
         self.meta: dict[str, Any] = dict(meta or {})
+        self._provided_meta = dict(meta or {})
         self.meta.setdefault("session_id", self.path.stem)
         self.meta.setdefault("started_at", time.time())
         if forked_from:
@@ -62,29 +67,55 @@ class Session:
 
     # -- lifecycle -------------------------------------------------------
     def open(self) -> "Session":
-        if not self.path.exists():
-            self._fh = self.path.open("a", encoding="utf-8")
-            self._write_line({"ordinal": 0, "type": "session_meta", "ts": time.time(), **self.meta})
-        else:
-            self._fh = self.path.open("a", encoding="utf-8")
+        if self._fh is not None:
+            return self
+        self._recover_tail()
         events: list[Event] = []
         for event in self.replay():
             if event.type == "session_meta":
                 # the meta line is identity, not history
-                self.meta = {**event.data, **self.meta, "session_id": self.path.stem}
+                self.meta = {**event.data, **self._provided_meta, "session_id": self.path.stem}
                 continue
             events.append(event)
         self.events = events
-        # _write_line already opened _fh above; if file existed, replay() closed
-        # the read handle, so we opened a fresh append handle above.  No second open.
-        if self._fh is None:
-            self._fh = self.path.open("a", encoding="utf-8")
+        self._fh = self.path.open("a", encoding="utf-8")
+        if self.path.stat().st_size == 0:
+            try:
+                self._write_line({**self.meta, "ordinal": 0, "type": "session_meta", "ts": time.time()})
+            except BaseException:
+                self.close()
+                raise
         return self
+
+    def _recover_tail(self) -> None:
+        """Preserve an interrupted final record before removing it from the log."""
+        if not self.path.exists():
+            return
+        raw = self.path.read_bytes()
+        if not raw or raw.endswith(b"\n"):
+            return
+        boundary = raw.rfind(b"\n") + 1
+        # A corrupt completed record needs explicit repair, never silent removal.
+        for line in raw[:boundary].decode("utf-8").splitlines():
+            if line.strip():
+                Event.from_line(line)
+        tail = raw[boundary:]
+        try:
+            Event.from_line(tail.decode("utf-8"))
+        except (ValueError, UnicodeError):
+            backup = self.path.with_name(self.path.name + ".incomplete-" + uuid.uuid4().hex)
+            backup.write_bytes(tail)
+            with self.path.open("r+b") as stream:
+                stream.truncate(boundary)
+        else:
+            with self.path.open("ab") as stream:
+                stream.write(b"\n")
 
     def close(self) -> None:
         if self._fh is not None:
-            self._fh.close()
+            handle = self._fh
             self._fh = None
+            handle.close()
 
     def __enter__(self) -> "Session":
         return self.open()
@@ -102,15 +133,27 @@ class Session:
         self._fh.flush()
 
     def append(self, etype: str, **data: Any) -> Event:
+        if self._fh is None:
+            self.open()
         ordinal = (self.events[-1].ordinal + 1) if self.events else 1
         event = Event(ordinal=ordinal, type=etype, data=data)
-        self.events.append(event)
         # one write path only: never a second channel that can disagree with it
         if self._fh is None:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             self._fh = self.path.open("a", encoding="utf-8")
-        self._fh.write(event.to_line() + "\n")
-        self._fh.flush()
+        line = event.to_line() + "\n"
+        try:
+            self._fh.write(line)
+            self._fh.flush()
+        except OSError:
+            # Reload the persisted log before any retry: a failed flush may
+            # still have written a complete record, or left an incomplete tail.
+            try:
+                self.close()
+            except OSError:
+                pass
+            raise
+        self.events.append(event)
         return event
 
     # -- reading ---------------------------------------------------------
@@ -143,7 +186,9 @@ class Session:
         """Copy the log (optionally truncated) into a new session file."""
         source = [e for e in self.events if e.type != "session_meta"]
         if keep_last is not None:
-            source = source[-keep_last:]
+            if keep_last < 0:
+                raise ValueError("keep_last must be nonnegative")
+            source = source[-keep_last:] if keep_last else []
         child = Session(path, meta={**self.meta, "session_id": Path(path).stem},
                         forked_from=str(self.meta.get("session_id")))
         child.open()
@@ -172,35 +217,62 @@ class SessionIndex:
         for file in sorted(self.root.glob("*.jsonl")):
             rows.append(self._summarise(file))
         payload = {"version": self.VERSION, "generated_at": time.time(), "sessions": rows}
-        self.path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=self.root,
+                                             prefix=".index-", suffix=".tmp", delete=False) as stream:
+                tmp = Path(stream.name)
+                json.dump(payload, stream, ensure_ascii=False, indent=2)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(tmp, self.path)
+        finally:
+            if tmp is not None:
+                tmp.unlink(missing_ok=True)
         return payload
 
     def _summarise(self, file: Path) -> dict[str, Any]:
         meta: dict[str, Any] = {}
         count = 0
         tokens = 0
-        for line in file.read_text(encoding="utf-8", errors="replace").splitlines():
+        error = None
+        try:
+            lines = file.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeError) as exc:
+            lines, error = [], str(exc)
+        for line in lines:
             if not line.strip():
                 continue
-            raw = json.loads(line)
+            try:
+                raw = json.loads(line)
+                if not isinstance(raw, dict):
+                    raise ValueError("session record must be an object")
+                total_tokens = int(raw.get("total_tokens", 0) or 0)
+            except (ValueError, TypeError) as exc:
+                error = str(exc)
+                break
             if raw.get("type") == "session_meta":
                 meta = {k: v for k, v in raw.items() if k not in {"type"}}
                 continue
             count += 1
-            tokens += int(raw.get("total_tokens", 0) or 0)
+            tokens += total_tokens
         return {
             "session_id": file.stem,
             "path": str(file),
             "events": count,
             "tokens": tokens,
             "meta": meta,
+            **({"error": error} if error else {}),
         }
 
     def load(self) -> dict[str, Any]:
         if not self.path.is_file():
             return self.rebuild()
-        payload = json.loads(self.path.read_text(encoding="utf-8"))
-        if payload.get("version") != self.VERSION:
+        try:
+            payload = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return self.rebuild()
+        if not isinstance(payload, dict) or payload.get("version") != self.VERSION or not isinstance(payload.get("sessions"), list):
             return self.rebuild()
         return payload
 

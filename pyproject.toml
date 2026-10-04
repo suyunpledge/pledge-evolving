@@ -23,8 +23,8 @@ forge = "forge.cli:main"
 [project.urls]
 Documentation = "https://example.invalid/forge"
 
-[tool.setuptools]
-packages = ["forge"]
+[tool.setuptools.packages.find]
+include = ["forge", "forge.*"]
 
 [tool.setuptools.package-data]
 forge = ["contrib/*.py", "contrib/*.md", "contrib/*.json",

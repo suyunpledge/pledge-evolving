@@ -4,7 +4,7 @@
   1. 输入卡三行结构齐全（编辑区 / ＋附件·上下文·命令 / 模型·发送）
   2. 发送按钮始终可见且在右侧
   3. 侧栏关键分组齐全
-  4. emoji 行末不裁切（零宽空格在位）
+  4. emoji 行末不裁切且复制内容保持原文
   5. 窄窗口下工具栏不溢出（需求宽不超实际宽）
   6. 消息正文 wraplength 跟随容器实时宽度（不靠固定值）
 
@@ -118,13 +118,13 @@ class UIRRegression(unittest.TestCase):
             texts = find_all(msg, lambda c: c.winfo_class() == "Text")
             self.assertTrue(texts)
             for t in texts:
-                # tk.Text 没 wraplength 选项（InlineText 内部用 tag_configure 维护）
-                # 验证 wrap 模式 = word（参与 word-wrap 才能让零宽空格起作用）
-                for t in texts:
-                    self.assertEqual(str(t.cget("wrap")), "word",
-                                     "正文 Text 应走 word-wrap")
-            body = texts[0].get("1.0", "end-1c")
-            self.assertIn("\u200b", body, "emoji 未插零宽空格（行末可能被裁）")
+                self.assertLessEqual(t.winfo_rootx()+t.winfo_width(), msg.winfo_rootx()+msg.winfo_width())
+                for kind, value, index in t.dump("1.0", "end-1c", image=True):
+                    box = t.bbox(index)
+                    self.assertIsNotNone(box)
+                    self.assertLessEqual(box[0]+box[2], t.winfo_width())
+                    self.assertLessEqual(box[1]+box[3], t.winfo_height())
+            self.assertEqual(texts[0].display_text(), "长正文 " * 60 + "🎉 收尾 emoji")
         finally:
             self._teardown(root, app)
 

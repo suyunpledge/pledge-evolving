@@ -128,8 +128,19 @@ def build_handler(cfg: GatewayConfig):
 
         # -- helpers ----------------------------------------------------
         def _read_body(self) -> bytes:
-            length = int(self.headers.get("Content-Length") or 0)
-            return self.rfile.read(length) if length else b""
+            if self.headers.get("Transfer-Encoding"):
+                raise ValueError("Transfer-Encoding is not supported; use Content-Length")
+            lengths = self.headers.get_all("Content-Length", [])
+            if len(lengths) > 1 or (lengths and not lengths[0].strip().isascii()):
+                raise ValueError("invalid Content-Length")
+            value = lengths[0].strip() if lengths else "0"
+            if not value.isdecimal():
+                raise ValueError("Content-Length must be a nonnegative integer")
+            length = int(value)
+            body = self.rfile.read(length) if length else b""
+            if len(body) != length:
+                raise ValueError("request body ended before Content-Length")
+            return body
 
         def _json(self, code: int, payload: dict[str, Any]) -> None:
             data = json.dumps(payload, ensure_ascii=False).encode()
@@ -203,12 +214,14 @@ def build_handler(cfg: GatewayConfig):
                 with cfg._auth_lock:
                     # Rate limit: lock out after max_auth_failures consecutive failures
                     if cfg._auth_locked_until > now:
+                        self.close_connection = True
                         self._json(429, {"type": "error", "error": {"type": "rate_limit_error",
                                                                   "message": "too many auth failures; locked out"}})
                         cfg.log.write(f"{self.command} {self.path} -> 429 (auth locked out)")
                         return
                     auth = self.headers.get("Authorization", "")
                     if auth != f"Bearer {cfg.gateway_token}":
+                        self.close_connection = True
                         cfg._auth_failures += 1
                         if cfg._auth_failures >= cfg.max_auth_failures:
                             cfg._auth_locked_until = now + 30.0  # 30 second lockout
@@ -219,10 +232,16 @@ def build_handler(cfg: GatewayConfig):
                         return
                     cfg._auth_failures = 0  # reset on success
             route = self.path.split("?")[0].rstrip("/")
-            if route == "/v1/tools/call":
-                self._tool_call(self._read_body())
+            try:
+                body = self._read_body()
+            except (ValueError, OverflowError) as exc:
+                self.close_connection = True
+                self._json(400, {"error": {"type": "invalid_request_error", "message": str(exc)}})
                 return
-            self._proxy(self._read_body())
+            if route == "/v1/tools/call":
+                self._tool_call(body)
+                return
+            self._proxy(body)
 
         def _tool_call(self, body: bytes) -> None:
             """Execute one forge tool through the full policy gate.
@@ -243,6 +262,9 @@ def build_handler(cfg: GatewayConfig):
                 self._json(400, {"type": "error",
                                  "error": {"type": "invalid_request_error",
                                            "message": f"bad json: {exc}"}})
+                return
+            if not isinstance(payload, dict):
+                self._json(400, {"error": {"type": "invalid_request_error", "message": "body must be an object"}})
                 return
             name = str(payload.get("name", "")).strip()
             if name.startswith("forge_"):

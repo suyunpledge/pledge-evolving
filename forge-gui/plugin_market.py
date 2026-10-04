@@ -880,8 +880,8 @@ class Marketplace:
 
     # ── 汇总 ────────────────────────────────────────────────────────
 
-    def summary(self) -> dict[str, Any]:
-        items = self.catalog()
+    def summary(self, *, items=None) -> dict[str, Any]:
+        items = self.catalog() if items is None else items
         return {
             "total": len(items),
             "installed": sum(1 for p in items if p.installed),
@@ -976,6 +976,7 @@ TOOL_SUMMARY_HINTS = {
 def build_tool_catalog(gateway_tools: Iterable[str] | None,
                        marketplace: Marketplace | None = None,
                        runtime_tools: list[tuple[str, str, str]] | None = None,
+                       *, plugins=None,
                        ) -> list[ToolEntry]:
     """工具市场 = 网关工具桥的工具 + 插件声明的工具 + 插件运行时的工具。
 
@@ -999,8 +1000,8 @@ def build_tool_catalog(gateway_tools: Iterable[str] | None,
             summary=TOOL_SUMMARY_HINTS.get(clean, ""),
             danger=classify_tool(clean),
         ))
-    if marketplace is not None:
-        for plugin in marketplace.catalog():
+    if marketplace is not None or plugins is not None:
+        for plugin in (marketplace.catalog() if plugins is None else plugins):
             if not plugin.enabled:
                 continue
             for tool in _as_list(plugin.provides.get("tools")):

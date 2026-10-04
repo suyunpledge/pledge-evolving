@@ -17,6 +17,7 @@ import ast
 import json
 import os
 import sys
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -54,6 +55,7 @@ from .guard import (
 )
 
 CTX: list[dict[str, Any]] = [{}]
+_EXPR_CONTEXT: ContextVar[dict[str, Any] | None] = ContextVar("forge_config_context", default=None)
 
 
 def _dig(node: Any, parts: list[str], default: Any) -> Any:
@@ -67,7 +69,8 @@ def _dig(node: Any, parts: list[str], default: Any) -> Any:
 
 def _helper_get(key: Any, default: Any = None, *_, **__) -> Any:
     """``get('a.b.c', default)`` — dotted lookup without attribute access."""
-    return _dig(CTX[0], str(key).split("."), default)
+    context = _EXPR_CONTEXT.get()
+    return _dig(CTX[0] if context is None else context, str(key).split("."), default)
 
 
 _CALL_IMPLEMENTATIONS: dict[str, Callable[..., Any]] = {
@@ -141,7 +144,7 @@ def _eval_expr(expr: str, ctx: dict[str, Any]) -> Any:
             if not isinstance(func, ast.Name) or func.id not in _ALLOWED_CALLS:
                 raise ConfigError(f"expression {expr!r} may only call {sorted(_ALLOWED_CALLS)}")
 
-    CTX[0] = ctx
+    token = _EXPR_CONTEXT.set(ctx)
     namespace: dict[str, Any] = {"ctx": ctx, "true": True, "false": False, "null": None,
                                  "none": None, **_ALLOWED_CALLS}
     namespace.update({k: v for k, v in ctx.items() if not k.startswith("_")})
@@ -151,6 +154,8 @@ def _eval_expr(expr: str, ctx: dict[str, Any]) -> Any:
         raise
     except Exception as exc:
         raise ConfigError(f"expression {expr!r} failed: {exc}") from exc
+    finally:
+        _EXPR_CONTEXT.reset(token)
 
 
 def resolve(value: Any, ctx: dict[str, Any]) -> Any:

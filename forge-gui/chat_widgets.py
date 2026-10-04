@@ -1487,7 +1487,7 @@ class TeamTogglePill(tk.Frame):
             self, text=self.LABELS[self._mode], fill=C["input_bg"],
             outline=C["border_hi"], fg=C["subtext"], font=FONT_CAPTION,
             bg=base, command=self._cycle, radius=R_PILL, padx=8, pady=2,
-            tooltip="Agent 集群/分工：关=单模型；开=按配置并行；AI 决断=模型按问题自行判断")
+            tooltip="Agent 集群/分工：关=单模型；开=按配置并行；AI 决断=本地规则按问题判断")
         self._btn.pack()
         self._apply_mode_color()
         # 右键直达指定档位

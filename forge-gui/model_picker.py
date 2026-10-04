@@ -9,11 +9,13 @@ from ui_icons import IconCanvas, draw_icon
 
 import math
 import tkinter as tk
+from tkinter import font as tkfont
 from urllib.parse import urlsplit
 
 import brand_marks
 from gui_theme import (C, FONT_CAPTION, FONT_EMOJI_SM, FONT_EMOJI_XS, FONT_MICRO,
-                       FONT_SMALL, FONT_UI_BOLD, OVERLAY_WIDTH, position_popover)
+                       FONT_SMALL, FONT_UI_BOLD, OVERLAY_WIDTH, position_popover,
+                       bind_keyboard_action, elide)
 from reasoning_slider import MiniReasoningTrack, ReasoningSlider
 
 PICKER_WIDTH = OVERLAY_WIDTH
@@ -58,7 +60,7 @@ class ModelPicker(tk.Frame):
                  on_router=None, on_settings=None, favorites=(),
                  on_favorite=None, thinking_var=None, thinking_choices=(),
                  on_thinking=None, router_choices=(), on_router_strategy=None,
-                 width_hint=144):
+                 width_hint=144, show_thinking=True):
         base = bg or C["input_bg"]
         super().__init__(parent, bg=base, highlightthickness=1,
                          highlightbackground=C["border_hi"],
@@ -80,6 +82,7 @@ class ModelPicker(tk.Frame):
         self._keep: list[tk.PhotoImage] = []
         self._base_bg = base
         self.width_hint = width_hint
+        self._width_budget = None
         self._filter = "all"
         self._search_var: tk.StringVar | None = None
         self._list_inner: tk.Frame | None = None
@@ -95,7 +98,7 @@ class ModelPicker(tk.Frame):
         self._dismiss_after_id: str | None = None
 
         self._body = tk.Frame(self, bg=base)
-        self._body.pack(padx=8, pady=4)
+        self._body.pack(fill=tk.X, padx=8, pady=4)
         self._icon_box = tk.Frame(self._body, bg=base, width=ITEM_ICON, height=ITEM_ICON)
         self._icon_box.pack_propagate(False)
         self._icon_box.pack(side=tk.LEFT, padx=(0, 6))
@@ -104,7 +107,7 @@ class ModelPicker(tk.Frame):
         self._fallback = tk.Canvas(self._icon_box, width=ITEM_ICON, height=ITEM_ICON,
                                    bg=base, highlightthickness=0, bd=0)
         self._labels = tk.Frame(self._body, bg=base)
-        self._labels.pack(side=tk.LEFT)
+        self._labels.pack(side=tk.LEFT, fill=tk.X, expand=True)
         self._text = tk.Label(self._labels, bg=base, fg=C["body"], font=FONT_SMALL,
                               anchor="w")
         self._text.pack(fill=tk.X)
@@ -114,7 +117,7 @@ class ModelPicker(tk.Frame):
         self._thinking_text = tk.Label(self._thinking_row, bg=base, fg=C["muted"],
                                        font=FONT_MICRO, anchor="w")
         self._thinking_mini: MiniReasoningTrack | None = None
-        if self._thinking_choices:
+        if self._thinking_choices and show_thinking:
             self._thinking_row.pack(fill=tk.X, pady=(1, 0))
             self._thinking_emoji.pack(side=tk.LEFT, padx=(0, 3))
             self._thinking_text.pack(side=tk.LEFT)
@@ -124,7 +127,7 @@ class ModelPicker(tk.Frame):
         self._caret = tk.Canvas(self._body, width=10, height=10, bg=base,
                                 highlightthickness=0, bd=0)
         self._caret.create_polygon(2, 3, 8, 3, 5, 7, fill=C["muted"], outline="")
-        self._caret.pack(side=tk.LEFT, padx=(6, 0))
+        self._caret.pack(side=tk.RIGHT, padx=(6, 0))
 
         bind_targets = [self, self._body, self._icon_box, self._icon,
                         self._fallback, self._labels, self._text,
@@ -136,6 +139,7 @@ class ModelPicker(tk.Frame):
             widget.bind("<Button-1>", self._on_click)
             widget.bind("<Enter>", lambda _e: self._set_hover(True))
             widget.bind("<Leave>", lambda _e: self._set_hover(False))
+        bind_keyboard_action(self, self.open_menu)
         self._var_trace = self.var.trace_add("write", lambda *_: self.refresh())
         self._thinking_trace = (self._thinking_var.trace_add(
             "write", lambda *_: self.refresh_thinking())
@@ -261,7 +265,7 @@ class ModelPicker(tk.Frame):
         value = self.var.get() or "default"
         provider = self._provider_for(value)
         brand = self.brand_of(value)
-        icon, keep = brand_marks.mark_icon(brand, ITEM_ICON)
+        icon, keep = brand_marks.mark_icon(brand, ITEM_ICON, master=self)
         if icon is not None:
             self._keep = [keep]
             self._fallback.place_forget()
@@ -278,7 +282,29 @@ class ModelPicker(tk.Frame):
                 shown += f" · {provider.get('modelLabel') or provider.get('model') or ''}"
         else:
             shown = value
-        self._text.configure(text=shown)
+        self._shown_text = "Model：" + shown
+        self._fit_caption()
+
+    def set_width_budget(self, pixels):
+        pixels = max(1, int(pixels))
+        line = tkfont.Font(root=self, font=FONT_SMALL).metrics("linespace")
+        height = max(self._body.winfo_reqheight(), line + 8) + 2
+        if int(self.cget("height")) != height:
+            self.configure(height=height)
+        if pixels == self._width_budget:
+            return
+        self._width_budget = pixels
+        self.configure(width=pixels)
+        self.pack_propagate(False)
+        self._fit_caption()
+
+    def _fit_caption(self):
+        shown = getattr(self, "_shown_text", "")
+        if self._width_budget is not None:
+            fixed = ITEM_ICON + 6 + self._caret.winfo_reqwidth() + 6 + 16 + 2
+            shown = elide(self, shown, max(0, self._width_budget-fixed))
+        if self._text.cget("text") != shown:
+            self._text.configure(text=shown)
 
     def refresh_thinking(self) -> None:
         if self._thinking_var is None:
@@ -357,7 +383,11 @@ class ModelPicker(tk.Frame):
 
         self._search_var.trace_add("write", search_changed)
         search.bind("<FocusIn>", lambda _e: search_hint.place_forget())
-        search.bind("<FocusOut>", lambda _e: search_changed())
+        # Moving from search into a result must keep that focused row alive.
+        search.bind("<FocusOut>", lambda _e:
+                    search_hint.place(x=11, rely=.5, anchor="w") if not self._search_var.get() else None)
+        search.bind("<Down>", lambda _e: self._focus_model_row(1))
+        search.bind("<Return>", lambda _e: self._select_first_match())
 
         filters = tk.Frame(shell, bg=C["surface"])
         filters.pack(fill=tk.X, pady=(0, 8))
@@ -368,6 +398,7 @@ class ModelPicker(tk.Frame):
             text = tk.Label(host, text=label, bg=C["surface2"], fg=C["subtext"],
                             font=FONT_MICRO, padx=8, pady=4, cursor="hand2")
             text.pack()
+            bind_keyboard_action(host, lambda k=key: self._set_filter(k))
             for widget in (host, text):
                 widget.bind("<Button-1>", lambda _e, k=key: self._set_filter(k))
             self._filter_widgets[key] = (host, text)
@@ -384,6 +415,7 @@ class ModelPicker(tk.Frame):
         viewport.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
         canvas = tk.Canvas(viewport, bg=C["surface"], highlightthickness=0, bd=0,
                            width=PICKER_WIDTH - 26, height=330)
+        self._list_canvas = canvas
         scrollbar = tk.Scrollbar(viewport, orient=tk.VERTICAL, command=canvas.yview,
                                  bg=C["surface2"], troughcolor=C["surface"], bd=0,
                                  relief=tk.FLAT, width=8)
@@ -556,6 +588,7 @@ class ModelPicker(tk.Frame):
             text = tk.Label(host, text=label, bg=C["surface2"], fg=C["subtext"],
                             font=FONT_MICRO, padx=9, pady=4, cursor="hand2")
             text.pack()
+            bind_keyboard_action(host, lambda v=value: self._pick_router(v))
             for widget in (host, text):
                 widget.bind("<Button-1>", lambda _e, v=value: self._pick_router(v))
                 widget.bind("<Enter>",
@@ -572,6 +605,7 @@ class ModelPicker(tk.Frame):
                 self._on_router(strategy)
 
         for widget in (action,):
+            bind_keyboard_action(widget, open_router)
             widget.bind("<Button-1>", open_router)
 
     def _hover_router(self, value: str, on: bool) -> None:
@@ -685,7 +719,7 @@ class ModelPicker(tk.Frame):
     def _brand_icon(self, parent, brand, *, bg: str, size=ITEM_ICON):
         box = tk.Frame(parent, bg=bg, width=28, height=28)
         box.pack_propagate(False)
-        icon, keep = brand_marks.mark_icon(brand, size)
+        icon, keep = brand_marks.mark_icon(brand, size, master=box)
         if icon is not None:
             self._keep.append(keep)
             tk.Label(box, image=icon, bg=bg, bd=0).place(relx=.5, rely=.5, anchor="center")
@@ -803,6 +837,11 @@ class ModelPicker(tk.Frame):
             return "break"
 
         favorite.bind("<Button-1>", toggle_favorite)
+        bind_keyboard_action(favorite, toggle_favorite)
+        bind_keyboard_action(row, pick)
+        row.bind("<Down>", lambda _e: self._focus_model_row(1))
+        row.bind("<Up>", lambda _e: self._focus_model_row(-1))
+        row.bind("<FocusIn>", lambda _e: self._reveal_model_row(row))
         clickable = (row, indicator, icon, text, title_row, title, desc, tags)
         for widget in clickable:
             widget.bind("<Button-1>", pick)
@@ -811,6 +850,33 @@ class ModelPicker(tk.Frame):
         for child in tags.winfo_children():
             child.bind("<Button-1>", pick)
         return row
+
+    def _focus_model_row(self, delta):
+        rows = [row for _value, row in self._rows]
+        if rows:
+            focused = self.focus_get()
+            index = rows.index(focused) if focused in rows else (-1 if delta > 0 else 0)
+            rows[(index + delta) % len(rows)].focus_set()
+        return "break"
+
+    def _select_first_match(self):
+        if self._rows:
+            self._select(self._rows[0][0])
+        return "break"
+
+    def _reveal_model_row(self, row):
+        canvas = getattr(self, "_list_canvas", None)
+        if canvas is None or self._list_inner is None:
+            return
+        canvas.update_idletasks()
+        top = canvas.canvasy(0)
+        bottom = top + canvas.winfo_height()
+        y, height = row.winfo_y(), row.winfo_height()
+        total = max(1, self._list_inner.winfo_height())
+        if y < top:
+            canvas.yview_moveto(y / total)
+        elif y + height > bottom:
+            canvas.yview_moveto((y + height - canvas.winfo_height()) / total)
 
     @staticmethod
     def _draw_star(canvas: tk.Canvas, active: bool) -> None:
@@ -866,6 +932,7 @@ class ModelPicker(tk.Frame):
         self._popup_bindings.clear()
         self._rows = []
         self._list_inner = None
+        self._list_canvas = None
         self._search_var = None
         self._filter_widgets.clear()
         self._thinking_widgets.clear()

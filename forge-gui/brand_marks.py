@@ -255,15 +255,15 @@ def _default_root():
     return getattr(tk, "_default_root", None)
 
 
-def _sync_cache_root() -> None:
+def _sync_cache_root(master=None) -> None:
     global _CACHE_ROOT
-    root = _default_root()
+    root = master._root() if master is not None else _default_root()
     if root is not _CACHE_ROOT:
         _ICON_CACHE.clear()
         _CACHE_ROOT = root
 
 
-def mark_icon(brand: Brand | str | None, size: int = 16):
+def mark_icon(brand: Brand | str | None, size: int = 16, *, master=None):
     """取品牌标志位图。
 
     返回 ``(PhotoImage | None, keepalive)``：Tk 的 PhotoImage 必须在 Python 侧留引用，
@@ -271,7 +271,7 @@ def mark_icon(brand: Brand | str | None, size: int = 16):
     """
     if brand is None:
         return None, None
-    _sync_cache_root()
+    _sync_cache_root(master)
     key = brand.key if isinstance(brand, Brand) else str(brand)
     for candidate in (size, 20, 24, 16, 32):
         cached = _ICON_CACHE.get((key, candidate))
@@ -282,7 +282,7 @@ def mark_icon(brand: Brand | str | None, size: int = 16):
         if path is None:
             continue
         try:
-            img = tk.PhotoImage(file=str(path))
+            img = tk.PhotoImage(master=master, file=str(path))
         except tk.TclError:
             continue
         _ICON_CACHE[(key, candidate)] = img

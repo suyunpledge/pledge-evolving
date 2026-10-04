@@ -18,7 +18,7 @@ def main():
     names = sys.argv[1:] or [
         "test_sysmon", "test_ui_icons", "test_chat_widgets", "test_gui_review",
         "test_interactions", "test_refactor_v3", "test_sub_agent", "test_runtime_review",
-        "test_ui_ergonomics",
+        "test_ui_ergonomics", "test_startup_responsiveness",
         "test_full_review", "test_config_model", "test_forge_client", "test_integration",
         "test_workspace", "test_ui_regression", "test_layout_dpi", "test_navigation",
         "test_plugin_market", "test_plugin_runtime", "test_plugin_adversarial",

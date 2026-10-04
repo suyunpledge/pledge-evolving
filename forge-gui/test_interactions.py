@@ -108,7 +108,7 @@ class ContractTests(unittest.TestCase):
         def receive(piece):
             chunks.append(piece)
             event.set()
-        with patch("forge_client.urllib.request.urlopen", return_value=io.BytesIO(chunk * 3)):
+        with patch("forge_client.open_response", return_value=io.BytesIO(chunk * 3)):
             with self.assertRaises(GenerationCancelled):
                 ForgeGatewayClient().stream_chat([], on_chunk=receive, cancel_event=event)
         self.assertEqual(chunks, ["x"])
@@ -238,9 +238,11 @@ class GuiInteractionTests(unittest.TestCase):
             "model": "test-model", "apiKey": {"$expr": "get('env.TEST_KEY', '')"}}}]
         proc = Mock()
         with patch.object(gui, "env_for", return_value={"TEST_KEY": "test-secret"}), \
+             patch.object(gui, "port_in_use", return_value=False), \
              patch.object(gui.subprocess, "Popen", return_value=proc) as popen, \
-             patch.object(gui.threading, "Thread"):
+             patch.object(self.app, "_gateway_started"):
             self.app._start_gateway()
+            self.pump(lambda: not self.app._gateway_starting)
         command = popen.call_args.args[0]
         self.assertEqual(command[command.index("--upstream") + 1], "https://example.invalid/v1")
         self.assertEqual(command[command.index("--client-wire") + 1], "openai")
@@ -253,7 +255,7 @@ class GuiInteractionTests(unittest.TestCase):
         self.app._include_history = False
         captured = []
         class Client:
-            def health(self): return True, "ok"
+            def health(self, **_kwargs): return True, "ok"
             def stream_chat(self, messages, **kwargs):
                 captured.extend(messages)
                 kwargs["on_chunk"]("new response")
@@ -268,7 +270,7 @@ class GuiInteractionTests(unittest.TestCase):
         release = threading.Event()
         class Client:
             called = False
-            def health(self):
+            def health(self, **_kwargs):
                 release.wait(1)
                 return True, "ok"
             def stream_chat(self, *_args, **_kwargs): self.called = True
@@ -295,7 +297,7 @@ class GuiInteractionTests(unittest.TestCase):
         # 用 stub 客户端避免打到真的 gateway
         class _StubClient:
             base_url = "http://127.0.0.1:8799"
-            def health(self): return True, "ok"
+            def health(self, **_kwargs): return True, "ok"
             def stream_chat(self, messages, **kw):
                 kw["on_chunk"]("收到")
         self.app.client = _StubClient()

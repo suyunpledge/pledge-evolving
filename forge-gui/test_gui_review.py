@@ -226,7 +226,7 @@ class GuiReviewTests(unittest.TestCase):
         calls = []
         class Client:
             base_url = "http://127.0.0.1:8799"
-            def health(self):
+            def health(self, **_kwargs):
                 release.wait(1)
                 return True, "ok"
             def stream_chat(self, messages, **kwargs):
@@ -252,7 +252,7 @@ class GuiReviewTests(unittest.TestCase):
     def test_failure_keeps_retry_text_without_polluting_history(self):
         class Client:
             base_url = "http://127.0.0.1:8799"
-            def health(self): return False, "test offline"
+            def health(self, **_kwargs): return False, "test offline"
         self.app.client = Client()
         self.app.send_var.set("retry this")
         self.app._do_send()

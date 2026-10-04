@@ -508,6 +508,7 @@ def build_builtin_registry(
             capture_output=True,
             text=True,
             timeout=int(args.get("timeout", shell_timeout)),
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         out = (proc.stdout or "") + (proc.stderr or "")
         return ToolResult(ok=proc.returncode == 0, content=out[-4000:], meta={"exit": proc.returncode})

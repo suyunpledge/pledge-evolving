@@ -487,6 +487,44 @@ def normalize_text_call(obj: dict[str, Any]) -> tuple[str, dict[str, Any]] | Non
     return name.strip(), args
 
 
+def _complete_tool_regions(text: str) -> str:
+    """Exclude interrupted XML calls while preserving bare JSON and literal tags."""
+    tag_re = re.compile(r"<(\/)?(tools|tool_call)\s*>", re.IGNORECASE)
+    out, stack = [], []
+    start, index = 0, 0
+    quoted, escaped = False, False
+    while index < len(text):
+        char = text[index]
+        if quoted:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                quoted = False
+        elif char == '"':
+            quoted = True
+        elif char == "<":
+            match = tag_re.match(text, index)
+            if match is not None:
+                closing, name = match.group(1), match.group(2).lower()
+                if not closing:
+                    if not stack:
+                        out.append(text[start:index])
+                    stack.append((name, match.end()))
+                elif stack and stack[-1][0] == name:
+                    _name, body_start = stack.pop()
+                    if not stack:
+                        out.append(html.unescape(text[body_start:index]))
+                        start = match.end()
+                index = match.end()
+                continue
+        index += 1
+    if not stack:
+        out.append(text[start:])
+    return "\n".join(out)
+
+
 def parse_text_protocol_calls(text: str, model_name: str = "") -> list[dict[str, Any]]:
     """从文本协议回复中提取全部工具调用块（brace-depth，不截断嵌套）。
 
@@ -498,6 +536,7 @@ def parse_text_protocol_calls(text: str, model_name: str = "") -> list[dict[str,
     normalize_text_call 归一键名，多块全部返回；与 parse_tool_call_tags 同形
     （每项 {"id", "name", "arguments"}）。
     """
+    text = _complete_tool_regions(text or "")
     if not text or "{" not in text:
         return []
     quirks = get_quirks(model_name)
@@ -530,6 +569,7 @@ def parse_tool_call_tags(content: str) -> list[dict[str, Any]]:
 
     Qwen/Mistral 系（Hermes 模板）在原生工具通道失败时会降级到文本输出。
     """
+    content = _complete_tool_regions(content or "")
     calls: list[dict[str, Any]] = []
     seen: set[str] = set()
 

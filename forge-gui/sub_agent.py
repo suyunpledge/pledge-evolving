@@ -28,6 +28,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 
 from interaction_model import gateway_settings
+from http_transport import open_response, RequestCancelled
 
 # 集群的同构编程 agent 系统提示词（照抄 AI Platform CLUSTER_AGENT_PROMPT 的语义）
 CLUSTER_AGENT_PROMPT = (
@@ -77,7 +78,7 @@ class SubAgentResult:
 
 def provider_chat(provider: dict, env: dict, messages: list[dict], *,
                   model: str, temperature: float, max_tokens: int,
-                  timeout_s: float) -> str:
+                  timeout_s: float, cancel_event=None) -> str:
     """直连一个 provider 的 OpenAI 兼容 /chat/completions（非流式）。
 
     provider 来自 forge.patch.json 的行 config（baseURL/model/apiKey env 引用）。
@@ -100,8 +101,10 @@ def provider_chat(provider: dict, env: dict, messages: list[dict], *,
         headers={"Content-Type": "application/json",
                  "Authorization": f"Bearer {key}"})
     try:
-        with urllib.request.urlopen(request, timeout=timeout_s) as resp:
+        with open_response(request, timeout=timeout_s, cancel_event=cancel_event) as resp:
             data = json.loads(resp.read().decode("utf-8", "replace"))
+    except RequestCancelled:
+        raise
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", "replace")[:200]
         raise RuntimeError(f"HTTP {exc.code}: {body}") from None
@@ -111,16 +114,21 @@ def provider_chat(provider: dict, env: dict, messages: list[dict], *,
         content = data["choices"][0]["message"].get("content") or ""
     except (KeyError, IndexError, TypeError):
         raise RuntimeError(f"上游响应结构异常: {str(data)[:160]}") from None
+    if not isinstance(content, str):
+        raise RuntimeError("上游回复 content 必须为文本")
     return content
 
 
 def _run_one(agent: SubAgent, default_provider: dict | None, env: dict,
-             default_model: str, temperature: float) -> SubAgentResult:
+             default_model: str, temperature: float, cancel_event=None) -> SubAgentResult:
     """执行单个 worker（在工作线程里被调用）。"""
     model = agent.model_name or default_model
     provider = agent.provider or default_provider
     start = time.monotonic()
     result = SubAgentResult(id=agent.id, role=agent.role, model_used=model)
+    if cancel_event is not None and cancel_event.is_set():
+        result.error = "已停止请求"
+        return result
     if provider is None:
         result.error = "未配置可用 Provider"
         result.duration_ms = int((time.monotonic() - start) * 1000)
@@ -132,13 +140,13 @@ def _run_one(agent: SubAgent, default_provider: dict | None, env: dict,
     if agent.context_text:
         # 统一记忆模式：先注入共享上下文，再给分工任务
         messages.append({"role": "user", "content": agent.context_text})
-        messages.append({"role": "assistant", "content": "(已了解以上背景信息)"})
     messages.append({"role": "user", "content": agent.user_message})
     try:
         output = provider_chat(provider, env, messages, model=model,
                                temperature=temperature,
                                max_tokens=agent.max_tokens,
-                               timeout_s=agent.timeout_s)
+                               timeout_s=agent.timeout_s,
+                               **({"cancel_event": cancel_event} if cancel_event is not None else {}))
         if not output or not output.strip():
             result.error = "子 Agent 返回空内容"
         else:
@@ -153,7 +161,7 @@ def run_sub_agents(agents: list[SubAgent], env: dict, *,
                    default_provider: dict | None,
                    default_model: str,
                    temperature: float = DEFAULT_TEMPERATURE,
-                   max_workers: int | None = None) -> list[SubAgentResult]:
+                   max_workers: int | None = None, cancel_event=None) -> list[SubAgentResult]:
     """并行执行所有子 Agent；任一失败不影响其他；结果顺序与传入顺序一致。"""
     agents = agents[:MAX_SUB_AGENTS]
     if not agents:
@@ -166,7 +174,7 @@ def run_sub_agents(agents: list[SubAgent], env: dict, *,
         # （KeyboardInterrupt 在子线程里只会作为 error 记录，主流程继续）。
         try:
             results[index] = _run_one(agent, default_provider, env,
-                                      default_model, temperature)
+                                      default_model, temperature, cancel_event)
         except BaseException as exc:
             if isinstance(exc, SystemExit):
                 raise
@@ -197,7 +205,7 @@ def run_cluster(user_text: str, count: int, lanes: list[dict],
                 env: dict, *, default_provider: dict | None,
                 default_model: str,
                 context_text: str | None = None,
-                temperature: float = DEFAULT_TEMPERATURE) -> list[SubAgentResult]:
+                temperature: float = DEFAULT_TEMPERATURE, cancel_event=None) -> list[SubAgentResult]:
     """Agent 集群：N 路同构编程 agent 各自独立产出方案。
 
     lanes: [{provider: <provider config>, model: <模型名>}, ...]，不足处
@@ -219,7 +227,8 @@ def run_cluster(user_text: str, count: int, lanes: list[dict],
             timeout_s=DEFAULT_TIMEOUT_S,
         ))
     return run_sub_agents(agents, env, default_provider=default_provider,
-                          default_model=default_model, temperature=temperature)
+                          default_model=default_model, temperature=temperature,
+                          cancel_event=cancel_event)
 
 
 def format_sub_agent_results(results: list[SubAgentResult], *,
@@ -310,19 +319,39 @@ def load_config() -> dict:
     # 默认值补全
     for key, default in DEFAULT_CONFIG.items():
         data.setdefault(key, json.loads(json.dumps(default)))
+    for key in ("cluster", "sub_agents"):
+        if not isinstance(data[key], dict):
+            data[key] = json.loads(json.dumps(DEFAULT_CONFIG[key]))
+        for field, default in DEFAULT_CONFIG[key].items():
+            data[key].setdefault(field, json.loads(json.dumps(default)))
+    try:
+        data["cluster"]["count"] = max(1, min(4, int(data["cluster"]["count"])))
+    except (ValueError, TypeError, OverflowError):
+        data["cluster"]["count"] = 2
+    for section, field in (("cluster", "lanes"), ("sub_agents", "presets")):
+        items = data[section].get(field)
+        data[section][field] = [item for item in items if isinstance(item, dict)] if isinstance(items, list) else []
+    if not isinstance(data["templates"], list):
+        data["templates"] = json.loads(json.dumps(DEFAULT_CONFIG["templates"]))
+    else:
+        data["templates"] = [item for item in data["templates"] if isinstance(item, dict) and item.get("role")]
+    if data["memory_mode"] not in ("isolated", "unified"):
+        data["memory_mode"] = "isolated"
     return data
 
 
 def save_config(config: dict) -> None:
     path = config_path()
+    import tempfile
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".agent-cluster-", suffix=".tmp", delete=False) as stream:
+        tmp = _Path(stream.name)
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(config, ensure_ascii=False, indent=2),
                        encoding="utf-8")
         _os.replace(tmp, path)
-    except OSError:
-        pass
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def enabled_sub_agent_presets(config: dict) -> list[dict]:

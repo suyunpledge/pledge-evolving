@@ -640,6 +640,7 @@ class ForgeGuiApp:
         self._abort_requested = False
         self._closing = False
         self._ui_events = queue.Queue()
+        self._background_jobs = {}
         self._editor_baseline = copy.deepcopy(self.user_rows)
 
         self._build_ui()
@@ -653,6 +654,48 @@ class ForgeGuiApp:
     def _post_ui(self, callback, *args):
         if not self._closing:
             self._ui_events.put((callback, args))
+
+    def _submit_background(self, kind, work, apply):
+        """Tk-owned scheduling: one reader per kind, latest request wins."""
+        if self._closing:
+            return
+        job = self._background_jobs.setdefault(kind, {
+            "generation": 0, "running": False, "pending": None})
+        job["generation"] += 1
+        job["pending"] = (job["generation"], work, apply)
+        if not job["running"]:
+            self._launch_background(kind, job)
+
+    def _launch_background(self, kind, job):
+        generation, work, apply = job["pending"]
+        job["pending"] = None
+        job["running"] = True
+
+        def worker():
+            try:
+                result, error = work(), None
+            except Exception as exc:
+                result, error = None, exc
+            self._post_ui(self._finish_background, kind, generation, apply, result, error)
+
+        threading.Thread(target=worker, daemon=True, name=f"Forge-{kind}").start()
+
+    def _finish_background(self, kind, generation, apply, result, error):
+        job = self._background_jobs[kind]
+        job["running"] = False
+        try:
+            if not self._closing and generation == job["generation"]:
+                if error is None:
+                    apply(result)
+                else:
+                    if kind == "market":
+                        self.market_stat_var.set("市场读取失败，可点击刷新重试")
+                    if kind == "market-action":
+                        self._market_action_busy = False
+                    self._set_status(f"读取 {kind} 失败：{error}", "warn")
+        finally:
+            if not self._closing and job["pending"] is not None:
+                self._launch_background(kind, job)
 
     def _drain_ui_events(self):
         deadline = time.monotonic() + 0.012
@@ -1468,13 +1511,16 @@ class ForgeGuiApp:
             "tools": self.tab_features,
             "config": self.tab_manage,
         }
+        self._lazy_views = set()
         for key in ("agents", "knowledge", "evolution", "files"):
             frame = tk.Frame(center, bg=C["bg"])
             if key == "agents":
                 # agents 视图 = 真实配置面板（集群/分工/记忆模式）
                 self._build_agents_team_panel(frame)
             else:
-                self._build_stub_view(frame, key)
+                # Keep frame parents/order stable, defer unused controls until
+                # first navigation instead of delaying the initial chat window.
+                self._lazy_views.add(key)
             self._views[key] = frame
 
     # ── agents 视图：Agent 集群与子 Agent 分工配置面板 ──
@@ -1862,7 +1908,7 @@ class ForgeGuiApp:
             try:
                 obj = Marketplace(home=self.home)
             except Exception as exc:  # pragma: no cover
-                self._set_status(f"市场初始化失败：{exc}", "error")
+                self._post_ui(self._set_status, f"市场初始化失败：{exc}", "error")
                 return None
             self._market_singleton = obj
         return obj
@@ -1961,23 +2007,39 @@ class ForgeGuiApp:
             return
         if not hasattr(self, "market_list"):
             return
+        self.market_stat_var.set("正在读取市场…")
+        self._submit_background("market", self._read_market_snapshot, self._render_market)
+
+    def _read_market_snapshot(self):
+        """Disk locks, fingerprints and HTTP requests never run inside Tk."""
         market = self._market_obj()
+        if market is None:
+            return None
+        items = market.catalog()
+        summary = market.summary(items=items)
+        names, err = self._gateway_tool_names()
+        runtime_rows = []
+        rt = getattr(self, "_plugin_runtime_singleton", None)
+        if rt is not None:
+            for name in rt.names():
+                info = rt.tools.get(name)
+                if info is not None:
+                    runtime_rows.append((name, info.plugin_id, info.plugin_id))
+        entries = (build_tool_catalog(names, runtime_tools=runtime_rows, plugins=items)
+                   if build_tool_catalog else [])
+        return items, summary, entries, err
+
+    def _render_market(self, snapshot):
         for child in self.market_list.winfo_children():
             child.destroy()
-        if market is None:
+        if snapshot is None:
             tk.Label(self.market_list,
                      text=f"市场模块不可用：{_MARKET_IMPORT_ERROR or '未知原因'}",
                      bg=C["bg"], fg=C["warn"], font=FONT_SMALL).pack(anchor=tk.W)
             self.market_stat_var.set("市场不可用")
             return
 
-        try:
-            items = market.catalog()
-            summary = market.summary()
-        except Exception as exc:  # pragma: no cover
-            tk.Label(self.market_list, text=f"读取市场失败：{exc}", bg=C["bg"],
-                     fg=C["error"], font=FONT_SMALL).pack(anchor=tk.W)
-            return
+        items, summary, entries, err = snapshot
 
         self.market_stat_var.set(
             f"已启用 {summary['enabled']} · 已安装 {summary['installed']} · "
@@ -2005,7 +2067,7 @@ class ForgeGuiApp:
         for plugin in shown:
             self._market_plugin_card(plugin)
 
-        self._market_tool_section(market)
+        self._market_tool_section(entries, err)
 
     def _market_plugin_card(self, plugin):
         card = RoundedCard(self.market_list, radius=R_PANEL, fill=C["surface"],
@@ -2071,21 +2133,10 @@ class ForgeGuiApp:
             tk.Label(actions, text="会执行本机代码", bg=C["surface"], fg=C["warn"],
                      font=FONT_MICRO).pack(side=tk.LEFT, padx=(10, 0))
 
-    def _market_tool_section(self, market):
+    def _market_tool_section(self, entries, err=""):
         """工具市场：网关工具桥暴露的工具 + 已启用插件声明的工具。"""
         divider(self.market_list, color=C["border_hi"], bg=C["bg"]).pack(
             fill=tk.X, pady=(10, 10))
-        names, err = self._gateway_tool_names()
-        # 插件运行时实际注册的工具（register() 出来的）也进市场视图
-        runtime_rows = []
-        rt = self._plugin_runtime_obj()
-        if rt is not None:
-            for tool_name in rt.names():
-                info = rt.tools.get(tool_name)
-                if info is not None:
-                    runtime_rows.append((tool_name, info.plugin_id, info.plugin_id))
-        entries = (build_tool_catalog(names, market, runtime_tools=runtime_rows)
-                   if build_tool_catalog else [])
         tk.Label(self.market_list, text=f"工具（{len(entries)}）", bg=C["bg"],
                  fg=C["ter"], font=FONT_UI_BOLD).pack(anchor=tk.W)
         if err:
@@ -2114,8 +2165,7 @@ class ForgeGuiApp:
     def _gateway_tool_names(self):
         """从网关工具桥取工具名。返回 (names|None, 错误说明)。
 
-        先做端口快检：网关「半死」（端口在听但不响应）时直接调 list_tools
-        会卡满 HTTP 超时，把界面拖住。0.3s 探不到就立刻返回提示。
+        仅从后台调用。端口在监听并不代表 HTTP 正常；快检只用于离线提示。
         """
         client = getattr(self, "client", None)
         if client is None or not hasattr(client, "list_tools"):
@@ -2127,7 +2177,7 @@ class ForgeGuiApp:
         if not self._port_open(host, port):
             return None, f"网关未在 {host}:{port} 上监听"
         try:
-            raw = client.list_tools()
+            raw = client.list_tools(timeout=3.0)
         except Exception as exc:
             return None, str(exc)[:160]
         names = []
@@ -2140,46 +2190,58 @@ class ForgeGuiApp:
 
     def _market_action(self, pid: str, action: str):
         """安装 / 启用 / 禁用 / 卸载 / 确认信任。"""
-        market = self._market_obj()
-        if market is None:
-            self._set_status("市场模块不可用", "error")
+        if getattr(self, "_market_action_busy", False):
+            self._set_status("正在处理插件操作，请稍候", "info")
             return
-        try:
-            if action == "install":
-                market.install_from_catalog(pid)
-                self._set_status(f"已安装 {pid}（未启用）", "ok")
-            elif action == "ack":
+        if action not in ("install", "ack", "enable", "disable", "uninstall"):
+            return
+        if action == "uninstall" and not messagebox.askyesno(
+                "卸载插件", f"卸载「{pid}」？\n\n"
+                "插件目录会移到 marketplace/trash 下，可手动恢复。", parent=self.root):
+            return
+        self._market_action_busy = True
+        self._set_status(f"正在处理 {pid}：{action}…", "info")
+
+        def work():
+            market = self._market_obj()
+            if market is None:
+                raise ValueError("市场模块不可用")
+            if action == "ack":
                 plugin = market.find(pid)
                 if plugin is None or not plugin.installed or plugin.error:
                     raise ValueError("插件尚未安装或文件无效")
-                reviewed_fingerprint = plugin.ack_of()
+                return market, plugin, plugin.ack_of()
+            methods = {"install": market.install_from_catalog, "enable": market.enable,
+                       "disable": market.disable, "uninstall": market.uninstall}
+            methods[action](pid)
+
+        def done(result):
+            if action == "ack":
+                market, plugin, reviewed_fingerprint = result
                 if not messagebox.askyesno(
                         "确认信任插件",
                         f"确认信任「{pid}」的当前文件和权限。\n\n"
                         f"版本：{plugin.version}\n权限：{'、'.join(plugin.permission_labels()) or '未声明'}\n\n"
                         "代码插件可以访问本机资源；此确认不是系统沙箱。\n"
                         "文件、清单、权限或工具声明变化后需重新确认。\n\n"
-                        "确认信任？"):
+                        "确认信任？", parent=self.root):
+                    self._market_action_busy = False
+                    self._set_status("已取消信任确认", "info")
                     return
-                market.ack(pid, expected_fingerprint=reviewed_fingerprint)
-                self._set_status(f"已确认信任 {pid}", "ok")
-            elif action == "enable":
-                market.enable(pid)
-                self._set_status(f"已启用 {pid}", "ok")
-            elif action == "disable":
-                market.disable(pid)
-                self._set_status(f"已禁用 {pid}", "info")
-            elif action == "uninstall":
-                if not messagebox.askyesno(
-                        "卸载插件",
-                        f"卸载「{pid}」？\n\n"
-                        "插件目录会移到 marketplace/trash 下，可手动恢复。"):
-                    return
-                market.uninstall(pid)
-                self._set_status(f"已卸载 {pid}", "info")
-        except Exception as exc:
-            self._set_status(f"{action} 失败：{exc}", "error")
-        self._refresh_market()
+                self._submit_background("market-action", lambda: market.ack(
+                    pid, expected_fingerprint=reviewed_fingerprint), finish)
+            else:
+                finish(result)
+
+        def finish(_result):
+            self._market_action_busy = False
+            label = {"install": "已安装", "ack": "已确认信任", "enable": "已启用",
+                     "disable": "已禁用", "uninstall": "已卸载"}[action]
+            self._set_status(f"{label} {pid}" + ("（未启用）" if action == "install" else ""),
+                             "info" if action in ("disable", "uninstall") else "ok")
+            self._refresh_market()
+
+        self._submit_background("market-action", work, done)
 
     def _open_plugins_dir(self):
         market = self._market_obj()
@@ -2240,6 +2302,9 @@ class ForgeGuiApp:
     def _show_view(self, key: str, *, record_history=True):
         if key not in self._views:
             key = "chat"
+        if key in self._lazy_views:
+            self._build_stub_view(self._views[key], key)
+            self._lazy_views.remove(key)
         if record_history and key != self._active_view and self._active_view in self._views:
             self._view_history.append(self._active_view)
             self._view_history = self._view_history[-32:]
@@ -2470,6 +2535,9 @@ class ForgeGuiApp:
         self._write_sessions(sessions)
 
     def _refresh_history(self):
+        self._submit_background("history", self._load_sessions, self._render_history)
+
+    def _render_history(self, sessions):
         box = getattr(self, "history_box", None)
         if box is None:
             return
@@ -2478,7 +2546,6 @@ class ForgeGuiApp:
             child.destroy()
         query = (self.session_search_var.get() if hasattr(self, "session_search_var")
                  else "").strip().lower()
-        sessions = self._load_sessions()
         if query:
             sessions = [s for s in sessions if query in str(s.get("title", "")).lower()]
         if not sessions:
@@ -3539,6 +3606,7 @@ class ForgeGuiApp:
 
         # 模型选择器（在输入卡底栏里，由 _make_model_picker 建）
         self.model_combo = None
+        self._team_mode = self._load_team_mode()
 
         self.input_card = cw.InputCard(
             parent, bg=C["chat"],
@@ -3556,7 +3624,7 @@ class ForgeGuiApp:
             on_context=self._open_context,
             on_commands=self._open_commands,
             on_team_change=self._on_team_mode_changed,
-            team_mode=self._load_team_mode(),
+            team_mode=self._team_mode,
         )
         self.input_card.pack(fill=tk.X, side=tk.BOTTOM, padx=20, pady=(0, 6))
         self.context_summary = tk.StringVar(value="历史上下文：开启 · 附件：0")
@@ -3723,7 +3791,7 @@ class ForgeGuiApp:
                 card.pack(fill=tk.X, pady=(0, 8))
                 top = tk.Frame(card, bg=C["surface"], padx=12, pady=8)
                 top.pack(fill=tk.X)
-                icon, keep = brand_marks.mark_icon(preset.brand or None, 16)
+                icon, keep = brand_marks.mark_icon(preset.brand or None, 16, master=top)
                 if icon is not None:
                     holder = tk.Label(top, image=icon, bg=C["surface"])
                     holder.image = icon
@@ -4044,7 +4112,7 @@ class ForgeGuiApp:
                 line.pack(fill=tk.X)
                 brand = target["brand"]
                 if brand is not None:
-                    icon, keep = brand_marks.mark_icon(brand, 16)
+                    icon, keep = brand_marks.mark_icon(brand, 16, master=line)
                     if icon is not None:
                         holder = tk.Label(line, image=icon, bg=C["surface"])
                         holder.image = icon
@@ -4577,17 +4645,16 @@ class ForgeGuiApp:
         """按搜索词过滤 Provider 列表（匹配显示名 / 真实 id / 模型名）。"""
         if not hasattr(self, "provider_list"):
             return
-        if not getattr(self, "_search_active", False):
-            return   # 占位符状态 = 不过滤
-        query = self.provider_search_var.get().strip().lower()
+        query = (self.provider_search_var.get().strip().lower()
+                 if getattr(self, "_search_active", False) else "")
         self.provider_list.delete(0, tk.END)
-        shown = 0
+        self._provider_visible_indices = []
         for idx, text in getattr(self, "_provider_rows_all", []):
             if query and query not in text.lower():
                 continue
             self.provider_list.insert(tk.END, text)
-            shown += 1
-        if not shown:
+            self._provider_visible_indices.append(idx)
+        if not self._provider_visible_indices:
             suffix = "（无匹配）" if query else "（空）"
             self.provider_list.insert(tk.END, f"暂无用户配置 {suffix}")
         # 保持选中项在过滤后仍可见
@@ -4595,10 +4662,8 @@ class ForgeGuiApp:
             cur = self._last_selected_provider_index
         except AttributeError:
             return
-        if cur is not None and query:
-            for vis_i, (orig_i, _t) in enumerate(
-                    [x for x in self._provider_rows_all
-                     if not query or query in x[1].lower()]):
+        if cur is not None:
+            for vis_i, orig_i in enumerate(self._provider_visible_indices):
                 if orig_i == cur:
                     self.provider_list.selection_clear(0, tk.END)
                     self.provider_list.selection_set(vis_i)
@@ -4623,6 +4688,12 @@ class ForgeGuiApp:
         self.input_text.insert("1.0", template)
         self.input_text.configure(fg=C["text"])
         self._placeholder_visible = False
+        self._pending_rows = []
+        self._organized_input = ""
+        self.save_btn.configure(state=tk.DISABLED)
+        self.provider_list.selection_clear(0, tk.END)
+        self._last_selected_provider_index = None
+        self._sync_model_editor(None)
         self._set_status("已生成模板：改好 baseURL / apiKey / model 后点「整理并预览」再保存",
                          "info")
         self._set_preview("")
@@ -4649,19 +4720,7 @@ class ForgeGuiApp:
                 display.append(f"{rid}  ·  {keys or '元数据'}")
         # 维护全量行（(原始 index, 文本)），供搜索过滤用；再按当前词过滤展示
         self._provider_rows_all = list(enumerate(display))
-        self.provider_list.delete(0, tk.END)
-        query = ""
-        if getattr(self, "_search_active", False):
-            query = self.provider_search_var.get().strip().lower()
-        shown = 0
-        for _idx, d in self._provider_rows_all:
-            if query and query not in d.lower():
-                continue
-            self.provider_list.insert(tk.END, d)
-            shown += 1
-        if not shown:
-            suffix = "（无匹配）" if query else ""
-            self.provider_list.insert(tk.END, f"暂无用户配置 {suffix}".rstrip())
+        self._filter_provider_list()
         self.provider_count_var.set(f"{len(rows)} 条用户配置")
         # 模型下拉
         models = []
@@ -4687,13 +4746,17 @@ class ForgeGuiApp:
         sel = self.provider_list.curselection()
         if not sel:
             return
-        idx = sel[0]
+        visible = self._provider_visible_indices
+        if sel[0] >= len(visible):
+            return
+        idx = visible[sel[0]]
         if idx >= len(self.user_rows):
             return
         if self._editor_is_dirty() and not messagebox.askyesno(
                 "编辑内容尚未保存", "切换条目会替换当前编辑内容。要放弃未保存的编辑吗？", parent=self.root):
             return
         row = self.user_rows[idx]
+        self._last_selected_provider_index = idx
         self._editor_baseline = copy.deepcopy(self.user_rows)
         # 把 row 放进输入区，便于编辑后重新矫治
         text = json.dumps(row, ensure_ascii=False, indent=2)
@@ -5099,7 +5162,7 @@ class ForgeGuiApp:
             pass
 
     def _start_gateway(self, autostart: bool = False) -> bool:
-        """拉起 gateway。返回是否真的起了进程（供自启重试判断）。"""
+        """受理 gateway 启动请求；进程创建和失败回调在后台完成。"""
         if self._closing:
             # 关窗过程中可能有延迟定时器刚到点；别在退出路上又拉一个进程出来。
             return False
@@ -5173,42 +5236,32 @@ class ForgeGuiApp:
             kwargs["creationflags"] = (
                 subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
             )
-        if port_in_use(port):
-            # Windows ownership queries can take seconds; keep them off Tk.
-            self._gateway_starting = True
-            cancel = self._gateway_launch_cancel = threading.Event()
-            self.gw_status_var.set("● 检查端口中")
-            self.gw_btn.configure(state=tk.DISABLED, text="检查端口…")
-            self.port_spin.configure(state=tk.DISABLED)
+        # Both port checks and CreateProcess can stall (including antivirus
+        # and frozen executable extraction). Always launch off Tk.
+        self._gateway_starting = True
+        cancel = self._gateway_launch_cancel = threading.Event()
+        self.gw_status_var.set("● 检查端口中")
+        self.gw_btn.configure(state=tk.DISABLED, text="检查端口…")
+        self.port_spin.configure(state=tk.DISABLED)
 
-            def launch():
-                try:
+        def launch():
+            try:
+                if port_in_use(port):
                     self._clear_stale_gateway_on_port(port)
-                    if cancel.is_set() or self._closing:
-                        self._post_ui(self._finish_deferred_gateway, None, upstream, cancel, "已取消启动", autostart)
-                        return
-                    if port_in_use(port):
-                        raise RuntimeError(f"端口 {port} 被正在运行的程序占用，请关闭旧版 Forge 或改用其它端口")
-                    proc = subprocess.Popen(cmd, env=env, **kwargs)
-                    self.gateway_proc = proc
-                    if cancel.is_set() or self._closing:
-                        kill_process_tree(proc)
-                    self._post_ui(self._finish_deferred_gateway, proc, upstream, cancel, "", autostart)
-                except Exception as exc:
-                    self._post_ui(self._finish_deferred_gateway, None, upstream, cancel, str(exc), autostart)
+                if cancel.is_set() or self._closing:
+                    self._post_ui(self._finish_deferred_gateway, None, upstream, cancel, "已取消启动", autostart)
+                    return
+                if port_in_use(port):
+                    raise RuntimeError(f"端口 {port} 被正在运行的程序占用，请关闭旧版 Forge 或改用其它端口")
+                proc = subprocess.Popen(cmd, env=env, **kwargs)
+                self.gateway_proc = proc
+                if cancel.is_set() or self._closing:
+                    kill_process_tree(proc)
+                self._post_ui(self._finish_deferred_gateway, proc, upstream, cancel, "", autostart)
+            except Exception as exc:
+                self._post_ui(self._finish_deferred_gateway, None, upstream, cancel, str(exc), autostart)
 
-            threading.Thread(target=launch, daemon=False, name="Forge-gateway-launch").start()
-            return True
-        self._set_status(f"启动 gateway：{' '.join(cmd[-4:])} ...", "info")
-        try:
-            self.gateway_proc = subprocess.Popen(cmd, env=env, **kwargs)
-            self._gateway_provider = copy.deepcopy(upstream)
-        except Exception as e:
-            self._set_status(f"启动失败：{e}", "error")
-            self._gateway_down("启动失败")
-            return False
-
-        self._gateway_started(self.gateway_proc, upstream)
+        threading.Thread(target=launch, daemon=False, name="Forge-gateway-launch").start()
         return True
 
     def _finish_deferred_gateway(self, proc, upstream, cancel, error, autostart):
@@ -5593,13 +5646,17 @@ class ForgeGuiApp:
         return mode if mode in ("off", "auto", "on") else "off"
 
     def _on_team_mode_changed(self, mode: str) -> None:
+        if mode not in ("off", "auto", "on"):
+            return
+        self._team_mode = mode
         try:
-            save_desktop_config(team_mode=mode)
+            saved = save_desktop_config(team_mode=mode)
         except Exception:
-            pass
-        label = {"off": "关（单模型直答）", "auto": "AI 决断（按问题自行判断）",
+            saved = False
+        label = {"off": "关（单模型直答）", "auto": "AI 决断（本地规则判断）",
                  "on": "开（按集群/分工配置并行）"}.get(mode, mode)
-        self._set_status(f"Agent 协作模式：{label}", "info")
+        self._set_status(f"Agent 协作模式：{label}" + ("；偏好未保存，本次仍生效" if not saved else ""),
+                         "info" if saved else "warn")
 
     #: AI 决断的本地启发式（零成本、零额外请求）：命中「需要多视角」的语言特征
     #: 或足够长的复合问题才并行。宁可漏并行，不可滥并行（额度纪律）。

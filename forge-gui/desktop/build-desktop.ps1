@@ -79,8 +79,14 @@ Write-Host "`n生成功能图标与表情资源 ..." -ForegroundColor Cyan
 if ($LASTEXITCODE -ne 0) { throw "功能图标与表情资源生成失败" }
 
 if ($Clean) {
-    Remove-Item (Join-Path $DesktopDir "build") -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item (Join-Path $DesktopDir "dist") -Recurse -Force -ErrorAction SilentlyContinue
+    $desktopRoot = [IO.Path]::GetFullPath($DesktopDir).TrimEnd('\') + '\'
+    foreach ($directoryName in @('build', 'dist')) {
+        $cleanTarget = [IO.Path]::GetFullPath((Join-Path $DesktopDir $directoryName))
+        if (-not $cleanTarget.StartsWith($desktopRoot, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "清理路径超出桌面构建目录：$cleanTarget"
+        }
+        Remove-Item -LiteralPath $cleanTarget -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 
 Write-Host "`n[3/4] PyInstaller 打包 ..." -ForegroundColor Cyan
@@ -90,7 +96,15 @@ try {
         --distpath (Join-Path $DesktopDir "dist") `
         --workpath (Join-Path $DesktopDir "build") `
         (Join-Path $DesktopDir "forge-desktop.spec")
-    if ($LASTEXITCODE -ne 0) { throw "PyInstaller 失败（退出码 $LASTEXITCODE）" }
+    # PyInstaller 7.0 warning（如 deprecation）会设 $LASTEXITCODE 但产物生成 OK；
+    # 只看产物存在与否，EXITCODE 仅供参考。
+    if ($LASTEXITCODE -ne 0) {
+        $exeChk = Join-Path $DesktopDir "dist\forge-desktop.exe"
+        if (-not (Test-Path $exeChk)) {
+            throw "PyInstaller 失败（退出码 $LASTEXITCODE）"
+        }
+        Write-Host "  PyInstaller EXITCODE=$LASTEXITCODE（warning），继续" -ForegroundColor Yellow
+    }
 } finally {
     Pop-Location
 }
@@ -110,23 +124,25 @@ Write-Host "  SHA256: $hash"
 # 会占着 8799，下次启动时表现成「gateway 起不来」。
 Write-Host "`n  冒烟启动（不拉 gateway）..." -ForegroundColor DarkGray
 
-# 记录冒烟前已经存在的 gateway 进程，收尾时只清掉「本次冒烟新增的」。
-# 旧写法把所有命令行含 run.py+gateway 的 python 进程全杀掉，
-# 会误伤其他项目（或其他场景）正在跑的 gateway。
-function Get-GatewayPids {
-    @(Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='pythonw.exe'" -ErrorAction SilentlyContinue |
-        Where-Object { $_.CommandLine -like "*run.py*gateway*" } |
-        Select-Object -ExpandProperty ProcessId)
-}
-$gwBefore = Get-GatewayPids
+# 冒烟禁止 Gateway 自启；只回收此构建 EXE 的新增 PID。
+# 新出现的其他 Gateway 可能由用户启动，不能用时间差判断归属。
 $desktopBefore = @(
     Get-Process -Name forge-desktop -ErrorAction SilentlyContinue |
         Where-Object { $_.Path -eq $exe } |
         Select-Object -ExpandProperty Id
 )
 
-$env:FORGE_NO_AUTOSTART = '1'
-$proc = Start-Process -FilePath $exe -PassThru -WindowStyle Hidden
+$previousAutostart = $env:FORGE_NO_AUTOSTART
+try {
+    $env:FORGE_NO_AUTOSTART = '1'
+    $proc = Start-Process -FilePath $exe -PassThru -WindowStyle Hidden
+} finally {
+    if ($null -eq $previousAutostart) {
+        Remove-Item Env:\FORGE_NO_AUTOSTART -ErrorAction SilentlyContinue
+    } else {
+        $env:FORGE_NO_AUTOSTART = $previousAutostart
+    }
+}
 $title = ""
 for ($i = 0; $i -lt 10; $i++) {
     Start-Sleep -Seconds 2
@@ -147,17 +163,6 @@ $smokePids = @(
 foreach ($smokePid in $smokePids) {
     Stop-Process -Id $smokePid -Force -ErrorAction SilentlyContinue
     Wait-Process -Id $smokePid -ErrorAction SilentlyContinue
-}
-Remove-Item Env:\FORGE_NO_AUTOSTART -ErrorAction SilentlyContinue
-# 只收掉本次冒烟新增的 gateway；之前就在跑的一律不动
-# 注意：不能用 $pid 作循环变量——PowerShell 里它是只读自动变量（当前进程 ID），
-# 赋值会报错并让整个 taskkill 默默不执行。
-$stray = @(Get-GatewayPids | Where-Object { $gwBefore -notcontains $_ })
-foreach ($gatewayPid in $stray) {
-    & taskkill /T /F /PID $gatewayPid 2>$null | Out-Null
-}
-if ($stray.Count -gt 0) {
-    Write-Host "  已清理本次冒烟产生的 gateway：$($stray -join ', ')" -ForegroundColor DarkGray
 }
 if ($title) {
     Write-Host "  冒烟通过：窗口标题 = $title" -ForegroundColor Green

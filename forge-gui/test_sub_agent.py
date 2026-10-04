@@ -87,9 +87,9 @@ class RunSubAgentsTests(unittest.TestCase):
                 [agent("1", "a", context_text="背景知识"),
                  agent("2", "b")],
                 ENV, default_provider=PROVIDER, default_model="m")
-        # unified: system + user(context) + assistant(ack) + user(task) = 4
+        # unified: system + user(context) + user(task); no invented assistant ack
         # isolated: system + user = 2
-        self.assertEqual(len(seen[0]), 4)
+        self.assertEqual(seen[0], ["system", "user", "user"])
         self.assertEqual(len(seen[1]), 2)
 
     def test_exception_in_worker_bounded(self):

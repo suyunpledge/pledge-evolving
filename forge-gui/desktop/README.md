@@ -93,11 +93,11 @@ python forge-gui\forge_gui_v2.py --diagnose   # 源码态同样可用
 诊断输出含 `python_exe` / `run_py` / `brand_logo` / `brand_logo_ok` / `brand_logo_px`，
 可用来判断「解释器是否找对、仓库是否找到、品牌资源是否打进去了」。
 
-GUI 回归测试：
+GUI 回归测试（临时用户目录，不读取真实密钥、不请求模型）：
 
 ```powershell
-python -m unittest test_gui_review -v      # 18 项
-python -m unittest test_interactions -v    # 17 项
+python run_offline_checks.py
+python run_offline_checks.py test_ui_ergonomics
 ```
 
 ## 2026-10-02 图标与表情修正
@@ -107,6 +107,13 @@ python -m unittest test_interactions -v    # 17 项
 - 未收录的组合表情（例如部分肤色、旗帜和 ZWJ 序列）保留原始文本，不替换为不同的表情；这些序列的显示仍取决于系统字体。
 - `make_ui_assets.py` 在构建时使用 Pillow 和系统 emoji 字体生成资源，运行时仅依赖 Tk。构建脚本自动执行该步骤，spec 同时打包图集和索引。
 - 验证命令：`python -m unittest test_ui_icons test_chat_widgets -v`。
+
+## GPU 监测闪窗修正
+
+资源监测器会定期运行 `nvidia-smi`。Windows 下只设置 `capture_output=True`
+仍会创建控制台，因此该调用显式使用 `CREATE_NO_WINDOW`，保留 GPU 监测和两秒超时。
+`python -m unittest test_sysmon -v` 验证首次与重复探测、失败后停止重试，
+并在 Windows 上启动真实控制台程序确认 `GetConsoleWindow()` 返回零。
 
 ## 已知取舍
 

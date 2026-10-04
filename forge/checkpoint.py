@@ -41,6 +41,7 @@ class CheckpointStore:
             capture_output=True,
             text=True,
             check=check,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
 
     def _sync_env(self) -> dict[str, str]:
@@ -59,7 +60,8 @@ class CheckpointStore:
         self.git_dir.parent.mkdir(parents=True, exist_ok=True)
         if not self.git_dir.exists():
             subprocess.run(["git", "init", "--bare", "--quiet", str(self.git_dir)],
-                           capture_output=True, text=True, check=False)
+                           capture_output=True, text=True, check=False,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             self._git("config", "core.worktree", str(self.workspace), check=False)
         return True
 
@@ -71,15 +73,18 @@ class CheckpointStore:
         subprocess.run(
             ["git", f"--git-dir={self.git_dir}", f"--work-tree={self.workspace}", "add", "-A"],
             capture_output=True, text=True, env=env, check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         commit = subprocess.run(
             ["git", f"--git-dir={self.git_dir}", f"--work-tree={self.workspace}",
              "commit", "--allow-empty", "-m", f"{label} @ {time.strftime('%H:%M:%S')}"],
             capture_output=True, text=True, env=env, check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         rev = subprocess.run(
             ["git", f"--git-dir={self.git_dir}", "rev-parse", "HEAD"],
             capture_output=True, text=True, check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         sha = rev.stdout.strip()
         if not sha:

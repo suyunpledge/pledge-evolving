@@ -341,7 +341,8 @@ class RefactorAcceptance(unittest.TestCase):
         self.app.model_var.set("千问max")
         self.pump(0.1)
         self.assertTrue(picker._icon.winfo_ismapped(), "已知模型应显示厂商标志")
-        self.assertEqual(picker._text.cget("text"), "千问max")
+        self.assertEqual(picker._text.cget("text"), "Model：千问max")
+        self.assertEqual(picker.get(), "千问max")
         self.app.model_var.set("zzz-unmapped-9k")
         self.pump(0.1)
         self.assertFalse(picker._icon.winfo_ismapped())
@@ -534,6 +535,7 @@ class RefactorAcceptance(unittest.TestCase):
         with patch.object(self.app, "_load_sessions", return_value=sessions), \
              patch.object(self.app, "_archive_current_session"):
             self.app._refresh_history()
+            self.pump(.1)
             self.assertIn("历史条目 24", label_texts(self.app.history_box))
             self.app._conversation_shortcut("search")
             self.app.session_search_var.set("条目 24")

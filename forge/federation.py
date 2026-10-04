@@ -189,7 +189,8 @@ def subprocess_runner(argv: Sequence[str], cwd: str, env: dict[str, str], timeou
         merged = {**os.environ, **env}
     try:
         proc = subprocess.run(list(argv), cwd=cwd or None, env=merged, capture_output=True,
-                              text=True, encoding="utf-8", errors="replace", timeout=timeout_s)
+                              text=True, encoding="utf-8", errors="replace", timeout=timeout_s,
+                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         return proc.returncode, (proc.stdout or "") + (proc.stderr or ""), False
     except subprocess.TimeoutExpired as exc:
         partial = (exc.stdout or "") if isinstance(exc.stdout, str) else ""
