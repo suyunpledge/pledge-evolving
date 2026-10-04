@@ -42,8 +42,8 @@ from gui_theme import (
 )
 
 MAX_BUBBLE_WIDTH = 740          # 中央 Conversation 是主体，长文允许更宽的阅读行
-USER_AUTOSIZE_PAD_X = 14
-USER_AUTOSIZE_PAD_Y = 10
+USER_AUTOSIZE_PAD_X = 15
+USER_AUTOSIZE_PAD_Y = 12
 
 # ─── 品牌头像（由主程序启动时注入） ─────────────────────────
 _BRAND_AVATAR = None
@@ -1717,7 +1717,7 @@ class InputCard(tk.Frame):
         self.send_var = tk.StringVar()
 
         card = RoundedCard(self, radius=R_BUBBLE, fill=C["input_bg"],
-                           outline=C["border_hi"], padx=12, pady=10, bg=base)
+                           outline=C["border_hi"], padx=14, pady=12, bg=base)
         card.pack(fill=tk.X)
         self._card = card
         inner = card.content

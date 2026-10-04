@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import math
 import platform
 import tkinter as tk
 from tkinter import ttk
@@ -111,8 +112,8 @@ C: dict[str, str] = {
 # ─── 圆角 / 间距 ───────────────────────────────────────────
 
 R_WINDOW, R_PANEL, R_CARD, R_PILL, R_MD, R_SM = 12, 12, 10, 8, 8, 6
-# 钝角圆角（对话气泡 / 底部输入卡专用）：比 R_CARD 大 8px，视觉更圆钝柔和。
-R_BUBBLE = 18
+# 钝角圆角（对话气泡 / 底部输入卡专用）：真圆弧绘制 + 大半径，圆钝柔和。
+R_BUBBLE = 22
 PAD_XS, PAD_S, PAD_M, PAD_L, PAD_XL = 4, 8, 12, 16, 20
 
 # 交互尺寸：所有主按钮、图标热区与浮层以此为基线，避免页面各写一套。
@@ -235,18 +236,33 @@ WECHAT_GREEN_DARK = (46, 174, 86, 255)   # #2EAE56（暗端，气泡底）
 # ─── 绘制原语 ───────────────────────────────────────────────────────────────────────────────────────────
 
 
-def rounded_points(x1, y1, x2, y2, r):
-    """圆角矩形的平滑多边形顶点（配合 create_polygon(smooth=True)）。"""
-    r = max(0, min(r, (x2 - x1) / 2, (y2 - y1) / 2))
-    return [x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r,
-            x2, y2 - r, x2, y2, x2 - r, y2, x1 + r, y2,
-            x1, y2, x1, y2 - r, x1, y1 + r, x1, y1]
+def rounded_points(x1, y1, x2, y2, r, *, seg=10):
+    """圆角矩形顶点：四分之一圆用多段折线逼近，拐角是真正的钝圆弧。
+
+    旧版每角只给 3 个控制点、靠 create_polygon(smooth=True) 样条插值——
+    Tk 样条按切线走会把角往里削，视觉上「带棱角、发锐」。改成显式圆弧
+    顶点（每角 seg 段）后，拐角是等半径的真圆弧，圆钝柔和。"""
+    r = max(0.0, min(r, (x2 - x1) / 2, (y2 - y1) / 2))
+    if r <= 0:
+        return [x1, y1, x2, y1, x2, y2, x1, y2]
+    pts: list = []
+    # 四角圆心 + 起止角（屏幕坐标 y 向下，故顺时针 180→270→0→90）
+    for cx, cy, a0 in ((x1 + r, y1 + r, 180), (x2 - r, y1 + r, 270),
+                       (x2 - r, y2 - r, 0), (x1 + r, y2 - r, 90)):
+        for i in range(seg + 1):
+            a = math.radians(a0 + 90 * i / seg)
+            pts.append(cx + r * math.cos(a))
+            pts.append(cy + r * math.sin(a))
+    return pts
 
 
 def round_rect(canvas: tk.Canvas, x1, y1, x2, y2, r, **kw):
-    """在 Canvas 上画一个圆角矩形，返回 item id。"""
-    return canvas.create_polygon(rounded_points(x1, y1, x2, y2, r),
-                                 smooth=True, splinesteps=18, **kw)
+    """在 Canvas 上画一个圆角矩形，返回 item id。
+
+    顶点已是真圆弧折线，故 smooth=False（样条平滑反而会削角）。
+    描边用圆角接头，密集顶点的轮廓不出现毛刺。"""
+    kw.setdefault("joinstyle", tk.ROUND)
+    return canvas.create_polygon(rounded_points(x1, y1, x2, y2, r), **kw)
 
 
 class RoundedCard(tk.Frame):
