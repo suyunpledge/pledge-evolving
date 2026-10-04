@@ -27,6 +27,16 @@ HIDDEN = [
     "model_picker",
     "ui_icons",
     "plugin_market",
+    "plugin_runtime",
+    "plugin_capabilities",
+    "compat_sources",
+    # 宿主 Forge 包：plugin_capabilities 运行期 import forge.tools / forge.policy
+    # （能力代理的本地别名注册表 + Policy 类型）。不加则冻结 exe 里插件全灭。
+    "forge",
+    "forge.config",
+    "forge.guard",
+    "forge.policy",
+    "forge.tools",
 ]
 
 # 运行期用不到的重量级包，排掉可显著减小体积
@@ -42,7 +52,7 @@ EXCLUDES = [
 
 a = Analysis(
     [str(GUI_DIR / "forge_gui_v2.py")],
-    pathex=[str(GUI_DIR)],
+    pathex=[str(GUI_DIR), str(GUI_DIR.parent)],  # parent = repo root (forge package)
     binaries=[],
     # 界面资源（品牌标志 + 模型厂商标识）。打包后由 _MEIPASS/assets 提供。
     # 注意：brands/ 是子目录，*.png 通配不会递归，必须单独列一条。

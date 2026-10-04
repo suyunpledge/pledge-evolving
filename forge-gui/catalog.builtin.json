@@ -1,8 +1,33 @@
 {
   "catalogVersion": 1,
-  "generatedAt": "2026-10-03",
+  "generatedAt": "2026-10-04",
   "note": "随程序分发的离线目录。不联网即可浏览；远程源需用户显式添加。",
   "entries": [
+    {
+      "id": "tool-repo-files",
+      "name": "工作区文件能力",
+      "version": "1.0.0",
+      "kind": "tool",
+      "icon": "📁",
+      "summary": "声明式文件工具：逐项授权读取或修改，经 Forge 工具注册表和 Policy 执行",
+      "description": "不执行插件 Python。只能操作授权工作区内的文件；单文件上限 2 MiB，请求上限 256 KiB。知悉、启用与授权分别进行，修改能力仍受 Forge Policy 限制。",
+      "author": "Forge 内置",
+      "capabilities": ["repo.read", "repo.write"],
+      "executes_code": false,
+      "provides": {"tools": ["repo_read_file", "repo_list_dir", "repo_write_file"]},
+      "contributions": {
+        "tools": [
+          {"name": "repo_read_file", "target": "read_file", "description": "读取已授权工作区文件",
+            "parameters": {"type": "object", "properties": {"path": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["path"], "additionalProperties": false}},
+          {"name": "repo_list_dir", "target": "list_dir", "description": "列出已授权工作区目录",
+            "parameters": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"], "additionalProperties": false}},
+          {"name": "repo_write_file", "target": "write_file", "description": "写入已授权工作区文件，仍需通过 Forge Policy",
+            "parameters": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"], "additionalProperties": false}}
+        ]
+      },
+      "tags": ["工具", "声明式", "逐项授权"],
+      "requires": {"forge": ">=0.7.0"}
+    },
     {
       "id": "theme-wechat-dark",
       "name": "微信暗色主题",
@@ -225,8 +250,8 @@
       "version": "0.1.0",
       "kind": "tool",
       "icon": "🐍",
-      "summary": "演示用：会执行本机 Python，安装时必须显式确认信任",
-      "description": "这条条目专门用来说明安全口径——它声明 executes_code=true，所以不能从目录一键安装，必须在界面上确认权限指纹后才会进入可启用状态。指纹随版本或权限变化而失效。",
+      "summary": "旧 Python 插件格式示例：未提供系统沙箱，Agent 执行已阻止",
+      "description": "仅展示旧格式的 executes_code 声明。不能从目录一键安装；本地安装后可以知悉，但不能获得 Agent 执行授权。旧 worker 的进程超时不是系统沙箱。",
       "author": "Forge 内置（示例）",
       "permissions": [
         "shell:exec",

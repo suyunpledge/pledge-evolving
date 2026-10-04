@@ -62,11 +62,15 @@ KINDS = ("tool", "theme", "panel", "integration")
 MANIFEST_FIELDS = (
     "id", "name", "version", "kind", "summary", "description", "author",
     "homepage", "icon", "provides", "permissions", "executes_code",
-    "requires", "tags", "source",
+    "requires", "tags", "source", "capabilities", "contributions",
 )
 
 #: 权限名 → 人话说明（UI 直接展示，避免用户看到裸标识符）
 PERMISSION_LABELS = {
+    "repo.read": "读取当前工作区文件",
+    "repo.write": "修改当前工作区文件",
+    "process.exec": "启动外部进程（尚无受控执行器）",
+    "network.github": "访问 GitHub 网络（尚无受控执行器）",
     "workspace:read": "读取工作区文件",
     "workspace:write": "改写工作区文件",
     "shell:exec": "执行本机命令",
@@ -111,7 +115,16 @@ _LOCKS_GUARD = threading.Lock()
 _LOCK_DEPTH = threading.local()
 MAX_PLUGIN_BYTES = 32 * 1024 * 1024
 MAX_PLUGIN_FILES = 512
-HIGH_RISK_PERMISSIONS = {"shell:exec", "workspace:write", "net:outbound", "model:call", "clipboard"}
+HIGH_RISK_PERMISSIONS = {"shell:exec", "workspace:write", "net:outbound", "model:call", "clipboard",
+                         "repo.write", "process.exec", "network.github"}
+CAPABILITY_ALIASES = {"workspace:read": "repo.read", "workspace:write": "repo.write",
+                      "shell:exec": "process.exec", "net:outbound": "network.outbound"}
+GRANTABLE_CAPABILITIES = frozenset({"repo.read", "repo.write"})
+CONTRIBUTION_TYPES = frozenset({"tools", "skills", "policies", "hooks", "providers", "agents", "ui_panels"})
+
+
+def workspace_key(workspace) -> str:
+    return os.path.normcase(str(Path(workspace).expanduser().resolve()))
 
 
 @contextmanager
@@ -280,6 +293,8 @@ class Plugin:
     requires: dict[str, Any] = field(default_factory=dict)
     tags: list[str] = field(default_factory=list)
     source: str = "builtin"
+    capabilities: list[str] = field(default_factory=list)
+    contributions: dict[str, list[dict]] = field(default_factory=dict)
 
     # 运行期状态（不写进清单）
     installed: bool = False
@@ -291,6 +306,18 @@ class Plugin:
     content_fingerprint: str = ""
     trust_required: bool = False
     generation: int = 0
+    grants: list[dict] = field(default_factory=list)
+
+    @property
+    def declared_capabilities(self) -> set[str]:
+        return {CAPABILITY_ALIASES.get(p, p) for p in self.permissions + self.capabilities}
+
+    def granted_capabilities(self, workspace, session="") -> set[str]:
+        return {cap for grant in self.grants
+                if grant.get("workspace") == workspace_key(workspace)
+                and grant.get("fingerprint") == self.ack_of()
+                and (not grant.get("session") or grant["session"] == session)
+                for cap in grant.get("capabilities", [])}
 
     @property
     def kind_label(self) -> str:
@@ -299,7 +326,7 @@ class Plugin:
     @property
     def needs_ack(self) -> bool:
         """需要显式确认才算可用的插件：会执行代码，且指纹变了（或从没确认过）。"""
-        if not self.executes_code and not self.trust_required:
+        if not self.executes_code and not self.trust_required and not self.capabilities and not self.contributions:
             return False
         return not (self.acked and self.ack_fingerprint == self.ack_of())
 
@@ -309,11 +336,12 @@ class Plugin:
             "permissions": sorted(self.permissions),
             "executes_code": self.executes_code,
             "provides": self.provides, "requires": self.requires,
+            "capabilities": sorted(self.capabilities), "contributions": self.contributions,
             "content": self.content_fingerprint,
         })
 
     def permission_labels(self) -> list[str]:
-        return [PERMISSION_LABELS.get(p, p) for p in self.permissions]
+        return [PERMISSION_LABELS.get(p, p) for p in dict.fromkeys(self.permissions + self.capabilities)]
 
     def to_dict(self) -> dict[str, Any]:
         out = {k: getattr(self, k) for k in MANIFEST_FIELDS if hasattr(self, k)}
@@ -321,7 +349,7 @@ class Plugin:
             "installed": self.installed, "enabled": self.enabled,
             "path": self.path, "acked": self.acked,
             "ack_fingerprint": self.ack_fingerprint, "error": self.error,
-            "needs_ack": self.needs_ack,
+            "needs_ack": self.needs_ack, "grants": self.grants,
         })
         return out
 
@@ -341,10 +369,19 @@ def parse_manifest(raw: dict[str, Any], *, source: str = "local") -> Plugin:
     for key, limit in limits.items():
         if len(str(raw.get(key) or "")) > limit:
             raise ValueError(f"插件清单 {key} 超过长度上限")
-    for key in ("permissions", "tags"):
+    for key in ("permissions", "tags", "capabilities"):
         values = raw.get(key)
         if isinstance(values, list) and (len(values) > 64 or any(len(str(v)) > 256 for v in values)):
             raise ValueError(f"插件清单 {key} 超过上限")
+    capabilities = raw.get("capabilities", [])
+    if (not isinstance(capabilities, list) or len(capabilities) > 64 or
+            any(not isinstance(c, str) or not c or len(c) > 256 for c in capabilities)):
+        raise ValueError("capabilities 必须是有界的能力名称数组")
+    contributions = raw.get("contributions", {})
+    if (not isinstance(contributions, dict) or set(contributions) - CONTRIBUTION_TYPES or
+            any(not isinstance(v, list) or len(v) > 32 or any(not isinstance(x, dict) for x in v)
+                for v in contributions.values())):
+        raise ValueError("contributions 必须按已知类型声明，且每类最多 32 项")
     declared = raw.get("provides", {})
     declared = declared.get("tools", []) if isinstance(declared, dict) else []
     if isinstance(declared, list) and (len(declared) > 32 or any(
@@ -390,6 +427,7 @@ def parse_manifest(raw: dict[str, Any], *, source: str = "local") -> Plugin:
         requires=requires,
         tags=[str(t) for t in tags if str(t).strip()],
         source=str(raw.get("source") or source),
+        capabilities=list(dict.fromkeys(capabilities)), contributions=contributions,
     )
 
 
@@ -404,7 +442,11 @@ class Marketplace:
     """
 
     def __init__(self, home: str | os.PathLike | None = None,
-                 builtin_catalog: Path | None = None):
+                 builtin_catalog: Path | None = None,
+                 external_sources: bool = False):
+        # external_sources=True 时合并外部生态目录（OpenClaw/Claude/DSH/Codex
+        # 的只读声明式映射）。默认关：保持纯离线语义与测试隔离。
+        self.external_sources = bool(external_sources)
         self.home = Path(home) if home else Path.home() / ".forge"
         self.market_dir = self.home / MARKET_DIRNAME
         self.plugins_dir = self.home / PLUGINS_DIRNAME
@@ -435,6 +477,7 @@ class Marketplace:
             "generations": {},
             "trust_required": {},
             "registered_schemas": {},
+            "grants": {},
         }
 
     def _load_state(self) -> dict[str, Any]:
@@ -481,6 +524,11 @@ class Marketplace:
         state["generations"] = {k: v for k, v in state["generations"].items()
                                 if type(v) is int and 0 <= v < 2**63}
         state["trust_required"] = {k: v for k, v in state["trust_required"].items() if type(v) is bool}
+        state["grants"] = {k: [g for g in value[:32] if isinstance(g, dict)
+            and isinstance(g.get("fingerprint"), str) and isinstance(g.get("workspace"), str)
+            and isinstance(g.get("session", ""), str) and isinstance(g.get("capabilities"), list)
+            and all(isinstance(c, str) and c in GRANTABLE_CAPABILITIES for c in g["capabilities"])]
+            for k, value in state["grants"].items() if isinstance(value, list)}
         return state
 
     def _stash(self, path: Path, suffix: str) -> Path:
@@ -564,6 +612,28 @@ class Marketplace:
                 continue
         return out
 
+
+    def external_entries(self) -> list[Plugin]:
+        """外部生态目录（OpenClaw / Claude Code / DSH / Codex）→ 声明式条目。
+
+        旁路源：只读扫描本机安装，产出 parse_manifest 兼容清单；
+        不改变安装/授权语义（与 plugin_capabilities 的能力代理契约一致）。
+        任何解析失败只跳过该条，不影响其他源。
+        """
+        if not getattr(self, "external_sources", False):
+            return []
+        try:
+            import compat_sources
+        except Exception:
+            return []
+        out: list[Plugin] = []
+        for entry in compat_sources.compat_entries():
+            try:
+                out.append(parse_manifest(entry.manifest, source="builtin"))
+            except ValueError:
+                continue
+        return out
+
     def local_entries(self) -> list[Plugin]:
         """已装到 ~/.forge/plugins 的插件（目录名即 id 兜底）。"""
         out: list[Plugin] = []
@@ -604,6 +674,8 @@ class Marketplace:
         merged: dict[str, Plugin] = {}
         for plugin in self.builtin_entries():
             merged[plugin.id] = plugin
+        for plugin in self.external_entries():
+            merged.setdefault(plugin.id, plugin)
         for plugin in self.local_entries():
             base = merged.get(plugin.id)
             if base is not None:
@@ -644,6 +716,13 @@ class Marketplace:
                 plugin.enabled = False
                 plugin.generation = self._state["generations"][pid]
                 invalidated = True
+            grants = self._state["grants"].get(pid, [])
+            valid_grants = [g for g in grants if plugin.enabled and not plugin.error
+                            and not plugin.needs_ack and g["fingerprint"] == plugin.ack_of()]
+            if grants != valid_grants:
+                self._state["grants"].pop(pid, None)
+                invalidated = True
+            plugin.grants = json.loads(json.dumps(valid_grants))
         # Remove orphan state entries whose directory/manifest vanished entirely.
         for pid in list(enabled - set(merged)):
             self._disable_in_state(pid)
@@ -714,7 +793,7 @@ class Marketplace:
                     "installed_at": _now(), "source": plugin.source,
                     "fingerprint": source_hash, "permissions": list(plugin.permissions),
                 }
-                needs_confirmation = plugin.executes_code or bool(previous and (
+                needs_confirmation = plugin.executes_code or bool(plugin.capabilities or plugin.contributions) or bool(previous and (
                     previous.executes_code or previous.trust_required or previous.acked or
                     (set(previous.permissions) != set(plugin.permissions) and
                      (set(plugin.permissions) & HIGH_RISK_PERMISSIONS or
@@ -827,6 +906,7 @@ class Marketplace:
             disabled.remove(pid)
 
     def _disable_in_state(self, pid: str) -> None:
+        self._state.setdefault("grants", {}).pop(pid, None)
         enabled = self._state.setdefault("enabled", [])
         if pid in enabled:
             enabled.remove(pid)
@@ -845,6 +925,7 @@ class Marketplace:
         if expected_fingerprint is not None and plugin.ack_of() != expected_fingerprint:
             raise PermissionError("确认期间插件文件或权限已变化，请重新查看并确认")
         self._state.setdefault("acked", {})[pid] = plugin.ack_of()
+        self._state["grants"].pop(pid, None)
         record = self._state["installed"].get(pid)
         if record is not None:
             record.update(fingerprint=plugin.content_fingerprint,
@@ -863,6 +944,83 @@ class Marketplace:
         self._bump_generation(pid)
         self.save()
         self._log_raw("info", "revoke-ack", pid)
+
+    @_fresh_state
+    def grant(self, pid, capabilities, workspace, *, session="", expected_fingerprint=None):
+        plugin = self.find(pid)
+        if (plugin is None or not plugin.installed or not plugin.enabled or plugin.error
+                or plugin.needs_ack or not plugin.acked or plugin.ack_fingerprint != plugin.ack_of()):
+            raise PermissionError("授权需要当前版本已知悉、已启用且文件有效")
+        if expected_fingerprint is not None and plugin.ack_of() != expected_fingerprint:
+            raise PermissionError("授权期间插件文件或能力声明已变化，请重新检查")
+        if not isinstance(capabilities, (list, tuple)) or not capabilities or any(
+                not isinstance(c, str) for c in capabilities):
+            raise ValueError("请逐项选择能力")
+        caps = set(capabilities)
+        if not caps <= plugin.declared_capabilities:
+            raise PermissionError("不能授予插件未声明的能力")
+        if plugin.executes_code or not caps <= GRANTABLE_CAPABILITIES:
+            raise PermissionError("该能力尚无受控执行器，不能授权给 Agent")
+        if not isinstance(session, str) or len(session) > 256:
+            raise ValueError("session 无效")
+        scope = workspace_key(workspace)
+        if not Path(scope).is_dir():
+            raise ValueError("工作区目录不存在")
+        grants = self._state["grants"].setdefault(pid, [])
+        grants[:] = [g for g in grants if (g["workspace"], g.get("session", "")) != (scope, session)]
+        if len(grants) >= 32:
+            raise ValueError("授权范围超过上限，请先撤销旧授权")
+        grants.append({"fingerprint": plugin.ack_of(), "workspace": scope, "session": session,
+                       "capabilities": sorted(caps)})
+        self._bump_generation(pid)
+        self.save()
+        self._log_raw("info", "grant", f"{pid} {scope} session={session!r} {sorted(caps)}")
+        return self.find(pid)
+
+    @_fresh_state
+    def revoke_grants(self, pid, *, workspace=None, session=None):
+        validate_plugin_id(pid)
+        if workspace is None:
+            self._state["grants"].pop(pid, None)
+        else:
+            scope = workspace_key(workspace)
+            self._state["grants"][pid] = [g for g in self._state["grants"].get(pid, [])
+                if not (g["workspace"] == scope and (session is None or g.get("session", "") == session))]
+        self._bump_generation(pid)
+        self.save()
+        self._log_raw("info", "revoke", f"{pid} workspace={workspace} session={session}")
+
+    def audit(self, **event):
+        """Execution audit is required: unlike display logs, write errors propagate."""
+        self.market_dir.mkdir(parents=True, exist_ok=True)
+        path = self.market_dir / "plugin-audit.ndjson"
+        with market_lock(self.market_dir / "audit.lock"):
+            # Best-effort rotation: the audit trail must not grow unbounded, but a
+            # failed rotation must never skip the audit write itself.
+            try:
+                if path.exists() and path.stat().st_size > 8 * 1024 * 1024:
+                    path.replace(path.with_name(path.name + ".1"))
+            except OSError:
+                pass
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps({"at": _now(), **event}, ensure_ascii=False,
+                                        allow_nan=False) + "\n")
+                handle.flush()
+
+    def audit_tail(self, limit=30):
+        from collections import deque
+        path = self.market_dir / "plugin-audit.ndjson"
+        if not path.exists():
+            return []
+        with market_lock(self.market_dir / "audit.lock"), path.open(encoding="utf-8") as handle:
+            lines = deque(handle, maxlen=max(1, min(int(limit), 200)))
+        rows = []
+        for line in lines:
+            try:
+                rows.append(json.loads(line))
+            except ValueError:
+                continue
+        return rows
 
     @_fresh_state
     def record_tool_schema(self, pid, token, schema_fingerprint):
@@ -941,6 +1099,7 @@ class ToolEntry:
     summary: str = ""
     plugin_id: str = ""
     danger: bool = False
+    active: bool = False  # declared != callable in this workspace/session
 
     @property
     def label(self) -> str:
@@ -999,6 +1158,7 @@ def build_tool_catalog(gateway_tools: Iterable[str] | None,
             name=clean, source="gateway",
             summary=TOOL_SUMMARY_HINTS.get(clean, ""),
             danger=classify_tool(clean),
+            active=True,
         ))
     if marketplace is not None or plugins is not None:
         for plugin in (marketplace.catalog() if plugins is None else plugins):
@@ -1015,12 +1175,16 @@ def build_tool_catalog(gateway_tools: Iterable[str] | None,
                 ))
     for name, plugin_id, plugin_name in (runtime_tools or []):
         if name in seen:
+            for entry in entries:
+                if entry.name == name and entry.plugin_id == plugin_id:
+                    entry.active = True
             continue
         seen.add(name)
         entries.append(ToolEntry(
             name=name, source="plugin", plugin_id=plugin_id,
             summary=f"来自插件「{plugin_name}」",
             danger=classify_tool(name),
+            active=True,
         ))
     return sorted(entries, key=lambda e: (e.source != "gateway", e.name))
 

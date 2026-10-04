@@ -15,6 +15,7 @@ A local gateway fixes both without touching the vendor's config:
 from __future__ import annotations
 
 import json
+import re
 import sys
 import threading
 import time
@@ -196,7 +197,7 @@ def build_handler(cfg: GatewayConfig):
                         },
                     },
                     )
-                self._json(200, {"object": "list", "data": tools})
+                self._json(200, {"object": "list", "data": tools, "plugin_policy_version": 1})
                 cfg.log.write(f"GET {self.path} -> tool list ({len(tools)} tools)")
                 return
             if route in ("/health", ""):
@@ -299,11 +300,52 @@ def build_handler(cfg: GatewayConfig):
                                                       "(start gateway with --registry/--profile so the "
                                                       "bridge inherits the real permission config)"}})
                 return
+            plugin_context = payload.get("plugin_context")
+            if "plugin_context" in payload:
+                from .policy import Decision
+                from .tools import ToolResult
+                try:
+                    capability = {"read_file": "repo.read", "list_dir": "repo.read",
+                                  "write_file": "repo.write", "edit_file": "repo.write"}.get(name)
+                    limits = {"id": 128, "tool": 64, "capability": 64,
+                              "fingerprint": 64, "workspace": 8192, "session": 256}
+                    if (not isinstance(plugin_context, dict) or set(plugin_context) != set(limits)
+                            or any(not isinstance(plugin_context[k], str) or len(plugin_context[k]) > limit
+                                   for k, limit in limits.items())
+                            or not re.fullmatch(r"[\w-]{1,128}", plugin_context["id"])
+                            or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]{0,63}", plugin_context["tool"])
+                            or not re.fullmatch(r"[0-9a-f]{64}", plugin_context["fingerprint"])
+                            or capability is None or plugin_context["capability"] != capability):
+                        raise ValueError("invalid or unsupported plugin capability context")
+                    scope = Path(plugin_context["workspace"]).resolve()
+                    path_arg = arguments.get("path")
+                    if (not scope.is_relative_to(cfg.workspace.resolve()) or not isinstance(path_arg, str)
+                            or not Path(path_arg).is_absolute() or not Path(path_arg).resolve().is_relative_to(scope)):
+                        raise ValueError("plugin workspace/path exceeds gateway workspace")
+                except (ValueError, OSError) as exc:
+                    self._json(400, {"error": {"type": "invalid_request_error", "message": str(exc)}})
+                    return
+                policy_names = (plugin_context["tool"],
+                    f"plugin:{plugin_context['id']}:{plugin_context['tool']}", capability)
+                touching = [path_arg]
+                decisions = [cfg.policy.resolve_ask(cfg.policy.evaluate(n, args=arguments, touching=touching))
+                             for n in policy_names]
+                decision = (Decision.DENY if Decision.DENY in decisions else
+                            Decision.ASK if Decision.ASK in decisions else Decision.ALLOW)
+                cfg.log.write(f"PLUGINTOOL {policy_names[1]} capability={capability} decision={decision.value}")
+                if decision is not Decision.ALLOW:
+                    result = ToolResult(False, error=f"plugin denied or awaiting approval by policy: {policy_names[1]}",
+                        meta={"authorization": decision.value, "plugin_policy_checked": True,
+                              "requires_approval": decision is Decision.ASK})
+                    self._json(200, result.as_dict())
+                    return
             ctx = ToolContext(policy=cfg.policy, workspace=cfg.workspace,
                               extras={"registry": cfg.registry})
             cfg.log.write(f"TOOLCALL {name} args={json.dumps(arguments, ensure_ascii=False)[:200]}")
             try:
                 result = cfg.registry.invoke(name, arguments, ctx)
+                if plugin_context is not None:
+                    result.meta["plugin_policy_checked"] = True
             except Exception as exc:  # never kill the handler
                 self._json(500, {"type": "error",
                                  "error": {"type": "api_error", "message": f"{type(exc).__name__}: {exc}"}})

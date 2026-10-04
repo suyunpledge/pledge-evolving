@@ -194,6 +194,10 @@ class ToolRegistry:
         if decision is Decision.DENY:
             return ToolResult(ok=False, error=f"denied by policy: {name}",
                               meta={"decision": "deny", "authorization": decision.value})
+        if decision is Decision.ASK:
+            return ToolResult(ok=False, error=f"approval required by policy: {name}",
+                              meta={"decision": "ask", "authorization": decision.value,
+                                    "requires_approval": True})
         try:
             result = spec.handler(args, ctx)
         except Exception as exc:  # tool errors must never kill the loop

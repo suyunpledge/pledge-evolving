@@ -77,6 +77,7 @@ class ForgeGatewayClient:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.timeout = timeout
+        self.plugin_policy_version = 0
 
     # ── 工具方法 ──
     def _request(self, method: str, path: str, body: dict | None = None,
@@ -105,16 +106,25 @@ class ForgeGatewayClient:
         except (urllib.error.URLError, OSError) as e:
             raise GatewayError(str(e)) from e
         tools = data.get("data") if isinstance(data, dict) else None
+        self.plugin_policy_version = (1 if isinstance(data, dict)
+            and type(data.get("plugin_policy_version")) is int and data["plugin_policy_version"] == 1 else 0)
         if not isinstance(tools, list):
             raise GatewayError(f"/v1/tools 响应结构异常: {str(data)[:200]}")
         return tools
 
-    def call_tool(self, name: str, arguments: dict) -> dict:
+    def call_tool(self, name: str, arguments: dict, *, timeout: float | None = None,
+                  plugin_context: dict | None = None) -> dict:
         """POST /v1/tools/call → gateway 走完整 policy gate 执行一个 forge 工具。"""
         body = {"name": name, "arguments": arguments or {}}
+        if plugin_context is not None:
+            if self.plugin_policy_version != 1:
+                self.list_tools(timeout=timeout)
+            if self.plugin_policy_version != 1:
+                raise GatewayError("网关不支持插件 Policy 上下文；请更新并重启网关，插件执行已阻止")
+            body["plugin_context"] = plugin_context
         req = self._request("POST", "/v1/tools/call", body)
         try:
-            with open_response(req, timeout=self.timeout, cancel_event=None) as resp:
+            with open_response(req, timeout=self.timeout if timeout is None else timeout, cancel_event=None) as resp:
                 return json.loads(resp.read().decode("utf-8", "replace"))
         except urllib.error.HTTPError as e:
             raise GatewayError(f"HTTP {e.code}: {http_error_detail(e)}") from e

@@ -31,6 +31,7 @@ import sys
 import threading
 import tempfile
 import time
+import uuid
 import tkinter as tk
 from ui_icons import IconCanvas, IconButton, icon_image
 from pathlib import Path
@@ -38,6 +39,7 @@ from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+sys.path.insert(1, str(HERE.parent))  # host Forge registry, never plugin directories
 
 from config_model import (  # noqa: E402
     ConfigNormalizeError,
@@ -108,16 +110,18 @@ else:
 try:  # 插件市场 / 工具市场（缺失时工具集视图退化为只读提示）
     from plugin_market import (  # noqa: E402
         KIND_LABELS,
+        PERMISSION_LABELS, GRANTABLE_CAPABILITIES, workspace_key,
         Marketplace,
         build_tool_catalog,
     )
-    from plugin_runtime import PluginRuntime  # noqa: E402
+    from plugin_capabilities import CapabilityRuntime  # noqa: E402
     _MARKET_IMPORT_ERROR = ""
 except Exception as _mk_exc:  # pragma: no cover
     Marketplace = None  # type: ignore[assignment]
     build_tool_catalog = None  # type: ignore[assignment]
     KIND_LABELS = {}  # type: ignore[assignment]
-    PluginRuntime = None  # type: ignore[assignment]
+    CapabilityRuntime = None  # type: ignore[assignment]
+    PERMISSION_LABELS, GRANTABLE_CAPABILITIES = {}, frozenset()
     _MARKET_IMPORT_ERROR = str(_mk_exc)
 
 try:  # 系统资源采样（顶栏指标）
@@ -158,7 +162,7 @@ NAV_ITEMS = [
     ("chat", "对话", "💬"),
     ("task", "任务", "✅"),
     ("agents", "Agents", "🤖"),
-    ("tools", "工具集", "🧰"),
+    ("tools", "工具 / 插件市场", "🧰"),
     ("knowledge", "知识库", "📚"),
     ("evolution", "演化", "🧬"),
     ("files", "文件与项目", "📁"),
@@ -625,7 +629,7 @@ class ForgeGuiApp:
         self._include_history = True
         self._session_custom_title = ""
         self._cancel_event = threading.Event()
-        self._session_id = f"s{int(time.time() * 1000)}"
+        self._session_id = "s" + uuid.uuid4().hex
         self._agent_msg = None
         self._task_msg = None
         self._task_proc = None
@@ -1904,40 +1908,78 @@ class ForgeGuiApp:
         if Marketplace is None:
             return None
         obj = getattr(self, "_market_singleton", None)
-        if obj is None:
+        want_external = self._external_sources_enabled()
+        if obj is None or bool(getattr(obj, "external_sources", False)) != want_external:
             try:
-                obj = Marketplace(home=self.home)
+                obj = Marketplace(home=self.home, external_sources=want_external)
             except Exception as exc:  # pragma: no cover
                 self._post_ui(self._set_status, f"市场初始化失败：{exc}", "error")
                 return None
+            obj.external_sources = want_external
             self._market_singleton = obj
         return obj
 
-    def _plugin_runtime_obj(self):
-        """插件运行时单例（与市场共用生命周期）。模块缺失返回 None。"""
-        if PluginRuntime is None:
+    def _external_sources_enabled(self) -> bool:
+        """外部生态源（OpenClaw/Claude/DSH/Codex）总开关，存 desktop config。"""
+        try:
+            cfg = load_desktop_config()
+        except Exception:
+            return True
+        return bool((cfg or {}).get("market_external_sources", True))
+
+    def _toggle_external_sources(self) -> None:
+        now = not self._external_sources_enabled()
+        try:
+            save_desktop_config(market_external_sources=now)
+        except Exception as exc:
+            self._set_status(f"外部生态源设置保存失败：{exc}", "warn")
+            return
+        # 重建市场单例并刷新
+        self._market_singleton = None
+        label = "开（含外部生态）" if now else "关（仅内置）"
+        self._set_status(f"外部生态源：{label}", "info")
+        self._refresh_market(force=True)
+
+    def _plugin_runtime_obj(self, *, workspace=None, session=None, dispatch=None):
+        """Each turn pins its scope/client. Plugin Python is never loaded by the GUI."""
+        if CapabilityRuntime is None:
             return None
         market = self._market_obj()
         if market is None:
             return None
+        client = self.client
+        ws = str(workspace or self._repo_root())
+        sid = str(session if session is not None else self._session_id)
         rt = getattr(self, "_plugin_runtime_singleton", None)
-        if rt is None:
-            rt = PluginRuntime(market)
-            self._plugin_runtime_singleton = rt
+        scope = (ws, sid, dispatch is None)
+        if rt is not None and getattr(self, "_plugin_runtime_scope", None) == scope and rt.market is market:
+            return rt
+        try:
+            rt = CapabilityRuntime(market, ws, sid,
+                dispatch or (lambda name, args, **context: client.call_tool(name, args, timeout=3.0, **context)))
+        except Exception as exc:  # e.g. host forge package unavailable (frozen build)
+            self._plugin_runtime_singleton = None
+            self._plugin_runtime_scope = None
+            self._post_ui(self._set_status, f"插件运行时不可用：{exc}", "warn")
+            return None
+        self._plugin_runtime_singleton = rt
+        self._plugin_runtime_scope = scope
         return rt
 
-    def _reload_plugin_tools(self, *, reserved_names=()):
+    def _reload_plugin_tools(self, *, reserved_names=(), workspace=None, session=None, dispatch=None):
         """按 enabled 状态重载插件工具；返回 (schemas, runtime)。
 
-        schemas 直接拼进 tools 参数；runtime 用于在 worker 里执行插件工具。
+        schemas 只暴露当前范围已授权的声明式工具；执行交给 Forge 工具桥。
         任何失败都返回 ([], None)，不阻断正常对话。
         """
-        rt = self._plugin_runtime_obj()
-        if rt is None:
-            return [], None
         try:
-            report = rt.reload(reserved_names=reserved_names)
-        except Exception:
+            rt = self._plugin_runtime_obj(workspace=workspace, session=session, dispatch=dispatch)
+            if rt is None:
+                return [], None
+            report = rt.reload(reserved_names=reserved_names,
+                               available_targets=reserved_names if self.client.plugin_policy_version == 1 else ())
+        except Exception as exc:
+            self._post_ui(self._set_status, f"插件工具不可用：{exc}；对话继续", "warn")
             return [], None
         for pid, err in report.errors:
             self._post_ui(self._set_status, f"插件 {pid} 加载失败：{err}", "warn")
@@ -1948,12 +1990,25 @@ class ForgeGuiApp:
         head = tk.Frame(parent, bg=C["bg"], padx=20)
         head.pack(fill=tk.X, pady=(10, 0))
         self.market_stat_var = tk.StringVar(value="市场未载入")
-        tk.Label(head, textvariable=self.market_stat_var, bg=C["bg"], fg=C["subtext"],
-                 font=FONT_SMALL).pack(side=tk.LEFT)
+        # Pack order = space priority in Tk: buttons first so a long stat text
+        # (final count incl. external ecosystems) compresses the label at high
+        # DPI instead of squeezing the buttons below their requested width.
         pill_button(head, "打开插件目录", self._open_plugins_dir,
                     kind="quiet", bg=C["bg"]).pack(side=tk.RIGHT)
         pill_button(head, "刷新", lambda: self._refresh_market(force=True),
                     kind="ghost", bg=C["bg"]).pack(side=tk.RIGHT, padx=(0, 8))
+        tk.Label(head, textvariable=self.market_stat_var, bg=C["bg"], fg=C["subtext"],
+                 font=FONT_SMALL).pack(side=tk.LEFT)
+
+        market_actions = tk.Frame(parent, bg=C["bg"], padx=20)
+        market_actions.pack(fill=tk.X, pady=(6, 0))
+        pill_button(market_actions, "安装本地插件", self._install_local_plugin,
+                    kind="ghost", bg=C["bg"]).pack(side=tk.LEFT)
+        pill_button(market_actions, "查看审计", self._show_plugin_audit,
+                    kind="quiet", bg=C["bg"]).pack(side=tk.LEFT, padx=(8, 0))
+        tk.Label(parent, text="安装 → 文件检查 → 知悉 → 启用 → 逐项授权 → Policy 判定 → 执行 → 审计 → 撤销",
+                 bg=C["bg"], fg=C["muted"], font=FONT_MICRO, anchor="w",
+                 justify=tk.LEFT, wraplength=700).pack(fill=tk.X, padx=20, pady=(6, 0))
 
         filt = tk.Frame(parent, bg=C["bg"], padx=20)
         filt.pack(fill=tk.X, pady=(8, 0))
@@ -1971,8 +2026,23 @@ class ForgeGuiApp:
         # 快捷键、代码）都会立刻重绘，不会出现「筛选变了列表没变」。
         self.market_kind_var.trace_add("write", lambda *_: self._refresh_market())
         kinds = ["全部"] + [KIND_LABELS.get(k, k) for k in ("tool", "theme", "panel", "integration")]
+        kind_row = tk.Frame(parent, bg=C["bg"], padx=20)
+        kind_row.pack(fill=tk.X, pady=(6, 0))
         for label in kinds:
-            pill_button(filt, label, lambda v=label: self.market_kind_var.set(v),
+            pill_button(kind_row, label, lambda v=label: self.market_kind_var.set(v),
+                        kind="ghost", bg=C["bg"]).pack(side=tk.LEFT, padx=(0, 6))
+        pill_button(kind_row, "生态源", self._toggle_external_sources,
+                    kind="quiet", bg=C["bg"]).pack(side=tk.RIGHT)
+
+        # 生态筛选（OpenClaw / Claude Code / DSH / Codex）：只影响展示过滤
+        eco_row = tk.Frame(parent, bg=C["bg"], padx=20)
+        eco_row.pack(fill=tk.X, pady=(4, 0))
+        tk.Label(eco_row, text="生态：", bg=C["bg"], fg=C["muted"],
+                 font=FONT_MICRO).pack(side=tk.LEFT)
+        self.market_eco_var = tk.StringVar(value="全部")
+        self.market_eco_var.trace_add("write", lambda *_: self._refresh_market())
+        for eco_label in ["全部", "🦞 OpenClaw", "🎭 Claude Code", "🐳 DSH", "🤖 Codex"]:
+            pill_button(eco_row, eco_label, lambda v=eco_label: self.market_eco_var.set(v),
                         kind="ghost", bg=C["bg"]).pack(side=tk.LEFT, padx=(0, 6))
 
         viewport = tk.Frame(parent, bg=C["bg"])
@@ -2019,12 +2089,19 @@ class ForgeGuiApp:
         summary = market.summary(items=items)
         names, err = self._gateway_tool_names()
         runtime_rows = []
-        rt = getattr(self, "_plugin_runtime_singleton", None)
+        rt = self._plugin_runtime_obj()
         if rt is not None:
-            for name in rt.names():
+            supported = getattr(self.client, "plugin_policy_version", 0) == 1
+            report = rt.reload(reserved_names=names or (), available_targets=(names or ()) if supported else (), plugins=items)
+            if names and not supported:
+                err = "当前网关不支持插件 Policy 上下文；请更新并重启。内置工具仍按其原有 Policy 执行。"
+            for plugin in items:
+                plugin.runtime_status = " · ".join(reason for pid, reason in report.errors + report.skipped
+                                                   if pid == plugin.id)
+            for name in rt.names(catalog=items):
                 info = rt.tools.get(name)
                 if info is not None:
-                    runtime_rows.append((name, info.plugin_id, info.plugin_id))
+                    runtime_rows.append((name, info["plugin_id"], info["plugin_id"]))
         entries = (build_tool_catalog(names, runtime_tools=runtime_rows, plugins=items)
                    if build_tool_catalog else [])
         return items, summary, entries, err
@@ -2040,18 +2117,30 @@ class ForgeGuiApp:
             return
 
         items, summary, entries, err = snapshot
+        self._market_active_ids = {t.plugin_id for t in entries if t.active and t.plugin_id}
 
+        external_n = sum(1 for p in items
+                         if p.id.startswith(("openclaw-", "claude-", "dsh-", "codex-")))
         self.market_stat_var.set(
             f"已启用 {summary['enabled']} · 已安装 {summary['installed']} · "
-            f"共 {summary['total']} 条 · 源 {summary['region']}"
+            f"共 {summary['total']} 条（外部生态 {external_n}）· 源 {summary['region']}"
             + ("（离线）" if not summary["sources"] else ""))
 
         query = (self.market_query_var.get() if hasattr(self, "market_query_var") else "").strip().lower()
         want = self.market_kind_var.get() if hasattr(self, "market_kind_var") else "全部"
 
+        eco_prefixes = {"🦞 OpenClaw": ("openclaw-",), "🎭 Claude Code": ("claude-",),
+                        "🐳 DSH": ("dsh-",), "🤖 Codex": ("codex-", "codex-mcp-")}
+        eco_want = (self.market_eco_var.get()
+                    if hasattr(self, "market_eco_var") else "全部")
+
         def match(plugin):
             if want != "全部" and plugin.kind_label != want:
                 return False
+            if eco_want != "全部":
+                prefixes = eco_prefixes.get(eco_want, ())
+                if prefixes and not plugin.id.startswith(prefixes):
+                    return False
             if not query:
                 return True
             blob = " ".join([plugin.id, plugin.name, plugin.summary,
@@ -2086,12 +2175,21 @@ class ForgeGuiApp:
         badge(top, plugin.kind_label, tone="muted", bg=C["surface"]).pack(side=tk.LEFT, padx=(8, 0))
         if plugin.source == "builtin":
             badge(top, "内置", tone="muted", bg=C["surface"]).pack(side=tk.LEFT, padx=(4, 0))
-        if plugin.enabled:
-            badge(top, "已启用", tone="ok", bg=C["surface"]).pack(side=tk.LEFT, padx=(4, 0))
-        elif plugin.installed:
-            badge(top, "已安装", tone="accent_soft", bg=C["surface"]).pack(side=tk.LEFT, padx=(4, 0))
-        if plugin.needs_ack:
-            badge(top, "待确认", tone="warn", bg=C["surface"]).pack(side=tk.LEFT, padx=(4, 0))
+        eco_badge = {"openclaw-": "🦞 OpenClaw", "claude-": "🎭 Claude Code",
+                     "dsh-": "🐳 DSH", "codex-": "🤖 Codex"}
+        for prefix, label in eco_badge.items():
+            if plugin.id.startswith(prefix):
+                badge(top, label, tone="accent_soft", bg=C["surface"]).pack(side=tk.LEFT, padx=(4, 0))
+                break
+        states = tk.Frame(body, bg=C["surface"])
+        states.pack(fill=tk.X, pady=(6, 0))
+        granted = plugin.granted_capabilities(self._repo_root(), self._session_id)
+        active = plugin.id in getattr(self, "_market_active_ids", set())
+        for label, yes in (("已安装", plugin.installed), ("已知悉", plugin.acked and not plugin.needs_ack),
+                           ("已启用", plugin.enabled), ("已授权", bool(granted)), ("可调用", active)):
+            badge(states, label if yes else {"已安装": "未安装", "已知悉": "待知悉", "已启用": "未启用",
+                  "已授权": "未授权", "可调用": "不可调用"}[label],
+                  tone="ok" if yes else "muted", bg=C["surface"]).pack(side=tk.LEFT, padx=(0, 4))
 
         if plugin.summary:
             tk.Label(body, text=plugin.summary, bg=C["surface"], fg=C["body"],
@@ -2101,7 +2199,7 @@ class ForgeGuiApp:
         if meta:
             tk.Label(body, text=meta, bg=C["surface"], fg=C["muted"],
                      font=FONT_MICRO, anchor=tk.W).pack(fill=tk.X)
-        if plugin.permissions:
+        if plugin.permissions or plugin.capabilities:
             tk.Label(body, text="权限：" + "、".join(plugin.permission_labels()),
                      bg=C["surface"], fg=C["warn"] if plugin.executes_code else C["subtext"],
                      font=FONT_MICRO, anchor=tk.W, justify=tk.LEFT,
@@ -2109,12 +2207,30 @@ class ForgeGuiApp:
         if plugin.error:
             tk.Label(body, text=f"清单有问题：{plugin.error}", bg=C["surface"],
                      fg=C["error"], font=FONT_MICRO, anchor=tk.W).pack(fill=tk.X)
+        if getattr(plugin, "runtime_status", ""):
+            tk.Label(body, text=f"执行状态：{plugin.runtime_status}", bg=C["surface"],
+                     fg=C["warn"], font=FONT_MICRO, anchor="w", justify=tk.LEFT,
+                     wraplength=760).pack(fill=tk.X, pady=(2, 0))
+        contributed = " · ".join(f"{key} {len(value)}" for key, value in plugin.contributions.items() if value)
+        if contributed:
+            tk.Label(body, text="能力声明：" + contributed, bg=C["surface"], fg=C["muted"],
+                     font=FONT_MICRO, anchor="w").pack(fill=tk.X, pady=(2, 0))
+        if plugin.executes_code:
+            boundary = "Python 插件尚无系统沙箱：知悉与启用不会允许 Agent 执行其代码。"
+        elif not plugin.contributions.get("tools"):
+            boundary = "声明条目：尚未接入受控工具执行；安装或启用不等于功能已生效。"
+        else:
+            boundary = "文件指纹检查不等于签名验证；授权不能覆盖 Forge Policy 的拒绝或审批要求。"
+        boundary_label = tk.Label(body, text=boundary, bg=C["surface"], fg=C["muted"],
+                 font=FONT_MICRO, anchor="w", justify=tk.LEFT, wraplength=760)
+        boundary_label.pack(fill=tk.X, pady=(4, 0))
+        body.bind("<Configure>", lambda event: boundary_label.configure(wraplength=max(80, event.width)), add="+")
 
         actions = tk.Frame(body, bg=C["surface"])
         actions.pack(fill=tk.X, pady=(10, 0))
         pid = plugin.id
-        if plugin.needs_ack:
-            pill_button(actions, "确认信任", lambda: self._market_action(pid, "ack"),
+        if plugin.installed and (plugin.needs_ack or not plugin.acked):
+            pill_button(actions, "知悉确认", lambda: self._market_action(pid, "ack"),
                         kind="primary", bg=C["surface"]).pack(side=tk.LEFT)
         if not plugin.installed:
             pill_button(actions, "安装", lambda: self._market_action(pid, "install"),
@@ -2129,9 +2245,16 @@ class ForgeGuiApp:
         if plugin.installed:
             pill_button(actions, "卸载", lambda: self._market_action(pid, "uninstall"),
                         kind="danger", bg=C["surface"]).pack(side=tk.LEFT, padx=(8, 0))
-        if plugin.executes_code:
-            tk.Label(actions, text="会执行本机代码", bg=C["surface"], fg=C["warn"],
-                     font=FONT_MICRO).pack(side=tk.LEFT, padx=(10, 0))
+        detail_actions = tk.Frame(body, bg=C["surface"])
+        detail_actions.pack(fill=tk.X, pady=(6, 0))
+        pill_button(detail_actions, "检查清单", lambda: self._inspect_plugin(pid),
+                    kind="quiet", bg=C["surface"]).pack(side=tk.LEFT)
+        if plugin.installed and plugin.enabled:
+            pill_button(detail_actions, "能力授权…", lambda: self._market_action(pid, "grant"),
+                        kind="ghost", bg=C["surface"]).pack(side=tk.LEFT, padx=(8, 0))
+        if plugin.grants:
+            pill_button(detail_actions, "撤销授权", lambda: self._market_action(pid, "revoke"),
+                        kind="danger", bg=C["surface"]).pack(side=tk.LEFT, padx=(8, 0))
 
     def _market_tool_section(self, entries, err=""):
         """工具市场：网关工具桥暴露的工具 + 已启用插件声明的工具。"""
@@ -2145,7 +2268,7 @@ class ForgeGuiApp:
                      justify=tk.LEFT, wraplength=760).pack(fill=tk.X, pady=(2, 4))
         if not entries:
             tk.Label(self.market_list,
-                     text="还没有可用工具。启动网关时带上 --tools，或在上面启用「网关工具桥」。",
+                     text="还没有可用工具。请启动带 --tools 的 Forge 网关；目录中的工具桥条目不能自动启动它。",
                      bg=C["bg"], fg=C["muted"], font=FONT_SMALL).pack(anchor=tk.W)
             return
         grid = tk.Frame(self.market_list, bg=C["bg"])
@@ -2156,7 +2279,8 @@ class ForgeGuiApp:
             name_lbl = tk.Label(grid, text=tool.name, bg=C["bg"], fg=C["text"],
                                 font=FONT_MONO or FONT_SMALL, anchor=tk.W)
             name_lbl.grid(row=row, column=0, sticky="w", padx=(0, 12), pady=1)
-            desc = tool.summary or ("插件提供" if tool.source == "plugin" else "网关工具")
+            desc = ("可调用 · " if tool.active else "仅声明 · ") + (tool.summary or (
+                "插件提供" if tool.source == "plugin" else "网关工具"))
             tone = C["warn"] if tool.danger else C["subtext"]
             mark = "⚠ " if tool.danger else ""
             tk.Label(grid, text=f"{mark}{desc}", bg=C["bg"], fg=tone,
@@ -2206,27 +2330,33 @@ class ForgeGuiApp:
             market = self._market_obj()
             if market is None:
                 raise ValueError("市场模块不可用")
-            if action == "ack":
+            if action in ("ack", "grant"):
                 plugin = market.find(pid)
                 if plugin is None or not plugin.installed or plugin.error:
                     raise ValueError("插件尚未安装或文件无效")
                 return market, plugin, plugin.ack_of()
             methods = {"install": market.install_from_catalog, "enable": market.enable,
-                       "disable": market.disable, "uninstall": market.uninstall}
+                       "disable": market.disable, "uninstall": market.uninstall,
+                       "revoke": market.revoke_grants}
             methods[action](pid)
 
         def done(result):
-            if action == "ack":
+            if action == "grant":
+                _market, plugin, reviewed_fingerprint = result
+                self._market_action_busy = False
+                self._show_grant_dialog(plugin, reviewed_fingerprint)
+            elif action == "ack":
                 market, plugin, reviewed_fingerprint = result
                 if not messagebox.askyesno(
-                        "确认信任插件",
-                        f"确认信任「{pid}」的当前文件和权限。\n\n"
+                        "知悉插件声明",
+                        f"你将确认已了解「{pid}」的当前文件和能力声明。\n\n"
                         f"版本：{plugin.version}\n权限：{'、'.join(plugin.permission_labels()) or '未声明'}\n\n"
-                        "代码插件可以访问本机资源；此确认不是系统沙箱。\n"
+                        "知悉不会授予权限，也不会自动启用。\n"
+                        "Python 插件没有系统沙箱，不能由 Agent 执行。\n"
                         "文件、清单、权限或工具声明变化后需重新确认。\n\n"
-                        "确认信任？", parent=self.root):
+                        "确认已知悉？", parent=self.root):
                     self._market_action_busy = False
-                    self._set_status("已取消信任确认", "info")
+                    self._set_status("已取消知悉确认", "info")
                     return
                 self._submit_background("market-action", lambda: market.ack(
                     pid, expected_fingerprint=reviewed_fingerprint), finish)
@@ -2235,13 +2365,148 @@ class ForgeGuiApp:
 
         def finish(_result):
             self._market_action_busy = False
-            label = {"install": "已安装", "ack": "已确认信任", "enable": "已启用",
-                     "disable": "已禁用", "uninstall": "已卸载"}[action]
+            label = {"install": "已安装", "ack": "已知悉", "enable": "已启用",
+                     "disable": "已禁用并撤销授权", "uninstall": "已卸载", "revoke": "已撤销全部授权"}[action]
             self._set_status(f"{label} {pid}" + ("（未启用）" if action == "install" else ""),
                              "info" if action in ("disable", "uninstall") else "ok")
             self._refresh_market()
 
         self._submit_background("market-action", work, done)
+
+    def _open_plugin_market(self):
+        self._show_view("tools")
+        self._switch_tools_tab("market")
+
+    def _install_local_plugin(self):
+        directory = filedialog.askdirectory(title="选择含 forge-plugin.json 的插件目录", parent=self.root)
+        if not directory or getattr(self, "_market_action_busy", False):
+            return
+        self._market_action_busy = True
+        def work():
+            market = self._market_obj()
+            if market is None:
+                raise RuntimeError("插件市场不可用")
+            return market.install_from_dir(directory, enable=False)
+        def done(plugin):
+            self._market_action_busy = False
+            self._set_status(f"已安装 {plugin.id}；请检查清单并逐步确认与授权", "ok")
+            self._refresh_market()
+        self._submit_background("market-action", work, done)
+
+    def _inspect_plugin(self, pid):
+        def work():
+            market = self._market_obj()
+            return market.find(pid) if market else None
+        def done(plugin):
+            if plugin is None:
+                self._set_status("插件已不存在", "warn")
+                return
+            text = json.dumps({"id": plugin.id, "version": plugin.version,
+                "capabilities": sorted(plugin.declared_capabilities), "contributions": plugin.contributions,
+                "provides": plugin.provides, "executes_code": plugin.executes_code,
+                "path": plugin.path, "file_fingerprint": plugin.content_fingerprint,
+                "signature": "未提供签名验证", "error": plugin.error}, ensure_ascii=False, indent=2)
+            dialog = tk.Toplevel(self.root)
+            dialog.title(f"检查插件 · {plugin.name}")
+            dialog.geometry("700x520")
+            dialog.configure(bg=C["bg"])
+            content = scrolledtext.ScrolledText(dialog, bg=C["surface"], fg=C["text"],
+                font=FONT_MONO, wrap=tk.WORD, relief=tk.FLAT)
+            content.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
+            content.insert("1.0", text)
+            content.configure(state=tk.DISABLED)
+            pill_button(dialog, "关闭", dialog.destroy, bg=C["bg"]).pack(pady=(0, 12))
+        self._submit_background("plugin-inspect", work, done)
+
+    def _show_grant_dialog(self, plugin, fingerprint):
+        old = getattr(self, "_grant_dialog", None)
+        if old is not None and old.winfo_exists():
+            old.destroy()
+        dialog = self._grant_dialog = tk.Toplevel(self.root)
+        dialog.title(f"能力授权 · {plugin.name}")
+        dialog.transient(self.root)
+        dialog.configure(bg=C["bg"])
+        dialog.resizable(False, False)
+        workspace, session_id = self._repo_root(), self._session_id
+        tk.Label(dialog, text="只选择你允许的能力", bg=C["bg"], fg=C["text"],
+                 font=FONT_SECTION).pack(anchor="w", padx=20, pady=(18, 8))
+        tk.Label(dialog, text=f"工作区：{workspace}\n授权不会覆盖 Forge Policy；需要审批时仍由 Policy 决定。",
+                 bg=C["bg"], fg=C["muted"], font=FONT_SMALL, justify=tk.LEFT,
+                 wraplength=520).pack(anchor="w", padx=20, pady=(0, 10))
+        dialog.capability_vars = {}
+        for cap in sorted(plugin.declared_capabilities):
+            supported = cap in GRANTABLE_CAPABILITIES and not plugin.executes_code
+            var = tk.BooleanVar(master=dialog, value=False)
+            checkbox = tk.Checkbutton(dialog, text=PERMISSION_LABELS.get(cap, cap) +
+                ("" if supported else " · 暂不可授权"), variable=var, bg=C["bg"], fg=C["text"],
+                selectcolor=C["surface2"], activebackground=C["bg"], activeforeground=C["text"],
+                font=FONT_SMALL, state=tk.NORMAL if supported else tk.DISABLED)
+            checkbox.pack(anchor="w", padx=20, pady=3)
+            if supported:
+                dialog.capability_vars[cap] = var
+        dialog.scope_var = tk.StringVar(master=dialog, value="session")
+        def refresh_scope(*_):
+            selected_session = session_id if dialog.scope_var.get() == "session" else ""
+            current = {cap for g in plugin.grants if g.get("workspace") == workspace_key(workspace)
+                       and g.get("session", "") == selected_session for cap in g.get("capabilities", [])}
+            for cap, var in dialog.capability_vars.items():
+                var.set(cap in current)
+        dialog.scope_var.trace_add("write", refresh_scope)
+        refresh_scope()
+        for value, label in (("session", "仅当前对话"), ("workspace", "此工作区的所有对话")):
+            tk.Radiobutton(dialog, text=label, variable=dialog.scope_var, value=value,
+                bg=C["bg"], fg=C["text"], selectcolor=C["surface2"], activebackground=C["bg"],
+                activeforeground=C["text"], font=FONT_SMALL).pack(anchor="w", padx=20, pady=3)
+        broader = {cap for g in plugin.grants if g.get("workspace") == workspace_key(workspace)
+                   and not g.get("session") for cap in g.get("capabilities", [])}
+        if broader:
+            tk.Label(dialog, text="工作区已有授权：" + "、".join(PERMISSION_LABELS.get(c, c) for c in sorted(broader)) +
+                     "\n当前对话会继承工作区授权。收窄权限时，请先撤销市场卡片上的授权。",
+                     bg=C["bg"], fg=C["warn"], font=FONT_SMALL, wraplength=520,
+                     justify=tk.LEFT).pack(anchor="w", padx=20, pady=(8, 0))
+        actions = tk.Frame(dialog, bg=C["bg"])
+        actions.pack(fill=tk.X, padx=20, pady=16)
+        def grant():
+            selected = [cap for cap, var in dialog.capability_vars.items() if var.get()]
+            if not selected:
+                self._set_status("请选择至少一项可授权能力；撤销请使用市场卡片上的按钮", "warn")
+                return
+            self._apply_market_grant(plugin.id, selected, dialog.scope_var.get(), fingerprint,
+                                     workspace=workspace, session_id=session_id)
+            dialog.destroy()
+        dialog.grant_btn = pill_button(actions, "授权所选能力", grant, kind="primary", bg=C["bg"])
+        dialog.grant_btn.pack(side=tk.LEFT)
+        if not dialog.capability_vars:
+            dialog.grant_btn.configure(state=tk.DISABLED)
+        pill_button(actions, "取消", dialog.destroy, bg=C["bg"]).pack(side=tk.RIGHT)
+
+    def _apply_market_grant(self, pid, capabilities, scope, fingerprint, *, workspace=None, session_id=None):
+        if getattr(self, "_market_action_busy", False):
+            self._set_status("插件操作进行中，请稍后重试", "info")
+            return
+        workspace = workspace or self._repo_root()
+        session = (session_id if session_id is not None else self._session_id) if scope == "session" else ""
+        self._market_action_busy = True
+        def work():
+            market = self._market_obj()
+            if market is None:
+                raise RuntimeError("插件市场不可用")
+            return market.grant(pid, capabilities, workspace, session=session, expected_fingerprint=fingerprint)
+        def done(_result):
+            self._market_action_busy = False
+            self._set_status(f"已授予 {pid} 所选能力；执行仍受 Forge Policy 约束", "ok")
+            self._refresh_market()
+        self._submit_background("market-action", work, done)
+
+    def _show_plugin_audit(self):
+        def work():
+            market = self._market_obj()
+            return market.audit_tail() if market else []
+        def done(rows):
+            messagebox.showinfo("插件调用审计 · 最近 30 条",
+                "\n".join(f"{r['at']} · {r['plugin']} · {r['tool']} · {r['phase']} / {r['outcome']}" for r in rows)
+                or "尚无插件调用记录。", parent=self.root)
+        self._submit_background("plugin-audit", work, done)
 
     def _open_plugins_dir(self):
         market = self._market_obj()
@@ -2290,6 +2555,9 @@ class ForgeGuiApp:
                         kind="ghost", bg=C["surface"]).pack(side=tk.LEFT, padx=(8, 0))
 
     def _nav_click(self, key: str):
+        if key == "tools":
+            self._open_plugin_market()
+            return
         if key == "files":
             self._show_view("chat")
             self._open_workspace("file_tree")
@@ -2522,7 +2790,7 @@ class ForgeGuiApp:
         history = list(getattr(self, "_chat_history", []) or [])
         if not history:
             return
-        sid = getattr(self, "_session_id", None) or f"s{int(time.time() * 1000)}"
+        sid = getattr(self, "_session_id", None) or "s" + uuid.uuid4().hex
         sessions = self._load_sessions()
         entry = {
             "id": sid,
@@ -2620,7 +2888,7 @@ class ForgeGuiApp:
         self._include_history = True
         self.send_var.set("")
         self._update_context_summary()
-        self._session_id = f"s{int(time.time() * 1000)}"
+        self._session_id = "s" + uuid.uuid4().hex
         if hasattr(self, "chat_area"):
             self._show_chat_start()
         try:
@@ -3598,6 +3866,9 @@ class ForgeGuiApp:
         self.session_menu_btn.pack(side=tk.RIGHT)
         self.clear_chat_btn = pill_button(right, "＋", self._new_session,
                                          kind="quiet", bg=C["chat"], padx=8)
+        self.market_entry_btn = pill_button(right, "插件市场", self._open_plugin_market,
+                                            kind="quiet", bg=C["chat"])
+        self.market_entry_btn.pack(side=tk.RIGHT, padx=(0, 6))
         self.model_chip = None  # 模型选择统一放在 Composer。
 
 
@@ -5908,6 +6179,7 @@ class ForgeGuiApp:
                 return
             model = str(provider["model"])
         client = self.client
+        plugin_workspace, plugin_session = self._repo_root(), self._session_id
         reasoning_effort = ("high" if self._reasoning_effort == "contemplate"
                             else None if self._reasoning_effort == "off" else self._reasoning_effort)
 
@@ -5939,10 +6211,12 @@ class ForgeGuiApp:
                 except Exception:
                     # 老 gateway / 未开 --tools：按无工具模式对话（保持旧行为）
                     tools = None
-                # 插件工具（runtime）：enabled 且已 ack 的插件 register() 出来的
+                # Plugin aliases are declarative, scoped and granted. Never import third-party Python.
                 bridge_names = {str((item.get("function") or {}).get("name", ""))
                                 for item in (tools or []) if isinstance(item, dict)}
-                plugin_schemas, plugin_rt = self._reload_plugin_tools(reserved_names=bridge_names)
+                plugin_schemas, plugin_rt = self._reload_plugin_tools(reserved_names=bridge_names,
+                    workspace=plugin_workspace, session=plugin_session,
+                    dispatch=lambda name, args, **context: client.call_tool(name, args, timeout=3.0, **context))
                 if plugin_schemas:
                     tools = list(tools or []) + plugin_schemas
                 if cancel_event.is_set():
@@ -6006,7 +6280,7 @@ class ForgeGuiApp:
                             # The gateway owns its names even if a stale runtime claims them.
                             if name in bridge_names:
                                 resp = client.call_tool(name, args)
-                            elif plugin_rt is not None and plugin_rt.has(name):
+                            elif plugin_rt is not None and name in plugin_rt.tools:
                                 resp = plugin_rt.call(name, args)
                             else:
                                 resp = client.call_tool(name, args)
