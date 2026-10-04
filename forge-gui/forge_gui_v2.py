@@ -17,6 +17,9 @@ secret_store.py / gui_theme.py / chat_widgets.py / workspace.py / sysmon.py。
 """
 from __future__ import annotations
 
+import i18n
+from i18n import tr
+
 import copy
 import json
 import os
@@ -35,7 +38,8 @@ import uuid
 import tkinter as tk
 from ui_icons import IconCanvas, IconButton, icon_image
 from pathlib import Path
-from tkinter import filedialog, messagebox, scrolledtext, ttk
+from tkinter import filedialog, scrolledtext, ttk
+from i18n import dialogs as messagebox
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -159,14 +163,14 @@ IS_WINDOWS = platform.system() == "Windows"
 # 主导航（顶栏与侧栏共用；key -> (标签, 图标)）
 # Navigation icons are semantic vectors, independent of the system emoji font.
 NAV_ITEMS = [
-    ("chat", "对话", "💬"),
-    ("task", "任务", "✅"),
+    ("chat", tr("对话"), "💬"),
+    ("task", tr("任务"), "✅"),
     ("agents", "Agents", "🤖"),
-    ("tools", "工具 / 插件市场", "🧰"),
-    ("knowledge", "知识库", "📚"),
-    ("evolution", "演化", "🧬"),
-    ("files", "文件与项目", "📁"),
-    ("config", "配置", "⚙️"),
+    ("tools", tr("工具 / 插件市场"), "🧰"),
+    ("knowledge", tr("知识库"), "📚"),
+    ("evolution", tr("演化"), "🧬"),
+    ("files", tr("文件与项目"), "📁"),
+    ("config", tr("配置"), "⚙️"),
 ]
 NAV_LABEL = {key: label for key, label, _g in NAV_ITEMS}
 NAV_GLYPH = {key: glyph for key, _l, glyph in NAV_ITEMS}
@@ -228,11 +232,11 @@ class ActivityGlyph(tk.Canvas):
             self.create_line(7, 11, 15, 11, fill=c, width=w)
 
 # 沉思模式（forge thinking.mode 三档；GUI 里对齐参考稿输入卡的工具条）
-THINKING_LABELS = {"off": "关闭", "smart": "智能", "on": "开启"}
+THINKING_LABELS = {"off": tr("关闭"), "smart": tr("智能"), "on": tr("开启")}
 THINKING_CHOICES = [
-    ("off", "关闭", "不启用沉思"),
-    ("smart", "智能", "按任务复杂度自动决定（推荐）"),
-    ("on", "开启", "始终启用沉思"),
+    ("off", tr("关闭"), "不启用沉思"),
+    ("smart", tr("智能"), "按任务复杂度自动决定（推荐）"),
+    ("on", tr("开启"), "始终启用沉思"),
 ]
 
 # Composer 的统一模型设置：前四档透传给支持 reasoning_effort 的模型；
@@ -584,7 +588,9 @@ class ForgeGuiApp:
 
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title(f"forge — v{APP_VERSION}（对话 · 任务 · 工作区）")
+        desktop_prefs = load_desktop_config()
+        self.root._forge_locale = i18n.Translator(desktop_prefs.get("language", "zh-CN"))
+        self._set_localized_title()
         self.root.geometry(WINDOW_SIZE)
         self.root.minsize(*MIN_SIZE)
         self.root.configure(bg=C["bg"])
@@ -595,7 +601,6 @@ class ForgeGuiApp:
         self.home = DEFAULT_FORGE_HOME
         self.user_layer_path = _probe_user_layer()
         self._load_error = ""
-        desktop_prefs = load_desktop_config()
         favorites = desktop_prefs.get("model_favorites", [])
         self._model_favorites = [v for v in favorites if isinstance(v, str) and v.strip()] if isinstance(favorites, list) else []
         self._reasoning_effort = str(desktop_prefs.get("reasoning_effort", ""))
@@ -651,9 +656,31 @@ class ForgeGuiApp:
         self._team_dirty = False
         self._update_team_feedback()
         self._refresh_provider_list()
-        self._set_status(self._load_error or "就绪",
+        self._set_status(self._load_error or tr("就绪"),
                          "error" if self._load_error else "info")
         self._event_poll = self.root.after(40, self._drain_ui_events)
+
+    def _set_localized_title(self):
+        self.root.title(i18n.resolve(tr("forge — v{version}（对话 · 任务 · 工作区）",
+                                       version=APP_VERSION), self.root))
+
+    def _change_language(self, code):
+        code = i18n.normalize_language(code)
+        locale = self.root._forge_locale
+        try:
+            saved = save_desktop_config(language=code)
+        except (OSError, ValueError):
+            saved = False
+        if not saved:
+            self.language_var.set(i18n.LANGUAGES[locale.language])
+            self._set_status(tr("语言设置保存失败，请重试。"), "error")
+            return False
+        locale.switch(code)
+        self.language_var.set(i18n.LANGUAGES[code])
+        self._set_localized_title()
+        self._sync_view_navigation()
+        self._set_status(tr("界面语言已切换为 {language}", language=i18n.LANGUAGES[code]))
+        return True
 
     def _post_ui(self, callback, *args):
         if not self._closing:
@@ -693,7 +720,7 @@ class ForgeGuiApp:
                     apply(result)
                 else:
                     if kind == "market":
-                        self.market_stat_var.set("市场读取失败，可点击刷新重试")
+                        self.market_stat_var.set(tr("市场读取失败，可点击刷新重试"))
                     if kind == "market-action":
                         self._market_action_busy = False
                     self._set_status(f"读取 {kind} 失败：{error}", "warn")
@@ -745,7 +772,7 @@ class ForgeGuiApp:
         self._sidebar_auto_hidden = False
         self._sidebar_force_open = False
         self._responsive_after_id = None
-        self._metric_labels: dict[str, tk.Label] = {}
+        self._metric_labels: dict[str, i18n.Label] = {}
         self._metric_bars: dict[str, tk.Canvas] = {}
 
         # ── 顶部标题栏（品牌 + 主导航 + 指标 + gateway）──
@@ -775,12 +802,12 @@ class ForgeGuiApp:
         bot = tk.Frame(self.root, bg=C["bg"], height=theme.ui_px(self.root, 28))
         bot.pack(fill=tk.X, side=tk.BOTTOM)
         bot.pack_propagate(False)
-        self.status_var = tk.StringVar(value="")
-        self.status_lbl = tk.Label(bot, textvariable=self.status_var, bg=C["bg"],
+        self.status_var = i18n.StringVar(self.root, value="")
+        self.status_lbl = i18n.Label(bot, textvariable=self.status_var, bg=C["bg"],
                                    fg=C["body"], font=FONT_CAPTION, anchor=tk.W,
                                    padx=16)
         self.status_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self.path_lbl = tk.Label(bot, text=self._status_label_text(), bg=C["bg"],
+        self.path_lbl = i18n.Label(bot, text=self._status_label_text(), bg=C["bg"],
                                  fg=C["muted"], font=FONT_CAPTION, padx=12)
         self.path_lbl.pack(side=tk.RIGHT)
         bot.pack_configure(before=body)
@@ -838,7 +865,7 @@ class ForgeGuiApp:
         if brand_img is not None:
             holder = tk.Frame(brand, bg=C["bg"])
             holder.pack(side=tk.LEFT, padx=(0, 8))
-            shown = tk.Label(holder, image=brand_img, bg=C["bg"], bd=0,
+            shown = i18n.Label(holder, image=brand_img, bg=C["bg"], bd=0,
                              highlightthickness=0)
             shown.pack()
             self._brand_logo_refs = (brand_img, brand_keep, holder, shown)
@@ -851,7 +878,7 @@ class ForgeGuiApp:
             logo.create_text(12, 12, text="F", fill="#FFFFFF",
                              font=(theme.UI_FAMILY, 11, "bold"))
             logo.pack(side=tk.LEFT, padx=(0, 8))
-        tk.Label(brand, text="FORGE", bg=C["bg"], fg=C["text"],
+        i18n.Label(brand, text="FORGE", bg=C["bg"], fg=C["text"],
                  font=(theme.UI_FAMILY, 12, "bold")).pack(side=tk.LEFT)
 
         self._project_chip = tk.Frame(bar, bg=C["surface2"], padx=9, pady=4)
@@ -859,11 +886,11 @@ class ForgeGuiApp:
         IconCanvas(self._project_chip, "files", size=18, bg=C["surface2"], fg=C["accent2"]).pack(
             side=tk.LEFT, padx=(0, 5))
         self._project_name_var = tk.StringVar(value=self._repo_root().name)
-        tk.Label(self._project_chip, textvariable=self._project_name_var,
+        i18n.Label(self._project_chip, textvariable=self._project_name_var,
                  bg=C["surface2"], fg=C["subtext"], font=FONT_SMALL).pack(side=tk.LEFT)
 
         # 保留「更多」能力合约，可见入口移到 Activity Bar 底部。
-        self._more_menu = tk.Menu(self.root, tearoff=0, bg=C["surface"],
+        self._more_menu = i18n.Menu(self.root, tearoff=0, bg=C["surface"],
                                   fg=C["text"], activebackground=C["accent_soft"],
                                   activeforeground=C["accent_text"],
                                   font=FONT_SMALL, bd=1, relief=tk.FLAT)
@@ -884,8 +911,8 @@ class ForgeGuiApp:
                                          kind="quiet", bg=C["bg"], font=FONT_SMALL,
                                          padx=10)
         self.ws_toggle_btn.pack(side=tk.LEFT, padx=(0, 10))
-        self.gw_status_var = tk.StringVar(value="● 离线")
-        self.gw_status_lbl = tk.Label(right, textvariable=self.gw_status_var,
+        self.gw_status_var = i18n.StringVar(self.root, value=tr("● 离线"))
+        self.gw_status_lbl = i18n.Label(right, textvariable=self.gw_status_var,
                                       bg=C["bg"], fg=C["muted"], font=FONT_CAPTION)
         self.gw_status_lbl.pack(side=tk.LEFT, padx=(0, 6))
         self._telemetry_btn = pill_button(right, "▾ 状态", self._toggle_telemetry,
@@ -927,9 +954,9 @@ class ForgeGuiApp:
         box.pack(side=tk.LEFT, padx=(0, 12))
         row = tk.Frame(box, bg=base)
         row.pack(anchor=tk.W)
-        tk.Label(row, text=text, bg=base, fg=C["muted"],
+        i18n.Label(row, text=text, bg=base, fg=C["muted"],
                  font=FONT_MICRO).pack(side=tk.LEFT)
-        value = tk.Label(row, text="—", bg=base, fg=C["ter"], font=FONT_MICRO)
+        value = i18n.Label(row, text="—", bg=base, fg=C["ter"], font=FONT_MICRO)
         value.pack(side=tk.LEFT, padx=(4, 0))
         self._metric_labels[key] = value
         bar = progress_bar(box, 0, width=22, height=2)
@@ -953,11 +980,11 @@ class ForgeGuiApp:
         base = parent.cget("bg")
         card = tk.Frame(parent, bg=base)
         card.pack(side=tk.LEFT, padx=(0, 10))
-        self.gw_detail_status_lbl = tk.Label(card, textvariable=self.gw_status_var,
+        self.gw_detail_status_lbl = i18n.Label(card, textvariable=self.gw_status_var,
                                              bg=base, fg=C["muted"],
                                              font=FONT_MICRO)
         self.gw_detail_status_lbl.pack(side=tk.LEFT, padx=(0, 5))
-        tk.Label(card, text="Gateway", bg=base, fg=C["muted"],
+        i18n.Label(card, text="Gateway", bg=base, fg=C["muted"],
                  font=FONT_MICRO).pack(side=tk.LEFT)
         self.port_var = tk.StringVar(value=str(self.gateway_port))
         self.port_spin = tk.Spinbox(card, from_=1024, to_=65535, width=5,
@@ -975,7 +1002,7 @@ class ForgeGuiApp:
                                 cursor="hand2", highlightthickness=0)
         self.gw_btn.pack(side=tk.LEFT)
         # 常驻语义下主按钮=确保运行；停止放在右键菜单里
-        self._gw_menu = tk.Menu(self.root, tearoff=0, bg=C["surface"],
+        self._gw_menu = i18n.Menu(self.root, tearoff=0, bg=C["surface"],
                                 fg=C["text"], activebackground=C["accent_soft"],
                                 activeforeground=C["accent_text"],
                                 font=FONT_SMALL, bd=1, relief=tk.FLAT)
@@ -1003,7 +1030,7 @@ class ForgeGuiApp:
         inner.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(9, 6))
         icon = IconCanvas(inner, key, size=20, bg=C["activity"], fg=C["ter"])
         icon.pack(side=tk.LEFT)
-        text = tk.Label(inner, text=label, bg=C["activity"], fg=C["ter"],
+        text = i18n.Label(inner, text=label, bg=C["activity"], fg=C["ter"],
                         font=FONT_SMALL, anchor="w")
         text.pack(side=tk.LEFT, fill=tk.X, expand=True)
         attach_tooltip(icon, label)
@@ -1057,7 +1084,7 @@ class ForgeGuiApp:
         # ── 2) 主导航（概念图只展示 3 项，其余入口走「⋯ 更多」）──
         nav_host = tk.Frame(chat_panel, bg=C["sidebar"])
         nav_host.pack(fill=tk.X, padx=6, pady=(0, 4))
-        tk.Label(nav_host, text="功能导航", bg=C["sidebar"], fg=C["muted"],
+        i18n.Label(nav_host, text=tr("功能导航"), bg=C["sidebar"], fg=C["muted"],
                  font=FONT_MICRO, anchor="w").pack(fill=tk.X, padx=8, pady=(2, 6))
         for key in ("chat", "task", "tools"):
             holder = self._make_side_nav(nav_host, key, NAV_LABEL[key],
@@ -1078,7 +1105,7 @@ class ForgeGuiApp:
         head = tk.Frame(chat_panel, bg=C["sidebar"])
         head.pack(fill=tk.X, padx=14, pady=(10, 4))
         # 分组标题强化，跟导航项形成层级差
-        tk.Label(head, text="历史记录", bg=C["sidebar"], fg=C["ter"],
+        i18n.Label(head, text="历史记录", bg=C["sidebar"], fg=C["ter"],
                  font=FONT_MICRO).pack(side=tk.LEFT)
         glyph_button(head, "搜索", self._toggle_session_search, bg=C["sidebar"],
                      fg=C["muted"], size=9, tooltip="搜索对话 · Ctrl+K").pack(
@@ -1116,10 +1143,10 @@ class ForgeGuiApp:
 
         tools_row = tk.Frame(bottom, bg=C["sidebar"])
         tools_row.pack(fill=tk.X)
-        pill_button(tools_row, "⚙ 设置", lambda: self._show_view("config"),
+        pill_button(tools_row, tr("⚙ 设置"), lambda: self._show_view("config"),
                     kind="quiet", bg=C["sidebar"], font=FONT_MICRO,
                     padx=8).pack(side=tk.LEFT, fill=tk.X, expand=True)
-        pill_button(tools_row, "ⓘ 关于", self._show_about, kind="quiet",
+        pill_button(tools_row, tr("ⓘ 关于"), self._show_about, kind="quiet",
                     bg=C["sidebar"], font=FONT_MICRO, padx=8).pack(
             side=tk.LEFT, fill=tk.X, expand=True, padx=(4, 0))
         self.sidebar_toggle_btn = glyph_button(
@@ -1146,7 +1173,7 @@ class ForgeGuiApp:
         inner.pack(fill=tk.X, padx=8, pady=7)
         icon = IconCanvas(inner, key, size=20, bg=C["sidebar"], fg=C["ter"])
         icon.pack(side=tk.LEFT)
-        text = tk.Label(inner, text=label, bg=C["sidebar"], fg=C["ter"],
+        text = i18n.Label(inner, text=label, bg=C["sidebar"], fg=C["ter"],
                         font=FONT_SMALL, anchor="w")
         text.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 0))
         attach_tooltip(icon, label)
@@ -1172,7 +1199,7 @@ class ForgeGuiApp:
         inner.pack(fill=tk.X, padx=8, pady=7)
         icon = IconCanvas(inner, "more", size=20, bg=C["sidebar"], fg=C["muted"])
         icon.pack(side=tk.LEFT)
-        text = tk.Label(inner, text="更多", bg=C["sidebar"], fg=C["muted"],
+        text = i18n.Label(inner, text=tr("更多"), bg=C["sidebar"], fg=C["muted"],
                         font=FONT_SMALL, anchor="w")
         text.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 0))
         attach_tooltip(text, "Agents / 知识库 / 演化 / 文件与项目 / 配置")
@@ -1229,7 +1256,7 @@ class ForgeGuiApp:
             row.pack(fill=tk.X, pady=1, padx=2)
             IconCanvas(row, "model", size=18, bg=C["sidebar"], fg=C["accent2"]).pack(
                 side=tk.LEFT, padx=(8, 6))
-            tk.Label(row, text=q.name, bg=C["sidebar"], fg=C["subtext"],
+            i18n.Label(row, text=q.name, bg=C["sidebar"], fg=C["subtext"],
                      font=FONT_SMALL, anchor="w").pack(side=tk.LEFT, pady=3,
                                                        fill=tk.X, expand=True)
             attach_tooltip(row, str(q))
@@ -1240,7 +1267,7 @@ class ForgeGuiApp:
                 w.bind("<Enter>", lambda _e, r=row: r.configure(bg=C["hover"]), add="+")
                 w.bind("<Leave>", lambda _e, r=row: r.configure(bg=C["sidebar"]), add="+")
         if not children:
-            tk.Label(list_box, text="还没有智能体", bg=C["sidebar"],
+            i18n.Label(list_box, text="还没有智能体", bg=C["sidebar"],
                      fg=C["muted"], font=FONT_MICRO, anchor="w",
                      padx=8).pack(fill=tk.X, pady=4)
         add = IconButton(list_box, text="＋ 添加智能体", bg=C["sidebar"], fg=C["ter"],
@@ -1269,7 +1296,7 @@ class ForgeGuiApp:
         if not agent_path.is_dir():
             self._set_status("智能体目录已不存在，请刷新侧边栏", "warn")
             return
-        messagebox.showinfo("智能体目录", f"{agent_path.name}\n{agent_path}\n\n这是现有 AutoClaw 智能体目录。Forge 的分工预设在 Agents 页面配置。", parent=self.root)
+        messagebox.showinfo(tr("智能体目录"), f"{agent_path.name}\n{agent_path}\n\n这是现有 AutoClaw 智能体目录。Forge 的分工预设在 Agents 页面配置。", parent=self.root)
 
     def _show_about(self):
         try:
@@ -1298,18 +1325,18 @@ class ForgeGuiApp:
         head = tk.Frame(panel, bg=C["sidebar"])
         head.pack(fill=tk.X, padx=14, pady=(18, 8))
         IconCanvas(head, key, size=22, bg=C["sidebar"], fg=C["accent2"]).pack(side=tk.LEFT, padx=(0, 8))
-        tk.Label(head, text=label, bg=C["sidebar"], fg=C["text"],
+        i18n.Label(head, text=label, bg=C["sidebar"], fg=C["text"],
                  font=FONT_SECTION).pack(side=tk.LEFT)
-        tk.Label(panel, text=descriptions.get(key, ""), bg=C["sidebar"],
+        i18n.Label(panel, text=descriptions.get(key, ""), bg=C["sidebar"],
                  fg=C["muted"], font=FONT_SMALL, justify=tk.LEFT,
                  anchor="w", wraplength=SIDEBAR_WIDTH - 28).pack(
             fill=tk.X, padx=14, pady=(0, 18))
-        section = tk.Label(panel, text="当前视图", bg=C["sidebar"],
+        section = i18n.Label(panel, text="当前视图", bg=C["sidebar"],
                            fg=C["muted"], font=FONT_MICRO, anchor="w")
         section.pack(fill=tk.X, padx=14, pady=(0, 6))
         row = tk.Frame(panel, bg=C["sel"], padx=10, pady=8)
         row.pack(fill=tk.X, padx=8)
-        tk.Label(row, text=label, bg=C["sel"], fg=C["text"],
+        i18n.Label(row, text=label, bg=C["sel"], fg=C["text"],
                  font=FONT_SMALL, anchor="w").pack(fill=tk.X)
         if key == "files":
             pill_button(panel, "打开 Workspace", lambda: self._open_workspace("file_tree"),
@@ -1422,16 +1449,16 @@ class ForgeGuiApp:
         """Keep an exit outside each page's scrolling/collapsible content."""
         bar = self.view_navigation = tk.Frame(center, bg=C["surface2"], padx=12, pady=6)
         bar.grid_columnconfigure(1, weight=1)
-        self.view_back_btn = glyph_button(bar, "◀ 返回对话", self._navigate_back,
+        self.view_back_btn = glyph_button(bar, tr("◀ 返回对话"), self._navigate_back,
                                           bg=C["surface2"], fg=C["text"], size=10,
                                           tooltip="返回上一页 · Alt+←；保留当前编辑内容")
         self.view_back_btn.grid(row=0, column=0, sticky="w", padx=(0, 12))
-        self.view_title_var = tk.StringVar()
-        self.view_title_label = tk.Label(bar, textvariable=self.view_title_var,
+        self.view_title_var = i18n.StringVar(self.root)
+        self.view_title_label = i18n.Label(bar, textvariable=self.view_title_var,
                                          bg=C["surface2"], fg=C["muted"], font=FONT_CAPTION,
                                          anchor="w")
         self.view_title_label.grid(row=0, column=1, sticky="ew")
-        self.view_chat_btn = glyph_button(bar, "💬 回到对话", self._return_to_chat,
+        self.view_chat_btn = glyph_button(bar, tr("💬 回到对话"), self._return_to_chat,
                                           bg=C["surface2"], fg=C["text"], size=10,
                                           tooltip="回到当前对话 · Esc；不新建或清空对话")
         self.view_chat_btn.grid(row=0, column=2, sticky="e", padx=(8, 0))
@@ -1442,7 +1469,7 @@ class ForgeGuiApp:
             self.view_navigation.pack_forget()
             return
         target = "chat" if files_mode or not self._view_history else self._view_history[-1]
-        self.view_back_btn.configure(text=f"◀ 返回{NAV_LABEL.get(target, '对话')}")
+        self.view_back_btn.configure(text=tr("◀ 返回{page}", page=NAV_LABEL.get(target, tr("对话"))))
         self.view_title_var.set(NAV_LABEL.get("files" if files_mode else self._active_view, ""))
         if target != "chat":
             self.view_chat_btn.grid()
@@ -1487,7 +1514,7 @@ class ForgeGuiApp:
         seg = tk.Frame(self.tab_features, bg=C["bg"], padx=20)
         seg.pack(fill=tk.X, pady=(10, 0))
         self._tools_tab_buttons = {}
-        for key, label in (("market", "🛒 市场"), ("features", "⚙ 功能开关")):
+        for key, label in (("market", tr("🛒 市场")), ("features", tr("⚙ 功能开关"))):
             btn = pill_button(seg, label, lambda k=key: self._switch_tools_tab(k),
                               kind="ghost", bg=C["bg"])
             btn.pack(side=tk.LEFT, padx=(0, 8))
@@ -1569,10 +1596,10 @@ class ForgeGuiApp:
             model_ids = ["（先在配置里添加 Provider）"]
 
         # ── 头部说明 ──
-        tk.Label(body, text="Agent 集群与分工",
+        i18n.Label(body, text="Agent 集群与分工",
                  bg=C["bg"], fg=C["text"], font=FONT_TITLE,
                  anchor="w").pack(fill=tk.X, padx=20, pady=(18, 2))
-        tk.Label(body,
+        i18n.Label(body,
                  text="为对话并行准备方案或分工结果，再交给主模型汇总。"
                       "选择一种模式；启用后会增加模型调用次数。",
                  bg=C["bg"], fg=C["muted"], font=FONT_SMALL, anchor="w",
@@ -1586,16 +1613,16 @@ class ForgeGuiApp:
         c1 = card1.content
         head1 = tk.Frame(c1, bg=C["surface"])
         head1.pack(fill=tk.X)
-        tk.Label(head1, text="Agent 集群", bg=C["surface"], fg=C["text"],
+        i18n.Label(head1, text="Agent 集群", bg=C["surface"], fg=C["text"],
                  font=FONT_SECTION).pack(side=tk.LEFT)
-        description1 = tk.Label(c1, text="并行准备多份方案，交给主模型综合对比",
+        description1 = i18n.Label(c1, text="并行准备多份方案，交给主模型综合对比",
                  bg=C["surface"], fg=C["muted"],
                  font=FONT_SMALL, anchor="w", justify=tk.LEFT)
         description1.pack(fill=tk.X, pady=(4, 0))
         description1.bind("<Configure>", lambda e: description1.configure(wraplength=max(120, e.width)))
         self._team_cluster_var = tk.BooleanVar(
             value=bool(cfg["cluster"].get("enabled")))
-        tk.Checkbutton(head1, text="启用", variable=self._team_cluster_var,
+        i18n.Checkbutton(head1, text=tr("启用"), variable=self._team_cluster_var,
                        command=lambda: self._team_select_mode("cluster"),
                        bg=C["surface"], fg=C["text"], selectcolor=C["sel"],
                        activebackground=C["surface"], activeforeground=C["text"],
@@ -1603,17 +1630,17 @@ class ForgeGuiApp:
 
         count_row = tk.Frame(c1, bg=C["surface"])
         count_row.pack(fill=tk.X, pady=(8, 4))
-        tk.Label(count_row, text="方案数", bg=C["surface"], fg=C["ter"],
+        i18n.Label(count_row, text="方案数", bg=C["surface"], fg=C["ter"],
                  font=FONT_SMALL).pack(side=tk.LEFT, padx=(0, 8))
         self._team_cluster_count = tk.IntVar(
             value=max(1, min(4, int(cfg["cluster"].get("count") or 2))))
         for n in (1, 2, 3, 4):
-            tk.Radiobutton(count_row, text=str(n), variable=self._team_cluster_count,
+            i18n.Radiobutton(count_row, text=str(n), variable=self._team_cluster_count,
                            value=n, bg=C["surface"], fg=C["text"],
                            selectcolor=C["sel"], activebackground=C["surface"],
                            activeforeground=C["text"], font=FONT_SMALL).pack(
                 side=tk.LEFT, padx=(0, 6))
-        tk.Label(count_row, text="（每路可选不同模型）", bg=C["surface"],
+        i18n.Label(count_row, text="（每路可选不同模型）", bg=C["surface"],
                  fg=C["muted"], font=FONT_MICRO).pack(side=tk.LEFT)
 
         # 每路模型下拉（最多 4 路，按当前 count 显示）
@@ -1624,7 +1651,7 @@ class ForgeGuiApp:
         for i in range(4):
             row = tk.Frame(lane_box, bg=C["surface"])
             row.pack(fill=tk.X, pady=1)
-            tk.Label(row, text=f"方案 {i + 1}", bg=C["surface"], fg=C["ter"],
+            i18n.Label(row, text=f"方案 {i + 1}", bg=C["surface"], fg=C["ter"],
                      font=FONT_SMALL, width=8, anchor="w").pack(side=tk.LEFT)
             var = tk.StringVar()
             lane = lanes_cfg[i] if i < len(lanes_cfg) else {}
@@ -1644,16 +1671,16 @@ class ForgeGuiApp:
         c2 = card2.content
         head2 = tk.Frame(c2, bg=C["surface"])
         head2.pack(fill=tk.X)
-        tk.Label(head2, text="子 Agent 分工", bg=C["surface"], fg=C["text"],
+        i18n.Label(head2, text="子 Agent 分工", bg=C["surface"], fg=C["text"],
                  font=FONT_SECTION).pack(side=tk.LEFT)
-        description2 = tk.Label(c2, text="按不同角色协作，交给主模型汇总各自结果",
+        description2 = i18n.Label(c2, text="按不同角色协作，交给主模型汇总各自结果",
                                 bg=C["surface"], fg=C["muted"], font=FONT_SMALL,
                                 anchor="w", justify=tk.LEFT)
         description2.pack(fill=tk.X, pady=(4, 0))
         description2.bind("<Configure>", lambda e: description2.configure(wraplength=max(120, e.width)))
         self._team_subs_var = tk.BooleanVar(
             value=bool(cfg["sub_agents"].get("enabled")))
-        tk.Checkbutton(head2, text="启用", variable=self._team_subs_var,
+        i18n.Checkbutton(head2, text=tr("启用"), variable=self._team_subs_var,
                        command=lambda: self._team_select_mode("subs"),
                        bg=C["surface"], fg=C["text"], selectcolor=C["sel"],
                        activebackground=C["surface"], activeforeground=C["text"],
@@ -1686,13 +1713,13 @@ class ForgeGuiApp:
         c3 = card3.content
         mem_row = tk.Frame(c3, bg=C["surface"])
         mem_row.pack(fill=tk.X)
-        tk.Label(mem_row, text="记忆模式", bg=C["surface"], fg=C["text"],
+        i18n.Label(mem_row, text="记忆模式", bg=C["surface"], fg=C["text"],
                  font=FONT_SECTION).pack(side=tk.LEFT)
         self._team_mem_var = tk.StringVar(
             value=cfg.get("memory_mode") or "isolated")
         for val, label, tip in (("isolated", "独立上下文", "子任务只接收本轮任务，减少上下文开销"),
                                 ("unified", "共享近期对话", "额外传入最近六条对话的截取内容")):
-            tk.Radiobutton(mem_row, text=label, variable=self._team_mem_var,
+            i18n.Radiobutton(mem_row, text=label, variable=self._team_mem_var,
                            value=val, bg=C["surface"], fg=C["text"],
                            selectcolor=C["sel"], activebackground=C["surface"],
                            activeforeground=C["text"],
@@ -1702,11 +1729,11 @@ class ForgeGuiApp:
         # ── 4) 保存 ──
         foot = tk.Frame(parent, bg=C["bg"])
         foot.pack(side=tk.BOTTOM, fill=tk.X, padx=20, pady=12, before=holder)
-        self._team_save_btn = pill_button(foot, "保存配置", self._team_save, kind="primary",
+        self._team_save_btn = pill_button(foot, tr("保存配置"), self._team_save, kind="primary",
                                          bg=C["bg"], font=FONT_UI)
         self._team_save_btn.pack(side=tk.RIGHT, padx=(12, 0))
-        self._team_feedback_var = tk.StringVar()
-        self._team_feedback_label = tk.Label(foot, textvariable=self._team_feedback_var,
+        self._team_feedback_var = i18n.StringVar(self.root)
+        self._team_feedback_label = i18n.Label(foot, textvariable=self._team_feedback_var,
                                             bg=C["bg"], fg=C["muted"], font=FONT_CAPTION,
                                             anchor="w", justify=tk.LEFT)
         self._team_feedback_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
@@ -1762,7 +1789,7 @@ class ForgeGuiApp:
         top = tk.Frame(row, bg=C["surface"])
         top.pack(fill=tk.X, padx=8, pady=(6, 2))
         top.grid_columnconfigure(1, weight=1)
-        tk.Label(top, text="角色", bg=C["surface"], fg=C["muted"],
+        i18n.Label(top, text="角色", bg=C["surface"], fg=C["muted"],
                  font=FONT_CAPTION).grid(row=0, column=0, sticky="w", padx=(0, 8))
         role_var = tk.StringVar(value=str(preset.get("role") or "worker"))
         tk.Entry(top, textvariable=role_var, width=14, bg=C["input_bg"],
@@ -1771,14 +1798,14 @@ class ForgeGuiApp:
                  highlightbackground=C["border_hi"],
                  highlightcolor=C["accent"]).grid(row=0, column=1, sticky="ew", ipady=3,
                                                   padx=(0, 8))
-        tk.Label(top, text="模型", bg=C["surface"], fg=C["muted"],
+        i18n.Label(top, text=tr("模型"), bg=C["surface"], fg=C["muted"],
                  font=FONT_CAPTION).grid(row=1, column=0, sticky="w", padx=(0, 8), pady=(6, 0))
         model_var = tk.StringVar(value=str(preset.get("model") or model_ids[0]))
         combo = ttk.Combobox(top, textvariable=model_var, values=model_ids,
                              state="readonly", width=24, font=FONT_SMALL)
         combo.grid(row=1, column=1, columnspan=3, sticky="ew", pady=(6, 0))
         enabled_var = tk.BooleanVar(value=bool(preset.get("enabled", True)))
-        tk.Checkbutton(top, text="参与", variable=enabled_var, bg=C["surface"],
+        i18n.Checkbutton(top, text="参与", variable=enabled_var, bg=C["surface"],
             fg=C["text"], selectcolor=C["sel"], activebackground=C["surface"],
             font=FONT_SMALL).grid(row=0, column=2)
         def remove():
@@ -1791,7 +1818,7 @@ class ForgeGuiApp:
         del_btn.grid(row=0, column=3, padx=(4, 0))
 
         prompt_var = tk.StringVar(value=str(preset.get("system_prompt") or ""))
-        tk.Label(row, text="提示词", bg=C["surface"], fg=C["muted"],
+        i18n.Label(row, text="提示词", bg=C["surface"], fg=C["muted"],
                  font=FONT_MICRO).pack(side=tk.LEFT, padx=(8, 2), pady=6)
         tk.Entry(row, textvariable=prompt_var, bg=C["input_bg"], fg=C["text"],
                  font=FONT_SMALL, relief=tk.FLAT, bd=0,
@@ -1869,13 +1896,13 @@ class ForgeGuiApp:
                    ("registry.py 里的成员定义", "subagent 派发与回执",
                     "多模型协作（MOA）编排"),
                    "Agent 面板会把 registry 里的成员、能力与最近一次调度画出来。"),
-        "knowledge": ("知识库", "长期记忆与策展（memory / curator）",
+        "knowledge": (tr("知识库"), "长期记忆与策展（memory / curator）",
                       ("会话记忆切片", "策展器打分与淘汰", "分级检索接入"),
                       "知识库面板会列出现有记忆条目、来源与最近命中。"),
-        "evolution": ("演化", "自演化迭代账本（evolution / iteration-ledger）",
+        "evolution": (tr("演化"), "自演化迭代账本（evolution / iteration-ledger）",
                       ("迭代记录与指标", "能力包升级", "回归对比"),
                       "演化面板会把 iteration-ledger.jsonl 画成时间线。"),
-        "files": ("文件与项目", "在右侧工作区里浏览与改动项目文件",
+        "files": (tr("文件与项目"), "在右侧工作区里浏览与改动项目文件",
                   ("文件树 / 变更 / 代码 / diff / 预览 / 终端",),
                   "点上方按钮或调用「打开工作区」即可展开右栏。"),
     }
@@ -1989,24 +2016,24 @@ class ForgeGuiApp:
         """市场面板骨架：统计行 + 筛选行 + 滚动列表（内容由 _refresh_market 填）。"""
         head = tk.Frame(parent, bg=C["bg"], padx=20)
         head.pack(fill=tk.X, pady=(10, 0))
-        self.market_stat_var = tk.StringVar(value="市场未载入")
+        self.market_stat_var = i18n.StringVar(self.root, value=tr("市场未载入"))
         # Pack order = space priority in Tk: buttons first so a long stat text
         # (final count incl. external ecosystems) compresses the label at high
         # DPI instead of squeezing the buttons below their requested width.
-        pill_button(head, "打开插件目录", self._open_plugins_dir,
+        pill_button(head, tr("打开插件目录"), self._open_plugins_dir,
                     kind="quiet", bg=C["bg"]).pack(side=tk.RIGHT)
-        pill_button(head, "刷新", lambda: self._refresh_market(force=True),
+        pill_button(head, tr("刷新"), lambda: self._refresh_market(force=True),
                     kind="ghost", bg=C["bg"]).pack(side=tk.RIGHT, padx=(0, 8))
-        tk.Label(head, textvariable=self.market_stat_var, bg=C["bg"], fg=C["subtext"],
+        i18n.Label(head, textvariable=self.market_stat_var, bg=C["bg"], fg=C["subtext"],
                  font=FONT_SMALL).pack(side=tk.LEFT)
 
         market_actions = tk.Frame(parent, bg=C["bg"], padx=20)
         market_actions.pack(fill=tk.X, pady=(6, 0))
-        pill_button(market_actions, "安装本地插件", self._install_local_plugin,
+        pill_button(market_actions, tr("安装本地插件"), self._install_local_plugin,
                     kind="ghost", bg=C["bg"]).pack(side=tk.LEFT)
-        pill_button(market_actions, "查看审计", self._show_plugin_audit,
+        pill_button(market_actions, tr("查看审计"), self._show_plugin_audit,
                     kind="quiet", bg=C["bg"]).pack(side=tk.LEFT, padx=(8, 0))
-        tk.Label(parent, text="安装 → 文件检查 → 知悉 → 启用 → 逐项授权 → Policy 判定 → 执行 → 审计 → 撤销",
+        i18n.Label(parent, text=tr("安装 → 文件检查 → 知悉 → 启用 → 逐项授权 → Policy 判定 → 执行 → 审计 → 撤销"),
                  bg=C["bg"], fg=C["muted"], font=FONT_MICRO, anchor="w",
                  justify=tk.LEFT, wraplength=700).pack(fill=tk.X, padx=20, pady=(6, 0))
 
@@ -2019,31 +2046,33 @@ class ForgeGuiApp:
                          fg=C["text"], insertbackground=C["accent"], relief=tk.FLAT,
                          font=FONT_SMALL, width=22)
         entry.pack(side=tk.LEFT, ipady=3)
-        tk.Label(filt, text="搜索插件", bg=C["bg"], fg=C["muted"],
+        i18n.Label(filt, text=tr("搜索插件"), bg=C["bg"], fg=C["muted"],
                  font=FONT_MICRO).pack(side=tk.LEFT, padx=(6, 12))
-        self.market_kind_var = tk.StringVar(value="全部")
+        self.market_kind_var = tk.StringVar(value=tr("全部"))
         # 挂 trace 而不是靠在按钮 lambda 里刷新：任何途径改这个变量（按钮、
         # 快捷键、代码）都会立刻重绘，不会出现「筛选变了列表没变」。
         self.market_kind_var.trace_add("write", lambda *_: self._refresh_market())
-        kinds = ["全部"] + [KIND_LABELS.get(k, k) for k in ("tool", "theme", "panel", "integration")]
+        kinds = [tr("全部")] + [tr(KIND_LABELS.get(k, k)) for k in ("tool", "theme", "panel", "integration")]
         kind_row = tk.Frame(parent, bg=C["bg"], padx=20)
         kind_row.pack(fill=tk.X, pady=(6, 0))
         for label in kinds:
             pill_button(kind_row, label, lambda v=label: self.market_kind_var.set(v),
                         kind="ghost", bg=C["bg"]).pack(side=tk.LEFT, padx=(0, 6))
-        pill_button(kind_row, "生态源", self._toggle_external_sources,
+        pill_button(kind_row, tr("生态源"), self._toggle_external_sources,
                     kind="quiet", bg=C["bg"]).pack(side=tk.RIGHT)
+        theme.flow_controls(kind_row)
 
         # 生态筛选（OpenClaw / Claude Code / DSH / Codex）：只影响展示过滤
         eco_row = tk.Frame(parent, bg=C["bg"], padx=20)
         eco_row.pack(fill=tk.X, pady=(4, 0))
-        tk.Label(eco_row, text="生态：", bg=C["bg"], fg=C["muted"],
+        i18n.Label(eco_row, text=tr("生态："), bg=C["bg"], fg=C["muted"],
                  font=FONT_MICRO).pack(side=tk.LEFT)
-        self.market_eco_var = tk.StringVar(value="全部")
+        self.market_eco_var = tk.StringVar(value=tr("全部"))
         self.market_eco_var.trace_add("write", lambda *_: self._refresh_market())
-        for eco_label in ["全部", "🦞 OpenClaw", "🎭 Claude Code", "🐳 DSH", "🤖 Codex"]:
+        for eco_label in [tr("全部"), "🦞 OpenClaw", "🎭 Claude Code", "🐳 DSH", "🤖 Codex"]:
             pill_button(eco_row, eco_label, lambda v=eco_label: self.market_eco_var.set(v),
                         kind="ghost", bg=C["bg"]).pack(side=tk.LEFT, padx=(0, 6))
+        theme.flow_controls(eco_row)
 
         viewport = tk.Frame(parent, bg=C["bg"])
         viewport.pack(fill=tk.BOTH, expand=True, padx=20, pady=(10, 14))
@@ -2110,7 +2139,7 @@ class ForgeGuiApp:
         for child in self.market_list.winfo_children():
             child.destroy()
         if snapshot is None:
-            tk.Label(self.market_list,
+            i18n.Label(self.market_list,
                      text=f"市场模块不可用：{_MARKET_IMPORT_ERROR or '未知原因'}",
                      bg=C["bg"], fg=C["warn"], font=FONT_SMALL).pack(anchor=tk.W)
             self.market_stat_var.set("市场不可用")
@@ -2127,17 +2156,17 @@ class ForgeGuiApp:
             + ("（离线）" if not summary["sources"] else ""))
 
         query = (self.market_query_var.get() if hasattr(self, "market_query_var") else "").strip().lower()
-        want = self.market_kind_var.get() if hasattr(self, "market_kind_var") else "全部"
+        want = self.market_kind_var.get() if hasattr(self, "market_kind_var") else tr("全部")
 
         eco_prefixes = {"🦞 OpenClaw": ("openclaw-",), "🎭 Claude Code": ("claude-",),
                         "🐳 DSH": ("dsh-",), "🤖 Codex": ("codex-", "codex-mcp-")}
         eco_want = (self.market_eco_var.get()
-                    if hasattr(self, "market_eco_var") else "全部")
+                    if hasattr(self, "market_eco_var") else tr("全部"))
 
         def match(plugin):
-            if want != "全部" and plugin.kind_label != want:
+            if want != tr("全部") and plugin.kind_label != want:
                 return False
-            if eco_want != "全部":
+            if eco_want != tr("全部"):
                 prefixes = eco_prefixes.get(eco_want, ())
                 if prefixes and not plugin.id.startswith(prefixes):
                     return False
@@ -2148,10 +2177,10 @@ class ForgeGuiApp:
             return query in blob
 
         shown = [p for p in items if match(p)]
-        tk.Label(self.market_list, text="插件", bg=C["bg"], fg=C["ter"],
+        i18n.Label(self.market_list, text="插件", bg=C["bg"], fg=C["ter"],
                  font=FONT_UI_BOLD).pack(anchor=tk.W, pady=(0, 6))
         if not shown:
-            tk.Label(self.market_list, text="没有匹配的插件——换个关键词，或清掉类型筛选。",
+            i18n.Label(self.market_list, text=tr("没有匹配的插件——换个关键词，或清掉类型筛选。"),
                      bg=C["bg"], fg=C["muted"], font=FONT_SMALL).pack(anchor=tk.W)
         for plugin in shown:
             self._market_plugin_card(plugin)
@@ -2166,15 +2195,15 @@ class ForgeGuiApp:
 
         top = tk.Frame(body, bg=C["surface"])
         top.pack(fill=tk.X)
-        tk.Label(top, text=plugin.icon, bg=C["surface"], fg=C["text"],
+        i18n.Label(top, text=plugin.icon, bg=C["surface"], fg=C["text"],
                  font=FONT_TITLE).pack(side=tk.LEFT, padx=(0, 8))
-        tk.Label(top, text=plugin.name, bg=C["surface"], fg=C["text"],
+        i18n.Label(top, text=plugin.name, bg=C["surface"], fg=C["text"],
                  font=FONT_UI_BOLD).pack(side=tk.LEFT)
-        tk.Label(top, text=f"v{plugin.version}", bg=C["surface"], fg=C["muted"],
+        i18n.Label(top, text=f"v{plugin.version}", bg=C["surface"], fg=C["muted"],
                  font=FONT_MICRO).pack(side=tk.LEFT, padx=(6, 0))
-        badge(top, plugin.kind_label, tone="muted", bg=C["surface"]).pack(side=tk.LEFT, padx=(8, 0))
+        badge(top, tr(plugin.kind_label), tone="muted", bg=C["surface"]).pack(side=tk.LEFT, padx=(8, 0))
         if plugin.source == "builtin":
-            badge(top, "内置", tone="muted", bg=C["surface"]).pack(side=tk.LEFT, padx=(4, 0))
+            badge(top, tr("内置"), tone="muted", bg=C["surface"]).pack(side=tk.LEFT, padx=(4, 0))
         eco_badge = {"openclaw-": "🦞 OpenClaw", "claude-": "🎭 Claude Code",
                      "dsh-": "🐳 DSH", "codex-": "🤖 Codex"}
         for prefix, label in eco_badge.items():
@@ -2185,43 +2214,43 @@ class ForgeGuiApp:
         states.pack(fill=tk.X, pady=(6, 0))
         granted = plugin.granted_capabilities(self._repo_root(), self._session_id)
         active = plugin.id in getattr(self, "_market_active_ids", set())
-        for label, yes in (("已安装", plugin.installed), ("已知悉", plugin.acked and not plugin.needs_ack),
-                           ("已启用", plugin.enabled), ("已授权", bool(granted)), ("可调用", active)):
-            badge(states, label if yes else {"已安装": "未安装", "已知悉": "待知悉", "已启用": "未启用",
-                  "已授权": "未授权", "可调用": "不可调用"}[label],
+        for label, yes in ((tr("已安装"), plugin.installed), (tr("已知悉"), plugin.acked and not plugin.needs_ack),
+                           (tr("已启用"), plugin.enabled), (tr("已授权"), bool(granted)), (tr("可调用"), active)):
+            badge(states, label if yes else {tr("已安装"): tr("未安装"), tr("已知悉"): tr("待知悉"), tr("已启用"): tr("未启用"),
+                  tr("已授权"): tr("未授权"), tr("可调用"): tr("不可调用")}[label],
                   tone="ok" if yes else "muted", bg=C["surface"]).pack(side=tk.LEFT, padx=(0, 4))
 
         if plugin.summary:
-            tk.Label(body, text=plugin.summary, bg=C["surface"], fg=C["body"],
+            i18n.Label(body, text=plugin.summary, bg=C["surface"], fg=C["body"],
                      font=FONT_SMALL, anchor=tk.W, justify=tk.LEFT,
                      wraplength=760).pack(fill=tk.X, pady=(6, 2))
         meta = " · ".join(x for x in (plugin.author, plugin.homepage) if x)
         if meta:
-            tk.Label(body, text=meta, bg=C["surface"], fg=C["muted"],
+            i18n.Label(body, text=meta, bg=C["surface"], fg=C["muted"],
                      font=FONT_MICRO, anchor=tk.W).pack(fill=tk.X)
         if plugin.permissions or plugin.capabilities:
-            tk.Label(body, text="权限：" + "、".join(plugin.permission_labels()),
+            i18n.Label(body, text=tr("权限：{permissions}", permissions=i18n.join(" / ", map(tr, plugin.permission_labels()))),
                      bg=C["surface"], fg=C["warn"] if plugin.executes_code else C["subtext"],
                      font=FONT_MICRO, anchor=tk.W, justify=tk.LEFT,
                      wraplength=760).pack(fill=tk.X, pady=(2, 0))
         if plugin.error:
-            tk.Label(body, text=f"清单有问题：{plugin.error}", bg=C["surface"],
+            i18n.Label(body, text=f"清单有问题：{plugin.error}", bg=C["surface"],
                      fg=C["error"], font=FONT_MICRO, anchor=tk.W).pack(fill=tk.X)
         if getattr(plugin, "runtime_status", ""):
-            tk.Label(body, text=f"执行状态：{plugin.runtime_status}", bg=C["surface"],
+            i18n.Label(body, text=f"执行状态：{plugin.runtime_status}", bg=C["surface"],
                      fg=C["warn"], font=FONT_MICRO, anchor="w", justify=tk.LEFT,
                      wraplength=760).pack(fill=tk.X, pady=(2, 0))
         contributed = " · ".join(f"{key} {len(value)}" for key, value in plugin.contributions.items() if value)
         if contributed:
-            tk.Label(body, text="能力声明：" + contributed, bg=C["surface"], fg=C["muted"],
+            i18n.Label(body, text=tr("能力声明：{contributions}", contributions=contributed), bg=C["surface"], fg=C["muted"],
                      font=FONT_MICRO, anchor="w").pack(fill=tk.X, pady=(2, 0))
         if plugin.executes_code:
-            boundary = "Python 插件尚无系统沙箱：知悉与启用不会允许 Agent 执行其代码。"
+            boundary = tr("Python 插件尚无系统沙箱：知悉与启用不会允许 Agent 执行其代码。")
         elif not plugin.contributions.get("tools"):
             boundary = "声明条目：尚未接入受控工具执行；安装或启用不等于功能已生效。"
         else:
-            boundary = "文件指纹检查不等于签名验证；授权不能覆盖 Forge Policy 的拒绝或审批要求。"
-        boundary_label = tk.Label(body, text=boundary, bg=C["surface"], fg=C["muted"],
+            boundary = tr("文件指纹检查不等于签名验证；授权不能覆盖 Forge Policy 的拒绝或审批要求。")
+        boundary_label = i18n.Label(body, text=boundary, bg=C["surface"], fg=C["muted"],
                  font=FONT_MICRO, anchor="w", justify=tk.LEFT, wraplength=760)
         boundary_label.pack(fill=tk.X, pady=(4, 0))
         body.bind("<Configure>", lambda event: boundary_label.configure(wraplength=max(80, event.width)), add="+")
@@ -2230,44 +2259,44 @@ class ForgeGuiApp:
         actions.pack(fill=tk.X, pady=(10, 0))
         pid = plugin.id
         if plugin.installed and (plugin.needs_ack or not plugin.acked):
-            pill_button(actions, "知悉确认", lambda: self._market_action(pid, "ack"),
+            pill_button(actions, tr("知悉确认"), lambda: self._market_action(pid, "ack"),
                         kind="primary", bg=C["surface"]).pack(side=tk.LEFT)
         if not plugin.installed:
-            pill_button(actions, "安装", lambda: self._market_action(pid, "install"),
+            pill_button(actions, tr("安装"), lambda: self._market_action(pid, "install"),
                         kind="primary", bg=C["surface"]).pack(side=tk.LEFT)
         elif not plugin.enabled:
-            pill_button(actions, "启用", lambda: self._market_action(pid, "enable"),
+            pill_button(actions, tr("启用"), lambda: self._market_action(pid, "enable"),
                         kind="ok" if not plugin.needs_ack else "ghost",
                         bg=C["surface"]).pack(side=tk.LEFT)
         else:
-            pill_button(actions, "禁用", lambda: self._market_action(pid, "disable"),
+            pill_button(actions, tr("禁用"), lambda: self._market_action(pid, "disable"),
                         kind="ghost", bg=C["surface"]).pack(side=tk.LEFT)
         if plugin.installed:
-            pill_button(actions, "卸载", lambda: self._market_action(pid, "uninstall"),
+            pill_button(actions, tr("卸载"), lambda: self._market_action(pid, "uninstall"),
                         kind="danger", bg=C["surface"]).pack(side=tk.LEFT, padx=(8, 0))
         detail_actions = tk.Frame(body, bg=C["surface"])
         detail_actions.pack(fill=tk.X, pady=(6, 0))
-        pill_button(detail_actions, "检查清单", lambda: self._inspect_plugin(pid),
+        pill_button(detail_actions, tr("检查清单"), lambda: self._inspect_plugin(pid),
                     kind="quiet", bg=C["surface"]).pack(side=tk.LEFT)
         if plugin.installed and plugin.enabled:
-            pill_button(detail_actions, "能力授权…", lambda: self._market_action(pid, "grant"),
+            pill_button(detail_actions, tr("能力授权…"), lambda: self._market_action(pid, "grant"),
                         kind="ghost", bg=C["surface"]).pack(side=tk.LEFT, padx=(8, 0))
         if plugin.grants:
-            pill_button(detail_actions, "撤销授权", lambda: self._market_action(pid, "revoke"),
+            pill_button(detail_actions, tr("撤销授权"), lambda: self._market_action(pid, "revoke"),
                         kind="danger", bg=C["surface"]).pack(side=tk.LEFT, padx=(8, 0))
 
     def _market_tool_section(self, entries, err=""):
         """工具市场：网关工具桥暴露的工具 + 已启用插件声明的工具。"""
         divider(self.market_list, color=C["border_hi"], bg=C["bg"]).pack(
             fill=tk.X, pady=(10, 10))
-        tk.Label(self.market_list, text=f"工具（{len(entries)}）", bg=C["bg"],
+        i18n.Label(self.market_list, text=tr("工具（{count}）", count=len(entries)), bg=C["bg"],
                  fg=C["ter"], font=FONT_UI_BOLD).pack(anchor=tk.W)
         if err:
-            tk.Label(self.market_list, text=f"工具桥未就绪：{err}", bg=C["bg"],
+            i18n.Label(self.market_list, text=f"工具桥未就绪：{err}", bg=C["bg"],
                      fg=C["warn"], font=FONT_MICRO, anchor=tk.W,
                      justify=tk.LEFT, wraplength=760).pack(fill=tk.X, pady=(2, 4))
         if not entries:
-            tk.Label(self.market_list,
+            i18n.Label(self.market_list,
                      text="还没有可用工具。请启动带 --tools 的 Forge 网关；目录中的工具桥条目不能自动启动它。",
                      bg=C["bg"], fg=C["muted"], font=FONT_SMALL).pack(anchor=tk.W)
             return
@@ -2276,14 +2305,14 @@ class ForgeGuiApp:
         grid.grid_columnconfigure(0, weight=0)
         grid.grid_columnconfigure(1, weight=1)
         for row, tool in enumerate(entries):
-            name_lbl = tk.Label(grid, text=tool.name, bg=C["bg"], fg=C["text"],
+            name_lbl = i18n.Label(grid, text=tool.name, bg=C["bg"], fg=C["text"],
                                 font=FONT_MONO or FONT_SMALL, anchor=tk.W)
             name_lbl.grid(row=row, column=0, sticky="w", padx=(0, 12), pady=1)
             desc = ("可调用 · " if tool.active else "仅声明 · ") + (tool.summary or (
                 "插件提供" if tool.source == "plugin" else "网关工具"))
             tone = C["warn"] if tool.danger else C["subtext"]
             mark = "⚠ " if tool.danger else ""
-            tk.Label(grid, text=f"{mark}{desc}", bg=C["bg"], fg=tone,
+            i18n.Label(grid, text=f"{mark}{desc}", bg=C["bg"], fg=tone,
                      font=FONT_MICRO, anchor=tk.W).grid(row=row, column=1, sticky="w", pady=1)
 
     def _gateway_tool_names(self):
@@ -2315,9 +2344,9 @@ class ForgeGuiApp:
     def _market_action(self, pid: str, action: str):
         """安装 / 启用 / 禁用 / 卸载 / 确认信任。"""
         if getattr(self, "_market_action_busy", False):
-            self._set_status("正在处理插件操作，请稍候", "info")
+            self._set_status(tr("正在处理插件操作，请稍候"), "info")
             return
-        if action not in ("install", "ack", "enable", "disable", "uninstall"):
+        if action not in ("install", "ack", "enable", "disable", "uninstall", "grant", "revoke"):
             return
         if action == "uninstall" and not messagebox.askyesno(
                 "卸载插件", f"卸载「{pid}」？\n\n"
@@ -2365,7 +2394,7 @@ class ForgeGuiApp:
 
         def finish(_result):
             self._market_action_busy = False
-            label = {"install": "已安装", "ack": "已知悉", "enable": "已启用",
+            label = {"install": tr("已安装"), "ack": tr("已知悉"), "enable": tr("已启用"),
                      "disable": "已禁用并撤销授权", "uninstall": "已卸载", "revoke": "已撤销全部授权"}[action]
             self._set_status(f"{label} {pid}" + ("（未启用）" if action == "install" else ""),
                              "info" if action in ("disable", "uninstall") else "ok")
@@ -2406,7 +2435,7 @@ class ForgeGuiApp:
                 "provides": plugin.provides, "executes_code": plugin.executes_code,
                 "path": plugin.path, "file_fingerprint": plugin.content_fingerprint,
                 "signature": "未提供签名验证", "error": plugin.error}, ensure_ascii=False, indent=2)
-            dialog = tk.Toplevel(self.root)
+            dialog = i18n.Toplevel(self.root)
             dialog.title(f"检查插件 · {plugin.name}")
             dialog.geometry("700x520")
             dialog.configure(bg=C["bg"])
@@ -2415,30 +2444,30 @@ class ForgeGuiApp:
             content.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
             content.insert("1.0", text)
             content.configure(state=tk.DISABLED)
-            pill_button(dialog, "关闭", dialog.destroy, bg=C["bg"]).pack(pady=(0, 12))
+            pill_button(dialog, tr("关闭"), dialog.destroy, bg=C["bg"]).pack(pady=(0, 12))
         self._submit_background("plugin-inspect", work, done)
 
     def _show_grant_dialog(self, plugin, fingerprint):
         old = getattr(self, "_grant_dialog", None)
         if old is not None and old.winfo_exists():
             old.destroy()
-        dialog = self._grant_dialog = tk.Toplevel(self.root)
-        dialog.title(f"能力授权 · {plugin.name}")
+        dialog = self._grant_dialog = i18n.Toplevel(self.root)
+        dialog.title(tr("能力授权 · {name}", name=plugin.name))
         dialog.transient(self.root)
         dialog.configure(bg=C["bg"])
         dialog.resizable(False, False)
         workspace, session_id = self._repo_root(), self._session_id
-        tk.Label(dialog, text="只选择你允许的能力", bg=C["bg"], fg=C["text"],
+        i18n.Label(dialog, text="只选择你允许的能力", bg=C["bg"], fg=C["text"],
                  font=FONT_SECTION).pack(anchor="w", padx=20, pady=(18, 8))
-        tk.Label(dialog, text=f"工作区：{workspace}\n授权不会覆盖 Forge Policy；需要审批时仍由 Policy 决定。",
+        i18n.Label(dialog, text=tr("工作区：{workspace}\n授权不会覆盖 Forge Policy；需要审批时仍由 Policy 决定。", workspace=workspace),
                  bg=C["bg"], fg=C["muted"], font=FONT_SMALL, justify=tk.LEFT,
                  wraplength=520).pack(anchor="w", padx=20, pady=(0, 10))
         dialog.capability_vars = {}
         for cap in sorted(plugin.declared_capabilities):
             supported = cap in GRANTABLE_CAPABILITIES and not plugin.executes_code
             var = tk.BooleanVar(master=dialog, value=False)
-            checkbox = tk.Checkbutton(dialog, text=PERMISSION_LABELS.get(cap, cap) +
-                ("" if supported else " · 暂不可授权"), variable=var, bg=C["bg"], fg=C["text"],
+            checkbox = i18n.Checkbutton(dialog, text=tr("{base}{detail}", base=tr(PERMISSION_LABELS.get(cap, cap)),
+                detail="" if supported else tr(" · 暂不可授权")), variable=var, bg=C["bg"], fg=C["text"],
                 selectcolor=C["surface2"], activebackground=C["bg"], activeforeground=C["text"],
                 font=FONT_SMALL, state=tk.NORMAL if supported else tk.DISABLED)
             checkbox.pack(anchor="w", padx=20, pady=3)
@@ -2453,14 +2482,14 @@ class ForgeGuiApp:
                 var.set(cap in current)
         dialog.scope_var.trace_add("write", refresh_scope)
         refresh_scope()
-        for value, label in (("session", "仅当前对话"), ("workspace", "此工作区的所有对话")):
-            tk.Radiobutton(dialog, text=label, variable=dialog.scope_var, value=value,
+        for value, label in (("session", tr("仅当前对话")), ("workspace", tr("此工作区的所有对话"))):
+            i18n.Radiobutton(dialog, text=label, variable=dialog.scope_var, value=value,
                 bg=C["bg"], fg=C["text"], selectcolor=C["surface2"], activebackground=C["bg"],
                 activeforeground=C["text"], font=FONT_SMALL).pack(anchor="w", padx=20, pady=3)
         broader = {cap for g in plugin.grants if g.get("workspace") == workspace_key(workspace)
                    and not g.get("session") for cap in g.get("capabilities", [])}
         if broader:
-            tk.Label(dialog, text="工作区已有授权：" + "、".join(PERMISSION_LABELS.get(c, c) for c in sorted(broader)) +
+            i18n.Label(dialog, text="工作区已有授权：" + "、".join(PERMISSION_LABELS.get(c, c) for c in sorted(broader)) +
                      "\n当前对话会继承工作区授权。收窄权限时，请先撤销市场卡片上的授权。",
                      bg=C["bg"], fg=C["warn"], font=FONT_SMALL, wraplength=520,
                      justify=tk.LEFT).pack(anchor="w", padx=20, pady=(8, 0))
@@ -2474,11 +2503,11 @@ class ForgeGuiApp:
             self._apply_market_grant(plugin.id, selected, dialog.scope_var.get(), fingerprint,
                                      workspace=workspace, session_id=session_id)
             dialog.destroy()
-        dialog.grant_btn = pill_button(actions, "授权所选能力", grant, kind="primary", bg=C["bg"])
+        dialog.grant_btn = pill_button(actions, tr("授权所选能力"), grant, kind="primary", bg=C["bg"])
         dialog.grant_btn.pack(side=tk.LEFT)
         if not dialog.capability_vars:
             dialog.grant_btn.configure(state=tk.DISABLED)
-        pill_button(actions, "取消", dialog.destroy, bg=C["bg"]).pack(side=tk.RIGHT)
+        pill_button(actions, tr("取消"), dialog.destroy, bg=C["bg"]).pack(side=tk.RIGHT)
 
     def _apply_market_grant(self, pid, capabilities, scope, fingerprint, *, workspace=None, session_id=None):
         if getattr(self, "_market_action_busy", False):
@@ -2528,30 +2557,30 @@ class ForgeGuiApp:
         head = tk.Frame(card.content, bg=C["surface"])
         head.pack(fill=tk.X)
         IconCanvas(head, key, size=24, bg=C["surface"], fg=C["accent2"]).pack(side=tk.LEFT, padx=(0, 8))
-        tk.Label(head, text=title, bg=C["surface"], fg=C["text"], font=FONT_TITLE).pack(side=tk.LEFT)
+        i18n.Label(head, text=title, bg=C["surface"], fg=C["text"], font=FONT_TITLE).pack(side=tk.LEFT)
         badge(head, "规划中", tone="muted", bg=C["surface"]).pack(side=tk.LEFT, padx=(10, 0))
-        tk.Label(card.content, text=subtitle, bg=C["surface"], fg=C["ter"],
+        i18n.Label(card.content, text=subtitle, bg=C["surface"], fg=C["ter"],
                  font=FONT_SMALL, anchor=tk.W, justify=tk.LEFT,
                  wraplength=680).pack(fill=tk.X, pady=(6, 10))
         for item in bullets:
             row = tk.Frame(card.content, bg=C["surface"])
             row.pack(fill=tk.X, pady=2)
-            tk.Label(row, text="•", bg=C["surface"], fg=C["accent2"],
+            i18n.Label(row, text="•", bg=C["surface"], fg=C["accent2"],
                      font=FONT_UI_BOLD, width=2).pack(side=tk.LEFT)
-            tk.Label(row, text=item, bg=C["surface"], fg=C["body"],
+            i18n.Label(row, text=item, bg=C["surface"], fg=C["body"],
                      font=FONT_SMALL).pack(side=tk.LEFT)
-        tk.Label(card.content, text=note, bg=C["surface"], fg=C["muted"],
+        i18n.Label(card.content, text=note, bg=C["surface"], fg=C["muted"],
                  font=FONT_SMALL, anchor=tk.W, justify=tk.LEFT,
                  wraplength=680).pack(fill=tk.X, pady=(10, 0))
         actions = tk.Frame(card.content, bg=C["surface"])
         actions.pack(fill=tk.X, pady=(14, 0))
         if key == "files":
-            pill_button(actions, "打开工作区", lambda: self._open_workspace("file_tree"),
+            pill_button(actions, tr("打开工作区"), lambda: self._open_workspace("file_tree"),
                         kind="primary", bg=C["surface"]).pack(side=tk.LEFT)
         else:
             pill_button(actions, "回到对话", lambda: self._show_view("chat"),
                         kind="primary", bg=C["surface"]).pack(side=tk.LEFT)
-            pill_button(actions, "打开工作区", lambda: self._open_workspace("file_tree"),
+            pill_button(actions, tr("打开工作区"), lambda: self._open_workspace("file_tree"),
                         kind="ghost", bg=C["surface"]).pack(side=tk.LEFT, padx=(8, 0))
 
     def _nav_click(self, key: str):
@@ -2655,7 +2684,7 @@ class ForgeGuiApp:
             self.workspace.open_changes()
         elif tab == "preview":
             try:
-                self.workspace._set_preview_sub("预览")
+                self.workspace._set_preview_sub(tr("预览"))
             except Exception:
                 pass
         else:
@@ -2784,7 +2813,7 @@ class ForgeGuiApp:
             if msg.role == "user" and msg.content.strip():
                 first = msg.content.strip().splitlines()[0]
                 return first if len(first) <= 26 else first[:26] + "…"
-        return "新对话"
+        return tr("新对话")
 
     def _archive_current_session(self):
         history = list(getattr(self, "_chat_history", []) or [])
@@ -2817,7 +2846,7 @@ class ForgeGuiApp:
         if query:
             sessions = [s for s in sessions if query in str(s.get("title", "")).lower()]
         if not sessions:
-            tk.Label(box, text="还没有历史对话" if not query else "没有匹配的对话",
+            i18n.Label(box, text="还没有历史对话" if not query else "没有匹配的对话",
                      bg=history_bg, fg=C["muted"], font=FONT_MICRO,
                      anchor=tk.W, padx=10, pady=8).pack(fill=tk.X)
             return
@@ -2842,7 +2871,7 @@ class ForgeGuiApp:
             else:
                 group = "更早"
             if group != last_group and not query:
-                tk.Label(box, text=group, bg=history_bg, fg=C["muted"],
+                i18n.Label(box, text=group, bg=history_bg, fg=C["muted"],
                          font=FONT_MICRO, anchor="w", padx=12, pady=7).pack(fill=tk.X)
                 last_group = group
             sid = str(session.get("id", ""))
@@ -2857,7 +2886,7 @@ class ForgeGuiApp:
             marker.pack(side=tk.LEFT, fill=tk.Y)
             row._active_marker = marker
             title = str(session.get("title", "未命名对话"))
-            title_label = tk.Label(row, text=title, bg=row["bg"],
+            title_label = i18n.Label(row, text=title, bg=row["bg"],
                      fg=C["text"] if active else C["subtext"], font=FONT_SMALL,
                      anchor=tk.W)
             title_label.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(9, 8), pady=6)
@@ -2879,7 +2908,7 @@ class ForgeGuiApp:
 
     def _new_session(self):
         if self._sending:
-            self._set_status("正在生成回复，完成后可新建对话", "info")
+            self._set_status(tr("正在生成回复，完成后可新建对话"), "info")
             return
         self._archive_current_session()
         self._chat_history.clear()
@@ -2892,12 +2921,12 @@ class ForgeGuiApp:
         if hasattr(self, "chat_area"):
             self._show_chat_start()
         try:
-            self.chat_title_var.set("新对话")
+            self.chat_title_var.set(tr("新对话"))
             self.chat_sub_var.set("")
         except AttributeError:
             pass
         self._refresh_history()
-        self._set_status("已新建对话", "info")
+        self._set_status(tr("已新建对话"), "info")
         self.input_card.focus_entry()
 
     def _load_session(self, sid: str):
@@ -2916,7 +2945,7 @@ class ForgeGuiApp:
                               and m.get("role") in ("user", "assistant")
                               and isinstance(m.get("content"), str)]
         self._session_id = sid
-        self._session_custom_title = str(session.get("title", "对话"))
+        self._session_custom_title = str(session.get("title", tr("对话")))
         self._attachments.clear()
         self.send_var.set("")
         self._include_history = True
@@ -2930,7 +2959,7 @@ class ForgeGuiApp:
                     agent = self.chat_area.add_agent(app=self)
                     agent.render_markdown(msg.content)
         try:
-            self.chat_title_var.set(str(session.get("title", "对话")))
+            self.chat_title_var.set(str(session.get("title", tr("对话"))))
             self.chat_sub_var.set("")
         except AttributeError:
             pass
@@ -2945,16 +2974,16 @@ class ForgeGuiApp:
         只有一轮对话时中间大半是深灰空区——把它利用起来；产生对话后自动消失。
         """
         lines = []
-        lines.append("你可以让我审查更改、运行测试、解释代码，或描述一个新目标。")
+        lines.append(tr("你可以让我审查更改、运行测试、解释代码，或描述一个新目标。"))
         self.chat_area.show_empty(
-            "今天想完成什么？",
+            tr("今天想完成什么？"),
             tuple(lines),
             actions=(
-                ("开始对话", "提问、讨论方案或梳理需求",
+                (tr("开始对话"), tr("提问、讨论方案或梳理需求"),
                  self.input_card.focus_entry),
-                ("交给 Forge 一个任务", "运行工具并在时间线里跟踪进度",
+                (tr("交给 Forge 一个任务"), tr("运行工具并在时间线里跟踪进度"),
                  lambda: self._show_view("task")),
-                ("查看项目工作区", "浏览文件、变更、Diff 与预览",
+                (tr("查看项目工作区"), tr("浏览文件、变更、Diff 与预览"),
                  lambda: self._open_workspace("file_tree")),
             ),
         )
@@ -2967,13 +2996,13 @@ class ForgeGuiApp:
                 return
             if self.send_var.get().strip():
                 self.input_card.focus_entry()
-                self._set_status("已有未发送草稿，请先编辑或发送当前内容", "info")
+                self._set_status(tr("已有未发送草稿，请先编辑或发送当前内容"), "info")
                 return
             self.send_var.set(text)
             self.input_card.focus_entry()
-        return (("审查更改", lambda: draft("请审查当前工作区的实际更改，并说明问题和建议。")),
-                ("运行测试", lambda: draft("请运行当前项目已有的测试，并报告真实结果。")),
-                ("解释代码", lambda: draft("请先查看当前项目的 README，再解释项目结构和主要代码。")))
+        return ((tr("审查更改"), lambda: draft("请审查当前工作区的实际更改，并说明问题和建议。")),
+                (tr("运行测试"), lambda: draft("请运行当前项目已有的测试，并报告真实结果。")),
+                (tr("解释代码"), lambda: draft("请先查看当前项目的 README，再解释项目结构和主要代码。")))
 
     def _refresh_work_context(self):
         repo = self.run_py.parent if self.run_py else None
@@ -3003,7 +3032,7 @@ class ForgeGuiApp:
     def _build_task_view(self, parent):
         head = tk.Frame(parent, bg=C["chat"])
         head.pack(fill=tk.X, padx=20, pady=(16, 10))
-        tk.Label(head, text="任务", bg=C["chat"], fg=C["text"],
+        i18n.Label(head, text=tr("任务"), bg=C["chat"], fg=C["text"],
                  font=FONT_TITLE).pack(side=tk.LEFT)
         IconButton(head, text="＋ 新建任务", command=self._clear_task_view,
                   bg=C["chat"], fg=C["ter"], activebackground=C["hover"],
@@ -3011,13 +3040,13 @@ class ForgeGuiApp:
                   padx=10, pady=3, cursor="hand2",
                   highlightthickness=1, highlightbackground=C["border_hi"]
                   ).pack(side=tk.RIGHT)
-        tk.Label(parent, text="交代目标与验收标准，Forge 会执行并汇报过程；产出可在工作区查看。",
+        i18n.Label(parent, text="交代目标与验收标准，Forge 会执行并汇报过程；产出可在工作区查看。",
                  bg=C["chat"], fg=C["ter"], font=FONT_SMALL, anchor=tk.W,
                  justify=tk.LEFT, wraplength=760).pack(fill=tk.X, padx=20)
 
         ctl = tk.Frame(parent, bg=C["chat"])
         ctl.pack(side=tk.BOTTOM, fill=tk.X, padx=20, pady=(10, 12))
-        tk.Label(ctl, text="交给 Forge 的任务", bg=C["chat"], fg=C["subtext"],
+        i18n.Label(ctl, text="交给 Forge 的任务", bg=C["chat"], fg=C["subtext"],
                  font=FONT_SMALL, anchor=tk.W).pack(fill=tk.X, pady=(0, 6))
         self.task_var = tk.StringVar()
         entry = tk.Entry(ctl, textvariable=self.task_var, bg=C["input_bg"],
@@ -3029,7 +3058,7 @@ class ForgeGuiApp:
 
         strategy_row = tk.Frame(ctl, bg=C["chat"])
         strategy_row.pack(fill=tk.X, pady=(8, 0))
-        tk.Label(strategy_row, text="策略", bg=C["chat"], fg=C["muted"],
+        i18n.Label(strategy_row, text="策略", bg=C["chat"], fg=C["muted"],
                  font=FONT_MICRO).pack(side=tk.LEFT, padx=(0, 6))
         self._strategy_row = tk.Frame(strategy_row, bg=C["chat"])
         self._strategy_row.pack(side=tk.LEFT)
@@ -3239,11 +3268,11 @@ class ForgeGuiApp:
         elif changed > 0:
             actions.append({"label": f"📑 仓库变更 ({changed})", "kind": "primary",
                             "command": lambda: self._open_workspace("changes")})
-        actions.append({"label": "打开工作区", "command": lambda: self._open_workspace("file_tree")})
+        actions.append({"label": tr("打开工作区"), "command": lambda: self._open_workspace("file_tree")})
         if isinstance(data, dict):
             actions.extend(self._file_actions(str(data.get("text") or "")))
         if changed:
-            actions.append({"label": "预览选中文件", "command": lambda: self._open_workspace("preview")})
+            actions.append({"label": tr("预览选中文件"), "command": lambda: self._open_workspace("preview")})
         msg.add_actions(actions)
 
         if self.workspace is not None:
@@ -3290,6 +3319,20 @@ class ForgeGuiApp:
 
     # ── 标签 1：管理 ──────────────────────────────────────────
     def _build_manage_tab(self, parent):
+        language_row = tk.Frame(parent, bg=C["bg"])
+        language_row.pack(fill=tk.X, pady=(8, 0))
+        i18n.Label(language_row, text=tr("界面语言"), bg=C["bg"], fg=C["text"],
+                   font=FONT_SMALL).pack(side=tk.LEFT, padx=(0, 10))
+        self.language_var = tk.StringVar(value=i18n.LANGUAGES[self.root._forge_locale.language])
+        self.language_picker = ttk.Combobox(language_row, textvariable=self.language_var,
+            values=list(i18n.LANGUAGES.values()), state="readonly", width=15, font=FONT_SMALL)
+        self.language_picker.pack(side=tk.LEFT)
+        self.language_picker.bind("<<ComboboxSelected>>", lambda _e: self._change_language(
+            next(code for code, label in i18n.LANGUAGES.items() if label == self.language_var.get())))
+        language_hint = i18n.Label(language_row, text=tr("立即应用；保留草稿、对话和布局。"),
+                   bg=C["bg"], fg=C["muted"], font=FONT_CAPTION, justify=tk.LEFT)
+        language_hint.pack(side=tk.LEFT, padx=12, fill=tk.X, expand=True)
+        theme.bind_wrap(language_hint)
         split = tk.PanedWindow(parent, orient=tk.HORIZONTAL, bg=C["border"],
                                sashwidth=7, sashrelief=tk.FLAT, bd=0)
         split.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
@@ -3316,14 +3359,14 @@ class ForgeGuiApp:
         # 被压成 1x1），核心入口不能随配置数量增长消失。
         head = tk.Frame(left, bg=C["surface"])
         head.pack(fill=tk.X)
-        tk.Label(head, text="用户配置", bg=C["surface"], fg=C["text"],
+        i18n.Label(head, text=tr("用户配置"), bg=C["surface"], fg=C["text"],
                  font=FONT_SECTION).pack(anchor=tk.W)
         count_row = tk.Frame(head, bg=C["surface"])
         count_row.pack(fill=tk.X, pady=(2, 8))
-        self.provider_count_var = tk.StringVar(value="0 条用户配置")
-        tk.Label(count_row, textvariable=self.provider_count_var, bg=C["surface"],
+        self.provider_count_var = i18n.StringVar(self.root, value=tr("0 条用户配置"))
+        i18n.Label(count_row, textvariable=self.provider_count_var, bg=C["surface"],
                  fg=C["muted"], font=FONT_SMALL).pack(side=tk.LEFT)
-        tk.Label(count_row, text="选择条目载入右侧编辑", bg=C["surface"],
+        i18n.Label(count_row, text=tr("选择条目载入右侧编辑"), bg=C["surface"],
                  fg=C["muted"], font=FONT_SMALL).pack(side=tk.RIGHT)
         # 搜索 / 筛选（对显示名与真实 id 都匹配）
         search_row = tk.Frame(head, bg=C["surface"])
@@ -3338,7 +3381,7 @@ class ForgeGuiApp:
                                 highlightbackground=C["border"],
                                 highlightcolor=C["accent"])
         search_entry.pack(fill=tk.X, ipady=4)
-        self._provider_search_placeholder = "🔍 搜索名称 / 模型 / ID"
+        self._provider_search_placeholder = tr("🔍 搜索名称 / 模型 / ID")
         self._provider_search_entry = search_entry
         search_entry.insert(0, self._provider_search_placeholder)
         search_entry.configure(fg=C["placeholder"])
@@ -3382,9 +3425,9 @@ class ForgeGuiApp:
         # 插在标题之前：side=TOP 首个 pack 的在最上
         # 此刻 right 还没有别的子控件，side=TOP 即为最上；标题/流水线在其后 pack
         self.model_edit_frame.pack(side=tk.TOP, fill=tk.X, pady=(0, 10), ipadx=10, ipady=8)
-        tk.Label(self.model_edit_frame, text="模型快捷编辑", bg=C["input_bg"], fg=C["text"],
+        i18n.Label(self.model_edit_frame, text="模型快捷编辑", bg=C["input_bg"], fg=C["text"],
                  font=FONT_UI_BOLD).pack(anchor=tk.W)
-        self.model_edit_target = tk.Label(self.model_edit_frame, text="（先在列表选中 provider）",
+        self.model_edit_target = i18n.Label(self.model_edit_frame, text="（先在列表选中 provider）",
                                           bg=C["input_bg"], fg=C["muted"], font=FONT_SMALL,
                                           wraplength=240, justify=tk.LEFT)
         self.model_edit_target.pack(anchor=tk.W, pady=(2, 6))
@@ -3399,7 +3442,7 @@ class ForgeGuiApp:
                                          highlightcolor=C["accent"])
         self.model_edit_entry.grid(row=0, column=0, sticky="ew", ipady=4)
         # 按钮 grid 自然宽：之前 pack 在扩张 Entry 后面被挤成 8px 紫条
-        self.model_apply_btn = tk.Button(entry_row, text="应用", bg=C["accent"], fg="#ffffff",
+        self.model_apply_btn = i18n.Button(entry_row, text="应用", bg=C["accent"], fg="#ffffff",
                                          activebackground=C["accent_hover"], activeforeground="#ffffff",
                                          font=FONT_UI_BOLD, relief=tk.FLAT, padx=10, pady=3,
                                          command=self._apply_model_edit, cursor="hand2",
@@ -3412,14 +3455,14 @@ class ForgeGuiApp:
         # 探活按钮
         probe_row = tk.Frame(self.model_edit_frame, bg=C["input_bg"])
         probe_row.pack(fill=tk.X, pady=(6, 0))
-        self.model_probe_btn = tk.Button(probe_row, text="测试此 provider", bg=C["surface2"], fg=C["link"],
+        self.model_probe_btn = i18n.Button(probe_row, text="测试此 provider", bg=C["surface2"], fg=C["link"],
                                          activebackground=C["link_soft"], activeforeground=C["link"],
                                          font=FONT_UI, relief=tk.FLAT, padx=8, pady=2,
                                          command=self._probe_selected_provider, cursor="hand2",
                                          state=tk.DISABLED)
         self.model_probe_btn.pack(side=tk.LEFT)
         self.model_probe_var = tk.StringVar(value="")
-        tk.Label(probe_row, textvariable=self.model_probe_var, bg=C["input_bg"],
+        i18n.Label(probe_row, textvariable=self.model_probe_var, bg=C["input_bg"],
                  fg=C["muted"], font=FONT_SMALL).pack(side=tk.LEFT, padx=(8, 0))
         # 两条路径：① 一键配置（选温度）；② 手写配置文件。放底部 actions 区上方。
         one_click = tk.Frame(right, bg=C["surface"], highlightthickness=1,
@@ -3430,17 +3473,17 @@ class ForgeGuiApp:
         oc_head = tk.Frame(one_click, bg=C["input_bg"])
         oc_head.pack(fill=tk.X)
         self._temp_expanded = False
-        self.temp_toggle_var = tk.StringVar(value="▸ 一键配置 · 采样温度")
+        self.temp_toggle_var = i18n.StringVar(self.root, value=tr("▸ 一键配置 · 采样温度"))
         self.temp_summary_var = tk.StringVar(value="")
-        tk.Button(oc_head, textvariable=self.temp_toggle_var,
+        i18n.Button(oc_head, textvariable=self.temp_toggle_var,
                   bg=C["input_bg"], fg=C["text"], font=FONT_UI_BOLD,
                   relief=tk.FLAT, bd=0, padx=0, pady=2, anchor=tk.W,
                   command=self._toggle_temp_panel, cursor="hand2",
                   ).pack(side=tk.LEFT, fill=tk.X, expand=True)
-        tk.Label(oc_head, textvariable=self.temp_summary_var, bg=C["input_bg"],
+        i18n.Label(oc_head, textvariable=self.temp_summary_var, bg=C["input_bg"],
                  fg=C["muted"], font=FONT_SMALL).pack(side=tk.RIGHT)
         oc_body = tk.Frame(one_click, bg=C["input_bg"])
-        tk.Label(oc_body,
+        i18n.Label(oc_body,
                  text="Agent 场景 0.7 更稳；只接受默认温度的模型会自动跳过；"
                       "Claude 协议不发任何采样参数。",
                  bg=C["input_bg"], fg=C["muted"], font=FONT_SMALL,
@@ -3455,7 +3498,7 @@ class ForgeGuiApp:
         for col, (value, label) in enumerate((("0.7", "0.7 · 均衡"),
                                               ("1.0", "1.0 · 保守"),
                                               ("", "不设置"))):
-            btn = tk.Button(
+            btn = i18n.Button(
                 temp_row, text=label, bg=C["surface2"], fg=C["text"],
                 activebackground=C["accent_soft"], activeforeground=C["accent"],
                 font=FONT_UI, relief=tk.FLAT, padx=8, pady=4, cursor="hand2",
@@ -3476,9 +3519,9 @@ class ForgeGuiApp:
                   command=lambda: self._open_path(self.home), cursor="hand2"
                   ).pack(fill=tk.X, pady=(8, 0))
 
-        tk.Label(right, text="添加或编辑配置", bg=C["bg"], fg=C["text"],
+        i18n.Label(right, text="添加或编辑配置", bg=C["bg"], fg=C["text"],
                  font=FONT_SECTION).pack(anchor=tk.W)
-        tk.Label(right, text="粘贴 Provider JSON 或地址与密钥，整理后确认预览再保存。",
+        i18n.Label(right, text="粘贴 Provider JSON 或地址与密钥，整理后确认预览再保存。",
                  bg=C["bg"], fg=C["muted"], font=FONT_SMALL
                  ).pack(anchor=tk.W, pady=(2, 10))
         self.input_text = scrolledtext.ScrolledText(
@@ -3502,44 +3545,44 @@ class ForgeGuiApp:
 
         btn_bar = tk.Frame(right, bg=C["bg"])
         btn_bar.pack(fill=tk.X, pady=(9, 14))
-        self.organize_btn = tk.Button(
+        self.organize_btn = i18n.Button(
             btn_bar, text="整理并预览", bg=C["accent"], fg="#ffffff",
             activebackground=C["accent_hover"], activeforeground="#ffffff",
             font=FONT_UI_BOLD, relief=tk.FLAT, padx=16, pady=6,
             command=self._do_organize, cursor="hand2",
         )
         self.organize_btn.pack(side=tk.LEFT)
-        tk.Button(btn_bar, text="粘贴", bg=C["surface2"], fg=C["text"],
+        i18n.Button(btn_bar, text="粘贴", bg=C["surface2"], fg=C["text"],
                   activebackground=C["border"], activeforeground=C["text"],
                   font=FONT_UI, relief=tk.FLAT, padx=12, pady=6,
                   command=self._paste_clipboard, cursor="hand2"
                   ).pack(side=tk.LEFT, padx=(8, 0))
         # 破坏性操作（清空输入区）用红色文字区分，不和普通操作混一层级（清单 #6）
-        tk.Button(btn_bar, text="清空", bg=C["surface2"], fg=C["error"],
+        i18n.Button(btn_bar, text=tr("清空"), bg=C["surface2"], fg=C["error"],
                   activebackground=C["error_soft"], activeforeground=C["error"],
                   font=FONT_UI, relief=tk.FLAT, padx=12, pady=6,
                   command=self._clear_input, cursor="hand2"
                   ).pack(side=tk.LEFT, padx=(8, 0))
         # 从 AutoClaw 用户层导入 provider（一次把 18 个 provider 写进 forge 用户层 + 密钥库）
-        tk.Button(btn_bar, text="从 AutoClaw 导入", bg=C["surface2"], fg=C["accent"],
+        i18n.Button(btn_bar, text="从 AutoClaw 导入", bg=C["surface2"], fg=C["accent"],
                   activebackground=C["accent_soft"], activeforeground=C["accent"],
                   font=FONT_UI, relief=tk.FLAT, padx=12, pady=6,
                   command=self._import_from_autoclaw, cursor="hand2"
                   ).pack(side=tk.LEFT, padx=(8, 0))
         # 供应商目录：19 家常见厂商 + 各自的套餐/订阅端点，点一下填模板
-        tk.Button(btn_bar, text="供应商目录", bg=C["surface2"], fg=C["link"],
+        i18n.Button(btn_bar, text="供应商目录", bg=C["surface2"], fg=C["link"],
                   activebackground=C["link_soft"], activeforeground=C["link"],
                   font=FONT_UI, relief=tk.FLAT, padx=12, pady=6,
                   command=self._open_provider_catalog, cursor="hand2"
                   ).pack(side=tk.LEFT, padx=(8, 0))
-        tk.Label(btn_bar, text="Ctrl + Enter 整理", bg=C["bg"],
+        i18n.Label(btn_bar, text="Ctrl + Enter 整理", bg=C["bg"],
                  fg=C["muted"], font=FONT_SMALL).pack(side=tk.RIGHT)
 
         preview_head = tk.Frame(right, bg=C["bg"])
         preview_head.pack(fill=tk.X, pady=(0, 7))
-        tk.Label(preview_head, text="预览", bg=C["bg"], fg=C["text"],
+        i18n.Label(preview_head, text=tr("预览"), bg=C["bg"], fg=C["text"],
                  font=FONT_SECTION).pack(side=tk.LEFT)
-        tk.Label(preview_head, text="整理后的 patch JSON", bg=C["bg"],
+        i18n.Label(preview_head, text="整理后的 patch JSON", bg=C["bg"],
                  fg=C["muted"], font=FONT_SMALL).pack(side=tk.LEFT, padx=(10, 0))
         self.preview_text = scrolledtext.ScrolledText(
             right, height=6, bg=C["input_bg"], fg=C["accent2"],
@@ -3550,10 +3593,10 @@ class ForgeGuiApp:
         self._style_scrollbar(self.preview_text)
         self._tint_scrolledtext(self.preview_text, C["input_bg"])
         warn_head = tk.Frame(right, bg=C["bg"])
-        tk.Label(warn_head, text="提示与环境变量", bg=C["bg"],
+        i18n.Label(warn_head, text="提示与环境变量", bg=C["bg"],
                  fg=C["subtext"], font=FONT_UI_BOLD).pack(side=tk.LEFT)
-        self.warning_count_var = tk.StringVar(value="无提示")
-        tk.Label(warn_head, textvariable=self.warning_count_var,
+        self.warning_count_var = i18n.StringVar(self.root, value=tr("无提示"))
+        i18n.Label(warn_head, textvariable=self.warning_count_var,
                  bg=C["bg"], fg=C["muted"], font=FONT_SMALL
                  ).pack(side=tk.RIGHT)
         self.warn_text = scrolledtext.ScrolledText(
@@ -3565,9 +3608,9 @@ class ForgeGuiApp:
         self._style_scrollbar(self.warn_text)
         self._tint_scrolledtext(self.warn_text, C["surface"])
         footer = tk.Frame(right_host, bg=C["bg"], padx=14)
-        tk.Label(footer, text="预览后保存", bg=C["bg"],
+        i18n.Label(footer, text="预览后保存", bg=C["bg"],
                  fg=C["muted"], font=FONT_SMALL).pack(side=tk.LEFT)
-        self.save_btn = tk.Button(
+        self.save_btn = i18n.Button(
             footer, text="保存到用户层", bg=C["ok"], fg="#ffffff",
             activebackground=C["accent_hover"], activeforeground="#ffffff",
             font=FONT_UI_BOLD, relief=tk.FLAT, padx=16, pady=7,
@@ -3591,8 +3634,8 @@ class ForgeGuiApp:
         self.feature_card.pack(fill=tk.BOTH, expand=True, pady=(12, 0))
         head = tk.Frame(self.feature_card, bg=C["surface"])
         head.pack(fill=tk.X)
-        self.feature_title_var = tk.StringVar(value="▸ 功能开关")
-        self.feature_toggle_btn = tk.Button(
+        self.feature_title_var = i18n.StringVar(self.root, value=tr("▸ 功能开关"))
+        self.feature_toggle_btn = i18n.Button(
             head, textvariable=self.feature_title_var, bg=C["surface"],
             fg=C["text"], activebackground=C["surface2"],
             activeforeground=C["accent"], font=FONT_UI_BOLD,
@@ -3600,34 +3643,34 @@ class ForgeGuiApp:
             command=self._toggle_feature_panel, cursor="hand2",
         )
         self.feature_toggle_btn.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self.feature_summary_var = tk.StringVar(value="读取中")
-        tk.Label(head, textvariable=self.feature_summary_var, bg=C["surface"],
+        self.feature_summary_var = i18n.StringVar(self.root, value=tr("读取中"))
+        i18n.Label(head, textvariable=self.feature_summary_var, bg=C["surface"],
                  fg=C["muted"], font=FONT_SMALL).pack(side=tk.RIGHT)
 
         self.feature_body = tk.Frame(self.feature_card, bg=C["surface"])
-        self.feature_feedback_var = tk.StringVar(value="勾选仅修改草稿。保存后，重启正在运行的 Forge / 通道服务以应用配置。")
-        tk.Label(self.feature_body, textvariable=self.feature_feedback_var,
+        self.feature_feedback_var = i18n.StringVar(self.root, value=tr("勾选仅修改草稿。保存后，重启正在运行的 Forge / 通道服务以应用配置。"))
+        i18n.Label(self.feature_body, textvariable=self.feature_feedback_var,
                  bg=C["surface"], fg=C["subtext"], font=FONT_SMALL,
                  anchor=tk.W, justify=tk.LEFT, wraplength=800
                  ).pack(fill=tk.X, pady=(10, 8))
         actions = tk.Frame(self.feature_body, bg=C["surface"])
         actions.pack(side=tk.BOTTOM, fill=tk.X, pady=(10, 0))
-        self.feature_reset_btn = tk.Button(
+        self.feature_reset_btn = i18n.Button(
             actions, text="还原未保存修改", bg=C["surface2"], fg=C["subtext"],
             activebackground=C["border"], activeforeground=C["text"],
             font=FONT_SMALL, relief=tk.FLAT, padx=10, pady=5,
             command=self._discard_feature_changes, cursor="hand2", state=tk.DISABLED,
         )
         self.feature_reset_btn.pack(side=tk.LEFT)
-        tk.Button(actions, text="刷新已保存配置", command=self._reload_configuration,
+        i18n.Button(actions, text="刷新已保存配置", command=self._reload_configuration,
                   bg=C["surface2"], fg=C["text"], activebackground=C["border"],
                   font=FONT_SMALL, relief=tk.FLAT, padx=10, pady=5,
                   cursor="hand2").pack(side=tk.LEFT, padx=8)
-        tk.Button(actions, text="选择 Forge 目录", command=self._choose_forge_repo,
+        i18n.Button(actions, text=tr("选择 Forge 目录"), command=self._choose_forge_repo,
                   bg=C["surface2"], fg=C["text"], activebackground=C["border"],
                   font=FONT_SMALL, relief=tk.FLAT, padx=10, pady=5,
                   cursor="hand2").pack(side=tk.LEFT)
-        self.feature_save_btn = tk.Button(
+        self.feature_save_btn = i18n.Button(
             actions, text="保存功能开关", bg=C["accent"], fg="#ffffff",
             activebackground=C["accent_hover"], activeforeground="#ffffff",
             font=FONT_UI_BOLD, relief=tk.FLAT, padx=14, pady=6,
@@ -3700,7 +3743,7 @@ class ForgeGuiApp:
         self.feature_list.grid_columnconfigure(0, weight=1)
         var = tk.BooleanVar(value=entry["value"])
         entry["var"] = var
-        toggle = tk.Checkbutton(
+        toggle = i18n.Checkbutton(
             card, text=entry["label"], variable=var, command=self._mark_features_dirty,
             bg=C["input_bg"], fg=C["text"], activebackground=C["input_bg"],
             activeforeground=C["accent"], selectcolor=C["surface2"],
@@ -3710,10 +3753,10 @@ class ForgeGuiApp:
         )
         state_var = tk.StringVar(value="")
         entry["state_var"] = state_var
-        tk.Label(card, textvariable=state_var, bg=C["input_bg"], fg=C["accent"],
+        i18n.Label(card, textvariable=state_var, bg=C["input_bg"], fg=C["accent"],
                  font=FONT_SMALL).pack(side=tk.RIGHT, padx=8)
         toggle.pack(anchor=tk.W)
-        description = tk.Label(card, text=entry["description"], bg=C["input_bg"], fg=C["muted"],
+        description = i18n.Label(card, text=entry["description"], bg=C["input_bg"], fg=C["muted"],
                                font=FONT_SMALL, anchor=tk.W, justify=tk.LEFT)
         description.pack(anchor=tk.W, padx=(23, 0), pady=(2, 0))
         card.bind("<Configure>", lambda event: (
@@ -3747,7 +3790,7 @@ class ForgeGuiApp:
                     "value": value, "label": label, "description": description,
                 })
         if not self._feature_entries:
-            tk.Label(self.feature_list, text="当前用户层没有可切换的布尔功能。添加 Provider 或通道配置后会自动出现在这里。",
+            i18n.Label(self.feature_list, text="当前用户层没有可切换的布尔功能。添加 Provider 或通道配置后会自动出现在这里。",
                      bg=C["surface"], fg=C["muted"], font=FONT_SMALL, anchor=tk.W,
                      justify=tk.LEFT, wraplength=620).pack(fill=tk.X, pady=4)
         self._mark_features_dirty()
@@ -3758,7 +3801,7 @@ class ForgeGuiApp:
             changed = bool(entry["var"].get()) != entry["value"]
             changes += changed
             positive_switch = entry["kind"] == "provider" or entry["path"][-1] in ("enabled", "moa")
-            state = (("开启" if entry["var"].get() else "关闭") if positive_switch
+            state = ((tr("开启") if entry["var"].get() else tr("关闭")) if positive_switch
                      else ("是 / true" if entry["var"].get() else "否 / false"))
             entry["state_var"].set(f"{state} · {'未保存' if changed else '已保存'}")
         self._feature_dirty = bool(changes)
@@ -3840,11 +3883,11 @@ class ForgeGuiApp:
         left.pack(side=tk.LEFT, fill=tk.X, expand=True)
         title_row = tk.Frame(left, bg=C["chat"])
         title_row.pack(anchor=tk.W, fill=tk.X)
-        self.chat_title_var = tk.StringVar(value="新对话")
-        tk.Label(title_row, textvariable=self.chat_title_var, bg=C["chat"],
+        self.chat_title_var = i18n.StringVar(self.root, value=tr("新对话"))
+        i18n.Label(title_row, textvariable=self.chat_title_var, bg=C["chat"],
                  fg=C["text"], font=FONT_TITLE).pack(side=tk.LEFT)
         self.chat_sub_var = tk.StringVar(value="")
-        subtitle = tk.Label(parent, textvariable=self.chat_sub_var, bg=C["chat"], fg=C["muted"],
+        subtitle = i18n.Label(parent, textvariable=self.chat_sub_var, bg=C["chat"], fg=C["muted"],
                  font=FONT_MICRO, anchor=tk.W, justify=tk.LEFT,
                  wraplength=520)
         def fit_subtitle(*_):
@@ -3866,7 +3909,7 @@ class ForgeGuiApp:
         self.session_menu_btn.pack(side=tk.RIGHT)
         self.clear_chat_btn = pill_button(right, "＋", self._new_session,
                                          kind="quiet", bg=C["chat"], padx=8)
-        self.market_entry_btn = pill_button(right, "插件市场", self._open_plugin_market,
+        self.market_entry_btn = pill_button(right, tr("插件市场"), self._open_plugin_market,
                                             kind="quiet", bg=C["chat"])
         self.market_entry_btn.pack(side=tk.RIGHT, padx=(0, 6))
         self.model_chip = None  # 模型选择统一放在 Composer。
@@ -3881,7 +3924,7 @@ class ForgeGuiApp:
 
         self.input_card = cw.InputCard(
             parent, bg=C["chat"],
-            placeholder="让 Forge 构建、修复或调查……",
+            placeholder=tr("让 Forge 构建、修复或调查……"),
             on_send=self._do_send,
             on_stop=self._stop_send,
             on_paste=self._paste_into_input,
@@ -3889,7 +3932,7 @@ class ForgeGuiApp:
             model_var=self.model_var,
             on_thinking=self._open_thinking_menu,
             thinking_text=self._thinking_label(),
-            footer_left="就绪",
+            footer_left=tr("就绪"),
             model_widget=self._make_model_picker,
             on_attach=self._attach_files,
             on_context=self._open_context,
@@ -3899,7 +3942,7 @@ class ForgeGuiApp:
         )
         self.input_card.pack(fill=tk.X, side=tk.BOTTOM, padx=20, pady=(0, 6))
         self.context_summary = tk.StringVar(value="历史上下文：开启 · 附件：0")
-        self.context_summary_label = tk.Label(
+        self.context_summary_label = i18n.Label(
             parent, textvariable=self.context_summary, bg=C["chat"], fg=C["ter"],
             font=FONT_MICRO, anchor="w", padx=20)
         self.chat_area.pack(fill=tk.BOTH, expand=True)
@@ -3910,7 +3953,7 @@ class ForgeGuiApp:
         self.model_var.trace_add("write", lambda *_: self._sync_composer_metadata())
         self.reasoning_var.trace_add("write", lambda *_: self._sync_composer_metadata())
         self._sync_composer_metadata()
-        self.request_status_var = tk.StringVar(value="空闲")
+        self.request_status_var = i18n.StringVar(self.root, value=tr("空闲"))
         self._show_chat_start()
 
     def _make_model_picker(self, host):
@@ -3947,9 +3990,9 @@ class ForgeGuiApp:
         provider = select_provider(self.user_rows, model)
         brand = brand_marks.detect(model=model, provider=provider) if provider else None
         row = next((row for row in self.user_rows if row.get("config") == provider), None)
-        name = brand.label if brand else str(row.get("id")) if row else "未配置"
+        name = brand.label if brand else str(row.get("id")) if row else tr("未配置")
         effort = self.reasoning_var.get()
-        mode = "标准" if effort == "off" else REASONING_LABELS.get(effort, effort)
+        mode = tr("标准") if effort == "off" else REASONING_LABELS.get(effort, effort)
         self.input_card.set_metadata(provider=name, mode=mode)
 
     def _on_model_picked(self, value: str) -> None:
@@ -3991,7 +4034,7 @@ class ForgeGuiApp:
         同一家的标准 API 与订阅套餐（Coding Plan 等）**分开列**，因为端点不同。
         这里只填 baseURL / wire / model，**不碰密钥**。
         """
-        dialog = tk.Toplevel(self.root)
+        dialog = i18n.Toplevel(self.root)
         dialog.title("供应商目录")
         dialog.bind("<Escape>", lambda _event: dialog.destroy() or "break")
         dialog.geometry("820x640")
@@ -4001,9 +4044,9 @@ class ForgeGuiApp:
 
         head = tk.Frame(dialog, bg=C["bg"], padx=20, pady=16)
         head.pack(fill=tk.X)
-        tk.Label(head, text="供应商目录", bg=C["bg"], fg=C["text"],
+        i18n.Label(head, text="供应商目录", bg=C["bg"], fg=C["text"],
                  font=FONT_TITLE).pack(anchor=tk.W)
-        tk.Label(head, text="每个供应商单独一条；标准 API 与订阅套餐分开列。"
+        i18n.Label(head, text="每个供应商单独一条；标准 API 与订阅套餐分开列。"
                             "点一行即把 baseURL / wire 填进下面的输入框，你再补 apiKey。",
                  bg=C["bg"], fg=C["muted"], font=FONT_SMALL,
                  wraplength=740, justify=tk.LEFT).pack(anchor=tk.W, pady=(2, 10))
@@ -4017,7 +4060,7 @@ class ForgeGuiApp:
                          highlightbackground=C["border_hi"],
                          highlightcolor=C["accent"])
         entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=5)
-        tk.Label(search_row, text="搜名称 / 别名 / 域名", bg=C["bg"],
+        i18n.Label(search_row, text="搜名称 / 别名 / 域名", bg=C["bg"],
                  fg=C["muted"], font=FONT_SMALL).pack(side=tk.LEFT, padx=(8, 0))
 
         listing = cw.ScrollArea(dialog, bg=C["surface"], padx=0, pady=0)
@@ -4025,9 +4068,9 @@ class ForgeGuiApp:
 
         footer = tk.Frame(dialog, bg=C["bg"], padx=20, pady=10)
         footer.pack(fill=tk.X)
-        tk.Label(footer, text="「待确认」= 该地址我没核到一手来源，若报错请以官网控制台为准",
+        i18n.Label(footer, text="「待确认」= 该地址我没核到一手来源，若报错请以官网控制台为准",
                  bg=C["bg"], fg=C["muted"], font=FONT_CAPTION).pack(side=tk.LEFT)
-        tk.Button(footer, text="关闭", bg=C["surface2"], fg=C["text"],
+        i18n.Button(footer, text=tr("关闭"), bg=C["surface2"], fg=C["text"],
                   activebackground=C["border"], activeforeground=C["text"],
                   font=FONT_UI, relief=tk.FLAT, padx=14, pady=5,
                   command=dialog.destroy, cursor="hand2").pack(side=tk.RIGHT)
@@ -4052,7 +4095,7 @@ class ForgeGuiApp:
                 child.destroy()
             hits = catalog.find(search_var.get())
             if not hits:
-                tk.Label(listing.inner, text="没有匹配的供应商", bg=C["surface"],
+                i18n.Label(listing.inner, text="没有匹配的供应商", bg=C["surface"],
                          fg=C["muted"], font=FONT_UI, pady=24).pack()
                 return
             for preset in hits:
@@ -4064,19 +4107,19 @@ class ForgeGuiApp:
                 top.pack(fill=tk.X)
                 icon, keep = brand_marks.mark_icon(preset.brand or None, 16, master=top)
                 if icon is not None:
-                    holder = tk.Label(top, image=icon, bg=C["surface"])
+                    holder = i18n.Label(top, image=icon, bg=C["surface"])
                     holder.image = icon
                     holder.pack(side=tk.LEFT, padx=(0, 7))
-                tk.Label(top, text=preset.name, bg=C["surface"], fg=C["text"],
+                i18n.Label(top, text=preset.name, bg=C["surface"], fg=C["text"],
                          font=FONT_UI_BOLD).pack(side=tk.LEFT)
                 tone = {catalog.SOURCE_CONFIRMED: C["ok"],
                         catalog.SOURCE_USER: C["ok"],
                         catalog.SOURCE_DOCS: C["muted"]}.get(
                     preset.source, C["warn"])
-                tk.Label(top, text=f"· {preset.source_label}", bg=C["surface"],
+                i18n.Label(top, text=f"· {preset.source_label}", bg=C["surface"],
                          fg=tone, font=FONT_MICRO).pack(side=tk.LEFT, padx=(7, 0))
                 if preset.docs:
-                    tk.Label(top, text=preset.docs, bg=C["surface"], fg=C["muted"],
+                    i18n.Label(top, text=preset.docs, bg=C["surface"], fg=C["muted"],
                              font=FONT_CAPTION).pack(side=tk.RIGHT)
                 plans_row = tk.Frame(card, bg=C["surface"], padx=12)
                 plans_row.pack(fill=tk.X, pady=(0, 9))
@@ -4084,7 +4127,7 @@ class ForgeGuiApp:
                     # usable=False：本框架用不了（协议不支持）——置灰且不可点，
                     # 而不是给一份装不上的模板。
                     usable = getattr(plan, "usable", True)
-                    chip = tk.Button(
+                    chip = i18n.Button(
                         plans_row,
                         text=plan.label if usable else f"{plan.label}",
                         bg=C["surface2"] if usable else C["input_bg"],
@@ -4336,7 +4379,7 @@ class ForgeGuiApp:
         没有一个地方能明确看到「哪家还没配密钥」。
         """
         from secret_store import save as _save_secrets
-        dialog = tk.Toplevel(self.root)
+        dialog = i18n.Toplevel(self.root)
         dialog.title("API 密钥")
         dialog.bind("<Escape>", lambda _event: dialog.destroy() or "break")
         dialog.geometry("760x600")
@@ -4348,12 +4391,12 @@ class ForgeGuiApp:
         head.pack(fill=tk.X)
         IconCanvas(head, "key", size=22, bg=C["bg"], fg=C["accent2"]).pack(
             side=tk.LEFT, padx=(0, 8))
-        tk.Label(head, text="API 密钥", bg=C["bg"], fg=C["text"],
+        i18n.Label(head, text="API 密钥", bg=C["bg"], fg=C["text"],
                  font=FONT_TITLE).pack(side=tk.LEFT)
-        self.key_status_var = tk.StringVar()
-        tk.Label(head, textvariable=self.key_status_var, bg=C["bg"], fg=C["muted"],
+        self.key_status_var = i18n.StringVar(self.root)
+        i18n.Label(head, textvariable=self.key_status_var, bg=C["bg"], fg=C["muted"],
                  font=FONT_SMALL).pack(side=tk.LEFT, padx=(12, 0))
-        tk.Label(head, text="密钥只写入 ~/.forge/secrets.json（不入日志、不进命令行）",
+        i18n.Label(head, text="密钥只写入 ~/.forge/secrets.json（不入日志、不进命令行）",
                  bg=C["bg"], fg=C["muted"], font=FONT_CAPTION).pack(side=tk.RIGHT)
 
         rows_host = cw.ScrollArea(dialog, bg=C["surface"], padx=0, pady=0)
@@ -4361,7 +4404,7 @@ class ForgeGuiApp:
 
         footer = tk.Frame(dialog, bg=C["bg"], padx=20, pady=12)
         footer.pack(fill=tk.X)
-        pill_button(footer, "完成", dialog.destroy, kind="primary",
+        pill_button(footer, tr("完成"), dialog.destroy, kind="primary",
                     bg=C["bg"]).pack(side=tk.RIGHT)
 
         def refresh_rows():
@@ -4385,13 +4428,13 @@ class ForgeGuiApp:
                 if brand is not None:
                     icon, keep = brand_marks.mark_icon(brand, 16, master=line)
                     if icon is not None:
-                        holder = tk.Label(line, image=icon, bg=C["surface"])
+                        holder = i18n.Label(line, image=icon, bg=C["surface"])
                         holder.image = icon
                         holder.pack(side=tk.LEFT, padx=(0, 6))
-                tk.Label(line, text=str(target["label"]), bg=C["surface"],
+                i18n.Label(line, text=str(target["label"]), bg=C["surface"],
                          fg=C["text"], font=FONT_UI_BOLD).pack(side=tk.LEFT)
                 if target["disabled"]:
-                    tk.Label(line, text="已停用", bg=C["surface"], fg=C["warn"],
+                    i18n.Label(line, text="已停用", bg=C["surface"], fg=C["warn"],
                              font=FONT_MICRO).pack(side=tk.LEFT, padx=(8, 0))
                 env_name = target["ref"] or ""
                 current = secrets.get(target["id"]) or (
@@ -4406,9 +4449,9 @@ class ForgeGuiApp:
                 meta = f"{target['host']}" + (f"   ·   {env_name}" if env_name else "")
                 if target.get("config_ref") and target["config_ref"] != env_name:
                     meta += f"   ·   配置现引用 {target['config_ref']}（保存后修正）"
-                tk.Label(left, text=meta, bg=C["surface"], fg=C["muted"],
+                i18n.Label(left, text=meta, bg=C["surface"], fg=C["muted"],
                          font=FONT_CAPTION, anchor="w").pack(fill=tk.X, pady=(3, 0))
-                tk.Label(top, text=state_text, bg=C["surface"], fg=state_fg,
+                i18n.Label(top, text=state_text, bg=C["surface"], fg=state_fg,
                          font=FONT_SMALL).pack(side=tk.RIGHT, padx=(10, 0))
 
                 entry_row = tk.Frame(card, bg=C["surface"], padx=12)
@@ -4458,13 +4501,13 @@ class ForgeGuiApp:
                         self._set_status(f"{rid} 的密钥已删除", "warn")
                     refresh_rows()
 
-                pill_button(entry_row, "保存", save_key, kind="primary",
+                pill_button(entry_row, tr("保存"), save_key, kind="primary",
                             bg=C["surface"]).pack(side=tk.LEFT, padx=(6, 0))
                 pill_button(entry_row, "清除", clear_key, kind="quiet",
                             bg=C["surface"]).pack(side=tk.LEFT, padx=(6, 0))
                 entry.bind("<Return>", lambda _e, f=save_key: f())
             if not targets:
-                tk.Label(rows_host.inner, text="用户层里还没有 provider 配置",
+                i18n.Label(rows_host.inner, text="用户层里还没有 provider 配置",
                          bg=C["surface"], fg=C["muted"], font=FONT_SMALL,
                          pady=20).pack()
             self.key_status_var.set(f"{configured} / {len(targets)} 家已配置")
@@ -4520,7 +4563,7 @@ class ForgeGuiApp:
 
     def _update_context_summary(self):
         self.context_summary.set(
-            f"历史上下文：{'开启' if self._include_history else '关闭'} · "
+            f"历史上下文：{tr('开启') if self._include_history else tr('关闭')} · "
             f"本轮文本附件：{len(self._attachments)}")
         label = getattr(self, "context_summary_label", None)
         if label is not None:
@@ -4547,7 +4590,7 @@ class ForgeGuiApp:
         self._update_context_summary()
 
     def _open_context(self):
-        dialog = tk.Toplevel(self.root)
+        dialog = i18n.Toplevel(self.root)
         dialog.title("本轮上下文 · 发送前可检查")
         dialog.bind("<Escape>", lambda _event: dialog.destroy() or "break")
         dialog.geometry("720x540")
@@ -4555,7 +4598,7 @@ class ForgeGuiApp:
         dialog.configure(bg=C["chat"])
         footer = tk.Frame(dialog, bg=C["chat"])
         footer.pack(side=tk.BOTTOM, fill=tk.X, padx=12, pady=10)
-        self.context_close_btn = pill_button(footer, "关闭", dialog.destroy, kind="quiet", bg=C["chat"])
+        self.context_close_btn = pill_button(footer, tr("关闭"), dialog.destroy, kind="quiet", bg=C["chat"])
         self.context_close_btn.pack(side=tk.RIGHT)
         use_history = tk.BooleanVar(value=self._include_history)
         preview = scrolledtext.ScrolledText(dialog, wrap="word", bg=C["input_bg"],
@@ -4574,31 +4617,31 @@ class ForgeGuiApp:
             preview.delete("1.0", tk.END)
             preview.insert("1.0", json.dumps(payload, ensure_ascii=False, indent=2))
             preview.configure(state=tk.DISABLED)
-        tk.Checkbutton(dialog, text="发送当前会话的历史消息", variable=use_history,
+        i18n.Checkbutton(dialog, text="发送当前会话的历史消息", variable=use_history,
                        command=refresh, bg=C["chat"], fg=C["text"], selectcolor=C["surface2"],
                        state=tk.DISABLED if self._sending else tk.NORMAL).pack(anchor="w", padx=12, pady=8)
-        tk.Label(dialog, text="附件以添加时的文本快照发送。下方展示消息角色及实际内容。",
+        i18n.Label(dialog, text="附件以添加时的文本快照发送。下方展示消息角色及实际内容。",
                  bg=C["chat"], fg=C["ter"]).pack(anchor="w", padx=12)
         items = tk.Frame(dialog, bg=C["chat"])
         items.pack(fill=tk.X, padx=12, pady=6)
         for attachment in list(self._attachments):
             row = tk.Frame(items, bg=C["chat"])
             row.pack(fill=tk.X)
-            tk.Label(row, text=Path(attachment["path"]).name, bg=C["chat"],
+            i18n.Label(row, text=Path(attachment["path"]).name, bg=C["chat"],
                      fg=C["text"]).pack(side=tk.LEFT)
             def remove(item=attachment, widget=row):
                 if item in self._attachments:
                     self._attachments.remove(item)
                 widget.destroy()
                 refresh()
-            tk.Button(row, text="移除", command=remove,
+            i18n.Button(row, text="移除", command=remove,
                       state=tk.DISABLED if self._sending else tk.NORMAL).pack(side=tk.RIGHT)
         preview.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
         refresh()
 
     def _open_commands(self):
         items = (
-            {"label": "新建对话", "detail": "/new", "command": self._new_session},
+            {"label": tr("新建对话"), "detail": "/new", "command": self._new_session},
             {"label": "任务执行", "detail": "/task · 使用 Forge Router",
              "command": lambda: self._show_view("task")},
             {"separator": True},
@@ -4608,7 +4651,7 @@ class ForgeGuiApp:
              "command": lambda: self._open_workspace("changes")},
             {"label": "检查发送上下文", "detail": "/context",
              "command": self._open_context},
-            {"label": "功能开关", "detail": "/tools",
+            {"label": tr("功能开关"), "detail": "/tools",
              "command": lambda: self._show_view("tools")},
         )
         return show_popover_menu(self.input_card, items, title="工具与命令",
@@ -4661,7 +4704,7 @@ class ForgeGuiApp:
         return "off"
 
     def _thinking_label(self) -> str:
-        return f"任务沉思 · {THINKING_LABELS.get(self._thinking_mode, '关闭')}"
+        return f"任务沉思 · {THINKING_LABELS.get(self._thinking_mode, tr('关闭'))}"
 
     def _open_thinking_menu(self, anchor=None):
         items = [
@@ -4980,7 +5023,7 @@ class ForgeGuiApp:
             if "baseURL" in conf:
                 model = conf.get("model", "")
                 label = conf.get("modelLabel") or model
-                state = "关闭" if r.get("disabled") else "开启"
+                state = tr("关闭") if r.get("disabled") else tr("开启")
                 # 有友好名时顺带显示真实 id，方便排查「上游不认模型」这类问题
                 shown = (f"{label}  ({model})" if label and model and label != model
                          else (label or "未指定模型"))
@@ -4992,7 +5035,7 @@ class ForgeGuiApp:
         # 维护全量行（(原始 index, 文本)），供搜索过滤用；再按当前词过滤展示
         self._provider_rows_all = list(enumerate(display))
         self._filter_provider_list()
-        self.provider_count_var.set(f"{len(rows)} 条用户配置")
+        self.provider_count_var.set(tr("{count} 条用户配置", count=len(rows)))
         # 模型下拉
         models = []
         for r in rows:
@@ -5065,10 +5108,10 @@ class ForgeGuiApp:
             if suggestions:
                 chip_row = tk.Frame(self.model_chips_frame, bg=C["input_bg"])
                 chip_row.pack(anchor=tk.W)
-                tk.Label(chip_row, text="常用:", bg=C["input_bg"], fg=C["muted"],
+                i18n.Label(chip_row, text="常用:", bg=C["input_bg"], fg=C["muted"],
                          font=FONT_SMALL).pack(side=tk.LEFT, padx=(0, 4))
                 for m in suggestions:
-                    tk.Button(chip_row, text=m, bg=C["surface2"], fg=C["link"],
+                    i18n.Button(chip_row, text=m, bg=C["surface2"], fg=C["link"],
                               activebackground=C["link_soft"], activeforeground=C["link"],
                               font=FONT_SMALL, relief=tk.FLAT, padx=7, pady=1,
                               command=lambda mm=m: (self.model_edit_var.set(mm), self._apply_model_edit()),
@@ -5192,7 +5235,7 @@ class ForgeGuiApp:
         self.preview_text.configure(state=tk.DISABLED)
 
     def _set_warnings(self, lines: list[str]):
-        self.warning_count_var.set(f"{len(lines)} 项提示" if lines else "无提示")
+        self.warning_count_var.set(f"{len(lines)} 项提示" if lines else tr("无提示"))
         self.warn_text.configure(state=tk.NORMAL, fg=C["warn"] if lines else C["muted"])
         self.warn_text.delete("1.0", tk.END)
         self.warn_text.insert("1.0", "\n\n".join(lines) if lines else "整理后会在这里显示警告和环境变量。")
@@ -5380,7 +5423,7 @@ class ForgeGuiApp:
         index = max(0, self._autostart_attempts - 1)
         if index >= len(AUTOSTART_RETRY_DELAYS):
             self._autostart_log(f"重试 {index} 次仍未起来，暂停自动重试：{reason}")
-            self.gw_status_var.set("● 离线")
+            self.gw_status_var.set(tr("● 离线"))
             self._set_status(f"gateway 自动启动失败（{reason}）；"
                              f"可点「启动」重试，或先选好模型 / Provider", "warn")
             return
@@ -5647,7 +5690,7 @@ class ForgeGuiApp:
         """将低频操作归到统一浮层，保留完整的原有配置入口。"""
         show_popover_menu(self.session_menu_btn, [
             {"label": "重命名对话", "command": self._rename_session},
-            {"label": "新建对话", "detail": "Ctrl+N", "command": self._new_session},
+            {"label": tr("新建对话"), "detail": "Ctrl+N", "command": self._new_session},
             {"separator": True},
             {"label": "上下文与附件", "command": self._open_context},
             {"label": f"回复温度 · {self.temp_var.get()}",
@@ -5813,7 +5856,7 @@ class ForgeGuiApp:
         self._set_status(f"gateway 在线：{self.gateway_url}", "ok")
 
     def _gateway_down(self, reason: str = "已停止"):
-        self.gw_status_var.set("● 离线")
+        self.gw_status_var.set(tr("● 离线"))
         self.gw_status_lbl.configure(fg=C["muted"])
         self.gw_detail_status_lbl.configure(fg=C["muted"])
         self.gw_btn.configure(text="▶ 启动", bg=C["accent"], fg="#FFFFFF",
@@ -5888,7 +5931,7 @@ class ForgeGuiApp:
         if role == "你":
             return area.add_user(text)
         if role == "error":
-            return area.add_notice(text, tone="error", title="错误")
+            return area.add_notice(text, tone="error", title=tr("错误"))
         msg = area.add_agent()
         if text:
             msg.stream_text(text)
@@ -6336,7 +6379,7 @@ class ForgeGuiApp:
         if msg is not None:
             msg.set_status("")
             msg.render_markdown(full or "（空回复）")
-            actions = [{"label": "打开工作区",
+            actions = [{"label": tr("打开工作区"),
                         "command": lambda: self._open_workspace("file_tree")}]
             actions.extend(self._file_actions(full))
             msg.add_actions(actions)
@@ -6389,7 +6432,7 @@ class ForgeGuiApp:
         self.gw_btn.configure(state=tk.NORMAL)
         if not self.gateway_proc:
             self.port_spin.configure(state=tk.NORMAL)
-        self._set_request_status("就绪")
+        self._set_request_status(tr("就绪"))
         self._refresh_send_circle()
     # ── 关闭 ──
     def _on_close(self):

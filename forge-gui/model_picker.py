@@ -5,6 +5,9 @@
 同时保留旧 Combobox 使用到的最小兼容面，避免影响既有 GUI 合约。
 """
 from __future__ import annotations
+
+import i18n
+from i18n import tr
 from ui_icons import IconCanvas, draw_icon
 
 import math
@@ -24,8 +27,8 @@ ITEM_ICON = 20
 # Tk 的 point 字体会随 Windows DPI 缩放；三层信息（名称、说明、能力标签）
 # 需要留出足够的逻辑高度，避免 150% DPI 下最后一层被 pack 裁掉。
 MODEL_ROW_HEIGHT = 106
-FILTERS = (("all", "全部"), ("recommended", "推荐"), ("cloud", "云端"),
-           ("local", "本地"), ("favorites", "收藏"))
+FILTERS = (("all", tr("全部")), ("recommended", tr("推荐")), ("cloud", tr("云端")),
+           ("local", tr("本地")), ("favorites", tr("收藏")))
 
 
 def _endpoint(provider: dict | None) -> str:
@@ -86,13 +89,13 @@ class ModelPicker(tk.Frame):
         self._filter = "all"
         self._search_var: tk.StringVar | None = None
         self._list_inner: tk.Frame | None = None
-        self._filter_widgets: dict[str, tuple[tk.Frame, tk.Label]] = {}
-        self._thinking_widgets: dict[str, tuple[tk.Frame, tk.Label]] = {}
+        self._filter_widgets: dict[str, tuple[tk.Frame, i18n.Label]] = {}
+        self._thinking_widgets: dict[str, tuple[tk.Frame, i18n.Label]] = {}
         self._router_choices = tuple(router_choices or ())
         self._on_router_strategy = on_router_strategy
-        self._router_chips: dict[str, tuple[tk.Frame, tk.Label]] = {}
-        self._router_heading: tk.Label | None = None
-        self._router_detail: tk.Label | None = None
+        self._router_chips: dict[str, tuple[tk.Frame, i18n.Label]] = {}
+        self._router_heading: i18n.Label | None = None
+        self._router_detail: i18n.Label | None = None
         self._popup_owner: tk.Misc | None = None
         self._popup_bindings: list[tuple[tk.Misc, str, str]] = []
         self._dismiss_after_id: str | None = None
@@ -102,19 +105,19 @@ class ModelPicker(tk.Frame):
         self._icon_box = tk.Frame(self._body, bg=base, width=ITEM_ICON, height=ITEM_ICON)
         self._icon_box.pack_propagate(False)
         self._icon_box.pack(side=tk.LEFT, padx=(0, 6))
-        self._icon = tk.Label(self._icon_box, bg=base, bd=0)
+        self._icon = i18n.Label(self._icon_box, bg=base, bd=0)
         self._icon.place(relx=.5, rely=.5, anchor="center")
         self._fallback = tk.Canvas(self._icon_box, width=ITEM_ICON, height=ITEM_ICON,
                                    bg=base, highlightthickness=0, bd=0)
         self._labels = tk.Frame(self._body, bg=base)
         self._labels.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self._text = tk.Label(self._labels, bg=base, fg=C["body"], font=FONT_SMALL,
+        self._text = i18n.Label(self._labels, bg=base, fg=C["body"], font=FONT_SMALL,
                               anchor="w")
         self._text.pack(fill=tk.X)
         # 思考强度：文字 + 一枚小滑杆示意（体现「第几档」，不接交互）
         self._thinking_row = tk.Frame(self._labels, bg=base)
         self._thinking_emoji = IconCanvas(self._thinking_row, "model", size=14, bg=base, fg=C["accent2"])
-        self._thinking_text = tk.Label(self._thinking_row, bg=base, fg=C["muted"],
+        self._thinking_text = i18n.Label(self._thinking_row, bg=base, fg=C["muted"],
                                        font=FONT_MICRO, anchor="w")
         self._thinking_mini: MiniReasoningTrack | None = None
         if self._thinking_choices and show_thinking:
@@ -312,7 +315,7 @@ class ModelPicker(tk.Frame):
         current = self._thinking_var.get()
         label = next((name for value, name, _hint in self._thinking_choices
                       if value == current), current or "Light")
-        self._thinking_text.configure(text=f"思考强度 · {label}")
+        self._thinking_text.configure(text=tr("思考强度 · {label}", label=label))
         if self._thinking_mini is not None:
             self._thinking_mini.refresh()
         self._paint_thinking_choices()
@@ -335,7 +338,7 @@ class ModelPicker(tk.Frame):
             return
         if not self._values:
             return
-        pop = tk.Toplevel(self)
+        pop = i18n.Toplevel(self)
         pop.withdraw()
         pop.overrideredirect(True)
         pop.configure(bg=C["border_hi"])
@@ -355,9 +358,9 @@ class ModelPicker(tk.Frame):
         shell.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
         title = tk.Frame(shell, bg=C["surface"])
         title.pack(fill=tk.X)
-        tk.Label(title, text="选择模型", bg=C["surface"], fg=C["text"],
+        i18n.Label(title, text=tr("选择模型"), bg=C["surface"], fg=C["text"],
                  font=FONT_UI_BOLD).pack(side=tk.LEFT)
-        tk.Label(title, text="Provider 与路由", bg=C["surface"], fg=C["muted"],
+        i18n.Label(title, text=tr("Provider 与路由"), bg=C["surface"], fg=C["muted"],
                  font=FONT_CAPTION).pack(side=tk.RIGHT)
 
         search_host = tk.Frame(shell, bg=C["input_bg"], highlightthickness=1,
@@ -368,7 +371,7 @@ class ModelPicker(tk.Frame):
                           bg=C["input_bg"], fg=C["text"], insertbackground=C["accent"],
                           relief=tk.FLAT, bd=0, font=FONT_SMALL)
         search.pack(fill=tk.X, padx=10, pady=7)
-        search_hint = tk.Label(search_host, text="搜索模型、Provider 或能力……",
+        search_hint = i18n.Label(search_host, text=tr("搜索模型、Provider 或能力……"),
                                bg=C["input_bg"], fg=C["placeholder"],
                                font=FONT_SMALL, cursor="xterm")
         search_hint.place(x=11, rely=.5, anchor="w")
@@ -395,7 +398,7 @@ class ModelPicker(tk.Frame):
         for key, label in FILTERS:
             host = tk.Frame(filters, bg=C["surface2"], cursor="hand2")
             host.pack(side=tk.LEFT, padx=(0, 5))
-            text = tk.Label(host, text=label, bg=C["surface2"], fg=C["subtext"],
+            text = i18n.Label(host, text=label, bg=C["surface2"], fg=C["subtext"],
                             font=FONT_MICRO, padx=8, pady=4, cursor="hand2")
             text.pack()
             bind_keyboard_action(host, lambda k=key: self._set_filter(k))
@@ -564,16 +567,16 @@ class ModelPicker(tk.Frame):
         line.pack(fill=tk.X)
         IconCanvas(line, "evolution", size=18, bg=C["accent_soft"], fg=C["accent_text"]).pack(
             side=tk.LEFT, padx=(0, 6))
-        self._router_heading = tk.Label(
+        self._router_heading = i18n.Label(
             line, text=f"Forge Auto · {strategy}", bg=C["accent_soft"],
             fg=C["text"], font=FONT_UI_BOLD)
         self._router_heading.pack(side=tk.LEFT)
-        action = tk.Label(line, text="打开任务", bg=C["accent_soft"], fg=C["accent_text"],
+        action = i18n.Label(line, text="打开任务", bg=C["accent_soft"], fg=C["accent_text"],
                           font=FONT_CAPTION, cursor="hand2")
         action.pack(side=tk.RIGHT)
         detail_text = next((hint for value, _label, hint in choices if value == strategy),
                            "")
-        self._router_detail = tk.Label(
+        self._router_detail = i18n.Label(
             body, text=detail_text or "按选定的 Router 策略执行任务；普通对话仍用所选 Provider。",
             bg=C["accent_soft"], fg=C["subtext"], font=FONT_CAPTION, anchor="w",
             justify=tk.LEFT, wraplength=PICKER_WIDTH - 60)
@@ -585,7 +588,7 @@ class ModelPicker(tk.Frame):
         for value, label, hint in choices:
             host = tk.Frame(chips, bg=C["surface2"], cursor="hand2")
             host.pack(side=tk.LEFT, padx=(0, 5))
-            text = tk.Label(host, text=label, bg=C["surface2"], fg=C["subtext"],
+            text = i18n.Label(host, text=label, bg=C["surface2"], fg=C["subtext"],
                             font=FONT_MICRO, padx=9, pady=4, cursor="hand2")
             text.pack()
             bind_keyboard_action(host, lambda v=value: self._pick_router(v))
@@ -704,7 +707,7 @@ class ModelPicker(tk.Frame):
             groups.setdefault(key, []).append(value)
             group_meta[key] = (brand, endpoint)
         if not groups:
-            tk.Label(inner, text="没有匹配的模型", bg=C["surface"], fg=C["muted"],
+            i18n.Label(inner, text=tr("没有匹配的模型"), bg=C["surface"], fg=C["muted"],
                      font=FONT_SMALL, pady=24).pack(fill=tk.X)
             return
         current = self.var.get()
@@ -722,7 +725,7 @@ class ModelPicker(tk.Frame):
         icon, keep = brand_marks.mark_icon(brand, size, master=box)
         if icon is not None:
             self._keep.append(keep)
-            tk.Label(box, image=icon, bg=bg, bd=0).place(relx=.5, rely=.5, anchor="center")
+            i18n.Label(box, image=icon, bg=bg, bd=0).place(relx=.5, rely=.5, anchor="center")
         else:
             cv = tk.Canvas(box, width=size, height=size, bg=bg, highlightthickness=0, bd=0)
             color = brand.color if brand else C["accent2"]
@@ -736,14 +739,14 @@ class ModelPicker(tk.Frame):
         icon = self._brand_icon(row, brand, bg=C["surface"], size=16)
         icon.pack(side=tk.LEFT, padx=(2, 5))
         name = brand.label if brand else "Other Provider"
-        tk.Label(row, text=name, bg=C["surface"], fg=C["subtext"],
+        i18n.Label(row, text=name, bg=C["surface"], fg=C["subtext"],
                  font=FONT_CAPTION).pack(side=tk.LEFT)
         if endpoint:
             local = "Local" if _is_local(provider) else endpoint
-            tk.Label(row, text=local, bg=C["surface"], fg=C["muted"],
+            i18n.Label(row, text=local, bg=C["surface"], fg=C["muted"],
                      font=FONT_MICRO).pack(side=tk.LEFT, padx=(7, 0))
         if self._on_settings is not None:
-            settings = tk.Label(row, text="设置", bg=C["surface"], fg=C["muted"],
+            settings = i18n.Label(row, text=tr("设置"), bg=C["surface"], fg=C["muted"],
                                 font=FONT_MICRO, cursor="hand2", padx=4)
             settings.pack(side=tk.RIGHT)
             settings.bind("<Button-1>", lambda _e, p=provider: (
@@ -788,7 +791,7 @@ class ModelPicker(tk.Frame):
         title_row = tk.Frame(text, bg=base, cursor="hand2")
         title_row.pack(fill=tk.X)
         shown = "默认 Provider" if value == "default" else value
-        title = tk.Label(title_row, text=shown, bg=base, fg=C["text"],
+        title = i18n.Label(title_row, text=shown, bg=base, fg=C["text"],
                          font=FONT_UI_BOLD if selected else FONT_SMALL,
                          anchor="w", cursor="hand2")
         title.pack(side=tk.LEFT)
@@ -798,13 +801,13 @@ class ModelPicker(tk.Frame):
             check.create_oval(1, 1, 13, 13, fill=C["accent"], outline="")
             check.create_line(4, 7, 6, 9, 10, 5, fill="#FFFFFF", width=1.5)
             check.pack(side=tk.LEFT, padx=(7, 0))
-        desc = tk.Label(text, text=self._description(value, provider), bg=base,
+        desc = i18n.Label(text, text=self._description(value, provider), bg=base,
                         fg=C["subtext"], font=FONT_CAPTION, anchor="w", cursor="hand2")
         desc.pack(fill=tk.X, pady=(2, 0))
         tags = tk.Frame(text, bg=base, cursor="hand2")
         tags.pack(fill=tk.X, pady=(3, 0))
         for label in self._tags(value, provider):
-            tk.Label(tags, text=label, bg=C["surface"], fg=C["muted"],
+            i18n.Label(tags, text=label, bg=C["surface"], fg=C["muted"],
                      font=FONT_MICRO, padx=5, pady=1).pack(side=tk.LEFT, padx=(0, 4))
         favorite = tk.Canvas(row, width=28, height=28, bg=base,
                              highlightthickness=0, bd=0, cursor="hand2")

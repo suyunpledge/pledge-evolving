@@ -12,6 +12,9 @@
 """
 from __future__ import annotations
 
+import i18n
+from i18n import tr
+
 import math
 import platform
 import tkinter as tk
@@ -401,7 +404,7 @@ def pill_button(parent, text, command, *, kind="ghost", bg=None, height=None,
         "ok": (C["ok"], "#0B0B10", "#34D399", "#0B0B10"),
     }
     bgb, fg, hovbg, hovfg = palettes.get(kind, palettes["ghost"])
-    label = f"{icon} {text}".strip() if icon else text
+    label = tr("{icon} {label}", icon=icon, label=text) if icon else text
     btn = IconButton(parent, text=label, command=command, bg=bgb, fg=fg,
                     activebackground=hovbg, activeforeground=hovfg,
                     font=font or FONT_SMALL, relief=tk.FLAT, bd=0,
@@ -420,7 +423,7 @@ def chip(parent, text, *, selected=False, command=None, bg=None):
     """筛选 chip（参考稿「全部文件 / 已修改 2 / 新增 1」）。"""
     bgb = C["accent_soft"] if selected else C["surface2"]
     fg = C["accent_text"] if selected else C["ter"]
-    lbl = tk.Label(parent, text=text, bg=bgb, fg=fg, font=FONT_MICRO,
+    lbl = i18n.Label(parent, text=text, bg=bgb, fg=fg, font=FONT_MICRO,
                    padx=8, pady=3,
                    highlightthickness=1,
                    highlightbackground=C["accent"] if selected else C["border_hi"])
@@ -441,7 +444,7 @@ def badge(parent, text, *, tone="accent", bg=None):
         "muted": (C["surface2"], C["subtext"]),
     }
     bgb, fg = tones.get(tone, tones["accent"])
-    return tk.Label(parent, text=text, bg=bgb, fg=fg, font=FONT_MICRO,
+    return i18n.Label(parent, text=text, bg=bgb, fg=fg, font=FONT_MICRO,
                     padx=6, pady=2, highlightthickness=1, highlightbackground=fg)
 
 
@@ -449,6 +452,51 @@ def divider(parent, *, color=None, horizontal=True, bg=None):
     return tk.Frame(parent, bg=color or C["border"],
                     height=1 if horizontal else 0,
                     width=0 if horizontal else 1)
+
+
+def flow_controls(parent, *, gap=6):
+    """Wrap existing sibling controls by rendered width, without reparenting."""
+    controls = list(parent.winfo_children())
+    pending = None
+
+    def fit():
+        nonlocal pending
+        pending = None
+        if not parent.winfo_exists() or parent.winfo_width() <= 1:
+            return
+        padding = int(parent.cget("padx"))
+        available = parent.winfo_width() - padding * 2
+        used, top, row_height = 0, 2, 0
+        for control in controls:
+            width = control.winfo_reqwidth() + gap
+            if used and used + width > available:
+                top, used, row_height = top + row_height + 4, 0, 0
+            height = control.winfo_reqheight()
+            control.place(x=padding + used, y=top, width=width-gap, height=height)
+            used += width
+            row_height = max(row_height, height)
+        parent.configure(height=top + row_height + 2)
+
+    def schedule(_event=None):
+        nonlocal pending
+        if pending is None:
+            pending = parent.after_idle(fit)
+
+    def cleanup(event):
+        nonlocal pending
+        if event.widget is parent and pending is not None:
+            parent.after_cancel(pending)
+            pending = None
+
+    for control in controls:
+        control.pack_forget()
+    parent._l10n_refresh = schedule
+    locale = i18n.owner(parent)
+    if locale:
+        locale.register(parent)
+    parent.bind("<Configure>", schedule, add="+")
+    parent.bind("<Destroy>", cleanup, add="+")
+    schedule()
 
 
 def glyph_button(parent, glyph, command, *, bg=None, fg=None, size=13,
@@ -490,10 +538,10 @@ def attach_tooltip(widget, text: str):
         tip["after"] = None
         if tip["win"] is not None or not widget.winfo_exists():
             return
-        win = tk.Toplevel(widget)
+        win = i18n.Toplevel(widget)
         win.wm_overrideredirect(True)
         win.configure(bg=C["border_hi"])
-        tk.Label(win, text=text, bg=C["surface"], fg=C["body"], font=FONT_CAPTION,
+        i18n.Label(win, text=text, bg=C["surface"], fg=C["body"], font=FONT_CAPTION,
                  wraplength=360, justify=tk.LEFT,
                  padx=10, pady=6).pack(padx=1, pady=1)
         x = widget.winfo_rootx() + 12
@@ -560,7 +608,7 @@ def show_popover_menu(anchor, items, *, title=None, width=300, prefer_above=Fals
             previous.destroy()
         except tk.TclError:
             pass
-    pop = tk.Toplevel(anchor)
+    pop = i18n.Toplevel(anchor)
     pop.withdraw()
     pop.overrideredirect(True)
     pop.configure(bg=C["border_hi"])
@@ -568,7 +616,7 @@ def show_popover_menu(anchor, items, *, title=None, width=300, prefer_above=Fals
     shell = tk.Frame(pop, bg=C["surface"], padx=8, pady=8)
     shell.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
     if title:
-        tk.Label(shell, text=title, bg=C["surface"], fg=C["subtext"],
+        i18n.Label(shell, text=title, bg=C["surface"], fg=C["subtext"],
                  font=FONT_CAPTION, anchor="w").pack(fill=tk.X, padx=8, pady=(4, 7))
 
     def close():
@@ -597,13 +645,13 @@ def show_popover_menu(anchor, items, *, title=None, width=300, prefer_above=Fals
         marker.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 8))
         text = tk.Frame(row, bg=base, cursor="hand2")
         text.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        label = tk.Label(text, text=str(item.get("label", "")), bg=base,
+        label = i18n.Label(text, text=item.get("label", ""), bg=base,
                          fg=C["error"] if item.get("danger") else C["text"],
                          font=FONT_SMALL, anchor="w", cursor="hand2")
         label.pack(fill=tk.X)
         detail = None
         if item.get("detail"):
-            detail = tk.Label(text, text=str(item["detail"]), bg=base,
+            detail = i18n.Label(text, text=item["detail"], bg=base,
                               fg=C["muted"], font=FONT_MICRO, anchor="w",
                               cursor="hand2")
             detail.pack(fill=tk.X, pady=(2, 0))
@@ -916,7 +964,7 @@ def rounded_label(parent, text, *, fill=None, outline=None, fg=None, font=None,
     from tkinter import font as tkfont
     base = bg or _bg_of(parent)
     fnt = tkfont.Font(font=font or FONT_SMALL)
-    icon, label = split_icon_text(text)
+    icon, label = split_icon_text(i18n.resolve(text, parent))
     w = fnt.measure(label) + padx * 2 + (24 if icon else 0)
     h = max(CONTROL_HEIGHT if command else 0,
             max(fnt.metrics("linespace"), 20 if icon else 0) + pady * 2)
@@ -930,7 +978,8 @@ def rounded_label(parent, text, *, fill=None, outline=None, fg=None, font=None,
         draw_icon(cv, icon, x=padx, y=(h-20)/2, size=20, fg=fg or C["body"])
 
     def set_text(new):
-        icon, label = split_icon_text(new)
+        i18n.remember(cv, new, method="set_text")
+        icon, label = split_icon_text(i18n.resolve(new, cv))
         cv.itemconfigure(txt, text=label)
         nw = fnt.measure(label) + padx * 2 + (24 if icon else 0)
         cv.configure(width=nw)
@@ -941,6 +990,7 @@ def rounded_label(parent, text, *, fill=None, outline=None, fg=None, font=None,
             draw_icon(cv, icon, x=padx, y=(h-20)/2, size=20, fg=fg or C["body"])
 
     cv.set_text = set_text  # type: ignore[attr-defined]
+    i18n.remember(cv, text, method="set_text")
     if command is not None:
         bind_keyboard_action(cv, command)
         cv.bind("<Button-1>", lambda _e: command())

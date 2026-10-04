@@ -8,6 +8,7 @@ import json
 import sys
 import tkinter as tk
 from pathlib import Path
+import i18n
 
 # Coordinates use a 24 × 24 grid; all icons share a 1.7px rounded stroke.
 # Shapes are also consumed by desktop/make_ui_assets.py.
@@ -221,6 +222,9 @@ class IconButton(tk.Button):
         self._icon_size = icon_size
         self._icon_name = None
         text = kwargs.get("text", "")
+        localized_text = text
+        text = i18n.resolve(text, parent)
+        kwargs["text"] = text
         name, label = split_icon_text(text)
         if icon_key(text):
             name, label = icon_key(text), ""
@@ -230,13 +234,19 @@ class IconButton(tk.Button):
             kwargs.update(text=label, image=image, compound=tk.LEFT)
         super().__init__(parent, **kwargs)
         self._icon_reference = image
+        i18n.remember(self, localized_text, method="_set_localized_text")
+
+    def _set_localized_text(self, text):
+        self.configure(text=text)
 
     def configure(self, cnf=None, **kwargs):
         if isinstance(cnf, dict):
             kwargs = {**cnf, **kwargs}
             cnf = None
         if "text" in kwargs:
-            text = kwargs["text"]
+            i18n.remember(self, kwargs["text"], method="_set_localized_text")
+            text = i18n.resolve(kwargs["text"], self)
+            kwargs["text"] = text
             name, label = split_icon_text(text)
             if icon_key(text):
                 name, label = icon_key(text), ""

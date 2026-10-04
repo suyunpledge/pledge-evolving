@@ -13,6 +13,7 @@ ICON = GUI_DIR / "desktop" / "forge.ico"
 
 # 同目录的兄弟模块：显式声明，避免静态分析漏掉
 HIDDEN = [
+    "i18n",
     "gui_theme",
     "chat_widgets",
     "workspace",
@@ -57,6 +58,7 @@ a = Analysis(
     # 界面资源（品牌标志 + 模型厂商标识）。打包后由 _MEIPASS/assets 提供。
     # 注意：brands/ 是子目录，*.png 通配不会递归，必须单独列一条。
     datas=[
+        (str(GUI_DIR / "locales" / "*.json"), "locales"),
         (str(GUI_DIR / "assets" / "*.png"), "assets"),
         (str(GUI_DIR / "assets" / "brands" / "*.png"), "assets/brands"),
         (str(GUI_DIR / "assets" / "ui" / "*.png"), "assets/ui"),

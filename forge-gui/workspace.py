@@ -34,6 +34,9 @@ v3 增量（本轮新增，不推翻既有版式）：
 """
 from __future__ import annotations
 
+import i18n
+from i18n import tr
+
 import os
 import math
 import queue
@@ -269,7 +272,7 @@ def _strip_md(text: str) -> str:
 # ─── 内部小组件 ────────────────────────────────────────────
 
 
-class _Tab(tk.Label):
+class _Tab(i18n.Label):
     """标签条上的一枚标签（选中态：#1E1E2A 底 + #34344A 描边）。"""
 
     def __init__(self, parent, text: str, *, on_click: Callable[["_Tab"], None]):
@@ -314,7 +317,7 @@ class _FileTab(tk.Frame):
         self._on_close = on_close
         self._selected = False
         self._base = C["bg"]
-        self._name_lbl = tk.Label(self, text=name, bg=self._base, fg=C["ter"],
+        self._name_lbl = i18n.Label(self, text=name, bg=self._base, fg=C["ter"],
                                   font=FONT_SMALL, padx=8, pady=4)
         self._name_lbl.pack(side=tk.LEFT)
         self._close_btn = IconCanvas(self, "close", size=16, bg=self._base, fg=C["muted"],
@@ -413,18 +416,18 @@ class _FileRow(tk.Frame):
         if added is not None or removed is not None:
             stats = tk.Frame(inner, bg=base)
             stats.pack(side=tk.RIGHT, padx=(4, 0))
-            tk.Label(stats, text=f"+{added or 0}", bg=base, fg=C["diff_add"],
+            i18n.Label(stats, text=f"+{added or 0}", bg=base, fg=C["diff_add"],
                      font=FONT_MONO_XS).pack(side=tk.LEFT)
-            tk.Label(stats, text=f"−{removed or 0}", bg=base, fg=C["diff_del"],
+            i18n.Label(stats, text=f"−{removed or 0}", bg=base, fg=C["diff_del"],
                      font=FONT_MONO_XS).pack(side=tk.LEFT, padx=(4, 0))
         if status:
             color = self._STATUS_COLORS.get(status[:1].upper(), C["muted"])
-            self._status_lbl = tk.Label(inner, text=status[:1].upper(), bg=base,
+            self._status_lbl = i18n.Label(inner, text=status[:1].upper(), bg=base,
                                         fg=color, font=FONT_MICRO, width=2)
             self._status_lbl.pack(side=tk.RIGHT, padx=(2, 0))
         else:
             self._status_lbl = None
-        self._name_lbl = tk.Label(inner, text=name, bg=base, fg=C["body"],
+        self._name_lbl = i18n.Label(inner, text=name, bg=base, fg=C["body"],
                                   font=FONT_SMALL, anchor="w")
         self._name_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True)
         for w in (self, inner, self._arrow_lbl, self._icon_lbl, self._name_lbl):
@@ -553,7 +556,7 @@ class _Minimap(tk.Canvas):
 class WorkspacePanel(tk.Frame):
     """右侧工作区（三段堆叠：代码区 / 变更+diff / 预览）。"""
 
-    _TAB_NAMES = ("文件树", "变更", "代码", "diff", "预览", "终端")
+    _TAB_NAMES = (tr("文件树"), tr("变更"), "代码", "diff", tr("预览"), tr("终端"))
 
     def __init__(self, parent, app: Any = None, *,
                  repo_root: str | os.PathLike | None = None,
@@ -569,7 +572,7 @@ class WorkspacePanel(tk.Frame):
         except (OSError, ValueError):
             self._repo_root = default_root
 
-        self._current_tab = "文件树"
+        self._current_tab = tr("文件树")
         self._current_file: Path | None = None       # 兼容旧字段
         self._current_diff_file: Path | None = None
         self._diff_requested = False
@@ -583,7 +586,7 @@ class WorkspacePanel(tk.Frame):
         self._file_tree_rows: list[tuple[_FileRow, dict]] = []
         self._tabs: dict[str, _Tab] = {}
         self._breadcrumb_var = tk.StringVar(value=self._repo_root.name)
-        self._preview_subtab_var = tk.StringVar(value="预览")
+        self._preview_subtab_var = tk.StringVar(value=tr("预览"))
         self._filter_var = tk.StringVar(value="全部文件")
         self._is_git_repo = False
         self._git_status: dict[str, str] = {}
@@ -631,11 +634,11 @@ class WorkspacePanel(tk.Frame):
         left = tk.Frame(top, bg=C["bg"])
         left.pack(side=tk.LEFT, padx=(PAD_M, PAD_S))
         IconCanvas(left, "workspace", size=22, bg=C["bg"], fg=C["accent2"]).pack(side=tk.LEFT, padx=(0, PAD_XS))
-        tk.Label(left, text="工作区", bg=C["bg"], fg=C["text"],
+        i18n.Label(left, text=tr("工作区"), bg=C["bg"], fg=C["text"],
                  font=(FONT_TITLE[0], 12, "bold")).pack(side=tk.LEFT)
         crumb = tk.Frame(top, bg=C["bg"])
         crumb.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=PAD_S)
-        self._crumb_lbl = tk.Label(crumb, textvariable=self._breadcrumb_var,
+        self._crumb_lbl = i18n.Label(crumb, textvariable=self._breadcrumb_var,
                                    bg=C["bg"], fg=C["ter"], font=FONT_SMALL,
                                    anchor="w")
         self._crumb_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True)
@@ -695,8 +698,8 @@ class WorkspacePanel(tk.Frame):
             t = _Tab(bar, name, on_click=_click)
             t.pack(side=tk.LEFT, padx=(PAD_XS, 0), pady=3)
             self._tabs[name] = t
-        self._tabs["文件树"].set_selected(True)
-        self._current_tab = "文件树"
+        self._tabs[tr("文件树")].set_selected(True)
+        self._current_tab = tr("文件树")
         divider(self).pack(side=tk.TOP, fill=tk.X)
 
     # ─── 三段主体 ──────────────────────────────────────────
@@ -833,7 +836,7 @@ class WorkspacePanel(tk.Frame):
         tree_head = tk.Frame(tree_col, bg=C["bg"], height=ui_px(self, 28))
         tree_head.pack(fill=tk.X)
         tree_head.pack_propagate(False)
-        tk.Label(tree_head, text="文件树", bg=C["bg"], fg=C["ter"],
+        i18n.Label(tree_head, text=tr("文件树"), bg=C["bg"], fg=C["ter"],
                  font=FONT_MICRO).pack(side=tk.LEFT, padx=PAD_S)
         glyph_button(tree_head, "⟳", self.refresh_async, size=10,
                      tooltip="重新扫描").pack(side=tk.RIGHT, padx=2)
@@ -871,7 +874,7 @@ class WorkspacePanel(tk.Frame):
         meta.pack(fill=tk.X)
         meta.pack_propagate(False)
         self._code_meta_var = tk.StringVar(value="未打开文件")
-        tk.Label(meta, textvariable=self._code_meta_var, bg=C["bg"],
+        i18n.Label(meta, textvariable=self._code_meta_var, bg=C["bg"],
                  fg=C["subtext"], font=FONT_MICRO, anchor="w").pack(
             side=tk.LEFT, fill=tk.X, expand=True, padx=PAD_S)
         glyph_button(meta, "⟳", self._reload_code, size=10,
@@ -1029,10 +1032,10 @@ class WorkspacePanel(tk.Frame):
         head.pack_propagate(False)
         IconCanvas(head, "diff", size=18, bg=C["bg"], fg=C["accent2"]).pack(side=tk.LEFT, padx=(PAD_S, 4))
         self._changes_title_var = tk.StringVar(value="变更 (0)")
-        tk.Label(head, textvariable=self._changes_title_var, bg=C["bg"],
+        i18n.Label(head, textvariable=self._changes_title_var, bg=C["bg"],
                  fg=C["text"], font=FONT_UI_BOLD).pack(side=tk.LEFT)
         self._changes_total_var = tk.StringVar(value="+0 −0")
-        self._total_lbl = tk.Label(head, textvariable=self._changes_total_var,
+        self._total_lbl = i18n.Label(head, textvariable=self._changes_total_var,
                                    bg=C["bg"], fg=C["subtext"],
                                    font=FONT_MONO_XS)
         self._total_lbl.pack(side=tk.LEFT, padx=(PAD_S, 0))
@@ -1041,7 +1044,7 @@ class WorkspacePanel(tk.Frame):
         chips.pack(fill=tk.X, padx=PAD_S, pady=(2, 4))
         chips.grid_columnconfigure(0, weight=1)
         chips.grid_columnconfigure(1, weight=1)
-        self._filter_chips: dict[str, tk.Label] = {}
+        self._filter_chips: dict[str, i18n.Label] = {}
         for i, name in enumerate(("全部文件", "已修改", "新增", "已删除")):
             c = self._make_filter_chip(chips, name)
             c.grid(row=i // 2, column=i % 2, sticky="ew", padx=(0, PAD_XS),
@@ -1081,14 +1084,14 @@ class WorkspacePanel(tk.Frame):
         dhead.pack(fill=tk.X)
         dhead.pack_propagate(False)
         self._diff_title_var = tk.StringVar(value="diff")
-        tk.Label(dhead, textvariable=self._diff_title_var, bg=C["bg"],
+        i18n.Label(dhead, textvariable=self._diff_title_var, bg=C["bg"],
                  fg=C["text"], font=FONT_UI_BOLD, anchor="w").pack(
             side=tk.LEFT, padx=PAD_S)
         self._diff_total_var = tk.StringVar(value="+0 −0")
-        tk.Label(dhead, textvariable=self._diff_total_var, bg=C["bg"],
+        i18n.Label(dhead, textvariable=self._diff_total_var, bg=C["bg"],
                  fg=C["subtext"], font=FONT_MONO_XS).pack(side=tk.LEFT,
                                                            padx=(PAD_S, 0))
-        tk.Label(dhead, text="统一 Diff · 含暂存", bg=C["bg"], fg=C["ter"],
+        i18n.Label(dhead, text=tr("统一 Diff · 含暂存"), bg=C["bg"], fg=C["ter"],
                  font=FONT_MICRO).pack(side=tk.RIGHT, padx=PAD_S)
 
         diff_body = tk.Frame(right, bg=C["code_bg"])
@@ -1112,7 +1115,7 @@ class WorkspacePanel(tk.Frame):
         self._diff_text.configure(state=tk.DISABLED)
         self._diff_empty = ScrollArea(diff_body, bg=C["code_bg"], padx=12, pady=8)
         empty = self._diff_empty.inner
-        title = tk.Label(empty, text="选择文件查看 Diff", bg=C["code_bg"], fg=C["body"],
+        title = i18n.Label(empty, text=tr("选择文件查看 Diff"), bg=C["code_bg"], fg=C["body"],
                          font=FONT_UI_BOLD, anchor="w", justify=tk.LEFT)
         title.pack(fill=tk.X, pady=(0, 6))
         bind_wrap(title)
@@ -1120,7 +1123,7 @@ class WorkspacePanel(tk.Frame):
         self._diff_empty_actions = ActionRow(empty, [{"label": "浏览更改", "command": self.open_changes}], bg=C["code_bg"])
         self._diff_empty_actions.pack(fill=tk.X)
         self._diff_empty_detail = tk.StringVar()
-        detail = tk.Label(empty, textvariable=self._diff_empty_detail, bg=C["code_bg"], fg=C["muted"],
+        detail = i18n.Label(empty, textvariable=self._diff_empty_detail, bg=C["code_bg"], fg=C["muted"],
                           font=FONT_CAPTION, anchor="w", justify=tk.LEFT)
         detail.pack(fill=tk.X, pady=(6, 0))
         bind_wrap(detail)
@@ -1155,7 +1158,7 @@ class WorkspacePanel(tk.Frame):
 
     def _make_filter_chip(self, parent, name: str):
         selected = name == self._filter_var.get()
-        c = tk.Label(parent, text=name, padx=7, pady=2, font=FONT_MICRO,
+        c = i18n.Label(parent, text=name, padx=7, pady=2, font=FONT_MICRO,
                      cursor="hand2", highlightthickness=1,
                      bg=C["accent_soft"] if selected else C["surface2"],
                      fg=C["accent_text"] if selected else C["ter"],
@@ -1171,10 +1174,10 @@ class WorkspacePanel(tk.Frame):
         top.pack_propagate(False)
         sub_holder = tk.Frame(top, bg=C["bg"])
         sub_holder.pack(side=tk.LEFT, padx=PAD_S)
-        self._preview_subs: dict[str, tk.Label] = {}
-        for name in ("预览", "控制台", "终端", "图像", "Markdown"):
-            lbl = tk.Label(sub_holder, text=name, bg=C["bg"],
-                           fg=C["text"] if name == "预览" else C["ter"],
+        self._preview_subs: dict[str, i18n.Label] = {}
+        for name in (tr("预览"), tr("控制台"), tr("终端"), tr("图像"), "Markdown"):
+            lbl = i18n.Label(sub_holder, text=name, bg=C["bg"],
+                           fg=C["text"] if name == tr("预览") else C["ter"],
                            font=FONT_SMALL, padx=8, pady=4, cursor="hand2")
             lbl.pack(side=tk.LEFT)
             lbl.bind("<Button-1>", lambda _e, n=name: self._set_preview_sub(n))
@@ -1209,7 +1212,7 @@ class WorkspacePanel(tk.Frame):
         style_scrollbar(self._preview_text)
         self._preview_text.configure(state=tk.DISABLED)
         self._preview_canvas: tk.Canvas | None = None
-        self._show_preview_sub("预览")
+        self._show_preview_sub(tr("预览"))
 
     # ─── Home 视图（无 activeFile 时显示） ────────────────────
 
@@ -1240,13 +1243,13 @@ class WorkspacePanel(tk.Frame):
         except tk.TclError:
             pass
         self._home_title_var = tk.StringVar(value=self._repo_root.name)
-        tk.Label(head, textvariable=self._home_title_var, bg=C["bg"],
+        i18n.Label(head, textvariable=self._home_title_var, bg=C["bg"],
                  fg=C["text"], font=FONT_TITLE,
                  anchor="w").pack(side=tk.LEFT)
 
         # 仓库根路径（小字）
         self._home_repo_var = tk.StringVar(value=str(self._repo_root))
-        path_label = tk.Label(card, textvariable=self._home_repo_var, bg=C["bg"],
+        path_label = i18n.Label(card, textvariable=self._home_repo_var, bg=C["bg"],
                              fg=C["muted"], font=FONT_MICRO, anchor="w", justify=tk.LEFT)
         path_label.pack(fill=tk.X, pady=(2, 10))
         bind_wrap(path_label)
@@ -1255,12 +1258,12 @@ class WorkspacePanel(tk.Frame):
         stats = tk.Frame(card, bg=C["bg"])
         stats.pack(fill=tk.X)
         self._home_summary_var = tk.StringVar(value="")
-        tk.Label(stats, textvariable=self._home_summary_var, bg=C["bg"],
+        i18n.Label(stats, textvariable=self._home_summary_var, bg=C["bg"],
                  fg=C["body"], font=FONT_SMALL, anchor="w").pack(
             side=tk.LEFT, fill=tk.X, expand=True)
 
         # 最近改动文件列表
-        tk.Label(card, text="最近修改文件", bg=C["bg"], fg=C["ter"],
+        i18n.Label(card, text=tr("最近修改文件"), bg=C["bg"], fg=C["ter"],
                  font=FONT_MICRO, anchor="w").pack(
             fill=tk.X, pady=(12, 4))
         self._home_recent_body = tk.Frame(card, bg=C["bg"])
@@ -1276,7 +1279,7 @@ class WorkspacePanel(tk.Frame):
 
         # 提示文案（非 git / 无改动时显示）
         self._home_empty_var = tk.StringVar(value="")
-        self._home_empty_lbl = tk.Label(card, textvariable=self._home_empty_var,
+        self._home_empty_lbl = i18n.Label(card, textvariable=self._home_empty_var,
                                         bg=C["bg"], fg=C["muted"],
                                         font=FONT_SMALL, anchor="w",
                                         justify="left", wraplength=420)
@@ -1312,7 +1315,7 @@ class WorkspacePanel(tk.Frame):
             child.destroy()
         recent = (self.workspace_summary().get("recent") or [])[:5]
         if not recent:
-            tk.Label(body, text="（无）", bg=C["bg"], fg=C["muted"],
+            i18n.Label(body, text=tr("（无）"), bg=C["bg"], fg=C["muted"],
                      font=FONT_SMALL, anchor="w").pack(fill=tk.X, pady=2)
         for rel in recent:
             self._make_home_file_row(body, rel)
@@ -1320,9 +1323,9 @@ class WorkspacePanel(tk.Frame):
     def _make_home_file_row(self, parent, rel: str):
         row = tk.Frame(parent, bg=C["bg"], cursor="hand2")
         row.pack(fill=tk.X, pady=1)
-        tk.Label(row, text="•", bg=C["bg"], fg=C["accent2"],
+        i18n.Label(row, text="•", bg=C["bg"], fg=C["accent2"],
                  font=FONT_SMALL).pack(side=tk.LEFT, padx=(0, 6))
-        tk.Label(row, text=rel, bg=C["bg"], fg=C["body"],
+        i18n.Label(row, text=rel, bg=C["bg"], fg=C["body"],
                  font=FONT_SMALL, anchor="w").pack(
             side=tk.LEFT, fill=tk.X, expand=True)
         for w in (row, *row.winfo_children()):
@@ -1460,12 +1463,12 @@ class WorkspacePanel(tk.Frame):
     def open_file_tree(self):
         self._tree_auto_collapsed = False
         self._set_tree_nav_visible(True)
-        self._focus_band_for_tab("文件树")
+        self._focus_band_for_tab(tr("文件树"))
 
     def open_changes(self):
         self._changes_auto_collapsed = False
         self._set_changes_nav_visible(True)
-        self._focus_band_for_tab("变更")
+        self._focus_band_for_tab(tr("变更"))
 
     def open_file(self, path, *, tab: str | None = None):
         """公开 API：打开文件为 Tab（已有则激活），并加载代码/预览/diff。"""
@@ -1702,20 +1705,20 @@ class WorkspacePanel(tk.Frame):
     # ─── 聚焦（标签条 → 区域高亮） ──────────────────────────
 
     def _focus_band_for_tab(self, name: str):
-        if name == "文件树":
+        if name == tr("文件树"):
             self._set_tree_nav_visible(True)
-        elif name == "变更":
+        elif name == tr("变更"):
             self._set_changes_nav_visible(True)
         self._current_tab = name
         for key, tab in self._tabs.items():
             tab.set_selected(key == name)
-        band = {"文件树": self._band_top, "代码": self._band_top,
-                "变更": self._band_mid, "diff": self._band_mid}.get(name)
-        if name == "预览":
-            self._set_preview_sub("预览")
+        band = {tr("文件树"): self._band_top, "代码": self._band_top,
+                tr("变更"): self._band_mid, "diff": self._band_mid}.get(name)
+        if name == tr("预览"):
+            self._set_preview_sub(tr("预览"))
             band = self._band_bottom
-        elif name == "终端":
-            self._set_preview_sub("终端")
+        elif name == tr("终端"):
+            self._set_preview_sub(tr("终端"))
             band = self._band_bottom
         if band is not None:
             self._flash_band(band)
@@ -1729,7 +1732,7 @@ class WorkspacePanel(tk.Frame):
             else:
                 self._update_breadcrumb()
             self._render_diff(self._current_diff_file)
-        elif name == "变更":
+        elif name == tr("变更"):
             self._update_breadcrumb()
 
     def _flash_band(self, band: tk.Frame):
@@ -1749,7 +1752,7 @@ class WorkspacePanel(tk.Frame):
             pass
 
     def _update_tab_counts(self):
-        tab = self._tabs.get("变更")
+        tab = self._tabs.get(tr("变更"))
         if tab is not None:
             tab.set_text(f"变更 ({len(self._git_status)})")
 
@@ -1927,7 +1930,7 @@ class WorkspacePanel(tk.Frame):
             if nodes is None:
                 nodes = _scan_tree(self._repo_root, expanded=self._expanded_dirs)
         except Exception as exc:
-            tk.Label(body, text=f"扫描失败：{exc}", bg=C["bg"],
+            i18n.Label(body, text=f"扫描失败：{exc}", bg=C["bg"],
                      fg=C["muted"], font=FONT_SMALL).pack(anchor="w",
                                                           padx=PAD_S,
                                                           pady=PAD_S)
@@ -1958,7 +1961,7 @@ class WorkspacePanel(tk.Frame):
             row.pack(fill=tk.X)
             self._file_tree_rows.append((row, node))
         if not self._file_tree_rows:
-            tk.Label(body, text="（空目录）", bg=C["bg"], fg=C["muted"],
+            i18n.Label(body, text=tr("（空目录）"), bg=C["bg"], fg=C["muted"],
                      font=FONT_SMALL).pack(anchor="w", padx=PAD_S, pady=PAD_S)
 
     def _toggle_dir(self, path: Path):
@@ -1979,7 +1982,7 @@ class WorkspacePanel(tk.Frame):
         for child in list(body.winfo_children()):
             child.destroy()
         if not self._is_git_repo:
-            tk.Label(body, text="不是 git 仓库", bg=C["bg"], fg=C["muted"],
+            i18n.Label(body, text=tr("不是 git 仓库"), bg=C["bg"], fg=C["muted"],
                      font=FONT_SMALL).pack(anchor="w", padx=PAD_S, pady=PAD_S)
             self._changes_title_var.set("变更 (0)")
             self._changes_total_var.set("+0 −0")
@@ -2001,7 +2004,7 @@ class WorkspacePanel(tk.Frame):
         total_del = sum(r[3] for r in rows)
         self._changes_total_var.set(f"+{total_add} −{total_del}")
         if not rows:
-            tk.Label(body, text="无变更", bg=C["bg"], fg=C["muted"],
+            i18n.Label(body, text=tr("无变更"), bg=C["bg"], fg=C["muted"],
                      font=FONT_SMALL).pack(anchor="w", padx=PAD_S, pady=PAD_S)
             return
         for code, path, added, removed in sorted(rows, key=lambda r: r[1]):
@@ -2121,7 +2124,7 @@ class WorkspacePanel(tk.Frame):
             title = "暂无 Git Diff"
             detail = "此目录不是 Git 仓库。你仍可以打开真实文件查看代码。"
         elif count:
-            title = "选择文件查看 Diff"
+            title = tr("选择文件查看 Diff")
             detail = f"工作区有 {count} 个文件修改。选择变更列表中的文件；拖动分隔线可调整区域高度。"
         else:
             title = "工作区暂无改动"
@@ -2288,14 +2291,14 @@ class WorkspacePanel(tk.Frame):
             sel = n == name
             lbl.configure(fg=C["text"] if sel else C["ter"])
         self._show_preview_sub(name)
-        if name in ("预览", "终端"):
+        if name in (tr("预览"), tr("终端")):
             self._current_tab = name
             for key, tab in self._tabs.items():
                 tab.set_selected(key == name)
 
     def _show_preview_sub(self, name: str):
         """终端/控制台切到终端 Text；其余切到预览内容宿主。"""
-        if name in ("终端", "控制台"):
+        if name in (tr("终端"), tr("控制台")):
             if getattr(self, "_term_text", None) is None:
                 self._term_text = tk.Text(self._preview_host, bg=C["code_bg"],
                                           fg=C["muted"], font=FONT_MONO_SM,
@@ -2324,7 +2327,7 @@ class WorkspacePanel(tk.Frame):
         if getattr(self, "_term_text", None) is not None:
             self._term_text.pack_forget()
             self._term_vbar.pack_forget()
-        if name == "图像":
+        if name == tr("图像"):
             self._preview_text.pack_forget()
             self._prev_vbar.pack_forget()
             self._show_image_preview()
@@ -2403,11 +2406,11 @@ class WorkspacePanel(tk.Frame):
 
     def _render_preview(self, path: Path):
         sub = self._preview_subtab_var.get()
-        if sub in ("终端", "控制台"):
+        if sub in (tr("终端"), tr("控制台")):
             return
         suffix = path.suffix.lower()
         image_exts = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
-        if suffix in image_exts and sub in ("预览", "图像"):
+        if suffix in image_exts and sub in (tr("预览"), tr("图像")):
             self._show_image_preview(path)
             return
         # 文本类
@@ -2424,7 +2427,7 @@ class WorkspacePanel(tk.Frame):
             txt = data.decode("utf-8", errors="replace")
             self._preview_write(txt + "\n\n（HTML/SVG 源码 · 可点「在新窗口打开」）")
             return
-        if suffix == ".md" and sub in ("预览", "Markdown"):
+        if suffix == ".md" and sub in (tr("预览"), "Markdown"):
             self._preview_write(_strip_md(data.decode("utf-8", errors="replace")))
             return
         if suffix == ".py":
@@ -2517,9 +2520,9 @@ def _selftest(repo: str | None = None):
             panel.open_file(sample)
             root.update()
         panel.push_terminal("test")
-        panel._set_preview_sub("终端")
-        panel._set_preview_sub("图像")
-        panel._set_preview_sub("预览")
+        panel._set_preview_sub(tr("终端"))
+        panel._set_preview_sub(tr("图像"))
+        panel._set_preview_sub(tr("预览"))
         root.update()
         print("selftest ok; changes:", panel.changes_count())
     finally:

@@ -23,6 +23,9 @@
 """
 from __future__ import annotations
 
+import i18n
+from i18n import tr
+
 import re
 import sys
 import time
@@ -485,10 +488,10 @@ def render_blocks(parent, text, *, bg=None, max_width=None,
                 heading = InlineText(host, bg=base, fg=C["text"], font=f)
                 heading.set_text(block["text"])
             else:
-                heading = tk.Label(host, text=block["text"], bg=base, fg=C["text"], font=f,
+                heading = i18n.Label(host, text=block["text"], bg=base, fg=C["text"], font=f,
                                    anchor="w", justify=tk.LEFT, wraplength=wrap)
             heading.pack(fill=tk.X, pady=(8, 3))
-            if isinstance(heading, tk.Label):
+            if isinstance(heading, i18n.Label):
                 bind_wrap(heading)
         elif kind == "p":
             t = InlineText(host, bg=base)
@@ -497,7 +500,7 @@ def render_blocks(parent, text, *, bg=None, max_width=None,
         elif kind == "li":
             row = tk.Frame(host, bg=base)
             row.pack(fill=tk.X, pady=1)
-            tk.Label(row, text="•", bg=base, fg=C["accent2"], font=FONT_UI_BOLD,
+            i18n.Label(row, text="•", bg=base, fg=C["accent2"], font=FONT_UI_BOLD,
                      width=2, anchor="nw").pack(side=tk.LEFT)
             t = InlineText(row, bg=base)
             t.set_segments(inline_segments(block["text"]))
@@ -617,7 +620,7 @@ class ToolCard(tk.Frame):
         self._arrow = IconCanvas(self._summary, "chevron_right", size=16, bg=base, fg=C["ter"])
         self._arrow.pack(side=tk.LEFT, padx=(0, 6))
         self._arrow.bind("<Button-1>", lambda _e: self.toggle())
-        self._summary_label = tk.Label(self._summary, text="", bg=base,
+        self._summary_label = i18n.Label(self._summary, text="", bg=base,
                                        fg=C["muted"], font=FONT_CAPTION,
                                        cursor="hand2", anchor="w")
         self._summary_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
@@ -670,14 +673,14 @@ class ToolCard(tk.Frame):
         mark = "✅" if ok else "⚠️"
         IconCanvas(wrap, "check_circle" if ok else "warning", size=18, bg=bgc,
                    fg=C["ok"] if ok else C["warn"]).pack(side=tk.LEFT, padx=(0, 6))
-        tk.Label(wrap, text=row.get("name", ""), bg=bgc, fg=C["accent2"],
+        i18n.Label(wrap, text=row.get("name", ""), bg=bgc, fg=C["accent2"],
                  font=FONT_MONO_SM).pack(side=tk.LEFT)
         desc = row.get("desc")
         if desc:
-            tk.Label(wrap, text=desc, bg=bgc, fg=C["ter"], font=FONT_SMALL,
+            i18n.Label(wrap, text=desc, bg=bgc, fg=C["ter"], font=FONT_SMALL,
                      anchor="w", justify=tk.LEFT).pack(side=tk.LEFT, padx=(10, 6))
         if row.get("elapsed"):
-            tk.Label(wrap, text=str(row["elapsed"]), bg=bgc, fg=C["muted"],
+            i18n.Label(wrap, text=str(row["elapsed"]), bg=bgc, fg=C["muted"],
                      font=FONT_MONO_SM).pack(side=tk.RIGHT)
         if row.get("detail"):
             attach_tooltip(wrap, row["detail"])
@@ -704,8 +707,8 @@ class StepList(tk.Frame):
         self._arrow.pack(side=tk.LEFT, padx=(0, 6))
         self._arrow.bind("<Button-1>", lambda _e: self.toggle())
         n = len(self._items)
-        self._summary_label = tk.Label(self._summary,
-                                       text=f"执行步骤 {n} 步",
+        self._summary_label = i18n.Label(self._summary,
+                                       text=tr("执行步骤 {count} 步", count=n),
                                        bg=base, fg=C["muted"], font=FONT_CAPTION,
                                        cursor="hand2", anchor="w")
         self._summary_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
@@ -729,16 +732,16 @@ class StepList(tk.Frame):
         idx.pack(side=tk.LEFT, anchor="n", padx=(0, 10))
         text_box = tk.Frame(row, bg=base)
         text_box.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        tk.Label(text_box, text=item.get("title", ""), bg=base, fg=C["text"],
+        i18n.Label(text_box, text=item.get("title", ""), bg=base, fg=C["text"],
                  font=FONT_UI_BOLD, anchor="w").pack(fill=tk.X)
         desc = item.get("desc")
         if desc:
-            tk.Label(text_box, text=desc, bg=base, fg=C["ter"], font=FONT_SMALL,
+            i18n.Label(text_box, text=desc, bg=base, fg=C["ter"], font=FONT_SMALL,
                      anchor="w", justify=tk.LEFT, wraplength=460).pack(fill=tk.X)
         right = tk.Frame(row, bg=base)
         right.pack(side=tk.RIGHT, anchor="n")
         if item.get("elapsed"):
-            tk.Label(right, text=str(item["elapsed"]), bg=base, fg=C["muted"],
+            i18n.Label(right, text=str(item["elapsed"]), bg=base, fg=C["muted"],
                      font=FONT_MONO_SM).pack(side=tk.LEFT, padx=(0, 8))
         if item.get("done", True):
             chk = tk.Canvas(right, width=14, height=14, bg=base,
@@ -770,7 +773,7 @@ class ActionRow(tk.Frame):
         for action in actions:
             kind = action.get("kind", "ghost")
             label = action.get("label", "")
-            if label == "打开工作区":
+            if label == tr("打开工作区"):
                 label = "📁 打开工作区"
             btn = IconButton(self, text=label,
                             command=action.get("command"),
@@ -811,7 +814,7 @@ class AgentStatusIndicator(tk.Frame):
         self.canvas = tk.Canvas(self, width=18, height=18, bg=bg,
                                 highlightthickness=0, bd=0)
         self.canvas.pack(side=tk.LEFT, padx=(0, 5))
-        self.label = tk.Label(self, text="", bg=bg, fg=C["muted"],
+        self.label = i18n.Label(self, text="", bg=bg, fg=C["muted"],
                               font=FONT_CAPTION)
         self.label.pack(side=tk.LEFT)
         self.pack_forget()
@@ -841,7 +844,7 @@ class AgentStatusIndicator(tk.Frame):
             self._tick()
         else:
             self._on_destroy()
-            color = C["error"] if any(w in lowered for w in ("失败", "错误")) else C["ok"]
+            color = C["error"] if any(w in lowered for w in (tr("失败"), tr("错误"))) else C["ok"]
             self._draw_static(color)
 
     def _draw_logo(self, color: str):
@@ -914,9 +917,9 @@ class UserMessage(tk.Frame):
         head.pack(anchor="e")
         avatar(head, size=ui_px(self, 26), glyph="你", fill="#2A2A38", shape="circle",
                bg=base).pack(side=tk.LEFT, padx=(0, ui_px(self, 8)))
-        tk.Label(head, text=name, bg=base, fg=C["subtext"], font=FONT_CAPTION,
+        i18n.Label(head, text=name, bg=base, fg=C["subtext"], font=FONT_CAPTION,
                  anchor="e").pack(side=tk.LEFT)
-        tk.Label(head, text=ts or time.strftime("%H:%M"), bg=base, fg=C["muted"],
+        i18n.Label(head, text=ts or time.strftime("%H:%M"), bg=base, fg=C["muted"],
                  font=FONT_CAPTION).pack(side=tk.LEFT, padx=(ui_px(self, 8), 0))
 
         # 气泡（autosize_width=True 修历史 bug）
@@ -934,7 +937,7 @@ class UserMessage(tk.Frame):
             self.label = EmojiLabel(card.content, text=text, bg=C["msg_user_bg"],
                                     fg=C["msg_user_fg"], wraplength=max_text)
         else:
-            self.label = tk.Label(card.content, text=text, bg=C["msg_user_bg"],
+            self.label = i18n.Label(card.content, text=text, bg=C["msg_user_bg"],
                                   fg=C["msg_user_fg"], font=FONT_UI, justify=tk.LEFT,
                                   anchor="w", wraplength=max_text)
         self.label.pack(anchor="w")
@@ -972,8 +975,8 @@ class AgentMessage(tk.Frame):
         self._avatar = avatar(head, size=ui_px(self, 28), glyph=glyph, fill=C["accent"], shape="rounded",
                               bg=base, image=_BRAND_AVATAR)
         self._avatar.pack(side=tk.LEFT, padx=(0, ui_px(self, 8)))
-        tk.Label(head, text=name, bg=base, fg=C["text"], font=FONT_UI_BOLD).pack(side=tk.LEFT)
-        tk.Label(head, text=ts or time.strftime("%H:%M"), bg=base, fg=C["muted"],
+        i18n.Label(head, text=name, bg=base, fg=C["text"], font=FONT_UI_BOLD).pack(side=tk.LEFT)
+        i18n.Label(head, text=ts or time.strftime("%H:%M"), bg=base, fg=C["muted"],
                  font=FONT_CAPTION).pack(side=tk.LEFT, padx=(8, 0))
         self._role_badge = None
         if role:
@@ -984,7 +987,7 @@ class AgentMessage(tk.Frame):
 
         self.subtitle = None
         if subtitle:
-            self.subtitle = tk.Label(self, text=subtitle, bg=base, fg=C["ter"],
+            self.subtitle = i18n.Label(self, text=subtitle, bg=base, fg=C["ter"],
                                      font=FONT_SMALL, anchor="w", justify=tk.LEFT,
                                      wraplength=MAX_BUBBLE_WIDTH)
             self.subtitle.pack(fill=tk.X, pady=(4, 0))
@@ -1195,7 +1198,7 @@ class AgentMessage(tk.Frame):
                     pass
 
         actions = [
-            ("⧉", "复制", _copy),
+            ("⧉", tr("复制"), _copy),
             ("⟳", "重生成", _retry),
             ("👍", "赞", lambda: _vote("赞")),
             ("👎", "踩", lambda: _vote("踩")),
@@ -1216,7 +1219,7 @@ class AgentMessage(tk.Frame):
             host_frame = self._ensure_trace_host()
         colors = {"muted": C["muted"], "ok": C["ok"], "error": C["error"],
                   "warn": C["warn"], "info": C["info"]}
-        label = tk.Label(host_frame, text=text, bg=self._bg,
+        label = i18n.Label(host_frame, text=text, bg=self._bg,
                  fg=colors.get(tone, C["muted"]),
                  font=FONT_CAPTION, anchor="w", justify=tk.LEFT,
                  wraplength=self._max_width)
@@ -1249,9 +1252,9 @@ class NoticeMessage(tk.Frame):
         card = RoundedCard(self, radius=R_MD, fill=soft, outline=color,
                            padx=12, pady=8, bg=base)
         card.pack(fill=tk.X)
-        tk.Label(card.content, text=(title or "提示"), bg=soft, fg=color,
+        i18n.Label(card.content, text=(title or tr("提示")), bg=soft, fg=color,
                  font=FONT_UI_BOLD, anchor="w").pack(fill=tk.X)
-        tk.Label(card.content, text=text, bg=soft, fg=C["body"], font=FONT_SMALL,
+        i18n.Label(card.content, text=text, bg=soft, fg=C["body"], font=FONT_SMALL,
                  anchor="w", justify=tk.LEFT,
                  wraplength=MAX_BUBBLE_WIDTH).pack(fill=tk.X, pady=(2, 0))
 
@@ -1270,7 +1273,7 @@ class MessageArea(tk.Frame):
         self._work_context = None
         self._context_hint = None
         self._context_actions = ()
-        self._context_var = tk.StringVar(value="")
+        self._context_var = i18n.StringVar(self, value="")
         self.scroll.canvas.bind("<Configure>", self._fit_context_hint, add="+")
         self.scroll.inner.bind("<Configure>", self._fit_context_hint, add="+")
         self.show_empty()
@@ -1288,14 +1291,14 @@ class MessageArea(tk.Frame):
             banner.pack(pady=(0, 10))
         except tk.TclError:
             banner = None
-        title_label = tk.Label(box, text=title, bg=self._bg, fg=C["text"], font=FONT_TITLE)
+        title_label = i18n.Label(box, text=title, bg=self._bg, fg=C["text"], font=FONT_TITLE)
         title_label.pack()
-        context = tk.Label(box, textvariable=self._context_var, bg=self._bg,
+        context = i18n.Label(box, textvariable=self._context_var, bg=self._bg,
                            fg=C["subtext"], font=FONT_SMALL, justify=tk.CENTER)
         context.pack(fill=tk.X, pady=(8, 0))
         bind_wrap(context)
         for line in lines:
-            label = tk.Label(box, text=line, bg=self._bg, fg=C["ter"],
+            label = i18n.Label(box, text=line, bg=self._bg, fg=C["ter"],
                              font=FONT_SMALL, wraplength=500, justify=tk.CENTER)
             label.pack(fill=tk.X, pady=(8, 0))
             label.bind("<Configure>", lambda e, w=label: w.configure(
@@ -1307,11 +1310,11 @@ class MessageArea(tk.Frame):
             for index, (title, detail, callback) in enumerate(actions):
                 row = tk.Frame(choices, bg=C["surface2"], padx=12, pady=10,
                                cursor="hand2")
-                label = tk.Label(row, text=title, bg=C["surface2"],
+                label = i18n.Label(row, text=title, bg=C["surface2"],
                                  fg=C["accent_text"] if index == 0 else C["body"],
                                  font=FONT_SMALL, anchor="w", cursor="hand2")
                 label.pack(fill=tk.X)
-                hint = tk.Label(row, text=detail, bg=C["surface2"], fg=C["muted"],
+                hint = i18n.Label(row, text=detail, bg=C["surface2"], fg=C["muted"],
                                 font=FONT_CAPTION, anchor="w", justify=tk.LEFT,
                                 cursor="hand2")
                 hint.pack(fill=tk.X, pady=(2, 0))
@@ -1369,9 +1372,10 @@ class MessageArea(tk.Frame):
     def set_work_context(self, repo, changed=None, *, actions=()):
         self._work_context = repo
         self._context_actions = actions
-        text = f"当前工作区：{repo}" if repo else "尚未选择工作区"
+        text = tr("当前工作区：{name}", name=repo) if repo else tr("尚未选择工作区")
         if repo and changed is not None:
-            text += f" · {changed} 个文件有修改" if changed else " · 工作区没有未提交修改"
+            detail = tr(" · {count} 个文件有修改", count=changed) if changed else tr(" · 工作区没有未提交修改")
+            text = tr("{base}{detail}", base=text, detail=detail)
         self._context_var.set(text)
         self._fit_context_hint()
 
@@ -1382,14 +1386,14 @@ class MessageArea(tk.Frame):
             return
         if self._context_hint is None:
             box = self._context_hint = tk.Frame(self.scroll.inner, bg=C["surface_subtle"], padx=14, pady=12)
-            label = tk.Label(box, textvariable=self._context_var, bg=C["surface_subtle"], fg=C["subtext"],
+            label = i18n.Label(box, textvariable=self._context_var, bg=C["surface_subtle"], fg=C["subtext"],
                              font=FONT_SMALL, justify=tk.LEFT, anchor="w")
             label.pack(fill=tk.X)
             bind_wrap(label)
             actions = ActionRow(box, [{"label": title, "command": callback} for title, callback in self._context_actions],
                                 bg=C["surface_subtle"])
             actions.pack(fill=tk.X, pady=(8, 0))
-            hint = tk.Label(box, text="选择建议会填入草稿，确认后再发送。", bg=C["surface_subtle"],
+            hint = i18n.Label(box, text=tr("选择建议会填入草稿，确认后再发送。"), bg=C["surface_subtle"],
                             fg=C["muted"], font=FONT_CAPTION, anchor="w", justify=tk.LEFT)
             hint.pack(fill=tk.X, pady=(4, 0))
             bind_wrap(hint)
@@ -1448,7 +1452,7 @@ class MessageArea(tk.Frame):
 
     def add_label(self, text, *, fg=None, font=None, pady=(8, 0)):
         following = self.scroll.at_bottom()
-        lbl = tk.Label(self.scroll.inner, text=text, bg=self._bg,
+        lbl = i18n.Label(self.scroll.inner, text=text, bg=self._bg,
                        fg=fg or C["ter"], font=font or FONT_SMALL,
                        anchor="w", justify=tk.LEFT, wraplength=MAX_BUBBLE_WIDTH)
         lbl.pack(fill=tk.X, pady=pady)
@@ -1472,7 +1476,7 @@ class TeamTogglePill(tk.Frame):
     """
 
     MODES = ("off", "auto", "on")
-    LABELS = {"off": "智能体：关", "auto": "智能体：AI 决断", "on": "智能体：开"}
+    LABELS = {"off": tr("智能体：关"), "auto": tr("智能体：AI 决断"), "on": tr("智能体：开")}
     COLORS = {   # (bg, fg)
         "off":  ("input_bg", "subtext"),
         "auto": ("accent_soft", "accent"),
@@ -1492,7 +1496,7 @@ class TeamTogglePill(tk.Frame):
         self._btn.pack()
         self._apply_mode_color()
         # 右键直达指定档位
-        menu = tk.Menu(self, tearoff=0, bg=C["surface"], fg=C["text"],
+        menu = i18n.Menu(self, tearoff=0, bg=C["surface"], fg=C["text"],
                        activebackground=C["hover"], activeforeground=C["accent"])
         for m in self.MODES:
             menu.add_command(label=self.LABELS[m],
@@ -1746,7 +1750,7 @@ class InputCard(tk.Frame):
         # 让 Windows 立刻把候选框重新摆到 caret 旁（与 WebView 的 caret bounding rect
         # 锚定是同一原理）。DPI awareness 同时升到 Per-Monitor V2，让候选框走 DPI 缩放路径。
         self._ime_anchor = _IMECaretAnchor(self.entry)
-        self._hint = tk.Label(entry_host, text=placeholder, bg=C["input_bg"],
+        self._hint = i18n.Label(entry_host, text=placeholder, bg=C["input_bg"],
                               fg=C["placeholder"], font=FONT_UI, anchor="w",
                               cursor="xterm")
         self._hint.place(x=1, y=2)
@@ -1779,7 +1783,7 @@ class InputCard(tk.Frame):
             low = attachments
             self._low_controls = low
             for text, tip, callback in (
-                    ("上下文", "查看历史与附件，检查本轮实际发送内容", on_context),
+                    (tr("上下文"), "查看历史与附件，检查本轮实际发送内容", on_context),
                     ("/ 命令", "工具与命令", on_commands)):
                 pill = rounded_label(low, text, fill=C["input_bg"], outline="",
                                      fg=C["subtext"], font=FONT_CAPTION,
@@ -1802,15 +1806,15 @@ class InputCard(tk.Frame):
         state_row.grid_columnconfigure(0, weight=1)
         metadata = self._metadata = tk.Frame(state_row, bg=C["input_bg"])
         metadata.grid(row=0, column=0, sticky="ew", padx=(0, 8))
-        self.provider_var = tk.StringVar(value="Provider：未配置")
-        self.provider_label = tk.Label(metadata, textvariable=self.provider_var,
+        self.provider_var = i18n.StringVar(self, value=tr("Provider：未配置"))
+        self.provider_label = i18n.Label(metadata, textvariable=self.provider_var,
                                        font=FONT_CAPTION, bg=C["input_bg"], fg=C["muted"], anchor="w")
         self.provider_label.grid(row=0, column=0, sticky="w", padx=(0, 8))
         model_host = self._model_host = tk.Frame(metadata, bg=C["input_bg"])
         model_host.grid(row=0, column=1, sticky="ew", padx=(0, 8))
         metadata.grid_columnconfigure(1, weight=1)
-        self.mode_var = tk.StringVar(value="模式：标准")
-        self.mode_pill = glyph_button(metadata, "模式：标准", on_thinking or (lambda: None),
+        self.mode_var = i18n.StringVar(self, value=tr("模式：标准"))
+        self.mode_pill = glyph_button(metadata, tr("模式：标准"), on_thinking or (lambda: None),
                                       bg=C["input_bg"], fg=C["subtext"], size=10,
                                       tooltip="当前思考强度；点击调整，实际支持能力取决于模型")
         self.mode_pill.grid(row=0, column=2, sticky="e")
@@ -1843,7 +1847,7 @@ class InputCard(tk.Frame):
         if on_settings is not None:
             self.settings_btn = glyph_button(bar, "⚙", on_settings, bg=C["input_bg"],
                                              fg=C["subtext"], size=11,
-                                             hover=C["hover"], tooltip="设置")
+                                             hover=C["hover"], tooltip=tr("设置"))
             self.settings_btn.pack(side=tk.RIGHT)
         else:
             self.settings_btn = None
@@ -1855,7 +1859,7 @@ class InputCard(tk.Frame):
         self.send_circle.pack(side=tk.RIGHT)
         self.stop_circle = circle_button(right, "■", self._fire_stop, size=ui_px(self, 36),
                                          kind="danger", bg=C["input_bg"],
-                                         tooltip="停止生成")
+                                         tooltip=tr("停止生成"))
         self._busy = False
         self._stopping = False
         self._toolbar_shrunk = []
@@ -1864,12 +1868,12 @@ class InputCard(tk.Frame):
         # 提示行（footer）—— 放到 InputCard 自带的 foot，不属于 inner card
         foot = tk.Frame(self, bg=base)
         foot.pack(fill=tk.X, pady=(6, 2))
-        self.footer_left = tk.Label(foot, text=footer_left or "空闲", bg=base,
+        self.footer_left = i18n.Label(foot, text=footer_left or tr("空闲"), bg=base,
                                     fg=C["muted"], font=FONT_CAPTION)
         self.footer_left.pack(side=tk.LEFT)
         if footer_right is None:
             footer_right = "Enter ↵  ·  Shift+Enter 换行"
-        self.footer_right = tk.Label(foot, text=footer_right, bg=base,
+        self.footer_right = i18n.Label(foot, text=footer_right, bg=base,
                                      fg=C["muted"], font=FONT_CAPTION)
         self.footer_right.pack(side=tk.RIGHT)
 
@@ -1950,9 +1954,9 @@ class InputCard(tk.Frame):
             self.model_pill.configure(width=budget)
 
     def set_metadata(self, *, provider, mode):
-        self.provider_var.set(f"Provider：{provider}")
-        self.mode_var.set(f"模式：{mode}")
-        self.mode_pill.configure(text=self.mode_var.get())
+        self.provider_var.set(tr("Provider：{provider}", provider=provider))
+        self.mode_var.set(tr("模式：{mode}", mode=tr(mode)))
+        self.mode_pill.configure(text=tr("模式：{mode}", mode=tr(mode)))
         self._fit_toolbar(type("Size", (), {"width": self._toolbar.winfo_width()})())
 
     def _enter(self, event):

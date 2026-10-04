@@ -16,6 +16,9 @@
 """
 from __future__ import annotations
 
+import i18n
+from i18n import tr
+
 import tkinter as tk
 
 from gui_theme import C, FONT_CAPTION, FONT_MICRO, FONT_UI_BOLD, round_rect
@@ -93,16 +96,16 @@ class ReasoningSlider(tk.Frame):
 
         # 保留既有自动化/兼容接口。可见标签已经收进卡片标题，隐藏的 Label 仍让
         # 调用方能按 value 查到名称，不需要依赖 Canvas 内部 item id。
-        self.label_widgets: dict[str, tuple[tk.Frame, tk.Label]] = {}
+        self.label_widgets: dict[str, tuple[tk.Frame, i18n.Label]] = {}
         for value in self.stops:
             host = tk.Frame(self, bg=base, cursor="hand2")
-            text = tk.Label(host, text=self._labels_text[value], bg=base,
+            text = i18n.Label(host, text=self._labels_text[value], bg=base,
                             fg=C["muted"], font=FONT_MICRO, cursor="hand2")
             for widget in (host, text):
                 widget.bind("<Button-1>", lambda _e, v=value: self.pick(v))
             self.label_widgets[value] = (host, text)
 
-        self.hint_label = tk.Label(self, text="", bg=base, fg=C["muted"],
+        self.hint_label = i18n.Label(self, text="", bg=base, fg=C["muted"],
                                    font=FONT_MICRO, anchor="w", justify=tk.LEFT)
 
         self.canvas.bind("<Configure>", self._on_configure)

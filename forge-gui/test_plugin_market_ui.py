@@ -29,6 +29,32 @@ def market_app(*args, **kwargs):
 
 
 class MarketplaceUiTests(unittest.TestCase):
+    def test_grant_action_reaches_reviewed_capability_dialog(self):
+        with market_app() as (root, app, errors):
+            plugin = pm.parse_manifest({"id": "demo", "capabilities": ["repo.read"]})
+            plugin.installed = plugin.enabled = plugin.acked = True
+            market = Mock()
+            market.find.return_value = plugin
+            with patch.object(app, "_market_obj", return_value=market), \
+                 patch.object(app, "_show_grant_dialog") as show:
+                app._market_action("demo", "grant")
+                layout.pump(root, .3)
+                show.assert_called_once_with(plugin, plugin.ack_of())
+                self.assertFalse(app._market_action_busy)
+            self.assertEqual(errors, [])
+
+    def test_revoke_action_reaches_marketplace_and_finishes(self):
+        with market_app() as (root, app, errors):
+            market = Mock()
+            with patch.object(app, "_market_obj", return_value=market), \
+                 patch.object(app, "_refresh_market") as refresh:
+                app._market_action("demo", "revoke")
+                layout.pump(root, .3)
+                market.revoke_grants.assert_called_once_with("demo")
+                refresh.assert_called_once_with()
+                self.assertFalse(app._market_action_busy)
+            self.assertEqual(errors, [])
+
     def test_main_entry_opens_market_and_returns_to_identical_layout(self):
         for scale in layout.SCALES:
             with self.subTest(scale=scale), market_app(scale, (1920, 1000)) as (root, app, errors):
