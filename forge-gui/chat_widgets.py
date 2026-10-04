@@ -24,6 +24,7 @@
 from __future__ import annotations
 
 import re
+import sys
 import time
 import tkinter as tk
 from tkinter import font as tkfont
@@ -1534,6 +1535,169 @@ class TeamTogglePill(tk.Frame):
                 self._btn.itemconfigure(item, fill=fg_c)
 
 
+
+class _IMECaretAnchor:
+    """把 Windows IME 候选框主动锚到 Tk Text 的 caret 屏幕位置。
+
+    Tk 用 Canvas + create_window 渲染输入卡（虚拟布局），Windows IME 在收到
+    SetCompositionWindow 时按「hwnd + caret rect」反推位置；Tk 没有自动把
+    create_window 那层的坐标转换出去，所以候选框在窗口中段定住。我们捕获
+    focus/click/key 事件，主动算出 caret 的屏幕绝对位置 + 字高，喂给
+    ImmSetCompositionWindow，让 Windows 立即刷新候选框位置。
+
+    非 Windows 平台 → no-op。
+    """
+
+    _IME_LEVEL = None  # 兼容老 API（找不到 ImmGetContext 时退回 IME_LEVEL）
+
+    def __init__(self, text_widget):
+        self._w = text_widget
+        self._supported = sys.platform.startswith("win32")
+        self._anchor_func = None
+        if self._supported:
+            try:
+                self._init_imm()
+            except Exception:
+                self._supported = False
+        if self._supported:
+            text_widget.bind("<FocusIn>", self._reanchor, add="+")
+            text_widget.bind("<Button-1>", self._reanchor, add="+")
+            text_widget.bind("<KeyRelease>", self._reanchor, add="+")
+            text_widget.bind("<Configure>", self._on_canvas_or_text_configure, add="+")
+
+    # ── 平台初始化 ──────────────────────────────────────────────
+
+    def _init_imm(self):
+        import ctypes
+        from ctypes import wintypes
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        imm32 = ctypes.WinDLL("imm32", use_last_error=True)
+        self._user32 = user32
+        self._imm32 = imm32
+        # CreateCaret / SetCaretPos / DestroyCaret：让 Windows 知道 caret 屏幕位置
+        self._user32.CreateCaret.argtypes = [wintypes.HANDLE, wintypes.HANDLE,
+                                             wintypes.INT, wintypes.INT]
+        self._user32.CreateCaret.restype = wintypes.BOOL
+        self._user32.DestroyCaret.argtypes = []
+        self._user32.DestroyCaret.restype = wintypes.BOOL
+        self._user32.GetForegroundWindow.argtypes = []
+        self._user32.GetForegroundWindow.restype = wintypes.HANDLE
+        # ImmGetContext / ImmReleaseContext
+        self._imm32.ImmGetContext.argtypes = [wintypes.HANDLE]
+        self._imm32.ImmGetContext.restype = wintypes.HANDLE
+        self._imm32.ImmReleaseContext.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+        self._imm32.ImmReleaseContext.restype = wintypes.BOOL
+        # ImmSetCompositionWindow：要的就是这个。COMPOSITIONFORM 含 ptCurrentPos
+        class POINT(ctypes.Structure):
+            _fields_ = [("x", wintypes.LONG), ("y", wintypes.LONG)]
+        class RECT(ctypes.Structure):
+            _fields_ = [("left", wintypes.LONG), ("top", wintypes.LONG),
+                        ("right", wintypes.LONG), ("bottom", wintypes.LONG)]
+        class COMPOSITIONFORM(ctypes.Structure):
+            _fields_ = [("dwStyle", ctypes.c_uint32), ("ptCurrentPos", POINT),
+                        ("rcArea", RECT)]
+        self._COMPOSITIONFORM = COMPOSITIONFORM
+        self._imm32.ImmSetCompositionWindow.argtypes = [wintypes.HANDLE,
+                                                        ctypes.POINTER(COMPOSITIONFORM)]
+        self._imm32.ImmSetCompositionWindow.restype = wintypes.BOOL
+        # CFS_POINT = 0x2 : 用 ptCurrentPos（屏幕绝对坐标）
+        self._CFS_POINT = 0x2
+        # 即时调用一次，建立 caret
+        self._anchor_func = self._imm_set
+
+    # ── 触发 ──────────────────────────────────────────────────────
+
+    def _reanchor(self, _event=None):
+        if not self._supported:
+            return
+        try:
+            self._update()
+            # 关键：强制 Tk 把 Canvas → create_window → Frame → Text 的所有
+            # 虚拟布局坐标都刷到屏幕——否则 ImmSetCompositionWindow 拿到的
+            # caret 位置是「上一帧」的，结果候选框只追到旧位置。
+            self._w.update_idletasks()
+            self._anchor_caret()
+        except Exception:
+            pass
+
+    def _on_canvas_or_text_configure(self, _event=None):
+        # 配置事件（如 height 变化）后也再锚一次
+        self._reanchor()
+
+    # ── 计算 + 调用 IMM ───────────────────────────────────────────
+
+    def _caret_root_xy(self, win):
+        """沿 widget 父链一路问 winfo_rootx/_rooty，累加到顶级窗口，
+        处理 Canvas→create_window 这层虚拟布局（顶级窗口不在屏外）。"""
+        try:
+            x = win.winfo_rootx()
+            y = win.winfo_rooty()
+            parent = win.master
+            while parent is not None:
+                try:
+                    x += parent.winfo_rootx() - parent.winfo_x()
+                    y += parent.winfo_rooty() - parent.winfo_y()
+                except (AttributeError, tk.TclError):
+                    break
+                if str(parent) == str(win.winfo_toplevel()):
+                    break
+                parent = parent.master
+            return x, y
+        except (AttributeError, tk.TclError):
+            return None
+
+    def _update(self):
+        # 显式建/销 caret，让系统记录 hwnd 关联（CreateCaret(NULL, w, 1, h) → 灰 caret）
+        try:
+            hwnd = int(self._w.winfo_id())
+            try:
+                self._user32.DestroyCaret()
+            except Exception:
+                pass
+            self._user32.CreateCaret(hwnd, 0, 1, 20)  # 宽 1 高 20（≈单行）
+            # 把 caret 设在当前 Tk Text 的光标位置：dlineinfo 拿到字高
+            dline = self._w.dlineinfo(self._w.index("insert"))
+            if not dline:
+                return
+            # dlineinfo 返回 (x, y, w, h, base)
+            ix, iy, iw, ih, base = dline
+            # Tk 局部坐标 → 屏幕坐标
+            tx = self._w.winfo_rootx()
+            ty = self._w.winfo_rooty()
+            self._caret_x = tx + ix
+            self._caret_y = ty + iy + ih   # caret 在文本下沿
+            self._caret_h = ih
+            self._user32.SetCaretPos = self._user32.SetCaretPos
+            self._user32.SetCaretPos.argtypes = [wintypes.INT, wintypes.INT]
+            self._user32.SetCaretPos.restype = wintypes.BOOL
+            self._user32.SetCaretPos(self._caret_x, self._caret_y)
+        except Exception:
+            pass
+
+    def _imm_set(self):
+        try:
+            hwnd = int(self._w.winfo_id())
+            hIMC = self._imm32.ImmGetContext(hwnd)
+            if not hIMC:
+                return
+            cf = self._COMPOSITIONFORM()
+            cf.dwStyle = self._CFS_POINT
+            cf.ptCurrentPos.x = getattr(self, "_caret_x", 0)
+            cf.ptCurrentPos.y = getattr(self, "_caret_y", 0) + 1
+            cf.rcArea.left = cf.ptCurrentPos.x
+            cf.rcArea.top = cf.ptCurrentPos.y
+            cf.rcArea.right = cf.ptCurrentPos.x + 200
+            cf.rcArea.bottom = cf.ptCurrentPos.y + 24
+            self._imm32.ImmSetCompositionWindow(hIMC, ctypes.byref(cf))
+            self._imm32.ImmReleaseContext(hwnd, hIMC)
+        except Exception:
+            pass
+
+    def _anchor_caret(self):
+        if self._anchor_func is not None:
+            self._anchor_func()
+
+
 class InputCard(tk.Frame):
     """底部 Composer：输入是主体，低频控制统一收进水平工具栏。"""
 
@@ -1575,6 +1739,13 @@ class InputCard(tk.Frame):
                               insertbackground=C["accent"], relief=tk.FLAT, bd=0,
                               highlightthickness=0)
         self.entry.pack(fill=tk.X, ipady=3)
+
+        # IME 候选框锚定（Windows）：输入卡走 Canvas + create_window 的虚拟布局，
+        # 系统 Caret 位置没自动跟上，导致候选框卡在窗口中段。
+        # 主动捕获 focus/click/keypress：把 caret 的屏幕坐标 + 字高喂给 ImmSetCompositionWindow，
+        # 让 Windows 立刻把候选框重新摆到 caret 旁（与 WebView 的 caret bounding rect
+        # 锚定是同一原理）。DPI awareness 同时升到 Per-Monitor V2，让候选框走 DPI 缩放路径。
+        self._ime_anchor = _IMECaretAnchor(self.entry)
         self._hint = tk.Label(entry_host, text=placeholder, bg=C["input_bg"],
                               fg=C["placeholder"], font=FONT_UI, anchor="w",
                               cursor="xterm")
