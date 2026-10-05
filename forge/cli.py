@@ -312,6 +312,7 @@ def cmd_gateway(args) -> int:
         upstream=args.upstream,
         api_key=args.api_key or os.environ.get("FORGE_GATEWAY_KEY", ""),
         port=args.port,
+        gateway_token=args.key or "",
         models=[m.strip() for m in (args.models or "").split(",") if m.strip()],
         log_path=Path(args.log) if args.log else None,
         upstream_wire=args.upstream_wire,

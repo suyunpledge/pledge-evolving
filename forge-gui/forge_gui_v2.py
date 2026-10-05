@@ -2648,6 +2648,7 @@ class ForgeGuiApp:
                 "signature": "未提供签名验证", "error": plugin.error}, ensure_ascii=False, indent=2)
             dialog = i18n.Toplevel(self.root)
             dialog.title(f"检查插件 · {plugin.name}")
+            dialog.bind("<Escape>", lambda _event: dialog.destroy() or "break")
             dialog.geometry("700x520")
             dialog.configure(bg=C["bg"])
             content = scrolledtext.ScrolledText(dialog, bg=C["surface"], fg=C["text"],
@@ -2656,6 +2657,10 @@ class ForgeGuiApp:
             content.insert("1.0", text)
             content.configure(state=tk.DISABLED)
             pill_button(dialog, tr("关闭"), dialog.destroy, bg=C["bg"]).pack(pady=(0, 12))
+            try:
+                dialog.grab_set()
+            except tk.TclError:
+                pass
         self._submit_background("plugin-inspect", work, done)
 
     def _show_grant_dialog(self, plugin, fingerprint):
@@ -2664,6 +2669,7 @@ class ForgeGuiApp:
             old.destroy()
         dialog = self._grant_dialog = i18n.Toplevel(self.root)
         dialog.title(tr("能力授权 · {name}", name=plugin.name))
+        dialog.bind("<Escape>", lambda _event: dialog.destroy() or "break")
         dialog.transient(self.root)
         dialog.configure(bg=C["bg"])
         dialog.resizable(False, False)
@@ -2719,6 +2725,10 @@ class ForgeGuiApp:
         if not dialog.capability_vars:
             dialog.grant_btn.configure(state=tk.DISABLED)
         pill_button(actions, tr("取消"), dialog.destroy, bg=C["bg"]).pack(side=tk.RIGHT)
+        try:
+            dialog.grab_set()
+        except tk.TclError:
+            pass
 
     def _apply_market_grant(self, pid, capabilities, scope, fingerprint, *, workspace=None, session_id=None):
         if getattr(self, "_market_action_busy", False):
@@ -6417,6 +6427,20 @@ class ForgeGuiApp:
         except Exception:
             pass
 
+    def _retry_last_agent(self, msg=None):
+        """重生成：用上一条用户输入重发（简单实现：取 retained 历史里最后一条 user）。"""
+        if getattr(self, "_sending", False):
+            self._set_status("正在生成回复，稍后再试", "info")
+            return
+        last_user = next((m.content for m in reversed(self._chat_history)
+                          if m.role == "user"), None)
+        if not last_user:
+            self._set_status("没有可重试的消息", "warn")
+            return
+        _ = msg  # 保留被忽略的入参（ghost 操作条会传当前气泡）
+        self.send_var.set(last_user)
+        self._do_send()
+
     def _do_send(self):
         if self._sending:
             return
@@ -6449,192 +6473,198 @@ class ForgeGuiApp:
             self.gateway_url = f"http://127.0.0.1:{port}"
             self.client.base_url = self.gateway_url
         self._sending = True
-        self._abort_requested = False
-        self._cancel_event = threading.Event()
-        cancel_event = self._cancel_event
-        # 重构后 send_var 不再绑 entry.textvariable，要分别清空。
         try:
-            if self.input_card is not None and self.input_card.entry is not None:
-                self.input_card.entry.delete("1.0", tk.END)
-        except (tk.TclError, AttributeError):
-            pass
-        self.send_var.set("")
-        self._chat_empty = False
-        self._last_sidecar_prompt = prompt   # compose 后的完整 prompt（含附件）
-        self.chat_area.add_user(prompt)
-        self._agent_msg = self.chat_area.add_agent(app=self)
-        self._agent_msg.set_status("生成中…")
-        self._agent_msg.stream_text("")
-        messages = (list(self._chat_history) if self._include_history else []) + [ChatMessage("user", prompt)]
-        retained_history = list(self._chat_history) + [ChatMessage("user", prompt)]
-        self.input_card.set_busy(True)
-        self.clear_chat_btn.configure(state=tk.DISABLED)
-        self.gw_btn.configure(state=tk.DISABLED)
-        self.port_spin.configure(state=tk.DISABLED)
-        self._set_request_status("正在连接…")
-        self._set_status(f"请求 → {self.model_var.get()} …", "info")
-
-        model = self.model_var.get()
-        # ── Agent 集群 / 子 Agent 分工（移植自 AI Platform sub-agent.ts）──
-        # 分工优先，与集群互斥（照抄 route.ts：同开会双份子调用+双份注入）。
-        team_cfg = team.load_config()
-        sidecar_plan = self._plan_sidecars(team_cfg, prompt)
-        if sidecar_plan is not None:
-            sidecar_plan.update(environment={**os.environ, **env_for()},
-                                provider_rows=copy.deepcopy(self.user_rows), prompt=prompt,
-                                default_provider=copy.deepcopy(select_provider(self.user_rows, model)))
-        if self.gateway_proc is not None and getattr(self, "_gateway_provider", None):
-            provider = select_provider(self.user_rows, model)
-            running = self._gateway_provider
-            if provider is None or any(provider.get(k) != running.get(k)
-                                       for k in ("baseURL", "wire", "apiKey")):
-                self._chat_failed("所选模型的 Provider 与正在运行的 Gateway 不同，请停止并重新启动 Gateway", text)
-                self._send_finished()
-                return
-            model = str(provider["model"])
-        client = self.client
-        plugin_workspace, plugin_session = self._repo_root(), self._session_id
-        reasoning_effort = ("high" if self._reasoning_effort == "contemplate"
-                            else None if self._reasoning_effort == "off" else self._reasoning_effort)
-
-        def worker():
+            self._abort_requested = False
+            self._cancel_event = threading.Event()
+            cancel_event = self._cancel_event
+            # 重构后 send_var 不再绑 entry.textvariable，要分别清空。
             try:
-                ok, msg = client.health(cancel_event=cancel_event)
-                if not ok:
-                    raise GatewayError(f"gateway 未连接：{msg}。请先启动 gateway 后重试。")
-                if cancel_event.is_set():
-                    raise GenerationCancelled("已停止生成")
-                # 子任务并行（阻塞 worker 线程即可，不卡 UI；UI 状态由 _post_ui 刷）
-                if sidecar_plan is not None:
-                    if cancel_event.is_set():
-                        raise GenerationCancelled("已停止生成")
-                    injection = self._run_sidecars(sidecar_plan, team_cfg,
-                                                   cancel_event)
-                    if injection:
-                        # 插入本轮 messages 的最后一条 user 之前（AI Platform 协议）
-                        insert_at = max(0, len(messages) - 1)
-                        messages.insert(insert_at,
-                                        ChatMessage("system", injection))
-                    if cancel_event.is_set():
-                        raise GenerationCancelled("已停止生成")
-                # ── 工具桥 + 插件工具：合并成一份 tools 给模型 ──
-                # 网关工具（bridge）：/v1/tools 拉取，走 gateway 执行
-                tools = None
+                if self.input_card is not None and self.input_card.entry is not None:
+                    self.input_card.entry.delete("1.0", tk.END)
+            except (tk.TclError, AttributeError):
+                pass
+            self.send_var.set("")
+            self._chat_empty = False
+            self._last_sidecar_prompt = prompt   # compose 后的完整 prompt（含附件）
+            self.chat_area.add_user(prompt)
+            self._agent_msg = self.chat_area.add_agent(app=self)
+            self._agent_msg.set_status("生成中…")
+            self._agent_msg.stream_text("")
+            messages = (list(self._chat_history) if self._include_history else []) + [ChatMessage("user", prompt)]
+            retained_history = list(self._chat_history) + [ChatMessage("user", prompt)]
+            self.input_card.set_busy(True)
+            self.clear_chat_btn.configure(state=tk.DISABLED)
+            self.gw_btn.configure(state=tk.DISABLED)
+            self.port_spin.configure(state=tk.DISABLED)
+            self._set_request_status("正在连接…")
+            self._set_status(f"请求 → {self.model_var.get()} …", "info")
+
+            model = self.model_var.get()
+            # ── Agent 集群 / 子 Agent 分工（移植自 AI Platform sub-agent.ts）──
+            # 分工优先，与集群互斥（照抄 route.ts：同开会双份子调用+双份注入）。
+            team_cfg = team.load_config()
+            sidecar_plan = self._plan_sidecars(team_cfg, prompt)
+            if sidecar_plan is not None:
+                sidecar_plan.update(environment={**os.environ, **env_for()},
+                                    provider_rows=copy.deepcopy(self.user_rows), prompt=prompt,
+                                    default_provider=copy.deepcopy(select_provider(self.user_rows, model)))
+            if self.gateway_proc is not None and getattr(self, "_gateway_provider", None):
+                provider = select_provider(self.user_rows, model)
+                running = self._gateway_provider
+                if provider is None or any(provider.get(k) != running.get(k)
+                                           for k in ("baseURL", "wire", "apiKey")):
+                    self._chat_failed("所选模型的 Provider 与正在运行的 Gateway 不同，请停止并重新启动 Gateway", text)
+                    self._send_finished()
+                    return
+                model = str(provider["model"])
+            client = self.client
+            plugin_workspace, plugin_session = self._repo_root(), self._session_id
+            reasoning_effort = ("high" if self._reasoning_effort == "contemplate"
+                                else None if self._reasoning_effort == "off" else self._reasoning_effort)
+
+            def worker():
                 try:
-                    tools = client.list_tools() or None
-                except Exception:
-                    # 老 gateway / 未开 --tools：按无工具模式对话（保持旧行为）
-                    tools = None
-                # Plugin aliases are declarative, scoped and granted. Never import third-party Python.
-                bridge_names = {str((item.get("function") or {}).get("name", ""))
-                                for item in (tools or []) if isinstance(item, dict)}
-                plugin_schemas, plugin_rt = self._reload_plugin_tools(reserved_names=bridge_names,
-                    workspace=plugin_workspace, session=plugin_session,
-                    dispatch=lambda name, args, **context: client.call_tool(name, args, timeout=3.0, **context))
-                if plugin_schemas:
-                    tools = list(tools or []) + plugin_schemas
-                if cancel_event.is_set():
-                    raise GenerationCancelled("已停止生成")
-                n_bridge = len(tools or []) - len(plugin_schemas or [])
-                parts = []
-                if n_bridge > 0:
-                    parts.append(f"网关 {n_bridge}")
-                if plugin_schemas:
-                    parts.append(f"插件 {len(plugin_schemas)}")
-                if parts:
-                    self._post_ui(self._set_request_status,
-                                  f"已加载 {' + '.join(parts)} 工具，正在生成…")
-                else:
-                    self._post_ui(self._set_request_status, "正在生成…")
-                acc: list[str] = []
-
-                def on_chunk(piece: str):
+                    ok, msg = client.health(cancel_event=cancel_event)
+                    if not ok:
+                        raise GatewayError(f"gateway 未连接：{msg}。请先启动 gateway 后重试。")
                     if cancel_event.is_set():
                         raise GenerationCancelled("已停止生成")
-                    acc.append(piece)
-                    self._post_ui(self._append_stream_delta, piece)
-
-                TOOL_ROUNDS = 8   # 防失控：模型最多连续调 8 轮工具
-                rounds = 0
-                while True:
-                    round_start = len(acc)
-                    result = client.stream_chat(
-                        messages, model=model,
-                        temperature=temp,
-                        reasoning_effort=reasoning_effort,
-                        on_chunk=on_chunk, cancel_event=cancel_event,
-                        tools=tools,
-                    )
-                    # 防御：stream_chat 理论必返回 CompletionResult，
-                    # 但测试 stub/异常实现可能返回 None —— 不能因此炸掉整轮
-                    turn_text = "".join(acc[round_start:]) or (
-                        result.text if result is not None else "")
-                    calls = (list(getattr(result, "tool_calls", None) or [])
-                             if result is not None else [])
-                    if not calls:
-                        break   # 纯文本 → 本轮对话完成
-                    # 模型发起了工具调用：按 OpenAI 协议回填 assistant(tool_calls)
-                    # + 每个 call 一条 tool 结果，然后再问一轮
-                    messages.append(ChatMessage(
-                        role="assistant", content=turn_text, tool_calls=calls))
-                    rows = []
-                    for call in calls:
+                    # 子任务并行（阻塞 worker 线程即可，不卡 UI；UI 状态由 _post_ui 刷）
+                    if sidecar_plan is not None:
                         if cancel_event.is_set():
                             raise GenerationCancelled("已停止生成")
-                        fn = call.get("function") or {}
-                        name = str(fn.get("name") or "")
-                        raw_args = fn.get("arguments") or "{}"
-                        try:
-                            args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
-                        except ValueError:
-                            args = {"_raw": str(raw_args)}
-                        if not isinstance(args, dict):
-                            args = {"value": args}
-                        try:
-                            # The gateway owns its names even if a stale runtime claims them.
-                            if name in bridge_names:
-                                resp = client.call_tool(name, args)
-                            elif plugin_rt is not None and name in plugin_rt.tools:
-                                resp = plugin_rt.call(name, args)
-                            else:
-                                resp = client.call_tool(name, args)
-                            ok_flag = bool(resp.get("ok")) if isinstance(resp, dict) else True
-                            body_text = json.dumps(resp, ensure_ascii=False)
-                        except Exception as tool_exc:
-                            resp = {"ok": False,
-                                    "error": f"{type(tool_exc).__name__}: {tool_exc}"}
-                            ok_flag = False
-                            body_text = str(tool_exc)
-                        messages.append(ChatMessage(
-                            role="tool", content=body_text,
-                            tool_call_id=str(call.get("id") or "")))
-                        rows.append({
-                            "name": name,
-                            "desc": json.dumps(args, ensure_ascii=False)[:70],
-                            "elapsed": f"第{rounds + 1}轮",
-                            "ok": ok_flag,
-                        })
-                    rounds += 1
-                    if rows:
-                        self._post_ui(self._post_tool_round, rows, rounds)
+                        injection = self._run_sidecars(sidecar_plan, team_cfg,
+                                                       cancel_event)
+                        if injection:
+                            # 插入本轮 messages 的最后一条 user 之前（AI Platform 协议）
+                            insert_at = max(0, len(messages) - 1)
+                            messages.insert(insert_at,
+                                            ChatMessage("system", injection))
+                        if cancel_event.is_set():
+                            raise GenerationCancelled("已停止生成")
+                    # ── 工具桥 + 插件工具：合并成一份 tools 给模型 ──
+                    # 网关工具（bridge）：/v1/tools 拉取，走 gateway 执行
+                    tools = None
+                    try:
+                        tools = client.list_tools() or None
+                    except Exception:
+                        # 老 gateway / 未开 --tools：按无工具模式对话（保持旧行为）
+                        tools = None
+                    # Plugin aliases are declarative, scoped and granted. Never import third-party Python.
+                    bridge_names = {str((item.get("function") or {}).get("name", ""))
+                                    for item in (tools or []) if isinstance(item, dict)}
+                    plugin_schemas, plugin_rt = self._reload_plugin_tools(reserved_names=bridge_names,
+                        workspace=plugin_workspace, session=plugin_session,
+                        dispatch=lambda name, args, **context: client.call_tool(name, args, timeout=3.0, **context))
+                    if plugin_schemas:
+                        tools = list(tools or []) + plugin_schemas
+                    if cancel_event.is_set():
+                        raise GenerationCancelled("已停止生成")
+                    n_bridge = len(tools or []) - len(plugin_schemas or [])
+                    parts = []
+                    if n_bridge > 0:
+                        parts.append(f"网关 {n_bridge}")
+                    if plugin_schemas:
+                        parts.append(f"插件 {len(plugin_schemas)}")
+                    if parts:
                         self._post_ui(self._set_request_status,
-                                      f"正在执行工具（第 {rounds} 轮）…")
-                    if rounds >= TOOL_ROUNDS:
-                        self._post_ui(self._post_note_to_msg,
-                                      f"已达工具调用轮数上限（{TOOL_ROUNDS} 轮），停止继续调用")
-                        break
+                                      f"已加载 {' + '.join(parts)} 工具，正在生成…")
+                    else:
+                        self._post_ui(self._set_request_status, "正在生成…")
+                    acc: list[str] = []
 
-                full = "".join(acc)
-                if cancel_event.is_set():
-                    raise GenerationCancelled("已停止生成")
-                self._post_ui(self._chat_succeeded, retained_history, full, text)
-            except GenerationCancelled:
-                self._post_ui(self._chat_cancelled, text)
-            except Exception as e:
-                error_text = f"{type(e).__name__}: {e}"
-                self._post_ui(self._chat_failed, error_text, text)
-            finally:
-                self._post_ui(self._send_finished)
+                    def on_chunk(piece: str):
+                        if cancel_event.is_set():
+                            raise GenerationCancelled("已停止生成")
+                        acc.append(piece)
+                        self._post_ui(self._append_stream_delta, piece)
+
+                    TOOL_ROUNDS = 8   # 防失控：模型最多连续调 8 轮工具
+                    rounds = 0
+                    while True:
+                        round_start = len(acc)
+                        result = client.stream_chat(
+                            messages, model=model,
+                            temperature=temp,
+                            reasoning_effort=reasoning_effort,
+                            on_chunk=on_chunk, cancel_event=cancel_event,
+                            tools=tools,
+                        )
+                        # 防御：stream_chat 理论必返回 CompletionResult，
+                        # 但测试 stub/异常实现可能返回 None —— 不能因此炸掉整轮
+                        turn_text = "".join(acc[round_start:]) or (
+                            result.text if result is not None else "")
+                        calls = (list(getattr(result, "tool_calls", None) or [])
+                                 if result is not None else [])
+                        if not calls:
+                            break   # 纯文本 → 本轮对话完成
+                        # 模型发起了工具调用：按 OpenAI 协议回填 assistant(tool_calls)
+                        # + 每个 call 一条 tool 结果，然后再问一轮
+                        messages.append(ChatMessage(
+                            role="assistant", content=turn_text, tool_calls=calls))
+                        rows = []
+                        for call in calls:
+                            if cancel_event.is_set():
+                                raise GenerationCancelled("已停止生成")
+                            fn = call.get("function") or {}
+                            name = str(fn.get("name") or "")
+                            raw_args = fn.get("arguments") or "{}"
+                            try:
+                                args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+                            except ValueError:
+                                args = {"_raw": str(raw_args)}
+                            if not isinstance(args, dict):
+                                args = {"value": args}
+                            try:
+                                # The gateway owns its names even if a stale runtime claims them.
+                                if name in bridge_names:
+                                    resp = client.call_tool(name, args)
+                                elif plugin_rt is not None and name in plugin_rt.tools:
+                                    resp = plugin_rt.call(name, args)
+                                else:
+                                    resp = client.call_tool(name, args)
+                                ok_flag = bool(resp.get("ok")) if isinstance(resp, dict) else True
+                                body_text = json.dumps(resp, ensure_ascii=False)
+                            except Exception as tool_exc:
+                                resp = {"ok": False,
+                                        "error": f"{type(tool_exc).__name__}: {tool_exc}"}
+                                ok_flag = False
+                                body_text = str(tool_exc)
+                            messages.append(ChatMessage(
+                                role="tool", content=body_text,
+                                tool_call_id=str(call.get("id") or "")))
+                            rows.append({
+                                "name": name,
+                                "desc": json.dumps(args, ensure_ascii=False)[:70],
+                                "elapsed": f"第{rounds + 1}轮",
+                                "ok": ok_flag,
+                            })
+                        rounds += 1
+                        if rows:
+                            self._post_ui(self._post_tool_round, rows, rounds)
+                            self._post_ui(self._set_request_status,
+                                          f"正在执行工具（第 {rounds} 轮）…")
+                        if rounds >= TOOL_ROUNDS:
+                            self._post_ui(self._post_note_to_msg,
+                                          f"已达工具调用轮数上限（{TOOL_ROUNDS} 轮），停止继续调用")
+                            break
+
+                    full = "".join(acc)
+                    if cancel_event.is_set():
+                        raise GenerationCancelled("已停止生成")
+                    self._post_ui(self._chat_succeeded, retained_history, full, text)
+                except GenerationCancelled:
+                    self._post_ui(self._chat_cancelled, text)
+                except Exception as e:
+                    error_text = f"{type(e).__name__}: {e}"
+                    self._post_ui(self._chat_failed, error_text, text)
+                finally:
+                    self._post_ui(self._send_finished)
+
+        except Exception as exc:
+            self._send_finished()
+            self._set_status(f"发送失败：{exc}", "error")
+            return
 
         threading.Thread(target=worker, daemon=True).start()
 

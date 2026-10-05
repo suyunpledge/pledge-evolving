@@ -1095,30 +1095,46 @@ class Marketplace:
         name = hashlib.sha1(url.encode("utf-8")).hexdigest()[:24]
         return self.market_dir / "cache" / (name + ".json")
 
+    def drop_source_cache(self, url: str) -> bool:
+        """删除某个远程源的缓存文件（从 state["sources"] 移除源时应调用）。"""
+        cache = self._cache_path(url)
+        if cache.exists():
+            try:
+                cache.unlink()
+                self._remote_cache = None
+                return True
+            except OSError:
+                return False
+        return False
+
     def remote_entries(self) -> list[Plugin]:
-        """已缓存的远程条目（按文件签名缓存解析结果；失败条目跳过）。"""
+        """已缓存的远程条目（只读当前 remote_sources 对应的缓存；失败条目跳过）。"""
         if self._state.get("remote_disabled"):
             return []
+        allowed = {self._cache_path(src["url"]).name for src in self.remote_sources()}
         cache = self.market_dir / "cache"
-        sig = None
+        paths: list[Path] = []
         if cache.is_dir():
-            sig = tuple(sorted((p.name, p.stat().st_mtime_ns, p.stat().st_size)
-                               for p in cache.glob("*.json")))
+            for candidate in sorted(cache.glob("*.json")):
+                if candidate.name in allowed:
+                    paths.append(candidate)
+        sig = None
+        if paths:
+            sig = tuple((q.name, q.stat().st_mtime_ns, q.stat().st_size) for q in paths)
         cached = getattr(self, "_remote_cache", None)
         if cached is not None and cached[0] == sig:
             return cached[1]
         out: list[Plugin] = []
-        if cache.is_dir():
-            for path in sorted(cache.glob("*.json")):
+        for path in paths:
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            for raw in (data.get("entries") if isinstance(data, dict) else []) or []:
                 try:
-                    data = json.loads(path.read_text(encoding="utf-8"))
-                except (OSError, ValueError):
+                    out.append(parse_manifest(raw, source="remote"))
+                except ValueError:
                     continue
-                for raw in (data.get("entries") if isinstance(data, dict) else []) or []:
-                    try:
-                        out.append(parse_manifest(raw, source="remote"))
-                    except ValueError:
-                        continue
         self._remote_cache = (sig, out)
         return out
 
@@ -1127,14 +1143,15 @@ class Marketplace:
         return dict(info) if isinstance(info, dict) else {}
 
     def needs_remote_sync(self) -> bool:
-        """无缓存 / 缓存超龄（72h）→ 该同步；失败按时间节流，离线不打爆。"""
-        if not self.remote_sources():
+        """逐源判断：无记录/无计数、失败超 1h、成功超 72h → 该同步（任一源需要即 True）。"""
+        sources = self.remote_sources()
+        if not sources:
             return False
         now = _now_epoch()
         info = self.last_sync_info()
-        for src in self.remote_sources():
+        for src in sources:
             rec = info.get(src["url"])
-            if not rec:
+            if not rec or "count" not in rec:
                 return True
             try:
                 age = now - float(rec.get("at_epoch") or 0)
@@ -1165,7 +1182,7 @@ class Marketplace:
                 blob = json.dumps({"fetched_at": _now(), "url": url,
                                    "kind": src["kind"], "entries": entries},
                                   ensure_ascii=False)
-                tmp = cache.with_suffix(".tmp")
+                tmp = cache.with_name(cache.stem + f".{os.getpid()}.{time.time_ns()}.tmp")
                 tmp.write_text(blob, encoding="utf-8")
                 os.replace(tmp, cache)
                 fetched.append((src, entries))
