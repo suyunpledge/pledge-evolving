@@ -61,6 +61,21 @@ class GatewayLog:
         self.lines: list[str] = []
         self._lock = threading.Lock()
 
+    #: Rotate at 8 MiB, keep one previous file (same policy as the plugin
+    #: audit log) — a long-lived gateway must not grow its log unbounded.
+    MAX_LOG_BYTES = 8 * 1024 * 1024
+
+    def _rotate_if_needed(self) -> None:
+        try:
+            if (self.path.exists()
+                    and self.path.stat().st_size >= self.MAX_LOG_BYTES):
+                rotated = self.path.with_suffix(self.path.suffix + ".1")
+                if rotated.exists():
+                    rotated.unlink()
+                self.path.replace(rotated)
+        except OSError:
+            pass  # rotation is best-effort; never block the request path
+
     def write(self, line: str) -> None:
         stamped = f"[{time.strftime('%H:%M:%S')}] {line}"
         with self._lock:
@@ -68,9 +83,13 @@ class GatewayLog:
             if len(self.lines) > 2000:
                 del self.lines[:1000]
             if self.path:
-                self.path.parent.mkdir(parents=True, exist_ok=True)
-                with self.path.open("a", encoding="utf-8") as fh:
-                    fh.write(stamped + "\n")
+                try:
+                    self.path.parent.mkdir(parents=True, exist_ok=True)
+                    self._rotate_if_needed()
+                    with self.path.open("a", encoding="utf-8") as fh:
+                        fh.write(stamped + "\n")
+                except OSError:
+                    pass  # a dead log file must not take the gateway down
         print(stamped, file=sys.stderr, flush=True)
 
 

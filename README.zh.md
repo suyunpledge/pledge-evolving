@@ -109,10 +109,19 @@ python run.py run "任务" --strategy economy      # CLI 显式指定（> 配置
 
 配置在 `bundles/base.json` 的 `model.routing` 块：`tiers`（档位表，按成本序声明）、`premium`（集成裁决档）、`small`（杂务档，失败不上浮烧不到审查档）。计价表未知价=0.0 的单一权威定义见 `pricing.py` 顶部注释（routing 取保守解释、预算缩放取宽松解释，有意不同）。
 
+## v0.8.0：声明式插件能力代理 + 插件市场
+
+插件从“import 第三方 Python”改为**声明式能力代理**（`forge-gui/plugin_capabilities.py`）：GUI 不再 import 插件代码 —— 插件的
+`contributions.tools` 只注册为本地别名，执行仍经 Forge 网关的真实 Policy 裁决。授权按能力 × 工作区 × 会话逐项绑定插件内容指纹；禁用/卸载/改文件即撤销。
+
+桌面市场同时新增：读沙箱限定的内置工具桥、远程目录（Claude 官方市场 + ClawHub，72 小时节流同步、按源重试）、本机生态适配层（OpenClaw 技能 / Claude Code 市场 / DSH bundles / Codex 插件 —— 声明式，不执行），以及带轮转的审计日志。
+
+2026-10-05 全仓审查的加固：读路径沙箱执行（S1）、网关鉴权接线（S2）、子代理 token 折进父成本账（S3）、会话用量事件（S4）、贡献源码扫描覆盖下标/解包（S5），以及主线程分批渲染 / 持久化后台化防 UI 冻结。
+
 ## 快速开始
 
 ```bash
-cd agent-forge
+cd pledge-evolving
 
 python run.py selftest            # 离线自检，项数以实际输出为准
 python run.py dump-config         # 看合成出的配置树
@@ -166,7 +175,7 @@ python run.py gateway --upstream https://api.deepseek.com --port 8799 --models c
 ## 目录
 
 ```
-agent-forge/
+pledge-evolving/
 ├── forge/
 │   ├── config.py       空根 + 补丁层合成（DSH）
 │   ├── policy.py       二维权限 + 三档沙箱 + 命令黑名单（CodeBuddy / Codex）

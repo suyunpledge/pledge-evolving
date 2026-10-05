@@ -151,7 +151,12 @@ class ContribAPI:
         if self.config is None:
             return default
         row, _, key = str(path).partition(".")
-        value = self.config.get(row, key or "value", default, ctx or {})
+        # M10: ``ctx or {}`` passed an EMPTY dict into _boot_ctx, whose
+        # ``if ctx is not None`` branch then returned it as-is — so a
+        # contribution calling config_get("x", ctx=None) (the default) never
+        # saw the process env and get('env.X') resolved to '' (the 2026-09-15
+        # "401 auth header" night, second half). None must stay None.
+        value = self.config.get(row, key or "value", default, ctx)
         return default if value is None else value
 
     def fire(self, **event: Any) -> None:

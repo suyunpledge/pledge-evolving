@@ -109,10 +109,46 @@ python run.py run "task" --strategy economy      # Explicit CLI override (CLI > 
 
 Configured under the `model.routing` block in `bundles/base.json`: `tiers` (the tier table, declared in cost order), `premium` (the integration/adjudication tier), `small` (the miscellaneous-tasks tier — failures here don't escalate, so they can't burn through the review tier). The single authoritative definition of "unknown price = 0.0" in the pricing table is documented in a comment at the top of `pricing.py` — routing interprets it conservatively while budget scaling interprets it generously, and this difference is intentional.
 
+## v0.8.0: declarative plugin capability broker + market
+
+Plugins moved from “import third-party Python” to a **declarative capability broker**
+(`forge-gui/plugin_capabilities.py`): the GUI never imports plugin code — a plugin's
+`contributions.tools` are registered as local aliases whose execution goes through the
+Forge gateway's real Policy again. Grants are per-capability × per-workspace × per-session,
+bound to the plugin's content fingerprint; disable/uninstall/edit revokes them.
+
+The desktop market also gained: a read-sandboxed builtin tool bridge, remote catalogs
+(Claude official marketplace + ClawHub, 72h-throttled sync with per-source retry), an
+adapter for on-machine ecosystems (OpenClaw skills / Claude Code market / DSH bundles /
+Codex plugins — declarative, never executed), and an audit log with rotation.
+
+Hardening from the 2026-10-05 full-repo audit: read-path sandbox enforcement (S1),
+gateway auth wiring (S2), subagent token folding into the parent cost ledger (S3),
+per-session usage events (S4), contribution source-scanner subscript/unpack coverage (S5),
+and main-thread chunked rendering / backgrounded persistence against UI freezes.
+
+## v0.8.0: declarative plugin capability broker + market
+
+Plugins moved from “import third-party Python” to a **declarative capability broker**
+(`forge-gui/plugin_capabilities.py`): the GUI never imports plugin code — a plugin's
+`contributions.tools` are registered as local aliases whose execution goes through the
+Forge gateway's real Policy again. Grants are per-capability × per-workspace × per-session,
+bound to the plugin's content fingerprint; disable/uninstall/edit revokes them.
+
+The desktop market also gained: a read-sandboxed builtin tool bridge, remote catalogs
+(Claude official marketplace + ClawHub, 72h-throttled sync with per-source retry), an
+adapter for on-machine ecosystems (OpenClaw skills / Claude Code market / DSH bundles /
+Codex plugins — declarative, never executed), and an audit log with rotation.
+
+Hardening from the 2026-10-05 full-repo audit: read-path sandbox enforcement (S1),
+gateway auth wiring (S2), subagent token folding into the parent cost ledger (S3),
+per-session usage events (S4), contribution source-scanner subscript/unpack coverage (S5),
+and main-thread chunked rendering / backgrounded persistence against UI freezes.
+
 ## Quick Start
 
 ```bash
-cd agent-forge
+cd pledge-evolving
 
 python run.py selftest            # Offline self-checks, item count follows actual output
 python run.py dump-config         # View the synthesized config tree
@@ -188,7 +224,7 @@ Every decision is logged into `sessions/*.jsonl`: `session_meta`, `user_message`
 ## Directory Layout
 
 ```
-agent-forge/
+pledge-evolving/
 ├── forge/
 │   ├── config.py       Empty root + patch-layer synthesis (DSH)
 │   ├── policy.py       Two-dimensional permissions + three-tier sandbox + command blacklist (CodeBuddy / Codex)

@@ -760,13 +760,6 @@ class ForgeGuiApp:
     # ── UI 构造 ──────────────────────────────────────────
     @staticmethod
     def _style_scrollbar(widget):
-        widget.vbar.configure(bg=C["surface2"], activebackground=C["border"],
-                              troughcolor=C["input_bg"], relief=tk.FLAT,
-                              bd=0, highlightthickness=0, width=10)
-
-    # ── UI 构造 ──────────────────────────────────────────
-    @staticmethod
-    def _style_scrollbar(widget):
         style_scrollbar(widget)
 
     def _build_ui(self):
