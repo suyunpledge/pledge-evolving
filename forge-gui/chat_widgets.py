@@ -503,96 +503,16 @@ def parse_blocks(text: str):
 
 def render_blocks(parent, text, *, bg=None, max_width=None,
                   mono_for_code=True) -> tk.Frame:
-    """把 markdown 轻量渲染成一叠控件，返回承载它们的 Frame。"""
+    """把 markdown 轻量渲染成一叠控件，返回承载它们的 Frame。
+
+    同步一次建全；长文请用 render_blocks_chunked（分批、不堵主线程）。
+    块级渲染逻辑只在 _render_single_block 一处，两个入口共享。
+    """
     base = bg or C["chat"]
     host = tk.Frame(parent, bg=base)
     wrap = max_width or MAX_BUBBLE_WIDTH
     for block in parse_blocks(text):
-        kind = block["type"]
-        if kind == "h":
-            f = FONT_TITLE if block["level"] <= 2 else FONT_SECTION
-            if any(is_emoji for _part, is_emoji in emoji_parts(block["text"])):
-                heading = InlineText(host, bg=base, fg=C["text"], font=f)
-                heading.set_text(block["text"])
-            else:
-                heading = i18n.Label(host, text=block["text"], bg=base, fg=C["text"], font=f,
-                                   anchor="w", justify=tk.LEFT, wraplength=wrap)
-            heading.pack(fill=tk.X, pady=(8, 3))
-            if isinstance(heading, i18n.Label):
-                bind_wrap(heading)
-        elif kind == "p":
-            t = InlineText(host, bg=base)
-            t.set_segments(inline_segments(block["text"]))
-            t.pack(fill=tk.X, pady=2)
-        elif kind == "li":
-            row = tk.Frame(host, bg=base)
-            row.pack(fill=tk.X, pady=1)
-            i18n.Label(row, text="•", bg=base, fg=C["accent2"], font=FONT_UI_BOLD,
-                     width=2, anchor="nw").pack(side=tk.LEFT)
-            t = InlineText(row, bg=base)
-            t.set_segments(inline_segments(block["text"]))
-            t.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        elif kind == "oli":
-            row = tk.Frame(host, bg=base)
-            row.pack(fill=tk.X, pady=2)
-            num = tk.Canvas(row, width=18, height=18, bg=base,
-                            highlightthickness=0, bd=0)
-            num.create_oval(0, 0, 17, 17, fill=C["sel"], outline=C["sel_border"])
-            num.create_text(9, 9, text=block["num"], fill=C["subtext"],
-                            font=FONT_MICRO)
-            num.pack(side=tk.LEFT, anchor="n", padx=(0, 8))
-            t = InlineText(row, bg=base)
-            t.set_segments(inline_segments(block["text"]))
-            t.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        elif kind == "todo":
-            row = tk.Frame(host, bg=base)
-            row.pack(fill=tk.X, pady=1)
-            mark = "✅" if block["done"] else "⬜"
-            color = C["ok"] if block["done"] else C["muted"]
-            IconCanvas(row, "check_circle" if block["done"] else "stop", size=18,
-                       bg=base, fg=color).pack(side=tk.LEFT, padx=(0, 8))
-            t = InlineText(row, bg=base)
-            t.set_segments(inline_segments(block["text"]))
-            t.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        elif kind == "quote":
-            row = tk.Frame(host, bg=base)
-            row.pack(fill=tk.X, pady=2)
-            tk.Frame(row, bg=C["accent_border"], width=3).pack(side=tk.LEFT, fill=tk.Y)
-            t = InlineText(row, bg=base)
-            t.set_segments(inline_segments(block["text"]))
-            t.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 0))
-        elif kind == "code":
-            # 代码块不识别文件链接：用不签名 InlineText 的 _on_link 的 Text 直接渲染。
-            card = RoundedCard(host, radius=R_MD, fill=C["code_bg"],
-                               outline=C["border_hi"], padx=10, pady=8, bg=base)
-            card.pack(fill=tk.X, pady=6)
-            tx = tk.Text(card.content, bg=C["code_bg"], fg=C["code_plain"],
-                         font=FONT_MONO_SM, relief=tk.FLAT, bd=0,
-                         highlightthickness=0, wrap=tk.NONE, height=1)
-            tx.insert("1.0", block["text"])
-            setup_code_tags(tx, font=FONT_MONO_SM)
-            lang = block.get("lang") or ""
-            if lang in ("", "py", "python") or lang.startswith("py"):
-                try:
-                    highlight_python(tx)
-                except Exception:
-                    pass
-            line_count = max(1, len(block["text"].split("\n")))
-            tx.configure(height=min(line_count, 24), state=tk.DISABLED)
-            sx = tk.Scrollbar(card.content, orient=tk.HORIZONTAL, command=tx.xview)
-            tx.configure(xscrollcommand=sx.set)
-            tx.pack(fill=tk.X)
-            sx.pack(fill=tk.X)
-            if line_count > 24:
-                sy = tk.Scrollbar(card.content, orient=tk.VERTICAL, command=tx.yview)
-                tx.configure(yscrollcommand=sy.set)
-                tx.pack_forget()
-                sx.pack_forget()
-                sx.pack(side=tk.BOTTOM, fill=tk.X)
-                sy.pack(side=tk.RIGHT, fill=tk.Y)
-                tx.pack(fill=tk.BOTH, expand=True)
-        elif kind == "hr":
-            tk.Frame(host, bg=C["border"], height=1).pack(fill=tk.X, pady=6)
+        _render_single_block(host, block, base=base, wrap=wrap)
     return host
 
 
