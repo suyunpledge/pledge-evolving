@@ -605,6 +605,125 @@ def render_blocks(parent, text, *, bg=None, max_width=None,
     return host
 
 
+def _render_single_block(host, block, *, base, wrap):
+    """渲染单个 markdown 块（由 render_blocks 循环体抽取，行为一致）。"""
+    kind = block["type"]
+    if kind == "h":
+        f = FONT_TITLE if block["level"] <= 2 else FONT_SECTION
+        if any(is_emoji for _part, is_emoji in emoji_parts(block["text"])):
+            heading = InlineText(host, bg=base, fg=C["text"], font=f)
+            heading.set_text(block["text"])
+        else:
+            heading = i18n.Label(host, text=block["text"], bg=base, fg=C["text"], font=f,
+                               anchor="w", justify=tk.LEFT, wraplength=wrap)
+        heading.pack(fill=tk.X, pady=(8, 3))
+        if isinstance(heading, i18n.Label):
+            bind_wrap(heading)
+    elif kind == "p":
+        t = InlineText(host, bg=base)
+        t.set_segments(inline_segments(block["text"]))
+        t.pack(fill=tk.X, pady=2)
+    elif kind == "li":
+        row = tk.Frame(host, bg=base)
+        row.pack(fill=tk.X, pady=1)
+        i18n.Label(row, text="•", bg=base, fg=C["accent2"], font=FONT_UI_BOLD,
+                 width=2, anchor="nw").pack(side=tk.LEFT)
+        t = InlineText(row, bg=base)
+        t.set_segments(inline_segments(block["text"]))
+        t.pack(side=tk.LEFT, fill=tk.X, expand=True)
+    elif kind == "oli":
+        row = tk.Frame(host, bg=base)
+        row.pack(fill=tk.X, pady=2)
+        num = tk.Canvas(row, width=18, height=18, bg=base,
+                        highlightthickness=0, bd=0)
+        num.create_oval(0, 0, 17, 17, fill=C["sel"], outline=C["sel_border"])
+        num.create_text(9, 9, text=block["num"], fill=C["subtext"],
+                        font=FONT_MICRO)
+        num.pack(side=tk.LEFT, anchor="n", padx=(0, 8))
+        t = InlineText(row, bg=base)
+        t.set_segments(inline_segments(block["text"]))
+        t.pack(side=tk.LEFT, fill=tk.X, expand=True)
+    elif kind == "todo":
+        row = tk.Frame(host, bg=base)
+        row.pack(fill=tk.X, pady=1)
+        mark = "✅" if block["done"] else "⬜"
+        color = C["ok"] if block["done"] else C["muted"]
+        IconCanvas(row, "check_circle" if block["done"] else "stop", size=18,
+                   bg=base, fg=color).pack(side=tk.LEFT, padx=(0, 8))
+        t = InlineText(row, bg=base)
+        t.set_segments(inline_segments(block["text"]))
+        t.pack(side=tk.LEFT, fill=tk.X, expand=True)
+    elif kind == "quote":
+        row = tk.Frame(host, bg=base)
+        row.pack(fill=tk.X, pady=2)
+        tk.Frame(row, bg=C["accent_border"], width=3).pack(side=tk.LEFT, fill=tk.Y)
+        t = InlineText(row, bg=base)
+        t.set_segments(inline_segments(block["text"]))
+        t.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 0))
+    elif kind == "code":
+        # 代码块不识别文件链接：用不签名 InlineText 的 _on_link 的 Text 直接渲染。
+        card = RoundedCard(host, radius=R_MD, fill=C["code_bg"],
+                           outline=C["border_hi"], padx=10, pady=8, bg=base)
+        card.pack(fill=tk.X, pady=6)
+        tx = tk.Text(card.content, bg=C["code_bg"], fg=C["code_plain"],
+                     font=FONT_MONO_SM, relief=tk.FLAT, bd=0,
+                     highlightthickness=0, wrap=tk.NONE, height=1)
+        tx.insert("1.0", block["text"])
+        setup_code_tags(tx, font=FONT_MONO_SM)
+        lang = block.get("lang") or ""
+        if lang in ("", "py", "python") or lang.startswith("py"):
+            try:
+                highlight_python(tx)
+            except Exception:
+                pass
+        line_count = max(1, len(block["text"].split("\n")))
+        tx.configure(height=min(line_count, 24), state=tk.DISABLED)
+        sx = tk.Scrollbar(card.content, orient=tk.HORIZONTAL, command=tx.xview)
+        tx.configure(xscrollcommand=sx.set)
+        tx.pack(fill=tk.X)
+        sx.pack(fill=tk.X)
+        if line_count > 24:
+            sy = tk.Scrollbar(card.content, orient=tk.VERTICAL, command=tx.yview)
+            tx.configure(yscrollcommand=sy.set)
+            tx.pack_forget()
+            sx.pack_forget()
+            sx.pack(side=tk.BOTTOM, fill=tk.X)
+            sy.pack(side=tk.RIGHT, fill=tk.Y)
+            tx.pack(fill=tk.BOTH, expand=True)
+    elif kind == "hr":
+        tk.Frame(host, bg=C["border"], height=1).pack(fill=tk.X, pady=6)
+
+
+def render_blocks_chunked(parent, text, *, bg=None, max_width=None,
+                          on_done=None) -> tk.Frame:
+    """分批渲染 markdown：每块之间 after(1) 让出事件循环。
+
+    长回复不再把 Tk 主线程堵过 Windows「未响应」阈值（约 5s），
+    每块渲染后窗口保持可响应。on_done(host) 全部完成后回调（可无）。
+    """
+    base = bg or C["chat"]
+    host = tk.Frame(parent, bg=base)
+    blocks = parse_blocks(text)
+    wrap = max_width or MAX_BUBBLE_WIDTH
+    total = len(blocks)
+
+    def build_one(i: int):
+        if not host.winfo_exists():
+            return
+        if i >= total:
+            if on_done is not None:
+                try:
+                    on_done(host)
+                except Exception:
+                    pass
+            return
+        _render_single_block(host, blocks[i], base=base, wrap=wrap)
+        host.after(1, lambda: build_one(i + 1))
+
+    build_one(0)
+    return host
+
+
 # ─── 消息块（折叠版） ──────────────────────────────────────
 
 
@@ -671,17 +790,49 @@ class ToolCard(tk.Frame):
         self.rows_frame.pack(fill=tk.X)
         self._row_specs: list[tuple[str, float]] = []
         rows = rows or []
-        for row in rows:
-            self.add_row(row)
+        # 分批建行：几百步的任务返回不再一帧全建（白屏/未响应根因之一）
+        self._pending_rows = list(rows)
+        self._row_batch_job = None
+        self.bind("<Destroy>", self._cancel_row_batch, add="+")
+        self._kick_row_batch()
 
         if self._expanded:
             card.pack(fill=tk.X, pady=(2, 4))
-        # 计算摘要文字
+        # 计算摘要文字（用全量行数，不等分批完成）
+        self._all_row_count = len(rows)
         self._refresh_summary()
+
+    def _kick_row_batch(self):
+        if self._row_batch_job is not None or not self._pending_rows:
+            return
+        def batch():
+            self._row_batch_job = None
+            if not self.winfo_exists():
+                return
+            for _ in range(12):            # 每帧 12 行
+                if not self._pending_rows:
+                    break
+                self.add_row(self._pending_rows.pop(0))
+            self._refresh_summary()
+            if self._pending_rows:
+                self._row_batch_job = self.after(1, batch)
+        self._row_batch_job = self.after(1, batch)
+
+    def _cancel_row_batch(self, event=None):
+        if event is not None and event.widget is not self:
+            return
+        if self._row_batch_job is not None:
+            try:
+                self.after_cancel(self._row_batch_job)
+            except tk.TclError:
+                pass
+            self._row_batch_job = None
 
     # -- 摘要 --
     def _refresh_summary(self):
-        n = len(self._row_specs)
+        n = getattr(self, "_all_row_count", None)
+        if n is None:
+            n = len(self._row_specs)
         secs = sum(s for _, s in self._row_specs)
         # 尊重 title（如「子 Agent 分工」「Agent 集群」），默认仍是「调用工具」
         text = f"{getattr(self, '_title_text', None) or '调用工具'} · {n} 项"
@@ -1152,12 +1303,22 @@ class AgentMessage(tk.Frame):
         previous = getattr(self, "_body_host", None)
         if previous is not None:
             previous.destroy()
-        host = self._body_host = render_blocks(self.body, text, bg=self._bg)
+        # 分批渲染：长 markdown 不再把主线程堵过 Windows 未响应阈值
+        host = self._body_host = render_blocks_chunked(
+            self.body, text, bg=self._bg, on_done=self._after_markdown_done)
         trace = getattr(self, "_trace_host", None)
         host.pack(fill=tk.X, in_=self.body, side=tk.TOP, **({"before": trace} if trace is not None else {}))
         self._fit_content()
         # 已有 trace？保持顺序：Body 段在最上 → 分割线 → 现有 trace 块
         self._reorder_body_with_trace()
+
+    def _after_markdown_done(self, _host):
+        # 分批渲染完成：恢复 trace 排序（正文块 → 分割线 → trace）并终校高度
+        try:
+            self._reorder_body_with_trace()
+            self._fit_content()
+        except tk.TclError:
+            pass
 
     def _reorder_body_with_trace(self):
         """如有 trace 容器，重新排布：正文 block(s) → 分割线 → trace。"""

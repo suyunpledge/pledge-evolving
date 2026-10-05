@@ -2987,6 +2987,22 @@ class ForgeGuiApp:
                 and isinstance(s.get("messages", []), list)]
 
     def _write_sessions(self, sessions: list[dict]):
+        """会话持久化走后台线程：主线程不再被 copy2+json.dump+fsync 堵住。
+
+        数据先深拷贝快照（调用方后续改 list 不影响落盘内容）；失败只在
+        状态栏提示，不弹窗打断。
+        """
+        import copy as _copy
+        snapshot = _copy.deepcopy(sessions)
+        def io():
+            try:
+                self._write_sessions_io(snapshot)
+            except OSError as exc:
+                self._post_ui(self._set_status,
+                              f"会话记录保存失败：{exc}", "warn")
+        threading.Thread(target=io, daemon=True, name="Forge-sessions-io").start()
+
+    def _write_sessions_io(self, sessions: list[dict]):
         temp_path = None
         try:
             payload = {"sessions": sessions[:40]}
@@ -3032,6 +3048,31 @@ class ForgeGuiApp:
         sessions = [s for s in sessions if s.get("id") != sid]
         sessions.insert(0, entry)
         self._write_sessions(sessions)
+
+    def _render_history_messages(self, messages):
+        """历史会话逐条渲染：每条之间 after(1) 让出主线程，长会话不卡界面。"""
+        state = {"i": 0}
+
+        def step():
+            if not getattr(self, "chat_area", None):
+                return
+            i = state["i"]
+            if i >= len(messages):
+                self._refresh_history()
+                return
+            msg = messages[i]
+            state["i"] = i + 1
+            try:
+                if msg.role == "user":
+                    self.chat_area.add_user(msg.content)
+                elif msg.content.strip():
+                    agent = self.chat_area.add_agent(app=self)
+                    agent.render_markdown(msg.content)
+            except tk.TclError:
+                return
+            self.root.after(1, step)
+
+        self.root.after(1, step)
 
     def _refresh_history(self):
         self._submit_background("history", self._load_sessions, self._render_history)
@@ -3154,12 +3195,7 @@ class ForgeGuiApp:
         self._update_context_summary()
         if hasattr(self, "chat_area"):
             self.chat_area.clear()
-            for msg in self._chat_history:
-                if msg.role == "user":
-                    self.chat_area.add_user(msg.content)
-                elif msg.content.strip():
-                    agent = self.chat_area.add_agent(app=self)
-                    agent.render_markdown(msg.content)
+            self._render_history_messages(list(self._chat_history))
         try:
             self.chat_title_var.set(str(session.get("title", tr("对话"))))
             self.chat_sub_var.set("")
