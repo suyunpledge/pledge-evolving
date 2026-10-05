@@ -48,6 +48,36 @@ CFS_POINT = 0x0002
 _TAG = "ime-preedit"
 
 
+def _diag_path():
+    """诊断日志路径：FORGE_IME_LOG 优先；否则 ~/.forge/gui/ime-diag.log。"""
+    import os
+    env = os.environ.get("FORGE_IME_LOG")
+    if env:
+        return env
+    try:
+        base = os.path.join(os.path.expanduser("~"), ".forge", "gui")
+        os.makedirs(base, exist_ok=True)
+        return os.path.join(base, "ime-diag.log")
+    except OSError:
+        return None
+
+
+def _dbg(line: str):
+    """常驻诊断：只记消息类型/标志，绝不记文本内容；文件封顶 64KB。"""
+    path = _diag_path()
+    if not path:
+        return
+    try:
+        import os
+        if os.path.exists(path) and os.path.getsize(path) > 65536:
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("(truncated)\n")
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+    except OSError:
+        pass
+
+
 class InlineIME:
     """把一个 Tk Text 控件的 IME 组合串改为行内显示。
 
@@ -65,10 +95,14 @@ class InlineIME:
         self._hwnd = None
         self._detached = False
         self._supported = sys.platform.startswith("win32") and tk is not None
+        self._top_hwnd = None
+        self._top_orig = 0
+        self._top_proc = None
         if not self._supported:
             return
         try:
             self._install()
+            self._install_toplevel()
         except Exception:
             self._supported = False
 
@@ -131,6 +165,36 @@ class InlineIME:
         self._tag_ready = False
         self._w.bind("<Destroy>", self._on_destroy, add="+")
 
+    def _install_toplevel(self):
+        """顶层窗口也挂一份钩子：部分 IME 把 WM_IME_SETCONTEXT 发给顶层窗口；
+        这里只抑制组合 UI 位，其余消息原样透传（不抢 Tk 的窗口管理）。"""
+        try:
+            top = self._w.winfo_toplevel()
+            hwnd = ctypes.c_void_p(int(top.winfo_id()))
+            proc = self._wndproc_type(self._top_wndproc)
+            orig = self._set_ptr(hwnd, GWL_WNDPROC,
+                                 ctypes.cast(proc, ctypes.c_void_p).value)
+            if not orig:
+                return
+            self._top_hwnd = hwnd
+            self._top_orig = orig
+            self._top_proc = proc
+        except Exception:
+            self._top_hwnd = None
+
+    def _top_wndproc(self, hwnd, msg, wParam, lParam):
+        try:
+            if msg == WM_IME_SETCONTEXT:
+                return self._user32.DefWindowProcW(
+                    hwnd, msg, wParam,
+                    lParam & ~ISC_SHOWUICOMPOSITIONWINDOW)
+        except Exception:
+            pass
+        if self._top_orig:
+            return self._user32.CallWindowProcW(self._top_orig, hwnd, msg,
+                                                wParam, lParam)
+        return self._user32.DefWindowProcW(hwnd, msg, wParam, lParam)
+
     def detach(self):
         """还原窗口过程（幂等；销毁/退出前调用）。"""
         if self._detached or not self._supported or not self._orig_proc:
@@ -139,6 +203,13 @@ class InlineIME:
             self._set_ptr(self._hwnd, GWL_WNDPROC, self._orig_proc)
         except Exception:
             pass
+        if self._top_hwnd is not None and self._top_orig:
+            try:
+                self._set_ptr(self._top_hwnd, GWL_WNDPROC, self._top_orig)
+            except Exception:
+                pass
+            self._top_hwnd = None
+            self._top_orig = 0
         self._orig_proc = 0
         self._detached = True
         self._clear_preedit()
@@ -157,6 +228,11 @@ class InlineIME:
     # ── 窗口过程 ────────────────────────────────────────────────
 
     def _wndproc(self, hwnd, msg, wParam, lParam):
+        try:
+            if msg in (0x0107, 0x0108, 0x010E, 0x0281, 0x0100, 0x0101, 0x0102, 0x0109, 0x0286):
+                _dbg(f"msg=0x{msg:04X} wParam={wParam} lParam=0x{lParam & 0xFFFFFFFF:X}")
+        except Exception:
+            pass
         try:
             if msg == WM_IME_COMPOSITION:
                 if lParam & GCS_COMPSTR:
