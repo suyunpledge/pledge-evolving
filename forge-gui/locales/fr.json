@@ -246,5 +246,12 @@
   "工具（{count}）": "Outils ({count})",
   "能力授权 · {name}": "Autorisations · {name}",
   "能力声明：{contributions}": "Contributions : {contributions}",
-  "勾选仅修改草稿。保存后，重启正在运行的 Forge / 通道服务以应用配置。": "Les changements modifient le brouillon. Enregistrez et redémarrez Forge / les services."
+  "勾选仅修改草稿。保存后，重启正在运行的 Forge / 通道服务以应用配置。": "Les changements modifient le brouillon. Enregistrez et redémarrez Forge / les services.",
+  "同步远程源": "Synchroniser",
+  "正在同步远程源…": "Synchronisation des sources distantes…",
+  "远程源同步失败：{error}": "Échec de la synchronisation distante : {error}",
+  "远程源已同步：{count} 条": "Sources distantes synchronisées : {count} entrées",
+  "远程源同步完成：{ok} 成功 / {fail} 失败": "Synchronisation distante terminée : {ok} réussie(s) / {fail} échouée(s)",
+  "远程 {count} 条": "{count} à distance",
+  "远程同步失败：{detail}": "Échec de la sync distante : {detail}"
 }

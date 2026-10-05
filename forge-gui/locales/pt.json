@@ -246,5 +246,12 @@
   "工具（{count}）": "Ferramentas ({count})",
   "能力授权 · {name}": "Permissões · {name}",
   "能力声明：{contributions}": "Contribuições: {contributions}",
-  "勾选仅修改草稿。保存后，重启正在运行的 Forge / 通道服务以应用配置。": "As mudanças editam o rascunho. Salve e reinicie Forge / serviços de canal."
+  "勾选仅修改草稿。保存后，重启正在运行的 Forge / 通道服务以应用配置。": "As mudanças editam o rascunho. Salve e reinicie Forge / serviços de canal.",
+  "同步远程源": "Sincronizar",
+  "正在同步远程源…": "Sincronizando fontes remotas…",
+  "远程源同步失败：{error}": "Falha na sincronização remota: {error}",
+  "远程源已同步：{count} 条": "Fontes remotas sincronizadas: {count} itens",
+  "远程源同步完成：{ok} 成功 / {fail} 失败": "Sincronização remota concluída: {ok} ok / {fail} falhas",
+  "远程 {count} 条": "{count} remotas",
+  "远程同步失败：{detail}": "Falha na sincronização remota: {detail}"
 }

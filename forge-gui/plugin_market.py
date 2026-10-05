@@ -115,6 +115,17 @@ _LOCKS_GUARD = threading.Lock()
 _LOCK_DEPTH = threading.local()
 MAX_PLUGIN_BYTES = 32 * 1024 * 1024
 MAX_PLUGIN_FILES = 512
+#: 默认远程源（离线可用；state["sources"] 追加自定义，remote_disabled=True 全关）。
+#: claude-marketplace = GitHub raw 的 marketplace.json；clawhub = 官方列表端点。
+DEFAULT_SOURCES = (
+    {"name": "Claude 官方市场", "kind": "claude-marketplace",
+     "url": "https://raw.githubusercontent.com/anthropics/claude-plugins-public/main/.claude-plugin/marketplace.json"},
+    {"name": "ClawHub 技能库", "kind": "clawhub",
+     "url": "https://clawhub.ai/api/v1/skills?limit=100"},
+)
+REMOTE_MAX_AGE_SECONDS = 72 * 3600  # 自动同步节流：72 小时（本机按流量计费）
+REMOTE_MAX_BYTES = 4 * 1024 * 1024
+
 HIGH_RISK_PERMISSIONS = {"shell:exec", "workspace:write", "net:outbound", "model:call", "clipboard",
                          "repo.write", "process.exec", "network.github"}
 CAPABILITY_ALIASES = {"workspace:read": "repo.read", "workspace:write": "repo.write",
@@ -125,6 +136,27 @@ CONTRIBUTION_TYPES = frozenset({"tools", "skills", "policies", "hooks", "provide
 
 def workspace_key(workspace) -> str:
     return os.path.normcase(str(Path(workspace).expanduser().resolve()))
+
+
+def _now_epoch() -> float:
+    return time.time()
+
+
+def _http_get_json(url: str, timeout: float = 10.0):
+    """拉取远程目录 JSON（有界读取，超限即拒）。Windows 下 urllib 走系统代理注册表。"""
+    import urllib.request
+    req = urllib.request.Request(url, headers={"User-Agent": "forge-desktop-market/1.0"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        chunks, total = [], 0
+        while True:
+            chunk = resp.read(65536)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > REMOTE_MAX_BYTES:
+                raise ValueError(f"远程目录超过 {REMOTE_MAX_BYTES // (1024 * 1024)} MiB 上限")
+            chunks.append(chunk)
+    return json.loads(b"".join(chunks).decode("utf-8"))
 
 
 @contextmanager
@@ -478,6 +510,8 @@ class Marketplace:
             "trust_required": {},
             "registered_schemas": {},
             "grants": {},
+            "last_sync": {},        # url → {at, at_epoch, count, error, name}
+            "remote_disabled": False,
         }
 
     def _load_state(self) -> dict[str, Any]:
@@ -675,6 +709,8 @@ class Marketplace:
         for plugin in self.builtin_entries():
             merged[plugin.id] = plugin
         for plugin in self.external_entries():
+            merged.setdefault(plugin.id, plugin)
+        for plugin in self.remote_entries():
             merged.setdefault(plugin.id, plugin)
         for plugin in self.local_entries():
             base = merged.get(plugin.id)
@@ -1037,6 +1073,135 @@ class Marketplace:
             self.save()
 
     # ── 汇总 ────────────────────────────────────────────────────────
+
+    # ── 远程源同步 ──────────────────────────────────────────────
+
+    def remote_sources(self) -> list[dict]:
+        """生效的远程源：默认两源 + 用户追加；state 里 remote_disabled=True 全关。"""
+        if self._state.get("remote_disabled"):
+            return []
+        out = list(DEFAULT_SOURCES)
+        for entry in self._state.get("sources", []):
+            if isinstance(entry, str) and entry:
+                out.append({"name": entry, "kind": "forge", "url": entry})
+            elif isinstance(entry, dict) and entry.get("url"):
+                out.append({"name": str(entry.get("name") or entry["url"]),
+                            "kind": str(entry.get("kind") or "forge"),
+                            "url": str(entry["url"])})
+        return out
+
+    def _cache_path(self, url: str) -> Path:
+        import hashlib
+        name = hashlib.sha1(url.encode("utf-8")).hexdigest()[:24]
+        return self.market_dir / "cache" / (name + ".json")
+
+    def remote_entries(self) -> list[Plugin]:
+        """已缓存的远程条目（按文件签名缓存解析结果；失败条目跳过）。"""
+        if self._state.get("remote_disabled"):
+            return []
+        cache = self.market_dir / "cache"
+        sig = None
+        if cache.is_dir():
+            sig = tuple(sorted((p.name, p.stat().st_mtime_ns, p.stat().st_size)
+                               for p in cache.glob("*.json")))
+        cached = getattr(self, "_remote_cache", None)
+        if cached is not None and cached[0] == sig:
+            return cached[1]
+        out: list[Plugin] = []
+        if cache.is_dir():
+            for path in sorted(cache.glob("*.json")):
+                try:
+                    data = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    continue
+                for raw in (data.get("entries") if isinstance(data, dict) else []) or []:
+                    try:
+                        out.append(parse_manifest(raw, source="remote"))
+                    except ValueError:
+                        continue
+        self._remote_cache = (sig, out)
+        return out
+
+    def last_sync_info(self) -> dict[str, Any]:
+        info = self._state.get("last_sync")
+        return dict(info) if isinstance(info, dict) else {}
+
+    def needs_remote_sync(self) -> bool:
+        """无缓存 / 缓存超龄（72h）→ 该同步；失败按时间节流，离线不打爆。"""
+        if not self.remote_sources():
+            return False
+        now = _now_epoch()
+        info = self.last_sync_info()
+        for src in self.remote_sources():
+            rec = info.get(src["url"])
+            if not rec:
+                return True
+            try:
+                age = now - float(rec.get("at_epoch") or 0)
+            except (TypeError, ValueError):
+                return True
+            # 成功 72h 节流；失败 1h 后重试（离线不打爆，恢复后能自愈）
+            limit = 3600 if rec.get("error") else REMOTE_MAX_AGE_SECONDS
+            if age > limit:
+                return True
+        return False
+
+    def sync_sources(self, *, timeout: float = 10.0) -> dict[str, Any]:
+        """拉取全部远程源并写缓存。**网络阶段不持状态锁**（避免 UI 操作锁等待超时）。
+
+        单源失败只记账、旧缓存保留；结果统一走 _record_sync 落盘。
+        返回 {url: {ok, count, error, name}}。必须在后台线程调用（GUI 已接线）。
+        """
+        results: dict[str, Any] = {}
+        fetched: list[tuple[dict, list[dict]]] = []
+        for src in self.remote_sources():
+            url = src["url"]
+            try:
+                payload = _http_get_json(url, timeout=timeout)
+                import compat_sources
+                entries = compat_sources.convert_remote_payload(src["kind"], payload)
+                cache = self._cache_path(url)
+                cache.parent.mkdir(parents=True, exist_ok=True)
+                blob = json.dumps({"fetched_at": _now(), "url": url,
+                                   "kind": src["kind"], "entries": entries},
+                                  ensure_ascii=False)
+                tmp = cache.with_suffix(".tmp")
+                tmp.write_text(blob, encoding="utf-8")
+                os.replace(tmp, cache)
+                fetched.append((src, entries))
+                results[url] = {"ok": True, "count": len(entries), "name": src["name"],
+                                "error": ""}
+            except Exception as exc:
+                reason = f"{type(exc).__name__}: {exc}"[:200]
+                results[url] = {"ok": False, "count": 0, "name": src["name"],
+                                "error": reason}
+        self._remote_cache = None
+        if results:
+            self._record_sync(results)
+        return results
+
+    @_fresh_state
+    def _record_sync(self, results: dict[str, Any]) -> None:
+        """把同步结果写进 state（失败保留旧计数）；短暂持锁，仅本地 IO。"""
+        last = self._state.setdefault("last_sync", {})
+        if not isinstance(last, dict):
+            last = self._state["last_sync"] = {}
+        for url, res in results.items():
+            prev = last.get(url) or {}
+            if res.get("ok"):
+                last[url] = {"at": _now(), "at_epoch": _now_epoch(),
+                             "count": int(res.get("count") or 0), "error": "",
+                             "name": res.get("name", "")}
+                self._log_raw("info", "source-sync",
+                              f"{res.get('name', url)} {res.get('count')} 条")
+            else:
+                last[url] = {"at": _now(), "at_epoch": _now_epoch(),
+                             "count": int(prev.get("count") or 0),
+                             "error": str(res.get("error", ""))[:200],
+                             "name": res.get("name", "")}
+                self._log_raw("warn", "source-sync-failed",
+                              f"{res.get('name', url)} {res.get('error', '')[:160]}")
+        self.save()
 
     def summary(self, *, items=None) -> dict[str, Any]:
         items = self.catalog() if items is None else items

@@ -2024,6 +2024,8 @@ class ForgeGuiApp:
                     kind="quiet", bg=C["bg"]).pack(side=tk.RIGHT)
         pill_button(head, tr("刷新"), lambda: self._refresh_market(force=True),
                     kind="ghost", bg=C["bg"]).pack(side=tk.RIGHT, padx=(0, 8))
+        pill_button(head, tr("同步远程源"), self._sync_remote_sources,
+                    kind="ghost", bg=C["bg"]).pack(side=tk.RIGHT, padx=(0, 8))
         i18n.Label(head, textvariable=self.market_stat_var, bg=C["bg"], fg=C["subtext"],
                  font=FONT_SMALL).pack(side=tk.LEFT)
 
@@ -2100,6 +2102,45 @@ class ForgeGuiApp:
         except OSError:
             return False
 
+    def _sync_remote_sources(self):
+        """手动同步远程源（后台线程跑网络；完成刷新列表并如实报结果）。"""
+        if getattr(self, "_market_sync_busy", False):
+            self._set_status(tr("正在同步远程源…"), "info")
+            return
+        self._market_sync_busy = True
+        self._set_status(tr("正在同步远程源…"), "info")
+
+        def work():
+            market = self._market_obj()
+            if market is None:
+                return {"_error": "市场模块不可用"}
+            try:
+                return market.sync_sources(timeout=10.0)
+            except Exception as exc:
+                return {"_error": str(exc)[:200]}
+
+        def done(results):
+            self._market_sync_busy = False
+            if isinstance(results, dict) and results and "_error" in results:
+                self._set_status(f"远程同步异常：{results['_error']}", "warn")
+            elif isinstance(results, dict) and results:
+                ok = [r for r in results.values() if isinstance(r, dict) and r.get("ok")]
+                fail = [r for r in results.values() if isinstance(r, dict) and not r.get("ok")]
+                if fail and not ok:
+                    self._set_status(
+                        tr("远程源同步失败：{error}",
+                           error=str(fail[0].get("error", ""))[:120]), "warn")
+                elif fail:
+                    self._set_status(
+                        tr("远程源同步完成：{ok} 成功 / {fail} 失败",
+                           ok=len(ok), fail=len(fail)), "warn")
+                else:
+                    total = sum(int(r.get("count") or 0) for r in ok)
+                    self._set_status(tr("远程源已同步：{count} 条", count=total), "ok")
+            self._refresh_market(force=True)
+
+        self._submit_background("market-sync", work, done)
+
     def _refresh_market(self, force: bool = False):
         """重建市场列表：插件分区 + 工具分区。"""
         if not getattr(self, "_market_built", False):
@@ -2114,6 +2155,15 @@ class ForgeGuiApp:
         market = self._market_obj()
         if market is None:
             return None
+        sync_results = None
+        try:
+            # run_offline_checks 的契约是不主动外联：测试进程里跳过自动同步
+            # （手动「同步远程源」按钮不受限；test_remote_sources 直调 market.sync_sources）
+            under_suite = "unittest" in sys.modules and os.environ.get("FORGE_NET_TESTS") != "1"
+            if not under_suite and market.needs_remote_sync():
+                sync_results = market.sync_sources(timeout=8.0)
+        except Exception as exc:
+            sync_results = {"_error": str(exc)[:200]}
         items = market.catalog()
         summary = market.summary(items=items)
         names, err = self._gateway_tool_names()
@@ -2133,9 +2183,23 @@ class ForgeGuiApp:
                     runtime_rows.append((name, info["plugin_id"], info["plugin_id"]))
         entries = (build_tool_catalog(names, runtime_tools=runtime_rows, plugins=items)
                    if build_tool_catalog else [])
-        return items, summary, entries, err
+        remote_meta = {"count": sum(1 for p in items if p.source == "remote"),
+                       "sync": market.last_sync_info(),
+                       "synced": sync_results}
+        return items, summary, entries, err, remote_meta
 
     def _render_market(self, snapshot):
+        try:
+            self._render_market_inner(snapshot)
+        except Exception as exc:
+            # 渲染中途炸掉不能把状态行永久留在「正在读取市场…」
+            try:
+                self.market_stat_var.set(tr("市场读取失败，可点击刷新重试"))
+                self._set_status(f"渲染市场失败：{exc}", "warn")
+            except Exception:
+                pass
+
+    def _render_market_inner(self, snapshot):
         for child in self.market_list.winfo_children():
             child.destroy()
         if snapshot is None:
@@ -2145,15 +2209,37 @@ class ForgeGuiApp:
             self.market_stat_var.set("市场不可用")
             return
 
-        items, summary, entries, err = snapshot
+        items, summary, entries, err, remote = snapshot
         self._market_active_ids = {t.plugin_id for t in entries if t.active and t.plugin_id}
 
         external_n = sum(1 for p in items
                          if p.id.startswith(("openclaw-", "claude-", "dsh-", "codex-")))
-        self.market_stat_var.set(
-            f"已启用 {summary['enabled']} · 已安装 {summary['installed']} · "
-            f"共 {summary['total']} 条（外部生态 {external_n}）· 源 {summary['region']}"
-            + ("（离线）" if not summary["sources"] else ""))
+        remote_n = int(remote.get("count") or 0)
+        stat = (f"已启用 {summary['enabled']} · 已安装 {summary['installed']} · "
+                f"共 {summary['total']} 条（外部生态 {external_n} · "
+                f"{tr('远程 {count} 条', count=remote_n)}）· 源 {summary['region']}")
+        sync_errors = [v for v in (remote.get("sync") or {}).values()
+                       if isinstance(v, dict) and v.get("error")]
+        if sync_errors:
+            detail = f"{sync_errors[0].get('name', '')} {sync_errors[0]['error']}".strip()
+            stat += f" · {tr('远程同步失败：{detail}', detail=detail[:60])}"
+        self.market_stat_var.set(stat)
+        synced = remote.get("synced")
+        if isinstance(synced, dict) and synced:
+            if "_error" in synced:
+                self._set_status(f"远程同步异常：{synced['_error']}", "warn")
+            else:
+                ok_n = sum(1 for r in synced.values()
+                           if isinstance(r, dict) and r.get("ok"))
+                fail_n = len(synced) - ok_n
+                if fail_n:
+                    self._set_status(
+                        tr("远程源同步完成：{ok} 成功 / {fail} 失败",
+                           ok=ok_n, fail=fail_n), "warn")
+                else:
+                    total = sum(int(r.get("count") or 0) for r in synced.values()
+                                if isinstance(r, dict))
+                    self._set_status(tr("远程源已同步：{count} 条", count=total), "ok")
 
         query = (self.market_query_var.get() if hasattr(self, "market_query_var") else "").strip().lower()
         want = self.market_kind_var.get() if hasattr(self, "market_kind_var") else tr("全部")

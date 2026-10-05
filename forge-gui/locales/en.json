@@ -246,5 +246,12 @@
   "工具（{count}）": "Tools ({count})",
   "能力授权 · {name}": "Capability grants · {name}",
   "能力声明：{contributions}": "Contributions: {contributions}",
-  "勾选仅修改草稿。保存后，重启正在运行的 Forge / 通道服务以应用配置。": "Changes edit the draft. Save and restart Forge / channel services to apply."
+  "勾选仅修改草稿。保存后，重启正在运行的 Forge / 通道服务以应用配置。": "Changes edit the draft. Save and restart Forge / channel services to apply.",
+  "同步远程源": "Sync sources",
+  "正在同步远程源…": "Syncing remote sources…",
+  "远程源同步失败：{error}": "Remote sync failed: {error}",
+  "远程源已同步：{count} 条": "Remote sources synced: {count} items",
+  "远程源同步完成：{ok} 成功 / {fail} 失败": "Remote sync finished: {ok} ok / {fail} failed",
+  "远程 {count} 条": "{count} remote",
+  "远程同步失败：{detail}": "Remote sync failed: {detail}"
 }

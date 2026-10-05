@@ -430,6 +430,103 @@ def _toml_section(cfg: str, dotted: str) -> dict:
     return out
 
 
+# ---- 远程目录转换（plugin_market.sync_sources 使用的纯函数）----
+
+
+def claude_item_manifest(item: dict) -> dict | None:
+    """Claude Code marketplace.json 的单条插件 → Forge 清单（不落盘、不联网）。"""
+    if not isinstance(item, dict) or not item.get("name"):
+        return None
+    name = str(item.get("name", ""))
+    src = item.get("source") or {}
+    if isinstance(src, str):
+        src_str = src
+    elif isinstance(src, dict):
+        src_str = str(src.get("url", ""))
+        if src.get("path"):
+            src_str += f"#path:{src['path']}"
+    else:
+        src_str = ""
+    desc = _one_line(item.get("description", ""), 200)
+    author = item.get("author") or {}
+    if isinstance(author, dict):
+        author_name = str(author.get("name", ""))
+    else:
+        author_name = _one_line(author, 120)
+    return {
+        "id": f"claude-{_slug(name)}",
+        "name": f"{name}（Claude Code）",
+        "version": "1.0.0",
+        "kind": "tool",
+        "icon": "🎭",
+        "summary": desc or f"Claude Code 市场插件 {name}",
+        "description": (
+            f"来源：Claude Code 官方市场（远程同步）。作者 {author_name or '未知'}。"
+            f"源 {src_str or '仓库内置'}。声明式条目：安装后经知悉/启用/授权流程，"
+            "不执行外部代码。"),
+        "author": author_name or "Claude Code 生态",
+        "homepage": str(item.get("homepage", "") or "")[:2000],
+        "executes_code": False,
+        "capabilities": ["repo.read"],
+        "provides": {"tools": []},
+        "contributions": {"tools": []},
+        "tags": ["Claude Code", "市场插件", "声明式"],
+        "source": "remote",
+    }
+
+
+def clawhub_item_manifest(item: dict) -> dict | None:
+    """ClawHub /api/v1/skills 单条 → Forge 清单。"""
+    if not isinstance(item, dict):
+        return None
+    owner = str(item.get("ownerHandle", "") or "").strip()
+    slug = str(item.get("slug", "") or "").strip()
+    display = str(item.get("displayName") or slug or "").strip()
+    if not slug:
+        return None
+    stats = item.get("stats") or {}
+    downloads = stats.get("downloads", 0) if isinstance(stats, dict) else 0
+    desc = _one_line(item.get("summary", "") or "", 200)
+    ref = f"{owner}/{slug}" if owner else slug
+    return {
+        "id": f"openclaw-{_slug(ref)}",
+        "name": f"{display}（ClawHub 技能）",
+        "version": str(((item.get("latestVersion") or {}).get("version") or "1.0.0") if isinstance(item.get("latestVersion"), dict) else "1.0.0"),
+        "kind": "integration",
+        "icon": "🦞",
+        "summary": desc or f"ClawHub 技能 {ref}",
+        "description": (
+            f"来源：ClawHub 技能库（OpenClaw 生态，远程同步）。作者 {owner or '未知'}。"
+            f"安装引用 {ref}，累计下载 {downloads}。声明式条目：SKILL.md 说明书随安装说明，"
+            "不执行外部代码。"),
+        "author": owner or "ClawHub",
+        "homepage": ("https://clawhub.ai" + str(item["canonicalUrl"])) if item.get("canonicalUrl") else (f"https://clawhub.ai/{owner}/skills/{slug}" if owner else "https://clawhub.ai"),
+        "executes_code": False,
+        "capabilities": ["repo.read"],
+        "provides": {"tools": []},
+        "contributions": {"tools": []},
+        "tags": ["ClawHub", "OpenClaw", "技能", "声明式"],
+        "source": "remote",
+    }
+
+
+def convert_remote_payload(kind: str, payload) -> list[dict]:
+    """远程目录 payload → 清单列表；schema 不对就抛 ValueError（由调用方记账）。"""
+    if kind == "claude-marketplace":
+        if not isinstance(payload, dict) or not isinstance(payload.get("plugins"), list):
+            raise ValueError("不是 Claude marketplace.json（缺 plugins 数组）")
+        out = [m for m in (claude_item_manifest(i) for i in payload["plugins"]) if m]
+    elif kind == "clawhub":
+        if not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
+            raise ValueError("不是 ClawHub skills 响应（缺 items 数组）")
+        out = [m for m in (clawhub_item_manifest(i) for i in payload["items"]) if m]
+    else:
+        raise ValueError(f"未知远程源类型：{kind}")
+    if not out:
+        raise ValueError("远程目录 0 条有效条目")
+    return out
+
+
 # ---- 聚合与缓存 ----
 
 _SCAN_CACHE: dict = {}

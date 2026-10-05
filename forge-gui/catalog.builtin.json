@@ -1,7 +1,7 @@
 {
   "catalogVersion": 1,
   "generatedAt": "2026-10-04",
-  "note": "随程序分发的离线目录。不联网即可浏览；远程源需用户显式添加。",
+  "note": "随程序分发的离线目录。联网时自动同步远程源（Claude 官方市场 + ClawHub，72 小时节流，可在 state 里自定义或关闭）。",
   "entries": [
     {
       "id": "tool-repo-files",
