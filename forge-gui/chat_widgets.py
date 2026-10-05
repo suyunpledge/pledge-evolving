@@ -1011,6 +1011,11 @@ class AgentMessage(tk.Frame):
         self._bubble_host.bind("<Configure>", self._fit_content)
         self.body.bind("<Configure>", self._sync_bubble_height)
         self._stream = None
+        # 流式占位：正文为空时把状态（生成中…/连接中等）显示在气孔内，
+        # 首段文本到达即让位（_teardown_placeholder）。head 行的指示器保留
+        # 给终态（完成/失败），避免同一信息显示两遍。
+        self._placeholder_label = None
+        self._placeholder_shown = False
 
     def _fit_content(self, _event=None):
         available = max(1, self._bubble_host.winfo_width() - self._bubble._padx * 2)
@@ -1035,6 +1040,13 @@ class AgentMessage(tk.Frame):
 
     def set_status(self, text: str):
         self._status_indicator.set(text)
+        # 气孔内占位：仅在还没有正文时跟随状态文案（生成中/连接中/停止中…），
+        # 有正文后 head 指示器单独负责，避免重复。
+        if self._stream is None and not (self._text_source or "").strip():
+            if str(text or "").strip():
+                self.set_stream_placeholder(text)
+            else:
+                self._teardown_placeholder()
 
     def set_role(self, role):
         if role and self._role_badge is None:
@@ -1047,6 +1059,7 @@ class AgentMessage(tk.Frame):
 
     # -- 正文（流式 & markdown）--
     def stream_text(self, text: str):
+        self._teardown_placeholder()
         self._text_source = text
         if self._stream is None:
             self._stream = InlineText(self.body, bg=self._bg)
@@ -1055,6 +1068,7 @@ class AgentMessage(tk.Frame):
         self._fit_content()
 
     def append_stream(self, piece: str):
+        self._teardown_placeholder()
         self._text_source += piece
         if self._stream is None:
             self._stream = InlineText(self.body, bg=self._bg)
@@ -1062,7 +1076,35 @@ class AgentMessage(tk.Frame):
         self._stream.append_text(piece)
         self._fit_content()
 
+    # -- 流式占位（气孔内的「生成中…」）--
+
+    def _ensure_placeholder(self):
+        if self._placeholder_label is None:
+            self._placeholder_label = i18n.Label(
+                self.body, text="", bg=self._bg, fg=C["muted"],
+                font=FONT_UI, anchor="w")
+        if not self._placeholder_shown and self._stream is None:
+            # 首选左上挂一条占位文案；气孔已存在（add_agent 即建），只是空
+            self._placeholder_label.pack(fill=tk.X, anchor="w")
+            self._placeholder_shown = True
+            self._sync_bubble_height()
+
+    def _teardown_placeholder(self):
+        if self._placeholder_shown:
+            self._placeholder_label.pack_forget()
+            self._placeholder_shown = False
+            self._sync_bubble_height()
+
+    def set_stream_placeholder(self, text: str):
+        """正文为空期间的状态文案（如「生成中…」）；有正文后调用方应改用
+        stream_text/append_stream，占位自动让位。"""
+        if self._stream is not None or (self._text_source or "").strip():
+            return
+        self._ensure_placeholder()
+        self._placeholder_label.configure(text=str(text or ""))
+
     def render_markdown(self, text: str):
+        self._teardown_placeholder()
         self._text_source = text
         self._has_details = self._has_details or any(block["type"] in ("code", "li", "oli", "quote", "task") for block in parse_blocks(text))
         # 注释要求：「如果 AgentMessage 里既渲染正文又渲染工具/步骤，确保正文始终在最上、
@@ -1124,6 +1166,7 @@ class AgentMessage(tk.Frame):
 
     def _ensure_trace_host(self):
         """第一次 add_steps/add_tool_card 时创建 trace 容器，并附 ghost 操作条。"""
+        self._teardown_placeholder()   # 有真实内容（工具卡/步骤）了，占位让位
         self._has_details = True
         self._fit_content()
         host = getattr(self, "_trace_host", None)
@@ -1606,27 +1649,42 @@ class _IMECaretAnchor:
         self._imm32.ImmSetCompositionWindow.restype = wintypes.BOOL
         # CFS_POINT = 0x2 : 用 ptCurrentPos（屏幕绝对坐标）
         self._CFS_POINT = 0x2
-        # 即时调用一次，建立 caret
+        # caret 交给 Tk 自管；这里只准备 composition 锚定函数
         self._anchor_func = self._imm_set
 
     # ── 触发 ──────────────────────────────────────────────────────
 
-    def _reanchor(self, _event=None):
+    _NAV_KEYS = frozenset({
+        "Left", "Right", "Up", "Down", "Home", "End", "Prior", "Next",
+        "BackSpace", "Delete", "Return", "space", "Tab"})
+
+    def _reanchor(self, event=None):
         if not self._supported:
             return
+        # KeyRelease 时只在「光标真的可能移动」的键后重锚；普通字符键不再
+        # 每次强拆 caret + 重设 composition——那会打断 IME 合成会话（微信
+        # 输入法语音上屏走 IME 投递链路，被拆后整段丢字且后续键入不上屏）。
+        if event is not None and hasattr(event, "keysym"):
+            if str(event.keysym) not in self._NAV_KEYS:
+                return
         try:
-            self._update()
-            # 关键：强制 Tk 把 Canvas → create_window → Frame → Text 的所有
-            # 虚拟布局坐标都刷到屏幕——否则 ImmSetCompositionWindow 拿到的
-            # caret 位置是「上一帧」的，结果候选框只追到旧位置。
+            # 先把虚拟布局刷到屏幕，再算 caret 坐标，最后喂给 IMM
             self._w.update_idletasks()
+            self._update()
             self._anchor_caret()
         except Exception:
             pass
 
     def _on_canvas_or_text_configure(self, _event=None):
         # 配置事件（如 height 变化）后也再锚一次
-        self._reanchor()
+        if not self._supported:
+            return
+        try:
+            self._w.update_idletasks()
+            self._update()
+            self._anchor_caret()
+        except Exception:
+            pass
 
     # ── 计算 + 调用 IMM ───────────────────────────────────────────
 
@@ -1651,34 +1709,32 @@ class _IMECaretAnchor:
             return None
 
     def _update(self):
-        # 显式建/销 caret，让系统记录 hwnd 关联（CreateCaret(NULL, w, 1, h) → 灰 caret）
+        """计算 caret 屏幕坐标（不再拆/建系统 caret）。
+
+        旧实现每键 DestroyCaret→CreateCaret→SetCaretPos(屏幕坐标)：
+        1) SetCaretPos 要的是**客户区坐标**，喂屏幕坐标会把 caret 甩到
+           客户区外，IME 语音合成串没有可用的插入锚点（微信输入法语音
+           上屏即失败，后续键入也不上屏）。
+        2) 每键重置会打断 IME 合成会话。
+        现在 caret 位置只用来喂 ImmSetCompositionWindow（CFS_POINT 用
+        屏幕坐标），系统 caret 完全交还 Tk 自管。
+        """
         try:
-            hwnd = int(self._w.winfo_id())
-            try:
-                self._user32.DestroyCaret()
-            except Exception:
-                pass
-            self._user32.CreateCaret(hwnd, 0, 1, 20)  # 宽 1 高 20（≈单行）
-            # 把 caret 设在当前 Tk Text 的光标位置：dlineinfo 拿到字高
             dline = self._w.dlineinfo(self._w.index("insert"))
             if not dline:
                 return
-            # dlineinfo 返回 (x, y, w, h, base)
             ix, iy, iw, ih, base = dline
-            # Tk 局部坐标 → 屏幕坐标
             tx = self._w.winfo_rootx()
             ty = self._w.winfo_rooty()
             self._caret_x = tx + ix
             self._caret_y = ty + iy + ih   # caret 在文本下沿
             self._caret_h = ih
-            self._user32.SetCaretPos = self._user32.SetCaretPos
-            self._user32.SetCaretPos.argtypes = [wintypes.INT, wintypes.INT]
-            self._user32.SetCaretPos.restype = wintypes.BOOL
-            self._user32.SetCaretPos(self._caret_x, self._caret_y)
         except Exception:
             pass
 
     def _imm_set(self):
+        # CFS_POINT 按 ptCurrentPos（屏幕坐标）放候选框；不再带 rcArea 硬框
+        # （200×24 的小框会挡住部分 IME 面板的自动避让/展开，包括语音条）。
         try:
             hwnd = int(self._w.winfo_id())
             hIMC = self._imm32.ImmGetContext(hwnd)
@@ -1688,10 +1744,6 @@ class _IMECaretAnchor:
             cf.dwStyle = self._CFS_POINT
             cf.ptCurrentPos.x = getattr(self, "_caret_x", 0)
             cf.ptCurrentPos.y = getattr(self, "_caret_y", 0) + 1
-            cf.rcArea.left = cf.ptCurrentPos.x
-            cf.rcArea.top = cf.ptCurrentPos.y
-            cf.rcArea.right = cf.ptCurrentPos.x + 200
-            cf.rcArea.bottom = cf.ptCurrentPos.y + 24
             self._imm32.ImmSetCompositionWindow(hIMC, ctypes.byref(cf))
             self._imm32.ImmReleaseContext(hwnd, hIMC)
         except Exception:
