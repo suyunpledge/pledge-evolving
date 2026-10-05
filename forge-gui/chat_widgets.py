@@ -97,7 +97,7 @@ class ScrollArea(tk.Frame):
         self._bg = base
         self.canvas = tk.Canvas(self, bg=base, highlightthickness=0, bd=0,
                                 highlightcolor=base)
-        self.vbar = tk.Scrollbar(self, orient=tk.VERTICAL, command=self.canvas.yview,
+        self.vbar = tk.Scrollbar(self, orient=tk.VERTICAL, command=self._manual_scroll,
                                  bg=C["surface2"], troughcolor=base, bd=0,
                                  highlightthickness=0, width=8,
                                  activebackground=C["scroll"], relief=tk.FLAT)
@@ -111,8 +111,11 @@ class ScrollArea(tk.Frame):
         self.canvas.bind("<MouseWheel>", self._on_wheel)
         self.inner.bind("<MouseWheel>", self._on_wheel)
         self._bar_visible = True
+        self._scroll_job = None
+        self._scroll_follow_end = False
         self.bind("<Enter>", self._grab_wheel)
         self.bind("<Leave>", self._release_wheel)
+        self.bind("<Destroy>", self._cancel_scroll, add="+")
 
     def _on_scroll(self, first, last):
         if float(last) - float(first) >= 0.999:
@@ -126,11 +129,20 @@ class ScrollArea(tk.Frame):
 
     def _sync_scrollregion(self, _event=None):
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        # Text/card geometry may finish after the first scroll callback. Keep
+        # following those height changes until the user explicitly scrolls.
+        if self._scroll_follow_end:
+            self.canvas.yview_moveto(1.0)
+
+    def _manual_scroll(self, *args):
+        self._cancel_scroll()
+        self.canvas.yview(*args)
 
     def _sync_width(self, event):
         self.canvas.itemconfigure(self._win, width=event.width)
 
     def _on_wheel(self, event):
+        self._cancel_scroll()
         self.canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
         return "break"
 
@@ -147,8 +159,27 @@ class ScrollArea(tk.Frame):
             return True
 
     def scroll_to_end(self):
-        self.update_idletasks()
-        self.canvas.yview_moveto(1.0)
+        # Streaming deltas can arrive faster than layout; merge their scrolls
+        # instead of running the whole application's idle queue for every token.
+        self._scroll_follow_end = True
+        if self._scroll_job is None:
+            # Geometry cascades through Text -> card -> Canvas across several
+            # idle passes. A frame delay lets those settle without nesting Tk.
+            self._scroll_job = self.after(16, self._scroll_after_layout)
+
+    def _scroll_after_layout(self):
+        self._scroll_job = None
+        if self.winfo_exists():
+            self._sync_scrollregion()
+            self.canvas.yview_moveto(1.0)
+
+    def _cancel_scroll(self, event=None):
+        if event is not None and event.widget is not self:
+            return
+        self._scroll_follow_end = False
+        if self._scroll_job is not None:
+            self.after_cancel(self._scroll_job)
+            self._scroll_job = None
 
     def near_bottom(self) -> bool:
         try:
@@ -1599,6 +1630,7 @@ class _IMECaretAnchor:
 
     def __init__(self, text_widget):
         self._w = text_widget
+        self._anchor_job = None
         self._supported = sys.platform.startswith("win32")
         self._anchor_func = None
         if self._supported:
@@ -1611,6 +1643,7 @@ class _IMECaretAnchor:
             text_widget.bind("<Button-1>", self._reanchor, add="+")
             text_widget.bind("<KeyRelease>", self._reanchor, add="+")
             text_widget.bind("<Configure>", self._on_canvas_or_text_configure, add="+")
+            text_widget.bind("<Destroy>", self._cancel_anchor, add="+")
 
     # ── 平台初始化 ──────────────────────────────────────────────
 
@@ -1667,24 +1700,30 @@ class _IMECaretAnchor:
         if event is not None and hasattr(event, "keysym"):
             if str(event.keysym) not in self._NAV_KEYS:
                 return
+        self._schedule_anchor()
+
+    def _on_canvas_or_text_configure(self, _event=None):
+        self._schedule_anchor()
+
+    def _schedule_anchor(self):
+        # Flushing Tk events inside Configure recursively enters sibling layout.
+        if not self._supported or self._anchor_job is not None:
+            return
+        self._anchor_job = self._w.after_idle(self._flush_anchor)
+
+    def _flush_anchor(self):
+        self._anchor_job = None
         try:
-            # 先把虚拟布局刷到屏幕，再算 caret 坐标，最后喂给 IMM
-            self._w.update_idletasks()
-            self._update()
-            self._anchor_caret()
+            if self._w.winfo_exists():
+                self._update()
+                self._anchor_caret()
         except Exception:
             pass
 
-    def _on_canvas_or_text_configure(self, _event=None):
-        # 配置事件（如 height 变化）后也再锚一次
-        if not self._supported:
-            return
-        try:
-            self._w.update_idletasks()
-            self._update()
-            self._anchor_caret()
-        except Exception:
-            pass
+    def _cancel_anchor(self, event):
+        if event.widget is self._w and self._anchor_job is not None:
+            self._w.after_cancel(self._anchor_job)
+            self._anchor_job = None
 
     # ── 计算 + 调用 IMM ───────────────────────────────────────────
 

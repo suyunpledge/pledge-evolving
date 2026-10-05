@@ -1,9 +1,10 @@
 """test_remote_sources.py — 远程插件源同步（Claude 官方市场 + ClawHub）。
 
-全程临时 home + mock 网络，不碰真实 ~/.forge；其中一条用例显式跑真网络
-（标记 REAL_NET，默认也跑——两个源都只有 ~200KB，失败只记账不阻塞）。
+临时 home + mock 网络，不碰真实 ~/.forge；真实网络冒烟仅在
+FORGE_NET_TESTS=1 时运行，不使离线回归依赖公共网站可达性。
 """
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -165,13 +166,15 @@ class TestSync(RemoteCase):
             with self.assertRaises(ValueError):
                 pm._http_get_json("https://example.com/big.json", timeout=1)
 
+    @unittest.skipUnless(os.environ.get("FORGE_NET_TESTS") == "1", "requires FORGE_NET_TESTS=1")
     def test_real_network_end_to_end(self):
         """真网络冒烟（~200KB）：只断言拉到了条目，不抦地址细节。"""
-        m = pm.Marketplace(home=tempfile.mkdtemp(prefix="forge-remote-real-"))
-        res = m.sync_sources(timeout=20)
-        ok = [v for v in res.values() if v.get("ok")]
-        self.assertTrue(ok, res)
-        self.assertGreater(sum(int(v.get("count") or 0) for v in ok), 0)
+        with tempfile.TemporaryDirectory(prefix="forge-remote-real-") as tmp:
+            m = pm.Marketplace(home=tmp)
+            res = m.sync_sources(timeout=20)
+            ok = [v for v in res.values() if v.get("ok")]
+            self.assertTrue(ok, res)
+            self.assertGreater(sum(int(v.get("count") or 0) for v in ok), 0)
 
 
 if __name__ == "__main__":

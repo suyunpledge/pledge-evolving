@@ -287,18 +287,29 @@ def _desktop_config_path() -> Path:
     return DEFAULT_FORGE_HOME / DESKTOP_CONFIG_NAME
 
 
+_DESKTOP_CONFIG_LOCK = threading.RLock()
+
+
 def load_desktop_config() -> dict:
-    path = _desktop_config_path()
-    if not path.is_file():
-        return {}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
+    # Windows readers do not grant delete sharing. Serialize local readers with
+    # atomic replacement, and keep read/modify/write updates together.
+    with _DESKTOP_CONFIG_LOCK:
+        path = _desktop_config_path()
+        if not path.is_file():
+            return {}
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        return data if isinstance(data, dict) else {}
 
 
 def save_desktop_config(**updates) -> bool:
+    with _DESKTOP_CONFIG_LOCK:
+        return _save_desktop_config_locked(updates)
+
+
+def _save_desktop_config_locked(updates) -> bool:
     path = _desktop_config_path()
     data = load_desktop_config()
     data.update(updates)
@@ -723,6 +734,8 @@ class ForgeGuiApp:
                         self.market_stat_var.set(tr("市场读取失败，可点击刷新重试"))
                     if kind == "market-action":
                         self._market_action_busy = False
+                    if kind == "market-sync":
+                        self._market_sync_busy = False
                     self._set_status(f"读取 {kind} 失败：{error}", "warn")
         finally:
             if not self._closing and job["pending"] is not None:
@@ -1915,6 +1928,9 @@ class ForgeGuiApp:
         if key not in ("market", "features"):
             return
         self._tools_tab = key
+        if key != "market":
+            self._cancel_market_render()
+            self._cancel_market_filter()
         for name, holder in (("market", self.market_holder),
                              ("features", self.feature_holder)):
             if name == key:
@@ -1928,6 +1944,10 @@ class ForgeGuiApp:
             if not getattr(self, "_market_built", False):
                 self._build_market_panel(self.market_holder)
                 self._market_built = True
+            if getattr(self, "_market_snapshot", None) is not None:
+                self._render_market(self._market_snapshot)
+                if time.monotonic() - getattr(self, "_market_loaded_at", 0) < 2:
+                    return
             self._refresh_market()
 
     def _market_obj(self):
@@ -1957,7 +1977,8 @@ class ForgeGuiApp:
     def _toggle_external_sources(self) -> None:
         now = not self._external_sources_enabled()
         try:
-            save_desktop_config(market_external_sources=now)
+            if not save_desktop_config(market_external_sources=now):
+                raise OSError("无法保存桌面偏好")
         except Exception as exc:
             self._set_status(f"外部生态源设置保存失败：{exc}", "warn")
             return
@@ -2008,8 +2029,10 @@ class ForgeGuiApp:
         except Exception as exc:
             self._post_ui(self._set_status, f"插件工具不可用：{exc}；对话继续", "warn")
             return [], None
-        for pid, err in report.errors:
-            self._post_ui(self._set_status, f"插件 {pid} 加载失败：{err}", "warn")
+        if report.errors:
+            pid, err = report.errors[0]
+            self._post_ui(self._set_status,
+                          f"{len(report.errors)} 个插件加载失败：{pid} {err}", "warn")
         return rt.openai_schemas(), rt
 
     def _build_market_panel(self, parent):
@@ -2043,7 +2066,7 @@ class ForgeGuiApp:
         filt.pack(fill=tk.X, pady=(8, 0))
         self.market_query_var = tk.StringVar(value="")
         self.market_query_var.trace_add(
-            "write", lambda *_: self._refresh_market())
+            "write", lambda *_: self._schedule_market_filter())
         entry = tk.Entry(filt, textvariable=self.market_query_var, bg=C["surface2"],
                          fg=C["text"], insertbackground=C["accent"], relief=tk.FLAT,
                          font=FONT_SMALL, width=22)
@@ -2052,8 +2075,8 @@ class ForgeGuiApp:
                  font=FONT_MICRO).pack(side=tk.LEFT, padx=(6, 12))
         self.market_kind_var = tk.StringVar(value=tr("全部"))
         # 挂 trace 而不是靠在按钮 lambda 里刷新：任何途径改这个变量（按钮、
-        # 快捷键、代码）都会立刻重绘，不会出现「筛选变了列表没变」。
-        self.market_kind_var.trace_add("write", lambda *_: self._refresh_market())
+        # 快捷键、代码）都会触发合并筛选，不会出现「筛选变了列表没变」。
+        self.market_kind_var.trace_add("write", lambda *_: self._schedule_market_filter())
         kinds = [tr("全部")] + [tr(KIND_LABELS.get(k, k)) for k in ("tool", "theme", "panel", "integration")]
         kind_row = tk.Frame(parent, bg=C["bg"], padx=20)
         kind_row.pack(fill=tk.X, pady=(6, 0))
@@ -2070,7 +2093,7 @@ class ForgeGuiApp:
         i18n.Label(eco_row, text=tr("生态："), bg=C["bg"], fg=C["muted"],
                  font=FONT_MICRO).pack(side=tk.LEFT)
         self.market_eco_var = tk.StringVar(value=tr("全部"))
-        self.market_eco_var.trace_add("write", lambda *_: self._refresh_market())
+        self.market_eco_var.trace_add("write", lambda *_: self._schedule_market_filter())
         for eco_label in [tr("全部"), "🦞 OpenClaw", "🎭 Claude Code", "🐳 DSH", "🤖 Codex"]:
             pill_button(eco_row, eco_label, lambda v=eco_label: self.market_eco_var.set(v),
                         kind="ghost", bg=C["bg"]).pack(side=tk.LEFT, padx=(0, 6))
@@ -2102,10 +2125,11 @@ class ForgeGuiApp:
         except OSError:
             return False
 
-    def _sync_remote_sources(self):
+    def _sync_remote_sources(self, *, automatic=False):
         """手动同步远程源（后台线程跑网络；完成刷新列表并如实报结果）。"""
         if getattr(self, "_market_sync_busy", False):
-            self._set_status(tr("正在同步远程源…"), "info")
+            if not automatic:
+                self._set_status(tr("正在同步远程源…"), "info")
             return
         self._market_sync_busy = True
         self._set_status(tr("正在同步远程源…"), "info")
@@ -2148,23 +2172,46 @@ class ForgeGuiApp:
         if not hasattr(self, "market_list"):
             return
         self.market_stat_var.set("正在读取市场…")
-        self._submit_background("market", self._read_market_snapshot, self._render_market)
+        self._submit_background("market", self._read_market_snapshot, self._apply_market_snapshot)
+
+    def _apply_market_snapshot(self, snapshot):
+        self._market_snapshot = snapshot
+        if snapshot is not None:
+            self._market_loaded_at = time.monotonic()
+        if self._active_view == "tools" and self._tools_tab == "market":
+            self._render_market(snapshot)
+        elif snapshot is not None:
+            self.market_stat_var.set(f"共 {snapshot[1]['total']} 条")
+        if snapshot is not None and snapshot[4].get("needs_sync"):
+            self._sync_remote_sources(automatic=True)
+
+    def _schedule_market_filter(self):
+        token = getattr(self, "_market_filter_job", None)
+        if token is not None:
+            self.root.after_cancel(token)
+        def apply_filter():
+            self._market_filter_job = None
+            if (self._active_view == "tools" and self._tools_tab == "market"
+                    and hasattr(self, "_market_snapshot")):
+                self._market_page = 0
+                self._market_tool_page = 0
+                self._render_market(self._market_snapshot)
+        self._market_filter_job = self.root.after(120, apply_filter)
+
+    def _cancel_market_filter(self):
+        token = getattr(self, "_market_filter_job", None)
+        if token is not None:
+            self.root.after_cancel(token)
+            self._market_filter_job = None
 
     def _read_market_snapshot(self):
         """Disk locks, fingerprints and HTTP requests never run inside Tk."""
         market = self._market_obj()
         if market is None:
             return None
-        sync_results = None
-        try:
-            # run_offline_checks 的契约是不主动外联：测试进程里跳过自动同步
-            # （手动「同步远程源」按钮不受限；test_remote_sources 直调 market.sync_sources）
-            under_suite = "unittest" in sys.modules and os.environ.get("FORGE_NET_TESTS") != "1"
-            if not under_suite and market.needs_remote_sync():
-                sync_results = market.sync_sources(timeout=8.0)
-        except Exception as exc:
-            sync_results = {"_error": str(exc)[:200]}
         items = market.catalog()
+        # catalog refreshes shared state before checking the sync timestamp.
+        needs_sync = market.needs_remote_sync() is True
         summary = market.summary(items=items)
         names, err = self._gateway_tool_names()
         runtime_rows = []
@@ -2174,9 +2221,11 @@ class ForgeGuiApp:
             report = rt.reload(reserved_names=names or (), available_targets=(names or ()) if supported else (), plugins=items)
             if names and not supported:
                 err = "当前网关不支持插件 Policy 上下文；请更新并重启。内置工具仍按其原有 Policy 执行。"
+            reasons = {}
+            for pid, reason in report.errors + report.skipped:
+                reasons.setdefault(pid, []).append(reason)
             for plugin in items:
-                plugin.runtime_status = " · ".join(reason for pid, reason in report.errors + report.skipped
-                                                   if pid == plugin.id)
+                plugin.runtime_status = " · ".join(reasons.get(plugin.id, ()))
             for name in rt.names(catalog=items):
                 info = rt.tools.get(name)
                 if info is not None:
@@ -2185,10 +2234,13 @@ class ForgeGuiApp:
                    if build_tool_catalog else [])
         remote_meta = {"count": sum(1 for p in items if p.source == "remote"),
                        "sync": market.last_sync_info(),
-                       "synced": sync_results}
+                       "needs_sync": needs_sync}
         return items, summary, entries, err, remote_meta
 
     def _render_market(self, snapshot):
+        self._market_snapshot = snapshot
+        self._cancel_market_filter()
+        self._cancel_market_render()
         try:
             self._render_market_inner(snapshot)
         except Exception as exc:
@@ -2215,14 +2267,14 @@ class ForgeGuiApp:
         external_n = sum(1 for p in items
                          if p.id.startswith(("openclaw-", "claude-", "dsh-", "codex-")))
         remote_n = int(remote.get("count") or 0)
-        stat = (f"已启用 {summary['enabled']} · 已安装 {summary['installed']} · "
-                f"共 {summary['total']} 条（外部生态 {external_n} · "
-                f"{tr('远程 {count} 条', count=remote_n)}）· 源 {summary['region']}")
+        stat = i18n.join("", [f"已启用 {summary['enabled']} · 已安装 {summary['installed']} · "
+                             f"共 {summary['total']} 条（外部生态 {external_n} · ",
+                             tr("远程 {count} 条", count=remote_n), f"）· 源 {summary['region']}"])
         sync_errors = [v for v in (remote.get("sync") or {}).values()
                        if isinstance(v, dict) and v.get("error")]
         if sync_errors:
             detail = f"{sync_errors[0].get('name', '')} {sync_errors[0]['error']}".strip()
-            stat += f" · {tr('远程同步失败：{detail}', detail=detail[:60])}"
+            stat = i18n.join(" · ", [stat, tr("远程同步失败：{detail}", detail=detail[:60])])
         self.market_stat_var.set(stat)
         synced = remote.get("synced")
         if isinstance(synced, dict) and synced:
@@ -2268,10 +2320,68 @@ class ForgeGuiApp:
         if not shown:
             i18n.Label(self.market_list, text=tr("没有匹配的插件——换个关键词，或清掉类型筛选。"),
                      bg=C["bg"], fg=C["muted"], font=FONT_SMALL).pack(anchor=tk.W)
-        for plugin in shown:
-            self._market_plugin_card(plugin)
+        # Bound widget count and yield between cards so input keeps dispatching.
+        page_size = 12
+        pages = max(1, (len(shown) + page_size - 1) // page_size)
+        page = min(getattr(self, "_market_page", 0), pages - 1)
+        self._market_page = page
+        self._market_page_items = shown[page * page_size:(page + 1) * page_size]
+        self._market_pager(len(shown), page, pages, tools=False)
+        generation = self._market_render_generation
+        pending = iter(self._market_page_items)
 
-        self._market_tool_section(entries, err)
+        def render_next():
+            self._market_render_job = None
+            if self._closing or generation != self._market_render_generation:
+                return
+            try:
+                plugin = next(pending)
+            except StopIteration:
+                tool_size = 40
+                tool_pages = max(1, (len(entries) + tool_size - 1) // tool_size)
+                tool_page = min(getattr(self, "_market_tool_page", 0), tool_pages - 1)
+                self._market_tool_page = tool_page
+                try:
+                    self._market_pager(len(entries), tool_page, tool_pages, tools=True)
+                    self._market_tool_section(entries[tool_page * tool_size:(tool_page + 1) * tool_size], err)
+                except Exception as exc:
+                    self.market_stat_var.set(tr("市场读取失败，可点击刷新重试"))
+                    self._set_status(f"渲染工具失败：{exc}", "warn")
+                return
+            try:
+                self._market_plugin_card(plugin)
+            except Exception as exc:
+                self._cancel_market_render()
+                self.market_stat_var.set(tr("市场读取失败，可点击刷新重试"))
+                self._set_status(f"渲染插件失败：{plugin.id} {exc}", "warn")
+                return
+            self._market_render_job = self.root.after(8, render_next)
+
+        self._market_render_job = self.root.after(1, render_next)
+
+    def _cancel_market_render(self):
+        self._market_render_generation = getattr(self, "_market_render_generation", 0) + 1
+        token = getattr(self, "_market_render_job", None)
+        if token is not None:
+            self.root.after_cancel(token)
+            self._market_render_job = None
+
+    def _market_pager(self, count, page, pages, *, tools):
+        if pages <= 1:
+            return
+        row = tk.Frame(self.market_list, bg=C["bg"])
+        row.pack(fill=tk.X, pady=(4, 8))
+        def select(offset):
+            setattr(self, "_market_tool_page" if tools else "_market_page", page + offset)
+            self._render_market(self._market_snapshot)
+            self.market_canvas.yview_moveto(0)
+        pill_button(row, "‹", lambda: select(-1), state=tk.NORMAL if page else tk.DISABLED,
+                    bg=C["bg"]).pack(side=tk.LEFT)
+        i18n.Label(row, text=tr("{label} {page}/{pages} · {count}",
+                   label=tr("工具" if tools else "插件"), page=page+1, pages=pages, count=count),
+                   bg=C["bg"], fg=C["subtext"], font=FONT_SMALL).pack(side=tk.LEFT, padx=8)
+        pill_button(row, "›", lambda: select(1), state=tk.NORMAL if page + 1 < pages else tk.DISABLED,
+                    bg=C["bg"]).pack(side=tk.LEFT)
 
     def _market_plugin_card(self, plugin):
         card = RoundedCard(self.market_list, radius=R_PANEL, fill=C["surface"],
@@ -2683,6 +2793,9 @@ class ForgeGuiApp:
         self._show_view(key)
 
     def _show_view(self, key: str, *, record_history=True):
+        if key != "tools":
+            self._cancel_market_render()
+            self._cancel_market_filter()
         if key not in self._views:
             key = "chat"
         if key in self._lazy_views:
@@ -2701,6 +2814,9 @@ class ForgeGuiApp:
         self._show_sidebar_for(key)
         self._sync_view_navigation()
         self._apply_responsive_layout()
+        if (key == "tools" and self._tools_tab == "market"
+                and getattr(self, "_market_snapshot", None) is not None):
+            self._render_market(self._market_snapshot)
         if key == "config":
             self._update_status_label()
 
@@ -6526,6 +6642,8 @@ class ForgeGuiApp:
                 "有未保存的修改", "功能开关、分工预设或编辑内容尚未保存。要放弃这些修改并退出吗？", parent=self.root):
             return
         self._closing = True
+        self._cancel_market_render()
+        self._cancel_market_filter()
         self._gateway_launch_cancel.set()
         try:
             self.model_combo.close_menu()
