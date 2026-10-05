@@ -46,7 +46,7 @@ from gui_theme import (
     FONT_SMALL, FONT_TITLE, FONT_UI, FONT_UI_BOLD, R_BUBBLE, R_CARD, R_MD, R_PILL,
     RoundedCard, attach_tooltip, avatar, badge, bind_keyboard_action, circle_button, circle_button_state,
     dot, emoji_font, glyph_button, highlight_python, round_rect, rounded_label,
-    setup_code_tags, style_scrollbar, ui_px, text_width, bind_wrap,
+    setup_code_tags, style_scrollbar, ui_px, text_width, bind_wrap, bind_scoped_wheel,
 )
 
 MAX_BUBBLE_WIDTH = 740          # 中央 Conversation 是主体，长文允许更宽的阅读行
@@ -113,13 +113,10 @@ class ScrollArea(tk.Frame):
         self._win = self.canvas.create_window(0, 0, window=self.inner, anchor="nw")
         self.inner.bind("<Configure>", self._sync_scrollregion)
         self.canvas.bind("<Configure>", self._sync_width)
-        self.canvas.bind("<MouseWheel>", self._on_wheel)
-        self.inner.bind("<MouseWheel>", self._on_wheel)
+        bind_scoped_wheel(self.canvas, self.inner, self._on_wheel)
         self._bar_visible = True
         self._scroll_job = None
         self._scroll_follow_end = False
-        self.bind("<Enter>", self._grab_wheel)
-        self.bind("<Leave>", self._release_wheel)
         self.bind("<Destroy>", self._cancel_scroll, add="+")
 
     def _on_scroll(self, first, last):
@@ -150,12 +147,6 @@ class ScrollArea(tk.Frame):
         self._cancel_scroll()
         self.canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
         return "break"
-
-    def _grab_wheel(self, _e=None):
-        self.canvas.bind_all("<MouseWheel>", self._on_wheel)
-
-    def _release_wheel(self, _e=None):
-        self.canvas.unbind_all("<MouseWheel>")
 
     def at_bottom(self) -> bool:
         try:
@@ -706,8 +697,19 @@ def render_blocks_chunked(parent, text, *, bg=None, max_width=None,
     blocks = parse_blocks(text)
     wrap = max_width or MAX_BUBBLE_WIDTH
     total = len(blocks)
+    pending = None
+
+    def cancel(event):
+        nonlocal pending
+        if event.widget is host and pending is not None:
+            host.after_cancel(pending)
+            pending = None
+
+    host.bind("<Destroy>", cancel, add="+")
 
     def build_one(i: int):
+        nonlocal pending
+        pending = None
         if not host.winfo_exists():
             return
         if i >= total:
@@ -718,7 +720,7 @@ def render_blocks_chunked(parent, text, *, bg=None, max_width=None,
                     pass
             return
         _render_single_block(host, blocks[i], base=base, wrap=wrap)
-        host.after(1, lambda: build_one(i + 1))
+        pending = host.after(1, lambda: build_one(i + 1))
 
     build_one(0)
     return host
@@ -772,13 +774,17 @@ class ToolCard(tk.Frame):
         self._summary = tk.Frame(self, bg=base, cursor="hand2")
         self._summary.pack(fill=tk.X, pady=(8, 2))
         self._summary.bind("<Button-1>", lambda _e: self.toggle())
-        self._arrow = IconCanvas(self._summary, "chevron_right", size=16, bg=base, fg=C["ter"])
+        bind_keyboard_action(self._summary, self.toggle)
+        self._arrow = IconCanvas(self._summary, "chevron_down" if expanded else "chevron_right",
+                                 size=16, bg=base, fg=C["ter"])
         self._arrow.pack(side=tk.LEFT, padx=(0, 6))
         self._arrow.bind("<Button-1>", lambda _e: self.toggle())
         self._summary_label = i18n.Label(self._summary, text="", bg=base,
                                        fg=C["muted"], font=FONT_CAPTION,
-                                       cursor="hand2", anchor="w")
+                                       cursor="hand2", anchor="w", justify=tk.LEFT,
+                                       wraplength=ui_px(self, MAX_BUBBLE_WIDTH))
         self._summary_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        bind_wrap(self._summary_label)
         self._summary_label.bind("<Button-1>", lambda _e: self.toggle())
 
         # 明细容器（按需显示）
@@ -860,18 +866,26 @@ class ToolCard(tk.Frame):
         mark = "✅" if ok else "⚠️"
         IconCanvas(wrap, "check_circle" if ok else "warning", size=18, bg=bgc,
                    fg=C["ok"] if ok else C["warn"]).pack(side=tk.LEFT, padx=(0, 6))
-        i18n.Label(wrap, text=row.get("name", ""), bg=bgc, fg=C["accent2"],
-                 font=FONT_MONO_SM).pack(side=tk.LEFT)
-        desc = row.get("desc")
-        if desc:
-            i18n.Label(wrap, text=desc, bg=bgc, fg=C["ter"], font=FONT_SMALL,
-                     anchor="w", justify=tk.LEFT).pack(side=tk.LEFT, padx=(10, 6))
+        # Reserve timing before giving the remaining width to the text column.
         if row.get("elapsed"):
             i18n.Label(wrap, text=str(row["elapsed"]), bg=bgc, fg=C["muted"],
-                     font=FONT_MONO_SM).pack(side=tk.RIGHT)
+                       font=FONT_MONO_SM).pack(side=tk.RIGHT, anchor="n", padx=(8, 0))
+        text_box = tk.Frame(wrap, bg=bgc)
+        text_box.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        name = i18n.Label(text_box, text=row.get("name", ""), bg=bgc, fg=C["accent2"],
+                         font=FONT_MONO_SM, anchor="w", justify=tk.LEFT,
+                         wraplength=ui_px(self, MAX_BUBBLE_WIDTH))
+        name.pack(fill=tk.X)
+        bind_wrap(name)
+        desc = row.get("desc")
+        if desc:
+            description = i18n.Label(text_box, text=desc, bg=bgc, fg=C["ter"], font=FONT_SMALL,
+                                     anchor="w", justify=tk.LEFT, wraplength=ui_px(self, MAX_BUBBLE_WIDTH))
+            description.pack(fill=tk.X)
+            bind_wrap(description)
         if row.get("detail"):
             attach_tooltip(wrap, row["detail"])
-            for child in wrap.winfo_children():
+            for child in [*wrap.winfo_children(), *text_box.winfo_children()]:
                 attach_tooltip(child, row["detail"])
         # 记录 (label, seconds) 以便摘要显示耗时
         self._row_specs.append((row.get("name", ""), _guess_seconds_from_row(row)))
@@ -890,15 +904,19 @@ class StepList(tk.Frame):
         self._summary = tk.Frame(self, bg=base, cursor="hand2")
         self._summary.pack(fill=tk.X, pady=(6, 2))
         self._summary.bind("<Button-1>", lambda _e: self.toggle())
-        self._arrow = IconCanvas(self._summary, "chevron_right", size=16, bg=base, fg=C["ter"])
+        bind_keyboard_action(self._summary, self.toggle)
+        self._arrow = IconCanvas(self._summary, "chevron_down" if expanded else "chevron_right",
+                                 size=16, bg=base, fg=C["ter"])
         self._arrow.pack(side=tk.LEFT, padx=(0, 6))
         self._arrow.bind("<Button-1>", lambda _e: self.toggle())
         n = len(self._items)
         self._summary_label = i18n.Label(self._summary,
                                        text=tr("执行步骤 {count} 步", count=n),
                                        bg=base, fg=C["muted"], font=FONT_CAPTION,
-                                       cursor="hand2", anchor="w")
+                                       cursor="hand2", anchor="w", justify=tk.LEFT,
+                                       wraplength=ui_px(self, MAX_BUBBLE_WIDTH))
         self._summary_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        bind_wrap(self._summary_label)
         self._summary_label.bind("<Button-1>", lambda _e: self.toggle())
 
         # 明细容器
@@ -917,16 +935,21 @@ class StepList(tk.Frame):
         idx.create_text(9, 9, text=str(item.get("index", "")), fill=C["subtext"],
                         font=FONT_MICRO)
         idx.pack(side=tk.LEFT, anchor="n", padx=(0, 10))
+        right = tk.Frame(row, bg=base)
+        right.pack(side=tk.RIGHT, anchor="n", padx=(8, 0))
         text_box = tk.Frame(row, bg=base)
         text_box.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        i18n.Label(text_box, text=item.get("title", ""), bg=base, fg=C["text"],
-                 font=FONT_UI_BOLD, anchor="w").pack(fill=tk.X)
+        title = i18n.Label(text_box, text=item.get("title", ""), bg=base, fg=C["text"],
+                          font=FONT_UI_BOLD, anchor="w", justify=tk.LEFT,
+                          wraplength=ui_px(self, MAX_BUBBLE_WIDTH))
+        title.pack(fill=tk.X)
+        bind_wrap(title)
         desc = item.get("desc")
         if desc:
-            i18n.Label(text_box, text=desc, bg=base, fg=C["ter"], font=FONT_SMALL,
-                     anchor="w", justify=tk.LEFT, wraplength=460).pack(fill=tk.X)
-        right = tk.Frame(row, bg=base)
-        right.pack(side=tk.RIGHT, anchor="n")
+            description = i18n.Label(text_box, text=desc, bg=base, fg=C["ter"], font=FONT_SMALL,
+                                     anchor="w", justify=tk.LEFT, wraplength=ui_px(self, MAX_BUBBLE_WIDTH))
+            description.pack(fill=tk.X)
+            bind_wrap(description)
         if item.get("elapsed"):
             i18n.Label(right, text=str(item["elapsed"]), bg=base, fg=C["muted"],
                      font=FONT_MONO_SM).pack(side=tk.LEFT, padx=(0, 8))

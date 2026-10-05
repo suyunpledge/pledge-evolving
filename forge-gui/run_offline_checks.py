@@ -26,7 +26,7 @@ def main():
         "test_workspace", "test_ui_regression", "test_layout_dpi", "test_navigation",
         "test_plugin_market", "test_plugin_runtime", "test_plugin_adversarial",
         "test_plugin_capabilities", "test_plugin_market_ui", "test_compat_sources", "test_i18n", "test_remote_sources", "test_ime_inline", "test_responsiveness_v2",
-        "test_market_responsiveness",
+        "test_market_responsiveness", "test_ui_polish",
     ]
     with tempfile.TemporaryDirectory(prefix="forge-offline-") as tmp, ExitStack() as stack:
         home = Path(tmp)

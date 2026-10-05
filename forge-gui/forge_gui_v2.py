@@ -1426,6 +1426,7 @@ class ForgeGuiApp:
     def _cancel_responsive_callback(self, event=None):
         if event is not None and event.widget is not self.root:
             return
+        self._cancel_history_render()
         if self._responsive_after_id is not None:
             try:
                 self.root.after_cancel(self._responsive_after_id)
@@ -1593,8 +1594,7 @@ class ForgeGuiApp:
                   lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
         canvas.bind("<Configure>",
                     lambda e: canvas.itemconfigure(win, width=e.width))
-        canvas.bind("<MouseWheel>", lambda e: canvas.yview_scroll(
-            -1 if e.delta > 0 else 1, "units"))
+        theme.bind_scoped_wheel(canvas, body)
         self._agents_panel_canvas = canvas
 
         # ── 所有 provider 的真模型 id（去重，作为下拉候选项）──
@@ -2058,9 +2058,12 @@ class ForgeGuiApp:
                     kind="ghost", bg=C["bg"]).pack(side=tk.LEFT)
         pill_button(market_actions, tr("查看审计"), self._show_plugin_audit,
                     kind="quiet", bg=C["bg"]).pack(side=tk.LEFT, padx=(8, 0))
-        i18n.Label(parent, text=tr("安装 → 文件检查 → 知悉 → 启用 → 逐项授权 → Policy 判定 → 执行 → 审计 → 撤销"),
+        theme.flow_controls(market_actions)
+        lifecycle = i18n.Label(parent, text=tr("安装 → 文件检查 → 知悉 → 启用 → 逐项授权 → Policy 判定 → 执行 → 审计 → 撤销"),
                  bg=C["bg"], fg=C["muted"], font=FONT_MICRO, anchor="w",
-                 justify=tk.LEFT, wraplength=700).pack(fill=tk.X, padx=20, pady=(6, 0))
+                 justify=tk.LEFT, wraplength=1)
+        lifecycle.pack(fill=tk.X, padx=20, pady=(6, 0))
+        theme.bind_wrap(lifecycle)
 
         filt = tk.Frame(parent, bg=C["bg"], padx=20)
         filt.pack(fill=tk.X, pady=(8, 0))
@@ -2112,8 +2115,7 @@ class ForgeGuiApp:
             scrollregion=canvas.bbox("all")))
         canvas.bind("<Configure>", lambda e: canvas.itemconfigure(
             self._market_window, width=e.width))
-        canvas.bind("<MouseWheel>", lambda e: (canvas.yview_scroll(
-            -1 if e.delta > 0 else 1, "units"), "break")[1])
+        theme.bind_scoped_wheel(canvas, self.market_list)
         self.market_canvas = canvas
 
     @staticmethod
@@ -2393,19 +2395,26 @@ class ForgeGuiApp:
         top.pack(fill=tk.X)
         i18n.Label(top, text=plugin.icon, bg=C["surface"], fg=C["text"],
                  font=FONT_TITLE).pack(side=tk.LEFT, padx=(0, 8))
-        i18n.Label(top, text=plugin.name, bg=C["surface"], fg=C["text"],
-                 font=FONT_UI_BOLD).pack(side=tk.LEFT)
-        i18n.Label(top, text=f"v{plugin.version}", bg=C["surface"], fg=C["muted"],
-                 font=FONT_MICRO).pack(side=tk.LEFT, padx=(6, 0))
-        badge(top, tr(plugin.kind_label), tone="muted", bg=C["surface"]).pack(side=tk.LEFT, padx=(8, 0))
+        name = i18n.Label(top, text=plugin.name, bg=C["surface"], fg=C["text"],
+                          font=FONT_UI_BOLD, anchor="w", justify=tk.LEFT, wraplength=1)
+        name.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        theme.bind_wrap(name)
+        metadata = tk.Frame(body, bg=C["surface"])
+        metadata.pack(fill=tk.X, pady=(4, 0))
+        version = i18n.Label(body, text=f"v{plugin.version}", bg=C["surface"], fg=C["muted"],
+                            font=FONT_MICRO, anchor="w", justify=tk.LEFT, wraplength=1)
+        version.pack(fill=tk.X)
+        theme.bind_wrap(version)
+        badge(metadata, tr(plugin.kind_label), tone="muted", bg=C["surface"]).pack(side=tk.LEFT)
         if plugin.source == "builtin":
-            badge(top, tr("内置"), tone="muted", bg=C["surface"]).pack(side=tk.LEFT, padx=(4, 0))
+            badge(metadata, tr("内置"), tone="muted", bg=C["surface"]).pack(side=tk.LEFT, padx=(4, 0))
         eco_badge = {"openclaw-": "🦞 OpenClaw", "claude-": "🎭 Claude Code",
                      "dsh-": "🐳 DSH", "codex-": "🤖 Codex"}
         for prefix, label in eco_badge.items():
             if plugin.id.startswith(prefix):
-                badge(top, label, tone="accent_soft", bg=C["surface"]).pack(side=tk.LEFT, padx=(4, 0))
+                badge(metadata, label, tone="accent_soft", bg=C["surface"]).pack(side=tk.LEFT, padx=(4, 0))
                 break
+        theme.flow_controls(metadata)
         states = tk.Frame(body, bg=C["surface"])
         states.pack(fill=tk.X, pady=(6, 0))
         granted = plugin.granted_capabilities(self._repo_root(), self._session_id)
@@ -2415,41 +2424,36 @@ class ForgeGuiApp:
             badge(states, label if yes else {tr("已安装"): tr("未安装"), tr("已知悉"): tr("待知悉"), tr("已启用"): tr("未启用"),
                   tr("已授权"): tr("未授权"), tr("可调用"): tr("不可调用")}[label],
                   tone="ok" if yes else "muted", bg=C["surface"]).pack(side=tk.LEFT, padx=(0, 4))
+        theme.flow_controls(states)
+
+        def detail(text, *, fg=C["muted"], font=FONT_MICRO, pady=0):
+            label = i18n.Label(body, text=text, bg=C["surface"], fg=fg, font=font,
+                               anchor="w", justify=tk.LEFT, wraplength=1)
+            label.pack(fill=tk.X, pady=pady)
+            return theme.bind_wrap(label)
 
         if plugin.summary:
-            i18n.Label(body, text=plugin.summary, bg=C["surface"], fg=C["body"],
-                     font=FONT_SMALL, anchor=tk.W, justify=tk.LEFT,
-                     wraplength=760).pack(fill=tk.X, pady=(6, 2))
+            detail(plugin.summary, fg=C["body"], font=FONT_SMALL, pady=(6, 2))
         meta = " · ".join(x for x in (plugin.author, plugin.homepage) if x)
         if meta:
-            i18n.Label(body, text=meta, bg=C["surface"], fg=C["muted"],
-                     font=FONT_MICRO, anchor=tk.W).pack(fill=tk.X)
+            detail(meta)
         if plugin.permissions or plugin.capabilities:
-            i18n.Label(body, text=tr("权限：{permissions}", permissions=i18n.join(" / ", map(tr, plugin.permission_labels()))),
-                     bg=C["surface"], fg=C["warn"] if plugin.executes_code else C["subtext"],
-                     font=FONT_MICRO, anchor=tk.W, justify=tk.LEFT,
-                     wraplength=760).pack(fill=tk.X, pady=(2, 0))
+            detail(tr("权限：{permissions}", permissions=i18n.join(" / ", map(tr, plugin.permission_labels()))),
+                   fg=C["warn"] if plugin.executes_code else C["subtext"], pady=(2, 0))
         if plugin.error:
-            i18n.Label(body, text=f"清单有问题：{plugin.error}", bg=C["surface"],
-                     fg=C["error"], font=FONT_MICRO, anchor=tk.W).pack(fill=tk.X)
+            detail(f"清单有问题：{plugin.error}", fg=C["error"])
         if getattr(plugin, "runtime_status", ""):
-            i18n.Label(body, text=f"执行状态：{plugin.runtime_status}", bg=C["surface"],
-                     fg=C["warn"], font=FONT_MICRO, anchor="w", justify=tk.LEFT,
-                     wraplength=760).pack(fill=tk.X, pady=(2, 0))
+            detail(f"执行状态：{plugin.runtime_status}", fg=C["warn"], pady=(2, 0))
         contributed = " · ".join(f"{key} {len(value)}" for key, value in plugin.contributions.items() if value)
         if contributed:
-            i18n.Label(body, text=tr("能力声明：{contributions}", contributions=contributed), bg=C["surface"], fg=C["muted"],
-                     font=FONT_MICRO, anchor="w").pack(fill=tk.X, pady=(2, 0))
+            detail(tr("能力声明：{contributions}", contributions=contributed), pady=(2, 0))
         if plugin.executes_code:
             boundary = tr("Python 插件尚无系统沙箱：知悉与启用不会允许 Agent 执行其代码。")
         elif not plugin.contributions.get("tools"):
             boundary = "声明条目：尚未接入受控工具执行；安装或启用不等于功能已生效。"
         else:
             boundary = tr("文件指纹检查不等于签名验证；授权不能覆盖 Forge Policy 的拒绝或审批要求。")
-        boundary_label = i18n.Label(body, text=boundary, bg=C["surface"], fg=C["muted"],
-                 font=FONT_MICRO, anchor="w", justify=tk.LEFT, wraplength=760)
-        boundary_label.pack(fill=tk.X, pady=(4, 0))
-        body.bind("<Configure>", lambda event: boundary_label.configure(wraplength=max(80, event.width)), add="+")
+        detail(boundary, pady=(4, 0))
 
         actions = tk.Frame(body, bg=C["surface"])
         actions.pack(fill=tk.X, pady=(10, 0))
@@ -2470,6 +2474,7 @@ class ForgeGuiApp:
         if plugin.installed:
             pill_button(actions, tr("卸载"), lambda: self._market_action(pid, "uninstall"),
                         kind="danger", bg=C["surface"]).pack(side=tk.LEFT, padx=(8, 0))
+        theme.flow_controls(actions)
         detail_actions = tk.Frame(body, bg=C["surface"])
         detail_actions.pack(fill=tk.X, pady=(6, 0))
         pill_button(detail_actions, tr("检查清单"), lambda: self._inspect_plugin(pid),
@@ -2480,6 +2485,7 @@ class ForgeGuiApp:
         if plugin.grants:
             pill_button(detail_actions, tr("撤销授权"), lambda: self._market_action(pid, "revoke"),
                         kind="danger", bg=C["surface"]).pack(side=tk.LEFT, padx=(8, 0))
+        theme.flow_controls(detail_actions)
 
     def _market_tool_section(self, entries, err=""):
         """工具市场：网关工具桥暴露的工具 + 已启用插件声明的工具。"""
@@ -2488,28 +2494,37 @@ class ForgeGuiApp:
         i18n.Label(self.market_list, text=tr("工具（{count}）", count=len(entries)), bg=C["bg"],
                  fg=C["ter"], font=FONT_UI_BOLD).pack(anchor=tk.W)
         if err:
-            i18n.Label(self.market_list, text=f"工具桥未就绪：{err}", bg=C["bg"],
+            warning = i18n.Label(self.market_list, text=f"工具桥未就绪：{err}", bg=C["bg"],
                      fg=C["warn"], font=FONT_MICRO, anchor=tk.W,
-                     justify=tk.LEFT, wraplength=760).pack(fill=tk.X, pady=(2, 4))
+                     justify=tk.LEFT, wraplength=1)
+            warning.pack(fill=tk.X, pady=(2, 4))
+            theme.bind_wrap(warning)
         if not entries:
-            i18n.Label(self.market_list,
+            empty = i18n.Label(self.market_list,
                      text="还没有可用工具。请启动带 --tools 的 Forge 网关；目录中的工具桥条目不能自动启动它。",
-                     bg=C["bg"], fg=C["muted"], font=FONT_SMALL).pack(anchor=tk.W)
+                     bg=C["bg"], fg=C["muted"], font=FONT_SMALL,
+                     anchor="w", justify=tk.LEFT, wraplength=1)
+            empty.pack(fill=tk.X)
+            theme.bind_wrap(empty)
             return
         grid = tk.Frame(self.market_list, bg=C["bg"])
         grid.pack(fill=tk.X, pady=(6, 0))
-        grid.grid_columnconfigure(0, weight=0)
-        grid.grid_columnconfigure(1, weight=1)
+        grid.grid_columnconfigure(0, weight=2, uniform="tool-text")
+        grid.grid_columnconfigure(1, weight=3, uniform="tool-text")
         for row, tool in enumerate(entries):
             name_lbl = i18n.Label(grid, text=tool.name, bg=C["bg"], fg=C["text"],
-                                font=FONT_MONO or FONT_SMALL, anchor=tk.W)
-            name_lbl.grid(row=row, column=0, sticky="w", padx=(0, 12), pady=1)
+                                font=FONT_MONO or FONT_SMALL, anchor=tk.W,
+                                justify=tk.LEFT, wraplength=1)
+            name_lbl.grid(row=row, column=0, sticky="new", padx=(0, 12), pady=1)
+            theme.bind_wrap(name_lbl)
             desc = ("可调用 · " if tool.active else "仅声明 · ") + (tool.summary or (
                 "插件提供" if tool.source == "plugin" else "网关工具"))
             tone = C["warn"] if tool.danger else C["subtext"]
             mark = "⚠ " if tool.danger else ""
-            i18n.Label(grid, text=f"{mark}{desc}", bg=C["bg"], fg=tone,
-                     font=FONT_MICRO, anchor=tk.W).grid(row=row, column=1, sticky="w", pady=1)
+            description = i18n.Label(grid, text=f"{mark}{desc}", bg=C["bg"], fg=tone,
+                                    font=FONT_MICRO, anchor=tk.W, justify=tk.LEFT, wraplength=1)
+            description.grid(row=row, column=1, sticky="new", pady=1)
+            theme.bind_wrap(description)
 
     def _gateway_tool_names(self):
         """从网关工具桥取工具名。返回 (names|None, 错误说明)。
@@ -3049,12 +3064,32 @@ class ForgeGuiApp:
         sessions.insert(0, entry)
         self._write_sessions(sessions)
 
+    def _cancel_history_render(self, event=None):
+        if event is not None and event.widget is not getattr(self, "chat_area", None):
+            return
+        self._history_render_generation = getattr(self, "_history_render_generation", 0) + 1
+        token = getattr(self, "_history_render_job", None)
+        if token is not None:
+            self.root.after_cancel(token)
+            self._history_render_job = None
+
     def _render_history_messages(self, messages):
         """历史会话逐条渲染：每条之间 after(1) 让出主线程，长会话不卡界面。"""
+        self._cancel_history_render()
+        generation = self._history_render_generation
+        session = getattr(self, "_session_id", None)
+        area = self.chat_area
+        if getattr(self, "_history_render_area", None) is not area:
+            area.bind("<Destroy>", self._cancel_history_render, add="+")
+            self._history_render_area = area
         state = {"i": 0}
 
         def step():
-            if not getattr(self, "chat_area", None):
+            if generation != self._history_render_generation:
+                return
+            self._history_render_job = None
+            if (getattr(self, "_closing", False) or not area.winfo_exists()
+                    or session != getattr(self, "_session_id", None)):
                 return
             i = state["i"]
             if i >= len(messages):
@@ -3070,9 +3105,9 @@ class ForgeGuiApp:
                     agent.render_markdown(msg.content)
             except tk.TclError:
                 return
-            self.root.after(1, step)
+            self._history_render_job = self.root.after(1, step)
 
-        self.root.after(1, step)
+        self._history_render_job = self.root.after(1, step)
 
     def _refresh_history(self):
         self._submit_background("history", self._load_sessions, self._render_history)
@@ -3211,6 +3246,7 @@ class ForgeGuiApp:
 
         只有一轮对话时中间大半是深灰空区——把它利用起来；产生对话后自动消失。
         """
+        self._cancel_history_render()
         lines = []
         lines.append(tr("你可以让我审查更改、运行测试、解释代码，或描述一个新目标。"))
         self.chat_area.show_empty(
@@ -3586,8 +3622,7 @@ class ForgeGuiApp:
                                          height=max(event.height, right.winfo_reqheight()))
         editor_canvas.bind("<Configure>", fit_editor)
         right.bind("<Configure>", lambda _: editor_canvas.configure(scrollregion=editor_canvas.bbox("all")))
-        editor_canvas.bind("<MouseWheel>", lambda event: editor_canvas.yview_scroll(
-            -1 if event.delta > 0 else 1, "units"))
+        theme.bind_scoped_wheel(editor_canvas, right)
         self.editor_canvas = editor_canvas
         split.add(left, minsize=240, width=310)
         split.add(right_host, minsize=480)
@@ -3929,7 +3964,7 @@ class ForgeGuiApp:
             scrollregion=self.feature_canvas.bbox("all")))
         self.feature_canvas.bind("<Configure>", lambda event: self.feature_canvas.itemconfigure(
             self._feature_window, width=event.width))
-        self.feature_canvas.bind("<MouseWheel>", self._scroll_features)
+        theme.bind_scoped_wheel(self.feature_canvas, self.feature_list, self._scroll_features)
         self._toggle_feature_panel()
 
     def _scroll_features(self, event):
@@ -4000,8 +4035,6 @@ class ForgeGuiApp:
         card.bind("<Configure>", lambda event: (
             toggle.configure(wraplength=max(160, event.width - 210)),
             description.configure(wraplength=max(160, event.width - 210))))
-        for widget in (card, toggle, description):
-            widget.bind("<MouseWheel>", self._scroll_features)
         self._feature_entries.append(entry)
 
     def _rebuild_feature_toggles(self, force: bool = False):
@@ -6678,6 +6711,7 @@ class ForgeGuiApp:
                 "有未保存的修改", "功能开关、分工预设或编辑内容尚未保存。要放弃这些修改并退出吗？", parent=self.root):
             return
         self._closing = True
+        self._cancel_history_render()
         self._cancel_market_render()
         self._cancel_market_filter()
         self._gateway_launch_cancel.set()

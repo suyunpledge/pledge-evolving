@@ -180,6 +180,44 @@ def bind_wrap(label):
     return label
 
 
+def bind_scoped_wheel(canvas, content, command=None):
+    """Route descendant wheel events without replacing global/other views' bindings.
+
+    Native editors and scrollable lists retain their own wheel behavior. Read-only
+    inline text without a scrollbar follows its surrounding conversation instead.
+    """
+    owner = canvas.winfo_toplevel()
+
+    def wheel(event):
+        widget = event.widget
+        if not isinstance(widget, tk.Misc) or not canvas.winfo_ismapped():
+            return
+        current = widget
+        while current is not None:
+            if isinstance(current, tk.Canvas) and current is not canvas and current.cget("yscrollcommand"):
+                return  # Let a nested viewport's own binding handle this event.
+            if isinstance(current, (tk.Text, tk.Listbox, tk.Scrollbar, ttk.Scrollbar)):
+                if not (isinstance(current, tk.Text) and str(current.cget("state")) == "disabled"
+                        and not current.cget("yscrollcommand")):
+                    return
+            if current is content or current is canvas:
+                if not event.delta:
+                    return
+                if command is not None:
+                    return command(event)
+                canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
+                return "break"
+            current = current.master
+
+    token = owner.bind("<MouseWheel>", wheel, add="+")
+
+    def cleanup(event):
+        if event.widget is canvas:
+            owner.unbind("<MouseWheel>", token)
+
+    canvas.bind("<Destroy>", cleanup, add="+")
+
+
 def elide(widget, text, width, font=FONT_SMALL):
     measure = tkfont.Font(root=widget, font=font)
     if measure.measure(text) <= width:
