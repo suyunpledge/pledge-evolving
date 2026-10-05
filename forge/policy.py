@@ -63,6 +63,23 @@ class Sandbox(str, Enum):
         except ValueError:
             return False
 
+    def allows_read(self, path: Path, root: Path) -> bool:
+        """Read sandbox: FULL_ACCESS may read anywhere; the sandboxed tiers
+        (READ_ONLY and WORKSPACE_WRITE) may only read inside the root.
+
+        Matches the trust model of Claude Code's sandbox tiers: confining
+        *writes* to the workspace while letting reads roam the whole disk
+        leaks secrets (credentials, ~/.ssh, other projects) just as surely
+        as an out-of-root write.
+        """
+        if self is Sandbox.FULL_ACCESS:
+            return True
+        try:
+            path.resolve().relative_to(root.resolve())
+            return True
+        except ValueError:
+            return False
+
 
 class Decision(str, Enum):
     ALLOW = "allow"
@@ -125,6 +142,10 @@ DEFAULT_DENY_PATTERNS = (
 )
 
 WRITE_TOOLS = {"write_file", "edit_file", "apply_patch", "shell_exec", "notebook_edit", "delete_file"}
+
+#: Tools whose job is to read a filesystem path (path / root argument).
+#: The read sandbox confines these to the granted root outside FULL_ACCESS.
+READ_PATH_TOOLS = {"read_file", "read_range", "file_outline", "list_dir", "grep"}
 
 
 @dataclass(frozen=True)
@@ -213,6 +234,19 @@ class Policy:
                            if k in {"path", "file", "target"} and v]
             for target in targets:
                 if not self.sandbox.allows_write(self.abs_path(target), self.workspace):
+                    return Decision.DENY
+        # 2b. sandbox: reads are confined too. Tools that take a filesystem
+        # path to read (path / root keys) must stay inside the granted root
+        # under the sandboxed tiers — otherwise read_file("~/.ssh/id_rsa")
+        # silently exfiltrates whatever the process account can see.
+        if tool in READ_PATH_TOOLS and self.sandbox is not Sandbox.FULL_ACCESS:
+            read_targets = list(touching)
+            if not read_targets:
+                key = "root" if tool == "grep" else "path"
+                raw = args.get(key)
+                read_targets = [str(raw)] if raw else []
+            for target in read_targets:
+                if not self.sandbox.allows_read(self.abs_path(target), self.workspace):
                     return Decision.DENY
         if tool == "shell_exec" and self.sandbox is Sandbox.READ_ONLY:
             return Decision.DENY

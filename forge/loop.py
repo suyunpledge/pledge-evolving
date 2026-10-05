@@ -259,6 +259,7 @@ class Agent:
         self._thinking_cap_configured = thinking_token_cap
         self._run_task = ""
         self._run_thinking_tokens = 0
+        self._child_tokens = 0
         self._run_thinking_active = False
         # H14: run-scoped pricing state (set per run()); _run_scope marks "an
         # un-recorded run is in flight on this agent" so nested/exited runs
@@ -441,6 +442,16 @@ class Agent:
                 if isinstance(value, str) and len(value) > 260:
                     folded[key] = value[:260] + "…[fold-preview]"
             self.events.append(folded)
+        # S3: fold the child's whole subtree into this run's delta. The child
+        # holds cost_ledger=None and shares our session, so without this the
+        # parent ledger only ever saw the parent's own completions — every
+        # subagent (and its grandchildren, and its thinking rounds) was
+        # consumed for free. report.usage is the child's own rollup.
+        child_delta = (int(report.usage.get("prompt_tokens", 0))
+                       + int(report.usage.get("completion_tokens", 0)))
+        child_delta += int(getattr(child, "_run_thinking_tokens", 0) or 0)
+        child_delta += int(getattr(child, "_child_tokens", 0) or 0)
+        self._child_tokens = int(getattr(self, "_child_tokens", 0)) + child_delta
         clean = sanitise_child_output(report.text)
         self._emit(type="subagent_result", chars=len(clean), steps=len(report.steps))
         return ToolResult(ok=True, content=clean[: self.limits.max_tool_result], meta={"depth": child.depth})
@@ -862,10 +873,22 @@ class Agent:
         # source is report.usage (the run's own completion rollup; session
         # events carry no token data). Children share the parent session but
         # hold cost_ledger=None, so their usage is not double-recorded here.
+        # S4: emit the run's token rollup into the event log. session.tokens()
+        # and SessionIndex._summarise read prompt/completion/total tokens from
+        # events, but nothing ever wrote them — every session showed 0 tokens.
+        # Emitted on every run (parent and child), so a session total is the
+        # honest sum of all its runs.
+        _p = int(report.usage.get("prompt_tokens", 0))
+        _c = int(report.usage.get("completion_tokens", 0))
+        self._emit(type="usage", prompt_tokens=_p, completion_tokens=_c,
+                   total_tokens=_p + _c, model=self._run_model)
+
         if self.cost_ledger is not None and self._run_scope:
-            delta = int(report.usage.get("prompt_tokens", 0)) + int(report.usage.get("completion_tokens", 0))
+            delta = _p + _c
             delta += self._run_thinking_tokens  # 沉思轮 token 并入本跑步账
+            delta += int(getattr(self, "_child_tokens", 0))  # S3: 子代理子树 token
             self._run_thinking_tokens = 0
+            self._child_tokens = 0
             if delta > 0:
                 entry = self.cost_ledger.record(self._run_model, delta, note=f"run {self.name}")
                 self._emit(type="ledger_recorded", model=entry.model, tokens=delta,

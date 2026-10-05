@@ -1233,7 +1233,8 @@ class AgentMessage(tk.Frame):
         readable = font.measure("0" * 78)
         limit = max(1, min(available, readable))
         preferred = (limit if self._has_details else
-                     max(ui_px(self, 48), text_width(self, self._text_source) + font.metrics("descent") * 2))
+                     max(ui_px(self, 48), text_width(self, self._text_source,
+                                                     limit=limit) + font.metrics("descent") * 2))
         self._max_width = limit
         self._bubble.set_content_width(preferred, limit=limit)
         self._sync_bubble_height()

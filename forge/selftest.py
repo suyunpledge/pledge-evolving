@@ -249,8 +249,11 @@ def test_tools() -> None:
         with tempfile.TemporaryDirectory() as outside_tmp:
             (Path(outside_tmp) / "outside_needle.py").write_text("outside_needle = 1\n", encoding="utf-8")
             g2 = registry.invoke("grep", {"pattern": "outside_needle", "root": outside_tmp}, ctx)
+        # S1 read sandbox: WORKSPACE_WRITE confines reads to the root too —
+        # an out-of-root grep must be denied (it used to succeed, which was
+        # the exfiltration hole this check now pins shut).
         check("tools:grep-out-of-workspace-root-safe",
-              g2.ok and "outside_needle" in g2.content,
+              (not g2.ok) and "denied by policy" in str(g2.error or ""),
               str(g2.error or g2.content)[:200])
         check("tools:unknown-tool-is-not-fatal", not unknown.ok and "unknown tool" in unknown.error)
 

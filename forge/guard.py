@@ -102,6 +102,19 @@ FORBIDDEN_CALLS: frozenset[str] = frozenset({
 # option 2): ``o.__class__.__name__`` is idiomatic benign code, and escape
 # chains stay blocked one link later at ``__bases__``/``__subclasses__``/
 # ``__mro__``.
+# -- dangerous leaf names (final segment of a chain) ------------------------
+# Used only when a chain contains an index the tracker cannot resolve
+# (``d[k].system``): we cannot prove the receiver is benign, so a leaf that is
+# a known exec/fs sink is denied. Resolvable chains are matched exactly via
+# FORBIDDEN_CALLS, so benign ``items.remove`` / ``s.replace`` stay clean.
+DANGEROUS_LEAVES: frozenset[str] = frozenset({
+    "system", "popen", "unlink", "remove", "rmdir", "removedirs", "mkdir",
+    "makedirs", "execv", "execve", "execvp", "spawnv", "startfile", "kill",
+    "replace", "rename", "link", "symlink", "truncate", "chmod", "utime",
+    "rmtree", "move", "import_module", "reload", "loads", "load", "__import__",
+})
+
+
 FORBIDDEN_ATTRS: frozenset[str] = frozenset({
     # H7-N1: getattr's twin on the attribute path
     "__getattribute__",
@@ -155,6 +168,7 @@ __all__ = [
     "EXPRESSION_ALLOWED_CALLS",
     "EXPRESSION_ALLOWED_NAMES",
     "EXPRESSION_ALLOWED_NODES",
+    "DANGEROUS_LEAVES",
     "FORBIDDEN_ATTRS",
     "FORBIDDEN_CALLS",
     "FORBIDDEN_FROM_NAMES",

@@ -46,8 +46,8 @@ ADAPTER_MIN_ASSERTIONS = 8
 # network client or a recursive delete inside it is not a style issue.
 # The table lives in forge.guard so the config-expression scanner and this
 # source scanner share one ban surface and cannot drift apart.
-from .guard import (FORBIDDEN_ATTRS, FORBIDDEN_CALLS, FORBIDDEN_FROM_NAMES,  # noqa: E402
-                    FORBIDDEN_IMPORTS, attr_name)
+from .guard import (DANGEROUS_LEAVES, FORBIDDEN_ATTRS, FORBIDDEN_CALLS,  # noqa: E402
+FORBIDDEN_FROM_NAMES, FORBIDDEN_IMPORTS, attr_name)
 
 REQUIRED_MANIFEST_KEYS = ("name", "version", "capabilities")
 
@@ -553,6 +553,10 @@ class ModuleRegistry:
         # alias_root from every binding form, iterated to a fixed point so
         # chains and reverse-order definitions are covered.
         imported_roots: set[str] = set()
+        # container aliases: a name bound to a dict/list/tuple of modules
+        # (``d = {"a": os}`` / ``mods = (os,)``) so indexing and unpacking
+        # cannot launder a module root past the gate.
+        container_alias: dict[str, object] = {}
 
         def _import_problems(alias: ast.alias) -> list[str]:
             root = alias.name.split(".")[0]
@@ -587,6 +591,31 @@ class ModuleRegistry:
                     if origin.split(".")[0] in imported_roots:
                         return f"{origin}.{dotted.split(".", 1)[1]}"
                 return None
+            if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
+                info = container_alias.get(node.value.id)
+                key = node.slice
+                if isinstance(key, ast.Constant):
+                    k = key.value
+                    if isinstance(info, dict) and k in info:
+                        return str(info[k]) or None
+                    if isinstance(info, list) and isinstance(k, int) and -len(info) <= k < len(info):
+                        return str(info[k]) or None
+                return None
+            return None
+
+        def _container_value(node: ast.AST) -> object:
+            """A dict/list/tuple literal whose elements alias modules, else None."""
+            if isinstance(node, ast.Dict):
+                out: dict = {}
+                for k, v in zip(node.keys, node.values):
+                    if isinstance(k, ast.Constant):
+                        origin = _module_value(v)
+                        if origin:
+                            out[k.value] = origin
+                return out or None
+            if isinstance(node, (ast.Tuple, ast.List)):
+                out_list = [_module_value(e) or "" for e in node.elts]
+                return out_list if any(out_list) else None
             return None
 
         def _bind(target: ast.AST, value: ast.AST) -> None:
@@ -595,11 +624,23 @@ class ModuleRegistry:
                 origin = _module_value(value)
                 if origin:
                     alias_root[target.id] = origin
-            elif isinstance(target, (ast.Tuple, ast.List)) and isinstance(
-                    value, (ast.Tuple, ast.List)):
-                if len(target.elts) == len(value.elts):
-                    for t, v in zip(target.elts, value.elts):
-                        _bind(t, v)
+                    return
+                container = _container_value(value)
+                if container is not None:
+                    container_alias[target.id] = container
+            elif isinstance(target, (ast.Tuple, ast.List)):
+                # unpack from a literal OR from a name holding a container
+                origin_list = None
+                if isinstance(value, (ast.Tuple, ast.List)):
+                    origin_list = [_module_value(e) for e in value.elts]
+                elif isinstance(value, ast.Name):
+                    info = container_alias.get(value.id)
+                    if isinstance(info, list):
+                        origin_list = list(info)
+                if origin_list is not None and len(target.elts) == len(origin_list):
+                    for el, o in zip(target.elts, origin_list):
+                        if o and isinstance(el, ast.Name):
+                            alias_root[el.id] = str(o)
 
         def _bind_defaults(fn_args: ast.arguments) -> None:
             """Bind arg names whose default values alias a module."""
@@ -630,6 +671,7 @@ class ModuleRegistry:
         # iterate binding pass to a fixed point (chains, reverse-order defs)
         for _ in range(3):
             size = len(alias_root)
+            csize = len(container_alias)
             for node in ast.walk(tree):
                 if isinstance(node, ast.Import):
                     for alias in node.names:
@@ -662,20 +704,50 @@ class ModuleRegistry:
                     _bind(node.target, it)
                 elif isinstance(node, (ast.Lambda, ast.FunctionDef, ast.AsyncFunctionDef)):
                     _bind_defaults(node.args)
-            if len(alias_root) == size:
+            if len(alias_root) == size and len(container_alias) == csize:
                 break
+
+        def _dotted(node: ast.AST) -> str | None:
+            """attr_name that also resolves Subscript heads via container_alias.
+
+            Returns None when the chain contains an index we cannot resolve —
+            the caller then falls back to a leaf check for known exec/fs sinks.
+            """
+            parts: list[str] = []
+            while True:
+                if isinstance(node, ast.Attribute):
+                    parts.append(node.attr)
+                    node = node.value
+                elif isinstance(node, ast.NamedExpr):
+                    node = node.value
+                elif isinstance(node, ast.Subscript):
+                    origin = _module_value(node)
+                    if origin:
+                        parts.append(origin)
+                    return ".".join(reversed([p for p in parts if p])) or None
+                else:
+                    break
+            if isinstance(node, ast.Name):
+                parts.append(alias_root.get(node.id, node.id))
+            return ".".join(reversed([p for p in parts if p])) or None
 
         for node in ast.walk(tree):
             if isinstance(node, ast.Call):
-                called = _resolve(attr_name(node.func))
-                if called in FORBIDDEN_CALLS:
+                called = _dotted(node.func)
+                if called is None:
+                    leaf = getattr(node.func, "attr", "")
+                    if leaf in DANGEROUS_LEAVES:
+                        problems.append(f"unresolved call to .{leaf}()")
+                elif called in FORBIDDEN_CALLS:
                     problems.append(f"forbidden call: {called}()")
             elif isinstance(node, ast.Attribute):
                 # H6-M1: a forbidden callable stored via ``fn = os.system`` is
                 # a laundering step even without a call on this line
-                dotted = _resolve(attr_name(node))
-                if dotted in FORBIDDEN_CALLS:
+                dotted = _dotted(node)
+                if dotted is not None and dotted in FORBIDDEN_CALLS:
                     problems.append(f"forbidden reference: {dotted}")
+                elif dotted is None and node.attr in DANGEROUS_LEAVES:
+                    problems.append(f"unresolved reference: .{node.attr}")
                 elif node.attr in FORBIDDEN_ATTRS:
                     # H6-M2/M4: attribute tables and dunder chains
                     problems.append(f"forbidden dunder access: .{node.attr}")

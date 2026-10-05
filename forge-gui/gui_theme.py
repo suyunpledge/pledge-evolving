@@ -155,18 +155,41 @@ def ui_px(widget, value):
     return max(1, round(value * float(widget.tk.call("tk", "scaling")) * 72 / 96))
 
 
-def text_width(widget, text, font=FONT_UI):
-    """Measure rendered text and emoji in pixels, without character rounding."""
+def text_width(widget, text, font=FONT_UI, *, limit=None):
+    """Measure rendered text and emoji in pixels, without character rounding.
+
+    ``limit`` enables an early exit: once any line reaches the cap the exact
+    width no longer matters (the caller clamps to that cap anyway), so we stop
+    measuring. Without it, streaming a long reply re-measured the whole
+    growing buffer on every delta — O(n²) in the reply length.
+    """
     from ui_icons import emoji_parts
     measure = tkfont.Font(root=widget, font=font)
-    widths = []
+    best = 0
+    linespace = None
     for line in text.split("\n"):
+        # Bound the per-call cost. Every glyph is at least 1px wide, so a line
+        # with more characters than the pixel cap necessarily exceeds it —
+        # return immediately instead of handing emoji_parts a megabyte-long
+        # line (which was the real O(n) cost behind the O(n²) streaming).
+        if limit is not None and len(line) > limit:
+            return limit
         width = 0
         for part, is_emoji in emoji_parts(line):
-            bitmap = emoji_image(widget, part, size=measure.metrics("linespace")) if is_emoji else None
-            width += bitmap.width() if bitmap is not None else measure.measure(part)
-        widths.append(width)
-    return max(widths, default=0)
+            if is_emoji:
+                if linespace is None:
+                    linespace = measure.metrics("linespace")
+                bitmap = emoji_image(widget, part, size=linespace)
+                width += bitmap.width() if bitmap is not None else measure.measure(part)
+            else:
+                width += measure.measure(part)
+            if limit is not None and width >= limit:
+                return limit
+        if width > best:
+            best = width
+    if limit is not None and best >= limit:
+        return limit
+    return best
 
 
 def bind_wrap(label):
