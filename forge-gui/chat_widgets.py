@@ -28,6 +28,11 @@ from i18n import tr
 
 import re
 import sys
+
+try:
+    from ime_inline import InlineIME
+except Exception:  # pragma: no cover
+    InlineIME = None
 import time
 import tkinter as tk
 from tkinter import font as tkfont
@@ -1841,6 +1846,14 @@ class InputCard(tk.Frame):
         # 让 Windows 立刻把候选框重新摆到 caret 旁（与 WebView 的 caret bounding rect
         # 锚定是同一原理）。DPI awareness 同时升到 Per-Monitor V2，让候选框走 DPI 缩放路径。
         self._ime_anchor = _IMECaretAnchor(self.entry)
+        # IME 行内组合（inline composition）：preedit 直接画进输入框光标处，
+        # 抑制系统默认的组合浮层；候选词窗口仍由系统 IME 显示。
+        # Windows 专属，失败自动 no-op（InlineIME 内部全兜底）。
+        self._inline_ime = InlineIME(self.entry) if InlineIME else None
+        if self._inline_ime is not None:
+            self.entry.bind("<Button-1>",
+                            lambda _e: self._inline_ime.cancel_if_composing(),
+                            add="+")
         self._hint = i18n.Label(entry_host, text=placeholder, bg=C["input_bg"],
                               fg=C["placeholder"], font=FONT_UI, anchor="w",
                               cursor="xterm")
@@ -2053,10 +2066,20 @@ class InputCard(tk.Frame):
     def _enter(self, event):
         if event.state & 1:                # Shift
             return None
+        ime = getattr(self, "_inline_ime", None)
+        if ime is not None and ime.composing:
+            # 组合中：这一下回车属于 IME（确认候选），不是发送
+            ime.cancel_if_composing()
+            return "break"
         self._fire_send()
         return "break"
 
     def _text_changed(self, _event=None):
+        ime = getattr(self, "_inline_ime", None)
+        if ime is not None and ime.composing:
+            # 组合中的拼音是显示层内容，不进 send_var
+            self.entry.edit_modified(False)
+            return
         if self.entry.edit_modified():
             if not self._syncing:
                 self._syncing = True
@@ -2066,6 +2089,9 @@ class InputCard(tk.Frame):
 
     def _sync_from_var(self, *_args):
         # Restored messages and local commands must also update the visible draft.
+        ime = getattr(self, "_inline_ime", None)
+        if ime is not None and ime.composing:
+            return   # 组合中改写 entry 会把 preedit 打碎；等确认后再同步
         if not self._syncing:
             value = self.send_var.get()
             if self.entry.get("1.0", "end-1c") != value:
@@ -2079,6 +2105,10 @@ class InputCard(tk.Frame):
         self._sync_hint()
 
     def _fire_send(self):
+        ime = getattr(self, "_inline_ime", None)
+        if ime is not None and ime.composing:
+            ime.cancel_if_composing()
+            return
         if self._busy or not self.send_var.get().strip():
             return
         if self._on_send:

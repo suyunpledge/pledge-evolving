@@ -14,6 +14,7 @@ ICON = GUI_DIR / "desktop" / "forge.ico"
 # 同目录的兄弟模块：显式声明，避免静态分析漏掉
 HIDDEN = [
     "i18n",
+    "ime_inline",
     "gui_theme",
     "chat_widgets",
     "workspace",
