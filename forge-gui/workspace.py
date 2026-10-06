@@ -642,15 +642,15 @@ class WorkspacePanel(tk.Frame):
                                    bg=C["bg"], fg=C["ter"], font=FONT_SMALL,
                                    anchor="w")
         self._crumb_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        close_btn = glyph_button(top, "✕", self._request_close, tooltip="收起工作区")
+        close_btn = glyph_button(top, "✕", self._request_close, tooltip=tr("收起工作区"))
         close_btn.pack(side=tk.RIGHT, padx=PAD_S)
         self._changes_nav_btn = glyph_button(
             top, "⑂", self._toggle_changes_nav, size=11,
-            tooltip="显示 / 隐藏变更列表")
+            tooltip=tr("显示 / 隐藏变更列表"))
         self._changes_nav_btn.pack(side=tk.RIGHT, padx=(0, 2))
         self._tree_nav_btn = glyph_button(
             top, "☷", self._toggle_tree_nav, size=11,
-            tooltip="显示 / 隐藏文件树")
+            tooltip=tr("显示 / 隐藏文件树"))
         self._tree_nav_btn.pack(side=tk.RIGHT, padx=(0, 2))
         divider(self).pack(side=tk.TOP, fill=tk.X)
 
@@ -839,7 +839,7 @@ class WorkspacePanel(tk.Frame):
         i18n.Label(tree_head, text=tr("文件树"), bg=C["bg"], fg=C["ter"],
                  font=FONT_MICRO).pack(side=tk.LEFT, padx=PAD_S)
         glyph_button(tree_head, "⟳", self.refresh_async, size=10,
-                     tooltip="重新扫描").pack(side=tk.RIGHT, padx=2)
+                     tooltip=tr("重新扫描")).pack(side=tk.RIGHT, padx=2)
         tree_host = tk.Frame(tree_col, bg=C["bg"])
         tree_host.pack(fill=tk.BOTH, expand=True)
         self._tree_canvas = tk.Canvas(tree_host, bg=C["bg"],
@@ -878,7 +878,7 @@ class WorkspacePanel(tk.Frame):
                  fg=C["subtext"], font=FONT_MICRO, anchor="w").pack(
             side=tk.LEFT, fill=tk.X, expand=True, padx=PAD_S)
         glyph_button(meta, "⟳", self._reload_code, size=10,
-                     tooltip="重新载入当前文件").pack(side=tk.RIGHT, padx=2)
+                     tooltip=tr("重新载入当前文件")).pack(side=tk.RIGHT, padx=2)
 
         # 文件 Tab 条（多文件 Tab）—— 默认隐藏，无 activeFile 时不占位
         self._file_tab_strip = tk.Frame(code_col, bg=C["bg"], height=ui_px(self, 28))
@@ -1187,9 +1187,9 @@ class WorkspacePanel(tk.Frame):
         actions = tk.Frame(top, bg=C["bg"])
         actions.pack(side=tk.RIGHT, padx=PAD_S)
         glyph_button(actions, "⟳", self._reload_preview, size=10,
-                     tooltip="刷新预览").pack(side=tk.RIGHT, padx=(PAD_XS, 0))
+                     tooltip=tr("刷新预览")).pack(side=tk.RIGHT, padx=(PAD_XS, 0))
         glyph_button(actions, "↗", self._open_current_external, size=10,
-                     tooltip="在新窗口打开").pack(side=tk.RIGHT)
+                     tooltip=tr("在新窗口打开")).pack(side=tk.RIGHT)
 
         self._preview_host = tk.Frame(band, bg=C["sidebar"])
         self._preview_host.pack(fill=tk.BOTH, expand=True, padx=PAD_S,
@@ -1298,16 +1298,16 @@ class WorkspacePanel(tk.Frame):
             )
             if summary["changed"] == 0:
                 self._home_empty_var.set(
-                    "工作区干净：没有未提交改动。\n"
-                    "可以从左侧文件树打开任意文件，或点「打开文件…」选择。"
+                    tr("工作区干净：没有未提交改动。\n"
+                    "可以从左侧文件树打开任意文件，或点「打开文件…」选择。")
                 )
             else:
                 self._home_empty_var.set("")
         else:
-            self._home_summary_var.set("（不是 git 仓库）")
+            self._home_summary_var.set(tr("（不是 git 仓库）"))
             self._home_empty_var.set(
-                "此目录未被 git 跟踪。仍然可以从左侧文件树浏览、打开文件，"
-                "或点「打开文件…」选择。"
+                tr("此目录未被 git 跟踪。仍然可以从左侧文件树浏览、打开文件，"
+                "或点「打开文件…」选择。")
             )
         # 重渲染最近改动文件列表
         body = self._home_recent_body
@@ -1348,7 +1348,7 @@ class WorkspacePanel(tk.Frame):
             from tkinter import filedialog
             initial = str(self._repo_root) if self._repo_root.exists() else None
             picked = filedialog.askopenfilename(initialdir=initial,
-                                                title="打开文件")
+                                                title=tr("打开文件"))
             if picked:
                 self._open_path_or_warn(picked)
         except Exception as exc:
@@ -1984,7 +1984,7 @@ class WorkspacePanel(tk.Frame):
         if not self._is_git_repo:
             i18n.Label(body, text=tr("不是 git 仓库"), bg=C["bg"], fg=C["muted"],
                      font=FONT_SMALL).pack(anchor="w", padx=PAD_S, pady=PAD_S)
-            self._changes_title_var.set("变更 (0)")
+            self._changes_title_var.set(tr("变更 (0)"))
             self._changes_total_var.set("+0 −0")
             return
         cur = self._filter_var.get()
@@ -2242,7 +2242,7 @@ class WorkspacePanel(tk.Frame):
             self._diff_total_var.set(f"+{ns[0]} −{ns[1]}")
             return
         else:
-            self._diff_title_var.set("diff（全部）")
+            self._diff_title_var.set(tr("diff（全部）"))
             out = loaded[0] if loaded is not None else _git_diff(self._repo_root)
             if not out:
                 text.insert("1.0",

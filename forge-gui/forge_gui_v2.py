@@ -157,6 +157,7 @@ DESKTOP_CONFIG_NAME = "forge-desktop.json"
 
 # 自动启动/自恢复的退避节奏（秒）。原实现只重试一次都没有，这里补上。
 AUTOSTART_RETRY_DELAYS = (1.5, 3.0, 6.0, 12.0, 20.0)
+GATEWAY_LAUNCH_TIMEOUT_MS = 30_000
 
 IS_WINDOWS = platform.system() == "Windows"
 
@@ -412,6 +413,27 @@ def port_in_use(port: int, host: str = "127.0.0.1", timeout: float = 0.35) -> bo
         return False
 
 
+def bindable_gateway_port(port: int) -> int:
+    """Connect probes miss Windows excluded ports: verify binding as well.
+
+    Only permission denial permits an OS-selected fallback. An occupied port
+    remains an error, so we cannot accidentally connect to somebody else's service.
+    The child still owns the final bind and may fail if another process races it.
+    """
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            if IS_WINDOWS:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            sock.bind(("127.0.0.1", port))
+        return port
+    except PermissionError as exc:
+        if getattr(exc, "winerror", None) != 10013:
+            raise
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", 0))
+            return sock.getsockname()[1]
+
+
 def kill_process_tree(proc, timeout: float = 5.0) -> bool:
     """杀掉进程及其全部子进程。
 
@@ -631,8 +653,16 @@ class ForgeGuiApp:
         self._restart_pending = False
         self._gateway_starting = False
         self._gateway_launch_cancel = threading.Event()
+        self._gateway_launch_after_id = None
+        self._gateway_launch_lock = threading.Lock()
+        self._gateway_pending_procs = []
+        self._gateway_ready_proc = None
         self._suppress_model_trace = False
-        self.gateway_port = 8799
+        try:
+            saved_port = int(desktop_prefs.get("gateway_port", 8799))
+            self.gateway_port = saved_port if 1024 <= saved_port <= 65535 else 8799
+        except (TypeError, ValueError):
+            self.gateway_port = 8799
         self.gateway_url = f"http://127.0.0.1:{self.gateway_port}"
         self.client = ForgeGatewayClient(self.gateway_url)
 
@@ -839,7 +869,7 @@ class ForgeGuiApp:
         self.model_var.trace_add("write", self._on_model_changed)
         if _autostart_enabled():
             # 先把状态标成「启动中」：打包版解包要几秒，这段时间界面不能看着像没反应。
-            self.gw_status_var.set("● 启动中…")
+            self.gw_status_var.set(tr("● 启动中…"))
             self._autostart_log("窗口打开，准备自动拉起 gateway")
             self._autostart_after_id = self.root.after(250, self._autostart_gateway)
 
@@ -861,7 +891,7 @@ class ForgeGuiApp:
 
         self.sidebar_reveal_btn = glyph_button(
             bar, "☰", self._toggle_sidebar, bg=C["bg"], size=11,
-            tooltip="展开 / 收起侧边栏")
+            tooltip=tr("展开 / 收起侧边栏"))
         self.sidebar_reveal_btn.pack(side=tk.LEFT, padx=(10, 0))
 
         # 品牌区
@@ -900,12 +930,12 @@ class ForgeGuiApp:
                                   fg=C["text"], activebackground=C["accent_soft"],
                                   activeforeground=C["accent_text"],
                                   font=FONT_SMALL, bd=1, relief=tk.FLAT)
-        self._more_menu.add_command(label="状态详情",
+        self._more_menu.add_command(label=tr("状态详情"),
                                     command=self._toggle_telemetry)
-        self._more_menu.add_command(label="收起 / 展开侧边栏",
+        self._more_menu.add_command(label=tr("收起 / 展开侧边栏"),
                                     command=self._toggle_sidebar)
         self._more_menu.add_separator()
-        self._more_menu.add_command(label="项目文件", command=lambda: self._nav_click("files"))
+        self._more_menu.add_command(label=tr("项目文件"), command=lambda: self._nav_click("files"))
         self._more_menu.add_separator()
         for key in ("agents", "knowledge", "evolution"):
             self._more_menu.add_command(
@@ -949,10 +979,10 @@ class ForgeGuiApp:
         self._telemetry_expanded = not self._telemetry_expanded
         if self._telemetry_expanded:
             self._telemetry_panel.pack(fill=tk.X, before=self._topbar_divider)
-            self._telemetry_btn.configure(text="▴ 状态")
+            self._telemetry_btn.configure(text=tr("▴ 状态"))
         else:
             self._telemetry_panel.pack_forget()
-            self._telemetry_btn.configure(text="▾ 状态")
+            self._telemetry_btn.configure(text=tr("▾ 状态"))
 
     def _build_metric(self, parent, key: str, text: str):
         base = parent.cget("bg")
@@ -1000,7 +1030,7 @@ class ForgeGuiApp:
                                     insertbackground=C["accent"],
                                     highlightthickness=0, justify=tk.CENTER)
         self.port_spin.pack(side=tk.LEFT, padx=(4, 8))
-        self.gw_btn = IconButton(card, text="▶ 启动", command=self._toggle_gateway,
+        self.gw_btn = IconButton(card, text=tr("▶ 启动"), command=self._toggle_gateway,
                                 bg=base, fg=C["accent_text"],
                                 activebackground=C["hover"],
                                 activeforeground=C["text"], font=FONT_MICRO,
@@ -1012,10 +1042,10 @@ class ForgeGuiApp:
                                 fg=C["text"], activebackground=C["accent_soft"],
                                 activeforeground=C["accent_text"],
                                 font=FONT_SMALL, bd=1, relief=tk.FLAT)
-        self._gw_menu.add_command(label="重启 gateway", image=icon_image(self.root, "refresh"), compound=tk.LEFT,
+        self._gw_menu.add_command(label=tr("重启 gateway"), image=icon_image(self.root, "refresh"), compound=tk.LEFT,
                                   command=self._toggle_gateway)
         self._gw_menu.add_separator()
-        self._gw_menu.add_command(label="停止 gateway", image=icon_image(self.root, "stop"), compound=tk.LEFT,
+        self._gw_menu.add_command(label=tr("停止 gateway"), image=icon_image(self.root, "stop"), compound=tk.LEFT,
                                   command=self._stop_gateway_from_menu)
         self.gw_btn.bind("<Button-3>", self._popup_gw_menu)
         attach_tooltip(self.gw_btn, "打开即自动启动；左键重启，右键可停止")
@@ -1111,10 +1141,10 @@ class ForgeGuiApp:
         head = tk.Frame(chat_panel, bg=C["sidebar"])
         head.pack(fill=tk.X, padx=14, pady=(10, 4))
         # 分组标题强化，跟导航项形成层级差
-        i18n.Label(head, text="历史记录", bg=C["sidebar"], fg=C["ter"],
+        i18n.Label(head, text=tr("历史记录"), bg=C["sidebar"], fg=C["ter"],
                  font=FONT_MICRO).pack(side=tk.LEFT)
         glyph_button(head, "搜索", self._toggle_session_search, bg=C["sidebar"],
-                     fg=C["muted"], size=9, tooltip="搜索对话 · Ctrl+K").pack(
+                     fg=C["muted"], size=9, tooltip=tr("搜索对话 · Ctrl+K")).pack(
             side=tk.RIGHT)
         self._search_visible = False
         self.session_search_var = tk.StringVar()
@@ -1157,7 +1187,7 @@ class ForgeGuiApp:
             side=tk.LEFT, fill=tk.X, expand=True, padx=(4, 0))
         self.sidebar_toggle_btn = glyph_button(
             tools_row, "≪", self._toggle_sidebar, bg=C["sidebar"],
-            fg=C["muted"], size=11, tooltip="收起 / 展开侧边栏")
+            fg=C["muted"], size=11, tooltip=tr("收起 / 展开侧边栏"))
         self.sidebar_toggle_btn.pack(side=tk.RIGHT)
 
         # 其他一级功能各有自己的上下文 Sidebar（切视图时显示）。
@@ -1248,7 +1278,7 @@ class ForgeGuiApp:
         self._agents_toggle_btn.pack(side=tk.LEFT, fill=tk.X, expand=True)
         attach_tooltip(self._agents_toggle_btn, "展开已有 AutoClaw 智能体目录；Forge 分工预设在 Agents 页面配置")
         plus = glyph_button(section, "＋", self._prompt_create_agent,
-                            bg=C["sidebar"], size=11, tooltip="添加 Forge 分工预设")
+                            bg=C["sidebar"], size=11, tooltip=tr("添加 Forge 分工预设"))
         plus.pack(side=tk.RIGHT)
 
         outer = tk.Frame(parent, bg=C["sidebar"], height=min(180, 38 * len(children) + 42))
@@ -1273,10 +1303,10 @@ class ForgeGuiApp:
                 w.bind("<Enter>", lambda _e, r=row: r.configure(bg=C["hover"]), add="+")
                 w.bind("<Leave>", lambda _e, r=row: r.configure(bg=C["sidebar"]), add="+")
         if not children:
-            i18n.Label(list_box, text="还没有智能体", bg=C["sidebar"],
+            i18n.Label(list_box, text=tr("还没有智能体"), bg=C["sidebar"],
                      fg=C["muted"], font=FONT_MICRO, anchor="w",
                      padx=8).pack(fill=tk.X, pady=4)
-        add = IconButton(list_box, text="＋ 添加智能体", bg=C["sidebar"], fg=C["ter"],
+        add = IconButton(list_box, text=tr("＋ 添加智能体"), bg=C["sidebar"], fg=C["ter"],
                          font=FONT_MICRO, anchor="w", padx=8, relief=tk.FLAT, bd=0,
                          cursor="hand2", command=lambda: self._prompt_create_agent())
         add.pack(fill=tk.X, pady=(4, 2))
@@ -1337,7 +1367,7 @@ class ForgeGuiApp:
                  fg=C["muted"], font=FONT_SMALL, justify=tk.LEFT,
                  anchor="w", wraplength=SIDEBAR_WIDTH - 28).pack(
             fill=tk.X, padx=14, pady=(0, 18))
-        section = i18n.Label(panel, text="当前视图", bg=C["sidebar"],
+        section = i18n.Label(panel, text=tr("当前视图"), bg=C["sidebar"],
                            fg=C["muted"], font=FONT_MICRO, anchor="w")
         section.pack(fill=tk.X, padx=14, pady=(0, 6))
         row = tk.Frame(panel, bg=C["sel"], padx=10, pady=8)
@@ -1458,7 +1488,7 @@ class ForgeGuiApp:
         bar.grid_columnconfigure(1, weight=1)
         self.view_back_btn = glyph_button(bar, tr("◀ 返回对话"), self._navigate_back,
                                           bg=C["surface2"], fg=C["text"], size=10,
-                                          tooltip="返回上一页 · Alt+←；保留当前编辑内容")
+                                          tooltip=tr("返回上一页 · Alt+←；保留当前编辑内容"))
         self.view_back_btn.grid(row=0, column=0, sticky="w", padx=(0, 12))
         self.view_title_var = i18n.StringVar(self.root)
         self.view_title_label = i18n.Label(bar, textvariable=self.view_title_var,
@@ -1467,7 +1497,7 @@ class ForgeGuiApp:
         self.view_title_label.grid(row=0, column=1, sticky="ew")
         self.view_chat_btn = glyph_button(bar, tr("💬 回到对话"), self._return_to_chat,
                                           bg=C["surface2"], fg=C["text"], size=10,
-                                          tooltip="回到当前对话 · Esc；不新建或清空对话")
+                                          tooltip=tr("回到当前对话 · Esc；不新建或清空对话"))
         self.view_chat_btn.grid(row=0, column=2, sticky="e", padx=(8, 0))
 
     def _sync_view_navigation(self):
@@ -1602,12 +1632,12 @@ class ForgeGuiApp:
             model_ids = ["（先在配置里添加 Provider）"]
 
         # ── 头部说明 ──
-        i18n.Label(body, text="Agent 集群与分工",
+        i18n.Label(body, text=tr("Agent 集群与分工"),
                  bg=C["bg"], fg=C["text"], font=FONT_TITLE,
                  anchor="w").pack(fill=tk.X, padx=20, pady=(18, 2))
         i18n.Label(body,
-                 text="为对话并行准备方案或分工结果，再交给主模型汇总。"
-                      "选择一种模式；启用后会增加模型调用次数。",
+                 text=tr("为对话并行准备方案或分工结果，再交给主模型汇总。"
+                      "选择一种模式；启用后会增加模型调用次数。"),
                  bg=C["bg"], fg=C["muted"], font=FONT_SMALL, anchor="w",
                  wraplength=640, justify=tk.LEFT).pack(fill=tk.X, padx=20,
                                                         pady=(0, 12))
@@ -1619,9 +1649,9 @@ class ForgeGuiApp:
         c1 = card1.content
         head1 = tk.Frame(c1, bg=C["surface"])
         head1.pack(fill=tk.X)
-        i18n.Label(head1, text="Agent 集群", bg=C["surface"], fg=C["text"],
+        i18n.Label(head1, text=tr("Agent 集群"), bg=C["surface"], fg=C["text"],
                  font=FONT_SECTION).pack(side=tk.LEFT)
-        description1 = i18n.Label(c1, text="并行准备多份方案，交给主模型综合对比",
+        description1 = i18n.Label(c1, text=tr("并行准备多份方案，交给主模型综合对比"),
                  bg=C["surface"], fg=C["muted"],
                  font=FONT_SMALL, anchor="w", justify=tk.LEFT)
         description1.pack(fill=tk.X, pady=(4, 0))
@@ -1636,7 +1666,7 @@ class ForgeGuiApp:
 
         count_row = tk.Frame(c1, bg=C["surface"])
         count_row.pack(fill=tk.X, pady=(8, 4))
-        i18n.Label(count_row, text="方案数", bg=C["surface"], fg=C["ter"],
+        i18n.Label(count_row, text=tr("方案数"), bg=C["surface"], fg=C["ter"],
                  font=FONT_SMALL).pack(side=tk.LEFT, padx=(0, 8))
         self._team_cluster_count = tk.IntVar(
             value=max(1, min(4, int(cfg["cluster"].get("count") or 2))))
@@ -1646,7 +1676,7 @@ class ForgeGuiApp:
                            selectcolor=C["sel"], activebackground=C["surface"],
                            activeforeground=C["text"], font=FONT_SMALL).pack(
                 side=tk.LEFT, padx=(0, 6))
-        i18n.Label(count_row, text="（每路可选不同模型）", bg=C["surface"],
+        i18n.Label(count_row, text=tr("（每路可选不同模型）"), bg=C["surface"],
                  fg=C["muted"], font=FONT_MICRO).pack(side=tk.LEFT)
 
         # 每路模型下拉（最多 4 路，按当前 count 显示）
@@ -1677,9 +1707,9 @@ class ForgeGuiApp:
         c2 = card2.content
         head2 = tk.Frame(c2, bg=C["surface"])
         head2.pack(fill=tk.X)
-        i18n.Label(head2, text="子 Agent 分工", bg=C["surface"], fg=C["text"],
+        i18n.Label(head2, text=tr("子 Agent 分工"), bg=C["surface"], fg=C["text"],
                  font=FONT_SECTION).pack(side=tk.LEFT)
-        description2 = i18n.Label(c2, text="按不同角色协作，交给主模型汇总各自结果",
+        description2 = i18n.Label(c2, text=tr("按不同角色协作，交给主模型汇总各自结果"),
                                 bg=C["surface"], fg=C["muted"], font=FONT_SMALL,
                                 anchor="w", justify=tk.LEFT)
         description2.pack(fill=tk.X, pady=(4, 0))
@@ -1719,7 +1749,7 @@ class ForgeGuiApp:
         c3 = card3.content
         mem_row = tk.Frame(c3, bg=C["surface"])
         mem_row.pack(fill=tk.X)
-        i18n.Label(mem_row, text="记忆模式", bg=C["surface"], fg=C["text"],
+        i18n.Label(mem_row, text=tr("记忆模式"), bg=C["surface"], fg=C["text"],
                  font=FONT_SECTION).pack(side=tk.LEFT)
         self._team_mem_var = tk.StringVar(
             value=cfg.get("memory_mode") or "isolated")
@@ -1795,7 +1825,7 @@ class ForgeGuiApp:
         top = tk.Frame(row, bg=C["surface"])
         top.pack(fill=tk.X, padx=8, pady=(6, 2))
         top.grid_columnconfigure(1, weight=1)
-        i18n.Label(top, text="角色", bg=C["surface"], fg=C["muted"],
+        i18n.Label(top, text=tr("角色"), bg=C["surface"], fg=C["muted"],
                  font=FONT_CAPTION).grid(row=0, column=0, sticky="w", padx=(0, 8))
         role_var = tk.StringVar(value=str(preset.get("role") or "worker"))
         tk.Entry(top, textvariable=role_var, width=14, bg=C["input_bg"],
@@ -1811,7 +1841,7 @@ class ForgeGuiApp:
                              state="readonly", width=24, font=FONT_SMALL)
         combo.grid(row=1, column=1, columnspan=3, sticky="ew", pady=(6, 0))
         enabled_var = tk.BooleanVar(value=bool(preset.get("enabled", True)))
-        i18n.Checkbutton(top, text="参与", variable=enabled_var, bg=C["surface"],
+        i18n.Checkbutton(top, text=tr("参与"), variable=enabled_var, bg=C["surface"],
             fg=C["text"], selectcolor=C["sel"], activebackground=C["surface"],
             font=FONT_SMALL).grid(row=0, column=2)
         def remove():
@@ -1820,11 +1850,11 @@ class ForgeGuiApp:
 
         del_btn = glyph_button(top, "✕", remove,
                                bg=C["surface"], fg=C["muted"], size=10,
-                               tooltip="删除这条预设")
+                               tooltip=tr("删除这条预设"))
         del_btn.grid(row=0, column=3, padx=(4, 0))
 
         prompt_var = tk.StringVar(value=str(preset.get("system_prompt") or ""))
-        i18n.Label(row, text="提示词", bg=C["surface"], fg=C["muted"],
+        i18n.Label(row, text=tr("提示词"), bg=C["surface"], fg=C["muted"],
                  font=FONT_MICRO).pack(side=tk.LEFT, padx=(8, 2), pady=6)
         tk.Entry(row, textvariable=prompt_var, bg=C["input_bg"], fg=C["text"],
                  font=FONT_SMALL, relief=tk.FLAT, bd=0,
@@ -1885,7 +1915,7 @@ class ForgeGuiApp:
             team.save_config(cfg)
         except OSError as exc:
             self._set_status(f"分工配置保存失败：{exc}", "error")
-            self._team_feedback_var.set("保存失败，修改已保留 · 请重试")
+            self._team_feedback_var.set(tr("保存失败，修改已保留 · 请重试"))
             self._team_feedback_label.configure(fg=C["error"])
             return
         self._team_cfg = cfg
@@ -2166,7 +2196,7 @@ class ForgeGuiApp:
             return
         if not hasattr(self, "market_list"):
             return
-        self.market_stat_var.set("正在读取市场…")
+        self.market_stat_var.set(tr("正在读取市场…"))
         self._submit_background("market", self._read_market_snapshot, self._apply_market_snapshot)
 
     def _apply_market_snapshot(self, snapshot):
@@ -2253,7 +2283,7 @@ class ForgeGuiApp:
             i18n.Label(self.market_list,
                      text=f"市场模块不可用：{_MARKET_IMPORT_ERROR or '未知原因'}",
                      bg=C["bg"], fg=C["warn"], font=FONT_SMALL).pack(anchor=tk.W)
-            self.market_stat_var.set("市场不可用")
+            self.market_stat_var.set(tr("市场不可用"))
             return
 
         items, summary, entries, err, remote = snapshot
@@ -2310,7 +2340,7 @@ class ForgeGuiApp:
             return query in blob
 
         shown = [p for p in items if match(p)]
-        i18n.Label(self.market_list, text="插件", bg=C["bg"], fg=C["ter"],
+        i18n.Label(self.market_list, text=tr("插件"), bg=C["bg"], fg=C["ter"],
                  font=FONT_UI_BOLD).pack(anchor=tk.W, pady=(0, 6))
         if not shown:
             i18n.Label(self.market_list, text=tr("没有匹配的插件——换个关键词，或清掉类型筛选。"),
@@ -2494,7 +2524,7 @@ class ForgeGuiApp:
             theme.bind_wrap(warning)
         if not entries:
             empty = i18n.Label(self.market_list,
-                     text="还没有可用工具。请启动带 --tools 的 Forge 网关；目录中的工具桥条目不能自动启动它。",
+                     text=tr("还没有可用工具。请启动带 --tools 的 Forge 网关；目录中的工具桥条目不能自动启动它。"),
                      bg=C["bg"], fg=C["muted"], font=FONT_SMALL,
                      anchor="w", justify=tk.LEFT, wraplength=1)
             empty.pack(fill=tk.X)
@@ -2611,7 +2641,7 @@ class ForgeGuiApp:
         self._switch_tools_tab("market")
 
     def _install_local_plugin(self):
-        directory = filedialog.askdirectory(title="选择含 forge-plugin.json 的插件目录", parent=self.root)
+        directory = filedialog.askdirectory(title=tr("选择含 forge-plugin.json 的插件目录"), parent=self.root)
         if not directory or getattr(self, "_market_action_busy", False):
             return
         self._market_action_busy = True
@@ -2667,7 +2697,7 @@ class ForgeGuiApp:
         dialog.configure(bg=C["bg"])
         dialog.resizable(False, False)
         workspace, session_id = self._repo_root(), self._session_id
-        i18n.Label(dialog, text="只选择你允许的能力", bg=C["bg"], fg=C["text"],
+        i18n.Label(dialog, text=tr("只选择你允许的能力"), bg=C["bg"], fg=C["text"],
                  font=FONT_SECTION).pack(anchor="w", padx=20, pady=(18, 8))
         i18n.Label(dialog, text=tr("工作区：{workspace}\n授权不会覆盖 Forge Policy；需要审批时仍由 Policy 决定。", workspace=workspace),
                  bg=C["bg"], fg=C["muted"], font=FONT_SMALL, justify=tk.LEFT,
@@ -2916,7 +2946,7 @@ class ForgeGuiApp:
             self.workspace.refresh_async()
         except Exception:
             pass
-        self.ws_toggle_btn.configure(text="▤ 收起工作区")
+        self.ws_toggle_btn.configure(text=tr("▤ 收起工作区"))
         self.root.after_idle(self._apply_responsive_layout)
 
     def _close_workspace(self, *, automatic=False):
@@ -2934,7 +2964,7 @@ class ForgeGuiApp:
         if not automatic:
             self._workspace_auto_hidden = False
         try:
-            self.ws_toggle_btn.configure(text="▤ 工作区")
+            self.ws_toggle_btn.configure(text=tr("▤ 工作区"))
         except (tk.TclError, AttributeError):
             pass
 
@@ -3311,19 +3341,19 @@ class ForgeGuiApp:
         head.pack(fill=tk.X, padx=20, pady=(16, 10))
         i18n.Label(head, text=tr("任务"), bg=C["chat"], fg=C["text"],
                  font=FONT_TITLE).pack(side=tk.LEFT)
-        IconButton(head, text="＋ 新建任务", command=self._clear_task_view,
+        IconButton(head, text=tr("＋ 新建任务"), command=self._clear_task_view,
                   bg=C["chat"], fg=C["ter"], activebackground=C["hover"],
                   activeforeground=C["text"], font=FONT_SMALL, relief=tk.FLAT, bd=0,
                   padx=10, pady=3, cursor="hand2",
                   highlightthickness=1, highlightbackground=C["border_hi"]
                   ).pack(side=tk.RIGHT)
-        i18n.Label(parent, text="交代目标与验收标准，Forge 会执行并汇报过程；产出可在工作区查看。",
+        i18n.Label(parent, text=tr("交代目标与验收标准，Forge 会执行并汇报过程；产出可在工作区查看。"),
                  bg=C["chat"], fg=C["ter"], font=FONT_SMALL, anchor=tk.W,
                  justify=tk.LEFT, wraplength=760).pack(fill=tk.X, padx=20)
 
         ctl = tk.Frame(parent, bg=C["chat"])
         ctl.pack(side=tk.BOTTOM, fill=tk.X, padx=20, pady=(10, 12))
-        i18n.Label(ctl, text="交给 Forge 的任务", bg=C["chat"], fg=C["subtext"],
+        i18n.Label(ctl, text=tr("交给 Forge 的任务"), bg=C["chat"], fg=C["subtext"],
                  font=FONT_SMALL, anchor=tk.W).pack(fill=tk.X, pady=(0, 6))
         self.task_var = tk.StringVar()
         entry = tk.Entry(ctl, textvariable=self.task_var, bg=C["input_bg"],
@@ -3335,7 +3365,7 @@ class ForgeGuiApp:
 
         strategy_row = tk.Frame(ctl, bg=C["chat"])
         strategy_row.pack(fill=tk.X, pady=(8, 0))
-        i18n.Label(strategy_row, text="策略", bg=C["chat"], fg=C["muted"],
+        i18n.Label(strategy_row, text=tr("策略"), bg=C["chat"], fg=C["muted"],
                  font=FONT_MICRO).pack(side=tk.LEFT, padx=(0, 6))
         self._strategy_row = tk.Frame(strategy_row, bg=C["chat"])
         self._strategy_row.pack(side=tk.LEFT)
@@ -3510,7 +3540,7 @@ class ForgeGuiApp:
                         "elapsed": f"#{step.get('index', '')}",
                         "ok": step.get("decision") == "ok",
                     })
-                msg.add_tool_card(rows, title="执行步骤")
+                msg.add_tool_card(rows, title=tr("执行步骤"))
             text = str(data.get("text") or "").strip()
             if text:
                 msg.render_markdown(text)
@@ -3701,9 +3731,9 @@ class ForgeGuiApp:
         # 插在标题之前：side=TOP 首个 pack 的在最上
         # 此刻 right 还没有别的子控件，side=TOP 即为最上；标题/流水线在其后 pack
         self.model_edit_frame.pack(side=tk.TOP, fill=tk.X, pady=(0, 10), ipadx=10, ipady=8)
-        i18n.Label(self.model_edit_frame, text="模型快捷编辑", bg=C["input_bg"], fg=C["text"],
+        i18n.Label(self.model_edit_frame, text=tr("模型快捷编辑"), bg=C["input_bg"], fg=C["text"],
                  font=FONT_UI_BOLD).pack(anchor=tk.W)
-        self.model_edit_target = i18n.Label(self.model_edit_frame, text="（先在列表选中 provider）",
+        self.model_edit_target = i18n.Label(self.model_edit_frame, text=tr("（先在列表选中 provider）"),
                                           bg=C["input_bg"], fg=C["muted"], font=FONT_SMALL,
                                           wraplength=240, justify=tk.LEFT)
         self.model_edit_target.pack(anchor=tk.W, pady=(2, 6))
@@ -3718,7 +3748,7 @@ class ForgeGuiApp:
                                          highlightcolor=C["accent"])
         self.model_edit_entry.grid(row=0, column=0, sticky="ew", ipady=4)
         # 按钮 grid 自然宽：之前 pack 在扩张 Entry 后面被挤成 8px 紫条
-        self.model_apply_btn = i18n.Button(entry_row, text="应用", bg=C["accent"], fg="#ffffff",
+        self.model_apply_btn = i18n.Button(entry_row, text=tr("应用"), bg=C["accent"], fg="#ffffff",
                                          activebackground=C["accent_hover"], activeforeground="#ffffff",
                                          font=FONT_UI_BOLD, relief=tk.FLAT, padx=10, pady=3,
                                          command=self._apply_model_edit, cursor="hand2",
@@ -3731,7 +3761,7 @@ class ForgeGuiApp:
         # 探活按钮
         probe_row = tk.Frame(self.model_edit_frame, bg=C["input_bg"])
         probe_row.pack(fill=tk.X, pady=(6, 0))
-        self.model_probe_btn = i18n.Button(probe_row, text="测试此 provider", bg=C["surface2"], fg=C["link"],
+        self.model_probe_btn = i18n.Button(probe_row, text=tr("测试此 provider"), bg=C["surface2"], fg=C["link"],
                                          activebackground=C["link_soft"], activeforeground=C["link"],
                                          font=FONT_UI, relief=tk.FLAT, padx=8, pady=2,
                                          command=self._probe_selected_provider, cursor="hand2",
@@ -3760,8 +3790,8 @@ class ForgeGuiApp:
                  fg=C["muted"], font=FONT_SMALL).pack(side=tk.RIGHT)
         oc_body = tk.Frame(one_click, bg=C["input_bg"])
         i18n.Label(oc_body,
-                 text="Agent 场景 0.7 更稳；只接受默认温度的模型会自动跳过；"
-                      "Claude 协议不发任何采样参数。",
+                 text=tr("Agent 场景 0.7 更稳；只接受默认温度的模型会自动跳过；"
+                      "Claude 协议不发任何采样参数。"),
                  bg=C["input_bg"], fg=C["muted"], font=FONT_SMALL,
                  wraplength=330, justify=tk.LEFT).pack(anchor=tk.W, pady=(2, 6))
         temp_row = tk.Frame(oc_body, bg=C["input_bg"])
@@ -3783,21 +3813,21 @@ class ForgeGuiApp:
             btn.grid(row=0, column=col, sticky="ew", padx=(0, 6) if col < 2 else 0)
             self._temperature_buttons[value] = btn
         self._paint_temperature_buttons()
-        IconButton(oc_body, text="手写配置文件（所有参数自己控）", icon="external",
+        IconButton(oc_body, text=tr("手写配置文件（所有参数自己控）"), icon="external",
                   bg=C["surface2"], fg=C["link"],
                   activebackground=C["link_soft"], activeforeground=C["link"],
                   font=FONT_UI, relief=tk.FLAT, padx=10, pady=4, cursor="hand2",
                   command=self._open_user_layer_file).pack(anchor=tk.W, pady=(8, 0))
         self._temp_body = oc_body   # 默认不 pack = 折叠
-        IconButton(actions, text="打开用户层目录", icon="external", bg=C["surface2"], fg=C["text"],
+        IconButton(actions, text=tr("打开用户层目录"), icon="external", bg=C["surface2"], fg=C["text"],
                   activebackground=C["border"], activeforeground=C["text"],
                   font=FONT_UI, relief=tk.FLAT, padx=12, pady=6,
                   command=lambda: self._open_path(self.home), cursor="hand2"
                   ).pack(fill=tk.X, pady=(8, 0))
 
-        i18n.Label(right, text="添加或编辑配置", bg=C["bg"], fg=C["text"],
+        i18n.Label(right, text=tr("添加或编辑配置"), bg=C["bg"], fg=C["text"],
                  font=FONT_SECTION).pack(anchor=tk.W)
-        i18n.Label(right, text="粘贴 Provider JSON 或地址与密钥，整理后确认预览再保存。",
+        i18n.Label(right, text=tr("粘贴 Provider JSON 或地址与密钥，整理后确认预览再保存。"),
                  bg=C["bg"], fg=C["muted"], font=FONT_SMALL
                  ).pack(anchor=tk.W, pady=(2, 10))
         self.input_text = scrolledtext.ScrolledText(
@@ -3822,13 +3852,13 @@ class ForgeGuiApp:
         btn_bar = tk.Frame(right, bg=C["bg"])
         btn_bar.pack(fill=tk.X, pady=(9, 14))
         self.organize_btn = i18n.Button(
-            btn_bar, text="整理并预览", bg=C["accent"], fg="#ffffff",
+            btn_bar, text=tr("整理并预览"), bg=C["accent"], fg="#ffffff",
             activebackground=C["accent_hover"], activeforeground="#ffffff",
             font=FONT_UI_BOLD, relief=tk.FLAT, padx=16, pady=6,
             command=self._do_organize, cursor="hand2",
         )
         self.organize_btn.pack(side=tk.LEFT)
-        i18n.Button(btn_bar, text="粘贴", bg=C["surface2"], fg=C["text"],
+        i18n.Button(btn_bar, text=tr("粘贴"), bg=C["surface2"], fg=C["text"],
                   activebackground=C["border"], activeforeground=C["text"],
                   font=FONT_UI, relief=tk.FLAT, padx=12, pady=6,
                   command=self._paste_clipboard, cursor="hand2"
@@ -3840,25 +3870,25 @@ class ForgeGuiApp:
                   command=self._clear_input, cursor="hand2"
                   ).pack(side=tk.LEFT, padx=(8, 0))
         # 从 AutoClaw 用户层导入 provider（一次把 18 个 provider 写进 forge 用户层 + 密钥库）
-        i18n.Button(btn_bar, text="从 AutoClaw 导入", bg=C["surface2"], fg=C["accent"],
+        i18n.Button(btn_bar, text=tr("从 AutoClaw 导入"), bg=C["surface2"], fg=C["accent"],
                   activebackground=C["accent_soft"], activeforeground=C["accent"],
                   font=FONT_UI, relief=tk.FLAT, padx=12, pady=6,
                   command=self._import_from_autoclaw, cursor="hand2"
                   ).pack(side=tk.LEFT, padx=(8, 0))
         # 供应商目录：19 家常见厂商 + 各自的套餐/订阅端点，点一下填模板
-        i18n.Button(btn_bar, text="供应商目录", bg=C["surface2"], fg=C["link"],
+        i18n.Button(btn_bar, text=tr("供应商目录"), bg=C["surface2"], fg=C["link"],
                   activebackground=C["link_soft"], activeforeground=C["link"],
                   font=FONT_UI, relief=tk.FLAT, padx=12, pady=6,
                   command=self._open_provider_catalog, cursor="hand2"
                   ).pack(side=tk.LEFT, padx=(8, 0))
-        i18n.Label(btn_bar, text="Ctrl + Enter 整理", bg=C["bg"],
+        i18n.Label(btn_bar, text=tr("Ctrl + Enter 整理"), bg=C["bg"],
                  fg=C["muted"], font=FONT_SMALL).pack(side=tk.RIGHT)
 
         preview_head = tk.Frame(right, bg=C["bg"])
         preview_head.pack(fill=tk.X, pady=(0, 7))
         i18n.Label(preview_head, text=tr("预览"), bg=C["bg"], fg=C["text"],
                  font=FONT_SECTION).pack(side=tk.LEFT)
-        i18n.Label(preview_head, text="整理后的 patch JSON", bg=C["bg"],
+        i18n.Label(preview_head, text=tr("整理后的 patch JSON"), bg=C["bg"],
                  fg=C["muted"], font=FONT_SMALL).pack(side=tk.LEFT, padx=(10, 0))
         self.preview_text = scrolledtext.ScrolledText(
             right, height=6, bg=C["input_bg"], fg=C["accent2"],
@@ -3869,7 +3899,7 @@ class ForgeGuiApp:
         self._style_scrollbar(self.preview_text)
         self._tint_scrolledtext(self.preview_text, C["input_bg"])
         warn_head = tk.Frame(right, bg=C["bg"])
-        i18n.Label(warn_head, text="提示与环境变量", bg=C["bg"],
+        i18n.Label(warn_head, text=tr("提示与环境变量"), bg=C["bg"],
                  fg=C["subtext"], font=FONT_UI_BOLD).pack(side=tk.LEFT)
         self.warning_count_var = i18n.StringVar(self.root, value=tr("无提示"))
         i18n.Label(warn_head, textvariable=self.warning_count_var,
@@ -3884,10 +3914,10 @@ class ForgeGuiApp:
         self._style_scrollbar(self.warn_text)
         self._tint_scrolledtext(self.warn_text, C["surface"])
         footer = tk.Frame(right_host, bg=C["bg"], padx=14)
-        i18n.Label(footer, text="预览后保存", bg=C["bg"],
+        i18n.Label(footer, text=tr("预览后保存"), bg=C["bg"],
                  fg=C["muted"], font=FONT_SMALL).pack(side=tk.LEFT)
         self.save_btn = i18n.Button(
-            footer, text="保存到用户层", bg=C["ok"], fg="#ffffff",
+            footer, text=tr("保存到用户层"), bg=C["ok"], fg="#ffffff",
             activebackground=C["accent_hover"], activeforeground="#ffffff",
             font=FONT_UI_BOLD, relief=tk.FLAT, padx=16, pady=7,
             command=self._do_save, cursor="hand2", state=tk.DISABLED,
@@ -3932,13 +3962,13 @@ class ForgeGuiApp:
         actions = tk.Frame(self.feature_body, bg=C["surface"])
         actions.pack(side=tk.BOTTOM, fill=tk.X, pady=(10, 0))
         self.feature_reset_btn = i18n.Button(
-            actions, text="还原未保存修改", bg=C["surface2"], fg=C["subtext"],
+            actions, text=tr("还原未保存修改"), bg=C["surface2"], fg=C["subtext"],
             activebackground=C["border"], activeforeground=C["text"],
             font=FONT_SMALL, relief=tk.FLAT, padx=10, pady=5,
             command=self._discard_feature_changes, cursor="hand2", state=tk.DISABLED,
         )
         self.feature_reset_btn.pack(side=tk.LEFT)
-        i18n.Button(actions, text="刷新已保存配置", command=self._reload_configuration,
+        i18n.Button(actions, text=tr("刷新已保存配置"), command=self._reload_configuration,
                   bg=C["surface2"], fg=C["text"], activebackground=C["border"],
                   font=FONT_SMALL, relief=tk.FLAT, padx=10, pady=5,
                   cursor="hand2").pack(side=tk.LEFT, padx=8)
@@ -3947,7 +3977,7 @@ class ForgeGuiApp:
                   font=FONT_SMALL, relief=tk.FLAT, padx=10, pady=5,
                   cursor="hand2").pack(side=tk.LEFT)
         self.feature_save_btn = i18n.Button(
-            actions, text="保存功能开关", bg=C["accent"], fg="#ffffff",
+            actions, text=tr("保存功能开关"), bg=C["accent"], fg="#ffffff",
             activebackground=C["accent_hover"], activeforeground="#ffffff",
             font=FONT_UI_BOLD, relief=tk.FLAT, padx=14, pady=6,
             command=self._save_feature_toggles, cursor="hand2", state=tk.DISABLED,
@@ -3987,7 +4017,7 @@ class ForgeGuiApp:
         arrow = "▾" if self._features_expanded else "▸"
         self.feature_title_var.set(f"{arrow} 功能开关")
         if not count:
-            self.feature_summary_var.set("暂无可切换项目")
+            self.feature_summary_var.set(tr("暂无可切换项目"))
         elif self._feature_dirty:
             changes = sum(bool(e["var"].get()) != e["value"] for e in self._feature_entries)
             self.feature_summary_var.set(f"{changes} 项未保存 / 共 {count} 项")
@@ -4064,7 +4094,7 @@ class ForgeGuiApp:
                     "value": value, "label": label, "description": description,
                 })
         if not self._feature_entries:
-            i18n.Label(self.feature_list, text="当前用户层没有可切换的布尔功能。添加 Provider 或通道配置后会自动出现在这里。",
+            i18n.Label(self.feature_list, text=tr("当前用户层没有可切换的布尔功能。添加 Provider 或通道配置后会自动出现在这里。"),
                      bg=C["surface"], fg=C["muted"], font=FONT_SMALL, anchor=tk.W,
                      justify=tk.LEFT, wraplength=620).pack(fill=tk.X, pady=4)
         self._mark_features_dirty()
@@ -4101,7 +4131,7 @@ class ForgeGuiApp:
             return
         self.user_rows = rows
         self._refresh_provider_list()
-        self.feature_feedback_var.set("已刷新磁盘上的配置。保存后的设置由下次启动的服务读取。")
+        self.feature_feedback_var.set(tr("已刷新磁盘上的配置。保存后的设置由下次启动的服务读取。"))
         self._set_status("已刷新用户层配置", "ok")
 
     def _save_feature_toggles(self):
@@ -4138,7 +4168,7 @@ class ForgeGuiApp:
         self.user_rows = rows
         self._feature_dirty = False
         self._refresh_provider_list()
-        self.feature_feedback_var.set("已保存。请重启正在运行的 Forge / 通道服务，让新设置生效。")
+        self.feature_feedback_var.set(tr("已保存。请重启正在运行的 Forge / 通道服务，让新设置生效。"))
         self._set_status("功能开关已保存；运行中的服务需重启以应用", "ok")
 
     # ── 视图：对话 ────────────────────────────────────────
@@ -4179,7 +4209,7 @@ class ForgeGuiApp:
         self.temp_var = tk.StringVar(value="0.7")
         self.session_menu_btn = glyph_button(right, "⋯", self._popup_session_menu, bg=C["chat"],
                      fg=C["ter"], size=12,
-                     tooltip="对话操作与设置")
+                     tooltip=tr("对话操作与设置"))
         self.session_menu_btn.pack(side=tk.RIGHT)
         self.clear_chat_btn = pill_button(right, "＋", self._new_session,
                                          kind="quiet", bg=C["chat"], padx=8)
@@ -4318,10 +4348,10 @@ class ForgeGuiApp:
 
         head = tk.Frame(dialog, bg=C["bg"], padx=20, pady=16)
         head.pack(fill=tk.X)
-        i18n.Label(head, text="供应商目录", bg=C["bg"], fg=C["text"],
+        i18n.Label(head, text=tr("供应商目录"), bg=C["bg"], fg=C["text"],
                  font=FONT_TITLE).pack(anchor=tk.W)
-        i18n.Label(head, text="每个供应商单独一条；标准 API 与订阅套餐分开列。"
-                            "点一行即把 baseURL / wire 填进下面的输入框，你再补 apiKey。",
+        i18n.Label(head, text=tr("每个供应商单独一条；标准 API 与订阅套餐分开列。"
+                            "点一行即把 baseURL / wire 填进下面的输入框，你再补 apiKey。"),
                  bg=C["bg"], fg=C["muted"], font=FONT_SMALL,
                  wraplength=740, justify=tk.LEFT).pack(anchor=tk.W, pady=(2, 10))
 
@@ -4334,7 +4364,7 @@ class ForgeGuiApp:
                          highlightbackground=C["border_hi"],
                          highlightcolor=C["accent"])
         entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=5)
-        i18n.Label(search_row, text="搜名称 / 别名 / 域名", bg=C["bg"],
+        i18n.Label(search_row, text=tr("搜名称 / 别名 / 域名"), bg=C["bg"],
                  fg=C["muted"], font=FONT_SMALL).pack(side=tk.LEFT, padx=(8, 0))
 
         listing = cw.ScrollArea(dialog, bg=C["surface"], padx=0, pady=0)
@@ -4342,7 +4372,7 @@ class ForgeGuiApp:
 
         footer = tk.Frame(dialog, bg=C["bg"], padx=20, pady=10)
         footer.pack(fill=tk.X)
-        i18n.Label(footer, text="「待确认」= 该地址我没核到一手来源，若报错请以官网控制台为准",
+        i18n.Label(footer, text=tr("「待确认」= 该地址我没核到一手来源，若报错请以官网控制台为准"),
                  bg=C["bg"], fg=C["muted"], font=FONT_CAPTION).pack(side=tk.LEFT)
         i18n.Button(footer, text=tr("关闭"), bg=C["surface2"], fg=C["text"],
                   activebackground=C["border"], activeforeground=C["text"],
@@ -4369,7 +4399,7 @@ class ForgeGuiApp:
                 child.destroy()
             hits = catalog.find(search_var.get())
             if not hits:
-                i18n.Label(listing.inner, text="没有匹配的供应商", bg=C["surface"],
+                i18n.Label(listing.inner, text=tr("没有匹配的供应商"), bg=C["surface"],
                          fg=C["muted"], font=FONT_UI, pady=24).pack()
                 return
             for preset in hits:
@@ -4665,12 +4695,12 @@ class ForgeGuiApp:
         head.pack(fill=tk.X)
         IconCanvas(head, "key", size=22, bg=C["bg"], fg=C["accent2"]).pack(
             side=tk.LEFT, padx=(0, 8))
-        i18n.Label(head, text="API 密钥", bg=C["bg"], fg=C["text"],
+        i18n.Label(head, text=tr("API 密钥"), bg=C["bg"], fg=C["text"],
                  font=FONT_TITLE).pack(side=tk.LEFT)
         self.key_status_var = i18n.StringVar(self.root)
         i18n.Label(head, textvariable=self.key_status_var, bg=C["bg"], fg=C["muted"],
                  font=FONT_SMALL).pack(side=tk.LEFT, padx=(12, 0))
-        i18n.Label(head, text="密钥只写入 ~/.forge/secrets.json（不入日志、不进命令行）",
+        i18n.Label(head, text=tr("密钥只写入 ~/.forge/secrets.json（不入日志、不进命令行）"),
                  bg=C["bg"], fg=C["muted"], font=FONT_CAPTION).pack(side=tk.RIGHT)
 
         rows_host = cw.ScrollArea(dialog, bg=C["surface"], padx=0, pady=0)
@@ -4708,7 +4738,7 @@ class ForgeGuiApp:
                 i18n.Label(line, text=str(target["label"]), bg=C["surface"],
                          fg=C["text"], font=FONT_UI_BOLD).pack(side=tk.LEFT)
                 if target["disabled"]:
-                    i18n.Label(line, text="已停用", bg=C["surface"], fg=C["warn"],
+                    i18n.Label(line, text=tr("已停用"), bg=C["surface"], fg=C["warn"],
                              font=FONT_MICRO).pack(side=tk.LEFT, padx=(8, 0))
                 env_name = target["ref"] or ""
                 current = secrets.get(target["id"]) or (
@@ -4781,7 +4811,7 @@ class ForgeGuiApp:
                             bg=C["surface"]).pack(side=tk.LEFT, padx=(6, 0))
                 entry.bind("<Return>", lambda _e, f=save_key: f())
             if not targets:
-                i18n.Label(rows_host.inner, text="用户层里还没有 provider 配置",
+                i18n.Label(rows_host.inner, text=tr("用户层里还没有 provider 配置"),
                          bg=C["surface"], fg=C["muted"], font=FONT_SMALL,
                          pady=20).pack()
             self.key_status_var.set(f"{configured} / {len(targets)} 家已配置")
@@ -4850,7 +4880,7 @@ class ForgeGuiApp:
         if self._sending:
             self._set_status("本轮正在生成，结束后可修改附件", "info")
             return
-        paths = filedialog.askopenfilenames(parent=self.root, title="添加 UTF-8 文本附件",
+        paths = filedialog.askopenfilenames(parent=self.root, title=tr("添加 UTF-8 文本附件"),
                                             initialdir=str(self._repo_root()))
         for path in paths:
             try:
@@ -4891,10 +4921,10 @@ class ForgeGuiApp:
             preview.delete("1.0", tk.END)
             preview.insert("1.0", json.dumps(payload, ensure_ascii=False, indent=2))
             preview.configure(state=tk.DISABLED)
-        i18n.Checkbutton(dialog, text="发送当前会话的历史消息", variable=use_history,
+        i18n.Checkbutton(dialog, text=tr("发送当前会话的历史消息"), variable=use_history,
                        command=refresh, bg=C["chat"], fg=C["text"], selectcolor=C["surface2"],
                        state=tk.DISABLED if self._sending else tk.NORMAL).pack(anchor="w", padx=12, pady=8)
-        i18n.Label(dialog, text="附件以添加时的文本快照发送。下方展示消息角色及实际内容。",
+        i18n.Label(dialog, text=tr("附件以添加时的文本快照发送。下方展示消息角色及实际内容。"),
                  bg=C["chat"], fg=C["ter"]).pack(anchor="w", padx=12)
         items = tk.Frame(dialog, bg=C["chat"])
         items.pack(fill=tk.X, padx=12, pady=6)
@@ -4908,7 +4938,7 @@ class ForgeGuiApp:
                     self._attachments.remove(item)
                 widget.destroy()
                 refresh()
-            i18n.Button(row, text="移除", command=remove,
+            i18n.Button(row, text=tr("移除"), command=remove,
                       state=tk.DISABLED if self._sending else tk.NORMAL).pack(side=tk.RIGHT)
         preview.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
         refresh()
@@ -4928,7 +4958,7 @@ class ForgeGuiApp:
             {"label": tr("功能开关"), "detail": "/tools",
              "command": lambda: self._show_view("tools")},
         )
-        return show_popover_menu(self.input_card, items, title="工具与命令",
+        return show_popover_menu(self.input_card, items, title=tr("工具与命令"),
                                  width=310, prefer_above=True)
 
     def _run_local_command(self, text):
@@ -4987,7 +5017,7 @@ class ForgeGuiApp:
              "command": lambda m=mode: self._set_thinking_mode(m)}
             for mode, label, hint in THINKING_CHOICES
         ]
-        return show_popover_menu(anchor or self.session_menu_btn, items, title="任务沉思",
+        return show_popover_menu(anchor or self.session_menu_btn, items, title=tr("任务沉思"),
                                  width=330)
 
     def _set_thinking_mode(self, mode: str, *, announce=True):
@@ -5382,7 +5412,7 @@ class ForgeGuiApp:
             if suggestions:
                 chip_row = tk.Frame(self.model_chips_frame, bg=C["input_bg"])
                 chip_row.pack(anchor=tk.W)
-                i18n.Label(chip_row, text="常用:", bg=C["input_bg"], fg=C["muted"],
+                i18n.Label(chip_row, text=tr("常用:"), bg=C["input_bg"], fg=C["muted"],
                          font=FONT_SMALL).pack(side=tk.LEFT, padx=(0, 4))
                 for m in suggestions:
                     i18n.Button(chip_row, text=m, bg=C["surface2"], fg=C["link"],
@@ -5436,7 +5466,7 @@ class ForgeGuiApp:
             self.model_probe_var.set(str(exc))
             return
         generation = self._provider_probe_generation = getattr(self, "_provider_probe_generation", 0) + 1
-        self.model_probe_var.set("请求中…")
+        self.model_probe_var.set(tr("请求中…"))
         self.model_probe_btn.configure(state=tk.DISABLED)
 
         def worker():
@@ -5594,7 +5624,7 @@ class ForgeGuiApp:
         if self.gateway_proc or self._sending or self._task_running:
             self._set_status("请在任务与请求结束、gateway 停止后切换 Forge 目录", "warn")
             return
-        folder = filedialog.askdirectory(title="选择包含 run.py 的 Forge 目录", parent=self.root)
+        folder = filedialog.askdirectory(title=tr("选择包含 run.py 的 Forge 目录"), parent=self.root)
         if not folder:
             return
         candidate = Path(folder) / "run.py"
@@ -5606,7 +5636,7 @@ class ForgeGuiApp:
         if self.workspace is not None:
             self.workspace.set_repo_root(candidate.parent)
         saved = save_desktop_config(forge_repo=str(candidate.parent))
-        self.path_lbl.configure(text="forge 目录已就绪")
+        self.path_lbl.configure(text=tr("forge 目录已就绪"))
         self._set_status(("已记住 Forge 目录：" if saved else "Forge 目录已切换，但无法保存桌面偏好：") + folder,
                          "ok" if saved else "warn")
 
@@ -5659,9 +5689,6 @@ class ForgeGuiApp:
         self._autostart_attempts += 1
         self._gateway_autostarted = True
         if self._start_gateway(autostart=True):
-            if not self._gateway_starting:
-                self._autostart_attempts = 0
-                self._autostart_log("gateway 已拉起")
             return
         self._schedule_autostart_retry(self.status_var.get() or "启动失败")
 
@@ -5734,6 +5761,10 @@ class ForgeGuiApp:
         """用户主动停止：之后不再自动拉起，直到再次启动。"""
         self._gateway_user_stopped = True
         self._gateway_launch_cancel.set()
+        self._cancel_gateway_launch_timer()
+        if self._gateway_starting:
+            self._gateway_starting = False
+            self._gateway_down("已取消启动")
         self._restart_pending = False
         self._cancel_autostart_timer()
         self._stop_gateway()
@@ -5773,6 +5804,10 @@ class ForgeGuiApp:
                 return False
         # 走到这里表示确实要启动：清掉「用户停过」的标记
         self._gateway_user_stopped = False
+        if not autostart:
+            self._cancel_autostart_timer()
+            self._autostart_attempts = 1
+            self._gateway_autostarted = False
         try:
             port = int(self.port_var.get())
         except ValueError:
@@ -5828,9 +5863,12 @@ class ForgeGuiApp:
         # and frozen executable extraction). Always launch off Tk.
         self._gateway_starting = True
         cancel = self._gateway_launch_cancel = threading.Event()
-        self.gw_status_var.set("● 检查端口中")
-        self.gw_btn.configure(state=tk.DISABLED, text="检查端口…")
+        self.gw_status_var.set(tr("● 检查端口中"))
+        self.gw_btn.configure(state=tk.DISABLED, text=tr("检查端口…"))
         self.port_spin.configure(state=tk.DISABLED)
+        self._gateway_launch_after_id = self.root.after(
+            GATEWAY_LAUNCH_TIMEOUT_MS,
+            lambda: self._gateway_launch_expired(cancel, autostart))
 
         def launch():
             try:
@@ -5841,39 +5879,87 @@ class ForgeGuiApp:
                     return
                 if port_in_use(port):
                     raise RuntimeError(f"端口 {port} 被正在运行的程序占用，请关闭旧版 Forge 或改用其它端口")
-                proc = subprocess.Popen(cmd, env=env, **kwargs)
-                self.gateway_proc = proc
+                actual_port = bindable_gateway_port(port)
                 if cancel.is_set() or self._closing:
+                    return
+                cmd[cmd.index("--port") + 1] = str(actual_port)
+                self._post_ui(self._gateway_launch_stage, cancel, port, actual_port)
+                proc = subprocess.Popen(cmd, env=env, **kwargs)
+                with self._gateway_launch_lock:
+                    dispose = cancel.is_set() or self._closing
+                    if not dispose:
+                        # Closing collects this child even before Tk accepts it.
+                        self._gateway_pending_procs.append(proc)
+                        self._post_ui(self._finish_deferred_gateway, proc, upstream, cancel, "", autostart)
+                if dispose:
                     kill_process_tree(proc)
-                self._post_ui(self._finish_deferred_gateway, proc, upstream, cancel, "", autostart)
             except Exception as exc:
                 self._post_ui(self._finish_deferred_gateway, None, upstream, cancel, str(exc), autostart)
 
-        threading.Thread(target=launch, daemon=False, name="Forge-gateway-launch").start()
+        threading.Thread(target=launch, daemon=True, name="Forge-gateway-launch").start()
         return True
 
-    def _finish_deferred_gateway(self, proc, upstream, cancel, error, autostart):
+    def _cancel_gateway_launch_timer(self):
+        timer = self._gateway_launch_after_id
+        self._gateway_launch_after_id = None
+        if timer is not None:
+            try:
+                self.root.after_cancel(timer)
+            except (tk.TclError, ValueError):
+                pass
+
+    def _gateway_launch_expired(self, cancel, autostart):
+        if cancel is not self._gateway_launch_cancel or not self._gateway_starting:
+            return
+        cancel.set()
+        self._gateway_launch_after_id = None
         self._gateway_starting = False
-        if cancel.is_set() or self._closing:
+        reason = "启动准备超时（30 秒）；请检查 Python / 端口，或点击启动重试"
+        self._gateway_down(reason)
+        self._autostart_log(reason)
+        # A hung CreateProcess/probe may still be in flight: do not spawn more
+        # overlapping attempts. A late child is disposed by its original worker.
+
+    def _gateway_launch_stage(self, cancel, requested_port, actual_port):
+        if cancel is not self._gateway_launch_cancel or cancel.is_set() or self._closing:
+            return
+        self.gateway_port = actual_port
+        self.gateway_url = f"http://127.0.0.1:{actual_port}"
+        self.client.base_url = self.gateway_url
+        self.port_var.set(str(actual_port))
+        if requested_port != actual_port:
+            reason = f"端口 {requested_port} 被 Windows 禁止绑定，改用 {actual_port}"
+            self._autostart_log(reason)
+            self._push_terminal(f"[gateway] {reason}")
+            self._set_status(reason, "info")
+        self.gw_status_var.set(tr("● 启动中"))
+        self.gw_btn.configure(text=tr("启动中…"))
+
+    def _finish_deferred_gateway(self, proc, upstream, cancel, error, autostart):
+        with self._gateway_launch_lock:
+            self._gateway_pending_procs = [p for p in self._gateway_pending_procs if p is not proc]
+        if cancel is not self._gateway_launch_cancel or cancel.is_set() or self._closing:
             if proc is not None and proc.poll() is None:
                 threading.Thread(target=kill_process_tree, args=(proc,), daemon=False).start()
-            self._gateway_down("已取消启动")
             return
+        self._cancel_gateway_launch_timer()
+        self._gateway_starting = False
         if proc is None:
             self._gateway_down(error or "启动失败")
+            self._autostart_log(f"启动准备失败：{error}")
             if autostart:
                 self._schedule_autostart_retry(error)
             return
         if autostart:
-            self._autostart_attempts = 0
-            self._autostart_log("gateway 已拉起")
+            self._autostart_log("进程已创建，等待网关就绪")
         self._gateway_started(proc, upstream)
 
     def _gateway_started(self, proc, upstream):
         self.gateway_proc = proc
+        self._gateway_ready_proc = None
         self._gateway_provider = copy.deepcopy(upstream)
-        self.gw_status_var.set("● 启动中")
-        self.gw_btn.configure(state=tk.DISABLED, text="启动中…")
+        self.gw_status_var.set(tr("● 启动中"))
+        self.gw_btn.configure(state=tk.DISABLED, text=tr("启动中…"))
         self.port_spin.configure(state=tk.DISABLED)
         probe = ForgeGatewayClient(self.gateway_url)
         threading.Thread(target=self._drain_gateway_log, args=(proc,), daemon=True).start()
@@ -5970,14 +6056,14 @@ class ForgeGuiApp:
             {"label": f"回复温度 · {self.temp_var.get()}",
              "command": self._open_temperature_menu},
             {"label": "打开配置", "command": lambda: self._show_view("config")},
-        ], title="对话操作", width=320)
+        ], title=tr("对话操作"), width=320)
 
     def _open_temperature_menu(self):
         show_popover_menu(self.session_menu_btn, [
             {"label": value, "selected": self.temp_var.get() == value,
              "command": lambda v=value: self._set_temperature(v)}
             for value in ("0.2", "0.5", "0.7", "1.0", "1.5")
-        ], title="回复温度", width=240)
+        ], title=tr("回复温度"), width=240)
 
     def _set_temperature(self, value: str):
         self.temp_var.set(value)
@@ -6057,7 +6143,9 @@ class ForgeGuiApp:
         if self.gateway_proc is not proc or proc.poll() is None:
             return
         code = proc.returncode
+        was_ready = self._gateway_ready_proc is proc
         self._gateway_down(f"进程已退出（代码 {code}）")
+        self._autostart_log(f"网关退出：代码 {code}，就绪={was_ready}")
         if self._closing:
             return
         if getattr(self, "_restart_pending", False):
@@ -6070,6 +6158,9 @@ class ForgeGuiApp:
                 pass
             return
         if self._gateway_user_stopped:
+            return
+        if not was_ready and self._gateway_autostarted:
+            self._schedule_autostart_retry(f"就绪前退出（代码 {code}）；详情见工作区终端")
             return
         # 意外退出 → 自动拉起（60 秒内最多 5 次，退避递增）
         now = time.monotonic()
@@ -6090,41 +6181,36 @@ class ForgeGuiApp:
 
     def _gateway_stop_failed(self, proc):
         if self.gateway_proc is proc:
-            self.gw_btn.configure(state=tk.NORMAL, text="⟳ 重启")
-            self.gw_status_var.set("● 停止失败")
+            self.gw_btn.configure(state=tk.NORMAL, text=tr("⟳ 重启"))
+            self.gw_status_var.set(tr("● 停止失败"))
             self._set_status("未能停止 gateway，请重试", "error")
 
     def _gateway_timeout(self, proc):
         if self.gateway_proc is proc and proc.poll() is None:
-            self.gw_status_var.set("● 未就绪")
+            self.gw_status_var.set(tr("● 未就绪"))
             self.gw_status_lbl.configure(fg=C["warn"])
             self.gw_detail_status_lbl.configure(fg=C["warn"])
-            self.gw_btn.configure(text="⟳ 重启", bg=C["accent"],
+            self.gw_btn.configure(text=tr("⟳ 重启"), bg=C["accent"],
                                   state=tk.DISABLED if self._sending else tk.NORMAL)
             self._set_status("gateway 启动未就绪；可点「重启」重试，或检查端口/配置", "warn")
             # 起来但一直不健康，多半是端口/配置问题：收掉这个进程再退避重试，
             # 否则它会一直挂着，而用户看到的就是「打开了但没起来」。
             if self._gateway_autostarted and not self._gateway_user_stopped:
                 self._autostart_log("启动后 30s 未就绪，收掉进程并重试")
-                try:
-                    # 要传进程对象：kill_process_tree 会调 proc.poll()，
-                    # 只传 pid 会抛 AttributeError，清理实际不会发生。
-                    kill_process_tree(proc)
-                except Exception:
-                    pass
-                self.gateway_proc = None
-                # 超时也是一次失败尝试：不计数就会出现 index=-1（取到最后一档 20s）
-                # 且永远碰不到次数上限。
-                self._autostart_attempts += 1
-                self._schedule_autostart_retry("启动未就绪")
+                self._autostart_attempts = max(1, self._autostart_attempts)
+                self._stop_gateway()
 
     def _gateway_up(self, proc):
         if self.gateway_proc is not proc or proc.poll() is not None:
             return
+        self._gateway_ready_proc = proc
+        self._autostart_attempts = 0
+        self._autostart_log(f"网关已就绪：端口 {self.gateway_port}")
+        save_desktop_config(gateway_port=self.gateway_port)
         self.gw_status_var.set(f"● 在线 ({self.gateway_port})")
         self.gw_status_lbl.configure(fg=C["ok"])
         self.gw_detail_status_lbl.configure(fg=C["ok"])
-        self.gw_btn.configure(text="⟳ 重启", bg=C["surface2"], fg=C["body"],
+        self.gw_btn.configure(text=tr("⟳ 重启"), bg=C["surface2"], fg=C["body"],
                               state=tk.DISABLED if self._sending else tk.NORMAL)
         self.port_spin.configure(state=tk.DISABLED if self._sending else tk.NORMAL)
         self._set_status(f"gateway 在线：{self.gateway_url}", "ok")
@@ -6133,19 +6219,20 @@ class ForgeGuiApp:
         self.gw_status_var.set(tr("● 离线"))
         self.gw_status_lbl.configure(fg=C["muted"])
         self.gw_detail_status_lbl.configure(fg=C["muted"])
-        self.gw_btn.configure(text="▶ 启动", bg=C["accent"], fg="#FFFFFF",
+        self.gw_btn.configure(text=tr("▶ 启动"), bg=C["accent"], fg="#FFFFFF",
                               state=tk.DISABLED if self._sending else tk.NORMAL)
         self.port_spin.configure(state=tk.DISABLED if self._sending else tk.NORMAL)
         self._set_status(f"gateway {reason}", "warn")
         self.gateway_proc = None
+        self._gateway_ready_proc = None
 
     def _stop_gateway(self):
         if not self.gateway_proc:
             return
         proc = self.gateway_proc
-        self.gw_btn.configure(state=tk.DISABLED, text="停止中…")
+        self.gw_btn.configure(state=tk.DISABLED, text=tr("停止中…"))
         self._stopping_proc = proc
-        self.gw_status_var.set("● 停止中")
+        self.gw_status_var.set(tr("● 停止中"))
         def terminate():
             try:
                 kill_process_tree(proc)
@@ -6699,7 +6786,7 @@ class ForgeGuiApp:
             msg.add_note(f"请求失败：{message}", tone="error")
         area = getattr(self, "chat_area", None)
         if area is not None:
-            area.add_notice(message, tone="error", title="gateway 请求失败")
+            area.add_notice(message, tone="error", title=tr("gateway 请求失败"))
         if not self.send_var.get():
             self.send_var.set(prompt)
         self._set_status("请求失败，消息已保留；检查 gateway 后可重试", "error")
@@ -6738,6 +6825,7 @@ class ForgeGuiApp:
         self._cancel_market_render()
         self._cancel_market_filter()
         self._gateway_launch_cancel.set()
+        self._cancel_gateway_launch_timer()
         try:
             self.model_combo.close_menu()
         except (AttributeError, tk.TclError):
@@ -6760,7 +6848,10 @@ class ForgeGuiApp:
             pass
         monitor = self._sysmon
         processes = []
-        for proc in (getattr(self, "_task_proc", None), self.gateway_proc):
+        with self._gateway_launch_lock:
+            pending_procs = self._gateway_pending_procs
+            self._gateway_pending_procs = []
+        for proc in (getattr(self, "_task_proc", None), self.gateway_proc, *pending_procs):
             try:
                 alive = proc is not None and proc.poll() is None
             except Exception:

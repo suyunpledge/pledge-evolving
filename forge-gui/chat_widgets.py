@@ -1676,7 +1676,7 @@ class TeamTogglePill(tk.Frame):
             self, text=self.LABELS[self._mode], fill=C["input_bg"],
             outline=C["border_hi"], fg=C["subtext"], font=FONT_CAPTION,
             bg=base, command=self._cycle, radius=R_PILL, padx=8, pady=2,
-            tooltip="Agent 集群/分工：关=单模型；开=按配置并行；AI 决断=本地规则按问题判断")
+            tooltip=tr("Agent 集群/分工：关=单模型；开=按配置并行；AI 决断=本地规则按问题判断"))
         self._btn.pack()
         self._apply_mode_color()
         # 右键直达指定档位
@@ -1984,7 +1984,7 @@ class InputCard(tk.Frame):
         self._low_controls = attachments
         self.plus = circle_button(attachments, "＋", plus_cb, size=ui_px(self, 28),
                                   kind="muted", bg=C["input_bg"], glyph_size=11,
-                                  tooltip="添加附件")
+                                  tooltip=tr("添加附件"))
         self.plus.pack(side=tk.LEFT, padx=(0, 5))
 
         # 低频操作收进水平工具栏，让输入框成为清晰的视觉主体。
@@ -2025,7 +2025,7 @@ class InputCard(tk.Frame):
         self.mode_var = i18n.StringVar(self, value=tr("模式：标准"))
         self.mode_pill = glyph_button(metadata, tr("模式：标准"), on_thinking or (lambda: None),
                                       bg=C["input_bg"], fg=C["subtext"], size=10,
-                                      tooltip="当前思考强度；点击调整，实际支持能力取决于模型")
+                                      tooltip=tr("当前思考强度；点击调整，实际支持能力取决于模型"))
         self.mode_pill.grid(row=0, column=2, sticky="e")
         right = tk.Frame(state_row, bg=C["input_bg"])
         right.grid(row=0, column=1, sticky="ne")
@@ -2043,14 +2043,14 @@ class InputCard(tk.Frame):
                                             fill=C["sel"], outline=C["sel_border"],
                                             fg=C["body"], font=FONT_SMALL,
                                             command=on_model, bg=C["input_bg"],
-                                            tooltip="切换模型")
+                                            tooltip=tr("切换模型"))
             self.model_pill.pack(fill=tk.X)
         # Compatibility accessor: mode is visibly represented by mode_pill.
         self.think_pill = rounded_label(model_host, thinking_text,
                                         fill=C["surface2"], outline=C["border_hi"],
                                         fg=C["subtext"], font=FONT_SMALL,
                                         command=on_thinking, bg=C["input_bg"],
-                                        tooltip="Forge 任务的沉思配置；普通 gateway 对话不执行任务沉思")
+                                        tooltip=tr("Forge 任务的沉思配置；普通 gateway 对话不执行任务沉思"))
 
         # ⚙ 设置按钮（可选）
         if on_settings is not None:
@@ -2064,7 +2064,7 @@ class InputCard(tk.Frame):
         # 发送 / 停止（同一物理位置，set_busy 切换）
         self.send_circle = circle_button(right, "↑", self._fire_send, size=ui_px(self, 36),
                                          kind="muted", bg=C["input_bg"],
-                                         tooltip="发送（Enter）")
+                                         tooltip=tr("发送（Enter）"))
         self.send_circle.pack(side=tk.RIGHT)
         self.stop_circle = circle_button(right, "■", self._fire_stop, size=ui_px(self, 36),
                                          kind="danger", bg=C["input_bg"],
