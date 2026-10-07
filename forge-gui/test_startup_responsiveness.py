@@ -90,6 +90,7 @@ class StartupResponsivenessTests(unittest.TestCase):
 
             try:
                 with patch.object(gui, "port_in_use", return_value=False), \
+                     patch.object(gui, "bindable_gateway_port", side_effect=lambda port: port), \
                      patch.object(gui.subprocess, "Popen", side_effect=spawn), \
                      patch.object(app, "_gateway_started") as started:
                     begin = time.monotonic()

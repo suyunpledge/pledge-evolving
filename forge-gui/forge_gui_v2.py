@@ -3091,7 +3091,7 @@ class ForgeGuiApp:
             "id": sid,
             "title": self._session_title(),
             "updated": time.time(),
-            "messages": [{"role": m.role, "content": m.content} for m in history],
+            "messages": [m.to_dict() for m in history],
         }
         sessions = [s for s in sessions if s.get("id") != sid]
         sessions.insert(0, entry)
@@ -3251,7 +3251,8 @@ class ForgeGuiApp:
             return
         self._archive_current_session()
         self._chat_history = [ChatMessage(str(m.get("role", "user")),
-                                          str(m.get("content", "")))
+                                          str(m.get("content", "")),
+                                          reasoning_content=str(m.get("reasoning_content") or ""))
                               for m in session.get("messages", []) if isinstance(m, dict)
                               and m.get("role") in ("user", "assistant")
                               and isinstance(m.get("content"), str)]
@@ -5852,6 +5853,13 @@ class ForgeGuiApp:
                "--profile", "balanced"]
         if model_map:
             cmd.extend(["--model-map", model_map])
+        provider_conf = upstream.get("config") or upstream
+        adaptation = {key: provider_conf[key] for key in
+                      ("vendor", "cacheControl", "expectedCalls", "callGapSeconds", "adapt", "thinkBudget",
+                       "flex", "defer", "maxDeferSeconds")
+                      if key in provider_conf}
+        if adaptation:
+            cmd.extend(["--provider-options", json.dumps(adaptation, ensure_ascii=False)])
 
         kwargs = dict(stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                       text=True, encoding="utf-8", errors="replace", cwd=str(self.run_py.parent))
@@ -6681,7 +6689,8 @@ class ForgeGuiApp:
                         # 模型发起了工具调用：按 OpenAI 协议回填 assistant(tool_calls)
                         # + 每个 call 一条 tool 结果，然后再问一轮
                         messages.append(ChatMessage(
-                            role="assistant", content=turn_text, tool_calls=calls))
+                            role="assistant", content=turn_text, tool_calls=calls,
+                            reasoning_content=str(getattr(result, "reasoning_content", "") or "")))
                         rows = []
                         for call in calls:
                             if cancel_event.is_set():
@@ -6732,7 +6741,8 @@ class ForgeGuiApp:
                     full = "".join(acc)
                     if cancel_event.is_set():
                         raise GenerationCancelled("已停止生成")
-                    self._post_ui(self._chat_succeeded, retained_history, full, text)
+                    self._post_ui(self._chat_succeeded, retained_history, full, text,
+                                  str(getattr(result, "reasoning_content", "") or ""))
                 except GenerationCancelled:
                     self._post_ui(self._chat_cancelled, text)
                 except Exception as e:
@@ -6748,11 +6758,11 @@ class ForgeGuiApp:
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _chat_succeeded(self, messages, full, original_prompt=None):
+    def _chat_succeeded(self, messages, full, original_prompt=None, reasoning_content=""):
         if self._abort_requested:
             self._chat_cancelled(original_prompt if original_prompt is not None else messages[-1].content)
             return
-        self._chat_history = messages + [ChatMessage("assistant", full)]
+        self._chat_history = messages + [ChatMessage("assistant", full, reasoning_content=reasoning_content)]
         self._attachments.clear()
         self._update_context_summary()
         self.chat_title_var.set(self._session_title())

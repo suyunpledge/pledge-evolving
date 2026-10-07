@@ -31,3 +31,8 @@ forge-diagnose.json
 
 # forge 桌面应用：图标预览（make_icon.py 派生产物）
 forge-gui/desktop/forge.png
+
+# 本地备份与测试产物（保留在磁盘，不入库）
+*.bak-*
+_bak-*/
+mimo26-test-artifacts/

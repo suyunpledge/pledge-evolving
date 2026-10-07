@@ -682,9 +682,18 @@ class RefactorAcceptance(unittest.TestCase):
         self.app._gateway_autostarted = True
         self.app._gateway_user_stopped = False
         self.app._autostart_attempts = 0
-        with patch.object(gui, "kill_process_tree") as kill, \
+        def terminate(target):
+            self.assertIs(target, proc)
+            proc.poll.return_value = 1
+            return True
+
+        with patch.object(gui, "kill_process_tree", side_effect=terminate) as kill, \
              patch.object(self.app, "_schedule_autostart_retry") as retry:
             self.app._gateway_timeout(proc)
+            until = time.monotonic() + 1
+            while not retry.called and time.monotonic() < until:
+                self.root.update()
+                time.sleep(.005)
         # 关键：传的是进程对象；传 pid 会让 kill_process_tree 内部 proc.poll() 抛错
         kill.assert_called_once()
         self.assertIs(kill.call_args.args[0], proc)

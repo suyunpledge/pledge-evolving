@@ -23,11 +23,15 @@ import sys
 from pathlib import Path
 
 from . import __version__
+from .adapters import PlanContext, breakeven_calls, compare_plans
+from .cache_state import prefix_fingerprint
 from .config import USER_LAYER_NAME, Config, load_config
+from .context_plan import CONTEXT_MODES, ContextPlan
 from .loop import THINKING_MODES, LoopLimits, build_agent
-from .model import ModelRouter
+from .model import ModelRouter, warmth_store
 from .policy import Policy
 from .routing import STRATEGIES, SmartRouter
+from .vendors import PROFILES, VENDOR_ORDER, profile_for
 
 DEFAULT_HOME = Path.home() / ".forge"
 # D2: bundles ship BOTH as a repo-root directory (editable checkout) and
@@ -64,6 +68,37 @@ def _compose(args) -> Config:
 # commands
 # ---------------------------------------------------------------------------
 
+def _primary_profile(cfg):
+    """解析「实际会首发的那一档」对应的厂商画像。
+
+    不能只看 model.primary：策略为 medium 时真正首发的是 routing.tiers 的第一档，
+    primary 只是配置里写下的默认值。直接问 SmartRouter 要真实顺序，
+    上下文阶梯的判断才会和运行时选到同一家（否则会拿 A 家的阶梯线去限制 B 家）。
+    """
+    order: list[tuple[str, str]] = []
+    try:
+        order = list(SmartRouter.from_config(cfg)._order(None))
+    except Exception:
+        order = []
+    if not order:
+        primary = cfg.get("model", "primary", None)
+        if isinstance(primary, (list, tuple)) and primary:
+            order = [(str(primary[0]), str(primary[1]) if len(primary) > 1 else "")]
+        elif isinstance(primary, str):
+            order = [(primary, "")]
+
+    row_id, model = order[0] if order else ("", "")
+    row = cfg.row(row_id) if row_id else None
+    conf = dict(row.config) if row is not None else {}
+    return profile_for(
+        base_url=str(conf.get("baseURL", conf.get("base_url", ""))),
+        model=str(model or conf.get("model", conf.get("defaultModel", ""))),
+        service=str(conf.get("service", "")),
+        vendor=str(conf.get("vendor", "")),
+        wire=str(conf.get("wire", "")),
+    )
+
+
 def cmd_run(args) -> int:
     # 指令一（2026-09-15）：无头 run 链路默认即 balanced —— 工作区沙箱内
     # write_file/edit_file/apply_patch 免询问直写，越界（如系统目录）仍拦。
@@ -99,8 +134,34 @@ def cmd_run(args) -> int:
         merged_t["mode"] = thinking_mode
         cfg.apply_patch([{"id": "thinking", "name": "thinking:mode", "config": merged_t}],
                         label=f"thinking:{thinking_mode}")
+    # --context-policy 显式传参 > 配置层 context.policy > 默认 ask。
+    # 同样整行合并（apply_patch 是整行替换，先取原行防冲掉 defaultMode/notes）。
+    context_policy = getattr(args, "context_policy", None)
+    if context_policy:
+        ctx_row = cfg.row("context")
+        merged_c = dict(ctx_row.config) if ctx_row is not None else {}
+        merged_c["mode"] = context_policy
+        cfg.apply_patch([{"id": "context", "name": "context:policy", "config": merged_c}],
+                        label=f"context:{context_policy}")
     home = Path(args.home)
     workspace = Path(args.workspace or Path.cwd())
+
+    # 长上下文编排：把配置里的 context.policy 翻译成实际的压缩天花板。
+    # compact 会把预算压在阶梯线之下（免得越线后单价翻倍）；
+    # lossless 把天花板抬到不可能触顶（代价由用户承担，这里明确告知）。
+    plan = ContextPlan.from_config(cfg)
+    profile = _primary_profile(cfg)
+    base_chars = int(cfg.get("loop", "contextChars", 24000) or 24000)
+    resolved_mode = plan.mode if plan.mode != "ask" else plan.default_mode
+    ctx_budget = plan.adjust_budget(base_chars, profile, mode=resolved_mode)
+    if resolved_mode == "lossless" and profile.long_context_threshold:
+        print(f"[context] 无损模式：{profile.label} 在 "
+              f"{profile.long_context_threshold:,} token 以上单价 ×{profile.long_context_multiplier:g}，"
+              f"本次不压缩。", file=sys.stderr)
+    elif resolved_mode == "compact" and profile.long_context_threshold and ctx_budget < base_chars:
+        print(f"[context] 压缩模式：预算已收窄到 {ctx_budget:,} 字符以避开 "
+              f"{profile.label} 的长上下文阶梯线。", file=sys.stderr)
+
     # SmartRouter 换装：仅当配置层真的声明了 routing 时才升级路由器，
     # 纯 base bundle（无 routing 块）保持 ModelRouter，行为零变化。
     routing_block = cfg.get("model", "routing", None)
@@ -120,6 +181,7 @@ def cmd_run(args) -> int:
             max_steps=int(cfg.get("loop", "maxSteps", 12)),
             max_depth=int(cfg.get("loop", "maxDepth", 2)),
             spawn_budget=int(cfg.get("loop", "spawnBudget", 8)),
+            context_chars=ctx_budget,
         ),
     )
     with agent.session:
@@ -141,6 +203,8 @@ def cmd_run(args) -> int:
 
 
 def cmd_dump_config(args) -> int:
+    if getattr(args, "dump_defaults_only", False):
+        args.no_user_layer = True
     cfg = _compose(args)
     print(cfg.to_json())
     return 0
@@ -321,6 +385,8 @@ def cmd_gateway(args) -> int:
         registry=registry,
         workspace=str(Path(args.workspace or Path.cwd())),
         policy=bridge_policy,
+        provider_options=json.loads(getattr(args, "provider_options", "{}")),
+        warmth_path=Path(getattr(args, "home", None) or os.environ.get("FORGE_HOME") or Path.home() / ".forge") / "cache-warmth.json",
     )
     server = serve(cfg)
     try:
@@ -329,6 +395,28 @@ def cmd_gateway(args) -> int:
         pass
     finally:
         server.server_close()
+    return 0
+
+
+def cmd_batch(args) -> int:
+    from .batch_execution import BatchExecutor
+    from .model import ModelRouter
+    providers = ModelRouter.from_config(_compose(args)).providers
+    provider = providers.get(args.provider)
+    if provider is None:
+        raise SystemExit("Unknown provider id")
+    executor = BatchExecutor(provider, args.home)
+    if args.action == "submit":
+        if not args.input:
+            raise SystemExit("batch submit requires --input JSONL file")
+        with Path(args.input).open(encoding="utf-8") as file:
+            rows = [json.loads(line) for line in file if line.strip()]
+        result = executor.submit(rows)
+    else:
+        if not args.job:
+            raise SystemExit("batch status/results/cancel requires --job")
+        result = getattr(executor, args.action)(args.job)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 
 
@@ -488,6 +576,158 @@ def cmd_channel(args) -> int:
     return _impl(args)
 
 
+def cmd_vendors(args) -> int:
+    """厂商适配总览：列出画像，或检视当前配置实际解析到哪家。"""
+    if getattr(args, "detect", False):
+        cfg = _compose(args)
+        router = ModelRouter.from_config(cfg)
+        fleet = router.fleet()
+        print(f"接入模式：{'单厂家' if fleet['mode'] == 'single' else '模型混排'}")
+        print("缓存命名空间：按端点、账号、模型、协议和缓存模式隔离；同厂商不保证跨档共享")
+        print(f"最低命中倍率：{fleet['best_cache_read_multiplier']:g}×")
+        print()
+        for provider in router.providers.values():
+            prof = provider.profile()
+            flags = []
+            if prof.explicit_cache:
+                flags.append("显式缓存")
+            if prof.peak_valley:
+                flags.append("峰谷价")
+            if prof.long_context_threshold:
+                flags.append(f"阶梯 {prof.long_context_threshold:,}")
+            print(f"  {provider.name:<12} {prof.label:<16} 命中 {prof.cache_read_multiplier:g}×  "
+                  f"{' · '.join(flags) or '—'}")
+        return 0
+
+    def _pad(text: str, width: int) -> str:
+        """按显示宽度补齐：CJK 与全角标点算 2 列，其余算 1 列。"""
+        used = sum(2 if ord(ch) > 0x2E80 else 1 for ch in text)
+        return text + " " * max(0, width - used)
+
+    print("厂商适配画像（命中倍率 = 命中价 / 未命中输入价）\n")
+    cols = (("厂商", 20), ("缓存模式", 20), ("命中", 8), ("写入", 8),
+            ("最小前缀", 10), ("Batch", 8), ("阶梯", 16), ("峰谷", 6))
+    print("".join(_pad(name, width) for name, width in cols))
+    print("-" * sum(width for _, width in cols))
+    for vid in VENDOR_ORDER:
+        p = PROFILES[vid]
+        cliff = f"{p.long_context_threshold:,} ×{p.long_context_multiplier:g}" \
+            if p.long_context_threshold else "—"
+        batch = f"{p.batch_discount:g}×" if p.batch_discount < 1.0 else "—"
+        cells = (p.label, p.cache_mode, f"{p.cache_read_multiplier:g}×",
+                 f"{p.cache_write_multiplier:g}×", str(p.min_cache_tokens), batch,
+                 cliff, "✔" if p.peak_valley else "—")
+        print("".join(_pad(cell, width) for cell, (_, width) in zip(cells, cols)).rstrip())
+    print()
+    for vid in VENDOR_ORDER:
+        print(f"  · {PROFILES[vid].label}：{PROFILES[vid].notes}")
+    print("\n用 `forge vendors --detect` 查看当前配置实际解析到哪家。")
+    return 0
+
+
+def cmd_adapters(args) -> int:
+    """厂商适配器：展示每个适配器对同一条请求会做出的最优决策。
+
+    这正是「混排也能达到每厂家最优」的证据：同一条对话，在每个厂商上
+    产出不同的（各自局部最优的）方案与报价，可并排比较。
+    """
+    from .pricing import base_rate
+
+    # 构造一个代表性的请求：系统提示 + 工具定义 + 一轮对话。
+    # 默认样例按真实 agent 的量级构造：一份长系统提示 + 两个工具定义，
+    # 稳定前缀约 4–5k token，足以越过所有厂商的最小可缓存门槛，
+    # 这样表格里每一行都是「真的在做决策」而不是「因前缀太短而不适用」。
+    sample_text = (getattr(args, "sample", None) or
+                   "你是一个严谨的工程助手，遵守以下工作原则：先读再写，改动最小化，"
+                   "每次修改都要能解释为什么。遇到不确定的地方先查证而不是猜。" * 200)
+    payload = {
+        "system": sample_text,
+        "tools": [{"name": "read_file", "description": "读文件内容" * 20, "input_schema": {}},
+                  {"name": "write_file", "description": "写文件内容" * 20, "input_schema": {}}],
+        "messages": [{"role": "user", "content": "分析这个仓库的结构"}],
+    }
+    calls = int(getattr(args, "calls", 4) or 4)
+    gap = float(getattr(args, "gap", 60) or 60)
+
+    vendor_ids = ([v.strip() for v in args.vendors.split(",") if v.strip()]
+                  if getattr(args, "vendors", None) else list(VENDOR_ORDER))
+    contexts: dict[str, PlanContext] = {}
+    for vid in vendor_ids:
+        profile = PROFILES.get(vid)
+        if profile is None:
+            continue
+        model = (args.model or "") if getattr(args, "model", None) else ""
+        rates = base_rate(model) if model else None
+        base_in = rates["input"] if rates else 1.08
+        base_out = rates["output"] if rates else 4.32
+        contexts[vid] = PlanContext(profile=profile, model=model,
+                                    base_input=base_in, base_output=base_out,
+                                    calls_expected=calls, gap_seconds=gap)
+
+    rows = compare_plans(payload, payload["messages"], contexts)
+    fp = prefix_fingerprint(payload)
+
+    print(f"同一条请求（预期复用 {calls} 次，间隔 {gap:g}s）："
+          f"系统提示 {len(sample_text):,} 字符，2 个工具定义\n")
+    print(f"{'厂商':<18}{'缓存':<10}{'断点':<6}{'TTL':<6}{'回本':<6}{'窗口成本':<12}{'节省'}")
+    print("-" * 84)
+    for row in rows:
+        cost = f"¥{row['est_cost']:.4f}" if row["est_cost"] else "—"
+        save = f"¥{row['saving']:.4f} ({row['saving_pct']:.0f}%)" if row["saving"] else "—"
+        cc = "显式" if row["cache_control"] else ("自动" if row["cache_engages"] else "不适用")
+        ttl = row["ttl"] or "—"
+        be = row["breakeven_calls"]
+        be_s = "—" if be >= 10 ** 8 else str(be)
+        # 断点只有在真的注入了标记时才有意义；自动缓存厂商不显示，
+        # 否则会让人以为我们也往它的请求里塞了标记。
+        bps = str(row["breakpoints"]) if row["cache_control"] else "—"
+        if not row["cache_engages"]:
+            ttl = "—"
+            be_s = "—"
+        print(f"{row['vendor_label']:<18}{cc:<10}{bps:<6}{ttl:<6}{be_s:<6}"
+              f"{cost:<12}{save}")
+
+    print("\n各适配器的判断依据：")
+    for row in rows:
+        if not row["actions"]:
+            continue
+        print(f"\n  【{row['vendor_label']}】")
+        for action in row["actions"]:
+            print(f"    · {action}")
+        for note in row["notes"][:2]:
+            print(f"    ⋯ {note}")
+
+    print(f"\n前缀指纹：{fp}（每厂商缓存命名空间独立，此指纹用于判断哪家还热着）")
+    return 0
+
+
+def cmd_cache(args) -> int:
+    """缓存温暖度：查看混排车队里哪个厂商还持有当前前缀的缓存。"""
+    store = warmth_store()
+    if args.action == "prune":
+        removed = store.prune(profiles=list(PROFILES.values()))
+        store.save()
+        print(f"已清理 {removed} 条过期记录")
+        return 0
+    if args.action == "clear":
+        store.clear()
+        store.save()
+        print("已清空缓存温暖度记录")
+        return 0
+
+    payload = {"system": getattr(args, "system", None) or "",
+               "tools": [], "messages": []}
+    fp = prefix_fingerprint(payload) if getattr(args, "system", None) else ""
+    raw = store.to_raw()
+    print(f"记录中：{raw['entries']} 条前缀，跨 {len(raw['vendors'])} 个厂商")
+    for vendor, count in sorted(raw["vendors"].items()):
+        print(f"  {vendor:<14} {count} 条前缀")
+    if fp:
+        profile = profile_for()
+        print(f"\n当前前缀 {fp} 热否：{'是' if store.is_warm(profile, fp) else '否'}")
+    return 0
+
+
 def cmd_selftest(args) -> int:
     from .selftest import run_selftest
 
@@ -590,13 +830,23 @@ def build_parser() -> argparse.ArgumentParser:
                      help="contemplation mode: off=never (default), "
                           "smart=decide per task complexity (trigger words / long text), "
                           "on=always")
+    run.add_argument("--context-policy", choices=list(CONTEXT_MODES), default=argparse.SUPPRESS,
+                     help="long-context orchestration: lossless=keep everything "
+                          "(higher cost, no information loss), "
+                          "compact=compress before the vendor's cliff, "
+                          "ask=prompt when interactive")
     run.set_defaults(func=cmd_run)
 
     for name, func in (("dump-config", cmd_dump_config), ("dump-default-config", cmd_dump_config)):
         item = sub.add_parser(name, parents=[common])
         item.set_defaults(func=func)
         if name == "dump-default-config":
-            item.set_defaults(no_user_layer=True)
+            # BUG-FIX (2026-09-24): 原为 set_defaults(no_user_layer=True)。argparse
+            # parents 共享同一 action 对象，set_defaults 会把共享 action 的 default
+            # 一并改成 True，导致 run/doctor/... 所有子命令都变成
+            # no_user_layer=True——用户层 forge.patch.json 在 run 链路上从未生效。
+            # 改用独立 dest，由 cmd_dump_config 翻译回 no_user_layer。
+            item.set_defaults(dump_defaults_only=True)
 
     doctor = sub.add_parser("doctor", parents=[common], help="health and drift checks")
     doctor.add_argument("--strict", action="store_true")
@@ -643,7 +893,16 @@ def build_parser() -> argparse.ArgumentParser:
                          help="client wire format; selects the upstream authentication header for direct proxying")
     gateway.add_argument("--model-map", default="",
                          help="requested=upstream pairs, e.g. claude-sonnet-5=mimo-v2.5")
+    gateway.add_argument("--provider-options", default="{}",
+                         help="non-secret provider adaptation settings as JSON")
     gateway.set_defaults(func=cmd_gateway)
+
+    batch = sub.add_parser("batch", parents=[common], help="explicit asynchronous Batch job lifecycle")
+    batch.add_argument("action", choices=["submit", "status", "results", "cancel"])
+    batch.add_argument("--provider", required=True, help="configured provider row id")
+    batch.add_argument("--input", help="JSONL file with custom_id and body")
+    batch.add_argument("--job", help="remote batch job id")
+    batch.set_defaults(func=cmd_batch)
 
     evolution = sub.add_parser("evolution", parents=[common], help="self-iteration loop")
     evolution.add_argument("action", nargs="?", default="list",
@@ -683,6 +942,31 @@ def build_parser() -> argparse.ArgumentParser:
 
     setup = sub.add_parser("setup", help="first-run wizard: configure API keys interactively")
     setup.set_defaults(func=cmd_setup)
+
+    vendors = sub.add_parser("vendors", parents=[common],
+                             help="vendor adaptation profiles (single vs mixed fleet)")
+    vendors.add_argument("--detect", action="store_true",
+                         help="resolve the current config's providers to vendor profiles")
+    vendors.set_defaults(func=cmd_vendors)
+
+    adapters = sub.add_parser("adapters", parents=[common],
+                              help="per-vendor adapters: the optimal plan for one request")
+    adapters.add_argument("--calls", type=int, default=4,
+                          help="expected reuse count for the same prefix (default 4)")
+    adapters.add_argument("--gap", type=float, default=60,
+                          help="typical seconds between calls, drives TTL choice")
+    adapters.add_argument("--model", default="", help="price the plan for this model")
+    adapters.add_argument("--vendors", default="",
+                          help="comma list to compare (default: all known vendors)")
+    adapters.add_argument("--sample", default="", help="sample system prompt text")
+    adapters.set_defaults(func=cmd_adapters)
+
+    cache = sub.add_parser("cache", parents=[common],
+                           help="cache warmth across the fleet (mixed-mode continuity)")
+    cache.add_argument("action", nargs="?", default="status",
+                       choices=["status", "prune", "clear"])
+    cache.add_argument("--system", default="", help="system prompt to fingerprint")
+    cache.set_defaults(func=cmd_cache)
 
     channel = sub.add_parser("channel", parents=[common], help="messaging channels (weixin, ...)")
     channel.add_argument("target", nargs="?", default="list",

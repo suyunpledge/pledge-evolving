@@ -30,6 +30,7 @@ class ChatMessage:
     # 工具循环用（OpenAI 协议）：assistant 带 tool_calls、tool 带 tool_call_id
     tool_calls: list | None = None
     tool_call_id: str = ""
+    reasoning_content: str = ""
 
     def to_dict(self) -> dict:
         d: dict = {"role": self.role, "content": self.content}
@@ -37,6 +38,8 @@ class ChatMessage:
             d["tool_calls"] = self.tool_calls
         if self.tool_call_id:
             d["tool_call_id"] = self.tool_call_id
+        if self.reasoning_content:
+            d["reasoning_content"] = self.reasoning_content
         return d
 
 
@@ -48,6 +51,7 @@ class CompletionResult:
     raw: dict | None = None
     # 流式累积的工具调用（OpenAI delta 形状：{id,type,function:{name,arguments}}）
     tool_calls: list[dict] = field(default_factory=list)
+    reasoning_content: str = ""
 
 
 class GatewayError(RuntimeError):
@@ -190,6 +194,7 @@ class ForgeGatewayClient:
             model=data.get("model", model),
             usage=data.get("usage"),
             raw=data,
+            reasoning_content=str(message.get("reasoning_content") or ""),
         )
 
     # ── 流式（SSE） ──
@@ -217,6 +222,8 @@ class ForgeGatewayClient:
             body["reasoning_effort"] = reasoning_effort
         req = self._request("POST", "/v1/chat/completions", body)
         full_text_parts: list[str] = []
+        reasoning_parts: list[str] = []
+        usage = None
         model_name = ""
         completed = False
         tool_acc: dict[int, dict] = {}   # 按 index 累积 delta.tool_calls
@@ -239,6 +246,8 @@ class ForgeGatewayClient:
                         continue
                     if ev.get("error"):
                         raise GatewayError(f"上游流式请求失败：{str(ev['error'])[:500]}")
+                    if isinstance(ev.get("usage"), dict):
+                        usage = ev["usage"]
                     if not model_name and ev.get("model"):
                         model_name = ev.get("model", "")
                     choices = ev.get("choices") or []
@@ -252,6 +261,9 @@ class ForgeGatewayClient:
                         delta = choice.get("delta", {}) or {}
                         if not isinstance(delta, dict):
                             continue
+                        reasoning = delta.get("reasoning_content")
+                        if isinstance(reasoning, str) and reasoning:
+                            reasoning_parts.append(reasoning)
                         piece = delta.get("content", "")
                         if isinstance(piece, str) and piece:
                             full_text_parts.append(piece)
@@ -293,4 +305,6 @@ class ForgeGatewayClient:
             text="".join(full_text_parts),
             model=model_name or model,
             tool_calls=[tool_acc[k] for k in sorted(tool_acc)],
+            usage=usage,
+            reasoning_content="".join(reasoning_parts),
         )

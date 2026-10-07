@@ -111,6 +111,8 @@ class GatewayConfig:
         registry=None,
         workspace: str = "",
         policy=None,
+        provider_options: dict | None = None,
+        warmth_path: Path | None = None,
     ) -> None:
         self.upstream = upstream.rstrip("/")
         self.api_key = api_key
@@ -133,9 +135,57 @@ class GatewayConfig:
         # Headless gateway has nobody to approve an ASK, so non_interactive
         # stays True: unresolved ASK collapses to DENY, same as `forge run`.
         self.policy = policy
+        self.provider_options = dict(provider_options or {})
+        from .cache_state import CacheWarmth
+        from .model import warmth_store
+        self.cache_warmth = CacheWarmth(warmth_path) if warmth_path else warmth_store()
         self._auth_lock = threading.Lock()
         self._auth_failures: int = 0
         self._auth_locked_until: float = 0.0
+
+    def prepare_request(self, payload):
+        from .model import Provider, _plan_and_shape
+        if not isinstance(payload, dict):
+            raise ValueError("JSON request must be an object")
+        payload = dict(payload)
+        model = str(payload.get("model") or "")
+        model = self.model_map.get(model, model)
+        payload["model"] = model
+        conf = self.provider_options
+        provider = Provider(
+            "gateway", self.upstream, api_key=self.api_key, wire=self.upstream_wire,
+            default_model=model, vendor=str(conf.get("vendor") or ""),
+            cache_control=str(conf.get("cacheControl", "auto")),
+            expected_calls=int(conf.get("expectedCalls", 2)),
+            call_gap_seconds=float(conf.get("callGapSeconds", 60)),
+            adapt=bool(conf.get("adapt", True)), think_budget=conf.get("thinkBudget"),
+            flex=bool(conf.get("flex", False)), defer=bool(conf.get("defer", False)),
+            max_defer_seconds=float(conf.get("maxDeferSeconds", 0)))
+        from . import sampling
+        sampling.strip_extra_params(payload, model, self.upstream_wire)
+        # These three vendors document include_usage on streaming Chat
+        # Completions. Unknown compatibility gateways retain their own shape.
+        if (payload.get("stream") and self.upstream_wire == "openai"
+                and provider.profile_for_model(model).id in ("deepseek", "bailian", "mimo", "openai")):
+            payload["stream_options"] = {**(payload.get("stream_options") or {}), "include_usage": True}
+        if "reasoning_effort" in payload and "thinking_budget" in payload:
+            raise ValueError("reasoning_effort and thinking_budget cannot be combined")
+        shaped, plan = _plan_and_shape(payload, payload.get("messages") or [], provider, model,
+                                       store=self.cache_warmth, interactive=True)
+        return shaped, plan, provider
+
+    def record_usage(self, provider, plan, raw_usage, service_tier=None):
+        from .model import _remember_warmth
+        from .vendors import normalize_usage
+        usage = normalize_usage(provider.profile_for_model(plan.get("model", "")), raw_usage)
+        _remember_warmth(provider, plan, usage, store=self.cache_warmth)
+        flex = plan.get("execution", {}).get("flex")
+        if flex:
+            flex["status"] = "confirmed" if service_tier == "flex" else "unconfirmed"
+            flex["discount_confirmed"] = service_tier == "flex"
+        self.log.write("ADAPT " + json.dumps({"model": plan.get("model"), "plan": plan,
+                                             "usage": usage, "service_tier": service_tier,
+                                             "invoice_verified": False}, ensure_ascii=False))
 
 
 def build_handler(cfg: GatewayConfig):
@@ -377,6 +427,7 @@ def build_handler(cfg: GatewayConfig):
             })
 
         def _proxy(self, body: bytes) -> None:
+            self._upstream_started = False
             translating = cfg.upstream_wire == "openai" and self.path.split("?")[0].rstrip("/").endswith("/messages")
             if translating:
                 self._proxy_translated(body)
@@ -385,6 +436,14 @@ def build_handler(cfg: GatewayConfig):
             # 客户端请求的是「友好模型名」（如 mimo），上游只认真实 id
             # （如 mimo-v2.6-flash）。有映射就改写请求体里的 model。
             body = self._apply_model_map(body)
+            plan = provider = None
+            if self.path.split("?")[0].rstrip("/").endswith(("/chat/completions", "/messages")):
+                try:
+                    payload, plan, provider = cfg.prepare_request(json.loads(body))
+                    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+                except (ValueError, TypeError) as exc:
+                    self._json(400, {"error": {"message": str(exc)}})
+                    return
 
             # self.path 是客户端的 OpenAI 兼容路径（/v1/chat/completions），
             # 这个 /v1 是 gateway 自己的协议前缀，upstream 通常没有它——
@@ -394,20 +453,23 @@ def build_handler(cfg: GatewayConfig):
             if stripped.startswith("/v1/"):
                 stripped = stripped[len("/v1"):]
             url = cfg.upstream + stripped
-            headers = {k: v for k, v in self.headers.items() if k.lower() not in HOP_BY_HOP}
+            headers = {k: v for k, v in self.headers.items()
+                       if k.lower() not in HOP_BY_HOP | {"authorization", "x-api-key"}}
             headers.pop("Authorization", None)
             headers.pop("x-api-key", None)
-            if cfg.wire == "anthropic":
+            if cfg.upstream_wire == "anthropic":
                 headers["x-api-key"] = cfg.api_key
                 headers["anthropic-version"] = headers.get("anthropic-version", "2023-06-01")
             else:
                 headers["Authorization"] = f"Bearer {cfg.api_key}"
             headers["accept-encoding"] = "identity"
 
-            cfg.log.write(f"{self.command} {self.path} -> {url} | {body[:200].decode('utf-8', 'replace')}")
+            cfg.log.write(f"{self.command} {self.path} -> {url} (bytes={len(body)})")
             request = urllib.request.Request(url, data=body or None, headers=headers, method=self.command)
             try:
                 with open_upstream(request, timeout=600, proxy=cfg.proxy) as response:
+                    from .request_execution import UsageObserver
+                    observer = UsageObserver()
                     ctype = response.headers.get("content-type", "")
                     self.send_response(response.status)
                     self.send_header("Content-Type", ctype)
@@ -417,17 +479,25 @@ def build_handler(cfg: GatewayConfig):
                         self.send_header("Connection", "close")
                         self.close_connection = True
                         self.end_headers()
+                        self._upstream_started = True
                         while True:
-                            chunk = response.read(4096)
+                            chunk = getattr(response, "read1", response.read)(4096)
                             if not chunk:
                                 break
+                            observer.feed(chunk)
                             self.wfile.write(chunk)
                             self.wfile.flush()
                     else:
                         data = response.read()
+                        try:
+                            observer.observe(json.loads(data))
+                        except (ValueError, UnicodeDecodeError):
+                            pass
                         self.send_header("Content-Length", str(len(data)))
                         self.end_headers()
                         self.wfile.write(data)
+                    if provider is not None:
+                        cfg.record_usage(provider, plan, observer.usage, observer.service_tier)
             except urllib.error.HTTPError as exc:
                 data = exc.read()
                 cfg.log.write(f"upstream HTTP {exc.code}: {data[:300]!r}")
@@ -438,7 +508,20 @@ def build_handler(cfg: GatewayConfig):
                 self.wfile.write(data)
             except Exception as exc:
                 cfg.log.write(f"upstream error: {exc!r}")
-                self._json(502, {"type": "error", "error": {"type": "api_error", "message": str(exc)}})
+                self._upstream_failure(exc)
+
+        def _upstream_failure(self, exc):
+            payload = {"type": "error", "error": {"type": "api_error", "message": str(exc)}}
+            if getattr(self, "_upstream_started", False):
+                # HTTP headers cannot be sent twice after streaming starts.
+                self.close_connection = True
+                try:
+                    self.wfile.write(("data: " + json.dumps(payload) + "\n\n").encode())
+                    self.wfile.flush()
+                except OSError:
+                    pass  # client already disconnected
+            else:
+                self._json(502, payload)
 
         # -- anthropic client in, openai upstream ------------------------
         def _apply_model_map(self, body: bytes) -> bytes:
@@ -464,6 +547,7 @@ def build_handler(cfg: GatewayConfig):
             return json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
         def _proxy_translated(self, body: bytes) -> None:
+            self._upstream_started = False
             from .wire import OpenAIStreamTranslator, anthropic_to_openai_request, openai_to_anthropic_response
 
             try:
@@ -475,6 +559,11 @@ def build_handler(cfg: GatewayConfig):
 
             requested = str(payload.get("model", ""))
             upstream_payload = anthropic_to_openai_request(payload, cfg.model_map)
+            try:
+                upstream_payload, plan, provider = cfg.prepare_request(upstream_payload)
+            except (ValueError, TypeError) as exc:
+                self._json(400, {"error": {"message": str(exc)}})
+                return
             url = cfg.upstream.rstrip("/") + "/chat/completions"
             headers = {
                 "content-type": "application/json",
@@ -493,6 +582,7 @@ def build_handler(cfg: GatewayConfig):
                 with open_upstream(request, timeout=600, proxy=cfg.proxy) as response:
                     if not upstream_payload.get("stream"):
                         raw = json.loads(response.read().decode("utf-8", "replace"))
+                        cfg.record_usage(provider, plan, raw.get("usage"), raw.get("service_tier"))
                         translated = openai_to_anthropic_response(raw, requested)
                         cfg.log.write(f"TRANSLATE reply ok: stop={translated['stop_reason']} "
                                       f"blocks={len(translated['content'])}")
@@ -505,8 +595,12 @@ def build_handler(cfg: GatewayConfig):
                     self.send_header("Connection", "close")
                     self.close_connection = True
                     self.end_headers()
+                    self._upstream_started = True
                     translator = OpenAIStreamTranslator(requested)
+                    from .request_execution import UsageObserver
+                    observer = UsageObserver()
                     for raw_line in response:
+                        observer.feed(raw_line)
                         for event in translator.feed(raw_line.decode("utf-8", "replace")):
                             self.wfile.write(event.encode())
                             self.wfile.flush()
@@ -515,6 +609,7 @@ def build_handler(cfg: GatewayConfig):
                         self.wfile.flush()
                     cfg.log.write(f"TRANSLATE stream done: stop={translator.finish_reason} "
                                   f"tools={len(translator.tool_calls)}")
+                    cfg.record_usage(provider, plan, observer.usage, observer.service_tier)
             except urllib.error.HTTPError as exc:
                 data = exc.read()
                 cfg.log.write(f"upstream HTTP {exc.code}: {data[:300]!r}")
@@ -522,7 +617,7 @@ def build_handler(cfg: GatewayConfig):
                                                                  "message": data.decode("utf-8", "replace")[:400]}})
             except Exception as exc:
                 cfg.log.write(f"translate error: {exc!r}")
-                self._json(502, {"type": "error", "error": {"type": "api_error", "message": str(exc)}})
+                self._upstream_failure(exc)
 
     return Handler
 

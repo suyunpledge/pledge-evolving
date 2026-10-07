@@ -735,6 +735,10 @@ class Agent:
                                               usage=usage_total, stopped="error", events=self.events))
             usage_total["prompt_tokens"] += completion.usage.prompt_tokens
             usage_total["completion_tokens"] += completion.usage.completion_tokens
+            # A premium/MoA completion may contain several paid requests.
+            # Preserve their own plans and usage in the report; reuse-window
+            # estimates cannot be added into a real invoice.
+            usage_total.setdefault("requests", []).extend(getattr(completion, "requests", []))
 
             text = completion.text or ""
             native_raw = list(getattr(completion, "tool_calls", None) or [])
@@ -890,10 +894,24 @@ class Agent:
             self._run_thinking_tokens = 0
             self._child_tokens = 0
             if delta > 0:
-                entry = self.cost_ledger.record(self._run_model, delta, note=f"run {self.name}")
-                self._emit(type="ledger_recorded", model=entry.model, tokens=delta,
-                           cost=entry.cost, scale=self._pricing_scale(self._run_probe,
-                                                                      ledger=self.cost_ledger))
+                per_model = {}
+                for request in report.usage.get("requests", []):
+                    usage = request.get("usage") or {}
+                    model_name = str(request.get("model") or self._run_model)
+                    count = int(usage.get("prompt_tokens", 0)) + int(usage.get("completion_tokens", 0))
+                    per_model[model_name] = per_model.get(model_name, 0) + max(0, count)
+                # Chore/child transports without request receipts retain the
+                # prior estimated accounting path; do not count them twice.
+                residual = max(0, delta - sum(per_model.values()))
+                per_model[self._run_model] = per_model.get(self._run_model, 0) + residual
+                for model_name, count in per_model.items():
+                    if count <= 0:
+                        continue
+                    entry = self.cost_ledger.record(model_name, count,
+                                                   note=f"run {self.name}; estimated, not vendor invoice")
+                    self._emit(type="ledger_recorded", model=entry.model, tokens=count,
+                               cost=entry.cost, estimated=True,
+                               scale=self._pricing_scale(self._run_probe, ledger=self.cost_ledger))
             self._run_scope = False
         return report
 

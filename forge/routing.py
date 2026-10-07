@@ -371,17 +371,15 @@ class SmartRouter(ModelRouter):
                     ok_event: dict[str, Any] = {"provider": provider_name, "model": model, "status": "ok",
                                                 "strategy": "premium", "stage": "integrate"}
                     attempts.append(ok_event)
-                    merged = self._completion(text, usage, attempts, extra, provider)
                     usage.provider = usage.provider or provider_name
                     usage.model = usage.model or model
-                    # 计费诚实：_finish 从 report.usage 记账，premium 一通调用
-                    # 烧了两个阶段，usage 必须是两阶段之和，否则账本漏记草稿段。
-                    merged.usage = Usage(
-                        prompt_tokens=draft.usage.prompt_tokens + usage.prompt_tokens,
-                        completion_tokens=draft.usage.completion_tokens + usage.completion_tokens,
-                        model=model, provider=provider_name)
+                    merged = self._completion(text, usage, attempts, extra, provider)
+                    # Keep request-level receipts and add actual usage, never
+                    # add overlapping reuse-window cost forecasts into a bill.
                     merged.aggregated = True
                     merged.candidates = [f"{draft.usage.provider}:{draft.usage.model}", f"{provider_name}:{model}"]
+                    from .model import merge_completions
+                    merge_completions(merged, [("draft", draft), ("integrate", merged)])
                     return merged
                 except TransportError as exc:
                     attempts.append({"provider": provider_name, "model": model,
@@ -420,6 +418,7 @@ class SmartRouter(ModelRouter):
             tool_calls=list(extra.get("tool_calls") or []),
             wire=str(extra.get("wire") or provider.wire),
             assistant_message=extra.get("assistant_message"),
+            plan=dict(extra.get("plan") or {}),
         )
 
 

@@ -117,7 +117,32 @@ class ScrollArea(tk.Frame):
         self._bar_visible = True
         self._scroll_job = None
         self._scroll_follow_end = False
-        self.bind("<Destroy>", self._cancel_scroll, add="+")
+        self._layout_job = None
+        # An offscreen Canvas window can change its requested height without
+        # resizing its Frame. Descendant Configure events still report the
+        # content changes; coalesce them before reading the current Canvas bbox.
+        self._layout_owner = self.winfo_toplevel()
+        self._content_prefix = str(self.inner) + "."
+        self._layout_binding = self._layout_owner.bind(
+            "<Configure>", self._content_layout_changed, add="+")
+        self.bind("<Destroy>", self._destroy_scroll, add="+")
+
+    def _content_layout_changed(self, event):
+        if str(event.widget).startswith(self._content_prefix) and self._layout_job is None:
+            self._layout_job = self.after(16, self._settle_content_layout)
+
+    def _settle_content_layout(self):
+        self._layout_job = None
+        self._sync_scrollregion()
+
+    def _destroy_scroll(self, event):
+        if event.widget is not self:
+            return
+        self._cancel_scroll()
+        if self._layout_job is not None:
+            self.after_cancel(self._layout_job)
+            self._layout_job = None
+        self._layout_owner.unbind("<Configure>", self._layout_binding)
 
     def _on_scroll(self, first, last):
         if float(last) - float(first) >= 0.999:

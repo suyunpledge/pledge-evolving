@@ -47,6 +47,156 @@ EFFECTIVE_RATES: dict[str, tuple[str, float, str]] = {
 
 MILLION = 1_000_000.0
 
+# --------------------------------------------------------------------------- #
+# 目录价（非混合价）：计费需要区分命中 / 未命中 / 写入 / 输出四类，
+# 单一混合价无法回答"这次改动的收益是多少"。这里按厂商官方公布口径存目录价，
+# 单位统一为 CNY / 1M tokens（USD 按 7.2 折算，与账单口径一致）。
+# 未列出的模型回落到 EFFECTIVE_RATES 的混合价——宁可给一个粗略值，
+# 也不要因为表里没有就假装成本是 0。
+# --------------------------------------------------------------------------- #
+BASE_RATES: dict[str, dict[str, float]] = {
+    # input = 未命中输入；output = 输出；cached/write 由厂商倍率在运行时推出
+    "deepseek-flash":       {"input": 1.08, "output": 4.32, "cache_write": 1.08},
+    "deepseek-v4-pro":      {"input": 4.75, "output": 14.26, "cache_write": 4.75},
+    "glm-5.3":              {"input": 8.0,  "output": 28.0, "cache_write": 8.0},
+    "glm-5.3-flash":        {"input": 0.8,  "output": 2.8,  "cache_write": 0.8},
+    "kimi-k3":              {"input": 20.0, "output": 100.0, "cache_write": 20.0},
+    "kimi-k2.6":            {"input": 6.5,  "output": 27.0, "cache_write": 6.5},
+    "claude-sonnet-5.5":    {"input": 14.4, "output": 72.0, "cache_write": 18.0},
+    "claude-opus-5.5":      {"input": 28.8, "output": 144.0, "cache_write": 36.0},
+    "gpt-6.1-sol":          {"input": 14.4, "output": 72.0, "cache_write": 18.0},
+    "gpt-6-luna":           {"input": 0.72, "output": 3.6,  "cache_write": 0.9},
+    # 2026-10-07 补：向导 / CLI 里用的**连字符**型号名。
+    # 同一份已核实目录价，只是写法不同（claude-sonnet-5-5 vs claude-sonnet-5.5）。
+    # 不补的话 rate 查不到 → 价格 0 → 适配器会直接放弃缓存决策。
+    "claude-haiku-4-5":     {"input": 7.2,  "output": 36.0, "cache_write": 9.0},
+    "claude-sonnet-5-5":    {"input": 14.4, "output": 72.0, "cache_write": 18.0},
+    "claude-opus-5-5":      {"input": 28.8, "output": 144.0, "cache_write": 36.0},
+    "gpt-6-astra":          {"input": 72.0, "output": 360.0, "cache_write": 90.0},
+    "gemini-3.8-flash":     {"input": 5.4,  "output": 27.0, "cache_write": 5.4},
+    "gemini-3.1-pro":       {"input": 14.4, "output": 86.4, "cache_write": 14.4},
+}
+
+# 写法别名：连字符型 ↔ 点号型。同一模型的两种常见命名。
+_RATE_ALIASES: dict[str, str] = {
+    "claude-sonnet-5-5": "claude-sonnet-5.5",
+    "claude-opus-5-5": "claude-opus-5.5",
+}
+
+# 价格未知时的中性单位价。适配器的缓存决策是**比例**决策（尺度无关），
+# 给 1.0 能让决策与命中／未命中倍率照常生效，而不会因为“查不到价”
+# 就把整个缓存策略丢掉。金额绝对值由调用方按 estimated 标记自行处理。
+UNKNOWN_PRICE = 1.0
+
+# 厂商倍率的兜底值（画像不可用时的保守估计：不打折）
+_DEFAULT_CACHE_READ = 1.0
+_DEFAULT_CACHE_WRITE = 1.0
+
+
+def base_rate(model: str) -> dict[str, float] | None:
+    """目录价，找不到返回 None（调用方回落到混合价或单位价）。"""
+    name = str(model)
+    row = BASE_RATES.get(name)
+    if row is None:
+        canonical = _RATE_ALIASES.get(name)
+        if canonical:
+            row = BASE_RATES.get(canonical)
+    return row
+
+
+def index_price(model: str) -> tuple[float, float, bool]:
+    """给适配器用的（输入单价, 输出单价, 是否真实目录价）。
+
+    三级回落：目录价 → 账单反推的混合有效单价 → 中性单位价。
+    最后一级是必要的：适配器的缓存决策是比例决策，不该因为“没查到价”
+    就整个放弃；返回的 ``known=False`` 让调用方知道金额只能当比例看。
+    """
+    rates = base_rate(model)
+    if rates:
+        return float(rates["input"]), float(rates["output"]), True
+    blended = rate_for(model)
+    if blended > 0:
+        return float(blended), float(blended), False
+    return UNKNOWN_PRICE, UNKNOWN_PRICE, False
+
+
+def cost_of_usage(
+    model: str,
+    *,
+    input_tokens: int = 0,
+    cached_tokens: int = 0,
+    cache_write_tokens: int = 0,
+    output_tokens: int = 0,
+    profile=None,
+    peak: bool = False,
+    batch: bool = False,
+    flex: bool = False,
+    long_context: bool = False,
+) -> dict[str, float]:
+    """按厂商计费结构算一次调用的钱（CNY）。
+
+    ``profile`` 是 vendors.VendorProfile（可选）。有画像时用它的命中/写入倍率
+    （这才是"同一个请求在不同厂商值多少钱"的答案）；没有时按不打折保守估计。
+    ``peak/batch/flex/long_context`` 是四个修饰开关，与 vendors.price_multiplier 同源。
+
+    返回分项明细，便于在运行报告里解释"钱花在哪"。
+    """
+    rates = base_rate(model)
+    if rates is None:
+        blended = rate_for(model)
+        if blended <= 0:
+            return {"input": 0.0, "cached": 0.0, "write": 0.0, "output": 0.0,
+                    "total": 0.0, "estimated": 1.0}
+        return {"input": round(blended * input_tokens / MILLION, 6),
+                "cached": 0.0, "write": 0.0,
+                "output": round(blended * output_tokens / MILLION, 6),
+                "total": round(blended * (input_tokens + output_tokens) / MILLION, 6),
+                "estimated": 1.0}
+
+    read_mult = getattr(profile, "cache_read_multiplier", _DEFAULT_CACHE_READ)
+    write_mult = getattr(profile, "cache_write_multiplier", _DEFAULT_CACHE_WRITE)
+
+    modifier = 1.0
+    if peak:
+        modifier *= 2.0
+    if batch:
+        modifier *= 0.5
+    if flex:
+        modifier *= 0.5
+    if long_context:
+        modifier *= 2.0
+
+    hits = max(0, int(cached_tokens))
+    writes = max(0, int(cache_write_tokens))
+    misses = max(0, int(input_tokens) - hits - writes)
+
+    p_input = rates["input"] * modifier
+    p_read = rates["input"] * read_mult * modifier
+    p_write = rates.get("cache_write", rates["input"]) * write_mult * modifier
+    p_output = rates["output"] * modifier
+
+    parts = {
+        "input": round(p_input * misses / MILLION, 6),
+        "cached": round(p_read * hits / MILLION, 6),
+        "write": round(p_write * writes / MILLION, 6),
+        "output": round(p_output * int(output_tokens) / MILLION, 6),
+        "estimated": 0.0,
+    }
+    parts["total"] = round(sum(parts[k] for k in ("input", "cached", "write", "output")), 6)
+    return parts
+
+
+def cost_of_usage_simple(model: str, usage) -> float:
+    """从 model.Usage 对象直接算总成本（CNY）的便利入口。"""
+    parts = cost_of_usage(
+        model,
+        input_tokens=int(getattr(usage, "prompt_tokens", 0) or 0),
+        cached_tokens=int(getattr(usage, "cached_tokens", 0) or 0),
+        cache_write_tokens=int(getattr(usage, "cache_write_tokens", 0) or 0),
+        output_tokens=int(getattr(usage, "completion_tokens", 0) or 0),
+    )
+    return parts["total"]
+
 
 def rate_for(model: str) -> float:
     row = EFFECTIVE_RATES.get(str(model))
@@ -144,11 +294,17 @@ def compare_models(tokens: int, models: Iterable[str]) -> list[dict[str, Any]]:
 
 
 __all__ = [
+    "BASE_RATES",
     "CostLedger",
     "EFFECTIVE_RATES",
     "MILLION",
     "SpendEntry",
+    "UNKNOWN_PRICE",
+    "base_rate",
     "compare_models",
     "cost_of",
+    "cost_of_usage",
+    "cost_of_usage_simple",
+    "index_price",
     "rate_for",
 ]

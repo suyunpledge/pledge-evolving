@@ -25,8 +25,11 @@ class UiPolishTests(unittest.TestCase):
         self.root.report_callback_exception = lambda *args: self.errors.append(args)
 
     def tearDown(self):
+        owners = [self.root, *descendants(self.root)]
         for token in self.root.tk.call("after", "info"):
-            self.root.after_cancel(token)
+            command = self.root.tk.call("after", "info", token)[0]
+            owner = next((widget for widget in owners if command in (widget._tclCommands or [])), self.root)
+            owner.after_cancel(token)
         self.root.destroy()
         self.assertEqual(self.errors, [])
 

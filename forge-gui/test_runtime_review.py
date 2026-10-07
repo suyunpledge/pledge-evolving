@@ -176,7 +176,7 @@ class TkRuntimeTests(unittest.TestCase):
         app._autostart_attempts = 3
         with patch.object(gui, "_autostart_enabled", return_value=True), \
              patch.object(app, "_schedule_autostart_retry") as retry:
-            app._finish_deferred_gateway(None, {}, threading.Event(), "occupied", True)
+            app._finish_deferred_gateway(None, {}, app._gateway_launch_cancel, "occupied", True)
         self.assertEqual(app._autostart_attempts, 3)
         retry.assert_called_once_with("occupied")
 

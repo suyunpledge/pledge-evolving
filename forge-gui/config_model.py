@@ -170,7 +170,9 @@ def _normalize_provider_row(raw: dict[str, Any], warnings: list[str], seen_ids: 
     conf = copy.deepcopy(raw.get("config") or {})
     # 平铺写法（顶层字段直接当作 config）
     for k in ("wire", "baseURL", "baseUrl", "apiKey", "api_key", "token",
-              "model", "smallModel", "notes"):
+              "model", "smallModel", "notes", "vendor", "cacheControl",
+              "expectedCalls", "callGapSeconds", "adapt", "service", "rpm",
+              "temperature", "headers", "models", "thinkBudget", "flex", "defer", "maxDeferSeconds"):
         if k in raw and k not in conf:
             conf[k] = raw[k]
     # 字段别名
@@ -237,7 +239,7 @@ def _normalize_model_row(raw: dict[str, Any] | None, warnings: list[str]) -> dic
         }
     conf = dict(raw.get("config") or {})
     # 平铺写法兼容
-    for k in ("primary", "fallback", "moa", "moaModels"):
+    for k in ("primary", "fallback", "moa", "moaModels", "routing"):
         if k in raw and k not in conf:
             conf[k] = raw[k]
     if "routing" not in conf:
@@ -261,6 +263,12 @@ def _normalize_input(value: Any, warnings: list[str], seen_ids: set[str]) -> dic
     """把各种形态输入转成一条 row（返回 None 表示跳过）。"""
     if not isinstance(value, dict):
         return None
+    if "config" not in value and (value.get("id") == "model"
+                                   or str(value.get("name", "")).startswith("model:")):
+        if "model" in seen_ids:
+            raise ConfigNormalizeError("重复配置 id：model")
+        seen_ids.add("model")
+        return _normalize_model_row(value, warnings)
     # 已经是标准 row：id + config
     if "id" in value and "config" in value:
         if not isinstance(value["id"], str) or not value["id"].strip():
