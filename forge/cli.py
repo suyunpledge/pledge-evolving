@@ -25,7 +25,7 @@ from pathlib import Path
 from . import __version__
 from .adapters import PlanContext, breakeven_calls, compare_plans
 from .cache_state import prefix_fingerprint
-from .config import USER_LAYER_NAME, Config, load_config
+from .config import USER_LAYER_NAME, Config, ConfigError, load_config
 from .context_plan import CONTEXT_MODES, ContextPlan
 from .loop import THINKING_MODES, LoopLimits, build_agent
 from .model import ModelRouter, warmth_store
@@ -99,6 +99,134 @@ def _primary_profile(cfg):
     )
 
 
+def _credential_report(cfg, home: Path) -> tuple[list[str], list[str], list[str]]:
+    """把 provider 分成三类（都以**当前进程已解析**的值为准）：
+
+      keyed      —— 已经解析出非空密钥（字面量密钥，或环境变量已设）
+      env_wait   —— 声明了密钥但本次进程解析为空（走 $expr/env，注入前还没值）
+      local      —— 本机 / 环回地址，不需要密钥（本地网关、本地推理引擎）
+
+    为什么要分三类：全新安装的 base.json 里 medium 写的是
+    ``get('env.FORGE_MEDIUM_KEY', '')``——它是“已声明但没值”，而不是“有密钥”。
+    旧代码只看字段是否非空字符串，于是 base 的占位行也算可用，doctor 报全绿
+    但实际跑就是 401。分桶之后，“现在能不能跑”才是一个真数字。
+
+    本机地址优先归入 local，**不看密钥**：base 的回环占位把 apiKey 默认值写成
+    了字面量 'local'（``get('env.FORGE_LITE_KEY', 'local')``），先判地址再判密钥。
+    """
+    keyed: list[str] = []
+    env_wait: list[str] = []
+    local: list[str] = []
+    for row_id, name, conf in cfg.active():
+        if not str(name).startswith("provider:"):
+            continue
+        base_url = str(conf.get("baseURL", conf.get("base_url", "")))
+        key = conf.get("apiKey", conf.get("api_key", ""))
+        is_local = any(host in base_url for host in ("127.0.0.1", "localhost", "::1", "0.0.0.0"))
+        if is_local or str(conf.get("service", "")):
+            local.append(row_id)
+            continue
+        if isinstance(key, str) and key.strip():
+            keyed.append(row_id)
+        else:
+            # 空值 + 来自表达式 / 环境变量 = 已声明但没值。
+            env_wait.append(row_id)
+    return keyed, env_wait, local
+
+
+def _usable_providers(cfg, home: Path) -> list[str]:
+    """当前进程下真的能用、且**用户真的配过**的 provider 行 id。
+
+    本机地址只在用户层存在时才算数：base.json 的回环行是占位示例，
+    全新安装里它们没在跑，不该构成“可用”（否则 doctor 又变回假绿灯）。
+    用户自己写了用户层时，本机 provider 视为故意配置（本地网关/本地引擎）。
+    """
+    keyed, _env_wait, local = _credential_report(cfg, home)
+    if (home / USER_LAYER_NAME).is_file():
+        return keyed + local
+    return keyed
+
+
+def _first_run_hint(home: Path) -> str:
+    """全新未配置时的引导语，而不是把 401 丢给用户。"""
+    return (
+        "还没有可用的模型接入。\n"
+        f"  配置文件：{home / USER_LAYER_NAME}（不存在，或里面没有可用凭据）\n"
+        "  下一步：\n"
+        f"    python run.py --home {home} setup        # 交互式选厂商、填密钥\n"
+        "  或先用环境变量注入密钥再跑（例如 FORGE_DEEPSEEK_KEY）。"
+    )
+
+
+class _ProgressWriter:
+    """把 run 过程中的关键事件打成一行进度，写 stderr。
+
+    背景：一次 run 最多 12 步、每步一次模型调用，之前启用完成后才输出，
+    长任务期间用户完全看不到动静。这个观察者只报**稀疏且有意义**的节点，
+    不做逐 token 刷新（后者既慢又刷屏）。
+
+    只有 stderr 是终端时才输出：管道 / 重定向下保持安静，不会污染机器可读输出。
+    """
+
+    # 值得报的事件 -> 前缀标签
+    _LABELS = {
+        "thinking_engaged": "思考",
+        "tool_call": "工具",
+        "compaction": "压缩",
+        "subagent_spawn": "子代理",
+        "assistant_message": "回复",
+        "model_error": "错误",
+        "mount_warning": "挂载",
+    }
+
+    def __init__(self, enabled: bool) -> None:
+        self.enabled = enabled
+        self._step = 0
+
+    def __call__(self, event: dict) -> None:
+        if not self.enabled:
+            return
+        kind = str(event.get("type", ""))
+        label = self._LABELS.get(kind)
+        if label is None:
+            return
+        self._step += 1
+        detail = ""
+        if kind == "tool_call":
+            detail = str(event.get("tool") or event.get("name") or "")
+            decision = str(event.get("decision") or "")
+            if decision:
+                detail = f"{detail} {decision}".strip()
+        elif kind == "compaction":
+            before, after = event.get("before"), event.get("after")
+            if before is not None and after is not None:
+                detail = f"{before} -> {after} 字符"
+        elif kind in ("model_error", "mount_warning"):
+            detail = str(event.get("error") or event.get("note") or "")[:120]
+        try:
+            print(f"  · {label} {detail}".rstrip(), file=sys.stderr, flush=True)
+        except OSError:
+            self.enabled = False
+
+    def finish(self) -> None:
+        """结束时把进度行与正文分开，避免混在一起看。"""
+        if self.enabled and self._step:
+            try:
+                print(file=sys.stderr, flush=True)
+            except OSError:
+                pass
+
+
+def _make_progress_writer(*, enabled: bool) -> _ProgressWriter:
+    """按终端情况决定是否真的输出进度。"""
+    interactive = False
+    try:
+        interactive = bool(getattr(sys.stderr, "isatty", lambda: False)())
+    except (OSError, ValueError):
+        interactive = False
+    return _ProgressWriter(enabled=enabled and interactive)
+
+
 def cmd_run(args) -> int:
     # 指令一（2026-09-15）：无头 run 链路默认即 balanced —— 工作区沙箱内
     # write_file/edit_file/apply_patch 免询问直写，越界（如系统目录）仍拦。
@@ -169,6 +297,16 @@ def cmd_run(args) -> int:
         router = SmartRouter.from_config(cfg)
     else:
         router = ModelRouter.from_config(cfg)
+    # 全新接入的前置体检：没有任何厂商凭据时，与其让用户等一轮网络超时
+    # 再看到 401，不如现在就告诉他下一步做什么。只提示不阻断。
+    keyed, env_wait, local = _credential_report(cfg, home)
+    if not _usable_providers(cfg, home):
+        print(_first_run_hint(home), file=sys.stderr)
+
+    # 进度反馈：一步最多 12 次模型调用，启用前用户全程看不到任何动静。
+    # 只在 stderr 是终端且非 --json 时输出（管道/重定向不会污染机器可读输出）。
+    progress = _make_progress_writer(enabled=not args.json)
+
     agent = build_agent(
         home=home,
         workspace=workspace,
@@ -183,23 +321,33 @@ def cmd_run(args) -> int:
             spawn_budget=int(cfg.get("loop", "spawnBudget", 8)),
             context_chars=ctx_budget,
         ),
+        observer=progress,
     )
     with agent.session:
         report = agent.run(args.task)
+
+    failed = str(getattr(report, "stopped", "")) == "error"
+    progress.finish()
     if args.json:
         print(json.dumps({
+            "ok": not failed,
             "text": report.text,
             "stopped": report.stopped,
             "usage": report.usage,
             "steps": [{"index": s.index, "tool": s.tool, "decision": s.decision,
                        "note": s.note, "result": s.result[:400]} for s in report.steps],
         }, ensure_ascii=False, indent=2))
+    elif failed:
+        # 失败不是答案：错误走 stderr，stdout 保持干净。否则
+        # `forge run x > answer.md` 会把错误写进用户的成果文件。
+        print(report.text, file=sys.stderr)
     else:
         print(report.text)
         if args.verbose:
             for step in report.steps:
                 print(f"  [{step.index}] {step.tool} -> {step.decision} {step.note}", file=sys.stderr)
-    return 0
+    # 退出码反映真实结果：之前无论成败都返回 0，脚本与 CI 无法判断失败。
+    return 1 if failed else 0
 
 
 def cmd_dump_config(args) -> int:
@@ -224,9 +372,14 @@ def cmd_doctor(args) -> int:
     user_layer = home / USER_LAYER_NAME
     if user_layer.is_file():
         try:
-            json.loads(user_layer.read_text(encoding="utf-8"))
+            # 与加载器用同一条路径（_read_json 按 utf-8-sig 读）。
+            # 之前这里单独用 json.loads(strict utf-8) 校验，于是带 BOM 的配置
+            # “能加载但 doctor 说它没效”——自相矛盾的假报警。
+            from .config import _read_json as _read_cfg_json
+
+            _read_cfg_json(user_layer)
             ok, detail = True, f"parsed {user_layer}"
-        except json.JSONDecodeError as exc:
+        except (ConfigError, json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
             ok, detail = False, f"user layer is not valid JSON: {exc}"
     else:
         ok, detail = True, "no user layer (fine)"
@@ -242,6 +395,37 @@ def cmd_doctor(args) -> int:
                 secrets.append(f"{row_id}.{key}")
     checks.append({"check": "security:inline-secrets", "ok": not secrets,
                    "detail": ", ".join(secrets) or "none (env vars, or loopback endpoints)"})
+
+    # 2026-10-07 手感修复：之前「一行凭据都没有」的全新安装也报 7/7 全绿——
+    # 用户看到全绿却跑不动任何任务，这是假绿灯。
+    # 注意不把 base.json 的占位回环网关当成可用（_credential_report 已处理）。
+    keyed, env_wait, local = _credential_report(cfg, home)
+    usable = _usable_providers(cfg, home)
+    if keyed:
+        cred_detail = f"{len(keyed)} 个已注入密钥: {', '.join(keyed[:4])}" + (" …" if len(keyed) > 4 else "")
+        extra = []
+        if env_wait:
+            extra.append(f"{len(env_wait)} 个待环境变量注入")
+        if local:
+            extra.append(f"{len(local)} 个本机地址")
+        if extra:
+            cred_detail += "；" + "；".join(extra)
+    elif env_wait or local:
+        # 已声明但本次进程解析为空——最常见的是密钥走环境变量，
+        # 而当前 shell / 启动快照里没有值。说清楚是“本进程视角”。
+        parts = []
+        if env_wait:
+            parts.append(f"{len(env_wait)} 个待环境变量注入")
+        if local:
+            parts.append(f"{len(local)} 个本机地址（需网关在运行）")
+        names = (env_wait + local)[:4]
+        cred_detail = ("；".join(parts) + f": {', '.join(names)}"
+                       + (" …" if len(env_wait) + len(local) > 4 else ""))
+        if not usable:
+            cred_detail += "。若是首次安装，跑 `forge setup` 配置厂商与密钥"
+    else:
+        cred_detail = "没有任何厂商凭据 —— 跑 `forge setup` 配置厂商与密钥"
+    checks.append({"check": "config:credentials", "ok": bool(usable), "detail": cred_detail})
 
     policy = Policy.from_config(cfg, workspace=Path(args.workspace or Path.cwd()))
     checks.append({"check": "policy:sandbox", "ok": policy.sandbox.value != "danger-full-access",
@@ -763,6 +947,9 @@ def _common_options() -> argparse.ArgumentParser:
     common.add_argument("--coding", action="store_true", default=argparse.SUPPRESS,
                         help="coding mode: layer bundles/modes/coding.json "
                              "(read-before-write contract, wider tool surface, bigger loop budget)")
+    # 排查用：把收口的异常重新抛成完整堆栈（默认只打印一行人话）。
+    common.add_argument("--traceback", action="store_true", default=argparse.SUPPRESS,
+                        help="show full Python tracebacks instead of one-line messages")
     return common
 
 
@@ -991,13 +1178,42 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """顶层入口：把两类常见故障变成人话，其余保留堆栈供排查。
+
+    手感问题：以前 Ctrl-C 会吐一大段 traceback；配置写坏也是一整屏堆栈，
+    而真正有用的只有一句“哪个文件、哪一行”。这里统一收口：
+      * Ctrl-C  → 一行“已中断” + 退出码 130（shell 惯例）
+      * 配置错 → 文件路径 + 具体原因 + 退出码 2
+      * 其余异常仍抛堆栈（那是 bug，不该被藏起来），需要时加 --traceback 也无所谓
+    """
     parser = build_parser()
     args = parser.parse_args(argv)
     for name, value in (("home", DEFAULT_HOME), ("workspace", str(Path.cwd())),
-                        ("bundle", None), ("overlay", []), ("no_user_layer", False)):
+                        ("bundle", None), ("overlay", []), ("no_user_layer", False),
+                        ("traceback", False)):
         if not hasattr(args, name):
             setattr(args, name, value)
-    return int(args.func(args) or 0)
+    want_traceback = bool(getattr(args, "traceback", False))
+    try:
+        return int(args.func(args) or 0)
+    except KeyboardInterrupt:
+        print("\n已中断。", file=sys.stderr)
+        return 130
+    except BrokenPipeError:
+        # 下游早退（例如 `forge run x | head`）不该报错，安静退出。
+        try:
+            devnull = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(devnull, sys.stdout.fileno())
+        except OSError:
+            pass
+        return 0
+    except ConfigError as exc:
+        if want_traceback:
+            raise
+        print(f"配置错误：{exc}", file=sys.stderr)
+        print("  提示：forge.patch.json 必须是合法 JSON（支持 UTF-8 带/不带 BOM）；"
+              "`forge dump-default-config` 可看默认值。", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

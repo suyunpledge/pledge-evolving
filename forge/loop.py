@@ -205,6 +205,7 @@ class Agent:
         thinking: bool | str = False,
         service: str = "",
         thinking_token_cap: int | None = None,
+        observer: "Callable[[dict[str, Any]], None] | None" = None,
     ) -> None:
         self.home = Path(home)
         self.workspace = Path(workspace)
@@ -215,6 +216,9 @@ class Agent:
         self.capabilities = capabilities
         self.checkpoints = checkpoints
         self.session = session
+        from .secrets import SecretScope, install_logging_redaction
+        self.secret_scope = SecretScope()
+        install_logging_redaction()
         self.limits = limits or LoopLimits()
         self.name = name
         self.depth = depth
@@ -233,6 +237,10 @@ class Agent:
         self._compaction_noop_reported = False
         # Last message list seen this run (post-compaction), for evidence.
         self._last_messages: list[dict[str, Any]] | None = None
+        # 进度观察者（可选）：每次 _emit 时回调一次，供 CLI/GUI 显示“正在做什么”。
+        # 只读地看事件，不参与任何决策；观察者抛错会被就地停用，
+        # 绝不能把一次 run 拖下水。
+        self._observer = observer
         # Host-registered periodic duties. The scheduler seat's due-set is
         # computed against this list; empty by default, because an interactive
         # run schedules nothing on its own.
@@ -323,8 +331,15 @@ class Agent:
 
     # -- events ----------------------------------------------------------
     def _emit(self, **event: Any) -> None:
-        record = dict(event)
+        from .secrets import redact
+        record = redact(self.secret_scope.protect(dict(event)))
         self.events.append(record)
+        if self._observer is not None:
+            try:
+                self._observer(record)
+            except Exception:
+                # 观察者出错就停用，而不是让一次正常 run 因为“显示进度”而失败。
+                self._observer = None
         if self.session is not None:
             payload = dict(record)
             etype = str(payload.pop("type", "event"))
@@ -357,6 +372,8 @@ class Agent:
             workspace=self.workspace,
             session=self.session,
             emit=self._emit,
+            secret_scope=self.secret_scope,
+            isolated=True,
             # ``agent`` is deliberately NOT exposed here. Handing tools a
             # reference to the runtime would let any tool (including a
             # third-party capability) mutate the spawn budget or reach the
@@ -371,6 +388,7 @@ class Agent:
 
     # -- subagents -------------------------------------------------------
     def _spawn_handler(self, task: str, mode: str) -> ToolResult:
+        task = self.secret_scope.protect_text(task)
         if self.depth >= self.limits.max_depth:
             return ToolResult(ok=False, error=f"max subagent depth {self.limits.max_depth} reached")
         if self.budget[0] <= 0:
@@ -646,6 +664,7 @@ class Agent:
 
     # -- main loop -------------------------------------------------------
     def run(self, task: str) -> RunReport:
+        task = self.secret_scope.protect_text(task)
         if self.session is not None:
             self._emit(type="user_message", content=task)
         # H14 (rev.H14-3.7): one un-recorded run in flight per agent. The
@@ -960,6 +979,7 @@ def build_agent(
     expose: Iterable[str] | None = None,
     mount_contrib: bool = True,
     session_path: Path | None = None,
+    observer: "Callable[[dict[str, Any]], None] | None" = None,
 ) -> Agent:
     """Wire a full agent from a composed config tree.
 
@@ -1041,6 +1061,7 @@ def build_agent(
             config.get("thinking", "mode", "off"), service),
         service=service,
         thinking_token_cap=config.get("thinking", "tokenCap", None),
+        observer=observer,
     )
 
 

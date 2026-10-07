@@ -285,7 +285,14 @@ class Config:
 
 
 def _read_json(path: Path) -> Any:
-    text = path.read_text(encoding="utf-8")
+    # 按 utf-8-sig 读：能同时处理无 BOM 与带 BOM 两种文件。
+    #
+    # 2026-10-07 手感修复：Windows 上不少写入路径会加 BOM（PowerShell 5.1 的
+    # ``Set-Content -Encoding UTF8``、部分编辑器与 IDE），而 Windows 记事本在
+    # 旧版本也会。之前用 strict utf-8 读，用户手改一行配置就得到
+    # ``Unexpected UTF-8 BOM (decode using utf-8-sig)`` 这种只有开发者看得懂的
+    # 报错。cmd_smoke 早就用 utf-8-sig 了，主配置加载器反而没有——这是不一致。
+    text = path.read_text(encoding="utf-8-sig")
     stripped = "\n".join(
         line for line in text.splitlines() if not line.lstrip().startswith("//")
     )
@@ -311,21 +318,34 @@ def load_config(
     include_user_layer: bool = True,
     validate: Callable[[str, str, dict[str, Any]], None] | None = None,
 ) -> Config:
-    """Compose: bundle layers -> user layer -> extra overlays."""
+    """Compose: bundle layers -> user layer -> extra overlays.
+
+    每一层都带上它来自哪个文件，这样 JSON 写坏时能把文件名与行列号报出来——
+    否则用户只看到 ``Expecting ',' delimiter`` 而不知道是哪个文件出的错。
+    """
     home = Path(home)
     cfg = Config()
+
+    def _apply(path: Path, label: str) -> None:
+        try:
+            cfg.apply_patch(_read_json(path), label=label)
+        except ConfigError:
+            raise
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
+            raise ConfigError(f"配置文件无法解析：{path}\n  {type(exc).__name__}: {exc}") from exc
+
     for bundle in bundles:
         bundle_path = Path(bundle)
         if bundle_path.is_file():
-            cfg.apply_patch(_read_json(bundle_path), label=bundle_path.name)
+            _apply(bundle_path, bundle_path.name)
     if include_user_layer:
         user = home / USER_LAYER_NAME
         if user.is_file():
-            cfg.apply_patch(_read_json(user), label=USER_LAYER_NAME)
+            _apply(user, USER_LAYER_NAME)
     for overlay in overlays:
         overlay_path = Path(overlay)
         if overlay_path.is_file():
-            cfg.apply_patch(_read_json(overlay_path), label=overlay_path.name)
+            _apply(overlay_path, overlay_path.name)
     if validate is not None:
         for row_id, name, conf in cfg.active():
             validate(row_id, name, conf)
