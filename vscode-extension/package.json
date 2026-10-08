@@ -1,7 +1,7 @@
 {
   "name": "forge-agent",
   "displayName": "Forge",
-  "description": "%extension.description%",
+  "description": "Forge coding agent beside your code: workspace tools, model routing, policy sandbox and secret virtualization.",
   "version": "0.2.0",
   "publisher": "forge-local",
   "license": "MIT",
@@ -193,5 +193,13 @@
     "@types/node": "^22.10.0",
     "@types/vscode": "~1.96.0",
     "typescript": "^5.7.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/suyunpledge/pledge-evolving"
+  },
+  "homepage": "https://github.com/suyunpledge/pledge-evolving#readme",
+  "bugs": {
+    "url": "https://github.com/suyunpledge/pledge-evolving/issues"
   }
 }
