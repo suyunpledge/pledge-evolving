@@ -1,0 +1,9 @@
+node_modules/**
+src/**
+test/**
+.vscode/**
+tsconfig.json
+package-lock.json
+out/**/*.map
+**/__pycache__/**
+**/*.pyc

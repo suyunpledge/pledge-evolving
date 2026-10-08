@@ -303,6 +303,14 @@ class SecretScope:
         assert_public_path(path)
         # Detect the entire file, not a truncated/range fragment of it.
         text = read_public_bytes(path, limit=8 * 1024 * 1024).decode('utf-8-sig')
+        return self.document_text(path, text)
+
+    def document_text(self, path: Path, text: str) -> str:
+        """Protect a complete editor buffer using the same file-aware detector."""
+        path = Path(path)
+        assert_public_path(path)
+        if not isinstance(text, str) or len(text.encode('utf-8')) > 8 * 1024 * 1024:
+            raise ValueError('Document exceeds the 8 MiB secret inspection limit')
         if path.suffix.lower() in {'.json', '.yaml', '.yml', '.toml', '.env'} or path.name.startswith('.env'):
             from .config_edit import _parse
             value, _ = _parse(path, text)

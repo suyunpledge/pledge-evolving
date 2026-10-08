@@ -667,7 +667,17 @@ class Agent:
         return notes or None
 
     # -- main loop -------------------------------------------------------
-    def run(self, task: str) -> RunReport:
+    def run(self, task: str, *, history: list[dict[str, Any]] | None = None) -> RunReport:
+        # Editor clients can provide genuine preceding turns. Only ordinary
+        # user/assistant text is accepted; clients cannot inject system/tool
+        # messages or manufacture permissions through conversation history.
+        previous = []
+        for message in history or []:
+            if (not isinstance(message, dict) or message.get('role') not in {'user', 'assistant'}
+                    or not isinstance(message.get('content'), str)):
+                raise ValueError('History must contain user/assistant text messages')
+            previous.append({'role': message['role'], 'content': message['content']})
+        previous = self.secret_scope.protect(previous)
         task = self.secret_scope.protect_text(task)
         if self.session is not None:
             self._emit(type="user_message", content=task)
@@ -692,6 +702,7 @@ class Agent:
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": self.system_prompt()},
             *self._inject_memory(),
+            *previous,
             {"role": "user", "content": task},
         ]
         # 启动沉思（phase=thinking）：三档门控——off 不起；on 直接起；smart 由
@@ -712,7 +723,7 @@ class Agent:
                     self._emit(type="extension_error", module="thinking",
                                error=f"{type(exc).__name__}: {exc}")
                 if notes:
-                    messages[1] = {"role": "user",
+                    messages[-1] = {"role": "user",
                                    "content": f"{task}\n\n<contemplation>\n{notes[:4000]}\n</contemplation>"}
         steps: list[Step] = []
         usage_total = {"prompt_tokens": 0, "completion_tokens": 0}

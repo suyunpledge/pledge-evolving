@@ -17,6 +17,12 @@ logs/
 # 编辑器/系统
 .idea/
 .vscode/
+!vscode-extension/.vscode/
+!vscode-extension/.vscode/launch.json
+!vscode-extension/.vscode/tasks.json
+node_modules/
+vscode-extension/out/
+*.vsix
 .DS_Store
 Thumbs.db
 

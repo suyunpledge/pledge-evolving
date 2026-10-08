@@ -1,0 +1,197 @@
+{
+  "name": "forge-agent",
+  "displayName": "Forge",
+  "description": "%extension.description%",
+  "version": "0.2.0",
+  "publisher": "forge-local",
+  "license": "MIT",
+  "icon": "media/forge-logo.png",
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "AI",
+    "Other"
+  ],
+  "keywords": [
+    "forge",
+    "agent",
+    "coding",
+    "secret-virtualization"
+  ],
+  "main": "./out/extension.js",
+  "extensionKind": [
+    "workspace"
+  ],
+  "activationEvents": [],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "%trust.description%",
+      "restrictedConfigurations": [
+        "forge.pythonPath",
+        "forge.enginePath",
+        "forge.homePath"
+      ]
+    },
+    "virtualWorkspaces": {
+      "supported": false
+    }
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "forge",
+          "title": "Forge",
+          "icon": "media/forge.svg"
+        }
+      ]
+    },
+    "views": {
+      "forge": [
+        {
+          "type": "webview",
+          "id": "forge.chat",
+          "name": "%view.title%"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "forge.open",
+        "title": "%command.open%",
+        "category": "Forge"
+      },
+      {
+        "command": "forge.newChat",
+        "title": "%command.newChat%",
+        "category": "Forge",
+        "icon": "$(add)"
+      },
+      {
+        "command": "forge.stop",
+        "title": "%command.stop%",
+        "category": "Forge",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "forge.attachFile",
+        "title": "%command.attachFile%",
+        "category": "Forge"
+      },
+      {
+        "command": "forge.attachSelection",
+        "title": "%command.attachSelection%",
+        "category": "Forge"
+      },
+      {
+        "command": "forge.explainSelection",
+        "title": "%command.explain%",
+        "category": "Forge"
+      },
+      {
+        "command": "forge.reviewSelection",
+        "title": "%command.review%",
+        "category": "Forge"
+      },
+      {
+        "command": "forge.configure",
+        "title": "%command.configure%",
+        "category": "Forge",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "forge.reconnect",
+        "title": "%command.reconnect%",
+        "category": "Forge",
+        "icon": "$(refresh)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "forge.newChat",
+          "when": "view == forge.chat",
+          "group": "navigation@1"
+        },
+        {
+          "command": "forge.configure",
+          "when": "view == forge.chat",
+          "group": "navigation@2"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "forge.explainSelection",
+          "when": "editorHasSelection && resourceScheme == file",
+          "group": "forge@1"
+        },
+        {
+          "command": "forge.reviewSelection",
+          "when": "editorHasSelection && resourceScheme == file",
+          "group": "forge@2"
+        },
+        {
+          "command": "forge.attachFile",
+          "when": "resourceScheme == file",
+          "group": "forge@3"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Forge",
+      "properties": {
+        "forge.pythonPath": {
+          "type": "string",
+          "default": "python",
+          "scope": "machine",
+          "description": "%setting.python%"
+        },
+        "forge.enginePath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "%setting.engine%"
+        },
+        "forge.homePath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "%setting.home%"
+        },
+        "forge.requestTimeoutSeconds": {
+          "type": "number",
+          "default": 300,
+          "minimum": 30,
+          "maximum": 1800,
+          "scope": "window",
+          "description": "%setting.timeout%"
+        },
+        "forge.language": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "zh-cn",
+            "en"
+          ],
+          "default": "auto",
+          "scope": "window",
+          "description": "%setting.language%"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -p . --watch",
+    "test": "npm run compile && node --test test/*.test.cjs",
+    "vscode:prepublish": "npm run compile"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.0",
+    "@types/node": "^22.10.0",
+    "@types/vscode": "~1.96.0",
+    "typescript": "^5.7.0"
+  }
+}

@@ -244,6 +244,7 @@ class ToolRegistry:
                     execution_roots.update(root / name for name in ('modules', 'plugins', 'bundles', 'policies', 'hooks'))
                 control = any(canonical.is_relative_to(root.resolve()) for root in control_roots)
                 if (canonical.is_relative_to(host) or canonical.is_relative_to(host.parent / 'forge-gui')
+                        or canonical.is_relative_to(host.parent / 'vscode-extension')
                         or any(canonical.is_relative_to(root.resolve()) for root in execution_roots)
                         or control and name != 'edit_config'):
                     if name != 'edit_config' or args.get('patch') is not None:
