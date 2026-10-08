@@ -17,6 +17,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
+from .secrets import redact
 
 RAW_START = "<!-- RAW_JSON_START -->"
 RAW_END = "<!-- RAW_JSON_END -->"
@@ -49,7 +50,7 @@ class Entry:
     def from_raw(raw: dict[str, Any]) -> "Entry":
         return Entry(
             kind=str(raw.get("kind", "project")),
-            text=str(raw.get("text", "")),
+            text=redact(str(raw.get("text", ""))),
             source=str(raw.get("source", "human")),
             pinned=bool(raw.get("pinned", False)),
             archived=bool(raw.get("archived", False)),
@@ -95,12 +96,13 @@ class MemoryStore:
         lines += ["", RAW_START, json.dumps(payload, ensure_ascii=False, indent=2), RAW_END, ""]
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(self.path.suffix + ".tmp")
-        tmp.write_text("\n".join(lines), encoding="utf-8")
+        tmp.write_text(redact("\n".join(lines)), encoding="utf-8")
         tmp.replace(self.path)  # atomic swap; never leave a half-written memory
 
     # -- api -------------------------------------------------------------
     def remember(self, text: str, *, kind: str = "project", source: str = "human",
                  tags: Iterable[str] = ()) -> Entry:
+        text, source, tags = redact(text), redact(source), tuple(redact(list(tags)))
         if kind not in KINDS:
             raise ValueError(f"unknown memory kind {kind!r}; expected one of {KINDS}")
         with self._lock:

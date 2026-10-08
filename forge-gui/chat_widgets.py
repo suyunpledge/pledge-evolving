@@ -1215,6 +1215,8 @@ class AgentMessage(tk.Frame):
 
     # -- 正文（流式 & markdown）--
     def stream_text(self, text: str):
+        from forge.secrets import redact
+        text = redact(text)
         self._teardown_placeholder()
         self._text_source = text
         if self._stream is None:
@@ -1260,6 +1262,8 @@ class AgentMessage(tk.Frame):
         self._placeholder_label.configure(text=str(text or ""))
 
     def render_markdown(self, text: str):
+        from forge.secrets import redact
+        text = redact(text)
         self._teardown_placeholder()
         self._text_source = text
         self._has_details = self._has_details or any(block["type"] in ("code", "li", "oli", "quote", "task") for block in parse_blocks(text))
@@ -1633,6 +1637,8 @@ class MessageArea(tk.Frame):
             self.scroll.scroll_to_end()
 
     def add_user(self, text, *, ts=None):
+        from forge.secrets import redact
+        text = redact(text)
         following = self.scroll.at_bottom()
         self._prepare()
         msg = UserMessage(self.scroll.inner, text, bg=self._bg, ts=ts)

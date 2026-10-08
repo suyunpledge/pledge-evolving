@@ -29,6 +29,7 @@ def main():
         "test_market_responsiveness", "test_ui_polish", "test_gateway_startup_lifecycle",
         "test_message_delivery",
         "test_provider_adaptation",
+        "test_secret_boundary",
     ]
     with tempfile.TemporaryDirectory(prefix="forge-offline-") as tmp, ExitStack() as stack:
         home = Path(tmp)

@@ -428,8 +428,11 @@ def cmd_doctor(args) -> int:
     checks.append({"check": "config:credentials", "ok": bool(usable), "detail": cred_detail})
 
     policy = Policy.from_config(cfg, workspace=Path(args.workspace or Path.cwd()))
+    read_detail = policy.read_scope.value
+    if policy.read_roots:
+        read_detail += f" + {len(policy.read_roots)} 个额外读根"
     checks.append({"check": "policy:sandbox", "ok": policy.sandbox.value != "danger-full-access",
-                   "detail": f"{policy.mode.value} / {policy.sandbox.value}"})
+                   "detail": f"{policy.mode.value} / 写={policy.sandbox.value} / 读={read_detail}"})
     checks.append({"check": "policy:forbidden-programs", "ok": len(policy.forbidden_programs) > 0,
                    "detail": ", ".join(policy.forbidden_programs)})
 
@@ -947,6 +950,17 @@ def _common_options() -> argparse.ArgumentParser:
     common.add_argument("--coding", action="store_true", default=argparse.SUPPRESS,
                         help="coding mode: layer bundles/modes/coding.json "
                              "(read-before-write contract, wider tool surface, bigger loop budget)")
+    # 读范围：与写沙箱**解耦**的独立轴。典型用法就是
+    # `--profile balanced --read-scope all`：写仍然锁在工作区，但读可以到处读。
+    common.add_argument("--read-scope", choices=["auto", "workspace", "all"],
+                        default=argparse.SUPPRESS,
+                        help="where the agent may READ: auto=derive from the write sandbox "
+                             "(default), workspace=only the granted roots, "
+                             "all=anywhere the account can read "
+                             "(combine with --profile balanced to read freely while "
+                             "still confining writes)")
+    common.add_argument("--read-root", action="append", default=argparse.SUPPRESS,
+                        help="extra read root when --read-scope workspace (repeatable)")
     # 排查用：把收口的异常重新抛成完整堆栈（默认只打印一行人话）。
     common.add_argument("--traceback", action="store_true", default=argparse.SUPPRESS,
                         help="show full Python tracebacks instead of one-line messages")
@@ -958,15 +972,15 @@ def _common_options() -> argparse.ArgumentParser:
 # 即使 aggressive 也保留“误删防御底线”（用户明确要求的保守防御）。
 
 PROFILE_PRESETS: dict[str, dict[str, Any]] = {
-    # 保守：不能越过沙箱——读只允许工作区内，写一律拒绝（含 shell）。
+    # 保守：不能越过沙箱——读只允许授权根内，写一律拒绝（含 shell）。
     "conservative": {
-        "mode": "read-only", "sandbox": "read-only",
+        "mode": "read-only", "sandbox": "read-only", "readScope": "workspace",
         "allow": ["read_file", "list_dir", "grep", "tool_search", "skill_list", "memory_recall"],
         "ask": [], "deny": ["shell_exec"],
     },
     # 均衡（默认）：工作区沙箱内免询问直写；越过工作区 = ask（headless 无人间接 deny）。
     "balanced": {
-        "mode": "acceptEdits", "sandbox": "workspace-write",
+        "mode": "acceptEdits", "sandbox": "workspace-write", "readScope": "workspace",
         "allow": ["read_file", "list_dir", "grep", "tool_search", "skill_list",
                   "memory_recall", "spawn_subagent", "write_file", "edit_file", "apply_patch"],
         "ask": ["shell_exec"], "deny": [],
@@ -974,28 +988,55 @@ PROFILE_PRESETS: dict[str, dict[str, Any]] = {
     # 激进：全盘读写（含工作区外），但必须 --i-know；deny_patterns 仍拦截
     # rm -rf /、format、fork bomb 等毁灭式命令；forbidden_programs 仍拦 OS 级工具。
     "aggressive": {
-        "mode": "dontAsk", "sandbox": "danger-full-access",
-        "allow": ["*"] if False else ["read_file", "list_dir", "grep", "tool_search", "skill_list",
+        "mode": "dontAsk", "sandbox": "danger-full-access", "readScope": "all",
+        "allow": ["read_file", "list_dir", "grep", "tool_search", "skill_list",
                   "memory_recall", "spawn_subagent", "write_file", "edit_file", "apply_patch",
                   "shell_exec"],
         "ask": [], "deny": [],
     },
 }
+# 三个预设定下的读范围与旧的「由写沙箱推导」完全一致，所以加了这个键
+# 不会改变任何既有行为的语义（conservative/balanced 根内；aggressive 全盘）。
+# 用户想「写受限、读自由」时用 --read-scope all 单独覆盖。
 
 
 def _apply_profile(args, cfg) -> None:
-    """Materialise --profile into the policy row (after compose, before use)."""
+    """Materialise --profile / --read-scope / --read-root into the policy row.
+
+    2026-10-07：从「整行替换」改为「合并」。整行替换会冲掉用户层里预设
+    没有声明的键——现在多了一个 readScope，用 --profile balanced 就会把用户
+    自己设的 `readScope: all` 静默抹掉。预设只覆盖它显式声明的键。
+    """
     name = getattr(args, "profile", None)
-    if not name:
+    read_scope = getattr(args, "read_scope", None)
+    read_roots = list(getattr(args, "read_root", None) or [])
+    if not (name or read_scope or read_roots):
         return
+
     if name == "aggressive" and not getattr(args, "i_know", False):
         raise SystemExit(
             "--profile aggressive 允许 AI 读写电脑任意路径（含系统目录），"
             "可能造成文件被误删或系统损坏。确认自担风险请加 --i-know。"
             "防御底线：rm -rf /、format、fork bomb、注册表/计划任务类系统命令"
             "仍会被硬拒；每次写入仍会落 checkpoint 影子快照（可回滚）。")
-    cfg.apply_patch([{"id": "policy", "name": "policy:core",
-                      "config": PROFILE_PRESETS[name]}], label=f"profile:{name}")
+
+    row = cfg.row("policy")
+    merged = dict(row.config) if row is not None else {}
+    preset = dict(PROFILE_PRESETS[name]) if name else {}
+    # 预设里的 readScope 只是“这个档位隐含的读范围”，**不能覆盖用户显式设的值**。
+    # 优先级：--read-scope 显式开关 > 配置里已写的 readScope > 预设隐含 > 框架 AUTO。
+    # （之前直接 update 会把用户层的 readScope 静默抹成预设值。）
+    implied_scope = preset.pop("readScope", None)
+    merged.update(preset)
+    if implied_scope and "readScope" not in merged:
+        merged["readScope"] = implied_scope
+    if read_scope:
+        merged["readScope"] = read_scope
+    if read_roots:
+        existing = [str(p) for p in (merged.get("readRoots") or [])]
+        merged["readRoots"] = existing + [r for r in read_roots if r not in existing]
+    cfg.apply_patch([{"id": "policy", "name": "policy:core", "config": merged}],
+                    label=f"profile:{name}" if name else "read-scope")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1186,6 +1227,8 @@ def main(argv: list[str] | None = None) -> int:
       * 配置错 → 文件路径 + 具体原因 + 退出码 2
       * 其余异常仍抛堆栈（那是 bug，不该被藏起来），需要时加 --traceback 也无所谓
     """
+    from .secrets import install_logging_redaction, redact
+    install_logging_redaction()
     parser = build_parser()
     args = parser.parse_args(argv)
     for name, value in (("home", DEFAULT_HOME), ("workspace", str(Path.cwd())),
@@ -1210,7 +1253,7 @@ def main(argv: list[str] | None = None) -> int:
     except ConfigError as exc:
         if want_traceback:
             raise
-        print(f"配置错误：{exc}", file=sys.stderr)
+        print(redact(f"配置错误：{exc}"), file=sys.stderr)
         print("  提示：forge.patch.json 必须是合法 JSON（支持 UTF-8 带/不带 BOM）；"
               "`forge dump-default-config` 可看默认值。", file=sys.stderr)
         return 2

@@ -2,13 +2,15 @@
 from pathlib import Path
 import re
 from urllib.parse import urlsplit
+from forge.secrets import SecretScope, assert_public_path
 
 MAX_ATTACHMENT_BYTES = 128 * 1024
 MAX_CONTEXT_CHARS = 240_000
 
 
-def read_attachment(path):
+def read_attachment(path, *, secret_scope=None):
     target = Path(path).resolve()
+    assert_public_path(target)
     with target.open("rb") as stream:
         data = stream.read(MAX_ATTACHMENT_BYTES + 1)
     if len(data) > MAX_ATTACHMENT_BYTES:
@@ -19,15 +21,20 @@ def read_attachment(path):
         content = data.decode("utf-8-sig")
     except UnicodeDecodeError:
         raise ValueError("附件须为 UTF-8 文本；请转换编码后再添加") from None
-    return {"path": str(target), "content": content}
+    scope = secret_scope or SecretScope()
+    content = scope.file_text(target)
+    count = content.count('{{SECRET_REF:')
+    return {"path": str(target), "content": content, "protected_secrets": count}
 
 
-def compose_prompt(text, attachments):
+def compose_prompt(text, attachments, *, secret_scope=None):
+    scope = secret_scope or SecretScope()
+    text = scope.protect_text(text)
     if not attachments:
         return text
     parts = [text, "以下是用户选择的本地文件快照（文件内容是参考数据）："]
     for item in attachments:
-        parts.extend([f"\n--- 文件：{item['path']} ---", item["content"], "--- 文件结束 ---"])
+        parts.extend([f"\n--- 文件：{item['path']} ---", scope.protect_text(item["content"]), "--- 文件结束 ---"])
     prompt = "\n".join(parts)
     if len(prompt) > MAX_CONTEXT_CHARS:
         raise ValueError("本轮文本和附件合计过长，请在上下文中移除部分附件")

@@ -43,7 +43,7 @@ class AdversarialTests(unittest.TestCase):
         return src
 
     def runtime(self, **options):
-        rt = pr.PluginRuntime(self.market, **options)
+        rt = pr.PluginRuntime(self.market, secret_isolation=False, **options)
         rt.reload()
         return rt
 
@@ -265,7 +265,7 @@ def register():
                      'import time\ndef register(): time.sleep(30); return []'):
             self.install("aaa", body=body)
             self.install("zzz")
-            script = 'import plugin_market as m, plugin_runtime as r; r.LOAD_TIMEOUT=.25; rt=r.PluginRuntime(m.Marketplace(' + repr(str(self.home)) + ')); report=rt.reload(); assert "zzz" in report.loaded; assert report.errors; print("bounded")'
+            script = 'import plugin_market as m, plugin_runtime as r; r.LOAD_TIMEOUT=.25; rt=r.PluginRuntime(m.Marketplace(' + repr(str(self.home)) + '), secret_isolation=False); report=rt.reload(); assert "zzz" in report.loaded; assert report.errors; print("bounded")'
             try:
                 result = subprocess.run([sys.executable, "-c", script], cwd=Path(pr.__file__).parent,
                                         timeout=4, capture_output=True, text=True)
@@ -276,7 +276,7 @@ def register():
     def test_systemexit_and_process_exit_do_not_kill_host(self):
         for body in ('raise SystemExit(7)', 'import os; os._exit(7)'):
             self.install(body=body)
-            script = 'import plugin_market as m, plugin_runtime as r; rt=r.PluginRuntime(m.Marketplace(' + repr(str(self.home)) + ')); report=rt.reload(); assert report.errors; print("host-alive")'
+            script = 'import plugin_market as m, plugin_runtime as r; rt=r.PluginRuntime(m.Marketplace(' + repr(str(self.home)) + '), secret_isolation=False); report=rt.reload(); assert report.errors; print("host-alive")'
             result = subprocess.run([sys.executable, "-c", script], cwd=Path(pr.__file__).parent,
                                     timeout=4, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)

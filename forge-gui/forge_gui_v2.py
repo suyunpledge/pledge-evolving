@@ -53,6 +53,8 @@ from config_model import (  # noqa: E402
     save_user_layer,
 )
 from secret_store import env_for, load as _load_secrets  # noqa: E402
+from forge.secrets import redact, install_logging_redaction
+install_logging_redaction()
 from forge_client import (  # noqa: E402
     ChatMessage,
     ForgeGatewayClient,
@@ -620,6 +622,8 @@ def _probe_user_layer() -> Path | None:
 class ForgeGuiApp:
 
     def __init__(self, root: tk.Tk):
+        from forge.secrets import install_tk_exception_redaction
+        install_tk_exception_redaction(root)
         self.root = root
         desktop_prefs = load_desktop_config()
         self.root._forge_locale = i18n.Translator(desktop_prefs.get("language", "zh-CN"))
@@ -1044,6 +1048,19 @@ class ForgeGuiApp:
                                 font=FONT_SMALL, bd=1, relief=tk.FLAT)
         self._gw_menu.add_command(label=tr("重启 gateway"), image=icon_image(self.root, "refresh"), compound=tk.LEFT,
                                   command=self._toggle_gateway)
+        self._gw_menu.add_separator()
+        # 读范围：只影响「读」，不动写沙箱。默认 workspace 与 balanced 预设一致
+        # （行为零变化）；选「全部磁盘」就是「写锁在工作区、读可到处读」。
+        self._read_scope_var = tk.StringVar(
+            value=str(load_desktop_config().get("read_scope", "workspace")))
+        self._gw_menu.add_radiobutton(
+            label=tr("读取范围：仅工作区"), value="workspace",
+            variable=self._read_scope_var,
+            command=lambda: self._set_read_scope("workspace"))
+        self._gw_menu.add_radiobutton(
+            label=tr("读取范围：全部磁盘"), value="all",
+            variable=self._read_scope_var,
+            command=lambda: self._set_read_scope("all"))
         self._gw_menu.add_separator()
         self._gw_menu.add_command(label=tr("停止 gateway"), image=icon_image(self.root, "stop"), compound=tk.LEFT,
                                   command=self._stop_gateway_from_menu)
@@ -3053,12 +3070,12 @@ class ForgeGuiApp:
     def _write_sessions_io(self, sessions: list[dict]):
         temp_path = None
         try:
-            payload = {"sessions": sessions[:40]}
+            payload = redact({"sessions": sessions[:40]})
             path = self._sessions_path()
             # 写前给现有文件留 .bak（上次快照），防止误覆盖丢历史
             try:
                 if path.is_file() and path.stat().st_size > 0:
-                    shutil.copy2(path, path.with_suffix(".json.bak"))
+                    path.with_suffix(".json.bak").write_text(redact(path.read_text(encoding='utf-8')), encoding='utf-8')
             except OSError:
                 pass
             with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
@@ -3229,6 +3246,8 @@ class ForgeGuiApp:
         self.send_var.set("")
         self._update_context_summary()
         self._session_id = "s" + uuid.uuid4().hex
+        if callable(getattr(getattr(self, 'client', None), 'reset_secret_session', None)):
+            self.client.reset_secret_session()
         if hasattr(self, "chat_area"):
             self._show_chat_start()
         try:
@@ -3257,6 +3276,8 @@ class ForgeGuiApp:
                               and m.get("role") in ("user", "assistant")
                               and isinstance(m.get("content"), str)]
         self._session_id = sid
+        if callable(getattr(getattr(self, 'client', None), 'reset_secret_session', None)):
+            self.client.reset_secret_session()
         self._session_custom_title = str(session.get("title", tr("对话")))
         self._attachments.clear()
         self.send_var.set("")
@@ -4592,13 +4613,8 @@ class ForgeGuiApp:
 
     # ── API 密钥 ────────────────────────────────────────
     def _masked_key(self, key: str) -> str:
-        """只回显足够辨认的前后缀，中间用省略号（不把密钥整串放回界面）。"""
-        key = str(key or "")
-        if not key:
-            return ""
-        if len(key) <= 10:
-            return key[:2] + "…"
-        return f"{key[:6]}…{key[-4:]}"
+        """Fixed mask reveals neither a prefix/suffix nor the credential length."""
+        return "••••••••••••  Protected" if key else ""
 
     def _key_targets(self) -> list[dict]:
         """需要密钥的 provider 列表（按用户层里的真实 provider 行）。"""
@@ -4885,9 +4901,9 @@ class ForgeGuiApp:
                                             initialdir=str(self._repo_root()))
         for path in paths:
             try:
-                item = read_attachment(path)
+                item = read_attachment(path, secret_scope=self._input_secret_scope())
                 pending = [a for a in self._attachments if a["path"] != item["path"]] + [item]
-                compose_prompt(self.send_var.get(), pending)
+                compose_prompt(self.send_var.get(), pending, secret_scope=self._input_secret_scope())
                 self._attachments = pending
             except (OSError, ValueError) as exc:
                 self._set_status(f"{Path(path).name}：{exc}", "warn")
@@ -4913,7 +4929,7 @@ class ForgeGuiApp:
             self._update_context_summary()
             selected = self._chat_history if self._include_history else []
             try:
-                prompt = compose_prompt(self.send_var.get(), self._attachments)
+                prompt = compose_prompt(self.send_var.get(), self._attachments, secret_scope=self._input_secret_scope())
             except ValueError as exc:
                 prompt = str(exc)
             payload = [{"role": m.role, "content": m.content} for m in selected]
@@ -5235,6 +5251,7 @@ class ForgeGuiApp:
 
     # ── 状态 ──
     def _set_status(self, msg: str, level: str = "info"):
+        msg = redact(msg)
         color = {
             "info": C["subtext"],
             "ok": C["ok"],
@@ -5694,6 +5711,7 @@ class ForgeGuiApp:
         self._schedule_autostart_retry(self.status_var.get() or "启动失败")
 
     def _autostart_log(self, message: str) -> None:
+        message = redact(message)
         """把自启过程落到 ~/.forge/gui/autostart.log。
 
         下次再有人说「它没自己起来」，这里能看到到底停在哪一步。
@@ -5757,6 +5775,28 @@ class ForgeGuiApp:
         self._gateway_user_stopped = True       # 防止 stop 过程被自动拉起打断
         self._restart_pending = True
         self._stop_gateway()
+
+    def _set_read_scope(self, scope: str) -> None:
+        """切换文件**读取**范围（不影响写沙箱），持久化后需重启 gateway。
+
+        写权限仍由 --profile 决定：balanced 永远写不出工作区。
+        这个开关只回答“能不能读工作区之外的东西”。
+        """
+        if scope not in ("workspace", "all"):
+            return
+        try:
+            if not save_desktop_config(read_scope=scope):
+                self._set_status(tr("读取范围保存失败，请重试。"), "error")
+                return
+        except Exception as exc:  # noqa: BLE001 - 保存失败不该把 UI 弄崩
+            self._set_status(tr("读取范围保存失败：{err}").format(err=exc), "error")
+            return
+        try:
+            self._read_scope_var.set(scope)
+        except Exception:  # noqa: BLE001
+            pass
+        label = tr("全部磁盘") if scope == "all" else tr("仅工作区")
+        self._set_status(tr("读取范围：{x}（重启 gateway 后生效）").format(x=label), "info")
 
     def _stop_gateway_from_menu(self):
         """用户主动停止：之后不再自动拉起，直到再次启动。"""
@@ -5851,6 +5891,11 @@ class ForgeGuiApp:
                # 访问要 --profile aggressive + ack，不默认开）。
                "--tools", "--workspace", str(self.run_py.parent),
                "--profile", "balanced"]
+        # 读范围独立于写沙箱：只追传 --read-scope，不动 --profile。
+        # 默认 workspace 与 balanced 预设一致，行为零变化。
+        _read_scope = str(load_desktop_config().get("read_scope", "workspace"))
+        if _read_scope in ("workspace", "all"):
+            cmd.extend(["--read-scope", _read_scope])
         if model_map:
             cmd.extend(["--model-map", model_map])
         provider_conf = upstream.get("config") or upstream
@@ -6529,6 +6574,20 @@ class ForgeGuiApp:
         self.send_var.set(last_user)
         self._do_send()
 
+    def _input_secret_scope(self):
+        scope = getattr(self.client, 'secret_scope', None)
+        if scope is not None:
+            return scope
+        # Trusted embedded/test clients still get one scope per conversation.
+        previous = getattr(self, '_fallback_secret_scope', None)
+        sid = getattr(self, '_session_id', '')
+        if previous is None or previous[0] != sid:
+            if previous is not None:
+                previous[1].close()
+            from forge.secrets import SecretScope
+            previous = self._fallback_secret_scope = (sid, SecretScope())
+        return previous[1]
+
     def _do_send(self):
         if self._sending:
             return
@@ -6538,7 +6597,7 @@ class ForgeGuiApp:
         if self._run_local_command(text):
             return
         try:
-            prompt = compose_prompt(text, self._attachments)
+            prompt = compose_prompt(text, self._attachments, secret_scope=self._input_secret_scope())
         except ValueError as exc:
             self._set_status(str(exc), "warn")
             return

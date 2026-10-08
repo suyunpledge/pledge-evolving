@@ -137,7 +137,10 @@ class CacheWarmth:
         # vendor -> {fingerprint: last_seen_epoch}
         self._seen: dict[str, dict[str, float]] = {}
         if self.path and self.path.is_file():
-            self._load()
+            # Windows readers deny atomic replacement while their handle is
+            # open. Even the initial read must share the transaction lock.
+            with self._transaction():
+                pass
 
     # -- persistence ------------------------------------------------------
     def _load(self) -> None:

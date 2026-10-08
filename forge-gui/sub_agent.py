@@ -89,27 +89,30 @@ def provider_chat(provider: dict, env: dict, messages: list[dict], *,
     if not model:
         model = _default_model
     endpoint = url.rstrip("/") + "/chat/completions"
-    payload = json.dumps({
+    from forge.secrets import SecretScope, VendorCredential, redact
+    credential = VendorCredential(key, url)
+    scope = SecretScope()
+    payload = json.dumps(scope.protect({
         "model": model,
         "messages": messages,
         "temperature": temperature,
         "max_tokens": max_tokens,
         "stream": False,
-    }, ensure_ascii=False).encode("utf-8")
+    }), ensure_ascii=False).encode("utf-8")
     request = urllib.request.Request(
         endpoint, data=payload, method="POST",
         headers={"Content-Type": "application/json",
-                 "Authorization": f"Bearer {key}"})
+                 **credential._header(endpoint, wire='openai')})
     try:
         with open_response(request, timeout=timeout_s, cancel_event=cancel_event) as resp:
-            data = json.loads(resp.read().decode("utf-8", "replace"))
+            data = redact(json.loads(resp.read().decode("utf-8", "replace")))
     except RequestCancelled:
         raise
     except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", "replace")[:200]
+        body = redact(exc.read().decode("utf-8", "replace"))[:200]
         raise RuntimeError(f"HTTP {exc.code}: {body}") from None
     except Exception as exc:  # URLError / timeout / JSON
-        raise RuntimeError(str(exc) or type(exc).__name__) from None
+        raise RuntimeError(redact(str(exc) or type(exc).__name__)) from None
     try:
         content = data["choices"][0]["message"].get("content") or ""
     except (KeyError, IndexError, TypeError):

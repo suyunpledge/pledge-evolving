@@ -335,7 +335,9 @@ class ExecutionReviewTests(unittest.TestCase):
                 self.rfile.read(int(self.headers["content-length"]))
                 self.send_response(200); self.send_header("Content-Type", "text/event-stream")
                 self.send_header("Connection", "close"); self.end_headers()
-                self.wfile.write(b'data: {"choices":[{"delta":{"content":"first"}}]}\n\n'); self.wfile.flush()
+                # Terminal punctuation makes this benign text unambiguous:
+                # secret prefixes at a chunk boundary must be held, not leaked.
+                self.wfile.write(b'data: {"choices":[{"delta":{"content":"first."}}]}\n\n'); self.wfile.flush()
                 release.wait(4)
                 self.wfile.write(b"data: [DONE]\n\n"); self.close_connection = True
         upstream = ThreadingHTTPServer(("127.0.0.1", 0), Upstream)

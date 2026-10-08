@@ -21,6 +21,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Callable
 from http_transport import open_response, RequestCancelled
+from forge.secrets import SecretScope, redact, VendorCredential
 
 
 @dataclass
@@ -32,7 +33,7 @@ class ChatMessage:
     tool_call_id: str = ""
     reasoning_content: str = ""
 
-    def to_dict(self) -> dict:
+    def to_dict(self, secret_scope=None) -> dict:
         d: dict = {"role": self.role, "content": self.content}
         if self.tool_calls:
             d["tool_calls"] = self.tool_calls
@@ -40,7 +41,7 @@ class ChatMessage:
             d["tool_call_id"] = self.tool_call_id
         if self.reasoning_content:
             d["reasoning_content"] = self.reasoning_content
-        return d
+        return secret_scope.protect(d) if secret_scope is not None else redact(d)
 
 
 @dataclass
@@ -55,16 +56,17 @@ class CompletionResult:
 
 
 class GatewayError(RuntimeError):
-    pass
+    def __init__(self, message):
+        super().__init__(redact(str(message)))
 
 
 def http_error_detail(error, limit=500):
     try:
         if hasattr(error, "_forge_detail"):
-            return error._forge_detail[:limit]
-        return error.read(limit).decode("utf-8", errors="replace")
+            return redact(error._forge_detail)[:limit]
+        return redact(error.read(limit).decode("utf-8", errors="replace"))
     except (OSError, ValueError, http.client.HTTPException):
-        return str(error.reason)
+        return redact(str(error.reason))
     finally:
         error.close()
 
@@ -79,21 +81,29 @@ class ForgeGatewayClient:
     def __init__(self, base_url: str = "http://127.0.0.1:8799",
                  api_key: str = "", timeout: float = 60.0):
         self.base_url = base_url.rstrip("/")
-        self.api_key = api_key
+        self._credential = VendorCredential(api_key, self.base_url)
+        self.api_key = self._credential.ref
+        self.secret_scope = SecretScope()
+        self.secret_session = __import__('uuid').uuid4().hex
         self.timeout = timeout
         self.plugin_policy_version = 0
 
     # ── 工具方法 ──
+    def reset_secret_session(self):
+        self.secret_scope.close()
+        self.secret_scope = SecretScope()
+        self.secret_session = __import__('uuid').uuid4().hex
+
     def _request(self, method: str, path: str, body: dict | None = None,
                  stream: bool = False) -> urllib.request.Request:
         url = f"{self.base_url}{path}"
         data = None
         headers = {"Content-Type": "application/json",
-                   "User-Agent": "forge-gui/0.1"}
+                   "User-Agent": "forge-gui/0.1", "X-Forge-Secret-Scope": self.secret_session}
         if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
+            headers.update(self._credential._header(url, wire='openai'))
         if body is not None:
-            data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+            data = json.dumps(self.secret_scope.protect(body), ensure_ascii=False).encode("utf-8")
         req = urllib.request.Request(url, data=data, method=method, headers=headers)
         return req
 
@@ -104,11 +114,11 @@ class ForgeGatewayClient:
         req = self._request("GET", "/v1/tools")
         try:
             with open_response(req, timeout=self.timeout if timeout is None else timeout, cancel_event=None) as resp:
-                data = json.loads(resp.read().decode("utf-8", "replace"))
+                data = redact(json.loads(resp.read().decode("utf-8", "replace")))
         except urllib.error.HTTPError as e:
-            raise GatewayError(f"HTTP {e.code}: {http_error_detail(e)}") from e
+            raise GatewayError(f"HTTP {e.code}: {http_error_detail(e)}") from None
         except (urllib.error.URLError, OSError) as e:
-            raise GatewayError(str(e)) from e
+            raise GatewayError(str(e)) from None
         tools = data.get("data") if isinstance(data, dict) else None
         self.plugin_policy_version = (1 if isinstance(data, dict)
             and type(data.get("plugin_policy_version")) is int and data["plugin_policy_version"] == 1 else 0)
@@ -129,11 +139,11 @@ class ForgeGatewayClient:
         req = self._request("POST", "/v1/tools/call", body)
         try:
             with open_response(req, timeout=self.timeout if timeout is None else timeout, cancel_event=None) as resp:
-                return json.loads(resp.read().decode("utf-8", "replace"))
+                return redact(json.loads(resp.read().decode("utf-8", "replace")))
         except urllib.error.HTTPError as e:
-            raise GatewayError(f"HTTP {e.code}: {http_error_detail(e)}") from e
+            raise GatewayError(f"HTTP {e.code}: {http_error_detail(e)}") from None
         except (urllib.error.URLError, OSError) as e:
-            raise GatewayError(str(e)) from e
+            raise GatewayError(str(e)) from None
 
     # ── 健康检查 ──
     def health(self, *, cancel_event=None) -> tuple[bool, str]:
@@ -147,11 +157,11 @@ class ForgeGatewayClient:
             raise GenerationCancelled("已停止生成") from exc
         except urllib.error.HTTPError as e:
             e.close()
-            return False, f"HTTP {e.code} {e.reason}"
+            return False, redact(f"HTTP {e.code} {e.reason}")
         except (urllib.error.URLError, socket.timeout, ConnectionRefusedError) as e:
-            return False, f"连接失败：{e}"
+            return False, redact(f"连接失败：{e}")
         except Exception as e:
-            return False, f"{type(e).__name__}: {e}"
+            return False, redact(f"{type(e).__name__}: {e}")
 
     # ── 非流式 ──
     def chat(self, messages: list[ChatMessage], model: str = "default",
@@ -159,7 +169,7 @@ class ForgeGatewayClient:
              reasoning_effort: str | None = None) -> CompletionResult:
         body = {
             "model": model,
-            "messages": [m.to_dict() for m in messages],
+            "messages": [m.to_dict(self.secret_scope) for m in messages],
             "temperature": temperature,
             "stream": False,
         }
@@ -169,18 +179,19 @@ class ForgeGatewayClient:
             body["reasoning_effort"] = reasoning_effort
         req = self._request("POST", "/v1/chat/completions", body)
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                raw_text = resp.read().decode("utf-8", errors="replace")
+            with open_response(req, timeout=self.timeout, cancel_event=None) as resp:
+                from forge.secret_http import redact_response
+                raw_text = redact_response(resp.read()).decode('utf-8')
         except urllib.error.HTTPError as e:
             err_body = http_error_detail(e)
-            raise GatewayError(f"HTTP {e.code}: {err_body}") from e
+            raise GatewayError(f"HTTP {e.code}: {err_body}") from None
         except (urllib.error.URLError, socket.timeout) as e:
-            raise GatewayError(f"网络错误：{e}") from e
+            raise GatewayError(f"网络错误：{e}") from None
 
         try:
             data = json.loads(raw_text)
         except json.JSONDecodeError as e:
-            raise GatewayError(f"非 JSON 响应：{raw_text[:200]}") from e
+            raise GatewayError(f"非 JSON 响应：{raw_text[:200]}") from None
 
         choices = data.get("choices") if isinstance(data, dict) else None
         if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
@@ -212,7 +223,7 @@ class ForgeGatewayClient:
         check_cancelled()
         body = {
             "model": model,
-            "messages": [m.to_dict() for m in messages],
+            "messages": [m.to_dict(self.secret_scope) for m in messages],
             "temperature": temperature,
             "stream": True,
         }
@@ -227,9 +238,15 @@ class ForgeGatewayClient:
         model_name = ""
         completed = False
         tool_acc: dict[int, dict] = {}   # 按 index 累积 delta.tool_calls
+        from forge.secret_http import SecretSSEFilter
+        fence = SecretSSEFilter()
         try:
             with open_response(req, timeout=self.timeout, cancel_event=cancel_event) as resp:
-                for line in resp:
+                def safe_lines():
+                    for upstream_line in resp:
+                        yield from fence.feed(upstream_line).splitlines(keepends=True)
+                    yield from fence.finish().splitlines(keepends=True)
+                for line in safe_lines():
                     check_cancelled()
                     raw = line.decode("utf-8", errors="replace").rstrip("\n")
                     if not raw.startswith("data:"):
@@ -291,13 +308,13 @@ class ForgeGatewayClient:
             raise GenerationCancelled("已停止生成") from exc
         except urllib.error.HTTPError as e:
             err_body = http_error_detail(e)
-            raise GatewayError(f"HTTP {e.code}: {err_body}") from e
+            raise GatewayError(f"HTTP {e.code}: {err_body}") from None
         except (urllib.error.URLError, socket.timeout) as e:
             check_cancelled()
-            raise GatewayError(f"网络错误：{e}") from e
+            raise GatewayError(f"网络错误：{e}") from None
         except OSError as e:
             check_cancelled()
-            raise GatewayError(f"流式连接中断：{e}") from e
+            raise GatewayError(f"流式连接中断：{e}") from None
         check_cancelled()
         if not completed:
             raise GatewayError("流式连接提前结束，回复尚未完成；请重试。")

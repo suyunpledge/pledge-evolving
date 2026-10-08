@@ -112,7 +112,7 @@ class ContractTests(unittest.TestCase):
             with self.assertRaises(GenerationCancelled):
                 ForgeGatewayClient().stream_chat([], on_chunk=receive, cancel_event=event)
         self.assertEqual(chunks, ["x"])
-        with patch("forge_client.urllib.request.urlopen", return_value=io.BytesIO(chunk)):
+        with patch("http_transport.open_authenticated", return_value=io.BytesIO(chunk)):
             with self.assertRaises(ValueError):
                 ForgeGatewayClient().stream_chat([], on_chunk=lambda _: (_ for _ in ()).throw(ValueError()))
 
@@ -121,7 +121,7 @@ class ContractTests(unittest.TestCase):
         def open_request(request, timeout):
             captured.append(json.loads(request.data.decode("utf-8")))
             return io.BytesIO(b"data: [DONE]\n")
-        with patch("forge_client.urllib.request.urlopen", side_effect=open_request):
+        with patch("http_transport.open_authenticated", side_effect=open_request):
             client = ForgeGatewayClient()
             client.stream_chat([], reasoning_effort="high")
             client.stream_chat([], reasoning_effort=None)

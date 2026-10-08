@@ -36,3 +36,9 @@ forge-gui/desktop/forge.png
 *.bak-*
 _bak-*/
 mimo26-test-artifacts/
+
+# 凭据文件：本机环境与本地密钥库（永不入库）
+.env
+*.env
+!.env.example
+forge-gui/.secret_store.json

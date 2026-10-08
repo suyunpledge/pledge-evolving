@@ -103,7 +103,7 @@ class TempHomeCase(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory(prefix="forge-rt-")
         self.home = Path(self._tmp.name)
         self.market = pm.Marketplace(home=self.home)
-        self.rt = pr.PluginRuntime(self.market)
+        self.rt = pr.PluginRuntime(self.market, secret_isolation=False)
 
     def tearDown(self):
         self._tmp.cleanup()
@@ -217,7 +217,7 @@ class TempHomeCase(unittest.TestCase):
 
     def test_timeout_kills_call(self):
         make_plugin(self.market, "sleeper", body=SLEEP_PLUGIN)
-        rt = pr.PluginRuntime(self.market, exec_timeout=0.5)
+        rt = pr.PluginRuntime(self.market, exec_timeout=0.5, secret_isolation=False)
         rt.reload()
         import time
         t = time.perf_counter()
@@ -279,7 +279,7 @@ class NoPollutionCase(unittest.TestCase):
             home = Path(td)
             market = pm.Marketplace(home=home)
             make_plugin(market, "pollute", body=GOOD_PLUGIN)
-            rt = pr.PluginRuntime(market)
+            rt = pr.PluginRuntime(market, secret_isolation=False)
             rt.reload()
             leaked = [k for k in sys.modules if k.startswith("forge_plugin_")]
             self.assertEqual(leaked, [])

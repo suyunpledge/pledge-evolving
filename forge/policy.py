@@ -81,6 +81,31 @@ class Sandbox(str, Enum):
             return False
 
 
+class ReadScope(str, Enum):
+    """Where the agent may *read*. Deliberately independent of the write sandbox.
+
+    Why this is its own axis: confining writes to the workspace is a safety
+    property most people want, but forcing the same confinement onto reads
+    breaks legitimate work (reading a file in another project, a shared
+    reference directory, a docs folder). Conversely, granting reads everywhere
+    used to require ``danger-full-access`` — which also unlocks unrestricted
+    *writes*, a much bigger permission than the user asked for.
+
+    So the user states it separately:
+
+        AUTO       derive from the write sandbox (backward-compatible default)
+        WORKSPACE  only the granted roots (workspace + ``read_roots``)
+        ALL        anywhere the process account can read
+
+    ``read_roots`` is what makes WORKSPACE mean "these specific places"
+    instead of "only the one project directory".
+    """
+
+    AUTO = "auto"
+    WORKSPACE = "workspace"
+    ALL = "all"
+
+
 class Decision(str, Enum):
     ALLOW = "allow"
     ASK = "ask"
@@ -145,7 +170,7 @@ WRITE_TOOLS = {"write_file", "edit_file", "apply_patch", "shell_exec", "notebook
 
 #: Tools whose job is to read a filesystem path (path / root argument).
 #: The read sandbox confines these to the granted root outside FULL_ACCESS.
-READ_PATH_TOOLS = {"read_file", "read_range", "file_outline", "list_dir", "grep"}
+READ_PATH_TOOLS = {"read_file", "read_range", "file_outline", "list_dir", "grep", "edit_config"}
 
 
 @dataclass(frozen=True)
@@ -168,6 +193,13 @@ class Policy:
     deny_patterns: tuple[str, ...] = DEFAULT_DENY_PATTERNS
     non_interactive: bool = False
 
+    # -- read scope (independent of the write sandbox) --------------------
+    # AUTO reproduces the historical behaviour exactly: FULL_ACCESS reads
+    # anywhere, the sandboxed tiers read only inside the workspace. Stating it
+    # explicitly is what lets a user ask for "write confined, read everywhere".
+    read_scope: ReadScope = ReadScope.AUTO
+    read_roots: tuple[Path, ...] = ()
+
     # -- construction ----------------------------------------------------
     @classmethod
     def from_config(cls, cfg, *, workspace: Path | None = None, non_interactive: bool = True) -> "Policy":
@@ -180,6 +212,8 @@ class Policy:
             allow=tuple(cfg.get("policy", "allow", ()) or ()),
             ask=tuple(cfg.get("policy", "ask", ()) or ()),
             deny=tuple(cfg.get("policy", "deny", ()) or ()),
+            read_scope=ReadScope(str(cfg.get("policy", "readScope", ReadScope.AUTO.value))),
+            read_roots=tuple(Path(str(p)) for p in (cfg.get("policy", "readRoots", ()) or ())),
             non_interactive=non_interactive,
         )
 
@@ -196,6 +230,8 @@ class Policy:
             forbidden_programs=self.forbidden_programs,
             deny_patterns=self.deny_patterns,
             non_interactive=self.non_interactive,
+            read_scope=self.read_scope,
+            read_roots=self.read_roots,
         )
 
     # -- evaluation ------------------------------------------------------
@@ -208,6 +244,19 @@ class Policy:
     ) -> Decision:
         args = args or {}
 
+        # Secret permissions are an independent boundary, including in BYPASS.
+        if tool in {"secret.resolve", "secret.export", "resolve_secret", "export_secret"}:
+            return Decision.DENY
+        if tool.startswith("secret."):
+            if self._matches(self.deny, tool):
+                return Decision.DENY
+            if tool == "secret.reference":
+                return Decision.ASK if self._matches(self.ask, tool) else Decision.ALLOW
+            if tool in {"secret.use", "secret.create", "secret.replace", "secret.delete"}:
+                # Only an exact host grant lifts ASK; broad '*' and bypass do not.
+                return Decision.ALLOW if tool in self.allow and tool not in self.ask else Decision.ASK
+            return Decision.DENY
+
         # 1. explicit denies (tool rules and content patterns) always win
         if self._matches(self.deny, tool):
             return Decision.DENY
@@ -216,7 +265,7 @@ class Policy:
             return Decision.DENY
 
         # 2. sandbox: writes outside the granted roots (only write tools move data)
-        if tool in WRITE_TOOLS:
+        if tool in WRITE_TOOLS or (tool == "edit_config" and args.get("patch") is not None):
             # Collect all candidate paths from every source so container tools
             # like apply_patch (patches[].path / edits[].path) are not silently
             # skipped when the top-level 'path' key is absent.
@@ -233,20 +282,21 @@ class Policy:
                 targets = [str(v) for k, v in args.items()
                            if k in {"path", "file", "target"} and v]
             for target in targets:
-                if not self.sandbox.allows_write(self.abs_path(target), self.workspace):
+                if not self.allows_write(self.abs_path(target)):
                     return Decision.DENY
-        # 2b. sandbox: reads are confined too. Tools that take a filesystem
-        # path to read (path / root keys) must stay inside the granted root
-        # under the sandboxed tiers — otherwise read_file("~/.ssh/id_rsa")
-        # silently exfiltrates whatever the process account can see.
-        if tool in READ_PATH_TOOLS and self.sandbox is not Sandbox.FULL_ACCESS:
+        # 2b. read scope: its own axis. Tools that take a filesystem path to
+        # read (path / root keys) are gated by ``read_scope``, not by the write
+        # sandbox — otherwise read_file("~/.ssh/id_rsa") silently exfiltrates
+        # whatever the process account can see, but forcing the same
+        # confinement when the user granted read-anywhere breaks real work.
+        if tool in READ_PATH_TOOLS and not self.read_allows_anywhere():
             read_targets = list(touching)
             if not read_targets:
                 key = "root" if tool == "grep" else "path"
                 raw = args.get(key)
                 read_targets = [str(raw)] if raw else []
             for target in read_targets:
-                if not self.sandbox.allows_read(self.abs_path(target), self.workspace):
+                if not self.allows_read(self.abs_path(target)):
                     return Decision.DENY
         if tool == "shell_exec" and self.sandbox is Sandbox.READ_ONLY:
             return Decision.DENY
@@ -266,6 +316,42 @@ class Policy:
         """Resolve a tool argument against the workspace, not the process cwd."""
         path = Path(str(target))
         return path if path.is_absolute() else (self.workspace / path)
+
+    # -- path gate -------------------------------------------------------
+    def granted_read_roots(self) -> tuple[Path, ...]:
+        """读权限覆盖的根：工作区 + 用户额外声明的读根。"""
+        return (self.workspace, *self.read_roots)
+
+    def read_allows_anywhere(self) -> bool:
+        """读范围是否完全不设限（用于跳过多余的逐路径 resolve）。"""
+        if self.read_scope is ReadScope.ALL:
+            return True
+        if self.read_scope is ReadScope.AUTO:
+            return self.sandbox is Sandbox.FULL_ACCESS
+        return False
+
+    def allows_read(self, path: Path) -> bool:
+        """单一读入口——工具处理器与策略评估都走这里，不再直接问 sandbox。
+
+        一个入口很重要：只要有一处绕过去，readScope=all 就会在那一处失效。
+        """
+        if self.read_scope is ReadScope.ALL:
+            return True
+        if self.read_scope is ReadScope.AUTO:
+            return self.sandbox is Sandbox.FULL_ACCESS or self._within_root(path, self.workspace)
+        return any(self._within_root(path, root) for root in self.granted_read_roots())
+
+    def allows_write(self, path: Path) -> bool:
+        """单一写入入口（封装既有的写沙箱语义，供处理器直接调用）。"""
+        return self.sandbox.allows_write(path, self.workspace)
+
+    @staticmethod
+    def _within_root(path: Path, root: Path) -> bool:
+        try:
+            Path(path).resolve().relative_to(Path(root).resolve())
+            return True
+        except (ValueError, OSError):
+            return False
 
     def _baseline(self, tool: str) -> Decision:
         writes = tool in WRITE_TOOLS
@@ -328,6 +414,7 @@ __all__ = [
     "Decision",
     "Mode",
     "Policy",
+    "ReadScope",
     "Sandbox",
     "DEFAULT_DENY_PATTERNS",
     "DEFAULT_FORBIDDEN_PROGRAMS",

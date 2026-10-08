@@ -12,12 +12,14 @@ import urllib.request
 import uuid
 
 from .model import _plan_and_shape
+from .secrets import redact
+from .secret_http import open_authenticated, redact_response
 
 
 class BatchExecutor:
     MAX_BYTES = 8 * 1024 * 1024
 
-    def __init__(self, provider, home, *, opener=urllib.request.urlopen, timeout=60):
+    def __init__(self, provider, home, *, opener=open_authenticated, timeout=60):
         self.provider = provider
         self.home = Path(home) / "batch-jobs"
         self.opener = opener
@@ -27,13 +29,21 @@ class BatchExecutor:
         # The supplied endpoint is the user's provider; never follow a remote
         # result URL or send the API key to a URL embedded in a result.
         request = urllib.request.Request(self.provider.url(path), data=body,
-                    headers={**self.provider.auth_headers(), "content-type": content_type},
+                    headers={**self.provider._execution_headers(self.provider.url(path)), "content-type": content_type},
                     method=method or ("POST" if body is not None else "GET"))
-        with self.opener(request, timeout=self.timeout) as response:
-            data = response.read(self.MAX_BYTES + 1)
+        try:
+            with self.opener(request, timeout=self.timeout) as response:
+                data = response.read(self.MAX_BYTES + 1)
+        except Exception as exc:
+            message = redact('Batch HTTP request failed: ' + str(exc))
+            if isinstance(exc, TimeoutError):
+                raise TimeoutError(message) from None
+            if isinstance(exc, ConnectionError):
+                raise ConnectionError(message) from None
+            raise RuntimeError(message) from None
         if len(data) > self.MAX_BYTES:
             raise ValueError("Batch response exceeds 8 MiB; download through the vendor console")
-        return data
+        return redact_response(data)
 
     @staticmethod
     def _identifier(value):
@@ -46,10 +56,12 @@ class BatchExecutor:
         self.home.mkdir(parents=True, exist_ok=True)
         path = self.home / (job_id + ".json")
         temp = path.with_suffix("." + uuid.uuid4().hex + ".tmp")
-        temp.write_text(json.dumps(job, ensure_ascii=False), encoding="utf-8")
+        temp.write_text(json.dumps(redact(job), ensure_ascii=False), encoding="utf-8")
         temp.replace(path)
 
     def submit(self, requests):
+        from .secrets import SecretScope
+        scope = SecretScope()
         if not isinstance(requests, list) or not 1 <= len(requests) <= 100:
             raise ValueError("A batch must contain 1–100 requests")
         rows, plans, ids = [], [], set()
@@ -65,6 +77,7 @@ class BatchExecutor:
                 raise ValueError("Batch body requires model")
             if self.provider.wire != "openai":
                 raise ValueError("Batch requires an OpenAI-compatible endpoint")
+            payload = scope.protect(payload)
             shaped, plan = _plan_and_shape(payload, payload.get("messages") or [], self.provider,
                 str(payload["model"]), batch=True, batch_submission=True, interactive=False)
             rows.append({"custom_id": custom_id, "method": "POST", "url": "/v1/chat/completions", "body": shaped})

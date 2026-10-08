@@ -195,6 +195,8 @@ class Ledger:
             "by": candidate.decision_by or "system",
             **extra,
         }
+        from .secrets import redact
+        entry = redact(entry)
         self.entries.append(entry)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.path.open("a", encoding="utf-8") as fh:

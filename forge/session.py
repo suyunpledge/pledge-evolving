@@ -19,6 +19,23 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator
+from .secrets import redact
+
+
+def _redact_record(record):
+    """Forge's public rollout identity is not an HTTP session credential.
+
+    Only the host-owned top-level session_id is exempt from field detection;
+    its content still passes ordinary detection and known-value redaction.
+    Nested configuration/session-token fields retain the normal secret gate.
+    """
+    if not isinstance(record, dict):
+        return redact(record)
+    public_id = record.get('session_id')
+    safe = redact({k: v for k, v in record.items() if k != 'session_id'})
+    if 'session_id' in record:
+        safe['session_id'] = redact(public_id)
+    return safe
 
 
 def new_id(prefix: str = "s") -> str:
@@ -34,7 +51,7 @@ class Event:
 
     def to_line(self) -> str:
         return json.dumps(
-            {**self.data, "ordinal": self.ordinal, "type": self.type, "ts": self.ts},
+            _redact_record({**self.data, "ordinal": self.ordinal, "type": self.type, "ts": self.ts}),
             ensure_ascii=False,
         )
 
@@ -57,8 +74,8 @@ class Session:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.events: list[Event] = []
-        self.meta: dict[str, Any] = dict(meta or {})
-        self._provided_meta = dict(meta or {})
+        self.meta: dict[str, Any] = _redact_record(dict(meta or {}))
+        self._provided_meta = _redact_record(dict(meta or {}))
         self.meta.setdefault("session_id", self.path.stem)
         self.meta.setdefault("started_at", time.time())
         if forked_from:
@@ -104,7 +121,7 @@ class Session:
             Event.from_line(tail.decode("utf-8"))
         except (ValueError, UnicodeError):
             backup = self.path.with_name(self.path.name + ".incomplete-" + uuid.uuid4().hex)
-            backup.write_bytes(tail)
+            backup.write_text(redact(tail.decode('utf-8', 'replace')), encoding='utf-8')
             with self.path.open("r+b") as stream:
                 stream.truncate(boundary)
         else:
@@ -129,14 +146,14 @@ class Session:
         if self._fh is None:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             self._fh = self.path.open("a", encoding="utf-8")
-        self._fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        self._fh.write(json.dumps(_redact_record(payload), ensure_ascii=False) + "\n")
         self._fh.flush()
 
     def append(self, etype: str, **data: Any) -> Event:
         if self._fh is None:
             self.open()
         ordinal = (self.events[-1].ordinal + 1) if self.events else 1
-        event = Event(ordinal=ordinal, type=etype, data=data)
+        event = Event(ordinal=ordinal, type=etype, data=redact(data))
         # one write path only: never a second channel that can disagree with it
         if self._fh is None:
             self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -164,7 +181,9 @@ class Session:
             for line in fh:
                 line = line.strip()
                 if line:
-                    yield Event.from_line(line)
+                    event = Event.from_line(line)
+                    event.data = _redact_record(event.data)
+                    yield event
 
     def messages(self) -> list[dict[str, Any]]:
         """Project the log back into chat messages for the next turn."""
@@ -244,7 +263,7 @@ class SessionIndex:
             if not line.strip():
                 continue
             try:
-                raw = json.loads(line)
+                raw = _redact_record(json.loads(line))
                 if not isinstance(raw, dict):
                     raise ValueError("session record must be an object")
                 total_tokens = int(raw.get("total_tokens", 0) or 0)

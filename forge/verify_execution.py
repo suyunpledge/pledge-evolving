@@ -87,7 +87,7 @@ def probe(provider, output, *, limit, ttl_wait, shared_path):
                              "reasoning_tokens": usage.reasoning_tokens}
                 row.update(plan=extra["plan"], text_present=bool(text), tool_calls=len(extra.get("tool_calls") or []))
             else:
-                cfg = GatewayConfig(upstream=provider.base_url, api_key=provider.api_key, port=0,
+                cfg = GatewayConfig(upstream=provider.base_url, _credential=provider._credential, port=0,
                     upstream_wire=provider.wire, wire="openai", warmth_path=shared_path,
                     provider_options={"cacheControl": provider.cache_control, "expectedCalls": 4})
                 server = serve(cfg)

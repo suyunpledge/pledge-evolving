@@ -52,6 +52,9 @@ def warmth_store() -> CacheWarmth:
 
 
 class TransportError(RuntimeError):
+    def __init__(self, message, *args):
+        from .secrets import redact
+        super().__init__(redact(str(message)), *args)
     retryable = True
 
 
@@ -117,6 +120,26 @@ class Provider:
     flex: bool = False
     defer: bool = False
     max_defer_seconds: float = 0
+    _credential: Any = field(default=None, repr=False, compare=False)
+    _secret_scope: Any = field(default=None, init=False, repr=False, compare=False)
+
+    def __post_init__(self):
+        from .secrets import SecretScope, VendorCredential
+        self._secret_scope = SecretScope()
+        from urllib.parse import urlsplit, parse_qsl
+        from .secrets import secret_field
+        parts = urlsplit(self.base_url)
+        if parts.username is not None or any(secret_field(k) for k, _ in parse_qsl(parts.query)):
+            raise BadRequest('Credentials embedded in provider URLs are unsupported; use protected authentication fields')
+        self._credential = self._credential or VendorCredential(str(self.api_key), self.base_url)
+        self.api_key = self._credential.ref
+        # Custom authentication headers also belong to the trusted boundary.
+        self._header_credentials = {}
+        for name, value in self.headers.items():
+            if secret_field(name):
+                self._header_credentials[name] = VendorCredential(str(value), self.base_url)
+        self.headers = {k: (self._header_credentials[k].ref if k in self._header_credentials else v)
+                        for k, v in self.headers.items()}
 
     def profile(self) -> VendorProfile:
         """该 provider 的厂商计费画像（按声明的默认模型识别）。"""
@@ -155,9 +178,16 @@ class Provider:
         return self.url(chat_request_path(self.service, self.wire, self.base_url))
 
     def auth_headers(self) -> dict[str, str]:
+        """Public inspection returns opaque references, never credentials."""
         if self.wire == "anthropic":
-            return {"x-api-key": self.api_key, "anthropic-version": "2023-06-01"}
-        return {"Authorization": f"Bearer {self.api_key}"}
+            return {"x-api-key": self.api_key, "anthropic-version": "2023-06-01", **self.headers}
+        return {"Authorization": f"Bearer {self.api_key}", **self.headers}
+
+    def _execution_headers(self, url: str) -> dict[str, str]:
+        headers = {**self._credential._header(url, wire=self.wire), **self.headers}
+        for name, credential in self._header_credentials.items():
+            headers[name] = credential._header(url, wire='anthropic')['x-api-key']
+        return headers
 
 
 @dataclass
@@ -282,7 +312,7 @@ def _plan_and_shape(payload: dict[str, Any], messages: list[dict[str, Any]],
 
     fingerprint = prefix_fingerprint(payload, model=model,
                                      endpoint=provider.base_url,
-                                     account=provider.api_key, wire=provider.wire,
+                                     account=provider._credential._account_fingerprint, wire=provider.wire,
                                      cache_mode=provider.cache_control)
     ctx = PlanContext(
         profile=profile, model=model,
@@ -395,6 +425,10 @@ class HttpTransport:
 
     def complete(self, provider: Provider, model: str, messages: list[dict[str, Any]],
                  **options: Any) -> tuple[str, Usage]:
+        from .secrets import SecretScope
+        scope = options.pop('secret_scope', None) or SecretScope()
+        messages = scope.protect(messages)
+        options = scope.protect(options)
         # Proactive throttle BEFORE the wire: providers with rpm>0 (e.g.
         # StepFun free tier at 10 RPM) get slot-reserved so bursts die at
         # the 429 stage far less often. No-op for rpm<=0 providers.
@@ -464,14 +498,18 @@ class HttpTransport:
         except ValueError as exc:
             raise BadRequest(str(exc)) from exc
 
+        payload = scope.protect(payload)
         body = json.dumps(payload, ensure_ascii=False).encode()
-        headers = {"content-type": "application/json", **provider.auth_headers(), **provider.headers}
+        headers = {"content-type": "application/json", **provider._execution_headers(url)}
         request = urllib.request.Request(url, data=body, headers=headers, method="POST")
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                raw = json.loads(response.read().decode("utf-8", "replace"))
+            from .secret_http import open_authenticated
+            with open_authenticated(request, timeout=self.timeout) as response:
+                from .secrets import redact
+                raw = redact(json.loads(response.read().decode("utf-8", "replace")))
         except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", "replace")[:300]
+            from .secrets import redact
+            detail = redact(exc.read().decode("utf-8", "replace"))[:300]
             if exc.code == 429:
                 # Retry-After from HTTPError.headers (case-insensitive Mapping)
                 retry_after = None
@@ -486,12 +524,15 @@ class HttpTransport:
                 raise RateLimited(
                     f"{provider.name}: 429 {detail}",
                     retry_after=retry_after,
-                ) from exc
+                ) from None
             if exc.code in (500, 502, 503, 504, 529):
-                raise Overloaded(f"{provider.name}: {exc.code} {detail}") from exc
-            raise BadRequest(f"{provider.name}: {exc.code} {detail}") from exc
+                raise Overloaded(f"{provider.name}: {exc.code} {detail}") from None
+            raise BadRequest(f"{provider.name}: {exc.code} {detail}") from None
         except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
-            raise TransportError(f"{provider.name}: {exc!r}") from exc
+            raise TransportError(f"{provider.name}: {exc!r}") from None
+        except Exception as exc:
+            # Suppress chained transport exceptions containing request headers.
+            raise TransportError(f"{provider.name}: {type(exc).__name__}: {exc}") from None
 
         # usage 归一：各家字段名不一（prompt_cache_hit_tokens /
         # cache_read_input_tokens / prompt_tokens_details.cached_tokens …），
@@ -638,6 +679,9 @@ class ModelRouter:
 
     def complete(self, messages: list[dict[str, Any]], *, primary: tuple[str, str] | None = None,
                  small: bool = False, **options: Any) -> Completion:
+        from .secrets import SecretScope
+        scope = options.pop('secret_scope', None) or SecretScope()
+        messages, options = scope.protect(messages), scope.protect(options)
         attempts: list[dict[str, Any]] = []
         for provider_name, model in self._order(primary):
             provider = self.providers.get(provider_name)
@@ -648,7 +692,8 @@ class ModelRouter:
                 model = provider.small_model
             for attempt in range(self.retries_per_provider + 1):
                 try:
-                    value = self.transport.complete(provider, model, messages, **options)
+                    value = self.transport.complete(provider, model, provider._secret_scope.protect(messages),
+                                                    **provider._secret_scope.protect(options))
                     if isinstance(value, tuple) and len(value) == 3:
                         text, usage, extra = value
                     else:
@@ -657,6 +702,8 @@ class ModelRouter:
                     attempts.append({"provider": provider_name, "model": model, "status": "ok"})
                     usage.provider = usage.provider or provider_name
                     usage.model = usage.model or model
+                    from .secrets import redact
+                    text, extra = redact(text), redact(extra)
                     return Completion(text=text, usage=usage, attempts=attempts,
                                       tool_calls=list((extra or {}).get("tool_calls") or []),
                                       wire=str((extra or {}).get("wire") or provider.wire),

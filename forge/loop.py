@@ -305,11 +305,14 @@ class Agent:
         # Memory excluded from system prompt for cache alignment.
         # See _inject_memory() — memory goes as user message.
         parts.append(f"Permission mode: {self.policy.mode.value}; sandbox: {self.policy.sandbox.value}.")
+        parts.append("Secrets are opaque session references. Inspect sensitive configurations with edit_config, "
+                     "then send a structured patch and its revision. Preserve credential fields. "
+                     "Native shell execution and secret resolution/export are unavailable in protected agents.")
         if self.depth:
             parts.append(f"You are a subagent at depth {self.depth}; report findings, do not plan the whole job.")
         if self.extra_system:
             parts.append(self.extra_system)
-        return "\n\n".join(parts)
+        return self.secret_scope.protect_text("\n\n".join(parts))
 
     def _inject_memory(self) -> list[dict[str, Any]]:
         """Inject memory as a user-role message for cache alignment.
@@ -326,7 +329,7 @@ class Agent:
         slice_ = self.memory.context_slice(max_chars=2000)
         if not slice_:
             return []
-        return [{"role": "user", "content": f"[长期记忆上下文]\n{slice_}"}]
+        return self.secret_scope.protect([{"role": "user", "content": f"[长期记忆上下文]\n{slice_}"}])
 
 
     # -- events ----------------------------------------------------------
@@ -379,6 +382,7 @@ class Agent:
             # third-party capability) mutate the spawn budget or reach the
             # policy object — an in-process privilege-escalation channel.
             extras={
+                "trusted_control_root": self.home,
                 "registry": self.registry,
                 "memory": self.memory,
                 "capabilities": self.capabilities,
@@ -732,6 +736,7 @@ class Agent:
                                shrunk=after < before)
                     if after >= before:
                         self._compaction_noop_reported = True
+            messages = self.secret_scope.protect(messages)
             self._last_messages = messages
             try:
                 completion: Completion = self.router.complete(
@@ -869,6 +874,12 @@ class Agent:
         Called on every exit path (final / error / max_steps) so the end of a
         run is always metabolised and always accounted for.
         """
+        from .secrets import redact
+        report.text = redact(report.text)
+        report.usage = redact(report.usage)
+        for step in report.steps:
+            step.args = self.secret_scope.protect(step.args)
+            step.result = redact(step.result)
         try:
             outcome = self.metabolise(report)
             if outcome:

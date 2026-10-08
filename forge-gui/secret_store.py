@@ -11,6 +11,7 @@ import stat
 import tempfile
 import threading
 from pathlib import Path
+from forge.secrets import SecretScope, protect_store_path
 
 SECRETS_FILE = Path.home() / ".forge" / "secrets.json"
 _LOCK = threading.RLock()
@@ -25,9 +26,14 @@ def _valid(secrets):
 def load(*, strict=False) -> dict[str, str]:
     """读 secrets.json；不存在/不可读返回空 dict。"""
     try:
+        protect_store_path(SECRETS_FILE)
         data = json.loads(SECRETS_FILE.read_text(encoding="utf-8-sig"))
         if not _valid(data):
             raise ValueError("密钥文件须为名称和密钥均为文本的对象")
+        scope = SecretScope()
+        for key in data.values():
+            scope.reference(key)
+        scope.close()
         return data
     except FileNotFoundError:
         return {}
@@ -41,6 +47,9 @@ def save(secrets: dict[str, str]) -> None:
     """原子写：临时文件 → os.replace。权限 0600（仅 owner 读写）。"""
     if not _valid(secrets):
         raise OSError("密钥名称和内容必须为文本")
+    scope = SecretScope()
+    for key in secrets.values(): scope.reference(key)
+    scope.close()
     with _LOCK:
         current = load(strict=True)
         SECRETS_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -49,6 +58,7 @@ def save(secrets: dict[str, str]) -> None:
             with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=SECRETS_FILE.parent,
                                              prefix=".secrets-", suffix=".tmp", delete=False) as stream:
                 tmp = Path(stream.name)
+                protect_store_path(tmp)
                 try:
                     os.chmod(tmp, stat.S_IRUSR | stat.S_IWUSR)
                 except OSError:
@@ -59,6 +69,10 @@ def save(secrets: dict[str, str]) -> None:
             if load(strict=True) != current:
                 raise OSError("密钥文件已被其他程序修改，请刷新后重试")
             os.replace(tmp, SECRETS_FILE)
+            protect_store_path(SECRETS_FILE)
+            scope = SecretScope()
+            for key in secrets.values(): scope.reference(key)
+            scope.close()
         finally:
             if tmp is not None:
                 tmp.unlink(missing_ok=True)

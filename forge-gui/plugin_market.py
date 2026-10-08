@@ -1027,6 +1027,8 @@ class Marketplace:
         self._log_raw("info", "revoke", f"{pid} workspace={workspace} session={session}")
 
     def audit(self, **event):
+        from forge.secrets import redact
+        event = redact(event)
         """Execution audit is required: unlike display logs, write errors propagate."""
         self.market_dir.mkdir(parents=True, exist_ok=True)
         path = self.market_dir / "plugin-audit.ndjson"

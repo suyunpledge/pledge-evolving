@@ -203,9 +203,10 @@ class Federation:
     """Registry + dispatch + normalisation for heterogeneous CLI agents."""
 
     def __init__(self, *, home: Path | None = None, runner: Runner | None = None,
-                 budget: list[int] | None = None) -> None:
+                 budget: list[int] | None = None, secret_isolation: bool = True) -> None:
         self.workers: dict[str, WorkerSpec] = {}
         self.runner = runner or subprocess_runner
+        self.secret_isolation = secret_isolation
         self.home = Path(home) if home else None
         self.budget = budget if budget is not None else [64]
         self.dispatches: list[dict[str, Any]] = []
@@ -255,9 +256,14 @@ class Federation:
 
     # -- dispatch --------------------------------------------------------
     def dispatch(self, name: str, brief: str, *, timeout_s: int | None = None) -> WorkerResult:
+        from .secrets import SecretScope, redact
+        brief = SecretScope().protect_text(brief)
         spec = self.workers.get(name)
         if spec is None:
             raise KeyError(f"unknown worker {name!r}")
+        if self.secret_isolation and self.runner is subprocess_runner:
+            return WorkerResult(worker=name, ok=False, failure="sandbox",
+                                text="External CLI agents lack a mediated Secret boundary; use Forge subagents")
         if self.budget[0] <= 0:
             return WorkerResult(worker=name, ok=False, failure="refused")
 
@@ -269,6 +275,7 @@ class Federation:
             self.budget[0] -= 1
             started = time.time()
             code, raw, timed_out = self.runner(spec.command(brief), spec.cwd, spec.env, timeout)
+            raw = redact(raw)
             result = WorkerResult(
                 worker=name,
                 ok=False,
@@ -329,6 +336,8 @@ class Federation:
     def _record(self, result: WorkerResult, brief: str) -> None:
         entry = {**result.to_raw(), "ts": time.time(), "brief_head": brief[:160],
                  "budget_left": self.budget[0]}
+        from .secrets import redact
+        entry = redact(entry)
         self.dispatches.append(entry)
         if self.ledger_path:
             self.ledger_path.parent.mkdir(parents=True, exist_ok=True)

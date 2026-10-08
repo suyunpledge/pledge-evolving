@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from .policy import Decision, Policy
+from .secrets import SecretScope, assert_public_path, redact, read_public_bytes
 
 
 class ToolError(RuntimeError):
@@ -32,7 +33,7 @@ class ToolResult:
     meta: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
-        return {"ok": self.ok, "content": self.content, "error": self.error, "meta": self.meta}
+        return redact({"ok": self.ok, "content": self.content, "error": self.error, "meta": self.meta})
 
 
 @dataclass
@@ -42,10 +43,13 @@ class ToolContext:
     session: Any | None = None
     emit: Callable[..., None] | None = None
     extras: dict[str, Any] = field(default_factory=dict)
+    secret_scope: SecretScope = field(default_factory=SecretScope, repr=False)
+    # Embedders may run trusted native tools; Agent/Gateway always set True.
+    isolated: bool = False
 
     def fire(self, **event: Any) -> None:
         if self.emit is not None:
-            self.emit(**event)
+            self.emit(**redact(event))
 
 
 @dataclass
@@ -175,6 +179,16 @@ class ToolRegistry:
 
     # -- invocation ------------------------------------------------------
     def invoke(self, name: str, args: dict[str, Any] | None, ctx: ToolContext) -> ToolResult:
+        try:
+            result = self._invoke(name, args, ctx)
+            result.content = ctx.secret_scope.protect_text(result.content)
+            result.error = redact(result.error)
+            result.meta = redact(result.meta)
+            return result
+        except Exception as exc:
+            return ToolResult(False, error=redact(f"{type(exc).__name__}: {exc}"))
+
+    def _invoke(self, name: str, args: dict[str, Any] | None, ctx: ToolContext) -> ToolResult:
         spec = self._specs.get(name)
         if spec is None:
             return ToolResult(ok=False, error=f"unknown tool {name!r}")
@@ -187,10 +201,19 @@ class ToolRegistry:
             )
         args = args or {}
         touching = [str(v) for k, v in args.items() if k in {"path", "file", "target"} and v]
+        # These operations have unrestricted filesystem/import/network access.
+        # No command blacklist or stdout filter can make them secret-safe.
+        if ctx.isolated and (name in {"shell_exec", "notebook_edit"} or "native" in spec.tags):
+            return ToolResult(False, error="Native execution is unavailable in a protected agent; use mediated tools",
+                              meta={"authorization": "deny", "boundary": "secret.isolation"})
+        for target in touching:
+            assert_public_path(ctx.policy.abs_path(target))
+        blocks = args.get("patches") or args.get("edits") or []
+        if isinstance(blocks, list):
+            touching += [str(b['path']) for b in blocks if isinstance(b, dict) and b.get('path')]
         decision = ctx.policy.resolve_ask(ctx.policy.evaluate(name, args=args, touching=touching))
-        # 瘦身 B：授权裁决不再单独发 tool_decision 事件——写进返回值的
-        # meta.authorization，由调用方（loop）合并进 tool_call 事件；审计面
-        # 不变（每次授权仍可追溯），事件流少一遍 args 复制
+        if name == "edit_config" and args.get("patch") is not None and decision is Decision.ALLOW:
+            decision = ctx.policy.resolve_ask(ctx.policy.evaluate("write_file", args=args, touching=touching))
         if decision is Decision.DENY:
             return ToolResult(ok=False, error=f"denied by policy: {name}",
                               meta={"decision": "deny", "authorization": decision.value})
@@ -198,6 +221,40 @@ class ToolRegistry:
             return ToolResult(ok=False, error=f"approval required by policy: {name}",
                               meta={"decision": "ask", "authorization": decision.value,
                                     "requires_approval": True})
+        for target in touching:
+            path = ctx.policy.abs_path(target)
+            assert_public_path(path)
+            if ctx.isolated and name in {"write_file", "edit_file", "apply_patch", "delete_file", "edit_config"}:
+                host = Path(__file__).resolve().parent
+                canonical = path.resolve()
+                control_roots = {Path.home() / '.forge', ctx.workspace / '.forge'}
+                execution_roots = set()
+                if ctx.extras.get('trusted_control_root'):
+                    root = Path(ctx.extras['trusted_control_root']).resolve()
+                    execution_roots.update(root / name for name in ('modules', 'plugins', 'bundles', 'policies', 'hooks'))
+                    if canonical.parent == root and canonical.name in {'user.json', 'config.json', 'forge.patch.json', 'secrets.json'}:
+                        control_roots.add(canonical)
+                for root in control_roots:
+                    execution_roots.update(root / name for name in ('modules', 'plugins', 'bundles', 'policies', 'hooks'))
+                control = any(canonical.is_relative_to(root.resolve()) for root in control_roots)
+                if (canonical.is_relative_to(host) or canonical.is_relative_to(host.parent / 'forge-gui')
+                        or any(canonical.is_relative_to(root.resolve()) for root in execution_roots)
+                        or control and name != 'edit_config'):
+                    if name != 'edit_config' or args.get('patch') is not None:
+                        return ToolResult(False, error="Protected agents cannot overwrite trusted Forge execution code",
+                                          meta={"authorization": "deny"})
+            if name in {"write_file", "edit_file", "apply_patch", "delete_file"} and path.is_file():
+                raw = read_public_bytes(path, limit=8 * 1024 * 1024).decode('utf-8-sig')
+                from .config_edit import sensitive_config
+                if ctx.secret_scope.file_text(path) != raw or sensitive_config(path, raw):
+                    return ToolResult(False, error="Protected configuration requires edit_config; raw rewrite denied",
+                                      meta={"authorization": "deny"})
+        if name in {"write_file", "edit_file", "apply_patch"}:
+            if 'SECRET_REF' in json.dumps(args) or ctx.secret_scope.protect(args) != args:
+                return ToolResult(False, error="Raw secrets and SecretRefs require the structured config validator")
+        # 瘦身 B：授权裁决不再单独发 tool_decision 事件——写进返回值的
+        # meta.authorization，由调用方（loop）合并进 tool_call 事件；审计面
+        # 不变（每次授权仍可追溯），事件流少一遍 args 复制
         try:
             result = spec.handler(args, ctx)
         except Exception as exc:  # tool errors must never kill the loop
@@ -227,13 +284,20 @@ def build_builtin_registry(
 ) -> ToolRegistry:
     reg = ToolRegistry(expose=expose, hide=hide)
 
+    @reg.tool("edit_config", "Inspect a protected JSON/YAML/TOML/.env configuration, then apply a structured "
+              "patch with its revision. Credentials remain opaque and unchanged.",
+              schema={"path": "string", "revision": "string", "patch": "array"})
+    def config_editor(args, ctx):
+        from .config_edit import edit_config
+        return edit_config(args, ctx)
+
     @reg.tool("read_file", "Read a UTF-8 text file from disk.", schema={"path": "string"})
     def read_file(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         path = _resolve(ctx.workspace, args.get("path", ""))
         if not path.is_file():
             return ToolResult(ok=False, error=f"not a file: {path}")
         limit = int(args.get("limit", 400))
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        lines = ctx.secret_scope.file_text(path).splitlines()
         body = "\n".join(lines[:limit])
         # 瘦身 A：行截断之外再加字符帽，超长内容在 handler 层就被截断，
         # 不再整块进入返回链/事件流/上下文回填
@@ -273,12 +337,18 @@ def build_builtin_registry(
             if any(part in skip_dirs for part in path.parts):
                 continue
             try:
+                assert_public_path(path)
+                if not ctx.policy.allows_read(path):
+                    continue
+            except (PermissionError, OSError):
+                continue
+            try:
                 if path.stat().st_size > 512_000:
                     continue
             except OSError:
                 continue
             try:
-                for number, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+                for number, line in enumerate(ctx.secret_scope.file_text(path).splitlines(), 1):
                     if pattern.search(line):
                         # root 可指向 workspace 外（绝对路径）时 relative_to 会抛
                         # ValueError 让整个工具崩掉（实测 2 次）；越界回退绝对路径。
@@ -291,6 +361,8 @@ def build_builtin_registry(
                             raise StopIteration
             except StopIteration:
                 break
+            except (UnicodeError, OSError):
+                continue
         return ToolResult(ok=True, content="\n".join(hits))
 
     @reg.tool(
@@ -409,7 +481,7 @@ def build_builtin_registry(
             path = _resolve(ctx.workspace, block.get("path", "")).resolve()
             # defence-in-depth: handler-side sandbox assert. The policy layer also
             # collects patches[].path, but a write tool must not trust one layer alone.
-            if not ctx.policy.sandbox.allows_write(path, ctx.policy.workspace):
+            if not ctx.policy.allows_write(path):
                 return ToolResult(ok=False, error=f"patch {i}: path escapes sandbox: {path}")
             current = buffers.get(path)
             if current is None:
@@ -462,7 +534,7 @@ def build_builtin_registry(
         path = _resolve(ctx.workspace, args.get("path", ""))
         if not path.is_file():
             return ToolResult(ok=False, error=f"not a file: {path}")
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        lines = ctx.secret_scope.file_text(path).splitlines()
         s = max(1, int(args.get("start", 1)))
         e = min(len(lines), int(args.get("end", len(lines))))
         if not lines or s > e:
@@ -486,7 +558,7 @@ def build_builtin_registry(
         pattern = _re.compile(r"^(\s*)(?:async\s+)?(def|class)\s+([A-Za-z_]\w*)")
         out: list[str] = []
         truncated = False
-        for number, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+        for number, line in enumerate(ctx.secret_scope.file_text(path).splitlines(), 1):
             match = pattern.match(line)
             if match:
                 indent = len(match.group(1).replace("\t", "    ")) // 4

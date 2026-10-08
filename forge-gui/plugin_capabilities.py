@@ -183,6 +183,8 @@ class CapabilityRuntime:
         if any(":" in part for part in path.parts if part != path.anchor):
             raise PermissionError("不允许 NTFS 附加数据流")
         path = (path if path.is_absolute() else self.workspace / path).resolve()
+        from forge.secrets import assert_public_path
+        assert_public_path(path)
         if not path.is_relative_to(self.workspace):
             raise PermissionError("插件路径超出已授权工作区")
         if path.is_relative_to(self._control_root):

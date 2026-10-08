@@ -235,6 +235,9 @@ class SmartRouter(ModelRouter):
     # -- public surface ----------------------------------------------------
     def complete(self, messages: list[dict[str, Any]], *, primary: tuple[str, str] | None = None,
                  small: bool = False, **options: Any) -> Completion:
+        from .secrets import SecretScope
+        scope = options.pop('secret_scope', None) or SecretScope()
+        messages, options = scope.protect(messages), scope.protect(options)
         strategy = self.routing.strategy
         # 显式 primary 优先（调用方点名 = 直接走冻结语义）。
         if primary is not None:
@@ -245,7 +248,8 @@ class SmartRouter(ModelRouter):
             provider = self.providers.get(self.routing.small[0])
             if provider is None:
                 raise TransportError(f"small tier provider missing: {self.routing.small!r}")
-            value = self.transport.complete(provider, self.routing.small[1], messages, **options)
+            value = self.transport.complete(provider, self.routing.small[1], provider._secret_scope.protect(messages),
+                                            **provider._secret_scope.protect(options))
             text, usage, extra = self._split(value)
             return self._completion(text, usage, [
                 {"provider": self.routing.small[0], "model": self.routing.small[1],
@@ -280,7 +284,8 @@ class SmartRouter(ModelRouter):
                 continue
             for attempt in range(self.retries_per_provider + 1):
                 try:
-                    value = self.transport.complete(provider, model, messages, **options)
+                    value = self.transport.complete(provider, model, provider._secret_scope.protect(messages),
+                                                    **provider._secret_scope.protect(options))
                     text, usage, extra = self._split(value)
                     ok_event: dict[str, Any] = {"provider": provider_name, "model": model,
                                                 "status": "ok", "strategy": label}
@@ -366,7 +371,8 @@ class SmartRouter(ModelRouter):
                 continue
             for attempt in range(self.retries_per_provider + 1):
                 try:
-                    value = self.transport.complete(provider, model, refine_messages, **refine_options)
+                    value = self.transport.complete(provider, model, provider._secret_scope.protect(refine_messages),
+                                                    **provider._secret_scope.protect(refine_options))
                     text, usage, extra = self._split(value)
                     ok_event: dict[str, Any] = {"provider": provider_name, "model": model, "status": "ok",
                                                 "strategy": "premium", "stage": "integrate"}
@@ -413,6 +419,8 @@ class SmartRouter(ModelRouter):
 
     def _completion(self, text: str, usage: Usage, attempts: list[dict[str, Any]],
                     extra: dict[str, Any], provider: Provider) -> Completion:
+        from .secrets import redact
+        text, extra, attempts = redact(text), redact(extra), redact(attempts)
         return Completion(
             text=text, usage=usage, attempts=attempts,
             tool_calls=list(extra.get("tool_calls") or []),

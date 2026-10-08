@@ -190,7 +190,9 @@ class ModelAdaptationTests(unittest.TestCase):
         cfg.apply_patch(rows)
         with patch.dict("os.environ", {}, clear=True):
             router = SmartRouter.from_config(cfg)
-        self.assertEqual(router.providers["medium"].api_key, "test-key")
+        self.assertRegex(router.providers["medium"].api_key, r'^\{\{SECRET_REF:[A-F0-9]{32}\}\}$')
+        self.assertEqual(router.providers["medium"]._execution_headers(router.providers["medium"].base_url)['Authorization'],
+                         'Bearer test-key')
         self.assertEqual(router._order(None)[0][0], "medium")
 
     def test_smart_router_preserves_adaptation_plan(self):
@@ -205,7 +207,7 @@ class ModelAdaptationTests(unittest.TestCase):
     def test_transport_ignores_malformed_usage_without_crashing(self):
         response = {"choices": [{"message": {"content": "ok"}}], "usage": {
             "prompt_tokens": float("inf"), "completion_tokens": -1, "cached_tokens": float("nan")}}
-        with patch.object(supply.urllib.request, "urlopen", return_value=io.BytesIO(json.dumps(response).encode())):
+        with patch('forge.secret_http.open_authenticated', return_value=io.BytesIO(json.dumps(response).encode())):
             _, usage, _ = supply.HttpTransport().complete(self.provider(wire="openai", adapt=False),
                                                           "unknown-model", [{"role": "user", "content": "hello"}])
         self.assertEqual((usage.prompt_tokens, usage.completion_tokens, usage.cached_tokens), (0, 0, 0))

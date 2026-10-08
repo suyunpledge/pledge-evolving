@@ -5,6 +5,8 @@ import socket
 import threading
 import urllib.error
 import urllib.request
+from forge.secret_http import NoCredentialRedirect, open_authenticated
+from forge.secrets import redact
 
 
 class RequestCancelled(RuntimeError):
@@ -127,7 +129,7 @@ class _HTTPSHandler(urllib.request.HTTPSHandler):
 @contextmanager
 def open_response(request, *, timeout, cancel_event=None):
     if cancel_event is None:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with open_authenticated(request, timeout=timeout) as response:
             yield response
         return
     scope = _Scope(cancel_event)
@@ -135,8 +137,8 @@ def open_response(request, *, timeout, cancel_event=None):
     watcher = threading.Thread(target=scope.watch, daemon=True, name="Forge-http-cancel")
     watcher.start()
     try:
-        # Preserve urllib's normal proxy discovery, redirect and TLS verification.
-        opener = urllib.request.build_opener(_HTTPHandler(scope), _HTTPSHandler(scope))
+        # Keep cancellation/proxy/TLS handling; never redirect an auth credential.
+        opener = urllib.request.build_opener(_HTTPHandler(scope), _HTTPSHandler(scope), NoCredentialRedirect())
         with opener.open(request, timeout=timeout) as response:
             scope.check()
             yield response
@@ -146,11 +148,11 @@ def open_response(request, *, timeout, cancel_event=None):
         # Read a bounded diagnostic while the cancellation watcher still owns
         # the socket. Callers can inspect it after this context has cleaned up.
         try:
-            error._forge_detail = error.read(500).decode("utf-8", errors="replace")
+            error._forge_detail = redact(error.read(500).decode("utf-8", errors="replace"))
             scope.check()
         except (OSError, http.client.HTTPException):
             scope.check()
-            error._forge_detail = str(error.reason)
+            error._forge_detail = redact(str(error.reason))
         finally:
             error.close()
         raise

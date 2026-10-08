@@ -7,7 +7,7 @@
       "sandbox": "workspace-write",
       "allow": ["read_file", "list_dir", "grep", "tool_search", "skill_list",
                 "memory_recall", "spawn_subagent",
-                "write_file", "edit_file", "apply_patch",
+                "write_file", "edit_file", "apply_patch", "edit_config",
                 "read_range", "file_outline"],
       "ask": ["shell_exec"],
       "deny": [],
@@ -38,7 +38,7 @@
     "config": {
       "expose": ["read_file", "list_dir", "grep", "tool_search", "skill_list",
                  "memory_recall", "spawn_subagent", "shell_exec",
-                 "write_file", "edit_file", "apply_patch",
+                 "write_file", "edit_file", "apply_patch", "edit_config",
                  "read_range", "file_outline"]
     }
   }

@@ -35,24 +35,10 @@ HOP_BY_HOP = {
 # proxy by default, which turns every upstream hiccup (or a stale proxy port)
 # into a ConnectionRefused that looks like the model is down. Upstream calls are
 # made through an opener with proxying disabled unless the caller opts in.
-_DIRECT_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-
-
 def open_upstream(request: urllib.request.Request, timeout: int, *, proxy: str = ""):
-    """Open an upstream request.
-
-    ``proxy`` is explicit on purpose. Relying on urllib's implicit proxy
-    discovery produced a ConnectionRefused that looked exactly like "the model
-    is down" while PowerShell (which always honours the system proxy) reached
-    the same host fine — the upstream in question is only reachable through the
-    proxy at all.
-    """
-    if proxy:
-        opener = urllib.request.build_opener(
-            urllib.request.ProxyHandler({"http": proxy, "https": proxy})
-        )
-        return opener.open(request, timeout=timeout)
-    return _DIRECT_OPENER.open(request, timeout=timeout)
+    """Open upstream with explicit proxy selection and no credential redirects."""
+    from .secret_http import open_authenticated
+    return open_authenticated(request, timeout=timeout, proxy=proxy)
 
 
 class GatewayLog:
@@ -77,6 +63,8 @@ class GatewayLog:
             pass  # rotation is best-effort; never block the request path
 
     def write(self, line: str) -> None:
+        from .secrets import redact
+        line = redact(line)
         stamped = f"[{time.strftime('%H:%M:%S')}] {line}"
         with self._lock:
             self.lines.append(stamped)
@@ -113,9 +101,13 @@ class GatewayConfig:
         policy=None,
         provider_options: dict | None = None,
         warmth_path: Path | None = None,
+        _credential=None,
     ) -> None:
         self.upstream = upstream.rstrip("/")
-        self.api_key = api_key
+        from .secrets import VendorCredential, install_logging_redaction
+        self._credential = _credential or VendorCredential(api_key, self.upstream)
+        self.api_key = self._credential.ref
+        install_logging_redaction()
         self.port = port
         self.models = models or []
         self.log = GatewayLog(log_path)
@@ -123,7 +115,10 @@ class GatewayConfig:
         self.upstream_wire = upstream_wire    # wire the *upstream* speaks
         self.model_map = model_map or {}
         self.proxy = proxy
-        self.gateway_token = gateway_token    # empty = no auth; set = bearer check
+        self.gateway_token = gateway_token    # trusted gateway authentication only
+        if gateway_token:
+            from .secrets import _remember
+            _remember(gateway_token)
         self.max_auth_failures = max_auth_failures  # rate limit: lock out after N failures
         # -- tool bridge: optional forge ToolRegistry + workspace root.
         # When attached, GET /v1/tools lists OpenAI function schemas and
@@ -140,20 +135,44 @@ class GatewayConfig:
         from .model import warmth_store
         self.cache_warmth = CacheWarmth(warmth_path) if warmth_path else warmth_store()
         self._auth_lock = threading.Lock()
+        self._secret_lock = threading.Lock()
+        self._secret_scopes = {}
         self._auth_failures: int = 0
         self._auth_locked_until: float = 0.0
 
-    def prepare_request(self, payload):
+    def secret_scope(self, identifier):
+        from .secrets import SecretScope
+        import re
+        if not identifier:
+            return SecretScope()
+        if not re.fullmatch(r'[a-f0-9]{32}', identifier):
+            raise ValueError('Invalid secret session identifier')
+        with self._secret_lock:
+            now = time.monotonic()
+            for key, (stamp, scope) in list(self._secret_scopes.items()):
+                if now - stamp > 4 * 3600:
+                    scope.close()
+                    del self._secret_scopes[key]
+            if identifier not in self._secret_scopes:
+                if len(self._secret_scopes) >= 256:
+                    raise ValueError('Too many active protected sessions')
+                self._secret_scopes[identifier] = (now, SecretScope())
+            scope = self._secret_scopes[identifier][1]
+            self._secret_scopes[identifier] = (now, scope)
+            return scope
+
+    def prepare_request(self, payload, *, secret_scope=None):
         from .model import Provider, _plan_and_shape
         if not isinstance(payload, dict):
             raise ValueError("JSON request must be an object")
-        payload = dict(payload)
+        from .secrets import SecretScope
+        payload = (secret_scope or SecretScope()).protect(dict(payload))
         model = str(payload.get("model") or "")
         model = self.model_map.get(model, model)
         payload["model"] = model
         conf = self.provider_options
         provider = Provider(
-            "gateway", self.upstream, api_key=self.api_key, wire=self.upstream_wire,
+            "gateway", self.upstream, _credential=self._credential, wire=self.upstream_wire,
             default_model=model, vendor=str(conf.get("vendor") or ""),
             cache_control=str(conf.get("cacheControl", "auto")),
             expected_calls=int(conf.get("expectedCalls", 2)),
@@ -213,6 +232,8 @@ def build_handler(cfg: GatewayConfig):
             return body
 
         def _json(self, code: int, payload: dict[str, Any]) -> None:
+            from .secrets import redact
+            payload = redact(payload)
             data = json.dumps(payload, ensure_ascii=False).encode()
             self.send_response(code)
             self.send_header("Content-Type", "application/json")
@@ -303,6 +324,7 @@ def build_handler(cfg: GatewayConfig):
                     cfg._auth_failures = 0  # reset on success
             route = self.path.split("?")[0].rstrip("/")
             try:
+                cfg.secret_scope(self.headers.get('X-Forge-Secret-Scope', ''))
                 body = self._read_body()
             except (ValueError, OverflowError) as exc:
                 self.close_connection = True
@@ -409,7 +431,8 @@ def build_handler(cfg: GatewayConfig):
                     self._json(200, result.as_dict())
                     return
             ctx = ToolContext(policy=cfg.policy, workspace=cfg.workspace,
-                              extras={"registry": cfg.registry})
+                              secret_scope=cfg.secret_scope(self.headers.get('X-Forge-Secret-Scope', '')),
+                              isolated=True, extras={"registry": cfg.registry})
             cfg.log.write(f"TOOLCALL {name} args={json.dumps(arguments, ensure_ascii=False)[:200]}")
             try:
                 result = cfg.registry.invoke(name, arguments, ctx)
@@ -428,6 +451,18 @@ def build_handler(cfg: GatewayConfig):
 
         def _proxy(self, body: bytes) -> None:
             self._upstream_started = False
+            scope = cfg.secret_scope(self.headers.get('X-Forge-Secret-Scope', ''))
+            if scope.protect_text(self.path) != self.path:
+                self._json(400, {'error': {'message': 'Secrets must not be placed in request URLs'}})
+                return
+            if body:
+                try:
+                    payload = json.loads(body)
+                    if not isinstance(payload, dict): raise ValueError('Request body must be a JSON object')
+                    body = json.dumps(scope.protect(payload), ensure_ascii=False).encode('utf-8')
+                except (ValueError, TypeError) as exc:
+                    self._json(400, {'error': {'message': str(exc)}})
+                    return
             translating = cfg.upstream_wire == "openai" and self.path.split("?")[0].rstrip("/").endswith("/messages")
             if translating:
                 self._proxy_translated(body)
@@ -439,7 +474,8 @@ def build_handler(cfg: GatewayConfig):
             plan = provider = None
             if self.path.split("?")[0].rstrip("/").endswith(("/chat/completions", "/messages")):
                 try:
-                    payload, plan, provider = cfg.prepare_request(json.loads(body))
+                    payload, plan, provider = cfg.prepare_request(json.loads(body),
+                        secret_scope=cfg.secret_scope(self.headers.get('X-Forge-Secret-Scope', '')))
                     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
                 except (ValueError, TypeError) as exc:
                     self._json(400, {"error": {"message": str(exc)}})
@@ -454,14 +490,14 @@ def build_handler(cfg: GatewayConfig):
                 stripped = stripped[len("/v1"):]
             url = cfg.upstream + stripped
             headers = {k: v for k, v in self.headers.items()
-                       if k.lower() not in HOP_BY_HOP | {"authorization", "x-api-key"}}
+                       if k.lower() in {'content-type', 'accept', 'user-agent', 'anthropic-version', 'anthropic-beta'}}
             headers.pop("Authorization", None)
             headers.pop("x-api-key", None)
             if cfg.upstream_wire == "anthropic":
-                headers["x-api-key"] = cfg.api_key
+                headers["x-api-key"] = cfg._credential._header(url, wire='anthropic')['x-api-key']
                 headers["anthropic-version"] = headers.get("anthropic-version", "2023-06-01")
             else:
-                headers["Authorization"] = f"Bearer {cfg.api_key}"
+                headers.update(cfg._credential._header(url, wire='openai'))
             headers["accept-encoding"] = "identity"
 
             cfg.log.write(f"{self.command} {self.path} -> {url} (bytes={len(body)})")
@@ -480,15 +516,20 @@ def build_handler(cfg: GatewayConfig):
                         self.close_connection = True
                         self.end_headers()
                         self._upstream_started = True
+                        from .secret_http import SecretSSEFilter
+                        fence = SecretSSEFilter()
                         while True:
-                            chunk = getattr(response, "read1", response.read)(4096)
-                            if not chunk:
-                                break
+                            chunk = response.readline(1024 * 1024 + 1)
+                            if not chunk: break
                             observer.feed(chunk)
-                            self.wfile.write(chunk)
+                            self.wfile.write(fence.feed(chunk))
                             self.wfile.flush()
+                        self.wfile.write(fence.finish())
+                        self.wfile.flush()
                     else:
-                        data = response.read()
+                        from .secrets import redact
+                        from .secret_http import redact_response
+                        data = redact_response(response.read())
                         try:
                             observer.observe(json.loads(data))
                         except (ValueError, UnicodeDecodeError):
@@ -499,7 +540,9 @@ def build_handler(cfg: GatewayConfig):
                     if provider is not None:
                         cfg.record_usage(provider, plan, observer.usage, observer.service_tier)
             except urllib.error.HTTPError as exc:
-                data = exc.read()
+                from .secrets import redact
+                from .secret_http import redact_response
+                data = redact_response(exc.read())
                 cfg.log.write(f"upstream HTTP {exc.code}: {data[:300]!r}")
                 self.send_response(exc.code)
                 self.send_header("Content-Type", exc.headers.get("content-type", "application/json"))
@@ -511,7 +554,8 @@ def build_handler(cfg: GatewayConfig):
                 self._upstream_failure(exc)
 
         def _upstream_failure(self, exc):
-            payload = {"type": "error", "error": {"type": "api_error", "message": str(exc)}}
+            from .secrets import redact
+            payload = {"type": "error", "error": {"type": "api_error", "message": redact(str(exc))}}
             if getattr(self, "_upstream_started", False):
                 # HTTP headers cannot be sent twice after streaming starts.
                 self.close_connection = True
@@ -560,14 +604,15 @@ def build_handler(cfg: GatewayConfig):
             requested = str(payload.get("model", ""))
             upstream_payload = anthropic_to_openai_request(payload, cfg.model_map)
             try:
-                upstream_payload, plan, provider = cfg.prepare_request(upstream_payload)
+                upstream_payload, plan, provider = cfg.prepare_request(upstream_payload,
+                    secret_scope=cfg.secret_scope(self.headers.get('X-Forge-Secret-Scope', '')))
             except (ValueError, TypeError) as exc:
                 self._json(400, {"error": {"message": str(exc)}})
                 return
             url = cfg.upstream.rstrip("/") + "/chat/completions"
             headers = {
                 "content-type": "application/json",
-                "Authorization": f"Bearer {cfg.api_key}",
+                **cfg._credential._header(url, wire='openai'),
                 "accept-encoding": "identity",
             }
             cfg.log.write(f"TRANSLATE {requested} -> {upstream_payload.get('model')} @ {url} "
@@ -581,7 +626,8 @@ def build_handler(cfg: GatewayConfig):
             try:
                 with open_upstream(request, timeout=600, proxy=cfg.proxy) as response:
                     if not upstream_payload.get("stream"):
-                        raw = json.loads(response.read().decode("utf-8", "replace"))
+                        from .secrets import redact
+                        raw = redact(json.loads(response.read().decode("utf-8", "replace")))
                         cfg.record_usage(provider, plan, raw.get("usage"), raw.get("service_tier"))
                         translated = openai_to_anthropic_response(raw, requested)
                         cfg.log.write(f"TRANSLATE reply ok: stop={translated['stop_reason']} "
@@ -599,9 +645,17 @@ def build_handler(cfg: GatewayConfig):
                     translator = OpenAIStreamTranslator(requested)
                     from .request_execution import UsageObserver
                     observer = UsageObserver()
+                    from .secret_http import SecretSSEFilter
+                    fence = SecretSSEFilter()
                     for raw_line in response:
                         observer.feed(raw_line)
-                        for event in translator.feed(raw_line.decode("utf-8", "replace")):
+                        safe_lines = fence.feed(raw_line).decode('utf-8', 'replace').splitlines()
+                        for safe_line in safe_lines:
+                            for event in translator.feed(safe_line):
+                                self.wfile.write(event.encode())
+                                self.wfile.flush()
+                    for safe_line in fence.finish().decode('utf-8', 'replace').splitlines():
+                        for event in translator.feed(safe_line):
                             self.wfile.write(event.encode())
                             self.wfile.flush()
                     for event in translator.finish():
@@ -611,7 +665,9 @@ def build_handler(cfg: GatewayConfig):
                                   f"tools={len(translator.tool_calls)}")
                     cfg.record_usage(provider, plan, observer.usage, observer.service_tier)
             except urllib.error.HTTPError as exc:
-                data = exc.read()
+                from .secrets import redact
+                from .secret_http import redact_response
+                data = redact_response(exc.read())
                 cfg.log.write(f"upstream HTTP {exc.code}: {data[:300]!r}")
                 self._json(exc.code, {"type": "error", "error": {"type": "api_error",
                                                                  "message": data.decode("utf-8", "replace")[:400]}})

@@ -45,7 +45,7 @@ MAX_SCHEMA_CHARS = 32_000
 # Forge's baseline registry (including bridge-prefixed aliases). Live gateway
 # names are additionally supplied by the caller; neither may be shadowed.
 BUILTIN_TOOL_NAMES = frozenset({"read_file", "list_dir", "grep", "write_file",
-    "delete_file", "edit_file", "apply_patch", "read_range", "file_outline",
+    "delete_file", "edit_file", "apply_patch", "edit_config", "read_range", "file_outline",
     "shell_exec", "tool_search", "skill_list", "spawn_subagent", "memory_recall",
     "web_search", "fetch_url", "datetime", "calculator", "python"})
 
@@ -247,12 +247,16 @@ class PluginRuntime:
     """
 
     def __init__(self, marketplace: Marketplace,
-                 *, exec_timeout: float = EXEC_TIMEOUT):
+                 *, exec_timeout: float = EXEC_TIMEOUT, secret_isolation: bool = True):
         if (type(exec_timeout) not in (int, float) or not math.isfinite(exec_timeout)
                 or exec_timeout <= 0):
             raise ValueError("插件执行超时必须是有限正数")
         self.market = marketplace
         self.exec_timeout = exec_timeout
+        # Native Python has the process user's filesystem/network authority.
+        # Acknowledgement does not grant access to SecretValue. The old runner
+        # remains available only to an explicitly trusted host/test harness.
+        self.secret_isolation = secret_isolation
         self.tools: dict[str, LoadedTool] = {}
         self.last_report = LoadReport()
         self._lock = threading.RLock()
@@ -284,6 +288,9 @@ class PluginRuntime:
             if not plugin.executes_code:
                 # 纯声明式插件：没有代码体，没有可执行工具
                 report.skipped.append((plugin.id, "声明式条目（无可执行体）"))
+                continue
+            if self.secret_isolation:
+                report.skipped.append((plugin.id, "Protected Agent 不执行原生 Python 插件；请使用受控声明式能力"))
                 continue
 
             pdir = Path(plugin.path) if plugin.path else (
@@ -368,6 +375,8 @@ class PluginRuntime:
             raise PermissionError("插件已禁用、卸载、修改或信任/生命周期已变化，请重新确认并加载")
 
     def _run_job(self, plugin, token, action, **payload):
+        if self.secret_isolation:
+            raise PermissionError("Secret isolation denies native plugin execution")
         if action == "call" and not isinstance(payload.get("arguments"), dict):
             raise ValueError("arguments 必须是对象")
         timeout = LOAD_TIMEOUT if action == "load" else self.exec_timeout
@@ -459,6 +468,8 @@ class PluginRuntime:
     # ── 调用 ────────────────────────────────────────────────────────
 
     def has(self, name: str) -> bool:
+        if self.secret_isolation:
+            return False
         tool = self.tools.get(name)
         if tool is None:
             return False
@@ -480,11 +491,14 @@ class PluginRuntime:
         try:
             if not self.has(name):
                 raise PermissionError("插件工具已失效或与内置工具冲突")
-            return {"ok": True, "result": tool.execute(args)}
+            from forge.secrets import redact
+            return redact({"ok": True, "result": tool.execute(args)})
         except (TimeoutError, RuntimeError) as exc:
-            return {"ok": False, "error": str(exc)}
+            from forge.secrets import redact
+            return {"ok": False, "error": redact(str(exc))}
         except Exception as exc:  # noqa: BLE001
-            return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+            from forge.secrets import redact
+            return {"ok": False, "error": redact(f"{type(exc).__name__}: {exc}")}
 
     # ── 导出 ────────────────────────────────────────────────────────
 

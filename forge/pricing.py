@@ -239,6 +239,8 @@ class CostLedger:
                                                note=str(raw.get("note", ""))))
 
     def record(self, model: str, tokens: int, *, note: str = "") -> SpendEntry:
+        from .secrets import redact
+        model, note = redact(model), redact(note)
         entry = SpendEntry(model=model, tokens=int(tokens), cost=cost_of(model, tokens), note=note)
         self.entries.append(entry)
         if self.path:
