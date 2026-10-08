@@ -54,7 +54,9 @@ class RuntimeIntegrityTests(unittest.TestCase):
         code, text, timed_out = subprocess_runner(argv, "", {}, 5)
         self.assertEqual((code, text.strip(), timed_out), (0, "0", False))
         with tempfile.TemporaryDirectory() as tmp:
-            context = ToolContext(policy=Policy(mode=Mode.BYPASS, workspace=Path(tmp), non_interactive=True), workspace=Path(tmp))
+            # isolated=False 是宿主自己的控制台回归测试在跑真实 shell ——
+            # 这是一个显式的信任声明（ToolContext 默认已翻转为受保护）。
+            context = ToolContext(policy=Policy(mode=Mode.BYPASS, workspace=Path(tmp), non_interactive=True), workspace=Path(tmp), isolated=False)
             result = build_builtin_registry().invoke("shell_exec", {"command": subprocess.list2cmdline(argv)}, context)
             self.assertTrue(result.ok, result.error)
             self.assertEqual(result.content.strip(), "0")

@@ -44,8 +44,14 @@ class ToolContext:
     emit: Callable[..., None] | None = None
     extras: dict[str, Any] = field(default_factory=dict)
     secret_scope: SecretScope = field(default_factory=SecretScope, repr=False)
-    # Embedders may run trusted native tools; Agent/Gateway always set True.
-    isolated: bool = False
+    # 2026-10-08 P1 修复：默认值从 False 翻转为 True（fail-closed）。
+    # 原来的 fail-open 意味着任何一个忘记传 isolated=True 的嵌入者都在
+    # 静默地裸奔——agent 可以通过它调 shell_exec / 原生插件，密钥防线形同虚设。
+    # 翻转后：默认即受保护；确需运行可信原生工具的宿主必须显式声明
+    # ``isolated=False``（写下来这个决定，才会去审视它）。
+    # 生产构造点（gateway.py / loop.py）本就显式传 True，行为不变；
+    # plugin_capabilities.py 的插件桥翻转后默认获得保护，正是期望效果。
+    isolated: bool = True
 
     def fire(self, **event: Any) -> None:
         if self.emit is not None:
