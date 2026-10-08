@@ -594,7 +594,7 @@ class ModuleRegistry:
                     head = dotted.split(".")[0]
                     origin = alias_root.get(head, head)
                     if origin.split(".")[0] in imported_roots:
-                        return f"{origin}.{dotted.split(".", 1)[1]}"
+                        return f"{origin}.{dotted.split('.', 1)[1]}"
                 return None
             if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
                 info = container_alias.get(node.value.id)

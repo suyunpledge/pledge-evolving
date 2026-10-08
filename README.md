@@ -267,3 +267,12 @@ pledge-evolving/
 - The premium two-stage pipeline sends **the draft and the original task** to the integration/adjudication tier (informed use: configuring a premium tier implies consent to this data flow); the full conversation history is never sent out.
 - `mount_contrib_extensions`'s dual registry covers the static gate and hook resolvability as a fallback; runtime hook exceptions are caught as a fallback inside `_use_extension` (it does not fall back to the bundled module) — scenarios needing "a bad hook never takes the seat" would require runtime-degraded retry instead (complex; logged as a known gap, not implemented).
 - `teams.deliver`'s `to` direction only supports id-based addressing (no name→id resolution), while the `from` direction supports unique name-based resolution — this asymmetry is intentional and safe, but note: `to` cannot use a display name.
+
+
+---
+
+## 项目结构图谱 / Project Tree Map
+
+- 中文：[项目结构图谱](docs/project-tree.zh.png)
+- English: [Project tree map](docs/project-tree.en.png)
+- 分层拆解与中英对照：[docs/PROJECT-TREE.md](docs/PROJECT-TREE.md)
