@@ -41,15 +41,22 @@ def compose_prompt(text, attachments, *, secret_scope=None):
     return prompt
 
 
-def task_command(executable, run_py, home, task, strategy):
-    return [executable, str(run_py), "run", task, "--json", "--strategy", strategy,
-            "--home", str(home), "--workspace", str(Path(run_py).parent)]
+def task_command(executable, run_py, home, task, strategy, planning=None, planning_model=None):
+    from forge.planning import planning_level
+    command = [executable, str(run_py), "run", task, "--json", "--strategy", strategy,
+               "--home", str(home), "--workspace", str(Path(run_py).parent)]
+    if planning is not None:
+        command.extend(["--planning", planning_level(planning)])
+    if planning_model:
+        from forge.phase_models import model_pair
+        command.extend(['--planning-model', *model_pair(planning_model)])
+    return command
 
 
 def task_outcome(code, report, cancelled=False):
     if cancelled:
         return "已停止", "warn"
-    if code != 0 or (report or {}).get("stopped") == "error":
+    if code != 0 or (report or {}).get("stopped") in {"error", "planning_error", "format_error", "stalled"}:
         return "执行失败", "error"
     if (report or {}).get("stopped") == "final":
         return "执行结束", "ok"

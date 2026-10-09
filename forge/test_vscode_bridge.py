@@ -45,6 +45,32 @@ class EditorBridgeTests(unittest.TestCase):
     def initialize(self):
         return self.bridge.initialize({'workspace': str(self.workspace), 'home': str(self.home)})
 
+    def test_selected_planning_runs_in_actual_agent_before_reply(self):
+        from .test_task_planning import Router, plan_json
+        self.initialize()
+        router = Router([plan_json(), 'done'])
+        self.bridge.router = router
+        result = self.bridge.run({'prompt': 'change model; keep key', 'planning': 'high'})
+        self.assertTrue(result['ok'])
+        self.assertEqual(result['planning']['level'], 'high')
+        self.assertEqual(len(router.calls), 2)
+        self.assertNotIn('tools', router.calls[0][1])
+        self.assertIn('Task plan', str(router.calls[1][0]))
+        self.assertTrue(any(e.get('data', {}).get('type') == 'task_plan' for e in self.events))
+        with self.assertRaises(ValueError):
+            self.bridge.run({'prompt': 'task', 'planning': 'bypass'})
+
+    def test_scoped_rules_reach_attached_editor_document(self):
+        self.initialize()
+        folder = self.workspace / 'src'
+        folder.mkdir()
+        (folder / 'AGENTS.md').write_text('EDITOR scoped standard', encoding='utf-8')
+        router = self.bridge.router = FakeRouter()
+        result = self.bridge.run({'prompt': 'Explain the attached file',
+            'contexts': [{'path': str(folder / 'unsaved.py'), 'content': 'print(1)'}]})
+        self.assertTrue(result['ok'])
+        self.assertIn('EDITOR scoped standard', str(router.messages))
+
     def test_initialize_is_offline_and_catalog_never_returns_credentials(self):
         value = 'sk-vscode-store-synthetic-123456789'
         (self.home / 'secrets.json').write_text(json.dumps({'medium': value}))
@@ -55,6 +81,40 @@ class EditorBridgeTests(unittest.TestCase):
         self.assertNotIn(value, json.dumps(ready))
         self.assertEqual(os.environ['FORGE_MEDIUM_KEY'], value)
         self.assertFalse(self.bridge.agent._tool_context().policy.allows_write(self.workspace / 'file.txt'))
+
+    def test_independent_planning_and_message_bound_manual_review(self):
+        from .model import Provider, ModelRouter
+        from .test_phase_models import Transport
+        from .test_task_planning import plan_json
+        self.initialize()
+        transport = Transport([plan_json(), 'written code', 'Review feedback', 'another response'])
+        router = ModelRouter([Provider('writer', 'https://writer.invalid', default_model='opus'),
+                              Provider('planner', 'https://planner.invalid', default_model='astra')],
+            transport=transport, primary=('writer', 'opus'), retries_per_provider=0)
+        self.bridge.router = self.bridge.agent.phase_catalog = router
+        self.bridge.models = {json.dumps(['writer', 'opus']): ('writer', 'opus'),
+                              json.dumps(['planner', 'astra']): ('planner', 'astra')}
+        result = self.bridge.run({'prompt': 'write', 'planning': 'high',
+            'model': json.dumps(['writer', 'opus']), 'planningModel': json.dumps(['planner', 'astra'])})
+        self.assertEqual([c[:2] for c in transport.calls], [('planner', 'astra'), ('writer', 'opus')])
+        before = list(self.bridge.history)
+        with self.assertRaises(PermissionError):
+            self.bridge.review({'messageId': result['messageId'], 'enabled': False})
+        review = self.bridge.review({'messageId': result['messageId'], 'enabled': True,
+                                    'model': json.dumps(['planner', 'astra'])})
+        self.assertEqual(review['text'], 'Review feedback')
+        self.assertEqual(self.bridge.history, before)
+        self.assertEqual(transport.calls[-1][:2], ('planner', 'astra'))
+        self.bridge.run({'prompt': 'next', 'planning': 'none'})
+        with self.assertRaises(ValueError):
+            self.bridge.review({'messageId': result['messageId'], 'enabled': True})
+
+    def test_invalid_phase_model_is_rejected_before_execution(self):
+        self.initialize()
+        router = self.bridge.router = FakeRouter()
+        with self.assertRaises(ValueError):
+            self.bridge.run({'prompt': 'task', 'planning': 'high', 'planningModel': 'unknown'})
+        self.assertEqual(router.messages, [])
 
     def test_unsaved_configuration_is_protected_before_model_and_gui(self):
         self.initialize()

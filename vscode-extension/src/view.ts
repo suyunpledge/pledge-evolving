@@ -40,7 +40,8 @@ export function viewHtml(webview: VSCode.Webview, root: VSCode.Uri): string {
 <form id="composer"><div id="attachments"></div><label id="promptLabel" class="sr-only" for="prompt"></label>
 <textarea id="prompt" rows="4" maxlength="16000"></textarea>
 <div class="context-row"><button id="attach" type="button"></button><button id="selection" type="button"></button><button id="changes" type="button"></button></div>
-<div class="options"><label><span id="modelLabel"></span><select id="model"></select></label><label><span id="modeLabel"></span><select id="mode"><option value="read-only"></option><option value="workspace-write"></option></select></label></div>
+<div class="options"><label><span id="modelLabel"></span><select id="model"></select></label><label><span id="modeLabel"></span><select id="mode"><option value="read-only"></option><option value="workspace-write"></option></select></label><label><span id="planningLabel"></span><select id="planning"><option value="high"></option><option value="medium"></option><option value="low"></option><option value="none"></option></select></label></div>
+<details><summary id="phaseSettings"></summary><div class="options"><label><span id="planningModelLabel"></span><select id="planningModel"></select></label><label><span id="reviewModelLabel"></span><select id="reviewModel"></select></label><label><span id="reviewEnabledLabel"></span><select id="reviewEnabled"><option value="off"></option><option value="on"></option></select></label></div></details>
 <div class="send-row"><span id="hint"></span><button id="stop" class="secondary" type="button" hidden></button><button id="send" class="primary" type="submit"></button></div>
 <p id="boundary"></p></form><script nonce="${nonce}" src="${asset('chat.js')}"></script></body></html>`;
 }

@@ -1439,6 +1439,8 @@ class AgentMessage(tk.Frame):
         label.pack(fill=tk.X, pady=(4, 0))
         bind_wrap(label)
 
+        return label
+
     def add_actions(self, actions):
         # 动作按钮单独一个 host，靠底部（不被 trace 折叠吸收）
         if not hasattr(self, "_action_row_packed"):
@@ -1943,7 +1945,8 @@ class InputCard(tk.Frame):
                  on_thinking=None, footer_left=None, footer_right=None,
                  attach_button=True, model_widget=None,
                  on_attach=None, on_context=None, on_commands=None,
-                 on_settings=None, on_team_change=None, team_mode="off"):
+                 on_settings=None, on_team_change=None, team_mode="off",
+                 on_planning=None, planning_text=""):
         base = bg or C["chat"]
         super().__init__(parent, bg=base)
         self._on_send = on_send
@@ -2058,6 +2061,12 @@ class InputCard(tk.Frame):
                                       bg=C["input_bg"], fg=C["subtext"], size=10,
                                       tooltip=tr("当前思考强度；点击调整，实际支持能力取决于模型"))
         self.mode_pill.grid(row=0, column=2, sticky="e")
+        self.planning_pill = None
+        if on_planning is not None:
+            self.planning_pill = glyph_button(metadata, planning_text, on_planning,
+                bg=C["input_bg"], fg=C["subtext"], size=10,
+                tooltip=tr("事前规划"))
+            self.planning_pill.grid(row=2, column=0, columnspan=3, sticky="w", pady=(4, 0))
         right = tk.Frame(state_row, bg=C["input_bg"])
         right.grid(row=0, column=1, sticky="ne")
         self._primary_controls = right

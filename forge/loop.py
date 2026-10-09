@@ -38,6 +38,12 @@ from .tools import ToolContext, ToolRegistry, ToolResult
 from . import toolwire
 from .types import Outcome, OutcomeClock, as_outcome  # noqa: F401  (re-export)
 import time
+import threading
+import uuid
+from .planning import TaskPlan, PlanningError, planning_level, planning_prompt, token_cap
+from .phase_models import model_pair, phase_router
+from .project_rules import ProjectRules, MAX_TARGETS
+from .execution_guard import ExecutionGuard
 
 # A seat that *raised* gets this marker (not None): callers must be able to
 # tell "the seat failed" apart from "the seat legitimately returned nothing".
@@ -164,8 +170,9 @@ class RunReport:
     text: str
     steps: list[Step]
     usage: dict[str, Any]
-    stopped: str = "final"          # final | max_steps | error
+    stopped: str = "final"          # final | max_steps | error | planning_error | format_error | stalled
     events: list[dict[str, Any]] = field(default_factory=list)
+    planning: dict[str, Any] | None = None
 
     @property
     def tool_calls(self) -> int:
@@ -203,6 +210,11 @@ class Agent:
         mount_warnings: Iterable[str] | None = None,
         cost_ledger: "CostLedger | None" = None,
         thinking: bool | str = False,
+        planning: str = "none",
+        planning_model=None,
+        review_enabled: bool = False,
+        review_model=None,
+        project_rules: bool = True,
         service: str = "",
         thinking_token_cap: int | None = None,
         observer: "Callable[[dict[str, Any]], None] | None" = None,
@@ -210,6 +222,7 @@ class Agent:
         self.home = Path(home)
         self.workspace = Path(workspace)
         self.router = router
+        self.phase_catalog = router
         self.registry = registry
         self.policy = policy
         self.memory = memory
@@ -263,6 +276,21 @@ class Agent:
         self.service = str(service or "").strip().lower()
         self.thinking_mode = resolve_thinking_mode(thinking, self.service)
         self.thinking = self.thinking_mode != "off"
+        self.planning_level = planning_level(planning)
+        self.planning_model = model_pair(planning_model)
+        if type(review_enabled) is not bool:
+            raise ValueError('review.enabled must be boolean')
+        self.review_enabled = review_enabled
+        self.review_model = model_pair(review_model)
+        if type(project_rules) is not bool:
+            raise ValueError('project_rules.enabled must be boolean')
+        self.project_rules_enabled = project_rules
+        self._rule_targets: list[str] = []
+        self._rule_context = ''
+        self._rule_audit = None
+        self._plan: TaskPlan | None = None
+        self._run_id = ""
+        self._run_lock = threading.Lock()
         # 本地引擎 + 沉思启用时附加的输出预算上限（None = 不动请求）。
         self._thinking_cap_configured = thinking_token_cap
         self._run_task = ""
@@ -331,10 +359,44 @@ class Agent:
             return []
         return self.secret_scope.protect([{"role": "user", "content": f"[长期记忆上下文]\n{slice_}"}])
 
+    def _refresh_project_rules(self, messages):
+        # Honour tool exposure as well as Policy. Only refresh a bounded set of
+        # file scopes acquired from successful mediated reads in this run.
+        enabled = self.project_rules_enabled and 'read_file' in self.registry.names()
+        snapshot = ProjectRules(self.workspace, self.policy, self.secret_scope,
+                                enabled=enabled).load(self._rule_targets)
+        audit = (snapshot.sources, snapshot.issues)
+        if audit != self._rule_audit and (snapshot.sources or snapshot.issues or self._rule_context):
+            self._emit(type='project_rules', run_id=self._run_id,
+                       sources=snapshot.sources, issues=snapshot.issues)
+        self._rule_audit = audit
+        if snapshot.context != self._rule_context:
+            old = self._rule_context
+            # Only our own ordinary user-context message is replaced. Native
+            # assistant call / tool result blocks retain their original order.
+            if old:
+                old_index = next((i for i, m in enumerate(messages)
+                                  if m.get('role') == 'user' and m.get('content') == old), None)
+                messages[:] = [m for m in messages if not (
+                    m.get('role') == 'user' and m.get('content') == old)]
+            else:
+                old_index = None
+            self._rule_context = snapshot.context
+            if snapshot.context:
+                # Keep background guidance ahead of the actual task. In
+                # particular it must not become premium routing's latest task.
+                index = old_index if old_index is not None else next((
+                    i for i, m in enumerate(messages) if m.get('role') == 'user'
+                    and m.get('content') == getattr(self, '_rule_task_content', None)), len(messages))
+                messages.insert(index, {'role': 'user', 'content': snapshot.context})
+
 
     # -- events ----------------------------------------------------------
     def _emit(self, **event: Any) -> None:
         from .secrets import redact
+        if event.get("type") == "workflow_state":
+            event.setdefault("agent", self.name)
+            event.setdefault("depth", self.depth)
         record = redact(self.secret_scope.protect(dict(event)))
         self.events.append(record)
         if self._observer is not None:
@@ -443,6 +505,7 @@ class Agent:
             cost_ledger=None,
             # 三档模式随树继承：子代理同样按模式在运行首尾起沉思。
             thinking=self.thinking_mode,
+            project_rules=self.project_rules_enabled,
         )
         self._emit(type="subagent_spawn", task=task[:300], mode=child_policy.mode.value,
                    depth=child.depth, budget_left=self.budget[0])
@@ -667,7 +730,82 @@ class Agent:
         return notes or None
 
     # -- main loop -------------------------------------------------------
-    def run(self, task: str, *, history: list[dict[str, Any]] | None = None) -> RunReport:
+    def review_code(self, code):
+        if not self.review_enabled:
+            raise PermissionError('Manual code review is disabled')
+        if not self._run_lock.acquire(blocking=False):
+            raise RuntimeError('Wait for execution/review to finish')
+        try:
+            from .code_review import review_code
+            router = phase_router(self.phase_catalog, self.review_model, self.router)
+            self._emit(type='review_started', message_id=self._run_id)
+            result = review_code(code, self.secret_scope, router)
+            self._record_review_usage(result.usage)
+            self._emit(type='review_result', message_id=self._run_id, review=result.to_dict())
+            return result
+        except Exception as exc:
+            usage = getattr(exc, 'usage', {})
+            if usage: self._record_review_usage(usage)
+            self._emit(type='review_error', message_id=self._run_id, error=str(exc)[:300], usage=usage)
+            raise
+        finally:
+            self._run_lock.release()
+
+    def _record_review_usage(self, usage):
+        if self.cost_ledger is not None:
+            for request in usage.get('requests', []):
+                counts = request.get('usage') or {}
+                self.cost_ledger.record(model=request.get('model') or 'unknown',
+                    tokens=int(counts.get('prompt_tokens', 0)) + int(counts.get('completion_tokens', 0)),
+                    note='manual code review')
+
+    def run(self, task: str, *, history: list[dict[str, Any]] | None = None,
+            context_paths: Iterable[str] = ()) -> RunReport:
+        # A mutable Agent is one session lane. Parallel conversations need
+        # distinct Agents; refusing re-entry avoids cross-run state corruption.
+        if not self._run_lock.acquire(blocking=False):
+            raise RuntimeError("Agent is already running; use a separate session")
+        try:
+            self._run_id = uuid.uuid4().hex
+            self.events = []
+            planning_level(self.planning_level)
+            if self.planning_level != 'none':
+                phase_router(self.phase_catalog, self.planning_model, self.router)
+            self._plan = None
+            self._guard = ExecutionGuard()
+            self._run_thinking_active = False
+            self._compaction_noop_reported = False
+            self._rule_targets = []
+            for path in context_paths:
+                if len(self._rule_targets) >= MAX_TARGETS:
+                    break
+                if isinstance(path, str) and path not in self._rule_targets:
+                    self._rule_targets.append(path)
+            self._rule_context = ''
+            self._rule_audit = None
+            self._rule_task_content = None
+            return self._run(task, history=history)
+        except BaseException:
+            self._emit(type="workflow_state", run_id=self._run_id, phase="failed")
+            raise
+        finally:
+            self._run_lock.release()
+
+    def _invoke_recorded(self, name, args):
+        action_id = uuid.uuid4().hex
+        self._emit(type="tool_started", run_id=self._run_id, action_id=action_id, tool=name)
+        if self.session is not None:
+            self.session.sync()  # persist intent before a possible side effect
+        result = self.registry.invoke(name, args, self._tool_context())
+        if result.ok and name in {'read_file', 'read_range', 'file_outline', 'edit_config'}:
+            path = args.get('path')
+            if isinstance(path, str) and path not in self._rule_targets and len(self._rule_targets) < MAX_TARGETS:
+                self._rule_targets.append(path)
+        self._emit(type="tool_completed", run_id=self._run_id, action_id=action_id,
+                   tool=name, ok=result.ok)
+        return result
+
+    def _run(self, task: str, *, history: list[dict[str, Any]] | None = None) -> RunReport:
         # Editor clients can provide genuine preceding turns. Only ordinary
         # user/assistant text is accepted; clients cannot inject system/tool
         # messages or manufacture permissions through conversation history.
@@ -703,8 +841,9 @@ class Agent:
             {"role": "system", "content": self.system_prompt()},
             *self._inject_memory(),
             *previous,
-            {"role": "user", "content": task},
         ]
+        self._refresh_project_rules(messages)
+        messages.append({"role": "user", "content": task})
         # 启动沉思（phase=thinking）：三档门控——off 不起；on 直接起；smart 由
         # 模块库函数 looks_complex 决定（有运行期消费者，非装饰）。沉思文本
         # 注入任务消息的 <contemplation> 段——消费者不是摆设，主跑真的用到它。
@@ -727,10 +866,53 @@ class Agent:
                                    "content": f"{task}\n\n<contemplation>\n{notes[:4000]}\n</contemplation>"}
         steps: list[Step] = []
         usage_total = {"prompt_tokens": 0, "completion_tokens": 0}
+        pinned_task = str(messages[-1].get("content", task))
+        if self.planning_level != "none":
+            self._emit(type="workflow_state", run_id=self._run_id, phase="planning",
+                       level=self.planning_level)
+            try:
+                # No tools and no privileged resolve capability on this request.
+                # Feed existing evidence only, with a separate planning contract.
+                contract = (planning_prompt(self.planning_level) +
+                    f"\nExecution mode: {self.policy.mode.value}; sandbox: {self.policy.sandbox.value}. "
+                    + "Tools declared for execution: " + ", ".join(self.registry.names()) +
+                    ". Declarations are not grants; Policy decides each invocation. "
+                    "Native process execution and secret resolution are unavailable.")
+                plan_messages = [{"role": "system", "content": contract},
+                                 *[m for m in messages if m.get("role") != "system"
+                                   and m.get('content') != self._rule_context]]
+                # Premium's integration stage deliberately carries only the
+                # latest task + draft. Keep the output contract in that task,
+                # so it survives handoff without forwarding private history.
+                plan_messages[-1] = {"role": "user", "content": pinned_task + "\n\n" +
+                                     contract + ("\n\n" + self._rule_context if self._rule_context else '')}
+                planner = phase_router(self.phase_catalog, self.planning_model, self.router)
+                plan_completion = planner.complete(self.secret_scope.protect(plan_messages),
+                    small=self.planning_level == "low" and self.planning_model is None,
+                    max_tokens=token_cap(self.planning_level))
+                usage_total["prompt_tokens"] += plan_completion.usage.prompt_tokens
+                usage_total["completion_tokens"] += plan_completion.usage.completion_tokens
+                usage_total.setdefault("requests", []).extend(getattr(plan_completion, "requests", []))
+                if getattr(plan_completion, "tool_calls", None):
+                    raise PlanningError("Planner attempted to call tools")
+                self._plan = TaskPlan.parse(self.secret_scope.protect_text(plan_completion.text or ""),
+                                            self.planning_level)
+            except (PlanningError, TransportError) as exc:
+                self._emit(type="planning_error", run_id=self._run_id, error=str(exc)[:300])
+                return self._finish(RunReport(text=f"[planning stopped] {exc}", steps=steps,
+                    usage=usage_total, stopped="planning_error", events=self.events))
+            pinned_task += "\n\n" + self._plan.context()
+            messages[-1] = {"role": "user", "content": pinned_task}
+            self._emit(type="task_plan", run_id=self._run_id, plan=self._plan.to_dict())
+        self._emit(type="workflow_state", run_id=self._run_id, phase="ready")
+        self._emit(type="workflow_state", run_id=self._run_id, phase="executing")
+        self._rule_task_content = pinned_task
+        format_errors = 0
         stopped = "max_steps"
 
         for index in range(1, self.limits.max_steps + 1):
             self._due_check(index)
+            self._refresh_project_rules(messages)
             if self._should_compact(messages):
                 before = self.compactor.size(messages)
                 # H16: the live ceiling (pricing-aware, ledger-tightened) must
@@ -740,7 +922,9 @@ class Agent:
                 # event every step — report it once per run (compaction
                 # skipped at size X), then stay silent while sizes creep.
                 messages = self.compactor.compact(messages,
-                                                  max_chars=self._effective_budget())
+                    max_chars=self._effective_budget(),
+                    pinned_contents=(pinned_task, self._rule_context,
+                                     self._plan.context() if self._plan else ''))
                 after = self.compactor.size(messages)
                 if after < before or not self._compaction_noop_reported:
                     self._emit(type="compaction", before=before, after=after,
@@ -797,14 +981,19 @@ class Agent:
             else:
                 text_calls = toolwire.parse_text_protocol_calls(text, self._run_model)
                 if not text_calls:
-                    if "{" not in text:
+                    if not toolwire.looks_like_tool_attempt(text):
                         if self.session is not None:
                             self._emit(type="assistant_message", content=text)
                         return self._finish(RunReport(text=text.strip(), steps=steps, usage=usage_total,
                                                       stopped="final", events=self.events))
-                    # 有花括号却提不出合法调用块：截断/键名漂移的工具调用给一次
-                    # 自纠机会（对齐旧 bad-tool-block retry 语义）
+                    # Recognizable malformed tool attempts get bounded format
+                    # feedback; ordinary JSON prose is a legitimate answer.
                     steps.append(Step(index=index, note="no valid tool call block"))
+                    format_errors += 1
+                    self._emit(type="tool_format_error", attempts=format_errors, limit=3)
+                    if format_errors >= 3:
+                        return self._finish(RunReport(text="[stopped: invalid tool protocol after 3 attempts]",
+                            steps=steps, usage=usage_total, stopped="format_error", events=self.events))
                     messages.append({"role": "assistant", "content": text})
                     messages.append({"role": "user", "content":
                                      "No valid tool call found. Emit exactly one block like "
@@ -824,7 +1013,7 @@ class Agent:
                         if point is not None:
                             step.note = f"checkpoint {point.commit[:8]}"
                             self._emit(type="checkpoint", commit=point.commit, label=point.label)
-                    result = self.registry.invoke(tool_name, args, self._tool_context())
+                    result = self._invoke_recorded(tool_name, args)
                     step.result = (result.content or result.error)[: self.limits.max_tool_result]
                     step.decision = ("deny" if not result.ok and "denied" in result.error
                                      else ("ok" if result.ok else "error"))
@@ -834,6 +1023,10 @@ class Agent:
                     self._emit(type="tool_call", tool=tool_name, args=args,
                                result=step.result[:1500], ok=result.ok, decision=step.decision,
                                step=step.index, native=False, authorization=authz)
+                    if self._guard.observe(tool_name, args, result.ok, result.content or result.error):
+                        self._emit(type="loop_stop", reason="stalled", steps=len(steps))
+                        return self._finish(RunReport(text="[stopped: repeated action/result; inspect the failure or change approach]",
+                            steps=steps, usage=usage_total, stopped="stalled", events=self.events))
                 messages.append({"role": "assistant", "content": text})
                 for tool_name, body, ok in answered_text:
                     messages.append({
@@ -852,7 +1045,7 @@ class Agent:
                         if point is not None:
                             step.note = f"checkpoint {point.commit[:8]}"
                             self._emit(type="checkpoint", commit=point.commit, label=point.label)
-                    result = self.registry.invoke(call.name, call.args, self._tool_context())
+                    result = self._invoke_recorded(call.name, call.args)
                     step.result = (result.content or result.error)[: self.limits.max_tool_result]
                     step.decision = ("deny" if not result.ok and "denied" in result.error
                                      else ("ok" if result.ok else "error"))
@@ -863,6 +1056,10 @@ class Agent:
                                result=step.result[:1500], ok=result.ok,
                                decision=step.decision, step=step.index,
                                call_id=call.id, wire=wire, authorization=authz)
+                    if self._guard.observe(call.name, call.args, result.ok, result.content or result.error):
+                        self._emit(type="loop_stop", reason="stalled", steps=len(steps))
+                        return self._finish(RunReport(text="[stopped: repeated action/result; inspect the failure or change approach]",
+                            steps=steps, usage=usage_total, stopped="stalled", events=self.events))
                 messages.append(completion.assistant_message
                                 or toolwire.assistant_message(prose, native_calls, wire))
                 messages.extend(toolwire.tool_result_messages(answered, wire))
@@ -886,6 +1083,12 @@ class Agent:
         run is always metabolised and always accounted for.
         """
         from .secrets import redact
+        phase = "completed" if report.stopped == "final" else (
+            "failed" if report.stopped in {"error", "planning_error", "format_error"} else "stopped")
+        if getattr(self, "_run_id", ""):
+            self._emit(type="workflow_state", run_id=self._run_id, phase=phase, reason=report.stopped)
+        current_plan = getattr(self, "_plan", None)
+        report.planning = self.secret_scope.protect(current_plan.to_dict()) if current_plan else None
         report.text = redact(report.text)
         report.usage = redact(report.usage)
         for step in report.steps:
@@ -1081,6 +1284,12 @@ def build_agent(
         # 云端 provider 的配置原样透传。
         thinking=resolve_thinking_mode(
             config.get("thinking", "mode", "off"), service),
+        planning=config.get("planning", "level", "none"),
+        planning_model=config.get("planning", "model", None),
+        review_enabled=config.get("review", "enabled", False),
+        review_model=config.get("review", "model", None),
+        project_rules=(False if config.row('project_rules') and config.row('project_rules').disabled
+                       else config.get('project_rules', 'enabled', True)),
         service=service,
         thinking_token_cap=config.get("thinking", "tokenCap", None),
         observer=observer,

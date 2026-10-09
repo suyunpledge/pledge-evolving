@@ -236,6 +236,8 @@ class ActivityGlyph(tk.Canvas):
 
 # 沉思模式（forge thinking.mode 三档；GUI 里对齐参考稿输入卡的工具条）
 THINKING_LABELS = {"off": tr("关闭"), "smart": tr("智能"), "on": tr("开启")}
+PLANNING_LABELS = {"high": tr("事前规划：高"), "medium": tr("事前规划：中"),
+                   "low": tr("事前规划：低"), "none": tr("事前规划：无")}
 THINKING_CHOICES = [
     ("off", tr("关闭"), "不启用沉思"),
     ("smart", tr("智能"), "按任务复杂度自动决定（推荐）"),
@@ -3393,6 +3395,12 @@ class ForgeGuiApp:
         self._strategy_row.pack(side=tk.LEFT)
         self._task_strategy = "medium"
         self._render_strategy_chips()
+        planning_row = tk.Frame(ctl, bg=C["chat"])
+        planning_row.pack(fill=tk.X, pady=(6, 0))
+        self._task_planning_row = planning_row
+        self._render_planning_chips()
+        pill_button(ctl, tr("规划模型与复审"), self._open_phase_settings,
+                    kind="ghost", bg=C["chat"]).pack(anchor="w", pady=(5, 0))
         row = tk.Frame(ctl, bg=C["chat"])
         row.pack(fill=tk.X, pady=(8, 0))
         self.task_stop_btn = pill_button(row, "■ 停止", self._stop_task, kind="danger",
@@ -3429,6 +3437,144 @@ class ForgeGuiApp:
         self._task_strategy = value
         self._render_strategy_chips()
 
+    def _read_planning_level(self):
+        from forge.planning import PLANNING_LEVELS
+        for row in self.user_rows:
+            if str(row.get("id")) == "planning":
+                value = (row.get("config") or {}).get("level", "none")
+                return value if value in PLANNING_LEVELS else "none"
+        return "none"
+
+    def _render_planning_chips(self):
+        row = getattr(self, "_task_planning_row", None)
+        if row is None or not row.winfo_exists():
+            return
+        for child in row.winfo_children():
+            child.destroy()
+        current = self._read_planning_level()
+        for value, label in PLANNING_LABELS.items():
+            theme.chip(row, label, selected=value == current,
+                command=lambda v=value: self._set_planning_level(v)).pack(side=tk.LEFT, padx=(0, 5))
+
+    def _open_planning_menu(self, anchor=None):
+        current = self._read_planning_level()
+        return show_popover_menu(anchor or self.session_menu_btn, [
+            {"label": label, "selected": value == current,
+             "command": lambda v=value: self._set_planning_level(v)}
+            for value, label in PLANNING_LABELS.items()] + [
+            {"separator": True}, {"label": tr("规划模型与复审"), "command": self._open_phase_settings}],
+            title=tr("事前规划"), width=280)
+
+    def _phase_setting(self, row_id, key, default=None):
+        row = next((r for r in self.user_rows if str(r.get('id')) == row_id), {})
+        if row.get('disabled'): return default
+        return (row.get('config') or {}).get(key, default)
+
+    def _save_phase_settings(self, planning_model, review_model, review_enabled):
+        from phase_client import model_catalog
+        from forge.phase_models import model_pair
+        if self._sending or getattr(self, '_task_running', False) or self._feature_dirty:
+            self._set_status(tr('请在执行结束并保存功能开关后调整规划'), 'info')
+            return False
+        latest = load_user_layer(self.home)
+        choices = {pair for pair, _label in model_catalog(latest)}
+        planning_model, review_model = model_pair(planning_model), model_pair(review_model)
+        if any(pair is not None and pair not in choices for pair in (planning_model, review_model)):
+            raise ValueError('Phase model is no longer enabled/configured')
+        if type(review_enabled) is not bool: raise ValueError('Review enabled must be boolean')
+        rows = copy.deepcopy(latest)
+        for rid, values in [('planning', {'model': planning_model}),
+                            ('review', {'model': review_model, 'enabled': review_enabled})]:
+            row = next((r for r in rows if str(r.get('id')) == rid), None)
+            if row is None:
+                row = {'id': rid, 'name': rid + ':settings', 'config': {}}
+                rows.append(row)
+            row.setdefault('config', {}).update(values)
+        save_user_layer(self.home, rows, expected_rows=latest)
+        self.user_rows = rows
+        self._rebuild_feature_toggles(force=True)
+        self._sync_composer_metadata()
+        for attr, task in [('_agent_msg', False), ('_task_msg', True)]:
+            msg = getattr(self, attr, None)
+            if msg is not None and msg.winfo_exists() and getattr(msg, '_review_source', None):
+                self._attach_review_action(msg, msg._review_source, task=task)
+        return True
+
+    def _open_phase_settings(self):
+        from phase_client import model_catalog
+        if self._sending or getattr(self, '_task_running', False):
+            self._set_status(tr('执行结束后可修改模型与复审设置'), 'info')
+            return
+        previous = getattr(self, '_phase_dialog', None)
+        if previous is not None and previous.winfo_exists():
+            previous.lift()
+            return
+        choices = [(None, i18n.resolve(tr('沿用执行模型'), self.root))] + model_catalog(self.user_rows)
+        dialog = i18n.Toplevel(self.root)
+        self._phase_dialog = dialog
+        dialog.title(tr('规划模型与复审'))
+        dialog.configure(bg=C['surface'])
+        dialog.transient(self.root)
+        body = tk.Frame(dialog, bg=C['surface'], padx=18, pady=16)
+        body.pack(fill=tk.BOTH, expand=True)
+        i18n.Label(body, text=tr('独立模型使用已配置 Provider 的凭据；审核只在点击后运行。'),
+                    bg=C['surface'], fg=C['muted'], wraplength=360, justify='left').pack(fill=tk.X)
+        selections = []
+        for title, rid in [(tr('规划模型'), 'planning'), (tr('复审模型'), 'review')]:
+            i18n.Label(body, text=title, bg=C['surface'], fg=C['text']).pack(anchor='w', pady=(14, 5))
+            picker = ttk.Combobox(body, state='readonly', values=[label for _, label in choices], width=40)
+            current = self._phase_setting(rid, 'model')
+            index = next((i for i, (pair, _) in enumerate(choices) if pair == tuple(current or ())), 0)
+            if current and index == 0:
+                i18n.Label(body, text=tr('原模型已不可用，请重新选择。'),
+                            bg=C['surface'], fg=C['warn']).pack(anchor='w')
+            picker.current(index); picker.pack(fill=tk.X)
+            selections.append(picker)
+        enabled = tk.BooleanVar(value=self._phase_setting('review', 'enabled', False) is True)
+        i18n.Checkbutton(body, text=tr('启用手动复审'), variable=enabled,
+                         bg=C['surface'], fg=C['text'], selectcolor=C['input_bg']).pack(anchor='w', pady=14)
+        def save():
+            try:
+                if self._save_phase_settings(choices[selections[0].current()][0],
+                        choices[selections[1].current()][0], enabled.get()):
+                    dialog.destroy()
+            except (ValueError, OSError) as exc:
+                self._set_status(str(exc), 'error')
+        footer = tk.Frame(body, bg=C['surface']); footer.pack(fill=tk.X)
+        pill_button(footer, tr('保存'), save, kind='primary', bg=C['surface']).pack(side=tk.RIGHT)
+        self._phase_settings_close_btn = pill_button(footer, tr('取消'), dialog.destroy,
+                                                     kind='ghost', bg=C['surface'])
+        self._phase_settings_close_btn.pack(side=tk.RIGHT, padx=(0, 8))
+        dialog.bind('<Escape>', lambda _event: dialog.destroy() or 'break')
+        dialog.grab_set()
+
+    def _set_planning_level(self, value):
+        from forge.planning import planning_level
+        planning_level(value)
+        if self._sending or getattr(self, "_task_running", False) or self._feature_dirty:
+            self._set_status("请在执行结束并保存功能开关后调整规划", "info")
+            return False
+        try:
+            latest = load_user_layer(self.home)
+            rows = copy.deepcopy(latest)
+            row = next((r for r in rows if str(r.get("id")) == "planning"), None)
+            if row is None:
+                rows.append({"id": "planning", "name": "planning:level", "config": {"level": value}})
+            else:
+                row.setdefault("config", {})["level"] = value
+            save_user_layer(self.home, rows, expected_rows=latest)
+        except (OSError, ValueError) as exc:
+            self._set_status(str(exc), "error")
+            return False
+        self.user_rows = rows
+        pill = getattr(getattr(self, "input_card", None), "planning_pill", None)
+        if pill is not None:
+            pill.configure(text=PLANNING_LABELS[value])
+        self._render_planning_chips()
+        self._rebuild_feature_toggles(force=True)
+        self._set_status(PLANNING_LABELS[value], "ok")
+        return True
+
     def _clear_task_view(self):
         if getattr(self, "_task_running", False):
             self._set_status("任务正在运行，先停止再新建", "info")
@@ -3463,7 +3609,8 @@ class ForgeGuiApp:
         self.task_run_btn.configure(state=tk.DISABLED)
         self._set_status(f"任务已下发：{task[:40]}", "info")
 
-        cmd = task_command(_python_exe(), self.run_py, self.home, task, self._task_strategy)
+        cmd = task_command(_python_exe(), self.run_py, self.home, task, self._task_strategy,
+                           self._read_planning_level(), self._phase_setting('planning', 'model'))
         env = {**os.environ, **env_for()}
         cwd = str(self.run_py.parent)
 
@@ -3548,6 +3695,11 @@ class ForgeGuiApp:
         msg.stream_text("")
 
         if isinstance(data, dict):
+            plan = data.get("planning")
+            if isinstance(plan, dict):
+                from forge.planning import TaskPlan
+                parsed_plan = TaskPlan.parse(json.dumps({k: v for k, v in plan.items() if k != "level"}), plan["level"])
+                msg.add_note(parsed_plan.display(), tone="muted")
             steps = data.get("steps") or []
             if steps:
                 rows = []
@@ -3603,6 +3755,8 @@ class ForgeGuiApp:
         if changed:
             actions.append({"label": tr("预览选中文件"), "command": lambda: self._open_workspace("preview")})
         msg.add_actions(actions)
+        if isinstance(data, dict) and data.get('stopped') == 'final':
+            self._attach_review_action(msg, str(data.get('text') or ''), task=True)
 
         if self.workspace is not None:
             self._push_terminal(f"[task] {outcome} · 退出码 {code} · 用时 {elapsed:.1f}s")
@@ -4258,6 +4412,8 @@ class ForgeGuiApp:
             model_var=self.model_var,
             on_thinking=self._open_thinking_menu,
             thinking_text=self._thinking_label(),
+            on_planning=lambda: self._open_planning_menu(self.input_card.planning_pill),
+            planning_text=PLANNING_LABELS[self._read_planning_level()],
             footer_left=tr("就绪"),
             model_widget=self._make_model_picker,
             on_attach=self._attach_files,
@@ -4320,6 +4476,9 @@ class ForgeGuiApp:
         effort = self.reasoning_var.get()
         mode = tr("标准") if effort == "off" else REASONING_LABELS.get(effort, effort)
         self.input_card.set_metadata(provider=name, mode=mode)
+        pill = getattr(self.input_card, "planning_pill", None)
+        if pill is not None:
+            pill.configure(text=PLANNING_LABELS[self._read_planning_level()])
 
     def _on_model_picked(self, value: str) -> None:
         """从下拉里选中一个模型：model_var 的 trace 负责后续（必要时重启 gateway）。"""
@@ -6634,6 +6793,9 @@ class ForgeGuiApp:
             self._chat_empty = False
             self._last_sidecar_prompt = prompt   # compose 后的完整 prompt（含附件）
             self.chat_area.add_user(prompt)
+            previous_review = getattr(getattr(self, '_agent_msg', None), '_review_action', None)
+            if previous_review is not None and previous_review.winfo_exists():
+                previous_review.master.destroy()
             self._agent_msg = self.chat_area.add_agent(app=self)
             self._agent_msg.set_status("生成中…")
             self._agent_msg.stream_text("")
@@ -6668,6 +6830,11 @@ class ForgeGuiApp:
             plugin_workspace, plugin_session = self._repo_root(), self._session_id
             reasoning_effort = ("high" if self._reasoning_effort == "contemplate"
                                 else None if self._reasoning_effort == "off" else self._reasoning_effort)
+            planning = self._read_planning_level()  # capture all Tk/config state on the UI thread
+            planning_model = self._phase_setting('planning', 'model')
+            phase_rows = copy.deepcopy(self.user_rows)
+            phase_env = {**os.environ, **env_for()}
+            phase_scope = self._input_secret_scope()
 
             def worker():
                 try:
@@ -6676,6 +6843,21 @@ class ForgeGuiApp:
                         raise GatewayError(f"gateway 未连接：{msg}。请先启动 gateway 后重试。")
                     if cancel_event.is_set():
                         raise GenerationCancelled("已停止生成")
+                    if planning != "none":
+                        self._post_ui(self._set_request_status, tr("事前规划"))
+                        planner = client
+                        if planning_model:
+                            from phase_client import PhaseClient
+                            planner = PhaseClient(phase_rows, planning_model, phase_env, phase_scope, cancel_event)
+                        plan, plan_usage = planner.plan_task(messages, planning, model=model,
+                                                           cancel_event=cancel_event)
+                        if cancel_event.is_set():
+                            raise GenerationCancelled("已停止生成")
+                        messages[-1] = ChatMessage("user", messages[-1].content + "\n\n" + plan.context())
+                        self._post_ui(self._post_note_to_msg, plan.display())
+                        if isinstance(plan_usage, dict):
+                            self._post_ui(self._post_note_to_msg,
+                                "Planning usage: " + json.dumps(plan_usage, ensure_ascii=False))
                     # 子任务并行（阻塞 worker 线程即可，不卡 UI；UI 状态由 _post_ui 刷）
                     if sidecar_plan is not None:
                         if cancel_event.is_set():
@@ -6727,6 +6909,8 @@ class ForgeGuiApp:
                         self._post_ui(self._append_stream_delta, piece)
 
                     TOOL_ROUNDS = 8   # 防失控：模型最多连续调 8 轮工具
+                    from forge.execution_guard import ExecutionGuard
+                    execution_guard = ExecutionGuard()
                     rounds = 0
                     while True:
                         round_start = len(acc)
@@ -6781,6 +6965,8 @@ class ForgeGuiApp:
                             messages.append(ChatMessage(
                                 role="tool", content=body_text,
                                 tool_call_id=str(call.get("id") or "")))
+                            if execution_guard.observe(name, args, ok_flag, body_text):
+                                raise GatewayError("重复工具调用没有进展，已停止；请检查错误或调整任务。")
                             rows.append({
                                 "name": name,
                                 "desc": json.dumps(args, ensure_ascii=False)[:70],
@@ -6833,9 +7019,79 @@ class ForgeGuiApp:
                         "command": lambda: self._open_workspace("file_tree")}]
             actions.extend(self._file_actions(full))
             msg.add_actions(actions)
+            self._attach_review_action(msg, full)
         self._archive_current_session()
         self._refresh_history()
         self._set_status("回复完成", "ok")
+
+    def _attach_review_action(self, msg, code, *, task=False):
+        if not msg.winfo_exists(): return
+        previous = getattr(msg, '_review_action', None)
+        if previous is not None and previous.winfo_exists(): previous.master.destroy()
+        msg._review_source = code
+        if not getattr(msg, '_forge_message_id', None): msg._forge_message_id = uuid.uuid4().hex
+        if code.strip() and self._phase_setting('review', 'enabled', False) is True:
+            msg._review_action = msg.add_actions([{'label': tr('复审'),
+                'command': lambda: self._review_response(msg, code, task=task)}])
+
+    def _review_response(self, msg, code, *, task=False):
+        if (self._sending or getattr(self, '_task_running', False)
+                or self._phase_setting('review', 'enabled', False) is not True):
+            return
+        current = getattr(self, '_task_msg' if task else '_agent_msg', None)
+        if msg is not current or not msg.winfo_exists() or not code.strip(): return
+        rows = copy.deepcopy(self.user_rows)
+        selection = self._phase_setting('review', 'model')
+        environment = {**os.environ, **env_for()}
+        scope = self._input_secret_scope()
+        client, model = self.client, self.model_var.get()
+        if self.gateway_proc is not None:
+            provider = select_provider(rows, model)
+            if provider is not None: model = provider['model']
+        sid, identifier = self._session_id, uuid.uuid4().hex
+        message_id = getattr(msg, '_forge_message_id', identifier)
+        msg._forge_review_id = identifier
+        self._sending = True
+        self._abort_requested = False
+        self._cancel_event = cancel = threading.Event()
+        self.input_card.set_busy(True)
+        self._set_request_status(tr('复审中…'))
+        for button in getattr(getattr(msg, '_review_action', None), '_buttons', ()):
+            button.configure(state=tk.DISABLED, text=tr('复审中…'))
+        def finish(result=None, error=None):
+            current = getattr(self, '_task_msg' if task else '_agent_msg', None)
+            if (not self._closing and self._session_id == sid and current is msg
+                    and getattr(msg, '_forge_review_id', None) == identifier and msg.winfo_exists()):
+                if cancel.is_set():
+                    feedback = i18n.resolve(tr('复审已停止。'), msg)
+                elif error:
+                    feedback = i18n.resolve(tr('复审失败'), msg) + ': ' + redact(error)
+                else:
+                    prefix = i18n.resolve(tr('审核意见'), msg)
+                    if result.truncated: prefix += '\n' + i18n.resolve(tr('仅审核前 20000 字符，未覆盖全部内容。'), msg)
+                    feedback = prefix + '\n' + result.text + '\nReview usage: ' + json.dumps(result.usage, ensure_ascii=False)
+                previous = getattr(msg, '_review_feedback', None)
+                if previous is not None and previous.winfo_exists(): previous.destroy()
+                msg._review_feedback = msg.add_note(feedback, tone='muted')
+            for button in getattr(getattr(msg, '_review_action', None), '_buttons', ()):
+                if button.winfo_exists(): button.configure(state=tk.NORMAL, text=tr('复审'))
+            self._send_finished()
+        def worker():
+            try:
+                reviewer = client
+                if selection:
+                    from phase_client import PhaseClient
+                    reviewer = PhaseClient(rows, selection, environment, scope, cancel)
+                result = reviewer.review_code(code, model=model, cancel_event=cancel)
+                if cancel.is_set(): raise GenerationCancelled('stopped')
+                from forge.session import Session
+                with Session(self.home / 'sessions' / 'reviews' / (identifier + '.jsonl')) as log:
+                    log.append('review_result', message_id=message_id, source_session=sid,
+                               review=result.to_dict())
+                self._post_ui(finish, result, None)
+            except Exception as exc:
+                self._post_ui(finish, None, str(exc))
+        threading.Thread(target=worker, daemon=True, name='Forge-code-review').start()
 
     def _chat_cancelled(self, prompt):
         if self._agent_msg is not None:

@@ -166,7 +166,7 @@ class ForgeGatewayClient:
     # ── 非流式 ──
     def chat(self, messages: list[ChatMessage], model: str = "default",
              temperature: float = 0.7, max_tokens: int | None = None,
-             reasoning_effort: str | None = None) -> CompletionResult:
+             reasoning_effort: str | None = None, cancel_event=None) -> CompletionResult:
         body = {
             "model": model,
             "messages": [m.to_dict(self.secret_scope) for m in messages],
@@ -179,14 +179,25 @@ class ForgeGatewayClient:
             body["reasoning_effort"] = reasoning_effort
         req = self._request("POST", "/v1/chat/completions", body)
         try:
-            with open_response(req, timeout=self.timeout, cancel_event=None) as resp:
+            with open_response(req, timeout=self.timeout, cancel_event=cancel_event) as resp:
                 from forge.secret_http import redact_response
-                raw_text = redact_response(resp.read()).decode('utf-8')
+                raw = resp.read(2 * 1024 * 1024 + 1)
+                if len(raw) > 2 * 1024 * 1024:
+                    raise GatewayError("响应超过 2 MiB，请缩小请求")
+                raw_text = redact_response(raw).decode('utf-8')
+        except RequestCancelled:
+            raise GenerationCancelled("已停止生成") from None
         except urllib.error.HTTPError as e:
             err_body = http_error_detail(e)
             raise GatewayError(f"HTTP {e.code}: {err_body}") from None
         except (urllib.error.URLError, socket.timeout) as e:
+            if cancel_event is not None and cancel_event.is_set():
+                raise GenerationCancelled("已停止生成") from None
             raise GatewayError(f"网络错误：{e}") from None
+        except OSError as e:
+            if cancel_event is not None and cancel_event.is_set():
+                raise GenerationCancelled("已停止生成") from None
+            raise GatewayError(f"连接中断：{e}") from None
 
         try:
             data = json.loads(raw_text)
@@ -208,7 +219,35 @@ class ForgeGatewayClient:
             reasoning_content=str(message.get("reasoning_content") or ""),
         )
 
+    def plan_task(self, messages, level, *, model="default", cancel_event=None):
+        """GUI's streaming path uses the same bounded, tool-free plan contract."""
+        from forge.planning import planning_level, planning_prompt, token_cap, TaskPlan, PlanningError
+        planning_level(level)
+        if level == 'none':
+            return None, None
+        inputs = [ChatMessage('system', planning_prompt(level)),
+                  *[m for m in messages if m.role in {'user', 'assistant'}]]
+        result = self.chat(inputs, model=model, max_tokens=token_cap(level), cancel_event=cancel_event)
+        raw = result.raw or {}
+        choices = raw.get('choices') or []
+        if result.tool_calls or (choices and (choices[0].get('message') or {}).get('tool_calls')):
+            raise PlanningError('Planner attempted to call tools')
+        return TaskPlan.parse(self.secret_scope.protect_text(result.text), level), result.usage
+
     # ── 流式（SSE） ──
+    def review_code(self, code, *, model='default', cancel_event=None):
+        from forge.code_review import review_messages, ReviewReport, REVIEW_TOKENS
+        inputs, truncated, chars = review_messages(code, self.secret_scope)
+        result = self.chat([ChatMessage(m['role'], m['content']) for m in inputs],
+                           model=model, max_tokens=REVIEW_TOKENS, temperature=0.3, cancel_event=cancel_event)
+        choices = (result.raw or {}).get('choices') or []
+        if result.tool_calls or (choices and (choices[0].get('message') or {}).get('tool_calls')):
+            raise GatewayError('Review model attempted a tool call; no tool was executed')
+        text = self.secret_scope.protect_text(result.text).strip()
+        if not text or len(text) > 16000:
+            raise GatewayError('Review model returned empty or oversized feedback')
+        return ReviewReport(text, result.usage or {}, result.model, truncated=truncated, reviewed_chars=chars)
+
     def stream_chat(self, messages: list[ChatMessage], model: str = "default",
                     temperature: float = 0.7,
                     reasoning_effort: str | None = None,

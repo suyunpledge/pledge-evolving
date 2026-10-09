@@ -135,6 +135,7 @@ class EditorBridge:
         self.credentials = SecretScope()
         self.models = {}
         self.current_request = ''
+        self.last_result = None
 
     def initialize(self, params):
         if self.agent is not None:
@@ -275,6 +276,10 @@ class EditorBridge:
     def run(self, params):
         if self.agent is None:
             raise ValueError('Initialize Forge first')
+        from .planning import planning_level
+        self.agent.planning_level = planning_level(params.get('planning', self.agent.planning_level))
+        self.agent.planning_model = self._phase_model(params.get('planningModel', ''))
+        self.last_result = None  # invalidate the preceding review target before starting another run
         self.agent.policy = self.policy(params.get('mode', 'read-only'))
         model = params.get('model', '')
         if model:
@@ -290,12 +295,37 @@ class EditorBridge:
         self.agent.events = []
         self.agent.budget = [self.agent.limits.spawn_budget]
         with self.agent.session:
-            report = self.agent.run(task, history=self.history)
+            report = self.agent.run(task, history=self.history,
+                context_paths=[item['path'] for item in params.get('contexts', []) if item.get('path')])
         self.history = _history([*self.history, {'role': 'user', 'content': task},
                                 {'role': 'assistant', 'content': report.text}])
-        return {'ok': report.stopped != 'error', 'text': report.text, 'stopped': report.stopped,
+        if report.stopped == 'final':
+            self.last_result = (self.agent._run_id, report.text)
+        return {'ok': report.stopped == 'final', 'text': report.text, 'stopped': report.stopped,
                 'usage': report.usage, 'toolCalls': report.tool_calls,
+                'planning': report.planning,
+                'messageId': self.agent._run_id,
                 'sessionPath': str(self.agent.session.path)}
+
+    def _phase_model(self, identifier):
+        if not isinstance(identifier, str): raise ValueError('Invalid phase model identifier')
+        if not identifier: return None
+        if identifier not in self.models: raise ValueError('Selected phase model is no longer configured')
+        return self.models[identifier]
+
+    def review(self, params):
+        if self.agent is None or not self.last_result:
+            raise ValueError('Generate a completed response before reviewing it')
+        identifier, code = self.last_result
+        if params.get('messageId') != identifier:
+            raise ValueError('Review target is stale; review the latest completed response')
+        if params.get('enabled') is not True:
+            raise PermissionError('Enable manual review first')
+        self.agent.review_enabled = True
+        self.agent.review_model = self._phase_model(params.get('model', ''))
+        with self.agent.session:
+            result = self.agent.review_code(code)
+        return {**result.to_dict(), 'messageId': identifier}
 
     def close(self):
         if self.agent is not None:
@@ -329,7 +359,7 @@ def serve(source=None, destination=None):
                 if not isinstance(identifier, str) or not re.fullmatch(r'[a-f0-9]{32}', identifier):
                     raise ValueError('Invalid request identifier')
                 method, params = message.get('method'), message.get('params', {})
-                if not isinstance(params, dict) or method not in {'initialize', 'run', 'set_credential', 'python_path_check'}:
+                if not isinstance(params, dict) or method not in {'initialize', 'run', 'review', 'set_credential', 'python_path_check'}:
                     raise ValueError('Unsupported editor request')
                 bridge.current_request = identifier
                 # Contributions printing to stdout cannot corrupt JSONL frames.

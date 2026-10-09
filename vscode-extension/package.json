@@ -1,9 +1,9 @@
 {
   "name": "forge-agent",
-  "displayName": "Forge",
+  "displayName": "pledge-evolving",
   "description": "Forge coding agent beside your code: workspace tools, model routing, policy sandbox and secret virtualization.",
   "version": "0.2.0",
-  "publisher": "forge-local",
+  "publisher": "pledgedeveloper0418",
   "license": "MIT",
   "icon": "media/forge-logo.png",
   "engines": {

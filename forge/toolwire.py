@@ -22,6 +22,7 @@ it, with matching ids. Reconstructing that from prose is guesswork.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
@@ -34,6 +35,15 @@ from .tool_adapter import (
 )
 
 WIRES = ("openai", "anthropic")
+
+
+def looks_like_tool_attempt(text: str) -> bool:
+    """Ordinary JSON/code in an answer is not a malformed tool request."""
+    return bool(re.search(r'<tool_call\b', text, re.I)
+                or (re.match(r'^\s*\{', text) and (
+                    re.search(r'"(?:tool|tool_name)"\s*:', text)
+                    or (re.search(r'"name"\s*:', text)
+                        and re.search(r'"(?:args|arguments)"\s*:', text)))))
 
 
 @dataclass

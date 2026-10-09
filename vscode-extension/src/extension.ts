@@ -5,7 +5,8 @@ import { ForgeBridge, BridgeEvent, Context, Ready, Result, Turn } from './bridge
 import { inside, validMessage } from './paths';
 import { viewHtml } from './view';
 
-type VisibleTurn = { role: 'user' | 'assistant' | 'error'; text: string; usage?: string };
+type VisibleTurn = { role: 'user' | 'assistant' | 'error' | 'plan'; text: string; usage?: string; id?: string;
+  review?: { loading: boolean; text?: string; error?: string; truncated?: boolean; usage?: string } };
 type Credential = { vendor: string; configured: boolean; name: string; env: string[] };
 
 export class ForgeView implements vscode.WebviewViewProvider, vscode.Disposable {
@@ -20,6 +21,10 @@ export class ForgeView implements vscode.WebviewViewProvider, vscode.Disposable 
   private busy = false;
   private mode = 'read-only';
   private model = '';
+  private planning = 'none';
+  private planningModel = '';
+  private reviewModel = '';
+  private reviewEnabled = false;
   private generation = 0;
   private status: 'offline' | 'connecting' | 'ready' = 'offline';
   private activity = '';
@@ -30,6 +35,11 @@ export class ForgeView implements vscode.WebviewViewProvider, vscode.Disposable 
   private bar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 80);
 
   constructor(private context: vscode.ExtensionContext) {
+    const saved = context.workspaceState?.get<string>('forge.planning', 'none');
+    if (['none', 'low', 'medium', 'high'].includes(saved || '')) { this.planning = saved!; }
+    this.planningModel = context.workspaceState?.get<string>('forge.planningModel', '') || '';
+    this.reviewModel = context.workspaceState?.get<string>('forge.reviewModel', '') || '';
+    this.reviewEnabled = context.workspaceState?.get<boolean>('forge.reviewEnabled', false) === true;
     this.bar.text = '$(comment-discussion) Forge'; this.bar.command = 'forge.open'; this.bar.show();
     context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(editor => {
       if (editor?.document.uri.scheme === 'file') { this.editor = editor; }
@@ -55,7 +65,8 @@ export class ForgeView implements vscode.WebviewViewProvider, vscode.Disposable 
   private refresh(): void {
     void this.view?.webview.postMessage({ type: 'state', language: this.chinese() ? 'zh-cn' : 'en',
       busy: this.busy, status: this.status, activity: this.activity, trusted: vscode.workspace.isTrusted,
-      workspace: this.workspace?.name || '', models: this.ready?.models || [], model: this.model, mode: this.mode,
+      workspace: this.workspace?.name || '', models: this.ready?.models || [], model: this.model, mode: this.mode, planning: this.planning,
+      planningModel: this.planningModel, reviewModel: this.reviewModel, reviewEnabled: this.reviewEnabled,
       transcript: this.transcript, attachments: this.contexts.map((c, index) => ({ index, name: path.basename(c.path), selection: c.selection })),
       onboarding: this.ready?.onboarding || [],
       pythonChecked: this.pythonChecked, pythonSaved: this.pythonSaved, keyStatus: this.keyStatus });
@@ -121,6 +132,16 @@ export class ForgeView implements vscode.WebviewViewProvider, vscode.Disposable 
         else if (data && data.type === 'compaction') { this.activity = this.text('正在整理上下文', 'Compacting context'); }
         else if (data && data.type === 'secret_protection') { this.activity = this.text('敏感配置已保护', 'Sensitive configuration protected'); }
         else if (data && data.type === 'thinking_engaged') { this.activity = this.text('正在分析任务', 'Analyzing task'); }
+        else if (data && data.type === 'workflow_state') {
+          this.activity = data.phase === 'planning' ? this.text('正在生成事前规划', 'Preparing task plan')
+            : data.phase === 'executing' ? this.text('按计划执行；权限仍由 Policy 判定', 'Executing; Policy controls permissions')
+            : this.activity;
+        } else if (data && data.type === 'task_plan' && data.plan && typeof data.plan === 'object') {
+          const plan = data.plan as Record<string, unknown>;
+          const lines = ['requirements', 'design', 'tasks', 'acceptance', 'risks'].flatMap(key =>
+            Array.isArray(plan[key]) ? [key + ':', ...(plan[key] as unknown[]).filter(v => typeof v === 'string').map(v => '• ' + v)] : []);
+          this.transcript.push({ role: 'plan', text: lines.join('\n') });
+        }
       }
       this.refresh();
     });
@@ -181,19 +202,45 @@ export class ForgeView implements vscode.WebviewViewProvider, vscode.Disposable 
       }
       if (generation !== this.generation || this.bridge !== bridge) { return; }
       const seconds = Math.min(1800, Math.max(30, vscode.workspace.getConfiguration('forge').get('requestTimeoutSeconds', 300)));
-      const result = await bridge.request<Result>('run', { prompt, contexts: this.contexts, model: this.model, mode: this.mode }, seconds * 1000);
+      const result = await bridge.request<Result>('run', { prompt, contexts: this.contexts, model: this.model, mode: this.mode,
+        planning: this.planning, planningModel: this.planningModel }, seconds * 1000);
       if (generation !== this.generation) { return; }
       if (!result || typeof result.text !== 'string') { throw new Error('Invalid Forge result'); }
       this.history.push({ role: 'assistant', content: result.text });
       this.history = this.history.slice(-40);
       this.transcript.push({ role: result.ok ? 'assistant' : 'error', text: result.text,
+        id: result.messageId,
         usage: `${Number(result.usage?.prompt_tokens || 0)} + ${Number(result.usage?.completion_tokens || 0)} tokens · ${result.toolCalls || 0} tools` });
       this.transcript = this.transcript.slice(-80);
       this.activity = result.stopped === 'max_steps' ? this.text('已达工具步骤上限，可继续描述下一步。', 'Tool step limit reached. Describe the next step to continue.') : '';
     } catch (error) { if (generation === this.generation) { this.showError(error); } }
     finally { if (generation === this.generation) { this.busy = false; this.refresh(); } }
   }
+  async reviewLast(messageId: string): Promise<void> {
+    if (this.busy || !this.reviewEnabled || !this.bridge || !this.ready || !vscode.workspace.isTrusted) { return; }
+    const target = this.transcript[this.transcript.length - 1];
+    if (!target || target.role !== 'assistant' || !target.id || target.id !== messageId || !target.text.trim()) { return; }
+    const bridge = this.bridge, generation = this.generation;
+    this.busy = true; target.review = { loading: true }; this.activity = this.text('复审中…', 'Reviewing…'); this.refresh();
+    try {
+      const result = await bridge.request<{ text: string; messageId: string; truncated: boolean; usage: Record<string, unknown> }>(
+        'review', { messageId, model: this.reviewModel, enabled: true }, 120000);
+      if (generation !== this.generation || this.bridge !== bridge || this.transcript.at(-1) !== target) { return; }
+      if (result.messageId !== messageId || typeof result.text !== 'string') { throw new Error('Invalid review target/result'); }
+      target.review = { loading: false, text: result.text, truncated: result.truncated,
+        usage: `${Number(result.usage?.prompt_tokens || 0)} + ${Number(result.usage?.completion_tokens || 0)} tokens` };
+    } catch (error) {
+      if (generation === this.generation && this.transcript.at(-1) === target) {
+        target.review = { loading: false, error: error instanceof Error ? error.message : 'Review failed' };
+      }
+    } finally {
+      if (generation === this.generation) { this.busy = false; this.activity = ''; this.refresh(); }
+    }
+  }
   stop(): void {
+    for (const turn of this.transcript) {
+      if (turn.review?.loading) { turn.review = { loading: false, error: this.text('复审已停止。', 'Review stopped.') }; }
+    }
     const running = this.busy; this.generation++; this.bridge?.dispose(); this.bridge = undefined; this.ready = undefined;
     this.connecting = undefined; this.busy = false; this.status = 'offline';
     this.activity = running ? this.text('执行已终止；已完成的文件修改会保留。', 'Execution terminated. Completed file changes are retained.') : '';
@@ -362,11 +409,33 @@ export class ForgeView implements vscode.WebviewViewProvider, vscode.Disposable 
       case 'selection': await this.attach(true); break;
       case 'explain': await this.action(false); break;
       case 'review': await this.action(true); break;
+      case 'reviewLast': if (typeof message.messageId === 'string') { await this.reviewLast(message.messageId); } break;
       case 'changes': await vscode.commands.executeCommand('workbench.view.scm'); break;
       case 'remove': if (!this.busy && typeof message.index === 'number' && Number.isInteger(message.index) && message.index >= 0 && message.index < this.contexts.length) { this.contexts.splice(message.index, 1); this.refresh(); } break;
       case 'options':
         if (!this.busy && (message.mode === 'read-only' || message.mode === 'workspace-write') && typeof message.model === 'string' &&
-            (!message.model || this.ready?.models.some(model => model.id === message.model))) { this.mode = message.mode; this.model = message.model; this.refresh(); }
+            (!message.model || this.ready?.models.some(model => model.id === message.model)) &&
+            ['planningModel', 'reviewModel'].every(key => message[key] === undefined || typeof message[key] === 'string' &&
+              (!message[key] || this.ready?.models?.some(model => model.id === message[key]))) &&
+            (message.reviewEnabled === undefined || typeof message.reviewEnabled === 'boolean') &&
+            (message.planning === undefined || ['none', 'low', 'medium', 'high'].includes(String(message.planning)))) {
+          this.mode = message.mode; this.model = message.model;
+          if (typeof message.planning === 'string') {
+            this.planning = message.planning;
+            await this.context.workspaceState?.update('forge.planning', this.planning);
+          }
+          for (const key of ['planningModel', 'reviewModel'] as const) {
+            if (typeof message[key] === 'string') {
+              this[key] = message[key] as string;
+              await this.context.workspaceState?.update('forge.' + key, this[key]);
+            }
+          }
+          if (typeof message.reviewEnabled === 'boolean') {
+            this.reviewEnabled = message.reviewEnabled;
+            await this.context.workspaceState?.update('forge.reviewEnabled', this.reviewEnabled);
+          }
+          this.refresh();
+        }
         break;
       case 'python_scan': {
         if (!this.assertTrustedForSpawn('python_scan')) { break; }

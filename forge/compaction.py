@@ -14,6 +14,7 @@ touching the memory store.
 from __future__ import annotations
 
 from typing import Any, Callable
+import json
 
 
 class ContextBudget:
@@ -29,35 +30,24 @@ class ContextBudget:
         self.keep_tail = keep_tail
 
     def size(self, messages: list[dict[str, Any]]) -> int:
-        return sum(len(str(m.get("content", ""))) for m in messages)
+        return sum(len(str(m.get("content", ""))) +
+                   (len(json.dumps(m["tool_calls"], ensure_ascii=False)) if m.get("tool_calls") else 0)
+                   for m in messages)
 
     def should_compact(self, messages: list[dict[str, Any]]) -> bool:
         return self.size(messages) > self.max_chars
 
     def compact(self, messages: list[dict[str, Any]], summariser=None,
-                *, max_chars: int | None = None) -> list[dict[str, Any]]:
-        """Compress old messages, preserving the system prompt prefix and a
-        stable tail so that KV cache hits survive compaction.
+                *, max_chars: int | None = None,
+                pinned_contents: tuple[str, ...] = ()) -> list[dict[str, Any]]:
+        """Keep system/task/plan and recent complete tool exchanges.
 
-        Design aligned with DeepSeek Harness's compaction semantics:
-
-        1. **System prompt is never touched** — it is the shared prefix for
-           all cache hits. Memory has already been moved out of it (P0-1).
-        2. **Tail is pinned** — the last ``keep_tail`` messages are always
-           sent verbatim. This gives the model recent context and, crucially,
-           keeps the post-compaction message sequence an **append-only
-           extension** of what came before. The next run's prefix matches.
-        3. **Head is replaced in-place** — the compressed head becomes a
-           single summary message. Its position (after system, before tail)
-           is deterministic, so it does not shift the tail.
-
-        The net effect: after compaction the message sequence is
-        ``[system, summary, tail]``.  The next run appends
-        ``[memory, task]``, making the new sequence
-        ``[system, summary, tail, memory, task]`` — a strict prefix extension
-        of the compacted form.
+        Compaction changes the earlier prefix and can invalidate provider
+        cache entries. Subsequent appends can reuse the new prefix, but a
+        preserved tail alone is not proof of a cache hit. This deterministic
+        excerpt summary is lossy; it does not invent verified file outcomes.
         """
-        gate = self.should_compact if max_chars is None else             (lambda msgs: self.size(msgs) > max_chars)
+        gate = self.should_compact if max_chars is None else (lambda msgs: self.size(msgs) > max_chars)
         if not gate(messages):
             return messages
 
@@ -65,7 +55,9 @@ class ContextBudget:
             squeezed: list[dict[str, Any]] = []
             changed = False
             for m in messages:
-                if str(m.get("role", "")) == "system":
+                if (str(m.get("role", "")) == "system" or m.get("content") in pinned_contents
+                        or m.get("tool_calls") or m.get("role") == "tool"
+                        or isinstance(m.get("content"), list)):
                     squeezed.append(m)
                     continue
                 content = str(m.get("content", ""))
@@ -78,23 +70,40 @@ class ContextBudget:
             return squeezed if changed else messages
 
         system = [m for m in messages if str(m.get("role", "")) == "system"]
-        rest = [m for m in messages if str(m.get("role", "")) != "system"]
-        head = rest[:-self.keep_tail]
-        tail = rest[-self.keep_tail:]
+        pinned = [m for m in messages if m.get("role") != "system" and
+                  isinstance(m.get("content"), str) and m["content"] in pinned_contents]
+        rest = [m for m in messages if m.get("role") != "system" and m not in pinned]
+        cut = max(0, len(rest) - max(1, self.keep_tail))
+        # pi-style valid cut points: never retain an orphan native tool result.
+        # Keep the entire assistant call + result group, including batched calls.
+        while cut > 0:
+            message = rest[cut]
+            content = message.get("content")
+            result_block = isinstance(content, list) and any(
+                isinstance(b, dict) and b.get("type") == "tool_result" for b in content)
+            if message.get("role") != "tool" and not result_block:
+                break
+            cut -= 1
+        head, tail = rest[:cut], rest[cut:]
 
         if not head:
             return messages
 
         if summariser is None:
-            flat = " ".join(str(m.get("content", ""))[:200] for m in head)
+            # Recent evidence matters more than the oldest messages. Preserve
+            # requested file paths/tool names without claiming a call succeeded.
+            requests = [json.dumps(m["tool_calls"], ensure_ascii=False)[:240]
+                        for m in head if m.get("tool_calls")][-3:]
+            flat = " ".join(str(m.get("role", "")) + ": " + str(m.get("content", ""))[:200]
+                            for m in head[-4:])
+            if requests:
+                flat = "Earlier tool requests (outcomes not asserted): " + " ".join(requests) + "\n" + flat
             summary = f"[compacted {len(head)} earlier messages] {flat[:800]}"
         else:
             summary = summariser(head)
 
-        # Result: [system, summary, *tail]
-        # Tail stays in place; next run appends memory+task after it,
-        # making the new sequence a strict prefix extension.
-        return [*system, {"role": "user", "content": summary}, *tail]
+        # A changed prefix is expected; native call/result pairs remain valid.
+        return [*system, *pinned, {"role": "user", "content": summary}, *tail]
 
 
 __all__ = ["ContextBudget"]

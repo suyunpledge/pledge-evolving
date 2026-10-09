@@ -58,9 +58,32 @@ test('webview is responsive, safe for model text, cancellable and IME-aware', { 
     await page.goto(url);
     const state = { type: 'state', language: 'zh-cn', trusted: true, busy: false, status: 'ready', activity: '',
       workspace: 'test', model: '', mode: 'read-only', attachments: [], models: [], transcript: [] };
-    const update = async () => { await page.evaluate(value => window.postMessage(value, '*'), state); await page.waitForFunction(() => document.getElementById('status').textContent.length > 0); };
+    const update = async () => {
+      await page.evaluate(value => new Promise(resolve => {
+        window.postMessage(value, '*'); requestAnimationFrame(() => requestAnimationFrame(resolve));
+      }), state);
+      await page.waitForFunction(() => document.getElementById('status').textContent.length > 0);
+    };
     await update();
     assert.equal(await page.locator('#welcome').textContent(), '在代码旁边，与 Forge 协作');
+    assert.equal(await page.locator('#planning option').count(), 4);
+    await page.locator('#planning').selectOption('high');
+    assert.equal(await page.evaluate(() => window.sent.at(-1).planning), 'high');
+    state.planning = 'high'; await update();
+    assert.equal(await page.locator('#planning').inputValue(), 'high');
+    await page.locator('details summary').click();
+    state.models = [{ id: 'planner', label: 'planner / astra' }, { id: 'writer', label: 'writer / opus' }];
+    state.planningModel = 'planner'; state.reviewModel = 'planner'; state.reviewEnabled = true;
+    state.transcript = [{ role: 'assistant', id: 'response1', text: 'print(1)' }]; await update();
+    assert.equal(await page.locator('#planningModel').inputValue(), 'planner');
+    await page.locator('[data-review-id="response1"]').click();
+    assert.deepEqual(await page.evaluate(() => window.sent.at(-1)), { type: 'reviewLast', messageId: 'response1' });
+    state.transcript[0].review = { loading: false, text: '<script>window.reviewInjection=true</script>', truncated: true }; await update();
+    assert.equal(await page.locator('.review-feedback script').count(), 0);
+    assert.equal(await page.evaluate(() => window.reviewInjection), undefined);
+    state.busy = true; await update(); assert.equal(await page.locator('[data-review-id="response1"]').count(), 0);
+    state.transcript[0].review.loading = true; await update(); assert.equal(await page.locator('[data-review-id="response1"]').isDisabled(), true);
+    state.busy = false;
     state.transcript = [{ role: 'assistant', text: '<img src=x onerror="window.injected=true"> 😀 长内容'.repeat(20) }];
     await update();
     assert.equal(await page.locator('.message-body img').count(), 0);

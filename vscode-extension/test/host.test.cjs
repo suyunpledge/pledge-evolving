@@ -57,3 +57,61 @@ test('unrecognized webview messages cannot dispatch arbitrary editor commands', 
     assert.equal(commands, 0);
   } finally { vscode.commands.executeCommand = previous; view.dispose(); }
 });
+
+test('planning selection is validated, persisted and forwarded independently of permissions', async () => {
+  let saved;
+  const view = new ForgeView({ subscriptions: [], workspaceState: { get: (_, fallback) => fallback,
+    update: async (_, value) => { saved = value; } } });
+  let params;
+  view.workspace = { name: 'test', uri: { fsPath: os.tmpdir() } };
+  view.ready = {}; view.connect = async () => {};
+  view.bridge = { dispose() {}, request: async (_, value) => { params = value; return { ok: true, text: 'done', usage: {} }; } };
+  try {
+    await view.receive({ type: 'options', model: '', mode: 'read-only', planning: 'high' });
+    assert.equal(saved, 'high');
+    await view.send('inspect');
+    assert.equal(params.planning, 'high'); assert.equal(params.mode, 'read-only');
+    await view.receive({ type: 'options', model: '', mode: 'workspace-write', planning: 'bypass' });
+    assert.equal(view.planning, 'high'); assert.equal(view.mode, 'read-only');
+    view.busy = true;
+    await view.receive({ type: 'options', model: '', mode: 'read-only', planning: 'none' });
+    assert.equal(view.planning, 'high');
+  } finally { view.dispose(); }
+});
+
+test('independent phase selections and manual review are validated and bound to a response', async () => {
+  const saved = new Map(); let params; let reviews = 0;
+  const view = new ForgeView({ subscriptions: [], workspaceState: { get: (_, fallback) => fallback,
+    update: async (key, value) => saved.set(key, value) } });
+  view.workspace = { name: 'test', uri: { fsPath: os.tmpdir() } }; view.connect = async () => {};
+  view.ready = { models: [{ id: 'writer' }, { id: 'planner' }] };
+  view.bridge = { dispose() {}, request: async (method, value) => {
+    params = value;
+    if (method === 'review') { reviews++; return { messageId: 'response1', text: 'Review', usage: {} }; }
+    return { ok: true, text: 'code', messageId: 'response1', usage: {} };
+  } };
+  try {
+    await view.receive({ type: 'options', model: 'writer', mode: 'read-only', planning: 'high',
+      planningModel: 'planner', reviewModel: 'planner', reviewEnabled: true });
+    assert.equal(saved.get('forge.planningModel'), 'planner'); assert.equal(view.model, 'writer');
+    await view.send('write'); assert.equal(params.planningModel, 'planner'); assert.equal(reviews, 0);
+    const history = JSON.stringify(view.history);
+    await view.reviewLast('wrong'); assert.equal(reviews, 0);
+    await view.reviewLast('response1'); assert.equal(reviews, 1); assert.equal(params.model, 'planner');
+    assert.equal(view.transcript.at(-1).review.text, 'Review'); assert.equal(JSON.stringify(view.history), history);
+    await view.receive({ type: 'options', model: 'writer', mode: 'read-only', planningModel: 'missing' });
+    assert.equal(view.planningModel, 'planner');
+  } finally { view.dispose(); }
+});
+
+test('a cancelled review cannot attach feedback to a new chat', async () => {
+  const view = new ForgeView({ subscriptions: [] }); let resolve;
+  view.ready = {}; view.reviewEnabled = true;
+  view.transcript = [{ role: 'assistant', id: 'old', text: 'old code' }];
+  view.bridge = { dispose() {}, request: () => new Promise(done => { resolve = done; }) };
+  try {
+    const pending = view.reviewLast('old'); view.newChat();
+    resolve({ messageId: 'old', text: 'stale review', usage: {} }); await pending;
+    assert.equal(view.transcript.length, 0); assert.equal(view.busy, false);
+  } finally { view.dispose(); }
+});

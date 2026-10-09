@@ -6,7 +6,7 @@ import { StringDecoder } from 'node:string_decoder';
 export type Turn = { role: 'user' | 'assistant'; content: string };
 export type Context = { path: string; content: string; selection?: [number, number] };
 export type Ready = { protocol: number; models: { id: string; label: string }[]; workspace: string; sessionPath: string; ready: boolean };
-export type Result = { ok: boolean; text: string; stopped: string; toolCalls: number; usage: Record<string, unknown>; sessionPath: string };
+export type Result = { ok: boolean; text: string; stopped: string; toolCalls: number; usage: Record<string, unknown>; sessionPath: string; messageId?: string };
 export type BridgeEvent = { event: 'user'; request: string; content: string; display: string }
   | { event: 'progress'; request: string; data: Record<string, unknown> };
 
@@ -64,7 +64,7 @@ export class ForgeBridge extends EventEmitter {
     child.stdin.on('error', () => this.stop('Forge engine disconnected.'));
   }
 
-  request<T>(method: 'initialize' | 'run' | 'set_credential' | 'python_path_check', params: Record<string, unknown>, timeout: number): Promise<T> {
+  request<T>(method: 'initialize' | 'run' | 'review' | 'set_credential' | 'python_path_check', params: Record<string, unknown>, timeout: number): Promise<T> {
     const child = this.child;
     if (!child || this.closing) { return Promise.reject(new Error('Forge is not connected.')); }
     const id = randomBytes(16).toString('hex');

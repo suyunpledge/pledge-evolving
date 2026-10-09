@@ -419,8 +419,9 @@ class _ProviderRateLimiter:
 class HttpTransport:
     """Minimal stdlib transport for OpenAI- and Anthropic-shaped endpoints."""
 
-    def __init__(self, timeout: int = 120) -> None:
+    def __init__(self, timeout: int = 120, *, response_opener=None) -> None:
         self.timeout = timeout
+        self._response_opener = response_opener  # trusted host injection, never a model option
         self._limiter = _ProviderRateLimiter()
 
     def complete(self, provider: Provider, model: str, messages: list[dict[str, Any]],
@@ -504,12 +505,15 @@ class HttpTransport:
         request = urllib.request.Request(url, data=body, headers=headers, method="POST")
         try:
             from .secret_http import open_authenticated
-            with open_authenticated(request, timeout=self.timeout) as response:
+            with (self._response_opener or open_authenticated)(request, timeout=self.timeout) as response:
                 from .secrets import redact
-                raw = redact(json.loads(response.read().decode("utf-8", "replace")))
+                data = response.read(2 * 1024 * 1024 + 1)
+                if len(data) > 2 * 1024 * 1024:
+                    raise ValueError('Upstream response exceeds 2 MiB')
+                raw = redact(json.loads(data.decode("utf-8", "replace")))
         except urllib.error.HTTPError as exc:
             from .secrets import redact
-            detail = redact(exc.read().decode("utf-8", "replace"))[:300]
+            detail = redact(getattr(exc, '_forge_detail', '') or exc.read(500).decode("utf-8", "replace"))[:300]
             if exc.code == 429:
                 # Retry-After from HTTPError.headers (case-insensitive Mapping)
                 retry_after = None
@@ -724,7 +728,8 @@ class ModelRouter:
                         # 2s → 4s → 8s → … capped at 30s; free RPM tiers need
                         # longer backoff than the old 0.5s/4s-cap schedule.
                         wait = min(2.0 * (2 ** attempt), 30.0)
-                    time.sleep(wait)
+                    if attempt < self.retries_per_provider:
+                        time.sleep(wait)  # no backoff when this provider has no next attempt
         raise TransportError(f"all providers failed: {attempts}")
 
     def complete_moa(self, messages: list[dict[str, Any]], *, models: Iterable[tuple[str, str]],

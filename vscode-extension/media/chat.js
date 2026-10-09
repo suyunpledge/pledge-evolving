@@ -14,7 +14,11 @@
       prompt: '描述任务… Ctrl / ⌘ + Enter 发送',
       attach: '+ 当前文件', selection: '选区上下文', changes: '查看修改',
       model: '模型', mode: '权限',
+      planning: '事前规划', high: '高 · 需求、设计、风险与验证', medium: '中 · 需求与验收', low: '低 · 简短清单', none: '无 · 直接执行', plan: '事前规划',
       automatic: '使用 Forge 路由', readonly: '只读', write: '工作区编辑',
+      phaseSettings: '规划模型与复审', planningModel: '规划模型', reviewModel: '复审模型', reviewEnabled: '手动复审',
+      follow: '沿用执行路由', on: '开启', off: '关闭', reviewLast: '复审', reviewing: '复审中…', feedback: '审核意见',
+      partialReview: '仅审核前 20000 字符，未覆盖全部内容。',
       hint: 'Enter 换行 · Ctrl / ⌘ + Enter 发送',
       stop: '停止', submit: '发送',
       boundary: '敏感信息由 Forge 内核保护；原生执行保持受限。',
@@ -39,7 +43,11 @@
       prompt: 'Describe your task… Ctrl / ⌘ + Enter to send',
       attach: '+ Current file', selection: 'Selection context', changes: 'View changes',
       model: 'Model', mode: 'Permissions',
+      planning: 'Pre-execution plan', high: 'High · design, risks and verification', medium: 'Medium · requirements and acceptance', low: 'Low · short checklist', none: 'None · execute directly', plan: 'Task plan',
       automatic: 'Use Forge routing', readonly: 'Read only', write: 'Workspace edits',
+      phaseSettings: 'Planning model and review', planningModel: 'Planning model', reviewModel: 'Review model', reviewEnabled: 'Manual review',
+      follow: 'Use execution routing', on: 'On', off: 'Off', reviewLast: 'Review response', reviewing: 'Reviewing…', feedback: 'Review feedback',
+      partialReview: 'Only the first 20000 protected characters were reviewed.',
       hint: 'Enter: new line · Ctrl / ⌘ + Enter: send',
       stop: 'Stop', submit: 'Send',
       boundary: 'Secrets are protected by the Forge engine. Native execution stays restricted.',
@@ -142,7 +150,9 @@
     document.documentElement.lang = next.language;
     for (const [id, key] of Object.entries({ connect: 'connect', settings: 'settings', welcome: 'welcome', intro: 'intro',
       explain: 'explain', review: 'review', promptLabel: 'prompt', attach: 'attach', selection: 'selection', changes: 'changes',
-      modelLabel: 'model', modeLabel: 'mode', hint: 'hint', stop: 'stop', send: 'submit', boundary: 'boundary' })) { $(id).textContent = t[key]; }
+      modelLabel: 'model', modeLabel: 'mode', planningLabel: 'planning', phaseSettings: 'phaseSettings',
+      planningModelLabel: 'planningModel', reviewModelLabel: 'reviewModel', reviewEnabledLabel: 'reviewEnabled',
+      hint: 'hint', stop: 'stop', send: 'submit', boundary: 'boundary' })) { $(id).textContent = t[key]; }
     $('trust').textContent = next.trusted ? (next.workspace ? t.workspace + ': ' + next.workspace : '') : t.trust;
     $('prompt').placeholder = t.prompt;
     $('status').textContent = t[next.busy ? 'busy' : next.status] || t.offline;
@@ -151,10 +161,12 @@
     $('connect').hidden = next.status === 'ready';
     $('connect').disabled = next.busy || next.status === 'connecting' || !next.trusted;
     $('stop').hidden = !next.busy;
-    for (const id of ['send', 'attach', 'selection', 'model', 'mode', 'explain', 'review']) { $(id).disabled = next.busy || !next.trusted; }
+    for (const id of ['send', 'attach', 'selection', 'model', 'mode', 'planning', 'planningModel', 'reviewModel', 'reviewEnabled', 'explain', 'review']) { $(id).disabled = next.busy || !next.trusted; }
     $('send').disabled = next.busy || !next.trusted || !$('prompt').value.trim();
     $('mode').options[0].textContent = t.readonly; $('mode').options[1].textContent = t.write;
     $('mode').value = next.mode;
+    for (const option of $('planning').options) { option.textContent = t[option.value]; }
+    $('planning').value = next.planning || 'none';
     const models = [{ id: '', label: t.automatic }, ...(next.models || [])];
     const signature = JSON.stringify(models);
     if ($('model').dataset.models !== signature) {
@@ -162,6 +174,14 @@
       $('model').dataset.models = signature;
     }
     $('model').value = next.model || '';
+    for (const id of ['planningModel', 'reviewModel']) {
+      const choices = [{ id: '', label: t.follow }, ...(next.models || [])];
+      if (next[id] && !choices.some(model => model.id === next[id])) { choices.push({ id: next[id], label: next[id] + ' (unavailable)' }); }
+      $(id).replaceChildren(...choices.map(model => { const option = document.createElement('option'); option.value = model.id; option.textContent = model.label; return option; }));
+      $(id).value = next[id] || '';
+    }
+    $('reviewEnabled').options[0].textContent = t.off; $('reviewEnabled').options[1].textContent = t.on;
+    $('reviewEnabled').value = next.reviewEnabled ? 'on' : 'off';
     $('attachments').replaceChildren(...(next.attachments || []).map(item => {
       const chip = document.createElement('button'); chip.type = 'button'; chip.className = 'chip'; chip.disabled = next.busy;
       chip.textContent = item.name + (item.selection ? ` · ${item.selection[0]}–${item.selection[1]}` : '') + ' ×';
@@ -169,7 +189,7 @@
       chip.addEventListener('click', () => send('remove', { index: item.index })); return chip;
     }));
     const transcript = next.transcript || [];
-    const sig = JSON.stringify([next.language, transcript]);
+    const sig = JSON.stringify([next.language, next.busy, next.reviewEnabled, transcript]);
     if (sig !== transcriptSignature) {
       transcriptSignature = sig;
       const pane = $('messages'); const nearEnd = pane.scrollHeight - pane.scrollTop - pane.clientHeight < 100;
@@ -184,6 +204,17 @@
         content.textContent = message.text;
         article.append(name, content);
         if (message.usage) { const usage = document.createElement('div'); usage.className = 'usage'; usage.textContent = message.usage; article.append(usage); }
+        if (next.reviewEnabled && (!next.busy || message.review?.loading) && message === transcript.at(-1) && message.role === 'assistant' && message.id && message.text.trim()) {
+          const button = document.createElement('button'); button.type = 'button'; button.textContent = message.review?.loading ? t.reviewing : t.reviewLast;
+          button.disabled = next.busy || !next.trusted; button.dataset.reviewId = message.id;
+          button.addEventListener('click', () => send('reviewLast', { messageId: message.id })); article.append(button);
+        }
+        if (message.review) {
+          const feedback = document.createElement('div'); feedback.className = 'message-body review-feedback';
+          feedback.textContent = message.review.error || (message.review.text ? t.feedback + '\n' +
+            (message.review.truncated ? t.partialReview + '\n' : '') + message.review.text + '\n' + (message.review.usage || '') : '');
+          article.append(feedback);
+        }
         pane.append(article);
       }
       if (nearEnd) { pane.scrollTop = pane.scrollHeight; }
@@ -217,8 +248,9 @@
   for (const id of ['connect', 'settings', 'attach', 'selection', 'changes', 'stop', 'explain', 'review']) {
     $(id).addEventListener('click', () => send(id));
   }
-  for (const id of ['model', 'mode']) {
-    $(id).addEventListener('change', () => send('options', { model: $('model').value, mode: $('mode').value }));
+  for (const id of ['model', 'mode', 'planning', 'planningModel', 'reviewModel', 'reviewEnabled']) {
+    $(id).addEventListener('change', () => send('options', { model: $('model').value, mode: $('mode').value, planning: $('planning').value,
+      planningModel: $('planningModel').value, reviewModel: $('reviewModel').value, reviewEnabled: $('reviewEnabled').value === 'on' }));
   }
   $('composer').addEventListener('submit', event => {
     event.preventDefault();

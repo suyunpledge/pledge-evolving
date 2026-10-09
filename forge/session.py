@@ -17,6 +17,7 @@ import tempfile
 import time
 import uuid
 from dataclasses import dataclass, field
+from collections import deque
 from pathlib import Path
 from typing import Any, Iterator
 from .secrets import redact
@@ -134,6 +135,12 @@ class Session:
             self._fh = None
             handle.close()
 
+    def sync(self) -> None:
+        """Durably record execution intent before tools with unknown outcomes."""
+        if self._fh is not None:
+            self._fh.flush()
+            os.fsync(self._fh.fileno())
+
     def __enter__(self) -> "Session":
         return self.open()
 
@@ -224,7 +231,7 @@ class Session:
 class SessionIndex:
     """Rebuildable projection over a session directory."""
 
-    VERSION = 2
+    VERSION = 3
 
     def __init__(self, root: Path) -> None:
         self.root = Path(root)
@@ -255,6 +262,9 @@ class SessionIndex:
         count = 0
         tokens = 0
         error = None
+        workflow_events = deque(maxlen=512)
+        workflow_id = None
+        latest_phase = None
         try:
             lines = file.read_text(encoding="utf-8").splitlines()
         except (OSError, UnicodeError) as exc:
@@ -273,14 +283,27 @@ class SessionIndex:
             if raw.get("type") == "session_meta":
                 meta = {k: v for k, v in raw.items() if k not in {"type"}}
                 continue
+            if raw.get("type") == "workflow_state" and raw.get("depth", 0) == 0:
+                identifier = raw.get("run_id")
+                if identifier != workflow_id:
+                    workflow_id = identifier
+                    workflow_events.clear()
+                latest_phase = raw
+            if workflow_id and raw.get("run_id") == workflow_id and raw.get("type") in {
+                    "workflow_state", "tool_started", "tool_completed"}:
+                workflow_events.append(raw)
             count += 1
             tokens += total_tokens
+        from .execution_guard import workflow_status
+        workflow = workflow_status([latest_phase, *workflow_events], workflow_id,
+                                   assume_interrupted=False) if workflow_id else None
         return {
             "session_id": file.stem,
             "path": str(file),
             "events": count,
             "tokens": tokens,
             "meta": meta,
+            **({"workflow": workflow} if workflow else {}),
             **({"error": error} if error else {}),
         }
 

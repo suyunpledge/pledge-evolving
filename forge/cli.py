@@ -170,6 +170,9 @@ class _ProgressWriter:
 
     # 值得报的事件 -> 前缀标签
     _LABELS = {
+        "workflow_state": "阶段",
+        "task_plan": "规划",
+        "planning_error": "规划失败",
         "thinking_engaged": "思考",
         "tool_call": "工具",
         "compaction": "压缩",
@@ -201,6 +204,12 @@ class _ProgressWriter:
             before, after = event.get("before"), event.get("after")
             if before is not None and after is not None:
                 detail = f"{before} -> {after} 字符"
+        elif kind == "workflow_state":
+            detail = str(event.get("phase") or "")
+        elif kind == "task_plan":
+            detail = json.dumps(event.get("plan") or {}, ensure_ascii=False)
+        elif kind == "planning_error":
+            detail = str(event.get("error") or "")[:120]
         elif kind in ("model_error", "mount_warning"):
             detail = str(event.get("error") or event.get("note") or "")[:120]
         try:
@@ -227,6 +236,32 @@ def _make_progress_writer(*, enabled: bool) -> _ProgressWriter:
     return _ProgressWriter(enabled=enabled and interactive)
 
 
+def cmd_review(args) -> int:
+    """Explicit manual review; no Agent execution or automatic repair."""
+    from .code_review import review_code
+    from .phase_models import phase_router
+    from .secrets import SecretScope
+    from .session import Session, new_id
+    cfg = _compose(args)
+    router = (SmartRouter.from_config(cfg) if cfg.get('model', 'routing', None) is not None
+              else ModelRouter.from_config(cfg))
+    selected = getattr(args, 'review_model', None) or cfg.get('review', 'model', None)
+    router = phase_router(router, selected, router)
+    scope = SecretScope()
+    log = Session(Path(args.home) / 'sessions' / 'reviews' / (new_id('review') + '.jsonl'))
+    try:
+        with log:
+            log.append('review_started')
+            result = review_code(args.code, scope, router)
+            log.append('review_result', review=result.to_dict())
+        print(json.dumps(result.to_dict(), ensure_ascii=False) if args.json else result.text)
+        if result.truncated and not args.json:
+            print('[partial review: first 20000 protected characters only]', file=sys.stderr)
+        return 0
+    finally:
+        scope.close()
+
+
 def cmd_run(args) -> int:
     # 指令一（2026-09-15）：无头 run 链路默认即 balanced —— 工作区沙箱内
     # write_file/edit_file/apply_patch 免询问直写，越界（如系统目录）仍拦。
@@ -251,6 +286,17 @@ def cmd_run(args) -> int:
         merged["routing"] = routing_conf
         cfg.apply_patch([{"id": "model", "name": "model:router", "config": merged}],
                         label=f"strategy:{strategy}")
+    planning_override = getattr(args, "planning", None)
+    planning_model_override = getattr(args, 'planning_model', None)
+    if planning_override or planning_model_override:
+        old = cfg.row("planning")
+        values = dict(old.config) if old is not None else {}
+        if planning_override:
+            values["level"] = planning_override
+        if planning_model_override:
+            values['model'] = planning_model_override
+        cfg.apply_patch([{"id": "planning", "name": "planning:level", "config": values}],
+                        label=f"planning:{planning_override}")
     # --thinking 显式传参 > 配置层 thinking.mode > 默认 off。同样整行合并
     # （apply_patch 是整行替换：先取原 thinking 行，防冲掉 notes 等键）。
     thinking_mode = getattr(args, "thinking", None)
@@ -326,7 +372,7 @@ def cmd_run(args) -> int:
     with agent.session:
         report = agent.run(args.task)
 
-    failed = str(getattr(report, "stopped", "")) == "error"
+    failed = str(getattr(report, "stopped", "")) in {"error", "planning_error", "format_error", "stalled"}
     progress.finish()
     if args.json:
         print(json.dumps({
@@ -334,6 +380,7 @@ def cmd_run(args) -> int:
             "text": report.text,
             "stopped": report.stopped,
             "usage": report.usage,
+            "planning": report.planning,
             "steps": [{"index": s.index, "tool": s.tool, "decision": s.decision,
                        "note": s.note, "result": s.result[:400]} for s in report.steps],
         }, ensure_ascii=False, indent=2))
@@ -460,7 +507,7 @@ def cmd_sessions(args) -> int:
     payload = index.rebuild() if args.rebuild else index.load()
     for row in payload["sessions"]:
         print(f"{row['session_id']:<28} events={row['events']:<5} tokens={row['tokens']:<8} "
-              f"cwd={row['meta'].get('cwd', '?')}")
+              f"status={row.get('workflow', {}).get('status', 'legacy')} cwd={row['meta'].get('cwd', '?')}")
     print(f"({len(payload['sessions'])} sessions, index v{payload['version']})")
     return 0
 
@@ -1050,6 +1097,11 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("task")
     run.add_argument("--json", action="store_true")
     run.add_argument("--verbose", action="store_true")
+    run.add_argument("--planning", choices=["none", "low", "medium", "high"],
+                     default=argparse.SUPPRESS,
+                     help="pre-execution plan depth, independent of thinking; none adds no request")
+    run.add_argument('--planning-model', nargs=2, metavar=('PROVIDER', 'MODEL'), default=argparse.SUPPRESS,
+                     help='independent configured planning model; execution routing stays unchanged')
     run.add_argument("--strategy", choices=list(STRATEGIES), default=argparse.SUPPRESS,
                      help="model routing strategy: base=cheapest-tier-first, "
                           "medium=mid-tier-first (default), premium=mid-draft + "
@@ -1064,6 +1116,12 @@ def build_parser() -> argparse.ArgumentParser:
                           "compact=compress before the vendor's cliff, "
                           "ask=prompt when interactive")
     run.set_defaults(func=cmd_run)
+
+    review = sub.add_parser('review', parents=[common], help='manually review a completed response/code; no tools')
+    review.add_argument('code')
+    review.add_argument('--review-model', nargs=2, metavar=('PROVIDER', 'MODEL'), default=argparse.SUPPRESS)
+    review.add_argument('--json', action='store_true')
+    review.set_defaults(func=cmd_review)
 
     for name, func in (("dump-config", cmd_dump_config), ("dump-default-config", cmd_dump_config)):
         item = sub.add_parser(name, parents=[common])
