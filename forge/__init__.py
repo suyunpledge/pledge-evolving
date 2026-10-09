@@ -1,7 +1,7 @@
 """forge — a unified agent framework.
 
 Integrated from the designs of Codex, Hermes Agent, DeepSeek Harness,
-Claude Code, WorkBuddy/CodeBuddy, OpenClaw and OpenCode.
+Claude Code, OpenClaw and OpenCode.
 
 Module map
 ----------
