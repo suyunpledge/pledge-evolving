@@ -1,6 +1,6 @@
 # forge — A Unified Agent Framework
 
-A standard-library-only Python agent runtime that consolidates proven design patterns from **Codex, Hermes Agent, DeepSeek Harness, Claude Code, WorkBuddy (CodeBuddy), OpenClaw, and OpenCode** into a small, runnable kernel. [中文文档](README.zh.md)
+A standard-library-only Python agent runtime that consolidates proven design patterns from **Codex, Hermes Agent, DeepSeek Harness, Claude Code, OpenClaw, and OpenCode** into a small, runnable kernel. [中文文档](README.zh.md)
 
 `forge selftest` provides an offline verification suite—requiring neither network access nor API keys. It covers configuration synthesis, permission decisions, lazy tool loading, capability trust, dual-write memory, session replay, shadow snapshots, routing and fallback, protocol translation, native tool calling, self-evolution, heterogeneous federation, contribution-module gates and integration, cost accounting, and subagent orchestration. The suite also enforces a static security baseline through table-aligned invariants and four-way coverage of the network, subprocess, and destructive-file-API prohibitions. Test counts are reported from the command's actual output.
 
@@ -189,7 +189,6 @@ Reasons, in order: the native chat surface rejects a replayed `tool_calls` histo
 | Source framework | Design borrowed | Landing module | Self-test anchor |
 | --- | --- | --- | --- |
 | **DeepSeek Harness** | Empty root + ordered patch layers, last-write-wins by id, whole-line replacement instead of deep merge, `dump-default` recovery channel, `$expr` lazy expressions | `config.py` | `config:*` |
-| **WorkBuddy / CodeBuddy** | Two-dimensional permissions (mode baseline + allow/ask/deny exceptions, deny always wins), subagent permission ceiling, Defer/NoDefer lazy loading, command-level blacklist, typed dual-write memory, trace metering | `policy.py` `tools.py` `memory.py` | `policy:*` `tools:*` `memory:*` |
 | **Codex** | Three-tier sandbox tied to approvals, rollout JSONL event stream (`session_meta` + ordinal), resume/fork, versioned & rebuildable derived index, point-path overrides + strict mode | `policy.py` `session.py` | `session:*` |
 | **Hermes Agent** | Fallback chains triggered by error type, MoA multi-slot aggregation, shadow-git checkpoints and rollback, curator that only archives (never deletes), skill provenance | `model.py` `checkpoint.py` `memory.py` | `model:*` (3) `checkpoint:*` (3) |
 | **OpenClaw** | Layered system-prompt assembly, context-compaction thresholds and compaction events, bounded-slice memory injection, subagent depth/budget/output detoxification, serialized sessions | `loop.py` `memory.py` | `loop:*` |
