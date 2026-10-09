@@ -1,6 +1,6 @@
 # forge — 统一智能体框架
 
-把 **Codex / Hermes Agent / DeepSeek Harness / Claude Code / WorkBuddy(CodeBuddy) / OpenClaw / OpenCode** 七套框架里各自最值得抄的设计，收敛成一个可运行的最小内核。
+把 **Codex / Hermes Agent / DeepSeek Harness / Claude Code / OpenClaw / OpenCode** 七套框架里各自最值得抄的设计，收敛成一个可运行的最小内核。
 
 不是概念图，是能跑的代码：`forge selftest` 离线跑全套检查（无网络、无 API Key，项数以命令实际输出为准），覆盖配置合成、权限裁决、工具延迟加载、能力信任、记忆双写、会话回放、影子快照、模型降级、协议网关与协议翻译、原生工具调用、自我迭代进化、异构联邦、贡献模块一致性闸门与跨模块集成、成本核算、子代理编排，以及静态安全线（禁网/禁子进程/禁破坏性文件 API 的表对齐不变量与四路覆盖）。
 
@@ -140,7 +140,6 @@ python run.py gateway --upstream https://api.deepseek.com --port 8799 --models c
 | 借鉴对象 | 被吸收的设计 | 落点模块 | 自检锚点 |
 | --- | --- | --- | --- |
 | **DeepSeek Harness** | 空根 + 有序补丁层、按 id 后写胜、整行替换不做深合并、`dump-default` 恢复通道、`$expr` 惰性表达式 | `config.py` | `config:*` |
-| **WorkBuddy / CodeBuddy** | 二维权限（mode 基线 + allow/ask/deny 例外，deny 恒胜）、子代理权限天花板、Defer/NoDefer 延迟加载、命令级黑名单、类型化记忆双写、trace 计量 | `policy.py` `tools.py` `memory.py` | `policy:*` `tools:*` `memory:*` |
 | **Codex** | 三档沙箱绑审批、rollout JSONL 事件流（`session_meta` + ordinal）、resume/fork、派生索引版本化可重建、点路径覆盖 + 严格模式 | `policy.py` `session.py` | `session:*` |
 | **Hermes Agent** | fallback 链按错误类型触发、MoA 多槽聚合、影子 git 检查点与回滚、curator 只归档不删除、技能 provenance | `model.py` `checkpoint.py` `memory.py` | `model:*` (3) `checkpoint:*` (3) |
 | **OpenClaw** | 系统提示分层组装、上下文压缩阈值与压缩事件、记忆有界切片注入、子代理深度/预算/结果去毒、会话串行 | `loop.py` `memory.py` | `loop:*` |
