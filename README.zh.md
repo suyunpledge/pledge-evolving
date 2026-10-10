@@ -7,6 +7,10 @@
 不是概念图，是能跑的代码：`forge selftest` 离线跑全套检查（无网络、无 API Key，项数以命令实际输出为准），覆盖配置合成、权限裁决、工具延迟加载、能力信任、记忆双写、会话回放、影子快照、模型降级、协议网关与协议翻译、原生工具调用、自我迭代进化、异构联邦、贡献模块一致性闸门与跨模块集成、成本核算、子代理编排，以及静态安全线（禁网/禁子进程/禁破坏性文件 API 的表对齐不变量与四路覆盖）。
 
 零第三方依赖（纯标准库），Python ≥ 3.10。
+### 一键云端 / Windows 一键配置
+
+- **云端**：点顶部「在 Codespaces 中打开」徽章，浏览器里直接用，无需本地环境。
+- **Windows**：下载仓库（Code → Download ZIP，解压）后双击 **`setup.cmd`** 即可——自动探测 Python 3.10+，没有就静默安装（优先 winget，回退 python.org 官方安装器），然后创建桌面快捷方式并打开界面，全程零手动安装。变体：`setup.cmd check`（只查环境）、`setup.cmd selftest`（离线自检）、`setup.cmd web`（浏览器界面代替桌面窗口）。
 
 ## 一眼看懂架构
 
@@ -136,6 +140,10 @@ python run.py gateway --upstream https://api.deepseek.com --port 8799 --models c
 `run.py` 是必需的入口：AutoClaw 内嵌 Python 用 `._pth` 布局，`python -m forge.cli` 会报 `No module named 'forge'`（当前目录不入 `sys.path`，`PYTHONPATH` 也失效）。外面用标准 Python 时 `python -m forge.cli` 可用。
 
 零第三方依赖（纯标准库），Python ≥ 3.10。
+### 一键云端 / Windows 一键配置
+
+- **云端**：点顶部「在 Codespaces 中打开」徽章，浏览器里直接用，无需本地环境。
+- **Windows**：下载仓库（Code → Download ZIP，解压）后双击 **`setup.cmd`** 即可——自动探测 Python 3.10+，没有就静默安装（优先 winget，回退 python.org 官方安装器），然后创建桌面快捷方式并打开界面，全程零手动安装。变体：`setup.cmd check`（只查环境）、`setup.cmd selftest`（离线自检）、`setup.cmd web`（浏览器界面代替桌面窗口）。
 
 ## 七套框架 → 一处落点
 
