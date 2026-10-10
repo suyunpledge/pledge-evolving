@@ -424,6 +424,11 @@ def bindable_gateway_port(port: int) -> int:
     remains an error, so we cannot accidentally connect to somebody else's service.
     The child still owns the final bind and may fail if another process races it.
     """
+    if port == 0:
+        # OS 分配一个可用端口（被占降级 / 首次启动都走这里）
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", 0))
+            return sock.getsockname()[1]
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
             if IS_WINDOWS:
@@ -6188,6 +6193,7 @@ class ForgeGuiApp:
             lambda: self._gateway_launch_expired(cancel, autostart))
 
         def launch():
+            nonlocal port  # 被占降级分支会重绑 port（OS 分配的可用端口）
             try:
                 if port_in_use(port):
                     self._clear_stale_gateway_on_port(port)
@@ -6195,7 +6201,11 @@ class ForgeGuiApp:
                     self._post_ui(self._finish_deferred_gateway, None, upstream, cancel, "已取消启动", autostart)
                     return
                 if port_in_use(port):
-                    raise RuntimeError(f"端口 {port} 被正在运行的程序占用，请关闭旧版 Forge 或改用其它端口")
+                    # 清理后仍被占（占用者不是我们的孤儿，或清理失败）：
+                    # 自动降级到 OS 分配的可用端口，保证「打开就能用」；
+                    # 不再原地退避重试同一个死端口。端口三件套（命令行/
+                    # port_var/client）同步由 _gateway_launch_stage 统一处理。
+                    port = bindable_gateway_port(0)
                 actual_port = bindable_gateway_port(port)
                 if cancel.is_set() or self._closing:
                     return
@@ -6337,6 +6347,16 @@ class ForgeGuiApp:
                      and any(Path(token).resolve() == self.run_py.resolve() for token in argv if token.lower().endswith("run.py"))
                      and Path(home_arg).resolve() == Path(self.home).resolve()
                      and not process_info.get("ParentAlive", True))
+            if not owned:
+                # 放宽一步：同类 forge gateway（同 home）即使父进程判定异常
+                # （WMI 查不到父进程信息）也允许清理——它占的就是我们的端口。
+                try:
+                    same_home = Path(home_arg).resolve() == Path(self.home).resolve()
+                except (OSError, ValueError):
+                    same_home = False
+                owned = ("gateway" in argv and same_home
+                         and self.run_py is not None
+                         and any(token.lower().endswith("run.py") for token in argv))
         except (ValueError, IndexError, TypeError, AttributeError, OSError):
             owned = False
         if not owned:

@@ -42,6 +42,7 @@ HIDDEN = [
     "forge.policy",
     "forge.desktop_services",
     "forge.tools",
+    "sqlite3",
 ]
 
 # 运行期用不到的重量级包，排掉可显著减小体积
@@ -52,7 +53,7 @@ EXCLUDES = [
     "pytest", "_pytest", "unittest", "doctest",
     "setuptools", "pip", "wheel", "pkg_resources",
     "tkinter.test", "test", "distutils",
-    "sqlite3", "curses", "multiprocessing",
+    "curses", "multiprocessing",
 ]
 
 a = Analysis(
