@@ -184,10 +184,22 @@ class ScrollArea(tk.Frame):
     def _bottom_distance(self):
         # Fractions grow with transcript length; measure the actual remaining
         # Canvas pixels so a long history cannot turn several screens into "near".
-        bounds = self.canvas.bbox("all")
-        if bounds is None:
+        # 2026-10-11 性能修复：bbox("all") 是 O(全部 item)，流式期间每个
+        # token 都会经 _on_scroll → at_bottom 走到这里，长对话直接卡死。
+        # 用 canvas.cget("scrollregion")（布局时 _sync_scrollregion 已写好，
+        # 读取是 O(1)）代替即时重算。
+        try:
+            region = self.canvas.cget("scrollregion")
+        except tk.TclError:
             return 0
-        return max(0, (1 - self.canvas.yview()[1]) * (bounds[3] - bounds[1]))
+        parts = str(region).split()
+        if len(parts) != 4:
+            return 0
+        try:
+            total_height = float(parts[3]) - float(parts[1])
+        except ValueError:
+            return 0
+        return max(0, (1 - self.canvas.yview()[1]) * total_height)
 
     def at_bottom(self) -> bool:
         try:
@@ -1519,9 +1531,15 @@ class MessageArea(tk.Frame):
         self.show_empty()
 
     def _update_jump_latest(self):
-        if self.scroll.at_bottom():
+        # 流式输出时 _on_scroll 每个 token 都会进这里。place/forget/lift
+        # 每次都触发再布局→再 _on_scroll 的级联，长对话下 UI 直接卡死
+        # （点击排队延迟，第二次点击被解析成双击/三击→「输入一行变蓝」）。
+        # 只在显隐状态真正变化时碰布局。
+        at_bottom = self.scroll.at_bottom()
+        shown = bool(self.jump_latest.winfo_manager())
+        if at_bottom and shown:
             self.jump_latest.place_forget()
-        else:
+        elif not at_bottom and not shown:
             self.jump_latest.place(relx=.5, rely=1, anchor="s", y=-ui_px(self, 8))
             self.jump_latest.lift()
 
