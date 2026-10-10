@@ -23,18 +23,18 @@ import tkinter as tk
 
 from gui_theme import C, FONT_CAPTION, FONT_MICRO, FONT_UI_BOLD, round_rect
 
-TRACK_HEIGHT = 44
-CARD_HEIGHT = 240
-CARD_RADIUS = 14
-TRACK_Y = 124
-KNOB_RADIUS = 20
-PAD_X = KNOB_RADIUS + 16
+TRACK_HEIGHT = 36
+CARD_HEIGHT = 192
+CARD_RADIUS = 18
+TRACK_Y = 100
+KNOB_RADIUS = 17
+PAD_X = KNOB_RADIUS + 13
 MINI_WIDTH = 34
 MINI_HEIGHT = 10
 
 # 轨道加粗后，刻度点/微光/端帽要同比放大，否则细节会显得浮在粗轨上。
-TICK_RADIUS = 3.5
-SPARKLE_SCALE = 1.3
+TICK_RADIUS = 3
+SPARKLE_SCALE = 1.05
 
 GRADIENT_START = "#5865F2"
 GRADIENT_MID = "#7C3AED"
@@ -291,10 +291,10 @@ class ReasoningSlider(tk.Frame):
                    width=1, tags=("slider-card",))
 
         # 顶部信息层：闪电 / 当前档位 / 当前模型 / 复位。
-        c.create_polygon(24, 19, 17, 31, 23, 31, 19, 43, 33, 27, 26, 27,
+        c.create_polygon(19, 15, 14, 25, 18, 25, 15, 34, 26, 22, 21, 22,
                          fill=C["subtext"], outline="", tags=("slider-bolt",))
         active_label = self._labels_text.get(self.current_value(), self.current_value())
-        c.create_text(width / 2, 27, text=f"{active_label}  ›",
+        c.create_text(width / 2, 22, text=f"{active_label}  ›",
                       fill=C["accent_text"], font=FONT_UI_BOLD,
                       tags=("slider-title",))
         model = ""
@@ -303,16 +303,16 @@ class ReasoningSlider(tk.Frame):
                 model = str(self._model_getter() or "")
             except (tk.TclError, TypeError, ValueError):
                 model = ""
-        c.create_text(width / 2, 52, text=model or "当前模型",
+        c.create_text(width / 2, 42, text=model or "当前模型",
                       fill=C["subtext"], font=FONT_CAPTION,
                       tags=("slider-model",))
         reset_color = (C["body"] if self._hover_part == "reset" else
                        (C["muted"] if self.current_value() == self.default_value
                         else C["subtext"]))
-        c.create_arc(width - 37, 20, width - 17, 40, start=36, extent=285,
+        c.create_arc(width - 32, 17, width - 15, 34, start=36, extent=285,
                      style=tk.ARC, outline=reset_color, width=2,
                      tags=("slider-reset",))
-        c.create_polygon(width - 18, 19, width - 13, 24, width - 20, 25,
+        c.create_polygon(width - 16, 16, width - 12, 20, width - 18, 21,
                          fill=reset_color, outline="", tags=("slider-reset",))
 
         pad = self._pad
@@ -385,13 +385,13 @@ class ReasoningSlider(tk.Frame):
                 sx = pad + label_span * i / (len(self.stops) - 1)
                 name = self._labels_text.get(value, value)
                 active = (i == index)
-                c.create_text(sx, 176, text=name,
+                c.create_text(sx, 141, text=name,
                               fill=C["accent_text"] if active else C["muted"],
                               font=FONT_UI_BOLD if active else FONT_MICRO,
                               tags=("slider-stop-label",))
 
         hint = self._hints.get(self.current_value(), "")
-        c.create_text(width / 2, 206, text=hint or "拖动选择思考强度",
+        c.create_text(width / 2, 165, text=hint or "拖动选择思考强度",
                       fill=C["subtext"] if hint else C["muted"],
                       font=FONT_MICRO, tags=("slider-hint",))
         self.hint_label.configure(text=hint, bg=base,

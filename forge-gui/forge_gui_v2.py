@@ -1532,10 +1532,10 @@ class ForgeGuiApp:
         if self._closing or not self.root.winfo_exists():
             return
         width = self.root.winfo_width()
+        # 2026-10-11 用户要求：任何模式下侧边栏都在。只有窗口过窄才收起。
         should_hide_sidebar = not self._sidebar_force_open and (
             width < SIDEBAR_COLLAPSE_AT or
-            (self._ws_packed and width < WORKSPACE_RESTORE_AT) or
-            self._active_view != "chat")
+            (self._ws_packed and width < WORKSPACE_RESTORE_AT))
         if should_hide_sidebar and self._sidebar_visible:
             self._sidebar_auto_hidden = True
             self._set_sidebar_visible(False, automatic=True)
@@ -2968,7 +2968,7 @@ class ForgeGuiApp:
             self._chat_sidebar_force_open = self._sidebar_force_open
         self._active_view = key
         if key != "chat":
-            self._sidebar_force_open = False
+            pass  # 侧边栏在所有模式常驻（2026-10-11）：不再因切页丢弃展开状态
         elif not was_chat:
             self._sidebar_force_open = getattr(self, "_chat_sidebar_force_open", False)
         self._set_nav_active(key)
