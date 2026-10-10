@@ -23,17 +23,17 @@ import tkinter as tk
 
 from gui_theme import C, FONT_CAPTION, FONT_MICRO, FONT_UI_BOLD, round_rect
 
-TRACK_HEIGHT = 20
-CARD_HEIGHT = 224
+TRACK_HEIGHT = 44
+CARD_HEIGHT = 240
 CARD_RADIUS = 14
-TRACK_Y = 110
-KNOB_RADIUS = 14
-PAD_X = KNOB_RADIUS + 12
+TRACK_Y = 124
+KNOB_RADIUS = 20
+PAD_X = KNOB_RADIUS + 16
 MINI_WIDTH = 34
 MINI_HEIGHT = 10
 
 # 轨道加粗后，刻度点/微光/端帽要同比放大，否则细节会显得浮在粗轨上。
-TICK_RADIUS = 2.0
+TICK_RADIUS = 3.5
 SPARKLE_SCALE = 1.3
 
 GRADIENT_START = "#5865F2"
@@ -385,13 +385,13 @@ class ReasoningSlider(tk.Frame):
                 sx = pad + label_span * i / (len(self.stops) - 1)
                 name = self._labels_text.get(value, value)
                 active = (i == index)
-                c.create_text(sx, 154, text=name,
+                c.create_text(sx, 176, text=name,
                               fill=C["accent_text"] if active else C["muted"],
                               font=FONT_UI_BOLD if active else FONT_MICRO,
                               tags=("slider-stop-label",))
 
         hint = self._hints.get(self.current_value(), "")
-        c.create_text(width / 2, 202, text=hint or "拖动选择思考强度",
+        c.create_text(width / 2, 206, text=hint or "拖动选择思考强度",
                       fill=C["subtext"] if hint else C["muted"],
                       font=FONT_MICRO, tags=("slider-hint",))
         self.hint_label.configure(text=hint, bg=base,
