@@ -11,6 +11,7 @@
 
 - **云端**：点顶部「在 Codespaces 中打开」徽章，浏览器里直接用，无需本地环境。
 - **Windows**：下载仓库（Code → Download ZIP，解压）后双击 **`setup.cmd`** 即可——自动探测 Python 3.10+，没有就静默安装（优先 winget，回退 python.org 官方安装器），然后创建桌面快捷方式并打开界面，全程零手动安装。变体：`setup.cmd check`（只查环境）、`setup.cmd selftest`（离线自检）、`setup.cmd web`（浏览器界面代替桌面窗口）。
+macOS/Linux 对等脚本是 **`./setup.sh`**（缺 Python 时走 Homebrew / apt / dnf / yum / pacman 自动安装），变体同上。
 
 ## 一眼看懂架构
 

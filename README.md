@@ -31,6 +31,10 @@ opens the GUI. No manual installs, no prompts to answer. Variants:
 `setup.cmd check` (environment probe only), `setup.cmd selftest` (offline suite),
 `setup.cmd web` (browser UI instead of the desktop window).
 
+On macOS/Linux the equivalent is **`./setup.sh`** (Homebrew / apt / dnf / yum /
+pacman auto-install when Python is missing), with the same `check` / `selftest`
+/ `web` variants.
+
 ## Architecture at a glance
 
 ```mermaid
