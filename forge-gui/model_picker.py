@@ -24,9 +24,7 @@ from reasoning_slider import MiniReasoningTrack, ReasoningSlider
 PICKER_WIDTH = OVERLAY_WIDTH
 PICKER_MAX_HEIGHT = 560
 ITEM_ICON = 20
-# Tk 的 point 字体会随 Windows DPI 缩放；三层信息（名称、说明、能力标签）
-# 需要留出足够的逻辑高度，避免 150% DPI 下最后一层被 pack 裁掉。
-MODEL_ROW_HEIGHT = 106
+# Rows use their natural wrapped height, including scaled fonts and capability tags.
 FILTERS = (("all", tr("全部")), ("recommended", tr("推荐")), ("cloud", tr("云端")),
            ("local", tr("本地")), ("favorites", tr("收藏")))
 
@@ -280,9 +278,8 @@ class ModelPicker(tk.Frame):
             self._paint_fallback(brand)
             self._fallback.place(relx=.5, rely=.5, anchor="center")
         if value == "default":
-            shown = "默认 Provider"
-            if provider:
-                shown += f" · {provider.get('modelLabel') or provider.get('model') or ''}"
+            shown = str((provider or {}).get('modelLabel') or
+                        (provider or {}).get('model') or tr("未配置"))
         else:
             shown = value
         self._shown_text = "Model：" + shown
@@ -325,7 +322,7 @@ class ModelPicker(tk.Frame):
         value = self.var.get() or "default"
         provider = self._provider_for(value) or {}
         return str(provider.get("modelLabel") or provider.get("model") or
-                   ("默认 Provider" if value == "default" else value))
+                   (tr("未配置") if value == "default" else value))
 
     # -- popup -------------------------------------------------------
     def _on_click(self, _event=None):
@@ -335,8 +332,6 @@ class ModelPicker(tk.Frame):
     def open_menu(self) -> None:
         if self._popup is not None:
             self.close_menu()
-            return
-        if not self._values:
             return
         pop = i18n.Toplevel(self)
         pop.withdraw()
@@ -360,8 +355,15 @@ class ModelPicker(tk.Frame):
         title.pack(fill=tk.X)
         i18n.Label(title, text=tr("选择模型"), bg=C["surface"], fg=C["text"],
                  font=FONT_UI_BOLD).pack(side=tk.LEFT)
-        i18n.Label(title, text=tr("Provider 与路由"), bg=C["surface"], fg=C["muted"],
-                 font=FONT_CAPTION).pack(side=tk.RIGHT)
+        if self._on_settings is not None:
+            self._settings_link = i18n.Label(title, text=tr("配置API"), bg=C["surface"],
+                fg=C["accent_text"], font=FONT_CAPTION, cursor="hand2")
+            self._settings_link.pack(side=tk.RIGHT)
+            def open_settings(_event=None):
+                self.close_menu()
+                self._on_settings(None)
+            bind_keyboard_action(self._settings_link, open_settings)
+            self._settings_link.bind("<Button-1>", open_settings)
 
         search_host = tk.Frame(shell, bg=C["input_bg"], highlightthickness=1,
                                highlightbackground=C["border_hi"])
@@ -407,13 +409,8 @@ class ModelPicker(tk.Frame):
             self._filter_widgets[key] = (host, text)
         self._paint_filters()
 
-        if self._router():
-            self._build_router_card(shell)
-
-        # 固定在底部，模型列表只占中间剩余空间；小窗口也不会把强度选项裁掉。
-        if self._thinking_choices:
-            self._build_thinking_section(shell)
-
+        # Models get the available viewport. Advanced settings live below the
+        # results in the same scrolling surface, so DPI cannot squeeze it shut.
         viewport = tk.Frame(shell, bg=C["surface"])
         viewport.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
         canvas = tk.Canvas(viewport, bg=C["surface"], highlightthickness=0, bd=0,
@@ -519,7 +516,7 @@ class ModelPicker(tk.Frame):
 
     def _build_thinking_section(self, parent) -> None:
         section = tk.Frame(parent, bg=C["surface"])
-        section.pack(side=tk.BOTTOM, fill=tk.X, pady=(10, 0))
+        section.pack(fill=tk.X, pady=(10, 0))
         tk.Frame(section, bg=C["border"], height=1).pack(fill=tk.X, pady=(0, 9))
         # Codex 式控制卡：档位、当前模型、复位和能量滑轨形成一个视觉整体。
         self._thinking_slider = ReasoningSlider(
@@ -688,6 +685,8 @@ class ModelPicker(tk.Frame):
             return
         for child in inner.winfo_children():
             child.destroy()
+        self._thinking_slider = None
+        self._thinking_widgets.clear()
         self._rows = []
         query = self._search_var.get().strip().lower() if self._search_var else ""
         groups: dict[str, list[str]] = {}
@@ -709,8 +708,10 @@ class ModelPicker(tk.Frame):
         if not groups:
             i18n.Label(inner, text=tr("没有匹配的模型"), bg=C["surface"], fg=C["muted"],
                      font=FONT_SMALL, pady=24).pack(fill=tk.X)
-            return
         current = self.var.get()
+        if current == "default":
+            provider = self._provider_for(current) or {}
+            current = str(provider.get("modelLabel") or provider.get("model") or current)
         for key, values in groups.items():
             brand, endpoint = group_meta[key]
             self._make_provider_header(inner, brand, endpoint, self._provider_for(values[0]))
@@ -718,6 +719,11 @@ class ModelPicker(tk.Frame):
                 row = self._make_model_row(inner, value, value == current)
                 row.pack(fill=tk.X, pady=(0, 3))
                 self._rows.append((value, row))
+        if self._router():
+            self._build_router_card(inner)
+        if self._thinking_choices:
+            self._build_thinking_section(inner)
+        self._list_canvas.yview_moveto(0)
 
     def _brand_icon(self, parent, brand, *, bg: str, size=ITEM_ICON):
         box = tk.Frame(parent, bg=bg, width=28, height=28)
@@ -778,10 +784,9 @@ class ModelPicker(tk.Frame):
         provider = self._provider_for(value)
         brand = self.brand_of(value)
         base = C["sel"] if selected else C["surface2"]
-        row = tk.Frame(parent, bg=base, height=MODEL_ROW_HEIGHT, cursor="hand2",
+        row = tk.Frame(parent, bg=base, cursor="hand2",
                        highlightthickness=1,
                        highlightbackground=C["accent_border"] if selected else C["surface2"])
-        row.pack_propagate(False)
         indicator = tk.Frame(row, bg=C["accent"] if selected else base, width=3)
         indicator.pack(side=tk.LEFT, fill=tk.Y)
         icon = self._brand_icon(row, brand, bg=base)
@@ -790,7 +795,8 @@ class ModelPicker(tk.Frame):
         text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, pady=7)
         title_row = tk.Frame(text, bg=base, cursor="hand2")
         title_row.pack(fill=tk.X)
-        shown = "默认 Provider" if value == "default" else value
+        shown = str((provider or {}).get("modelLabel") or (provider or {}).get("model") or
+                    tr("未配置")) if value == "default" else value
         title = i18n.Label(title_row, text=shown, bg=base, fg=C["text"],
                          font=FONT_UI_BOLD if selected else FONT_SMALL,
                          anchor="w", cursor="hand2")
@@ -800,10 +806,18 @@ class ModelPicker(tk.Frame):
                               highlightthickness=0, bd=0, cursor="hand2")
             check.create_oval(1, 1, 13, 13, fill=C["accent"], outline="")
             check.create_line(4, 7, 6, 9, 10, 5, fill="#FFFFFF", width=1.5)
-            check.pack(side=tk.LEFT, padx=(7, 0))
+            check.pack(side=tk.LEFT, padx=(7, 0), before=title)
         desc = i18n.Label(text, text=self._description(value, provider), bg=base,
                         fg=C["subtext"], font=FONT_CAPTION, anchor="w", cursor="hand2")
         desc.pack(fill=tk.X, pady=(2, 0))
+        def fit_text(event):
+            # Text width comes from the actual row, including icon/check/star
+            # occupancy. Natural row height then follows wrapped lines at DPI.
+            for label, width in ((title, max(40, event.width-24)),
+                                 (desc, max(40, event.width))):
+                if int(label.cget("wraplength")) != width:
+                    label.configure(wraplength=width)
+        text.bind("<Configure>", fit_text)
         tags = tk.Frame(text, bg=base, cursor="hand2")
         tags.pack(fill=tk.X, pady=(3, 0))
         for label in self._tags(value, provider):
@@ -811,7 +825,7 @@ class ModelPicker(tk.Frame):
                      font=FONT_MICRO, padx=5, pady=1).pack(side=tk.LEFT, padx=(0, 4))
         favorite = tk.Canvas(row, width=28, height=28, bg=base,
                              highlightthickness=0, bd=0, cursor="hand2")
-        favorite.pack(side=tk.RIGHT, padx=(3, 8))
+        favorite.pack(side=tk.RIGHT, padx=(3, 8), before=text)
         self._draw_star(favorite, value in self._favorites)
 
         def paint(bg: str):

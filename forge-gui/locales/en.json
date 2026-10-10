@@ -462,5 +462,8 @@
   "自动同步 AI 文件修改（仍受 Policy 限制）": "Automatically apply AI file edits (subject to Policy)",
   "任务模式关闭同步时只读；开启后可按 Policy 修改文件。": "Task mode is read-only with sync off; enabling sync allows edits subject to Policy.",
   "项目目录不存在": "Project directory does not exist",
-  "正在切换或启动工作区，请等待 Gateway 就绪后发送": "Workspace is starting or switching. Wait for Gateway readiness before sending."
+  "正在切换或启动工作区，请等待 Gateway 就绪后发送": "Workspace is starting or switching. Wait for Gateway readiness before sending.",
+  "配置API": "API Settings",
+  "📂 项目": "📂 Project",
+  "🤖 Agent 集群": "🤖 Agent Cluster"
 }

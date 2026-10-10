@@ -141,12 +141,14 @@ class ErgonomicsTests(unittest.TestCase):
         self.assertEqual(calls, [2])
         self.assertFalse(pop.winfo_exists())
 
-    def test_directory_disclosure_keeps_fixed_actions_visible(self):
+    def test_compact_navigation_keeps_history_and_fixed_actions_visible(self):
         app = self.app_ui()
-        self.assertFalse(app._agents_list_frame.winfo_ismapped())
-        app._agents_toggle_btn.invoke()
+        self.assertEqual(tuple(app.sidebar_navigation),
+                         ('connectors', 'knowledge', 'evolution', 'config'))
+        app.input_card.team_settings_btn.invoke()
+        self.assertEqual(app._active_view, 'agents')
+        app._return_to_chat()
         self.pump()
-        self.assertTrue(app._agents_list_frame.winfo_ismapped())
         self.assertTrue(app.sidebar_toggle_btn.winfo_ismapped())
         self.assertLessEqual(app.sidebar_toggle_btn.winfo_rooty() + app.sidebar_toggle_btn.winfo_height(),
                              app.sidebar.winfo_rooty() + app.sidebar.winfo_height())

@@ -463,7 +463,8 @@ class DesktopFeatures:
     def _choose_project(self):
         if self.app._sending or self.app._task_running or self.app._gateway_starting:
             self.app._set_status(tr('请在当前请求结束后切换项目'),'warn'); return
-        selected=filedialog.askdirectory(parent=self.window,title=tr('选择项目工作区'))
+        parent=self.window if self.window is not None and self.window.winfo_exists() else self.app.root
+        selected=filedialog.askdirectory(parent=parent,title=tr('选择项目工作区'))
         if not selected: return
         def inspect():
             root=Path(selected).resolve()
@@ -484,7 +485,9 @@ class DesktopFeatures:
         if self.app.workspace is not None: self.app.workspace.set_repo_root(root)
         self.app._project_name_var.set(root.name)
         self.app._refresh_work_context()
-        self.project_label.configure(text=tr('当前项目：{path}',path=str(root)))
+        label=getattr(self,'project_label',None)
+        if label is not None and label.winfo_exists():
+            label.configure(text=tr('当前项目：{path}',path=str(root)))
         if self.app.gateway_proc is not None:
             self.app._project_switch_pending=True
             self.app._restart_gateway()

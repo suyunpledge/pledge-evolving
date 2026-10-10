@@ -434,12 +434,13 @@ class RefactorAcceptance(unittest.TestCase):
 
     # ── 11. Activity Bar 与 contextual Sidebar 真正分层 ──
     def test_sidebar_is_single_column_concept_layout(self):
-        # 概念图：单栏侧栏。主导航只占 3 项（对话/任务/工具集），
-        # 其余入口在「⋯ 更多」菜单与底部「⚙ 设置」里。
-        self.assertEqual(set(self.app._activity_markers), {"chat", "task", "tools"})
-        self.assertEqual(len(self.app._activity_markers), 3)
+        # 顶部三个快捷入口，下面四个功能导航，沿用同一侧栏容器。
+        self.assertEqual(set(self.app._activity_markers),
+                         {"connectors", "knowledge", "evolution", "config"})
+        self.assertEqual(tuple(self.app.sidebar_shortcuts), ("chat", "tools", "schedules"))
+        self.assertEqual(len(self.app._activity_markers), 4)
         # 占位视图不占主导航（走更多菜单）
-        for key in ("agents", "knowledge", "evolution", "files", "config"):
+        for key in ("agents", "files"):
             entries = self.app._nav_widgets.get(key)
             if entries:
                 for holder, _inner in entries:
@@ -447,7 +448,7 @@ class RefactorAcceptance(unittest.TestCase):
                                      f"{key} 不应出现在主导航区")
         # 窄轨道已移除（不 pack，宽度 0），侧栏是唯一的左栏
         self.assertLessEqual(self.app.activity_bar.winfo_width(), 1)
-        # 侧栏底部有 设置 / 关于 / 收起 / 模型 pill
+        # 主导航和历史可见；新建对话与集群入口位于聊天区。
         texts = []
 
         def walk(w):
@@ -464,15 +465,11 @@ class RefactorAcceptance(unittest.TestCase):
         blob = " | ".join(texts)
         # 注：模型 pill 的 ▣ 字形已由 ui_icons 自绘图标接管（Codex 图标化改造），
         # 这里断言「有模型行」（pill 文字=当前模型名）而非字形本身。
-        for need in ("设置", "关于", "新建对话", "智能体", "历史记录"):
+        for need in ("对话", "插件", "定时任务", "连接器", "知识库", "演化", "配置API", "关于", "历史记录"):
             self.assertIn(need, blob, f"侧栏缺少 {need}")
-        has_model_pill = any(
-            t.strip() in ("default", "mimo", "mimopro") or
-            (t and any(t == m for m in ()))  # 模型名随配置变化，只验证存在性
-            for t in texts)
-        self.assertTrue(
-            getattr(self.app, "side_model_pill", None) is not None or
-            has_model_pill, "侧栏底部缺少模型 pill")
+        self.assertTrue(self.app.clear_chat_btn.winfo_ismapped(), "新建对话应位于对话头")
+        self.assertTrue(self.app.input_card.team_settings_btn.winfo_ismapped())
+        self.assertTrue(self.app.model_combo.winfo_ismapped(), "模型选择位于聊天输入区")
         chat_panel = self.app._sidebar_panels["chat"]
         task_panel = self.app._sidebar_panels["task"]
         self.assertTrue(chat_panel.winfo_ismapped())
@@ -483,7 +480,8 @@ class RefactorAcceptance(unittest.TestCase):
                          "无辅助内容的任务视图应把宽度留给时间线")
         self.app._toggle_sidebar()
         self.pump(0.1)
-        self.assertTrue(task_panel.winfo_ismapped(), "用户仍可按需展开侧栏")
+        self.assertTrue(chat_panel.winfo_ismapped(), "任务页按需展开相同的主导航")
+        self.assertFalse(task_panel.winfo_ismapped())
 
     def test_start_actions_lead_to_real_workflows(self):
         self.assertEqual(self.app._active_view, "chat")
@@ -600,10 +598,15 @@ class RefactorAcceptance(unittest.TestCase):
         for key, entries in self.app._activity_labels.items():
             for _icon, text in entries:
                 labels[key] = text.cget("text")
-        # 主导航 3 项（单栏侧栏）显示名称
-        for key in ("chat", "task", "tools"):
-            self.assertEqual(labels.get(key), gui.NAV_LABEL[key],
+        # 四个功能导航及三个顶部快捷入口显示真实名称。
+        for key, name in (("connectors", "连接器"), ("knowledge", "知识库"),
+                          ("evolution", "演化"), ("config", "配置API")):
+            self.assertEqual(labels.get(key), name,
                              f"{key} 的侧栏导航应显示名称")
+            icon = self.app._activity_labels[key][0][0]
+            self.assertTrue(icon.find_all(), "功能入口应显示矢量图标")
+        self.assertEqual([button.cget("text") for button in self.app.sidebar_shortcuts.values()],
+                         ["对话", "插件", "定时任务"])
         # 图标必须是真 emoji（配 emoji 字体才出彩色），不是单色 dingbat
         for _key, label, glyph in gui.NAV_ITEMS:
             with self.subTest(glyph=glyph):

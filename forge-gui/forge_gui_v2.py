@@ -959,6 +959,7 @@ class ForgeGuiApp:
         self._more_menu.add_command(label=tr("收起 / 展开侧边栏"),
                                     command=self._toggle_sidebar)
         self._more_menu.add_separator()
+        self._more_menu.add_command(label=NAV_LABEL["task"], command=lambda: self._show_view("task"))
         self._more_menu.add_command(label=tr("项目文件"), command=lambda: self._nav_click("files"))
         self._more_menu.add_command(label=tr('定时任务'), command=lambda:self.desktop_features.open(0))
         self._more_menu.add_command(label=tr('连接器'), command=lambda:self.desktop_features.open(1))
@@ -976,7 +977,6 @@ class ForgeGuiApp:
         self.ws_toggle_btn.pack(side=tk.LEFT, padx=(0, 10))
         self.desktop_features_btn = pill_button(right,tr('连接与任务'),lambda:self.desktop_features.open(),
                                                 kind='ghost',icon='◷',bg=C['bg'],font=FONT_SMALL,padx=8)
-        self.desktop_features_btn.pack(side=tk.LEFT,padx=(0,8))
         self.gw_status_var = i18n.StringVar(self.root, value=tr("● 离线"))
         self.gw_status_lbl = i18n.Label(right, textvariable=self.gw_status_var,
                                       bg=C["bg"], fg=C["muted"], font=FONT_CAPTION)
@@ -1154,29 +1154,46 @@ class ForgeGuiApp:
         chat_panel = tk.Frame(side, bg=C["sidebar"])
         self._sidebar_panels["chat"] = chat_panel
 
-        # ── 1) 顶部：＋ 新建对话 ──
-        new_btn = pill_button(chat_panel, "＋  新建对话", self._new_session,
-                              kind="accent_soft", bg=C["sidebar"], font=FONT_UI, padx=0)
-        new_btn.pack(fill=tk.X, padx=12, pady=(14, 10))
-        attach_tooltip(new_btn, "新建对话 · Ctrl+N")
+        # Stable primary navigation remains accessible from task and settings views.
+        shortcuts = tk.Frame(chat_panel, bg=C["sidebar"])
+        shortcuts.pack(fill=tk.X, padx=8, pady=(14, 10))
+        self.sidebar_shortcuts = {}
+        for column, (key, label, action) in enumerate((
+                ("chat", tr("对话"), self._return_to_chat),
+                ("tools", tr("插件"), self._open_plugin_market),
+                ("schedules", tr("定时任务"), lambda: self.desktop_features.open(0)))):
+            shortcuts.grid_columnconfigure(column, weight=1, uniform="shortcuts")
+            button = pill_button(shortcuts, label, action, kind="ghost",
+                                 bg=C["sidebar"], font=FONT_MICRO, padx=2, width=1)
+            button.grid(row=0, column=column, sticky="nsew", padx=1)
+            self.sidebar_shortcuts[key] = button
+        def fit_shortcuts(event):
+            # Use the fixed container width. Deriving each button's request from
+            # its own grid allocation can oscillate at fractional DPI scaling.
+            width = max(20, event.width // 3 - 10)
+            for button in self.sidebar_shortcuts.values():
+                if int(button.cget("wraplength")) != width:
+                    button.configure(wraplength=width)
+        shortcuts.bind("<Configure>", fit_shortcuts)
 
-        # ── 2) 主导航（概念图只展示 3 项，其余入口走「⋯ 更多」）──
+        # ── 2) 功能导航 ──
         nav_host = tk.Frame(chat_panel, bg=C["sidebar"])
         nav_host.pack(fill=tk.X, padx=6, pady=(0, 4))
         i18n.Label(nav_host, text=tr("功能导航"), bg=C["sidebar"], fg=C["muted"],
                  font=FONT_MICRO, anchor="w").pack(fill=tk.X, padx=8, pady=(2, 6))
-        for key in ("chat", "task", "tools"):
-            holder = self._make_side_nav(nav_host, key, NAV_LABEL[key],
-                                         NAV_GLYPH[key])
+        self.sidebar_navigation = {}
+        for key, label, glyph in (("connectors", tr("连接器"), "connector"),
+                                  ("knowledge", NAV_LABEL["knowledge"], "knowledge"),
+                                  ("evolution", NAV_LABEL["evolution"], "evolution"),
+                                  ("config", tr("配置API"), "config")):
+            holder = self._make_side_nav(nav_host, key, label, glyph)
             holder.pack(fill=tk.X, pady=1)
+            self.sidebar_navigation[key] = holder
         # 更多入口：Agents / 知识库 / 演化 / 文件与项目 / 配置
         more_holder = self._make_side_nav_more(chat_panel)
         more_holder.pack(fill=tk.X, padx=6, pady=(2, 6))
 
         # 导航与历史之间：全宽分隔线 + 上下留白（视觉分层，别混成一块）
-
-        # ── 3) 智能体分组（扫描 ~/.openclaw-autoclaw/agents/）──
-        self._build_agents_group(chat_panel)
 
         divider(chat_panel, bg=C["border_hi"]).pack(fill=tk.X, padx=0, pady=(12, 6))
 
@@ -1222,9 +1239,6 @@ class ForgeGuiApp:
 
         tools_row = tk.Frame(bottom, bg=C["sidebar"])
         tools_row.pack(fill=tk.X)
-        pill_button(tools_row, tr("⚙ 设置"), lambda: self._show_view("config"),
-                    kind="quiet", bg=C["sidebar"], font=FONT_MICRO,
-                    padx=8).pack(side=tk.LEFT, fill=tk.X, expand=True)
         pill_button(tools_row, tr("ⓘ 关于"), self._show_about, kind="quiet",
                     bg=C["sidebar"], font=FONT_MICRO, padx=8).pack(
             side=tk.LEFT, fill=tk.X, expand=True, padx=(4, 0))
@@ -1233,7 +1247,7 @@ class ForgeGuiApp:
             fg=C["muted"], size=11, tooltip=tr("收起 / 展开侧边栏"))
         self.sidebar_toggle_btn.pack(side=tk.RIGHT)
 
-        # 其他一级功能各有自己的上下文 Sidebar（切视图时显示）。
+        # Retain legacy context panel accessors; global navigation stays shared.
         for key, label, glyph in NAV_ITEMS:
             if key == "chat":
                 continue
@@ -1250,11 +1264,16 @@ class ForgeGuiApp:
         bind_keyboard_action(holder, lambda: self._nav_click(key))
         inner = tk.Frame(holder, bg=C["sidebar"])
         inner.pack(fill=tk.X, padx=8, pady=7)
-        icon = IconCanvas(inner, key, size=20, bg=C["sidebar"], fg=C["ter"])
+        icon = IconCanvas(inner, glyph, size=20, bg=C["sidebar"], fg=C["ter"])
         icon.pack(side=tk.LEFT)
         text = i18n.Label(inner, text=label, bg=C["sidebar"], fg=C["ter"],
                         font=FONT_SMALL, anchor="w")
         text.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 0))
+        def fit_label(event):
+            width = max(40, event.width)
+            if int(text.cget("wraplength")) != width:
+                text.configure(wraplength=width)
+        text.bind("<Configure>", fit_label)
         attach_tooltip(icon, label)
         attach_tooltip(text, label)
         for widget in (holder, inner, icon, text):
@@ -1450,7 +1469,8 @@ class ForgeGuiApp:
         return "break"
 
     def _show_sidebar_for(self, key: str):
-        panel = self._sidebar_panels.get(key) or self._sidebar_panels.get("chat")
+        # Opening a page must not replace the global navigation with a dead end.
+        panel = self._sidebar_panels.get("files" if key == "files" else "chat")
         for other in self._sidebar_panels.values():
             if other is not panel:
                 other.pack_forget()
@@ -1475,8 +1495,10 @@ class ForgeGuiApp:
             self._sidebar_auto_hidden = False
 
     def _toggle_sidebar(self):
-        if self._active_view != "chat":
-            self._sidebar_force_open = not self._sidebar_visible
+        width = self.root.winfo_width()
+        self._sidebar_force_open = not self._sidebar_visible and (
+            self._active_view != "chat" or width < SIDEBAR_COLLAPSE_AT or
+            (self._ws_packed and width < WORKSPACE_RESTORE_AT))
         self._set_sidebar_visible(not self._sidebar_visible)
 
     def _on_root_configure(self, event):
@@ -1505,10 +1527,10 @@ class ForgeGuiApp:
         if self._closing or not self.root.winfo_exists():
             return
         width = self.root.winfo_width()
-        should_hide_sidebar = (width < SIDEBAR_COLLAPSE_AT or
-                               (self._ws_packed and width < WORKSPACE_RESTORE_AT) or
-                               (self._active_view != "chat" and
-                                not self._sidebar_force_open))
+        should_hide_sidebar = not self._sidebar_force_open and (
+            width < SIDEBAR_COLLAPSE_AT or
+            (self._ws_packed and width < WORKSPACE_RESTORE_AT) or
+            self._active_view != "chat")
         if should_hide_sidebar and self._sidebar_visible:
             self._sidebar_auto_hidden = True
             self._set_sidebar_visible(False, automatic=True)
@@ -2905,6 +2927,9 @@ class ForgeGuiApp:
                         kind="ghost", bg=C["surface"]).pack(side=tk.LEFT, padx=(8, 0))
 
     def _nav_click(self, key: str):
+        if key == "connectors":
+            self.desktop_features.open(1)
+            return
         if key == "tools":
             self._open_plugin_market()
             return
@@ -2933,8 +2958,14 @@ class ForgeGuiApp:
             if other != key:
                 frame.pack_forget()
         self._views[key].pack(fill=tk.BOTH, expand=True)
+        was_chat = self._active_view == "chat"
+        if was_chat and key != "chat":
+            self._chat_sidebar_force_open = self._sidebar_force_open
         self._active_view = key
-        self._sidebar_force_open = False
+        if key != "chat":
+            self._sidebar_force_open = False
+        elif not was_chat:
+            self._sidebar_force_open = getattr(self, "_chat_sidebar_force_open", False)
         self._set_nav_active(key)
         self._show_sidebar_for(key)
         self._sync_view_navigation()
@@ -2947,6 +2978,9 @@ class ForgeGuiApp:
 
     def _set_nav_active(self, key: str):
         self._active_nav = key
+        for nav_key, button in getattr(self, "sidebar_shortcuts", {}).items():
+            button.configure(bg=C["sel"] if nav_key == key else C["surface2"],
+                             fg=C["text"] if nav_key == key else C["ter"])
         for nav_key, widgets in self._nav_widgets.items():
             active = nav_key == key
             for holder, inner in widgets:
@@ -4442,7 +4476,7 @@ class ForgeGuiApp:
         subtitle.bind("<Configure>", lambda event: subtitle.configure(wraplength=max(160, event.width)))
 
         # 会话头只保留：标题 + 当前模型 + 设置。温度等高级参数收进 ⚙ 菜单，
-        # 「新对话」的主入口在左侧栏（这里只留一个低调的 ＋）。
+        # 新建对话固定在当前对话右上角。
         right = tk.Frame(head, bg=C["chat"])
         right.pack(side=tk.RIGHT, anchor=tk.N, before=left)
         self.temp_var = tk.StringVar(value="0.7")
@@ -4450,11 +4484,12 @@ class ForgeGuiApp:
                      fg=C["ter"], size=12,
                      tooltip=tr("对话操作与设置"))
         self.session_menu_btn.pack(side=tk.RIGHT)
-        self.clear_chat_btn = pill_button(right, "＋", self._new_session,
-                                         kind="quiet", bg=C["chat"], padx=8)
+        self.clear_chat_btn = pill_button(right, tr("新建对话"), self._new_session,
+                                         icon="＋", kind="ghost", bg=C["chat"], padx=8)
+        self.clear_chat_btn.pack(side=tk.RIGHT, padx=(0, 6))
         self.market_entry_btn = pill_button(right, tr("插件市场"), self._open_plugin_market,
                                             kind="quiet", bg=C["chat"])
-        self.market_entry_btn.pack(side=tk.RIGHT, padx=(0, 6))
+        # Marketplace is reached from the sidebar shortcut.
         self.model_chip = None  # 模型选择统一放在 Composer。
 
 
@@ -4482,6 +4517,9 @@ class ForgeGuiApp:
             on_attach=self._attach_files,
             on_context=self._open_context,
             on_commands=self._open_commands,
+            on_project=lambda: self.desktop_features._choose_project(),
+            on_project_files=lambda: self._nav_click("files"),
+            on_team_settings=lambda: self._show_view("agents"),
             on_team_change=self._on_team_mode_changed,
             team_mode=self._team_mode,
         )
@@ -5587,7 +5625,7 @@ class ForgeGuiApp:
                 m = r["config"].get("modelLabel") or r["config"].get("model") or r.get("id")
                 if m and m not in models:
                     models.append(m)
-        models = ["default"] + [m for m in models if m and m != "default"]
+        models = [m for m in models if m and m != "default"]
         self.model_combo.configure(values=models)
         self._sync_model_chip()
         self._sync_composer_metadata()

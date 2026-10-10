@@ -46,7 +46,7 @@ from gui_theme import (
     FONT_SMALL, FONT_TITLE, FONT_UI, FONT_UI_BOLD, R_BUBBLE, R_CARD, R_MD, R_PILL,
     RoundedCard, attach_tooltip, avatar, badge, bind_keyboard_action, circle_button, circle_button_state,
     dot, emoji_font, glyph_button, highlight_python, round_rect, rounded_label,
-    setup_code_tags, style_scrollbar, ui_px, text_width, bind_wrap, bind_scoped_wheel,
+    setup_code_tags, style_scrollbar, ui_px, text_width, bind_wrap, bind_scoped_wheel, flow_controls,
 )
 
 MAX_BUBBLE_WIDTH = 740          # 中央 Conversation 是主体，长文允许更宽的阅读行
@@ -1733,6 +1733,14 @@ class TeamTogglePill(tk.Frame):
         self._mode = mode
         self._btn.set_text(self.LABELS[mode])   # rounded_label 是 Canvas，用 set_text
         self._apply_mode_color()
+        # Width changes with the label; ask the enclosing action row to reflow.
+        container = self.master
+        while container is not None:
+            refresh = getattr(container, "_l10n_refresh", None)
+            if refresh is not None:
+                refresh()
+                break
+            container = getattr(container, "master", None)
         if self._on_change is not None:
             try:
                 self._on_change(mode)
@@ -1946,7 +1954,8 @@ class InputCard(tk.Frame):
                  attach_button=True, model_widget=None,
                  on_attach=None, on_context=None, on_commands=None,
                  on_settings=None, on_team_change=None, team_mode="off",
-                 on_planning=None, planning_text=""):
+                 on_planning=None, planning_text="", on_project=None,
+                 on_project_files=None, on_team_settings=None):
         base = bg or C["chat"]
         super().__init__(parent, bg=base)
         self._on_send = on_send
@@ -2040,6 +2049,20 @@ class InputCard(tk.Frame):
                                         mode=team_mode, on_change=on_team_change,
                                         bg=C["input_bg"])
         self.team_pill.pack(side=tk.LEFT, padx=(4, 0))
+        self.project_btn = self.project_files_btn = self.team_settings_btn = None
+        if on_project is not None:
+            self.project_btn = glyph_button(bar, tr("📂 项目"), on_project,
+                bg=C["input_bg"], size=10, tooltip=tr("选择项目工作区"))
+            self.project_btn.pack(side=tk.LEFT)
+        if on_project_files is not None:
+            self.project_files_btn = glyph_button(bar, tr("项目文件"), on_project_files,
+                bg=C["input_bg"], size=10, tooltip=tr("项目文件"))
+            self.project_files_btn.pack(side=tk.LEFT)
+        if on_team_settings is not None:
+            self.team_settings_btn = glyph_button(bar, tr("🤖 Agent 集群"), on_team_settings,
+                bg=C["input_bg"], size=10, tooltip=tr("Agent 集群"))
+            self.team_settings_btn.configure(highlightbackground=C["border_hi"])
+            self.team_settings_btn.pack(side=tk.LEFT)
 
         # Third layer: real provider/model/mode. Sending has its own column,
         # so metadata can wrap without overlapping or hiding the send button.
@@ -2067,6 +2090,8 @@ class InputCard(tk.Frame):
                 bg=C["input_bg"], fg=C["subtext"], size=10,
                 tooltip=tr("事前规划"))
             self.planning_pill.pack(side=tk.RIGHT,padx=(6,0))
+            self.planning_pill.configure(highlightbackground=C["warn"],
+                                         highlightcolor=C["warn"], fg=C["warn"])
         right = tk.Frame(state_row, bg=C["input_bg"])
         right.grid(row=0, column=1, sticky="ne")
         self._primary_controls = right
@@ -2100,6 +2125,11 @@ class InputCard(tk.Frame):
             self.settings_btn.pack(side=tk.RIGHT)
         else:
             self.settings_btn = None
+        self._actions_compact = None
+        bar.bind("<Configure>", self._fit_actions, add="+")
+        # Keep every action reachable when the workspace or Windows DPI reduces
+        # the available width. The same widgets wrap; no state is recreated.
+        flow_controls(bar, gap=6)
 
         # 发送 / 停止（同一物理位置，set_busy 切换）
         self.send_circle = circle_button(right, "↑", self._fire_send, size=ui_px(self, 36),
@@ -2132,6 +2162,18 @@ class InputCard(tk.Frame):
         self.bind("<Configure>", lambda _event: self._resize_entry(), add="+")
 
     # -- 交互 --
+    def _fit_actions(self, event):
+        # Compact controls keep their tooltips and callbacks. Use logical width
+        # at the current DPI, so large fonts do not force an unnecessary row.
+        compact = event.width < ui_px(self, 500)
+        if compact == self._actions_compact:
+            return
+        self._actions_compact = compact
+        if self.project_btn is not None:
+            self.project_btn.configure(text="📂" if compact else tr("📂 项目"))
+        if self.team_settings_btn is not None:
+            self.team_settings_btn.configure(text="🤖" if compact else tr("🤖 Agent 集群"))
+
     def _resize_entry(self):
         """按显示行增长，长输入保留内部滚动，不把时间线挤出屏幕。"""
         try:

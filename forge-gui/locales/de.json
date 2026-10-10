@@ -462,5 +462,8 @@
   "自动同步 AI 文件修改（仍受 Policy 限制）": "KI-Dateiänderungen automatisch anwenden (gemäß Policy)",
   "任务模式关闭同步时只读；开启后可按 Policy 修改文件。": "Ohne Synchronisierung sind Aufgaben schreibgeschützt. Mit Synchronisierung sind Änderungen gemäß Policy erlaubt.",
   "项目目录不存在": "Projektordner existiert nicht",
-  "正在切换或启动工作区，请等待 Gateway 就绪后发送": "Arbeitsbereich startet oder wechselt. Vor dem Senden auf Gateway-Bereitschaft warten."
+  "正在切换或启动工作区，请等待 Gateway 就绪后发送": "Arbeitsbereich startet oder wechselt. Vor dem Senden auf Gateway-Bereitschaft warten.",
+  "配置API": "API-Einstellungen",
+  "📂 项目": "📂 Projekt",
+  "🤖 Agent 集群": "🤖 Agent-Gruppe"
 }

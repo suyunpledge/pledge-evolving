@@ -125,7 +125,16 @@ class ReasoningSlider(tk.Frame):
         self.canvas.bind("<FocusOut>", lambda _e: self._paint())
 
         self._trace = self.var.trace_add("write", lambda *_: self.refresh())
+        self.bind("<Destroy>", self._release_trace, add="+")
         self.refresh()
+
+    def _release_trace(self, event):
+        if event.widget is self and self._trace is not None:
+            try:
+                self.var.trace_remove("write", self._trace)
+            except tk.TclError:
+                pass
+            self._trace = None
 
     # ── 取值 ────────────────────────────────────────────
     def current_index(self) -> int:

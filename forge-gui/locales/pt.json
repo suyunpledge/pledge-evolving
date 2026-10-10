@@ -462,5 +462,8 @@
   "自动同步 AI 文件修改（仍受 Policy 限制）": "Aplicar alterações de arquivos da IA automaticamente (conforme Policy)",
   "任务模式关闭同步时只读；开启后可按 Policy 修改文件。": "Sem sincronização, as tarefas são somente leitura. Ao ativar, as alterações seguem Policy.",
   "项目目录不存在": "A pasta do projeto não existe",
-  "正在切换或启动工作区，请等待 Gateway 就绪后发送": "O espaço está iniciando ou mudando. Aguarde Gateway ficar pronto antes de enviar."
+  "正在切换或启动工作区，请等待 Gateway 就绪后发送": "O espaço está iniciando ou mudando. Aguarde Gateway ficar pronto antes de enviar.",
+  "配置API": "Configuração API",
+  "📂 项目": "📂 Projeto",
+  "🤖 Agent 集群": "🤖 Grupo de agentes"
 }

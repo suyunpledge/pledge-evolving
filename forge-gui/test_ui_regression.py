@@ -98,8 +98,8 @@ class UIRRegression(unittest.TestCase):
                             f"{w}x{h}: 工具栏需求宽超出实际（会溢出裁切）")
                     labels = [str(l.cget("text")) for l in find_all(
                         app._sidebar_panels["chat"],
-                        lambda c: c.winfo_class() == "Label")]
-                    for need in ("对话", "任务", "历史记录"):
+                        lambda c: c.winfo_class() in ("Label", "Button"))]
+                    for need in ("对话", "插件", "定时任务", "连接器", "知识库", "演化", "配置API", "历史记录"):
                         self.assertIn(need, labels, f"{w}x{h}: 侧栏缺 {need}")
                     self.assertFalse(self.errors)
                 finally:
