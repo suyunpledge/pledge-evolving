@@ -118,6 +118,8 @@ class ScrollArea(tk.Frame):
         self._bar_visible = True
         self._scroll_job = None
         self._scroll_follow_end = False
+        self._follow_paused = False
+        self.on_position_changed = None
         self._layout_job = None
         # An offscreen Canvas window can change its requested height without
         # resizing its Frame. Descendant Configure events still report the
@@ -154,6 +156,9 @@ class ScrollArea(tk.Frame):
             self.vbar.pack(side=tk.RIGHT, fill=tk.Y)
             self._bar_visible = True
         self.vbar.set(first, last)
+        callback = self.on_position_changed
+        if callback is not None:
+            callback()
 
     def _sync_scrollregion(self, _event=None):
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
@@ -165,6 +170,7 @@ class ScrollArea(tk.Frame):
     def _manual_scroll(self, *args):
         self._cancel_scroll()
         self.canvas.yview(*args)
+        self._follow_paused = not self.at_bottom()
 
     def _sync_width(self, event):
         self.canvas.itemconfigure(self._win, width=event.width)
@@ -172,11 +178,20 @@ class ScrollArea(tk.Frame):
     def _on_wheel(self, event):
         self._cancel_scroll()
         self.canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
+        self._follow_paused = not self.at_bottom()
         return "break"
+
+    def _bottom_distance(self):
+        # Fractions grow with transcript length; measure the actual remaining
+        # Canvas pixels so a long history cannot turn several screens into "near".
+        bounds = self.canvas.bbox("all")
+        if bounds is None:
+            return 0
+        return max(0, (1 - self.canvas.yview()[1]) * (bounds[3] - bounds[1]))
 
     def at_bottom(self) -> bool:
         try:
-            return self.canvas.yview()[1] >= 0.98
+            return self._bottom_distance() <= ui_px(self, 4)
         except tk.TclError:
             return True
 
@@ -184,6 +199,7 @@ class ScrollArea(tk.Frame):
         # Streaming deltas can arrive faster than layout; merge their scrolls
         # instead of running the whole application's idle queue for every token.
         self._scroll_follow_end = True
+        self._follow_paused = False
         if self._scroll_job is None:
             # Geometry cascades through Text -> card -> Canvas across several
             # idle passes. A frame delay lets those settle without nesting Tk.
@@ -205,7 +221,8 @@ class ScrollArea(tk.Frame):
 
     def near_bottom(self) -> bool:
         try:
-            return self.canvas.yview()[1] >= 0.90
+            return not self._follow_paused and (
+                self._scroll_follow_end or self._bottom_distance() <= ui_px(self, 64))
         except tk.TclError:
             return True
 
@@ -1351,7 +1368,7 @@ class AgentMessage(tk.Frame):
     def _ensure_action_row(self):
         """消息下方 ghost 操作条：复制 / 重生成 / 赞 / 踩。
 
-        仅 UI：赞/踩暂不落库；重生成调主程序的 _retry_last_agent（若无则静默）。
+        仅 UI：赞/踩暂不落库；编辑后重试将对应输入恢复为草稿，不自动发送。
         整行靠左；常规态 fg=muted，hover 才变 text，不抢正文视觉优先级。
         """
         if getattr(self, "_action_row", None) is not None:
@@ -1413,7 +1430,7 @@ class AgentMessage(tk.Frame):
 
         actions = [
             ("⧉", tr("复制"), _copy),
-            ("⟳", "重生成", _retry),
+            ("⟳", tr("编辑后重试"), _retry),
             ("👍", "赞", lambda: _vote("赞")),
             ("👎", "踩", lambda: _vote("踩")),
         ]
@@ -1484,6 +1501,13 @@ class MessageArea(tk.Frame):
         self._bg = base
         self.scroll = ScrollArea(self, bg=base, padx=18, pady=18)
         self.scroll.pack(fill=tk.BOTH, expand=True)
+        self.jump_latest = i18n.Button(
+            self, text=tr("回到最新"), command=self.scroll.scroll_to_end,
+            bg=C["surface2"], fg=C["text"], activebackground=C["hover"],
+            activeforeground=C["text"], relief=tk.FLAT, borderwidth=1,
+            highlightthickness=1, highlightbackground=C["border"],
+            padx=12, pady=5, cursor="hand2", font=FONT_SMALL)
+        self.scroll.on_position_changed = self._update_jump_latest
         self._empty = None
         self._count = 0
         self._work_context = None
@@ -1493,6 +1517,13 @@ class MessageArea(tk.Frame):
         self.scroll.canvas.bind("<Configure>", self._fit_context_hint, add="+")
         self.scroll.inner.bind("<Configure>", self._fit_context_hint, add="+")
         self.show_empty()
+
+    def _update_jump_latest(self):
+        if self.scroll.at_bottom():
+            self.jump_latest.place_forget()
+        else:
+            self.jump_latest.place(relx=.5, rely=1, anchor="s", y=-ui_px(self, 8))
+            self.jump_latest.lift()
 
     def show_empty(self, title="从一个目标开始",
                    lines=("描述你想解决的问题，或添加文件作为上下文。",
@@ -1579,6 +1610,9 @@ class MessageArea(tk.Frame):
         self._empty = box
 
     def clear(self):
+        self.scroll._cancel_scroll()
+        self.scroll._follow_paused = False
+        self.jump_latest.place_forget()
         for child in self.scroll.inner.winfo_children():
             child.destroy()
         self._empty = None
@@ -2258,17 +2292,34 @@ class InputCard(tk.Frame):
         self._reasoning_popup = pop
         self._reasoning_popup_slider = slider
 
-        def _close_if_outside(event):
-            if pop.winfo_containing(event.x_root, event.y_root) is None:
-                self._close_reasoning_popup()
+        # 外点关闭：绝不能 bind_all——全局 bindtable 上的 handler 在弹层
+        # 销毁后解不掉（实例 unbind 只解自己的表），僵尸 handler 每次点击
+        # 对已销毁的 pop 抛 TclError，Tk 会中断整个事件链，输入框从此点
+        # 不进焦点（2026-10-10 用户实测「打不进字」的根因）。照 ModelPicker
+        # 的生命周期模式：bind 在 owner 与 pop 各自的表上并登记 funcid。
+        self._reasoning_popup_bindings = []
 
-        self._reasoning_outside_id = pop.bind_all("<Button-1>", _close_if_outside, add="+")
+        def _close_on_owner_click(_event):
+            self._close_reasoning_popup()
+
+        for widget in (owner, pop):
+            try:
+                funcid = widget.bind("<Button-1>", _close_on_owner_click, add="+")
+            except tk.TclError:
+                continue
+            if funcid:
+                self._reasoning_popup_bindings.append((widget, "<Button-1>", funcid))
 
         def _close_on_esc(_event):
             self._close_reasoning_popup()
             return "break"
 
-        self._reasoning_esc_id = pop.bind("<Escape>", _close_on_esc, add="+")
+        try:
+            esc_id = pop.bind("<Escape>", _close_on_esc, add="+")
+        except tk.TclError:
+            esc_id = ""
+        if esc_id:
+            self._reasoning_popup_bindings.append((pop, "<Escape>", esc_id))
 
         def _reposition(_event):
             if getattr(self, "_reasoning_popup", None) is pop:
@@ -2294,14 +2345,12 @@ class InputCard(tk.Frame):
         pop = getattr(self, "_reasoning_popup", None)
         if pop is None:
             return
-        try:
-            pop.unbind("<Button-1>", self._reasoning_outside_id)
-        except tk.TclError:
-            pass
-        try:
-            pop.unbind("<Escape>", self._reasoning_esc_id)
-        except tk.TclError:
-            pass
+        for widget, sequence, funcid in getattr(self, "_reasoning_popup_bindings", ()):
+            try:
+                widget.unbind(sequence, funcid)
+            except (tk.TclError, TypeError):
+                pass
+        self._reasoning_popup_bindings = []
         owner = self.winfo_toplevel()
         for attr in ("_reasoning_owner_cfg_id", "_reasoning_owner_unmap_id"):
             try:

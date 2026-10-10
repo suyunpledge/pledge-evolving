@@ -24,9 +24,9 @@ import tkinter as tk
 from gui_theme import C, FONT_CAPTION, FONT_MICRO, FONT_UI_BOLD, round_rect
 
 TRACK_HEIGHT = 20
-CARD_HEIGHT = 196
+CARD_HEIGHT = 224
 CARD_RADIUS = 14
-TRACK_Y = 96
+TRACK_Y = 110
 KNOB_RADIUS = 14
 PAD_X = KNOB_RADIUS + 12
 MINI_WIDTH = 34
@@ -294,7 +294,7 @@ class ReasoningSlider(tk.Frame):
         c.create_polygon(24, 19, 17, 31, 23, 31, 19, 43, 33, 27, 26, 27,
                          fill=C["subtext"], outline="", tags=("slider-bolt",))
         active_label = self._labels_text.get(self.current_value(), self.current_value())
-        c.create_text(width / 2, 23, text=f"{active_label}  ›",
+        c.create_text(width / 2, 27, text=f"{active_label}  ›",
                       fill=C["accent_text"], font=FONT_UI_BOLD,
                       tags=("slider-title",))
         model = ""
@@ -303,7 +303,7 @@ class ReasoningSlider(tk.Frame):
                 model = str(self._model_getter() or "")
             except (tk.TclError, TypeError, ValueError):
                 model = ""
-        c.create_text(width / 2, 43, text=model or "当前模型",
+        c.create_text(width / 2, 52, text=model or "当前模型",
                       fill=C["subtext"], font=FONT_CAPTION,
                       tags=("slider-model",))
         reset_color = (C["body"] if self._hover_part == "reset" else
@@ -385,13 +385,13 @@ class ReasoningSlider(tk.Frame):
                 sx = pad + label_span * i / (len(self.stops) - 1)
                 name = self._labels_text.get(value, value)
                 active = (i == index)
-                c.create_text(sx, 132, text=name,
+                c.create_text(sx, 154, text=name,
                               fill=C["accent_text"] if active else C["muted"],
                               font=FONT_UI_BOLD if active else FONT_MICRO,
                               tags=("slider-stop-label",))
 
         hint = self._hints.get(self.current_value(), "")
-        c.create_text(width / 2, 170, text=hint or "拖动选择思考强度",
+        c.create_text(width / 2, 202, text=hint or "拖动选择思考强度",
                       fill=C["subtext"] if hint else C["muted"],
                       font=FONT_MICRO, tags=("slider-hint",))
         self.hint_label.configure(text=hint, bg=base,
