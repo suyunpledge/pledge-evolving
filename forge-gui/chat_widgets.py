@@ -42,6 +42,7 @@ from typing import Callable, Optional
 import decor
 from ui_icons import IconButton, IconCanvas, emoji_image, emoji_parts, draw_icon
 from gui_theme import (
+    position_popover,
     C, FONT_CAPTION, FONT_MICRO, FONT_MONO, FONT_MONO_SM, FONT_MONO_XS, FONT_SECTION,
     FONT_SMALL, FONT_TITLE, FONT_UI, FONT_UI_BOLD, R_BUBBLE, R_CARD, R_MD, R_PILL,
     RoundedCard, attach_tooltip, avatar, badge, bind_keyboard_action, circle_button, circle_button_state,
@@ -2220,37 +2221,39 @@ class InputCard(tk.Frame):
         self._sync_hint()
 
     def _toggle_reasoning_popup(self):
-        """模式按钮：弹出/收起 Codex 式思考强度滑杆卡。"""
+        """模式按钮：弹出/收起 Codex 式思考强度滑杆卡。
+
+        浮层定位与生命周期照 ModelPicker 的成熟模式：position_popover
+        锚定按钮（右对齐、下方优先、放不下翻上方、夹在主窗内），
+        transient(owner) + 非 topmost（Forge 内部浮层，不压其它应用），
+        跟随主窗 <Configure> 重定位，主窗最小化/移动出屏即关闭。
+        """
         if getattr(self, "_reasoning_popup", None) is not None:
             self._close_reasoning_popup()
             return
         from reasoning_slider import ReasoningSlider
         pop = tk.Toplevel(self)
+        pop.withdraw()
         pop.overrideredirect(True)
         pop.configure(bg=C["surface"])
+        owner = self.winfo_toplevel()
+        try:
+            pop.transient(owner)
+            pop.attributes("-topmost", False)
+        except tk.TclError:
+            pass
         slider = ReasoningSlider(
             pop, self._reasoning_var, self._reasoning_choices,
             on_select=self._on_reasoning_select, bg=C["surface"],
             default_value=self._reasoning_var.get() or "medium")
         slider.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         # overrideredirect 的 Toplevel 必须在映射前定 geometry——一旦 wm
-        # 以 +0+0 映射过，再 set 坐标在部分 Windows/Tk 组合上不生效，
-        # 弹层就停在屏幕左上角。这里用「withdraw → 计算尺寸 → geometry
-        # → deiconify」的顺序，并用 update_idletasks（不触发完整映射）。
-        pop.withdraw()
+        # 以 +0+0 映射过，再 set 坐标在部分 Windows/Tk 组合上不生效。
         pop.update_idletasks()
         w = max(360, slider.winfo_reqwidth() + 20)
         h = slider.winfo_reqheight() + 24
-        x = self.mode_pill.winfo_rootx() + self.mode_pill.winfo_width() - w
-        y = self.mode_pill.winfo_rooty() + self.mode_pill.winfo_height() + 8
-        sw = pop.winfo_screenwidth()
-        sh = pop.winfo_screenheight()
-        x = max(8, min(x, sw - w - 8))
-        if y + h > sh - 8:
-            y = max(8, self.mode_pill.winfo_rooty() - h - 8)
-        pop.geometry(f"{w}x{h}+{x}+{y}")
+        position_popover(pop, self.mode_pill, w, h, align_right=True)
         pop.deiconify()
-        pop.attributes("-topmost", True)
         slider.canvas.focus_set()
         self._reasoning_popup = pop
         self._reasoning_popup_slider = slider
@@ -2266,6 +2269,25 @@ class InputCard(tk.Frame):
             return "break"
 
         self._reasoning_esc_id = pop.bind("<Escape>", _close_on_esc, add="+")
+
+        def _reposition(_event):
+            if getattr(self, "_reasoning_popup", None) is pop:
+                try:
+                    position_popover(pop, self.mode_pill, w, h, align_right=True)
+                except tk.TclError:
+                    self._close_reasoning_popup()
+
+        self._reasoning_owner_cfg_id = owner.bind("<Configure>", _reposition, add="+")
+
+        def _owner_gone(_event):
+            # 主窗最小化/隐藏时 overrideredirect 浮层不会自动消失（只认
+            # 主窗自己的 Unmap，子控件冒泡忽略——与 ModelPicker 同判法）。
+            if (_event is not None and
+                    str(getattr(_event, "widget", "")) != str(owner)):
+                return
+            self._close_reasoning_popup()
+
+        self._reasoning_owner_unmap_id = owner.bind("<Unmap>", _owner_gone, add="+")
         pop.focus_set()
 
     def _close_reasoning_popup(self):
@@ -2280,6 +2302,13 @@ class InputCard(tk.Frame):
             pop.unbind("<Escape>", self._reasoning_esc_id)
         except tk.TclError:
             pass
+        owner = self.winfo_toplevel()
+        for attr in ("_reasoning_owner_cfg_id", "_reasoning_owner_unmap_id"):
+            try:
+                owner.unbind("<Configure>", getattr(self, attr, None))
+                owner.unbind("<Unmap>", getattr(self, attr, None))
+            except (tk.TclError, TypeError):
+                pass
         self._reasoning_popup = None
         try:
             pop.destroy()
