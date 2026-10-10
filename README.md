@@ -22,6 +22,15 @@ python client/server.py            # http://127.0.0.1:7712
 python run.py selftest             # offline verification suite
 ```
 
+### One-click on Windows
+
+Download the repo (Code → Download ZIP, unzip), then double-click **`setup.cmd`**.
+It detects Python 3.10+ and, if missing, installs it silently (winget, falling
+back to the official python.org installer) — then creates a desktop shortcut and
+opens the GUI. No manual installs, no prompts to answer. Variants:
+`setup.cmd check` (environment probe only), `setup.cmd selftest` (offline suite),
+`setup.cmd web` (browser UI instead of the desktop window).
+
 ## Architecture at a glance
 
 ```mermaid
