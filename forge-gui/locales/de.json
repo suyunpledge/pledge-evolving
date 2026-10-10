@@ -1,4 +1,9 @@
 {
+  "历史消息已作为文字快照放入输入框，请检查后发送。": "Die frühere Nachricht wurde als Textaufnahme geladen. Bitte vor dem Senden prüfen.",
+  "回到最新": "Zur neuesten Nachricht",
+  "编辑后重试": "Bearbeiten und erneut versuchen",
+  "已有草稿或附件，已保留；清空后可编辑重试原消息。": "Entwurf und Anhänge bleiben erhalten. Leeren Sie diese, um die ursprüngliche Nachricht zu bearbeiten.",
+  "原消息已放入输入框；确认后发送，工具仍需经过权限检查。": "Ursprüngliche Nachricht geladen. Vor dem Senden prüfen; Werkzeuge benötigen weiterhin eine Berechtigungsprüfung.",
   "规划模型与复审": "Planungsmodell und Prüfung",
   "沿用执行模型": "Ausführungsmodell verwenden",
   "独立模型使用已配置 Provider 的凭据；审核只在点击后运行。": "Separate Modelle nutzen die Zugangsdaten konfigurierter Anbieter. Die Prüfung startet nur per Klick.",

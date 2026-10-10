@@ -3234,7 +3234,7 @@ class ForgeGuiApp:
         if getattr(self, "_history_render_area", None) is not area:
             area.bind("<Destroy>", self._cancel_history_render, add="+")
             self._history_render_area = area
-        state = {"i": 0}
+        state = {"i": 0, "prompt": None}
 
         def step():
             if generation != self._history_render_generation:
@@ -3251,9 +3251,14 @@ class ForgeGuiApp:
             state["i"] = i + 1
             try:
                 if msg.role == "user":
+                    state["prompt"] = msg.content
                     self.chat_area.add_user(msg.content)
                 elif msg.content.strip():
                     agent = self.chat_area.add_agent(app=self)
+                    agent._retry_session = session
+                    agent._retry_prompt = state["prompt"]
+                    agent._retry_attachments = ()  # Saved prompt already contains its file snapshots.
+                    agent._retry_from_history = True
                     agent.render_markdown(msg.content)
             except tk.TclError:
                 return
@@ -6832,18 +6837,27 @@ class ForgeGuiApp:
             pass
 
     def _retry_last_agent(self, msg=None):
-        """重生成：用上一条用户输入重发（简单实现：取 retained 历史里最后一条 user）。"""
+        """Prepare the clicked turn for editing; only Send may start another run."""
         if getattr(self, "_sending", False):
             self._set_status("正在生成回复，稍后再试", "info")
             return
-        last_user = next((m.content for m in reversed(self._chat_history)
-                          if m.role == "user"), None)
-        if not last_user:
+        prompt = getattr(msg, "_retry_prompt", None)
+        if (not prompt or getattr(msg, "_retry_session", None) != self._session_id
+                or not msg.winfo_exists()):
             self._set_status("没有可重试的消息", "warn")
             return
-        _ = msg  # 保留被忽略的入参（ghost 操作条会传当前气泡）
-        self.send_var.set(last_user)
-        self._do_send()
+        if self.send_var.get().strip() or self._attachments:
+            self.input_card.focus_entry()
+            self._set_status(tr("已有草稿或附件，已保留；清空后可编辑重试原消息。"), "info")
+            return
+        self._attachments = copy.deepcopy(list(getattr(msg, "_retry_attachments", ())))
+        self.send_var.set(prompt)
+        self._update_context_summary()
+        self.input_card.focus_entry()
+        self._set_status(
+            tr("历史消息已作为文字快照放入输入框，请检查后发送。")
+            if getattr(msg, "_retry_from_history", False) else
+            tr("原消息已放入输入框；确认后发送，工具仍需经过权限检查。"), "info")
 
     def _input_secret_scope(self):
         scope = getattr(self.client, 'secret_scope', None)
@@ -6912,8 +6926,14 @@ class ForgeGuiApp:
             if previous_review is not None and previous_review.winfo_exists():
                 previous_review.master.destroy()
             self._agent_msg = self.chat_area.add_agent(app=self)
+            self._agent_msg._retry_session = self._session_id
+            self._agent_msg._retry_prompt = self._input_secret_scope().protect_text(text)
+            self._agent_msg._retry_attachments = copy.deepcopy(self._attachments)
             self._agent_msg.set_status("生成中…")
             self._agent_msg.stream_text("")
+            # Explicit Send reveals the new turn; incoming deltas alone never
+            # take scroll ownership back from someone reading earlier messages.
+            self.chat_area.scroll.scroll_to_end()
             messages = (list(self._chat_history) if self._include_history else []) + [ChatMessage("user", prompt)]
             retained_history = list(self._chat_history) + [ChatMessage("user", prompt)]
             self.input_card.set_busy(True)

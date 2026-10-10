@@ -1,4 +1,9 @@
 {
+  "历史消息已作为文字快照放入输入框，请检查后发送。": "Historical message loaded as a text snapshot, including any saved file content. Review before sending.",
+  "回到最新": "Jump to latest",
+  "编辑后重试": "Edit and retry",
+  "已有草稿或附件，已保留；清空后可编辑重试原消息。": "Your draft and attachments are preserved. Clear them to edit the original message.",
+  "原消息已放入输入框；确认后发送，工具仍需经过权限检查。": "Original message loaded. Review it before sending; tools still require permission checks.",
   "规划模型与复审": "Planning model and review",
   "沿用执行模型": "Use execution routing",
   "独立模型使用已配置 Provider 的凭据；审核只在点击后运行。": "Independent models use configured provider credentials. Review runs only when clicked.",

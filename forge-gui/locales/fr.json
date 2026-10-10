@@ -1,4 +1,9 @@
 {
+  "历史消息已作为文字快照放入输入框，请检查后发送。": "L’ancien message a été chargé sous forme d’instantané textuel. Vérifiez-le avant l’envoi.",
+  "回到最新": "Aller au plus récent",
+  "编辑后重试": "Modifier et réessayer",
+  "已有草稿或附件，已保留；清空后可编辑重试原消息。": "Votre brouillon et vos pièces jointes sont conservés. Effacez-les pour modifier le message original.",
+  "原消息已放入输入框；确认后发送，工具仍需经过权限检查。": "Message original chargé. Vérifiez-le avant de l’envoyer ; les outils restent soumis au contrôle des autorisations.",
   "规划模型与复审": "Modèle de planification et revue",
   "沿用执行模型": "Utiliser le modèle d’exécution",
   "独立模型使用已配置 Provider 的凭据；审核只在点击后运行。": "Les modèles indépendants utilisent les identifiants des fournisseurs configurés. La revue démarre uniquement sur clic.",
