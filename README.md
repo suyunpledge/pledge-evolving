@@ -1,10 +1,26 @@
 # forge — A Unified Agent Framework
 
+[![Open in Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/suyunpledge/pledge-evolving?quickstart=1)
+
 A standard-library-only Python agent runtime that consolidates proven design patterns from **Codex, Hermes Agent, DeepSeek Harness, Claude Code, OpenClaw, and OpenCode** into a small, runnable kernel. [中文文档](README.zh.md)
 
 `forge selftest` provides an offline verification suite—requiring neither network access nor API keys. It covers configuration synthesis, permission decisions, lazy tool loading, capability trust, dual-write memory, session replay, shadow snapshots, routing and fallback, protocol translation, native tool calling, self-evolution, heterogeneous federation, contribution-module gates and integration, cost accounting, and subagent orchestration. The suite also enforces a static security baseline through table-aligned invariants and four-way coverage of the network, subprocess, and destructive-file-API prohibitions. Test counts are reported from the command's actual output.
 
 Requires Python 3.10 or later; no third-party Python packages are needed.
+
+## Quick start in the cloud (one click)
+
+Click the **Open in Codespaces** badge above — GitHub spins up a container with
+Python 3.12, the web client auto-starts, and the browser opens the UI. No local
+setup, no environment wrangling. Configure a provider key in the UI to start
+talking to a model.
+
+Local equivalent (also zero dependencies):
+
+```bash
+python client/server.py            # http://127.0.0.1:7712
+python run.py selftest             # offline verification suite
+```
 
 ## Architecture at a glance
 

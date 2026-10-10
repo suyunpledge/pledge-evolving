@@ -1,0 +1,20 @@
+// Forge 一键云端体验：GitHub Codespaces
+// 点 README 徽章 → 浏览器开出容器 → 自动启动 Web 客户端 → 自动打开浏览器
+{
+  "name": "Forge",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+  // 纯 stdlib：无需 postCreateCommand 装依赖
+  "postStartCommand": "python client/server.py --host 0.0.0.0 --port 7712",
+  "forwardPorts": [7712],
+  "portsAttributes": {
+    "7712": {
+      "label": "Forge Web 客户端",
+      "onAutoForward": "openBrowser"
+    }
+  },
+  "customizations": {
+    "codespaces": {
+      "openFiles": ["client/index.html"]
+    }
+  }
+}

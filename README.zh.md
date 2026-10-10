@@ -1,5 +1,7 @@
 # forge — 统一智能体框架
 
+[![在 Codespaces 中打开](https://github.com/codespaces/badge.svg)](https://codespaces.new/suyunpledge/pledge-evolving?quickstart=1)
+
 把 **Codex / Hermes Agent / DeepSeek Harness / Claude Code / OpenClaw / OpenCode** 七套框架里各自最值得抄的设计，收敛成一个可运行的最小内核。
 
 不是概念图，是能跑的代码：`forge selftest` 离线跑全套检查（无网络、无 API Key，项数以命令实际输出为准），覆盖配置合成、权限裁决、工具延迟加载、能力信任、记忆双写、会话回放、影子快照、模型降级、协议网关与协议翻译、原生工具调用、自我迭代进化、异构联邦、贡献模块一致性闸门与跨模块集成、成本核算、子代理编排，以及静态安全线（禁网/禁子进程/禁破坏性文件 API 的表对齐不变量与四路覆盖）。
