@@ -239,6 +239,7 @@ class GuiInteractionTests(unittest.TestCase):
         proc = Mock()
         with patch.object(gui, "env_for", return_value={"TEST_KEY": "test-secret"}), \
              patch.object(gui, "port_in_use", return_value=False), \
+             patch.object(gui, "bindable_gateway_port", side_effect=lambda port: port), \
              patch.object(gui.subprocess, "Popen", return_value=proc) as popen, \
              patch.object(self.app, "_gateway_started"):
             self.app._start_gateway()

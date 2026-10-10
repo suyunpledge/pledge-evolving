@@ -90,11 +90,21 @@ def get_provider(name: str) -> str | None:
     return load().get(name)
 
 
+def delete_provider(name: str) -> None:
+    """Remove one credential without racing another local credential update."""
+    with _LOCK:
+        current=load(strict=True)
+        current.pop(name,None)
+        save(current)
+
+
 def env_for(secrets: dict[str, str] | None = None) -> dict[str, str]:
     """把 secrets 转成 env 变量名（FORGE_<NAME>_KEY 大写）。"""
     s = secrets if secrets is not None else load()
     out: dict[str, str] = {}
     for name, key in s.items():
+        if isinstance(name,str) and name.startswith('connector.'):
+            continue  # Connector credentials never enter model/gateway environments.
         if not isinstance(name, str) or not isinstance(key, str):
             continue
         env_name = "FORGE_" + name.upper().replace("-", "_") + "_KEY"

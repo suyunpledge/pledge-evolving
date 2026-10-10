@@ -74,7 +74,11 @@ ICONS = {
     "save": [("poly", (3, 3, 17, 3, 21, 7, 21, 21, 3, 21)), ("rect", (7, 3, 15, 9)), ("rect", (7, 14, 17, 21))],
 }
 
+ICONS['clock'] = [('circle',(3,3,21,21)),('line',(12,6,12,12,16,14))]
+ICONS['connector'] = [('rect',(7,8,17,17)),('line',(9,3,9,8)),('line',(15,3,15,8)),('line',(12,17,12,22))]
+
 ALIASES = {
+    '◷':'clock', '🔌':'connector',
     "💬": "chat", "✅": "check_circle", "☑": "task", "🤖": "agents", "🧰": "tools",
     "📚": "knowledge", "🧬": "evolution", "📁": "files", "📂": "folder_open", "📄": "file",
     "🐍": "code", "⚙": "config", "⚙️": "config", "🔍": "search", "⌗": "search",

@@ -44,7 +44,7 @@ class UiPolishTests(unittest.TestCase):
     def market(self):
         area = cw.ScrollArea(self.root, bg=theme.C["bg"])
         area.pack(fill="both", expand=True)
-        return SimpleNamespace(market_list=area.inner, viewport=area, _session_id="ui-test", _repo_root=lambda: Path.cwd(),
+        return SimpleNamespace(market_list=area.inner, viewport=area, _session_id="ui-test", _repo_root=lambda: Path.cwd(), _active_workspace=lambda: Path.cwd(),
                                _market_action=lambda *_: None, _inspect_plugin=lambda *_: None)
 
     def test_plugin_long_metadata_and_translated_actions_fit_at_five_scales(self):

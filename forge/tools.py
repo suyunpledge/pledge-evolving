@@ -262,6 +262,23 @@ class ToolRegistry:
         # 瘦身 B：授权裁决不再单独发 tool_decision 事件——写进返回值的
         # meta.authorization，由调用方（loop）合并进 tool_call 事件；审计面
         # 不变（每次授权仍可追溯），事件流少一遍 args 复制
+        if '_expected_revisions' in args:
+            import hashlib
+            revisions = args['_expected_revisions']
+            if not isinstance(revisions, dict) or len(revisions) > 40:
+                return ToolResult(False, error='Invalid preview revision guard')
+            resolved_targets = {str(ctx.policy.abs_path(t).resolve()) for t in touching}
+            if set(revisions) != resolved_targets:
+                return ToolResult(False, error='Preview revision targets do not match tool targets')
+            for target, expected in revisions.items():
+                path = Path(target)
+                try:
+                    raw = read_public_bytes(path, limit=512*1024) if path.exists() else None
+                except (OSError, ValueError) as exc:
+                    return ToolResult(False, error=f'Cannot validate preview revision: {exc}')
+                actual = hashlib.sha256(raw).hexdigest() if raw is not None else None
+                if actual != expected:
+                    return ToolResult(False, error='File changed since preview; regenerate the change')
         try:
             result = spec.handler(args, ctx)
         except Exception as exc:  # tool errors must never kill the loop
@@ -277,6 +294,26 @@ def _safe(args: dict[str, Any], limit: int = 400) -> str:
     """Compact JSON preview of tool args (kept for fold previews and probes)."""
     text = json.dumps(args, ensure_ascii=False, default=str)
     return text if len(text) <= limit else text[:limit] + "…"
+
+
+def _atomic_text(path: Path, content: str) -> None:
+    """Prepare and fsync a replacement before touching the previous file."""
+    import os
+    import tempfile
+    import stat
+    path=path.resolve()
+    path.parent.mkdir(parents=True,exist_ok=True)
+    previous_mode=stat.S_IMODE(path.stat().st_mode) if path.exists() else None
+    temporary=None
+    try:
+        with tempfile.NamedTemporaryFile(mode='w',encoding='utf-8',dir=path.parent,
+                                         prefix='.forge-edit-',delete=False) as stream:
+            temporary=Path(stream.name)
+            stream.write(content); stream.flush(); os.fsync(stream.fileno())
+        if previous_mode is not None: os.chmod(temporary,previous_mode)
+        os.replace(temporary,path)
+    finally:
+        if temporary is not None: temporary.unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------------------
@@ -383,10 +420,10 @@ def build_builtin_registry(
         path.parent.mkdir(parents=True, exist_ok=True)
         content = str(args.get("content", ""))
         if args.get("append"):
-            with path.open("a", encoding="utf-8") as fh:
-                fh.write(content)
+            previous=path.read_text(encoding='utf-8') if path.exists() else ''
+            _atomic_text(path,previous+content)
             return ToolResult(ok=True, content=f"appended {len(content)} bytes to {path}")
-        path.write_text(content, encoding="utf-8")
+        _atomic_text(path,content)
         return ToolResult(ok=True, content=f"wrote {len(content)} bytes to {path}")
 
     @reg.tool(
@@ -449,7 +486,7 @@ def build_builtin_registry(
                 return ToolResult(ok=False, error=f"line range {s}-{e} out of bounds (file has {len(lines)} lines)")
             body = new if (not new or new.endswith("\n")) else new + "\n"
             updated = "".join(lines[: s - 1]) + body + "".join(lines[e:])
-            path.write_text(updated, encoding="utf-8")
+            _atomic_text(path,updated)
             return ToolResult(ok=True, content=f"replaced lines {s}-{e} of {path}", meta={"lines": len(lines)})
         if not old:
             return ToolResult(ok=False, error="edit_file needs 'old' (or start_line/end_line)")
@@ -462,7 +499,7 @@ def build_builtin_registry(
                               error=f"anchor is ambiguous in {path.name} ({count} matches); "
                                     f"pass replace_all or add surrounding context")
         updated = original.replace(old, new) if replace_all else original.replace(old, new, 1)
-        path.write_text(updated, encoding="utf-8")
+        _atomic_text(path,updated)
         return ToolResult(ok=True, content=f"edited {path} ({count if replace_all else 1} replacement(s))",
                           meta={"matches": count})
 

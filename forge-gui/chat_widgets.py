@@ -221,7 +221,7 @@ class InlineText(tk.Text):
         super().__init__(parent, wrap=wrap, bg=base, fg=fg or C["body"],
                          font=font or FONT_UI, relief=tk.FLAT, bd=0,
                          highlightthickness=0, padx=0, pady=0, height=1,
-                         cursor="arrow", insertwidth=0, spacing1=1, spacing3=1,
+                         cursor="arrow", insertwidth=0, spacing1=2, spacing3=3,
                          selectbackground=C["accent_soft"])
         self._measure_font = tkfont.Font(root=self, font=self.cget("font"))
         # Font descent supplies the optical inset at every DPI. Width and
@@ -2063,10 +2063,10 @@ class InputCard(tk.Frame):
         self.mode_pill.grid(row=0, column=2, sticky="e")
         self.planning_pill = None
         if on_planning is not None:
-            self.planning_pill = glyph_button(metadata, planning_text, on_planning,
+            self.planning_pill = glyph_button(self._tools_row, planning_text, on_planning,
                 bg=C["input_bg"], fg=C["subtext"], size=10,
                 tooltip=tr("事前规划"))
-            self.planning_pill.grid(row=2, column=0, columnspan=3, sticky="w", pady=(4, 0))
+            self.planning_pill.pack(side=tk.RIGHT,padx=(6,0))
         right = tk.Frame(state_row, bg=C["input_bg"])
         right.grid(row=0, column=1, sticky="ne")
         self._primary_controls = right

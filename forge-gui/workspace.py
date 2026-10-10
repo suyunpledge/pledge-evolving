@@ -2138,7 +2138,25 @@ class WorkspacePanel(tk.Frame):
         self._diff_empty_actions.pack(fill=tk.X, after=self._diff_empty_title)
         self._diff_empty.place(x=0, y=0, relwidth=1, relheight=1)
 
+    def show_change_preview(self, preview: str):
+        """Display proposed changes distinctly from the on-disk Git diff."""
+        self._change_preview = preview
+        self._diff_empty.place_forget()
+        self._diff_title_var.set(tr('AI 修改预览（尚未应用）'))
+        self._diff_text.configure(state=tk.NORMAL)
+        self._diff_text.delete('1.0',tk.END)
+        for line in str(preview)[:120000].splitlines(True):
+            self._diff_text.insert(tk.END,line,'add' if line.startswith('+') else 'del' if line.startswith('-') else 'plain')
+        self._diff_text.configure(state=tk.DISABLED)
+
+    def clear_change_preview(self):
+        self._change_preview = None
+        self.refresh_async() if self._app is not None else self.refresh()
+
     def _render_diff(self, path: Path | None, *, loaded=None):
+        if getattr(self,'_change_preview',None) is not None:
+            self.show_change_preview(self._change_preview)
+            return
         if path is None and not self._diff_requested:
             self._show_diff_empty()
             return

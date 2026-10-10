@@ -10,7 +10,8 @@ import sys
 from pathlib import Path
 
 GUI = Path(__file__).resolve().parent
-FILES = [GUI / "forge_gui_v2.py", GUI / "chat_widgets.py", GUI / "workspace.py"]
+FILES = [GUI / "forge_gui_v2.py", GUI / "chat_widgets.py", GUI / "workspace.py",
+        GUI / "desktop_features.py", GUI / "phase_client.py", GUI / "config_model.py"]
 RE_CJK = re.compile(r"[\u4e00-\u9fff]{2,}")
 
 ALLOW_KEYS = {"text", "label", "title", "summary", "detail", "placeholder",

@@ -41,10 +41,13 @@ def compose_prompt(text, attachments, *, secret_scope=None):
     return prompt
 
 
-def task_command(executable, run_py, home, task, strategy, planning=None, planning_model=None):
+def task_command(executable, run_py, home, task, strategy, planning=None, planning_model=None, *,workspace=None,profile=None):
     from forge.planning import planning_level
     command = [executable, str(run_py), "run", task, "--json", "--strategy", strategy,
-               "--home", str(home), "--workspace", str(Path(run_py).parent)]
+               "--home", str(home), "--workspace", str(workspace or Path(run_py).parent)]
+    if profile is not None:
+        if profile not in {'conservative','balanced'}: raise ValueError('Unsupported desktop task profile')
+        command.extend(['--profile',profile])
     if planning is not None:
         command.extend(["--planning", planning_level(planning)])
     if planning_model:

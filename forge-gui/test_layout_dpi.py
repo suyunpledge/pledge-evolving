@@ -71,6 +71,12 @@ def isolated_app(scale=1, size=(1440, 900), *, repo=None):
                 owner = next((widget for widget in owners if command in (widget._tclCommands or [])), root)
                 owner.after_cancel(token)
             root.destroy()
+            # File-backed workers must quiesce before Windows removes this
+            # temporary home; joins happen after Tk has been destroyed.
+            app.desktop_features.thread.join(3)
+            for job in app._background_jobs.values():
+                worker=job.get('thread')
+                if worker is not None: worker.join(3)
 
 
 class DpiLayoutTests(unittest.TestCase):

@@ -656,7 +656,11 @@ class RefactorAcceptance(unittest.TestCase):
     def test_api_key_panel_lists_and_masks_providers(self):
         targets = self.app._key_targets()
         self.assertTrue(targets, "应能列出需要密钥的 provider")
-        self.assertEqual(self.app._masked_key("sk-abcdef123456"), "sk-abc…3456")
+        mask=self.app._masked_key("sk-abcdef123456")
+        self.assertEqual(mask, self.app._masked_key("a-much-longer-secret-value"))
+        self.assertIn("Protected",mask)
+        self.assertNotIn("sk-abc",mask)
+        self.assertNotIn("3456",mask)
         self.assertEqual(self.app._masked_key(""), "")
         before = len(self.root.winfo_children())
         self.app._open_api_keys()

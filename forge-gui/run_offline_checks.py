@@ -15,6 +15,29 @@ import forge_gui_v2 as gui
 import secret_store
 import sub_agent
 import plugin_market
+import forge.secrets as boundary
+
+
+class IsolatedResult(unittest.TextTestResult):
+    """Keep synthetic secret registrations scoped to their test scenario.
+
+    Runtime redaction deliberately spans sessions. Independent regressions
+    must not interpret another scenario's fake key (e.g. '1') as their data.
+    Preserve pre-test/class state; do not change production redaction rules.
+    """
+    def startTest(self,test):
+        with boundary._LOCK:
+            self._secret_snapshot={name:getattr(boundary,name).copy() for name in
+                ('_KNOWN','_NUMERIC_VALUES','_PATHS','_IDENTITIES')}
+            self._secret_bytes=boundary._KNOWN_BYTES
+        super().startTest(test)
+
+    def stopTest(self,test):
+        with boundary._LOCK:
+            for name,snapshot in self._secret_snapshot.items():
+                current=getattr(boundary,name); current.clear(); current.update(snapshot)
+            boundary._KNOWN_BYTES=self._secret_bytes
+        super().stopTest(test)
 
 
 def main():
@@ -32,6 +55,7 @@ def main():
         "test_secret_boundary",
         "test_task_planning",
         "test_phase_models",
+        "test_desktop_features",
     ]
     with tempfile.TemporaryDirectory(prefix="forge-offline-") as tmp, ExitStack() as stack:
         home = Path(tmp)
@@ -58,7 +82,7 @@ def main():
                 if fn.__module__ == name and (fn_name.startswith("test_") or
                     (name == "test_config_model" and fn_name in {"run_pass", "run_fail", "run_merge", "run_sniff"})):
                     suite.addTest(unittest.FunctionTestCase(fn, description=f"{name}.{fn_name}"))
-        result = unittest.TextTestRunner(verbosity=2).run(suite)
+        result = unittest.TextTestRunner(verbosity=2,resultclass=IsolatedResult).run(suite)
         return 0 if result.wasSuccessful() else 1
 
 

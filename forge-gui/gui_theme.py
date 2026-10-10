@@ -44,7 +44,7 @@ C: dict[str, str] = {
 
     # 线条
     "border": "#2A2A2A",
-    "border_hi": "#333333",
+    "border_hi": "#42424B",
     "sel_border": "#3A3A3A",
     "scroll": "#3A3A3A",
 
@@ -81,12 +81,12 @@ C: dict[str, str] = {
     # user 带一点主色倾向（“我说的话”），agent 用中性面；两者都配一道 hairline 描边。
     "msg_user_bg": "#206D3B",         # 保留绿色角色区分，白色正文有足够对比度
     "msg_user_fg": "#FFFFFF",          # 用户气泡文字（白）
-    "msg_agent_bg": "#2A2A2A",         # AI 深灰气泡
+    "msg_agent_bg": "#242429",         # AI 消息与代码区保持轻微层次
     "msg_agent_fg": "#E8E8E8",         # AI 气泡文字（浅灰）
     "msg_user_bg_old": "#232134",
     "msg_agent_bg_old": "#1A1A22",
     "msg_user_border": "#34834E",
-    "msg_agent_border": "#383838",
+    "msg_agent_border": "#3C3C48",
 
     # 代码高亮（One Dark 近似）
     "code_kw": "#C678DD",
@@ -470,7 +470,8 @@ def pill_button(parent, text, command, *, kind="ghost", bg=None, height=None,
                     activebackground=hovbg, activeforeground=hovfg,
                     font=font or FONT_SMALL, relief=tk.FLAT, bd=0,
                     padx=padx, pady=5, cursor="hand2", highlightthickness=1,
-                    highlightbackground=base, highlightcolor=C["accent2"],
+                    highlightbackground=C['accent_border'] if kind in {'primary','accent_soft'} else
+                        (C['border_hi'] if kind in {'ghost','danger'} else base), highlightcolor=C["accent2"],
                     state=state)
     btn.configure(disabledforeground=C["muted"])
     if width:
