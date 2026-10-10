@@ -25,6 +25,8 @@ HIDDEN = [
     "sub_agent",
     "secret_store",
     "interaction_model",
+    "desktop_features",
+    "change_preview",
     "brand_marks",
     "model_picker",
     "ui_icons",
@@ -38,6 +40,7 @@ HIDDEN = [
     "forge.config",
     "forge.guard",
     "forge.policy",
+    "forge.desktop_services",
     "forge.tools",
 ]
 
