@@ -465,5 +465,6 @@
   "正在切换或启动工作区，请等待 Gateway 就绪后发送": "Arbeitsbereich startet oder wechselt. Vor dem Senden auf Gateway-Bereitschaft warten.",
   "配置API": "API-Einstellungen",
   "📂 项目": "📂 Projekt",
-  "🤖 Agent 集群": "🤖 Agent-Gruppe"
+  "🤖 Agent 集群": "🤖 Agent-Gruppe",
+  "模式：{label}": "Modus: {label}"
 }

@@ -1955,7 +1955,9 @@ class InputCard(tk.Frame):
                  on_attach=None, on_context=None, on_commands=None,
                  on_settings=None, on_team_change=None, team_mode="off",
                  on_planning=None, planning_text="", on_project=None,
-                 on_project_files=None, on_team_settings=None):
+                 on_project_files=None, on_team_settings=None,
+                 thinking_var=None, thinking_choices=(),
+                 on_reasoning_select=None, on_reasoning_label=None):
         base = bg or C["chat"]
         super().__init__(parent, bg=base)
         self._on_send = on_send
@@ -2080,7 +2082,13 @@ class InputCard(tk.Frame):
         model_host.grid(row=0, column=1, sticky="ew", padx=(0, 8))
         metadata.grid_columnconfigure(1, weight=1)
         self.mode_var = i18n.StringVar(self, value=tr("模式：标准"))
-        self.mode_pill = glyph_button(metadata, tr("模式：标准"), on_thinking or (lambda: None),
+        # 思考强度入口：点模式按钮弹出 Codex 式分级滑杆卡。
+        self._reasoning_var = thinking_var
+        self._reasoning_choices = tuple(thinking_choices or ())
+        self._on_reasoning_select = on_reasoning_select
+        self._reasoning_label_of = on_reasoning_label
+        self._reasoning_popup = None
+        self.mode_pill = glyph_button(metadata, tr("模式：标准"), self._toggle_reasoning_popup,
                                       bg=C["input_bg"], fg=C["subtext"], size=10,
                                       tooltip=tr("当前思考强度；点击调整，实际支持能力取决于模型"))
         self.mode_pill.grid(row=0, column=2, sticky="e")
@@ -2210,6 +2218,82 @@ class InputCard(tk.Frame):
     def _set_focus(self, focused: bool):
         self._card.set_fill(C["input_bg"], C["accent"] if focused else C["border_hi"])
         self._sync_hint()
+
+    def _toggle_reasoning_popup(self):
+        """模式按钮：弹出/收起 Codex 式思考强度滑杆卡。"""
+        if getattr(self, "_reasoning_popup", None) is not None:
+            self._close_reasoning_popup()
+            return
+        from reasoning_slider import ReasoningSlider
+        pop = tk.Toplevel(self)
+        pop.overrideredirect(True)
+        pop.configure(bg=C["surface"])
+        slider = ReasoningSlider(
+            pop, self._reasoning_var, self._reasoning_choices,
+            on_select=self._on_reasoning_select, bg=C["surface"],
+            default_value=self._reasoning_var.get() or "medium")
+        slider.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        # overrideredirect 的 Toplevel 必须在映射前定 geometry——一旦 wm
+        # 以 +0+0 映射过，再 set 坐标在部分 Windows/Tk 组合上不生效，
+        # 弹层就停在屏幕左上角。这里用「withdraw → 计算尺寸 → geometry
+        # → deiconify」的顺序，并用 update_idletasks（不触发完整映射）。
+        pop.withdraw()
+        pop.update_idletasks()
+        w = max(360, slider.winfo_reqwidth() + 20)
+        h = slider.winfo_reqheight() + 24
+        x = self.mode_pill.winfo_rootx() + self.mode_pill.winfo_width() - w
+        y = self.mode_pill.winfo_rooty() + self.mode_pill.winfo_height() + 8
+        sw = pop.winfo_screenwidth()
+        sh = pop.winfo_screenheight()
+        x = max(8, min(x, sw - w - 8))
+        if y + h > sh - 8:
+            y = max(8, self.mode_pill.winfo_rooty() - h - 8)
+        pop.geometry(f"{w}x{h}+{x}+{y}")
+        pop.deiconify()
+        pop.attributes("-topmost", True)
+        slider.canvas.focus_set()
+        self._reasoning_popup = pop
+        self._reasoning_popup_slider = slider
+
+        def _close_if_outside(event):
+            if pop.winfo_containing(event.x_root, event.y_root) is None:
+                self._close_reasoning_popup()
+
+        self._reasoning_outside_id = pop.bind_all("<Button-1>", _close_if_outside, add="+")
+
+        def _close_on_esc(_event):
+            self._close_reasoning_popup()
+            return "break"
+
+        self._reasoning_esc_id = pop.bind("<Escape>", _close_on_esc, add="+")
+        pop.focus_set()
+
+    def _close_reasoning_popup(self):
+        pop = getattr(self, "_reasoning_popup", None)
+        if pop is None:
+            return
+        try:
+            pop.unbind("<Button-1>", self._reasoning_outside_id)
+        except tk.TclError:
+            pass
+        try:
+            pop.unbind("<Escape>", self._reasoning_esc_id)
+        except tk.TclError:
+            pass
+        self._reasoning_popup = None
+        try:
+            pop.destroy()
+        except tk.TclError:
+            pass
+
+    def _sync_mode_label(self):
+        """档位变化后刷新模式按钮文字。"""
+        label = getattr(self, "_reasoning_label_of", None)
+        if label is not None:
+            try:
+                self.mode_pill.configure(text=label(self._reasoning_var.get()))
+            except tk.TclError:
+                pass
 
     def _fit_toolbar(self, event):
         """Reflow metadata using measured widths, preserving every control."""
