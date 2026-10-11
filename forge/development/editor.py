@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import stat
 import tempfile
+import difflib
 
 from forge.secrets import assert_public_path
 
@@ -52,6 +53,7 @@ class Document:
     original: str
     digest: str
     status: str = 'clean'
+    external: object = None
 
     @classmethod
     def open(cls, boundary, path, *, encoding=None):
@@ -86,6 +88,69 @@ class Document:
         if changed:
             self.status = 'conflict'
         return changed
+
+    def inspect_external(self):
+        """Worker-side immutable observation. Does not mutate a live editor buffer."""
+        try:
+            disk = self.open(self.boundary, self.path, encoding=self.encoding)
+            return {'document': disk, 'error': None}
+        except (OSError, ValueError, UnicodeError, PermissionError) as exc:
+            return {'document': None, 'error': str(exc)}
+
+    def reconcile(self, observation):
+        """Called on the UI thread, after reading the *latest* user buffer."""
+        disk = observation['document']
+        if disk is not None and disk.digest == self.digest:
+            self.external = None
+            if self.status == 'conflict':
+                self.status = 'modified' if self.dirty else 'clean'
+            return 'unchanged'
+        self.external = observation
+        if disk is None or self.dirty:
+            self.status = 'conflict'
+            return 'conflict'
+        self.text, self.original, self.digest = disk.text, disk.text, disk.digest
+        self.encoding, self.newline, self.status = disk.encoding, disk.newline, 'clean'
+        self.external = None
+        return 'reloaded'
+
+    def external_diff(self, *, buffer=False):
+        if not self.external:
+            return 'No external change recorded.'
+        disk = self.external['document']
+        if disk is None:
+            return 'Disk version unavailable: ' + self.external['error']
+        left = self.text if buffer else self.original
+        return ''.join(difflib.unified_diff(left.splitlines(True), disk.text.splitlines(True),
+                       fromfile='editor-buffer' if buffer else 'opened-version', tofile='disk-version'))
+
+    def merge_external(self):
+        """Conservative three-way line merge into memory only, never an approval or write."""
+        disk = self.external['document'] if self.external else None
+        if disk is None:
+            raise ConflictError('No readable disk version to merge')
+        base = self.original.splitlines(True)
+        ours, theirs = self.text.splitlines(True), disk.text.splitlines(True)
+        def edits(lines):
+            return [(a, b, lines[c:d]) for tag, a, b, c, d in difflib.SequenceMatcher(
+                    None, base, lines, autojunk=False).get_opcodes() if tag != 'equal']
+        own, other = edits(ours), edits(theirs)
+        for a, b, replacement in own:
+            for c, d, external in other:
+                if (a, b, replacement) == (c, d, external):
+                    continue
+                # Insertions at changed boundaries are deliberately considered conflicts.
+                if max(a, c) < min(b, d) or a == b and c <= a <= d or c == d and a <= c <= b:
+                    raise ConflictError('Overlapping edits; compare versions and resolve manually')
+        merged = list(base)
+        combined = own + [e for e in other if e not in own]
+        for a, b, replacement in sorted(combined, key=lambda e: (e[0], e[1]), reverse=True):
+            merged[a:b] = replacement
+        self.text = ''.join(merged)
+        self.original, self.digest = disk.text, disk.digest
+        self.encoding, self.newline = disk.encoding, disk.newline
+        self.external = None
+        self.status = 'modified' if self.dirty else 'clean'
 
     def save(self):
         try:

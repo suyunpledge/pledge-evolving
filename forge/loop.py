@@ -218,10 +218,15 @@ class Agent:
         service: str = "",
         thinking_token_cap: int | None = None,
         observer: "Callable[[dict[str, Any]], None] | None" = None,
+        child_router_factory: "Callable | None" = None,
+        child_observer: "Callable | None" = None,
     ) -> None:
         self.home = Path(home)
         self.workspace = Path(workspace)
         self.router = router
+        # Optional trusted-host seams. Never placed in ToolContext or chosen by a plugin.
+        self.child_router_factory = child_router_factory
+        self.child_observer = child_observer
         self.phase_catalog = router
         self.registry = registry
         self.policy = policy
@@ -394,9 +399,11 @@ class Agent:
     # -- events ----------------------------------------------------------
     def _emit(self, **event: Any) -> None:
         from .secrets import redact
-        if event.get("type") == "workflow_state":
+        if event.get("type") == "workflow_state" or self.child_observer is not None:
             event.setdefault("agent", self.name)
             event.setdefault("depth", self.depth)
+            if self.child_observer is not None:
+                event.setdefault("run_id", self._run_id)
         record = redact(self.secret_scope.protect(dict(event)))
         self.events.append(record)
         if self._observer is not None:
@@ -479,11 +486,20 @@ class Agent:
                        delivered=dispatch["delivery"]["delivered"][:4],
                        denied=dispatch["delivery"]["denied"][:4])
 
+        child_router = self.router
+        if self.child_router_factory is not None:
+            try:
+                child_router = self.child_router_factory(child_name, child_policy, self.router)
+                if not callable(getattr(child_router, 'complete', None)):
+                    raise ValueError('Child router must implement complete()')
+            except Exception as exc:
+                self._emit(type='subagent_error', member=child_name, error=str(exc), stage='model_selection')
+                return ToolResult(ok=False, error=f'subagent model selection failed: {exc}')
         self.budget[0] -= 1
         child = Agent(
             home=self.home,
             workspace=self.workspace,
-            router=self.router,
+            router=child_router,
             # a child gets its own activation set, otherwise a child's
             # tool_search silently widens the parent's tool surface too
             registry=self.registry.clone(),
@@ -506,6 +522,9 @@ class Agent:
             # 三档模式随树继承：子代理同样按模式在运行首尾起沉思。
             thinking=self.thinking_mode,
             project_rules=self.project_rules_enabled,
+            child_router_factory=self.child_router_factory,
+            child_observer=self.child_observer,
+            observer=self.child_observer,
         )
         self._emit(type="subagent_spawn", task=task[:300], mode=child_policy.mode.value,
                    depth=child.depth, budget_left=self.budget[0])
