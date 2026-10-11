@@ -1509,8 +1509,12 @@ class ForgeGuiApp:
         for other in self._sidebar_panels.values():
             if other is not panel:
                 other.pack_forget()
-        if panel is not None and not panel.winfo_manager():
-            panel.pack(fill=tk.BOTH, expand=True)
+        if panel is not None:
+            # 显式 side=TOP + 始终重挂（幂等）：保证面板填充侧栏剩余空间，
+            # 不受 back 按钮插入顺序影响（2026-10-12 侧栏失效修复）。
+            if panel.winfo_manager():
+                panel.pack_forget()
+            panel.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
     def _set_sidebar_visible(self, visible: bool, *, automatic=False):
         if visible == self._sidebar_visible:
@@ -1600,7 +1604,11 @@ class ForgeGuiApp:
         if btn is None:
             return
         if show and not btn.winfo_manager():
-            btn.pack(fill=tk.X, padx=10, pady=(10, 4), before=self._first_sidebar_child())
+            first = self._first_sidebar_child()
+            if first is not None:
+                btn.pack(side=tk.TOP, fill=tk.X, padx=10, pady=(10, 4), before=first)
+            else:
+                btn.pack(side=tk.TOP, fill=tk.X, padx=10, pady=(10, 4))
         elif not show and btn.winfo_manager():
             btn.pack_forget()
 
