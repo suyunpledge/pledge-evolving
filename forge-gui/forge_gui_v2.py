@@ -646,6 +646,13 @@ class ForgeGuiApp:
         self._project_workspace = (Path(desktop_prefs['project_workspace'])
                                    if isinstance(desktop_prefs.get('project_workspace'),str) and desktop_prefs['project_workspace'] else None)
         self.home = DEFAULT_FORGE_HOME
+        # 踩坑知识库（Phase 2A 知识库落地）：与 MEMORY.md 同库不同 kind，
+        # 发送任务前按关键词检索相关教训注入背景上下文。
+        try:
+            from forge.knowledge import KnowledgeBase
+            self.knowledge = KnowledgeBase(self.home / "MEMORY.md")
+        except Exception:
+            self.knowledge = None
         self.user_layer_path = _probe_user_layer()
         self._load_error = ""
         favorites = desktop_prefs.get("model_favorites", [])
@@ -2936,11 +2943,260 @@ class ForgeGuiApp:
         except Exception as exc:
             self._set_status(f"打开插件目录失败：{exc}", "error")
 
+    def _build_knowledge_panel(self, parent):
+        """知识库管理页：条目列表 + 手动添加 + 检索预览（M 型布局）。"""
+        import tkinter.ttk as ttk2
+        wrap = tk.Frame(parent, bg=C["bg"])
+        wrap.pack(fill=tk.BOTH, expand=True, padx=24, pady=20)
+        theme.bind_packed_column(wrap, max_width=theme.FORM_WIDTH)
+
+        head = tk.Frame(wrap, bg=C["bg"]); head.pack(fill=tk.X)
+        i18n.Label(head, text=tr("知识库"), bg=C["bg"], fg=C["text"],
+                   font=FONT_TITLE).pack(side=tk.LEFT)
+        self._kb_stats_var = tk.StringVar(value="")
+        i18n.Label(head, textvariable=self._kb_stats_var, bg=C["bg"],
+                   fg=C["ter"], font=FONT_SMALL).pack(side=tk.LEFT, padx=12)
+        pill_button(head, tr("刷新"), self._refresh_knowledge, icon="⟳").pack(
+            side=tk.RIGHT)
+
+        # 手动添加（用户可配置）
+        form = RoundedCard(wrap, radius=R_MD, fill=C["surface"],
+                           padx=14, pady=12, bg=C["bg"])
+        form.pack(fill=tk.X, pady=(10, 8))
+        i18n.Label(form.content, text=tr("添加知识条目"), bg=C["surface"],
+                   fg=C["subtext"], font=FONT_SMALL).pack(anchor="w")
+        rowf = tk.Frame(form.content, bg=C["surface"]); rowf.pack(fill=tk.X, pady=4)
+        self._kb_text_var = tk.StringVar()
+        theme.style_editor(tk.Entry(rowf, textvariable=self._kb_text_var,
+                              font=FONT_SMALL)).pack(
+            side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8), ipady=4)
+        self._kb_kind_var = tk.StringVar(value=tr("踩坑"))
+        kindbox = ttk2.Combobox(rowf, textvariable=self._kb_kind_var,
+                                values=[tr("踩坑"), tr("经验"), tr("笔记")],
+                                state="readonly", width=8)
+        kindbox.pack(side=tk.LEFT, padx=(0, 8))
+        pill_button(rowf, tr("添加"), self._kb_add, kind="primary", icon="＋").pack(side=tk.LEFT)
+
+        # 检索预览：输入任务描述 → 看会注入什么
+        probe = RoundedCard(wrap, radius=R_MD, fill=C["surface"],
+                            padx=14, pady=12, bg=C["bg"])
+        probe.pack(fill=tk.X, pady=(0, 8))
+        i18n.Label(probe.content, text=tr("检索预览（输入任务描述，查看将注入的背景）"),
+                   bg=C["surface"], fg=C["subtext"], font=FONT_SMALL).pack(anchor="w")
+        prow = tk.Frame(probe.content, bg=C["surface"]); prow.pack(fill=tk.X, pady=4)
+        self._kb_query_var = tk.StringVar()
+        theme.style_editor(tk.Entry(prow, textvariable=self._kb_query_var,
+                              font=FONT_SMALL)).pack(
+            side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8), ipady=4)
+        pill_button(prow, tr("检索"), self._kb_probe, icon="?").pack(side=tk.LEFT)
+        self._kb_probe_var = tk.StringVar(value="")
+        i18n.Label(probe.content, textvariable=self._kb_probe_var, bg=C["surface"],
+                   fg=C["ter"], font=FONT_SMALL, justify=tk.LEFT,
+                   anchor="w", wraplength=640).pack(fill=tk.X, anchor="w")
+
+        # 条目列表
+        self._kb_list = ttk2.Treeview(wrap, columns=("kind", "text", "created"),
+                                      show="headings", height=12)
+        for field, title, width in (("kind", tr("类型"), 70),
+                                    ("text", tr("内容"), 460),
+                                    ("created", tr("时间"), 130)):
+            self._kb_list.heading(field, text=title)
+            self._kb_list.column(field, width=width, minwidth=50)
+        self._kb_list.pack(fill=tk.BOTH, expand=True, pady=(4, 6))
+        acts = tk.Frame(wrap, bg=C["bg"]); acts.pack(fill=tk.X)
+        pill_button(acts, tr("删除所选"), self._kb_delete, icon="－").pack(side=tk.LEFT, padx=(0, 6))
+        self._kb_note = i18n.Label(acts, text=tr("知识条目会在发送相关任务时自动检索注入。"),
+                                   bg=C["bg"], fg=C["ter"], font=FONT_MICRO)
+        self._kb_note.pack(side=tk.LEFT, padx=8)
+        self._refresh_knowledge()
+
+    def _refresh_knowledge(self):
+        kb = getattr(self, "knowledge", None)
+        if kb is None or not hasattr(self, "_kb_list"):
+            return
+        try:
+            rows = kb.entries()
+            self._kb_list.delete(*self._kb_list.get_children())
+            kind_label = {"pitfall": tr("踩坑"), "lesson": tr("经验"), "note": tr("笔记")}
+            import datetime as _dt
+            for idx, e in enumerate(rows):
+                created = _dt.datetime.fromtimestamp(e.created_at).strftime("%m-%d %H:%M")
+                self._kb_list.insert("", "end", iid=str(idx),
+                                     values=(kind_label.get(e.kind, e.kind),
+                                             e.text[:80], created))
+            self._kb_rows = rows
+            st = kb.stats()
+            self._kb_stats_var.set(
+                tr("共 {count} 条（踩坑 {p} · 经验 {l} · 笔记 {n}）",
+                   count=st["total"], p=st["by_kind"].get("pitfall", 0),
+                   l=st["by_kind"].get("lesson", 0),
+                   n=st["by_kind"].get("note", 0)))
+        except Exception as exc:
+            self._set_status(str(exc), "error")
+
+    def _kb_add(self):
+        kb = getattr(self, "knowledge", None)
+        if kb is None:
+            return
+        text = self._kb_text_var.get().strip()
+        if not text:
+            return
+        kind_map = {tr("踩坑"): "pitfall", tr("经验"): "lesson", tr("笔记"): "note"}
+        kind = kind_map.get(self._kb_kind_var.get(), "pitfall")
+        try:
+            kb.record(text, source="user", kind=kind)
+            self._kb_text_var.set("")
+            self._refresh_knowledge()
+        except Exception as exc:
+            self._set_status(str(exc), "error")
+
+    def _kb_delete(self):
+        kb = getattr(self, "knowledge", None)
+        if kb is None:
+            return
+        sel = self._kb_list.selection()
+        if not sel:
+            return
+        row = self._kb_rows[int(sel[0])]
+        try:
+            kb.store.entries.remove(row)
+            kb.store.save()
+            self._refresh_knowledge()
+        except Exception as exc:
+            self._set_status(str(exc), "error")
+
+    def _kb_probe(self):
+        kb = getattr(self, "knowledge", None)
+        if kb is None:
+            return
+        q = self._kb_query_var.get().strip()
+        ctx = kb.context_for(q) if q else ""
+        self._kb_probe_var.set(ctx if ctx else tr("（无匹配条目）"))
+
+    def _build_evolution_panel(self, parent):
+        """演化页：真实账本（EvolutionEngine pending/applied/stats）。"""
+        import tkinter.ttk as ttk2
+        wrap = tk.Frame(parent, bg=C["bg"])
+        wrap.pack(fill=tk.BOTH, expand=True, padx=24, pady=20)
+        theme.bind_packed_column(wrap, max_width=theme.FORM_WIDTH)
+
+        head = tk.Frame(wrap, bg=C["bg"]); head.pack(fill=tk.X)
+        i18n.Label(head, text=tr("演化"), bg=C["bg"], fg=C["text"],
+                   font=FONT_TITLE).pack(side=tk.LEFT)
+        self._evo_stats_var = tk.StringVar(value="")
+        i18n.Label(head, textvariable=self._evo_stats_var, bg=C["bg"],
+                   fg=C["ter"], font=FONT_SMALL).pack(side=tk.LEFT, padx=12)
+        pill_button(head, tr("刷新"), self._refresh_evolution, icon="⟳").pack(side=tk.RIGHT)
+
+        # 从会话学习（自进化钩子：观察当前对话提取信号提名候选）
+        learn = RoundedCard(wrap, radius=R_MD, fill=C["surface"],
+                            padx=14, pady=12, bg=C["bg"])
+        learn.pack(fill=tk.X, pady=(10, 8))
+        i18n.Label(learn.content, text=tr("从当前会话提取演化信号（纠正/偏好/教训 → 候选，审批后写入长期记忆）"),
+                   bg=C["surface"], fg=C["subtext"], font=FONT_SMALL).pack(anchor="w")
+        lrow = tk.Frame(learn.content, bg=C["surface"]); lrow.pack(fill=tk.X, pady=4)
+        pill_button(lrow, tr("观察会话并提名"), self._evo_observe, kind="primary",
+                    icon="✦").pack(side=tk.LEFT)
+        self._evo_note = i18n.Label(lrow, text="", bg=C["surface"], fg=C["ter"],
+                                    font=FONT_MICRO)
+        self._evo_note.pack(side=tk.LEFT, padx=8)
+
+        # 候选列表（pending + applied）
+        self._evo_list = ttk2.Treeview(wrap, columns=("state", "summary", "risk"),
+                                       show="headings", height=12)
+        for field, title, width in (("state", tr("状态"), 90),
+                                    ("summary", tr("候选内容"), 470),
+                                    ("risk", tr("风险"), 80)):
+            self._evo_list.heading(field, text=title)
+            self._evo_list.column(field, width=width, minwidth=50)
+        self._evo_list.pack(fill=tk.BOTH, expand=True, pady=(4, 6))
+        acts = tk.Frame(wrap, bg=C["bg"]); acts.pack(fill=tk.X)
+        pill_button(acts, tr("批准"), self._evo_approve, kind="primary").pack(side=tk.LEFT, padx=(0, 6))
+        pill_button(acts, tr("驳回"), self._evo_reject).pack(side=tk.LEFT)
+        self._refresh_evolution()
+
+    def _evo_engine(self):
+        try:
+            from forge.evolution import EvolutionEngine
+            return EvolutionEngine(self.home)
+        except Exception:
+            return None
+
+    def _refresh_evolution(self):
+        eng = self._evo_engine()
+        if eng is None or not hasattr(self, "_evo_list"):
+            return
+        try:
+            pend = eng.pending(); applied = eng.applied()
+            self._evo_list.delete(*self._evo_list.get_children())
+            self._evo_rows = [("pending", c) for c in pend] + [("applied", c) for c in applied]
+            state_label = {"pending": tr("待审批"), "applied": tr("已应用")}
+            for idx, (state, c) in enumerate(self._evo_rows):
+                summary = (c.content or c.note or "")[:90]
+                self._evo_list.insert("", "end", iid=str(idx),
+                                      values=(state_label.get(state, state),
+                                              summary,
+                                              getattr(c, "risk", "")))
+            st = eng.stats()
+            self._evo_stats_var.set(
+                tr("待审批 {p} · 已应用 {a}", p=len(pend), a=len(applied)))
+        except Exception as exc:
+            self._set_status(str(exc), "error")
+
+    def _evo_observe(self):
+        eng = self._evo_engine()
+        if eng is None:
+            return
+        try:
+            text = "\n".join(m.content for m in self._chat_history[-40:])
+            signals = eng.observe_text(text)
+            nominated = eng.nominate(signals) if signals else []
+            self._evo_note.set = None  # noop 防误用
+            self._evo_note.configure(
+                text=tr("提取 {s} 个信号，提名 {n} 个候选", s=len(signals), n=len(nominated)))
+            self._refresh_evolution()
+        except Exception as exc:
+            self._set_status(str(exc), "error")
+
+    def _evo_approve(self):
+        sel = self._evo_list.selection()
+        if not sel:
+            return
+        state, cand = self._evo_rows[int(sel[0])]
+        eng = self._evo_engine()
+        try:
+            eng.evaluate(cand)
+            if cand.requires_approval:
+                eng.approve(cand.id)
+            eng.apply(cand.id)
+            self._refresh_evolution()
+        except Exception as exc:
+            self._set_status(str(exc), "error")
+
+    def _evo_reject(self):
+        sel = self._evo_list.selection()
+        if not sel:
+            return
+        state, cand = self._evo_rows[int(sel[0])]
+        try:
+            self._evo_engine().reject(cand.id)
+            self._refresh_evolution()
+        except Exception as exc:
+            self._set_status(str(exc), "error")
+
     def _build_stub_view(self, parent, key: str):
         if key == "schedules":
             # Phase 2A 补充：定时任务迁入主工作区（L 型内容布局）。
             # 页面尺寸 ≠ 应用窗口尺寸：不改变 Forge 主窗口大小。
             self.desktop_features.mount_page(parent, 0)
+            return
+        if key == "knowledge":
+            # 知识库落地：真实管理页（M 型内容布局，bind_packed_column 限宽）。
+            self._build_knowledge_panel(parent)
+            return
+        if key == "evolution":
+            # 演化落地：真实账本页（复用 EvolutionEngine，M 型布局）。
+            self._build_evolution_panel(parent)
             return
         title, subtitle, bullets, note = self.STUB_TEXT.get(key, (key, "", (), ""))
         wrap = tk.Frame(parent, bg=C["bg"])
@@ -7000,6 +7256,16 @@ class ForgeGuiApp:
             self.chat_area.scroll.scroll_to_end()
             messages = (list(self._chat_history) if self._include_history else []) + [ChatMessage("user", prompt)]
             retained_history = list(self._chat_history) + [ChatMessage("user", prompt)]
+            # 知识库检索注入：相关踩坑/经验作为背景上下文（不改用户消息本体，
+            # user-role 注入保持 system prompt 前缀稳定利于缓存命中）。
+            kb_ctx = ""
+            try:
+                if self.knowledge is not None:
+                    kb_ctx = self.knowledge.context_for(prompt)
+            except Exception:
+                kb_ctx = ""
+            if kb_ctx:
+                messages = [ChatMessage("user", f"[知识库提示] 以下是过往任务的相关教训，仅供参考，避免重蹈覆辙：\n{kb_ctx}")] + list(messages)
             self.input_card.set_busy(True)
             self.clear_chat_btn.configure(state=tk.DISABLED)
             self.gw_btn.configure(state=tk.DISABLED)

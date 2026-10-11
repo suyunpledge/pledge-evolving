@@ -22,7 +22,8 @@ from .secrets import redact
 RAW_START = "<!-- RAW_JSON_START -->"
 RAW_END = "<!-- RAW_JSON_END -->"
 
-KINDS = ("user", "feedback", "project", "reference")
+KINDS = ("user", "feedback", "project", "reference",
+          "pitfall", "lesson", "note")  # 知识库三态（knowledge.py）
 
 
 @dataclass
