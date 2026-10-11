@@ -160,11 +160,15 @@ class InputCardGuardCase(unittest.TestCase):
 
     def setUp(self):
         import tkinter as tk
+        import os
+        # 守卫逻辑测试需要行内 IME 真身（生产默认关闭，见 chat_widgets）
+        os.environ["FORGE_INLINE_IME"] = "1"
         self.root = tk.Tk()
         self.root.withdraw()
         self.card = cw.InputCard(self.root, on_send=None)
         self.card.pack()
         self.root.update()
+        os.environ.pop("FORGE_INLINE_IME", None)
 
     def tearDown(self):
         self.root.destroy()
@@ -191,7 +195,12 @@ class InputCardGuardCase(unittest.TestCase):
         card = cw.InputCard(self.root, on_send=lambda: sent.append(1))
         card.pack()
         self.root.update()
-        ime = card._inline_ime or Mock(composing=True)
+        class FakeIME:
+            def __init__(self):
+                self.composing = True
+            def cancel_if_composing(self):
+                self.composing = False
+        ime = card._inline_ime or FakeIME()
         if card._inline_ime is None:
             card._inline_ime = ime
         ime.composing = True

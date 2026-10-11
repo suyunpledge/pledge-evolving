@@ -26,6 +26,7 @@ from __future__ import annotations
 import i18n
 from i18n import tr
 
+import os
 import re
 import sys
 
@@ -1552,7 +1553,9 @@ class MessageArea(tk.Frame):
         box.pack(fill=tk.X, pady=(14, 12))
         # 欢迎屏主视觉：柔光球 + 星座 + 点阵的组合画（Tk 原生，无动画）
         try:
-            banner = decor.hero_banner(box, 480, 112, bg=self._bg)
+            banner = decor.hero_banner(box, 480, 112, bg=self._bg,
+                                       accent=C["accent2"], accent2=C["brand_ice"],
+                                       spark=C["brand_spark"])
             banner.pack(pady=(0, 10))
         except tk.TclError:
             banner = None
@@ -2052,7 +2055,15 @@ class InputCard(tk.Frame):
         # IME 行内组合（inline composition）：preedit 直接画进输入框光标处，
         # 抑制系统默认的组合浮层；候选词窗口仍由系统 IME 显示。
         # Windows 专属，失败自动 no-op（InlineIME 内部全兜底）。
-        self._inline_ime = InlineIME(self.entry) if InlineIME else None
+        # 2026-10-11 止血：行内 IME（子类化窗口过程）默认关闭。
+        # 它把 Tk wndproc 换成 Python 回调，ctypes 回调的硬崩（访问违例）
+        # 无法被 try/except 捕获，消息泵死锁表现为「打不出字/点不动」，
+        # 且重启必现（与 10-10 晚起用户实测完全吻合）。候选框锚定
+        # （_IMECaretAnchor，非子类化）不受影响。
+        # 需要行内 preedit 时设 FORGE_INLINE_IME=1 开回。
+        self._inline_ime = (InlineIME(self.entry)
+                            if InlineIME and os.environ.get("FORGE_INLINE_IME") == "1"
+                            else None)
         if self._inline_ime is not None:
             self.entry.bind("<Button-1>",
                             lambda _e: self._inline_ime.cancel_if_composing(),
@@ -2269,7 +2280,7 @@ class InputCard(tk.Frame):
             pass
 
     def _set_focus(self, focused: bool):
-        self._card.set_fill(C["input_bg"], C["accent"] if focused else C["border_hi"])
+        self._card.set_fill(C["input_bg"], C["accent2"] if focused else C["border_hi"])
         self._sync_hint()
 
     def _toggle_reasoning_popup(self):
