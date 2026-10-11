@@ -170,6 +170,7 @@ NAV_ITEMS = [
     ("task", tr("任务"), "✅"),
     ("schedules", tr("定时任务"), "⏰"),
     ("agents", "Agents", "🤖"),
+    ("development", tr("开发"), "🛠"),
     ("tools", tr("工具 / 插件市场"), "🧰"),
     ("knowledge", tr("知识库"), "📚"),
     ("evolution", tr("演化"), "🧬"),
@@ -180,7 +181,7 @@ NAV_LABEL = {key: label for key, label, _g in NAV_ITEMS}
 NAV_GLYPH = {key: glyph for key, _l, glyph in NAV_ITEMS}
 # 主轨道只呈现已经可以完成工作的视图。仍保留旧视图及其调用入口，
 # 但将规划中页面降到「更多」，避免把占位页冒充成正式产品能力。
-PRIMARY_NAV = {"chat", "task", "schedules", "tools", "config"}
+PRIMARY_NAV = {"chat", "task", "schedules", "development", "tools", "config"}
 
 
 class ActivityGlyph(tk.Canvas):
@@ -1669,7 +1670,7 @@ class ForgeGuiApp:
             "config": self.tab_manage,
         }
         self._lazy_views = set()
-        for key in ("schedules", "agents", "knowledge", "evolution", "files"):
+        for key in ("schedules", "development", "agents", "knowledge", "evolution", "files"):
             frame = tk.Frame(center, bg=C["bg"])
             if key == "agents":
                 # agents 视图 = 真实配置面板（集群/分工/记忆模式）
@@ -3189,6 +3190,22 @@ class ForgeGuiApp:
             # Phase 2A 补充：定时任务迁入主工作区（L 型内容布局）。
             # 页面尺寸 ≠ 应用窗口尺寸：不改变 Forge 主窗口大小。
             self.desktop_features.mount_page(parent, 0)
+            return
+        if key == "development":
+            # Development Mode（Codex 交付）：隔离开发工作台嵌入主 GUI。
+            # 独立 home 保持隔离语义；ttk.Frame 直接挂进视图容器。
+            try:
+                from development_mode.app import DevelopmentWorkbench
+                from forge.development.state import ModeState
+                dev_home = Path(__file__).resolve().parent.parent / ".forge-development-home"
+                state = ModeState(dev_home)
+                bench = DevelopmentWorkbench(self._views[key], state)
+                bench.pack(fill=tk.BOTH, expand=True)
+                path = state.value("project")
+                if path and Path(path).is_dir():
+                    bench.open_project(path)
+            except Exception as exc:
+                self._set_status(f"Development Mode 加载失败：{exc}", "error")
             return
         if key == "knowledge":
             # 知识库落地：真实管理页（M 型内容布局，bind_packed_column 限宽）。

@@ -507,5 +507,6 @@
   "全部磁盘": "Tous les disques",
   "仅工作区": "Espace de travail uniquement",
   "读取范围：{x}（重启 gateway 后生效）": "Portée de lecture : {x} (prend effet après le redémarrage du gateway)",
-  "[知识库提示] 以下是过往任务的相关教训，仅供参考，避免重蹈覆辙：": "[Base de connaissances] Voici les leçons connexes tirées de tâches passées, à titre de référence uniquement, pour éviter de répéter les mêmes erreurs :"
+  "[知识库提示] 以下是过往任务的相关教训，仅供参考，避免重蹈覆辙：": "[Base de connaissances] Voici les leçons connexes tirées de tâches passées, à titre de référence uniquement, pour éviter de répéter les mêmes erreurs :",
+  "开发": "Développer"
 }

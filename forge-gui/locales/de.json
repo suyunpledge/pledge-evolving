@@ -507,5 +507,6 @@
   "全部磁盘": "Alle Datenträger",
   "仅工作区": "Nur Workspace",
   "读取范围：{x}（重启 gateway 后生效）": "Lesebereich: {x} (wirkt nach Gateway-Neustart)",
-  "[知识库提示] 以下是过往任务的相关教训，仅供参考，避免重蹈覆辙：": "[Wissensdatenbank-Hinweis] Untenstehende Lehren aus früheren Aufgaben dienen nur zur Orientierung, um dieselben Fehler zu vermeiden:"
+  "[知识库提示] 以下是过往任务的相关教训，仅供参考，避免重蹈覆辙：": "[Wissensdatenbank-Hinweis] Untenstehende Lehren aus früheren Aufgaben dienen nur zur Orientierung, um dieselben Fehler zu vermeiden:",
+  "开发": "Entwickeln"
 }

@@ -507,5 +507,6 @@
   "全部磁盘": "All disks",
   "仅工作区": "Workspace only",
   "读取范围：{x}（重启 gateway 后生效）": "Read scope: {x} (takes effect after gateway restart)",
-  "[知识库提示] 以下是过往任务的相关教训，仅供参考，避免重蹈覆辙：": "[Knowledge base notice] Below are related lessons from past tasks, for reference only, to avoid repeating past mistakes:"
+  "[知识库提示] 以下是过往任务的相关教训，仅供参考，避免重蹈覆辙：": "[Knowledge base notice] Below are related lessons from past tasks, for reference only, to avoid repeating past mistakes:",
+  "开发": "Develop"
 }
