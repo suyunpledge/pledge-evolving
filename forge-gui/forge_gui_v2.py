@@ -1151,6 +1151,11 @@ class ForgeGuiApp:
             icon.configure(bg=bg, fg=fg)
             text.configure(bg=bg, fg=fg)
 
+    def _first_sidebar_child(self):
+        """侧栏内容区的第一个子控件（back 按钮插它前面）。"""
+        kids = self.sidebar.pack_slaves()
+        return kids[0] if kids else None
+
     def _build_sidebar(self, parent):
         # 概念图：单栏侧栏（无窄轨道）。rail/Activity Bar 已移除，
         # 但保留 self.activity_bar 与两个 dict 引用（其他方法仍会读）。
@@ -1166,6 +1171,11 @@ class ForgeGuiApp:
         self._sidebar_pack_options = side.pack_info()
 
         self._sidebar_panels: dict[str, tk.Frame] = {}
+        # 2026-10-12：「返回对话」统一放侧栏顶部（非 chat 视图显示；
+        # 由 _sync_view_navigation 控制显隐）。
+        self.sidebar_back_btn = pill_button(
+            side, tr("← 返回对话"), self._return_to_chat, kind="ghost",
+            bg=C["surface2"], font=FONT_SMALL, padx=10)
         chat_panel = tk.Frame(side, bg=C["sidebar"])
         self._sidebar_panels["chat"] = chat_panel
 
@@ -1573,36 +1583,26 @@ class ForgeGuiApp:
 
     # ── 视图切换 ──────────────────────────────────────────
     def _build_view_navigation(self, center):
-        """Keep an exit outside each page's scrolling/collapsible content."""
-        bar = self.view_navigation = tk.Frame(center, bg=C["surface2"], padx=12, pady=6)
-        bar.grid_columnconfigure(1, weight=1)
-        self.view_back_btn = glyph_button(bar, tr("◀ 返回对话"), self._navigate_back,
-                                          bg=C["surface2"], fg=C["text"], size=10,
-                                          tooltip=tr("返回上一页 · Alt+←；保留当前编辑内容"))
-        self.view_back_btn.grid(row=0, column=0, sticky="w", padx=(0, 12))
+        """2026-10-12 交互优化：返回对话移到左侧侧栏顶部（原主区顶部条移除）。
+
+        页面间直接切换由全局导航承担（_nav_click），不再需要顶部条中转；
+        Alt+← 返回上一页的 _navigate_back 保留。
+        """
+        # 兼容旧引用：view_navigation 挂一个空 Frame（永不 pack）
+        self.view_navigation = tk.Frame(center, bg=C["surface2"])
         self.view_title_var = i18n.StringVar(self.root)
-        self.view_title_label = i18n.Label(bar, textvariable=self.view_title_var,
-                                         bg=C["surface2"], fg=C["muted"], font=FONT_CAPTION,
-                                         anchor="w")
-        self.view_title_label.grid(row=0, column=1, sticky="ew")
-        self.view_chat_btn = glyph_button(bar, tr("💬 回到对话"), self._return_to_chat,
-                                          bg=C["surface2"], fg=C["text"], size=10,
-                                          tooltip=tr("回到当前对话 · Esc；不新建或清空对话"))
-        self.view_chat_btn.grid(row=0, column=2, sticky="e", padx=(8, 0))
 
     def _sync_view_navigation(self):
+        """非 chat 视图时在侧栏顶部显示「返回对话」。"""
         files_mode = self._active_view == "chat" and self._active_nav == "files"
-        if self._active_view == "chat" and not files_mode:
-            self.view_navigation.pack_forget()
+        show = self._active_view != "chat" or files_mode
+        btn = getattr(self, "sidebar_back_btn", None)
+        if btn is None:
             return
-        target = "chat" if files_mode or not self._view_history else self._view_history[-1]
-        self.view_back_btn.configure(text=tr("◀ 返回{page}", page=NAV_LABEL.get(target, tr("对话"))))
-        self.view_title_var.set(NAV_LABEL.get("files" if files_mode else self._active_view, ""))
-        if target != "chat":
-            self.view_chat_btn.grid()
-        else:
-            self.view_chat_btn.grid_remove()
-        self.view_navigation.pack(fill=tk.X, before=self._views[self._active_view])
+        if show and not btn.winfo_manager():
+            btn.pack(fill=tk.X, padx=10, pady=(10, 4), before=self._first_sidebar_child())
+        elif not show and btn.winfo_manager():
+            btn.pack_forget()
 
     def _navigate_back(self, _event=None):
         if self.root.grab_current() is not None:
@@ -7656,25 +7656,51 @@ class ForgeGuiApp:
         self._set_request_status(tr("就绪"))
         self._refresh_send_circle()
     # ── 关闭 ──
+    def _confirm_discard_dialog(self) -> bool:
+        """退出前的规范模态确认：transient+grab，居中于主窗，无闪烁。"""
+        dialog = tk.Toplevel(self.root)
+        dialog.withdraw()
+        dialog.title(tr("有未保存的修改"))
+        dialog.configure(bg=C["surface"])
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+        body = tk.Frame(dialog, bg=C["surface"], padx=22, pady=18)
+        body.pack(fill=tk.BOTH, expand=True)
+        i18n.Label(body, text=tr("有未保存的修改"), bg=C["surface"],
+                   fg=C["text"], font=FONT_UI_BOLD).pack(anchor="w", pady=(0, 6))
+        i18n.Label(body, text=tr("功能开关、分工预设或编辑内容尚未保存。要放弃这些修改并退出吗？"),
+                   bg=C["surface"], fg=C["subtext"], font=FONT_SMALL,
+                   justify=tk.LEFT, wraplength=340).pack(anchor="w", pady=(0, 14))
+        result = {"ok": False}
+
+        def choose(ok: bool):
+            result["ok"] = ok
+            dialog.destroy()
+
+        acts = tk.Frame(body, bg=C["surface"])
+        acts.pack(fill=tk.X)
+        pill_button(acts, tr("取消"), lambda: choose(False)).pack(side=tk.RIGHT, padx=(8, 0))
+        pill_button(acts, tr("放弃并退出"), lambda: choose(True),
+                    kind="danger").pack(side=tk.RIGHT)
+        dialog.protocol("WM_DELETE_WINDOW", lambda: choose(False))
+        dialog.bind("<Escape>", lambda _e: choose(False))
+
+        dialog.update_idletasks()
+        w, h = dialog.winfo_reqwidth(), dialog.winfo_reqheight()
+        x = self.root.winfo_rootx() + (self.root.winfo_width() - w) // 2
+        y = self.root.winfo_rooty() + (self.root.winfo_height() - h) // 2
+        dialog.geometry(f"{w}x{h}+{max(x, 0)}+{max(y, 0)}")
+        dialog.deiconify()
+        dialog.grab_set()
+        dialog.focus_set()
+        dialog.wait_window()
+        return result["ok"]
+
     def _on_close(self):
         if (self._feature_dirty or self._team_dirty or self._editor_is_dirty() or self._pending_rows):
-            # 2026-10-11 退出保险丝：确认弹窗先最小化主窗再问，弹窗成为
-            # 屏幕上唯一可见窗口（此前可能被主窗/其它窗口遮挡，用户
-            # 「点 X 没反应」实际是在等一个看不见的弹窗）。取消则恢复。
-            try:
-                was_normal = self.root.state() == "normal"
-                self.root.iconify()
-            except tk.TclError:
-                was_normal = False
-            try:
-                confirmed = messagebox.askyesno(
-                    "有未保存的修改", "功能开关、分工预设或编辑内容尚未保存。要放弃这些修改并退出吗？")
-            finally:
-                if was_normal:
-                    try:
-                        self.root.deiconify()
-                    except tk.TclError:
-                        pass
+            # 2026-10-12 改规范模态：自定义对话框 transient+grab（始终浮在
+            # 主窗上方、屏蔽主窗交互），无 iconify 闪烁；Esc/关闭按钮 = 取消。
+            confirmed = self._confirm_discard_dialog()
             if not confirmed:
                 return
         try:
