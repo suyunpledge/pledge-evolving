@@ -7657,12 +7657,43 @@ class ForgeGuiApp:
         self._refresh_send_circle()
     # ── 关闭 ──
     def _on_close(self):
-        if (self._feature_dirty or self._team_dirty or self._editor_is_dirty() or self._pending_rows) and not messagebox.askyesno(
-                "有未保存的修改", "功能开关、分工预设或编辑内容尚未保存。要放弃这些修改并退出吗？", parent=self.root):
-            return
+        if (self._feature_dirty or self._team_dirty or self._editor_is_dirty() or self._pending_rows):
+            # 2026-10-11 退出保险丝：确认弹窗先最小化主窗再问，弹窗成为
+            # 屏幕上唯一可见窗口（此前可能被主窗/其它窗口遮挡，用户
+            # 「点 X 没反应」实际是在等一个看不见的弹窗）。取消则恢复。
+            try:
+                was_normal = self.root.state() == "normal"
+                self.root.iconify()
+            except tk.TclError:
+                was_normal = False
+            try:
+                confirmed = messagebox.askyesno(
+                    "有未保存的修改", "功能开关、分工预设或编辑内容尚未保存。要放弃这些修改并退出吗？")
+            finally:
+                if was_normal:
+                    try:
+                        self.root.deiconify()
+                    except tk.TclError:
+                        pass
+            if not confirmed:
+                return
+        try:
+            self._close_for_real()
+        except Exception:
+            # 退出链任何一步异常都不能把窗口卡在桌面上。
+            try:
+                self.root.destroy()
+            except tk.TclError:
+                pass
+
+    def _close_for_real(self):
         self._closing = True
         desktop = getattr(self,'desktop_features',None)
-        if desktop is not None: desktop.close()
+        if desktop is not None:
+            try:
+                desktop.close()
+            except Exception:
+                pass
         self._cancel_history_render()
         self._cancel_market_render()
         self._cancel_market_filter()
