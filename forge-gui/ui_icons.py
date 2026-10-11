@@ -33,7 +33,10 @@ ICONS = {
     "plus": [("line", (12, 4, 12, 20)), ("line", (4, 12, 20, 12))],
     "minus": [("line", (4, 12, 20, 12))],
     "close": [("line", (6, 6, 18, 18)), ("line", (18, 6, 6, 18))],
-    "more": [("circle", (3, 10, 7, 14)), ("circle", (10, 10, 14, 14)), ("circle", (17, 10, 21, 14))],
+    # Filled dots keep the overflow affordance legible at 16–20px. Outlined
+    # dots blur into three small rings on Windows' non-retina scaling.
+    "more": [("dot", (3.5, 10.5, 6.5, 13.5)), ("dot", (10.5, 10.5, 13.5, 13.5)),
+             ("dot", (17.5, 10.5, 20.5, 13.5))],
     "chevron_right": [("line", (9, 5, 16, 12, 9, 19))],
     "chevron_left": [("line", (15, 5, 8, 12, 15, 19))],
     "chevron_down": [("line", (5, 9, 12, 16, 19, 9))],
@@ -53,7 +56,9 @@ ICONS = {
     "stop": [("rect", (6, 6, 18, 18))],
     "check": [("line", (4, 12, 10, 18, 21, 5))],
     "check_circle": [("circle", (2, 2, 22, 22)), ("line", (6, 12, 10, 16, 18, 8))],
-    "warning": [("poly", (12, 2, 23, 21, 1, 21)), ("line", (12, 8, 12, 14)), ("circle", (11.5, 17, 12.5, 18))],
+    # Keep the warning outline one grid unit inside the box so its stroke does
+    # not clip at small sizes.
+    "warning": [("poly", (12, 2, 22, 20, 2, 20)), ("line", (12, 8, 12, 14)), ("dot", (11, 16.5, 13, 18.5))],
     "error": [("circle", (2, 2, 22, 22)), ("line", (8, 8, 16, 16)), ("line", (16, 8, 8, 16))],
     "info": [("circle", (2, 2, 22, 22)), ("line", (12, 11, 12, 17)), ("circle", (11.5, 6, 12.5, 7))],
     "copy": [("rect", (8, 8, 21, 22)), ("line", (16, 4, 16, 2, 3, 2, 3, 16, 5, 16))],
@@ -116,6 +121,8 @@ def draw_icon(canvas, name, *, x=0, y=0, size=24, fg="#9A9AA8", tag="icon"):
             canvas.create_oval(*coordinates, outline=fg, width=width, tags=tag)
         elif kind == "rect":
             canvas.create_rectangle(*coordinates, outline=fg, width=width, tags=tag)
+        elif kind == "dot":
+            canvas.create_oval(*coordinates, outline="", fill=fg, tags=tag)
         else:
             canvas.create_polygon(*coordinates, outline=fg, fill="", width=width,
                                   joinstyle=tk.ROUND, tags=tag)
@@ -128,16 +135,95 @@ class IconCanvas(tk.Canvas):
         self.name, self._fg, self._size = (icon_key(name) or "file") if name else None, fg, size
         self._text = name
         self._command = command
+        self._base_bg = bg
+        self._state = tk.NORMAL
+        self._hovered = False
+        self._pressed = False
+        self._focused = False
         if command:
-            self.bind("<Button-1>", lambda _e: command())
-            self.bind("<Return>", lambda _e: command())
-            self.bind("<space>", lambda _e: command())
+            self.bind("<Return>", self._activate)
+            self.bind("<space>", self._activate)
+            self.bind("<Enter>", self._enter)
+            self.bind("<Leave>", self._leave)
+            self.bind("<ButtonPress-1>", self._press)
+            self.bind("<ButtonRelease-1>", self._release, add="+")
+            self.bind("<FocusIn>", self._focus_in)
+            self.bind("<FocusOut>", self._focus_out)
         self._draw()
+
+    @staticmethod
+    def _blend(color, target, amount):
+        """Blend #RRGGBB colors without timers or per-frame animation."""
+        if not (isinstance(color, str) and len(color) == 7 and color.startswith("#")):
+            return color
+        try:
+            source = tuple(int(color[index:index + 2], 16) for index in (1, 3, 5))
+        except ValueError:
+            return color
+        mixed = tuple(round(value + (goal - value) * amount) for value, goal in zip(source, target))
+        return "#%02X%02X%02X" % mixed
+
+    def _visual_bg(self):
+        if self._state == tk.DISABLED:
+            return self._base_bg
+        if self._pressed:
+            return self._blend(self._base_bg, (0, 0, 0), .14)
+        if self._hovered:
+            return self._blend(self._base_bg, (255, 255, 255), .10)
+        return self._base_bg
+
+    def _visual_fg(self):
+        return self._blend(self._fg, (128, 128, 128), .52) if self._state == tk.DISABLED else self._fg
+
+    def _redraw_visual(self):
+        if not hasattr(self, "name"):
+            return
+        enabled = self._state == tk.NORMAL and self._command
+        super().configure(bg=self._visual_bg(), cursor="hand2" if enabled else "arrow",
+                          takefocus=bool(enabled))
+        self._draw()
+
+    def _activate(self, _event=None):
+        if self._state == tk.NORMAL and self._command:
+            self._command()
+        return "break"
+
+    def _enter(self, _event=None):
+        self._hovered = self._state == tk.NORMAL
+        self._redraw_visual()
+
+    def _leave(self, _event=None):
+        self._hovered = self._pressed = False
+        self._redraw_visual()
+
+    def _press(self, _event=None):
+        if self._state == tk.NORMAL:
+            self._pressed = True
+            self._redraw_visual()
+            self._command()
+
+    def _release(self, _event=None):
+        if self._pressed:
+            self._pressed = False
+            self._redraw_visual()
+
+    def _focus_in(self, _event=None):
+        self._focused = True
+        self._redraw_visual()
+
+    def _focus_out(self, _event=None):
+        self._focused = False
+        self._redraw_visual()
 
     def _draw(self):
         self.delete("icon")
+        self.delete("focus")
         if self.name:
-            draw_icon(self, self.name, size=self._size, fg=self._fg)
+            draw_icon(self, self.name, size=self._size, fg=self._visual_fg())
+        if self._focused and self._state == tk.NORMAL:
+            inset = max(1, round(self._size / 16))
+            self.create_rectangle(inset, inset, self._size - inset, self._size - inset,
+                                  outline="#A19BFF", width=1, tags="focus")
 
     def configure(self, cnf=None, **kwargs):
         if isinstance(cnf, dict):
@@ -145,12 +231,18 @@ class IconCanvas(tk.Canvas):
             cnf = None
         if "fg" in kwargs:
             self._fg = kwargs.pop("fg")
+        if "bg" in kwargs:
+            self._base_bg = kwargs["bg"]
+        if "state" in kwargs:
+            self._state = kwargs.pop("state")
+            if self._state != tk.NORMAL:
+                self._hovered = self._pressed = False
         if "text" in kwargs:
             self._text = kwargs.pop("text")
             self.name = icon_key(self._text.strip()) if self._text else None
         result = super().configure(cnf, **kwargs) if cnf is not None else super().configure(**kwargs)
         if hasattr(self, "name"):
-            self._draw()
+            self._redraw_visual()
         return result
 
     config = configure
@@ -160,6 +252,8 @@ class IconCanvas(tk.Canvas):
             return self._fg
         if key == "text":
             return self._text
+        if key == "state":
+            return self._state
         return super().cget(key)
 
 

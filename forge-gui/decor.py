@@ -11,7 +11,8 @@ Tk Canvas 没有透明 fill，也没有渐变；这里的柔和观感全部靠
 - ``soft_orb``        柔光球：同心色阶圆，当「光晕」或品牌点缀
 - ``constellation``   星座图：节点 + 连线，呼应 agent 网络
 - ``circuit_lines``   电路纹：折线 + 端点，科技感角饰
-- ``hero_banner``     欢迎屏主视觉：orb + 星座 + 点阵的组合画
+- ``forge_motif``     Forge 火种切面 + Agent 轨道节点
+- ``hero_banner``     欢迎屏主视觉：静态 Forge 切面与节点轨道
 """
 from __future__ import annotations
 
@@ -146,30 +147,122 @@ def circuit_lines(canvas: tk.Canvas, x1, y1, x2, y2, *, bg: str,
     return n
 
 
+def forge_motif(canvas: tk.Canvas, cx: float, cy: float, size: float, *,
+                bg: str, accent: str = "#7C3AED",
+                accent2: str = "#5865F2", spark: str = "#F5BC74",
+                tag: str = "decor") -> int:
+    """绘制静态 Forge 火种切面与 Agent 轨道；坐标和笔画按 size 缩放。
+
+    图形以棱面核心代替发光球，以对称分叉轨道表达 Agent 协作；不触碰
+    原有品牌 logo，也不使用定时器或动画。返回 Canvas item 数量。
+    """
+    if not all(_hex_ok(c) for c in (bg, accent, accent2, spark)):
+        return 0
+    s = max(18.0, float(size))
+    half = s * 0.5
+    line = max(1.0, s / 64.0)
+    faint = mix(accent2, bg, 0.68)
+    rail = mix(accent2, bg, 0.48)
+    n = 0
+
+    # 中心六边切面：外框、两侧金属面与中间火种。保留足够的空隙，
+    # 在 112px 高的欢迎横幅上仍能读成清晰标记，而不是一团光斑。
+    outer = [(cx, cy - half * .72), (cx + half * .58, cy - half * .38),
+             (cx + half * .58, cy + half * .38), (cx, cy + half * .72),
+             (cx - half * .58, cy + half * .38), (cx - half * .58, cy - half * .38)]
+    canvas.create_polygon(*[v for p in outer for v in p], fill=mix(accent2, bg, .84),
+                          outline=accent2, width=line, joinstyle=tk.ROUND, tags=(tag,))
+    n += 1
+    canvas.create_polygon(cx, cy - half * .48, cx - half * .38, cy - half * .25,
+                          cx - half * .38, cy + half * .24, cx, cy + half * .47,
+                          fill=mix(accent2, bg, .62), outline=faint, width=line,
+                          tags=(tag,))
+    canvas.create_polygon(cx, cy - half * .48, cx + half * .38, cy - half * .25,
+                          cx + half * .38, cy + half * .24, cx, cy + half * .47,
+                          fill=mix(accent, bg, .73), outline=faint, width=line,
+                          tags=(tag,))
+    canvas.create_line(cx - half * .38, cy - half * .25, cx, cy,
+                       cx + half * .38, cy - half * .25,
+                       fill=accent2, width=line, tags=(tag,))
+    canvas.create_line(cx, cy, cx, cy + half * .47,
+                       fill=rail, width=line, tags=(tag,))
+    n += 4
+
+    # 上方短促的锻火切片，采用棱形而非星点/光晕。
+    tip_y = cy - half * .9
+    canvas.create_polygon(cx, tip_y - half * .16, cx + half * .095, tip_y,
+                          cx, tip_y + half * .2, cx - half * .095, tip_y,
+                          fill=spark, outline="", tags=(tag,))
+    canvas.create_line(cx, tip_y + half * .18, cx, cy - half * .64,
+                       fill=accent, width=line, tags=(tag,))
+    n += 2
+
+    # 两段未闭合轨道和左右分叉节点；轨道刻意断开，形成有方向的切口。
+    orbit = half * .91
+    box = (cx - orbit, cy - orbit, cx + orbit, cy + orbit)
+    for start, extent in ((36, 104), (216, 104)):
+        canvas.create_arc(*box, start=start, extent=extent, style=tk.ARC,
+                          outline=rail, width=line, tags=(tag,))
+        n += 1
+
+    branch = half * .58
+    reach = half * 1.24
+    nodes = []
+    for side in (-1, 1):
+        core_x = cx + side * half * .58
+        mid_x = cx + side * branch
+        for dy in (-half * .48, half * .48):
+            node_x = cx + side * reach
+            node_y = cy + dy * .68
+            canvas.create_line(core_x, cy + dy * .42, mid_x, cy + dy * .42,
+                               node_x, node_y, fill=rail, width=line,
+                               joinstyle=tk.ROUND, tags=(tag,))
+            nodes.append((node_x, node_y, side == 1 and dy < 0))
+            n += 1
+    # 每侧主节点及两枚次节点，尺寸和对比度分级，不画随机星座。
+    for nx, ny, primary in nodes:
+        r = max(1.6, s * (.045 if primary else .032))
+        color = accent if primary else accent2
+        canvas.create_oval(nx - r * 1.7, ny - r * 1.7,
+                           nx + r * 1.7, ny + r * 1.7,
+                           fill=mix(color, bg, .7), outline="", tags=(tag,))
+        canvas.create_oval(nx - r, ny - r, nx + r, ny + r,
+                           fill=color, outline="", tags=(tag,))
+        n += 2
+    return n
+
+
 def hero_banner(parent, width: int, height: int, *, bg: str,
                 accent: str = "#7C3AED", accent2: str = "#5865F2",
-                seed: int = 11) -> tk.Canvas:
-    """欢迎屏主视觉：柔光球 + 星座 + 点阵 + 电路纹的组合画布。"""
+                seed: int = 11, spark: str = "#F5BC74") -> tk.Canvas:
+    """欢迎屏 Forge 主视觉：棱面火种、分叉 Agent 轨道与静态边框刻线。
+
+    ``width``/``height`` 和历史 API 保持不变；seed 保留以兼容现有调用。
+    所有绘制均为静态 Canvas item，无动画、无定时器。
+    """
+    del seed  # API 兼容；几何为固定品牌构图，不再使用随机星座。
     canvas = tk.Canvas(parent, width=width, height=height, bg=bg,
                        highlightthickness=0, bd=0)
-    pad = 8  # 光晕最大半径约 6px；留 8px 边距防止被画布裁切
-    # 背景点阵（整幅，步距大一点保持克制）
-    dot_grid(canvas, pad + 8, pad + 4, width - pad - 8, height - pad - 4,
-             bg=bg, fg=accent2, step=24, r=1.0)
-    # 左右两团柔光球，主体居中偏上
-    soft_orb(canvas, width * 0.30, height * 0.46, height * 0.40,
-             bg=bg, fg=accent2, layers=10)
-    soft_orb(canvas, width * 0.72, height * 0.58, height * 0.28,
-             bg=bg, fg=accent, layers=8)
-    # 中央星座（留出光晕边距）
-    constellation(canvas, width * 0.16, pad + 8,
-                  width * 0.84, height - pad - 8, bg=bg, count=10, seed=seed)
-    # 角落电路纹
-    circuit_lines(canvas, pad + 4, pad + 4, width * 0.4, height - pad - 4,
-                  bg=bg, seed=seed)
-    circuit_lines(canvas, width * 0.6, pad + 4, width - pad - 4, height - pad - 4,
-                  bg=bg, fg=accent2, seed=seed + 1)
-    # 中心主 orb（品牌核）
-    soft_orb(canvas, width / 2, height * 0.46, height * 0.24,
-             bg=bg, fg=accent, layers=9, core="#EDE9FE")
+    if width <= 0 or height <= 0 or not _hex_ok(bg):
+        return canvas
+
+    # 横向切面轨道利用宽画幅留白，中心保持紧凑，边缘不堆叠点阵。
+    scale = min(float(height) * .68, float(width) * .27)
+    cx, cy = width * .5, height * .5
+    fine = mix(accent2, bg, .72) if _hex_ok(accent2) else bg
+    line = max(1.0, scale / 64.0)
+    left, right = width * .075, width * .925
+    rail_y = cy + scale * .48
+    canvas.create_line(left, rail_y, cx - scale * 1.02, rail_y,
+                       fill=fine, width=line, tags=("decor",))
+    canvas.create_line(cx + scale * 1.02, rail_y, right, rail_y,
+                       fill=fine, width=line, tags=("decor",))
+    # 边缘刻线用同一相对尺度，适配不同横幅尺寸与 Tk DPI 缩放。
+    for x, direction in ((left, 1), (right, -1)):
+        canvas.create_line(x, rail_y - scale * .11,
+                           x + direction * scale * .16, rail_y,
+                           x, rail_y + scale * .11,
+                           fill=fine, width=line, tags=("decor",))
+    forge_motif(canvas, cx, cy, scale, bg=bg, accent=accent,
+                accent2=accent2, spark=spark, tag="decor")
     return canvas

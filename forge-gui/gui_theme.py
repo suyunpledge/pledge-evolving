@@ -4,7 +4,7 @@
 `forge_gui_v2.py`、`workspace.py`、`chat_widgets.py` 全部从这里取，
 避免三处各写一套 token。
 
-暖灰深色层级搭配 Indigo 操作色；绿色气泡区分用户消息。
+深墨色层级搭配 Indigo 操作色与冷紫光边；绿色气泡区分用户消息。
 正文与必要说明优先保证对比度。自绘控件提供键盘激活和可见焦点，
 常用操作保持足够热区，工具提示延迟出现并随控件销毁而清理。
 
@@ -28,65 +28,67 @@ IS_WINDOWS = platform.system() == "Windows"
 
 C: dict[str, str] = {
     # 背景层级
-    "bg": "#141414",            # 主背景（暖灰黑）
-    "activity": "#0F0F0F",
-    "sidebar": "#1C1C1C",
-    "sidebar_history": "#171717",
-    "chat": "#141414",
-    "surface": "#232323",
-    "surface2": "#1C1C1C",
-    "surface_subtle": "#1F1F1F",
-    "hover": "#262626",
-    "sel": "#2B2940",
-    "code_bg": "#1A1A1A",
-    "input_bg": "#1F1F1F",
+    "bg": "#11131B",            # 主背景：带轻微冷色的深墨
+    "activity": "#0D1018",
+    "sidebar": "#171B25",
+    "sidebar_history": "#131720",
+    "chat": "#11131B",
+    "surface": "#202636",
+    "surface2": "#191F2D",
+    "surface_subtle": "#1A2030",
+    "hover": "#283248",
+    "sel": "#2C2B4C",
+    "code_bg": "#131824",
+    "input_bg": "#1A2030",
     "black": "#000000",
 
     # 线条
-    "border": "#2A2A2A",
-    "border_hi": "#42424B",
-    "sel_border": "#3A3A3A",
-    "scroll": "#3A3A3A",
+    "border": "#2C3446",
+    "border_hi": "#47536B",
+    "sel_border": "#625B98",
+    "scroll": "#45516B",
 
     # 主色
-    "accent": "#4F46E5",
-    "accent_hover": "#6366F1",
-    "accent2": "#7C7CF0",
-    "accent_soft": "#232145",
-    "accent_border": "#3D3782",
-    "accent_text": "#C7C7FF",
+    "accent": "#5955D9",
+    "accent_hover": "#6962E3",
+    "accent2": "#A19BFF",
+    "accent_soft": "#292645",
+    "accent_border": "#7971BD",
+    "accent_text": "#D7D1FF",
+    "brand_ice": "#BDCAFF",       # 仅用于品牌图形，避免混同状态颜色
+    "brand_spark": "#F5BC74",
 
     # 语义
     "ok": "#22C55E",
     "ok_soft": "#132C1C",
     "warn": "#F59E0B",
     "warn_soft": "#2E2410",
-    "error": "#EF4444",
-    "error_soft": "#2E1315",
-    "info": "#7C7CF0",
-    "info_soft": "#1C1B33",
-    "link": "#7C7CF0",
-    "link_soft": "#1C1B33",
+    "error": "#FB7185",
+    "error_soft": "#321C2A",
+    "info": "#A19BFF",
+    "info_soft": "#25243C",
+    "link": "#B4AEFF",
+    "link_soft": "#25243C",
 
     # 文字
-    "text": "#E9E9F0",
-    "body": "#D2D2DC",
-    "subtext": "#9A9AA8",
-    "muted": "#9595A3",
-    "ter": "#8A8A96",
-    "placeholder": "#9595A3",
+    "text": "#EDF0FF",
+    "body": "#D5DCEE",
+    "subtext": "#ABB5CD",
+    "muted": "#A2ADC5",
+    "ter": "#A2ADC5",
+    "placeholder": "#A2ADC5",
     "comment": "#5C6370",
 
     # 消息气泡：两侧要能看出「谁在说」，又不能让深色界面变花。
     # user 带一点主色倾向（“我说的话”），agent 用中性面；两者都配一道 hairline 描边。
     "msg_user_bg": "#206D3B",         # 保留绿色角色区分，白色正文有足够对比度
     "msg_user_fg": "#FFFFFF",          # 用户气泡文字（白）
-    "msg_agent_bg": "#242429",         # AI 消息与代码区保持轻微层次
-    "msg_agent_fg": "#E8E8E8",         # AI 气泡文字（浅灰）
+    "msg_agent_bg": "#202638",         # AI 消息与代码区保持轻微层次
+    "msg_agent_fg": "#E8ECFA",         # AI 气泡文字（浅灰）
     "msg_user_bg_old": "#232134",
     "msg_agent_bg_old": "#1A1A22",
     "msg_user_border": "#34834E",
-    "msg_agent_border": "#3C3C48",
+    "msg_agent_border": "#45516C",
 
     # 代码高亮（One Dark 近似）
     "code_kw": "#C678DD",
@@ -826,19 +828,37 @@ def dot(parent, color, *, size=8, bg=None):
     return cv
 
 
+def _circle_palette(kind):
+    palettes = {
+        "primary": (C["accent"], "#FFFFFF", C["accent_hover"], C["accent_border"], C["accent_soft"]),
+        "muted": (C["surface2"], C["muted"], C["hover"], C["border_hi"], C["surface_subtle"]),
+        "danger": (C["surface2"], C["error"], C["error_soft"], C["error"], C["surface_subtle"]),
+    }
+    return palettes.get(kind, palettes["primary"])
+
+
+def _paint_circle(cv):
+    from decor import mix
+    fill, _fg, hover, border, pressed = cv._circle_palette
+    active = cv._enabled
+    color = pressed if active and cv._pressed else hover if active and cv._hovered else fill
+    cv.itemconfigure(cv._oval, fill=color, outline=border)
+    cv.itemconfigure(cv._sheen, outline=mix(C["brand_ice"], color, .65),
+                     state=tk.NORMAL if active and cv._kind == "primary" else tk.HIDDEN)
+
+
 def circle_button(parent, glyph, command, *, size=30, kind="primary", bg=None,
                   glyph_size=None, tooltip=None):
     """圆形按钮（发送 ↑ / 停止 ■）。"""
     base = bg or _bg_of(parent)
-    palettes = {
-        "primary": (C["accent"], "#FFFFFF", C["accent_hover"]),
-        "muted": (C["surface2"], C["muted"], C["hover"]),
-        "danger": (C["surface2"], C["error"], C["error_soft"]),
-    }
-    fill, fg, hov = palettes.get(kind, palettes["primary"])
+    fill, fg, hov, border, _pressed = _circle_palette(kind)
     cv = tk.Canvas(parent, width=size, height=size, bg=base,
                    highlightthickness=0, bd=0, cursor="hand2")
-    oval = cv.create_oval(0, 0, size - 1, size - 1, fill=fill, outline="")
+    oval = cv.create_oval(1, 1, size - 2, size - 2, fill=fill, outline=border)
+    from decor import mix
+    sheen = cv.create_arc(3, 3, size - 4, size - 4, start=45, extent=90,
+                          style=tk.ARC, outline=mix(C["brand_ice"], fill, .65), width=1,
+                          state=tk.NORMAL if kind == "primary" else tk.HIDDEN)
     icon = icon_key(glyph)
     if icon:
         icon_size = max(14, size-12)
@@ -851,10 +871,22 @@ def circle_button(parent, glyph, command, *, size=30, kind="primary", bg=None,
     cv._icon_size = max(14, size-12)
     cv._button_size = size
     cv._enabled = True
+    cv._kind, cv._circle_palette = kind, _circle_palette(kind)
+    cv._hovered = cv._pressed = False
+    cv._sheen = sheen
     bind_keyboard_action(cv, command)
-    cv.bind("<Button-1>", lambda _e: command() if cv._enabled else None)
-    cv.bind("<Enter>", lambda _e: cv.itemconfigure(oval, fill=cv._palette[1]) if cv._enabled else None)
-    cv.bind("<Leave>", lambda _e: cv.itemconfigure(oval, fill=cv._palette[0]))
+    def paint(hovered=None, pressed=None):
+        if hovered is not None: cv._hovered = hovered
+        if pressed is not None: cv._pressed = pressed
+        _paint_circle(cv)
+    def invoke(_event):
+        if cv._enabled:
+            paint(pressed=True)
+            command()
+    cv.bind("<Button-1>", invoke)
+    cv.bind("<ButtonRelease-1>", lambda _e: paint(pressed=False))
+    cv.bind("<Enter>", lambda _e: paint(hovered=True))
+    cv.bind("<Leave>", lambda _e: paint(hovered=False, pressed=False))
     if tooltip:
         attach_tooltip(cv, tooltip)
     cv._palette = (fill, hov)  # type: ignore[attr-defined]
@@ -865,13 +897,9 @@ def circle_button(parent, glyph, command, *, size=30, kind="primary", bg=None,
 
 def circle_button_state(cv, kind: str, *, enabled=None):
     """切换圆形按钮状态（primary/muted/danger）。"""
-    palettes = {
-        "primary": (C["accent"], "#FFFFFF", C["accent_hover"]),
-        "muted": (C["surface2"], C["muted"], C["hover"]),
-        "danger": (C["surface2"], C["error"], C["error_soft"]),
-    }
-    fill, fg, hov = palettes.get(kind, palettes["primary"])
-    cv.itemconfigure(cv._oval, fill=fill)          # type: ignore[attr-defined]
+    fill, fg, hov, border, pressed = _circle_palette(kind)
+    cv._kind, cv._circle_palette = kind, (fill, fg, hov, border, pressed)
+    cv._pressed = False
     if getattr(cv, "_icon_name", None):
         cv.delete("glyph")
         offset = (cv._button_size-cv._icon_size)/2
@@ -882,6 +910,7 @@ def circle_button_state(cv, kind: str, *, enabled=None):
     if enabled is not None:
         cv._enabled = bool(enabled)
         cv.configure(takefocus=int(cv._enabled), cursor="hand2" if cv._enabled else "arrow")
+    _paint_circle(cv)
 
 
 # ─── 滚动 / ttk 主题 ───────────────────────────────────────

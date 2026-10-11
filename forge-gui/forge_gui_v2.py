@@ -1133,7 +1133,7 @@ class ForgeGuiApp:
     def _paint_activity(self, key, *, hover=False):
         active = key == getattr(self, "_active_nav", "chat")
         bg = C["sel"] if active else C["hover"] if hover else C["sidebar"]
-        fg = C["text"] if active or hover else C["ter"]
+        fg = C["accent_text"] if active else C["text"] if hover else C["ter"]
         for holder, inner in self._nav_widgets.get(key, []):
             holder.configure(bg=bg, highlightbackground=bg)
             inner.configure(bg=bg)
@@ -2985,7 +2985,8 @@ class ForgeGuiApp:
         self._active_nav = key
         for nav_key, button in getattr(self, "sidebar_shortcuts", {}).items():
             button.configure(bg=C["sel"] if nav_key == key else C["surface2"],
-                             fg=C["text"] if nav_key == key else C["ter"])
+                             fg=C["accent_text"] if nav_key == key else C["ter"],
+                             highlightbackground=C["sel_border"] if nav_key == key else C["border"])
         for nav_key, widgets in self._nav_widgets.items():
             active = nav_key == key
             for holder, inner in widgets:
@@ -2996,7 +2997,7 @@ class ForgeGuiApp:
                 bg = C["sel"] if active else base
                 holder.configure(bg=bg)
                 inner.configure(bg=bg)
-            fg = C["text"] if active else C["ter"]
+            fg = C["accent_text"] if active else C["ter"]
             for icon, text in self._activity_labels.get(nav_key, []):
                 icon.configure(bg=C["sel"] if active else C["sidebar"], fg=fg)
                 text.configure(bg=C["sel"] if active else C["sidebar"], fg=fg)
@@ -4597,6 +4598,10 @@ class ForgeGuiApp:
 
     def _on_model_picked(self, value: str) -> None:
         """从下拉里选中一个模型：model_var 的 trace 负责后续（必要时重启 gateway）。"""
+        # The picker has returned focus to its owner before invoking this
+        # callback. Model selection finishes in the composer, including when
+        # the picker was opened via keyboard rather than from the Text widget.
+        self.input_card.focus_entry()
         brand = brand_marks.detect(
             model=value, provider=select_provider(self.user_rows, value))
         if brand is not None:

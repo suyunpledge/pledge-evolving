@@ -42,7 +42,8 @@ class IsolatedResult(unittest.TextTestResult):
 
 def main():
     names = sys.argv[1:] or [
-        "test_sysmon", "test_ui_icons", "test_chat_widgets", "test_gui_review",
+        "test_sysmon", "test_ui_icons", "test_icon_identity", "test_brand_decor", "test_visual_identity",
+        "test_chat_widgets", "test_gui_review",
         "test_interactions", "test_refactor_v3", "test_sub_agent", "test_runtime_review",
         "test_ui_ergonomics", "test_startup_responsiveness",
         "test_full_review", "test_config_model", "test_forge_client", "test_integration",
@@ -50,7 +51,7 @@ def main():
         "test_plugin_market", "test_plugin_runtime", "test_plugin_adversarial",
         "test_plugin_capabilities", "test_plugin_market_ui", "test_compat_sources", "test_i18n", "check_i18n_coverage", "test_remote_sources", "test_ime_inline", "test_responsiveness_v2",
         "test_market_responsiveness", "test_ui_polish", "test_gateway_startup_lifecycle",
-        "test_message_delivery", "test_interaction_intent",
+        "test_message_delivery", "test_interaction_intent", "test_model_picker_focus",
         "test_provider_adaptation",
         "test_secret_boundary",
         "test_task_planning",

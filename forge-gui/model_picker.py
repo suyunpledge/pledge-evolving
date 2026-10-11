@@ -95,6 +95,7 @@ class ModelPicker(tk.Frame):
         self._router_heading: i18n.Label | None = None
         self._router_detail: i18n.Label | None = None
         self._popup_owner: tk.Misc | None = None
+        self._return_focus: tk.Misc | None = None
         self._popup_bindings: list[tuple[tk.Misc, str, str]] = []
         self._dismiss_after_id: str | None = None
 
@@ -331,13 +332,16 @@ class ModelPicker(tk.Frame):
 
     def open_menu(self) -> None:
         if self._popup is not None:
-            self.close_menu()
+            self.close_menu(restore_focus=True)
             return
+        owner = self.winfo_toplevel()
+        focused = owner.focus_get()
+        self._return_focus = (focused if focused is not None and
+                              str(focused.winfo_toplevel()) == str(owner) else self)
         pop = i18n.Toplevel(self)
         pop.withdraw()
         pop.overrideredirect(True)
         pop.configure(bg=C["border_hi"])
-        owner = self.winfo_toplevel()
         try:
             # 这是 Forge 内部的浮层，不是系统级悬浮窗。绑定 owner 后它只会压在
             # Forge 上方；切到其它应用或最小化 Forge 时不会继续挡在桌面前面。
@@ -429,7 +433,7 @@ class ModelPicker(tk.Frame):
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         pop.bind("<MouseWheel>", lambda e: (canvas.yview_scroll(-1 if e.delta > 0 else 1,
                                                                   "units"), "break")[-1])
-        pop.bind("<Escape>", lambda _e: self.close_menu())
+        pop.bind("<Escape>", self._cancel_menu)
         pop.bind("<Button-1>", self._maybe_close)
         self._bind_popup_lifecycle(pop, owner)
         self._rebuild_list()
@@ -925,21 +929,25 @@ class ModelPicker(tk.Frame):
             self.close_menu()
 
     def _select(self, value: str) -> None:
-        # 2026-10-11 顺序反转：先关浮层再改 var。原顺序在浮层 Button-1
-        # 事件里同步触发 var trace → gateway 重启（taskkill+拉进程），
-        # 进程销毁/创建的窗口消息打进浮层销毁中的事件链，消息泵可卡死
-        # （用户实测「换个模型就打不出字」）。关完浮层再切，重启发生在
-        # 干净的事件上下文里。
-        self.close_menu()
+        # Destroying a focused override-redirect window can leave Windows/Tk
+        # with no keyboard target. Return focus before destroying it, then let
+        # variable traces and the selection callback update the model.
+        self.close_menu(restore_focus=True)
         self.var.set(value)
         if self._on_select is not None:
             self._on_select(value)
 
-    def close_menu(self) -> None:
+    def _cancel_menu(self, _event=None):
+        self.close_menu(restore_focus=True)
+        return "break"
+
+    def close_menu(self, *, restore_focus: bool = False) -> None:
         pop = self._popup
         self._popup = None
         owner = self._popup_owner
         self._popup_owner = None
+        target = self._return_focus
+        self._return_focus = None
         if self._dismiss_after_id is not None and owner is not None:
             try:
                 owner.after_cancel(self._dismiss_after_id)
@@ -960,6 +968,20 @@ class ModelPicker(tk.Frame):
         self._thinking_widgets.clear()
         if pop is None:
             return
+        if restore_focus and owner is not None:
+            try:
+                focused = owner.focus_displayof()
+                # Only explicit selection/cancellation while this popup still
+                # owns focus may return it. Background dismissal and outside
+                # clicks must keep the destination chosen by the user.
+                if (focused is not None and
+                        str(focused.winfo_toplevel()) == str(pop) and
+                        str(owner.wm_state()) not in {"iconic", "withdrawn"}):
+                    if target is None or not target.winfo_exists() or not target.winfo_ismapped():
+                        target = self
+                    target.focus_set()
+            except tk.TclError:
+                pass
         try:
             pop.destroy()
         except tk.TclError:
