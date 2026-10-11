@@ -2999,16 +2999,20 @@ class ForgeGuiApp:
             side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8), ipady=4)
         pill_button(prow, tr("检索"), self._kb_probe, icon="?").pack(side=tk.LEFT)
         self._kb_probe_var = tk.StringVar(value="")
-        i18n.Label(probe.content, textvariable=self._kb_probe_var, bg=C["surface"],
+        probe_label = i18n.Label(probe.content, textvariable=self._kb_probe_var, bg=C["surface"],
                    fg=C["ter"], font=FONT_SMALL, justify=tk.LEFT,
-                   anchor="w", wraplength=640).pack(fill=tk.X, anchor="w")
+                   anchor="w", wraplength=640)
+        probe_label.pack(fill=tk.X, anchor="w")
+        probe_label.bind("<Configure>", lambda e: probe_label.configure(
+            wraplength=max(200, e.width - 8)) if int(str(probe_label.cget("wraplength"))) != max(200, e.width - 8) else None)
 
         # 条目列表
         self._kb_list = ttk2.Treeview(wrap, columns=("kind", "text", "created"),
                                       show="headings", height=12)
+        # text 列 stretch 弹性（M 型限宽由外层 bind_packed_column 承担）
         for field, title, width in (("kind", tr("类型"), 70),
-                                    ("text", tr("内容"), 460),
-                                    ("created", tr("时间"), 130)):
+                                    ("text", tr("内容"), 440),
+                                    ("created", tr("时间"), 120)):
             self._kb_list.heading(field, text=title)
             self._kb_list.column(field, width=width, minwidth=50)
         self._kb_list.pack(fill=tk.BOTH, expand=True, pady=(4, 6))
@@ -3114,7 +3118,7 @@ class ForgeGuiApp:
         self._evo_list = ttk2.Treeview(wrap, columns=("state", "summary", "risk"),
                                        show="headings", height=12)
         for field, title, width in (("state", tr("状态"), 90),
-                                    ("summary", tr("候选内容"), 470),
+                                    ("summary", tr("候选内容"), 440),
                                     ("risk", tr("风险"), 80)):
             self._evo_list.heading(field, text=title)
             self._evo_list.column(field, width=width, minwidth=50)
