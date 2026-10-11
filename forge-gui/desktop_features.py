@@ -131,6 +131,13 @@ class DesktopFeatures:
                 self.app._post_ui(self.app._set_status,str(redact(str(exc))),'error')
         threading.Thread(target=worker,name='Forge-Desktop-Action',daemon=True).start()
 
+    def _jobs_hosted(self):
+        """定时任务 UI 是否仍被托管（弹窗或主工作区页面任一存活）。"""
+        if self.window is not None and self.window.winfo_exists():
+            return True
+        host = getattr(self, 'jobs_host_page', None)
+        return host is not None and host.winfo_exists()
+
     def open(self, tab=0):
         if self.window is not None and self.window.winfo_exists():
             self.notebook.select(tab); self.window.lift(); return
@@ -151,6 +158,23 @@ class DesktopFeatures:
         preview = self._page(tr('代码预览'))
         self._jobs_ui(jobs); self._connectors_ui(connectors); self._preview_ui(preview)
         self.notebook.select(tab)
+
+    def mount_page(self, parent, tab=0):
+        """主工作区模式（Phase 2A 补充）：把指定页面构建进 Forge 主区容器。
+
+        定时任务不再开独立 Toplevel（任务书：管理页面不进弹窗）。
+        连接器/代码预览仍走 open()（保留弹窗形态）。
+        """
+        page = tk.Frame(parent, bg=C['surface'])
+        page.pack(fill='both', expand=True)
+        if tab == 0:
+            self.jobs_host_page = page
+            self._jobs_ui(page)
+        elif tab == 1:
+            self._connectors_ui(page)
+        else:
+            self._preview_ui(page)
+        return page
 
     def _close_window(self):
         self.auth_cancel.set()
@@ -247,14 +271,14 @@ class DesktopFeatures:
         except Exception as exc: self.app._set_status(str(exc),'error')
 
     def _refresh_jobs(self):
-        if self.window is None or not self.window.winfo_exists(): return
+        if not self._jobs_hosted(): return
         def read():
             if not self.ready.wait(3) or not hasattr(self,'store'): raise RuntimeError('Desktop service unavailable')
             return self.store.jobs()
         self.app._submit_background('desktop-jobs',read,self._show_jobs)
 
     def _show_jobs(self, rows):
-        if self.window is None or not self.window.winfo_exists(): return
+        if not self._jobs_hosted(): return
         self.job_rows = {r['id']:r for r in rows}
         self.job_list.delete(*self.job_list.get_children())
         for row in rows:

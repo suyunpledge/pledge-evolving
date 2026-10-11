@@ -168,6 +168,7 @@ IS_WINDOWS = platform.system() == "Windows"
 NAV_ITEMS = [
     ("chat", tr("对话"), "💬"),
     ("task", tr("任务"), "✅"),
+    ("schedules", tr("定时任务"), "⏰"),
     ("agents", "Agents", "🤖"),
     ("tools", tr("工具 / 插件市场"), "🧰"),
     ("knowledge", tr("知识库"), "📚"),
@@ -179,7 +180,7 @@ NAV_LABEL = {key: label for key, label, _g in NAV_ITEMS}
 NAV_GLYPH = {key: glyph for key, _l, glyph in NAV_ITEMS}
 # 主轨道只呈现已经可以完成工作的视图。仍保留旧视图及其调用入口，
 # 但将规划中页面降到「更多」，避免把占位页冒充成正式产品能力。
-PRIMARY_NAV = {"chat", "task", "tools", "config"}
+PRIMARY_NAV = {"chat", "task", "schedules", "tools", "config"}
 
 
 class ActivityGlyph(tk.Canvas):
@@ -966,7 +967,7 @@ class ForgeGuiApp:
                                     command=self._toggle_sidebar)
         # Phase 2A 导航去重：task/项目文件已进全局导航（PRIMARY_NAV），
         # 重复入口移除；「更多」只留低频功能与 desktop_features 专属入口。
-        self._more_menu.add_command(label=tr('定时任务'), command=lambda:self.desktop_features.open(0))
+        # 定时任务已进全局导航（Phase 2A 补充），弹窗入口移除
         self._more_menu.add_command(label=tr('连接器'), command=lambda:self.desktop_features.open(1))
         self._more_menu.add_command(label=tr('代码预览'), command=lambda:self.desktop_features.open(2))
         self._more_menu.add_separator()
@@ -1661,7 +1662,7 @@ class ForgeGuiApp:
             "config": self.tab_manage,
         }
         self._lazy_views = set()
-        for key in ("agents", "knowledge", "evolution", "files"):
+        for key in ("schedules", "agents", "knowledge", "evolution", "files"):
             frame = tk.Frame(center, bg=C["bg"])
             if key == "agents":
                 # agents 视图 = 真实配置面板（集群/分工/记忆模式）
@@ -2936,6 +2937,11 @@ class ForgeGuiApp:
             self._set_status(f"打开插件目录失败：{exc}", "error")
 
     def _build_stub_view(self, parent, key: str):
+        if key == "schedules":
+            # Phase 2A 补充：定时任务迁入主工作区（L 型内容布局）。
+            # 页面尺寸 ≠ 应用窗口尺寸：不改变 Forge 主窗口大小。
+            self.desktop_features.mount_page(parent, 0)
+            return
         title, subtitle, bullets, note = self.STUB_TEXT.get(key, (key, "", (), ""))
         wrap = tk.Frame(parent, bg=C["bg"])
         wrap.pack(fill=tk.BOTH, expand=True, padx=24, pady=24)
