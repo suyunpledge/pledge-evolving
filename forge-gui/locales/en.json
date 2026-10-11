@@ -471,5 +471,9 @@
   "配置API": "API Settings",
   "📂 项目": "📂 Project",
   "🤖 Agent 集群": "🤖 Agent Cluster",
-  "模式：{label}": "Mode: {label}"
+  "模式：{label}": "Mode: {label}",
+  "查看详情": "Show details",
+  "收起详情": "Hide details",
+  "协作与通信": "Collaboration and communication",
+  "模型请求失败": "Model request failed"
 }

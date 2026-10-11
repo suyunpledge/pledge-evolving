@@ -22,7 +22,7 @@ from forge.desktop_services import DesktopStore, ConnectorService, OPERATIONS
 from forge.secrets import SecretScope, redact
 from forge.policy import Policy, Mode, Sandbox
 from change_preview import prepare_change, check_revisions
-from gui_theme import bind_scoped_wheel
+from gui_theme import bind_scoped_wheel, bind_canvas_column, FORM_WIDTH, style_editor, FONT_TITLE
 
 
 class DesktopFeatures:
@@ -143,6 +143,8 @@ class DesktopFeatures:
         window.bind('<Escape>',lambda _:self._close_window())
         head = tk.Frame(window,bg=C['bg']); head.pack(fill='x',padx=16,pady=10)
         pill_button(head,tr('返回工作区'),self._close_window,icon='◀').pack(side='left')
+        i18n.Label(head, text=tr('自动化与连接器'), bg=C['bg'], fg=C['text'],
+                   font=FONT_TITLE).pack(side='left', padx=16)
         self.notebook = ttk.Notebook(window); self.notebook.pack(fill='both',expand=True,padx=16,pady=(0,16))
         jobs = self._page(tr('定时任务'))
         connectors = self._page(tr('连接器'))
@@ -166,7 +168,7 @@ class DesktopFeatures:
         page=tk.Frame(canvas,bg=C['surface'],padx=14,pady=12)
         item=canvas.create_window((0,0),window=page,anchor='nw')
         page.bind('<Configure>',lambda _:canvas.configure(scrollregion=canvas.bbox('all')))
-        canvas.bind('<Configure>',lambda e:canvas.itemconfigure(item,width=e.width))
+        bind_canvas_column(canvas,item,max_width=FORM_WIDTH,gutter=0)
         bind_scoped_wheel(canvas,page)
         return page
 
@@ -191,8 +193,8 @@ class DesktopFeatures:
     def entry(self,parent,label,value='',secret=False):
         self.label(parent,label)
         var = tk.StringVar(value=value)
-        tk.Entry(parent,textvariable=var,show='•' if secret else '',bg=C['input_bg'],fg=C['text'],insertbackground=C['text'],
-                 font=FONT_SMALL,relief='flat',highlightthickness=1,highlightbackground=C['border_hi'],highlightcolor=C['accent2']).pack(fill='x',ipady=4)
+        style_editor(tk.Entry(parent,textvariable=var,show='•' if secret else '',
+                             font=FONT_SMALL)).pack(fill='x',ipady=4)
         return var
 
     def text(self,parent,height=6):
@@ -202,6 +204,7 @@ class DesktopFeatures:
                        highlightthickness=1,highlightbackground=C['border_hi'])
         bar = ttk.Scrollbar(frame,command=text.yview); bar.pack(side='right',fill='y')
         text.configure(yscrollcommand=bar.set); text.pack(fill='both',expand=True)
+        style_editor(text)
         return text
 
     def workspace(self):
@@ -288,6 +291,7 @@ class DesktopFeatures:
         for key,title in [('read',tr('允许读取')),('write',tr('允许写入')),('agent',tr('允许 Agent 使用'))]:
             var = self.grants[key] = tk.BooleanVar(value=False)
             i18n.Checkbutton(row,text=title,variable=var,bg=C['surface'],fg=C['text'],selectcolor=C['sel']).pack(side='left',padx=(0,12))
+        flow_controls(row)
         self.scope_label=self.label(page,tr('Microsoft 权限范围（按需选择；更改后重新登录）'))
         self.scopes = sorted({op.scope for op in OPERATIONS.values() if op.scope})
         self.scope_list = tk.Listbox(page,selectmode='multiple',exportselection=False,height=5,bg=C['input_bg'],fg=C['body'],

@@ -206,7 +206,11 @@ class ProcessOwnershipTests(unittest.TestCase):
             app.run_py, app.home = home / "run.py", home
             app._post_ui = Mock()
             command = f'python.exe "{app.run_py}" gateway --home "{home}"'
-            for parent_alive, run_path, expected in ((True, command, 2), (False, command.replace("run.py", "other.py"), 2), (False, command, 3)):
+            foreign = command.replace(str(app.run_py), str(home / 'foreign' / 'run.py'))
+            other_home = command.replace(f'--home "{home}"', f'--home "{home / "other-home"}"')
+            for parent_alive, run_path, expected in ((True, command, 2),
+                    (False, command.replace("run.py", "other.py"), 2),
+                    (False, foreign, 2), (False, other_home, 2), (False, command, 3)):
                 responses = [Mock(stdout="9999"), Mock(stdout=json.dumps({"CommandLine": run_path, "ParentAlive": parent_alive})), Mock(returncode=0)]
                 with patch.object(gui, "IS_WINDOWS", True), patch.object(gui, "port_in_use", return_value=True), \
                      patch.object(gui.subprocess, "run", side_effect=responses) as run:

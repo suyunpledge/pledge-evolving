@@ -74,6 +74,10 @@ def atlas(tiles, size, path):
     for index, tile in enumerate(tiles):
         output.alpha_composite(tile, ((index % 32) * size, (index // 32) * size))
     output.save(path, optimize=True)
+    if path.name.startswith('emoji-'):
+        for page, top in enumerate(range(0, output.height, 8 * size)):
+            output.crop((0, top, output.width, min(output.height, top + 8 * size))).save(
+                path.with_name(path.stem + f'-page-{page}.png'), optimize=True)
 
 
 def generate():

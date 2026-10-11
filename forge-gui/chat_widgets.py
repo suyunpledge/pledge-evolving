@@ -41,11 +41,12 @@ import math
 from typing import Callable, Optional
 
 import decor
+import gui_theme as theme
 from ui_icons import IconButton, IconCanvas, emoji_image, emoji_parts, draw_icon
 from gui_theme import (
     position_popover,
     C, FONT_CAPTION, FONT_MICRO, FONT_MONO, FONT_MONO_SM, FONT_MONO_XS, FONT_SECTION,
-    FONT_SMALL, FONT_TITLE, FONT_UI, FONT_UI_BOLD, R_BUBBLE, R_CARD, R_MD, R_PILL,
+    FONT_SMALL, FONT_TITLE, FONT_UI, FONT_UI_BOLD, R_BUBBLE, R_CARD, R_MD, R_PILL, R_PANEL,
     RoundedCard, attach_tooltip, avatar, badge, bind_keyboard_action, circle_button, circle_button_state,
     dot, emoji_font, glyph_button, highlight_python, round_rect, rounded_label,
     setup_code_tags, style_scrollbar, ui_px, text_width, bind_wrap, bind_scoped_wheel, flow_controls,
@@ -98,10 +99,11 @@ def _looks_like_markdown_or_path(token: str) -> bool:
 class ScrollArea(tk.Frame):
     """Canvas + 内嵌 Frame 的滚动容器（深色细滚动条）。"""
 
-    def __init__(self, parent, *, bg=None, padx=0, pady=0):
+    def __init__(self, parent, *, bg=None, padx=0, pady=0, max_width=None):
         base = bg or C["chat"]
         super().__init__(parent, bg=base, highlightthickness=0, bd=0)
         self._bg = base
+        self._max_width = max_width
         self.canvas = tk.Canvas(self, bg=base, highlightthickness=0, bd=0,
                                 highlightcolor=base)
         self.vbar = tk.Scrollbar(self, orient=tk.VERTICAL, command=self._manual_scroll,
@@ -174,7 +176,12 @@ class ScrollArea(tk.Frame):
         self._follow_paused = not self.at_bottom()
 
     def _sync_width(self, event):
-        self.canvas.itemconfigure(self._win, width=event.width)
+        if self._max_width is None:
+            width, left = event.width, 0
+        else:
+            width, left = theme.column_geometry(self, event.width, max_width=self._max_width)
+        self.canvas.coords(self._win, left, 0)
+        self.canvas.itemconfigure(self._win, width=width)
 
     def _on_wheel(self, event):
         self._cancel_scroll()
@@ -500,6 +507,16 @@ def parse_blocks(text: str):
 
     while i < len(lines):
         line = lines[i]
+        if ('|' in line and i + 1 < len(lines) and
+                re.fullmatch(r'\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*', lines[i+1])):
+            flush()
+            table = [line, lines[i+1]]
+            i += 2
+            while i < len(lines) and lines[i].strip() and '|' in lines[i]:
+                table.append(lines[i])
+                i += 1
+            blocks.append({'type':'table', 'text':'\n'.join(table)})
+            continue
         if line.strip().startswith("```"):
             flush()
             lang = line.strip().strip("`").strip()
@@ -627,23 +644,51 @@ def _render_single_block(host, block, *, base, wrap):
         t = InlineText(row, bg=base)
         t.set_segments(inline_segments(block["text"]))
         t.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 0))
-    elif kind == "code":
+    elif kind in ("code", "table"):
         # 代码块不识别文件链接：用不签名 InlineText 的 _on_link 的 Text 直接渲染。
         card = RoundedCard(host, radius=R_MD, fill=C["code_bg"],
-                           outline=C["border_hi"], padx=10, pady=8, bg=base)
+                           outline=C["border"], padx=10, pady=8, bg=base)
         card.pack(fill=tk.X, pady=6)
+        toolbar = tk.Frame(card.content, bg=C['code_bg'])
+        toolbar.pack(fill=tk.X, pady=(0,6))
+        lang = block.get('lang') or ('Markdown' if kind == 'table' else 'Code')
+        i18n.Label(toolbar, text=lang, bg=C['code_bg'], fg=C['muted'],
+                   font=FONT_CAPTION).pack(side=tk.LEFT)
+        def copy_source():
+            card.clipboard_clear()
+            card.clipboard_append(block['text'])
+        card._copy_button = theme.pill_button(toolbar, tr('复制'), copy_source,
+                                               kind='quiet', bg=C['code_bg'], icon='⧉')
+        card._copy_button.pack(side=tk.RIGHT)
         tx = tk.Text(card.content, bg=C["code_bg"], fg=C["code_plain"],
                      font=FONT_MONO_SM, relief=tk.FLAT, bd=0,
                      highlightthickness=0, wrap=tk.NONE, height=1)
-        tx.insert("1.0", block["text"])
         setup_code_tags(tx, font=FONT_MONO_SM)
-        lang = block.get("lang") or ""
-        if lang in ("", "py", "python") or lang.startswith("py"):
+        if kind == 'table':
+            rows = [[cell.strip().replace(r'\|','|') for cell in re.split(r'(?<!\\)\|', line.strip().strip('|'))]
+                    for index,line in enumerate(block['text'].splitlines()) if index != 1]
+            columns = max(len(row) for row in rows)
+            heading_font = (theme.MONO_FAMILY, FONT_MONO_SM[1], 'bold')
+            measure = tkfont.Font(root=tx, font=heading_font)
+            widths = [max(measure.measure(row[col]) if col < len(row) else 0 for row in rows)
+                      + ui_px(tx,24) for col in range(columns)]
+            positions, position = [], 0
+            for width in widths:
+                position += width
+                positions.append(position)
+            tx.configure(tabs=tuple(positions))
+            tx.insert('1.0', '\n'.join('\t'.join(row) for row in rows))
+            tx.tag_configure('table_heading', font=heading_font,
+                             foreground=C['text'], background=C['surface'])
+            tx.tag_add('table_heading','1.0','1.end')
+        else:
+            tx.insert("1.0", block["text"])
+        if kind == 'code' and (lang in ("Code", "py", "python") or lang.startswith("py")):
             try:
                 highlight_python(tx)
             except Exception:
                 pass
-        line_count = max(1, len(block["text"].split("\n")))
+        line_count = max(1, len(tx.get('1.0','end-1c').split('\n')))
         tx.configure(height=min(line_count, 24), state=tk.DISABLED)
         sx = tk.Scrollbar(card.content, orient=tk.HORIZONTAL, command=tx.xview)
         tx.configure(xscrollcommand=sx.set)
@@ -1125,7 +1170,8 @@ class UserMessage(tk.Frame):
         else:
             self.label = i18n.Label(card.content, text=text, bg=C["msg_user_bg"],
                                   fg=C["msg_user_fg"], font=FONT_UI, justify=tk.LEFT,
-                                  anchor="w", wraplength=max_text)
+                                  anchor="w", wraplength=max_text, bd=0,
+                                  highlightthickness=0, padx=0, pady=0)
         self.label.pack(anchor="w")
         self.bind("<Configure>", self._fit_bubble)
 
@@ -1145,9 +1191,9 @@ class AgentMessage(tk.Frame):
         base = bg or C["chat"]
         super().__init__(parent, bg=base)
         self._base = base
-        # 正文气孔用独立底色：head 行在对话底色上，正文落在气孔里。
-        # （以前 agent 侧根本没有气孔，整条时间线是平的。）
-        self._bg = C["msg_agent_bg"]
+        # Document-style replies share the transcript background. Retain the
+        # existing card's measured geometry and public attributes for callers.
+        self._bg = base
         self._max_width = MAX_BUBBLE_WIDTH
         self._app = app          # 给 ghost 操作条的重生成/赞踩用
         self._action_row = None
@@ -1182,10 +1228,9 @@ class AgentMessage(tk.Frame):
         # 这样代码块/工具卡/表格都能拿到完整宽度（不为了「抱得紧」把内容压窄）。
         self._bubble_host = tk.Frame(self, bg=base)
         self._bubble_host.pack(fill=tk.X, anchor="w", padx=(ui_px(self, 36), 0), pady=(6, 0))
-        self._bubble = RoundedCard(self._bubble_host, radius=R_BUBBLE,
-                                   fill=self._bg, outline=C["msg_agent_border"],
-                                   padx=ui_px(self, USER_AUTOSIZE_PAD_X),
-                                   pady=ui_px(self, USER_AUTOSIZE_PAD_Y), bg=base, autosize_width=True)
+        self._bubble = RoundedCard(self._bubble_host, radius=0,
+                                   fill=self._bg, outline="",
+                                   padx=0, pady=ui_px(self, 4), bg=base, autosize_width=True)
         # 跟随列宽（fill=X）而不是抱紧内容：里面的 markdown 标签带 wraplength 上限，
         # 列窄时靠 fill=X 让它们重新折行，不会横向溢出。
         self._bubble.pack(anchor="w")
@@ -1205,14 +1250,11 @@ class AgentMessage(tk.Frame):
 
     def _fit_content(self, _event=None):
         available = max(1, self._bubble_host.winfo_width() - self._bubble._padx * 2)
-        font = tkfont.Font(root=self, font=FONT_UI)
-        readable = font.measure("0" * 78)
-        limit = max(1, min(available, readable))
-        preferred = (limit if self._has_details else
-                     max(ui_px(self, 48), text_width(self, self._text_source,
-                                                     limit=limit) + font.metrics("descent") * 2))
+        # The bounded transcript column owns reading width; nested text uses
+        # its actual allocation (including avatar gutter), even during resize.
+        limit = available
         self._max_width = limit
-        self._bubble.set_content_width(preferred, limit=limit)
+        self._bubble.set_content_width(limit, limit=limit)
         self._sync_bubble_height()
 
     def _sync_bubble_height(self, _event=None):
@@ -1487,7 +1529,9 @@ class AgentMessage(tk.Frame):
 class NoticeMessage(tk.Frame):
     """系统提示 / 错误（左侧色条 + 小字）。"""
 
-    def __init__(self, parent, text, *, bg=None, tone="error", title=None):
+    def __init__(self, parent, text, *, bg=None, tone="error", title=None, actions=()):
+        from forge.secrets import redact
+        text = str(redact(str(text)))
         base = bg or C["chat"]
         super().__init__(parent, bg=base)
         tones = {"error": (C["error"], C["error_soft"]),
@@ -1495,14 +1539,35 @@ class NoticeMessage(tk.Frame):
                  "ok": (C["ok"], C["ok_soft"]),
                  "info": (C["info"], C["info_soft"])}
         color, soft = tones.get(tone, tones["info"])
-        card = RoundedCard(self, radius=R_MD, fill=soft, outline=color,
+        card = RoundedCard(self, radius=R_MD, fill=soft, outline=C["border"],
                            padx=12, pady=8, bg=base)
         card.pack(fill=tk.X)
         i18n.Label(card.content, text=(title or tr("提示")), bg=soft, fg=color,
                  font=FONT_UI_BOLD, anchor="w").pack(fill=tk.X)
-        i18n.Label(card.content, text=text, bg=soft, fg=C["body"], font=FONT_SMALL,
-                 anchor="w", justify=tk.LEFT,
-                 wraplength=MAX_BUBBLE_WIDTH).pack(fill=tk.X, pady=(2, 0))
+        first_line = text.splitlines()[0] if text else ''
+        summary = first_line.split('{', 1)[0].strip()
+        # Details preserve the complete sanitized failure without duplicating
+        # a full response in the transcript's main reading path.
+        self.summary = i18n.Label(card.content, text=summary[:240] if summary else tr('查看详情'), bg=soft,
+                                  fg=C["body"], font=FONT_SMALL, anchor="w", justify=tk.LEFT)
+        self.summary.pack(fill=tk.X, pady=(2, 0))
+        bind_wrap(self.summary)
+        self.details = InlineText(card.content, bg=soft, font=FONT_MONO_SM)
+        self.details.set_text(text)
+        self.details_button = theme.pill_button(card.content, tr('查看详情'), self.toggle_details,
+                                                kind='quiet', bg=soft)
+        self.details_button.pack(anchor='w', pady=(6, 0))
+        if actions:
+            self.actions = ActionRow(card.content, actions, bg=soft)
+            self.actions.pack(fill=tk.X, pady=(6, 0))
+
+    def toggle_details(self):
+        if self.details.winfo_manager():
+            self.details.pack_forget()
+            self.details_button.configure(text=tr('查看详情'))
+        else:
+            self.details.pack(fill=tk.X, pady=(6, 0), before=self.details_button)
+            self.details_button.configure(text=tr('收起详情'))
 
 
 class MessageArea(tk.Frame):
@@ -1512,9 +1577,10 @@ class MessageArea(tk.Frame):
         base = bg or C["chat"]
         super().__init__(parent, bg=base)
         self._bg = base
-        self.scroll = ScrollArea(self, bg=base, padx=18, pady=18)
+        self.scroll = ScrollArea(self, bg=base, padx=0, pady=ui_px(self, 20),
+                                 max_width=theme.CONTENT_WIDTH)
         self.scroll.pack(fill=tk.BOTH, expand=True)
-        self.jump_latest = i18n.Button(
+        self.jump_latest = theme.control_button(
             self, text=tr("回到最新"), command=self.scroll.scroll_to_end,
             bg=C["surface2"], fg=C["text"], activebackground=C["hover"],
             activeforeground=C["text"], relief=tk.FLAT, borderwidth=1,
@@ -1714,11 +1780,11 @@ class MessageArea(tk.Frame):
         self._finish(following)
         return msg
 
-    def add_notice(self, text, *, tone="error", title=None):
+    def add_notice(self, text, *, tone="error", title=None, actions=()):
         following = self.scroll.at_bottom()
         self._prepare()
         msg = NoticeMessage(self.scroll.inner, text, bg=self._bg, tone=tone,
-                            title=title)
+                            title=title, actions=actions)
         msg.pack(fill=tk.X, pady=(12, 0))
         self._finish(following)
         return msg
@@ -2022,7 +2088,7 @@ class InputCard(tk.Frame):
         self._on_settings = on_settings
         self.send_var = tk.StringVar()
 
-        card = RoundedCard(self, radius=R_BUBBLE, fill=C["input_bg"],
+        card = RoundedCard(self, radius=R_PANEL, fill=C["input_bg"],
                            outline=C["border_hi"], padx=14, pady=12, bg=base)
         card.pack(fill=tk.X)
         self._card = card
@@ -2079,8 +2145,8 @@ class InputCard(tk.Frame):
         self.entry.bind("<<Modified>>", self._text_changed)
         self.entry.bind("<Configure>", lambda _e: self._resize_entry())
         self.send_var.trace_add("write", self._sync_from_var)
-        self.entry.bind("<FocusIn>", lambda _e: self._set_focus(True))
-        self.entry.bind("<FocusOut>", lambda _e: self._set_focus(False))
+        self.entry.bind("<FocusIn>", lambda _e: self._set_focus(True), add="+")
+        self.entry.bind("<FocusOut>", lambda _e: self._set_focus(False), add="+")
 
         # Second layer: attachments, context and commands.
         bar = tk.Frame(inner, bg=C["input_bg"])
@@ -2127,7 +2193,8 @@ class InputCard(tk.Frame):
         if on_team_settings is not None:
             self.team_settings_btn = glyph_button(bar, tr("🤖 Agent 集群"), on_team_settings,
                 bg=C["input_bg"], size=10, tooltip=tr("Agent 集群"))
-            self.team_settings_btn.configure(highlightbackground=C["border_hi"])
+            self.team_settings_btn.configure(highlightbackground=C["accent_border"],
+                                              fg=C["accent_text"])
             self.team_settings_btn.pack(side=tk.LEFT)
 
         # Third layer: real provider/model/mode. Sending has its own column,

@@ -112,11 +112,20 @@ class NavigationTests(unittest.TestCase):
                 for size in ((1360, 850), gui.MIN_SIZE):
                     root.geometry(f"{size[0]}x{size[1]}")
                     pump(root, .05)
+                    app._apply_responsive_layout()
+                    pump(root, .05)
+                    visible_before = app._sidebar_visible
+                    parent_before = app.sidebar.master
+                    order_before = tuple(parent_before.pack_slaves())
                     for key in ("tools", "task", "agents", "config", "knowledge", "evolution", "files"):
                         with self.subTest(scale=scale, size=size, page=key):
                             app._show_view(key)
                             pump(root, .05)
-                            self.assertFalse(app._sidebar_visible)
+                            # Global navigation now stays visible in wide
+                            # windows; page changes retain responsive docking.
+                            self.assertEqual(app._sidebar_visible, visible_before)
+                            self.assertIs(app.sidebar.master, parent_before)
+                            self.assertEqual(tuple(parent_before.pack_slaves()), order_before)
                             self.assert_inside(app.view_back_btn, app.center)
                             self.assertEqual(app.view_back_btn.cget("text"), "返回对话")
                             self.assertTrue(app.view_back_btn.cget("image"))

@@ -1,10 +1,10 @@
-"""forge 桌面端设计系统（v2：深色 / Indigo 主题）。
+"""forge 桌面端设计系统（深色 IDE 工作台）。
 
 单一来源：所有配色、字体、圆角、间距、通用绘制原语都放这里，
 `forge_gui_v2.py`、`workspace.py`、`chat_widgets.py` 全部从这里取，
 避免三处各写一套 token。
 
-深墨色层级搭配 Indigo 操作色与冷紫光边；绿色气泡区分用户消息。
+深墨色层级搭配低饱和蓝色操作反馈；轻量用户气泡与文档式助手正文。
 正文与必要说明优先保证对比度。自绘控件提供键盘激活和可见焦点，
 常用操作保持足够热区，工具提示延迟出现并随控件销毁而清理。
 
@@ -28,18 +28,18 @@ IS_WINDOWS = platform.system() == "Windows"
 
 C: dict[str, str] = {
     # 背景层级
-    "bg": "#11131B",            # 主背景：带轻微冷色的深墨
+    "bg": "#11151C",            # 主背景：深色 IDE 工作台
     "activity": "#0D1018",
-    "sidebar": "#171B25",
-    "sidebar_history": "#131720",
-    "chat": "#11131B",
-    "surface": "#202636",
-    "surface2": "#191F2D",
-    "surface_subtle": "#1A2030",
-    "hover": "#283248",
-    "sel": "#2C2B4C",
+    "sidebar": "#171C25",
+    "sidebar_history": "#131923",
+    "chat": "#11151C",
+    "surface": "#1D2430",
+    "surface2": "#19212D",
+    "surface_subtle": "#171F2B",
+    "hover": "#293344",
+    "sel": "#29364D",
     "code_bg": "#131824",
-    "input_bg": "#1A2030",
+    "input_bg": "#151B25",
     "black": "#000000",
 
     # 线条
@@ -48,47 +48,56 @@ C: dict[str, str] = {
     "sel_border": "#625B98",
     "scroll": "#45516B",
 
+    # 控件状态
+    "control_pressed": "#1F293D",
+    "disabled_bg": "#191F2D",
+    "disabled_fg": "#8894AD",
+    "disabled_border": "#343D50",
+    "focus_ring": "#D2DEFF",
+
     # 主色
-    "accent": "#5955D9",
-    "accent_hover": "#6962E3",
-    "accent2": "#A19BFF",
-    "accent_soft": "#292645",
-    "accent_border": "#7971BD",
-    "accent_text": "#D7D1FF",
+    "accent": "#4664BB",
+    "accent_hover": "#5270C5",
+    "accent_pressed": "#38539E",
+    "accent2": "#7B9CFF",
+    "accent_soft": "#23314A",
+    "accent_border": "#607BB8",
+    "accent_text": "#BCD0FF",
     "brand_ice": "#BDCAFF",       # 仅用于品牌图形，避免混同状态颜色
     "brand_spark": "#F5BC74",
 
     # 语义
-    "ok": "#22C55E",
-    "ok_soft": "#132C1C",
-    "warn": "#F59E0B",
+    "ok": "#48B89A",
+    "ok_pressed": "#399B80",
+    "ok_soft": "#152C27",
+    "warn": "#E5B45C",
     "warn_soft": "#2E2410",
-    "error": "#FB7185",
+    "error": "#E57373",
     "error_soft": "#321C2A",
-    "info": "#A19BFF",
-    "info_soft": "#25243C",
-    "link": "#B4AEFF",
-    "link_soft": "#25243C",
+    "info": "#7B9CFF",
+    "info_soft": "#23314A",
+    "link": "#AFC4FF",
+    "link_soft": "#23314A",
 
     # 文字
-    "text": "#EDF0FF",
-    "body": "#D5DCEE",
-    "subtext": "#ABB5CD",
+    "text": "#EDF1F7",
+    "body": "#D6DEEA",
+    "subtext": "#ABB5C5",
     "muted": "#A2ADC5",
     "ter": "#A2ADC5",
     "placeholder": "#A2ADC5",
-    "comment": "#5C6370",
+    "comment": "#909BAD",
 
     # 消息气泡：两侧要能看出「谁在说」，又不能让深色界面变花。
     # user 带一点主色倾向（“我说的话”），agent 用中性面；两者都配一道 hairline 描边。
-    "msg_user_bg": "#206D3B",         # 保留绿色角色区分，白色正文有足够对比度
+    "msg_user_bg": "#23314A",         # 轻量、低饱和的用户气泡
     "msg_user_fg": "#FFFFFF",          # 用户气泡文字（白）
-    "msg_agent_bg": "#202638",         # AI 消息与代码区保持轻微层次
+    "msg_agent_bg": "#11151C",         # 助手正文融入文档背景
     "msg_agent_fg": "#E8ECFA",         # AI 气泡文字（浅灰）
     "msg_user_bg_old": "#232134",
     "msg_agent_bg_old": "#1A1A22",
-    "msg_user_border": "#34834E",
-    "msg_agent_border": "#45516C",
+    "msg_user_border": "#334666",
+    "msg_agent_border": "#11151C",
 
     # 代码高亮（One Dark 近似）
     "code_kw": "#C678DD",
@@ -97,7 +106,7 @@ C: dict[str, str] = {
     "code_str": "#98C379",
     "code_const": "#E06C75",
     "code_num": "#D19A66",
-    "code_comment": "#5C6370",
+    "code_comment": "#909BAD",
     "code_plain": "#D2D2DC",
 
     # diff
@@ -118,7 +127,7 @@ C: dict[str, str] = {
 
 R_WINDOW, R_PANEL, R_CARD, R_PILL, R_MD, R_SM = 12, 12, 10, 8, 8, 6
 # 钝角圆角（对话气泡 / 底部输入卡专用）：真圆弧绘制 + 大半径，圆钝柔和。
-R_BUBBLE = 22
+R_BUBBLE = 16
 PAD_XS, PAD_S, PAD_M, PAD_L, PAD_XL = 4, 8, 12, 16, 20
 
 # 交互尺寸：所有主按钮、图标热区与浮层以此为基线，避免页面各写一套。
@@ -127,6 +136,11 @@ ICON_SIZE = 16
 ICON_HIT_SIZE = 32
 OVERLAY_WIDTH = 448
 FOCUS_WIDTH = 1
+CONTENT_WIDTH = 1040
+FORM_WIDTH = 800
+CONTENT_GUTTER = 20
+MOTION_MS = 0
+SHADOW = None
 
 # ─── 字体 ──────────────────────────────────────────────────
 # 参考稿用 Inter / JetBrains Mono；本机没有，退回 Windows 自带等价字体
@@ -155,6 +169,46 @@ FONT_GLYPH = (UI_FAMILY, 11)
 def ui_px(widget, value):
     """Convert 96-DPI layout units to the current Tk pixel scale."""
     return max(1, round(value * float(widget.tk.call("tk", "scaling")) * 72 / 96))
+
+
+def column_geometry(widget, viewport, *, max_width=CONTENT_WIDTH, gutter=CONTENT_GUTTER):
+    """One DPI-aware width contract for transcript, composer and forms."""
+    width = max(1, min(ui_px(widget, max_width), viewport - ui_px(widget, gutter) * 2))
+    return width, max(0, (viewport - width) // 2)
+
+
+def bind_canvas_column(canvas, item, *, max_width=CONTENT_WIDTH, gutter=CONTENT_GUTTER):
+    """Constrain an existing Canvas window; keep its parent and scroll ownership."""
+    def fit(event):
+        width, left = column_geometry(canvas, event.width, max_width=max_width, gutter=gutter)
+        canvas.coords(item, left, 0)
+        canvas.itemconfigure(item, width=width)
+    canvas.bind('<Configure>', fit, add='+')
+    return fit
+
+
+def bind_packed_column(widget, *, max_width=CONTENT_WIDTH, gutter=CONTENT_GUTTER):
+    """Bound a packed child without adding a competing layout container."""
+    parent = widget.master
+    def fit(event):
+        if event.widget is not parent or widget.winfo_manager() != 'pack':
+            return
+        width, _inset = column_geometry(widget, event.width, max_width=max_width, gutter=gutter)
+        inset = math.ceil((event.width - width) / 2)
+        if widget.pack_info().get('padx') != inset:
+            widget.pack_configure(padx=inset)
+    token = parent.bind('<Configure>', fit, add='+')
+    widget.bind('<Destroy>', lambda e: parent.unbind('<Configure>', token)
+                if e.widget is widget else None, add='+')
+
+
+def style_editor(widget):
+    """Apply shared editable-text states to existing Entry/Text/Spinbox widgets."""
+    widget.configure(bg=C['input_bg'], fg=C['text'], insertbackground=C['text'],
+                     relief=tk.FLAT, bd=0, highlightthickness=FOCUS_WIDTH,
+                     highlightbackground=C['border'], highlightcolor=C['focus_ring'],
+                     selectbackground=C['accent_soft'], selectforeground=C['text'])
+    return widget
 
 
 def text_width(widget, text, font=FONT_UI, *, limit=None):
@@ -454,6 +508,20 @@ def _bg_of(widget) -> str:
 # ─── 小组件 ────────────────────────────────────────────────
 
 
+def button_feedback(button: IconButton, *, kind="ghost") -> IconButton:
+    """Shared feedback for native buttons, with stable geometry and semantics."""
+    button.configure(highlightthickness=max(1, int(button.cget("highlightthickness"))),
+                     highlightcolor=C["focus_ring"], disabledforeground=C["disabled_fg"])
+    return button.set_feedback({
+        "pressed_bg": C["accent_pressed"] if kind in {"primary", "accent_soft"} else
+                      C["error_soft"] if kind == "danger" else
+                      C["ok_pressed"] if kind == "ok" else C["control_pressed"],
+        "hover_border": C["accent2"] if kind in {"primary", "accent_soft"} else
+                        C["error"] if kind == "danger" else C["border_hi"],
+        "disabled_bg": C["disabled_bg"], "disabled_border": C["disabled_border"],
+    })
+
+
 def pill_button(parent, text, command, *, kind="ghost", bg=None, height=None,
                 font=None, padx=12, width=None, state=tk.NORMAL, icon=None):
     """扁平按钮（kind: primary / ghost / quiet / danger / accent_soft）。"""
@@ -473,14 +541,34 @@ def pill_button(parent, text, command, *, kind="ghost", bg=None, height=None,
                     font=font or FONT_SMALL, relief=tk.FLAT, bd=0,
                     padx=padx, pady=5, cursor="hand2", highlightthickness=1,
                     highlightbackground=C['accent_border'] if kind in {'primary','accent_soft'} else
-                        (C['border_hi'] if kind in {'ghost','danger'} else base), highlightcolor=C["accent2"],
+                        (C['border_hi'] if kind in {'ghost','danger'} else base), highlightcolor=C["focus_ring"],
+                    disabledforeground=C["disabled_fg"],
                     state=state)
-    btn.configure(disabledforeground=C["muted"])
     if width:
         btn.configure(width=width)
     if height:
         btn.configure(height=max(1, int(height / 16)))
-    return btn
+    return button_feedback(btn, kind=kind)
+
+
+def control_button(parent, **options):
+    """Adapt legacy native button call sites to the existing shared control.
+
+    Commands, variables, dimensions and explicit state colors remain intact.
+    IconButton already owns localization and native keyboard activation.
+    """
+    options.setdefault('font', FONT_SMALL)
+    options.setdefault('relief', tk.FLAT)
+    options.setdefault('cursor', 'hand2')
+    options.setdefault('bg', _bg_of(parent))
+    options.setdefault('fg', C['body'])
+    options.setdefault('activebackground', C['hover'])
+    options.setdefault('activeforeground', C['text'])
+    options.setdefault('highlightbackground', C['border'])
+    bg = options.get('bg', _bg_of(parent))
+    kind = ('primary' if bg == C['accent'] else 'ok' if bg == C['ok'] else
+            'danger' if options.get('fg') == C['error'] else 'quiet' if bg == _bg_of(parent) else 'ghost')
+    return button_feedback(IconButton(parent, **options), kind=kind)
 
 
 def chip(parent, text, *, selected=False, command=None, bg=None):
@@ -492,8 +580,11 @@ def chip(parent, text, *, selected=False, command=None, bg=None):
                    highlightthickness=1,
                    highlightbackground=C["accent"] if selected else C["border_hi"])
     if command is not None:
+        bind_keyboard_action(lbl, command)
         lbl.bind("<Button-1>", lambda _e: command())
         lbl.configure(cursor="hand2")
+        lbl.bind("<Enter>", lambda _e: lbl.configure(bg=C["sel"] if selected else C["hover"]))
+        lbl.bind("<Leave>", lambda _e: lbl.configure(bg=bgb))
     return lbl
 
 
@@ -572,17 +663,18 @@ def glyph_button(parent, glyph, command, *, bg=None, fg=None, size=13,
                     activeforeground=C["text"], font=(UI_FAMILY, size),
                     relief=tk.FLAT, bd=0, padx=8, pady=4, cursor="hand2",
                     highlightthickness=1, highlightbackground=base,
-                    highlightcolor=C["accent2"])
+                    highlightcolor=C["focus_ring"])
     if tooltip:
         attach_tooltip(btn, tooltip)
-    return btn
+    return button_feedback(btn, kind="quiet")
 
 
 def bind_keyboard_action(widget, command):
     """Give custom clickable controls the same keyboard contract as buttons."""
+    border = (widget.cget("highlightbackground") if int(widget.cget("highlightthickness"))
+              else widget.cget("bg"))
     widget.configure(takefocus=1, highlightthickness=1,
-                     highlightbackground=widget.cget("bg"),
-                     highlightcolor=C["accent2"])
+                     highlightbackground=border, highlightcolor=C["focus_ring"])
 
     def invoke(_event=None):
         if getattr(widget, "_enabled", True):
@@ -929,6 +1021,11 @@ def style_scrollbar(widget):
 
 def apply_ttk_theme(root):
     """ttk 控件（Combobox / Scrollbar / Notebook）深色主题。"""
+    for widget_class in ('Checkbutton', 'Radiobutton', 'Entry', 'Text', 'Spinbox', 'Listbox'):
+        root.option_add(f'*{widget_class}.highlightColor', C['focus_ring'])
+        root.option_add(f'*{widget_class}.highlightBackground', C['border'])
+    for widget_class in ('Checkbutton', 'Radiobutton', 'Entry', 'Spinbox', 'Listbox'):
+        root.option_add(f'*{widget_class}.disabledForeground', C['disabled_fg'])
     style = ttk.Style(root)
     try:
         style.theme_use("clam")
@@ -954,9 +1051,24 @@ def apply_ttk_theme(root):
                     lightcolor=C["surface2"], darkcolor=C["surface2"],
                     relief=tk.FLAT, insertcolor=C["text"])
     style.map("TCombobox",
-              fieldbackground=[("readonly", C["surface2"])],
-              foreground=[("readonly", C["body"])],
-              bordercolor=[("focus", C["accent"])])
+              fieldbackground=[("disabled", C['disabled_bg']), ("readonly", C["input_bg"])],
+              foreground=[("disabled", C['disabled_fg']), ("readonly", C["body"])],
+              bordercolor=[("focus", C["focus_ring"])])
+    style.configure('TEntry', fieldbackground=C['input_bg'], foreground=C['text'],
+                    insertcolor=C['text'], bordercolor=C['border'], padding=5)
+    style.configure('TSpinbox', fieldbackground=C['input_bg'], foreground=C['text'],
+                    arrowcolor=C['subtext'], bordercolor=C['border'], padding=5)
+    for name in ('TEntry', 'TSpinbox'):
+        style.map(name, bordercolor=[('focus', C['focus_ring'])],
+                  foreground=[('disabled', C['disabled_fg'])])
+    style.configure('Treeview', background=C['input_bg'], fieldbackground=C['input_bg'],
+                    foreground=C['body'], borderwidth=0, font=FONT_SMALL,
+                    rowheight=ui_px(root, CONTROL_HEIGHT))
+    style.configure('Treeview.Heading', background=C['surface'], foreground=C['subtext'],
+                    relief=tk.FLAT, font=FONT_SMALL, padding=6)
+    style.map('Treeview', background=[('selected', C['accent_soft'])],
+              foreground=[('selected', C['accent_text'])])
+    style.map('Treeview.Heading', background=[('active', C['hover'])])
     root.option_add("*TCombobox*Listbox.background", C["surface"])
     root.option_add("*TCombobox*Listbox.foreground", C["body"])
     root.option_add("*TCombobox*Listbox.selectBackground", C["accent_soft"])

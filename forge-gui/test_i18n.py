@@ -62,7 +62,14 @@ class LanguageUiTests(unittest.TestCase):
                                                          widget.cget("text"))
                             app._return_to_chat()
                             layout.pump(root, .04)
-                            self.assertGreaterEqual(app.market_entry_btn.winfo_width(), app.market_entry_btn.winfo_reqwidth())
+                            # Marketplace moved to the sidebar. At minimum
+                            # width its reveal control is the visible entry;
+                            # the legacy chat-header button is an unmounted
+                            # compatibility accessor, not a visual contract.
+                            entry = (app.sidebar_shortcuts['tools'] if app.sidebar.winfo_ismapped()
+                                     else app.sidebar_reveal_btn)
+                            self.assertTrue(entry.winfo_ismapped())
+                            self.assertGreaterEqual(entry.winfo_width(),entry.winfo_reqwidth())
                             for control in (app.input_card.plus, app.input_card.team_pill._btn,
                                             app.input_card.mode_pill, app.input_card.send_circle):
                                 self.assertTrue(control.winfo_ismapped())

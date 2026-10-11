@@ -281,11 +281,19 @@ def _tile(master, atlas_name, index, tile_size):
     if key in cache:
         return cache[key]
     try:
-        atlas_key = ("atlas", atlas_name)
+        # Tk's PNG decoder stalls the UI on the full 1,382-emoji sheet.
+        # Build-time pages cap each decode to 256 sprites, retaining exact
+        # pixels and interpreter-local caching without a runtime dependency.
+        source_name, source_index = atlas_name, index
+        if atlas_name.startswith('emoji-'):
+            page_name = atlas_name[:-4] + f'-page-{index // 256}.png'
+            if (_ROOT / page_name).is_file():
+                source_name, source_index = page_name, index % 256
+        atlas_key = ("atlas", source_name)
         if atlas_key not in cache:
-            cache[atlas_key] = tk.PhotoImage(master=master, file=str(_ROOT / atlas_name))
+            cache[atlas_key] = tk.PhotoImage(master=master, file=str(_ROOT / source_name))
         atlas = cache[atlas_key]
-        x, y = (index % 32) * tile_size, (index // 32) * tile_size
+        x, y = (source_index % 32) * tile_size, (source_index // 32) * tile_size
         tile = tk.PhotoImage(master=master, width=tile_size, height=tile_size)
         tile.tk.call(str(tile), "copy", str(atlas), "-from", x, y, x + tile_size, y + tile_size)
         cache[key] = tile
@@ -294,8 +302,9 @@ def _tile(master, atlas_name, index, tile_size):
         return None
 
 
-PALETTE = {"muted": "#9A9AA8", "text": "#E9E9F0", "accent": "#7C7CF0",
-           "ok": "#22C55E", "warn": "#F59E0B", "error": "#EF4444"}
+PALETTE = {"muted": "#A2ADC5", "text": "#EDF1F7", "accent": "#7B9CFF",
+           "ok": "#48B89A", "warn": "#E5B45C", "error": "#E57373",
+           "disabled": "#8894AD"}
 
 
 def icon_image(master, name, *, size=20, fg="#9A9AA8"):
@@ -314,8 +323,13 @@ def icon_image(master, name, *, size=20, fg="#9A9AA8"):
 
 
 class IconButton(tk.Button):
-    """Native button: retain invoke/state/focus, replace only its icon font glyph."""
+    """Native activation, bitmap icons and optional event-driven visual feedback."""
+    _COLOR_ALIASES = {"background": "bg", "foreground": "fg"}
+
     def __init__(self, parent, *, icon=None, icon_size=20, **kwargs):
+        self._feedback = None
+        kwargs = {self._COLOR_ALIASES.get(key, key): value
+                  for key, value in kwargs.items()}
         self._explicit_icon = icon_key(icon) if icon else None
         self._icon_size = icon_size
         self._icon_name = None
@@ -327,7 +341,9 @@ class IconButton(tk.Button):
         if icon_key(text):
             name, label = icon_key(text), ""
         self._icon_name = self._explicit_icon or name
-        image = icon_image(parent, self._icon_name, size=icon_size, fg=kwargs.get("fg", "#9A9AA8"))
+        fg = (kwargs.get("disabledforeground", "#9A9AA8") if kwargs.get("state") == tk.DISABLED
+              else kwargs.get("fg", "#9A9AA8"))
+        image = icon_image(parent, self._icon_name, size=icon_size, fg=fg)
         if image is not None:
             kwargs.update(text=label, image=image, compound=tk.LEFT)
         super().__init__(parent, **kwargs)
@@ -337,10 +353,88 @@ class IconButton(tk.Button):
     def _set_localized_text(self, text):
         self.configure(text=text)
 
+    def set_feedback(self, palette):
+        """Theme supplies colours; native Button keeps mouse/Space activation.
+
+        Keep intended colours separately from transient hover/disabled paint so
+        status updates made while disabled are restored correctly on enable.
+        No animation, timer, global binding or replacement widget is involved.
+        """
+        first = self._feedback is None
+        self._feedback = dict(palette)
+        custom_border = getattr(self, "_feedback_outline_override", None)
+        if custom_border is not None:
+            self._feedback["hover_border"] = custom_border
+        if first:
+            keys = ("bg", "fg", "activebackground", "activeforeground", "highlightbackground",
+                    "highlightcolor", "disabledforeground", "cursor", "takefocus")
+            self._feedback_base = {key: self.cget(key) for key in keys}
+            self._feedback_hovered = self._feedback_pressed = self._feedback_focused = False
+            for sequence, changes in (
+                ("<Enter>", {"hovered": True}), ("<Leave>", {"hovered": False, "pressed": False}),
+                ("<ButtonPress-1>", {"pressed": True}), ("<ButtonRelease-1>", {"pressed": False}),
+                ("<FocusIn>", {"focused": True}), ("<FocusOut>", {"focused": False, "pressed": False}),
+            ):
+                self.bind(sequence, lambda _e, values=changes: self._change_feedback(**values), add="+")
+            self.bind("<Return>", self._keyboard_invoke, add="+")
+        self._feedback_visual = None
+        self._paint_feedback()
+        return self
+
+    def _keyboard_invoke(self, _event=None):
+        self.invoke()  # Native invoke already rejects disabled state.
+        return "break"
+
+    def _change_feedback(self, **changes):
+        for key, value in changes.items():
+            setattr(self, "_feedback_" + key, value)
+        self._paint_feedback()
+
+    def _paint_feedback(self):
+        if self._feedback is None or not self.winfo_exists():
+            return
+        base, palette = self._feedback_base, self._feedback
+        disabled = str(self.cget("state")) == tk.DISABLED
+        if disabled:
+            self._feedback_hovered = self._feedback_pressed = False
+            bg, fg, border = palette["disabled_bg"], base["disabledforeground"], palette["disabled_border"]
+        else:
+            active = self._feedback_hovered or self._feedback_pressed
+            bg = (palette["pressed_bg"] if self._feedback_pressed else
+                  base["activebackground"] if self._feedback_hovered else base["bg"])
+            fg = base["activeforeground"] if active else base["fg"]
+            border = (base["highlightcolor"] if self._feedback_focused else
+                      palette["hover_border"] if active else base["highlightbackground"])
+        visual = {"bg": bg, "fg": fg, "activebackground": bg, "activeforeground": fg,
+                  "highlightbackground": border,
+                  "cursor": "arrow" if disabled else base["cursor"],
+                  "takefocus": 0 if disabled else base["takefocus"]}
+        if visual == self._feedback_visual:
+            return
+        tk.Button.configure(self, **visual)
+        if self._icon_name:
+            image = icon_image(self, self._icon_name, size=self._icon_size, fg=fg)
+            if image is not None:
+                tk.Button.configure(self, image=image, compound=tk.LEFT)
+                self._icon_reference = image
+        self._feedback_visual = visual
+
     def configure(self, cnf=None, **kwargs):
         if isinstance(cnf, dict):
             kwargs = {**cnf, **kwargs}
             cnf = None
+        kwargs = {self._COLOR_ALIASES.get(key, key): value
+                  for key, value in kwargs.items()}
+        if self._feedback is not None and kwargs:
+            for key, value in kwargs.items():
+                if key in self._feedback_base:
+                    self._feedback_base[key] = value
+                if key == "highlightbackground":
+                    # A caller's semantic outline (e.g. orange planning) must
+                    # survive hovering, not revert to the default purple/grey.
+                    self._feedback["hover_border"] = value
+                    self._feedback_outline_override = value
+            self._feedback_visual = None
         if "text" in kwargs:
             i18n.remember(self, kwargs["text"], method="_set_localized_text")
             text = i18n.resolve(kwargs["text"], self)
@@ -350,8 +444,10 @@ class IconButton(tk.Button):
                 name, label = icon_key(text), ""
             self._icon_name = self._explicit_icon or name
             kwargs["text"] = label
-        if self._icon_name and any(key in kwargs for key in ("text", "fg", "state")):
-            fg = "#9A9AA8" if kwargs.get("state") == tk.DISABLED else kwargs.get("fg", self.cget("fg"))
+        if self._icon_name and any(key in kwargs for key in ("text", "fg", "state", "disabledforeground")):
+            disabled = str(kwargs.get("state", self.cget("state"))) == tk.DISABLED
+            fg = (kwargs.get("disabledforeground", self.cget("disabledforeground")) if disabled
+                  else kwargs.get("fg", self.cget("fg")))
             image = icon_image(self, self._icon_name, size=self._icon_size, fg=fg)
             if image is not None:
                 kwargs.update(image=image, compound=tk.LEFT)
@@ -359,7 +455,10 @@ class IconButton(tk.Button):
         elif "text" in kwargs and not self._icon_name:
             kwargs["image"] = ""
             self._icon_reference = None
-        return super().configure(cnf, **kwargs) if cnf is not None else super().configure(**kwargs)
+        result = super().configure(cnf, **kwargs) if cnf is not None else super().configure(**kwargs)
+        if kwargs:
+            self._paint_feedback()
+        return result
 
     config = configure
 

@@ -277,14 +277,14 @@ def test_diff_visible_for_changed_and_unchanged():
         for path, code in panel._git_status.items():
             if not code.startswith("?"):  # 已有 tracked 改动优先
                 full = Path(REAL_REPO) / path
-                if full.is_file():
+                if full.is_file() and full.suffix.lower() in {'.py', '.md', '.json', '.txt', '.toml', '.yaml', '.yml'}:
                     changed_file = path
                     break
         # fallback：任意 untracked
         if changed_file is None:
             for path, code in panel._git_status.items():
                 full = Path(REAL_REPO) / path
-                if full.is_file():
+                if full.is_file() and full.suffix.lower() in {'.py', '.md', '.json', '.txt', '.toml', '.yaml', '.yml'}:
                     changed_file = path
                     break
         assert changed_file is not None, "git_status 没改动可测"

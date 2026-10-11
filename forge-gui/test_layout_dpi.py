@@ -204,7 +204,11 @@ class DpiLayoutTests(unittest.TestCase):
             called = []
             actions = reply.add_actions([{"label": "打开工作区", "command": lambda: called.append(1)}])
             pump(root)
-            self.assertLess(reply._bubble.winfo_width(), reply._bubble_host.winfo_width()*.65)
+            # Replies now use the bounded document column, without a filled
+            # notification-like bubble. Keep the geometry and action checks.
+            self.assertEqual(reply._bubble._fill, gui.C['chat'])
+            self.assertEqual(reply._bubble._outline, '')
+            self.assertLessEqual(reply._bubble.winfo_width(), reply._bubble_host.winfo_width())
             button = actions._buttons[0]
             self.assertTrue(button.cget("image"))
             self.assertLess(button.winfo_width(), actions.winfo_width())

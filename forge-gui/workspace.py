@@ -808,6 +808,12 @@ class WorkspacePanel(tk.Frame):
         if event is not None and event.widget is not self:
             return
         self._destroyed = True
+        if self._highlight_after_id is not None:
+            try:
+                self.after_cancel(self._highlight_after_id)
+            except tk.TclError:
+                pass
+            self._highlight_after_id = None
         if self._io_poll_id is not None:
             self.after_cancel(self._io_poll_id)
             self._io_poll_id = None
@@ -1746,7 +1752,9 @@ class WorkspacePanel(tk.Frame):
                 if band.winfo_exists():
                     band.configure(highlightbackground=C["bg"])
 
-            token = band.after(900, clear)
+            # The panel tracks/cancels this timer; its child band is destroyed
+            # first, so registering on the child leaves a deleted Tcl command.
+            token = self.after(900, clear)
             self._transient_after_ids.add(token)
         except tk.TclError:
             pass
@@ -2470,7 +2478,7 @@ class WorkspacePanel(tk.Frame):
             if target.stat().st_size > 20 * 1024 * 1024:
                 self._preview_write("图片超过 20 MiB，请在新窗口打开。")
                 return False
-            img = tk.PhotoImage(file=str(target))
+            img = tk.PhotoImage(master=self._preview_host, file=str(target))
         except (tk.TclError, OSError):
             if path is None:
                 self._preview_write("当前文件不是可显示的图片。\n"

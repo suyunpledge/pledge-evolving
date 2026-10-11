@@ -475,9 +475,12 @@ class RefactorAcceptance(unittest.TestCase):
         self.assertTrue(chat_panel.winfo_ismapped())
         self.app._show_view("task")
         self.pump(0.2)
+        self.assertTrue(chat_panel.winfo_ismapped())
+        self.assertTrue(self.app._sidebar_visible,
+                        "宽窗口的任务视图保留全局导航")
+        self.app._toggle_sidebar()
+        self.pump(0.1)
         self.assertFalse(chat_panel.winfo_ismapped())
-        self.assertFalse(self.app._sidebar_visible,
-                         "无辅助内容的任务视图应把宽度留给时间线")
         self.app._toggle_sidebar()
         self.pump(0.1)
         self.assertTrue(chat_panel.winfo_ismapped(), "任务页按需展开相同的主导航")
@@ -523,6 +526,8 @@ class RefactorAcceptance(unittest.TestCase):
             self.assertTrue(widget.winfo_ismapped())
             self.assertLessEqual(widget.winfo_rootx() + widget.winfo_width(), right)
             self.assertGreaterEqual(widget.winfo_width(), widget.winfo_reqwidth() - 2)
+        self.assertEqual(msg.label.cget('text'), "请检查布局并保持文件与对话均可阅读。" * 50)
+        self.assertLessEqual(msg.label.winfo_width(), msg._card.content.winfo_width())
         self.assertGreater(msg.label.winfo_height(), 40)
 
     def test_history_search_reaches_older_sessions_and_focuses_input(self):
@@ -617,7 +622,7 @@ class RefactorAcceptance(unittest.TestCase):
         self.assertLessEqual(self.app.activity_bar.winfo_width(), 1)
 
     # ── 16. 对话两侧都有气泡 ────────────────────────────────
-    def test_both_sides_of_conversation_have_bubbles(self):
+    def test_user_bubble_and_document_reply_remain_visible(self):
         user = self.app.chat_area.add_user("用户消息")
         agent = self.app.chat_area.add_agent()
         agent.render_markdown("回复正文。")
@@ -625,9 +630,10 @@ class RefactorAcceptance(unittest.TestCase):
         self.assertEqual(user._card._fill, theme.C["msg_user_bg"])
         self.assertEqual(user._card._outline, theme.C["msg_user_border"])
         bubble = getattr(agent, "_bubble", None)
-        self.assertIsNotNone(bubble, "agent 回复也应有气泡")
+        self.assertIsNotNone(bubble, "保留回复的测量容器与兼容接口")
         self.assertEqual(bubble._fill, theme.C["msg_agent_bg"])
-        self.assertEqual(bubble._outline, theme.C["msg_agent_border"])
+        self.assertEqual(bubble._outline, '')
+        self.assertEqual(bubble._fill, theme.C['chat'])
         # 两种气泡底色必须不同，否则「谁在说」看不出来
         self.assertNotEqual(theme.C["msg_user_bg"], theme.C["msg_agent_bg"])
         self.assertTrue(agent.body.winfo_ismapped(), "气泡内正文必须可见")
@@ -1031,7 +1037,7 @@ class RefactorAcceptance(unittest.TestCase):
         self.assertTrue(found, "欢迎屏应有带 decor 标签的画布")
         hero = found[0]
         self.assertTrue(hero.winfo_ismapped(), "主视觉必须可见")
-        self.assertGreater(len(hero.find_withtag("decor")), 100)
+        self.assertEqual(len(hero.find_withtag("decor")), 25)
         for i in hero.find_all():
             b = hero.bbox(i)
             if b:
@@ -1148,11 +1154,15 @@ class DecorTests(unittest.TestCase):
         self.assertEqual((int(banner["width"]), int(banner["height"])),
                          (640, 220))
         items = banner.find_all()
-        self.assertGreater(len(items), 100, "组合画应有足量元素")
+        # The current brand motif replaces the old star field with facets,
+        # open orbits and four Agent nodes. Keep it bounded and lightweight.
+        self.assertLessEqual(len(items), 40)
         kinds = {}
         for i in items:
             kinds[banner.type(i)] = kinds.get(banner.type(i), 0) + 1
-        self.assertGreater(kinds.get("oval", 0), 20)
+        self.assertEqual(kinds.get("oval", 0), 8)
+        self.assertEqual(kinds.get("polygon", 0), 4)
+        self.assertEqual(kinds.get("arc", 0), 2)
         self.assertGreaterEqual(kinds.get("line", 0), 6)
         for i in items:
             b = banner.bbox(i)

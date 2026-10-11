@@ -265,10 +265,13 @@ def register():
                      'import time\ndef register(): time.sleep(30); return []'):
             self.install("aaa", body=body)
             self.install("zzz")
-            script = 'import plugin_market as m, plugin_runtime as r; r.LOAD_TIMEOUT=.25; rt=r.PluginRuntime(m.Marketplace(' + repr(str(self.home)) + '), secret_isolation=False); report=rt.reload(); assert "zzz" in report.loaded; assert report.errors; print("bounded")'
+            # Include interpreter / Windows process-boundary startup in the
+            # test budget. 250 ms also kills a healthy worker on this host;
+            # one second still terminates either malicious 30-second sleep.
+            script = 'import plugin_market as m, plugin_runtime as r; r.LOAD_TIMEOUT=1; rt=r.PluginRuntime(m.Marketplace(' + repr(str(self.home)) + '), secret_isolation=False); report=rt.reload(); assert "zzz" in report.loaded, report; assert report.errors, report; print("bounded")'
             try:
                 result = subprocess.run([sys.executable, "-c", script], cwd=Path(pr.__file__).parent,
-                                        timeout=4, capture_output=True, text=True)
+                                        timeout=6, capture_output=True, text=True)
             except subprocess.TimeoutExpired:
                 self.fail("import/register hung the loader beyond the outer guard")
             self.assertEqual(result.returncode, 0, result.stderr)

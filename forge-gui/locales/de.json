@@ -471,5 +471,9 @@
   "配置API": "API-Einstellungen",
   "📂 项目": "📂 Projekt",
   "🤖 Agent 集群": "🤖 Agent-Gruppe",
-  "模式：{label}": "Modus: {label}"
+  "模式：{label}": "Modus: {label}",
+  "查看详情": "Details anzeigen",
+  "收起详情": "Details ausblenden",
+  "协作与通信": "Zusammenarbeit und Kommunikation",
+  "模型请求失败": "Modellanfrage fehlgeschlagen"
 }

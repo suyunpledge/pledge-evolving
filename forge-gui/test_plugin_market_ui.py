@@ -171,6 +171,18 @@ class MarketplaceUiTests(unittest.TestCase):
                         self.assertLessEqual(widget.winfo_rootx() + widget.winfo_width(),
                             app.market_holder.winfo_rootx() + app.market_holder.winfo_width(),
                             (scale, widget.cget("text")))
+                # At high DPI the filter toolbar exceeds a short viewport.
+                # It must be scrollable into real view, not merely mapped
+                # below a fixed frame that cannot be reached.
+                target = buttons['全部']
+                body = app._market_scroll.inner
+                offset = target.winfo_rooty() - body.winfo_rooty()
+                app.market_canvas.yview_moveto(offset / max(1, body.winfo_height()))
+                layout.pump(root, .1)
+                self.assertGreaterEqual(target.winfo_rooty(), app.market_canvas.winfo_rooty())
+                self.assertLessEqual(target.winfo_rooty() + target.winfo_height(),
+                                     app.market_canvas.winfo_rooty() + app.market_canvas.winfo_height())
+                self.assertTrue(app.view_back_btn.winfo_ismapped())
                 self.assertEqual(errors, [])
 
 

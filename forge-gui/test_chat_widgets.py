@@ -85,12 +85,10 @@ class UserBubbleAutoSize(unittest.TestCase):
                 lw = label.winfo_reqwidth()
                 cw_ = m._card.winfo_width()
                 print(f"[user msg {i}] label_reqwidth={lw} bubble={cw_}")
-                # label 的 request width 应至少是气泡宽度的一半（不完全相等因为 label 是
-                # 实际内容、card 包含 padx/pady 的圆角矩形）
-                self.assertGreater(
-                    lw, cw_ * 0.4,
-                    f"气泡 #{i} 内 Label({lw}) 太窄，远小于气泡({cw_})",
-                )
+                # Use actual card padding, rather than a proportion that
+                # rejects a valid one-character reply (15px + 2*15px = 45px).
+                self.assertAlmostEqual(cw_ - lw, m._card._padx * 2, delta=2)
+                self.assertGreaterEqual(label.winfo_width(), lw - 2)
 
             # 短消息气泡 < 长消息气泡：自适应生效
             # 选取宽的那个短（如果第一次加的是短的）
@@ -106,7 +104,7 @@ class UserBubbleAutoSize(unittest.TestCase):
 
             # 整体容器：用户消息在 MessageArea 整行容器中，靠右
             for m in msgs:
-                self.assertEqual(m.winfo_width(), area.scroll.inner.winfo_width() - 36,
+                self.assertEqual(m.winfo_width(), area.scroll.inner.winfo_width() - int(area.scroll.inner.cget('padx')) * 2,
                                  "用户行未填满 MessageArea 整行宽度")
         finally:
             root.destroy()

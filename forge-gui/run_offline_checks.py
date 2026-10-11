@@ -43,6 +43,7 @@ class IsolatedResult(unittest.TextTestResult):
 def main():
     names = sys.argv[1:] or [
         "test_sysmon", "test_ui_icons", "test_icon_identity", "test_brand_decor", "test_visual_identity",
+        "test_control_feedback",
         "test_chat_widgets", "test_gui_review",
         "test_interactions", "test_refactor_v3", "test_sub_agent", "test_runtime_review",
         "test_ui_ergonomics", "test_startup_responsiveness",
