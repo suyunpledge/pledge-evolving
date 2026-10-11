@@ -256,7 +256,15 @@ class InlineIME:
                     lParam & ~ISC_SHOWUICOMPOSITIONWINDOW)
         except Exception:
             pass
-        return self._call_orig(hwnd, msg, wParam, lParam)
+        try:
+            return self._call_orig(hwnd, msg, wParam, lParam)
+        except Exception:
+            # 窗口销毁边缘 _call_orig 可能抛异常；返回 0 会中断消息链。
+            # 走 DefWindowProc 保底，让消息泵继续转。
+            try:
+                return self._user32.DefWindowProcW(hwnd, msg, wParam, lParam)
+            except Exception:
+                return 0
 
     def _on_compstr(self, hwnd):
         s = ""

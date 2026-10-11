@@ -925,8 +925,13 @@ class ModelPicker(tk.Frame):
             self.close_menu()
 
     def _select(self, value: str) -> None:
-        self.var.set(value)
+        # 2026-10-11 顺序反转：先关浮层再改 var。原顺序在浮层 Button-1
+        # 事件里同步触发 var trace → gateway 重启（taskkill+拉进程），
+        # 进程销毁/创建的窗口消息打进浮层销毁中的事件链，消息泵可卡死
+        # （用户实测「换个模型就打不出字」）。关完浮层再切，重启发生在
+        # 干净的事件上下文里。
         self.close_menu()
+        self.var.set(value)
         if self._on_select is not None:
             self._on_select(value)
 
