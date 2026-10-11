@@ -964,9 +964,8 @@ class ForgeGuiApp:
                                     command=self._toggle_telemetry)
         self._more_menu.add_command(label=tr("收起 / 展开侧边栏"),
                                     command=self._toggle_sidebar)
-        self._more_menu.add_separator()
-        self._more_menu.add_command(label=NAV_LABEL["task"], command=lambda: self._show_view("task"))
-        self._more_menu.add_command(label=tr("项目文件"), command=lambda: self._nav_click("files"))
+        # Phase 2A 导航去重：task/项目文件已进全局导航（PRIMARY_NAV），
+        # 重复入口移除；「更多」只留低频功能与 desktop_features 专属入口。
         self._more_menu.add_command(label=tr('定时任务'), command=lambda:self.desktop_features.open(0))
         self._more_menu.add_command(label=tr('连接器'), command=lambda:self.desktop_features.open(1))
         self._more_menu.add_command(label=tr('代码预览'), command=lambda:self.desktop_features.open(2))
@@ -1476,8 +1475,18 @@ class ForgeGuiApp:
         return "break"
 
     def _show_sidebar_for(self, key: str):
-        # Opening a page must not replace the global navigation with a dead end.
-        panel = self._sidebar_panels.get("files" if key == "files" else "chat")
+        """页面专属侧栏（Phase 2A）：每页展示自己的上下文，聊天历史只在对话页。
+
+        - chat → 聊天历史面板（唯一显示聊天历史的地方）
+        - 其它页 → 该页注册的 context 面板（task/tools/config 等）
+        - 未注册专属面板的页 → 回落 task 说明面板，避免空白侧栏。
+        """
+        if key == "chat":
+            panel = self._sidebar_panels.get("chat")
+        elif key in self._sidebar_panels:
+            panel = self._sidebar_panels[key]
+        else:
+            panel = self._sidebar_panels.get("task")
         for other in self._sidebar_panels.values():
             if other is not panel:
                 other.pack_forget()

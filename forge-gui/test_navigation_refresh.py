@@ -22,7 +22,9 @@ class NavigationRefreshTests(unittest.TestCase):
             app._apply_responsive_layout()
             pump(root)
             self.assertTrue(app.sidebar.winfo_ismapped())
-            self.assertTrue(app._sidebar_panels['chat'].winfo_ismapped())
+            # Phase 2A：每页显示自己的 context 面板；聊天历史只在 chat 页。
+            self.assertTrue(app._sidebar_panels['task'].winfo_ismapped())
+            self.assertFalse(app._sidebar_panels['chat'].winfo_ismapped())
             self.assertEqual(app.sidebar.master.pack_slaves()[0], app.sidebar)
             self.assertFalse(errors, errors)
 
