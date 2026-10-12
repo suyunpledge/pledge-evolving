@@ -51,12 +51,17 @@ class KnowledgeBase:
 
     def record(self, text: str, *, source: str = "agent",
                tags: tuple[str, ...] = (), kind: str = "pitfall") -> object:
-        """踩坑入库（幂等：同文本不重复）。"""
+        """踩坑入库（幂等：同文本更新语义而非静默丢弃）。
+
+        F-05（QA）：tags 未显式给时按 kind 生成（调用方语义优先），
+        不再用固定 'knowledge-base' 覆盖。
+        """
         if kind not in _KB_KINDS:
             kind = "pitfall"
+        final_tags = tuple(tags) if tags else (kind,)
         with self._lock:
             return self.store.remember(text, kind=kind, source=source,
-                                       tags=tags or ("knowledge-base",))
+                                       tags=final_tags)
 
     def search(self, query: str, *, limit: int = 5) -> list[tuple[object, float]]:
         """按任务文本关键词检索知识条目，(entry, score) 降序。"""
@@ -90,9 +95,13 @@ class KnowledgeBase:
         used = 0
         for entry, score in hits:
             tag = "pitfall" if entry.kind == "pitfall" else "lesson"
-            line = f"- [{tag}] {entry.text}"
-            if used + len(line) > max_chars:
+            # F-07（QA 审查）：单条超长截断保留（不再整条丢弃），至少给
+            # 出前 200 字符的可用线索。
+            budget = max_chars - used
+            if budget <= 0:
                 break
+            text = entry.text if len(entry.text) <= budget - 24 else entry.text[:max(60, budget - 32)] + "…"
+            line = f"- [{tag}] {text}"
             lines.append(line)
             used += len(line)
         return "\n".join(lines)

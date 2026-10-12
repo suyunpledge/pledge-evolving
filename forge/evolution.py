@@ -180,7 +180,11 @@ class Ledger:
         if self.path.is_file():
             for line in self.path.read_text(encoding="utf-8", errors="replace").splitlines():
                 if line.strip():
-                    self.entries.append(json.loads(line))
+                    try:
+                        self.entries.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        # F-02（QA 审查）：坏行跳过，不击穿引擎构造。
+                        continue
 
     def append(self, action: str, candidate: Candidate, **extra: Any) -> dict[str, Any]:
         entry = {
@@ -462,7 +466,22 @@ class EvolutionEngine:
             point = self.checkpoints.snapshot(f"before rollback {candidate.id}")
             if point is not None:
                 candidate.note = (candidate.note + f" rollback-checkpoint={point.commit[:8]}").strip()
-        if candidate.previous_content:
+        current = target.read_text(encoding="utf-8") if target.is_file() else None
+        applied_content = str(getattr(candidate, "content", "") or "")
+        # F-03（QA 审查）：同目标文件可能已有后续候选的内容——整文件盲写
+        # previous_content 会清掉别人的成果。改为块级回滚：仅当文件仍与
+        # 本候选 apply 后的内容一致时才整文件还原；否则从当前内容中移除
+        # 本候选的块（保留其余候选的成果）。
+        if current is not None and applied_content and applied_content.strip() in current:
+            remaining = current.replace(applied_content, "", 1).strip("\n")
+            target.write_text(remaining + ("\n" if remaining else ""), encoding="utf-8")
+        elif current is not None and applied_content and current.strip() != applied_content.strip():
+            # 内容既不包含本候选块、也不等于 apply 后状态（人工改动过）——
+            # 拒绝盲写，转人工（checkpoint 兜底）。
+            raise RuntimeError(
+                f"rollback refused: {target.name} was edited manually after {candidate.id}. "
+                f"Restore from checkpoint instead.")
+        elif candidate.previous_content:
             target.write_text(candidate.previous_content, encoding="utf-8")
         elif target.is_file():
             target.write_text("", encoding="utf-8")

@@ -70,19 +70,58 @@ class MemoryStore:
         self.entries: list[Entry] = []
 
     # -- load / save -----------------------------------------------------
+    @staticmethod
+    def _recover_from_view(text: str) -> list:
+        """F-06：JSON 块损坏时从 markdown 可读视图恢复条目。"""
+        import re as _re
+        entries = []
+        pattern = _re.compile(r"^- \*\*\[([\w-]+)\]\*\*\s*(📌 )?(.+)$", _re.M)
+        for match in pattern.finditer(text):
+            kind, _pin, body = match.group(1), match.group(2), match.group(3)
+            if kind not in KINDS:
+                continue
+            entries.append(Entry(kind=kind, text=body.strip(),
+                                 source="view-recovery",
+                                 tags=("recovered",)))
+        return entries
+
     def load(self) -> "MemoryStore":
         if self.path.is_file():
             text = self.path.read_text(encoding="utf-8", errors="replace")
             block = _between(text, RAW_START, RAW_END)
-            if block:
+            # F-06（QA 审查）：三种损坏形态都要走恢复——
+            # ① JSON 块存在但解析失败；② 块存在但单条坏；③ 块被截断
+            # （有 START 无 END，_between 返回空）。统一回退解析 markdown
+            # 可读视图恢复条目，坏块不再清零整个库；save() 重建权威块。
+            truncated = text.find(RAW_START) >= 0 and text.find(RAW_END) < 0
+            if block or truncated:
                 try:
                     payload = json.loads(block)
-                    self.entries = [Entry.from_raw(e) for e in payload.get("entries", [])]
-                except json.JSONDecodeError:
                     self.entries = []
+                    for raw in payload.get("entries", []):
+                        try:
+                            self.entries.append(Entry.from_raw(raw))
+                        except Exception:
+                            continue  # 单条坏数据跳过
+                except json.JSONDecodeError:
+                    self.entries = self._recover_from_view(text)
+                if truncated and not self.entries:
+                    self.entries = self._recover_from_view(text)
         return self
 
     def save(self) -> None:
+        # F-04（QA 审查）：跨实例并发写同一路径的 last-writer-wins 防护——
+        # 写前重读磁盘，合并磁盘上多出的条目（本实例未见过的），再落盘。
+        try:
+            if self.path.is_file():
+                disk = MemoryStore(self.path)
+                disk.load()
+                known = {(e.text.strip(), e.kind) for e in self.entries}
+                for entry in disk.entries:
+                    if (entry.text.strip(), entry.kind) not in known:
+                        self.entries.append(entry)
+        except Exception:
+            pass  # 磁盘读取失败不阻断保存（保持原行为）
         lines = ["# Memory", "", "<!-- human-readable view; the JSON block below is authoritative -->", ""]
         for entry in self.entries:
             if entry.archived:
@@ -108,7 +147,13 @@ class MemoryStore:
             raise ValueError(f"unknown memory kind {kind!r}; expected one of {KINDS}")
         with self._lock:
             for existing in self.entries:
+                # F-05（QA 审查）：同文本再次 remember 时同步更新
+                # kind/tags/source（不再静默丢弃第二个调用方的语义）。
                 if existing.text.strip() == text.strip():
+                    existing.kind = kind
+                    existing.tags = tuple(tags) if tags else existing.tags
+                    if source:
+                        existing.source = source
                     return existing
             entry = Entry(kind=kind, text=text.strip(), source=source, tags=tuple(tags))
             self.entries.append(entry)
@@ -154,7 +199,10 @@ class MemoryStore:
                 archived += 1
         if archived:
             self.save()
-        return {"archived": archived, "kept": len(self.entries) - archived}
+        # F-08（QA 审查）：kept = 活跃（未归档）条目数——先前已归档的
+        # 不应被计入 kept。
+        kept = sum(1 for e in self.entries if not e.archived)
+        return {"archived": archived, "kept": kept}
 
     def restore(self, text: str) -> bool:
         for entry in self.entries:

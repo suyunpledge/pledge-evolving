@@ -60,7 +60,13 @@ class DevelopmentRuntime:
             return {'models': [{'id': i, 'label': ' / '.join(pair)} for i, pair in self.catalog.items()],
                     'workspace': str(project), 'sessionPath': str(self.bridge.agent.session.path), 'ready': True}
         home = self.state.home
-        if home.is_relative_to((Path.home() / '.forge').resolve()) or home.is_relative_to(project):
+        # F-09（QA）：General 存储（~/.forge）永不共享；project 内的
+        # 【专用 dot 目录】home 放行（GUI 的 project-local 选址合法，
+        # 不与项目源码混淆），其余 project 内位置仍拒绝。
+        dedicated = home.name == '.forge-development-home' and home.parent == project
+        if home.is_relative_to((Path.home() / '.forge').resolve()):
+            raise ValueError('Use an independent IDE home outside the project; never share General runtime stores')
+        if home.is_relative_to(project) and not dedicated:
             raise ValueError('Use an independent IDE home outside the project; never share General runtime stores')
         if not self._lane.acquire(False):
             raise RuntimeError('A task is running')
@@ -68,11 +74,15 @@ class DevelopmentRuntime:
             result = self.bridge.initialize({'workspace': str(project), 'home': str(home)})
             self.catalog = {row['id']: self.bridge.models[row['id']] for row in result['models']}
             self.ready = True
-            self._base_extra_system = self.bridge.agent.extra_system
+            # F-09（QA）：最小宿主桥（agent 未就绪）也能初始化
+            self._base_extra_system = getattr(
+                getattr(self.bridge, 'agent', None), 'extra_system', '') or ''
             # The existing shadow checkpoint repo is project-specific, not shared across opened projects.
             from forge.checkpoint import CheckpointStore
             identity = hashlib.sha256(str(project).encode('utf-8')).hexdigest()[:24]
-            self.bridge.agent.checkpoints = CheckpointStore(home / 'projects' / identity, project)
+            _agent = getattr(self.bridge, 'agent', None)
+            if _agent is not None:
+                _agent.checkpoints = CheckpointStore(home / 'projects' / identity, project)
             self.state.remember_project(project)
             self.state.remember_session(result['sessionPath'])
             return result

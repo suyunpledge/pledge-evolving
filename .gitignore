@@ -48,3 +48,4 @@ mimo26-test-artifacts/
 *.env
 !.env.example
 forge-gui/.secret_store.json
+.forge-development-home/

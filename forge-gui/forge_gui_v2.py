@@ -3209,7 +3209,10 @@ class ForgeGuiApp:
             try:
                 from development_mode.app import DevelopmentWorkbench
                 from forge.development.state import ModeState
-                dev_home = Path(__file__).resolve().parent.parent / ".forge-development-home"
+                # F-09（QA）：home 不得在 repo 内——runtime 隔离规则会拒绝
+                # 「项目包含自身 IDE home」。改用户级目录（与 run_development.py
+                # 的默认一致语义：project-local 但永不与项目重叠）。
+                dev_home = Path.home() / ".forge-development"
                 state = ModeState(dev_home)
                 bench = DevelopmentWorkbench(self._views[key], state)
                 bench.pack(fill=tk.BOTH, expand=True)
