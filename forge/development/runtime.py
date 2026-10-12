@@ -2,10 +2,11 @@
 import hashlib
 from pathlib import Path
 import threading
+import uuid
 
 from forge.execution_guard import workflow_status
 from forge.secrets import redact, install_logging_redaction
-from forge.session import Event
+from forge.session import Event, _redact_record
 from .evidence import TaskEvidence
 from forge.vscode_bridge import EditorBridge
 from .state import WorkMode
@@ -15,7 +16,9 @@ DEVELOPMENT_GUIDANCE = (
     'For nontrivial work plan dependencies and changes, make scoped edits, run relevant tests '
     'through authorized tools, inspect the actual diff, and summarize evidence and limitations. '
     'Simplify this workflow for small tasks. Report only real tool/test events; '
-    'never claim tests ran when Policy denied execution. Do not overwrite unsaved editor buffers. '
+    'Before editing an existing file, read it through a file tool in this Agent run; '
+    'read it again after a revision conflict. '
+    'Never claim tests ran when Policy denied execution. Do not overwrite unsaved editor buffers. '
     'Mode selection grants no permissions.'
 )
 
@@ -38,6 +41,10 @@ class DevelopmentRuntime:
         self.bridge._development_lane = self._lane
         self.last_snapshot = None
         self.evidence = TaskEvidence()
+        self.tasks = {}
+        self.last_task_id = ''
+        self._control = threading.RLock()
+        self._cancel_event = None
         self._resume_evidence = None
         self._base_extra_system = getattr(existing_agent, 'extra_system', '')
         self._base_child_factory = getattr(existing_agent, 'child_router_factory', None)
@@ -52,10 +59,33 @@ class DevelopmentRuntime:
 
     def _emit(self, event):
         if event.get('event') == 'progress':
-            self.evidence.apply(event.get('data', {}))
-        if self._previous_bridge_emit is not None:
-            self._previous_bridge_emit(redact(event))
-        self.emit(redact(event))
+            data = event.get('data', {})
+            task = self.tasks.get(data.get('task_id'))
+            (task['evidence'] if task else self.evidence).apply(data)
+        for listener in (self._previous_bridge_emit, self.emit):
+            if listener is not None:
+                try:
+                    listener(redact(event))
+                except Exception:
+                    # A destroyed view must not change execution or journal truth.
+                    pass
+
+    def _publish(self, kind, **data):
+        event = redact({'type': kind, 'task_id': self.last_task_id, **data})
+        agent = getattr(self.bridge, 'agent', None)
+        if agent is not None:
+            with agent.session:
+                agent.session.append(kind, **{k: v for k, v in event.items() if k != 'type'})
+                agent.session.sync()
+        self._emit({'event': 'progress', 'data': event})
+
+    def cancel(self):
+        """Request a stop at the next boundary; do not pretend a worker has exited."""
+        with self._control:
+            if self._cancel_event is None:
+                return False
+            self._cancel_event.set()
+            return True
 
     def initialize(self, project):
         project = Path(project).resolve(strict=True)
@@ -106,11 +136,24 @@ class DevelopmentRuntime:
             raise RuntimeError('Open a project first')
         if not self._lane.acquire(False):
             raise RuntimeError('Agent is already running; configuration applies to the next task')
+        agent = getattr(self.bridge, 'agent', None)
+        attributes = ('router', 'policy', 'planning_level', 'planning_model', 'review_model',
+                      'review_enabled', 'extra_system', 'child_router_factory', 'child_observer',
+                      'cancellation_event', 'file_guard', 'task_id')
+        previous = {key: getattr(agent, key) for key in attributes if agent is not None and hasattr(agent, key)}
+        with self._control:
+            self._cancel_event = threading.Event()
+        started = False
         try:
             snap = snapshot or self.state.task_snapshot(explicit_model=explicit_model, agent_model=agent_model,
                                                        role=role, permission=permission)
             self.last_snapshot = snap
             self.evidence = TaskEvidence()
+            self.last_task_id = uuid.uuid4().hex
+            self.tasks[self.last_task_id] = {'snapshot': snap, 'evidence': self.evidence}
+            self.bridge.last_result = None
+            started = True
+            self._publish('development_task_started', phase='executing', work_mode=snap.mode.value)
             selected = ''
             if snap.model:
                 selected = next((identifier for identifier, pair in self.catalog.items() if pair == snap.model), None)
@@ -119,21 +162,26 @@ class DevelopmentRuntime:
             params = {'prompt': prompt, 'model': selected, 'mode': snap.permission,
                       'planning': planning if snap.mode == WorkMode.DEVELOPMENT else 'none',
                       'contexts': list(contexts)}
-            for source in tuple(self.context_sources):
+            for source in tuple(self.context_sources) if snap.mode == WorkMode.DEVELOPMENT else ():
                 # Trusted adapters contribute documents, all validated/virtualized by EditorBridge.
                 params['contexts'].extend(source(snap))
             # Review/subagent defaults bind only at the task boundary, and only to core-supported slots.
             agent = getattr(self.bridge, 'agent', None)
             if agent is not None:
+                agent.task_id = self.last_task_id
+                agent.cancellation_event = self._cancel_event
+                if snap.mode == WorkMode.DEVELOPMENT:
+                    from .guard import FileRevisionGuard
+                    agent.file_guard = FileRevisionGuard(self.bridge.workspace)
                 roles = dict(snap.roles) if snap.mode == WorkMode.DEVELOPMENT else {}
                 from forge.phase_models import phase_router
-                review = roles.get('review')
+                review = roles.get('review') if snap.mode == WorkMode.DEVELOPMENT else previous.get('review_model')
                 phase_router(self.bridge.router, review, self.bridge.router)
                 agent.review_model = tuple(review) if review else None
-                agent.extra_system = self._base_extra_system + ('\n' + DEVELOPMENT_GUIDANCE
+                agent.extra_system = previous.get('extra_system', '') + ('\n' + DEVELOPMENT_GUIDANCE
                                      if snap.mode == WorkMode.DEVELOPMENT else '')
                 from forge.phase_models import model_pair
-                child_model = model_pair(child_model)
+                child_model = model_pair(child_model) if snap.mode == WorkMode.DEVELOPMENT else None
                 child_pair = child_model or roles.get('subagent')
                 child_pair = model_pair(child_pair)
                 phase_router(self.bridge.router, child_pair, self.bridge.router)
@@ -143,12 +191,12 @@ class DevelopmentRuntime:
                 # Each actual child keeps explicit assignment > own model > role > inherited route.
                 def child_route(name, policy, inherited):
                     choice = child_model or overrides.get(name)
-                    if choice is None and getattr(self, '_base_child_factory', None):
-                        return self._base_child_factory(name, policy, inherited)
+                    if choice is None and previous.get('child_router_factory'):
+                        return previous['child_router_factory'](name, policy, inherited)
                     choice = choice or child_pair
                     return phase_router(self.bridge.router, choice, inherited)
-                agent.child_router_factory = child_route if snap.mode == WorkMode.DEVELOPMENT else getattr(self, '_base_child_factory', None)
-                agent.child_observer = self.bridge.observe if snap.mode == WorkMode.DEVELOPMENT else getattr(self, '_base_child_observer', None)
+                agent.child_router_factory = child_route if snap.mode == WorkMode.DEVELOPMENT else previous.get('child_router_factory')
+                agent.child_observer = self.bridge.observe if snap.mode == WorkMode.DEVELOPMENT else previous.get('child_observer')
                 if self._resume_evidence:
                     agent.extra_system += ('\nRecovery: previous actions may have unknown outcomes. '
                                           'Re-read files and diff before continuing; never replay a pending action automatically.')
@@ -161,14 +209,35 @@ class DevelopmentRuntime:
                         'unless it really did. Task:\n' + prompt)
                 with agent.session:
                     agent.session.append('development_task', work_mode=snap.mode.value, role=snap.role,
+                                         task_id=self.last_task_id,
                                          selected_model=snap.model, permission=snap.permission,
                                          delegated=bool(delegate))
             result = self.bridge.run(params)
+            if agent is not None:
+                self.tasks[self.last_task_id]['router'] = agent.router
+            result = {**result, 'task_id': self.last_task_id}
+            self.tasks[self.last_task_id]['result'] = redact(result)
+            self._publish('development_task_finished', phase='completed' if result.get('ok') else
+                          'cancelled' if result.get('stopped') == 'cancelled' else 'failed',
+                          run_id=result.get('messageId', ''), result=result)
             self._resume_evidence = None
             for listener in tuple(self.result_observers):
-                listener(redact(result))
+                try:
+                    listener(redact(result))
+                except Exception as exc:
+                    self._emit({'event': 'progress', 'data': {'type': 'observer_error',
+                               'task_id': self.last_task_id, 'error': redact(str(exc))}})
             return redact(result)
+        except BaseException as exc:
+            if started:
+                self._publish('development_task_finished', phase='interrupted' if isinstance(exc, (KeyboardInterrupt, SystemExit))
+                              else 'failed', error=redact(str(exc)))
+            raise
         finally:
+            for key, value in previous.items():
+                setattr(agent, key, value)
+            with self._control:
+                self._cancel_event = None
             self._lane.release()
 
     def review(self):
@@ -178,11 +247,87 @@ class DevelopmentRuntime:
             target = self.bridge.last_result
             if not target:
                 raise ValueError('No completed response to review')
-            pair = self.state.value('roles').get('review')
+            snap = self.last_snapshot
+            pair = dict(snap.roles).get('review') if snap and snap.mode == WorkMode.DEVELOPMENT else self.bridge.agent.review_model
             identifier = next((i for i, p in self.catalog.items() if tuple(pair or ()) == p), '')
             if pair and not identifier:
                 raise ValueError('Review model is not configured')
-            return redact(self.bridge.review({'enabled': True, 'messageId': target[0], 'model': identifier}))
+            agent = self.bridge.agent
+            previous = agent.review_model, agent.review_enabled, agent.task_id, agent.cancellation_event, agent.router
+            with self._control:
+                self._cancel_event = threading.Event()
+            try:
+                agent.task_id = self.last_task_id
+                agent.cancellation_event = self._cancel_event
+                agent.router = self.tasks.get(self.last_task_id, {}).get('router', agent.router)
+                return redact({**self.bridge.review({'enabled': True, 'messageId': target[0], 'model': identifier}),
+                               'task_id': self.last_task_id})
+            except Exception as exc:
+                from forge.loop import RunCancelled
+                if not isinstance(exc, RunCancelled):
+                    raise
+                return {'ok': False, 'status': 'cancelled', 'messageId': target[0], 'task_id': self.last_task_id}
+            finally:
+                agent.review_model, agent.review_enabled, agent.task_id, agent.cancellation_event, agent.router = previous
+                with self._control:
+                    self._cancel_event = None
+        finally:
+            self._lane.release()
+
+    def execute_tests(self, argv, *, trusted=False, timeout=120):
+        """Human/host execution only. Never registered as an Agent tool.
+
+        trusted means the human approved this exact native command and project code.
+        This is account-level execution, not a Secret-safe or OS-sandboxed capability.
+        """
+        if not self.ready or not self._lane.acquire(False):
+            raise RuntimeError('Open a project and wait for task completion')
+        try:
+            snap = self.last_snapshot
+            if (not trusted or not snap or snap.mode != WorkMode.DEVELOPMENT or
+                    self.state.mode != WorkMode.DEVELOPMENT or snap.permission != 'workspace-write'):
+                raise PermissionError('Explicit human approval and a Development workspace-write task are required')
+            from .testing import execute
+            from forge.policy import Decision
+            import subprocess
+            command = subprocess.list2cmdline(argv)
+            decision = self.bridge.policy(snap.permission).evaluate('shell_exec', args={'command': command})
+            if decision == Decision.DENY:
+                raise PermissionError('Test command denied by Policy')
+            with self._control:
+                self._cancel_event = threading.Event()
+            run_id = uuid.uuid4().hex
+            self._publish('test_started', run_id=run_id, agent='human-test', command=command,
+                          authorization='human-approved')
+            try:
+                result = execute(argv, self.bridge.workspace, self.home, self._cancel_event,
+                                 timeout=timeout, task_id=self.last_task_id, run_id=run_id)
+            except BaseException as exc:
+                self._publish('test_result', run_id=run_id, agent='human-test', command=command,
+                              status='interrupted', error=redact(str(exc)), exit_code=None)
+                raise
+            self._publish('test_result', run_id=run_id, agent='human-test', command=command, **result)
+            return {**result, 'task_id': self.last_task_id, 'run_id': run_id}
+        finally:
+            with self._control:
+                self._cancel_event = None
+            self._lane.release()
+
+    def inspect_diff(self, source, path, view='combined'):
+        if not self._lane.acquire(False):
+            raise RuntimeError('Wait for task completion before capturing Diff')
+        try:
+            if source.root != self.bridge.workspace:
+                raise ValueError('Diff belongs to another project')
+            from .guard import FileRevisionGuard
+            guard = FileRevisionGuard(source.root)
+            with guard.lock:
+                target = source.boundary.path(path)
+                value = source.diff(target, view)
+                if self.last_task_id:
+                    self._publish('git_diff', path=str(target), view=view, diff=value,
+                                  revision=guard.digest(target), source='workspace-snapshot')
+            return value
         finally:
             self._lane.release()
 
@@ -214,13 +359,15 @@ class DevelopmentRuntime:
             previous = agent.policy
             agent.policy = self.bridge.policy(permission)
             def publish(event):
-                data = dict(event)
+                data = {'task_id': self.last_task_id, **event}
                 kind = data.pop('type')
                 agent.session.append(kind, **data)
-                self._emit({'event': 'progress', 'data': event})
+                self._emit({'event': 'progress', 'data': {'type': kind, **data}})
             try:
                 with agent.session:
-                    result = apply_checkpoint(agent, commit, path, expected, publish=publish)
+                    from .guard import FileRevisionGuard
+                    with FileRevisionGuard(self.bridge.workspace).lock:
+                        result = apply_checkpoint(agent, commit, path, expected, publish=publish)
             finally:
                 agent.policy = previous
             return {'ok': result.ok, 'error': redact(result.error), 'result': redact(result.content), 'meta': redact(result.meta)}
@@ -249,14 +396,21 @@ class DevelopmentRuntime:
                     raise
                 incomplete = True
                 break
-            event.data = redact(event.data)
+            # Session owns the public rollout identity exemption. It is not an
+            # HTTP session credential and must not poison known-value detection.
+            event.data = _redact_record(event.data) if event.type == 'session_meta' else redact(event.data)
             events.append(event)
-        run = next((e.data['run_id'] for e in reversed(events) if e.type == 'workflow_state'
+        latest_task = next((e.data.get('task_id') for e in reversed(events) if e.data.get('task_id')), '')
+        task_events = [e for e in events if not latest_task or e.data.get('task_id') == latest_task]
+        run = next((e.data['run_id'] for e in reversed(task_events) if e.type == 'workflow_state'
                     and not e.data.get('depth', 0) and e.data.get('run_id')), '')
         # Real dialogue only; never turn pending tool intents into new invocations.
         history, nested = [], 0
         for e in events:
-            if e.type == 'subagent_spawn':
+            if e.type == 'development_recovery':
+                from forge.vscode_bridge import _history
+                history = _history(e.data.get('history', []))
+            elif e.type == 'subagent_spawn':
                 nested += 1
             elif e.type in {'subagent_result', 'subagent_error'}:
                 nested = max(0, nested - 1)
@@ -265,7 +419,9 @@ class DevelopmentRuntime:
                 history.append({'role': 'user' if e.type == 'user_message' else 'assistant',
                                 'content': str(e.data.get('content', ''))})
         return {'history': history[-100:], 'events': [{'type': e.type, **e.data} for e in events],
-                'workflow': workflow_status(events, run) if run else None, 'path': str(path),
+                'workflow': workflow_status(task_events, run) if run else None, 'path': str(path),
+                'task_id': latest_task,
+                'task_status': TaskEvidence.from_events([{'type': e.type, **e.data} for e in task_events], recovered=True).phase,
                 'incomplete_tail': incomplete,
                 'workspace': next((e.data.get('cwd', '') for e in events if e.type == 'session_meta'), '')}
 
@@ -280,8 +436,25 @@ class DevelopmentRuntime:
             self.bridge.history = self.bridge.agent.secret_scope.protect(_history(evidence['history']))
             self.bridge.last_result = None  # Never review a response from the replaced conversation.
             self.evidence = TaskEvidence.from_events(evidence['events'], recovered=True)
+            self.last_task_id = self.evidence.task_id
+            self.last_snapshot = None  # Recovery cannot reinstate a write grant.
+            if self.last_task_id:
+                self.tasks[self.last_task_id] = {'evidence': self.evidence, 'recovered': True}
             self._resume_evidence = evidence
             # Continue with a fresh journal. Preserve uncertain old actions as read-only evidence.
+            from forge.session import Session
+            old_session = self.bridge.agent.session
+            fresh = old_session.path.parent / (uuid.uuid4().hex + '.jsonl')
+            self.bridge.agent.session = Session(fresh, meta={'cwd': str(self.bridge.workspace),
+                                                            'resumed_from': evidence['path']})
+            old_session.close()
+            with self.bridge.agent.session as journal:
+                journal.append('development_recovery', task_id=self.last_task_id,
+                               source=evidence['path'], history=self.bridge.history,
+                               phase=evidence['task_status'], workflow=evidence['workflow'])
+                journal.sync()
+            self.state.remember_session(fresh)
+            evidence['continuation_path'] = str(fresh)
             return evidence
         finally:
             self._lane.release()

@@ -84,6 +84,7 @@ class WorkbenchTests(unittest.TestCase):
         self.app.open_file(self.project / 'one.py')
         self.pump(lambda: bool(self.app.documents))
         self.app.runtime.bridge.router = Router([
+            json.dumps({'tool': 'read_file', 'args': {'path': 'one.py'}}),
             json.dumps({'tool': 'write_file', 'args': {'path': 'one.py', 'content': 'print(2)\n'}}),
             'Done'])
         agent = self.app.runtime.bridge.agent
@@ -278,6 +279,58 @@ class WorkbenchTests(unittest.TestCase):
             self.app.send()
             self.pump(lambda: str(self.app.send_button['state']) == 'normal')
         self.assertEqual(self.app.input.get('1.0', 'end-1c'), 'retry draft')
+
+    def test_mode_switch_resets_next_task_permission(self):
+        self.app.permission.set('workspace-write')
+        self.app._permission = 'workspace-write'
+        self.state.switch('general')
+        self.assertEqual(self.app.permission.get(), 'read-only')
+        self.state.switch('development')
+        self.assertEqual(self.app.permission.get(), 'read-only')
+
+    def test_test_execution_requires_exact_human_confirmation(self):
+        from forge.test_task_planning import Router
+        from unittest.mock import Mock
+        (self.project / 'tests').mkdir()
+        self.app.runtime.bridge.router = Router(['done'])
+        agent = self.app.runtime.bridge.agent
+        agent.thinking_mode, agent.thinking = 'off', False
+        self.app.runtime.run('prepare tests', permission='workspace-write', planning='none')
+        self.app.permission.set('workspace-write')
+        self.pump(lambda: self.app._jobs == 0)
+        execute = Mock(return_value={'status': 'completed'})
+        with patch('development_mode.app.simpledialog.askstring', return_value='tests'), \
+                patch('development_mode.app.messagebox.askyesno', return_value=False), \
+                patch.object(self.app.runtime, 'execute_tests', execute):
+            self.app.run_tests()
+            execute.assert_not_called()
+        with patch('development_mode.app.simpledialog.askstring', return_value='tests'), \
+                patch('development_mode.app.messagebox.askyesno', return_value=True), \
+                patch.object(self.app.runtime, 'execute_tests', execute):
+            self.app.run_tests()
+            self.pump(lambda: self.app._jobs == 0)
+        execute.assert_called_once()
+        self.assertTrue(execute.call_args.kwargs['trusted'])
+
+    def test_cancel_button_requests_stop_without_marking_worker_complete(self):
+        with patch.object(self.app.runtime, 'cancel', return_value=True) as cancel:
+            self.app.cancel_button.invoke()
+            cancel.assert_called_once()
+        self.assertIn('等待', self.app.status.get())
+
+    def test_recovery_preview_preserves_public_identity_and_resets_grant(self):
+        from forge.session import Session
+        from forge.secrets import redact
+        identifier = 'rollout-display-fixture-123'
+        journal = self.app.runtime.home / 'sessions' / (identifier + '.jsonl')
+        with Session(journal, meta={'cwd': str(self.project.resolve())}) as log:
+            log.append('user_message', content='actual dialogue')
+        self.app.permission.set('workspace-write')
+        self.app.restore_session(journal)
+        self.pump(lambda: self.app._jobs == 0)
+        self.assertIn(identifier, self.app.events.get('1.0', 'end'))
+        self.assertEqual(redact(identifier), identifier)
+        self.assertEqual(self.app.permission.get(), 'read-only')
 
 
 if __name__ == '__main__':

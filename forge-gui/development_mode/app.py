@@ -5,6 +5,7 @@ import json
 import queue
 import threading
 import time
+import sys
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 
@@ -229,6 +230,9 @@ class DevelopmentWorkbench(ttk.Frame):
         self.delegate_button = ttk.Button(row3, text='请求子 Agent', command=lambda: self.send(delegate=True))
         row3.pack(fill='x', padx=6, pady=(0, 4))
         self.delegate_button.pack(side='left')
+        self.cancel_button = ttk.Button(row3, text='取消', command=self.cancel_task)
+        self.cancel_button.pack(side='right')
+        ttk.Button(row3, text='执行测试', command=self.run_tests).pack(side='right', padx=4)
         ttk.Button(row3, text='独立模型', command=self.agent_model_settings).pack(side='left', padx=4)
         row3 = ttk.Frame(self.agent_frame)
         row3.pack(fill='x', padx=6, pady=(0, 6))
@@ -467,7 +471,7 @@ class DevelopmentWorkbench(ttk.Frame):
             heading = ('真实操作来源 / 审批记录：\n' + json.dumps(evidence, ensure_ascii=False, indent=2)
                        if evidence else '尚无本会话 Agent 操作记录；Git 变更不自动归因于 Agent。') + '\n\n'
             view = self.diff_view.get()
-            self.work(lambda: source.diff(path, view), lambda value, error: self.write_output('Diff', heading + value, clear=True)
+            self.work(lambda: self.runtime.inspect_diff(source, path, view), lambda value, error: self.write_output('Diff', heading + value, clear=True)
                       if not error and request == self._diff_request else None)
             self.output.select(0)
 
@@ -733,7 +737,7 @@ class DevelopmentWorkbench(ttk.Frame):
 
     def render_evidence(self):
         view = self.task_evidence
-        lines = ['任务状态：' + view.phase, '', '计划（不由文本推断完成）：']
+        lines = ['任务：' + (view.task_id or '尚未创建'), '任务状态：' + view.phase, '', '计划（不由文本推断完成）：']
         lines.extend('• ' + str(task) for task in view.plan)
         lines.extend(['', 'Agent / 实际执行状态：'])
         lines.extend(f"{row['agent']} · {row['status']} · {row['run_id'][:8]} · {row.get('model', '')}"
@@ -742,7 +746,12 @@ class DevelopmentWorkbench(ttk.Frame):
         lines.extend(f"{r.get('agent', 'forge')} / {r.get('tool', '')} · {r['status']}"
                      for r in list(view.actions.values())[-100:])
         lines.extend(['', '测试 / 命令记录：'])
-        lines.extend(f"{r['status']} · {r['command']} · 未提供结构化通过数" for r in view.tests[-20:])
+        lines.extend(f"{r['status']} · {r['command']} · 退出码 {r.get('exit_code', '未提供')}"
+                     for r in view.tests[-20:])
+        lines.extend(['', f'Diff 快照：{len(view.diffs)}（工作区实况，包含其他来源的修改）'])
+        lines.extend(['', '复审：'])
+        lines.extend(f"{r['status']} · {(r.get('review') or {}).get('model', '')} · {r.get('message_id', '')[:8]}"
+                     for r in list(view.reviews.values())[-10:])
         self.workflow.configure(state='normal')
         self.workflow.delete('1.0', 'end')
         self.workflow.insert('1.0', redact('\n'.join(lines)))
@@ -753,8 +762,12 @@ class DevelopmentWorkbench(ttk.Frame):
             self.append(self.chat, '\n你\n' + event.get('display', '') + '\n')
             return
         data = event.get('data', event)
+        if data.get('type') == 'development_task_started' and data.get('task_id') != self.task_evidence.task_id:
+            self.task_evidence = TaskEvidence()
         self.task_evidence.apply(data)
-        if data.get('type') in {'workflow_state', 'task_plan', 'tool_started', 'tool_completed', 'tool_call', 'usage'}:
+        if data.get('type') in {'workflow_state', 'task_plan', 'tool_started', 'tool_completed', 'tool_call', 'usage',
+                                'development_task_started', 'development_task_finished', 'test_started', 'test_result', 'git_diff',
+                                'review_started', 'review_result', 'review_error', 'review_cancelled'}:
             self.render_evidence()
         raw = json.dumps(data, ensure_ascii=False, indent=2)
         if len(raw) > 16384:
@@ -766,7 +779,7 @@ class DevelopmentWorkbench(ttk.Frame):
             paths = [data.get('args', {}).get('path')]
             blocks = data.get('args', {}).get('patches') or data.get('args', {}).get('edits') or []
             paths.extend(p.get('path') for p in blocks if isinstance(p, dict))
-            for path in paths:
+            for path in paths if data.get('ok') and data.get('tool') in {'write_file', 'edit_file', 'apply_patch', 'edit_config', 'delete_file'} else []:
                 if not path or not self.source:
                     continue
                 try:
@@ -785,6 +798,44 @@ class DevelopmentWorkbench(ttk.Frame):
                 self.refresh_documents()
         elif kind in {'model_error', 'review_error', 'subagent_error'}:
             self.write_output('问题', json.dumps(data, ensure_ascii=False) + '\n')
+        elif kind == 'test_result':
+            heading = json.dumps({k: v for k, v in data.items() if k != 'output'}, ensure_ascii=False, indent=2)
+            output = data.get('output', '')
+            self.write_output('测试', heading + '\n' + output[:16384] +
+                              ('\n[预览已截断，请查看上述 artifact]\n' if len(output) > 16384 else '\n'))
+
+    def cancel_task(self):
+        if self.runtime.cancel():
+            self.status.set('已请求取消；等待当前模型请求或工具返回，之后停止执行。已写入文件会保留。')
+        else:
+            self.status.set('当前没有可取消的任务')
+
+    def run_tests(self):
+        if self.runtime.busy or self._loading or self.state.mode != WorkMode.DEVELOPMENT:
+            self.status.set('请在开发模式完成当前任务后执行测试')
+            return
+        snap = self.runtime.last_snapshot
+        if (not snap or snap.permission != 'workspace-write' or snap.mode != WorkMode.DEVELOPMENT
+                or self.permission.get() != 'workspace-write'):
+            self.status.set('请先完成一个明确授予 workspace-write 的开发任务')
+            return
+        directory = simpledialog.askstring('测试目录', '相对于项目的 unittest 测试目录：', initialvalue='tests', parent=self)
+        if not directory:
+            return
+        try:
+            target = self.source.boundary.path(directory)
+            if not target.is_dir():
+                raise ValueError('测试目录不存在')
+        except (ValueError, PermissionError, OSError) as exc:
+            self.status.set(str(exc))
+            return
+        argv = [sys.executable, '-m', 'unittest', 'discover', '-s', str(target), '-v']
+        if not messagebox.askyesno('信任并执行项目测试',
+                '此操作将以当前账户执行项目代码，具有文件和网络访问能力。仅在信任该项目时继续。\n'
+                '命令：' + ' '.join(argv) + '\n\n是否执行此命令？', parent=self):
+            return
+        self.work(lambda: self.runtime.execute_tests(argv, trusted=True),
+                  lambda value, error: (self.refresh_project(), self.refresh_documents()) if not error else None)
 
     def review(self):
         if self.runtime.busy or not self.runtime.ready or self._loading:
@@ -801,6 +852,8 @@ class DevelopmentWorkbench(ttk.Frame):
             return
         def restored(value, error):
             if not error:
+                self._permission = 'read-only'
+                self.permission.set('read-only')
                 for widget in (self.chat, self.events):
                     widget.configure(state='normal')
                     widget.delete('1.0', 'end')
@@ -817,7 +870,12 @@ class DevelopmentWorkbench(ttk.Frame):
                     self.append(self.chat, '\n' + message['role'] + '\n' + message['content'] + '\n')
                 previews = []
                 for event in value['events'][-500:]:
-                    raw = json.dumps(event, ensure_ascii=False)
+                    preview = dict(event)
+                    if preview.get('type') == 'session_meta' and 'session_id' in preview:
+                        # Public rollout identity must not be scanned as an HTTP
+                        # credential when the JSON is rendered as plain text.
+                        preview['rollout_id'] = preview.pop('session_id')
+                    raw = json.dumps(preview, ensure_ascii=False)
                     previews.append(raw[:16384] + (' [大事件预览截断]' if len(raw) > 16384 else ''))
                 self.append(self.events, '恢复最近 500 条事件预览；完整原日志：' + value['path'] + '\n'
                             + '\n'.join(previews) + '\n')
@@ -974,6 +1032,8 @@ class DevelopmentWorkbench(ttk.Frame):
         self.state.switch(self.mode.get())
 
     def _mode_changed(self, mode):
+        self._permission = 'read-only'
+        self.permission.set('read-only')
         self.mode.set(mode.value)
         self.apply_layout()
 

@@ -20,6 +20,8 @@ truth). Everything else hangs off it:
 
 from __future__ import annotations
 
+from contextlib import nullcontext
+
 import json
 import re
 from dataclasses import dataclass, field
@@ -35,6 +37,8 @@ from .pricing import CostLedger, cost_of, rate_for
 from .policy import Decision, Mode, Policy, WRITE_TOOLS
 from .session import Session
 from .tools import ToolContext, ToolRegistry, ToolResult
+
+
 from . import toolwire
 from .types import Outcome, OutcomeClock, as_outcome  # noqa: F401  (re-export)
 import time
@@ -44,6 +48,10 @@ from .planning import TaskPlan, PlanningError, planning_level, planning_prompt, 
 from .phase_models import model_pair, phase_router
 from .project_rules import ProjectRules, MAX_TARGETS
 from .execution_guard import ExecutionGuard
+
+
+class RunCancelled(Exception):
+    """Cooperative host cancellation, never a tool-controlled permission."""
 
 # A seat that *raised* gets this marker (not None): callers must be able to
 # tell "the seat failed" apart from "the seat legitimately returned nothing".
@@ -220,6 +228,8 @@ class Agent:
         observer: "Callable[[dict[str, Any]], None] | None" = None,
         child_router_factory: "Callable | None" = None,
         child_observer: "Callable | None" = None,
+        cancellation_event=None,
+        file_guard=None,
     ) -> None:
         self.home = Path(home)
         self.workspace = Path(workspace)
@@ -227,6 +237,9 @@ class Agent:
         # Optional trusted-host seams. Never placed in ToolContext or chosen by a plugin.
         self.child_router_factory = child_router_factory
         self.child_observer = child_observer
+        self.cancellation_event = cancellation_event
+        self.file_guard = file_guard
+        self.task_id = ''
         self.phase_catalog = router
         self.registry = registry
         self.policy = policy
@@ -399,11 +412,11 @@ class Agent:
     # -- events ----------------------------------------------------------
     def _emit(self, **event: Any) -> None:
         from .secrets import redact
-        if event.get("type") == "workflow_state" or self.child_observer is not None:
-            event.setdefault("agent", self.name)
-            event.setdefault("depth", self.depth)
-            if self.child_observer is not None:
-                event.setdefault("run_id", self._run_id)
+        event.setdefault("agent", self.name)
+        event.setdefault("depth", self.depth)
+        event.setdefault("run_id", self._run_id)
+        if self.task_id:
+            event.setdefault('task_id', self.task_id)
         record = redact(self.secret_scope.protect(dict(event)))
         self.events.append(record)
         if self._observer is not None:
@@ -461,6 +474,7 @@ class Agent:
 
     # -- subagents -------------------------------------------------------
     def _spawn_handler(self, task: str, mode: str) -> ToolResult:
+        self._check_cancel()
         task = self.secret_scope.protect_text(task)
         if self.depth >= self.limits.max_depth:
             return ToolResult(ok=False, error=f"max subagent depth {self.limits.max_depth} reached")
@@ -525,7 +539,10 @@ class Agent:
             child_router_factory=self.child_router_factory,
             child_observer=self.child_observer,
             observer=self.child_observer,
+            cancellation_event=self.cancellation_event,
+            file_guard=self.file_guard.fork() if self.file_guard is not None else None,
         )
+        child.task_id = self.task_id
         self._emit(type="subagent_spawn", task=task[:300], mode=child_policy.mode.value,
                    depth=child.depth, budget_left=self.budget[0])
         try:
@@ -718,6 +735,7 @@ class Agent:
                 # 而不是挂着跑到超时。云端/未知 service 返回 None，请求不变。
                 round_cap = thinking_token_cap(
                     self.service, engaged=True, configured=self._thinking_cap_configured)
+                self._check_cancel()
                 if round_cap is not None:
                     completion = self.router.complete(msgs, small=True, max_tokens=round_cap)
                 else:
@@ -754,18 +772,24 @@ class Agent:
             raise PermissionError('Manual code review is disabled')
         if not self._run_lock.acquire(blocking=False):
             raise RuntimeError('Wait for execution/review to finish')
+        review_id = uuid.uuid4().hex
         try:
             from .code_review import review_code
+            self._check_cancel()
             router = phase_router(self.phase_catalog, self.review_model, self.router)
-            self._emit(type='review_started', message_id=self._run_id)
+            self._emit(type='review_started', message_id=self._run_id, review_id=review_id)
             result = review_code(code, self.secret_scope, router)
             self._record_review_usage(result.usage)
-            self._emit(type='review_result', message_id=self._run_id, review=result.to_dict())
+            self._check_cancel()
+            self._emit(type='review_result', message_id=self._run_id, review_id=review_id, review=result.to_dict())
             return result
+        except RunCancelled:
+            self._emit(type='review_cancelled', message_id=self._run_id, review_id=review_id)
+            raise
         except Exception as exc:
             usage = getattr(exc, 'usage', {})
             if usage: self._record_review_usage(usage)
-            self._emit(type='review_error', message_id=self._run_id, error=str(exc)[:300], usage=usage)
+            self._emit(type='review_error', message_id=self._run_id, review_id=review_id, error=str(exc)[:300], usage=usage)
             raise
         finally:
             self._run_lock.release()
@@ -803,25 +827,52 @@ class Agent:
             self._rule_context = ''
             self._rule_audit = None
             self._rule_task_content = None
+            self._cancel_steps = []
+            self._cancel_usage = {}
+            self._run_model = 'unknown'
+            self._run_scope = False
+            self._check_cancel()
             return self._run(task, history=history)
+        except RunCancelled:
+            return self._finish(RunReport(text='[cancelled: inspect files and diff before continuing]',
+                steps=self._cancel_steps, usage=self._cancel_usage, stopped='cancelled', events=self.events))
         except BaseException:
             self._emit(type="workflow_state", run_id=self._run_id, phase="failed")
             raise
         finally:
             self._run_lock.release()
 
+    def _check_cancel(self):
+        if self.cancellation_event is not None and self.cancellation_event.is_set():
+            raise RunCancelled()
+
     def _invoke_recorded(self, name, args):
+        self._check_cancel()
         action_id = uuid.uuid4().hex
         self._emit(type="tool_started", run_id=self._run_id, action_id=action_id, tool=name)
         if self.session is not None:
             self.session.sync()  # persist intent before a possible side effect
-        result = self.registry.invoke(name, args, self._tool_context())
+        ctx = self._tool_context()
+        try:
+            guard = self.file_guard.protect(name, args, ctx) if self.file_guard is not None else nullcontext(args)
+            with guard as guarded_args:
+                self._check_cancel()
+                result = self.registry.invoke(name, guarded_args, ctx)
+                if self.file_guard is not None:
+                    self.file_guard.record(name, args, result)
+        except RunCancelled:
+            self._emit(type='tool_completed', action_id=action_id, tool=name, ok=False, cancelled=True)
+            raise
+        except Exception as exc:
+            result = ToolResult(False, error=f'{type(exc).__name__}: {exc}', meta={'boundary': 'file.revision'})
+        result.meta['action_id'] = action_id
         if result.ok and name in {'read_file', 'read_range', 'file_outline', 'edit_config'}:
             path = args.get('path')
             if isinstance(path, str) and path not in self._rule_targets and len(self._rule_targets) < MAX_TARGETS:
                 self._rule_targets.append(path)
         self._emit(type="tool_completed", run_id=self._run_id, action_id=action_id,
-                   tool=name, ok=result.ok)
+                   tool=name, ok=result.ok, args=args, result=(result.content or result.error)[:1500],
+                   meta=result.meta)
         return result
 
     def _run(self, task: str, *, history: list[dict[str, Any]] | None = None) -> RunReport:
@@ -885,6 +936,8 @@ class Agent:
                                    "content": f"{task}\n\n<contemplation>\n{notes[:4000]}\n</contemplation>"}
         steps: list[Step] = []
         usage_total = {"prompt_tokens": 0, "completion_tokens": 0}
+        self._cancel_steps, self._cancel_usage = steps, usage_total
+        self._check_cancel()
         pinned_task = str(messages[-1].get("content", task))
         if self.planning_level != "none":
             self._emit(type="workflow_state", run_id=self._run_id, phase="planning",
@@ -930,6 +983,7 @@ class Agent:
         stopped = "max_steps"
 
         for index in range(1, self.limits.max_steps + 1):
+            self._check_cancel()
             self._due_check(index)
             self._refresh_project_rules(messages)
             if self._should_compact(messages):
@@ -979,6 +1033,7 @@ class Agent:
             usage_total.setdefault("requests", []).extend(getattr(completion, "requests", []))
 
             text = completion.text or ""
+            self._check_cancel()
             native_raw = list(getattr(completion, "tool_calls", None) or [])
             wire = str(getattr(completion, "wire", None) or self.wire_hint)
             native_calls: list[toolwire.ToolCall] = []
@@ -1040,6 +1095,7 @@ class Agent:
                     answered_text.append((tool_name, step.result, result.ok))
                     authz = (result.meta or {}).get("authorization") if isinstance(result.meta, dict) else None
                     self._emit(type="tool_call", tool=tool_name, args=args,
+                               action_id=result.meta.get('action_id'), meta=result.meta,
                                result=step.result[:1500], ok=result.ok, decision=step.decision,
                                step=step.index, native=False, authorization=authz)
                     if self._guard.observe(tool_name, args, result.ok, result.content or result.error):
@@ -1072,6 +1128,7 @@ class Agent:
                     answered.append((call, step.result, result.ok))
                     authz = (result.meta or {}).get("authorization") if isinstance(result.meta, dict) else None
                     self._emit(type="tool_call", tool=call.name, args=call.args,
+                               action_id=result.meta.get('action_id'), meta=result.meta,
                                result=step.result[:1500], ok=result.ok,
                                decision=step.decision, step=step.index,
                                call_id=call.id, wire=wire, authorization=authz)
@@ -1125,7 +1182,7 @@ class Agent:
         # 结束反思（phase=reflection）：在 extension_calls 审计事件之前完成；
         # 反思轮 token 并入账本 delta（诚实计费：沉思不是免费午餐）。smart
         # 模式下未启用的跑次同样跳过反思（_run_thinking_active 在 run() 判定）。
-        if self._run_thinking_active and "thinking" in self.extensions:
+        if report.stopped != 'cancelled' and self._run_thinking_active and "thinking" in self.extensions:
             try:
                 self._contemplate("reflection", self._run_task or "",
                                   last_outputs=[str(report.text or "")])
