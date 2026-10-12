@@ -779,8 +779,20 @@ class ModuleRegistry:
             if spec is None or spec.loader is None:
                 return None
             module = importlib.util.module_from_spec(spec)
+            # QA-09（独立 QA 回归）：登记必须先于 exec——dataclass 装饰器
+            # 在模块执行期间查 sys.modules[cls.__module__] 解析字符串
+            # 注解（KW_ONLY 等），晚登记会让任何含 dataclass 的贡献
+            # 模块直接 AttributeError。失败路径做干净：弹掉半成品键，
+            # 若此前有同 stem 旧模块则恢复，不让坏载入顶掉好版本。
+            previous = sys.modules.get(name)
             sys.modules[name] = module
-            spec.loader.exec_module(module)  # type: ignore[union-attr]
+            try:
+                spec.loader.exec_module(module)  # type: ignore[union-attr]
+            except Exception:
+                sys.modules.pop(name, None)
+                if previous is not None:
+                    sys.modules[name] = previous
+                raise
             return module
         except Exception as exc:  # a broken contribution must not take the framework down
             print(f"[registry] {file.name}: import raised {type(exc).__name__}: {exc}", file=sys.stderr)

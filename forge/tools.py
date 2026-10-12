@@ -93,8 +93,20 @@ class ToolRegistry:
         self._hide = list(hide)
 
     # -- registration ----------------------------------------------------
-    def register(self, spec: ToolSpec) -> None:
+    def register(self, spec: ToolSpec, *, force: bool = False) -> None:
+        # QA-08（独立 QA 回归）：同名静默覆盖是潜伏风险——插件热重载或
+        # 多贡献源并存时会无声顶掉既有工具。默认冲突即错；宿主显式
+        # force=True 才允许覆盖。名称含空白一律拒绝。
+        if any(ch.isspace() for ch in spec.name):
+            raise ValueError(f"tool name {spec.name!r} must not contain whitespace")
+        if spec.name in self._specs and not force:
+            raise ValueError(
+                f"tool {spec.name!r} is already registered; pass force=True to replace")
         self._specs[spec.name] = spec
+
+    def unregister(self, name: str) -> bool:
+        """QA-08: plugin lifecycle needs a removal path."""
+        return self._specs.pop(name, None) is not None
 
     def tool(
         self,

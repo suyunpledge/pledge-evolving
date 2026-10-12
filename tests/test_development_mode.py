@@ -146,6 +146,10 @@ class DevelopmentTests(unittest.TestCase):
             link.symlink_to(outside)
         except OSError:
             self.skipTest('Windows account cannot create symlinks')
+        # QA-10：无开发者模式的 Windows 会静默创建 0 字节普通文件——
+        # 逃逸根本没发生，断言 PermissionError 必挂。先验真链接。
+        if not link.is_symlink():
+            self.skipTest('symlink_to silently created a regular file (no developer mode)')
         with self.assertRaises(PermissionError):
             Document.open(ProjectBoundary(self.project), link)
 

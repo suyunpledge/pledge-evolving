@@ -105,7 +105,9 @@ class CapabilityTests(unittest.TestCase):
         except OSError:
             pass
         else:
-            self.assertFalse(rt.call("reader_tool", {"path": "link.txt"})["ok"])
+            # QA-10：静默假链接（无开发者模式）不算逃逸路径，跳过断言。
+            if (self.ws / "link.txt").is_symlink():
+                self.assertFalse(rt.call("reader_tool", {"path": "link.txt"})["ok"])
         self.assertEqual(self.calls, [])
 
     def test_python_import_never_runs_in_agent_runtime(self):

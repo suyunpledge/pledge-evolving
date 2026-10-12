@@ -156,10 +156,39 @@ class Session:
         self._fh.write(json.dumps(_redact_record(payload), ensure_ascii=False) + "\n")
         self._fh.flush()
 
+    def _disk_tail_ordinal(self) -> int:
+        """QA-07: best-effort scan of the persisted tail's last ordinal."""
+        try:
+            if not self.path.is_file():
+                return 0
+            with self.path.open("rb") as fh:
+                fh.seek(0, 2)
+                size = fh.tell()
+                window = min(size, 65536)
+                fh.seek(size - window)
+                tail = fh.read().decode("utf-8", errors="replace")
+            for line in reversed(tail.splitlines()):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    import json as _json
+                    return int(_json.loads(line).get("ordinal", 0))
+                except Exception:
+                    continue
+        except OSError:
+            pass
+        return 0
+
     def append(self, etype: str, **data: Any) -> Event:
         if self._fh is None:
             self.open()
         ordinal = (self.events[-1].ordinal + 1) if self.events else 1
+        # QA-07（独立 QA 回归）：另一实例/进程可能已向同一文件追加——
+        # 以磁盘尾部 ordinal 为下界续号，消除 [1,1] 重复。
+        disk_tail = self._disk_tail_ordinal()
+        if disk_tail >= ordinal:
+            ordinal = disk_tail + 1
         event = Event(ordinal=ordinal, type=etype, data=redact(data))
         # one write path only: never a second channel that can disagree with it
         if self._fh is None:
