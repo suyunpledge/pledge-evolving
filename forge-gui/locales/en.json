@@ -510,5 +510,10 @@
   "[知识库提示] 以下是过往任务的相关教训，仅供参考，避免重蹈覆辙：": "[Knowledge base notice] Below are related lessons from past tasks, for reference only, to avoid repeating past mistakes:",
   "开发": "Develop",
   "← 返回对话": "← Back to chat",
-  "放弃并退出": "Discard & exit"
+  "放弃并退出": "Discard & exit",
+  "编辑内容尚未保存": "Unsaved editor content",
+  "新建会替换当前编辑内容。要放弃未保存的编辑吗？": "Creating a new entry will replace the current editor content. Discard unsaved edits?",
+  "切换条目会替换当前编辑内容。要放弃未保存的编辑吗？": "Switching entries will replace the current editor content. Discard unsaved edits?",
+  "放弃并新建": "Discard and create",
+  "放弃并切换": "Discard and switch"
 }

@@ -5952,9 +5952,10 @@ class ForgeGuiApp:
                 "modelLabel": "显示名",
             },
         }, ensure_ascii=False, indent=2)
-        if self._editor_is_dirty() and not messagebox.askyesno(
-                "编辑内容尚未保存", "新建会替换当前编辑内容。要放弃未保存的编辑吗？",
-                parent=self.root):
+        if self._editor_is_dirty() and not self._confirm_dialog(
+                tr("编辑内容尚未保存"),
+                tr("新建会替换当前编辑内容。要放弃未保存的编辑吗？"),
+                tr("放弃并新建")):
             return
         self.input_text.delete("1.0", tk.END)
         self.input_text.insert("1.0", template)
@@ -6024,8 +6025,10 @@ class ForgeGuiApp:
         idx = visible[sel[0]]
         if idx >= len(self.user_rows):
             return
-        if self._editor_is_dirty() and not messagebox.askyesno(
-                "编辑内容尚未保存", "切换条目会替换当前编辑内容。要放弃未保存的编辑吗？", parent=self.root):
+        if self._editor_is_dirty() and not self._confirm_dialog(
+                tr("编辑内容尚未保存"),
+                tr("切换条目会替换当前编辑内容。要放弃未保存的编辑吗？"),
+                tr("放弃并切换")):
             return
         row = self.user_rows[idx]
         self._last_selected_provider_index = idx
@@ -7671,6 +7674,48 @@ class ForgeGuiApp:
         self._set_request_status(tr("就绪"))
         self._refresh_send_circle()
     # ── 关闭 ──
+    def _confirm_dialog(self, title: str, message: str,
+                         confirm_text: str, *, danger: bool = True) -> bool:
+        """规范确认模态（2026-10-12 统一弹窗机制）：transient+grab、
+        居中主窗、Esc/关闭=取消。替代配置编辑器里的 messagebox.askyesno。"""
+        dialog = tk.Toplevel(self.root)
+        dialog.withdraw()
+        dialog.title(title)
+        dialog.configure(bg=C["surface"])
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+        body = tk.Frame(dialog, bg=C["surface"], padx=22, pady=18)
+        body.pack(fill=tk.BOTH, expand=True)
+        i18n.Label(body, text=title, bg=C["surface"], fg=C["text"],
+                   font=FONT_UI_BOLD).pack(anchor="w", pady=(0, 6))
+        i18n.Label(body, text=message, bg=C["surface"], fg=C["subtext"],
+                   font=FONT_SMALL, justify=tk.LEFT,
+                   wraplength=340).pack(anchor="w", pady=(0, 14))
+        result = {"ok": False}
+
+        def choose(ok: bool):
+            result["ok"] = ok
+            dialog.destroy()
+
+        acts = tk.Frame(body, bg=C["surface"])
+        acts.pack(fill=tk.X)
+        pill_button(acts, tr("取消"), lambda: choose(False)).pack(
+            side=tk.RIGHT, padx=(8, 0))
+        pill_button(acts, confirm_text, lambda: choose(True),
+                    kind="danger" if danger else "primary").pack(side=tk.RIGHT)
+        dialog.protocol("WM_DELETE_WINDOW", lambda: choose(False))
+        dialog.bind("<Escape>", lambda _e: choose(False))
+        dialog.update_idletasks()
+        w, h = dialog.winfo_reqwidth(), dialog.winfo_reqheight()
+        x = self.root.winfo_rootx() + (self.root.winfo_width() - w) // 2
+        y = self.root.winfo_rooty() + (self.root.winfo_height() - h) // 2
+        dialog.geometry(f"{w}x{h}+{max(x, 0)}+{max(y, 0)}")
+        dialog.deiconify()
+        dialog.grab_set()
+        dialog.focus_set()
+        dialog.wait_window()
+        return result["ok"]
+
     def _confirm_discard_dialog(self) -> bool:
         """退出前的规范模态确认：transient+grab，居中于主窗，无闪烁。"""
         dialog = tk.Toplevel(self.root)

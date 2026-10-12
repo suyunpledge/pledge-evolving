@@ -510,5 +510,10 @@
   "[知识库提示] 以下是过往任务的相关教训，仅供参考，避免重蹈覆辙：": "[Aviso de base de conocimientos] Estas son lecciones relacionadas de tareas anteriores, solo como referencia, para evitar repetir los mismos errores:",
   "开发": "Desarrollar",
   "← 返回对话": "← Volver al chat",
-  "放弃并退出": "Descartar y salir"
+  "放弃并退出": "Descartar y salir",
+  "编辑内容尚未保存": "Contenido del editor sin guardar",
+  "新建会替换当前编辑内容。要放弃未保存的编辑吗？": "Crear una entrada nueva reemplazará el contenido actual del editor. ¿Descartar los cambios sin guardar?",
+  "切换条目会替换当前编辑内容。要放弃未保存的编辑吗？": "Cambiar de entrada reemplazará el contenido actual del editor. ¿Descartar los cambios sin guardar?",
+  "放弃并新建": "Descartar y crear",
+  "放弃并切换": "Descartar y cambiar"
 }
