@@ -217,5 +217,8 @@
       "failure": "punctuation secret test expectation conflicts with W1 short-value global filtering change",
       "resolution": "Updated test only; retained local structured secret and JSON/global-isolation checks."
     }
-  ]
+  ],
+  "parallel_main_at_delivery": "c6c10feeb74a9ecc83b458b3ca25db6d72125b76",
+  "parallel_main_runtime_overlap": [],
+  "W3_W4_combined_integration_tested": false
 }
