@@ -1,0 +1,17 @@
+{
+  "local_only": true,
+  "retained_drafts": true,
+  "retained_dom": true,
+  "retained_tabs": true,
+  "background_callback_continues": true,
+  "layout_presets": true,
+  "keyboard_panel_resize": true,
+  "viewport_widths": [
+    920,
+    1100,
+    1360,
+    1920
+  ],
+  "page_errors": [],
+  "screenshots": "HTML layout specimens, not production Forge or native Tk screenshots"
+}

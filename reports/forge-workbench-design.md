@@ -1,5 +1,9 @@
 # Forge 工作台 GUI/UX 规范与架构审查
 
+> 2.0 核心目标修订见 [双工作空间设计规范](../docs/forge-visual-system-2.md)。
+> 本文记录既有实现；“深色 IDE 工作台”不再作为整个产品的布局定位。
+> Work Mode 与 Coding Mode 共享设计语言，各自采用适合用途的导航、密度和布局。
+
 ## 实际架构（2026-10-11）
 
 桌面端为 Python Tkinter/ttk，不是 Web 前端。`forge_gui_v2.py` 负责主窗口、稳定的 sidebar、PanedWindow、页面导航、配置表单及事件适配；`chat_widgets.py` 负责 Canvas 滚动列表、Unicode/Emoji 文本、Markdown、工具记录和输入卡；`workspace.py` 负责文件树、代码、diff、预览和可拖动分隔线。`gui_theme.py` 与 `ui_icons.py` 是既有共享组件系统，继续复用。
