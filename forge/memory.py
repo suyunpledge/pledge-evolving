@@ -35,12 +35,16 @@ class Entry:
     archived: bool = False
     created_at: float = field(default_factory=time.time)
     tags: tuple[str, ...] = ()
+    # QA-03（独立 QA 回归）：agent 写入的记忆默认不进生效上下文，
+    # 经宿主审批（promote_to_context / curate）放行后才注入 prompt。
+    approved: bool = True
 
     def to_raw(self) -> dict[str, Any]:
         return {
             "kind": self.kind,
             "text": self.text,
             "source": self.source,
+            "approved": self.approved,
             "pinned": self.pinned,
             "archived": self.archived,
             "created_at": self.created_at,
@@ -57,6 +61,7 @@ class Entry:
             archived=bool(raw.get("archived", False)),
             created_at=float(raw.get("created_at", time.time())),
             tags=tuple(raw.get("tags") or ()),
+            approved=bool(raw.get("approved", True)),
         )
 
 
@@ -82,7 +87,7 @@ class MemoryStore:
                 continue
             entries.append(Entry(kind=kind, text=body.strip(),
                                  source="view-recovery",
-                                 tags=("recovered",)))
+                                 tags=("recovered",), approved=True))
         return entries
 
     def load(self) -> "MemoryStore":
@@ -163,7 +168,8 @@ class MemoryStore:
                     if source:
                         existing.source = source
                     return existing
-            entry = Entry(kind=kind, text=text.strip(), source=source, tags=tuple(tags))
+            entry = Entry(kind=kind, text=text.strip(), source=source, tags=tuple(tags),
+                          approved=(source != "agent"))
             self.entries.append(entry)
             self.save()
             return entry
@@ -180,11 +186,24 @@ class MemoryStore:
         out.sort(key=lambda e: (not e.pinned, -e.created_at))
         return out[:limit]
 
+    def promote_to_context(self, text: str) -> bool:
+        """QA-03: 宿主/审批流程显式放行一条 agent 记忆进入生效上下文。"""
+        with self._lock:
+            for entry in self.entries:
+                if entry.text.strip() == text.strip():
+                    entry.approved = True
+                    self.save()
+                    return True
+        return False
+
     def context_slice(self, max_chars: int = 2000) -> str:
         """The bounded slice that gets injected into the system prompt."""
         chunks: list[str] = []
         used = 0
         for entry in self.recall():
+            # QA-03：未放行的 agent 记忆不进注入上下文。
+            if getattr(entry, "approved", True) is False:
+                continue
             line = f"[{entry.kind}] {entry.text}"
             if used + len(line) > max_chars:
                 break

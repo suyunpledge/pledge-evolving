@@ -74,6 +74,14 @@ def _remember(value: str) -> None:
         if len(value.encode('utf-8')) > 64 * 1024:
             raise ValueError('Secret exceeds the 64 KiB value limit')
         variants = _variants(value)
+        # QA-06（独立 QA 回归）：短值不进子串匹配集——否则测试/运行期
+        # put 过 'old' 一类占位词后，全局 redact 会把普通单词、合法模型
+        # 标识符和配置值误杀（子串命中即替换）。真实凭据几乎全部 ≥16
+        # 字符；12 以下短值的保护价值远低于全局误伤。REF 精确匹配路径
+        # 不经过 _KNOWN 子串，不受影响。
+        variants = {v for v in variants if len(v) >= 12}
+        if not variants:
+            return
         with _LOCK:
             added = variants - _KNOWN
             size = sum(len(v.encode('utf-8')) for v in added)
@@ -81,6 +89,18 @@ def _remember(value: str) -> None:
                 raise ValueError('Secret redaction capacity exceeded')
             _KNOWN.update(added)
             _KNOWN_BYTES += size
+
+
+def forget_known_secrets() -> None:
+    """Testing/reset hook: drop the in-memory redaction registry.
+
+    Never touches persisted secret stores — only the process-global
+    substring match set built by ``_remember``.
+    """
+    global _KNOWN_BYTES
+    with _LOCK:
+        _KNOWN.clear()
+        _KNOWN_BYTES = 0
 
 
 def _known_text(text: str, replace) -> str:

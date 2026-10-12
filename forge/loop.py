@@ -560,8 +560,14 @@ class Agent:
             folded = dict(child_event)
             folded.setdefault("agent", child.name)
             for key, value in list(folded.items()):
-                if isinstance(value, str) and len(value) > 260:
-                    folded[key] = value[:260] + "…[fold-preview]"
+                if isinstance(value, str):
+                    # QA-04（独立 QA 回归）：折叠进父流的子代文本与
+                    # report.text 走同一净化器，再做 260 截断——指令
+                    # 形态注入在折叠路径不再存活。
+                    value = sanitise_child_output(value)
+                    if len(value) > 260:
+                        value = value[:260] + "…[fold-preview]"
+                    folded[key] = value
             self.events.append(folded)
         # S3: fold the child's whole subtree into this run's delta. The child
         # holds cost_ledger=None and shares our session, so without this the

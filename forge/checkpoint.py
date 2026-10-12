@@ -104,11 +104,39 @@ class CheckpointStore:
         return self._history[-limit:]
 
     def rollback(self, commit: str) -> bool:
-        """Restore every tracked file to the snapshot state."""
+        """Restore every tracked file to the snapshot state.
+
+        QA-05（独立 QA 回归）：`git checkout <commit> -- .` only rewrites
+        tracked paths — files created after the snapshot survived, breaking
+        the "restore to snapshot" contract. We now also remove files that
+        (a) are untracked now, (b) were absent at ``commit``, and (c) are
+        not ignored — i.e. things the snapshot's own tree did not contain.
+        """
         if not self.enabled or not self.init():
             return False
         result = self._git("checkout", commit, "--", ".", check=False)
-        return result.returncode == 0
+        if result.returncode != 0:
+            return False
+        # Untracked-now minus ignored, minus "existed at commit" = post-snapshot new files.
+        listed = self._git("ls-files", "--others", "--exclude-standard", check=False)
+        if listed.returncode == 0 and listed.stdout.strip():
+            existed = self._git("ls-tree", "-r", "--name-only", commit, check=False)
+            existed_set = set(existed.stdout.splitlines()) if existed.returncode == 0 else set()
+            root = getattr(self, "workspace", None)
+            if root is not None:
+                for rel in listed.stdout.splitlines():
+                    rel = rel.strip()
+                    if not rel or rel in existed_set:
+                        continue
+                    target = (root / rel) if hasattr(root, "joinpath") else None
+                    if target is None:
+                        continue
+                    try:
+                        if target.is_file():
+                            target.unlink()
+                    except OSError:
+                        pass  # never fail a rollback because a residue refused to die
+        return True
 
     def rollback_last(self) -> bool:
         history = self.history()

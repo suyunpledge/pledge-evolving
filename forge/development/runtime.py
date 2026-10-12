@@ -416,8 +416,9 @@ class DevelopmentRuntime:
                 nested = max(0, nested - 1)
             elif (e.type in {'user_message', 'assistant_message'} and not e.data.get('depth', 0)
                   and ('depth' in e.data or not nested)):
+                from forge.loop import sanitise_child_output
                 history.append({'role': 'user' if e.type == 'user_message' else 'assistant',
-                                'content': str(e.data.get('content', ''))})
+                                'content': sanitise_child_output(str(e.data.get('content', '')))})
         return {'history': history[-100:], 'events': [{'type': e.type, **e.data} for e in events],
                 'workflow': workflow_status(task_events, run) if run else None, 'path': str(path),
                 'task_id': latest_task,

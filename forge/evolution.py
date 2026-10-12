@@ -375,7 +375,19 @@ class EvolutionEngine:
         return "auto"
 
     # -- lifecycle -------------------------------------------------------
+    _APPROVER_ALLOWED = ("human", "tester", "cli", "qa")
+
+    @classmethod
+    def _check_approver(cls, by: str) -> None:
+        # QA-02（独立 QA 回归）：审批是人的裁决，agent 不得自批。
+        # 白名单覆盖既有调用方（human 默认 / selftest 的 tester / cli）。
+        if by not in cls._APPROVER_ALLOWED:
+            raise PermissionError(
+                f"approve identity {by!r} is not a recognized human authority; "
+                f"allowed: {', '.join(cls._APPROVER_ALLOWED)}")
+
     def approve(self, candidate_id: str, *, by: str = "human") -> Candidate:
+        self._check_approver(by)
         candidate = self._require(candidate_id)
         if candidate.status not in ("pending", "quarantined"):
             raise RuntimeError(f"cannot approve a candidate in state {candidate.status!r}")
@@ -387,6 +399,7 @@ class EvolutionEngine:
         return candidate
 
     def reject(self, candidate_id: str, *, by: str = "human", reason: str = "") -> Candidate:
+        self._check_approver(by)
         candidate = self._require(candidate_id)
         candidate.status = "rejected"
         candidate.decision_by = by
@@ -410,7 +423,9 @@ class EvolutionEngine:
         candidate = self._require(candidate_id)
         if candidate.status == "applied":
             return candidate
-        if candidate.requires_approval and candidate.status != "approved" and not force:
+        if candidate.requires_approval and candidate.status != "approved":
+            # QA-01（独立 QA 回归）：force 只豁免证据软闸门，
+            # 不得绕过人工审批——审批门无条件生效。
             raise PermissionError(
                 f"{candidate.id} requires approval (target={candidate.target}, kind={candidate.kind}, "
                 f"risk={candidate.risk}); call approve() first"
