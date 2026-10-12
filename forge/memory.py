@@ -116,10 +116,18 @@ class MemoryStore:
             if self.path.is_file():
                 disk = MemoryStore(self.path)
                 disk.load()
-                known = {(e.text.strip(), e.kind) for e in self.entries}
+                # 合并按 text 对齐：kind 变化（F-05 语义更新）不产生双条，
+                # 磁盘旧 kind 版本被内存新语义取代（不复活）；磁盘版已归档
+                # 则同步归档态（不让 save 救回顾档条目）。
+                known = {e.text.strip() for e in self.entries}
                 for entry in disk.entries:
-                    if (entry.text.strip(), entry.kind) not in known:
+                    if entry.text.strip() not in known:
                         self.entries.append(entry)
+                    else:
+                        for mine in self.entries:
+                            if mine.text.strip() == entry.text.strip():
+                                mine.archived = mine.archived or entry.archived
+                                break
         except Exception:
             pass  # 磁盘读取失败不阻断保存（保持原行为）
         lines = ["# Memory", "", "<!-- human-readable view; the JSON block below is authoritative -->", ""]

@@ -473,7 +473,13 @@ class EvolutionEngine:
         # 本候选 apply 后的内容一致时才整文件还原；否则从当前内容中移除
         # 本候选的块（保留其余候选的成果）。
         if current is not None and applied_content and applied_content.strip() in current:
-            remaining = current.replace(applied_content, "", 1).strip("\n")
+            remaining = current.replace(applied_content, "", 1)
+            # 块级回滚同时移除本候选的 provenance 注释行（selftest 契约：
+            # rollback 后文件不含候选 id）。
+            remaining = "\n".join(
+                line for line in remaining.splitlines()
+                if candidate.id not in line or "<!-- evolution" not in line
+            ).strip("\n")
             target.write_text(remaining + ("\n" if remaining else ""), encoding="utf-8")
         elif current is not None and applied_content and current.strip() != applied_content.strip():
             # 内容既不包含本候选块、也不等于 apply 后状态（人工改动过）——
