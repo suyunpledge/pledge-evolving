@@ -9,7 +9,8 @@ import sys
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 
-from gui_theme import C, apply_ttk_theme, style_editor, FONT_MONO_SM
+from gui_theme import (C, apply_ttk_theme, style_editor, FONT_MONO_SM,
+    FONT_TITLE, FONT_SECTION, FONT_UI)
 from forge.development.state import ModeState, WorkMode
 from forge.development.editor import Document
 from forge.development.runtime import DevelopmentRuntime
@@ -76,7 +77,7 @@ class DevelopmentWorkbench(ttk.Frame):
     def _build(self):
         header = ttk.Frame(self, padding=(12, 8))
         header.pack(fill='x')
-        ttk.Label(header, text='FORGE / Development', font=('Segoe UI', 13, 'bold')).pack(side='left')
+        ttk.Label(header, text='FORGE / Development', font=FONT_TITLE).pack(side='left')
         self.mode = tk.StringVar(value=self.state.mode.value)
         combo = ttk.Combobox(header, textvariable=self.mode, values=['general', 'development'], state='readonly', width=14)
         combo.pack(side='left', padx=12)
@@ -112,7 +113,7 @@ class DevelopmentWorkbench(ttk.Frame):
     def _build_project(self):
         tools = ttk.Frame(self.project_frame)
         tools.pack(fill='x', pady=4)
-        ttk.Label(tools, text='项目', font=('Segoe UI', 11, 'bold')).pack(side='left')
+        ttk.Label(tools, text='项目', font=FONT_SECTION).pack(side='left')
         ttk.Button(tools, text='刷新', command=self.refresh_project).pack(side='right')
         self.search = tk.StringVar()
         search = ttk.Entry(self.project_frame, textvariable=self.search)
@@ -189,6 +190,11 @@ class DevelopmentWorkbench(ttk.Frame):
 
     def _build_agent(self):
         self.task_label = ttk.Label(self.agent_frame, text='Agent · 未运行', padding=(8, 4), wraplength=320)
+        # P0-D1（UX 审查）：权限常驻标识——安全边界随时可见。
+        self.perm_badge = ttk.Label(
+            self, text='权限 read-only', foreground=C.get('subtext', '#888'))
+        self.perm_badge.pack(side='top', anchor='e', padx=8, pady=(0, 2))
+        self._sync_perm_badge()
         self.task_label.pack(fill='x')
         log_tabs = ttk.Notebook(self.agent_frame)
         log_tabs.pack(fill='both', expand=True)
@@ -204,7 +210,7 @@ class DevelopmentWorkbench(ttk.Frame):
         self.editor_contexts = []
         self.context_label = ttk.Label(self.agent_frame, text='未附加编辑器内容', padding=4)
         self.context_label.pack(fill='x')
-        self.input = tk.Text(self.agent_frame, height=5, wrap='word', undo=True, font=('Segoe UI', 11))
+        self.input = tk.Text(self.agent_frame, height=5, wrap='word', undo=True, font=FONT_UI)
         style_editor(self.input)
         self.input.pack(fill='x', padx=6, pady=4)
         self.input.bind('<Control-Return>', lambda e: (self.send(), 'break')[-1])
@@ -222,6 +228,7 @@ class DevelopmentWorkbench(ttk.Frame):
         ttk.Combobox(row2, textvariable=self.planning, values=['none', 'low', 'medium', 'high'], state='readonly', width=8).pack(side='left')
         self.permission = tk.StringVar(value='read-only')
         perms = ttk.Combobox(row2, textvariable=self.permission, values=['read-only', 'workspace-write'], state='readonly', width=16)
+        perms.bind('<<ComboboxSelected>>', lambda _e: self._sync_perm_badge())
         perms.pack(side='left', padx=4)
         perms.bind('<<ComboboxSelected>>', self.permission_changed)
         ttk.Button(row2, text='复审', command=self.review).pack(side='right')
@@ -244,7 +251,7 @@ class DevelopmentWorkbench(ttk.Frame):
         self.run_model.pack(side='left', fill='x', expand=True)
 
     def _readonly_text(self, parent, **kw):
-        text = tk.Text(parent, font=('Segoe UI', 11), state='disabled', **kw)
+        text = tk.Text(parent, font=FONT_UI, state='disabled', **kw)
         style_editor(text)
         sb = ttk.Scrollbar(parent, command=text.yview)
         sb.pack(side='right', fill='y')
@@ -323,6 +330,11 @@ class DevelopmentWorkbench(ttk.Frame):
             self.status.set('任务运行中，项目保持不变')
             return
         if any(row['document'].dirty for row in self.documents.values()):
+            # P0-D2（UX 审查）：阻塞用户流程的条件必须模态可见——
+            # 状态栏是易失通道，下一条消息即覆盖，用户看不到就会
+            # 困惑「为什么点了没反应」。
+            from tkinter import messagebox as _mb
+            _mb.showinfo('无法切换项目', '请先保存或关闭未保存的标签页，再切换项目。', parent=self)
             self.status.set('请先保存或关闭未保存标签，再切换项目')
             return
         if self.source and Path(path).resolve() == self.source.root:
@@ -399,6 +411,34 @@ class DevelopmentWorkbench(ttk.Frame):
         if previous and self._resume_project and Path(self._resume_project).resolve() == self.source.root:
             if Path(previous).exists() and Path(previous).resolve() != self.runtime.bridge.agent.session.path.resolve():
                 self.restore_session(previous)
+
+    def _sync_perm_badge(self):
+        """P0-D1：当前权限常驻显示；高于 read-only 时高亮。"""
+        perm = getattr(self, 'permission', None)
+        if perm is None:
+            return
+        value = perm.get() if hasattr(perm, 'get') else str(perm)
+        try:
+            from gui_theme import C as _C
+            hot = (value != 'read-only')
+            self.perm_badge.configure(
+                text=f'权限 {value}',
+                foreground=_C.get('error', '#e66') if hot else _C.get('subtext', '#888'))
+        except Exception:
+            pass
+
+    def _schedule_refresh(self, delay_ms: int = 800, *, documents: bool = False):
+        """P0-A2：合并密集事件的刷新（目录/文档扫描）。"""
+        self._refresh_due_docs = getattr(self, '_refresh_due_docs', False) or documents
+        if getattr(self, '_refresh_after_id', None):
+            return
+        def _fire():
+            self._refresh_after_id = None
+            docs, self._refresh_due_docs = self._refresh_due_docs, False
+            self.refresh_project()
+            if docs:
+                self.refresh_documents()
+        self._refresh_after_id = self.after(delay_ms, _fire)
 
     def refresh_project(self):
         if not self.source:
@@ -719,10 +759,34 @@ class DevelopmentWorkbench(ttk.Frame):
         self.input.delete('1.0', 'end')
         self.editor_contexts = []
         self.context_label.configure(text='未附加编辑器内容')
-        self.task_label.configure(text='Agent · 正在执行真实任务')
+        self.task_label.configure(text='Agent · 正在执行 · 0s')
+        # P0-A1（UX 审查）：不确定阶段的存活信号——稳定文案 + 已用时间，
+        # 事件类型不再覆盖本行（详见 handle_event）。
+        self._task_started_at = time.monotonic()
+        self._pulse_phase = 0
+        if getattr(self, '_pulse_after_id', None):
+            try:
+                self.after_cancel(self._pulse_after_id)
+            except Exception:
+                pass
+        def _tick_pulse():
+            if not getattr(self, '_task_started_at', None):
+                return
+            elapsed = int(time.monotonic() - self._task_started_at)
+            self._pulse_phase = (self._pulse_phase + 1) % 4
+            glyphs = ['◔', '◑', '◕', '●']
+            self.task_label.configure(text=f'Agent · 正在执行 {glyphs[self._pulse_phase]} · {elapsed}s')
+            self._pulse_after_id = self.after(1000, _tick_pulse)
+        _tick_pulse()
         def done(value, error):
             self.send_button.configure(state='normal')
             self.delegate_button.configure(state='normal')
+            self._task_started_at = None
+            if getattr(self, '_pulse_after_id', None):
+                try:
+                    self.after_cancel(self._pulse_after_id)
+                except Exception:
+                    pass
             self.task_label.configure(text='Agent · 失败' if error else 'Agent · ' + str(value.get('stopped', '完成')))
             if error:
                 if not self.input.get('1.0', 'end-1c').strip():
@@ -752,10 +816,30 @@ class DevelopmentWorkbench(ttk.Frame):
         lines.extend(['', '复审：'])
         lines.extend(f"{r['status']} · {(r.get('review') or {}).get('model', '')} · {r.get('message_id', '')[:8]}"
                      for r in list(view.reviews.values())[-10:])
+        # P0-A2（UX 审查）：增量渲染——行数只增时 append 差量（保留
+        # 滚动位置与用户选区），回缩才全量重绘。每 20 次强制全量一次，
+        # 防止浮点误差累积。
+        body = redact('\n'.join(lines))
+        self._evidence_renders = getattr(self, '_evidence_renders', 0) + 1
+        current = self.workflow.get('1.0', 'end - 1c')
+        if (len(lines) >= getattr(self, '_evidence_lines', 0)
+                and self._evidence_renders % 20 != 0
+                and current):
+            # 只追加差量：找当前末行在主体中的对齐点
+            keep = current.count('\n')  # 现有行数
+            if keep <= len(lines):
+                tail = '\n'.join(lines[keep:])
+                self.workflow.configure(state='normal')
+                if tail:
+                    self.workflow.insert('end', ('\n' if keep > 0 else '') + tail)
+                self.workflow.configure(state='disabled')
+                self._evidence_lines = len(lines)
+                return
         self.workflow.configure(state='normal')
         self.workflow.delete('1.0', 'end')
-        self.workflow.insert('1.0', redact('\n'.join(lines)))
+        self.workflow.insert('1.0', body)
         self.workflow.configure(state='disabled')
+        self._evidence_lines = len(lines)
 
     def handle_event(self, event, error=None):
         if event.get('event') == 'user':
@@ -774,7 +858,8 @@ class DevelopmentWorkbench(ttk.Frame):
             raw = raw[:16384] + '\n[大事件预览已截断；完整记录保留在原有 Session 日志]\n'
         self.append(self.events, raw + '\n')
         kind = data.get('type', '')
-        self.task_label.configure(text='Agent · ' + kind + ' · ' + str(data.get('tool', data.get('phase', ''))))
+        # P0-A1：事件类型不再覆盖存活信号行——工具/阶段动态已在证据
+        # 面板与输出区呈现，此处覆盖只制造开发者词汇闪烁。
         if kind == 'tool_call':
             paths = [data.get('args', {}).get('path')]
             blocks = data.get('args', {}).get('patches') or data.get('args', {}).get('edits') or []
@@ -793,9 +878,11 @@ class DevelopmentWorkbench(ttk.Frame):
                 self.write_output('测试', json.dumps(data, ensure_ascii=False, indent=2) + '\n')
             if not data.get('ok', True):
                 self.write_output('问题', str(data.get('result', '')) + '\n')
-            self.refresh_project()
+            # P0-A2：事件密集期目录扫描 800ms 合并（数百事件 × 全扫描
+            # 是滚动卡顿主因之一；复用 _scan_pending 的合并语义）。
+            self._schedule_refresh(800)
             if data.get('ok') and data.get('tool') in {'write_file', 'edit_file', 'apply_patch', 'edit_config', 'delete_file'}:
-                self.refresh_documents()
+                self._schedule_refresh(800, documents=True)
         elif kind in {'model_error', 'review_error', 'subagent_error'}:
             self.write_output('问题', json.dumps(data, ensure_ascii=False) + '\n')
         elif kind == 'test_result':
