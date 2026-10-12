@@ -478,10 +478,15 @@ class SecretVirtualizationTests(unittest.TestCase):
         from forge.secrets import SecretScope, _KNOWN
         scope = SecretScope()
         with patch('forge.secrets._KNOWN', set(_KNOWN)):
-            scope.reference('{')
+            before = set(_KNOWN)
+            ref = scope.reference('{')
             safe = scope.protect_text(json.dumps({'messages': [{'content': 'password={' }]}))
+            # W1 intentionally stopped global matching of short punctuation.
+            # Its structured local secret remains opaque, without poisoning JSON.
+            self.assertEqual(_KNOWN, before)
+            self.assertEqual(scope.protect({'password': '{'})['password'], ref)
         self.assertIsInstance(json.loads(safe), dict)
-        self.assertNotIn('password={"', safe)
+        scope.close()
 
     def test_credential_destination_bound_host_approval(self):
         from forge.secrets import authorize_config_destination

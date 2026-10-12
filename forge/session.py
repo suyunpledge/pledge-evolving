@@ -21,6 +21,7 @@ from collections import deque
 from pathlib import Path
 from typing import Any, Iterator
 from .secrets import redact
+from .runtime_lock import resource_lock
 
 
 def _redact_record(record):
@@ -85,6 +86,10 @@ class Session:
 
     # -- lifecycle -------------------------------------------------------
     def open(self) -> "Session":
+        with resource_lock('session', self.path):
+            return self._open_locked()
+
+    def _open_locked(self) -> "Session":
         if self._fh is not None:
             return self
         self._recover_tail()
@@ -109,6 +114,12 @@ class Session:
         """Preserve an interrupted final record before removing it from the log."""
         if not self.path.exists():
             return
+        with self.path.open('rb') as stream:
+            if stream.seek(0, 2) == 0:
+                return
+            stream.seek(-1, 2)
+            if stream.read(1) == b'\n':
+                return
         raw = self.path.read_bytes()
         if not raw or raw.endswith(b"\n"):
             return
@@ -130,6 +141,10 @@ class Session:
                 stream.write(b"\n")
 
     def close(self) -> None:
+        with resource_lock('session', self.path):
+            self._close_locked()
+
+    def _close_locked(self) -> None:
         if self._fh is not None:
             handle = self._fh
             self._fh = None
@@ -137,9 +152,10 @@ class Session:
 
     def sync(self) -> None:
         """Durably record execution intent before tools with unknown outcomes."""
-        if self._fh is not None:
-            self._fh.flush()
-            os.fsync(self._fh.fileno())
+        with resource_lock('session', self.path):
+            if self._fh is not None:
+                self._fh.flush()
+                os.fsync(self._fh.fileno())
 
     def __enter__(self) -> "Session":
         return self.open()
@@ -157,32 +173,36 @@ class Session:
         self._fh.flush()
 
     def _disk_tail_ordinal(self) -> int:
-        """QA-07: best-effort scan of the persisted tail's last ordinal."""
-        try:
-            if not self.path.is_file():
-                return 0
-            with self.path.open("rb") as fh:
-                fh.seek(0, 2)
-                size = fh.tell()
-                window = min(size, 65536)
-                fh.seek(size - window)
-                tail = fh.read().decode("utf-8", errors="replace")
-            for line in reversed(tail.splitlines()):
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    import json as _json
-                    return int(_json.loads(line).get("ordinal", 0))
-                except Exception:
-                    continue
-        except OSError:
-            pass
+        """Read the full final record while holding the OS writer lock.
+
+        A record may exceed W2's 64 KiB window. Corruption is not a reason to
+        reuse an ordinal; only interrupted tails go through explicit recovery.
+        """
+        if not self.path.exists():
+            return 0
+        with self.path.open('rb') as stream:
+            position = stream.seek(0, 2)
+            tail = b''
+            while position:
+                size = min(position, 65536)
+                position -= size
+                stream.seek(position)
+                tail = stream.read(size) + tail
+                trimmed = tail.rstrip(b'\r\n ')
+                if b'\n' in trimmed or position == 0:
+                    line = trimmed.rsplit(b'\n', 1)[-1]
+                    return Event.from_line(line.decode('utf-8')).ordinal if line else 0
         return 0
 
     def append(self, etype: str, **data: Any) -> Event:
+        with resource_lock('session', self.path):
+            return self._append_locked(etype, **data)
+
+    def _append_locked(self, etype: str, **data: Any) -> Event:
         if self._fh is None:
             self.open()
+        # Another crashed writer may have left a partial line since open().
+        self._recover_tail()
         ordinal = (self.events[-1].ordinal + 1) if self.events else 1
         # QA-07（独立 QA 回归）：另一实例/进程可能已向同一文件追加——
         # 以磁盘尾部 ordinal 为下界续号，消除 [1,1] 重复。
@@ -211,15 +231,13 @@ class Session:
 
     # -- reading ---------------------------------------------------------
     def replay(self) -> Iterator[Event]:
-        if not self.path.exists():
-            return iter(())
-        with self.path.open("r", encoding="utf-8") as fh:
-            for line in fh:
-                line = line.strip()
-                if line:
-                    event = Event.from_line(line)
-                    event.data = _redact_record(event.data)
-                    yield event
+        with resource_lock('session', self.path):
+            lines = self.path.read_text(encoding='utf-8').splitlines() if self.path.exists() else []
+        for line in lines:
+            if line.strip():
+                event = Event.from_line(line)
+                event.data = _redact_record(event.data)
+                yield event
 
     def messages(self) -> list[dict[str, Any]]:
         """Project the log back into chat messages for the next turn."""

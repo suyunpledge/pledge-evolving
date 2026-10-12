@@ -20,8 +20,6 @@ truth). Everything else hangs off it:
 
 from __future__ import annotations
 
-from contextlib import nullcontext
-
 import json
 import re
 from dataclasses import dataclass, field
@@ -34,7 +32,8 @@ from .local_service import resolve_thinking_mode, service_from_config, thinking_
 from .memory import ContextBudget, MemoryStore  # noqa: F401
 from .model import Completion, ModelRouter, TransportError
 from .pricing import CostLedger, cost_of, rate_for
-from .policy import Decision, Mode, Policy, WRITE_TOOLS
+from .policy import Decision, Mode, Policy
+from .secrets import redact
 from .session import Session
 from .tools import ToolContext, ToolRegistry, ToolResult
 
@@ -48,6 +47,8 @@ from .planning import TaskPlan, PlanningError, planning_level, planning_prompt, 
 from .phase_models import model_pair, phase_router
 from .project_rules import ProjectRules, MAX_TARGETS
 from .execution_guard import ExecutionGuard
+from .execution import (ActionExecutor, ActionRequest, EventEnvelope, RunRequest,
+                        RunResult, create_execution_context)
 
 
 class RunCancelled(Exception):
@@ -171,6 +172,8 @@ class Step:
     result: str = ""
     decision: str = ""
     note: str = ""
+    action_id: str = ''
+    meta: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -181,6 +184,12 @@ class RunReport:
     stopped: str = "final"          # final | max_steps | error | planning_error | format_error | stalled
     events: list[dict[str, Any]] = field(default_factory=list)
     planning: dict[str, Any] | None = None
+    run_id: str = ''
+    task_id: str = ''
+    parent_run_id: str = ''
+
+    def as_result(self):
+        return RunResult.from_report(self)
 
     @property
     def tool_calls(self) -> int:
@@ -230,6 +239,7 @@ class Agent:
         child_observer: "Callable | None" = None,
         cancellation_event=None,
         file_guard=None,
+        parent_run_id: str = '',
     ) -> None:
         self.home = Path(home)
         self.workspace = Path(workspace)
@@ -240,6 +250,9 @@ class Agent:
         self.cancellation_event = cancellation_event
         self.file_guard = file_guard
         self.task_id = ''
+        self.parent_run_id = parent_run_id
+        self._context_id = uuid.uuid4().hex
+        self.action_executor = ActionExecutor()
         self.phase_catalog = router
         self.registry = registry
         self.policy = policy
@@ -411,24 +424,29 @@ class Agent:
 
     # -- events ----------------------------------------------------------
     def _emit(self, **event: Any) -> None:
-        from .secrets import redact
-        event.setdefault("agent", self.name)
-        event.setdefault("depth", self.depth)
-        event.setdefault("run_id", self._run_id)
-        if self.task_id:
-            event.setdefault('task_id', self.task_id)
+        event.setdefault('agent', self.name)
+        event.setdefault('depth', self.depth)
+        run = self._run_id or self._context_id
+        event.setdefault('run_id', run)
+        event.setdefault('task_id', self.task_id or run)
+        event.setdefault('parent_run_id', self.parent_run_id)
+        event.setdefault('event_id', uuid.uuid4().hex)
+        event.setdefault('protocol_version', 1)
         record = redact(self.secret_scope.protect(dict(event)))
+        if self.session is not None:
+            payload = dict(record)
+            etype = str(payload.pop('type', 'event'))
+            stored = self.session.append(etype, **payload)
+            record['ordinal'] = stored.ordinal
+        self._observe_event(record)
+
+    def _observe_event(self, record):
         self.events.append(record)
         if self._observer is not None:
             try:
                 self._observer(record)
             except Exception:
-                # 观察者出错就停用，而不是让一次正常 run 因为“显示进度”而失败。
                 self._observer = None
-        if self.session is not None:
-            payload = dict(record)
-            etype = str(payload.pop("type", "event"))
-            self.session.append(etype, **payload)
 
     # -- contribution seats ----------------------------------------------
     def _use_extension(self, name: str, *args: Any, **kwargs: Any) -> Any:
@@ -451,28 +469,20 @@ class Agent:
                        error=f"{type(exc).__name__}: {exc}")
             return _SEAT_FAILED
 
-    def _tool_context(self) -> ToolContext:
-        return ToolContext(
-            policy=self.policy,
-            workspace=self.workspace,
-            session=self.session,
-            emit=self._emit,
-            secret_scope=self.secret_scope,
-            isolated=True,
-            # ``agent`` is deliberately NOT exposed here. Handing tools a
-            # reference to the runtime would let any tool (including a
-            # third-party capability) mutate the spawn budget or reach the
-            # policy object — an in-process privilege-escalation channel.
-            extras={
-                "trusted_control_root": self.home,
-                "registry": self.registry,
-                "memory": self.memory,
-                "capabilities": self.capabilities,
-                "spawn": self._spawn_handler,
-            },
-        )
+    def execution_context(self):
+        """Public host context; GUI consumers use events/results, not Agent fields."""
+        run = self._run_id or self._context_id
+        return create_execution_context(home=self.home, workspace=self.workspace,
+            policy=self.policy, registry=self.registry, isolate_registry=False,
+            run=RunRequest(run, self.task_id or run, self.parent_run_id, entry='agent'),
+            session=self.session, cancellation=self.cancellation_event,
+            secret_scope=self.secret_scope, checkpoints=self.checkpoints, file_guard=self.file_guard,
+            subscriber=self._observe_event, tool_emit=self._emit, agent=self.name, depth=self.depth,
+            capabilities={'memory': self.memory, 'capabilities': self.capabilities, 'spawn': self._spawn_handler})
 
-    # -- subagents -------------------------------------------------------
+    def _tool_context(self) -> ToolContext:
+        return self.execution_context().tool_context()
+
     def _spawn_handler(self, task: str, mode: str) -> ToolResult:
         self._check_cancel()
         task = self.secret_scope.protect_text(task)
@@ -541,8 +551,9 @@ class Agent:
             observer=self.child_observer,
             cancellation_event=self.cancellation_event,
             file_guard=self.file_guard.fork() if self.file_guard is not None else None,
+            parent_run_id=self._run_id,
         )
-        child.task_id = self.task_id
+        child.task_id = self.task_id or self._run_id
         self._emit(type="subagent_spawn", task=task[:300], mode=child_policy.mode.value,
                    depth=child.depth, budget_left=self.budget[0])
         try:
@@ -580,7 +591,8 @@ class Agent:
         child_delta += int(getattr(child, "_child_tokens", 0) or 0)
         self._child_tokens = int(getattr(self, "_child_tokens", 0)) + child_delta
         clean = sanitise_child_output(report.text)
-        self._emit(type="subagent_result", chars=len(clean), steps=len(report.steps))
+        self._emit(type="subagent_result", chars=len(clean), steps=len(report.steps),
+                   child_run_id=report.run_id, child_task_id=report.task_id)
         return ToolResult(ok=True, content=clean[: self.limits.max_tool_result], meta={"depth": child.depth})
 
     def _dispatch_consult(self, task: str, child_name: str, child_policy: Policy) -> dict[str, Any]:
@@ -852,33 +864,16 @@ class Agent:
         if self.cancellation_event is not None and self.cancellation_event.is_set():
             raise RunCancelled()
 
-    def _invoke_recorded(self, name, args):
+    def _invoke_recorded(self, name, args, *, tool_call_id=''):
         self._check_cancel()
-        action_id = uuid.uuid4().hex
-        self._emit(type="tool_started", run_id=self._run_id, action_id=action_id, tool=name)
-        if self.session is not None:
-            self.session.sync()  # persist intent before a possible side effect
-        ctx = self._tool_context()
-        try:
-            guard = self.file_guard.protect(name, args, ctx) if self.file_guard is not None else nullcontext(args)
-            with guard as guarded_args:
-                self._check_cancel()
-                result = self.registry.invoke(name, guarded_args, ctx)
-                if self.file_guard is not None:
-                    self.file_guard.record(name, args, result)
-        except RunCancelled:
-            self._emit(type='tool_completed', action_id=action_id, tool=name, ok=False, cancelled=True)
-            raise
-        except Exception as exc:
-            result = ToolResult(False, error=f'{type(exc).__name__}: {exc}', meta={'boundary': 'file.revision'})
-        result.meta['action_id'] = action_id
+        result = self.action_executor.execute(self.execution_context(),
+            ActionRequest(name, args, tool_call_id=tool_call_id)).as_tool_result()
+        if result.meta.get('error_code') == 'cancelled':
+            raise RunCancelled()
         if result.ok and name in {'read_file', 'read_range', 'file_outline', 'edit_config'}:
             path = args.get('path')
             if isinstance(path, str) and path not in self._rule_targets and len(self._rule_targets) < MAX_TARGETS:
                 self._rule_targets.append(path)
-        self._emit(type="tool_completed", run_id=self._run_id, action_id=action_id,
-                   tool=name, ok=result.ok, args=args, result=(result.content or result.error)[:1500],
-                   meta=result.meta)
         return result
 
     def _run(self, task: str, *, history: list[dict[str, Any]] | None = None) -> RunReport:
@@ -1088,14 +1083,12 @@ class Agent:
                     tool_name = str(one.get("name") or "")
                     args = dict(one.get("arguments") or {})
                     step = Step(index=len(steps) + 1, tool=tool_name, args=args)
-                    if self.checkpoints is not None and tool_name in WRITE_TOOLS:
-                        point = self.checkpoints.snapshot(f"before {tool_name}")
-                        if point is not None:
-                            step.note = f"checkpoint {point.commit[:8]}"
-                            self._emit(type="checkpoint", commit=point.commit, label=point.label)
                     result = self._invoke_recorded(tool_name, args)
+                    step.action_id, step.meta = result.meta['action_id'], dict(result.meta)
+                    if result.meta.get('checkpoint'):
+                        step.note = 'checkpoint ' + result.meta['checkpoint'][:8]
                     step.result = (result.content or result.error)[: self.limits.max_tool_result]
-                    step.decision = ("deny" if not result.ok and "denied" in result.error
+                    step.decision = ("deny" if not result.ok and result.meta.get("authorization") == "deny"
                                      else ("ok" if result.ok else "error"))
                     steps.append(step)
                     answered_text.append((tool_name, step.result, result.ok))
@@ -1121,14 +1114,12 @@ class Agent:
                 for call in native_calls:
                     step = Step(index=len(steps) + 1, tool=call.name, args=call.args,
                                 note=f"native/{wire} id={call.id or '-'}")
-                    if self.checkpoints is not None and call.name in WRITE_TOOLS:
-                        point = self.checkpoints.snapshot(f"before {call.name}")
-                        if point is not None:
-                            step.note = f"checkpoint {point.commit[:8]}"
-                            self._emit(type="checkpoint", commit=point.commit, label=point.label)
-                    result = self._invoke_recorded(call.name, call.args)
+                    result = self._invoke_recorded(call.name, call.args, tool_call_id=call.id or '')
+                    step.action_id, step.meta = result.meta['action_id'], dict(result.meta)
+                    if result.meta.get('checkpoint'):
+                        step.note = 'checkpoint ' + result.meta['checkpoint'][:8]
                     step.result = (result.content or result.error)[: self.limits.max_tool_result]
-                    step.decision = ("deny" if not result.ok and "denied" in result.error
+                    step.decision = ("deny" if not result.ok and result.meta.get("authorization") == "deny"
                                      else ("ok" if result.ok else "error"))
                     steps.append(step)
                     answered.append((call, step.result, result.ok))
@@ -1165,6 +1156,9 @@ class Agent:
         run is always metabolised and always accounted for.
         """
         from .secrets import redact
+        report.run_id = getattr(self, '_run_id', '')
+        report.task_id = getattr(self, 'task_id', '') or report.run_id
+        report.parent_run_id = getattr(self, 'parent_run_id', '')
         phase = "completed" if report.stopped == "final" else (
             "failed" if report.stopped in {"error", "planning_error", "format_error"} else "stopped")
         if getattr(self, "_run_id", ""):
@@ -1176,6 +1170,7 @@ class Agent:
         for step in report.steps:
             step.args = self.secret_scope.protect(step.args)
             step.result = redact(step.result)
+            step.meta = redact(step.meta)
         try:
             outcome = self.metabolise(report)
             if outcome:
@@ -1297,7 +1292,7 @@ def build_agent(
     empty — mounting never fails the boot.
 
     ``session_path`` overrides where this agent's event log lands. The default
-    (``home/sessions/current.jsonl``) is right for one interactive user; a chat
+    uses a fresh identity to isolate concurrent CLI tasks; a chat
     channel serving several peers passes a per-peer path so conversations do
     not share one log.
     """
@@ -1323,7 +1318,7 @@ def build_agent(
     session_dir = home / "sessions"
     from .session import Session as _Session
 
-    session = _Session(session_path or (session_dir / "current.jsonl"), meta={
+    session = _Session(session_path or (session_dir / (uuid.uuid4().hex + ".jsonl")), meta={
         "cwd": str(workspace),
         "model": str(config.get("model", "primary", "")),
         "policy_mode": policy.mode.value,

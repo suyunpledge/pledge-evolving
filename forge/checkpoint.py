@@ -14,6 +14,8 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from .runtime_lock import resource_lock
+from contextlib import contextmanager
 
 
 @dataclass
@@ -67,6 +69,19 @@ class CheckpointStore:
 
     def snapshot(self, label: str) -> Checkpoint | None:
         """Commit the current workspace state into the shadow repo."""
+        with self._transaction():
+            return self._snapshot(label)
+
+    @contextmanager
+    def _transaction(self):
+        # One home may serve several workspaces. Their shadow index is shared;
+        # workspace-only locks cannot protect it. Keep the same lock order as
+        # ActionExecutor (workspace before checkpoint repository).
+        with resource_lock('workspace-write', self.workspace):
+            with resource_lock('checkpoint', self.git_dir):
+                yield
+
+    def _snapshot(self, label):
         if not self.enabled or not self.init():
             return None
         env = self._sync_env()
@@ -95,6 +110,10 @@ class CheckpointStore:
         return point
 
     def history(self, limit: int = 20) -> list[Checkpoint]:
+        with self._transaction():
+            return self._history_locked(limit)
+
+    def _history_locked(self, limit):
         if not self._history and self.enabled and self.git_dir.exists():
             log = self._git("log", "--pretty=%H\t%s", f"-{limit}", check=False)
             for line in log.stdout.splitlines():
@@ -112,6 +131,10 @@ class CheckpointStore:
         (a) are untracked now, (b) were absent at ``commit``, and (c) are
         not ignored — i.e. things the snapshot's own tree did not contain.
         """
+        with self._transaction():
+            return self._rollback(commit)
+
+    def _rollback(self, commit):
         if not self.enabled or not self.init():
             return False
         result = self._git("checkout", commit, "--", ".", check=False)
@@ -139,6 +162,10 @@ class CheckpointStore:
         return True
 
     def rollback_last(self) -> bool:
+        with self._transaction():
+            return self._rollback_last()
+
+    def _rollback_last(self):
         history = self.history()
         if len(history) < 2:
             return False
@@ -146,6 +173,10 @@ class CheckpointStore:
 
     def prune(self, keep: int = 30) -> dict[str, int]:
         """Trim the shadow history without touching the workspace."""
+        with self._transaction():
+            return self._prune(keep)
+
+    def _prune(self, keep):
         history = self.history(limit=10_000)
         if len(history) <= keep:
             return {"pruned": 0, "kept": len(history)}
