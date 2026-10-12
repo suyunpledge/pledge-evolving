@@ -69,7 +69,7 @@ def apply_checkpoint(agent, commit, path, expected, *, publish):
     result = agent.registry.invoke('write_file', args, agent._tool_context())
     publish({'type': 'tool_completed', 'run_id': identifier, 'action_id': identifier, 'agent': 'human-review',
              'depth': 0, 'tool': 'write_file', 'ok': result.ok})
-    publish({'type': 'tool_call', 'run_id': identifier, 'agent': 'human-review', 'depth': 0,
+    publish({'type': 'tool_call', 'run_id': identifier, 'action_id': identifier, 'agent': 'human-review', 'depth': 0,
              'tool': 'write_file', 'args': {'path': target}, 'ok': result.ok,
              'authorization': (result.meta or {}).get('authorization'),
              'result': result.content or result.error, 'source': 'checkpoint_restore', 'checkpoint': commit})

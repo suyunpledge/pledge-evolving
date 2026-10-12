@@ -154,7 +154,9 @@ class Document:
 
     def save(self):
         try:
-            self._save()
+            from .guard import FileRevisionGuard
+            with FileRevisionGuard(self.boundary.root).lock:
+                self._save()
         except ConflictError:
             self.status = 'conflict'
             raise
