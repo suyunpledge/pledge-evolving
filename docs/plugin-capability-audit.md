@@ -1,6 +1,7 @@
 # 插件能力链路审查矩阵
 
-2026-10-04；“原行为”描述本次改动前的实现。此表只描述源码与测试，不代表已打包发布。
+2026-10-04 首版；2026-10-12 增补 skills 执行器、requires 闸门、headless CLI 与
+compat 实体复制各行（"原行为"列对应该次改动前）。此表只描述源码与测试，不代表已打包发布。
 
 | 攻击 / 故障场景 | 原行为 | 风险 | 修复 / 当前限制 | 测试 |
 |---|---|---|---|---|
@@ -30,10 +31,27 @@
 | import/register 卡死、超时、崩溃 | 原进程树隔离/超时 | 主 GUI 或 worker 失控 | GUI 不 import Python；旧诊断边界保留原故障回归 | python_import_never_runs；原 runtime/adversarial 套件 |
 | 把 RPC timeout 宣称为终止执行 | 旧 Python 20 秒实际能杀 worker 树 | 新 RPC 不可杀宿主 I/O | 明确 3 秒 RPC 仅限制等待；目标只允许有界文件类工具 | request limits；真实 HTTP 路径 |
 | 伪称沙箱 / 签名验证 | 原架构文档宣称未实现的保障 | 用户在错误安全认知下授权 | 文档与 UI 明确：指纹校验、受控 broker；无 OS 沙箱和签名 verifier | 代码路径检查；UI boundary labels |
-| 插件 Policy/Hook 自行放权 | 原架构为计划草案 | 不受审查的扩展执行 | 保留声明类型并纳入指纹；未实现的类型不激活 | contributions_are_fingerprinted_but_not_executed |
+| 插件 Policy/Hook 自行放权 | 原架构为计划草案 | 不受审查的扩展执行 | 保留声明类型并纳入指纹；未实现的类型不激活（skills 已于 2026-10-12 接入） | policies_are_fingerprinted_but_not_executed |
 | 市场退出改变 sidebar | 旧导航已经修复 | 新入口可能重挂载 | 复用原工具视图与固定返回路径 | main_entry_opens_market_and_returns；原 navigation 套件 |
 | 200% DPI 筛选按钮被裁切 | 原搜索及分类挤在同一行 | “集成”按钮文字被吃掉 | 搜索和类别分成两行；检查所有固定按钮实际宽度 | market_controls_fit_at_all_supported_scales |
+| skills 贡献仅指纹无执行器 | contributions.skills 只展示 | 装了技能也不能用，展示与能力不符 | skill.read 能力 + 受控正文读取工具；文件/内联正文两种来源 | test_plugin_skills 全套真实验证 |
+| 技能 file 指向插件目录外 | 无该路径（不加载） | 读取任意本机文件 | 相对路径规范化 + 目录内约束 + 普通文件 + 尺寸上限 | path_escape_in_skill_file_rejected |
+| 技能名与工具名冲突 | 无该执行面 | 覆盖既有工具误导调用 | 与 tools 同一冲突规则，整组拒绝（含内置名/forge_ 前缀/跨插件） | skill_and_tool_name_collision_in_one_plugin |
+| 技能未声明 skill.read | 无该执行面 | 未声明能力被调用 | 整组拒绝；授权也仅限声明过的能力 | undeclared_capability_rejects_group |
+| 技能正文文件被替换 | 无该执行面 | 旧授权读新内容 | token 绑定内容指纹，替换即撤销知悉/授权，工具消失 | file_change_invalidates_skill |
+| 已启用未授权的技能仍出现在模型 schema | 无该执行面 | 越权调用 | names()/openai_schemas() 过滤未授权工具；调用被拒并留审计 | no_grant_no_callable_but_still_discoverable |
+| 技能调用携带参数 | 无该执行面 | 参数 smuggling | 技能工具零参数，传参即拒绝 | skill_arguments_rejected |
+| requires.forge 版本不满足仍安装 | requires 只进指纹不校验 | 装上不兼容版本运行时崩 | 安装/启用硬检查，fail closed | forge_version_too_old_blocks_install |
+| 依赖插件缺失或版本过低 | 同上 | 加载期才炸或静默错配 | 安装/启用硬检查 + doctor 复查（卸载依赖后 enable 被拦） | missing/unsatisfied dependency tests |
+| 依赖环（自依赖/互依赖） | 同上 | 安装顺序死锁或无限递归 | check_requirements DFS 环检测，安装即拒 | dependency_cycle_detected；self_dependency_is_a_cycle |
+| 更新重装继承旧知悉/授权 | 原指纹机制已处理 tools | skills 新路径需同样口径 | 重装即清空 ack/grants/enabled，回到待知悉态 | update_over_install_revokes_ack_and_grants |
+| 旧 state.json 缺新键 | — | 升级后状态丢失或崩溃 | _load_state 按默认键合并；孤儿 enabled 自愈摘除 | old_state_file_without_new_keys_still_loads |
+| OpenClaw 条目宣称"SKILL.md 随插件安装"但只落清单 | install_dir 无消费者 | 展示文案与实际不符 | 安装时真实复制 SKILL.md（≤512 KiB 普通文件，仅本机扫描源）| openclaw_skill_installs_body_and_executes |
+| 远程条目骗取本机文件复制 | install_dir 无消费者 | 任意路径写入插件目录 | _compat_body_files 只认 compat_entries 本机扫描源；远程 payload 无实体 | remote_entries_never_gain_install_dir |
+| 无 GUI 无法安装/诊断 | CLI 只有只读 list/summary/log | 服务器/自动化场景断链 | headless 全生命周期命令 + doctor（孤儿/依赖/加载/审计） | test_plugin_cli 全套 |
 
 签名验证、任意代码的真正系统沙箱、多类型贡献执行器均未实现；不能把“知悉”或进程隔离
 描述成这些能力。旧 Python `PluginRuntime` 是兼容/诊断入口，直接使用该 API 仍是不受 Policy
-限制的本机代码执行；生产 GUI/Agent 路径禁止它。
+限制的本机代码执行；生产 GUI/Agent 路径禁止它。MCP（forge/contrib/mcp_bridge.py）仍是
+纯规划函数库，无运行席位、不 spawn 进程、不实现客户端协议——Codex MCP 条目只登记存在与
+命令路径，属"仅发现/展示"。

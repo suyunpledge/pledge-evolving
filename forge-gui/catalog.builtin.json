@@ -29,6 +29,26 @@
       "requires": {"forge": ">=0.7.0"}
     },
     {
+      "id": "skill-forge-guide",
+      "name": "Forge 技能说明示例",
+      "version": "1.0.0",
+      "kind": "tool",
+      "icon": "📘",
+      "summary": "声明式技能条目：安装→知悉→启用→授予 skill.read 后，Agent 可调用工具加载正文",
+      "description": "contributions.skills 的内置示例。正文内联在清单里（provides.skill_body），不依赖外部文件；工具调用只返回这段说明，不访问工作区。用于验证技能类贡献的真实执行链。",
+      "author": "Forge 内置",
+      "capabilities": ["skill.read"],
+      "executes_code": false,
+      "provides": {"tools": [], "skill_body": "# Forge 技能说明示例\n\n这是 forge 内置的声明式技能正文。安装该插件并完成 知悉 → 启用 → 授予 skill.read 后，Agent 对话里会出现 `forge_skill_guide` 工具；调用它返回本文件内容。\n\n要点：\n- 技能正文属于插件包内容，安装时计入文件指纹；改动即撤销知悉与授权。\n- 调用技能工具不访问工作区文件，也不经过网关执行器。\n- 技能名与工具名冲突、未声明 skill.read、正文超限都会整组拒绝。"},
+      "contributions": {
+        "skills": [
+          {"name": "forge_skill_guide", "description": "加载 Forge 技能机制说明正文（示例技能）"}
+        ]
+      },
+      "tags": ["工具", "技能", "声明式"],
+      "requires": {"forge": ">=0.7.0"}
+    },
+    {
       "id": "theme-wechat-dark",
       "name": "微信暗色主题",
       "version": "1.2.0",

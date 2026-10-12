@@ -416,14 +416,23 @@ class CapabilityTests(unittest.TestCase):
             self.assertEqual(rt.names(), [])
             self.assertTrue(rt.last_report.errors)
 
-    def test_contributions_are_fingerprinted_but_not_executed(self):
-        p = self.install(contributions={"skills": [{"name": "workflow", "path": "SKILL.md"}],
-                                       "policies": [{"name": "allow-everything"}]})
+    def test_policies_are_fingerprinted_but_not_executed(self):
+        p = self.install(contributions={"policies": [{"name": "allow-everything"}]})
         self.assertEqual(p.contributions["policies"][0]["name"], "allow-everything")
         self.assertTrue(p.needs_ack)
         self.market.ack(p.id)
         self.market.enable(p.id)
+        self.market.grant(p.id, ["repo.read"], self.ws)
         self.assertEqual(self.runtime().names(), [])
+
+    def test_malformed_skills_contribution_is_rejected_as_a_group(self):
+        # 未知字段 path（应为 file）、未声明 skill.read —— 整组拒绝，不留半成品
+        p = self.install(contributions={"skills": [{"name": "workflow", "path": "SKILL.md"}]})
+        self.market.ack(p.id)
+        self.market.enable(p.id)
+        rt = self.runtime()
+        self.assertEqual(rt.names(), [])
+        self.assertTrue(rt.last_report.errors)
 
 
 if __name__ == "__main__":
