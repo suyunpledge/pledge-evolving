@@ -47,7 +47,10 @@ class LanguageUiTests(unittest.TestCase):
                         with self.subTest(scale=scale, language=code):
                             self.assertTrue(app._change_language(code))
                             layout.pump(root, .06)
-                            for button in (app.view_back_btn, app.language_picker,
+                            if not app.sidebar.winfo_ismapped():
+                                app.sidebar_reveal_btn.invoke()
+                                layout.pump(root, .06)
+                            for button in (app.sidebar_back_btn, app.language_picker,
                                            *app._tools_tab_buttons.values()):
                                 if button is app.language_picker:
                                     continue  # settings is not the current view

@@ -54,7 +54,7 @@ class NavigationTests(unittest.TestCase):
                     pump(root)
                     before = self.main_layout(app)
                     self.assertEqual(before["body_order"], (str(app.sidebar), str(app.split)))
-                    for exit_action in (app.view_back_btn.invoke, app._return_to_chat):
+                    for exit_action in (app.sidebar_back_btn.invoke, app._return_to_chat):
                         for cycle in range(3):
                             with self.subTest(workspace=workspace_open, exit=exit_action.__name__, cycle=cycle):
                                 app._show_view("tools")
@@ -71,7 +71,7 @@ class NavigationTests(unittest.TestCase):
             for page in ("config", "agents", "task", "knowledge", "evolution", "files"):
                 app._show_view(page)
                 pump(root)
-                app.view_back_btn.invoke()
+                app.sidebar_back_btn.invoke()
                 pump(root)
                 self.assertEqual(self.main_layout(app), before, page)
             app._toggle_sidebar()
@@ -79,7 +79,7 @@ class NavigationTests(unittest.TestCase):
             hidden = self.main_layout(app)
             app._show_view("tools")
             pump(root)
-            app.view_back_btn.invoke()
+            app.sidebar_back_btn.invoke()
             pump(root)
             self.assertEqual(self.main_layout(app), hidden)
             app._toggle_sidebar()
@@ -126,15 +126,15 @@ class NavigationTests(unittest.TestCase):
                             self.assertEqual(app._sidebar_visible, visible_before)
                             self.assertIs(app.sidebar.master, parent_before)
                             self.assertEqual(tuple(parent_before.pack_slaves()), order_before)
-                            self.assert_inside(app.view_back_btn, app.center)
-                            self.assertEqual(app.view_back_btn.cget("text"), "返回对话")
-                            self.assertTrue(app.view_back_btn.cget("image"))
-                            self.assertLess(app.view_navigation.winfo_rooty(), app._views[key].winfo_rooty())
-                            app.view_back_btn.invoke()
+                            self.assertTrue(app.sidebar_back_btn.winfo_ismapped())
+                            self.assertEqual(app.sidebar_back_btn.cget("text"), "← 返回对话")  # 固定文案（2026-10-12 契约）
+                            self.assertTrue(app.sidebar_back_btn.cget("image"))
+                            self.assertTrue(app.sidebar_back_btn.winfo_ismapped())
+                            app.sidebar_back_btn.invoke()
                             pump(root, .03)
                             self.assertEqual(app._active_view, "chat")
                             self.assertTrue(app.send_entry.winfo_ismapped())
-                            self.assertFalse(app.view_navigation.winfo_ismapped())
+                            self.assertFalse(app.sidebar_back_btn.winfo_ismapped())
                 self.assertFalse(errors, errors)
 
     def test_back_tracks_previous_page_and_home_clears_history(self):
@@ -142,15 +142,17 @@ class NavigationTests(unittest.TestCase):
             app._show_view("config")
             app._show_view("tools")
             pump(root)
-            self.assertEqual(app.view_back_btn.cget("text"), "返回配置")
-            self.assert_inside(app.view_chat_btn, app.center)
-            app.view_back_btn.invoke()
-            self.assertEqual(app._active_view, "config")
-            app.view_back_btn.invoke()
+            self.assertEqual(app.sidebar_back_btn.cget("text"), "← 返回对话")  # 固定文案（2026-10-12 契约）
+            self.assertTrue(app.sidebar_back_btn.winfo_ismapped())
+            # 按钮语义 = 直接回对话（2026-10-12 契约；历史返回走 Alt+←/_navigate_back）
+            app.sidebar_back_btn.invoke()
             self.assertEqual(app._active_view, "chat")
+            # 历史返回链语义单独验证（原 view_back_btn 的行为）
             app._show_view("task")
             app._show_view("agents")
-            app.view_chat_btn.invoke()
+            app._navigate_back()
+            self.assertEqual(app._active_view, "task")
+            app._navigate_back()
             self.assertEqual(app._active_view, "chat")
             self.assertEqual(app._view_history, [])
             self.assertFalse(errors, errors)
@@ -170,7 +172,7 @@ class NavigationTests(unittest.TestCase):
             with patch.object(gui.messagebox, "askyesno") as confirmation:
                 for key in ("tools", "config", "agents", "task"):
                     app._show_view(key)
-                    app.view_back_btn.invoke()
+                    app.sidebar_back_btn.invoke()
                 confirmation.assert_not_called()
             self.assertEqual(app._chat_history, history)
             self.assertTrue(message.winfo_exists())
@@ -191,8 +193,8 @@ class NavigationTests(unittest.TestCase):
             app.feature_canvas.yview_moveto(1)
             pump(root)
             self.assertGreater(app.feature_canvas.yview()[0], 0)
-            self.assert_inside(app.view_back_btn, app.center)
-            app.view_back_btn.invoke()
+            self.assertTrue(app.sidebar_back_btn.winfo_ismapped())
+            app.sidebar_back_btn.invoke()
             pump(root)
             self.assertTrue(app._ws_packed)
             self.assertIs(app.workspace, panel)
@@ -225,26 +227,30 @@ class NavigationTests(unittest.TestCase):
                 pump(root)
                 holder = app.market_holder if key == "market" else app.feature_holder
                 self.assertTrue(holder.winfo_ismapped())
-                self.assert_inside(app.view_back_btn, app.center)
-                app.view_back_btn.invoke()
+                # MIN_SIZE@1.5x 侧栏可能被响应式收起：确保展开后再断言
+                if not app.sidebar.winfo_ismapped():
+                    app.sidebar_reveal_btn.invoke()
+                    pump(root)
+                self.assertTrue(app.sidebar_back_btn.winfo_ismapped())
+                app.sidebar_back_btn.invoke()
                 pump(root)
                 self.assertEqual(app._active_view, "chat")
                 app._show_view("tools")
                 pump(root)
                 self.assertEqual(app._tools_tab, key)
-                app.view_back_btn.invoke()
+                app.sidebar_back_btn.invoke()
             self.assertFalse(errors, errors)
 
     def test_file_sidebar_mode_can_return_to_normal_conversation(self):
         with isolated_app(1, (1600, 950)) as (root, app, errors):
             app._nav_click("files")
             pump(root)
-            self.assertTrue(app.view_navigation.winfo_ismapped())
-            app.view_back_btn.invoke()
+            self.assertTrue(app.sidebar_back_btn.winfo_ismapped())  # files 模式返回按钮在侧栏（2026-10-12 契约）
+            app.sidebar_back_btn.invoke()
             pump(root)
             self.assertEqual(app._active_nav, "chat")
             self.assertTrue(app._sidebar_panels["chat"].winfo_ismapped())
-            self.assertFalse(app.view_navigation.winfo_ismapped())
+            self.assertFalse(app.sidebar_back_btn.winfo_ismapped())
             self.assertFalse(errors, errors)
 
     def test_context_dialog_has_explicit_close_and_escape(self):
@@ -283,7 +289,7 @@ class NavigationTests(unittest.TestCase):
                 self.assertFalse(dialog.winfo_exists())
                 self.assertIsNone(root.grab_current())
                 self.assertEqual(app._active_view, "tools")
-            app.view_back_btn.invoke()
+            app.sidebar_back_btn.invoke()
             self.assertEqual(app._active_view, "chat")
             self.assertFalse(errors, errors)
 

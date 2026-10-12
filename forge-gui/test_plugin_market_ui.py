@@ -71,7 +71,10 @@ class MarketplaceUiTests(unittest.TestCase):
                         self.assertEqual(app._active_view, "tools")
                         self.assertEqual(app._tools_tab, "market")
                         self.assertTrue(app.market_holder.winfo_ismapped())
-                        app.view_back_btn.invoke()
+                        if not app.sidebar.winfo_ismapped():
+                            app.sidebar_reveal_btn.invoke()
+                            pump(root)
+                        app.sidebar_back_btn.invoke()
                         layout.pump(root)
                         self.assertEqual(navigation.NavigationTests.main_layout(app), before, opened)
                 self.assertEqual(errors, [])
@@ -182,7 +185,10 @@ class MarketplaceUiTests(unittest.TestCase):
                 self.assertGreaterEqual(target.winfo_rooty(), app.market_canvas.winfo_rooty())
                 self.assertLessEqual(target.winfo_rooty() + target.winfo_height(),
                                      app.market_canvas.winfo_rooty() + app.market_canvas.winfo_height())
-                self.assertTrue(app.view_back_btn.winfo_ismapped())
+                if not app.sidebar.winfo_ismapped():
+                    app.sidebar_reveal_btn.invoke()
+                    pump(root)
+                self.assertTrue(app.sidebar_back_btn.winfo_ismapped())
                 self.assertEqual(errors, [])
 
 
