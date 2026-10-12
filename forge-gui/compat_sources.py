@@ -107,6 +107,15 @@ class CompatEntry:
 # ---- OpenClaw skills ----
 
 
+def _skill_tool_name(skill_dir_name: str) -> str:
+    """技能加载工具名：ASCII、≤64、满足插件工具名语法（中文目录名落哈希兜底）。"""
+    s = re.sub(r"[^A-Za-z0-9_-]+", "", skill_dir_name).strip("_-")[:40]
+    if not s or not s[0].isalpha():
+        import hashlib
+        s = "s" + hashlib.sha1(skill_dir_name.encode("utf-8")).hexdigest()[:12]
+    return f"openclaw_skill_{s}"[:64]
+
+
 def scan_openclaw_skills(roots: Iterable[Path] | None = None) -> list[CompatEntry]:
     entries: list[CompatEntry] = []
     seen: set[str] = set()
@@ -148,13 +157,18 @@ def scan_openclaw_skills(roots: Iterable[Path] | None = None) -> list[CompatEntr
                     "icon": "🦞",
                     "summary": desc or f"OpenClaw 技能 {skill_dir.name}",
                     "description": (
-                        f"来源：OpenClaw 技能目录 {skill_dir}。SKILL.md 随插件安装进 Forge，"
-                        "作为声明式说明书条目展示；不执行外部代码，不给 Agent 提供执行面。"),
+                        f"来源：OpenClaw 技能目录 {skill_dir}。安装时复制 SKILL.md 进插件目录；"
+                        "知悉→启用→授予 skill.read 后，Agent 可通过受控工具加载该技能正文。"
+                        "不执行外部代码，不提供工作区访问。"),
                     "author": "OpenClaw 本机安装",
                     "executes_code": False,
-                    "capabilities": ["repo.read"],
+                    "capabilities": ["skill.read"],
                     "provides": {"tools": []},
-                    "contributions": {"tools": []},
+                    "contributions": {"skills": [{
+                        "name": _skill_tool_name(skill_dir.name),
+                        "file": "SKILL.md",
+                        "description": desc or f"OpenClaw 技能 {skill_dir.name} 的说明正文",
+                    }]},
                     "tags": ["OpenClaw", "技能", "声明式"],
                     "source": "builtin",
                 },

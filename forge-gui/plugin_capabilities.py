@@ -14,7 +14,7 @@ import stat
 import threading
 import uuid
 
-from plugin_market import Marketplace, market_lock, workspace_key
+from plugin_market import Marketplace, linked, market_lock, workspace_key
 from plugin_runtime import BUILTIN_TOOL_NAMES, LoadReport, _validate_schema, re_fullmatch
 
 TARGETS = {
@@ -24,9 +24,33 @@ TARGETS = {
     "edit_file": ("repo.write", {"path": str, "old": str, "new": str,
                                   "replace_all": bool, "start_line": int, "end_line": int}),
 }
+#: contributions.skills 的受控执行器：返回插件自带的技能正文（SKILL.md 等）。
+#: 不经网关、不触工作区文件——正文本身是插件包内容，安装时已计入指纹。
+SKILL_CAPABILITY = "skill.read"
+SKILL_TARGET = "skill_body"
+MAX_SKILL_BODY_BYTES = 128 * 1024
+MAX_INLINE_SKILL_BODY = 8192
 MAX_FILE_BYTES = 2 * 1024 * 1024
 MAX_REQUEST_BYTES = 256 * 1024
 MAX_RESPONSE_CHARS = 200_000
+_EMPTY_SCHEMA = {"type": "object", "properties": {}, "required": [],
+                 "additionalProperties": False}
+
+
+def _skill_relative_path(plugin, raw) -> str:
+    """校验技能声明里的 file 字段，返回插件目录内的相对 posix 路径。"""
+    if (not isinstance(raw, str) or not raw or len(raw) > 160
+            or "\\" in raw or raw != raw.strip()):
+        raise ValueError("技能文件必须是非空相对路径")
+    rel = Path(raw)
+    if rel.is_absolute() or ".." in rel.parts or any(":" in part for part in rel.parts):
+        raise ValueError("技能文件必须位于插件目录内")
+    if not plugin.path:
+        raise ValueError("插件目录未知，无法定位技能文件")
+    root = Path(plugin.path).resolve()
+    if not (root / rel).resolve().is_relative_to(root):
+        raise ValueError("技能文件必须位于插件目录内")
+    return rel.as_posix()
 
 
 class CapabilityRuntime:
@@ -103,10 +127,40 @@ class CapabilityRuntime:
                     batch[name] = {"plugin": plugin, "plugin_id": plugin.id, "name": name,
                         "token": (plugin.ack_of(), plugin.generation), "target": target,
                         "capability": capability, "description": description, "parameters": parameters}
+                for raw in plugin.contributions.get("skills", []):
+                    name, skill_file = raw.get("name"), raw.get("file")
+                    if not isinstance(name, str) or len(name) > 64 or not re_fullmatch(name):
+                        raise ValueError("技能名称无效")
+                    if name in batch or name in tools or name in reserved or name.removeprefix("forge_") in reserved:
+                        raise ValueError(f"技能名冲突：{name}")
+                    if set(raw) - {"name", "file", "description"}:
+                        raise ValueError("技能声明含未知字段")
+                    description = raw.get("description", "")
+                    if not isinstance(description, str) or len(description) > 4096:
+                        raise ValueError("技能描述无效")
+                    if SKILL_CAPABILITY not in plugin.declared_capabilities:
+                        raise PermissionError(f"技能未声明必要能力：{SKILL_CAPABILITY}")
+                    meta = {"plugin": plugin, "plugin_id": plugin.id, "name": name,
+                        "token": (plugin.ack_of(), plugin.generation), "target": SKILL_TARGET,
+                        "capability": SKILL_CAPABILITY, "description": description,
+                        "parameters": copy.deepcopy(_EMPTY_SCHEMA)}
+                    if skill_file is not None:
+                        # 外部技能包（SKILL.md 随插件落盘）：只允许插件目录内的相对纯文本
+                        meta["skill_file"] = _skill_relative_path(plugin, skill_file)
+                    else:
+                        # 内置目录条目可以不带文件：正文内联在 provides.skill_body，
+                        # 安装时随清单一起进指纹，不依赖打包额外资源文件
+                        body = plugin.provides.get("skill_body")
+                        if (not isinstance(body, str) or not body.strip()
+                                or len(body) > MAX_INLINE_SKILL_BODY):
+                            raise ValueError("技能缺少 file 或有效的 provides.skill_body 正文")
+                        meta["skill_body"] = body
+                    batch[name] = meta
                 for name, meta in batch.items():
                     registry.register(ToolSpec(name, meta["description"],
                         lambda args, ctx, m=meta: self._execute(m, args, ctx),
-                        read_only=meta["capability"] == "repo.read", schema=meta["parameters"]))
+                        read_only=meta["capability"] in {"repo.read", SKILL_CAPABILITY},
+                        schema=meta["parameters"]))
                     tools[name] = meta
                 if batch:
                     report.loaded.append(plugin.id)
@@ -126,6 +180,7 @@ class CapabilityRuntime:
                 or p.executes_code or (p.ack_of(), p.generation) != meta["token"]
                 or meta["capability"] not in p.granted_capabilities(self.workspace, self.session)):
             raise PermissionError("插件未获当前范围授权，或已禁用、撤销、修改；请检查并重新加载")
+        return p
 
     def _alive(self, meta, catalog):
         try:
@@ -155,9 +210,18 @@ class CapabilityRuntime:
         if not tools:
             return []
         catalog = self.market.catalog() if catalog is None else catalog
-        return [{"type": "function", "function": {"name": name,
-                 "description": f"{meta['description']} [插件 {meta['plugin_id']}；{meta['capability']}；受 Forge Policy 约束]",
-                 "parameters": meta["parameters"]}} for name, meta in tools.items() if self._alive(meta, catalog)]
+        out = []
+        for name, meta in tools.items():
+            if not self._alive(meta, catalog):
+                continue
+            if meta["capability"] == SKILL_CAPABILITY:
+                note = f"返回技能「{name}」的说明正文；不访问工作区文件"
+            else:
+                note = f"{meta['capability']}；受 Forge Policy 约束"
+            out.append({"type": "function", "function": {"name": name,
+                "description": f"{meta['description']} [插件 {meta['plugin_id']}；{note}]",
+                "parameters": meta["parameters"]}})
+        return out
 
     def _arguments(self, meta, args):
         if not isinstance(args, dict):
@@ -218,7 +282,9 @@ class CapabilityRuntime:
         from forge.tools import ToolResult
         # A retained registry handler is also revocable; call() is not the only gate.
         with market_lock(self.market.market_dir / "state.lock"):
-            self._current(meta)
+            plugin = self._current(meta)
+            if meta["capability"] == SKILL_CAPABILITY:
+                return self._execute_skill(meta, plugin, args, ctx)
             arguments = self._arguments(meta, args)
             event = ctx.extras.get("plugin_audit") or {
                 "call": uuid.uuid4().hex, "plugin": meta["plugin_id"], "fingerprint": meta["token"][0],
@@ -240,6 +306,51 @@ class CapabilityRuntime:
         return ToolResult(response["ok"], str(response.get("content", "")),
                           str(response.get("error", "")), response.get("meta") or {})
 
+    def _execute_skill(self, meta, plugin, args, ctx):
+        """技能正文读取：只回插件包内文件/内联正文，不经网关、不触工作区。"""
+        from forge.tools import ToolResult
+        if args:
+            raise ValueError("技能工具不接受参数")
+        if "skill_body" in meta:
+            body = meta["skill_body"]
+            if len(body) > MAX_RESPONSE_CHARS:
+                body = body[:MAX_RESPONSE_CHARS] + "\n…[截断]"
+            # 内联正文也过一遍生命周期复核：换包/禁用/撤销即失效
+            self._current(meta)
+        else:
+            body = self._read_skill_body(meta, plugin)
+        event = ctx.extras.get("plugin_audit") or {
+            "call": uuid.uuid4().hex, "plugin": meta["plugin_id"], "fingerprint": meta["token"][0],
+            "tool": meta["name"], "target": meta["target"], "workspace": str(self.workspace),
+            "session": self.session}
+        self.market.audit(**event, phase="dispatch", outcome="pending")
+        return ToolResult(True, body, "", {"skill": meta["name"], "plugin": meta["plugin_id"],
+            "fingerprint": meta["token"][0], "capability": SKILL_CAPABILITY,
+            "authorization": "allow"})
+
+    def _read_skill_body(self, meta, plugin) -> str:
+        root = Path(plugin.path).resolve()
+        path = (root / meta["skill_file"]).resolve()
+        if not path.is_relative_to(root):
+            raise PermissionError("技能文件超出插件目录")
+        try:
+            info = path.stat()
+        except OSError as exc:
+            raise ValueError(f"技能文件不可读：{exc}")
+        if linked(path) or not stat.S_ISREG(info.st_mode) or info.st_nlink > 1:
+            raise PermissionError("技能文件必须是普通文件")
+        if info.st_size > MAX_SKILL_BODY_BYTES:
+            raise ValueError("技能正文超过大小上限")
+        try:
+            body = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            raise ValueError(f"技能文件读取失败：{exc}")
+        if len(body) > MAX_RESPONSE_CHARS:
+            body = body[:MAX_RESPONSE_CHARS] + "\n…[截断]"
+        # 读后再核一次生命周期：换包/禁用/撤销会改变 token，立即失效
+        self._current(meta)
+        return body
+
     def call(self, name, args):
         from forge.policy import Policy
         from forge.tools import ToolContext
@@ -259,7 +370,11 @@ class CapabilityRuntime:
                 if meta is None:
                     raise PermissionError("未知插件工具")
                 self._current(meta)
-                self._arguments(meta, args)
+                if meta["capability"] == SKILL_CAPABILITY:
+                    if args:
+                        raise ValueError("技能工具不接受参数")
+                else:
+                    self._arguments(meta, args)
                 # This registry gates the alias; dispatch MUST go to the trusted
                 # gateway's registry, which applies its real Policy to the target.
                 result = registry.invoke(name, args, context)

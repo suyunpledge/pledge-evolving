@@ -39,7 +39,11 @@ class TestOpenClawScan(unittest.TestCase):
             self.assertEqual(e.source_eco, "openclaw")
             self.assertEqual(e.install_dir, root / "file-io")
             self.assertFalse(e.manifest["executes_code"])
-            self.assertEqual(e.manifest["capabilities"], ["repo.read"])
+            self.assertEqual(e.manifest["capabilities"], ["skill.read"])
+            skills = e.manifest["contributions"]["skills"]
+            self.assertEqual(len(skills), 1)
+            self.assertEqual(skills[0]["file"], "SKILL.md")
+            self.assertRegex(skills[0]["name"], r"^[A-Za-z_][A-Za-z0-9_\-]*$")
             self.assertIn("Upload local files to filebin", e.manifest["summary"])
             nofm = next(e for e in got if e.manifest["id"] == "openclaw-no-fm")
             self.assertEqual(nofm.manifest["summary"], "Just a title")
@@ -61,7 +65,6 @@ class TestOpenClawScan(unittest.TestCase):
 
     def test_manifest_passes_parse(self):
         # 契约测试：产出的清单必须能过 Forge parse_manifest
-        sys.path.insert(0, r"C:\Users\匡溯昀\pledge-evolving\forge-gui")
         from plugin_market import parse_manifest
         import tempfile
         with tempfile.TemporaryDirectory() as td:
@@ -71,6 +74,7 @@ class TestOpenClawScan(unittest.TestCase):
             p = parse_manifest(e.manifest, source="builtin")
             self.assertEqual(p.id, "openclaw-s")
             self.assertFalse(p.executes_code)
+            self.assertEqual(p.contributions["skills"][0]["file"], "SKILL.md")
             # capabilities 声明触发 needs_ack 是预期行为（知悉门槛），只需解析成功
 
 

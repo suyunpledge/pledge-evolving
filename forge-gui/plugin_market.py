@@ -69,6 +69,7 @@ MANIFEST_FIELDS = (
 PERMISSION_LABELS = {
     "repo.read": "读取当前工作区文件",
     "repo.write": "修改当前工作区文件",
+    "skill.read": "读取插件自带的技能说明正文（不访问工作区文件）",
     "process.exec": "启动外部进程（尚无受控执行器）",
     "network.github": "访问 GitHub 网络（尚无受控执行器）",
     "workspace:read": "读取工作区文件",
@@ -130,12 +131,37 @@ HIGH_RISK_PERMISSIONS = {"shell:exec", "workspace:write", "net:outbound", "model
                          "repo.write", "process.exec", "network.github"}
 CAPABILITY_ALIASES = {"workspace:read": "repo.read", "workspace:write": "repo.write",
                       "shell:exec": "process.exec", "net:outbound": "network.outbound"}
-GRANTABLE_CAPABILITIES = frozenset({"repo.read", "repo.write"})
+GRANTABLE_CAPABILITIES = frozenset({"repo.read", "repo.write", "skill.read"})
 CONTRIBUTION_TYPES = frozenset({"tools", "skills", "policies", "hooks", "providers", "agents", "ui_panels"})
 
 
 def workspace_key(workspace) -> str:
     return os.path.normcase(str(Path(workspace).expanduser().resolve()))
+
+
+def _forge_version() -> str:
+    """当前 Forge 版本（requires.forge 约束的比对对象）。
+
+    先 import；子进程/测试场景 forge 包可能不在 sys.path，再退回直接解析
+    源码里的 __version__。两者都拿不到返回空串——此时跳过 forge 约束比对
+    而不是伪造 0.0.0（那会把所有带约束的条目全部拦死）；doctor 会提示。
+    """
+    try:
+        import forge
+        version = str(getattr(forge, "__version__", "") or "")
+        if version:
+            return version
+    except Exception:
+        pass
+    init = Path(__file__).resolve().parents[1] / "forge" / "__init__.py"
+    try:
+        match = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']',
+                          init.read_text(encoding="utf-8"))
+        if match:
+            return match.group(1)
+    except OSError:
+        pass
+    return ""
 
 
 def _now_epoch() -> float:
@@ -800,6 +826,24 @@ class Marketplace:
         generations = self._state.setdefault("generations", {})
         generations[pid] = generations.get(pid, 0) + 1
 
+    def _check_requirements_ok(self, plugin: Plugin) -> None:
+        """安装/启用前的 requires 硬检查（forge 版本、插件依赖、依赖环）。
+
+        只要求依赖"已安装且版本满足"，不要求已启用；依赖禁用时本插件的
+        加载会自然跳过，不构成执行面。此前 requires 只进指纹从不校验，
+        内置目录里的 ">=0.7.0" 是一句没人核对的口号——这里把它变成闸门。
+        """
+        import plugin_dependencies
+        catalog = self.catalog()
+        installed = {p.id: p.version for p in catalog
+                     if p.installed and not p.error and p.id != plugin.id}
+        graph = {p.id: p.requires for p in catalog if p.installed and not p.error}
+        problems = plugin_dependencies.check_requirements(
+            plugin, installed, _forge_version(), requires_graph=graph)
+        if problems:
+            raise plugin_dependencies.RequirementError(
+                plugin_dependencies.format_problems(plugin.id, problems))
+
     @_fresh_state
     def install_from_dir(self, src: str | os.PathLike, *,
                          enable: bool = False) -> Plugin:
@@ -810,6 +854,7 @@ class Marketplace:
             raise FileNotFoundError(f"{src_path} 里没有 {MANIFEST_NAME}")
         raw = json.loads(manifest_path.read_text(encoding="utf-8"))
         plugin = parse_manifest(raw, source="local")
+        self._check_requirements_ok(plugin)
         dest = self._plugin_path(plugin.id)
         source_hash = content_fingerprint(src_path)
         previous = self.find(plugin.id)
@@ -884,7 +929,81 @@ class Marketplace:
             (src / MANIFEST_NAME).write_text(
                 json.dumps(payload, ensure_ascii=False, indent=2),
                 encoding="utf-8")
+            # 外部生态条目（OpenClaw 等本机扫描源）随安装复制声明的技能正文，
+            # 让 contributions.skills 指向真实文件而不是一句展示文案。
+            for body_path, name in self._compat_body_files(plugin):
+                shutil.copyfile(body_path, src / name)
             return self.install_from_dir(src, enable=enable)
+
+    def _compat_body_files(self, plugin: Plugin) -> list[tuple[Path, str]]:
+        """compat 条目声明的技能正文文件（源目录 → 安装后相对文件名）。
+
+        只信本机扫描源（compat_sources 的 install_dir），远程 payload 无
+        install_dir，不可能通过这条路径写入任何文件。单文件 ≤512 KiB、
+        普通文件、非链接；复制进安装目录后计入 content_fingerprint。
+        """
+        skills = plugin.contributions.get("skills", [])
+        if not skills or not getattr(self, "external_sources", False):
+            return []
+        try:
+            import compat_sources
+            entries = compat_sources.compat_entries()
+        except Exception:
+            return []
+        out: list[tuple[Path, str]] = []
+        for entry in entries:
+            if entry.manifest.get("id") != plugin.id or entry.install_dir is None:
+                continue
+            for skill in skills:
+                name = skill.get("file") if isinstance(skill, dict) else None
+                if (not isinstance(name, str) or not name or "/" in name
+                        or "\\" in name or ".." in name or name != Path(name).name):
+                    continue
+                src = Path(entry.install_dir) / name
+                try:
+                    if (src.is_file() and not linked(src)
+                            and src.stat().st_size <= 512 * 1024):
+                        out.append((src, name))
+                except OSError:
+                    continue
+        return out
+
+    @_fresh_state
+    def check_updates(self) -> list[dict[str, Any]]:
+        """对比已装版本与目录（内置/远程/外部）同 id 条目，返回可用更新。
+
+        诚实口径：只是"目录里有更高版本号"，不代表更新内容已验证；
+        真正的更新 = 对新目录重新 install_from_dir，知悉与授权全部重来。
+        """
+        from plugin_dependencies import parse_version
+        installed = {p.id: p for p in self.catalog() if p.installed}
+        if not installed:
+            return []
+        newest: dict[str, Plugin] = {}
+        for plugin in (*self.builtin_entries(), *self.remote_entries(),
+                       *self.external_entries()):
+            try:
+                current = newest.get(plugin.id)
+                if current is None or (parse_version(plugin.version)
+                                       > parse_version(current.version)):
+                    newest[plugin.id] = plugin
+            except ValueError:
+                continue
+        out = []
+        for pid, local in installed.items():
+            candidate = newest.get(pid)
+            if candidate is None:
+                continue
+            try:
+                newer = parse_version(candidate.version) > parse_version(local.version)
+            except ValueError:
+                continue
+            if newer:
+                out.append({"id": pid, "name": local.name or pid,
+                            "installed": local.version,
+                            "available": candidate.version,
+                            "source": candidate.source})
+        return sorted(out, key=lambda u: u["id"])
 
     @_fresh_state
     def uninstall(self, pid: str) -> bool:
@@ -918,6 +1037,8 @@ class Marketplace:
             raise PermissionError(
                 f"{pid} 插件代码或权限需确认（权限：{'、'.join(plugin.permission_labels()) or '未声明'}），"
                 "必须先在界面上确认信任才能启用")
+        # 安装后依赖可能被卸载/降级，启用时复查一遍
+        self._check_requirements_ok(plugin)
         self._enable_in_state(pid)
         self._bump_generation(pid)
         self.save()
@@ -1377,22 +1498,165 @@ def default_marketplace() -> Marketplace:
     return Marketplace()
 
 
+def doctor_report(market: Marketplace, workspace=None) -> tuple[str, bool]:
+    """插件系统健康诊断（CLI 与测试共用）。返回 (文本报告, 是否全部健康)。"""
+    lines: list[str] = []
+    healthy = True
+
+    def issue(text: str):
+        nonlocal healthy
+        healthy = False
+        lines.append(f"  ✗ {text}")
+
+    state = market.state()
+    lines.append(f"state: {market.state_path}")
+    lines.append(f"  已装 {len(state.get('installed', {}))} · 启用 "
+                 f"{len(state.get('enabled', []))} · 已知悉 {len(state.get('acked', {}))}"
+                 f" · 授权 {len(state.get('grants', {}))}")
+
+    catalog = market.catalog()
+    by_id = {p.id: p for p in catalog}
+    for pid in state.get("enabled", []):
+        plugin = by_id.get(pid)
+        if plugin is None or not plugin.installed:
+            issue(f"启用态但目录缺失：{pid}")
+        elif plugin.error:
+            issue(f"启用态但清单损坏：{pid}（{plugin.error}）")
+    installed_ids = {p.id for p in catalog if p.installed}
+    for pid in state.get("installed", {}):
+        if pid not in installed_ids:
+            issue(f"安装索引指向不存在的目录：{pid}")
+    if market.plugins_dir.is_dir():
+        indexed = set(state.get("installed", {}))
+        for child in sorted(market.plugins_dir.iterdir()):
+            if not child.is_dir():
+                continue
+            if ".bak-" in child.name or ".removed-" in child.name:
+                continue
+            if not (child / MANIFEST_NAME).is_file():
+                issue(f"plugins/ 里的孤儿目录（无清单，不会被加载）：{child.name}")
+            elif child.name not in indexed:
+                issue(f"plugins/ 有清单但不在安装索引：{child.name}")
+
+    import plugin_dependencies
+    installed_map = {p.id: p.version for p in catalog if p.installed and not p.error}
+    graph = {p.id: p.requires for p in catalog if p.installed and not p.error}
+    dep_problems = 0
+    if not _forge_version():
+        lines.append("  ⚠ 无法确定当前 Forge 版本，requires.forge 约束未参与校验")
+    for plugin in sorted((p for p in catalog if p.installed and not p.error),
+                         key=lambda p: p.id):
+        problems = plugin_dependencies.check_requirements(
+            plugin, installed_map, _forge_version(), requires_graph=graph)
+        for problem in problems:
+            issue(f"依赖问题 {plugin.id}：{problem}")
+            dep_problems += 1
+        unknown = plugin_dependencies.normalize_requires(plugin.requires)["unknown"]
+        if unknown:
+            lines.append(f"  ⚠ {plugin.id} requires 含未知键（忽略）：{', '.join(unknown)}")
+    if not dep_problems:
+        lines.append("  依赖检查：全部通过")
+
+    try:
+        import plugin_capabilities
+        scope = Path(workspace_key(workspace if workspace is not None else Path.cwd()))
+        runtime = plugin_capabilities.CapabilityRuntime(market, scope, "doctor", None)
+        report = runtime.reload()
+        for pid, reason in report.errors:
+            issue(f"加载失败 {pid}：{reason}")
+        for pid, reason in report.skipped:
+            lines.append(f"  ⚠ 跳过 {pid}：{reason}")
+        lines.append(f"  能力加载：{len(report.loaded)} 个插件 / {len(report.tools)} 个工具别名")
+    except Exception as exc:  # noqa: BLE001 - doctor 自身不能崩
+        issue(f"能力加载器无法运行：{type(exc).__name__}: {exc}")
+
+    updates = market.check_updates()
+    for update in updates:
+        lines.append(f"  ⚠ 可更新 {update['id']}：{update['installed']} → "
+                     f"{update['available']}（{update['source']}）")
+
+    try:
+        tail = market.audit_tail(limit=200)
+    except OSError:
+        tail = []
+    denials = sum(1 for row in tail if row.get("outcome") in {"deny", "error"})
+    lines.append(f"  审计：近 {len(tail)} 条调用记录，其中拒绝/错误 {denials} 条")
+    return "\n".join(lines), healthy
+
+
 def main(argv: list[str] | None = None) -> int:  # pragma: no cover - 手跑入口
-    """`python plugin_market.py [list|summary|log]` —— 不开 GUI 时的速查。"""
+    """`python plugin_market.py <cmd>` —— 不开 GUI 时的插件生命周期入口。"""
     import argparse
-    parser = argparse.ArgumentParser(description="Forge 插件市场速查")
+    parser = argparse.ArgumentParser(description="Forge 插件市场（headless）")
     parser.add_argument("cmd", nargs="?", default="list",
-                        choices=("list", "summary", "log"))
+                        choices=("list", "summary", "log", "install", "install-dir",
+                                 "enable", "disable", "uninstall", "ack", "revoke",
+                                 "grant", "updates", "doctor", "audit"))
+    parser.add_argument("target", nargs="?", help="插件 id 或目录路径")
+    parser.add_argument("--home", help="Forge home 目录（默认 ~/.forge）")
+    parser.add_argument("--workspace", help="doctor/grant 使用的工作区（默认当前目录）")
+    parser.add_argument("--session", default="", help="grant 的会话范围（默认工作区级）")
+    parser.add_argument("--capability", action="append", default=[],
+                        help="grant 的能力，可重复（如 --capability skill.read）")
     args = parser.parse_args(argv)
-    market = default_marketplace()
+    market = Marketplace(home=args.home) if args.home else default_marketplace()
+
     if args.cmd == "summary":
         print(json.dumps(market.summary(), ensure_ascii=False, indent=2))
-    elif args.cmd == "log":
+        return 0
+    if args.cmd == "log":
         for row in market.log_tail():
             print(f"{row.get('at')} [{row.get('level')}] "
                   f"{row.get('event')} {row.get('detail', '')}")
-    else:
-        print(market.render_text())
+        return 0
+    if args.cmd == "audit":
+        for row in market.audit_tail():
+            print(json.dumps(row, ensure_ascii=False))
+        return 0
+    if args.cmd == "install":
+        if not args.target:
+            parser.error("install 需要插件 id")
+        plugin = market.install_from_catalog(args.target)
+        print(f"已安装 {plugin.id}@{plugin.version}（未启用；声明式插件需知悉→启用→授权）")
+        return 0
+    if args.cmd == "install-dir":
+        if not args.target:
+            parser.error("install-dir 需要目录路径")
+        plugin = market.install_from_dir(args.target)
+        print(f"已安装 {plugin.id}@{plugin.version}（更新会撤销原有知悉与授权）")
+        return 0
+    if args.cmd == "updates":
+        updates = market.check_updates()
+        if not updates:
+            print("没有可用更新（目录里没有同 id 更高版本）")
+            return 0
+        for update in updates:
+            print(f"{update['id']}: {update['installed']} → {update['available']}"
+                  f"（来源 {update['source']}）")
+        print("更新 = 对新目录重新 install-dir；知悉与授权不会自动继承。")
+        return 0
+    if args.cmd == "doctor":
+        report, healthy = doctor_report(market, workspace=args.workspace)
+        print(report)
+        return 0 if healthy else 1
+    if args.cmd in {"enable", "disable", "uninstall", "ack", "revoke", "grant"}:
+        if not args.target:
+            parser.error(f"{args.cmd} 需要插件 id")
+        if args.cmd == "grant":
+            if not args.capability:
+                parser.error("grant 需要 --capability（可重复）")
+            market.grant(args.target, args.capability,
+                         args.workspace or Path.cwd(), session=args.session)
+            print(f"已授予 {args.target}：{', '.join(args.capability)}"
+                  f"（workspace={args.workspace or Path.cwd()} session={args.session or '全部对话'}）")
+            return 0
+        action = {"enable": market.enable, "disable": market.disable,
+                  "uninstall": market.uninstall, "ack": market.ack,
+                  "revoke": market.revoke_grants}[args.cmd]
+        action(args.target)
+        print(f"完成：{args.cmd} {args.target}")
+        return 0
+    print(market.render_text())
     return 0
 
 

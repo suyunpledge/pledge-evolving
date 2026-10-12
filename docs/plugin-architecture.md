@@ -119,8 +119,63 @@ GUI 使用 3 秒工具 RPC 超时；这是网络等待上限，**不能宣称终
 
 清单保留 `tools / skills / policies / hooks / providers / agents / ui_panels` 一级类型。
 每类最多 32 个声明对象，全部进入版本指纹。
-当前仅 `tools` 接入宿主执行；其他类型可检查但不加载、不注入模型提示、不挂载面板、不执行 hook，
-也不允许插件提供的 `policies` 放宽 Forge Policy。后续需要每种类型独立的受控宿主适配器。
+
+当前接入宿主执行的类型（2026-10-12 起）：
+
+| 类型 | 执行方式 | 状态 |
+|---|---|---|
+| `tools` | 别名代理到网关 4 个文件工具（read_file/list_dir/write_file/edit_file） | 真实可调用 |
+| `skills` | 受控正文读取：返回插件自带技能正文，不经网关、不触工作区 | 真实可调用 |
+| `policies / hooks / providers / agents / ui_panels` | 无宿主适配器 | 仅检查+指纹，不加载 |
+
+### skills 贡献格式
+
+```json
+{
+  "capabilities": ["skill.read"],
+  "contributions": {"skills": [
+    {"name": "my_skill", "file": "SKILL.md", "description": "加载技能正文"}
+  ]}
+}
+```
+
+- `file` 必须是插件目录内的相对路径普通文件（≤128 KiB），安装时计入内容指纹；
+  换文件、改正文都会撤销知悉与授权。
+- 内置目录条目可以不写 `file`，正文内联在 `provides.skill_body`（≤8 KiB），
+  避免为随程序分发的示例打包额外资源文件。
+- 技能工具调用返回正文文本；不接受参数；授予 `skill.read` 能力后才会出现在
+  模型 schema 里。技能名与工具名共用同一冲突规则（内置名、`forge_` 前缀、
+  跨插件重名、同插件 tool/skill 重名都整组拒绝）。
+- `skill.read` 与 `repo.read/repo.write` 一样走逐项授权（grant）与撤销；
+  它不涉及工作区文件，也不经过网关执行器，因此调用不发 `plugin_context`。
+
+外部生态（OpenClaw）技能条目安装时会真实复制 SKILL.md 进插件目录
+（`Marketplace._compat_body_files`，单文件 ≤512 KiB、普通文件、仅本机扫描源），
+装完即可走知悉→启用→授权→调用链。远程目录条目没有本机实体，仍为纯声明展示。
+
+## 依赖与版本约束（requires）
+
+清单 `requires` 自 2026-10-12 起为硬检查（此前只进指纹，从未校验）：
+
+```json
+{"forge": ">=0.7.0", "plugins": {"other-id": ">=1.0 <2.0"}}
+```
+
+- 安装与启用都会执行 `plugin_dependencies.check_requirements`：
+  Forge 版本、依赖插件已安装且版本满足、依赖环（含自依赖）。
+- 只支持比较运算符（`>= <= > < == != =`，空格/逗号 AND 连接）；`^ ~ *` 等
+  范围语法明确拒绝，fail closed。版本按点分段数值比较，缺段补零（1.0 == 1.0.0）。
+- 未知 `requires` 键不硬拒（兼容旧清单），doctor 诊断会提示。
+- 依赖只要求"已安装"，不要求"已启用"；禁用依赖只导致本插件加载时跳过其贡献。
+
+## Headless CLI 与诊断
+
+`python plugin_market.py <cmd>`（无需 GUI，支持 `--home` 指定隔离目录）：
+
+- 生命周期：`install <id>` / `install-dir <path>` / `enable|disable|uninstall|ack|revoke <id>`
+  / `grant <id> --capability C --workspace W [--session S]`
+- 检查：`updates`（目录里同 id 更高版本）、`doctor`（孤儿目录、启用态不一致、
+  依赖问题、能力加载报告、审计概要；退出码 1 = 存在问题）、`audit`、`list`、`summary`、`log`
 
 ## 旧 Python worker
 
@@ -141,5 +196,8 @@ GUI 使用 3 秒工具 RPC 超时；这是网络等待上限，**不能宣称终
 结果审计失败或网络等待失败误当成“尚未执行”并盲目重试。
 
 离线回归入口：`forge-gui/run_offline_checks.py`，使用临时 home 和本地测试网关。
-新增测试见 `test_plugin_capabilities.py`、`test_plugin_market_ui.py`。
+插件相关测试：`test_plugin_capabilities.py`、`test_plugin_market_ui.py`、
+`test_plugin_skills.py`（技能执行器真实验证）、`test_plugin_dependencies.py`
+（requires/版本冲突/环/更新）、`test_plugin_cli.py`（headless 生命周期、doctor、
+OpenClaw 实体复制端到端）。
 攻击与故障矩阵见 [plugin-capability-audit.md](plugin-capability-audit.md)。
