@@ -1,8 +1,10 @@
 """Development workbench UI. Only queued callbacks touch Tcl/Tk."""
 from pathlib import Path
+import hashlib
 import json
 import queue
 import threading
+import time
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 
@@ -10,6 +12,7 @@ from gui_theme import C, apply_ttk_theme, style_editor, FONT_MONO_SM
 from forge.development.state import ModeState, WorkMode
 from forge.development.editor import Document
 from forge.development.runtime import DevelopmentRuntime
+from forge.development.evidence import TaskEvidence
 from forge.secrets import redact, install_tk_exception_redaction
 from .project import WorkspaceSource
 
@@ -31,16 +34,21 @@ class DevelopmentWorkbench(ttk.Frame):
         self._poll = None
         self._external_poll = None
         self._external_busy = False
+        self._external_pending = False
         self._scan_busy = False
         self._scan_pending = False
         self.source = None
         self.documents = {}
         self._file_actions = {}
+        self.task_evidence = TaskEvidence()
+        self._diff_request = 0
+        self._compare_path = None
         self.expanded = set()
         self.model_ids = ['']
         self.catalog_rows = []
         self._permission = 'read-only'
         self._session_to_restore = self.state.value('session')
+        self._resume_project = self.state.value('project')
         self._build()
         self._unsubscribe = self.state.subscribe(self._mode_changed)
         self.bind('<Destroy>', self._destroyed, add='+')
@@ -116,6 +124,11 @@ class DevelopmentWorkbench(ttk.Frame):
         git = ttk.Frame(notebook)
         notebook.add(files, text='文件')
         notebook.add(git, text='Git 变更')
+        self.diff_view = tk.StringVar(value='combined')
+        diff_choice = ttk.Combobox(git, textvariable=self.diff_view, state='readonly',
+                                  values=['combined', 'working', 'staged'], width=18)
+        diff_choice.pack(fill='x', pady=4)
+        diff_choice.bind('<<ComboboxSelected>>', self.show_diff)
         self.tree = ttk.Treeview(files, show='tree', selectmode='browse')
         scroll = ttk.Scrollbar(files, command=self.tree.yview)
         scroll.pack(side='right', fill='y')
@@ -139,6 +152,14 @@ class DevelopmentWorkbench(ttk.Frame):
         state_bar = ttk.Frame(self.editor_frame)
         state_bar.pack(fill='x', pady=(0, 4))
         ttk.Button(state_bar, text='编码', command=self.open_encoding).pack(side='left')
+        actions = ttk.Menubutton(state_bar, text='文件审查')
+        actions.pack(side='left', padx=4)
+        menu = tk.Menu(actions, tearoff=False, bg=C['bg'], fg=C['text'])
+        menu.add_command(label='比较磁盘与草稿', command=self.compare_external)
+        menu.add_command(label='安全合并到草稿（不保存）', command=self.merge_external)
+        menu.add_separator()
+        menu.add_command(label='检查点差异 / 恢复此文件', command=self.checkpoints)
+        actions.configure(menu=menu)
         ttk.Button(state_bar, text='附加给 Agent', command=self.attach_current).pack(side='right')
         self.document_state = ttk.Label(self.editor_frame, text='Ctrl+S 保存 · 尚无打开文件', padding=(4, 0, 4, 4))
         self.document_state.pack(fill='x')
@@ -163,7 +184,7 @@ class DevelopmentWorkbench(ttk.Frame):
             text.configure(yscrollcommand=sy.set, xscrollcommand=sx.set, state='disabled')
             text.pack(fill='both', expand=True)
             self.output_views[name] = text
-        self.write_output('测试', '这里只展示真实工具事件，不推算通过数。命令审批仍由 Forge Policy 决定。\n')
+        self.write_output('测试', '内置 shell_exec 在 Secret 隔离中不可用。这里只展示真实执行或拒绝事件；没有结构化结果时不推算通过数。\n')
 
     def _build_agent(self):
         self.task_label = ttk.Label(self.agent_frame, text='Agent · 未运行', padding=(8, 4), wraplength=320)
@@ -173,7 +194,10 @@ class DevelopmentWorkbench(ttk.Frame):
         dialogue = ttk.Frame(log_tabs)
         events = ttk.Frame(log_tabs)
         log_tabs.add(dialogue, text='对话')
-        log_tabs.add(events, text='真实任务事件')
+        workflow = ttk.Frame(log_tabs)
+        log_tabs.add(workflow, text='任务 / 子 Agent')
+        log_tabs.add(events, text='完整事件')
+        self.workflow = self._readonly_text(workflow, wrap='word')
         self.chat = self._readonly_text(dialogue, wrap='word')
         self.events = self._readonly_text(events, wrap='word')
         self.editor_contexts = []
@@ -201,6 +225,11 @@ class DevelopmentWorkbench(ttk.Frame):
         perms.bind('<<ComboboxSelected>>', self.permission_changed)
         ttk.Button(row2, text='复审', command=self.review).pack(side='right')
         ttk.Button(row2, text='恢复', command=self.restore_session).pack(side='right', padx=4)
+        row3 = ttk.Frame(self.agent_frame)
+        self.delegate_button = ttk.Button(row3, text='请求子 Agent', command=lambda: self.send(delegate=True))
+        row3.pack(fill='x', padx=6, pady=(0, 4))
+        self.delegate_button.pack(side='left')
+        ttk.Button(row3, text='独立模型', command=self.agent_model_settings).pack(side='left', padx=4)
         row3 = ttk.Frame(self.agent_frame)
         row3.pack(fill='x', padx=6, pady=(0, 6))
         ttk.Label(row3, text='任务角色').pack(side='left')
@@ -251,6 +280,7 @@ class DevelopmentWorkbench(ttk.Frame):
     def _drain(self):
         if self._closed:
             return
+        deadline = time.monotonic() + .012
         for _ in range(80):
             try:
                 generation, callback, value, error, job = self.results.get_nowait()
@@ -267,6 +297,8 @@ class DevelopmentWorkbench(ttk.Frame):
                 callback(value, error)
             except Exception as exc:
                 self.status.set(redact(str(exc)))
+            if time.monotonic() >= deadline:
+                break
         self._poll = self.later(40, self._drain)
 
     def choose_project(self):
@@ -303,8 +335,14 @@ class DevelopmentWorkbench(ttk.Frame):
         old = self.runtime
         def load():
             source = WorkspaceSource(path)
-            if old.ready and self._owns_runtime:
-                runtime = DevelopmentRuntime(self.state, emit=self.enqueue_event)
+            home = self.state.home
+            if home.is_relative_to(source.root):
+                # Host layout preferences may live in the checkout; execution
+                # stores remain outside it, distinct for every host/worktree.
+                identity = hashlib.sha256(str(home).encode('utf-8')).hexdigest()[:16]
+                home = source.root.parent / ('.forge-development-' + identity)
+            if self._owns_runtime and (old.ready or old.home != home):
+                runtime = DevelopmentRuntime(self.state, emit=self.enqueue_event, runtime_home=home)
             else:
                 runtime = old
             try:
@@ -333,9 +371,13 @@ class DevelopmentWorkbench(ttk.Frame):
             row['frame'].destroy()
         self.documents.clear()
         self._file_actions.clear()
+        self._changed_selection = ()
+        self.task_evidence = TaskEvidence()
+        self.render_evidence()
         self.expanded = {str(self.source.root)}
         self._scan_busy = False
         self._external_busy = False
+        self._external_pending = False
         self.editor_contexts = []
         self.context_label.configure(text='未附加编辑器内容')
         self.catalog_rows = ready['models']
@@ -348,6 +390,11 @@ class DevelopmentWorkbench(ttk.Frame):
         for path in self.state.value('tabs'):
             if Path(path).is_relative_to(self.source.root):
                 self.open_file(path)
+        previous = self._session_to_restore
+        self._session_to_restore = None
+        if previous and self._resume_project and Path(self._resume_project).resolve() == self.source.root:
+            if Path(previous).exists() and Path(previous).resolve() != self.runtime.bridge.agent.session.path.resolve():
+                self.restore_session(previous)
 
     def refresh_project(self):
         if not self.source:
@@ -380,8 +427,12 @@ class DevelopmentWorkbench(ttk.Frame):
                 if self.tree.exists(item):
                     self.tree.selection_set(item)
             self.changes.delete(*self.changes.get_children())
+            changed_selection = getattr(self, '_changed_selection', ())
             for path, status in value['status'].items():
                 self.changes.insert('', 'end', iid=path, text=status + ' ' + path)
+            for path in changed_selection:
+                if self.changes.exists(path):
+                    self.changes.selection_set(path)
             self.status.set(f"{value['branch']} · {self.source.root.name} · {len(value['status'])} 个 Git 变更 · {self.permission.get()}")
         if self._scan_pending:
             self._scan_pending = False
@@ -406,13 +457,18 @@ class DevelopmentWorkbench(ttk.Frame):
 
     def show_diff(self, event=None):
         selected = self.changes.selection()
+        self._changed_selection = selected
         if selected:
+            self._diff_request += 1
+            request = self._diff_request
             path = self.source.root / selected[0]
             source = self.source
             evidence = self._file_actions.get(str(path.resolve()))
             heading = ('真实操作来源 / 审批记录：\n' + json.dumps(evidence, ensure_ascii=False, indent=2)
                        if evidence else '尚无本会话 Agent 操作记录；Git 变更不自动归因于 Agent。') + '\n\n'
-            self.work(lambda: source.diff(path), lambda value, error: self.write_output('Diff', heading + value, clear=True) if not error else None)
+            view = self.diff_view.get()
+            self.work(lambda: source.diff(path, view), lambda value, error: self.write_output('Diff', heading + value, clear=True)
+                      if not error and request == self._diff_request else None)
             self.output.select(0)
 
     def open_file(self, path, *, encoding=None):
@@ -538,29 +594,92 @@ class DevelopmentWorkbench(ttk.Frame):
         row['frame'].destroy()
         self.state.remember_tabs(self.documents)
 
+    def _replace_buffer(self, row):
+        widget = row['widget']
+        caret, y, x = widget.index('insert'), widget.yview()[0], widget.xview()[0]
+        widget.delete('1.0', 'end')
+        widget.insert('1.0', row['document'].text)
+        widget.mark_set('insert', caret)
+        widget.yview_moveto(y)
+        widget.xview_moveto(x)
+        widget.edit_reset()
+        widget.edit_modified(False)
+        self.update_tab(row)
+
+    def _reconcile_external(self, value, error):
+        self._external_busy = False
+        for key, row, baseline, observation in value or []:
+            if self.documents.get(key) is not row or row['saving']:
+                continue
+            if row['document'].digest != baseline:
+                # Save/reload/merge overtook this read. Never restore an obsolete
+                # observation over a newer editor baseline; schedule a fresh read.
+                self._external_pending = True
+                continue
+            # A user may have typed since the worker started. Read Tcl only here.
+            row['document'].update(row['widget'].get('1.0', 'end-1c'))
+            outcome = row['document'].reconcile(observation)
+            if outcome == 'reloaded':
+                self._replace_buffer(row)
+                self.status.set('已刷新磁盘版本：' + Path(key).name)
+            elif outcome == 'conflict':
+                self.update_tab(row)
+                self.status.set('外部变更：' + Path(key).name + ' · 草稿保留，可比较磁盘或安全合并')
+            if self._compare_path == key:
+                self._compare_path = None
+                self.write_output('Diff', row['document'].external_diff(buffer=True), clear=True)
+                self.output.select(0)
+        if self._external_pending:
+            self._external_pending = False
+            self.refresh_documents()
+
+    def refresh_documents(self):
+        if self._external_busy:
+            self._external_pending = True
+            return
+        rows = [(key, r, r['document'].digest) for key, r in self.documents.items() if not r['saving']]
+        if rows:
+            self._external_busy = True
+            self.work(lambda: [(key, row, digest, row['document'].inspect_external()) for key, row, digest in rows],
+                      self._reconcile_external)
+
     def _check_external(self):
         if self._closed:
             return
-        if self.documents and not self._external_busy:
-            self._external_busy = True
-            rows = [r for r in self.documents.values() if not r['saving']]
-            def check():
-                return [(str(r['document'].path), r['document'].check_external()) for r in rows]
-            def checked(value, error):
-                self._external_busy = False
-                for key, changed in value or []:
-                    if changed and key in self.documents:
-                        self.update_tab(self.documents[key])
-                        self.status.set('外部变更：' + Path(key).name + '；缓冲区保留，请比较或重新载入')
-            self.work(check, checked)
+        if self._external_poll in self._after_ids:
+            self.after_cancel(self._external_poll)
+            self._after_ids.discard(self._external_poll)
+        self.refresh_documents()
         self._external_poll = self.later(3000, self._check_external)
+
+    def compare_external(self):
+        row = self.current_row()
+        if row:
+            self.document_changed(row)
+            self._compare_path = str(row['document'].path)
+            self.refresh_documents()
+
+    def merge_external(self):
+        row = self.current_row()
+        if row and not row['saving']:
+            self.document_changed(row)
+            try:
+                row['document'].merge_external()
+            except Exception as exc:
+                self.status.set(redact(str(exc)))
+                self.compare_external()
+                return
+            self._replace_buffer(row)
+            self.status.set('无重叠改动已合并到草稿 · 尚未保存，Ctrl+S 前仍检查磁盘版本')
 
     def attach_current(self):
         row = self.current_row()
         if row:
             self.document_changed(row)
             # Trusted bridge virtualizes before any provider payload is constructed.
-            self.editor_contexts = [{'path': str(row['document'].path), 'content': row['document'].text}]
+            path = str(row['document'].path)
+            if path not in self.editor_contexts:
+                self.editor_contexts.append(path)
             self.context_label.configure(text='附加：' + row['document'].path.name + ' · 发送前保护 Secret')
             self.input.focus_set()
 
@@ -572,24 +691,34 @@ class DevelopmentWorkbench(ttk.Frame):
             return
         self._permission = value
 
-    def send(self):
+    def send(self, *, delegate=False):
         prompt = self.input.get('1.0', 'end-1c').strip()
         if not prompt or not self.runtime.ready or self.runtime.busy or self._loading:
             self.status.set('请打开项目，或等待当前任务结束')
             return
         index = self.model_choice.current()
         model = self.runtime.catalog.get(self.model_ids[index]) if index > 0 else None
-        permission, planning, contexts = self.permission.get(), self.planning.get(), list(self.editor_contexts)
+        permission, planning = self.permission.get(), self.planning.get()
+        contexts = []
+        for path in self.editor_contexts:
+            row = self.documents.get(path)
+            if row:
+                self.document_changed(row)
+                contexts.append({'path': path, 'content': row['widget'].get('1.0', 'end-1c')})
         role = self.task_role.get()
         snapshot = self.state.task_snapshot(explicit_model=model, role=role, permission=permission)
         self.run_model.configure(text='运行模型：' + (' / '.join(snapshot.model) if snapshot.model else '全局路由'))
         self.send_button.configure(state='disabled')
+        self.delegate_button.configure(state='disabled')
+        self.task_evidence = TaskEvidence()
+        self.render_evidence()
         self.input.delete('1.0', 'end')
         self.editor_contexts = []
         self.context_label.configure(text='未附加编辑器内容')
         self.task_label.configure(text='Agent · 正在执行真实任务')
         def done(value, error):
             self.send_button.configure(state='normal')
+            self.delegate_button.configure(state='normal')
             self.task_label.configure(text='Agent · 失败' if error else 'Agent · ' + str(value.get('stopped', '完成')))
             if error:
                 if not self.input.get('1.0', 'end-1c').strip():
@@ -597,20 +726,49 @@ class DevelopmentWorkbench(ttk.Frame):
             elif value.get('text'):
                 self.append(self.chat, '\nForge\n' + value['text'] + '\n')
             self.refresh_project()
+            self.refresh_documents()
         self.work(lambda: self.runtime.run(prompt, explicit_model=model, permission=permission,
-                                          planning=planning, contexts=contexts, role=role, snapshot=snapshot), done)
+                                          planning=planning, contexts=contexts, role=role, snapshot=snapshot,
+                                          delegate=delegate), done)
+
+    def render_evidence(self):
+        view = self.task_evidence
+        lines = ['任务状态：' + view.phase, '', '计划（不由文本推断完成）：']
+        lines.extend('• ' + str(task) for task in view.plan)
+        lines.extend(['', 'Agent / 实际执行状态：'])
+        lines.extend(f"{row['agent']} · {row['status']} · {row['run_id'][:8]} · {row.get('model', '')}"
+                     for row in view.agents.values())
+        lines.extend(['', '真实工具步骤（最近 100 条；完整日志保留）：'])
+        lines.extend(f"{r.get('agent', 'forge')} / {r.get('tool', '')} · {r['status']}"
+                     for r in list(view.actions.values())[-100:])
+        lines.extend(['', '测试 / 命令记录：'])
+        lines.extend(f"{r['status']} · {r['command']} · 未提供结构化通过数" for r in view.tests[-20:])
+        self.workflow.configure(state='normal')
+        self.workflow.delete('1.0', 'end')
+        self.workflow.insert('1.0', redact('\n'.join(lines)))
+        self.workflow.configure(state='disabled')
 
     def handle_event(self, event, error=None):
         if event.get('event') == 'user':
             self.append(self.chat, '\n你\n' + event.get('display', '') + '\n')
             return
         data = event.get('data', event)
-        self.append(self.events, json.dumps(data, ensure_ascii=False, indent=2) + '\n')
+        self.task_evidence.apply(data)
+        if data.get('type') in {'workflow_state', 'task_plan', 'tool_started', 'tool_completed', 'tool_call', 'usage'}:
+            self.render_evidence()
+        raw = json.dumps(data, ensure_ascii=False, indent=2)
+        if len(raw) > 16384:
+            raw = raw[:16384] + '\n[大事件预览已截断；完整记录保留在原有 Session 日志]\n'
+        self.append(self.events, raw + '\n')
         kind = data.get('type', '')
         self.task_label.configure(text='Agent · ' + kind + ' · ' + str(data.get('tool', data.get('phase', ''))))
         if kind == 'tool_call':
-            path = data.get('args', {}).get('path')
-            if path and self.source:
+            paths = [data.get('args', {}).get('path')]
+            blocks = data.get('args', {}).get('patches') or data.get('args', {}).get('edits') or []
+            paths.extend(p.get('path') for p in blocks if isinstance(p, dict))
+            for path in paths:
+                if not path or not self.source:
+                    continue
                 try:
                     self._file_actions[str(self.source.boundary.path(path))] = data
                 except (ValueError, PermissionError, OSError):
@@ -623,6 +781,8 @@ class DevelopmentWorkbench(ttk.Frame):
             if not data.get('ok', True):
                 self.write_output('问题', str(data.get('result', '')) + '\n')
             self.refresh_project()
+            if data.get('ok') and data.get('tool') in {'write_file', 'edit_file', 'apply_patch', 'edit_config', 'delete_file'}:
+                self.refresh_documents()
         elif kind in {'model_error', 'review_error', 'subagent_error'}:
             self.write_output('问题', json.dumps(data, ensure_ascii=False) + '\n')
 
@@ -632,21 +792,39 @@ class DevelopmentWorkbench(ttk.Frame):
             return
         self.work(self.runtime.review, lambda v, e: self.write_output('输出', json.dumps(v, ensure_ascii=False, indent=2) + '\n') if not e else None)
 
-    def restore_session(self):
+    def restore_session(self, path=None):
         if not self.runtime.ready or self.runtime.busy or self._loading:
             self.status.set('请先打开原项目，并等待任务结束')
             return
-        path = filedialog.askopenfilename(parent=self, initialdir=self.state.home / 'sessions', filetypes=[('Forge Session', '*.jsonl')])
+        path = path or filedialog.askopenfilename(parent=self, initialdir=self.runtime.home / 'sessions', filetypes=[('Forge Session', '*.jsonl')])
         if not path:
             return
         def restored(value, error):
             if not error:
+                for widget in (self.chat, self.events):
+                    widget.configure(state='normal')
+                    widget.delete('1.0', 'end')
+                    widget.configure(state='disabled')
+                self.task_evidence = TaskEvidence.from_events(value['events'], recovered=True)
+                self.render_evidence()
+                self._file_actions.clear()
+                for path, event in self.task_evidence.changed.items():
+                    try:
+                        self._file_actions[str(self.source.boundary.path(path))] = event
+                    except (ValueError, PermissionError, OSError):
+                        pass
                 for message in value['history']:
                     self.append(self.chat, '\n' + message['role'] + '\n' + message['content'] + '\n')
-                for event in value['events']:
-                    self.append(self.events, json.dumps(event, ensure_ascii=False) + '\n')
+                previews = []
+                for event in value['events'][-500:]:
+                    raw = json.dumps(event, ensure_ascii=False)
+                    previews.append(raw[:16384] + (' [大事件预览截断]' if len(raw) > 16384 else ''))
+                self.append(self.events, '恢复最近 500 条事件预览；完整原日志：' + value['path'] + '\n'
+                            + '\n'.join(previews) + '\n')
                 self.write_output('输出', json.dumps(value['workflow'], ensure_ascii=False, indent=2) + '\n')
                 self.status.set('已恢复真实对话；未知操作不重放。请输入检查或继续任务。')
+                if value['incomplete_tail']:
+                    self.write_output('问题', '旧日志末尾写入中断，原日志已保留；未知操作必须重新核实。\n')
         self.work(lambda: self.runtime.restore_history(path), restored)
 
     def model_settings(self):
@@ -655,7 +833,7 @@ class DevelopmentWorkbench(ttk.Frame):
         window.geometry('620x360')
         ttk.Label(window, text='仅选择已配置模型；任务运行时修改只影响后续任务。', padding=12).pack(anchor='w')
         choices = ['继承', *[r['label'] for r in self.catalog_rows]]
-        labels = {'default': '默认编程', 'complex': '复杂任务', 'review': '代码复审', 'simple': '简单任务', 'subagent': '子 Agent（接口预留，未执行）'}
+        labels = {'default': '默认编程', 'complex': '复杂任务', 'review': '代码复审', 'simple': '简单任务', 'subagent': '子 Agent 默认模型'}
         controls = {}
         roles = self.state.value('roles')
         for role in self.state.ROLES:
@@ -675,6 +853,121 @@ class DevelopmentWorkbench(ttk.Frame):
             self.status.set('Development 模型角色已保存')
             window.destroy()
         ttk.Button(window, text='保存', command=save).pack(anchor='e', padx=12, pady=12)
+
+    def agent_model_settings(self):
+        if not self.runtime.ready:
+            self.status.set('请先打开项目，读取已配置模型')
+            return
+        window = tk.Toplevel(self)
+        window.title('子 Agent 独立模型')
+        window.geometry('560x320')
+        ttk.Label(window, text='配置实际运行名称，例如 forge/sub1；不创建第二套 Agent。\n'
+                  '显式任务指定 > 独立配置 > 子 Agent 默认 > 继承父模型。', padding=12).pack(anchor='w')
+        names = set(self.state.value('agent_models')) | set(self.task_evidence.agents)
+        parent = self.runtime.bridge.agent.name
+        names.discard(parent)
+        names.add(parent + '/sub1')
+        name = ttk.Combobox(window, values=sorted(names), width=44)
+        name.pack(anchor='w', padx=12, pady=6)
+        name.set(parent + '/sub1')
+        model = ttk.Combobox(window, values=['继承角色', *[r['label'] for r in self.catalog_rows]],
+                             state='readonly', width=44)
+        model.pack(anchor='w', padx=12, pady=6)
+        def show(event=None):
+            pair = tuple(self.state.value('agent_models').get(name.get()) or ())
+            model.current(next((i + 1 for i, row in enumerate(self.catalog_rows)
+                                if self.runtime.catalog[row['id']] == pair), 0))
+        name.bind('<<ComboboxSelected>>', show)
+        name.bind('<FocusOut>', show)
+        show()
+        feedback = ttk.Label(window, text='', padding=12)
+        feedback.pack(anchor='w')
+        def save():
+            try:
+                index = model.current()
+                pair = self.runtime.catalog[self.catalog_rows[index - 1]['id']] if index > 0 else None
+                self.state.configure_agent_model(name.get().strip(), pair)
+            except (ValueError, KeyError) as exc:
+                feedback.configure(text=redact(str(exc)))
+                return
+            feedback.configure(text='已保存 · 当前任务不变，下次真实 spawn 时生效')
+            self.status.set('子 Agent 独立模型已保存')
+        ttk.Button(window, text='保存', command=save).pack(anchor='e', padx=12, pady=12)
+
+    def checkpoints(self):
+        row = self.current_row()
+        if not row or not self.runtime.ready or self.runtime.busy or self._loading:
+            self.status.set('打开目标文件，等待任务结束后审查检查点')
+            return
+        path = str(row['document'].path)
+        def loaded(points, error):
+            if error:
+                return
+            window = tk.Toplevel(self)
+            window.title('检查点审查 · ' + Path(path).name)
+            window.geometry('560x300')
+            ttk.Label(window, text='仅恢复此文件；先查看差异，再确认。\n'
+                      '保留工作区权限、Secret 和版本检查；写入使用原工具的系统换行。', padding=12).pack(anchor='w')
+            combo = ttk.Combobox(window, values=[p['commit'][:8] + ' · ' + p['label'] for p in points],
+                                  state='readonly', width=52)
+            combo.pack(padx=12, pady=8, fill='x')
+            if points:
+                combo.current(0)
+            else:
+                ttk.Label(window, text='暂无真实写入检查点', padding=12).pack()
+            reviewed = {'value': None}
+            restore = ttk.Button(window, text='恢复已审查版本', state='disabled')
+            def previewed(value, failure):
+                if not window.winfo_exists():
+                    return
+                if failure:
+                    return
+                selected = combo.current()
+                if selected < 0 or points[selected]['commit'] != value['commit']:
+                    return
+                reviewed['value'] = value
+                self.write_output('Diff', value['diff'] or '此文件与检查点相同', clear=True)
+                self.output.select(0)
+                restore.configure(state='normal')
+            def preview():
+                if combo.current() >= 0:
+                    restore.configure(state='disabled')
+                    self.work(lambda commit=points[combo.current()]['commit']:
+                              self.runtime.checkpoint_preview(commit, path), previewed)
+            def selection_changed(event=None):
+                reviewed['value'] = None
+                restore.configure(state='disabled')
+            combo.bind('<<ComboboxSelected>>', selection_changed)
+            ttk.Button(window, text='查看差异', command=preview).pack(anchor='w', padx=12, pady=6)
+            restore.configure(command=lambda: self.restore_reviewed_checkpoint(reviewed['value']))
+            restore.pack(anchor='e', padx=12, pady=8)
+        self.work(self.runtime.checkpoint_list, loaded)
+
+    def restore_reviewed_checkpoint(self, preview):
+        if not preview or self.runtime.busy or self._loading:
+            return
+        row = self.documents.get(preview['path'])
+        if row:
+            self.document_changed(row)
+            if row['document'].dirty or row['saving']:
+                self.status.set('目标标签有未保存编辑，请先保存或关闭草稿；回滚不会覆盖草稿')
+                return
+        if self.permission.get() != 'workspace-write':
+            self.status.set('当前为只读；恢复文件需要先明确授权工作区写入')
+            return
+        if not messagebox.askyesno('恢复已审查版本', '仅将 ' + Path(preview['path']).name +
+                ' 恢复到检查点 ' + preview['commit'][:8] + '？磁盘版本变化会拒绝写入。', parent=self):
+            return
+        permission = self.permission.get()
+        def restored(value, error):
+            if not error:
+                if not value['ok']:
+                    self.write_output('问题', str(value['error']) + '\n')
+                self.status.set('已恢复审查版本' if value['ok'] else '恢复被拒绝，文件保留')
+                self.refresh_project()
+                self.refresh_documents()
+        self.work(lambda: self.runtime.restore_checkpoint(preview['commit'], preview['path'],
+                  preview['expected'], permission=permission), restored)
 
     def switch_mode(self):
         self.capture_layout()
@@ -780,7 +1073,7 @@ class DevelopmentWorkbench(ttk.Frame):
         elif not self._owns_runtime:
             self.runtime.emit = self._previous_emit
         # Release host-owned Tcl variables on the Tk thread while its interpreter exists.
-        for name in ('mode', 'preset', 'search', 'status', 'planning', 'permission', 'task_role'):
+        for name in ('mode', 'preset', 'search', 'status', 'planning', 'permission', 'task_role', 'diff_view'):
             if hasattr(self, name):
                 setattr(self, name, None)
 

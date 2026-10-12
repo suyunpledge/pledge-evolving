@@ -11,7 +11,7 @@ from development_mode.app import launch
 
 def main():
     parser = argparse.ArgumentParser(description='Forge independent Development Mode')
-    parser.add_argument('--home', type=Path, default=ROOT.parent / '.forge-development-home')
+    parser.add_argument('--home', type=Path, default=ROOT.parent / ('.forge-development-' + ROOT.name))
     parser.add_argument('--project', type=Path)
     args = parser.parse_args()
     launch(args.home, args.project)

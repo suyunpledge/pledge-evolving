@@ -25,6 +25,7 @@ class TaskSnapshot:
     # A mode can never grant permissions. The host supplies separately approved policy.
     permission: str = 'read-only'
     roles: tuple = ()
+    agent_models: tuple = ()
 
 
 class ModeState:
@@ -36,7 +37,7 @@ class ModeState:
         self._lock = threading.RLock()
         self._listeners = []
         self._data = {'version': 1, 'mode': 'general', 'project': '', 'recent': [],
-                      'roles': {}, 'tabs': [], 'session': '',
+                      'roles': {}, 'agent_models': {}, 'tabs': [], 'session': '',
                       'layout': {'visible': True, 'preset': 'agent', 'fractions': [.2, .6],
                                  'output': .72, 'focus': 'editor'}}
         if self.path.exists():
@@ -47,6 +48,8 @@ class ModeState:
             self._validate_layout(raw.get('layout', self._data['layout']))
             for role, pair in raw.get('roles', {}).items():
                 self._validate_role(role, pair)
+            for name, pair in raw.get('agent_models', {}).items():
+                self._validate_agent(name, pair)
             for key in self._data:
                 if key in raw:
                     self._data[key] = raw[key]
@@ -128,6 +131,17 @@ class ModeState:
             self._data['roles'][role] = list(pair) if pair else None
             self._save()
 
+    def _validate_agent(self, name, pair):
+        if not isinstance(name, str) or not name.strip() or len(name) > 128 or redact(name) != name:
+            raise ValueError('Invalid concrete Agent name')
+        return self._validate_role('subagent', pair)
+
+    def configure_agent_model(self, name, pair):
+        pair = self._validate_agent(name, pair)
+        with self._lock:
+            self._data['agent_models'][name] = list(pair) if pair else None
+            self._save()
+
     def remember_project(self, project):
         project = str(Path(project).resolve())
         with self._lock:
@@ -155,4 +169,5 @@ class ModeState:
             if selected is None and self.mode == WorkMode.DEVELOPMENT:
                 selected = self._data['roles'].get(role) or self._data['roles'].get('default')
             roles = tuple((key, model_pair(pair)) for key, pair in self._data['roles'].items())
-            return TaskSnapshot(self.mode, model_pair(selected or global_model), role, permission, roles)
+            agents = tuple((name, model_pair(pair)) for name, pair in self._data['agent_models'].items())
+            return TaskSnapshot(self.mode, model_pair(selected or global_model), role, permission, roles, agents)

@@ -3,6 +3,7 @@ from pathlib import Path
 import tempfile
 import time
 import tkinter as tk
+import _tkinter
 import unittest
 from unittest.mock import patch
 
@@ -40,10 +41,18 @@ class WorkbenchTests(unittest.TestCase):
         self.root = None
         gc.collect()
 
-    def pump(self, condition, timeout=8):
+    def step(self):
+        # update() waits until *all* OS/Tcl events drain, which may never
+        # happen while another app/test produces Windows events. Bound each
+        # iteration so the timeout and assertions actually get evaluated.
+        for _ in range(16):
+            if not self.root.tk.dooneevent(_tkinter.ALL_EVENTS | _tkinter.DONT_WAIT):
+                break
+
+    def pump(self, condition, timeout=20):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            self.root.update()
+            self.step()
             if condition():
                 return
             time.sleep(.015)
@@ -54,13 +63,13 @@ class WorkbenchTests(unittest.TestCase):
         self.pump(lambda: bool(self.app.documents))
         row = self.app.current_row()
         row['widget'].insert('end', '# unsaved\n')
-        self.root.update()
+        self.step()
         parent, agent = row['frame'].master, self.app.runtime.bridge.agent
         self.state.switch('general')
-        self.root.update()
+        self.step()
         self.assertEqual(len(self.app.panes.panes()), 1)
         self.state.switch('development')
-        self.root.update()
+        self.step()
         self.assertEqual(len(self.app.panes.panes()), 3)
         self.assertIs(self.app.current_row()['frame'].master, parent)
         self.assertIs(self.app.runtime.bridge.agent, agent)
@@ -69,17 +78,128 @@ class WorkbenchTests(unittest.TestCase):
         self.assertEqual(self.state.mode.value, 'development')
         self.assertEqual(len(self.app.panes.panes()), 1)
 
+    def test_clean_agent_write_refreshes_editor_from_actual_runtime(self):
+        import json
+        from forge.test_task_planning import Router
+        self.app.open_file(self.project / 'one.py')
+        self.pump(lambda: bool(self.app.documents))
+        self.app.runtime.bridge.router = Router([
+            json.dumps({'tool': 'write_file', 'args': {'path': 'one.py', 'content': 'print(2)\n'}}),
+            'Done'])
+        agent = self.app.runtime.bridge.agent
+        agent.thinking = False
+        agent.thinking_mode = 'off'
+        self.app.permission.set('workspace-write')
+        self.app.planning.set('none')
+        self.app.input.insert('1.0', 'change one.py')
+        self.app.send()
+        self.pump(lambda: 'print(2)' in self.app.current_row()['widget'].get('1.0', 'end'))
+        self.pump(lambda: self.app._jobs == 0)
+        self.assertFalse(self.app.current_row()['document'].dirty)
+        self.assertTrue(self.app.task_evidence.actions)
+        self.assertEqual(self.app.task_evidence.phase, 'completed')
+
+    def test_reconciliation_preserves_new_typing_and_closed_tabs(self):
+        self.app.open_file(self.project / 'one.py')
+        self.pump(lambda: bool(self.app.documents))
+        row = self.app.current_row()
+        path = str(row['document'].path)
+        (self.project / 'one.py').write_text('print(2)\n')
+        observation = row['document'].inspect_external()
+        row['widget'].insert('end', '# just typed')
+        self.app._reconcile_external([(path, row, row['document'].digest, observation)], None)
+        self.assertIn('just typed', row['widget'].get('1.0', 'end'))
+        self.assertEqual(row['document'].status, 'conflict')
+        with patch('development_mode.app.messagebox.askyesno', return_value=True):
+            self.app.close_current()
+        self.app._reconcile_external([(path, row, row['document'].digest, observation)], None)
+        self.assertFalse(self.app.documents)
+
+    def test_attachment_is_latest_buffer_not_attachment_time_snapshot(self):
+        calls = []
+        self.app.open_file(self.project / 'one.py')
+        self.pump(lambda: bool(self.app.documents))
+        self.app.attach_current()
+        self.app.current_row()['widget'].insert('end', '# latest draft')
+        self.app.input.insert('1.0', 'inspect')
+        with patch.object(self.app.runtime, 'run', side_effect=lambda p, **kw: (calls.append(kw) or {'text': 'ok'})):
+            self.app.send()
+            self.pump(lambda: self.app._jobs == 0)
+        self.assertIn('latest draft', calls[0]['contexts'][0]['content'])
+
+    def test_obsolete_disk_read_cannot_replace_newer_saved_baseline(self):
+        self.app.open_file(self.project / 'one.py')
+        self.pump(lambda: bool(self.app.documents))
+        row = self.app.current_row()
+        document = row['document']
+        baseline, observation = document.digest, document.inspect_external()
+        row['widget'].insert('end', '# saved after read')
+        self.app.document_changed(row)
+        document.save()
+        self.app._reconcile_external([(str(document.path), row, baseline, observation)], None)
+        self.assertIn('saved after read', row['widget'].get('1.0', 'end'))
+        self.assertEqual(document.text, (self.project / 'one.py').read_text())
+
+    def test_checkpoint_confirmation_never_discards_dirty_buffer(self):
+        self.app.open_file(self.project / 'one.py')
+        self.pump(lambda: bool(self.app.documents))
+        row = self.app.current_row()
+        row['widget'].insert('end', '# draft')
+        self.step()
+        preview = {'path': str(row['document'].path), 'commit': 'a' * 40, 'expected': 'hash', 'diff': 'x'}
+        with patch.object(self.app.runtime, 'restore_checkpoint') as restore:
+            with patch('development_mode.app.messagebox.askyesno', return_value=True) as ask:
+                self.app.restore_reviewed_checkpoint(preview)
+        restore.assert_not_called()
+        ask.assert_not_called()
+        self.assertIn('draft', row['widget'].get('1.0', 'end'))
+
+    def test_integrated_preferences_inside_project_use_external_execution_home(self):
+        self.pump(lambda: self.app._jobs == 0)
+        self.app.destroy()
+        self.state = ModeState(self.project / '.forge-development-home')
+        self.state.switch('development')
+        self.app = DevelopmentWorkbench(self.root, self.state)
+        self.app.pack(fill='both', expand=True)
+        self.app.open_project(self.project)
+        self.pump(lambda: self.app.source is not None)
+        self.assertFalse(self.app.runtime.home.is_relative_to(self.project.resolve()))
+        self.assertTrue(self.state.path.is_relative_to(self.project.resolve()))
+        self.assertTrue(self.app.runtime.bridge.agent.session.path.is_relative_to(self.app.runtime.home))
+
+    def test_reopen_project_restores_real_history_without_running_pending_action(self):
+        from forge.session import Session
+        self.pump(lambda: self.app._jobs == 0)
+        old = self.state.home / 'sessions' / 'interrupted.jsonl'
+        with Session(old, meta={'cwd': str(self.project.resolve())}) as journal:
+            journal.append('user_message', content='review my project')
+            journal.append('workflow_state', run_id='interrupted', phase='executing')
+            journal.append('tool_started', run_id='interrupted', action_id='unknown', tool='write_file')
+        before = old.read_bytes()
+        self.state.remember_session(old)
+        self.app.destroy()
+        self.app = DevelopmentWorkbench(self.root, self.state)
+        self.app.pack(fill='both', expand=True)
+        self.app.open_project(self.project)
+        self.pump(lambda: 'review my project' in self.app.chat.get('1.0', 'end'))
+        self.assertEqual(self.app.task_evidence.actions['unknown']['status'], 'unknown')
+        self.assertEqual(self.app.task_evidence.phase, 'interrupted')
+        self.assertFalse(self.app.runtime.busy)
+        self.assertEqual(old.read_bytes(), before)
+        self.assertEqual((self.project / 'one.py').read_text(), 'print(1)\n')
+        self.assertIsNone(self.app.runtime.bridge.last_result)
+
     def test_save_and_external_change_preserves_buffer(self):
         self.app.open_file(self.project / 'one.py')
         self.pump(lambda: bool(self.app.documents))
         row = self.app.current_row()
         row['widget'].insert('end', '# edit\n')
-        self.root.update()
+        self.step()
         self.app.save_current()
         self.pump(lambda: not row['saving'])
         self.assertIn('# edit', (self.project / 'one.py').read_text())
         row['widget'].insert('end', '# user draft\n')
-        self.root.update()
+        self.step()
         (self.project / 'one.py').write_text('external\n')
         self.app._check_external()
         self.pump(lambda: row['document'].status == 'conflict')
@@ -94,15 +214,15 @@ class WorkbenchTests(unittest.TestCase):
             for preset in ('agent', 'editor', 'focus'):
                 self.app.preset.set(preset)
                 self.app.change_preset()
-                self.root.update()
+                self.step()
                 self.assertGreater(self.app.agent_frame.winfo_width(), 0)
         self.app.preset.set('editor')
         self.app.change_preset()
-        self.root.update()
+        self.step()
         self.app.open_file(self.project / 'one.py')
         self.pump(lambda: bool(self.app.documents))
         self.app.current_row()['widget'].focus_set()
-        self.root.update()
+        self.step()
         self.app.current_row()['widget'].insert('end', 'abc')
         self.assertIn('abc', self.app.current_row()['widget'].get('1.0', 'end'))
 
@@ -135,10 +255,10 @@ class WorkbenchTests(unittest.TestCase):
             self.state.set_layout(focus='editor')
             self.app.preset.set('focus')
             self.app.change_preset()
-            self.root.update()
+            self.step()
             self.assertEqual(len(self.app.panes.panes()), 1)
             self.app.toggle_focus()
-            self.root.update()
+            self.step()
             self.assertTrue(self.app.input.winfo_ismapped())
             self.assertGreater(self.app.input.winfo_height(), 30)
 
