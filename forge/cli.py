@@ -535,6 +535,9 @@ def cmd_capabilities(args) -> int:
     elif args.action == "disable":
         cap = lib.enable(args.name, False)
         print(f"disabled {cap.name}")
+    elif args.action == "uninstall":
+        record = lib.uninstall(args.name)
+        print(f"uninstalled {args.name} (was v{record['version']}, archived in state)")
     return 0
 
 
@@ -1147,7 +1150,7 @@ def build_parser() -> argparse.ArgumentParser:
     sessions.set_defaults(func=cmd_sessions)
 
     caps = sub.add_parser("capabilities", parents=[common], help="skills / plugins / connectors")
-    caps.add_argument("action", choices=["list", "trust", "enable", "disable"], nargs="?", default="list")
+    caps.add_argument("action", choices=["list", "trust", "enable", "disable", "uninstall"], nargs="?", default="list")
     caps.add_argument("name", nargs="?")
     caps.set_defaults(func=cmd_capabilities)
 

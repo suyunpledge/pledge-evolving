@@ -77,15 +77,32 @@ class CapabilityRuntime:
 
     def reload(self, *, reserved_names=(), available_targets=None, plugins=None):
         from forge.tools import ToolRegistry, ToolSpec
+        import plugin_dependencies
+        from plugin_market import _forge_version
         report, tools, registry = LoadReport(), {}, ToolRegistry()
         reserved = set(BUILTIN_TOOL_NAMES) | set(reserved_names)
         available = None if available_targets is None else {n.removeprefix("forge_") for n in available_targets}
-        for plugin in self.market.catalog() if plugins is None else plugins:
+        items = self.market.catalog() if plugins is None else plugins
+        # 运行时依赖兜底：安装/启用闸门之后，依赖仍可能被卸载、降级或
+        # （旧状态文件直改）失配。加载前复查一遍，不满足即跳过并记账，
+        # 不让"启用态但依赖失效"的插件带着旧授权继续暴露工具。
+        # 调用方传入过滤子集时，版本映射仍取全量 catalog，避免误判缺依赖。
+        map_source = items if plugins is None else self.market.catalog()
+        installed_map = {p.id: p.version for p in map_source if p.installed and not p.error}
+        forge_version = _forge_version()
+        for plugin in items:
             if not plugin.installed or not plugin.enabled or plugin.error or plugin.needs_ack:
                 continue
             if plugin.executes_code:
                 report.skipped.append((plugin.id, "Python 插件仅有信任门；没有系统沙箱，不向 Agent 开放"))
                 continue
+            if plugin.requires:
+                problems = plugin_dependencies.check_requirements(
+                    plugin, installed_map, forge_version)
+                if problems:
+                    report.skipped.append((plugin.id,
+                                           f"依赖不满足（运行时复查）：{'；'.join(problems)}"))
+                    continue
             declarations = plugin.contributions.get("tools", [])
             try:
                 batch = {}

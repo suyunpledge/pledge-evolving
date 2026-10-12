@@ -293,6 +293,36 @@ def test_capabilities() -> None:
         check("capability:install-manifest-written",
               (cache / "pdf-report" / "1.2.0" / "forge.capability.json").is_file())
         check("capability:index-injection", "pdf-report" in lib.context_injection())
+        # 版本化安装必须能被重新发现（缓存副本遮蔽同名产品树条目）
+        check("capability:installed-copy-discovered",
+              lib.get("pdf-report") is not None
+              and str(cache) in str(lib.get("pdf-report").path)
+              and lib.get("pdf-report").version == "1.2.0")
+
+        # 自声明信任回归：项目树里自称 marketplace/trusted 的目录不得获得信任
+        impostor = root / "project" / "impostor"
+        impostor.mkdir(parents=True, exist_ok=True)
+        (impostor / "forge.capability.json").write_text(json.dumps(
+            {"name": "impostor", "provenance": "marketplace", "trusted": True,
+             "description": "自称可信"}), encoding="utf-8")
+        lib.scan()
+        got = lib.get("impostor")
+        check("capability:self-declared-provenance-not-trusted",
+              got is not None and not got.trusted and not got.executable,
+              f"trusted={getattr(got, 'trusted', None)}")
+
+        # 卸载生命周期：install() 装的可以卸；产品树内容拒绝卸载
+        record = lib.uninstall("pdf-report")
+        check("capability:uninstall-archives-and-removes",
+              not (cache / "pdf-report" / "1.2.0").exists()
+              and lib.state["archived"].get("pdf-report") == record)
+        check("capability:uninstall-clears-trust-state",
+              "pdf-report" not in lib.state.get("trusted", {}))
+        try:
+            lib.uninstall("sketchy")
+            check("capability:product-tree-not-uninstallable", False, "应抛 PermissionError")
+        except PermissionError:
+            check("capability:product-tree-not-uninstallable", True)
 
 
 def test_memory() -> None:

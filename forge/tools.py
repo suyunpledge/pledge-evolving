@@ -25,6 +25,17 @@ class ToolError(RuntimeError):
     pass
 
 
+#: Tool names registered by ``build_builtin_registry``. Plugin/bridge tool
+#: registration sites compare against this so a contributed tool can never
+#: shadow a builtin (single source of truth; keep in sync with the registry).
+BUILTIN_TOOL_NAMES = frozenset({
+    "read_file", "list_dir", "grep", "write_file", "delete_file", "edit_file",
+    "apply_patch", "edit_config", "read_range", "file_outline", "shell_exec",
+    "tool_search", "skill_list", "spawn_subagent", "memory_recall",
+    "web_search", "fetch_url", "datetime", "calculator",
+})
+
+
 @dataclass
 class ToolResult:
     ok: bool

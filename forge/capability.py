@@ -11,6 +11,10 @@ instead of three, and keeps the parts they disagreed about explicit:
 * an untrusted project-local capability must be promoted with ``trust()`` before
   it can execute anything
 * agent-authored capabilities carry ``provenance: agent`` and are curator-able
+* trust is decided by the *host*, never by the manifest: a directory claiming
+  ``trusted: true`` / ``provenance: marketplace`` about itself stays untrusted.
+  Only the bundled product root is trusted by default, and ``install()`` /
+  ``trust()`` record their decision in the state file.
 """
 
 from __future__ import annotations
@@ -44,6 +48,25 @@ def _parse_frontmatter(text: str) -> dict[str, Any]:
         else:
             out[key.strip()] = value
     return out
+
+
+def _within(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def _version_key(version: str) -> list:
+    """Natural version sort key: '1.10.0' > '1.9.0' (digit runs compare as ints)."""
+    parts: list = []
+    for token in re.split(r"(\d+)", str(version)):
+        if token.isdigit():
+            parts.append((1, int(token)))
+        elif token:
+            parts.append((0, token))
+    return parts
 
 
 @dataclass
@@ -97,6 +120,7 @@ class CapabilityLibrary:
         self.roots = [Path(r) for r in roots]
         self.state_path = Path(state_path) if state_path else None
         self._caps: dict[str, Capability] = {}
+        self._install_roots: list[Path] = []
         self.state: dict[str, Any] = {"version": 1, "enabled": {}, "trusted": {}, "archived": {}}
         if self.state_path and self.state_path.is_file():
             try:
@@ -106,6 +130,11 @@ class CapabilityLibrary:
 
     # -- discovery -------------------------------------------------------
     def scan(self) -> list[Capability]:
+        # Rebuild from disk every time: a persisted dict would keep shadowing
+        # newly installed copies (install inserts its cache root at position 0,
+        # but setdefault would keep the first-ever winner) and would keep
+        # listing entries whose directory was deleted.
+        self._caps = {}
         for root in self.roots:
             if not root.is_dir():
                 continue
@@ -113,11 +142,29 @@ class CapabilityLibrary:
                 if not child.is_dir():
                     continue
                 cap = self._load(child, root)
+                if cap is None:
+                    # versioned install layout: <root>/<name>/<version>/manifest
+                    # (install() writes there). Pick the highest version.
+                    cap = self._load_versioned(child, root)
                 if cap is not None:
                     # first anchor wins: the product tree shadows the profile tree
                     self._caps.setdefault(cap.name, cap)
         self._apply_state()
         return self.list()
+
+    def _load_versioned(self, path: Path, root: Path) -> Capability | None:
+        best: tuple[list, Capability] | None = None
+        try:
+            versions = [c for c in path.iterdir() if c.is_dir()]
+        except OSError:
+            return None
+        for version_dir in versions:
+            cap = self._load(version_dir, root)
+            if cap is not None:
+                key = _version_key(cap.version)
+                if best is None or key > best[0]:
+                    best = (key, cap)
+        return best[1] if best is not None else None
 
     def _load(self, path: Path, root: Path) -> Capability | None:
         manifest = path / "forge.capability.json"
@@ -132,7 +179,11 @@ class CapabilityLibrary:
         else:
             return None
 
-        provenance = str(meta.get("provenance") or ("bundled" if "bundled" in str(root).lower() else "project"))
+        # provenance/trusted 是展示与宿主记录字段，不是自声明授权：清单是
+        # 外部输入，项目树里一个写着 ``provenance: marketplace, trusted: true``
+        # 的目录不能因此获得信任。默认信任只认捆绑产品根；install()/trust()
+        # 的决定落在 state 文件里，_apply_state 再覆盖。
+        provenance = "bundled" if "bundled" in str(root).lower() else "project"
         return Capability(
             name=str(meta.get("name") or path.name),
             path=path,
@@ -140,7 +191,7 @@ class CapabilityLibrary:
             version=str(meta.get("version", "0.0.0")),
             description=str(meta.get("description", "")),
             allowed_tools=tuple(meta.get("allowed-tools") or meta.get("allowed_tools") or ()),
-            trusted=bool(meta.get("trusted", provenance in {"bundled", "marketplace"})),
+            trusted=provenance == "bundled",
             provenance=provenance,
             source=str(meta.get("source", "directory")),
             enabled=bool(meta.get("enabled", True)),
@@ -212,9 +263,49 @@ class CapabilityLibrary:
             ),
             encoding="utf-8",
         )
-        self.roots.insert(0, Path(cache_root))
+        cache_root = Path(cache_root)
+        if cache_root not in self._install_roots:
+            self._install_roots.append(cache_root)
+        if cache_root not in self.roots:
+            self.roots.insert(0, cache_root)
+        # 安装是宿主动作：信任记在 state 里（_load 已不再读清单自声明），
+        # 与用户显式 trust() 走同一条持久化通道。
+        if provenance in {"bundled", "marketplace"}:
+            self.state.setdefault("trusted", {})[source_path.name] = True
+            self._save_state()
         self.scan()
         return self._caps[source_path.name]
+
+    def uninstall(self, name: str) -> dict[str, Any]:
+        """Remove a capability that ``install()`` put into a cache root.
+
+        Only host-installed capabilities are uninstallable: directories in the
+        product tree are shipped, not user-managed. The removal is recorded in
+        ``state["archived"]`` (audit surface) and the directory is deleted.
+        """
+        cap = self._caps.get(name)
+        if cap is None:
+            raise KeyError(name)
+        path = Path(cap.path).resolve()
+        inside_install_root = any(
+            _within(path, Path(root).resolve()) for root in self._install_roots
+        )
+        if not inside_install_root:
+            raise PermissionError(
+                f"{name} 不是 install() 安装的能力（产品树内容不可卸载）；路径 {cap.path}")
+        record = {
+            "path": str(cap.path),
+            "version": cap.version,
+            "kind": cap.kind,
+            "uninstalled_at": time.time(),
+        }
+        shutil.rmtree(path)
+        self.state.setdefault("archived", {})[name] = record
+        self.state.get("enabled", {}).pop(name, None)
+        self.state.get("trusted", {}).pop(name, None)
+        self._save_state()
+        self.scan()
+        return record
 
     def audit(self) -> list[dict[str, Any]]:
         """Supply-chain style audit surface: what is installed and from where."""

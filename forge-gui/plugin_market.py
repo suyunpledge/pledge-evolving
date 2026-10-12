@@ -826,6 +826,35 @@ class Marketplace:
         generations = self._state.setdefault("generations", {})
         generations[pid] = generations.get(pid, 0) + 1
 
+    def _dependents(self, pid: str, *, enabled_only: bool = True,
+                    catalog: list[Plugin] | None = None) -> list[str]:
+        """requires.plugins 引用了 pid 的已装插件 id（反向依赖）。
+
+        依赖闸门此前只在安装/启用时检查自身；卸载/降级安装会把"已启用但
+        依赖已失效"的插件留在启用态。此方法供这两条路径做级联禁用：
+        fail-closed，宁可多关一个插件，不留静默失效的执行面。
+        """
+        items = self.catalog() if catalog is None else catalog
+        out: list[str] = []
+        for plugin in items:
+            if plugin.id == pid or not plugin.installed or plugin.error:
+                continue
+            if enabled_only and not plugin.enabled:
+                continue
+            requires = plugin.requires.get("plugins") if isinstance(plugin.requires, dict) else None
+            if isinstance(requires, dict) and pid in requires:
+                out.append(plugin.id)
+        return out
+
+    def _cascade_disable_dependents(self, pid: str, dependents: list[str],
+                                    reason: str) -> None:
+        """级联禁用 + 记账。调用方负责随后 save()。"""
+        for dep_id in dependents:
+            self._disable_in_state(dep_id)
+            self._bump_generation(dep_id)
+            self._log_raw("warn", "cascade-disable",
+                          f"{dep_id} 依赖 {pid}（{reason}），已联动禁用")
+
     def _check_requirements_ok(self, plugin: Plugin) -> None:
         """安装/启用前的 requires 硬检查（forge 版本、插件依赖、依赖环）。
 
@@ -887,6 +916,23 @@ class Marketplace:
                 if enable and not needs_confirmation:
                     self._enable_in_state(plugin.id)
                 self.save()
+                # 降级保护：重装旧版本可能击穿已启用依赖方的版本约束。
+                # 安装本身合法（用户明确要求装这个版本），但被击穿的依赖方
+                # 立即级联禁用，不留"启用态却依赖失效"的执行面。
+                import plugin_dependencies
+                items = self.catalog()
+                broken = []
+                for dep in items:
+                    if dep.id == plugin.id or not dep.enabled or dep.error or not dep.installed:
+                        continue
+                    spec = dep.requires.get("plugins") if isinstance(dep.requires, dict) else None
+                    if isinstance(spec, dict) and plugin.id in spec and not plugin_dependencies.satisfies(
+                            plugin.version, spec[plugin.id]):
+                        broken.append(dep.id)
+                if broken:
+                    self._cascade_disable_dependents(
+                        plugin.id, broken, f"重装为 {plugin.version} 后版本约束不满足")
+                    self.save()
             except BaseException:
                 # Destination was validated above; never remove an arbitrary path.
                 if dest.exists():
@@ -1007,6 +1053,8 @@ class Marketplace:
 
     @_fresh_state
     def uninstall(self, pid: str) -> bool:
+        # 先算反向依赖（此时 catalog 仍完整），卸载后级联禁用启用中的依赖方
+        dependents = self._dependents(pid)
         dest = self._plugin_path(pid)
         backup = self._stash(dest, "removed") if dest.exists() else None
         try:
@@ -1016,6 +1064,7 @@ class Marketplace:
             self._state.get("registered_schemas", {}).pop(pid, None)
             self._disable_in_state(pid)
             self._bump_generation(pid)
+            self._cascade_disable_dependents(pid, dependents, "依赖被卸载")
             self.save()
         except BaseException:
             if backup is not None:

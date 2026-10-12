@@ -44,10 +44,18 @@ LOAD_TIMEOUT = 5.0
 MAX_SCHEMA_CHARS = 32_000
 # Forge's baseline registry (including bridge-prefixed aliases). Live gateway
 # names are additionally supplied by the caller; neither may be shadowed.
-BUILTIN_TOOL_NAMES = frozenset({"read_file", "list_dir", "grep", "write_file",
+# The 19 builtin names come from forge.tools (single source of truth); the
+# local copy is only a fallback for hosts running without the forge package.
+try:
+    from forge.tools import BUILTIN_TOOL_NAMES as _FORGE_BUILTINS
+except Exception:  # pragma: no cover - frozen/embedded hosts without forge
+    _FORGE_BUILTINS = frozenset()
+BUILTIN_TOOL_NAMES = frozenset({
+    "read_file", "list_dir", "grep", "write_file",
     "delete_file", "edit_file", "apply_patch", "edit_config", "read_range", "file_outline",
     "shell_exec", "tool_search", "skill_list", "spawn_subagent", "memory_recall",
-    "web_search", "fetch_url", "datetime", "calculator", "python"})
+    "web_search", "fetch_url", "datetime", "calculator", "python",
+}) | _FORGE_BUILTINS
 
 
 def _synchronized(method):
