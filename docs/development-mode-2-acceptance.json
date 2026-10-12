@@ -1,0 +1,90 @@
+{
+  "task_id": "788da693df0141c5a64b2175b843ea0b",
+  "result": {
+    "ok": true,
+    "text": "Edited value.py",
+    "stopped": "final",
+    "usage": {
+      "prompt_tokens": 30,
+      "completion_tokens": 15,
+      "requests": [
+        {
+          "provider": "fake",
+          "model": "test",
+          "usage": {
+            "prompt_tokens": 10,
+            "completion_tokens": 5,
+            "model": "test",
+            "provider": "fake",
+            "cached_tokens": 0,
+            "cache_write_tokens": 0,
+            "reasoning_tokens": 0
+          },
+          "plan": {},
+          "estimate_scope": "reuse_window",
+          "invoice_verified": false
+        },
+        {
+          "provider": "fake",
+          "model": "test",
+          "usage": {
+            "prompt_tokens": 10,
+            "completion_tokens": 5,
+            "model": "test",
+            "provider": "fake",
+            "cached_tokens": 0,
+            "cache_write_tokens": 0,
+            "reasoning_tokens": 0
+          },
+          "plan": {},
+          "estimate_scope": "reuse_window",
+          "invoice_verified": false
+        },
+        {
+          "provider": "fake",
+          "model": "test",
+          "usage": {
+            "prompt_tokens": 10,
+            "completion_tokens": 5,
+            "model": "test",
+            "provider": "fake",
+            "cached_tokens": 0,
+            "cache_write_tokens": 0,
+            "reasoning_tokens": 0
+          },
+          "plan": {},
+          "estimate_scope": "reuse_window",
+          "invoice_verified": false
+        }
+      ]
+    },
+    "toolCalls": 2,
+    "planning": null,
+    "messageId": "2246899702014eb297b8abb6a6fdea3e",
+    "sessionPath": "C:\\Users\\匡溯昀\\AppData\\Local\\Temp\\tmph3vgejq9\\home\\sessions\\vscode\\7dc5a68a815648beb18827c5db7c1fc1.jsonl",
+    "task_id": "788da693df0141c5a64b2175b843ea0b"
+  },
+  "diff": "diff --git a/value.py b/value.py\nindex b15b1b0..c8fcecd 100644\n--- a/value.py\n+++ b/value.py\n@@ -1 +1 @@\n-VALUE = 1\n+VALUE = 2\n",
+  "test": {
+    "status": "completed",
+    "exit_code": 0,
+    "output": "test_value (test_value.ValueTest.test_value) ... ok\r\n\r\n----------------------------------------------------------------------\r\nRan 1 test in 0.000s\r\n\r\nOK\r\n",
+    "output_truncated": false,
+    "passed": null,
+    "failed": null,
+    "artifact": "C:\\Users\\匡溯昀\\AppData\\Local\\Temp\\tmph3vgejq9\\home\\artifacts\\test-99aa3621f4c7411085726dd7206a0895.json",
+    "task_id": "788da693df0141c5a64b2175b843ea0b",
+    "run_id": "a539ae60442e405ea78e3efc957bd238"
+  },
+  "restore": {
+    "ok": true,
+    "error": "",
+    "result": "wrote 10 bytes to C:\\Users\\匡溯昀\\AppData\\Local\\Temp\\tmph3vgejq9\\project\\value.py",
+    "meta": {
+      "authorization": "allow"
+    }
+  },
+  "recovered_events": 33,
+  "final_content": "VALUE = 1\n",
+  "model_transport": "offline deterministic fixture"
+}
