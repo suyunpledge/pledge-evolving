@@ -52,20 +52,20 @@ ROOT.mkdir(parents=True, exist_ok=True)
 (ROOT / "workspace").mkdir(parents=True, exist_ok=True)
 
 
-def load_keys_into_env() -> dict[str, bool]:
-    status: dict[str, bool] = {}
+def load_keys() -> dict[str, str]:
+    """TRAE 审查 P0-2：只返回键值映射供 Provider 引用传递，
+    不再写入 os.environ（shell_exec 子进程会继承环境变量，
+    导致明文密钥可被 `env | grep` 类命令读取）。"""
+    keys: dict[str, str] = {}
     if KEYS_FILE.is_file():
         try:
             data = json.loads(KEYS_FILE.read_text(encoding="utf-8"))
             for env_name, value in data.items():
                 if isinstance(value, str) and value:
-                    os.environ.setdefault(env_name, value)
-                    status[env_name] = True
-                else:
-                    status[env_name] = False
+                    keys[env_name] = value
         except (json.JSONDecodeError, OSError):
             pass
-    return status
+    return keys
 
 
 CATALOG: list[dict] = [
@@ -91,7 +91,10 @@ CATALOG: list[dict] = [
 
 STRATEGIES = ("economy", "balanced", "premium")
 THINKING_MODES = ("off", "smart", "on")
-POLICY_MODES = ("auto", "acceptEdits", "full-auto", "readonly")
+# TRAE 审查 P0-1：与内核 forge.policy 的合法模式对齐——自定义枚举
+# （full-auto/readonly 不存在于内核）会静默降级为 default（可写基线），
+# 用户选"readonly"实际拿到写权限，语义误导。
+POLICY_MODES = ("default", "acceptEdits", "read-only", "bypassPermissions")
 
 PROVIDER_ROWS = {
     "deepseek": {"id": "deepseek", "name": "provider:deepseek", "config": {
@@ -350,9 +353,12 @@ def run_forge(run_id: str, task: str, model_label: str | None,
             max_depth=max_depth or int(cfg.get("loop", "maxDepth", 2)),
             spawn_budget=spawn_budget or int(cfg.get("loop", "spawnBudget", 8)))
 
+        # TRAE 审查 P0-4：并发 run 不得共享 current.jsonl（ordinal 交错/双写）。
+        run_session = FORGE_HOME / "sessions" / f"s-{run_id}.jsonl"
         agent = build_agent(
             home=FORGE_HOME, workspace=workspace, config=cfg, router=router,
-            expose=cfg.get("tools", "expose", None), limits=limits)
+            expose=cfg.get("tools", "expose", None), limits=limits,
+            session_path=run_session)
         actual_model = model_label or "(auto routing)"
         STORE.update(run_id, model=actual_model)
         STORE.push_event(run_id, {"type": "state", "state": "running",
@@ -470,7 +476,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._send_json({"error": "client/index.html missing"}, 500)
         elif path == "/api/models":
-            key_status = load_keys_into_env()
+            key_keys_status = {k: bool(v) for k, v in load_keys().items()}
             models = [{**m, "keyReady": key_status.get(m["env"], False)}
                       for m in CATALOG]
             self._send_json({"models": models,
@@ -510,7 +516,7 @@ class Handler(BaseHTTPRequestHandler):
             workspace = ROOT / "workspace"
             self._send_json(read_file(workspace, rel))
         elif path == "/api/diag":
-            key_status = load_keys_into_env()
+            key_keys_status = {k: bool(v) for k, v in load_keys().items()}
             self._send_json({
                 "forge_home": str(FORGE_HOME),
                 "keys_file": str(KEYS_FILE),
@@ -548,7 +554,7 @@ class Handler(BaseHTTPRequestHandler):
         if not task:
             self._send_json({"error": "task required"}, 400)
             return
-        load_keys_into_env()
+        {k: True for k in load_keys()}
         rec = STORE.create(task)
         raw_ws = payload.get("workspace") or str(ROOT / "workspace")
         workspace = Path(raw_ws).resolve()
@@ -592,7 +598,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--workspace", default=str(ROOT / "workspace"))
     args = ap.parse_args(argv)
-    load_keys_into_env()
+    {k: True for k in load_keys()}
     srv = ClientServer((args.host, args.port), Handler)
     print(f"[planet-evolving] v0.3 on http://{args.host}:{args.port}"
           f"  (home={FORGE_HOME})")

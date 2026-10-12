@@ -659,7 +659,11 @@ def cmd_evolution(args) -> int:
     from .memory import MemoryStore
 
     home = Path(args.home)
-    engine = EvolutionEngine(home, memory=MemoryStore(home / "MEMORY.md").load())
+    # TRAE 审查 P0-3：workspace 必传——沙箱校验不得因缺省而整体失效。
+    workspace = (Path.cwd().resolve() if Path.cwd().resolve() != Path.home()
+                 else home.resolve())
+    engine = EvolutionEngine(home, memory=MemoryStore(home / "MEMORY.md").load(),
+                             workspace=workspace)
     action = args.action
     if action == "stats":
         print(json.dumps(engine.stats(), ensure_ascii=False, indent=2))
