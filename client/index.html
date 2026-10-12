@@ -219,10 +219,10 @@ textarea#task{width:100%;height:72px;background:var(--bg);color:var(--text);bord
           <label>mode — 工具调用审批策略</label>
           <select id="policyMode">
             <option value="">跟随 bundle 默认</option>
-            <option value="auto">auto — 全部自动</option>
-            <option value="acceptEdits">acceptEdits — 写操作需确认</option>
-            <option value="full-auto">full-auto — 全自动 (危险)</option>
-            <option value="readonly">readonly — 只读</option>
+            <option value="default">default — 默认（写需确认）</option>
+            <option value="acceptEdits">acceptEdits — 自动接受编辑</option>
+            <option value="read-only">read-only — 只读</option>
+            <option value="bypassPermissions">bypassPermissions — 全自动 (危险)</option>
           </select>
         </div>
         <div class="field">
@@ -505,7 +505,7 @@ async function loadFiles(sub){try{const{files}=await api('/api/files'+(sub?'?pat
 async function viewFile(path){const el=document.getElementById('fileContent');try{const r=await api('/api/file?path='+encodeURIComponent(path));if(r.error){el.innerHTML=`<div class="empty">${esc(r.error)}</div>`;return}if(r.binary){el.innerHTML=`<div class="empty">二进制 ${fmtSize(r.size)}</div>`;return}el.innerHTML=`<div class="meta">${esc(r.path)} · ${fmtSize(r.size)}</div><pre>${esc(r.text)}</pre>`}catch(e){el.innerHTML='<div class="empty">失败</div>'}}
 
 // ── diag ──
-async function loadDiag(){try{const d=await api('/api/diag');const el=document.getElementById('diagPanel');let h='';h+=kv('forge home',d.forge_home);h+=kv('keys.json',d.keys_exists?'✅ 存在':'❌ 缺失');h+=kv('workspace',d.workspace);h+=kv('version',d.forge_version);h+='<div style="margin:12px 0 6px;font-size:11px;color:var(--muted)">KEY 注入</div>';for(const[k,v]of Object.entries(d.env_status||{})){h+=kv(k,v?'✅':'❌')}el.innerHTML=h}catch(e){document.getElementById('diagPanel').innerHTML='失败'}}
+async function loadDiag(){try{const d=await api('/api/diag');const el=document.getElementById('diagPanel');let h='';h+=kv('forge home',d.forge_home);h+=kv('secrets.json',d.keys_exists?'✅ 存在':'❌ 缺失');h+=kv('workspace',d.workspace);h+=kv('version',d.forge_version);h+='<div style="margin:12px 0 6px;font-size:11px;color:var(--muted)">KEY 注入</div>';for(const[k,v]of Object.entries(d.env_status||{})){h+=kv(k,v?'✅':'❌')}el.innerHTML=h}catch(e){document.getElementById('diagPanel').innerHTML='失败'}}
 
 function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function escAttr(s){return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}

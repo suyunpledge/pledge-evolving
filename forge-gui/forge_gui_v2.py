@@ -347,6 +347,22 @@ def _autostart_enabled() -> bool:
         "1", "true", "yes", "on")
 
 
+def _tool_detail(name: str, args: dict, resp) -> str:
+    """工具卡 tooltip 正文：参数 + 结果摘要（有界；响应已经过各执行器脱敏）。"""
+    try:
+        args_preview = json.dumps(args, ensure_ascii=False)
+    except (TypeError, ValueError):
+        args_preview = str(args)
+    if isinstance(resp, dict):
+        body = (resp.get("content") if resp.get("content") else
+                resp.get("error") or resp.get("result") or "")
+        body = body if isinstance(body, str) else json.dumps(body, ensure_ascii=False)
+    else:
+        body = str(resp)
+    text = f"{name} {args_preview[:200]}\n→ {body[:400]}"
+    return text[:640]
+
+
 def split_file_ref(ref: str) -> tuple[str, int | None]:
     """把聊天里的文件引用拆成 (路径, 行号)。
 
@@ -851,26 +867,26 @@ class ForgeGuiApp:
         self._metric_bars: dict[str, tk.Canvas] = {}
 
         # ── 顶部标题栏（品牌 + 主导航 + 指标 + gateway）──
+        from visual_system.contracts import WorkspaceKind
+        self._workspace_kind = WorkspaceKind
+        self._workspace_mode = WorkspaceKind.WORK
         self._build_topbar()
 
-        # ── 主体：左侧栏 | 中栏视图 | 右栏工作区 ──
+        # ── 主体：WorkspaceDeck 双工作空间（visual-system-2 §4 契约）──
+        # Work surface = 左侧栏 + 中栏视图 + 右栏工作区（原有结构原样迁入）；
+        # Coding surface = DevelopmentWorkbench（首次切换时懒构建）。
+        # deck 只改可见性，永不销毁另一空间；见 _request_workspace。
+        from visual_system.components import WorkspaceDeck
         body = tk.Frame(self.root, bg=C["bg"])
         body.pack(fill=tk.BOTH, expand=True)
 
-        self._build_sidebar(body)
-
-        self.split = tk.PanedWindow(body, orient=tk.HORIZONTAL, bg=C["border"],
-                                    sashwidth=6, sashrelief=tk.FLAT, bd=0,
-                                    handlepad=0, opaqueresize=True)
-        self.split.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        center = tk.Frame(self.split, bg=C["chat"])
-        self.center = center
-        self.split.add(center, minsize=500, stretch="always")
-
-        self._build_view_navigation(center)
-        self._build_views(center)
-        self._build_workspace()
+        self._workspace_deck = WorkspaceDeck(body, {
+            WorkspaceKind.WORK: self._build_work_surface,
+            WorkspaceKind.CODING: self._build_coding_surface,
+        })
+        self._workspace_deck.pack(fill=tk.BOTH, expand=True)
+        self._workspace_deck.select(WorkspaceKind.WORK)
+        self._coding_bench = None   # P0-01：宿主持有 Coding Workbench 引用
 
         # ── 底部状态栏 ──
         tk.Frame(self.root, bg=C["border"], height=1).pack(fill=tk.X, side=tk.BOTTOM)
@@ -894,6 +910,7 @@ class ForgeGuiApp:
         self._show_view("chat")
         self._refresh_history()
         self._start_sysmon()
+        self._restore_workspace_preference()
         self.root.bind("<Configure>", self._on_root_configure, add="+")
         self.root.bind("<Destroy>", self._cancel_responsive_callback, add="+")
         self.root.bind("<Control-n>", lambda _e: self._conversation_shortcut("new"))
@@ -911,6 +928,99 @@ class ForgeGuiApp:
             self.gw_status_var.set(tr("● 启动中…"))
             self._autostart_log("窗口打开，准备自动拉起 gateway")
             self._autostart_after_id = self.root.after(250, self._autostart_gateway)
+
+    # ── 双工作空间（visual-system-2 §3/§4）──────────────────
+
+    def _restore_workspace_preference(self):
+        """启动时恢复上次所在的工作空间（desktop config；失败静默留在 Work）。"""
+        try:
+            if load_desktop_config().get("workspace_mode") == "coding":
+                self._request_workspace(self._workspace_kind.CODING)
+        except Exception:
+            pass
+
+    def _build_work_surface(self, parent):
+        """Work surface：原主体结构原样迁入（侧栏 + 分栏 + 视图 + 工作区）。
+
+        只在 deck 首次选中 work 时执行一次；self.split/self.center 等引用
+        全程有效，既有代码不需要感知 deck 的存在。
+        """
+        self._build_sidebar(parent)
+        self.split = tk.PanedWindow(parent, orient=tk.HORIZONTAL, bg=C["border"],
+                                    sashwidth=6, sashrelief=tk.FLAT, bd=0,
+                                    handlepad=0, opaqueresize=True)
+        self.split.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        center = tk.Frame(self.split, bg=C["chat"])
+        self.center = center
+        self.split.add(center, minsize=500, stretch="always")
+        self._build_view_navigation(center)
+        self._build_views(center)
+        self._build_workspace()
+
+    def _build_coding_surface(self, parent):
+        """Coding surface：以现有 DevelopmentWorkbench 为基础（不重写 IDE）。
+
+        隔离语义保持：独立 ~/.forge-development home、自建 runtime。
+        挂载失败向上抛——WorkspaceDeck 会保留原空间，切换器停留在 work。
+        """
+        from development_mode.app import DevelopmentWorkbench
+        from forge.development.state import ModeState
+        # F-09（QA）：home 不得在 repo 内——runtime 隔离规则会拒绝
+        # 「项目包含自身 IDE home」。改用户级目录（与 run_development.py
+        # 的默认一致语义：project-local 但永不与项目重叠）。
+        dev_home = Path.home() / ".forge-development"
+        state = ModeState(dev_home)
+        bench = DevelopmentWorkbench(parent, state)
+        bench.pack(fill=tk.BOTH, expand=True)
+        self._coding_bench = bench
+        path = state.value("project")
+        if path and Path(path).is_dir():
+            bench.open_project(path)
+
+    def _request_workspace(self, kind):
+        """宿主确认制的空间切换（ModeSwitcher 只发请求，不自带状态）。"""
+        kind = self._workspace_kind(kind)
+        if kind == getattr(self, "_workspace_mode", None):
+            return
+        try:
+            # 先挂载目标空间，成功后才隐藏原空间（deck 内建该顺序与焦点恢复）
+            self._workspace_deck.select(kind)
+        except Exception as exc:
+            self._set_status(f"Coding Mode 挂载失败，已保留当前工作空间：{exc}", "error")
+            return
+        self._workspace_mode = kind
+        try:
+            self._mode_switcher.set_selected(kind)
+        except Exception:
+            pass
+        self._apply_workspace_chrome(kind)
+        try:
+            save_desktop_config(workspace_mode=kind.value)
+        except Exception:
+            pass  # 偏好持久化失败不阻断切换
+        self._set_status("Coding Mode · 开发工作台" if kind == self._workspace_kind.CODING
+                         else "Work Mode", "info")
+
+    def _apply_workspace_chrome(self, kind):
+        """Coding 下收起 Work 专属顶栏控件（快照 pack 参数，可逆恢复）。"""
+        coding = kind == self._workspace_kind.CODING
+        if not hasattr(self, "_chrome_pack_cache"):
+            self._chrome_pack_cache = {}
+        for name in ("sidebar_reveal_btn", "ws_toggle_btn", "_project_chip"):
+            widget = getattr(self, name, None)
+            if widget is None:
+                continue
+            try:
+                if coding:
+                    if widget.winfo_manager() == "pack" and name not in self._chrome_pack_cache:
+                        info = widget.pack_info()
+                        self._chrome_pack_cache[name] = {
+                            key: value for key, value in info.items() if key != "in"}
+                    widget.pack_forget()
+                elif name in self._chrome_pack_cache and not widget.winfo_manager():
+                    widget.pack(**self._chrome_pack_cache[name])
+            except tk.TclError:
+                continue
 
     # ── 顶栏 ──────────────────────────────────────────────
     def _build_topbar(self):
@@ -955,6 +1065,12 @@ class ForgeGuiApp:
             logo.pack(side=tk.LEFT, padx=(0, 8))
         i18n.Label(brand, text="FORGE", bg=C["bg"], fg=C["text"],
                  font=(theme.UI_FAMILY, 12, "bold")).pack(side=tk.LEFT)
+
+        # 双工作空间切换（visual-system-2 §4：宿主确认制，始终可见、可达）
+        from visual_system.components import ModeSwitcher
+        self._mode_switcher = ModeSwitcher(bar, self._request_workspace,
+                                           selected=self._workspace_kind.WORK)
+        self._mode_switcher.pack(side=tk.LEFT, padx=(8, 0))
 
         self._project_chip = tk.Frame(bar, bg=C["surface2"], padx=9, pady=4)
         self._project_chip.pack(side=tk.LEFT, padx=(8, 0))
@@ -1012,7 +1128,8 @@ class ForgeGuiApp:
         def fit_topbar(event):
             if event.width < 1180:
                 self._project_chip.pack_forget()
-            elif not self._project_chip.winfo_manager():
+            elif (not self._project_chip.winfo_manager()
+                  and getattr(self, "_workspace_mode", None) != self._workspace_kind.CODING):
                 self._project_chip.pack(side=tk.LEFT, padx=(8, 0), after=brand)
         bar.bind("<Configure>", fit_topbar)
 
@@ -3204,23 +3321,10 @@ class ForgeGuiApp:
             self.desktop_features.mount_page(parent, 0)
             return
         if key == "development":
-            # Development Mode（Codex 交付）：隔离开发工作台嵌入主 GUI。
-            # 独立 home 保持隔离语义；ttk.Frame 直接挂进视图容器。
-            try:
-                from development_mode.app import DevelopmentWorkbench
-                from forge.development.state import ModeState
-                # F-09（QA）：home 不得在 repo 内——runtime 隔离规则会拒绝
-                # 「项目包含自身 IDE home」。改用户级目录（与 run_development.py
-                # 的默认一致语义：project-local 但永不与项目重叠）。
-                dev_home = Path.home() / ".forge-development"
-                state = ModeState(dev_home)
-                bench = DevelopmentWorkbench(self._views[key], state)
-                bench.pack(fill=tk.BOTH, expand=True)
-                path = state.value("project")
-                if path and Path(path).is_dir():
-                    bench.open_project(path)
-            except Exception as exc:
-                self._set_status(f"Development Mode 加载失败：{exc}", "error")
+            # W3：DevelopmentWorkbench 已迁入 WorkspaceDeck 的 Coding surface
+            # （见 _build_coding_surface）。此视图不再二次挂载工作台；直接
+            # 路径一律转发顶层工作空间切换。留此分支兜底，防双重 runtime。
+            self._request_workspace(self._workspace_kind.CODING)
             return
         if key == "knowledge":
             # 知识库落地：真实管理页（M 型内容布局，bind_packed_column 限宽）。
@@ -3273,6 +3377,11 @@ class ForgeGuiApp:
         if key == "tools":
             self._open_plugin_market()
             return
+        if key == "development":
+            # 宿主 adapter（visual-system-2 §4）：旧 development 视图名映射为
+            # 顶层 Coding 工作空间——Coding 不再是 Work 内容区里的附属面板。
+            self._request_workspace(self._workspace_kind.CODING)
+            return
         if key == "files":
             self._show_view("chat")
             self._open_workspace("file_tree")
@@ -3283,6 +3392,11 @@ class ForgeGuiApp:
         self._show_view(key)
 
     def _show_view(self, key: str, *, record_history=True):
+        if key == "development":
+            # 旧视图名统一走顶层工作空间切换（含历史返回等间接路径），
+            # 杜绝 DevelopmentWorkbench 被第二次挂载进 Work 内容区。
+            self._request_workspace(self._workspace_kind.CODING)
+            return
         if key != "tools":
             self._cancel_market_render()
             self._cancel_market_filter()
@@ -7470,6 +7584,7 @@ class ForgeGuiApp:
                                 args = {"value": args}
                             try:
                                 # The gateway owns its names even if a stale runtime claims them.
+                                _call_t0 = time.monotonic()
                                 if name in bridge_names:
                                     if desktop is not None:
                                         args = desktop.review_change(name,args,selected_workspace,phase_scope,cancel_event)
@@ -7489,6 +7604,7 @@ class ForgeGuiApp:
                                         "error": f"{type(tool_exc).__name__}: {tool_exc}"}
                                 ok_flag = False
                                 body_text = str(tool_exc)
+                            _call_elapsed = time.monotonic() - _call_t0
                             messages.append(ChatMessage(
                                 role="tool", content=body_text,
                                 tool_call_id=str(call.get("id") or "")))
@@ -7497,7 +7613,11 @@ class ForgeGuiApp:
                             rows.append({
                                 "name": name,
                                 "desc": json.dumps(args, ensure_ascii=False)[:70],
-                                "elapsed": f"第{rounds + 1}轮",
+                                # detail 让工具结果进 tooltip（此前主对话工具结果完全不可见）；
+                                # elapsed 用数值秒（此前传字符串致 ToolCard 耗时汇总恒为 0）。
+                                # 桥接路径含人工审批等待，墙钟时间如实计入。
+                                "detail": _tool_detail(name, args, resp),
+                                "elapsed": round(_call_elapsed, 2),
                                 "ok": ok_flag,
                             })
                         rounds += 1
@@ -7757,6 +7877,17 @@ class ForgeGuiApp:
         return result["ok"]
 
     def _on_close(self):
+        # P0-01：Coding Workbench 关闭保护——主窗持有 bench 引用，退出前
+        # 走它自己的确认链（未保存草稿询问 / 任务运行中提示 / 后台操作等待）。
+        # 用户取消时保留当前编辑状态；确认后补记布局快照再进入正常退出流程。
+        bench = getattr(self, "_coding_bench", None)
+        if bench is not None:
+            try:
+                if not bench.can_close():
+                    return
+                bench.capture_layout()
+            except Exception:
+                pass  # 工作台自身的关闭检查异常不阻断主窗退出
         if (self._feature_dirty or self._team_dirty or self._editor_is_dirty() or self._pending_rows):
             # 2026-10-12 改规范模态：自定义对话框 transient+grab（始终浮在
             # 主窗上方、屏蔽主窗交互），无 iconify 闪烁；Esc/关闭按钮 = 取消。

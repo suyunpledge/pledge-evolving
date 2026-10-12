@@ -50,6 +50,7 @@ from gui_theme import (
     RoundedCard, attach_tooltip, avatar, badge, bind_keyboard_action, circle_button, circle_button_state,
     dot, emoji_font, glyph_button, highlight_python, round_rect, rounded_label,
     setup_code_tags, style_scrollbar, ui_px, text_width, bind_wrap, bind_scoped_wheel, flow_controls,
+    _bg_of,
 )
 
 MAX_BUBBLE_WIDTH = 740          # 中央 Conversation 是主体，长文允许更宽的阅读行

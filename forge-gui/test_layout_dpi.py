@@ -77,6 +77,11 @@ def isolated_app(scale=1, size=(1440, 900), *, repo=None):
             for job in app._background_jobs.values():
                 worker=job.get('thread')
                 if worker is not None: worker.join(3)
+            # W3: 强制在主线程回收 Tk 对象环——解释器销毁后的垃圾若留给
+            # 之后的线程（如本地 HTTP 测试的 handler）在 GC 时清理，Windows
+            # 上会触发跨线程 Tcl 断点异常（0x80000003，工作台审查已记录同类）。
+            import gc
+            gc.collect()
 
 
 class DpiLayoutTests(unittest.TestCase):

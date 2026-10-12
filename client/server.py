@@ -38,7 +38,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 FORGE_HOME = Path.home() / ".forge"
-KEYS_FILE = FORGE_HOME / "keys.json"
+# W3 P0-02：与内核/GUI/VSCode 桥共用同一凭据存储 ~/.forge/secrets.json
+# （此前读 keys.json——内核没有任何代码读它，等价于凭据链路断裂）。
+# 命名约定与 vscode_bridge._load_credentials 一致：name → FORGE_<NAME>_KEY。
+SECRETS_FILE = FORGE_HOME / "secrets.json"
 _CANCEL_FLAGS: dict[str, bool] = {}
 
 # ── Constants ──────────────────────────────────────────────────────────────
@@ -53,18 +56,37 @@ ROOT.mkdir(parents=True, exist_ok=True)
 
 
 def load_keys() -> dict[str, str]:
-    """TRAE 审查 P0-2：只返回键值映射供 Provider 引用传递，
-    不再写入 os.environ（shell_exec 子进程会继承环境变量，
-    导致明文密钥可被 `env | grep` 类命令读取）。"""
+    """读内核凭据存储 secrets.json，返回 {FORGE_<NAME>_KEY: value}。
+
+    读取走内核既有安全机制（protect_store_path + SecretScope.reference +
+    有界读取 + 形状校验）；TRAE P0-2 的约束保留——绝不写入 os.environ
+    （shell_exec 子进程会继承环境变量，明文密钥可被 `env | grep` 读出），
+    值只在 run_forge 组装 Provider 配置时内存内替换。API 响应只出现布尔。
+    """
+    from forge.secrets import SecretScope, protect_store_path
+
     keys: dict[str, str] = {}
-    if KEYS_FILE.is_file():
+    if not SECRETS_FILE.is_file():
+        return keys
+    try:
+        protect_store_path(SECRETS_FILE)
+        raw = SECRETS_FILE.read_bytes()[:1024 * 1024 + 1]
+        if len(raw) > 1024 * 1024:
+            return keys
+        data = json.loads(raw.decode("utf-8-sig"))
+        if not isinstance(data, dict):
+            return keys
+        scope = SecretScope()
         try:
-            data = json.loads(KEYS_FILE.read_text(encoding="utf-8"))
-            for env_name, value in data.items():
-                if isinstance(value, str) and value:
-                    keys[env_name] = value
-        except (json.JSONDecodeError, OSError):
-            pass
+            for name, value in data.items():
+                if (isinstance(name, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,128}", name)
+                        and isinstance(value, str) and value):
+                    scope.reference(value)
+                    keys[f"FORGE_{name.upper().replace('-', '_')}_KEY"] = value
+        finally:
+            scope.close()
+    except (json.JSONDecodeError, OSError, ValueError):
+        return keys
     return keys
 
 
@@ -124,6 +146,33 @@ BUNDLES = {
     "base": {"label": "默认模式", "desc": "只读，写操作需确认", "file": None},
     "coding": {"label": "编码模式", "desc": "工作区内直写，越界仍拦", "file": "bundles/modes/coding.json"},
 }
+
+
+def _resolved_provider_row(hit: dict) -> dict:
+    """CATALOG 条目 → Provider 行，apiKey 的 $expr 在内存内解析为真实值。
+
+    此前 Provider 只带 {"$expr": "get('env.FORGE_*_KEY', '')"}，而本进程
+    从不向 os.environ 注入密钥（TRAE P0-2），表达式恒解析为空——链路断裂。
+    现在：secrets.json 有对应键 → 直接替换为值（仅存在于本次 run 的内存
+    Config，不落 env、不回 API）；没有 → 保留 $expr（照旧解析为空，诚实
+    反映“未配置密钥”）。别名兜底：CATALOG 的 env 名（如 FORGE_CLAUDE_KEY）
+    与按 provider id 推导的名字（如 FORGE_REVIEW_KEY）都会尝试。
+    """
+    import copy
+
+    keys = load_keys()
+    row = copy.deepcopy(PROVIDER_ROWS[hit["id"]])
+    expr = row["config"].get("apiKey")
+    if not (isinstance(expr, dict) and "$expr" in expr):
+        return row
+    env_names = [hit.get("env", ""),
+                 f"FORGE_{hit['id'].upper().replace('-', '_')}_KEY"]
+    for env_name in env_names:
+        value = keys.get(env_name)
+        if value:
+            row["config"]["apiKey"] = value
+            break
+    return row
 
 
 class RunStore:
@@ -324,7 +373,7 @@ def run_forge(run_id: str, task: str, model_label: str | None,
         if model_label:
             hit = next((m for m in CATALOG if m["label"] == model_label), None)
             if hit:
-                patch_rows.append(PROVIDER_ROWS[hit["id"]])
+                patch_rows.append(_resolved_provider_row(hit))
                 patch_rows.append({"id": "model", "name": "model:router",
                                    "config": {"primary": [hit["id"], hit["model"]]}})
         if strategy:
@@ -476,7 +525,9 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._send_json({"error": "client/index.html missing"}, 500)
         elif path == "/api/models":
-            key_keys_status = {k: bool(v) for k, v in load_keys().items()}
+            # W3 P0-02：变量名修正（此前 key_keys_status 定义、key_status 使用 → NameError，
+            # 且 boot() 首请求即 /api/models，整个 Web UI 启动即 500）。只回布尔，不回键值。
+            key_status = {k: bool(v) for k, v in load_keys().items()}
             models = [{**m, "keyReady": key_status.get(m["env"], False)}
                       for m in CATALOG]
             self._send_json({"models": models,
@@ -516,11 +567,11 @@ class Handler(BaseHTTPRequestHandler):
             workspace = ROOT / "workspace"
             self._send_json(read_file(workspace, rel))
         elif path == "/api/diag":
-            key_keys_status = {k: bool(v) for k, v in load_keys().items()}
+            key_status = {k: bool(v) for k, v in load_keys().items()}
             self._send_json({
                 "forge_home": str(FORGE_HOME),
-                "keys_file": str(KEYS_FILE),
-                "keys_exists": KEYS_FILE.is_file(),
+                "keys_file": str(SECRETS_FILE),
+                "keys_exists": SECRETS_FILE.is_file(),
                 "env_status": key_status,
                 "forge_version": "0.3",
                 "workspace": str(ROOT / "workspace")})
@@ -554,7 +605,6 @@ class Handler(BaseHTTPRequestHandler):
         if not task:
             self._send_json({"error": "task required"}, 400)
             return
-        {k: True for k in load_keys()}
         rec = STORE.create(task)
         raw_ws = payload.get("workspace") or str(ROOT / "workspace")
         workspace = Path(raw_ws).resolve()
@@ -598,7 +648,6 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--workspace", default=str(ROOT / "workspace"))
     args = ap.parse_args(argv)
-    {k: True for k in load_keys()}
     srv = ClientServer((args.host, args.port), Handler)
     print(f"[planet-evolving] v0.3 on http://{args.host}:{args.port}"
           f"  (home={FORGE_HOME})")
