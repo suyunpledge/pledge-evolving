@@ -2,6 +2,7 @@
 from pathlib import Path
 import hashlib
 import json
+import os
 import queue
 import threading
 import time
@@ -11,6 +12,10 @@ from tkinter import ttk, filedialog, messagebox, simpledialog
 
 from gui_theme import (C, apply_ttk_theme, style_editor, FONT_MONO_SM,
     FONT_TITLE, FONT_SECTION, FONT_UI)
+try:  # E1（UX 审查）：与 InputCard 同款可选行内 IME 守卫（默认关）
+    from ime_inline import InlineIME
+except Exception:  # pragma: no cover - 非 Windows / 缺 ctypes
+    InlineIME = None
 from forge.development.state import ModeState, WorkMode
 from forge.development.editor import Document
 from forge.development.runtime import DevelopmentRuntime
@@ -93,7 +98,10 @@ class DevelopmentWorkbench(ttk.Frame):
         presets = ttk.Combobox(options, textvariable=self.preset, values=['agent', 'editor', 'focus'], state='readonly', width=12)
         presets.pack(side='left')
         presets.bind('<<ComboboxSelected>>', self.change_preset)
-        ttk.Button(options, text='专注：编辑器 / Agent', command=self.toggle_focus).pack(side='left', padx=4)
+        # B4（UX 审查）：移除「专注：编辑器 / Agent」按钮——与预设值 focus
+        # 语义重叠（两个入口做同一件事）。toggle_focus() 保留（测试契约与
+        # 状态机不变），focus 预设内可用 toggle_focus 的状态字段切换，或
+        # 再次选择预设复位。
         self.path_label = ttk.Label(options, text='打开项目后可开始；模式切换不会改变任务权限', anchor='w')
         self.path_label.pack(side='left', fill='x', expand=True, padx=8)
         self.panes = ttk.Panedwindow(self, orient='horizontal')
@@ -189,31 +197,59 @@ class DevelopmentWorkbench(ttk.Frame):
         self.write_output('测试', '内置 shell_exec 在 Secret 隔离中不可用。这里只展示真实执行或拒绝事件；没有结构化结果时不推算通过数。\n')
 
     def _build_agent(self):
-        self.task_label = ttk.Label(self.agent_frame, text='Agent · 未运行', padding=(8, 4), wraplength=320)
+        # B1（UX 审查）：语义分组重排——会话（状态/日志/输入/发送）、任务
+        # （规划/权限/复审/恢复/子Agent/取消/测试）、模型（选择/独立模型/
+        # 角色/回显）三区，用分隔线划界；此前 14 个可交互元素无层级平铺，
+        # 语义相近控件（模型类 4 处）散在各行。
+        status_row = ttk.Frame(self.agent_frame)
+        status_row.pack(fill='x', padx=8, pady=(6, 0))
+        self.task_label = ttk.Label(status_row, text='Agent · 未运行', padding=(0, 4), wraplength=260)
+        self.task_label.pack(side='left', fill='x', expand=True)
         # P0-D1（UX 审查）：权限常驻标识——安全边界随时可见。
-        self.perm_badge = ttk.Label(
-            self, text='权限 read-only', foreground=C.get('subtext', '#888'))
-        self.perm_badge.pack(side='top', anchor='e', padx=8, pady=(0, 2))
+        # W5 修正：徽标父容器从工作台顶层改回 Agent 栏状态行（此前错挂
+        # self，渲染到分栏之外的窗口底部）。
+        self.perm_badge = ttk.Label(status_row, text='权限 read-only',
+                                    foreground=C.get('subtext', '#888'))
+        self.perm_badge.pack(side='right')
         self._sync_perm_badge()
-        self.task_label.pack(fill='x')
+        # B2（UX 审查）：完整事件是开发者调试通道，与用户对话/任务并列
+        # 一等 tab 提高了认知负荷——默认隐藏，开发者开关按需恢复；数据
+        # 始终继续写入隐藏页，开关切换不丢历史。
+        self.dev_events = tk.BooleanVar(value=False)
+        ttk.Checkbutton(status_row, text='事件', variable=self.dev_events,
+                        command=self._toggle_events_tab).pack(side='right', padx=(0, 8))
         log_tabs = ttk.Notebook(self.agent_frame)
         log_tabs.pack(fill='both', expand=True)
+        self.log_tabs = log_tabs
         dialogue = ttk.Frame(log_tabs)
-        events = ttk.Frame(log_tabs)
         log_tabs.add(dialogue, text='对话')
         workflow = ttk.Frame(log_tabs)
         log_tabs.add(workflow, text='任务 / 子 Agent')
+        events = ttk.Frame(log_tabs)
         log_tabs.add(events, text='完整事件')
+        self._events_tab = events
+        log_tabs.hide(events)
         self.workflow = self._readonly_text(workflow, wrap='word')
         self.chat = self._readonly_text(dialogue, wrap='word')
         self.events = self._readonly_text(events, wrap='word')
         self.editor_contexts = []
+        # ── 会话组 ──────────────────────────────────────────────
         self.context_label = ttk.Label(self.agent_frame, text='未附加编辑器内容', padding=4)
         self.context_label.pack(fill='x')
         self.input = tk.Text(self.agent_frame, height=5, wrap='word', undo=True, font=FONT_UI)
         style_editor(self.input)
         self.input.pack(fill='x', padx=6, pady=4)
+        # E1（UX 审查）：Enter 发送、Shift+Enter 换行（与主对话一致），
+        # 输入区旁明示键位；IME 组合确认不触发发送（守卫方式与
+        # InputCard 相同：行内 IME 默认关闭，系统候选窗路径 Tk 不向
+        # 绑定投递组合期按键）。
+        self._inline_ime = (InlineIME(self.input)
+                            if InlineIME and os.environ.get("FORGE_INLINE_IME") == "1"
+                            else None)
+        self.input.bind('<Return>', self._enter_key)
         self.input.bind('<Control-Return>', lambda e: (self.send(), 'break')[-1])
+        ttk.Label(self.agent_frame, text='Enter 发送 · Shift+Enter 换行 · Ctrl+Enter 亦可',
+                  foreground=C.get('muted', '#777')).pack(fill='x', padx=8)
         row = ttk.Frame(self.agent_frame)
         row.pack(fill='x', padx=6, pady=4)
         self.model_choice = ttk.Combobox(row, values=['继承配置'], state='readonly', width=24)
@@ -222,36 +258,65 @@ class DevelopmentWorkbench(ttk.Frame):
         self.model_choice.pack(side='left', fill='x', expand=True)
         self.send_button = ttk.Button(row, text='发送', command=self.send)
         self.send_button.pack(side='right', padx=(4, 0))
+        # ── 任务组 ──────────────────────────────────────────────
+        ttk.Separator(self.agent_frame).pack(fill='x', padx=6, pady=2)
         row2 = ttk.Frame(self.agent_frame)
-        row2.pack(fill='x', padx=6, pady=(0, 6))
+        row2.pack(fill='x', padx=6, pady=(0, 4))
         self.planning = tk.StringVar(value='low')
-        ttk.Combobox(row2, textvariable=self.planning, values=['none', 'low', 'medium', 'high'], state='readonly', width=8).pack(side='left')
+        ttk.Label(row2, text='规划').pack(side='left')
+        ttk.Combobox(row2, textvariable=self.planning, values=['none', 'low', 'medium', 'high'], state='readonly', width=7).pack(side='left')
+        ttk.Label(row2, text='权限').pack(side='left', padx=(8, 0))
         self.permission = tk.StringVar(value='read-only')
-        perms = ttk.Combobox(row2, textvariable=self.permission, values=['read-only', 'workspace-write'], state='readonly', width=16)
-        perms.bind('<<ComboboxSelected>>', lambda _e: self._sync_perm_badge())
-        perms.pack(side='left', padx=4)
+        perms = ttk.Combobox(row2, textvariable=self.permission, values=['read-only', 'workspace-write'], state='readonly', width=15)
+        perms.pack(side='left')
+        perms.bind('<<ComboboxSelected>>', self._sync_perm_badge)
         perms.bind('<<ComboboxSelected>>', self.permission_changed)
         ttk.Button(row2, text='复审', command=self.review).pack(side='right')
         ttk.Button(row2, text='恢复', command=self.restore_session).pack(side='right', padx=4)
         row3 = ttk.Frame(self.agent_frame)
-        self.delegate_button = ttk.Button(row3, text='请求子 Agent', command=lambda: self.send(delegate=True))
         row3.pack(fill='x', padx=6, pady=(0, 4))
+        self.delegate_button = ttk.Button(row3, text='请求子 Agent', command=lambda: self.send(delegate=True))
         self.delegate_button.pack(side='left')
+        ttk.Button(row3, text='执行测试', command=self.run_tests).pack(side='right', padx=4)
         self.cancel_button = ttk.Button(row3, text='取消', command=self.cancel_task)
         self.cancel_button.pack(side='right')
-        ttk.Button(row3, text='执行测试', command=self.run_tests).pack(side='right', padx=4)
-        ttk.Button(row3, text='独立模型', command=self.agent_model_settings).pack(side='left', padx=4)
-        row3 = ttk.Frame(self.agent_frame)
-        row3.pack(fill='x', padx=6, pady=(0, 6))
-        ttk.Label(row3, text='任务角色').pack(side='left')
+        # ── 模型组 ──────────────────────────────────────────────
+        ttk.Separator(self.agent_frame).pack(fill='x', padx=6, pady=2)
+        row4 = ttk.Frame(self.agent_frame)
+        row4.pack(fill='x', padx=6, pady=(0, 6))
+        ttk.Label(row4, text='任务角色').pack(side='left')
         self.task_role = tk.StringVar(value='default')
-        ttk.Combobox(row3, textvariable=self.task_role, values=['default', 'complex', 'simple'],
-                     state='readonly', width=10).pack(side='left', padx=4)
-        self.run_model = ttk.Label(row3, text='模型：继承', wraplength=180)
+        ttk.Combobox(row4, textvariable=self.task_role, values=['default', 'complex', 'simple'],
+                     state='readonly', width=9).pack(side='left', padx=4)
+        ttk.Button(row4, text='独立模型', command=self.agent_model_settings).pack(side='left', padx=4)
+        self.run_model = ttk.Label(row4, text='模型：继承', wraplength=150)
         self.run_model.pack(side='left', fill='x', expand=True)
 
+    def _enter_key(self, event):
+        """E1：Enter=发送，Shift+Enter=换行；IME 组合期不拦截。"""
+        if event.state & 0x0001:        # Shift 按下 → 走默认换行
+            return None
+        ime = self._inline_ime
+        if ime is not None and ime.composing:
+            return None                 # 组合确认交给输入法
+        self.send()
+        return 'break'
+
+    def _toggle_events_tab(self):
+        """B2：开发者事件开关——隐藏页恢复显示 / 再次隐藏，不丢数据。"""
+        try:
+            if self.dev_events.get():
+                self.log_tabs.add(self._events_tab, text='完整事件')
+            else:
+                self.log_tabs.hide(self._events_tab)
+        except tk.TclError:
+            pass  # 销毁竞态：视图已不在，真相仍留在 runtime 事件流里
+
     def _readonly_text(self, parent, **kw):
-        text = tk.Text(parent, font=FONT_UI, state='disabled', **kw)
+        # B1：请求高度降为 6 行——fill/expand 下实际显示仍由分配决定，
+        # 只降低 Notebook 的最小请求（Text 默认 24 行 ≈400px，760px 窗口
+        # 里会把 Agent 栏底部控件挤出映射）。
+        text = tk.Text(parent, font=FONT_UI, state='disabled', height=6, **kw)
         style_editor(text)
         sb = ttk.Scrollbar(parent, command=text.yview)
         sb.pack(side='right', fill='y')

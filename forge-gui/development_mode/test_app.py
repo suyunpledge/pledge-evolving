@@ -332,6 +332,91 @@ class WorkbenchTests(unittest.TestCase):
         self.assertEqual(redact(identifier), identifier)
         self.assertEqual(self.app.permission.get(), 'read-only')
 
+    # ── W5 批次（17 号审查 B1/B2/B4/E1）────────────────────────────
+
+    def _tab_texts(self):
+        # ttk.tabs() 会列出隐藏页；隐藏以 tab state='hidden' 判定
+        return [self.app.log_tabs.tab(tab, 'text')
+                for tab in self.app.log_tabs.tabs()
+                if str(self.app.log_tabs.tab(tab, 'state')) != 'hidden']
+
+    def test_dev_events_tab_hidden_by_default_and_toggles_without_data_loss(self):
+        """B2：完整事件默认隐藏；开关恢复显示且历史不丢。"""
+        self.assertEqual(self._tab_texts(), ['对话', '任务 / 子 Agent'])
+        self.app.append(self.app.events, 'w5-event-line\n')
+        self.app.dev_events.set(True)
+        self.app._toggle_events_tab()
+        self.step()
+        self.assertEqual(self._tab_texts(), ['对话', '任务 / 子 Agent', '完整事件'])
+        self.assertIn('w5-event-line', self.app.events.get('1.0', 'end'))
+        self.app.dev_events.set(False)
+        self.app._toggle_events_tab()
+        self.step()
+        self.assertEqual(self._tab_texts(), ['对话', '任务 / 子 Agent'])
+        # 再次打开：隐藏期间的数据仍在
+        self.app.dev_events.set(True)
+        self.app._toggle_events_tab()
+        self.step()
+        self.assertIn('w5-event-line', self.app.events.get('1.0', 'end'))
+
+    def test_enter_sends_and_shift_enter_inserts_newline(self):
+        """E1：Enter=发送、Shift+Enter=换行；IME 组合期不触发。"""
+
+        class _Event:
+            def __init__(self, state=0):
+                self.state = state
+
+        sent = []
+        self.app.send = lambda **kw: sent.append(kw)
+        self.app.input.insert('1.0', 'hello')
+        self.assertEqual(self.app._enter_key(_Event(state=0)), 'break')
+        self.assertEqual(sent, [{}])
+        self.assertEqual(self.app._enter_key(_Event(state=0x0001)), None)
+        self.assertEqual(len(sent), 1, 'Shift+Enter 不得触发发送')
+        # IME 组合守卫（行内 IME 开启路径）
+        self.app._inline_ime = type('Ime', (), {'composing': True})()
+        self.assertEqual(self.app._enter_key(_Event(state=0)), None)
+        self.assertEqual(len(sent), 1, '组合期 Enter 交给输入法')
+
+    def test_perm_badge_lives_in_agent_column(self):
+        """B1 修正回归：权限徽标挂 Agent 栏状态行，不再漂到工作台顶层。"""
+        badge = self.app.perm_badge
+        frame = badge.master
+        self.assertIs(frame.master, self.app.agent_frame)
+        self.assertIs(self.app.task_label.master, frame)
+
+    def test_agent_groups_separate_session_task_and_model_rows(self):
+        """B1：三组语义分区的代表控件都在 Agent 栏内且映射可见。"""
+        from tkinter import ttk as _ttk
+        for widget in (self.app.task_label, self.app.perm_badge, self.app.context_label,
+                       self.app.input, self.app.send_button, self.app.model_choice,
+                       self.app.cancel_button, self.app.delegate_button,
+                       self.app.run_model):
+            self.assertTrue(widget.winfo_ismapped(), '分组后控件应可见')
+        # 任务组与模型组的下拉变量随行布局存在
+        for var in (self.app.planning, self.app.permission, self.app.task_role):
+            self.assertEqual(var.get() in {'low', 'read-only', 'default'}, True)
+        # 模型类控件收敛：任务角色、独立模型与回显同处一行
+        model_row = self.app.run_model.master
+        texts = [w.cget('text') for w in model_row.winfo_children()
+                 if isinstance(w, _ttk.Button)]
+        labels = [w.cget('text') for w in model_row.winfo_children()
+                  if isinstance(w, _ttk.Label)]
+        self.assertIn('独立模型', texts)
+        self.assertIn('任务角色', labels)
+
+    def test_focus_toggle_contract_survives_button_removal(self):
+        """B4：按钮移除后 toggle_focus 状态机与预设联动保持原契约。"""
+        self.state.set_layout(focus='editor')
+        self.app.preset.set('focus')
+        self.app.change_preset()
+        self.step()
+        self.assertEqual(len(self.app.panes.panes()), 1)
+        self.app.toggle_focus()
+        self.step()
+        self.assertTrue(self.app.input.winfo_ismapped())
+        self.assertEqual(self.app.preset.get(), 'focus')
+
 
 if __name__ == '__main__':
     unittest.main()
