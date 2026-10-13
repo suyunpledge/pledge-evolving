@@ -160,6 +160,35 @@ class AgentPanelTests(unittest.TestCase):
             self.pump(lambda: self.app._jobs == 0)
             restore.assert_not_called()
         self.assertIn('拒绝', self.app.status.get())
+        # Force the pending scan's completion after the refusal, regardless of
+        # scheduler timing; it must still refresh the tree without hiding why.
+        notice = self.app.status.get()
+        marker = self.project / 'after-refusal.txt'
+        marker.write_text('scan still runs\n')
+        scan = self.app.source.scan(set(self.app.expanded), '')
+        self.app._project_scan(scan, None)
+        self.assertTrue(self.app.tree.exists(str(marker.resolve())))
+        self.assertEqual(self.app.status.get(), notice)
+        self.assertEqual((self.project / 'one.py').read_text(), 'new external version\n')
+
+    def test_project_scan_preserves_notices_for_two_seconds_without_renewal(self):
+        scan = self.app.source.scan(set(self.app.expanded), '')
+        for notice in ('已保存 one.py', '磁盘已变化，拒绝恢复旧卡片版本', '读取文件失败'):
+            with self.subTest(notice=notice):
+                with patch('development_mode.app.time.monotonic', return_value=100.0):
+                    self.app.status.set(notice)
+                for now in (100.0, 100.8, 101.999):
+                    with patch('development_mode.app.time.monotonic', return_value=now):
+                        self.app._project_scan(scan, None)
+                    self.assertEqual(self.app.status.get(), notice)
+                with patch('development_mode.app.time.monotonic', return_value=102.0):
+                    self.app._project_scan(scan, None)
+                self.assertIn('个 Git 变更', self.app.status.get())
+                # A second background refresh must update immediately; it did
+                # not start a new semantic-notice window at the previous write.
+                with patch('development_mode.app.time.monotonic', return_value=102.1):
+                    self.app._project_scan({**scan, 'branch': 'next-branch'}, None)
+                self.assertTrue(self.app.status.get().startswith('next-branch ·'))
 
     def test_unknown_action_is_not_retried(self):
         self.task()

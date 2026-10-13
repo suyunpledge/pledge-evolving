@@ -57,6 +57,9 @@ class DevelopmentWorkbench(ttk.Frame):
         self._session_to_restore = self.state.value('session')
         self._resume_project = self.state.value('project')
         self._build()
+        self._status_notice_at = float('-inf')
+        self._status_background_write = False
+        self.status.trace_add('write', self._status_written)
         self._unsubscribe = self.state.subscribe(self._mode_changed)
         self.bind('<Destroy>', self._destroyed, add='+')
         self._poll = self.later(40, self._drain)
@@ -505,6 +508,22 @@ class DevelopmentWorkbench(ttk.Frame):
         source, expanded, search = self.source, set(self.expanded), self.search.get()
         self.work(lambda: source.scan(expanded, search), self._project_scan)
 
+    def _status_written(self, *_):
+        """Track semantic notices from every existing status writer on the Tk thread."""
+        if not self._status_background_write:
+            self._status_notice_at = time.monotonic()
+
+    def _set_project_status(self, text):
+        # A delayed scan must not erase a refusal/error/save notice just shown.
+        # Background writes do not renew the notice's two-second window.
+        if time.monotonic() - self._status_notice_at < 2.0:
+            return
+        self._status_background_write = True
+        try:
+            self.status.set(text)
+        finally:
+            self._status_background_write = False
+
     def _project_scan(self, value, error):
         self._scan_busy = False
         if not error:
@@ -532,7 +551,7 @@ class DevelopmentWorkbench(ttk.Frame):
             for path in changed_selection:
                 if self.changes.exists(path):
                     self.changes.selection_set(path)
-            self.status.set(f"{value['branch']} · {self.source.root.name} · {len(value['status'])} 个 Git 变更 · {self.permission.get()}")
+            self._set_project_status(f"{value['branch']} · {self.source.root.name} · {len(value['status'])} 个 Git 变更 · {self.permission.get()}")
         if self._scan_pending:
             self._scan_pending = False
             self.refresh_project()
