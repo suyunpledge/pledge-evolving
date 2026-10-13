@@ -1,4 +1,4 @@
-"""布局域回归测试：P0-L1 Agent 栏溢出 + pane 顺序 + 增量挂载守护。
+"""布局域回归测试：P0-L1 Agent 栏溢出 + pane 顺序 + 增量挂载 + M1 骨架守护。
 
 背景（Phase 1 实测，1440x900 为 launch() 默认尺寸、1200x760 为测试夹具）：
   P0-L1  Agent 栏 11 个子控件中底部 5 个渲染在窗口下缘之外，用户看不到
@@ -16,8 +16,15 @@
          修复：固定组 side='bottom' 先占位；live 统一换算控件对象再比较，
                并在 forget 后重读（否则 len(live) 过期会让 insert 越界）。
 
-本文件即上述修复的守护，也是集成验收口径「P0-L1 两尺寸映射断言」的落地。
-只测布局容器层，不触碰 Agent 栏内部控件语义（Codex 域）。
+  M1 骨架（顶部导航栏 + 全宽底部工具面板 + 多字段状态栏）：
+         输出 Notebook 从 editor_frame 内的竖向 pane 上移到外层竖向
+         Panedwindow，与三栏并列 → 底部面板跨三栏全宽；导航栏激活态
+         经 StringVar trace 与模式下拉同源；状态栏四字段 +
+         右侧瞬态消息（self.status 契约保留）。IDE 收起时底部面板
+         让位（_sync_bottom_panel 二态切换，不走增量挂载路径）。
+
+本文件即上述修复与改造的守护，也是集成验收口径「P0-L1 两尺寸映射断言」
+的落地。只测布局容器层，不触碰 Agent 栏内部控件语义（Codex 域）。
 """
 import time
 import unittest
@@ -29,6 +36,7 @@ import _tkinter
 from gui_theme import apply_ttk_theme
 from forge.development.state import ModeState
 from development_mode.app import DevelopmentWorkbench
+from development_mode.layout import StatusBar
 
 
 class _WorkbenchFixture:
@@ -226,6 +234,130 @@ class LayoutRegressionTests(_WorkbenchFixture, unittest.TestCase):
         self.step()
         self.assertEqual(self._pane_names(),
                          ['project', 'editor', 'agent'])
+
+    # ── 4. M1 骨架：导航栏 / 全宽底部面板 / 多字段状态栏 ───────────
+    def test_navigation_bar_exposes_all_entries(self):
+        """顶部导航栏必须提供品牌之外的 5 个导航项（2 模式 + 3 动作）。"""
+        for key in ('general', 'development', 'project', 'run', 'settings'):
+            self.assertIsNotNone(self.app.nav.item(key), f'导航栏缺少 {key}')
+        self.assertIsNone(self.app.nav.item('nonexistent'))
+
+    def test_navigation_active_mode_follows_mode_switch(self):
+        """模式切换后导航栏激活项必须跟随（与 header 下拉同一 StringVar 真源）。"""
+        self.assertEqual(self.app.nav.active_mode, 'development')
+        self.app.state.switch('general')
+        self.step()
+        self.assertEqual(self.app.nav.active_mode, 'general')
+        self.app.state.switch('development')
+        self.step()
+        self.assertEqual(self.app.nav.active_mode, 'development')
+
+    def test_navigation_action_dispatches_via_callback(self):
+        """动作项点击必须经 on_navigate 分发（布局组件不自己执行业务）。"""
+        seen = []
+        original = self.app.nav._on_navigate
+        self.app.nav._on_navigate = lambda key: seen.append(key)
+        try:
+            for key in ('project', 'run', 'settings'):
+                self.app.nav.item(key).event_generate('<Button-1>')
+                self.step()
+        finally:
+            self.app.nav._on_navigate = original
+        self.assertEqual(seen, ['project', 'run', 'settings'])
+
+    def test_bottom_panel_spans_full_width_across_three_columns(self):
+        """底部工具面板必须与三栏同宽（全宽），且是 panes 的姊妹 slave。"""
+        self.root.update_idletasks()
+        self.step()
+        vertical = self.app.vertical
+        width = vertical.winfo_width()
+        self.assertGreater(width, 100)
+        self.assertEqual(self.app.bottom.winfo_width(), width,
+                         '底部面板宽度应等于外层竖向 pane 宽（全宽）')
+        self.assertGreater(
+            self.app.bottom.winfo_width(),
+            self.app.project_frame.winfo_width() + self.app.agent_frame.winfo_width(),
+            '底部面板应宽于左右两栏之和（证明它跨三栏而非只占中央栏）')
+        slaves = [vertical.nametowidget(n) for n in vertical.panes()]
+        self.assertEqual(slaves, [self.app.panes, self.app.bottom])
+
+    def test_bottom_panel_hides_with_collapsed_ide_and_returns(self):
+        """IDE 收起时底部面板让位，展开时补回且 [三栏, 底部] 次序不变。
+
+        同时卫仪 place_sashes/capture_layout 的单 pane 保护：收起态下
+        外层竖向 pane 只剩一个 slave，此时写 sashpos(0) 会越界。
+        """
+        vertical = self.app.vertical
+        self.app.toggle_ide()
+        self.step()
+        self.app.place_sashes()      # 收起态调用不得抛错
+        self.app.capture_layout()
+        self.step()
+        slaves = [vertical.nametowidget(n) for n in vertical.panes()]
+        self.assertNotIn(self.app.bottom, slaves, '收起态底部面板应让位')
+        self.app.toggle_ide()
+        self.step()
+        slaves = [vertical.nametowidget(n) for n in vertical.panes()]
+        self.assertEqual(slaves, [self.app.panes, self.app.bottom],
+                         '展开态应恢复 [三栏, 底部面板] 次序')
+
+    def test_bottom_panel_keeps_all_five_output_pages(self):
+        """迁移不得丢页：五输出页与 self.output/self.output_views 别名契约保留。"""
+        self.assertEqual(len(self.app.bottom.views), 5)
+        for name in ('Diff', '终端', '测试', '问题', '输出'):
+            self.assertIn(name, self.app.bottom.views)
+        self.assertIs(self.app.output, self.app.bottom.notebook)
+        self.assertIs(self.app.output_views, self.app.bottom.views)
+        self.app.write_output('输出', 'M1 冒烟')
+        self.step()
+        self.assertIn('M1 冒烟', self.app.output_views['输出'].get('1.0', 'end'))
+
+    def test_status_bar_fields_default_to_placeholder_and_update(self):
+        """四字段初始为占位，update 按值显示、未知键忽略（组件级）。"""
+        bar = StatusBar(self.root, status_var=tk.StringVar(value=''))
+        self.addCleanup(bar.destroy)
+        for key in ('git', 'agent', 'model', 'project'):
+            self.assertEqual(bar.value(key), '—', f'{key} 初始应为占位')
+        bar.update(git='main · 2 处变更', agent='forge', model='默认编程',
+                   project='pledge-evolving', unknown='ignored')
+        self.assertEqual(bar.value('git'), 'main · 2 处变更')
+        self.assertEqual(bar.value('agent'), 'forge')
+        self.assertEqual(bar.value('model'), '默认编程')
+        self.assertEqual(bar.value('project'), 'pledge-evolving')
+
+    def test_status_bar_fields_are_fed_by_project_scan(self):
+        """接线：_project_scan 的扫描结果必须推送到四字段。"""
+        self.app._refresh_status_fields({'branch': 'main', 'status': {'a.py': 'M'}})
+        self.step()
+        self.assertEqual(self.app.status_bar.value('git'), 'main · 1 处变更')
+        self.assertEqual(self.app.status_bar.value('project'),
+                         self.app.source.root.name)
+        # 瞬态消息：self.status 的行为与文案零变化（既有测试契约）
+        self.app.status.set('M1 瞬态消息')
+        self.step()
+        self.assertIn('M1 瞬态消息', self.app.status.get())
+
+    def test_vertical_sash_persists_bottom_fraction(self):
+        """拖动竖向 sash 后 capture_layout 必须持久化（含 clamp），
+        place_sashes 能把 sash 拉回持久化位置（2px 容差内）。"""
+        self.root.update_idletasks()
+        self.step()
+        vertical = self.app.vertical
+        height = vertical.winfo_height()
+        self.assertGreater(height, 100)
+        vertical.sashpos(0, int(height * 0.5))
+        self.app.capture_layout()
+        self.step()
+        self.assertAlmostEqual(self.state.layout['output'], 0.5, delta=0.05)
+        vertical.sashpos(0, int(height * 0.02))
+        self.app.capture_layout()
+        self.step()
+        self.assertGreaterEqual(self.state.layout['output'], 0.15,
+                                'output 必须被 clamp 到 >= .15')
+        self.app.place_sashes()
+        self.step()
+        restored = int(height * self.state.layout['output'])
+        self.assertLessEqual(abs(vertical.sashpos(0) - restored), 2)
 
 
 if __name__ == '__main__':
