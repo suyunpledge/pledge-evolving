@@ -178,6 +178,13 @@ class DevelopmentRuntime:
                 review = roles.get('review') if snap.mode == WorkMode.DEVELOPMENT else previous.get('review_model')
                 phase_router(self.bridge.router, review, self.bridge.router)
                 agent.review_model = tuple(review) if review else None
+                self._publish('development_agent_config', agent=agent.name,
+                    selected_model=snap.model or getattr(self.bridge.router, 'primary', None),
+                    model_source='independent task' if explicit_model or agent_model else 'independent role' if snap.model else 'inherited',
+                    permission=snap.permission, tool_surface=agent.registry.names(), role=snap.role)
+                self._publish('development_agent_config', agent='Review Agent',
+                    selected_model=review or snap.model, model_source='independent role' if review else 'inherited',
+                    permission='no tool execution', tool_surface=[], role='review')
                 agent.extra_system = previous.get('extra_system', '') + ('\n' + DEVELOPMENT_GUIDANCE
                                      if snap.mode == WorkMode.DEVELOPMENT else '')
                 from forge.phase_models import model_pair
@@ -192,9 +199,16 @@ class DevelopmentRuntime:
                 def child_route(name, policy, inherited):
                     choice = child_model or overrides.get(name)
                     if choice is None and previous.get('child_router_factory'):
-                        return previous['child_router_factory'](name, policy, inherited)
-                    choice = choice or child_pair
-                    return phase_router(self.bridge.router, choice, inherited)
+                        route = previous['child_router_factory'](name, policy, inherited)
+                        source = 'host configured'
+                    else:
+                        choice = choice or child_pair
+                        route = phase_router(self.bridge.router, choice, inherited)
+                        source = 'explicit' if child_model else 'independent' if overrides.get(name) else 'role' if child_pair else 'inherited'
+                    self._publish('development_agent_config', agent=name,
+                        selected_model=choice or getattr(route, 'primary', None) or snap.model, model_source=source,
+                        permission=policy.mode.value, tool_surface=agent.registry.names(), role='subagent')
+                    return route
                 agent.child_router_factory = child_route if snap.mode == WorkMode.DEVELOPMENT else previous.get('child_router_factory')
                 agent.child_observer = self.bridge.observe if snap.mode == WorkMode.DEVELOPMENT else previous.get('child_observer')
                 if self._resume_evidence:
@@ -339,6 +353,41 @@ class DevelopmentRuntime:
         finally:
             self._lane.release()
 
+    def refresh_change_states(self):
+        """Read Git objects, never infer commits from a clean status or modify Git."""
+        if not self.ready or not self._lane.acquire(False):
+            raise RuntimeError('Wait for task completion before checking change versions')
+        try:
+            import subprocess
+            from .guard import FileRevisionGuard
+            guard = FileRevisionGuard(self.bridge.workspace)
+            for change in list(self.evidence.changes.values()):
+                if change['state'] == 'pending':
+                    continue
+                path = guard.boundary.path(change['path'])
+                current = guard.digest(path)
+                committed, commit = False, ''
+                relative = path.relative_to(self.bridge.workspace).as_posix()
+                options = dict(cwd=self.bridge.workspace, capture_output=True, timeout=10,
+                    stdin=subprocess.DEVNULL, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+                head = subprocess.run(['git', 'rev-parse', '--verify', 'HEAD'], **options)
+                if head.returncode == 0:
+                    commit = head.stdout.decode('ascii').strip()
+                    size = subprocess.run(['git', 'cat-file', '-s', 'HEAD:' + relative], **options)
+                    if size.returncode == 0 and size.stdout.strip().isdigit() and int(size.stdout) <= 512 * 1024:
+                        blob = subprocess.run(['git', 'cat-file', 'blob', 'HEAD:' + relative], **options)
+                        committed = blob.returncode == 0 and hashlib.sha256(blob.stdout).hexdigest() == change.get('revision')
+                    elif change.get('revision') is None:
+                        # An absent object only proves deletion when the pre-write
+                        # HEAD existed; no automatic committed classification.
+                        commit = ''
+                self._publish('development_change_state', path=change['path'], action_id=change['action_id'],
+                    state='committed' if committed else 'written', commit=commit if committed else '',
+                    revision_changed=current != change.get('revision'))
+            return list(self.evidence.changes.values())
+        finally:
+            self._lane.release()
+
     def checkpoint_preview(self, commit, path):
         if not self._lane.acquire(False):
             raise RuntimeError('Wait for task completion')
@@ -368,6 +417,14 @@ class DevelopmentRuntime:
                     from .guard import FileRevisionGuard
                     with FileRevisionGuard(self.bridge.workspace).lock:
                         result = apply_checkpoint(agent, commit, path, expected, publish=publish)
+                        if result.ok:
+                            guard = FileRevisionGuard(self.bridge.workspace)
+                            target = str(guard.boundary.path(path))
+                            for change in list(self.evidence.changes.values()):
+                                if change['path'] == target and change['state'] != 'pending':
+                                    self._publish('development_change_state', path=target,
+                                        action_id=change['action_id'], state=change['state'],
+                                        revision_changed=guard.digest(guard.boundary.path(path)) != change.get('revision'))
             finally:
                 agent.policy = previous
             return {'ok': result.ok, 'error': redact(result.error), 'result': redact(result.content), 'meta': redact(result.meta)}

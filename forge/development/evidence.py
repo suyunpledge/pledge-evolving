@@ -16,23 +16,34 @@ class TaskEvidence:
         self.reviews = {}
         self.phase = 'not_started'
         self.task_id = ''
+        self.changes = {}
+        self.configurations = {}
+        self._seen = set()
 
     def apply(self, raw):
         if raw.get('type') == 'session_meta':
             return  # Trusted rollout metadata is not task execution evidence.
         event = redact(deepcopy(raw))
+        identifier = event.get('event_id')
+        if identifier and identifier in self._seen:
+            return
         kind = event.get('type')
         task_id = event.get('task_id', '')
         if self.task_id and task_id and task_id != self.task_id:
             return
         if task_id:
             self.task_id = task_id
+        if identifier:
+            self._seen.add(identifier)
         agent = event.get('agent', 'forge')
         run = event.get('run_id', '')
         if kind in {'development_task_started', 'development_task_finished', 'development_recovery'}:
             self.phase = event['phase']
         elif kind == 'workflow_state':
-            row = {'agent': agent, 'run_id': run, 'status': event['phase'], 'depth': event.get('depth', 0)}
+            row = self.runs.setdefault((agent, run), {})
+            row.update(agent=agent, run_id=run, status=event['phase'], depth=event.get('depth', 0),
+                       parent_run_id=event.get('parent_run_id', ''), task_id=task_id)
+            row.update(self.configurations.get(agent, {}))
             if event.get('reason') == 'cancelled':
                 row['status'] = 'cancelled'
             self.agents[agent] = row
@@ -43,14 +54,44 @@ class TaskEvidence:
             row = self.runs.get((agent, run))
             if row is not None:
                 row.update(model=event.get('model', ''), tokens=event.get('total_tokens'))
+        elif kind == 'development_agent_config':
+            self.configurations[agent] = event
+            for (name, _), row in self.runs.items():
+                if name == agent:
+                    row.update(event)
+        elif kind == 'user_message':
+            if run:
+                row = self.runs.setdefault((agent, run), {'agent': agent, 'run_id': run,
+                    'parent_run_id': event.get('parent_run_id', ''), 'depth': event.get('depth', 0),
+                    'task_id': task_id, 'status': 'requested'})
+                row['task'] = event.get('content', '')
+        elif kind == 'assistant_message':
+            row = self.runs.get((agent, run))
+            if row is not None:
+                row['output'] = event.get('content', '')
         elif kind == 'task_plan' and not event.get('depth', 0):
             self.plan = list(event.get('plan', {}).get('tasks', []))
         elif kind == 'tool_started':
-            self.actions[event['action_id']] = {**event, 'status': 'running'}
+            self.actions[event['action_id']] = {**event, 'status':
+                'not_started' if event.get('execution_state') == 'not_started' else 'running'}
         elif kind == 'tool_completed':
             row = self.actions.setdefault(event['action_id'], dict(event))
             row.update(event)
-            row['status'] = 'cancelled' if event.get('cancelled') else 'completed' if event.get('ok') else 'failed'
+            row['status'] = ('unknown' if event.get('execution_state') == 'unknown' else
+                'awaiting_approval' if (event.get('meta') or {}).get('requires_approval') else
+                'cancelled' if event.get('cancelled') or event.get('error_code') == 'cancelled' else
+                'completed' if event.get('ok') else 'failed')
+            for change in (event.get('meta') or {}).get('file_changes', []):
+                key = (event['action_id'], change['path'])
+                self.changes[key] = {**change, 'action_id': event['action_id'], 'task_id': task_id,
+                    'run_id': run, 'checkpoint': (event.get('meta') or {}).get('checkpoint', '')}
+            if row['status'] == 'awaiting_approval' and event.get('tool') in {
+                    'write_file', 'edit_file', 'apply_patch', 'delete_file', 'edit_config'}:
+                args = event.get('args') or {}
+                if args.get('path') and (event.get('tool') != 'edit_config' or args.get('patch') is not None):
+                    self.changes[(event['action_id'], args['path'])] = {'path': args['path'],
+                        'state': 'pending', 'action_id': event['action_id'], 'task_id': task_id,
+                        'run_id': run, 'diff': None, 'added': None, 'removed': None}
         elif kind == 'tool_call':
             row = self.actions.get(event.get('action_id'))
             if row is None and not event.get('action_id'):
@@ -87,6 +128,16 @@ class TaskEvidence:
             row.update(event)
             row['status'] = {'review_started': 'running', 'review_result': 'completed',
                              'review_error': 'failed', 'review_cancelled': 'cancelled'}[kind]
+            name = 'Review Agent'
+            config = self.configurations.get(name, {})
+            self.runs[(name, key[1])] = {**config, 'agent': name, 'run_id': key[1],
+                'parent_run_id': event.get('run_id', ''), 'task_id': task_id, 'status': row['status'],
+                'depth': 1, 'output': event.get('review') or event.get('error', ''),
+                'model': (event.get('review') or {}).get('model', config.get('selected_model', ''))}
+        elif kind == 'development_change_state':
+            key = (event.get('action_id'), event.get('path'))
+            if key in self.changes:
+                self.changes[key].update(event)
         elif kind == 'checkpoint':
             self.checkpoints.append(event)
         elif kind == 'git_diff':
