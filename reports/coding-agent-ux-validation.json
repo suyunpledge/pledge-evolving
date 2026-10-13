@@ -1,0 +1,260 @@
+{
+  "environment": {
+    "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+    "executable": "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "model_transport": "offline fixtures; no paid provider calls",
+    "gui_verification": "real Windows Tk, hidden test windows; no manual flicker observation"
+  },
+  "source_sha256": {
+    "forge\\development\\editor.py": "48acbf46b513c61fad92242add8ef907b6e3a02aefe1bcbd22a8827eb033b13d",
+    "forge\\development\\evidence.py": "13edb89cf57c66b3e6851169a095ce20892dec38962a35ac8fe0b3c8ead1270c",
+    "forge\\development\\guard.py": "bfeadc8dd84529c032249d624f72c4f193b3f2f6c515fd80a39b5c7157aff3af",
+    "forge\\development\\review.py": "30a3653beaaab40cc79315a20c74ce0c55504ebbb7b93d070701678b4c439910",
+    "forge\\development\\runtime.py": "6b5f41d7cf1dc01bc5d3bc190010168c18cd323c57a07cd4949ace5ca8b7a0c7",
+    "forge\\development\\state.py": "382d30286b2e804dac8212084656db4f909068844e073508b72cd117c34125cf",
+    "forge\\development\\testing.py": "a606c03300916304a00c44eea3334b2614d03192711b6823c79c0f801b13a501",
+    "forge\\development\\__init__.py": "6a8be1b2ba825a2c8fc1e729c45e91074c5be7c11581bdd9481979907ffef676",
+    "forge-gui\\development_mode\\agent_panel.py": "6f7a23727539516febc6f711db3dbb75dacf2d7908b912ed99c20ba438ca7e44",
+    "forge-gui\\development_mode\\app.py": "0369303cac9df4c1c90f2332a38d80e950e71ed08f9cdeee5ff0be65c248f2eb",
+    "forge-gui\\development_mode\\project.py": "7e45a9bfd4b39061853d4d3a3700dac328f6f53a40656c0210b205593580aaf9",
+    "forge-gui\\development_mode\\test_agent_panel.py": "b424e08bafaa567d5894b6915039bd0c8698b64bc24a38b6911807572bd634e1",
+    "forge-gui\\development_mode\\test_app.py": "9062316ee76d63d2fa364e03de9366e2315cfd5b09b950849da3696191f4f155",
+    "forge-gui\\development_mode\\test_project.py": "6e503b8308d161f4564dff55386baef81a82dfeace6f3a84d81af3aea10e0245",
+    "forge-gui\\development_mode\\__init__.py": "c96d23771325bace89786d20a5da0209ba3f81962723c6f04b7fba87873be9b9",
+    "tests\\test_coding_agent_ux.py": "b68976bc0e7bcba157ba9e1d8b9b9b8eb3eb432f065c6b5636a91f6dabdc9762",
+    "tools\\verify_coding_agent_ux.py": "7e730ab1d7ccec6d49dbb6685f42e8ce65df26a0541d834c772d56186961a3f1"
+  },
+  "suites": [
+    {
+      "name": "tests",
+      "exit_code": 0,
+      "seconds": 51.844,
+      "command": [
+        "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+        "-B",
+        "-c",
+        "import sys,runpy; sys.path[:0]=['C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux', 'C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux\\\\forge-gui']; sys.argv[0]='unittest'; runpy.run_module('unittest',run_name='__main__')",
+        "discover",
+        "-s",
+        "tests",
+        "-p",
+        "test*.py"
+      ],
+      "log": "C:\\Users\\匡溯昀\\forge-coding-agent-ux-final-validation\\tests.log",
+      "log_sha256": "87c9772f30a9fe50dac78b786e89233f3b2acdbe4eeeb2c544a537d539f312a5",
+      "total": 131,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 1,
+      "passed": 130
+    },
+    {
+      "name": "forge",
+      "exit_code": 0,
+      "seconds": 24.656,
+      "command": [
+        "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+        "-B",
+        "-c",
+        "import sys,runpy; sys.path[:0]=['C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux', 'C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux\\\\forge-gui']; sys.argv[0]='unittest'; runpy.run_module('unittest',run_name='__main__')",
+        "discover",
+        "-s",
+        "forge",
+        "-p",
+        "test*.py",
+        "-t",
+        "."
+      ],
+      "log": "C:\\Users\\匡溯昀\\forge-coding-agent-ux-final-validation\\forge.log",
+      "log_sha256": "1ccc26ac1823819b6374c796b4e09cc1b6ad3a9cbb8621b9905075c5fc24dce5",
+      "total": 229,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 1,
+      "passed": 228
+    },
+    {
+      "name": "development_gui",
+      "exit_code": 0,
+      "total": 42,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "command": [
+        "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+        "-B",
+        "-c",
+        "import sys,runpy; sys.path[:0]=['C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux', 'C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux\\\\forge-gui']; sys.argv[0]='unittest'; runpy.run_module('unittest',run_name='__main__')",
+        "development_mode.test_app",
+        "development_mode.test_agent_panel",
+        "development_mode.test_project"
+      ],
+      "seconds": 55.469,
+      "log": "C:\\Users\\匡溯昀\\forge-coding-agent-ux-final-validation\\development_gui_badge_final.log",
+      "log_sha256": "fcccb5e4299f64b3d86e542cbfcfff8954e7b512d9130e6c9c5ea041d7fb68ad",
+      "passed": 42
+    },
+    {
+      "name": "workspace_wiring",
+      "exit_code": 0,
+      "seconds": 17.141,
+      "command": [
+        "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+        "-B",
+        "-c",
+        "import sys,runpy; sys.path[:0]=['C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux', 'C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux\\\\forge-gui']; sys.argv[0]='unittest'; runpy.run_module('unittest',run_name='__main__')",
+        "test_workspace_wiring"
+      ],
+      "log": "C:\\Users\\匡溯昀\\forge-coding-agent-ux-final-validation\\workspace_wiring.log",
+      "log_sha256": "e892efbdf6a72ff04cf9054ced327c97f6db57080f743aa388368772c5cfa89e",
+      "total": 12,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 12
+    },
+    {
+      "name": "gui_adapters",
+      "exit_code": 0,
+      "seconds": 87.078,
+      "command": [
+        "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+        "-B",
+        "-c",
+        "import sys,runpy; sys.path[:0]=['C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux', 'C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux\\\\forge-gui']; sys.argv[0]='unittest'; runpy.run_module('unittest',run_name='__main__')",
+        "test_phase_models",
+        "test_task_planning",
+        "test_runtime_review",
+        "test_sub_agent",
+        "test_forge_client",
+        "test_plugin_capabilities",
+        "test_plugin_runtime"
+      ],
+      "log": "C:\\Users\\匡溯昀\\forge-coding-agent-ux-final-validation\\gui_adapters.log",
+      "log_sha256": "23ed1bd05a6fb1cc9c28610cef451cdfd25034a6b24c91f049bfe14249d4ae0f",
+      "total": 90,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 90
+    },
+    {
+      "name": "selftest",
+      "exit_code": 0,
+      "seconds": 24.438,
+      "command": [
+        "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+        "-B",
+        "run.py",
+        "selftest"
+      ],
+      "log": "C:\\Users\\匡溯昀\\forge-coding-agent-ux-final-validation\\selftest.log",
+      "log_sha256": "e4ca6ecf22bbfdabd8360388813b4a56f1f853ac14c093d9481cb513f054f517",
+      "passed": 574,
+      "total": 574,
+      "failures": 0
+    }
+  ],
+  "previous_development_gui_run": {
+    "name": "development_gui",
+    "exit_code": 0,
+    "seconds": 55.484,
+    "command": [
+      "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+      "-B",
+      "-c",
+      "import sys,runpy; sys.path[:0]=['C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux', 'C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux\\\\forge-gui']; sys.argv[0]='unittest'; runpy.run_module('unittest',run_name='__main__')",
+      "development_mode.test_app",
+      "development_mode.test_agent_panel",
+      "development_mode.test_project"
+    ],
+    "log": "C:\\Users\\匡溯昀\\forge-coding-agent-ux-final-validation\\development_gui.log",
+    "log_sha256": "8e0004f48e397f6a2e067d34610523088cc3ab38736fe4e65a78af3295a10392",
+    "total": 40,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "passed": 40
+  },
+  "source_sha256_before_ui_retry_adjustment": {
+    "forge\\development\\editor.py": "48acbf46b513c61fad92242add8ef907b6e3a02aefe1bcbd22a8827eb033b13d",
+    "forge\\development\\evidence.py": "13edb89cf57c66b3e6851169a095ce20892dec38962a35ac8fe0b3c8ead1270c",
+    "forge\\development\\guard.py": "bfeadc8dd84529c032249d624f72c4f193b3f2f6c515fd80a39b5c7157aff3af",
+    "forge\\development\\review.py": "30a3653beaaab40cc79315a20c74ce0c55504ebbb7b93d070701678b4c439910",
+    "forge\\development\\runtime.py": "6b5f41d7cf1dc01bc5d3bc190010168c18cd323c57a07cd4949ace5ca8b7a0c7",
+    "forge\\development\\state.py": "382d30286b2e804dac8212084656db4f909068844e073508b72cd117c34125cf",
+    "forge\\development\\testing.py": "a606c03300916304a00c44eea3334b2614d03192711b6823c79c0f801b13a501",
+    "forge\\development\\__init__.py": "6a8be1b2ba825a2c8fc1e729c45e91074c5be7c11581bdd9481979907ffef676",
+    "forge-gui\\development_mode\\agent_panel.py": "6f7a23727539516febc6f711db3dbb75dacf2d7908b912ed99c20ba438ca7e44",
+    "forge-gui\\development_mode\\app.py": "a13793c828c91f09310df87a6552daf2839963ebdfd7feb5c00363b7e33fa634",
+    "forge-gui\\development_mode\\project.py": "7e45a9bfd4b39061853d4d3a3700dac328f6f53a40656c0210b205593580aaf9",
+    "forge-gui\\development_mode\\test_agent_panel.py": "75ed1b86d1ce45a9e03834c7dc2e28a37042bec31077d768f52e6d2d1650b78f",
+    "forge-gui\\development_mode\\test_app.py": "9062316ee76d63d2fa364e03de9366e2315cfd5b09b950849da3696191f4f155",
+    "forge-gui\\development_mode\\test_project.py": "6e503b8308d161f4564dff55386baef81a82dfeace6f3a84d81af3aea10e0245",
+    "forge-gui\\development_mode\\__init__.py": "c96d23771325bace89786d20a5da0209ba3f81962723c6f04b7fba87873be9b9",
+    "tests\\test_coding_agent_ux.py": "b68976bc0e7bcba157ba9e1d8b9b9b8eb3eb432f065c6b5636a91f6dabdc9762",
+    "tools\\verify_coding_agent_ux.py": "7e730ab1d7ccec6d49dbb6685f42e8ce65df26a0541d834c772d56186961a3f1"
+  },
+  "final_adjustment": "UI-only retry and permission display corrections, each followed by a full Development GUI rerun. No runtime/shared/core suite source changed after its full run.",
+  "closed_loop": {
+    "path": "C:\\Users\\匡溯昀\\forge-coding-agent-ux-final-validation\\closed-loop.json",
+    "sha256": "0cb63a4adfdfac1683ef8d86a1432b77ccd4ed0e3ef751452c35ad022dae2e6a",
+    "command": [
+      "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+      "-B",
+      "-c",
+      "import sys,runpy; sys.path[:0]=['C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux', 'C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux\\\\forge-gui', 'C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux\\\\tests']; sys.argv[0]='unittest'; runpy.run_module('unittest',run_name='__main__')",
+      "test_development_execution.ExecutionTests.test_true_execution_loop_and_recovery"
+    ],
+    "exit_code": 0
+  },
+  "previous_development_gui_retry_run": {
+    "name": "development_gui",
+    "exit_code": 0,
+    "total": 41,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "command": [
+      "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+      "-B",
+      "-c",
+      "import sys,runpy; sys.path[:0]=['C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux', 'C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux\\\\forge-gui', 'C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux\\\\tests']; sys.argv[0]='unittest'; runpy.run_module('unittest',run_name='__main__')",
+      "development_mode.test_app",
+      "development_mode.test_agent_panel",
+      "development_mode.test_project"
+    ],
+    "seconds": 49.156,
+    "log": "C:\\Users\\匡溯昀\\forge-coding-agent-ux-final-validation\\development_gui_final.log",
+    "log_sha256": "07cda42e7dd2d4e17f35fb041dce07312b4ab78f49091c2b827caced51a95630",
+    "passed": 41
+  },
+  "source_sha256_before_badge_adjustment": {
+    "forge\\development\\editor.py": "48acbf46b513c61fad92242add8ef907b6e3a02aefe1bcbd22a8827eb033b13d",
+    "forge\\development\\evidence.py": "13edb89cf57c66b3e6851169a095ce20892dec38962a35ac8fe0b3c8ead1270c",
+    "forge\\development\\guard.py": "bfeadc8dd84529c032249d624f72c4f193b3f2f6c515fd80a39b5c7157aff3af",
+    "forge\\development\\review.py": "30a3653beaaab40cc79315a20c74ce0c55504ebbb7b93d070701678b4c439910",
+    "forge\\development\\runtime.py": "6b5f41d7cf1dc01bc5d3bc190010168c18cd323c57a07cd4949ace5ca8b7a0c7",
+    "forge\\development\\state.py": "382d30286b2e804dac8212084656db4f909068844e073508b72cd117c34125cf",
+    "forge\\development\\testing.py": "a606c03300916304a00c44eea3334b2614d03192711b6823c79c0f801b13a501",
+    "forge\\development\\__init__.py": "6a8be1b2ba825a2c8fc1e729c45e91074c5be7c11581bdd9481979907ffef676",
+    "forge-gui\\development_mode\\agent_panel.py": "6f7a23727539516febc6f711db3dbb75dacf2d7908b912ed99c20ba438ca7e44",
+    "forge-gui\\development_mode\\app.py": "3990fe2a9ceb78ca76d581ae9ee447be2f61f1c556acf199c5600dd5115c4bbe",
+    "forge-gui\\development_mode\\project.py": "7e45a9bfd4b39061853d4d3a3700dac328f6f53a40656c0210b205593580aaf9",
+    "forge-gui\\development_mode\\test_agent_panel.py": "bd458ee30b5d45b75ecfed2fe83e459258a08bed6e02be97bbe2191c43568cc3",
+    "forge-gui\\development_mode\\test_app.py": "9062316ee76d63d2fa364e03de9366e2315cfd5b09b950849da3696191f4f155",
+    "forge-gui\\development_mode\\test_project.py": "6e503b8308d161f4564dff55386baef81a82dfeace6f3a84d81af3aea10e0245",
+    "forge-gui\\development_mode\\__init__.py": "c96d23771325bace89786d20a5da0209ba3f81962723c6f04b7fba87873be9b9",
+    "tests\\test_coding_agent_ux.py": "b68976bc0e7bcba157ba9e1d8b9b9b8eb3eb432f065c6b5636a91f6dabdc9762",
+    "tools\\verify_coding_agent_ux.py": "7e730ab1d7ccec6d49dbb6685f42e8ce65df26a0541d834c772d56186961a3f1"
+  },
+  "baseline": "51f6f82bd6c9b09c74b710a11121449f16a2be7c",
+  "implementation_commits": [
+    "a38fb03",
+    "82c157c",
+    "4fdd94e"
+  ],
+  "parallel_main": "81acf1b; only state.py review preset; not merged/tested in this branch",
+  "earlier_failures": "initial tests package import; obsolete W5 tab expectations; wrong opaque marker expectation; Tk idle assertions before settling; all corrected and retested"
+}
