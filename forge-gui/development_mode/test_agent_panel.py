@@ -236,6 +236,17 @@ class AgentPanelTests(unittest.TestCase):
         self.assertTrue(any('失效' in text for text in labels))
         window.destroy()
 
+    def test_permission_badge_tracks_rejected_grant_and_mode_reset(self):
+        self.app.permission.set('workspace-write')
+        self.assertIn('workspace-write', self.app.perm_badge.cget('text'))
+        with patch('development_mode.app.messagebox.askyesno', return_value=False):
+            self.app.permission_changed()
+        self.assertEqual(self.app.permission.get(), 'read-only')
+        self.assertIn('read-only', self.app.perm_badge.cget('text'))
+        self.app.permission.set('workspace-write')
+        self.state.switch('general')
+        self.assertIn('read-only', self.app.perm_badge.cget('text'))
+
 
 class OwnershipTests(unittest.TestCase):
     def test_protected_layout_methods_are_byte_identical_to_51f6f82(self):

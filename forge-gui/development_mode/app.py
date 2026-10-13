@@ -253,9 +253,15 @@ class DevelopmentWorkbench(ttk.Frame):
         ttk.Combobox(row2, textvariable=self.planning, values=['none', 'low', 'medium', 'high'], state='readonly', width=7).pack(side='left')
         ttk.Label(row2, text='权限').pack(side='left', padx=(8, 0))
         self.permission = tk.StringVar(value='read-only')
+        import weakref
+        owner = weakref.ref(self)
+        def permission_display(*args):
+            bench = owner()
+            if bench is not None and not bench._closed:
+                bench._sync_perm_badge()
+        self.permission.trace_add('write', permission_display)
         perms = ttk.Combobox(row2, textvariable=self.permission, values=['read-only', 'workspace-write'], state='readonly', width=10)
         perms.pack(side='left')
-        perms.bind('<<ComboboxSelected>>', self._sync_perm_badge)
         perms.bind('<<ComboboxSelected>>', self.permission_changed)
         task_tools = self.agent_panel.tasks_toolbar
         ttk.Button(task_tools, text='复审', command=self.review).pack(side='left')
