@@ -208,7 +208,7 @@ class EditorBridge:
                 'forge_imports': info}
 
     def _probe_python_imports(self, python: str) -> dict:
-        snippet = ('import importlib, json, sys; '
+        snippet = ('import importlib.util, json, sys; '
                    "sys.path.insert(0, %r); "
                    'names = ["forge.config","forge.loop","forge.policy","forge.secrets","forge.routing"]; '
                    'print(json.dumps({n: bool(importlib.util.find_spec(n)) for n in names}))' % str(self.workspace))
@@ -299,12 +299,16 @@ class EditorBridge:
                 context_paths=[item['path'] for item in params.get('contexts', []) if item.get('path')])
         self.history = _history([*self.history, {'role': 'user', 'content': task},
                                 {'role': 'assistant', 'content': report.text}])
-        if report.stopped == 'final':
-            self.last_result = (self.agent._run_id, report.text)
-        return {'ok': report.stopped == 'final', 'text': report.text, 'stopped': report.stopped,
+        if report.as_result().outcome == 'succeeded':
+            self.last_result = (report.run_id, report.text)
+        return {'ok': report.as_result().outcome == 'succeeded', 'text': report.text, 'stopped': report.stopped,
                 'usage': report.usage, 'toolCalls': report.tool_calls,
                 'planning': report.planning,
-                'messageId': self.agent._run_id,
+                'messageId': report.run_id,
+                'run_id': report.run_id, 'task_id': report.task_id,
+                'parent_run_id': report.parent_run_id, 'protocol_version': 1,
+                'outcome': report.as_result().outcome, 'error_code': report.as_result().error_code,
+                'execution_state': report.as_result().execution_state,
                 'sessionPath': str(self.agent.session.path)}
 
     def _phase_model(self, identifier):

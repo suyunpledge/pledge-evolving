@@ -72,7 +72,7 @@ class DesktopServicesTests(unittest.TestCase):
             transport=lambda *a,**kw:{'encoding':'base64','content':base64.b64encode(('API_KEY='+key).encode()).decode()})
         registry=service.registry()
         result=registry.invoke('connector_github_file',{'owner':'a','repo':'b','path':'.env'},
-                              ToolContext(Policy(mode=Mode.DEFAULT),Path(self.tmp.name)))
+                              ToolContext(Policy(mode=Mode.DEFAULT, workspace=Path(self.tmp.name)),Path(self.tmp.name)))
         self.assertTrue(result.ok,result.error)
         self.assertNotIn(key,result.content)
         self.assertNotIn('base64',result.content)

@@ -115,6 +115,18 @@ class Decision(str, Enum):
         return self is Decision.ALLOW
 
 
+class ToolEffect(str, Enum):
+    """Host-verified effect, never copied from a tool's own JSON declaration."""
+    READ = 'read'
+    FILE_READ = 'file_read'
+    WRITE = 'write'
+    NATIVE = 'native'
+    CONTROL = 'control'
+    CONFIG = 'config'
+    DELEGATED_WRITE = 'delegated_write'
+    UNKNOWN = 'unknown'
+
+
 # Programs that hand control back to the OS and therefore bypass any
 # path-based sandbox. Hard-denied before the shell ever sees them.
 DEFAULT_FORBIDDEN_PROGRAMS = (
@@ -241,8 +253,15 @@ class Policy:
         *,
         args: dict | None = None,
         touching: Iterable[str] = (),
+        effect: ToolEffect | None = None,
     ) -> Decision:
         args = args or {}
+        if effect is ToolEffect.UNKNOWN:
+            return Decision.DENY
+        writes = (tool in WRITE_TOOLS or effect in {ToolEffect.WRITE, ToolEffect.NATIVE,
+                  ToolEffect.DELEGATED_WRITE} or (tool == 'edit_config' and args.get('patch') is not None))
+        if effect is not None and writes and (self.mode is Mode.READ_ONLY or self.sandbox is Sandbox.READ_ONLY):
+            return Decision.DENY
 
         # Secret permissions are an independent boundary, including in BYPASS.
         if tool in {"secret.resolve", "secret.export", "resolve_secret", "export_secret"}:
@@ -265,7 +284,7 @@ class Policy:
             return Decision.DENY
 
         # 2. sandbox: writes outside the granted roots (only write tools move data)
-        if tool in WRITE_TOOLS or (tool == "edit_config" and args.get("patch") is not None):
+        if writes:
             # Collect all candidate paths from every source so container tools
             # like apply_patch (patches[].path / edits[].path) are not silently
             # skipped when the top-level 'path' key is absent.
@@ -280,7 +299,7 @@ class Policy:
             targets = list(touching) + extra
             if not targets:
                 targets = [str(v) for k, v in args.items()
-                           if k in {"path", "file", "target"} and v]
+                           if k in {"path", "file", "target", "root"} and v]
             for target in targets:
                 if not self.allows_write(self.abs_path(target)):
                     return Decision.DENY
@@ -289,7 +308,7 @@ class Policy:
         # sandbox — otherwise read_file("~/.ssh/id_rsa") silently exfiltrates
         # whatever the process account can see, but forcing the same
         # confinement when the user granted read-anywhere breaks real work.
-        if tool in READ_PATH_TOOLS and not self.read_allows_anywhere():
+        if (tool in READ_PATH_TOOLS or effect is ToolEffect.FILE_READ) and not self.read_allows_anywhere():
             read_targets = list(touching)
             if not read_targets:
                 key = "root" if tool == "grep" else "path"
@@ -310,7 +329,9 @@ class Policy:
             return Decision.ALLOW
 
         # 5. mode baseline
-        return self._baseline(tool)
+        # A verified delegated writer has its own narrower host approval gate.
+        # Read-only restrictions above still apply before reaching that gate.
+        return self._baseline(tool, writes=writes and effect is not ToolEffect.DELEGATED_WRITE)
 
     def abs_path(self, target: str | Path) -> Path:
         """Resolve a tool argument against the workspace, not the process cwd."""
@@ -353,8 +374,8 @@ class Policy:
         except (ValueError, OSError):
             return False
 
-    def _baseline(self, tool: str) -> Decision:
-        writes = tool in WRITE_TOOLS
+    def _baseline(self, tool: str, *, writes: bool | None = None) -> Decision:
+        writes = tool in WRITE_TOOLS if writes is None else writes
         if self.mode is Mode.BYPASS:
             return Decision.ALLOW
         if self.mode is Mode.READ_ONLY:

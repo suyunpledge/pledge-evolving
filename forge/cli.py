@@ -372,17 +372,24 @@ def cmd_run(args) -> int:
     with agent.session:
         report = agent.run(args.task)
 
-    failed = str(getattr(report, "stopped", "")) in {"error", "planning_error", "format_error", "stalled"}
+    failed = report.as_result().outcome != 'succeeded'
     progress.finish()
     if args.json:
         print(json.dumps({
             "ok": not failed,
+            "run_id": report.run_id, "task_id": report.task_id,
+            "parent_run_id": report.parent_run_id, "protocol_version": 1,
+            "outcome": report.as_result().outcome,
+            "error_code": report.as_result().error_code,
+            "execution_state": report.as_result().execution_state,
+            "sessionPath": str(agent.session.path),
             "text": report.text,
             "stopped": report.stopped,
             "usage": report.usage,
             "planning": report.planning,
             "steps": [{"index": s.index, "tool": s.tool, "decision": s.decision,
-                       "note": s.note, "result": s.result[:400]} for s in report.steps],
+                       "note": s.note, "result": s.result[:400],
+                       "action_id": s.action_id, "meta": s.meta} for s in report.steps],
         }, ensure_ascii=False, indent=2))
     elif failed:
         # 失败不是答案：错误走 stderr，stdout 保持干净。否则
@@ -603,7 +610,7 @@ def cmd_gateway(args) -> int:
 
         composed = _compose(args)
         _apply_profile(args, composed)
-        registry = build_builtin_registry()
+        registry = build_builtin_registry(expose=composed.get('tools', 'expose', None))
         bridge_policy = Policy.from_config(
             composed,
             workspace=Path(args.workspace or Path.cwd()),
@@ -622,6 +629,7 @@ def cmd_gateway(args) -> int:
         registry=registry,
         workspace=str(Path(args.workspace or Path.cwd())),
         policy=bridge_policy,
+        home=Path(args.home),
         provider_options=json.loads(getattr(args, "provider_options", "{}")),
         warmth_path=Path(getattr(args, "home", None) or os.environ.get("FORGE_HOME") or Path.home() / ".forge") / "cache-warmth.json",
     )

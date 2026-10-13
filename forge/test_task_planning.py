@@ -40,7 +40,7 @@ class TaskPlanningTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         root = Path(tmp.name)
         agent = Agent(home=root, workspace=root, router=router,
-            registry=build_builtin_registry(), policy=Policy(mode=Mode.DONT_ASK, sandbox=Sandbox.READ_ONLY),
+            registry=build_builtin_registry(), policy=Policy(mode=Mode.DONT_ASK, sandbox=Sandbox.READ_ONLY, workspace=root),
             planning=level, limits=LoopLimits(max_steps=12), **kwargs)
         self.addCleanup(agent.secret_scope.close)
         return agent

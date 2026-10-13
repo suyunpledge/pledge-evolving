@@ -102,6 +102,7 @@ class GatewayConfig:
         provider_options: dict | None = None,
         warmth_path: Path | None = None,
         _credential=None,
+        home: Path | None = None,
     ) -> None:
         self.upstream = upstream.rstrip("/")
         from .secrets import VendorCredential, install_logging_redaction
@@ -124,6 +125,13 @@ class GatewayConfig:
         # When attached, GET /v1/tools lists OpenAI function schemas and
         # POST /v1/tools/call executes a tool through the full policy gate.
         self.registry = registry
+        from .execution import ActionExecutor
+        self.home = Path(home).resolve() if home is not None else None
+        self._runtime_temp = None
+        self._context_lock = threading.RLock()
+        self._contexts = {}
+        self._protected_runs = set()
+        self.action_executor = ActionExecutor()
         self.workspace = Path(workspace) if workspace else Path.cwd()
         # Tool-bridge policy: MUST come from the composed user config (never a
         # bare Policy() default — that silently re-permissions the bridge).
@@ -139,6 +147,76 @@ class GatewayConfig:
         self._secret_scopes = {}
         self._auth_failures: int = 0
         self._auth_locked_until: float = 0.0
+
+    def execution_context(self, run_id='', task_id='', parent_run_id='', *, secret_scope=None, discovery=False,
+                          require_scope=False):
+        from .execution import RunRequest, create_execution_context, validate_id
+        from .session import Session
+        import hashlib
+        import tempfile
+        if self.policy is None:
+            raise ValueError('No host Policy attached')
+        with self._context_lock:
+            if self.home is None:
+                self._runtime_temp = tempfile.TemporaryDirectory(prefix='forge-gateway-runtime-')
+                self.home = Path(self._runtime_temp.name)
+            if discovery:
+                return create_execution_context(home=self.home, workspace=self.workspace,
+                    registry=self.registry, policy=self.policy, secret_scope=secret_scope, journal=False)
+            if run_id:
+                validate_id(run_id)
+                if run_id in self._contexts:
+                    ctx = self._contexts[run_id]
+                    if task_id and task_id != ctx.run.task_id or parent_run_id and parent_run_id != ctx.run.parent_run_id:
+                        raise ValueError('Run identity conflicts with existing task')
+                    if secret_scope is not None and secret_scope is not ctx.secret_scope:
+                        raise ValueError('Run is bound to a different protected scope')
+                    if require_scope and secret_scope is None:
+                        if run_id in self._protected_runs:
+                            raise ValueError('Protected run requires its scope header')
+                    return ctx
+            if len(self._contexts) >= 256:
+                raise ValueError('Gateway context limit reached; restart with durable home')
+            run = RunRequest(run_id=run_id) if run_id else RunRequest(entry='gateway')
+            path = self.home / 'sessions' / 'gateway' / (hashlib.sha256(run.run_id.encode()).hexdigest() + '.jsonl')
+            recovered = path.exists() and path.stat().st_size > 0
+            journal = Session(path)
+            if path.exists():
+                journal.open()
+                if journal.meta.get('cwd') and Path(journal.meta['cwd']).resolve() != self.workspace.resolve():
+                    journal.close()
+                    raise ValueError('Journal belongs to another workspace')
+                if task_id and journal.meta.get('task_id') not in {None, task_id}:
+                    journal.close()
+                    raise ValueError('Journal task identity mismatch')
+                if parent_run_id and journal.meta.get('parent_run_id') not in {None, parent_run_id}:
+                    journal.close()
+                    raise ValueError('Journal parent identity mismatch')
+                task_id = task_id or journal.meta.get('task_id', '')
+                parent_run_id = parent_run_id or journal.meta.get('parent_run_id', '')
+                if journal.meta.get('run_id') not in {None, run.run_id}:
+                    raise ValueError('Journal run identity mismatch')
+                journal.close()
+            run = RunRequest(run.run_id, task_id or run.task_id, parent_run_id, entry='gateway')
+            journal.meta.update(cwd=str(self.workspace.resolve()), run_id=run.run_id,
+                                task_id=run.task_id, parent_run_id=run.parent_run_id)
+            ctx = create_execution_context(home=self.home, workspace=self.workspace,
+                registry=self.registry, policy=self.policy, run=run, session=journal,
+                cancellation=threading.Event(), secret_scope=secret_scope, recovered=recovered)
+            self._contexts[run.run_id] = ctx
+            if secret_scope is not None:
+                self._protected_runs.add(run.run_id)
+            return ctx
+
+    def close_runtime(self):
+        with self._context_lock:
+            for ctx in self._contexts.values():
+                ctx.session.close()
+            self._contexts.clear()
+            self._protected_runs.clear()
+            if self._runtime_temp is not None:
+                self._runtime_temp.cleanup()
+                self._runtime_temp = None
 
     def secret_scope(self, identifier):
         from .secrets import SecretScope
@@ -244,6 +322,44 @@ def build_handler(cfg: GatewayConfig):
         # -- routes -----------------------------------------------------
         def do_GET(self):  # noqa: N802
             route = self.path.split("?")[0].rstrip("/")
+            parts = route.split('/')
+            if len(parts) == 5 and parts[1:3] == ['v1', 'runs'] and parts[4] == 'events':
+                if not cfg.gateway_token:
+                    self._json(503, {'error': {'message': 'Configure a Gateway key for execution queries'}})
+                    return
+                if cfg.gateway_token and self.headers.get('Authorization') != 'Bearer ' + cfg.gateway_token:
+                    self._json(401, {'error': {'message': 'Gateway authentication required'}})
+                    return
+                try:
+                    from urllib.parse import urlsplit, parse_qs
+                    query = parse_qs(urlsplit(self.path).query)
+                    after = int(query.get('after', ['0'])[0])
+                    if after < 0:
+                        raise ValueError('after must be a nonnegative ordinal')
+                    context = cfg.execution_context(parts[3])
+                    events = [{'type': e.type, 'ordinal': e.ordinal, 'ts': e.ts, **e.data}
+                        for e in context.session.replay() if e.type != 'session_meta'
+                        and e.data.get('run_id') == parts[3] and e.ordinal > after]
+                    page = events[:200]
+                    self._json(200, {'protocol_version': 1, 'run_id': parts[3], 'data': page,
+                        'next_after': page[-1]['ordinal'] if page else after, 'has_more': len(events) > 200})
+                except ValueError as exc:
+                    self._json(400, {'error': {'message': str(exc)}})
+                return
+            if len(parts) == 6 and parts[1:3] == ['v1', 'runs'] and parts[4] == 'actions':
+                if not cfg.gateway_token:
+                    self._json(503, {'error': {'message': 'Configure a Gateway key for execution queries'}})
+                    return
+                if cfg.gateway_token and self.headers.get('Authorization') != 'Bearer ' + cfg.gateway_token:
+                    self._json(401, {'error': {'message': 'Gateway authentication required'}})
+                    return
+                try:
+                    context = cfg.execution_context(parts[3])
+                    result = cfg.action_executor.query(context, parts[5])
+                    self._json(200 if result else 404, result or {'error': {'message': 'Unknown action'}})
+                except ValueError as exc:
+                    self._json(400, {'error': {'message': str(exc)}})
+                return
             if route in ("/v1/models", "/models"):
                 now = int(time.time())
                 self._json(200, {
@@ -259,7 +375,11 @@ def build_handler(cfg: GatewayConfig):
                                      "error": {"type": "not_found",
                                                "message": "tool registry not attached to this gateway"}})
                     return
-                specs = cfg.registry.callable_specs()
+                if cfg.policy is None:
+                    self._json(503, {'error': {'message': 'No host Policy attached'}})
+                    return
+                discovery = cfg.execution_context(discovery=True)
+                specs = discovery.registry.available_specs(discovery.tool_context())
                 tools = []
                 for spec in specs:
                     props = {}
@@ -330,6 +450,20 @@ def build_handler(cfg: GatewayConfig):
                 self.close_connection = True
                 self._json(400, {"error": {"type": "invalid_request_error", "message": str(exc)}})
                 return
+            parts = route.split('/')
+            if len(parts) == 5 and parts[1:3] == ['v1', 'runs'] and parts[4] == 'cancel':
+                if not cfg.gateway_token:
+                    self._json(503, {'error': {'message': 'Configure a Gateway key for execution control'}})
+                    return
+                try:
+                    context = cfg.execution_context(parts[3])
+                    context.cancellation.set()
+                    context.publish('run_cancel_requested', outcome='cancel_requested')
+                    self._json(200, {'run_id': context.run.run_id, 'task_id': context.run.task_id,
+                        'outcome': 'cancel_requested', 'protocol_version': 1})
+                except ValueError as exc:
+                    self._json(400, {'error': {'message': str(exc)}})
+                return
             if route == "/v1/tools/call":
                 self._tool_call(body)
                 return
@@ -341,7 +475,7 @@ def build_handler(cfg: GatewayConfig):
             Body: {"name": "read_file", "arguments": {"path": "x.py"}}
             The name may arrive with or without the forge_ prefix.
             """
-            from .tools import ToolContext
+            from .execution import ActionRequest
 
             if cfg.registry is None:
                 self._json(404, {"type": "error",
@@ -357,6 +491,9 @@ def build_handler(cfg: GatewayConfig):
                 return
             if not isinstance(payload, dict):
                 self._json(400, {"error": {"type": "invalid_request_error", "message": "body must be an object"}})
+                return
+            if payload.get('protocol_version', 1) != 1:
+                self._json(400, {'error': {'message': 'Unsupported action protocol'}})
                 return
             name = str(payload.get("name", "")).strip()
             if name.startswith("forge_"):
@@ -379,9 +516,6 @@ def build_handler(cfg: GatewayConfig):
                 self._json(404, {"type": "error",
                                  "error": {"type": "not_found", "message": f"unknown tool: {name}"}})
                 return
-            if spec.is_deferred:
-                cfg.registry.activate(name)
-                cfg.log.write(f"TOOLCALL implicit activation: {name}")
             if cfg.policy is None:
                 # fail-closed: a gateway started without a policy must not
                 # execute tools under invented default permissions
@@ -391,6 +525,18 @@ def build_handler(cfg: GatewayConfig):
                                                       "(start gateway with --registry/--profile so the "
                                                       "bridge inherits the real permission config)"}})
                 return
+            try:
+                scope_id = self.headers.get('X-Forge-Secret-Scope', '')
+                context = cfg.execution_context(payload.get('run_id', ''), payload.get('task_id', ''),
+                    payload.get('parent_run_id', ''), secret_scope=cfg.secret_scope(scope_id) if scope_id else None,
+                    require_scope=True)
+                request = ActionRequest(name, arguments, **({'action_id': payload['action_id']} if 'action_id' in payload else {}))
+            except ValueError as exc:
+                self._json(400, {'error': {'type': 'invalid_request_error', 'message': str(exc)}})
+                return
+            if spec.is_deferred:
+                context.registry.activate(name)
+            preflight = None
             plugin_context = payload.get("plugin_context")
             if "plugin_context" in payload:
                 from .policy import Decision
@@ -428,26 +574,40 @@ def build_handler(cfg: GatewayConfig):
                     result = ToolResult(False, error=f"plugin denied or awaiting approval by policy: {policy_names[1]}",
                         meta={"authorization": decision.value, "plugin_policy_checked": True,
                               "requires_approval": decision is Decision.ASK})
-                    self._json(200, result.as_dict())
-                    return
-            ctx = ToolContext(policy=cfg.policy, workspace=cfg.workspace,
-                              secret_scope=cfg.secret_scope(self.headers.get('X-Forge-Secret-Scope', '')),
-                              isolated=True, extras={"registry": cfg.registry})
-            cfg.log.write(f"TOOLCALL {name} args={json.dumps(arguments, ensure_ascii=False)[:200]}")
+                    preflight = result
+            cfg.log.write(f"TOOLCALL {name} run={context.run.run_id} action={request.action_id}")
+            if preflight is None:
+                from dataclasses import replace
+                # The frozen run cannot gain new grants, and current host
+                # restrictions still deny newly submitted actions after revocation.
+                current = replace(context.tool_context(), policy=cfg.policy)
+                current_registry = cfg.registry.clone()
+                if spec.is_deferred:
+                    current_registry.activate(name)
+                current.extras['registry'] = current_registry
+                preflight = current_registry.authorize(name, arguments, current)
+                if preflight is None:
+                    preflight = context.registry.authorize(name, arguments, context.tool_context())
+            if preflight is not None and plugin_context is not None:
+                preflight.meta['plugin_policy_checked'] = True
             try:
-                result = cfg.registry.invoke(name, arguments, ctx)
+                result = cfg.action_executor.execute(context, request, preflight=preflight).as_dict()
                 if plugin_context is not None:
-                    result.meta["plugin_policy_checked"] = True
-            except Exception as exc:  # never kill the handler
-                self._json(500, {"type": "error",
-                                 "error": {"type": "api_error", "message": f"{type(exc).__name__}: {exc}"}})
-                return
-            self._json(200, {
-                "ok": result.ok,
-                "content": result.content,
-                "error": result.error,
-                "meta": result.meta,
-            })
+                    result['meta']['plugin_policy_checked'] = True
+                self._json(200, result)
+            except (ConnectionError, BrokenPipeError):
+                # The action result is already durable. A disconnected client
+                # queries the identity; a second response cannot restore its socket.
+                pass
+            except Exception as exc:
+                # A durable intent may already exist. Query its identity; never
+                # turn a lost journal acknowledgement into an automatic retry.
+                self._json(500, {'ok': False, 'error': f'{type(exc).__name__}: {exc}',
+                    'meta': {'run_id': context.run.run_id, 'task_id': context.run.task_id,
+                        'action_id': request.action_id, 'execution_state': 'unknown',
+                        'outcome': 'unknown', 'error_code': 'journal_failure'}})
+            finally:
+                context.session.close()
 
         def _proxy(self, body: bytes) -> None:
             self._upstream_started = False
@@ -679,7 +839,11 @@ def build_handler(cfg: GatewayConfig):
 
 
 def serve(cfg: GatewayConfig) -> ThreadingHTTPServer:
-    server = ThreadingHTTPServer(("127.0.0.1", cfg.port), build_handler(cfg))
+    class RuntimeServer(ThreadingHTTPServer):
+        def server_close(self):
+            super().server_close()
+            cfg.close_runtime()
+    server = RuntimeServer(("127.0.0.1", cfg.port), build_handler(cfg))
     cfg.log.write(f"listening on http://127.0.0.1:{cfg.port} -> {cfg.upstream}")
     return server
 

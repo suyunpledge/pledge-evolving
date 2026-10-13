@@ -255,6 +255,7 @@ class ConnectorService:
 
     def registry(self, *, approve=None, cancel_event=None, agent=True):
         from .tools import ToolRegistry, ToolSpec, ToolResult
+        from .policy import ToolEffect
         registry=ToolRegistry()
         for name,op in OPERATIONS.items():
             def handler(args,ctx,name=name):
@@ -263,7 +264,8 @@ class ConnectorService:
                                   meta={'connector':OPERATIONS[name].account})
             registry.register(ToolSpec(name,op.route,handler,read_only=not op.write,tags=('connector',),
                 schema={'type':'object','properties':{f:{'type':'string'} for f in op.fields},
-                        'required':list(op.required),'additionalProperties':False}))
+                        'required':list(op.required),'additionalProperties':False}), trusted=True,
+                effect=ToolEffect.DELEGATED_WRITE if op.write else ToolEffect.READ)
         return registry
 
     def invoke(self, name, arguments, policy, *, approve=None, cancel_event=None, agent=True):

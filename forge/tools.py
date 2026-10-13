@@ -12,12 +12,15 @@ that keeps the system prompt small when the tool surface is wide.
 from __future__ import annotations
 
 import json
+import sys
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from .policy import Decision, Policy
+from .policy import Decision, Policy, ToolEffect
+from .runtime_lock import resource_lock
+from contextlib import contextmanager, ExitStack
 from .secrets import SecretScope, assert_public_path, redact, read_public_bytes
 
 
@@ -63,6 +66,7 @@ class ToolContext:
     # 生产构造点（gateway.py / loop.py）本就显式传 True，行为不变；
     # plugin_capabilities.py 的插件桥翻转后默认获得保护，正是期望效果。
     isolated: bool = True
+    cancellation: Any | None = None
 
     def fire(self, **event: Any) -> None:
         if self.emit is not None:
@@ -91,9 +95,14 @@ class ToolRegistry:
         self._activated: set[str] = set()
         self._expose = list(expose) if expose is not None else None
         self._hide = list(hide)
+        self._effects: dict[str, ToolEffect] = {}
+        self._requires: dict[str, tuple[str, ...]] = {}
 
     # -- registration ----------------------------------------------------
-    def register(self, spec: ToolSpec, *, force: bool = False) -> None:
+    def register(self, spec: ToolSpec, *, force: bool = False, trusted: bool = False,
+                 effect: ToolEffect | None = None, requires: Iterable[str] = ()) -> None:
+        if effect is not None and not isinstance(effect, ToolEffect):
+            raise ValueError('Host effect must be a ToolEffect')
         # QA-08（独立 QA 回归）：同名静默覆盖是潜伏风险——插件热重载或
         # 多贡献源并存时会无声顶掉既有工具。默认冲突即错；宿主显式
         # force=True 才允许覆盖。名称含空白一律拒绝。
@@ -103,9 +112,51 @@ class ToolRegistry:
             raise ValueError(
                 f"tool {spec.name!r} is already registered; pass force=True to replace")
         self._specs[spec.name] = spec
+        verified = trusted
+        # RC1 compatibility for the existing declarative plugin broker. This
+        # exact shipped handler is host code, not plugin code; it checks grants,
+        # revocation and delegates repo operations to the Gateway's real Policy.
+        # New adapters use explicit trusted registration. Names/tags/manifest
+        # read_only flags alone can never activate this compatibility bridge.
+        code = getattr(spec.handler, '__code__', None)
+        broker = Path(__file__).resolve().parent.parent / 'forge-gui' / 'plugin_capabilities.py'
+        if code is not None and Path(code.co_filename).resolve() == broker:
+            # Filename/qualname can be forged by code.replace(). Require the
+            # actual code object owned by the loaded host class and its instance.
+            for module in tuple(sys.modules.values()):
+                if module is None or getattr(module, '__file__', None) is None:
+                    continue
+                if Path(module.__file__).resolve() != broker:
+                    continue
+                cls = getattr(module, 'CapabilityRuntime', None)
+                reload_code = getattr(getattr(cls, 'reload', None), '__code__', None)
+                owners = [cell.cell_contents for cell in (getattr(spec.handler, '__closure__', None) or ())]
+                owner = next((v for v in owners if cls is not None and type(v) is cls), None)
+                if (reload_code is not None and any(code is item for item in reload_code.co_consts)
+                        and owner is not None and getattr(owner._execute, '__func__', None) is cls._execute):
+                    meta = (spec.handler.__defaults__ or (None,))[-1]
+                    if isinstance(meta, dict):
+                        target = meta.get('target')
+                        if target in {'write_file', 'edit_file'}:
+                            effect = ToolEffect.DELEGATED_WRITE
+                        elif target in {'read_file', 'list_dir'}:
+                            effect = ToolEffect.FILE_READ
+                        elif target == getattr(module, 'SKILL_TARGET', None):
+                            effect = ToolEffect.READ
+                        else:
+                            break
+                        verified = True
+                break
+        if verified and ('native' in spec.tags or spec.name in {'shell_exec', 'notebook_edit'}):
+            effect = ToolEffect.NATIVE
+        self._effects[spec.name] = (effect or (ToolEffect.READ if spec.read_only else ToolEffect.WRITE)) if verified else ToolEffect.UNKNOWN
+        self._requires[spec.name] = tuple(requires) if verified else ()
 
     def unregister(self, name: str) -> bool:
         """QA-08: plugin lifecycle needs a removal path."""
+        self._effects.pop(name, None)
+        self._requires.pop(name, None)
+        self._activated.discard(name)
         return self._specs.pop(name, None) is not None
 
     def tool(
@@ -118,6 +169,9 @@ class ToolRegistry:
         no_defer: bool = False,
         tags: Iterable[str] = (),
         schema: dict[str, Any] | None = None,
+        trusted: bool = False,
+        effect: ToolEffect | None = None,
+        requires: Iterable[str] = (),
     ):
         def deco(fn):
             self.register(ToolSpec(
@@ -129,7 +183,7 @@ class ToolRegistry:
                 no_defer=no_defer,
                 tags=tuple(tags),
                 schema=schema or {},
-            ))
+            ), trusted=trusted, effect=effect, requires=requires)
             return fn
 
         return deco
@@ -204,32 +258,109 @@ class ToolRegistry:
         out = ToolRegistry(expose=self._expose, hide=self._hide)
         out._specs = dict(self._specs)
         out._activated = set(self._activated)
+        out._effects = dict(self._effects)
+        out._requires = dict(self._requires)
         return out
+
+    def effect(self, name, args=None):
+        effect = self._effects.get(name, ToolEffect.UNKNOWN)
+        if effect is ToolEffect.CONFIG:
+            return ToolEffect.WRITE if (args or {}).get('patch') is not None else ToolEffect.FILE_READ
+        return effect
+
+    def writes(self, name, args=None):
+        # A delegated host gate must not hold a workspace lock while waiting
+        # for Gateway/connector approval: the actual writer acquires that lock.
+        return self.effect(name, args) in {ToolEffect.WRITE, ToolEffect.NATIVE}
+
+    def side_effects(self, name, args=None):
+        return self.effect(name, args) in {ToolEffect.WRITE, ToolEffect.NATIVE, ToolEffect.DELEGATED_WRITE}
+
+    @contextmanager
+    def write_guard(self, name, args, ctx):
+        with ExitStack() as locks:
+            if self.writes(name, args):
+                locks.enter_context(resource_lock('workspace-write', ctx.workspace))
+                targets = [v for k,v in (args or {}).items() if k in {'path', 'file', 'target', 'root'} and isinstance(v, str)]
+                blocks = (args or {}).get('patches') or (args or {}).get('edits') or []
+                if isinstance(blocks, list):
+                    targets += [b['path'] for b in blocks if isinstance(b, dict) and isinstance(b.get('path'), str)]
+                paths = sorted({str(ctx.policy.abs_path(p).resolve()) for p in targets})
+                for path in paths:
+                    locks.enter_context(resource_lock('file-write', path))
+            yield
+
+    def available_specs(self, ctx):
+        return [s for s in self.callable_specs() if all(ctx.extras.get(k) is not None
+                for k in self._requires.get(s.name, ())) and self.effect(s.name) is not ToolEffect.UNKNOWN]
+
+    def authorize(self, name, args, ctx):
+        """Preflight only. invoke rechecks under the write lock before dispatch."""
+        try:
+            value = self._prepare(name, args, ctx)
+            return value if isinstance(value, ToolResult) else None
+        except Exception as exc:
+            return ToolResult(False, error=redact(str(exc)), meta={'authorization': 'deny',
+                              'error_code': 'boundary_violation', 'execution_state': 'not_started'})
 
     # -- invocation ------------------------------------------------------
     def invoke(self, name: str, args: dict[str, Any] | None, ctx: ToolContext) -> ToolResult:
         try:
-            result = self._invoke(name, args, ctx)
+            with self.write_guard(name, args, ctx):
+                result = self._invoke(name, args, ctx)
             result.content = ctx.secret_scope.protect_text(result.content)
             result.error = redact(result.error)
             result.meta = redact(result.meta)
+            result.meta.setdefault('outcome', 'unknown' if result.meta.get('execution_state') == 'unknown' else 'succeeded' if result.ok else 'failed')
+            result.meta.setdefault('error_code', '' if result.ok else 'tool_rejected')
+            result.meta.setdefault('execution_state', 'completed' if result.ok else 'not_started')
             return result
         except Exception as exc:
-            return ToolResult(False, error=redact(f"{type(exc).__name__}: {exc}"))
+            return ToolResult(False, error=redact(f"{type(exc).__name__}: {exc}"),
+                              meta={'authorization': 'unknown', 'error_code': 'result_processing_failed',
+                                    'execution_state': 'unknown' if self.side_effects(name, args) else 'completed'})
 
     def _invoke(self, name: str, args: dict[str, Any] | None, ctx: ToolContext) -> ToolResult:
+        try:
+            decision = self._prepare(name, args, ctx)
+        except Exception as exc:
+            return ToolResult(False, error=redact(str(exc)), meta={'authorization': 'deny',
+                              'error_code': 'boundary_violation', 'execution_state': 'not_started'})
+        if isinstance(decision, ToolResult):
+            return decision
+        spec = self._specs[name]
+        try:
+            result = spec.handler(args or {}, ctx)
+            if (not isinstance(result, ToolResult) or not isinstance(result.content, str)
+                    or not isinstance(result.error, str) or result.meta is not None and not isinstance(result.meta, dict)):
+                raise TypeError('Handler must return ToolResult with string outputs and dict metadata')
+        except Exception as exc:
+            return ToolResult(False, error=f'{type(exc).__name__}: {exc}', meta={
+                'authorization': decision.value, 'error_code': 'tool_error',
+                'execution_state': 'unknown' if self.side_effects(name, args) else 'completed'})
+        if result.meta is None:
+            result.meta = {}
+        result.meta.setdefault('authorization', decision.value)
+        result.meta.setdefault('execution_state', 'unknown' if not result.ok and self.side_effects(name, args) else 'completed')
+        return result
+
+    def _prepare(self, name: str, args: dict[str, Any] | None, ctx: ToolContext):
         spec = self._specs.get(name)
         if spec is None:
-            return ToolResult(ok=False, error=f"unknown tool {name!r}")
+            return ToolResult(ok=False, error=f"unknown tool {name!r}", meta={'error_code': 'unknown_tool'})
         if self._hidden(name):
-            return ToolResult(ok=False, error=f"tool {name!r} is not exposed in this session")
+            return ToolResult(ok=False, error=f"tool {name!r} is not exposed in this session", meta={'error_code': 'tool_hidden'})
+        if Path(ctx.workspace).resolve() != Path(ctx.policy.workspace).resolve():
+            return ToolResult(False, error='Workspace and Policy disagree', meta={'authorization': 'deny', 'error_code': 'invalid_context'})
+        if any(ctx.extras.get(k) is None for k in self._requires.get(name, ())):
+            return ToolResult(False, error='Required host capability is not attached', meta={'authorization': 'deny', 'error_code': 'missing_capability'})
         if spec.is_deferred and name not in self._activated:
             return ToolResult(
                 ok=False,
                 error=f"tool {name!r} is deferred; call tool_search first to load it",
             )
         args = args or {}
-        touching = [str(v) for k, v in args.items() if k in {"path", "file", "target"} and v]
+        touching = [str(v) for k, v in args.items() if k in {"path", "file", "target", "root"} and v]
         # These operations have unrestricted filesystem/import/network access.
         # No command blacklist or stdout filter can make them secret-safe.
         if ctx.isolated and (name in {"shell_exec", "notebook_edit"} or "native" in spec.tags):
@@ -240,12 +371,16 @@ class ToolRegistry:
         blocks = args.get("patches") or args.get("edits") or []
         if isinstance(blocks, list):
             touching += [str(b['path']) for b in blocks if isinstance(b, dict) and b.get('path')]
-        decision = ctx.policy.resolve_ask(ctx.policy.evaluate(name, args=args, touching=touching))
+        effect = self.effect(name, args)
+        raw_decision = ctx.policy.evaluate(name, args=args, touching=touching, effect=effect)
+        decision = ctx.policy.resolve_ask(raw_decision)
         if name == "edit_config" and args.get("patch") is not None and decision is Decision.ALLOW:
             decision = ctx.policy.resolve_ask(ctx.policy.evaluate("write_file", args=args, touching=touching))
         if decision is Decision.DENY:
             return ToolResult(ok=False, error=f"denied by policy: {name}",
-                              meta={"decision": "deny", "authorization": decision.value})
+                              meta={"decision": "deny", "authorization": decision.value,
+                                    'raw_authorization': raw_decision.value,
+                                    'error_code': 'approval_unavailable' if raw_decision is Decision.ASK else 'policy_denied'})
         if decision is Decision.ASK:
             return ToolResult(ok=False, error=f"approval required by policy: {name}",
                               meta={"decision": "ask", "authorization": decision.value,
@@ -253,14 +388,17 @@ class ToolRegistry:
         for target in touching:
             path = ctx.policy.abs_path(target)
             assert_public_path(path)
-            if ctx.isolated and name in {"write_file", "edit_file", "apply_patch", "delete_file", "edit_config"}:
+            if ctx.isolated and self.writes(name, args):
                 host = Path(__file__).resolve().parent
                 canonical = path.resolve()
                 control_roots = {Path.home() / '.forge', ctx.workspace / '.forge'}
                 execution_roots = set()
                 if ctx.extras.get('trusted_control_root'):
                     root = Path(ctx.extras['trusted_control_root']).resolve()
-                    execution_roots.update(root / name for name in ('modules', 'plugins', 'bundles', 'policies', 'hooks'))
+                    execution_roots.update(root / name for name in ('modules', 'plugins', 'bundles', 'policies', 'hooks',
+                                                                    'sessions', 'checkpoints', 'cost'))
+                    if root != ctx.workspace.resolve() and root.is_relative_to(ctx.workspace.resolve()):
+                        control_roots.add(root)
                     if canonical.parent == root and canonical.name in {'user.json', 'config.json', 'forge.patch.json', 'secrets.json'}:
                         control_roots.add(canonical)
                 for root in control_roots:
@@ -301,16 +439,9 @@ class ToolRegistry:
                     return ToolResult(False, error=f'Cannot validate preview revision: {exc}')
                 actual = hashlib.sha256(raw).hexdigest() if raw is not None else None
                 if actual != expected:
-                    return ToolResult(False, error='File changed since preview; regenerate the change')
-        try:
-            result = spec.handler(args, ctx)
-        except Exception as exc:  # tool errors must never kill the loop
-            return ToolResult(ok=False, error=f"{type(exc).__name__}: {exc}",
-                              meta={"authorization": decision.value})
-        if result.meta is None:
-            result.meta = {}
-        result.meta.setdefault("authorization", decision.value)
-        return result
+                    return ToolResult(False, error='File changed since preview; regenerate the change',
+                                      meta={'authorization': decision.value, 'error_code': 'revision_conflict'})
+        return decision
 
 
 def _safe(args: dict[str, Any], limit: int = 400) -> str:
@@ -350,15 +481,18 @@ def build_builtin_registry(
     shell_timeout: int = 60,
 ) -> ToolRegistry:
     reg = ToolRegistry(expose=expose, hide=hide)
+    from functools import partial
+    host_tool = partial(reg.tool, trusted=True)
 
-    @reg.tool("edit_config", "Inspect a protected JSON/YAML/TOML/.env configuration, then apply a structured "
+    @host_tool("edit_config", "Inspect a protected JSON/YAML/TOML/.env configuration, then apply a structured "
               "patch with its revision. Credentials remain opaque and unchanged.",
+              effect=ToolEffect.CONFIG,
               schema={"path": "string", "revision": "string", "patch": "array"})
     def config_editor(args, ctx):
         from .config_edit import edit_config
         return edit_config(args, ctx)
 
-    @reg.tool("read_file", "Read a UTF-8 text file from disk.", schema={"path": "string"})
+    @host_tool("read_file", "Read a UTF-8 text file from disk.", schema={"path": "string"})
     def read_file(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         path = _resolve(ctx.workspace, args.get("path", ""))
         if not path.is_file():
@@ -378,7 +512,7 @@ def build_builtin_registry(
                                 "truncated": len(lines) > limit or char_truncated,
                                 "char_truncated": char_truncated})
 
-    @reg.tool("list_dir", "List entries of a directory.", schema={"path": "string"})
+    @host_tool("list_dir", "List entries of a directory.", schema={"path": "string"})
     def list_dir(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         path = _resolve(ctx.workspace, args.get("path", "."))
         if not path.is_dir():
@@ -386,7 +520,7 @@ def build_builtin_registry(
         entries = sorted(p.name + ("/" if p.is_dir() else "") for p in path.iterdir())
         return ToolResult(ok=True, content="\n".join(entries[:200]))
 
-    @reg.tool("grep", "Search a regex over files under a root.", schema={"pattern": "string", "root": "string"})
+    @host_tool("grep", "Search a regex over files under a root.", schema={"pattern": "string", "root": "string"})
     def grep(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         import re
 
@@ -432,7 +566,7 @@ def build_builtin_registry(
                 continue
         return ToolResult(ok=True, content="\n".join(hits))
 
-    @reg.tool(
+    @host_tool(
         "write_file",
         "Write UTF-8 text to a file (append mode optional). Gated by the sandbox and permission mode.",
         read_only=False,
@@ -449,7 +583,7 @@ def build_builtin_registry(
         _atomic_text(path,content)
         return ToolResult(ok=True, content=f"wrote {len(content)} bytes to {path}")
 
-    @reg.tool(
+    @host_tool(
         "delete_file",
         "Delete a file inside the workspace (sandbox-gated, audit-friendly "
         "alternative to shell rm). Refuses directories.",
@@ -465,7 +599,7 @@ def build_builtin_registry(
         path.unlink()
         return ToolResult(ok=True, content=f"deleted {path}")
 
-    @reg.tool(
+    @host_tool(
         "edit_file",
         "Replace an exact anchor (old -> new) inside a UTF-8 file, or overwrite a "
         "1-indexed inclusive line range (start defaults to 1, end to the last line). "
@@ -526,7 +660,7 @@ def build_builtin_registry(
         return ToolResult(ok=True, content=f"edited {path} ({count if replace_all else 1} replacement(s))",
                           meta={"matches": count})
 
-    @reg.tool(
+    @host_tool(
         "apply_patch",
         "Apply a list of {path, old, new} edits ATOMICALLY: every block is validated "
         "first, then every file is written (per-file atomic replace); a failed "
@@ -592,7 +726,7 @@ def build_builtin_registry(
                           content=f"applied {len(blocks)} patch(es) across {len(buffers)} file(s)",
                           meta={"patches": len(blocks), "files": len(buffers), "committed": committed})
 
-    @reg.tool(
+    @host_tool(
         "read_range",
         "Read a 1-indexed line range from a UTF-8 file (cheaper than a whole-file read).",
         schema={"path": "string", "start": "integer", "end": "integer"},
@@ -611,7 +745,7 @@ def build_builtin_registry(
         body = "\n".join(f"{i}\t{lines[i - 1]}" for i in range(s, e + 1))
         return ToolResult(ok=True, content=body, meta={"lines": len(lines), "start": s, "end": e})
 
-    @reg.tool(
+    @host_tool(
         "file_outline",
         "List top-level symbols (def/class signatures) of a source file without reading it whole.",
         schema={"path": "string"},
@@ -636,7 +770,7 @@ def build_builtin_registry(
         return ToolResult(ok=True, content="\n".join(out) or "(no symbols found)",
                           meta={"symbols": len(out), "truncated": truncated})
 
-    @reg.tool(
+    @host_tool(
         "shell_exec",
         "Run a shell command. Denied outright for OS-escape programs.",
         read_only=False,
@@ -656,7 +790,7 @@ def build_builtin_registry(
         out = (proc.stdout or "") + (proc.stderr or "")
         return ToolResult(ok=proc.returncode == 0, content=out[-4000:], meta={"exit": proc.returncode})
 
-    @reg.tool(
+    @host_tool(
         "tool_search",
         "Discover deferred tools by keyword and load them for this session.",
         no_defer=True,
@@ -668,7 +802,7 @@ def build_builtin_registry(
         lines = [f"{s.name}: {s.description}" for s in found] or ["no matching tools"]
         return ToolResult(ok=True, content="\n".join(lines), meta={"activated": [s.name for s in found]})
 
-    @reg.tool("skill_list", "List installed capabilities (skills/plugins).", no_defer=True)
+    @host_tool("skill_list", "List installed capabilities (skills/plugins).", no_defer=True, requires=("capabilities",))
     def skill_list(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         lib = ctx.extras.get("capabilities")
         if lib is None:
@@ -679,10 +813,10 @@ def build_builtin_registry(
             lines.append(f"{cap.name} [{cap.kind}] v{cap.version} {flag} — {cap.description}")
         return ToolResult(ok=True, content="\n".join(lines) or "(empty)")
 
-    @reg.tool(
+    @host_tool(
         "spawn_subagent",
         "Spawn a nested agent with its own context window and a permission ceiling.",
-        read_only=False,
+        read_only=False, effect=ToolEffect.CONTROL, requires=("spawn",),
         schema={"task": "string", "mode": "string"},
     )
     def spawn_subagent(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
@@ -691,7 +825,7 @@ def build_builtin_registry(
             return ToolResult(ok=False, error="subagent runtime not attached")
         return runner(str(args.get("task", "")), str(args.get("mode", "")))
 
-    @reg.tool("memory_recall", "Recall typed long-term memory entries.", no_defer=True)
+    @host_tool("memory_recall", "Recall typed long-term memory entries.", no_defer=True, requires=("memory",))
     def memory_recall(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         store = ctx.extras.get("memory")
         if store is None:
@@ -704,7 +838,7 @@ def build_builtin_registry(
     # web_search / fetch_url 参数与 ai-platform tools.ts 的 web_search /
     # fetch_webpage 逐字段对齐——模型在两个框架间切换零成本。
 
-    @reg.tool(
+    @host_tool(
         "web_search",
         "Search the web (Bing + Baidu aggregated, Sogou/Yahoo fallback). "
         "site: all/zhihu/xiaohongshu/baidu/bing/weixin.",
@@ -737,7 +871,7 @@ def build_builtin_registry(
                 lines.append(f"   {r['snippet'][:200]}")
         return ToolResult(ok=True, content="\n".join(lines), meta={"count": len(results)})
 
-    @reg.tool(
+    @host_tool(
         "fetch_url",
         "Fetch a URL and extract readable text (HTML tags stripped). "
         "Aligned with Always fetch_webpage (url + max_chars).",
@@ -762,7 +896,7 @@ def build_builtin_registry(
         return ToolResult(ok=True, content=(head + body)[:max_chars],
                           meta={"url": url, "chars": len(head + body)})
 
-    @reg.tool(
+    @host_tool(
         "datetime",
         "Current local time, timezone conversion, or duration between two times. "
         "Aligned with Always datetime tool.",
@@ -798,7 +932,7 @@ def build_builtin_registry(
         except Exception as exc:
             return ToolResult(ok=False, error=f"datetime failed: {exc}")
 
-    @reg.tool(
+    @host_tool(
         "calculator",
         "Safe math expression evaluator (recursive descent, no eval). "
         "Aligned with Always calculator.",

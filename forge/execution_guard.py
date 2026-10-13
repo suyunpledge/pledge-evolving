@@ -33,6 +33,7 @@ def workflow_status(events, run_id, *, assume_interrupted=True):
     """Read-only recovery evidence; never load/replay callables from a journal."""
     phase = 'unknown'
     pending = {}
+    unknown = set()
     for event in events:
         if hasattr(event, 'data'):
             event = {'type': event.type, **event.data}
@@ -44,7 +45,11 @@ def workflow_status(events, run_id, *, assume_interrupted=True):
             pending[event['action_id']] = event.get('tool', '')
         elif event.get('type') == 'tool_completed':
             pending.pop(event['action_id'], None)
+            if (event.get('execution_state') == 'unknown' or
+                    (event.get('meta') or {}).get('execution_state') == 'unknown'):
+                unknown.add(event['action_id'])
     status = phase if phase in {'completed', 'failed', 'stopped'} else (
         'interrupted' if assume_interrupted else 'unfinished')
     return {'run_id': run_id, 'status': status, 'last_phase': phase,
-            'pending_actions': list(pending), 'replay_safe': False}
+             'pending_actions': list(pending), 'unknown_actions': sorted(unknown),
+             'requires_inspection': bool(pending or unknown), 'replay_safe': False}
