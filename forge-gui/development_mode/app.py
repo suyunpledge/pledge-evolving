@@ -1238,23 +1238,41 @@ class DevelopmentWorkbench(ttk.Frame):
         else:
             panels = [self.project_frame, self.editor_frame, self.agent_frame]
         wanted = list(panels)
+        # panes.panes() 返回的是窗口路径名**字符串**，与控件对象比较恒为
+        # False。那会让下面两处判断同时失效：「已在集合则 continue」永不
+        # 命中、「不在集合才 forget」对每个在装面板都成立——结果是每次
+        # apply_layout 都走全量 forget+add（51f6f82 要消除的闪白路径
+        # 复活），且 insert 的目标位计数恒为 0，三个面板依次插到队首，
+        # 顺序反转成 agent|editor|project；fractions 的「sash0=project
+        # 右界」语义随之错位，agent 栏被压到 20%（实测 1200px 下仅
+        # 236px，栏内模型组横向放不下）。先统一换算成控件对象再比较。
+        live = [self.panes.nametowidget(name) for name in self.panes.panes()]
         # 保序移除：只摘不在目标集合里的
-        for pane in list(self.panes.panes()):
+        for pane in live:
             if pane not in wanted:
                 self.panes.forget(pane)
+        # forget 后必须重读：此时 live 里还留着刚被摘掉的面板，len(live)
+        # 会大于真实 slave 数。若不重读，下面的 idx < len(live) 会拿过期
+        # 上界去 insert，而 insert 只接受 0 <= pos < 真实 slave 数——
+        # focus 预设连续 forget 到 slave 归零时就会抛 Slave index 0 out
+        # of bounds（toggle_focus 从 editor 切到 agent 即触发）。
+        live = [self.panes.nametowidget(name) for name in self.panes.panes()]
         # 增量挂载：逐个补挂 wanted 中缺失的面板。每挂一个都重读
         # 实际列表——insert 的 pos 按当前实际列表计位：目标位置 =
         # 实际列表中、wanted 里排在它前面的面板个数。
+        # 注意 ttk::panedwindow 的 insert 只接受 0 <= pos < n（n 为当前
+        # pane 数），pos == n 会抛 Slave index out of bounds；要追加到
+        # 队尾必须走 add。原代码写 min(idx, len(live)) 本意是「越界贴边」，
+        # 但贴出的上界值本身非法，只因 idx 恒为 0 而从未触发。
         for panel in wanted:
-            if panel in self.panes.panes():
+            if panel in live:
                 continue
-            idx = sum(1 for m in wanted[:wanted.index(panel)]
-                      if m in self.panes.panes())
-            live = self.panes.panes()
-            if live:
-                self.panes.insert(min(idx, len(live)), panel, weight=1)
+            idx = sum(1 for m in wanted[:wanted.index(panel)] if m in live)
+            if idx < len(live):
+                self.panes.insert(idx, panel, weight=1)
             else:
                 self.panes.add(panel, weight=1)
+            live = [self.panes.nametowidget(name) for name in self.panes.panes()]
         self.later(0, self.place_sashes)
 
     def place_sashes(self):
