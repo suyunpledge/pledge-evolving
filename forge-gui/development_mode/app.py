@@ -235,10 +235,8 @@ class DevelopmentWorkbench(ttk.Frame):
         self.editor_contexts = []
         # ── 会话组 ──────────────────────────────────────────────
         self.context_label = ttk.Label(self.agent_frame, text='未附加编辑器内容', padding=4)
-        self.context_label.pack(fill='x')
         self.input = tk.Text(self.agent_frame, height=5, wrap='word', undo=True, font=FONT_UI)
         style_editor(self.input)
-        self.input.pack(fill='x', padx=6, pady=4)
         # E1（UX 审查）：Enter 发送、Shift+Enter 换行（与主对话一致），
         # 输入区旁明示键位；IME 组合确认不触发发送（守卫方式与
         # InputCard 相同：行内 IME 默认关闭，系统候选窗路径 Tk 不向
@@ -248,10 +246,9 @@ class DevelopmentWorkbench(ttk.Frame):
                             else None)
         self.input.bind('<Return>', self._enter_key)
         self.input.bind('<Control-Return>', lambda e: (self.send(), 'break')[-1])
-        ttk.Label(self.agent_frame, text='Enter 发送 · Shift+Enter 换行 · Ctrl+Enter 亦可',
-                  foreground=C.get('muted', '#777')).pack(fill='x', padx=8)
+        hint_label = ttk.Label(self.agent_frame, text='Enter 发送 · Shift+Enter 换行 · Ctrl+Enter 亦可',
+                               foreground=C.get('muted', '#777'))
         row = ttk.Frame(self.agent_frame)
-        row.pack(fill='x', padx=6, pady=4)
         self.model_choice = ttk.Combobox(row, values=['继承配置'], state='readonly', width=24)
         self.model_choice.current(0)
         self.model_choice.bind('<<ComboboxSelected>>', lambda event: self.input.focus_set())
@@ -259,9 +256,8 @@ class DevelopmentWorkbench(ttk.Frame):
         self.send_button = ttk.Button(row, text='发送', command=self.send)
         self.send_button.pack(side='right', padx=(4, 0))
         # ── 任务组 ──────────────────────────────────────────────
-        ttk.Separator(self.agent_frame).pack(fill='x', padx=6, pady=2)
+        task_sep = ttk.Separator(self.agent_frame)
         row2 = ttk.Frame(self.agent_frame)
-        row2.pack(fill='x', padx=6, pady=(0, 4))
         self.planning = tk.StringVar(value='low')
         ttk.Label(row2, text='规划').pack(side='left')
         ttk.Combobox(row2, textvariable=self.planning, values=['none', 'low', 'medium', 'high'], state='readonly', width=7).pack(side='left')
@@ -274,16 +270,14 @@ class DevelopmentWorkbench(ttk.Frame):
         ttk.Button(row2, text='复审', command=self.review).pack(side='right')
         ttk.Button(row2, text='恢复', command=self.restore_session).pack(side='right', padx=4)
         row3 = ttk.Frame(self.agent_frame)
-        row3.pack(fill='x', padx=6, pady=(0, 4))
         self.delegate_button = ttk.Button(row3, text='请求子 Agent', command=lambda: self.send(delegate=True))
         self.delegate_button.pack(side='left')
         ttk.Button(row3, text='执行测试', command=self.run_tests).pack(side='right', padx=4)
         self.cancel_button = ttk.Button(row3, text='取消', command=self.cancel_task)
         self.cancel_button.pack(side='right')
         # ── 模型组 ──────────────────────────────────────────────
-        ttk.Separator(self.agent_frame).pack(fill='x', padx=6, pady=2)
+        model_sep = ttk.Separator(self.agent_frame)
         row4 = ttk.Frame(self.agent_frame)
-        row4.pack(fill='x', padx=6, pady=(0, 6))
         ttk.Label(row4, text='任务角色').pack(side='left')
         self.task_role = tk.StringVar(value='default')
         ttk.Combobox(row4, textvariable=self.task_role, values=['default', 'complex', 'simple'],
@@ -291,6 +285,29 @@ class DevelopmentWorkbench(ttk.Frame):
         ttk.Button(row4, text='独立模型', command=self.agent_model_settings).pack(side='left', padx=4)
         self.run_model = ttk.Label(row4, text='模型：继承', wraplength=150)
         self.run_model.pack(side='left', fill='x', expand=True)
+        # ── P0-L1 容器重组（仲裁裁决 3；只动容器 pack，控件与回调未改）────
+        # 溢出根因：中部 log_tabs 是 agent_frame 内唯一 expand，但其后 8 个
+        # 固定组仍按 side=top 顺序堆叠——窗口高度不足时 Tk 从序列尾部开始
+        # 裁剪，任务组（规划/权限/复审/恢复/子Agent/测试/取消）与模型组
+        # （任务角色/独立模型/模型回显）连同两条分隔线被推出窗口下缘之外
+        # （实测 1440x900 默认尺寸下 5/11 个子控件 rooty 已达 903~1020）。
+        # 修法：固定组改 side='bottom' 先占位——Tk 的 bottom 系列按 pack
+        # 顺序自栏底向上排列，故按 row4 → context_label 逆序 pack，视觉顺序
+        # 与原布局逐行一致；log_tabs 保持唯一 expand 吃掉中部剩余空间，
+        # 从结构上消除溢出，而非靠调大 minsize 掩盖。
+        # 控件创建顺序与父子关系均未改动（Tab 遍历序不变，Codex 域契约不变）。
+        for slave, kw in (
+            (row4, dict(fill='x', padx=6, pady=(0, 6))),        # 模型组（贴栏底）
+            (model_sep, dict(fill='x', padx=6, pady=2)),
+            (row3, dict(fill='x', padx=6, pady=(0, 4))),        # 任务组
+            (row2, dict(fill='x', padx=6, pady=(0, 4))),
+            (task_sep, dict(fill='x', padx=6, pady=2)),
+            (row, dict(fill='x', padx=6, pady=4)),              # 模型选择 + 发送
+            (hint_label, dict(fill='x', padx=8)),               # 键位提示
+            (self.input, dict(fill='x', padx=6, pady=4)),       # 输入框
+            (self.context_label, dict(fill='x')),               # 附加内容（贴 log_tabs）
+        ):
+            slave.pack(side='bottom', **kw)
 
     def _enter_key(self, event):
         """E1：Enter=发送，Shift+Enter=换行；IME 组合期不拦截。"""
