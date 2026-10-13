@@ -1324,9 +1324,11 @@ class DevelopmentWorkbench(ttk.Frame):
         # 236px，栏内模型组横向放不下）。先统一换算成控件对象再比较。
         live = [self.panes.nametowidget(name) for name in self.panes.panes()]
         # 保序移除：只摘不在目标集合里的
+        mounted = False
         for pane in live:
             if pane not in wanted:
                 self.panes.forget(pane)
+                mounted = True
         # forget 后必须重读：此时 live 里还留着刚被摘掉的面板，len(live)
         # 会大于真实 slave 数。若不重读，下面的 idx < len(live) 会拿过期
         # 上界去 insert，而 insert 只接受 0 <= pos < 真实 slave 数——
@@ -1349,11 +1351,46 @@ class DevelopmentWorkbench(ttk.Frame):
             else:
                 self.panes.add(panel, weight=1)
             live = [self.panes.nametowidget(name) for name in self.panes.panes()]
+            mounted = True
+        # M1-fix（验收打回项 test_focus_toggle_contract_survives_button_removal
+        # 环境敏感回归）：ttk::panedwindow 的 add/insert **不同步映射 slave**
+        # ——slave 的映射发生在随之排队的延迟重排里。若紧随其后的事件循环
+        # 预算被 OS 窗口突发占满（无控制台/后台会话实测：step() 的 16 次
+        # dooneevent 全部耗在其他事件上、队列未排空），重排不执行，新挂载的
+        # 面板保持 winfo_ismapped()==0——toggle_focus 后 agent 栏连带
+        # input 全部 unmapped，而几何完全正确（高度停在最后一次成功重排的
+        # 值，如 427）。基线同路径事件少、16 预算够用，只表现为偶发抖动；
+        # M1 的竖向 pane + 底部面板同步 + 额外 sash 写入拉长了事件级联，
+        # 把抖动变成后台会话必现。挂载集合发生变化时立即冲刷 idle 任务
+        # （只服务 idle 回调、不派发窗口事件，不触发 Configure 自激环），
+        # 让重排在 apply_layout 返回前同步落地——映射状态不再依赖外部
+        # 事件循环预算。见 _settle_mount。
         # M1：底部工具面板随 IDE 展开/收起显隐。与三栏的增量挂载是两条
         # 独立路径——这里只做「在装/不在装」二态切换（vertical 内固定
         # panes+bottom 两个 slave），不碰 forget/insert 增量逻辑。
-        self._sync_bottom_panel(show)
+        if self._sync_bottom_panel(show):
+            mounted = True
+        if mounted:
+            self._settle_mount()
         self.later(0, self.place_sashes)
+
+    def _settle_mount(self):
+        """把挂载变化的物理效果（slave 映射与重排）同步落地。
+
+        根因与边界见 apply_layout 内注释：panedwindow add/insert 的
+        slave 映射是延迟的，后台/无控制台会话里事件预算可能被 OS 窗口
+        突发吃满，导致新挂载面板停留在 unmapped。update_idletasks 只
+        服务 idle 回调（含 Tk 的延迟重排），不派发窗口事件，因此不会
+        触发 _panes_resized→place_sashes 自激环；_settling 旗标防嵌套
+        冲刷（重入 apply_layout 时，外层这一次冲刷会一并服务其重排）。
+        """
+        if getattr(self, '_settling', False):
+            return
+        self._settling = True
+        try:
+            self.update_idletasks()
+        finally:
+            self._settling = False
 
     def _sync_bottom_panel(self, show):
         """M1：IDE 收起时把底部工具面板移出外层竖向 pane，展开时补回。
@@ -1362,19 +1399,24 @@ class DevelopmentWorkbench(ttk.Frame):
         一致：原输出 Notebook 在 editor_frame 内，editor_frame 不在装
         时它同样不可见）。补回用 add 追加到队尾，保持 [panes, bottom]
         的固定次序。同样注意 panes() 返回字符串，须 nametowidget 换算。
+        返回 True 表示本次确实改变了挂载集合（调用方据此冲刷重排）。
         """
         if getattr(self, '_closed', False):
-            return
+            return False
+        changed = False
         try:
             live = [self.vertical.nametowidget(name)
                     for name in self.vertical.panes()]
             if show:
                 if self.bottom not in live:
                     self.vertical.add(self.bottom, weight=1)
+                    changed = True
             elif self.bottom in live:
                 self.vertical.forget(self.bottom)
+                changed = True
         except (tk.TclError, AttributeError):
-            pass  # 构造早期 / 已销毁：无底部面板可同步
+            return False  # 构造早期 / 已销毁：无底部面板可同步
+        return changed
 
     def place_sashes(self):
         if self._closed or getattr(self, '_placing_sashes', False):
