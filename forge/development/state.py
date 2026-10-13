@@ -97,9 +97,9 @@ class ModeState:
 
     @staticmethod
     def _validate_layout(layout):
-        if not isinstance(layout, dict) or set(layout) - {'visible', 'preset', 'fractions', 'output', 'focus'}:
+        if not isinstance(layout, dict) or set(layout) - {'visible', 'preset', 'fractions', 'output', 'focus', 'review_fractions'}:
             raise ValueError('Invalid layout fields')
-        if layout.get('preset', 'agent') not in {'agent', 'editor', 'focus'}:
+        if layout.get('preset', 'agent') not in {'agent', 'editor', 'focus', 'review'}:
             raise ValueError('Invalid layout preset')
         if not isinstance(layout.get('visible', True), bool) or layout.get('focus', 'editor') not in {'editor', 'agent'}:
             raise ValueError('Invalid panel visibility')
