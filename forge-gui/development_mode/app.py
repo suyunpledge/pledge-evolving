@@ -197,46 +197,32 @@ class DevelopmentWorkbench(ttk.Frame):
         self.write_output('测试', '内置 shell_exec 在 Secret 隔离中不可用。这里只展示真实执行或拒绝事件；没有结构化结果时不推算通过数。\n')
 
     def _build_agent(self):
-        # B1（UX 审查）：语义分组重排——会话（状态/日志/输入/发送）、任务
-        # （规划/权限/复审/恢复/子Agent/取消/测试）、模型（选择/独立模型/
-        # 角色/回显）三区，用分隔线划界；此前 14 个可交互元素无层级平铺，
-        # 语义相近控件（模型类 4 处）散在各行。
+        from .agent_panel import AgentPanel
         status_row = ttk.Frame(self.agent_frame)
         status_row.pack(fill='x', padx=8, pady=(6, 0))
-        self.task_label = ttk.Label(status_row, text='Agent · 未运行', padding=(0, 4), wraplength=260)
+        self.task_label = ttk.Label(status_row, text='Agent · 未运行', wraplength=260)
         self.task_label.pack(side='left', fill='x', expand=True)
-        # P0-D1（UX 审查）：权限常驻标识——安全边界随时可见。
-        # W5 修正：徽标父容器从工作台顶层改回 Agent 栏状态行（此前错挂
-        # self，渲染到分栏之外的窗口底部）。
-        self.perm_badge = ttk.Label(status_row, text='权限 read-only',
-                                    foreground=C.get('subtext', '#888'))
+        self.perm_badge = ttk.Label(status_row, text='权限 read-only', foreground=C['subtext'])
         self.perm_badge.pack(side='right')
         self._sync_perm_badge()
-        # B2（UX 审查）：完整事件是开发者调试通道，与用户对话/任务并列
-        # 一等 tab 提高了认知负荷——默认隐藏，开发者开关按需恢复；数据
-        # 始终继续写入隐藏页，开关切换不丢历史。
-        self.dev_events = tk.BooleanVar(value=False)
-        ttk.Checkbutton(status_row, text='事件', variable=self.dev_events,
-                        command=self._toggle_events_tab).pack(side='right', padx=(0, 8))
-        log_tabs = ttk.Notebook(self.agent_frame)
-        log_tabs.pack(fill='both', expand=True)
-        self.log_tabs = log_tabs
-        dialogue = ttk.Frame(log_tabs)
-        log_tabs.add(dialogue, text='对话')
-        workflow = ttk.Frame(log_tabs)
-        log_tabs.add(workflow, text='任务 / 子 Agent')
-        events = ttk.Frame(log_tabs)
-        log_tabs.add(events, text='完整事件')
-        self._events_tab = events
-        log_tabs.hide(events)
-        self.workflow = self._readonly_text(workflow, wrap='word')
-        self.chat = self._readonly_text(dialogue, wrap='word')
-        self.events = self._readonly_text(events, wrap='word')
+        self.agent_panel = AgentPanel(self.agent_frame, open_file=self.open_agent_file,
+            view_diff=self.view_agent_diff, revert=self.revert_agent_change,
+            pending=self.resolve_agent_approval, configure_model=self.agent_model_settings,
+            refresh=self.refresh_agent_versions)
+        self.log_tabs = self.agent_panel.notebook
+        self.chat = self.agent_panel.chat
+        self.workflow = self.agent_panel.workflow
+        event_content = self.agent_panel.mount_events(self.output)
+        self.events = event_content.text
+        self._events_tab = event_content
+        self.dev_events = tk.BooleanVar(value=True)
+        footer = ttk.Frame(self.agent_frame)
+        footer.pack(side='bottom', fill='x')
         self.editor_contexts = []
         # ── 会话组 ──────────────────────────────────────────────
-        self.context_label = ttk.Label(self.agent_frame, text='未附加编辑器内容', padding=4)
+        self.context_label = ttk.Label(footer, text='未附加编辑器内容', padding=4)
         self.context_label.pack(fill='x')
-        self.input = tk.Text(self.agent_frame, height=5, wrap='word', undo=True, font=FONT_UI)
+        self.input = tk.Text(footer, height=5, wrap='word', undo=True, font=FONT_UI)
         style_editor(self.input)
         self.input.pack(fill='x', padx=6, pady=4)
         # E1（UX 审查）：Enter 发送、Shift+Enter 换行（与主对话一致），
@@ -248,49 +234,51 @@ class DevelopmentWorkbench(ttk.Frame):
                             else None)
         self.input.bind('<Return>', self._enter_key)
         self.input.bind('<Control-Return>', lambda e: (self.send(), 'break')[-1])
-        ttk.Label(self.agent_frame, text='Enter 发送 · Shift+Enter 换行 · Ctrl+Enter 亦可',
+        ttk.Label(footer, text='Enter 发送 · Shift+Enter 换行 · Ctrl+Enter 亦可',
                   foreground=C.get('muted', '#777')).pack(fill='x', padx=8)
-        row = ttk.Frame(self.agent_frame)
+        row = ttk.Frame(footer)
         row.pack(fill='x', padx=6, pady=4)
-        self.model_choice = ttk.Combobox(row, values=['继承配置'], state='readonly', width=24)
+        self.model_choice = ttk.Combobox(row, values=['继承配置'], state='readonly', width=12)
         self.model_choice.current(0)
         self.model_choice.bind('<<ComboboxSelected>>', lambda event: self.input.focus_set())
-        self.model_choice.pack(side='left', fill='x', expand=True)
         self.send_button = ttk.Button(row, text='发送', command=self.send)
         self.send_button.pack(side='right', padx=(4, 0))
+        self.model_choice.pack(side='left', fill='x', expand=True)
         # ── 任务组 ──────────────────────────────────────────────
-        ttk.Separator(self.agent_frame).pack(fill='x', padx=6, pady=2)
-        row2 = ttk.Frame(self.agent_frame)
+        ttk.Separator(footer).pack(fill='x', padx=6, pady=2)
+        row2 = ttk.Frame(footer)
         row2.pack(fill='x', padx=6, pady=(0, 4))
         self.planning = tk.StringVar(value='low')
         ttk.Label(row2, text='规划').pack(side='left')
         ttk.Combobox(row2, textvariable=self.planning, values=['none', 'low', 'medium', 'high'], state='readonly', width=7).pack(side='left')
         ttk.Label(row2, text='权限').pack(side='left', padx=(8, 0))
         self.permission = tk.StringVar(value='read-only')
-        perms = ttk.Combobox(row2, textvariable=self.permission, values=['read-only', 'workspace-write'], state='readonly', width=15)
+        perms = ttk.Combobox(row2, textvariable=self.permission, values=['read-only', 'workspace-write'], state='readonly', width=10)
         perms.pack(side='left')
         perms.bind('<<ComboboxSelected>>', self._sync_perm_badge)
         perms.bind('<<ComboboxSelected>>', self.permission_changed)
-        ttk.Button(row2, text='复审', command=self.review).pack(side='right')
-        ttk.Button(row2, text='恢复', command=self.restore_session).pack(side='right', padx=4)
-        row3 = ttk.Frame(self.agent_frame)
+        task_tools = self.agent_panel.tasks_toolbar
+        ttk.Button(task_tools, text='复审', command=self.review).pack(side='left')
+        ttk.Button(task_tools, text='恢复', command=self.restore_session).pack(side='left', padx=4)
+        ttk.Button(task_tools, text='执行测试', command=self.run_tests).pack(side='right')
+        row3 = ttk.Frame(footer)
         row3.pack(fill='x', padx=6, pady=(0, 4))
         self.delegate_button = ttk.Button(row3, text='请求子 Agent', command=lambda: self.send(delegate=True))
-        self.delegate_button.pack(side='left')
-        ttk.Button(row3, text='执行测试', command=self.run_tests).pack(side='right', padx=4)
         self.cancel_button = ttk.Button(row3, text='取消', command=self.cancel_task)
         self.cancel_button.pack(side='right')
+        self.delegate_button.pack(side='left')
+        ttk.Button(row3, text='重试', command=self.retry_agent_task).pack(side='left', padx=4)
         # ── 模型组 ──────────────────────────────────────────────
-        ttk.Separator(self.agent_frame).pack(fill='x', padx=6, pady=2)
-        row4 = ttk.Frame(self.agent_frame)
+        ttk.Separator(footer).pack(fill='x', padx=6, pady=2)
+        row4 = ttk.Frame(footer)
         row4.pack(fill='x', padx=6, pady=(0, 6))
-        ttk.Label(row4, text='任务角色').pack(side='left')
         self.task_role = tk.StringVar(value='default')
-        ttk.Combobox(row4, textvariable=self.task_role, values=['default', 'complex', 'simple'],
-                     state='readonly', width=9).pack(side='left', padx=4)
+        # Concrete/role configuration belongs in dialogs, not a crowded toolbar.
         ttk.Button(row4, text='独立模型', command=self.agent_model_settings).pack(side='left', padx=4)
         self.run_model = ttk.Label(row4, text='模型：继承', wraplength=150)
         self.run_model.pack(side='left', fill='x', expand=True)
+
+        self.agent_panel.pack(fill='both', expand=True)
 
     def _enter_key(self, event):
         """E1：Enter=发送，Shift+Enter=换行；IME 组合期不拦截。"""
@@ -303,14 +291,10 @@ class DevelopmentWorkbench(ttk.Frame):
         return 'break'
 
     def _toggle_events_tab(self):
-        """B2：开发者事件开关——隐藏页恢复显示 / 再次隐藏，不丢数据。"""
-        try:
-            if self.dev_events.get():
-                self.log_tabs.add(self._events_tab, text='完整事件')
-            else:
-                self.log_tabs.hide(self._events_tab)
-        except tk.TclError:
-            pass  # 销毁竞态：视图已不在，真相仍留在 runtime 事件流里
+        if self.dev_events.get():
+            self.output.add(self._events_tab, text='Agent Events')
+        else:
+            self.output.hide(self._events_tab)
 
     def _readonly_text(self, parent, **kw):
         # B1：请求高度降为 6 行——fill/expand 下实际显示仍由分配决定，
@@ -824,40 +808,22 @@ class DevelopmentWorkbench(ttk.Frame):
         self.input.delete('1.0', 'end')
         self.editor_contexts = []
         self.context_label.configure(text='未附加编辑器内容')
-        self.task_label.configure(text='Agent · 正在执行 · 0s')
-        # P0-A1（UX 审查）：不确定阶段的存活信号——稳定文案 + 已用时间，
-        # 事件类型不再覆盖本行（详见 handle_event）。
-        self._task_started_at = time.monotonic()
-        self._pulse_phase = 0
-        if getattr(self, '_pulse_after_id', None):
-            try:
-                self.after_cancel(self._pulse_after_id)
-            except Exception:
-                pass
-        def _tick_pulse():
-            if not getattr(self, '_task_started_at', None):
-                return
-            elapsed = int(time.monotonic() - self._task_started_at)
-            self._pulse_phase = (self._pulse_phase + 1) % 4
-            glyphs = ['◔', '◑', '◕', '●']
-            self.task_label.configure(text=f'Agent · 正在执行 {glyphs[self._pulse_phase]} · {elapsed}s')
-            self._pulse_after_id = self.after(1000, _tick_pulse)
-        _tick_pulse()
+        self._retry_request = {'prompt': prompt, 'delegate': delegate}
+        self.task_label.configure(text='Agent · 请求执行')
         def done(value, error):
             self.send_button.configure(state='normal')
             self.delegate_button.configure(state='normal')
-            self._task_started_at = None
-            if getattr(self, '_pulse_after_id', None):
-                try:
-                    self.after_cancel(self._pulse_after_id)
-                except Exception:
-                    pass
             self.task_label.configure(text='Agent · 失败' if error else 'Agent · ' + str(value.get('stopped', '完成')))
             if error:
                 if not self.input.get('1.0', 'end-1c').strip():
                     self.input.insert('1.0', prompt)
             elif value.get('text'):
-                self.append(self.chat, '\nForge\n' + value['text'] + '\n')
+                self.chat.message('Coding Agent', value['text'])
+            if error:
+                self.chat.message('执行失败', error)
+            else:
+                self.chat.message('任务结果', '状态：' + str(value.get('outcome', value.get('stopped', '未知'))))
+            self.refresh_agent_versions()
             self.refresh_project()
             self.refresh_documents()
         self.work(lambda: self.runtime.run(prompt, explicit_model=model, permission=permission,
@@ -865,63 +831,26 @@ class DevelopmentWorkbench(ttk.Frame):
                                           delegate=delegate), done)
 
     def render_evidence(self):
-        view = self.task_evidence
-        lines = ['任务：' + (view.task_id or '尚未创建'), '任务状态：' + view.phase, '', '计划（不由文本推断完成）：']
-        lines.extend('• ' + str(task) for task in view.plan)
-        lines.extend(['', 'Agent / 实际执行状态：'])
-        lines.extend(f"{row['agent']} · {row['status']} · {row['run_id'][:8]} · {row.get('model', '')}"
-                     for row in view.agents.values())
-        lines.extend(['', '真实工具步骤（最近 100 条；完整日志保留）：'])
-        lines.extend(f"{r.get('agent', 'forge')} / {r.get('tool', '')} · {r['status']}"
-                     for r in list(view.actions.values())[-100:])
-        lines.extend(['', '测试 / 命令记录：'])
-        lines.extend(f"{r['status']} · {r['command']} · 退出码 {r.get('exit_code', '未提供')}"
-                     for r in view.tests[-20:])
-        lines.extend(['', f'Diff 快照：{len(view.diffs)}（工作区实况，包含其他来源的修改）'])
-        lines.extend(['', '复审：'])
-        lines.extend(f"{r['status']} · {(r.get('review') or {}).get('model', '')} · {r.get('message_id', '')[:8]}"
-                     for r in list(view.reviews.values())[-10:])
-        # P0-A2（UX 审查）：增量渲染——行数只增时 append 差量（保留
-        # 滚动位置与用户选区），回缩才全量重绘。每 20 次强制全量一次，
-        # 防止浮点误差累积。
-        body = redact('\n'.join(lines))
-        self._evidence_renders = getattr(self, '_evidence_renders', 0) + 1
-        current = self.workflow.get('1.0', 'end - 1c')
-        if (len(lines) >= getattr(self, '_evidence_lines', 0)
-                and self._evidence_renders % 20 != 0
-                and current):
-            # 只追加差量：找当前末行在主体中的对齐点
-            keep = current.count('\n')  # 现有行数
-            if keep <= len(lines):
-                tail = '\n'.join(lines[keep:])
-                self.workflow.configure(state='normal')
-                if tail:
-                    self.workflow.insert('end', ('\n' if keep > 0 else '') + tail)
-                self.workflow.configure(state='disabled')
-                self._evidence_lines = len(lines)
-                return
-        self.workflow.configure(state='normal')
-        self.workflow.delete('1.0', 'end')
-        self.workflow.insert('1.0', body)
-        self.workflow.configure(state='disabled')
-        self._evidence_lines = len(lines)
+        # One idle update per event burst; events themselves are never dropped.
+        if getattr(self, '_agent_render_pending', False):
+            return
+        self._agent_render_pending = True
+        def render():
+            self._agent_render_pending = False
+            self.agent_panel.render(self.task_evidence)
+            self.task_label.configure(text='Agent · ' + self.task_evidence.phase)
+        self.later(0, render)
 
     def handle_event(self, event, error=None):
         if event.get('event') == 'user':
-            self.append(self.chat, '\n你\n' + event.get('display', '') + '\n')
+            self.chat.message('你', event.get('display', ''))
             return
         data = event.get('data', event)
         if data.get('type') == 'development_task_started' and data.get('task_id') != self.task_evidence.task_id:
             self.task_evidence = TaskEvidence()
         self.task_evidence.apply(data)
-        if data.get('type') in {'workflow_state', 'task_plan', 'tool_started', 'tool_completed', 'tool_call', 'usage',
-                                'development_task_started', 'development_task_finished', 'test_started', 'test_result', 'git_diff',
-                                'review_started', 'review_result', 'review_error', 'review_cancelled'}:
-            self.render_evidence()
-        raw = json.dumps(data, ensure_ascii=False, indent=2)
-        if len(raw) > 16384:
-            raw = raw[:16384] + '\n[大事件预览已截断；完整记录保留在原有 Session 日志]\n'
-        self.append(self.events, raw + '\n')
+        self.render_evidence()
+        self.agent_panel.events.append_event(data)
         kind = data.get('type', '')
         # P0-A1：事件类型不再覆盖存活信号行——工具/阶段动态已在证据
         # 面板与输出区呈现，此处覆盖只制造开发者词汇闪烁。
@@ -1042,6 +971,11 @@ class DevelopmentWorkbench(ttk.Frame):
         window.title('Development 模型角色')
         window.geometry('620x360')
         ttk.Label(window, text='仅选择已配置模型；任务运行时修改只影响后续任务。', padding=12).pack(anchor='w')
+        task_row = ttk.Frame(window, padding=(12, 4))
+        task_row.pack(fill='x')
+        ttk.Label(task_row, text='后续任务角色', width=27).pack(side='left')
+        ttk.Combobox(task_row, textvariable=self.task_role, values=['default', 'complex', 'simple'],
+                     state='readonly', width=30).pack(side='left')
         choices = ['继承', *[r['label'] for r in self.catalog_rows]]
         labels = {'default': '默认编程', 'complex': '复杂任务', 'review': '代码复审', 'simple': '简单任务', 'subagent': '子 Agent 默认模型'}
         controls = {}
@@ -1064,9 +998,13 @@ class DevelopmentWorkbench(ttk.Frame):
             window.destroy()
         ttk.Button(window, text='保存', command=save).pack(anchor='e', padx=12, pady=12)
 
-    def agent_model_settings(self):
+    def agent_model_settings(self, selected_name=None):
         if not self.runtime.ready:
             self.status.set('请先打开项目，读取已配置模型')
+            return
+        parent_name = self.runtime.bridge.agent.name
+        if selected_name in {parent_name, 'Review Agent'}:
+            self.model_settings()
             return
         window = tk.Toplevel(self)
         window.title('子 Agent 独立模型')
@@ -1079,21 +1017,28 @@ class DevelopmentWorkbench(ttk.Frame):
         names.add(parent + '/sub1')
         name = ttk.Combobox(window, values=sorted(names), width=44)
         name.pack(anchor='w', padx=12, pady=6)
-        name.set(parent + '/sub1')
+        name.set(selected_name or parent + '/sub1')
         model = ttk.Combobox(window, values=['继承角色', *[r['label'] for r in self.catalog_rows]],
                              state='readonly', width=44)
         model.pack(anchor='w', padx=12, pady=6)
         def show(event=None):
             pair = tuple(self.state.value('agent_models').get(name.get()) or ())
-            model.current(next((i + 1 for i, row in enumerate(self.catalog_rows)
-                                if self.runtime.catalog[row['id']] == pair), 0))
+            index = next((i + 1 for i, row in enumerate(self.catalog_rows)
+                                if self.runtime.catalog[row['id']] == pair), 0)
+            model.current(index)
+            if pair and not index:
+                feedback.configure(text='配置已失效：模型不在当前目录中；请选择或恢复继承')
+            else:
+                feedback.configure(text='下次任务来源：独立配置' if pair else '下次任务来源：继承子 Agent 角色 / 主模型')
+        feedback = ttk.Label(window, text='', padding=12)
+        feedback.pack(anchor='w')
         name.bind('<<ComboboxSelected>>', show)
         name.bind('<FocusOut>', show)
         show()
-        feedback = ttk.Label(window, text='', padding=12)
-        feedback.pack(anchor='w')
         def save():
             try:
+                if name.get().strip() in {parent, 'Review Agent'}:
+                    raise ValueError('主 Agent / Review Agent 请使用模型角色配置；此弹窗只配置真实子 Agent 名称')
                 index = model.current()
                 pair = self.runtime.catalog[self.catalog_rows[index - 1]['id']] if index > 0 else None
                 self.state.configure_agent_model(name.get().strip(), pair)
@@ -1103,6 +1048,67 @@ class DevelopmentWorkbench(ttk.Frame):
             feedback.configure(text='已保存 · 当前任务不变，下次真实 spawn 时生效')
             self.status.set('子 Agent 独立模型已保存')
         ttk.Button(window, text='保存', command=save).pack(anchor='e', padx=12, pady=12)
+
+    def open_agent_file(self, path):
+        if not self.source:
+            self.status.set('请先打开项目')
+            return
+        import re
+        path = re.sub(r':\d+(?:-\d+)?$', '', path)
+        try:
+            self.open_file(self.source.boundary.path(path))
+        except (ValueError, PermissionError, OSError) as exc:
+            self.status.set(redact(str(exc)))
+
+    def view_agent_diff(self, change):
+        diff = change.get('diff')
+        if diff is not None and change.get('diff_truncated'):
+            diff += '\n[安全 Diff 预览已截断；可在 Git 面板查看当前工作区实况]\n'
+        self.write_output('Diff', diff if diff is not None else
+            '没有安全的文本预览；此状态不代表补丁已应用。请查看执行详情或工作区 Git Diff。', clear=True)
+        self.output.select(self.output_views['Diff'].master)
+
+    def revert_agent_change(self, change):
+        if change.get('state') != 'written' or not change.get('checkpoint') or change.get('revision_changed'):
+            self.status.set('此版本无法直接恢复，请重新审查检查点')
+            return
+        def previewed(preview, error):
+            if error:
+                return
+            if preview['expected'] != change.get('revision'):
+                self.status.set('磁盘已变化，拒绝恢复旧卡片版本')
+                return
+            self.write_output('Diff', preview['diff'], clear=True)
+            self.output.select(self.output_views['Diff'].master)
+            self.restore_reviewed_checkpoint(preview)
+        self.work(lambda: self.runtime.checkpoint_preview(change['checkpoint'], change['path']), previewed)
+
+    def resolve_agent_approval(self, change):
+        self.agent_panel.notebook.select(0)
+        self.status.set('该动作未执行。通过权限控件明确授权后，用重试提交新任务；未知动作不会自动重放。')
+        self.input.focus_set()
+
+    def retry_agent_task(self):
+        request = getattr(self, '_retry_request', None)
+        if not request or self.runtime.busy or self._loading:
+            self.status.set('没有可重试任务，或仍在执行')
+            return
+        if self.task_evidence.phase in {'interrupted', 'unknown'} or any(
+                r['status'] == 'unknown' for r in self.task_evidence.actions.values()):
+            self.status.set('上次结果未知，请先检查磁盘和 Diff，再明确输入新任务')
+            return
+        draft = self.input.get('1.0', 'end-1c').strip()
+        if draft and draft != request['prompt']:
+            self.status.set('输入框已有草稿，未覆盖；请自行发送')
+            return
+        if not draft:
+            self.input.insert('1.0', request['prompt'])
+        self.send(delegate=request['delegate'])
+
+    def refresh_agent_versions(self):
+        if not self.runtime.ready or self.runtime.busy or not self.runtime.evidence.changes:
+            return
+        self.work(self.runtime.refresh_change_states, lambda value, error: None)
 
     def checkpoints(self):
         row = self.current_row()
