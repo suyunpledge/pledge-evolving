@@ -1074,6 +1074,41 @@ def apply_ttk_theme(root):
     root.option_add("*TCombobox*Listbox.foreground", C["body"])
     root.option_add("*TCombobox*Listbox.selectBackground", C["accent_soft"])
     root.option_add("*TCombobox*Listbox.selectForeground", C["accent_text"])
+
+    # ─── Coding Mode 工作台 ttk 深色化（对齐自绘控件视觉）───
+    # DevelopmentWorkbench 大量使用 ttk.Button / TCheckbutton /
+    # TMenubutton，此前无样式定义，渲染成 clam 默认浅灰浮雕——
+    # 深色界面上一片白块（「黑白无常」问题的根源）。
+    style.configure('TButton', background=C['surface2'], foreground=C['body'],
+                    relief=tk.FLAT, borderwidth=0, focuscolor=C['border'],
+                    padding=(10, 4), font=FONT_SMALL, anchor='center')
+    style.map('TButton',
+              background=[('disabled', C['disabled_bg']),
+                          ('pressed', C['control_pressed']),
+                          ('active', C['hover'])],
+              foreground=[('disabled', C['disabled_fg']),
+                          ('active', C['text'])],
+              lightcolor=[('pressed', C['control_pressed'])],
+              darkcolor=[('pressed', C['control_pressed'])])
+    style.configure('TCheckbutton', background=C['bg'], foreground=C['body'],
+                    focuscolor=C['border'], font=FONT_SMALL, padding=2)
+    style.map('TCheckbutton',
+              background=[('active', C['bg'])],
+              foreground=[('disabled', C['disabled_fg']), ('active', C['text'])],
+              indicatorcolor=[('selected', C['accent'])])
+    style.configure('TMenubutton', background=C['surface2'], foreground=C['body'],
+                    relief=tk.FLAT, borderwidth=0, padding=(10, 4),
+                    font=FONT_SMALL)
+    style.map('TMenubutton',
+              background=[('disabled', C['disabled_bg']),
+                          ('active', C['hover'])],
+              foreground=[('disabled', C['disabled_fg']), ('active', C['text'])])
+    style.configure('Horizontal.TScrollbar', background=C['scroll'],
+                    troughcolor=C['chat'], arrowcolor=C['ter'],
+                    bordercolor=C['chat'], lightcolor=C['scroll'],
+                    darkcolor=C['scroll'])
+    style.map('Horizontal.TScrollbar', background=[('active', C['ter'])])
+    style.configure('TSeparator', background=C['border'])
     return style
 
 

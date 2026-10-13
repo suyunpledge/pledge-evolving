@@ -11,7 +11,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 
 from gui_theme import (C, apply_ttk_theme, style_editor, FONT_MONO_SM,
-    FONT_TITLE, FONT_SECTION, FONT_UI)
+    FONT_TITLE, FONT_SECTION, FONT_UI, setup_code_tags, highlight_python)
 try:  # E1（UX 审查）：与 InputCard 同款可选行内 IME 守卫（默认关）
     from ime_inline import InlineIME
 except Exception:  # pragma: no cover - 非 Windows / 缺 ctypes
@@ -82,7 +82,14 @@ class DevelopmentWorkbench(ttk.Frame):
     def _build(self):
         header = ttk.Frame(self, padding=(12, 8))
         header.pack(fill='x')
-        ttk.Label(header, text='FORGE / Development', font=FONT_TITLE).pack(side='left')
+        # FORGE 品牌标识（对齐概念图：火花字符 + 标题，主色调）
+        brand = tk.Label(header, text='\u25C6', font=('Segoe UI Symbol', 13),
+                         fg=C.get('brand_spark', '#F5BC74'), bg=C['bg'])
+        brand.pack(side='left', padx=(0, 6))
+        ttk.Label(header, text='FORGE', font=FONT_TITLE,
+                  foreground=C.get('accent_text', '#BCD0FF')).pack(side='left')
+        ttk.Label(header, text='/ Development', font=FONT_SECTION,
+                  foreground=C.get('subtext', '#ABB5C5')).pack(side='left', padx=(8, 0))
         self.mode = tk.StringVar(value=self.state.mode.value)
         combo = ttk.Combobox(header, textvariable=self.mode, values=['general', 'development'], state='readonly', width=14)
         combo.pack(side='left', padx=12)
@@ -326,9 +333,34 @@ class DevelopmentWorkbench(ttk.Frame):
 
     def append(self, widget, text):
         widget.configure(state='normal')
-        widget.insert('end', str(redact(text)))
+        chunk = str(redact(text))
+        widget.insert('end', chunk)
+        self._paint_result_lines(widget, chunk)
         widget.configure(state='disabled')
         widget.see('end')
+
+    def _paint_result_lines(self, widget, chunk):
+        """测试/执行结果行着色：PASS 绿、FAIL/ERROR 红（对齐概念图）。"""
+        try:
+            tag_name = 'forge_pass'
+            if tag_name not in widget.tag_names():
+                widget.tag_configure(tag_name, foreground=C.get('ok', '#48B89A'))
+            fail_tag = 'forge_fail'
+            if fail_tag not in widget.tag_names():
+                widget.tag_configure(fail_tag, foreground=C.get('error', '#E57373'))
+            start = widget.index('end-1c linestart')
+            # 只处理本次新插入区域的行
+            line_count = chunk.count('\n') + 1
+            for i in range(line_count):
+                line_start = widget.index(f'end-1c -{i} lines linestart')
+                line_end = widget.index(f'{line_start} lineend')
+                line_text = widget.get(line_start, line_end)
+                if line_text.lstrip().startswith(('PASS', 'PASS ')):
+                    widget.tag_add(tag_name, line_start, line_end)
+                elif line_text.lstrip().startswith(('FAIL', 'ERROR', 'Error', 'error')):
+                    widget.tag_add(fail_tag, line_start, line_end)
+        except Exception:
+            pass  # 着色失败不影响内容输出
 
     def write_output(self, name, text, *, clear=False):
         widget = self.output_views[name]
@@ -622,6 +654,9 @@ class DevelopmentWorkbench(ttk.Frame):
         widget.configure(yscrollcommand=sy.set, xscrollcommand=sx.set)
         widget.pack(fill='both', expand=True)
         widget.insert('1.0', document.text)
+        setup_code_tags(widget, bg=C.get('code_bg'))
+        if document.path.suffix.lower() == '.py':
+            highlight_python(widget)
         widget.edit_modified(False)
         row = {'document': document, 'frame': frame, 'widget': widget, 'saving': False}
         self.documents[key] = row
@@ -640,6 +675,8 @@ class DevelopmentWorkbench(ttk.Frame):
         if widget.edit_modified() and not row['saving']:
             row['document'].update(widget.get('1.0', 'end-1c'))
             widget.edit_modified(False)
+            if row['document'].path.suffix.lower() == '.py':
+                highlight_python(widget)
             self.update_tab(row)
 
     def update_tab(self, row):
