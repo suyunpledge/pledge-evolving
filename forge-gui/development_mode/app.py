@@ -1209,8 +1209,9 @@ class DevelopmentWorkbench(ttk.Frame):
     def apply_layout(self):
         if self._closed:
             return
-        for pane in list(self.panes.panes()):
-            self.panes.forget(pane)
+        # 闪烁修复：增量挂载——只摘除应移除的面板、只挂载新增的面板。
+        # 全量 forget+add 会让真机窗口整块重排（用户可见的闪白与
+        # 下方白色框闪烁）；面板集合不变时保持挂载关系不动。
         layout = self.state.layout
         show = self.state.mode == WorkMode.DEVELOPMENT and layout['visible']
         if not show:
@@ -1219,25 +1220,54 @@ class DevelopmentWorkbench(ttk.Frame):
             panels = [self.editor_frame if layout['focus'] == 'editor' else self.agent_frame]
         else:
             panels = [self.project_frame, self.editor_frame, self.agent_frame]
-        for panel in panels:
-            self.panes.add(panel, weight=1)
+        wanted = list(panels)
+        # 保序移除：只摘不在目标集合里的
+        for pane in list(self.panes.panes()):
+            if pane not in wanted:
+                self.panes.forget(pane)
+        # 增量挂载：逐个补挂 wanted 中缺失的面板。每挂一个都重读
+        # 实际列表——insert 的 pos 按当前实际列表计位：目标位置 =
+        # 实际列表中、wanted 里排在它前面的面板个数。
+        for panel in wanted:
+            if panel in self.panes.panes():
+                continue
+            idx = sum(1 for m in wanted[:wanted.index(panel)]
+                      if m in self.panes.panes())
+            live = self.panes.panes()
+            if live:
+                self.panes.insert(min(idx, len(live)), panel, weight=1)
+            else:
+                self.panes.add(panel, weight=1)
         self.later(0, self.place_sashes)
 
     def place_sashes(self):
-        if self._closed:
+        if self._closed or getattr(self, '_placing_sashes', False):
             return
-        if len(self.panes.panes()) == 3:
-            width = self.panes.winfo_width()
-            for i, fraction in enumerate(self.state.layout['fractions']):
-                position = int(width * fraction)
-                if self.panes.sashpos(i) != position:
-                    self.panes.sashpos(i, position)
-        if self.vertical.winfo_height() > 40:
-            position = int(self.vertical.winfo_height() * self.state.layout['output'])
-            if self.vertical.sashpos(0) != position:
-                self.vertical.sashpos(0, position)
+        self._placing_sashes = True
+        try:
+            # 闪烁修复：sashpos 写入会触发 <Configure>→_panes_resized→
+            # 再排 place_sashes 的自激环。写入期间挂旗标让 resized 忽略
+            # 自触发事件；位置比较加 2px 容差（int 取整抖动不再构成
+            # 「位置不同」的假差异，环在源头断开）。
+            if len(self.panes.panes()) == 3:
+                width = self.panes.winfo_width()
+                for i, fraction in enumerate(self.state.layout['fractions']):
+                    position = int(width * fraction)
+                    if abs(self.panes.sashpos(i) - position) > 2:
+                        self.panes.sashpos(i, position)
+            if self.vertical.winfo_height() > 40:
+                position = int(self.vertical.winfo_height() * self.state.layout['output'])
+                if abs(self.vertical.sashpos(0) - position) > 2:
+                    self.vertical.sashpos(0, position)
+        finally:
+            root = self.winfo_toplevel()
+            root.after_idle(lambda: setattr(self, '_placing_sashes', False))
 
     def _panes_resized(self, event):
+        # 闪烁修复：place_sashes 写 sashpos 期间触发的 Configure 是
+        # 自激回声，不响应（旗标由 after_idle 复位）。
+        if getattr(self, '_placing_sashes', False):
+            return
         if event.width != self._last_pane_width:
             self._last_pane_width = event.width
             self.later(0, self.place_sashes)
