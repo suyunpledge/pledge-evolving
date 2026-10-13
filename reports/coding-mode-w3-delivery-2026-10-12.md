@@ -121,3 +121,19 @@ GC 会触发 Windows 原生断点异常 0x80000003（已修：teardown 强制主
    落位、三布局预设与 Coding 独立布局存储 key。
 3. Phase 3：合并路由上的 ASK 挂起 → PermissionPrompt 内嵌审批（W2 已补
    session/tools 基础，可与 RT 负责人对齐）。
+
+## 八、集成后记（2026-10-13 补记）
+
+- W3 已由集成者以 `cd1b15a`（分支 `feature/coding-mode-w3`，快进合入
+  main）落库，10 文件 +947/−59；其上叠加 W4 批次 `c6c10fe`（工作台存活
+  信号/增量渲染，与本轮接线无冲突）。
+- 合并后 HEAD（c6c10fe）复验：test_workspace_wiring **12/12 全绿**
+  （前一轮 1 例为已记录的 Tcl init 环境抖动，重跑即过）。
+- 过程事故与结论：验证期间一次 `git stash pop` 误触了历史遗留 stash
+  （5841ba6，2026-10-12 12:58:24 "WIP on main: 5a27bf8"——即首轮插件工作
+  被暂存那次事件的残留），半应用产生 UU 冲突后 stash 被 drop。经查该
+  stash 内容已由 `03801e6` 完整进入 main，**无数据丢失**；冲突现场已
+  `checkout HEAD --` 还原为干净工作区。教训已记录：并行多 Agent 仓库里
+  禁止对非本人创建的 stash/reflog 条目执行 pop/drop。
+- 后续 runtime 三笔提交（c90e43d/9225a54/0a5c6c6）位于其他分支
+  （host contexts/RC1 adapter 契约），与 GUI 接线无文件冲突。
