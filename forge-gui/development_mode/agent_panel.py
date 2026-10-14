@@ -340,7 +340,8 @@ class PlanningCard(ttk.Frame):
 
 class AgentPanel(ttk.Frame):
     def __init__(self, parent, *, open_file, view_diff, revert, pending, configure_model, refresh,
-                 new_conversation=None, history=None, settings=None, view_changes=None, history_source=None):
+                 new_conversation=None, history=None, settings=None, view_changes=None, history_source=None,
+                 on_show_approvals=None):
         super().__init__(parent)
         titlebar = ttk.Frame(self, padding=(8, 6))
         titlebar.pack(fill='x')
@@ -349,7 +350,8 @@ class AgentPanel(ttk.Frame):
         self.header_buttons = {}
         for key, icon, label, callback in (
                 ('new', 'plus', '新对话', new_conversation),
-                ('history', 'clock', '历史', history), ('settings', 'config', '设置', settings)):
+                ('history', 'clock', '历史', history), ('settings', 'config', '设置', settings),
+                ('approvals', 'check', '审批', on_show_approvals)):
             button = IconButton(titlebar, icon=icon, icon_size=16, text='', command=callback,
                 bg=C['bg'], fg=C['subtext'], bd=0, padx=7, pady=5, takefocus=True, highlightthickness=1,
                 state='normal' if callback else 'disabled')
@@ -357,11 +359,15 @@ class AgentPanel(ttk.Frame):
             attach_tooltip(button, label)
             button.pack(side='left', padx=2)
             self.header_buttons[key] = button
+        # 运行时上下文（权限矩阵 + 模型路由）—— 4-Tab 之上、标题之下
+        self._runtime_context = None  # 由 app 调 mount_runtime_context 注入
         self.notebook = ttk.Notebook(self)
         self.notebook.pack(fill='both', expand=True)
-        conversation, tasks, agents = (ttk.Frame(self.notebook) for _ in range(3))
+        # 4 个 Tab：对话 / 任务 / 子 Agent / 完整事件
+        conversation, tasks, agents, events = (ttk.Frame(self.notebook) for _ in range(4))
         self.tasks_page = tasks
-        for frame, label in zip((conversation, tasks, agents), ('对话', '任务', '子 Agent')):
+        for frame, label in zip((conversation, tasks, agents, events),
+                                ('对话', '任务', '子 Agent', '完整事件')):
             self.notebook.add(frame, text=label)
         self.chat = Conversation(conversation, open_file, history_source)
         sb = ttk.Scrollbar(conversation, command=self.chat.yview)
@@ -390,6 +396,9 @@ class AgentPanel(ttk.Frame):
         self.detail = readonly(detail)
         self.detail.configure(height=3)
         self.tree.bind('<<TreeviewSelect>>', self.show_agent)
+        # 完整事件 Tab：与底部 mount_events 共享同一 AgentEvents 实例
+        # （避免重复构建），但通过这里的 notebook 也直接可见。
+        self._events_holder = events
         self.rows = {}
         self._evidence = None
         self._summary = None
@@ -401,11 +410,27 @@ class AgentPanel(ttk.Frame):
         self._planning_card = None
         self._view_changes = view_changes
 
+    def mount_runtime_context(self, **kwargs):
+        """app 注入 RuntimeContext 组件（权限矩阵 + 模型路由）。"""
+        if self._runtime_context is not None:
+            self._runtime_context.destroy()
+        from .policy_widgets import RuntimeContext
+        self._runtime_context = RuntimeContext(self, **kwargs)
+        # 插在 titlebar 与 notebook 之间
+        self._runtime_context.pack(fill='x', before=self.notebook)
+        return self._runtime_context
+
     def mount_events(self, notebook):
-        """WorkBuddy container seam: attach once without rebuilding its layout."""
+        """WorkBuddy container seam: attach once without rebuilding its layout.
+
+        同时把同一个 AgentEvents 实例挂到 AgentPanel 的「完整事件」Tab
+        （line 360 的 self._events_holder）—— 这之前是塞到底部 Notebook 的
+        「变更事件」Tab，v0.2 起统一到本面板内。
+        """
         if self.events is None:
-            self.events = AgentEvents(notebook)
-            notebook.add(self.events, text='变更事件')
+            self.events = AgentEvents(self._events_holder)
+            self._events_holder.notebook_inner = self._events_holder  # placeholder
+            self.events.pack(fill='both', expand=True, in_=self._events_holder)
         return self.events
 
     def selected_name(self):

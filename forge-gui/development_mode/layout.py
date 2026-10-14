@@ -144,10 +144,19 @@ class StatusBar(ttk.Frame):
     瞬态消息（``status_var``，即 workbench 的 ``self.status``）保持
     既有行为：右对齐、由各处 ``self.status.set(...)`` 驱动。四字段
     由 :meth:`update` 推送，未打开项目时显示占位 ``—``。
+
+    右侧扩展（v0.2 起）：
+    * 「能力」—— capability_count = "19 (builtin) + 6 (contrib) + 3 (plugin)"
+    * 「布局」—— layout_name（来自 state.layout['preset']，agent / editor / focus）
+
+    能力 / 布局也支持 update() 推送，键名 ``capability`` / ``layout``；
+    旧键名（git / agent / model / project）保持不变。
     """
 
     FIELDS = (('git', 'Git'), ('agent', 'Agent'),
               ('model', 'Model'), ('project', 'Project'))
+    # 右侧扩展字段（与左侧字段同样支持 update()）。
+    RIGHT_FIELDS = (('capability', '能力'), ('layout', '布局'))
 
     def __init__(self, master, status_var, **kw):
         super().__init__(master, **kw)
@@ -170,6 +179,16 @@ class StatusBar(ttk.Frame):
                      fg=C['text']).pack(side='left', padx=(4, 0))
         spacer = tk.Frame(row, bg=C['bg'])
         spacer.pack(side='left', expand=True, fill='x')
+        # 右侧扩展字段：能力 / 布局 —— 在瞬态消息之前显示。
+        for key, title in reversed(self.RIGHT_FIELDS):
+            var = tk.StringVar(value='—')
+            self._vars[key] = var
+            cell = tk.Frame(row, bg=C['bg'])
+            cell.pack(side='right')
+            tk.Label(cell, text=title, font=FONT_CAPTION, bg=C['bg'],
+                     fg=C['ter']).pack(side='left')
+            tk.Label(cell, textvariable=var, font=FONT_CAPTION, bg=C['bg'],
+                     fg=C['text']).pack(side='left', padx=(4, 8))
         tk.Label(row, textvariable=status_var, anchor='e', font=FONT_CAPTION,
                  bg=C['bg'], fg=C['subtext']).pack(side='right')
 

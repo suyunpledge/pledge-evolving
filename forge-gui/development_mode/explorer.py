@@ -169,14 +169,21 @@ class ActivityBar(ttk.Frame):
     图标用 :class:`IconCanvas`（矢量、逐态重绘、可键盘聚焦），
     与主仓活动栏（forge_gui_v2._make_activity_item）同一范式；
     激活/悬停配色经 :meth:`_paint` 统一重刷，不依赖 ttk 主题映射。
+
+    9 个图标（自上而下）：文件 / 搜索 / Git / 任务 / 运行 / 知识 /
+    演化 / 审批 / 设置——按「与代码模块一一对应」原则排序：前三是
+    工作区事实、中四（任务/运行/知识/演化）是架构侧、后一是配置。
     """
 
     ITEMS = (
         ('files', 'files', '文件'),
         ('search', 'search', '搜索'),
         ('git', 'diff', 'Git 变更'),
+        ('tasks', 'task', '任务'),
         ('run', 'play', '运行'),
-        ('extensions', 'tools', '扩展'),
+        ('knowledge', 'book', '知识库'),
+        ('evolution', 'spark', '演化'),
+        ('approvals', 'check', '审批'),
         ('settings', 'config', '设置'),
     )
 
@@ -260,15 +267,22 @@ class ExplorerPanel(ttk.Frame):
 
     # 占位视图（无真实数据源的入口：明说未接入，不伪造内容）。
     PLACEHOLDERS = {
-        'extensions': ('扩展', '扩展视图将在后续模块接入。'),
         'settings': ('设置', '设置视图将在后续模块接入；'
                             '模型设置可从顶部导航栏的 Settings 进入。'),
     }
 
+    # 真实 Tab：6 个视图（文件 / Git / 搜索 / 任务 / 知识 / 演化）
+    # 搜索不占独立 Tab——它是文件 Tab 顶部的过滤框，活动栏「搜索」只是
+    # 聚焦它（与既有行为一致）。
+    REAL_TABS = ('files', 'git', 'tasks', 'knowledge', 'evolution')
+
     def __init__(self, master, *, on_open_file, on_open_tree, on_open_changed,
                  on_show_diff, on_expand, on_refresh, on_run,
                  boundary_provider, expanded_getter, search_var, diff_var,
-                 status_var, **kw):
+                 status_var,
+                 on_show_tasks=None, on_show_knowledge=None, on_show_evolution=None,
+                 on_show_approvals=None,
+                 **kw):
         super().__init__(master, **kw)
         self._on_open_file = on_open_file
         self._on_open_tree = on_open_tree
@@ -282,6 +296,12 @@ class ExplorerPanel(ttk.Frame):
         self._search_var = search_var
         self._diff_var = diff_var
         self._status_var = status_var
+        # 新 Tab 回调：缺省回落为「把任务/知识/演化/审批请回 app」的占位
+        # 提示；activity_bar 触发时 app 注入真实处理（详见 app.py）。
+        self._on_show_tasks = on_show_tasks
+        self._on_show_knowledge = on_show_knowledge
+        self._on_show_evolution = on_show_evolution
+        self._on_show_approvals = on_show_approvals
         self._activity = ActivityBar(self, self._select_view)
         self._build_content()
         # 布局顺序：活动栏在左、内容区在右（先 pack 活动栏）。
@@ -301,12 +321,15 @@ class ExplorerPanel(ttk.Frame):
         self.search_entry.bind('<Return>', lambda _e: self._on_refresh())
         ttk.Label(self._search_row, text='文件名搜索 · Enter',
                   foreground=C['subtext']).pack(anchor='w')
-        # 文件 / Git 变更两个真实视图。
+        # 6 个真实 Tab：文件 / Git / 搜索(过滤) / 任务 / 知识 / 演化
         self.notebook = ttk.Notebook(content)
         self._build_files_tab()
         self._build_git_tab()
+        self._build_tasks_tab()
+        self._build_knowledge_tab()
+        self._build_evolution_tab()
         self.notebook.pack(fill='both', expand=True)
-        # 占位视图（扩展 / 设置：与 notebook 二态切换）。
+        # 占位视图（设置：与 notebook 二态切换）。
         self._placeholder = ttk.Frame(content)
         box = ttk.Frame(self._placeholder)
         box.pack(anchor='nw', padx=16, pady=24)
@@ -375,6 +398,58 @@ class ExplorerPanel(ttk.Frame):
         for code, (_letter, token, _label) in GIT_STATUS_STYLE.items():
             tree.tag_configure(f'git-{code}', foreground=C[token])
 
+    def _build_tasks_tab(self):
+        """任务 Tab：当前任务的子代理 / 调度队列占位。真实内容由 app 注入。"""
+        tasks = ttk.Frame(self.notebook)
+        self._tasks_tab = tasks
+        self._tasks_placeholder = ttk.Label(
+            tasks,
+            text='任务视图由 app 注入（子代理 / 调度 / 工作流状态）。',
+            foreground=C['subtext'], wraplength=200, justify='left',
+            padding=16)
+        self._tasks_placeholder.pack(anchor='nw')
+        self.notebook.add(tasks, text='任务')
+        return tasks
+
+    def _build_knowledge_tab(self):
+        """知识库 Tab：MemoryStore + KnowledgeBase 占位。真实内容由 app 注入。"""
+        knowledge = ttk.Frame(self.notebook)
+        self._knowledge_tab = knowledge
+        self._knowledge_placeholder = ttk.Label(
+            knowledge,
+            text='知识库视图由 app 注入（pitfall / lesson / note 检索与注入预览）。',
+            foreground=C['subtext'], wraplength=200, justify='left',
+            padding=16)
+        self._knowledge_placeholder.pack(anchor='nw')
+        self.notebook.add(knowledge, text='知识')
+        return knowledge
+
+    def _build_evolution_tab(self):
+        """演化 Tab：EvolutionEngine 候选审批占位。真实内容由 app 注入。"""
+        evolution = ttk.Frame(self.notebook)
+        self._evolution_tab = evolution
+        self._evolution_placeholder = ttk.Label(
+            evolution,
+            text='演化视图由 app 注入（pending 候选 / approve · reject · quarantine）。',
+            foreground=C['subtext'], wraplength=200, justify='left',
+            padding=16)
+        self._evolution_placeholder.pack(anchor='nw')
+        self.notebook.add(evolution, text='演化')
+        return evolution
+
+    def install_tasks_view(self, view):
+        """app 注入真实任务视图（替换占位）。"""
+        self._tasks_placeholder.pack_forget()
+        view.pack(in_=self._tasks_tab, fill='both', expand=True)
+
+    def install_knowledge_view(self, view):
+        self._knowledge_placeholder.pack_forget()
+        view.pack(in_=self._knowledge_tab, fill='both', expand=True)
+
+    def install_evolution_view(self, view):
+        self._evolution_placeholder.pack_forget()
+        view.pack(in_=self._evolution_tab, fill='both', expand=True)
+
     # ── 视图切换 ──────────────────────────────────────────────────
     def _select_view(self, key):
         if key in ('files', 'search', 'git'):
@@ -384,6 +459,34 @@ class ExplorerPanel(ttk.Frame):
             self.notebook.select(self._git_tab if key == 'git' else self._files_tab)
             if key == 'search':
                 self.search_entry.focus_set()
+        elif key == 'tasks':
+            self._placeholder.pack_forget()
+            self._search_row.pack_forget()
+            self.notebook.pack(fill='both', expand=True)
+            self.notebook.select(self._tasks_tab)
+            if callable(self._on_show_tasks):
+                self._on_show_tasks()
+        elif key == 'knowledge':
+            self._placeholder.pack_forget()
+            self._search_row.pack_forget()
+            self.notebook.pack(fill='both', expand=True)
+            self.notebook.select(self._knowledge_tab)
+            if callable(self._on_show_knowledge):
+                self._on_show_knowledge()
+        elif key == 'evolution':
+            self._placeholder.pack_forget()
+            self._search_row.pack_forget()
+            self.notebook.pack(fill='both', expand=True)
+            self.notebook.select(self._evolution_tab)
+            if callable(self._on_show_evolution):
+                self._on_show_evolution()
+        elif key == 'approvals':
+            # 审批 Tab 在底部面板，本活动栏选中时：滚动到底部并切到该 Tab。
+            self._placeholder.pack_forget()
+            self._search_row.pack_forget()
+            self.notebook.pack(fill='both', expand=True)
+            if callable(self._on_show_approvals):
+                self._on_show_approvals()
         elif key in self.PLACEHOLDERS:
             self.notebook.pack_forget()
             self._search_row.pack_forget()

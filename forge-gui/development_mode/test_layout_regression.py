@@ -333,16 +333,15 @@ class LayoutRegressionTests(_WorkbenchFixture, unittest.TestCase):
         self.assertEqual(slaves, [self.app.panes, self.app.bottom],
                          '展开态应恢复 [三栏, 底部面板] 次序')
 
-    def test_bottom_panel_keeps_all_five_output_pages(self):
-        """迁移不得丢页：五输出页与 self.output/self.output_views 别名契约保留。"""
-        self.assertEqual(len(self.app.bottom.views), 5)
-        for name in ('Diff', '终端', '测试', '问题', '输出'):
+    def test_bottom_panel_keeps_all_six_pages(self):
+        """v0.2：六 Tab（差异/测试/问题/输出/能力/审批）替代旧五 Tab。"""
+        self.assertEqual(len(self.app.bottom.views), 6)
+        for name in ('差异', '测试', '问题', '输出', '能力', '审批'):
             self.assertIn(name, self.app.bottom.views)
-        self.assertIs(self.app.output, self.app.bottom.notebook)
-        self.assertIs(self.app.output_views, self.app.bottom.views)
+        # write_output 旧名「输出」仍生效（兼容别名）。
         self.app.write_output('输出', 'M1 冒烟')
         self.step()
-        self.assertIn('M1 冒烟', self.app.output_views['输出'].get('1.0', 'end'))
+        self.assertIn('M1 冒烟', self.app.bottom.views['输出'].get('1.0', 'end'))
 
     def test_status_bar_fields_default_to_placeholder_and_update(self):
         """四字段初始为占位，update 按值显示、未知键忽略（组件级）。"""
@@ -503,8 +502,10 @@ class ExplorerViewTests(_WorkbenchFixture, unittest.TestCase):
         self.assertIsInstance(panel, ExplorerPanel)
         bar = panel._activity
         self.assertEqual(bar.winfo_width(), 48)
+        # v0.2：活动栏 9 图标（任务 / 知识 / 演化 / 审批 四个新 Tab）。
         self.assertEqual([key for key, _g, _l in bar.ITEMS],
-                         ['files', 'search', 'git', 'run', 'extensions', 'settings'])
+                         ['files', 'search', 'git', 'tasks', 'run',
+                          'knowledge', 'evolution', 'approvals', 'settings'])
         self.assertEqual(bar.active, 'files')
         # 契约转交：app.tree / app.changes 就是面板内的 Treeview。
         self.assertIs(self.app.tree, panel.tree)
@@ -525,13 +526,29 @@ class ExplorerViewTests(_WorkbenchFixture, unittest.TestCase):
                          'Git 变更')
         bar.select('files')
         self.assertEqual(panel.notebook.tab(panel.notebook.select(), 'text'), '文件')
-        # 无真实数据源的入口：占位视图明说未接入（不伪造内容）。
-        bar.select('extensions')
+        # v0.2：占位入口从「扩展」改为「设置」——活动栏切到 settings 时
+        # notebook 收起，由 placeholder 接管（与 v0.1 行为对齐）。
+        bar.select('settings')
         self.pump(lambda: panel._placeholder.winfo_ismapped())
-        self.assertEqual(panel._placeholder_title.cget('text'), '扩展')
+        self.assertEqual(panel._placeholder_title.cget('text'), '设置')
         bar.select('files')
-        self.pump(lambda: not panel._placeholder.winfo_ismapped())
+        # pump 同时等 notebook 重新映射（不是仅等 placeholder 收起）。
+        self.pump(lambda: not panel._placeholder.winfo_ismapped()
+                  and panel.notebook.winfo_ismapped())
         self.assertTrue(panel.notebook.winfo_ismapped())
+        # v0.2：任务 / 知识 / 演化切到对应 notebook Tab（真实 Tab，非占位）。
+        for key, expected in (('tasks', '任务'),
+                              ('knowledge', '知识'),
+                              ('evolution', '演化')):
+            bar.select(key)
+            self.pump(lambda: panel.notebook.winfo_ismapped())
+            self.assertEqual(
+                panel.notebook.tab(panel.notebook.select(), 'text'),
+                expected,
+                f'{key} → {expected} 切到了 {panel.notebook.tab(panel.notebook.select(), "text")}')
+        # v0.2：审批触发 _show_approvals_tab（不要求 bottom 一定就绪，
+        # 只验证不抛异常；bottom.install_*_view 在集成测试里覆盖）。
+        bar.select('approvals')
 
     # ── 2. Git 状态语义化 ─────────────────────────────────────────
     def test_git_status_semantics_rendered_with_letter_badges(self):

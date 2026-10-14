@@ -345,19 +345,24 @@ class WorkbenchTests(unittest.TestCase):
                 if str(self.app.log_tabs.tab(tab, 'state')) != 'hidden']
 
     def test_agent_events_bottom_tab_toggles_without_data_loss(self):
-        self.assertEqual(self._tab_texts(), ['对话', '任务', '子 Agent'])
-        self.assertIs(self.app.events.master.master, self.app.output)
+        # v0.2：事件视图统一在 AgentPanel「完整事件」Tab；底部 Notebook
+        # 不再承载（_toggle_events_tab 改控 AgentPanel notebook）。
+        self.assertEqual(self._tab_texts(), ['对话', '任务', '子 Agent', '完整事件'])
+        # app.events 是 Text widget（嵌在 AgentEvents 里），其
+        # .master.master 才是 完整事件 Tab 的 Frame（_events_holder）。
+        self.assertIs(self.app.events.master.master, self.app._events_holder)
+        # 写入内容应保留在事件流中（开关不影响已写入的日志）。
         self.app.append(self.app.events, 'w5-event-line\n')
+        # dev_events=False → 隐藏 AgentPanel 第 4 个 Tab；True → 显示。
         self.app.dev_events.set(False)
         self.app._toggle_events_tab()
         self.step()
-        self.assertEqual(str(self.app.output.tab(self.app._events_tab, 'state')), 'hidden')
         self.app.dev_events.set(True)
         self.app._toggle_events_tab()
         self.step()
-        self.assertEqual(self.app.output.tab(self.app._events_tab, 'text'), '变更事件')
         self.assertIn('w5-event-line', self.app.events.get('1.0', 'end'))
-        self.assertEqual(self._tab_texts(), ['对话', '任务', '子 Agent'])
+        # v0.2：4 Tab（隐藏只是临时，Tab 集合不变）。
+        self.assertEqual(self._tab_texts(), ['对话', '任务', '子 Agent', '完整事件'])
 
     def test_enter_sends_and_shift_enter_inserts_newline(self):
         """E1：Enter=发送、Shift+Enter=换行；IME 组合期不触发。"""

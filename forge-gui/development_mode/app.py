@@ -194,7 +194,8 @@ class DevelopmentWorkbench(ttk.Frame):
         #     show_diff 的读取路径不变）；
         #   * self.expanded 仍是 app 侧状态（open_project 会重绑定它，
         #     故经 expanded_getter 注入而非传引用）。
-        # 三栏 pane 的增量挂载路径（apply_layout）不受影响。
+        # v0.2 起活动栏扩到 9 图标（任务 / 知识 / 演化 / 审批），对应
+        # 侧边栏 6 Tab（app 侧用 install_* 注入真实视图）。
         self.search = tk.StringVar()
         self.diff_view = tk.StringVar(value='combined')
         self.explorer = ExplorerPanel(
@@ -211,6 +212,10 @@ class DevelopmentWorkbench(ttk.Frame):
             search_var=self.search,
             diff_var=self.diff_view,
             status_var=self.status,
+            on_show_tasks=self._show_tasks_tab,
+            on_show_knowledge=self._show_knowledge_tab,
+            on_show_evolution=self._show_evolution_tab,
+            on_show_approvals=self._show_approvals_tab,
         )
         self.explorer.pack(fill='both', expand=True)
         self.tree = self.explorer.tree
@@ -307,17 +312,26 @@ class DevelopmentWorkbench(ttk.Frame):
 
         # B2（UX 审查）：完整事件是开发者调试通道——AgentPanel 二轮起由
         # agent_panel.AgentPanel 统一承载三标签与事件页挂载。
+        # v0.2 起：标题栏新增「审批」入口、4-Tab（对话/任务/子 Agent/完整事件）
+        # 上方插入「运行时上下文」组件（权限矩阵 + 模型路由）。
         self.agent_panel = AgentPanel(self.agent_frame, open_file=self.open_agent_file,
             view_diff=self.view_agent_diff, revert=self.revert_agent_change,
             pending=self.resolve_agent_approval, configure_model=self.agent_model_settings,
             refresh=self.refresh_agent_versions, new_conversation=self._new_agent_conversation,
             history=self.restore_session, settings=self.model_settings, view_changes=self._view_agent_changes,
+            on_show_approvals=self._show_approvals_tab,
             history_source=lambda: (self.runtime._resume_evidence or {}).get('path'))
         self.log_tabs = self.agent_panel.notebook
         self.chat = self.agent_panel.chat
         self.workflow = self.agent_panel.workflow
+        # 注入运行时上下文（权限矩阵 + 模型路由）—— 失败时静默退化为
+        # 旧 chrome（保留旧 `_sync_perm_badge` 路径），不影响核心 run。
+        self._runtime_ctx = self._safe_mount_runtime_context()
         event_content = self.agent_panel.mount_events(self.output)
         self.events = event_content.text
+        # v0.2：把「完整事件」Tab 的 holder 也挂到 app（与 self.events
+        # 同源；旧测试通过 .master 拿 holder）。
+        self._events_holder = self.agent_panel._events_holder
         self._events_tab = event_content
         self.dev_events = tk.BooleanVar(value=True)
         self.editor_contexts = []
@@ -504,10 +518,17 @@ class DevelopmentWorkbench(ttk.Frame):
             self.view_agent_diff(evidence.diffs[-1])
 
     def _toggle_events_tab(self):
+        # v0.2：事件视图统一在 AgentPanel 的「完整事件」Tab，不再放底部
+        # Notebook。`dev_events` 仍保留为开关语义，但 v0.2 改控 AgentPanel
+        # 第 4 个 Tab 的可见性（不再操作 self.output）。
         if self.dev_events.get():
-            self.output.add(self._events_tab, text='变更事件')
+            self.agent_panel.notebook.add(self._events_holder, text='完整事件')
         else:
-            self.output.hide(self._events_tab)
+            # 已 add 过则隐藏；首次切换时可能未 add，容错跳过。
+            try:
+                self.agent_panel.notebook.hide(self._events_holder)
+            except tk.TclError:
+                pass
 
     def _readonly_text(self, parent, **kw):
         # B1：请求高度降为 6 行——fill/expand 下实际显示仍由分配决定，
@@ -553,7 +574,10 @@ class DevelopmentWorkbench(ttk.Frame):
             pass  # 着色失败不影响内容输出
 
     def write_output(self, name, text, *, clear=False):
-        widget = self.output_views[name]
+        # v0.2 页改名兼容：旧页名（Diff/终端）经 bottom 面板别名表映射
+        # 到新页（差异），保持既有调用点零改动。
+        from .bottom_panel import PAGE_ALIASES
+        widget = self.output_views[PAGE_ALIASES.get(name, name)]
         if clear:
             widget.configure(state='normal')
             widget.delete('1.0', 'end')
@@ -716,6 +740,180 @@ class DevelopmentWorkbench(ttk.Frame):
         except Exception:
             pass
 
+    # ── v0.2 新 chrome 接线 ──────────────────────────────────────
+
+    def _safe_mount_runtime_context(self):
+        """挂载 RuntimeContext 组件到 AgentPanel 顶部。
+
+        失败时返回 None（保留旧 chrome）；失败原因写到状态栏但不阻断 run。
+        """
+        try:
+            from .policy_widgets import RuntimeContext
+            policy_kwargs = self._policy_matrix_kwargs()
+            routing_kwargs = self._routing_chain_kwargs()
+            return self.agent_panel.mount_runtime_context(
+                policy_kwargs=policy_kwargs,
+                routing_kwargs=routing_kwargs,
+            )
+        except Exception as exc:
+            self._safe_status(f'运行时上下文不可用：{exc}', level='warn')
+            return None
+
+    def _policy_matrix_kwargs(self):
+        """从当前 workbench 状态构造 PolicyMatrix 初始值（best-effort）。"""
+        mode = 'default'
+        sandbox = 'workspace-write'
+        read_scope = 'auto'
+        secret_scope = 'isolated'
+        try:
+            perm = getattr(self, 'permission', None)
+            if perm is not None:
+                value = perm.get() if hasattr(perm, 'get') else str(perm)
+                if value == 'workspace-write':
+                    sandbox = 'workspace-write'
+                elif value == 'read-only':
+                    sandbox = 'read-only'
+                else:
+                    sandbox = 'workspace-write'
+        except Exception:
+            pass
+        return dict(mode=mode, sandbox=sandbox, read_scope=read_scope,
+                    secret_scope=secret_scope,
+                    on_change=self._on_policy_change)
+
+    def _routing_chain_kwargs(self):
+        primary, fallback, moa = self._collect_routing()
+        # 主模型选项 = 当前 catalog 的所有 model id；与顶部下拉共享。
+        options = self._collect_model_options()
+        return dict(primary=primary, fallback=fallback, moa=moa,
+                    model_options=options,
+                    on_change=self._on_routing_change)
+
+    def _collect_routing(self):
+        """从 self.state / ModeState 抽 routing（best-effort）。"""
+        try:
+            state = getattr(self, 'state', None)
+            if state is not None:
+                value = state.value('routing') if hasattr(state, 'value') else None
+                if isinstance(value, dict):
+                    return (value.get('primary', '') or '',
+                            value.get('fallback', '') or '',
+                            value.get('moa', 'off') or 'off')
+        except Exception:
+            pass
+        return ('', '', 'off')
+
+    def _collect_model_options(self):
+        """从 catalog 收集 model id 列表（与 self.model_choice 一致）。"""
+        try:
+            model_choice = getattr(self, 'model_choice', None)
+            if model_choice is not None:
+                values = model_choice['values'] if isinstance(model_choice, dict) else None
+                if values is None and hasattr(model_choice, 'cget'):
+                    values = model_choice.cget('values')
+                if values:
+                    return tuple(values)
+        except Exception:
+            pass
+        return ()
+
+    def _on_policy_change(self, *, mode, sandbox, read_scope, secret_scope):
+        """RuntimeContext 矩阵变更 → 写回 self.permission 与状态栏。"""
+        # 同步状态栏徽标（B1 修正回归点）。
+        if hasattr(self, 'permission'):
+            try:
+                self.permission.set(sandbox)
+                self._sync_perm_badge()
+            except Exception:
+                pass
+        # 不在此处直接改 policy.mode——架构审查 P0-2 / P1-7 修复要求
+        # app 在保存路径做强校验；这里只做即时展示。
+
+    def _on_routing_change(self, *, primary, fallback, moa):
+        """RuntimeContext 路由变更 → 写回顶部 model_choice 与状态栏。"""
+        if primary and hasattr(self, 'model_var'):
+            try:
+                self.model_var.set(primary)
+            except Exception:
+                pass
+
+    def _show_tasks_tab(self):
+        """活动栏/标题栏点「任务」——侧边栏切到任务 Tab（暂无独立实现）。"""
+        if getattr(self, 'explorer', None) is None:
+            return
+        try:
+            self.explorer._activity.select('tasks')
+        except Exception:
+            pass
+
+    def _show_knowledge_tab(self):
+        if getattr(self, 'explorer', None) is None:
+            return
+        try:
+            self.explorer._activity.select('knowledge')
+            self._ensure_knowledge_view()
+        except Exception:
+            pass
+
+    def _show_evolution_tab(self):
+        if getattr(self, 'explorer', None) is None:
+            return
+        try:
+            self.explorer._activity.select('evolution')
+            self._ensure_evolution_view()
+        except Exception:
+            pass
+
+    def _show_approvals_tab(self):
+        """活动栏/Agent 标题栏点「审批」——切到底部面板的「审批」Tab。"""
+        if getattr(self, 'bottom', None) is None:
+            return
+        try:
+            self.bottom.notebook.select(
+                self.bottom.notebook.tabs()[4])  # 「审批」= 第 5 个（index 4）
+        except Exception:
+            try:
+                self.bottom.select('审批')
+            except Exception:
+                pass
+
+    def _ensure_knowledge_view(self):
+        """注入知识库视图（懒构造，KnowledgeBase 在缺包时退化为提示）。"""
+        if getattr(self, '_knowledge_view', None) is not None:
+            return
+        try:
+            from .knowledge_view import KnowledgeView
+            view = KnowledgeView(self.explorer._knowledge_tab, home=self.home)
+        except Exception:
+            from .knowledge_view import KnowledgePlaceholder
+            view = KnowledgePlaceholder(self.explorer._knowledge_tab)
+        self._knowledge_view = view
+        try:
+            self.explorer.install_knowledge_view(view)
+        except Exception:
+            pass
+
+    def _ensure_evolution_view(self):
+        if getattr(self, '_evolution_view', None) is not None:
+            return
+        try:
+            from .evolution_view import EvolutionView
+            view = EvolutionView(self.explorer._evolution_tab, home=self.home)
+        except Exception:
+            from .evolution_view import EvolutionPlaceholder
+            view = EvolutionPlaceholder(self.explorer._evolution_tab)
+        self._evolution_view = view
+        try:
+            self.explorer.install_evolution_view(view)
+        except Exception:
+            pass
+
+    def _safe_status(self, message, *, level='info'):
+        try:
+            self._set_status(message, level)
+        except Exception:
+            pass
+
     def _schedule_refresh(self, delay_ms: int = 800, *, documents: bool = False):
         """P0-A2：合并密集事件的刷新（目录/文档扫描）。"""
         self._refresh_due_docs = getattr(self, '_refresh_due_docs', False) or documents
@@ -806,7 +1004,55 @@ class DevelopmentWorkbench(ttk.Frame):
                         break
         except Exception:
             pass
-        bar.update(git=git, agent=agent, model=model, project=project)
+        # v0.2 状态栏扩展字段：能力计数 / 布局名
+        capability = self._capability_count_text()
+        layout = self._layout_name_text()
+        bar.update(git=git, agent=agent, model=model, project=project,
+                   capability=capability, layout=layout)
+
+    def _capability_count_text(self):
+        """能力数：builtin + contrib + plugin 三类合计。
+
+        真实值在 _init_tools/build_agent 完成后可读；这里取 best-effort
+        —— CapabilityLibrary / Marketplace 都可能不可用，回落 "—"。
+        """
+        try:
+            from forge.tools import BUILTIN_TOOL_NAMES
+            builtin = len(BUILTIN_TOOL_NAMES)
+        except Exception:
+            builtin = 0
+        contrib = 0
+        try:
+            from forge.registry import ModuleRegistry
+            # 避免实际 mount（只读 count）；保守取 catalog_rows 长度。
+            contrib = len(getattr(self, 'catalog_rows', []) or [])
+        except Exception:
+            pass
+        plugin = 0
+        try:
+            from pathlib import Path
+            from forge.home import forge_home
+            m_dir = Path(forge_home()) / 'plugins'
+            if m_dir.is_dir():
+                plugin = sum(1 for c in m_dir.iterdir() if c.is_dir())
+        except Exception:
+            pass
+        if not (builtin or contrib or plugin):
+            return '—'
+        return f'{builtin} (builtin) + {contrib} (contrib) + {plugin} (plugin)'
+
+    def _layout_name_text(self):
+        try:
+            value = self.state.layout
+            preset = value.get('preset') if isinstance(value, dict) else None
+        except Exception:
+            preset = None
+        if not preset:
+            return '默认'
+        # 中文映射
+        names = {'agent': 'Agent 优先', 'editor': '编辑器优先',
+                 'focus': '专注'}
+        return names.get(preset, preset)
 
     def expand_tree(self, opened):
         path = self.tree.focus()
@@ -1373,7 +1619,7 @@ class DevelopmentWorkbench(ttk.Frame):
             diff += '\n[安全 Diff 预览已截断；可在 Git 面板查看当前工作区实况]\n'
         self.write_output('Diff', diff if diff is not None else
             '没有安全的文本预览；此状态不代表补丁已应用。请查看执行详情或工作区 Git Diff。', clear=True)
-        self.output.select(self.output_views['Diff'].master)
+        self.bottom.select('Diff')  # v0.2：按页名 select（ToolPanel.select 兼容旧别名，内部选中 notebook）
 
     def revert_agent_change(self, change):
         if change.get('state') != 'written' or not change.get('checkpoint') or change.get('revision_changed'):
@@ -1385,8 +1631,10 @@ class DevelopmentWorkbench(ttk.Frame):
             if preview['expected'] != change.get('revision'):
                 self.status.set('磁盘已变化，拒绝恢复旧卡片版本')
                 return
+            from .bottom_panel import PAGE_ALIASES
+            page = PAGE_ALIASES.get('Diff', 'Diff')
             self.write_output('Diff', preview['diff'], clear=True)
-            self.output.select(self.output_views['Diff'].master)
+            self.bottom.select(page)
             self.restore_reviewed_checkpoint(preview)
         self.work(lambda: self.runtime.checkpoint_preview(change['checkpoint'], change['path']), previewed)
 

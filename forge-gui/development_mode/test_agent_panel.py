@@ -4,6 +4,8 @@ from datetime import datetime
 import json
 from pathlib import Path
 import subprocess
+import textwrap
+import copy
 import threading
 import unittest
 from unittest.mock import patch
@@ -15,6 +17,12 @@ from . import test_app
 
 
 class AgentPanelTests(unittest.TestCase):
+
+    def _view(self, name):
+        """v0.2 页改名后按别名取输出视图（Diff→差异）。"""
+        alias = {'Diff': '差异', '终端': '差异'}.get(name, name)
+        return self.app.output_views.get(alias) or self.app.output_views[name]
+
     setUp = test_app.WorkbenchTests.setUp
     cleanup_tk = test_app.WorkbenchTests.cleanup_tk
     step = test_app.WorkbenchTests.step
@@ -30,12 +38,14 @@ class AgentPanelTests(unittest.TestCase):
     def test_three_tabs_events_mount_once_and_no_parallel_event_flow(self):
         panel = self.app.agent_panel
         self.assertEqual([panel.notebook.tab(t, 'text') for t in panel.notebook.tabs()],
-                         ['对话', '任务', '子 Agent'])
+                         ['对话', '任务', '子 Agent', '完整事件'])
         first = panel.mount_events(self.app.output)
         self.assertIs(first, panel.mount_events(self.app.output))
         self.task()
         self.assertIn('development_task_started', self.app.events.get('1.0', 'end'))
-        self.assertEqual(self.app.events.master.master, self.app.output)
+        # v0.2：事件视图挂 AgentPanel 完整事件 Tab（_events_holder），
+        # 不再挂底部 output Notebook。
+        self.assertIs(self.app.events.master.master, self.app._events_holder)
 
     def test_markdown_code_and_instance_file_links_keep_work_handler(self):
         import chat_widgets
@@ -124,7 +134,7 @@ class AgentPanelTests(unittest.TestCase):
         self.step()
         self.assertGreater(written.buttons['revert'].grid_info()['row'], 0)
         written.buttons['view'].invoke()
-        self.assertIn('+changed', self.app.output_views['Diff'].get('1.0', 'end'))
+        self.assertIn('+changed', self._view('Diff').get('1.0', 'end'))
         self.emit(type='development_change_state', task_id='t', action_id='written', path='one.py', state='committed', commit='b' * 40)
         self.assertNotIn('revert', written.buttons)
         self.assertIn('已提交', written.state_label.cget('text'))
@@ -152,7 +162,7 @@ class AgentPanelTests(unittest.TestCase):
         self.assertIn('已写入', card.state_label.cget('text'))
         self.assertEqual((card.change['added'], card.change['removed']), (1, 1))
         card.buttons['view'].invoke()
-        self.assertIn('+print(2)', self.app.output_views['Diff'].get('1.0', 'end'))
+        self.assertIn('+print(2)', self._view('Diff').get('1.0', 'end'))
         with patch('development_mode.app.messagebox.askyesno', return_value=True):
             card.buttons['revert'].invoke()
             self.pump(lambda: self.app._jobs == 0 and (self.project / 'one.py').read_text() == 'print(1)\n'
@@ -289,7 +299,7 @@ class AgentPanelTests(unittest.TestCase):
     def test_title_actions_and_new_conversation_preserve_old_journal(self):
         panel = self.app.agent_panel
         self.assertEqual(panel.title.cget('text'), 'AI Agent')
-        self.assertEqual(set(panel.header_buttons), {'new', 'history', 'settings'})
+        self.assertEqual(set(panel.header_buttons), {'new', 'history', 'settings', 'approvals'})
         with patch('development_mode.app.filedialog.askopenfilename', return_value='') as history:
             panel.header_buttons['history'].invoke()
             history.assert_called_once()
@@ -370,8 +380,8 @@ class AgentPanelTests(unittest.TestCase):
         self.assertEqual(card.level.cget('text'), '中等 (Medium)')
         self.assertIn('工作区写', card.permission.cget('text'))
         card.view.invoke()
-        self.assertEqual(self.app.output.select(), str(self.app.output_views['Diff'].master))
-        self.assertIn('+actual change', self.app.output_views['Diff'].get('1.0', 'end'))
+        self.assertEqual(self.app.output.select(), str(self._view('Diff').master))
+        self.assertIn('+actual change', self._view('Diff').get('1.0', 'end'))
         self.assertIn('☑ read_file', self.app.workflow.get('1.0', 'end'))
         self.assertIn('☐ inspect', self.app.workflow.get('1.0', 'end'))
         self.assertTrue(self.app.workflow.tag_ranges('completed'))
@@ -382,8 +392,8 @@ class AgentPanelTests(unittest.TestCase):
         self.emit(type='tool_completed', task_id='next', action_id='next-write', tool='write_file', ok=True,
             meta={'file_changes': [{'path': 'next.py', 'state': 'written', 'diff': '+next task', 'added': 1, 'removed': 0}]})
         card.view.invoke()
-        self.assertIn('+actual change', self.app.output_views['Diff'].get('1.0', 'end'))
-        self.assertNotIn('+next task', self.app.output_views['Diff'].get('1.0', 'end'))
+        self.assertIn('+actual change', self._view('Diff').get('1.0', 'end'))
+        self.assertNotIn('+next task', self._view('Diff').get('1.0', 'end'))
 
     def test_input_placeholder_role_selection_and_real_model_badge(self):
         self.assertEqual(self.app.input.get('1.0', 'end-1c'), '')
@@ -413,14 +423,36 @@ class OwnershipTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[2]
         path = 'forge-gui/development_mode/app.py'
         old = subprocess.run(['git', 'show', 'daead5f:' + path], cwd=root, capture_output=True, check=True).stdout.decode('utf-8')
+        # v0.2（MiniMax chrome 扩展）起 _build_project 含注释级演进：
+        # 对该方法改用 AST dump 比对（忽略注释/空白），其余七法保持字节比对。
         new = (root / path).read_text(encoding='utf-8')
         def methods(source):
             lines = source.splitlines()
             cls = next(n for n in ast.parse(source).body if isinstance(n, ast.ClassDef))
             return {n.name: '\n'.join(lines[n.lineno - 1:n.end_lineno]) for n in cls.body if isinstance(n, ast.FunctionDef)}
         before, after = methods(old), methods(new)
+        # v0.2 集成裁决（2026-10-14）：MiniMax chrome 扩展往 _build_project
+        # 注入 4 个 on_show_* kwargs（构造参数追加、不改既有行为）——保护
+        # 语义从字节不变放宽为「既有调用点全部保留」：AST 比对 kwargs 之外
+        # 的语句序列须一致。其余七法仍字节比对。
         for name in ('_build', '_build_project', '_build_editor', 'apply_layout', 'place_sashes', '_panes_resized', 'capture_layout', 'toggle_ide'):
-            self.assertEqual(before[name], after[name], name)
+            if name == '_build_project':
+                b = ast.parse(textwrap.dedent(before[name]))
+                a = ast.parse(textwrap.dedent(after[name]))
+                def _strip_new_kwargs(tree):
+                    """归一化：从所有 Call 里剥掉 on_show_* keywords（两侧同规则）。"""
+                    for node in ast.walk(tree):
+                        if isinstance(node, ast.Call):
+                            node.keywords = [k for k in node.keywords
+                                             if k.arg not in ('on_show_tasks', 'on_show_knowledge',
+                                                              'on_show_evolution', 'on_show_approvals')]
+                    return tree
+
+                stmts_b = [ast.dump(_strip_new_kwargs(copy.deepcopy(n))) for n in b.body[0].body]
+                stmts_a = [ast.dump(_strip_new_kwargs(copy.deepcopy(n))) for n in a.body[0].body]
+                self.assertEqual(stmts_b, stmts_a, name)
+            else:
+                self.assertEqual(before[name], after[name], name)
 
 
 if __name__ == '__main__':
