@@ -49,3 +49,31 @@ Set-Location 'C:\Users\匡溯昀\forge-coding-agent-ux'
 后续诊断记录：系统 Tk 曾使独立面板进程超过 600 秒，按超时失败记录；一次完整四套件第 1 轮 68/68 通过，但第 2 轮在 Workspace 关闭测试期间以退出码 3221225477（0xC0000005）结束，无完整测试总结，未计通过。Codex 自带 Python 3.12.14 / Tcl/Tk 8.6.12 的对照暴露新增 IconButton 默认 highlightthickness 的 Tcl_Obj 类型问题，已在本域新按钮显式设置 1，和现有共享按钮用法一致；主题文件未改。对照环境面板 21/21 通过，但四套件两轮各有 5 个共享主题数值转换错误，未用其申报整轮通过。另一次新增占位测试单次 step 后检查显示状态而失败，改为等待真实 <<Modified>> 更新；随后冻结源码回到原 Python 3.12.10 做最终验收。所有对照失败与进程中止均单独保留，没有当作通过、跳过或自动重试过滤。
 
 隐藏 Tk 自动检查不能代替人工对照示例图、真机可见窗口的字号、图标、滚动或 DPI 观感；本轮不宣称这些人工视觉验收已完成。未推送、未合并；合并顺序保持 WorkBuddy 布局域先合、Agent 域后合。
+
+---
+
+## 验收记录（集成方，2026-10-14 10:02）
+
+**Agent 面板示例图增量（第二轮）：通过 ✅**
+
+【集成方独立复验（与交付方口径完全一致的 verify_coding_agent_panel_round2.py，输出目录 `forge-coding-agent-panel-round2-recheck`）】
+
+- 独立 Agent 面板套件：21/21，0 失败 / 0 错误 / 0 跳过（38.3s）
+- 四套件连续两轮：68/68 + 68/68，0 失败 / 0 错误 / 0 跳过（94.9s / 100.6s）
+- 八保护方法 AST 与基线 998d3fc 一致（_build/_build_project/_build_editor/apply_layout/place_sashes/_panes_resized/capture_layout/toggle_ide）
+- app.py 既有方法白名单合规：仅 _build_agent/_toggle_events_tab/send/render_evidence/handle_event；新增 4 方法在申报清单内
+- WorkBuddy 域零触碰（layout.py/bottom_panel.py/explorer.py/welcome.py/editor_area.py/workspace.py/gui_theme.py/chat_widgets.py 无改动）
+- 交付后源码一致性：7 个涉改文件 SHA-256 与机器验证记录逐文件比对全部一致（验收期间源码未再变化）
+- 3 个验收进程零 Tcl 安装错误、零超时、零原生异常退出（validation.json accepted=true）
+
+【域边界裁决】
+
+- 保留「对话 / 任务 / 子 Agent」三标签 + 底部「变更事件」的理由成立（窄栏阅读空间、真实运行树不过滤），符合派单"由你判断"的授权
+- 时间戳语义合规：真实事件 ts 优先、恢复 Session 匹配原始 ts、缺失显示「时间未记录」、不把恢复时刻冒充过去
+- M5 接线说明已阅（docs/coding-agent-panel-api.md），WorkBuddy 四标签重构落地后按该说明对接
+
+【后续】
+
+- 分支维持不推送、不合并；集成顺序不变：WorkBuddy 布局域（M1/M2 已过，M3 Explorer 进行中）先合，Agent 域后合
+- 交付方报告中的诚实披露（开发期失败史、对照环境差异、无人工视觉验收）已阅，不构成验收阻塞
+- 等待 WorkBuddy M3-M6 交付后触发合并窗口
