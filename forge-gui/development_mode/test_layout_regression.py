@@ -29,19 +29,33 @@
          切换）；近期项目来自 state.value('recent')，点击行经
          on_recent 回调走既有 open_project。切换不新增 pane 挂载路径。
 
+  M3 Explorer（explorer.py）：
+         左栏重构为「48px 活动栏（文件/搜索/Git/运行/扩展/设置）+
+         文件面板」——文件树 / Git 变更 / 搜索 / 文件操作移入新模块；
+         app._build_project 只做挂载与契约转交（self.tree /
+         self.changes 仍指向面板内 Treeview，self.search /
+         self.diff_view / self.expanded 仍归 app），_project_scan
+         的渲染循环委派给 ExplorerPanel.populate。Git porcelain 码
+         归一化为 M/A/D/U/R/C/X，字母徽标 + 主题色 + 图例文字三重
+         冗余；文件操作经 ProjectBoundary 校验。
+
 本文件即上述修复与改造的守护，也是集成验收口径「P0-L1 两尺寸映射断言」
 的落地。只测布局容器层，不触碰 Agent 栏内部控件语义（Codex 域）。
 """
+import subprocess
 import time
 import unittest
 from pathlib import Path
 import tempfile
+from unittest import mock
 import tkinter as tk
 import _tkinter
 
 from gui_theme import apply_ttk_theme
 from forge.development.state import ModeState
 from development_mode.app import DevelopmentWorkbench
+from development_mode import explorer
+from development_mode.explorer import ExplorerPanel
 from development_mode.layout import StatusBar
 
 
@@ -449,6 +463,178 @@ class WelcomeViewTests(_WorkbenchFixture, unittest.TestCase):
         self.assertEqual(len(self.app.panes.panes()), 3)
         self.assertFalse(self.app.editor_body.winfo_ismapped())
         self.assertIsNone(self.app.source)
+
+
+class ExplorerViewTests(_WorkbenchFixture, unittest.TestCase):
+    """M3 Explorer 守护：活动栏结构 / 视图切换 / Git 状态语义化 /
+    文件操作（边界校验）/ 真实 git 仓库的端到端填充。
+
+    只测布局容器层与面板公开行为，不触碰 Agent 栏内部控件语义
+    （Codex 域）。状态语义用合成 scan 值（hermetic）+ 一路真实
+    git 端到端（覆盖 _project_scan → populate 委派）。
+    """
+
+    def _tree_rows(self):
+        """深度优先展开文件树：(iid, text, tags, values) 列表。"""
+        rows = []
+
+        def walk(iid):
+            for child in self.app.tree.get_children(iid):
+                rows.append((child, self.app.tree.item(child, 'text'),
+                             self.app.tree.item(child, 'tags'),
+                             self.app.tree.item(child, 'values')))
+                walk(child)
+        walk('')
+        return rows
+
+    def _git(self, *args):
+        subprocess.run(['git', *args], cwd=self.project, check=True,
+                       capture_output=True, text=True)
+
+    # ── 1. 活动栏结构与契约转交 ───────────────────────────────────
+    def test_activity_bar_mounts_with_contracts(self):
+        panel = self.app.explorer
+        self.assertIsInstance(panel, ExplorerPanel)
+        bar = panel._activity
+        self.assertEqual(bar.winfo_width(), 48)
+        self.assertEqual([key for key, _g, _l in bar.ITEMS],
+                         ['files', 'search', 'git', 'run', 'extensions', 'settings'])
+        self.assertEqual(bar.active, 'files')
+        # 契约转交：app.tree / app.changes 就是面板内的 Treeview。
+        self.assertIs(self.app.tree, panel.tree)
+        self.assertIs(self.app.changes, panel.changes)
+        # app.search 仍是面板 Entry 绑定的同一 StringVar。
+        self.app.search.set('one')
+        self.addCleanup(self.app.search.set, '')
+        self.assertEqual(panel.search_entry.get(), 'one')
+        # 默认停在「文件」标签。
+        self.assertEqual(panel.notebook.tab(panel.notebook.select(), 'text'), '文件')
+
+    def test_activity_bar_switches_views(self):
+        panel = self.app.explorer
+        bar = panel._activity
+        bar.select('git')
+        self.assertEqual(bar.active, 'git')
+        self.assertEqual(panel.notebook.tab(panel.notebook.select(), 'text'),
+                         'Git 变更')
+        bar.select('files')
+        self.assertEqual(panel.notebook.tab(panel.notebook.select(), 'text'), '文件')
+        # 无真实数据源的入口：占位视图明说未接入（不伪造内容）。
+        bar.select('extensions')
+        self.pump(lambda: panel._placeholder.winfo_ismapped())
+        self.assertEqual(panel._placeholder_title.cget('text'), '扩展')
+        bar.select('files')
+        self.pump(lambda: not panel._placeholder.winfo_ismapped())
+        self.assertTrue(panel.notebook.winfo_ismapped())
+
+    # ── 2. Git 状态语义化 ─────────────────────────────────────────
+    def test_git_status_semantics_rendered_with_letter_badges(self):
+        root = self.project.resolve()
+        value = {
+            'nodes': [
+                {'path': str(root / 'a.py'), 'name': 'a.py', 'is_dir': False},
+                {'path': str(root / 'b.py'), 'name': 'b.py', 'is_dir': False},
+                {'path': str(root / 'c.py'), 'name': 'c.py', 'is_dir': False},
+                {'path': str(root / 'x.py'), 'name': 'x.py', 'is_dir': False},
+                {'path': str(root / 'pkg'), 'name': 'pkg', 'is_dir': True},
+            ],
+            'status': {'a.py': 'M', 'b.py': '??', 'c.py': 'D', 'x.py': 'UU'},
+            'branch': 'main',
+        }
+        self.app.explorer.populate(value, root)
+        rows = {Path(iid).name: (text, tags)
+                for iid, text, tags, _values in self._tree_rows()}
+        # 字母徽标 + tag（非颜色冗余 + 主题色双重编码）。
+        self.assertEqual(rows['a.py'], ('M a.py', ('git-M',)))
+        self.assertEqual(rows['b.py'], ('U b.py', ('git-U',)))
+        self.assertEqual(rows['c.py'], ('D c.py', ('git-D',)))
+        self.assertEqual(rows['x.py'], ('! x.py', ('git-X',)))
+        self.assertEqual(rows['pkg'], ('pkg', ''))  # 无状态目录不加徽标
+        changes = {iid: (self.app.changes.item(iid, 'text'),
+                         self.app.changes.item(iid, 'tags'))
+                   for iid in self.app.changes.get_children()}
+        self.assertEqual(changes['a.py'], ('M a.py', ('git-M',)))
+        self.assertEqual(changes['b.py'], ('U b.py', ('git-U',)))
+        self.assertEqual(changes['c.py'], ('D c.py', ('git-D',)))
+        self.assertEqual(changes['x.py'], ('! x.py', ('git-X',)))
+        # 图例文字冗余：字母 + 中文标签同屏。
+        legend = [w.cget('text') for w in panel_legend(self.app)]
+        for expected in ('M 已修改', 'A 新增', 'D 删除', 'U 未跟踪', 'R 重命名'):
+            self.assertIn(expected, legend)
+
+    def test_scan_populates_semantic_status_from_real_git(self):
+        """端到端：真实 git 仓库的 M / ?? 状态经 _project_scan 委派
+        populate 后，树与变更清单都带语义徽标。"""
+        self._git('init', '-q')
+        self._git('add', '.')
+        self._git('-c', 'user.name=t', '-c', 'user.email=t@t',
+                  'commit', '-qm', 'init')
+        (self.project / 'one.py').write_text('print(11)\n', encoding='utf-8')
+        (self.project / 'two.py').write_text('print(2)\n', encoding='utf-8')
+        self.app.refresh_project()
+        self.pump(lambda: any('M one.py' == self.app.tree.item(i, 'text')
+                              for i in self.app.tree.get_children()))
+        rows = {Path(iid).name: self.app.tree.item(iid, 'text')
+                for iid in self.app.tree.get_children()}
+        self.assertEqual(rows['one.py'], 'M one.py')
+        self.assertEqual(rows['two.py'], 'U two.py')
+        changes = {iid: self.app.changes.item(iid, 'text')
+                   for iid in self.app.changes.get_children()}
+        self.assertEqual(changes['one.py'], 'M one.py')
+        self.assertEqual(changes['two.py'], 'U two.py')
+
+    # ── 3. 文件操作（经 ProjectBoundary 校验）─────────────────────
+    def test_file_ops_create_rename_delete_through_boundary(self):
+        root = self.project.resolve()
+        with mock.patch('development_mode.explorer.simpledialog.askstring',
+                        return_value='made.py'):
+            self.app.explorer._new_file()
+        self.assertTrue((root / 'made.py').is_file(), '新建文件应落盘')
+        self.pump(lambda: any(Path(i).name == 'made.py'
+                              for i in self.app.tree.get_children()))
+        self.app.tree.selection_set(str(root / 'made.py'))
+        with mock.patch('development_mode.explorer.simpledialog.askstring',
+                        return_value='renamed.py'):
+            self.app.explorer._rename()
+        self.pump(lambda: any(Path(i).name == 'renamed.py'
+                              for i in self.app.tree.get_children()))
+        self.assertTrue((root / 'renamed.py').is_file())
+        self.assertFalse((root / 'made.py').exists())
+        self.app.tree.selection_set(str(root / 'renamed.py'))
+        with mock.patch('development_mode.explorer.messagebox.askyesno',
+                        return_value=True):
+            self.app.explorer._delete()
+        self.pump(lambda: not any(Path(i).name == 'renamed.py'
+                                  for i in self.app.tree.get_children()))
+        self.assertFalse((root / 'renamed.py').exists())
+
+    def test_boundary_rejects_paths_outside_project(self):
+        boundary = self.app.source.boundary
+        with self.assertRaises(PermissionError):
+            explorer.create_file(boundary, self.base, 'evil.py')
+        with self.assertRaises(PermissionError):
+            explorer.create_file(boundary, self.project / '.git', 'evil.py')
+        with self.assertRaises(PermissionError):
+            explorer.delete_path(boundary, self.base / 'repo' / '..' / 'x')
+
+    def test_collapse_all_clears_expanded_state(self):
+        root = self.project.resolve()
+        (self.project / 'sub').mkdir()
+        (self.project / 'sub' / 'x.py').write_text('x\n', encoding='utf-8')
+        self.app.expanded.add(str(root / 'sub'))
+        self.app.refresh_project()
+        self.pump(lambda: any(Path(i).name == 'sub'
+                              for i in self.app.tree.get_children()))
+        self.assertTrue(self.app.tree.item(str(root / 'sub'), 'open'))
+        self.app.explorer._collapse_all()
+        self.pump(lambda: not self.app.expanded)
+        self.assertFalse(self.app.tree.item(str(root / 'sub'), 'open'))
+
+
+def panel_legend(app):
+    """Git 标签页图例帧的子 Label（测试辅助，不暴露私有结构）。"""
+    return [w for w in app.explorer.status_legend.winfo_children()
+            if isinstance(w, tk.Label)]
 
 
 if __name__ == '__main__':

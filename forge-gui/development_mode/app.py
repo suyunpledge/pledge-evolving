@@ -11,7 +11,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 
 from gui_theme import (C, apply_ttk_theme, style_editor, FONT_MONO_SM,
-    FONT_TITLE, FONT_SECTION, FONT_UI)
+    FONT_TITLE, FONT_UI)
 try:  # E1（UX 审查）：与 InputCard 同款可选行内 IME 守卫（默认关）
     from ime_inline import InlineIME
 except Exception:  # pragma: no cover - 非 Windows / 缺 ctypes
@@ -22,6 +22,7 @@ from forge.development.runtime import DevelopmentRuntime
 from forge.development.evidence import TaskEvidence
 from forge.secrets import redact, install_tk_exception_redaction
 from .bottom_panel import ToolPanel
+from .explorer import ExplorerPanel
 from .layout import NavigationBar, StatusBar
 from .welcome import WelcomeView
 from .project import WorkspaceSource
@@ -171,39 +172,37 @@ class DevelopmentWorkbench(ttk.Frame):
             self.model_settings()
 
     def _build_project(self):
-        tools = ttk.Frame(self.project_frame)
-        tools.pack(fill='x', pady=4)
-        ttk.Label(tools, text='项目', font=FONT_SECTION).pack(side='left')
-        ttk.Button(tools, text='刷新', command=self.refresh_project).pack(side='right')
+        # M3：左栏重构为「48px 活动栏 + 文件面板」——文件树 / Git 变更 /
+        # 搜索 / 文件操作的实现移入 explorer.py 的 ExplorerPanel（示例图
+        # 左区结构 + Git 状态语义化 + 文件类型图标）。本方法只做挂载与
+        # 契约转交，不实现面板内部结构：
+        #   * self.tree / self.changes 仍是 Treeview（指向面板内控件）；
+        #   * self.search / self.diff_view 仍是 app 侧 StringVar
+        #     （面板的 Entry/Combobox 绑同一变量，refresh_project /
+        #     show_diff 的读取路径不变）；
+        #   * self.expanded 仍是 app 侧状态（open_project 会重绑定它，
+        #     故经 expanded_getter 注入而非传引用）。
+        # 三栏 pane 的增量挂载路径（apply_layout）不受影响。
         self.search = tk.StringVar()
-        search = ttk.Entry(self.project_frame, textvariable=self.search)
-        search.pack(fill='x', pady=(0, 6))
-        search.bind('<Return>', lambda e: self.refresh_project())
-        ttk.Label(self.project_frame, text='文件名搜索 · Enter', foreground=C['subtext']).pack(anchor='w')
-        notebook = ttk.Notebook(self.project_frame)
-        notebook.pack(fill='both', expand=True)
-        files = ttk.Frame(notebook)
-        git = ttk.Frame(notebook)
-        notebook.add(files, text='文件')
-        notebook.add(git, text='Git 变更')
         self.diff_view = tk.StringVar(value='combined')
-        diff_choice = ttk.Combobox(git, textvariable=self.diff_view, state='readonly',
-                                  values=['combined', 'working', 'staged'], width=18)
-        diff_choice.pack(fill='x', pady=4)
-        diff_choice.bind('<<ComboboxSelected>>', self.show_diff)
-        self.tree = ttk.Treeview(files, show='tree', selectmode='browse')
-        scroll = ttk.Scrollbar(files, command=self.tree.yview)
-        scroll.pack(side='right', fill='y')
-        self.tree.configure(yscrollcommand=scroll.set)
-        self.tree.pack(fill='both', expand=True)
-        self.tree.bind('<Double-1>', self.open_tree)
-        self.tree.bind('<Return>', self.open_tree)
-        self.tree.bind('<<TreeviewOpen>>', lambda e: self.expand_tree(True))
-        self.tree.bind('<<TreeviewClose>>', lambda e: self.expand_tree(False))
-        self.changes = ttk.Treeview(git, show='tree', selectmode='browse')
-        self.changes.pack(fill='both', expand=True)
-        self.changes.bind('<<TreeviewSelect>>', self.show_diff)
-        self.changes.bind('<Double-1>', lambda e: self.open_changed())
+        self.explorer = ExplorerPanel(
+            self.project_frame,
+            on_open_file=self.open_file,
+            on_open_tree=self.open_tree,
+            on_open_changed=self.open_changed,
+            on_show_diff=self.show_diff,
+            on_expand=self.expand_tree,
+            on_refresh=self.refresh_project,
+            on_run=self.run_tests,
+            boundary_provider=lambda: self.source.boundary if self.source else None,
+            expanded_getter=lambda: self.expanded,
+            search_var=self.search,
+            diff_var=self.diff_view,
+            status_var=self.status,
+        )
+        self.explorer.pack(fill='both', expand=True)
+        self.tree = self.explorer.tree
+        self.changes = self.explorer.changes
 
     def _build_editor(self):
         # M2：编辑器本体收进 editor_body 子帧——未打开项目时中央区让给
@@ -629,30 +628,12 @@ class DevelopmentWorkbench(ttk.Frame):
     def _project_scan(self, value, error):
         self._scan_busy = False
         if not error:
-            selected = self.tree.selection()
-            self.tree.delete(*self.tree.get_children())
-            for node in value['nodes']:
-                path = node['path']
-                if path == str(self.source.root):
-                    continue
-                parent = str(Path(path).parent)
-                parent = parent if self.tree.exists(parent) and not self.search.get() else ''
-                relative = Path(path).relative_to(self.source.root).as_posix()
-                marker = value['status'].get(relative, '')
-                self.tree.insert(parent, 'end', iid=path, text=(marker + ' ' + node['name']).strip(),
-                                 open=path in self.expanded, values=('dir' if node['is_dir'] else 'file',))
-                if node['is_dir'] and path not in self.expanded:
-                    self.tree.insert(path, 'end', text='…')
-            for item in selected:
-                if self.tree.exists(item):
-                    self.tree.selection_set(item)
-            self.changes.delete(*self.changes.get_children())
-            changed_selection = getattr(self, '_changed_selection', ())
-            for path, status in value['status'].items():
-                self.changes.insert('', 'end', iid=path, text=status + ' ' + path)
-            for path in changed_selection:
-                if self.changes.exists(path):
-                    self.changes.selection_set(path)
+            # M3：文件树 / Git 变更清单的渲染移入 explorer.ExplorerPanel
+            # （Git 状态语义化 + 文件类型图标）；选择恢复、展开态、过滤
+            # 语义与既有实现一致。status.set / _refresh_status_fields 与
+            #  pending 重扫逻辑不变。
+            self.explorer.populate(value, self.source.root,
+                                   changes_selection=getattr(self, '_changed_selection', ()))
             self.status.set(f"{value['branch']} · {self.source.root.name} · {len(value['status'])} 个 Git 变更 · {self.permission.get()}")
             # M1：多字段状态栏的 Git/项目字段随扫描结果同步（扫描是
             # 打开项目与刷新的共同完成点，一处接线覆盖两种入口）。
