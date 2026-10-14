@@ -77,7 +77,7 @@ from unittest import mock
 import tkinter as tk
 import _tkinter
 
-from gui_theme import apply_ttk_theme
+from gui_theme import C, apply_ttk_theme
 from forge.development.state import ModeState
 from development_mode.app import DevelopmentWorkbench
 from development_mode import explorer
@@ -1167,6 +1167,157 @@ class LayoutPresetTests(_WorkbenchFixture, unittest.TestCase):
         self._use_preset('review')
         self.assertAlmostEqual(self.state.layout['fractions'][0], .25, places=1)
         self.assertAlmostEqual(self.state.layout['fractions'][1], .8, places=1)
+
+
+class StatusBarTests(_WorkbenchFixture, unittest.TestCase):
+    """M7 状态栏编辑器状态组 + 头部在线状态 + 品牌火花守护。
+
+    数据源真实性：编码/换行/语言取自当前 Document 属性与扩展名
+    映射；光标由 EditorArea 光标通知推送；就绪态现读 runtime；
+    问题计数走 TaskEvidence 失败记录（与底部徽标同源）；无独立
+    诊断器 → 警告恒 0；runtime 无在线数据 → 头部「离线」不伪造。
+    """
+
+    def _open_sample(self):
+        path = (self.project / 'sample.py')
+        path.write_text(SAMPLE_PY, encoding='utf-8')
+        key = str(path.resolve())
+        self.app.open_file(path.resolve())
+        self.pump(lambda: key in self.app.documents)
+        return self.app.documents[key]
+
+    def _fields(self):
+        bar = self.app.status_bar
+        return {key: bar.value(key) for key in
+                ('cursor', 'encoding', 'eol', 'language', 'ready',
+                 'warnings', 'problems')}
+
+    # ── 1. 编辑器状态组：文档驱动 ─────────────────────────────────
+    def test_editor_fields_track_opened_document(self):
+        """打开 .py 文档 → UTF-8 / LF / Python（真实 Document 属性）；
+        M1 既有四字段与瞬态消息契约不受影响。"""
+        row = self._open_sample()
+        self.pump(lambda: self.app.status_bar.value('language') == 'Python')
+        fields = self._fields()
+        self.assertEqual(fields['encoding'], 'UTF-8')
+        self.assertEqual(fields['eol'], 'LF')
+        self.assertEqual(fields['language'], 'Python')
+        # M1 契约：既有四字段键仍在；瞬态消息由 status.set 驱动
+        # （此处为扫描完成文案，无项目初始态才是「等待」）。
+        self.assertIn('repo', self.app.status_bar.value('project'))
+        self.assertIn('repo', self.app.status.get())
+
+    def test_editor_fields_placeholder_without_document(self):
+        """无打开文件 → 光标/编码/换行/语言占位；警告/问题 0。"""
+        self.app.close_current()
+        self.step()
+        fields = self._fields()
+        for key in ('cursor', 'encoding', 'eol', 'language'):
+            self.assertEqual(fields[key], '—', key)
+        self.assertEqual(fields['warnings'], '0')
+        self.assertEqual(fields['problems'], '0')
+
+    def test_cursor_field_follows_insert(self):
+        """光标通知（KeyRelease/ButtonRelease 同一汇聚点）→ 行列字段。
+        注意：测试环境不可见窗口无焦点，合成 KeyRelease 事件不触发
+        绑定——直接走 EditorArea.notify_cursor 公开路径（真实事件与
+        该路径在 _after_caret 汇聚，链路同一）。"""
+        row = self._open_sample()
+        area = row['area']
+        area.text.mark_set('insert', '3.4')
+        area.notify_cursor()
+        self.step()
+        self.assertEqual(self.app.status_bar.value('cursor'), '行 3, 列 5')
+
+    def test_ready_field_and_indicator_reflect_runtime(self):
+        """就绪态现读 runtime：ready → 绿点「就绪」；busy → 黄点
+        「运行中」；未就绪 → 灰点。圆点颜色经 set_indicator 语义
+        token，不持有第二份状态。"""
+        class _FakeRuntime:
+            def __init__(self, ready, busy):
+                self.ready, self.busy = ready, busy
+        bar = self.app.status_bar
+        self.app.runtime = _FakeRuntime(True, False)
+        self.app._sync_ready_status()
+        self.assertEqual(bar.value('ready'), '就绪')
+        self.assertEqual(bar._indicator.itemcget('dot', 'fill'), C['ok'])
+        self.app.runtime = _FakeRuntime(True, True)
+        self.app._sync_ready_status()
+        self.assertEqual(bar.value('ready'), '运行中')
+        self.assertEqual(bar._indicator.itemcget('dot', 'fill'), C['warn'])
+        self.app.runtime = _FakeRuntime(False, False)
+        self.app._sync_ready_status()
+        self.assertEqual(bar.value('ready'), '未就绪')
+        self.assertEqual(bar._indicator.itemcget('dot', 'fill'), C['ter'])
+
+    def test_problems_field_counts_real_failures(self):
+        """问题字段 = TaskEvidence 失败记录（真实计数）；经
+        handle_event 接线——失败 test_result 到达即刷新（与底部
+        问题徽标同源）。无独立诊断器 → 警告恒 0 不伪造。"""
+        self._open_sample()
+        self.app.task_evidence.apply(
+            {'type': 'test_result', 'run_id': 'r1', 'agent': 't',
+             'status': 'failed', 'exit_code': 1})
+        self.app.handle_event({'data': {'type': 'test_result', 'run_id': 'r1',
+                                        'agent': 't', 'status': 'failed',
+                                        'exit_code': 1}})
+        self.step()
+        self.assertEqual(self.app.status_bar.value('problems'), '1')
+        self.assertEqual(self.app.status_bar.value('warnings'), '0')
+        # 底部问题徽标同步（同源同事件）。
+        self.assertEqual(self.app.bottom._pages and
+                         self.app.bottom.notebook.tab(
+                             self.app.bottom._pages['问题'], 'text'),
+                         '问题(1)')
+
+    # ── 2. 头部在线状态与品牌火花 ─────────────────────────────────
+    def test_header_online_status_offline_without_fabrication(self):
+        """runtime 无在线连接数据源 → 「离线」+ 灰点，不伪造计数；
+        文案与圆点色经 _sync_online_status 一处可控。"""
+        self.assertEqual(self.app.online_var.get(), '离线')
+        self.assertEqual(self.app.online_dot.itemcget('dot', 'fill'), C['ter'])
+        self.app._sync_online_status()
+        self.assertEqual(self.app.online_var.get(), '离线')
+
+    def test_brand_spark_icon_left_of_forge_label(self):
+        """品牌火花（flame）在 FORGE 左侧，颜色 = brand_spark token
+        （示例图橙色），与 chat 空态主视觉火花同源同色。"""
+        nav = self.app.nav
+        canvases = [w for w in nav.winfo_children()
+                    if w.winfo_class() == 'Canvas']
+        labels = [w for w in nav.winfo_children()
+                  if w.winfo_class() == 'Label' and w.cget('text') == 'FORGE']
+        self.assertEqual(len(canvases), 1)
+        self.assertEqual(len(labels), 1)
+        self.assertEqual(canvases[0].cget('fg'), C['brand_spark'])
+        self.assertLess(canvases[0].winfo_rootx(),
+                        labels[0].winfo_rootx())
+
+    # ── 3. 两尺寸布局回归（编辑器状态组不越界） ───────────────────
+    def test_status_editor_group_mapped_at_both_sizes(self):
+        """1200x760 与 1440x900 下状态栏编辑器状态组 Label 全部
+        mapped 且在根窗内（布局回归口径）。"""
+        self._open_sample()
+        for geometry in ('1200x760', '1440x900'):
+            with self.subTest(geometry=geometry):
+                self.root.geometry(geometry)
+                self.pump(lambda: all(
+                    w.winfo_ismapped() for w in self._status_labels()))
+                rx1 = self.root.winfo_rootx() + self.root.winfo_width()
+                for label in self._status_labels():
+                    x1 = label.winfo_rootx() + label.winfo_width()
+                    self.assertLessEqual(x1, rx1 + 1, f'{geometry} 越界: {label}')
+
+    def _status_labels(self):
+        """状态栏行内全部 Label（四字段 + 编辑器状态组 + 瞬态消息）。"""
+        row = self.app.status_bar.winfo_children()[-1]
+        out = []
+        for cell in row.winfo_children():
+            out.extend(w for w in cell.winfo_children()
+                       if w.winfo_class() == 'Label')
+            if cell.winfo_class() == 'Label':
+                out.append(cell)
+        return out
 
 
 def panel_legend(app):
