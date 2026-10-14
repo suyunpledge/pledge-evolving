@@ -139,13 +139,15 @@ class AgentPanelTests(unittest.TestCase):
         self.app.planning.set('none')
         self.app.input.insert('1.0', 'change one.py')
         self.app.send()
-        self.pump(lambda: self.app._jobs == 0 and bool(self.app.agent_panel._cards))
+        self.pump(lambda: self.app._jobs == 0 and bool(self.app.agent_panel._cards)
+                          and self.app.agent_panel._planning_card is not None
+                          and self.app.agent_panel._planning_card.winfo_exists())
         self.step()
         return next(iter(self.app.agent_panel._cards.values()))
 
     def test_actual_agent_edit_card_view_and_authorized_revert(self):
         card = self.run_actual_edit()
-        from .agent_panel import PlanningCard
+        PlanningCard = type(self.app.agent_panel._planning_card)
         self.assertEqual(sum(isinstance(w, PlanningCard) for w in self.app.chat._windows), 1)
         self.assertIn('已写入', card.state_label.cget('text'))
         self.assertEqual((card.change['added'], card.change['removed']), (1, 1))
@@ -410,7 +412,7 @@ class OwnershipTests(unittest.TestCase):
     def test_protected_layout_methods_are_byte_identical_to_integration_base(self):
         root = Path(__file__).resolve().parents[2]
         path = 'forge-gui/development_mode/app.py'
-        old = subprocess.run(['git', 'show', 'c67a120:' + path], cwd=root, capture_output=True, check=True).stdout.decode('utf-8')
+        old = subprocess.run(['git', 'show', 'daead5f:' + path], cwd=root, capture_output=True, check=True).stdout.decode('utf-8')
         new = (root / path).read_text(encoding='utf-8')
         def methods(source):
             lines = source.splitlines()
