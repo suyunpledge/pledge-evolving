@@ -11,6 +11,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 
 from gui_theme import (C, apply_ttk_theme, style_editor, FONT_MONO_SM,
+
     FONT_TITLE, FONT_SECTION, FONT_UI, setup_code_tags, highlight_python)
 try:  # E1（UX 审查）：与 InputCard 同款可选行内 IME 守卫（默认关）
     from ime_inline import InlineIME
@@ -21,6 +22,10 @@ from forge.development.editor import Document
 from forge.development.runtime import DevelopmentRuntime
 from forge.development.evidence import TaskEvidence
 from forge.secrets import redact, install_tk_exception_redaction
+from .bottom_panel import ToolPanel
+from .explorer import ExplorerPanel
+from .layout import NavigationBar, StatusBar
+from .welcome import WelcomeView
 from .project import WorkspaceSource
 
 
@@ -80,8 +85,15 @@ class DevelopmentWorkbench(ttk.Frame):
         self.enqueue_event(event)
 
     def _build(self):
+        # M1：顶部导航栏（FORGE / Work / Coding / Project / Run / Settings）。
+        # 品牌字从 header 上移到导航栏；header 只留模式下拉与操作按钮。
+        # 导航项回调走 _nav_navigate（本文件新增方法），布局组件本体在
+        # layout.py——app.py 这里只做挂载，不实现导航栏内部结构。
+        self.nav = NavigationBar(self, on_navigate=self._nav_navigate)
+        self.nav.pack(fill='x')
         header = ttk.Frame(self, padding=(12, 8))
         header.pack(fill='x')
+
         # FORGE 品牌标识（对齐概念图：火花字符 + 标题，主色调）
         brand = tk.Label(header, text='\u25C6', font=('Segoe UI Symbol', 13),
                          fg=C.get('brand_spark', '#F5BC74'), bg=C['bg'])
@@ -91,6 +103,9 @@ class DevelopmentWorkbench(ttk.Frame):
         ttk.Label(header, text='/ Development', font=FONT_SECTION,
                   foreground=C.get('subtext', '#ABB5C5')).pack(side='left', padx=(8, 0))
         self.mode = tk.StringVar(value=self.state.mode.value)
+        # 导航栏激活态与模式下拉共享同一 StringVar 真源（trace 在
+        # layout.py 内，迟到回调有 TclError 卫仪，无需改 _mode_changed）。
+        self.nav.bind_mode(self.mode)
         combo = ttk.Combobox(header, textvariable=self.mode, values=['general', 'development'], state='readonly', width=14)
         combo.pack(side='left', padx=12)
         combo.bind('<<ComboboxSelected>>', lambda e: self.switch_mode())
@@ -111,62 +126,107 @@ class DevelopmentWorkbench(ttk.Frame):
         # 再次选择预设复位。
         self.path_label = ttk.Label(options, text='打开项目后可开始；模式切换不会改变任务权限', anchor='w')
         self.path_label.pack(side='left', fill='x', expand=True, padx=8)
-        self.panes = ttk.Panedwindow(self, orient='horizontal')
-        self.panes.pack(fill='both', expand=True, padx=8)
+        # M1：外层竖向 Panedwindow——三栏 panes 与全宽底部工具面板并列，
+        # 底部面板因此跨 project/editor/agent 三栏全宽（原输出 Notebook
+        # 只占中央栏）。sash 比例仍走 state.layout['output']，语义变为
+        # 「上部区域占比」，旧持久化值（默认 .72）直接兼容。
+        # 注意：这仍是同一条挂载路径——三栏的增量挂载逻辑在 apply_layout
+        # 内原样保留，底部面板只按 IDE 展开/收起做在装/不在装二态切换
+        # （_sync_bottom_panel），不新增第二条增量挂载路径。
+        self.status = tk.StringVar(value='未连接 · 只读 · 无执行任务')
+        # M1：多字段状态栏（Git/Agent/Model/Project）+ 右侧瞬态消息。
+        # self.status 的语义与文案零变化，只是从独占一行变为右侧一条。
+        # 入 Packing 序列必须早于竖向 pane：Tk 在总自然高度超限时从序列
+        # 末尾开始牺牲 Slave——状态栏若垫后会被压成 1px 挤出视线（实测
+        # 1200x760），提前入队则让位的是 expand 的竖向 pane（其内部再由
+        # log_tabs 次级让位），chrome 永不被挤掉。
+        self.status_bar = StatusBar(self, status_var=self.status)
+        self.status_bar.pack(side='bottom', fill='x')
+        self.vertical = ttk.Panedwindow(self, orient='vertical')
+        self.vertical.pack(fill='both', expand=True, padx=8)
+        self.panes = ttk.Panedwindow(self.vertical, orient='horizontal')
+        self.vertical.add(self.panes, weight=4)
+        self.bottom = ToolPanel(self.vertical)
+        self.vertical.add(self.bottom, weight=1)
+        # 既有调用点契约保留：self.output / self.output_views 指向底部
+        # 面板内的 Notebook 与页面字典（write_output、output.select 等
+        # 既有方法零改动）。
+        self.output = self.bottom.notebook
+        self.output_views = self.bottom.views
+        self.panes.bind('<ButtonRelease-1>', lambda e: self.capture_layout())
+        self.vertical.bind('<ButtonRelease-1>', lambda e: self.capture_layout())
+        self._last_pane_width = 0
+        self.panes.bind('<Configure>', self._panes_resized)
         self.project_frame = ttk.Frame(self.panes, width=230)
         self.editor_frame = ttk.Frame(self.panes, width=650)
         self.agent_frame = ttk.Frame(self.panes, width=420)
-        self.panes.bind('<ButtonRelease-1>', lambda e: self.capture_layout())
-        self._last_pane_width = 0
-        self.panes.bind('<Configure>', self._panes_resized)
         self._build_project()
         self._build_editor()
         self._build_agent()
-        self.status = tk.StringVar(value='未连接 · 只读 · 无执行任务')
-        ttk.Label(self, textvariable=self.status, padding=(12, 6)).pack(fill='x')
+        # M2：欢迎页（无项目时中央区的占位视图）。必须在 _build_editor
+        # 之后建——它复用 editor_frame 作父容器，与编辑器本体二态切换。
+        self._build_welcome()
+
+    def _nav_navigate(self, key):
+        """M1 导航栏回调：模式项复刻 switch_mode 的布局捕获语义，动作项
+        委托既有方法。本方法只做分发，不改被委托方法的任何行为。"""
+        if key in ('general', 'development'):
+            self.capture_layout()
+            self.state.switch(key)
+        elif key == 'project':
+            self.choose_project()
+        elif key == 'run':
+            self.run_tests()
+        elif key == 'settings':
+            self.model_settings()
 
     def _build_project(self):
-        tools = ttk.Frame(self.project_frame)
-        tools.pack(fill='x', pady=4)
-        ttk.Label(tools, text='项目', font=FONT_SECTION).pack(side='left')
-        ttk.Button(tools, text='刷新', command=self.refresh_project).pack(side='right')
+        # M3：左栏重构为「48px 活动栏 + 文件面板」——文件树 / Git 变更 /
+        # 搜索 / 文件操作的实现移入 explorer.py 的 ExplorerPanel（示例图
+        # 左区结构 + Git 状态语义化 + 文件类型图标）。本方法只做挂载与
+        # 契约转交，不实现面板内部结构：
+        #   * self.tree / self.changes 仍是 Treeview（指向面板内控件）；
+        #   * self.search / self.diff_view 仍是 app 侧 StringVar
+        #     （面板的 Entry/Combobox 绑同一变量，refresh_project /
+        #     show_diff 的读取路径不变）；
+        #   * self.expanded 仍是 app 侧状态（open_project 会重绑定它，
+        #     故经 expanded_getter 注入而非传引用）。
+        # 三栏 pane 的增量挂载路径（apply_layout）不受影响。
         self.search = tk.StringVar()
-        search = ttk.Entry(self.project_frame, textvariable=self.search)
-        search.pack(fill='x', pady=(0, 6))
-        search.bind('<Return>', lambda e: self.refresh_project())
-        ttk.Label(self.project_frame, text='文件名搜索 · Enter', foreground=C['subtext']).pack(anchor='w')
-        notebook = ttk.Notebook(self.project_frame)
-        notebook.pack(fill='both', expand=True)
-        files = ttk.Frame(notebook)
-        git = ttk.Frame(notebook)
-        notebook.add(files, text='文件')
-        notebook.add(git, text='Git 变更')
         self.diff_view = tk.StringVar(value='combined')
-        diff_choice = ttk.Combobox(git, textvariable=self.diff_view, state='readonly',
-                                  values=['combined', 'working', 'staged'], width=18)
-        diff_choice.pack(fill='x', pady=4)
-        diff_choice.bind('<<ComboboxSelected>>', self.show_diff)
-        self.tree = ttk.Treeview(files, show='tree', selectmode='browse')
-        scroll = ttk.Scrollbar(files, command=self.tree.yview)
-        scroll.pack(side='right', fill='y')
-        self.tree.configure(yscrollcommand=scroll.set)
-        self.tree.pack(fill='both', expand=True)
-        self.tree.bind('<Double-1>', self.open_tree)
-        self.tree.bind('<Return>', self.open_tree)
-        self.tree.bind('<<TreeviewOpen>>', lambda e: self.expand_tree(True))
-        self.tree.bind('<<TreeviewClose>>', lambda e: self.expand_tree(False))
-        self.changes = ttk.Treeview(git, show='tree', selectmode='browse')
-        self.changes.pack(fill='both', expand=True)
-        self.changes.bind('<<TreeviewSelect>>', self.show_diff)
-        self.changes.bind('<Double-1>', lambda e: self.open_changed())
+        self.explorer = ExplorerPanel(
+            self.project_frame,
+            on_open_file=self.open_file,
+            on_open_tree=self.open_tree,
+            on_open_changed=self.open_changed,
+            on_show_diff=self.show_diff,
+            on_expand=self.expand_tree,
+            on_refresh=self.refresh_project,
+            on_run=self.run_tests,
+            boundary_provider=lambda: self.source.boundary if self.source else None,
+            expanded_getter=lambda: self.expanded,
+            search_var=self.search,
+            diff_var=self.diff_view,
+            status_var=self.status,
+        )
+        self.explorer.pack(fill='both', expand=True)
+        self.tree = self.explorer.tree
+        self.changes = self.explorer.changes
 
     def _build_editor(self):
-        bar = ttk.Frame(self.editor_frame)
+        # M2：编辑器本体收进 editor_body 子帧——未打开项目时中央区让给
+        # 欢迎页（welcome.py 的 WelcomeView，见 _build_welcome /
+        # _sync_welcome 二态切换），打开项目后切回。控件父子与既有属性
+        # 契约（self.tabs / self.document_state 等）不变，调用方无感。
+        body = ttk.Frame(self.editor_frame)
+        self.editor_body = body
+        body.pack(fill='both', expand=True)
+        bar = ttk.Frame(body)
         bar.pack(fill='x', pady=4)
         ttk.Button(bar, text='保存', command=self.save_current).pack(side='left')
         ttk.Button(bar, text='重新载入', command=self.reload_current).pack(side='left', padx=4)
         ttk.Button(bar, text='关闭标签', command=self.close_current).pack(side='left')
-        state_bar = ttk.Frame(self.editor_frame)
+        state_bar = ttk.Frame(body)
         state_bar.pack(fill='x', pady=(0, 4))
         ttk.Button(state_bar, text='编码', command=self.open_encoding).pack(side='left')
         actions = ttk.Menubutton(state_bar, text='文件审查')
@@ -178,30 +238,58 @@ class DevelopmentWorkbench(ttk.Frame):
         menu.add_command(label='检查点差异 / 恢复此文件', command=self.checkpoints)
         actions.configure(menu=menu)
         ttk.Button(state_bar, text='附加给 Agent', command=self.attach_current).pack(side='right')
-        self.document_state = ttk.Label(self.editor_frame, text='Ctrl+S 保存 · 尚无打开文件', padding=(4, 0, 4, 4))
+        self.document_state = ttk.Label(body, text='Ctrl+S 保存 · 尚无打开文件', padding=(4, 0, 4, 4))
         self.document_state.pack(fill='x')
-        self.vertical = ttk.Panedwindow(self.editor_frame, orient='vertical')
-        self.vertical.pack(fill='both', expand=True)
-        self.tabs = ttk.Notebook(self.vertical)
+        # M1：输出 Notebook 已上移到全宽底部工具面板（bottom_panel.py 的
+        # ToolPanel，见 _build）。编辑器栏不再有竖向 Panedwindow，文档
+        # 标签页直接占满剩余空间。
+        self.tabs = ttk.Notebook(body)
         self.tabs.bind('<<NotebookTabChanged>>', lambda event: self.show_document_state())
-        self.output = ttk.Notebook(self.vertical)
-        self.vertical.add(self.tabs, weight=4)
-        self.vertical.add(self.output, weight=1)
-        self.vertical.bind('<ButtonRelease-1>', lambda e: self.capture_layout())
-        self.output_views = {}
-        for name in ('Diff', '终端', '测试', '问题', '输出'):
-            page = ttk.Frame(self.output)
-            self.output.add(page, text=name)
-            text = tk.Text(page, wrap='none', font=FONT_MONO_SM, height=8, undo=False)
-            style_editor(text)
-            sy = ttk.Scrollbar(page, command=text.yview)
-            sy.pack(side='right', fill='y')
-            sx = ttk.Scrollbar(page, orient='horizontal', command=text.xview)
-            sx.pack(side='bottom', fill='x')
-            text.configure(yscrollcommand=sy.set, xscrollcommand=sx.set, state='disabled')
-            text.pack(fill='both', expand=True)
-            self.output_views[name] = text
+        self.tabs.pack(fill='both', expand=True)
         self.write_output('测试', '内置 shell_exec 在 Secret 隔离中不可用。这里只展示真实执行或拒绝事件；没有结构化结果时不推算通过数。\n')
+
+    def _build_welcome(self):
+        """M2：欢迎页挂载 + 初始可见性。
+
+        无项目时中央区（editor_frame）显示欢迎页；打开项目后由
+        _project_loaded 调 _sync_welcome 切回编辑器本体。视图本体在
+        welcome.py，这里只做挂载与切换，不实现欢迎页内部结构。
+        """
+        self.welcome = WelcomeView(
+            self.editor_frame,
+            on_open=self.choose_project,
+            on_recent=self.open_project,
+            recent_provider=lambda: self.state.value('recent'),
+        )
+        self._sync_welcome()
+
+    def _sync_welcome(self):
+        """M2：按 self.source 二态切换中央区——无项目 → 欢迎页；
+        有项目 → 编辑器本体（editor_body）。只做 editor_frame 内两个
+        子帧的 pack/pack_forget，不触碰三栏 pane 的增量挂载路径。
+
+        与 M1-fix 的 _settle_mount 同一原则：pack 切换后立即冲刷
+        idle 任务，让新显示子帧的内容分层映射同步落地——否则内容
+        子树排在 Tk 的延迟重排队列里，依赖外部事件循环逐个排空
+        （实测每层可滞后数百 ms 甚至不收敛），欢迎页/编辑器会长时间
+        停在不可见状态。update_idletasks 只服务 idle 回调，不派发
+        窗口事件，无自激风险。"""
+        welcome = getattr(self, 'welcome', None)
+        body = getattr(self, 'editor_body', None)
+        if welcome is None or body is None:
+            return
+        if self.source is None:
+            body.pack_forget()
+            # 先 pack 再 refresh：子控件必须在父控件已获几何管理器后
+            # 创建/挂载，否则整树映射时它们停留在 unmapped（实测：欢迎页
+            # 已 mapped 而近期项目行仍 1x1 未映射，点击不触发）。
+            welcome.pack(fill='both', expand=True)
+            welcome.refresh()
+            welcome.update_idletasks()
+        else:
+            welcome.pack_forget()
+            body.pack(fill='both', expand=True)
+            body.update_idletasks()
 
     def _build_agent(self):
         # B1（UX 审查）：语义分组重排——会话（状态/日志/输入/发送）、任务
@@ -226,7 +314,6 @@ class DevelopmentWorkbench(ttk.Frame):
         ttk.Checkbutton(status_row, text='事件', variable=self.dev_events,
                         command=self._toggle_events_tab).pack(side='right', padx=(0, 8))
         log_tabs = ttk.Notebook(self.agent_frame)
-        log_tabs.pack(fill='both', expand=True)
         self.log_tabs = log_tabs
         dialogue = ttk.Frame(log_tabs)
         log_tabs.add(dialogue, text='对话')
@@ -242,10 +329,8 @@ class DevelopmentWorkbench(ttk.Frame):
         self.editor_contexts = []
         # ── 会话组 ──────────────────────────────────────────────
         self.context_label = ttk.Label(self.agent_frame, text='未附加编辑器内容', padding=4)
-        self.context_label.pack(fill='x')
         self.input = tk.Text(self.agent_frame, height=5, wrap='word', undo=True, font=FONT_UI)
         style_editor(self.input)
-        self.input.pack(fill='x', padx=6, pady=4)
         # E1（UX 审查）：Enter 发送、Shift+Enter 换行（与主对话一致），
         # 输入区旁明示键位；IME 组合确认不触发发送（守卫方式与
         # InputCard 相同：行内 IME 默认关闭，系统候选窗路径 Tk 不向
@@ -255,10 +340,9 @@ class DevelopmentWorkbench(ttk.Frame):
                             else None)
         self.input.bind('<Return>', self._enter_key)
         self.input.bind('<Control-Return>', lambda e: (self.send(), 'break')[-1])
-        ttk.Label(self.agent_frame, text='Enter 发送 · Shift+Enter 换行 · Ctrl+Enter 亦可',
-                  foreground=C.get('muted', '#777')).pack(fill='x', padx=8)
+        hint_label = ttk.Label(self.agent_frame, text='Enter 发送 · Shift+Enter 换行 · Ctrl+Enter 亦可',
+                               foreground=C.get('muted', '#777'))
         row = ttk.Frame(self.agent_frame)
-        row.pack(fill='x', padx=6, pady=4)
         self.model_choice = ttk.Combobox(row, values=['继承配置'], state='readonly', width=24)
         self.model_choice.current(0)
         self.model_choice.bind('<<ComboboxSelected>>', lambda event: self.input.focus_set())
@@ -266,9 +350,8 @@ class DevelopmentWorkbench(ttk.Frame):
         self.send_button = ttk.Button(row, text='发送', command=self.send)
         self.send_button.pack(side='right', padx=(4, 0))
         # ── 任务组 ──────────────────────────────────────────────
-        ttk.Separator(self.agent_frame).pack(fill='x', padx=6, pady=2)
+        task_sep = ttk.Separator(self.agent_frame)
         row2 = ttk.Frame(self.agent_frame)
-        row2.pack(fill='x', padx=6, pady=(0, 4))
         self.planning = tk.StringVar(value='low')
         ttk.Label(row2, text='规划').pack(side='left')
         ttk.Combobox(row2, textvariable=self.planning, values=['none', 'low', 'medium', 'high'], state='readonly', width=7).pack(side='left')
@@ -281,16 +364,14 @@ class DevelopmentWorkbench(ttk.Frame):
         ttk.Button(row2, text='复审', command=self.review).pack(side='right')
         ttk.Button(row2, text='恢复', command=self.restore_session).pack(side='right', padx=4)
         row3 = ttk.Frame(self.agent_frame)
-        row3.pack(fill='x', padx=6, pady=(0, 4))
         self.delegate_button = ttk.Button(row3, text='请求子 Agent', command=lambda: self.send(delegate=True))
         self.delegate_button.pack(side='left')
         ttk.Button(row3, text='执行测试', command=self.run_tests).pack(side='right', padx=4)
         self.cancel_button = ttk.Button(row3, text='取消', command=self.cancel_task)
         self.cancel_button.pack(side='right')
         # ── 模型组 ──────────────────────────────────────────────
-        ttk.Separator(self.agent_frame).pack(fill='x', padx=6, pady=2)
+        model_sep = ttk.Separator(self.agent_frame)
         row4 = ttk.Frame(self.agent_frame)
-        row4.pack(fill='x', padx=6, pady=(0, 6))
         ttk.Label(row4, text='任务角色').pack(side='left')
         self.task_role = tk.StringVar(value='default')
         ttk.Combobox(row4, textvariable=self.task_role, values=['default', 'complex', 'simple'],
@@ -298,6 +379,35 @@ class DevelopmentWorkbench(ttk.Frame):
         ttk.Button(row4, text='独立模型', command=self.agent_model_settings).pack(side='left', padx=4)
         self.run_model = ttk.Label(row4, text='模型：继承', wraplength=150)
         self.run_model.pack(side='left', fill='x', expand=True)
+        # ── P0-L1 容器重组（仲裁裁决 3；只动容器 pack，控件与回调未改）────
+        # 溢出根因：中部 log_tabs 是 agent_frame 内唯一 expand，但其后 8 个
+        # 固定组仍按 side=top 顺序堆叠——窗口高度不足时 Tk 从序列尾部开始
+        # 裁剪，任务组（规划/权限/复审/恢复/子Agent/测试/取消）与模型组
+        # （任务角色/独立模型/模型回显）连同两条分隔线被推出窗口下缘之外
+        # （实测 1440x900 默认尺寸下 5/11 个子控件 rooty 已达 903~1020）。
+        # 修法：固定组改 side='bottom' 先占位——Tk 的 bottom 系列按 pack
+        # 顺序自栏底向上排列，故按 row4 → context_label 逆序 pack，视觉顺序
+        # 与原布局逐行一致；log_tabs 保持唯一 expand 吃掉中部剩余空间，
+        # 从结构上消除溢出，而非靠调大 minsize 掩盖。
+        # 控件创建顺序与父子关系均未改动（Tab 遍历序不变，Codex 域契约不变）。
+        for slave, kw in (
+            (row4, dict(fill='x', padx=6, pady=(0, 6))),        # 模型组（贴栏底）
+            (model_sep, dict(fill='x', padx=6, pady=2)),
+            (row3, dict(fill='x', padx=6, pady=(0, 4))),        # 任务组
+            (row2, dict(fill='x', padx=6, pady=(0, 4))),
+            (task_sep, dict(fill='x', padx=6, pady=2)),
+            (row, dict(fill='x', padx=6, pady=4)),              # 模型选择 + 发送
+            (hint_label, dict(fill='x', padx=8)),               # 键位提示
+            (self.input, dict(fill='x', padx=6, pady=4)),       # 输入框
+            (self.context_label, dict(fill='x')),               # 附加内容（贴 log_tabs）
+        ):
+            slave.pack(side='bottom', **kw)
+        # log_tabs 必须最后 pack：Tk 在空间不足时按 Packing 序列**从末尾
+        # 开始牺牲** Slave。若它排在 9 个固定组之前，短窗口下被取消映射的
+        # 是固定组（实测 1200x760 + M1 底部面板后 context_label 被 unmap）；
+        # 排在之后，则让位的是可伸缩的 log 区——9 个控件任何窗口高度下
+        # 都保持可见，log_tabs 压到 tab 条最低高度为止。
+        log_tabs.pack(fill='both', expand=True)
 
     def _enter_key(self, event):
         """E1：Enter=发送，Shift+Enter=换行；IME 组合期不拦截。"""
@@ -476,6 +586,8 @@ class DevelopmentWorkbench(ttk.Frame):
         if error:
             return
         self.source, self.runtime, ready = value
+        # M2：项目已载入，中央区从欢迎页切回编辑器本体。
+        self._sync_welcome()
         # An earlier workspace grant does not apply to a different project.
         self._permission = 'read-only'
         self.permission.set('read-only')
@@ -550,34 +662,54 @@ class DevelopmentWorkbench(ttk.Frame):
     def _project_scan(self, value, error):
         self._scan_busy = False
         if not error:
-            selected = self.tree.selection()
-            self.tree.delete(*self.tree.get_children())
-            for node in value['nodes']:
-                path = node['path']
-                if path == str(self.source.root):
-                    continue
-                parent = str(Path(path).parent)
-                parent = parent if self.tree.exists(parent) and not self.search.get() else ''
-                relative = Path(path).relative_to(self.source.root).as_posix()
-                marker = value['status'].get(relative, '')
-                self.tree.insert(parent, 'end', iid=path, text=(marker + ' ' + node['name']).strip(),
-                                 open=path in self.expanded, values=('dir' if node['is_dir'] else 'file',))
-                if node['is_dir'] and path not in self.expanded:
-                    self.tree.insert(path, 'end', text='…')
-            for item in selected:
-                if self.tree.exists(item):
-                    self.tree.selection_set(item)
-            self.changes.delete(*self.changes.get_children())
-            changed_selection = getattr(self, '_changed_selection', ())
-            for path, status in value['status'].items():
-                self.changes.insert('', 'end', iid=path, text=status + ' ' + path)
-            for path in changed_selection:
-                if self.changes.exists(path):
-                    self.changes.selection_set(path)
+            # M3：文件树 / Git 变更清单的渲染移入 explorer.ExplorerPanel
+            # （Git 状态语义化 + 文件类型图标）；选择恢复、展开态、过滤
+            # 语义与既有实现一致。status.set / _refresh_status_fields 与
+            #  pending 重扫逻辑不变。
+            self.explorer.populate(value, self.source.root,
+                                   changes_selection=getattr(self, '_changed_selection', ()))
             self.status.set(f"{value['branch']} · {self.source.root.name} · {len(value['status'])} 个 Git 变更 · {self.permission.get()}")
+            # M1：多字段状态栏的 Git/项目字段随扫描结果同步（扫描是
+            # 打开项目与刷新的共同完成点，一处接线覆盖两种入口）。
+            self._refresh_status_fields(value)
         if self._scan_pending:
             self._scan_pending = False
             self.refresh_project()
+
+    def _refresh_status_fields(self, scan=None):
+        """M1：把 Git / Agent / Model / Project 四字段推送到多字段状态栏。
+
+        单一推送点（_project_scan 完成回调）。Agent/Model 取运行时与
+        状态层的真实值，不读 Agent 栏控件（Codex 域）——模型取
+        state.value('roles') 的 default 角色在 catalog 里的标签，
+        与「模型角色」窗口同源。任何一步取不到都退回占位，不抛错。
+        """
+        bar = getattr(self, 'status_bar', None)
+        if bar is None:
+            return
+        git, project = '未打开项目', '—'
+        if self.source:
+            project = self.source.root.name
+            branch = (scan or {}).get('branch') or '非 Git 仓库'
+            changed = len((scan or {}).get('status') or {})
+            git = f'{branch} · {changed} 处变更' if changed else f'{branch} · 干净'
+        agent = '—'
+        try:
+            if self.runtime.ready:
+                agent = self.runtime.bridge.agent.name
+        except Exception:
+            pass
+        model = '继承'
+        try:
+            pair = tuple((self.state.value('roles') or {}).get('default') or ())
+            if pair:
+                for row in self.catalog_rows:
+                    if self.runtime.catalog.get(row['id']) == pair:
+                        model = row['label']
+                        break
+        except Exception:
+            pass
+        bar.update(git=git, agent=agent, model=model, project=project)
 
     def expand_tree(self, opened):
         path = self.tree.focus()
@@ -1258,24 +1390,109 @@ class DevelopmentWorkbench(ttk.Frame):
         else:
             panels = [self.project_frame, self.editor_frame, self.agent_frame]
         wanted = list(panels)
+        # panes.panes() 返回的是窗口路径名**字符串**，与控件对象比较恒为
+        # False。那会让下面两处判断同时失效：「已在集合则 continue」永不
+        # 命中、「不在集合才 forget」对每个在装面板都成立——结果是每次
+        # apply_layout 都走全量 forget+add（51f6f82 要消除的闪白路径
+        # 复活），且 insert 的目标位计数恒为 0，三个面板依次插到队首，
+        # 顺序反转成 agent|editor|project；fractions 的「sash0=project
+        # 右界」语义随之错位，agent 栏被压到 20%（实测 1200px 下仅
+        # 236px，栏内模型组横向放不下）。先统一换算成控件对象再比较。
+        live = [self.panes.nametowidget(name) for name in self.panes.panes()]
         # 保序移除：只摘不在目标集合里的
-        for pane in list(self.panes.panes()):
+        mounted = False
+        for pane in live:
             if pane not in wanted:
                 self.panes.forget(pane)
+                mounted = True
+        # forget 后必须重读：此时 live 里还留着刚被摘掉的面板，len(live)
+        # 会大于真实 slave 数。若不重读，下面的 idx < len(live) 会拿过期
+        # 上界去 insert，而 insert 只接受 0 <= pos < 真实 slave 数——
+        # focus 预设连续 forget 到 slave 归零时就会抛 Slave index 0 out
+        # of bounds（toggle_focus 从 editor 切到 agent 即触发）。
+        live = [self.panes.nametowidget(name) for name in self.panes.panes()]
         # 增量挂载：逐个补挂 wanted 中缺失的面板。每挂一个都重读
         # 实际列表——insert 的 pos 按当前实际列表计位：目标位置 =
         # 实际列表中、wanted 里排在它前面的面板个数。
+        # 注意 ttk::panedwindow 的 insert 只接受 0 <= pos < n（n 为当前
+        # pane 数），pos == n 会抛 Slave index out of bounds；要追加到
+        # 队尾必须走 add。原代码写 min(idx, len(live)) 本意是「越界贴边」，
+        # 但贴出的上界值本身非法，只因 idx 恒为 0 而从未触发。
         for panel in wanted:
-            if panel in self.panes.panes():
+            if panel in live:
                 continue
-            idx = sum(1 for m in wanted[:wanted.index(panel)]
-                      if m in self.panes.panes())
-            live = self.panes.panes()
-            if live:
-                self.panes.insert(min(idx, len(live)), panel, weight=1)
+            idx = sum(1 for m in wanted[:wanted.index(panel)] if m in live)
+            if idx < len(live):
+                self.panes.insert(idx, panel, weight=1)
             else:
                 self.panes.add(panel, weight=1)
+            live = [self.panes.nametowidget(name) for name in self.panes.panes()]
+            mounted = True
+        # M1-fix（验收打回项 test_focus_toggle_contract_survives_button_removal
+        # 环境敏感回归）：ttk::panedwindow 的 add/insert **不同步映射 slave**
+        # ——slave 的映射发生在随之排队的延迟重排里。若紧随其后的事件循环
+        # 预算被 OS 窗口突发占满（无控制台/后台会话实测：step() 的 16 次
+        # dooneevent 全部耗在其他事件上、队列未排空），重排不执行，新挂载的
+        # 面板保持 winfo_ismapped()==0——toggle_focus 后 agent 栏连带
+        # input 全部 unmapped，而几何完全正确（高度停在最后一次成功重排的
+        # 值，如 427）。基线同路径事件少、16 预算够用，只表现为偶发抖动；
+        # M1 的竖向 pane + 底部面板同步 + 额外 sash 写入拉长了事件级联，
+        # 把抖动变成后台会话必现。挂载集合发生变化时立即冲刷 idle 任务
+        # （只服务 idle 回调、不派发窗口事件，不触发 Configure 自激环），
+        # 让重排在 apply_layout 返回前同步落地——映射状态不再依赖外部
+        # 事件循环预算。见 _settle_mount。
+        # M1：底部工具面板随 IDE 展开/收起显隐。与三栏的增量挂载是两条
+        # 独立路径——这里只做「在装/不在装」二态切换（vertical 内固定
+        # panes+bottom 两个 slave），不碰 forget/insert 增量逻辑。
+        if self._sync_bottom_panel(show):
+            mounted = True
+        if mounted:
+            self._settle_mount()
         self.later(0, self.place_sashes)
+
+    def _settle_mount(self):
+        """把挂载变化的物理效果（slave 映射与重排）同步落地。
+
+        根因与边界见 apply_layout 内注释：panedwindow add/insert 的
+        slave 映射是延迟的，后台/无控制台会话里事件预算可能被 OS 窗口
+        突发吃满，导致新挂载面板停留在 unmapped。update_idletasks 只
+        服务 idle 回调（含 Tk 的延迟重排），不派发窗口事件，因此不会
+        触发 _panes_resized→place_sashes 自激环；_settling 旗标防嵌套
+        冲刷（重入 apply_layout 时，外层这一次冲刷会一并服务其重排）。
+        """
+        if getattr(self, '_settling', False):
+            return
+        self._settling = True
+        try:
+            self.update_idletasks()
+        finally:
+            self._settling = False
+
+    def _sync_bottom_panel(self, show):
+        """M1：IDE 收起时把底部工具面板移出外层竖向 pane，展开时补回。
+
+        收起态下用户只看 Agent 栏，底部工具面板应当让位（与原结构
+        一致：原输出 Notebook 在 editor_frame 内，editor_frame 不在装
+        时它同样不可见）。补回用 add 追加到队尾，保持 [panes, bottom]
+        的固定次序。同样注意 panes() 返回字符串，须 nametowidget 换算。
+        返回 True 表示本次确实改变了挂载集合（调用方据此冲刷重排）。
+        """
+        if getattr(self, '_closed', False):
+            return False
+        changed = False
+        try:
+            live = [self.vertical.nametowidget(name)
+                    for name in self.vertical.panes()]
+            if show:
+                if self.bottom not in live:
+                    self.vertical.add(self.bottom, weight=1)
+                    changed = True
+            elif self.bottom in live:
+                self.vertical.forget(self.bottom)
+                changed = True
+        except (tk.TclError, AttributeError):
+            return False  # 构造早期 / 已销毁：无底部面板可同步
+        return changed
 
     def place_sashes(self):
         if self._closed or getattr(self, '_placing_sashes', False):
@@ -1292,7 +1509,9 @@ class DevelopmentWorkbench(ttk.Frame):
                     position = int(width * fraction)
                     if abs(self.panes.sashpos(i) - position) > 2:
                         self.panes.sashpos(i, position)
-            if self.vertical.winfo_height() > 40:
+            # M1：外层竖向 pane 固定 [三栏, 底部面板] 两个 slave；底部
+            # 面板被收起（IDE 折叠）时只剩一个 slave，此时没有 sash 可写。
+            if len(self.vertical.panes()) == 2 and self.vertical.winfo_height() > 40:
                 position = int(self.vertical.winfo_height() * self.state.layout['output'])
                 if abs(self.vertical.sashpos(0) - position) > 2:
                     self.vertical.sashpos(0, position)
@@ -1316,7 +1535,7 @@ class DevelopmentWorkbench(ttk.Frame):
             fractions = [self.panes.sashpos(i) / width for i in range(2)]
             if .05 <= fractions[0] < fractions[1] <= .95:
                 changes['fractions'] = fractions
-        if height > 50:
+        if height > 50 and len(self.vertical.panes()) == 2:
             changes['output'] = min(.9, max(.15, self.vertical.sashpos(0) / height))
         if changes:
             self.state.set_layout(**changes)
