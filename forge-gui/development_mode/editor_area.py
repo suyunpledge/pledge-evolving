@@ -83,13 +83,17 @@ class EditorArea(ttk.Frame):
     ``document``      forge.development.editor.Document（缓冲区真源）
     ``on_change``     ``<<Modified>>`` 回调（app.document_changed）
     ``on_save``       ``<Control-s>`` 回调（app.save_current）
+    ``on_cursor``     M7：光标移动回调（状态栏「行 n, 列 n」字段的
+                      数据源；无参调用，由 app 侧自行取当前区）
     """
 
-    def __init__(self, master, document, *, on_change=None, on_save=None, **kw):
+    def __init__(self, master, document, *, on_change=None, on_save=None,
+                 on_cursor=None, **kw):
         super().__init__(master, **kw)
         self.document = document
         self._on_change = on_change
         self._on_save = on_save
+        self._on_cursor = on_cursor
         self._search_open = False
         self._reference_visible = False
         self._build()
@@ -180,6 +184,7 @@ class EditorArea(ttk.Frame):
         widget.edit_reset()
         widget.edit_modified(False)
         self.refresh_all()
+        self.notify_cursor()
 
     def refresh_all(self):
         """内容变化后的统一刷新：高亮 + 行号槽 + 修改标记 + 镜像。"""
@@ -248,6 +253,21 @@ class EditorArea(ttk.Frame):
     def _after_caret(self, _event=None):
         self._highlight_current_line()
         self._sync_reference()
+        # M7：光标移动 → 状态栏行列字段（回调失败不影响编辑器本身）。
+        if self._on_cursor is not None:
+            try:
+                self._on_cursor()
+            except Exception:
+                pass
+
+    def notify_cursor(self):
+        """M7：手动触发一次光标回调（set_text / 标签切换后状态栏
+        需要一次初始推送——光标没动过也要有行列值）。"""
+        if self._on_cursor is not None:
+            try:
+                self._on_cursor()
+            except Exception:
+                pass
 
     def _highlight_current_line(self):
         self.text.tag_remove('current_line', '1.0', 'end')

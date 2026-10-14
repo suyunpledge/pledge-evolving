@@ -418,6 +418,13 @@ class AgentPanel(ttk.Frame):
         self._runtime_context = RuntimeContext(self, **kwargs)
         # 插在 titlebar 与 notebook 之间
         self._runtime_context.pack(fill='x', before=self.notebook)
+        # 窄窗契约（1200x760）：默认收起，展开由用户点击——避免 chrome
+        # 高度把 P0-L1 保护的底部固定组挤出栏底（实测溢出 4px）。
+        if hasattr(self._runtime_context, '_toggle'):
+            try:
+                self._runtime_context._toggle()
+            except Exception:
+                pass
         return self._runtime_context
 
     def mount_events(self, notebook):

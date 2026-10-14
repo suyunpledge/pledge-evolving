@@ -11,7 +11,11 @@
   Project + 右侧瞬态消息）。瞬态消息沿用 workbench 既有的
   ``self.status`` StringVar（既有测试契约
   ``assertIn('等待', app.status.get())`` 依赖它），本栏只把它从
-  「独占一行」改为「右侧一条」，文案与行为零变化。
+  「独占一行」改为「右侧一条」，文案与行为零变化。M7 增量：右侧
+  增「编辑器状态」字段组（光标行列 / 编码 / 换行 / 语言 / 就绪
+  态 + 绿点 / 警告 / 问题）——数据源全部真实（编辑器光标绑定 /
+  runtime 就绪态 / TaskEvidence 问题计数），无诊断器类能力时显
+  示 0 不伪造。
 
 三栏与底部工具面板的挂载仍走 ``app.py`` 的 ``apply_layout`` 增量
 路径（51f6f82 保护清单：增量挂载 / 防重入旗标 / 2px 容差），本文件
@@ -24,6 +28,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from gui_theme import C, FONT_BRAND, FONT_CAPTION, FONT_UI, FONT_UI_BOLD, FONT_UI_MED
+from ui_icons import IconCanvas
 
 # 字段值截断上限：项目路径等可能很长，无上限会撑爆状态栏布局。
 _VALUE_LIMIT = 48
@@ -91,6 +96,12 @@ class NavigationBar(ttk.Frame):
     # ── 构建 ──────────────────────────────────────────────────────
     def _build(self):
         self.configure(padding=(12, 6, 12, 4))
+        # M7：品牌火花图标（示例图顶部火焰 + FORGE）——颜色用
+        # gui_theme 的 brand_spark token（橙），与 chat 空态主视觉
+        # hero_banner 的火花同源同色。
+        spark = IconCanvas(self, 'flame', size=18, bg=C['bg'],
+                           fg=C['brand_spark'])
+        spark.pack(side='left', padx=(0, 6))
         tk.Label(self, text='FORGE', font=FONT_BRAND, bg=C['bg'],
                  fg=C['accent_text']).pack(side='left', padx=(0, 14))
         for value, title in self.MODES:
@@ -168,22 +179,43 @@ class StatusBar(ttk.Frame):
     既有行为：右对齐、由各处 ``self.status.set(...)`` 驱动。四字段
     由 :meth:`update` 推送，未打开项目时显示占位 ``—``。
 
+
     右侧扩展（v0.2 起）：
     * 「能力」—— capability_count = "19 (builtin) + 6 (contrib) + 3 (plugin)"
     * 「布局」—— layout_name（来自 state.layout['preset']，agent / editor / focus）
 
     能力 / 布局也支持 update() 推送，键名 ``capability`` / ``layout``；
     旧键名（git / agent / model / project）保持不变。
+
+        M7 编辑器状态字段组（右侧，瞬态消息左侧）：光标行列 / 编码 /
+    换行 / 语言 / 就绪态（带绿点）/ 警告 / 问题。数据源全部真实：
+    * cursor —— 编辑器 Text 光标位置（<KeyRelease>/<ButtonRelease>
+      绑定，经 workbench 回调推送）；
+    * encoding / eol / language —— 当前 Document 的 encoding /
+      newline 属性与扩展名映射（无打开文件时 ``—``）；
+    * ready —— runtime 就绪/运行态（busy 时黄点「运行中」，
+      ready 时绿点「就绪」）；
+    * warnings —— 本项目无独立诊断器，恒 0（不伪造）；
+    * problems —— TaskEvidence 失败记录计数（bottom_panel
+      .count_problems 同源）。
     """
 
     FIELDS = (('git', 'Git'), ('agent', 'Agent'),
               ('model', 'Model'), ('project', 'Project'))
+
     # 右侧扩展字段（与左侧字段同样支持 update()）。
     RIGHT_FIELDS = (('capability', '能力'), ('layout', '布局'))
+
+        # M7 编辑器状态组：标题与键（值由 update 推送，ready 前带圆点）。
+    EDITOR_FIELDS = (('cursor', '行 1, 列 1'), ('encoding', 'UTF-8'),
+                     ('eol', 'LF'), ('language', 'Plain'),
+                     ('ready', '就绪'), ('warnings', '警告 0'),
+                     ('problems', '问题 0'))
 
     def __init__(self, master, status_var, **kw):
         super().__init__(master, **kw)
         self._vars = {}
+        self._indicator = None
         self._build(status_var)
 
     def _build(self, status_var):
@@ -202,6 +234,7 @@ class StatusBar(ttk.Frame):
                      fg=C['text']).pack(side='left', padx=(4, 0))
         spacer = tk.Frame(row, bg=C['bg'])
         spacer.pack(side='left', expand=True, fill='x')
+
         # 右侧扩展字段：能力 / 布局 —— 在瞬态消息之前显示。
         for key, title in reversed(self.RIGHT_FIELDS):
             var = tk.StringVar(value='—')
@@ -212,8 +245,42 @@ class StatusBar(ttk.Frame):
                      fg=C['ter']).pack(side='left')
             tk.Label(cell, textvariable=var, font=FONT_CAPTION, bg=C['bg'],
                      fg=C['text']).pack(side='left', padx=(4, 8))
+
+        # M7 编辑器状态组：位于 spacer 与瞬态消息之间。side='right'
+        # 的 pack 是反序累积（先 pack 的更靠右），故反序遍历得到
+        # 从左到右 cursor → … → problems 的阅读顺序；瞬态消息最后
+        # pack 占最右（M1 契约：右对齐不变）。
+        for key, default in reversed(self.EDITOR_FIELDS):
+            cell = tk.Frame(row, bg=C['bg'])
+            cell.pack(side='right', padx=(12, 0))
+            var = tk.StringVar(value=default)
+            self._vars[key] = var
+            if key == 'ready':
+                # 就绪态圆点：Canvas 画 oval（Label 的 '●' 字符跨字体
+                # 渲染不稳），颜色经 set_indicator 按语义 token 切换。
+                self._indicator = tk.Canvas(cell, width=8, height=8, bg=C['bg'],
+                                            bd=0, highlightthickness=0)
+                self._indicator.pack(side='left', padx=(0, 3))
+                self._paint_indicator(C['ok'])
+            tk.Label(cell, textvariable=var, font=FONT_CAPTION, bg=C['bg'],
+                     fg=C['subtext']).pack(side='left')
         tk.Label(row, textvariable=status_var, anchor='e', font=FONT_CAPTION,
                  bg=C['bg'], fg=C['subtext']).pack(side='right')
+
+    def _paint_indicator(self, color):
+        """就绪态圆点着色（ok 绿 = 就绪 / warn 黄 = 运行中 / ter 灰 = 离线）。"""
+        canvas = self._indicator
+        if canvas is None:
+            return
+        try:
+            canvas.delete('dot')
+            canvas.create_oval(1, 1, 7, 7, outline='', fill=color, tags='dot')
+        except tk.TclError:
+            pass  # 已销毁
+
+    def set_indicator(self, token):
+        """按语义色 token 设置圆点（'ok' / 'warn' / 'ter'）。"""
+        self._paint_indicator(C.get(token, C['ter']))
 
     def update(self, **fields):
         """推送字段值；未知键忽略，超长值截断（保护栏宽）。"""

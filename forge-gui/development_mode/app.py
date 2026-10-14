@@ -30,6 +30,16 @@ from .layout import NavigationBar, StatusBar, PRESETS
 from .welcome import WelcomeView
 from .project import WorkspaceSource
 
+# M7：状态栏「语言」字段的扩展名映射（编辑器当前文档 → 语言名）。
+# 只列本项目真实会出现的类型；未命中显示 Plain（不猜）。
+_LANGUAGE_BY_SUFFIX = {
+    '.py': 'Python', '.pyw': 'Python', '.md': 'Markdown',
+    '.json': 'JSON', '.toml': 'TOML', '.yaml': 'YAML', '.yml': 'YAML',
+    '.txt': 'Plain Text', '.cfg': 'INI', '.ini': 'INI', '.sh': 'Shell',
+    '.js': 'JavaScript', '.ts': 'TypeScript', '.html': 'HTML',
+    '.css': 'CSS', '.xml': 'XML', '.csv': 'CSV',
+}
+
 
 class DevelopmentWorkbench(ttk.Frame):
     def __init__(self, parent, state, *, runtime=None):
@@ -115,6 +125,21 @@ class DevelopmentWorkbench(ttk.Frame):
         combo = ttk.Combobox(header, textvariable=self.mode, values=['general', 'development'], state='readonly', width=14)
         combo.pack(side='left', padx=12)
         combo.bind('<<ComboboxSelected>>', lambda e: self.switch_mode())
+        # M7：头部「在线 (n)」绿点状态。数据源 = runtime 在线状态——
+        # 当前 runtime 无在线连接概念（无 peers/presence 数据），按任务书
+        # 纪律显示「离线」+ 灰点，不伪造计数；未来接入真实数据源时只改
+        # _sync_online_status 一处。
+        online = tk.Frame(header)
+        online.pack(side='right', padx=(0, 12))
+        self.online_dot = tk.Canvas(online, width=8, height=8, bg=C['bg'],
+                                    bd=0, highlightthickness=0)
+        self.online_dot.pack(side='left', padx=(0, 4))
+        self.online_dot.create_oval(1, 1, 7, 7, outline='', fill=C['ter'],
+                                    tags='dot')
+        self.online_var = tk.StringVar(value='离线')
+        tk.Label(online, textvariable=self.online_var, font=FONT_CAPTION,
+                 bg=C['bg'], fg=C['subtext']).pack(side='left')
+        attach_tooltip(online, '在线状态：当前无在线连接数据源')
         ttk.Button(header, text='收起 / 展开 IDE', command=self.toggle_ide).pack(side='right')
         ttk.Button(header, text='模型角色', command=self.model_settings).pack(side='right', padx=4)
         options = ttk.Frame(self, padding=(12, 0, 12, 6))
@@ -708,6 +733,122 @@ class DevelopmentWorkbench(ttk.Frame):
         elif evidence.diffs:
             self.view_agent_diff(evidence.diffs[-1])
 
+
+    def _editor_status_fields(self):
+        """M7 编辑器状态字段的当前值（供 _refresh_status_fields 并集推送）。"""
+        if getattr(self, 'status_bar', None) is None:
+            return {}
+        row = self.current_row()
+        fields = {}
+        if row is None:
+            fields.update(cursor='—', encoding='—', eol='—', language='—')
+        else:
+            document = row['document']
+            area = row.get('area')
+            cursor = '行 1, 列 1'
+            if area is not None:
+                try:
+                    line, column = area.text.index('insert').split('.')
+                    cursor = f'行 {line}, 列 {int(column) + 1}'
+                except (tk.TclError, ValueError):
+                    pass
+            fields.update(cursor=cursor, encoding=document.encoding.upper(),
+                          eol={'\r\n': 'CRLF', '\r': 'CR'}.get(document.newline, 'LF'),
+                          language=_LANGUAGE_BY_SUFFIX.get(document.path.suffix.lower(), 'Plain'))
+        try:
+            fields.update(warnings=0, problems=count_problems(self.task_evidence))
+        except Exception:
+            fields.update(warnings=0, problems=0)
+        return fields
+
+
+    def _sync_editor_status(self):
+        """M7：推送编辑器状态字段（光标 / 编码 / 换行 / 语言 / 警告 /
+        问题）到状态栏。数据源全部真实：当前 Document 的 encoding /
+        newline 属性、扩展名→语言映射、TaskEvidence 失败计数（与底
+        部面板 Problems 徽标同源 count_problems）。无打开文件时
+        光标/编码/换行/语言显示占位，警告与问题显示 0（无独立诊断
+        器，不伪造）。
+        """
+        bar = getattr(self, 'status_bar', None)
+        if bar is None:
+            return
+        row = self.current_row()
+        if row is None:
+            bar.update(cursor='—', encoding='—', eol='—', language='—')
+        else:
+            document = row['document']
+            area = row.get('area')
+            cursor = '行 1, 列 1'
+            if area is not None:
+                try:
+                    line, column = area.text.index('insert').split('.')
+                    cursor = f'行 {line}, 列 {int(column) + 1}'
+                except (tk.TclError, ValueError):
+                    pass
+            bar.update(cursor=cursor, encoding=document.encoding.upper(),
+                       eol={'\\r\\n': 'CRLF', '\\r': 'CR'}.get(
+                           document.newline, 'LF'),
+                       language=_LANGUAGE_BY_SUFFIX.get(
+                           document.path.suffix.lower(), 'Plain'))
+        bar.update(warnings=0, problems=count_problems(self.task_evidence))
+
+
+    def _on_editor_cursor(self, row):
+        """M7：编辑器光标移动回调——只更新光标字段（轻量路径，不
+        走整个 _sync_editor_status 的文档/证据读取）。row 为标签行
+        字典（闭包在 EditorArea 构造前绑定，避免 area 未赋值）。"""
+        bar = getattr(self, 'status_bar', None)
+        if bar is None:
+            return
+        area = row.get('area')
+        if area is None:
+            return
+        try:
+            line, column = area.text.index('insert').split('.')
+        except (tk.TclError, ValueError):
+            return
+        bar.update(cursor=f'行 {line}, 列 {int(column) + 1}')
+
+
+    def _sync_ready_status(self):
+        """M7：就绪态字段 + 圆点。数据源 = runtime 真实状态：运行中
+        （busy）→ 黄点「运行中」；Agent 就绪 → 绿点「就绪」；否则
+        灰点「未就绪」。不持有第二份状态，全部现读。
+        """
+        bar = getattr(self, 'status_bar', None)
+        if bar is None:
+            return
+        try:
+            if self.runtime.busy:
+                bar.update(ready='运行中')
+                bar.set_indicator('warn')
+            elif self.runtime.ready:
+                bar.update(ready='就绪')
+                bar.set_indicator('ok')
+            else:
+                bar.update(ready='未就绪')
+                bar.set_indicator('ter')
+        except Exception:
+            pass
+
+
+    def _sync_online_status(self):
+        """M7：头部在线状态。数据源 = runtime 在线连接状态——当前
+        runtime 无 peers/presence 概念（无真实数据），按任务书纪律
+        固定显示「离线」+ 灰点，不伪造计数。接入真实数据源时只改
+        本方法（圆点 fill 与文案一处）。
+        """
+        dot = getattr(self, 'online_dot', None)
+        var = getattr(self, 'online_var', None)
+        if dot is None or var is None:
+            return
+        try:
+            dot.itemconfigure('dot', fill=C['ter'])
+            var.set('离线')
+        except tk.TclError:
+            pass
+
     def _toggle_events_tab(self):
         # v0.2：事件视图统一在 AgentPanel 的「完整事件」Tab，不再放底部
         # Notebook。`dev_events` 仍保留为开关语义，但 v0.2 改控 AgentPanel
@@ -1202,11 +1343,13 @@ class DevelopmentWorkbench(ttk.Frame):
                         break
         except Exception:
             pass
+
         # v0.2 状态栏扩展字段：能力计数 / 布局名
         capability = self._capability_count_text()
         layout = self._layout_name_text()
         bar.update(git=git, agent=agent, model=model, project=project,
-                   capability=capability, layout=layout)
+                   capability=capability, layout=layout,
+                   **self._editor_status_fields())
 
     def _capability_count_text(self):
         """能力数：builtin + contrib + plugin 三类合计。
@@ -1327,7 +1470,12 @@ class DevelopmentWorkbench(ttk.Frame):
                'saving': False, 'area': None}
         area = EditorArea(frame, document,
                           on_change=lambda _a: self.document_changed(row),
-                          on_save=self.save_current)
+                          on_save=self.save_current,
+                          # M7：光标移动 → 状态栏「行 n, 列 n」字段。
+                          # 闭包捕获 row（构造前已绑定）而非 area（构造
+                          # 返回值，参数表达式里尚不存在——默认参数写法
+                          # 会 UnboundLocalError）。
+                          on_cursor=lambda: self._on_editor_cursor(row))
         area.pack(fill='both', expand=True)
         row['widget'] = area.text
         row['area'] = area
@@ -1340,6 +1488,10 @@ class DevelopmentWorkbench(ttk.Frame):
         self.tabs.add(frame, text=document.path.name)
         self.tabs.select(frame)
         self.state.remember_tabs(self.documents)
+        # M7：新标签成为当前文档——编码/换行/语言/光标全量刷新一次
+        # （on_cursor 只推光标字段；set_text 的首帧通知早于此赋值，
+        # 这里补全量推送保证四字段与新文档一致）。
+        self._sync_editor_status()
 
     def current_row(self):
         selected = self.tabs.select()
@@ -1364,10 +1516,14 @@ class DevelopmentWorkbench(ttk.Frame):
         row = self.current_row()
         if not row:
             self.document_state.configure(text='Ctrl+S 保存 · 尚无打开文件')
+            # M7：无打开文件——编辑器状态组回占位。
+            self._sync_editor_status()
             return
         d = row['document']
         labels = {'clean': '未修改', 'modified': '未保存', 'saved': '保存成功', 'failed': '保存失败', 'conflict': '外部变更冲突'}
         self.document_state.configure(text=labels[d.status] + ' · ' + d.encoding + ' · Ctrl+S 保存')
+        # M7：标签切换——编码/换行/语言/光标随新当前文档刷新。
+        self._sync_editor_status()
 
     def save_current(self):
         row = self.current_row()
@@ -1511,6 +1667,10 @@ class DevelopmentWorkbench(ttk.Frame):
         self.tabs.forget(row['frame'])
         row['frame'].destroy()
         self.state.remember_tabs(self.documents)
+        # M7：关闭后同步文档状态与状态栏编辑器字段——关的是最后一个
+        # 标签时 Notebook 不产生 <<NotebookTabChanged>>，需显式刷新
+        # （还有标签时该事件也会触发，双保险幂等）。
+        self.show_document_state()
 
     def _replace_buffer(self, row):
         widget = row['widget']
@@ -1703,8 +1863,33 @@ class DevelopmentWorkbench(ttk.Frame):
         elif same_task and data.get('type') == 'development_recovery':
             self.agent_panel.task_context = {}
         self.task_evidence.apply(data)
+
         self.render_evidence()
         self.agent_panel.events.append_event(data)
+        # M7：就绪态与问题计数随关键事件实时刷新——任务开始/结束 →
+        # runtime 忙闲（状态栏 ready 字段 + 圆点）；失败记录类事件 →
+        # 底部 Problems 徽标与状态栏 problems 字段（同源
+        # count_problems，与扫描周期刷新合并去重）。
+        if data.get('type') in {'development_task_started',
+                                'development_task_finished', 'test_started',
+                                'test_result', 'review_started',
+                                'review_result', 'review_error',
+                                'review_cancelled', 'tool_completed'}:
+            self._sync_ready_status()
+            bottom = getattr(self, 'bottom', None)
+            if bottom is not None:
+                bottom.refresh_badges()
+            bar = getattr(self, 'status_bar', None)
+            if bar is not None:
+                bar.update(problems=count_problems(self.task_evidence))
+        if data.get('type') in {'workflow_state', 'task_plan', 'tool_started', 'tool_completed', 'tool_call', 'usage',
+                                'development_task_started', 'development_task_finished', 'test_started', 'test_result', 'git_diff',
+                                'review_started', 'review_result', 'review_error', 'review_cancelled'}:
+            self.render_evidence()
+        raw = json.dumps(data, ensure_ascii=False, indent=2)
+        if len(raw) > 16384:
+            raw = raw[:16384] + '\n[大事件预览已截断；完整记录保留在原有 Session 日志]\n'
+        self.append(self.events, raw + '\n')
         kind = data.get('type', '')
         # P0-A1：事件类型不再覆盖存活信号行——工具/阶段动态已在证据
         # 面板与输出区呈现，此处覆盖只制造开发者词汇闪烁。
