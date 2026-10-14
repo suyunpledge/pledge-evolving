@@ -23,6 +23,12 @@
          右侧瞬态消息（self.status 契约保留）。IDE 收起时底部面板
          让位（_sync_bottom_panel 二态切换，不走增量挂载路径）。
 
+  M2 欢迎页（welcome.py）：
+         未打开项目时中央区（editor_frame）显示欢迎页而非空的编辑器
+         本体（_build_welcome 建视图、_sync_welcome 按 source 二态
+         切换）；近期项目来自 state.value('recent')，点击行经
+         on_recent 回调走既有 open_project。切换不新增 pane 挂载路径。
+
 本文件即上述修复与改造的守护，也是集成验收口径「P0-L1 两尺寸映射断言」
 的落地。只测布局容器层，不触碰 Agent 栏内部控件语义（Codex 域）。
 """
@@ -44,7 +50,12 @@ class _WorkbenchFixture:
 
     直接继承 WorkbenchTests 会让 pytest 把父类全部用例重跑一遍
     （test_app 全量 90s+，直接超时），故用 mixin 只取夹具。
+
+    ``open_project_on_start`` 默认 True（既有行为）；欢迎页等需要
+    「未打开项目」初始态的用例置 False 即可，夹具其余部分不变。
     """
+
+    open_project_on_start = True
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -62,8 +73,9 @@ class _WorkbenchFixture:
         self.state.switch('development')
         self.app = DevelopmentWorkbench(self.root, self.state)
         self.app.pack(fill='both', expand=True)
-        self.app.open_project(self.project)
-        self.pump(lambda: self.app.source is not None and bool(self.app.tree.get_children()))
+        if self.open_project_on_start:
+            self.app.open_project(self.project)
+            self.pump(lambda: self.app.source is not None and bool(self.app.tree.get_children()))
 
     def cleanup_tk(self):
         import gc
@@ -358,6 +370,85 @@ class LayoutRegressionTests(_WorkbenchFixture, unittest.TestCase):
         self.step()
         restored = int(height * self.state.layout['output'])
         self.assertLessEqual(abs(vertical.sashpos(0) - restored), 2)
+
+
+class WelcomeViewTests(_WorkbenchFixture, unittest.TestCase):
+    """M2 欢迎页守护：无项目 → 欢迎页；打开项目 → 编辑器本体。
+
+    只测中央区二态切换与近期项目渲染/回调，不测欢迎页内部视觉细节。
+    切换发生在 editor_frame 内的两个子帧之间，三栏 pane 的挂载顺序
+    与增量逻辑（51f6f82）不在本类范围（由 LayoutRegressionTests 守护）。
+    """
+
+    open_project_on_start = False
+
+    def _recent_labels(self):
+        box = self.app.welcome._recent_box
+        return [w for w in box.winfo_children()
+                if isinstance(w, tk.Label) and w.cget('text') != '暂无项目记录']
+
+    def _pump_content(self):
+        """等欢迎页内容层映射到位。
+
+        Tk 的映射按层级逐级传播（实测 root mapped 后每层还有数百 ms
+        级联，编辑器 tabs/tree 同样如此——存量行为），只 pump
+        welcome 自身标志会在过渡态中途返回、其子控件仍 unmapped。
+        以内容层代表控件（打开项目按钮）为准。"""
+        self.pump(lambda: (self.app.welcome.winfo_ismapped()
+                           and self.app.welcome.open_button.winfo_ismapped()))
+
+    def test_welcome_shown_without_project_and_hidden_after_open(self):
+        """无项目：欢迎页 mapped、编辑器本体隐藏；打开项目后互换。"""
+        self._pump_content()
+        self.assertFalse(self.app.editor_body.winfo_ismapped(),
+                         '无项目时编辑器本体应让位')
+        self.assertIsNone(self.app.source)
+        self.app.open_project(self.project)
+        self.pump(lambda: self.app.source is not None)
+        self.pump(lambda: not self.app.welcome.winfo_ismapped())
+        self.assertTrue(self.app.editor_body.winfo_ismapped(),
+                        '项目已载入后应切回编辑器本体')
+        self.assertTrue(self.app.tabs.winfo_ismapped())
+
+    def test_welcome_lists_recent_projects_and_row_opens_project(self):
+        """近期项目来自 state.value('recent')（remember_project 写入），
+        点击行经 on_recent 回调打开对应项目。"""
+        self.state.remember_project(str(self.project))
+        self.app._sync_welcome()  # 真实显示路径：每次展示前刷新近期列表
+        # 等最深层级（近期行）映射后再点击——未映射控件不派发事件
+        self.pump(lambda: self._recent_labels()
+                  and self._recent_labels()[0].winfo_ismapped())
+        self.assertEqual(self.app.welcome.recent_count(), 1)
+        labels = self._recent_labels()
+        self.assertEqual(len(labels), 1)
+        # remember_project 存的是 resolve() 后的长路径（tempfile 在
+        # Windows 可能给出 8.3 短名），断言按持久化口径比长名。
+        self.assertIn(str(self.project.resolve()), labels[0].cget('text'))
+        labels[0].event_generate('<Button-1>')
+        self.pump(lambda: self.app.source is not None)
+        self.assertEqual(Path(self.app.source.root),
+                         self.project.resolve())
+
+    def test_welcome_empty_recent_shows_placeholder(self):
+        """无近期记录时显示空态提示，不计入 recent_count。"""
+        self.step()
+        self.assertEqual(self.app.welcome.recent_count(), 0)
+        texts = [w.cget('text') for w in
+                 self.app.welcome._recent_box.winfo_children()]
+        self.assertIn('暂无项目记录', texts)
+
+    def test_welcome_survives_mode_roundtrip(self):
+        """模式切换（general↔development）会让 editor_frame 被
+        apply_layout 摘除/重挂；无项目状态下欢迎页必须随之回归可见，
+        且编辑器本体保持让位（_sync_welcome 状态不被重挂扰动）。"""
+        self._pump_content()
+        self.state.switch('general')
+        self.pump(lambda: len(self.app.panes.panes()) == 1)
+        self.state.switch('development')
+        self._pump_content()
+        self.assertEqual(len(self.app.panes.panes()), 3)
+        self.assertFalse(self.app.editor_body.winfo_ismapped())
+        self.assertIsNone(self.app.source)
 
 
 if __name__ == '__main__':

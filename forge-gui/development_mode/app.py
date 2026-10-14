@@ -23,6 +23,7 @@ from forge.development.evidence import TaskEvidence
 from forge.secrets import redact, install_tk_exception_redaction
 from .bottom_panel import ToolPanel
 from .layout import NavigationBar, StatusBar
+from .welcome import WelcomeView
 from .project import WorkspaceSource
 
 
@@ -152,6 +153,9 @@ class DevelopmentWorkbench(ttk.Frame):
         self._build_project()
         self._build_editor()
         self._build_agent()
+        # M2：欢迎页（无项目时中央区的占位视图）。必须在 _build_editor
+        # 之后建——它复用 editor_frame 作父容器，与编辑器本体二态切换。
+        self._build_welcome()
 
     def _nav_navigate(self, key):
         """M1 导航栏回调：模式项复刻 switch_mode 的布局捕获语义，动作项
@@ -202,12 +206,19 @@ class DevelopmentWorkbench(ttk.Frame):
         self.changes.bind('<Double-1>', lambda e: self.open_changed())
 
     def _build_editor(self):
-        bar = ttk.Frame(self.editor_frame)
+        # M2：编辑器本体收进 editor_body 子帧——未打开项目时中央区让给
+        # 欢迎页（welcome.py 的 WelcomeView，见 _build_welcome /
+        # _sync_welcome 二态切换），打开项目后切回。控件父子与既有属性
+        # 契约（self.tabs / self.document_state 等）不变，调用方无感。
+        body = ttk.Frame(self.editor_frame)
+        self.editor_body = body
+        body.pack(fill='both', expand=True)
+        bar = ttk.Frame(body)
         bar.pack(fill='x', pady=4)
         ttk.Button(bar, text='保存', command=self.save_current).pack(side='left')
         ttk.Button(bar, text='重新载入', command=self.reload_current).pack(side='left', padx=4)
         ttk.Button(bar, text='关闭标签', command=self.close_current).pack(side='left')
-        state_bar = ttk.Frame(self.editor_frame)
+        state_bar = ttk.Frame(body)
         state_bar.pack(fill='x', pady=(0, 4))
         ttk.Button(state_bar, text='编码', command=self.open_encoding).pack(side='left')
         actions = ttk.Menubutton(state_bar, text='文件审查')
@@ -219,15 +230,58 @@ class DevelopmentWorkbench(ttk.Frame):
         menu.add_command(label='检查点差异 / 恢复此文件', command=self.checkpoints)
         actions.configure(menu=menu)
         ttk.Button(state_bar, text='附加给 Agent', command=self.attach_current).pack(side='right')
-        self.document_state = ttk.Label(self.editor_frame, text='Ctrl+S 保存 · 尚无打开文件', padding=(4, 0, 4, 4))
+        self.document_state = ttk.Label(body, text='Ctrl+S 保存 · 尚无打开文件', padding=(4, 0, 4, 4))
         self.document_state.pack(fill='x')
         # M1：输出 Notebook 已上移到全宽底部工具面板（bottom_panel.py 的
         # ToolPanel，见 _build）。编辑器栏不再有竖向 Panedwindow，文档
         # 标签页直接占满剩余空间。
-        self.tabs = ttk.Notebook(self.editor_frame)
+        self.tabs = ttk.Notebook(body)
         self.tabs.bind('<<NotebookTabChanged>>', lambda event: self.show_document_state())
         self.tabs.pack(fill='both', expand=True)
         self.write_output('测试', '内置 shell_exec 在 Secret 隔离中不可用。这里只展示真实执行或拒绝事件；没有结构化结果时不推算通过数。\n')
+
+    def _build_welcome(self):
+        """M2：欢迎页挂载 + 初始可见性。
+
+        无项目时中央区（editor_frame）显示欢迎页；打开项目后由
+        _project_loaded 调 _sync_welcome 切回编辑器本体。视图本体在
+        welcome.py，这里只做挂载与切换，不实现欢迎页内部结构。
+        """
+        self.welcome = WelcomeView(
+            self.editor_frame,
+            on_open=self.choose_project,
+            on_recent=self.open_project,
+            recent_provider=lambda: self.state.value('recent'),
+        )
+        self._sync_welcome()
+
+    def _sync_welcome(self):
+        """M2：按 self.source 二态切换中央区——无项目 → 欢迎页；
+        有项目 → 编辑器本体（editor_body）。只做 editor_frame 内两个
+        子帧的 pack/pack_forget，不触碰三栏 pane 的增量挂载路径。
+
+        与 M1-fix 的 _settle_mount 同一原则：pack 切换后立即冲刷
+        idle 任务，让新显示子帧的内容分层映射同步落地——否则内容
+        子树排在 Tk 的延迟重排队列里，依赖外部事件循环逐个排空
+        （实测每层可滞后数百 ms 甚至不收敛），欢迎页/编辑器会长时间
+        停在不可见状态。update_idletasks 只服务 idle 回调，不派发
+        窗口事件，无自激风险。"""
+        welcome = getattr(self, 'welcome', None)
+        body = getattr(self, 'editor_body', None)
+        if welcome is None or body is None:
+            return
+        if self.source is None:
+            body.pack_forget()
+            # 先 pack 再 refresh：子控件必须在父控件已获几何管理器后
+            # 创建/挂载，否则整树映射时它们停留在 unmapped（实测：欢迎页
+            # 已 mapped 而近期项目行仍 1x1 未映射，点击不触发）。
+            welcome.pack(fill='both', expand=True)
+            welcome.refresh()
+            welcome.update_idletasks()
+        else:
+            welcome.pack_forget()
+            body.pack(fill='both', expand=True)
+            body.update_idletasks()
 
     def _build_agent(self):
         # B1（UX 审查）：语义分组重排——会话（状态/日志/输入/发送）、任务
@@ -499,6 +553,8 @@ class DevelopmentWorkbench(ttk.Frame):
         if error:
             return
         self.source, self.runtime, ready = value
+        # M2：项目已载入，中央区从欢迎页切回编辑器本体。
+        self._sync_welcome()
         # An earlier workspace grant does not apply to a different project.
         self._permission = 'read-only'
         self.permission.set('read-only')
