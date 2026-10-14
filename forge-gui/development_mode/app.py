@@ -22,7 +22,7 @@ from forge.development.editor import Document
 from forge.development.runtime import DevelopmentRuntime
 from forge.development.evidence import TaskEvidence
 from forge.secrets import redact, install_tk_exception_redaction
-from .bottom_panel import ToolPanel
+from .bottom_panel import ToolPanel, count_problems, count_tests
 from .editor_area import EditorArea, save_document_as
 from .explorer import ExplorerPanel
 from .layout import NavigationBar, StatusBar
@@ -139,7 +139,19 @@ class DevelopmentWorkbench(ttk.Frame):
         self.vertical.pack(fill='both', expand=True, padx=8)
         self.panes = ttk.Panedwindow(self.vertical, orient='horizontal')
         self.vertical.add(self.panes, weight=4)
-        self.bottom = ToolPanel(self.vertical)
+        # M5：底部面板四标签 + 真实计数徽标。徽标数据源经 provider
+        # 注入（面板不读 app 私有结构）：差异 = Git 变更清单行数
+        # （explorer 的 changes Treeview，一行一个变更文件）、测试 /
+        # 问题 = 当前任务 evidence 的只读投影（Codex 域，只消费）。
+        # provider 均为懒求值——构造时 self.changes 尚未建立
+        # （_build_project 在 156 行之后），取不到返回 0。
+        self.bottom = ToolPanel(
+            self.vertical,
+            changes_provider=lambda: len(self.changes.get_children())
+            if getattr(self, 'changes', None) else 0,
+            tests_provider=lambda: count_tests(self.task_evidence),
+            problems_provider=lambda: count_problems(self.task_evidence),
+        )
         self.vertical.add(self.bottom, weight=1)
         # 既有调用点契约保留：self.output / self.output_views 指向底部
         # 面板内的 Notebook 与页面字典（write_output、output.select 等
@@ -654,7 +666,14 @@ class DevelopmentWorkbench(ttk.Frame):
             return
         self._scan_busy = True
         source, expanded, search = self.source, set(self.expanded), self.search.get()
-        self.work(lambda: source.scan(expanded, search), self._project_scan)
+
+        def _scan_done(value, error):
+            self._project_scan(value, error)
+            # M5：扫描完成即徽标数据（Git 变更文件数）的到位点——异步
+            # 扫描完成后同步底部面板计数徽标，避免开箱看到 0（标签切换
+            # 时面板另有一次自行刷新，双路径不互斥）。
+            self.bottom.refresh_badges()
+        self.work(lambda: source.scan(expanded, search), _scan_done)
 
     def _project_scan(self, value, error):
         self._scan_busy = False

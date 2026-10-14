@@ -54,6 +54,17 @@
          赤字（side 定视觉位置、pack 次序定让位优先级）。同族：
          M1 底部面板 height=6 小请求、editor_area 分屏重 pack。
 
+  M5 底部面板四标签（bottom_panel.py）：
+         可见标签差异/终端/测试/问题（示例图基线标签与次序），标签
+         计数徽标取真实数据源——差异 = Git 变更文件数（Explorer
+         变更清单行数）、测试 = 当前任务测试记录数、问题 = 当前任务
+         失败记录数（TaskEvidence 只读投影）；无数据显示 0，不伪造。
+         views 五键不变，'输出' 为 '测试' 别名（任务书 Output =
+         构建输出/运行日志/测试结果/工具执行结果，与测试结果同页），
+         write_output 既有调用点零改动。差异页增删行着色（+/-
+         行按 git 语义上色，@@ hunk 头 accent）；文件选择与修改前后
+         对比沿用 M3 已接线的 inspect_diff 链路。
+
 本文件即上述修复与改造的守护，也是集成验收口径「P0-L1 两尺寸映射断言」
 的落地。只测布局容器层，不触碰 Agent 栏内部控件语义（Codex 域）。
 """
@@ -853,6 +864,135 @@ class EditorAreaTests(_WorkbenchFixture, unittest.TestCase):
         with self.assertRaises(PermissionError):
             save_document_as(boundary, row['document'],
                              self.project / '.git' / 'evil.py')
+
+
+SAMPLE_DIFF = '''--- a/one.py
++++ b/one.py
+@@ -1,2 +1,3 @@
+ print(1)
+-print(2)
++print(22)
++print(3)
+'''
+
+
+class BottomPanelTests(_WorkbenchFixture, unittest.TestCase):
+    """M5 底部面板守护：四标签结构 / 真实计数徽标 / 输出别名契约 /
+    差异页增删行着色。只测面板公开行为与 app 侧 provider 接线。"""
+
+    def _tab_text(self, name):
+        return self.app.bottom.notebook.tab(
+            self.app.bottom._pages[name], 'text')
+
+    def _git(self, *args):
+        subprocess.run(['git', *args], cwd=self.project, check=True,
+                       capture_output=True, text=True)
+
+    # ── 1. 四标签结构与徽标分布 ───────────────────────────────────
+    def test_four_tabs_with_badges_and_plain_terminal(self):
+        bottom = self.app.bottom
+        labels = [bottom.notebook.tab(bottom._pages[n], 'text')
+                  for n in ('Diff', '终端', '测试', '问题')]
+        self.assertEqual(labels, ['差异(0)', '终端', '测试(0)', '问题(0)'])
+        # 四个可见标签，无「输出」标签（并入测试页）。
+        self.assertEqual(len(bottom.notebook.tabs()), 4)
+
+    def test_output_page_aliases_test_page(self):
+        """别名契约：views['输出'] 与 views['测试'] 同一 Text——
+        write_output('输出') 既有调用点零改动，内容落在测试页。"""
+        bottom = self.app.bottom
+        self.assertIs(self.app.output_views['输出'],
+                      self.app.output_views['测试'])
+        self.assertIs(self.app.output, bottom.notebook)
+        self.app.write_output('输出', 'ALIAS-LINE\n')
+        self.assertIn('ALIAS-LINE',
+                      self.app.output_views['测试'].get('1.0', 'end-1c'))
+        self.assertTrue(bottom.select('输出'))
+        self.assertEqual(bottom.notebook.tab('current', 'text'), '测试(0)')
+
+    def test_select_zero_still_selects_diff_tab(self):
+        """既有调用点 self.output.select(0) 的语义：tab 0 = 差异页。"""
+        self.app.output.select(0)
+        self.assertEqual(self.app.bottom.notebook.index('current'), 0)
+
+    # ── 2. 真实计数徽标 ───────────────────────────────────────────
+    def test_diff_badge_counts_real_git_changes(self):
+        """端到端：真实 git 仓库的 M/?? 变更数进入差异徽标（扫描完成
+        即刷新，不等标签切换）。"""
+        self._git('init', '-q')
+        self._git('config', 'user.name', 't')
+        self._git('config', 'user.email', 't@t')
+        self._git('add', '.')
+        self._git('commit', '-qm', 'init')
+        (self.project / 'one.py').write_text('print(11)\n', encoding='utf-8')
+        (self.project / 'two.py').write_text('print(2)\n', encoding='utf-8')
+        self.app.refresh_project()
+        self.pump(lambda: self._tab_text('Diff') == '差异(2)')
+
+    def test_badges_refresh_on_tab_change(self):
+        """标签切换即刷新（<<NotebookTabChanged>> 接线）。"""
+        bottom = self.app.bottom
+        self.app.task_evidence.apply(
+            {'type': 'test_result', 'run_id': 'r1', 'agent': 'human-test',
+             'status': 'completed', 'exit_code': 0})
+        bottom.notebook.select(1)          # 切到终端再切回，触发事件
+        bottom.notebook.select(2)
+        # select() 只投递虚拟事件——泵到徽标更新（接线失效则超时失败）。
+        self.pump(lambda: self._tab_text('测试') == '测试(1)')
+
+    def test_test_badge_counts_evidence_records(self):
+        bottom = self.app.bottom
+        self.app.task_evidence.apply(
+            {'type': 'test_result', 'run_id': 'r1', 'agent': 'human-test',
+             'status': 'completed', 'exit_code': 0})
+        self.app.task_evidence.apply(
+            {'type': 'test_result', 'run_id': 'r2', 'agent': 'human-test',
+             'status': 'failed', 'exit_code': 1})
+        bottom.refresh_badges()
+        # 记录数（含失败）——徽标不区分成败，只数真实记录。
+        self.assertEqual(self._tab_text('测试'), '测试(2)')
+
+    def test_problem_badge_counts_failed_records(self):
+        bottom = self.app.bottom
+        self.app.task_evidence.apply(
+            {'type': 'tool_completed', 'action_id': 'a1',
+             'tool': 'shell_exec', 'ok': False, 'status': 'failed'})
+        bottom.refresh_badges()
+        self.assertEqual(self._tab_text('问题'), '问题(1)')
+        # 失败的测试同时计入问题（任务书 Problems 含测试失败）。
+        self.app.task_evidence.apply(
+            {'type': 'test_result', 'run_id': 'r1', 'agent': 'human-test',
+             'status': 'failed', 'exit_code': 1})
+        bottom.refresh_badges()
+        self.assertEqual(self._tab_text('问题'), '问题(2)')
+        # 成功记录不计入问题。
+        self.app.task_evidence.apply(
+            {'type': 'tool_completed', 'action_id': 'a2',
+             'tool': 'write_file', 'ok': True, 'status': 'completed'})
+        bottom.refresh_badges()
+        self.assertEqual(self._tab_text('问题'), '问题(2)')
+
+    def test_badge_shows_zero_without_fabrication(self):
+        """无数据时显示 0（示例图问题(0)），不伪造计数。"""
+        self.assertEqual(self._tab_text('Diff'), '差异(0)')
+        self.assertEqual(self._tab_text('测试'), '测试(0)')
+        self.assertEqual(self._tab_text('问题'), '问题(0)')
+
+    # ── 3. 差异页增删行着色 ───────────────────────────────────────
+    def test_diff_page_highlights_added_removed_hunk_lines(self):
+        bottom = self.app.bottom
+        self.app.write_output('Diff', SAMPLE_DIFF, clear=True)
+        bottom.refresh_badges()
+        text = self.app.output_views['Diff']
+        self.assertEqual(len(text.tag_ranges('diff_add')), 4)    # 2 行
+        self.assertEqual(len(text.tag_ranges('diff_del')), 2)    # 1 行
+        self.assertEqual(len(text.tag_ranges('diff_hunk')), 2)   # 1 行
+        # 非差异内容不染色。
+        self.app.write_output('Diff', '普通文本，没有 +/- 行\n', clear=True)
+        bottom.refresh_badges()
+        self.assertEqual(len(text.tag_ranges('diff_add')), 0)
+        self.assertEqual(len(text.tag_ranges('diff_del')), 0)
+        self.assertEqual(len(text.tag_ranges('diff_hunk')), 0)
 
 
 def panel_legend(app):
