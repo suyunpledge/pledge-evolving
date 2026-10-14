@@ -1,11 +1,15 @@
 """Coding Agent views over TaskEvidence; no execution or global link handlers."""
 import json
 import re
+from collections import defaultdict, deque
+from datetime import datetime
+from pathlib import Path
 import tkinter as tk
 from tkinter import ttk
 
 from chat_widgets import parse_blocks, inline_segments
-from gui_theme import C, FONT_UI, FONT_UI_BOLD, FONT_SECTION, FONT_MONO_SM, style_editor
+from gui_theme import C, FONT_UI, FONT_UI_BOLD, FONT_SECTION, FONT_MONO_SM, style_editor, button_feedback, attach_tooltip
+from ui_icons import IconButton
 from forge.secrets import redact
 
 
@@ -33,11 +37,15 @@ def replace(text, body):
 
 class Conversation(tk.Text):
     """Shared Markdown parser + Text tags; link callbacks belong to this instance."""
-    def __init__(self, parent, open_file):
+    def __init__(self, parent, open_file, history_source=None):
         super().__init__(parent, height=6, wrap='word', font=FONT_UI)
         style_editor(self)
         self.configure(state='disabled')
         self.open_file = open_file
+        self.history_source = history_source
+        self._history_path = None
+        self._history_times = defaultdict(deque)
+        self.tag_configure('timestamp', foreground=C['comment'], spacing1=6)
         self.tag_configure('heading', font=FONT_SECTION, foreground=C['text'])
         self.tag_configure('b', font=FONT_UI_BOLD)
         self.tag_configure('code', font=FONT_MONO_SM, background=C['code_bg'])
@@ -70,16 +78,67 @@ class Conversation(tk.Text):
             if widget.winfo_exists():
                 widget.destroy()
         self._windows.clear()
+        self._history_path = None
+        self._history_times.clear()
 
     def insert(self, index, chars, *tags):
         # Existing recovery adapter appends whole historical messages to Text.
         match = re.fullmatch(r'\n(user|assistant)\n([\s\S]*)\n', str(chars)) if not tags else None
         if match:
-            return self.message(match[1], match[2])
+            return self.message(match[1], match[2], timestamp=self._historical_time(match[1], match[2]), historical=True)
         return super().insert(index, chars, *tags)
 
-    def message(self, role, body):
+    def _historical_time(self, role, body):
+        # Read only the already-authorized recovery journal, once per restore.
+        # Older logs without timestamps remain explicitly unknown.
+        path = self.history_source() if self.history_source else None
+        if path and path != self._history_path:
+            self._history_path = path
+            self._history_times.clear()
+            from forge.loop import sanitise_child_output
+            try:
+                with Path(path).open('rb') as stream:
+                    raw = stream.read(16 * 1024 * 1024 + 1)
+                if len(raw) > 16 * 1024 * 1024:
+                    return None
+                nested = 0
+                messages = deque(maxlen=100)
+                for line in raw.splitlines():
+                    try:
+                        event = json.loads(line)
+                    except (ValueError, UnicodeError):
+                        continue
+                    if not isinstance(event, dict):
+                        continue
+                    kind = event.get('type')
+                    if kind == 'subagent_spawn':
+                        nested += 1
+                    elif kind in {'subagent_result', 'subagent_error'}:
+                        nested = max(0, nested - 1)
+                    elif kind == 'development_recovery':
+                        messages.clear()
+                        for message in event.get('history', []):
+                            if isinstance(message, dict) and message.get('role') in {'user', 'assistant'}:
+                                messages.append((message['role'], str(redact(message.get('content', ''))), message.get('ts')))
+                    elif kind in {'user_message', 'assistant_message'} and not event.get('depth', 0) and ('depth' in event or not nested):
+                        messages.append(('user' if kind == 'user_message' else 'assistant',
+                            sanitise_child_output(str(redact(event.get('content', '')))), event.get('ts')))
+                for name, content, ts in messages:
+                    self._history_times[(name, content)].append(ts)
+            except (OSError, ValueError):
+                return None
+        times = self._history_times.get((role, body))
+        return times.popleft() if times else None
+
+    def message(self, role, body, *, timestamp=None, historical=False):
         self.configure(state='normal')
+        if timestamp is None and not historical:
+            timestamp = datetime.now().timestamp()  # actual message display time
+        try:
+            stamp = datetime.fromtimestamp(float(timestamp)).strftime('%H:%M')
+        except (TypeError, ValueError, OverflowError, OSError):
+            stamp = '时间未记录'
+        self.insert('end', '\n' + stamp + '\n', 'timestamp')
         self.insert('end', '\n' + str(redact(role)) + '\n', 'heading')
         for block in parse_blocks(str(redact(body))):
             kind, value = block['type'], block.get('text', '')
@@ -217,16 +276,94 @@ class AgentEvents(ttk.Frame):
         self.text.configure(state='disabled')
 
 
+class TaskInput(tk.Text):
+    """An overlay placeholder, never inserted into the task sent to Runtime."""
+    def __init__(self, parent, **options):
+        super().__init__(parent, **options)
+        style_editor(self)
+        self.placeholder = tk.Label(self, text='输入任务描述，按 Enter 发送，\nShift+Enter 换行 …',
+            bg=self.cget('background'), fg=C['placeholder'], font=FONT_UI, justify='left')
+        self.placeholder.bind('<Button-1>', lambda event: self.focus_set())
+        self.bind('<<Modified>>', self._placeholder_changed, add='+')
+        self._placeholder_changed()
+
+    def _placeholder_changed(self, event=None):
+        if self.get('1.0', 'end-1c'):
+            self.placeholder.place_forget()
+        else:
+            self.placeholder.place(x=6, y=6)
+        if self.edit_modified():
+            self.edit_modified(False)
+
+
+class PlanningCard(ttk.Frame):
+    LEVELS = {'none': '无 (None)', 'low': '低 (Low)', 'medium': '中等 (Medium)', 'high': '高 (High)'}
+
+    def __init__(self, parent, view_changes):
+        super().__init__(parent, padding=8)
+        ttk.Label(self, text='任务规划', font=FONT_UI_BOLD).pack(anchor='w')
+        self.level = ttk.Label(self, foreground=C['subtext'])
+        self.level.pack(anchor='w')
+        self.authorization = ttk.Label(self, wraplength=280)
+        self.authorization.pack(anchor='w')
+        self.permission = ttk.Label(self, foreground=C['subtext'])
+        self.permission.pack(anchor='w')
+        self.view = ttk.Button(self, text='查看变更', command=view_changes, state='disabled')
+        self.view.pack(anchor='w', pady=(4, 0))
+        self._view_changes = view_changes
+        self._display = None
+
+    def fit(self, width):
+        self.authorization.configure(wraplength=width)
+
+    def update_plan(self, evidence, context):
+        level = self.LEVELS.get(context.get('planning'), '级别未记录')
+        permission = context.get('permission')
+        label = {'read-only': '只读', 'workspace-write': '工作区写'}.get(permission, '权限未记录')
+        pending = any(r['status'] == 'awaiting_approval' for r in evidence.actions.values())
+        denied = any(r.get('authorization') == 'deny' for r in evidence.actions.values())
+        auth = ('待逐动作审批' if pending else '动作被拒绝' if denied else
+                '已授权工作区写入' if permission == 'workspace-write' else
+                '只读授权' if permission == 'read-only' else '未提交授权')
+        if context.get('recovered'):
+            auth = '历史授权记录 · 当前恢复为只读'
+        enabled = bool(self._view_changes and (evidence.changes or evidence.diffs))
+        display = (level, auth, label, enabled)
+        if display == self._display:
+            return
+        self._display = display
+        self.level.configure(text=level)
+        self.permission.configure(text='权限 · ' + label)
+        self.authorization.configure(text='授权 · ' + auth)
+        self.view.configure(state='normal' if enabled else 'disabled')
+
+
 class AgentPanel(ttk.Frame):
-    def __init__(self, parent, *, open_file, view_diff, revert, pending, configure_model, refresh):
+    def __init__(self, parent, *, open_file, view_diff, revert, pending, configure_model, refresh,
+                 new_conversation=None, history=None, settings=None, view_changes=None, history_source=None):
         super().__init__(parent)
+        titlebar = ttk.Frame(self, padding=(8, 6))
+        titlebar.pack(fill='x')
+        self.title = ttk.Label(titlebar, text='AI Agent', font=FONT_UI_BOLD)
+        self.title.pack(side='left', fill='x', expand=True)
+        self.header_buttons = {}
+        for key, icon, label, callback in (
+                ('new', 'plus', '新对话', new_conversation),
+                ('history', 'clock', '历史', history), ('settings', 'config', '设置', settings)):
+            button = IconButton(titlebar, icon=icon, icon_size=16, text='', command=callback,
+                bg=C['bg'], fg=C['subtext'], bd=0, padx=7, pady=5, takefocus=True, highlightthickness=1,
+                state='normal' if callback else 'disabled')
+            button_feedback(button)
+            attach_tooltip(button, label)
+            button.pack(side='left', padx=2)
+            self.header_buttons[key] = button
         self.notebook = ttk.Notebook(self)
         self.notebook.pack(fill='both', expand=True)
         conversation, tasks, agents = (ttk.Frame(self.notebook) for _ in range(3))
         self.tasks_page = tasks
-        for frame, label in zip((conversation, tasks, agents), ('Conversation', 'Tasks', 'Agents')):
+        for frame, label in zip((conversation, tasks, agents), ('对话', '任务', '子 Agent')):
             self.notebook.add(frame, text=label)
-        self.chat = Conversation(conversation, open_file)
+        self.chat = Conversation(conversation, open_file, history_source)
         sb = ttk.Scrollbar(conversation, command=self.chat.yview)
         sb.pack(side='right', fill='y')
         self.chat.configure(yscrollcommand=sb.set)
@@ -236,6 +373,8 @@ class AgentPanel(ttk.Frame):
         task_body = ttk.Frame(tasks)
         task_body.pack(fill='both', expand=True)
         self.workflow = readonly(task_body)
+        for tag, token in (('pending', 'subtext'), ('running', 'warn'), ('completed', 'ok')):
+            self.workflow.tag_configure(tag, foreground=C[token])
         tools = ttk.Frame(agents)
         tools.pack(fill='x')
         ttk.Button(tools, text='模型配置', command=lambda: configure_model(self.selected_name())).pack(side='left')
@@ -258,12 +397,15 @@ class AgentPanel(ttk.Frame):
         self._callbacks = dict(view=view_diff, open_file=open_file, revert=revert, pending=pending)
         self._last_task = None
         self.events = None
+        self.task_context = {}
+        self._planning_card = None
+        self._view_changes = view_changes
 
     def mount_events(self, notebook):
         """WorkBuddy container seam: attach once without rebuilding its layout."""
         if self.events is None:
             self.events = AgentEvents(notebook)
-            notebook.add(self.events, text='Agent Events')
+            notebook.add(self.events, text='变更事件')
         return self.events
 
     def selected_name(self):
@@ -292,14 +434,31 @@ class AgentPanel(ttk.Frame):
         self._evidence = evidence
         lines = ['任务：' + (evidence.task_id or '尚未创建'), '任务状态：' + evidence.phase,
                  '', '计划（未提供阶段事件时不推断完成）：']
-        lines += ['○ ' + str(task) for task in evidence.plan]
-        lines += ['', '真实工具步骤：'] + [f"{r.get('tool', '')} · {r['status']}" for r in list(evidence.actions.values())[-100:]]
+        lines += ['☐ ' + str(task) for task in evidence.plan]
+        marks = {'running': '◐', 'completed': '☑', 'not_started': '☐', 'awaiting_approval': '☐'}
+        lines += ['', '真实工具步骤：'] + [f"{marks.get(r['status'], '!')} {r.get('tool', '')} · {r['status']}" for r in list(evidence.actions.values())[-100:]]
         lines += ['', '测试：'] + [f"{r['status']} · {r.get('command', '')} · 退出码 {r.get('exit_code', '未提供')}" for r in evidence.tests[-20:]]
         lines += ['', f'工作区 Diff 快照：{len(evidence.diffs)}（可能包含其他来源）']
         replace(self.workflow, '\n'.join(lines))
+        for number, line in enumerate(lines, 1):
+            tag = {'☐': 'pending', '◐': 'running', '☑': 'completed'}.get(line[:1])
+            if tag:
+                self.workflow.tag_add(tag, f'{number}.0', f'{number}.end')
         if self._last_task != evidence.task_id:
             self._summary = None
             self._last_task = evidence.task_id
+            self._planning_card = None
+        if evidence.task_id or evidence.plan:
+            if self._planning_card is None or not self._planning_card.winfo_exists():
+                callback = (lambda e=evidence: self._view_changes(e)) if self._view_changes else None
+                self._planning_card = PlanningCard(self.chat, callback)
+                self.chat.card(self._planning_card)
+            # Configuration events are frozen task evidence, never the next-task controls.
+            context = dict(self.task_context)
+            main = next((c for c in evidence.configurations.values() if c.get('role') in {'default', 'complex', 'simple'}), {})
+            if main.get('permission'):
+                context['permission'] = main['permission']
+            self._planning_card.update_plan(evidence, context)
         if evidence.actions:
             if self._summary is None or not self._summary.winfo_exists():
                 self._summary = ToolSummary(self.chat)

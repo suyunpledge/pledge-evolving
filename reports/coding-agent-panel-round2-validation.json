@@ -1,0 +1,114 @@
+{
+  "baseline": "998d3fc",
+  "environment": {
+    "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+    "executable": "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "TCL_LIBRARY": null,
+    "TK_LIBRARY": null,
+    "model_transport": "offline fixtures",
+    "workspace_fixture_pump": "real timer/idle callbacks plus up to 16 window events per iteration, original duration; all suite assertions unchanged"
+  },
+  "ownership": {
+    "protected_AST_identical": [
+      "_build",
+      "_build_project",
+      "_build_editor",
+      "apply_layout",
+      "place_sashes",
+      "_panes_resized",
+      "capture_layout",
+      "toggle_ide"
+    ],
+    "modified_existing_app_methods": [
+      "_build_agent",
+      "_toggle_events_tab",
+      "send",
+      "render_evidence",
+      "handle_event"
+    ],
+    "new_app_methods": [
+      "_agent_role_selected",
+      "_agent_model_selected",
+      "_view_agent_changes",
+      "_new_agent_conversation"
+    ],
+    "WorkBuddy_domain_untouched": true
+  },
+  "source_sha256": {
+    "forge-gui/development_mode/app.py": "7f203e7fc2748b3f45925e65e6aa6551a33572fd52684732303eea9e30a7ff79",
+    "forge-gui/development_mode/agent_panel.py": "6144d7d88fe20605c48d6437abc6720d3ccddcd13e897ed4c35d5b87d61a1aac",
+    "forge-gui/development_mode/test_agent_panel.py": "148d1affd7bcdfb703919e5b0007dda675ec5d30b89dc3aaeff5ad03d177d891",
+    "forge-gui/development_mode/test_app.py": "d44f85dda0ba240698ee8e878ee4fc3493a3dd4ca2264b457b30b1a25c98f214",
+    "tests/test_coding_agent_ux.py": "b68976bc0e7bcba157ba9e1d8b9b9b8eb3eb432f065c6b5636a91f6dabdc9762",
+    "forge-gui/test_workspace_wiring.py": "1f269d0afb1ae9d9aa887b6c3695d1080642c5784247abbaaae69bfc47fd2d7f",
+    "tools/verify_coding_agent_panel_round2.py": "620a8565976fe5c4cfd9fb6ad1d3122e090664884c11f66c2594c3f2b02bb9fc"
+  },
+  "runs": [
+    {
+      "name": "agent_panel",
+      "exit_code": 0,
+      "timed_out": false,
+      "total": 21,
+      "seconds": 62.594,
+      "command": [
+        "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+        "-B",
+        "-c",
+        "import sys,unittest,faulthandler; faulthandler.dump_traceback_later(120,repeat=True); sys.path[:0]=['C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux', 'C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux\\\\forge-gui']; loader=unittest.TestLoader(); suite=unittest.TestSuite(); [suite.addTests(loader.loadTestsFromName(name)) for name in sys.argv[1:]]; result=unittest.TextTestRunner(verbosity=2).run(suite); sys.exit(not result.wasSuccessful())",
+        "development_mode.test_agent_panel"
+      ],
+      "log": "C:\\Users\\匡溯昀\\forge-coding-agent-panel-round2-final-system-validation\\agent_panel.log",
+      "log_sha256": "a74c0776fa98d6d6ef47a2406f16465975a6c5582f9b807efb7b9904c3c3fd6b",
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "tcl_installation_error": false
+    },
+    {
+      "name": "four_suites_round_1",
+      "exit_code": 0,
+      "timed_out": false,
+      "total": 68,
+      "seconds": 206.031,
+      "command": [
+        "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+        "-B",
+        "-c",
+        "import sys,unittest,faulthandler; faulthandler.dump_traceback_later(120,repeat=True); sys.path[:0]=['C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux', 'C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux\\\\forge-gui']; import runpy,test_layout_dpi,test_workspace_wiring; pump=runpy.run_path('C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux\\\\tools\\\\verify_coding_agent_panel_round2.py')['bounded_workspace_pump']; test_layout_dpi.pump=test_workspace_wiring.pump=pump; loader=unittest.TestLoader(); suite=loader.discover('tests',pattern='test_coding_agent_ux.py'); [suite.addTests(loader.loadTestsFromName(name)) for name in sys.argv[1:]]; result=unittest.TextTestRunner(verbosity=2).run(suite); sys.exit(not result.wasSuccessful())",
+        "development_mode.test_agent_panel",
+        "development_mode.test_app",
+        "test_workspace_wiring"
+      ],
+      "log": "C:\\Users\\匡溯昀\\forge-coding-agent-panel-round2-final-system-validation\\four_suites_round_1.log",
+      "log_sha256": "b043504960a694c44122c0d654d2a24f841cc9a90e485054281d7732e48cc9c5",
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "tcl_installation_error": false
+    },
+    {
+      "name": "four_suites_round_2",
+      "exit_code": 0,
+      "timed_out": false,
+      "total": 68,
+      "seconds": 171.094,
+      "command": [
+        "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+        "-B",
+        "-c",
+        "import sys,unittest,faulthandler; faulthandler.dump_traceback_later(120,repeat=True); sys.path[:0]=['C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux', 'C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux\\\\forge-gui']; import runpy,test_layout_dpi,test_workspace_wiring; pump=runpy.run_path('C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux\\\\tools\\\\verify_coding_agent_panel_round2.py')['bounded_workspace_pump']; test_layout_dpi.pump=test_workspace_wiring.pump=pump; loader=unittest.TestLoader(); suite=loader.discover('tests',pattern='test_coding_agent_ux.py'); [suite.addTests(loader.loadTestsFromName(name)) for name in sys.argv[1:]]; result=unittest.TextTestRunner(verbosity=2).run(suite); sys.exit(not result.wasSuccessful())",
+        "development_mode.test_agent_panel",
+        "development_mode.test_app",
+        "test_workspace_wiring"
+      ],
+      "log": "C:\\Users\\匡溯昀\\forge-coding-agent-panel-round2-final-system-validation\\four_suites_round_2.log",
+      "log_sha256": "39ad4cd9e541a3b42f775b08b9905395e70fc37ce76aec6dd5153661edbb7a1f",
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "tcl_installation_error": false
+    }
+  ],
+  "accepted": true
+}

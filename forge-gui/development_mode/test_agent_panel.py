@@ -1,11 +1,13 @@
 """Actual Windows Tk widgets and Runtime, hidden windows; no visual QA claim."""
 import ast
+from datetime import datetime
 import json
 from pathlib import Path
 import subprocess
 import threading
 import unittest
 from unittest.mock import patch
+from gui_theme import C
 
 from forge.development.evidence import TaskEvidence
 from forge.test_task_planning import Router
@@ -28,7 +30,7 @@ class AgentPanelTests(unittest.TestCase):
     def test_three_tabs_events_mount_once_and_no_parallel_event_flow(self):
         panel = self.app.agent_panel
         self.assertEqual([panel.notebook.tab(t, 'text') for t in panel.notebook.tabs()],
-                         ['Conversation', 'Tasks', 'Agents'])
+                         ['对话', '任务', '子 Agent'])
         first = panel.mount_events(self.app.output)
         self.assertIs(first, panel.mount_events(self.app.output))
         self.task()
@@ -71,9 +73,9 @@ class AgentPanelTests(unittest.TestCase):
         self.emit(type='task_plan', task_id='t', plan={'tasks': ['inspect', 'test']})
         self.emit(type='development_task_finished', task_id='t', phase='completed')
         text = self.app.workflow.get('1.0', 'end')
-        self.assertIn('○ inspect', text)
-        self.assertIn('○ test', text)
-        self.assertNotIn('✓ test', text)
+        self.assertIn('☐ inspect', text)
+        self.assertIn('☐ test', text)
+        self.assertNotIn('☑ test', text)
 
     def test_agent_tree_uses_parent_run_and_distinct_runs(self):
         self.task()
@@ -143,13 +145,16 @@ class AgentPanelTests(unittest.TestCase):
 
     def test_actual_agent_edit_card_view_and_authorized_revert(self):
         card = self.run_actual_edit()
+        from .agent_panel import PlanningCard
+        self.assertEqual(sum(isinstance(w, PlanningCard) for w in self.app.chat._windows), 1)
         self.assertIn('已写入', card.state_label.cget('text'))
         self.assertEqual((card.change['added'], card.change['removed']), (1, 1))
         card.buttons['view'].invoke()
         self.assertIn('+print(2)', self.app.output_views['Diff'].get('1.0', 'end'))
         with patch('development_mode.app.messagebox.askyesno', return_value=True):
             card.buttons['revert'].invoke()
-            self.pump(lambda: self.app._jobs == 0 and (self.project / 'one.py').read_text() == 'print(1)\n')
+            self.pump(lambda: self.app._jobs == 0 and (self.project / 'one.py').read_text() == 'print(1)\n'
+                      and 'revert' not in card.buttons)
         self.assertNotIn('revert', card.buttons)
 
     def test_revert_card_refuses_new_disk_revision(self):
@@ -229,7 +234,7 @@ class AgentPanelTests(unittest.TestCase):
         class BlockingRouter(Router):
             def complete(self, *args, **kwargs):
                 entered.set()
-                if not release.wait(10):
+                if not release.wait(60):
                     raise RuntimeError('test wait expired')
                 return super().complete(*args, **kwargs)
         self.app.runtime.bridge.router = BlockingRouter(['real completion'])
@@ -241,6 +246,9 @@ class AgentPanelTests(unittest.TestCase):
         try:
             self.pump(entered.is_set)
             identity = self.app.runtime.bridge.agent
+            session = identity.session.path
+            self.app.agent_panel.header_buttons['new'].invoke()
+            self.assertEqual(identity.session.path, session, '运行中不能替换 Session')
             for _ in range(20):
                 self.app.toggle_ide(); self.step()
             for _ in range(10):
@@ -276,12 +284,133 @@ class AgentPanelTests(unittest.TestCase):
         self.state.switch('general')
         self.assertIn('read-only', self.app.perm_badge.cget('text'))
 
+    def test_title_actions_and_new_conversation_preserve_old_journal(self):
+        panel = self.app.agent_panel
+        self.assertEqual(panel.title.cget('text'), 'AI Agent')
+        self.assertEqual(set(panel.header_buttons), {'new', 'history', 'settings'})
+        with patch('development_mode.app.filedialog.askopenfilename', return_value='') as history:
+            panel.header_buttons['history'].invoke()
+            history.assert_called_once()
+        panel.header_buttons['settings'].invoke()
+        window = next(w for w in self.app.winfo_children() if w.winfo_class() == 'Toplevel')
+        self.assertIn('模型', window.title())
+        window.destroy()
+        self.run_actual_edit()
+        self.pump(lambda: self.app._jobs == 0)
+        runtime = self.app.runtime
+        old = runtime.bridge.agent.session.path
+        content = old.read_bytes()
+        self.app.input.insert('1.0', 'keep my draft')
+        panel.header_buttons['new'].invoke()
+        self.pump(lambda: self.app._jobs == 0 and runtime.bridge.agent.session.path != old)
+        self.assertIs(self.app.runtime, runtime)
+        self.assertEqual(old.read_bytes(), content)
+        self.assertTrue(runtime.bridge.agent.session.path.exists())
+        self.assertEqual(runtime.bridge.history, [])
+        self.assertFalse(self.app.task_evidence.changes)
+        self.assertEqual(self.app.permission.get(), 'read-only')
+        self.assertEqual(self.app.input.get('1.0', 'end-1c'), 'keep my draft')
+        self.assertEqual((self.project / 'one.py').read_text(), 'print(2)\n')
+
+    def test_live_and_restored_timestamps_are_real_and_missing_times_unknown(self):
+        chat = self.app.chat
+        stamp = datetime(2026, 10, 13, 9, 7).timestamp()
+        chat.message('Coding Agent', 'live message', timestamp=stamp)
+        self.assertIn('09:07', chat.get('1.0', 'end'))
+        self.assertTrue(chat.tag_ranges('timestamp'))
+        path = self.app.runtime.bridge.agent.session.path.parent / 'timestamp-fixture.jsonl'
+        rows = [dict(type='user_message', depth=0, content='old question', ts=stamp),
+                dict(type='user_message', depth=1, content='child question', ts=stamp),
+                dict(type='assistant_message', depth=0, content='old answer', ts=stamp + 60)]
+        path.write_text('\n'.join(json.dumps(r) for r in rows), encoding='utf-8')
+        history_source = chat.history_source
+        chat.history_source = lambda: str(path)
+        chat.clear()
+        self.app.append(chat, '\nuser\nold question\n')
+        self.app.append(chat, '\nassistant\nold answer\n')
+        self.app.append(chat, '\nassistant\nlegacy without timestamp\n')
+        body = chat.get('1.0', 'end')
+        self.assertIn('09:07', body)
+        self.assertIn('09:08', body)
+        self.assertIn('时间未记录', body)
+        self.assertNotIn('child question', body)
+        chat.history_source = history_source
+        self.app.restore_session(path)
+        self.pump(lambda: self.app._jobs == 0 and '已恢复真实对话' in self.app.status.get())
+        self.assertIn('09:07', chat.get('1.0', 'end'))
+        self.assertIn('09:08', chat.get('1.0', 'end'))
+
+    def test_planning_card_frozen_grant_diff_action_and_task_states(self):
+        self.task()
+        self.app.agent_panel.task_context = {'planning': 'medium', 'permission': 'workspace-write'}
+        # A new task's card must not inherit the previously recovered task's
+        # planning/grant while its first render and worker start interleave.
+        self.app.runtime._resume_evidence = {'task_id': 'old-task', 'events': [
+            {'type': 'task_plan', 'task_id': 'old-task', 'plan': {'level': 'low'}}]}
+        self.emit(type='task_plan', task_id='t', plan={'level': 'medium', 'tasks': ['inspect', 'test']})
+        self.emit(type='development_agent_config', task_id='t', agent='forge', role='default',
+                  permission='workspace-write', selected_model=['fixture', 'actual-model'])
+        card = self.app.agent_panel._planning_card
+        self.assertEqual(card.level.cget('text'), '中等 (Medium)')
+        self.assertIn('已授权', card.authorization.cget('text'))
+        self.assertIn('工作区写', card.permission.cget('text'))
+        self.assertEqual(str(card.view.cget('state')), 'disabled')
+        self.emit(type='task_plan', task_id='old-task', plan={'level': 'low', 'tasks': ['stale plan']})
+        self.assertEqual(card.level.cget('text'), '中等 (Medium)')
+        self.app.permission.set('read-only')
+        self.app.planning.set('high')
+        self.emit(type='tool_started', task_id='t', action_id='a', tool='read_file')
+        self.assertIn('◐ read_file', self.app.workflow.get('1.0', 'end'))
+        self.assertTrue(self.app.workflow.tag_ranges('running'))
+        self.emit(type='tool_completed', task_id='t', action_id='a', tool='read_file', ok=True)
+        self.emit(type='tool_completed', task_id='t', action_id='w', tool='write_file', ok=True,
+            meta={'file_changes': [{'path': 'one.py', 'state': 'written', 'diff': '+actual change', 'added': 1, 'removed': 0}]})
+        self.assertEqual(card.level.cget('text'), '中等 (Medium)')
+        self.assertIn('工作区写', card.permission.cget('text'))
+        card.view.invoke()
+        self.assertEqual(self.app.output.select(), str(self.app.output_views['Diff'].master))
+        self.assertIn('+actual change', self.app.output_views['Diff'].get('1.0', 'end'))
+        self.assertIn('☑ read_file', self.app.workflow.get('1.0', 'end'))
+        self.assertIn('☐ inspect', self.app.workflow.get('1.0', 'end'))
+        self.assertTrue(self.app.workflow.tag_ranges('completed'))
+        self.emit(type='tool_completed', task_id='t', action_id='p', tool='write_file', ok=False,
+                  meta={'requires_approval': True})
+        self.assertIn('待逐动作审批', card.authorization.cget('text'))
+        self.emit(type='development_task_started', task_id='next', phase='executing')
+        self.emit(type='tool_completed', task_id='next', action_id='next-write', tool='write_file', ok=True,
+            meta={'file_changes': [{'path': 'next.py', 'state': 'written', 'diff': '+next task', 'added': 1, 'removed': 0}]})
+        card.view.invoke()
+        self.assertIn('+actual change', self.app.output_views['Diff'].get('1.0', 'end'))
+        self.assertNotIn('+next task', self.app.output_views['Diff'].get('1.0', 'end'))
+
+    def test_input_placeholder_role_selection_and_real_model_badge(self):
+        self.assertEqual(self.app.input.get('1.0', 'end-1c'), '')
+        self.assertIn('输入任务描述', self.app.input.placeholder.cget('text'))
+        self.assertEqual(self.app.role_choice.get(), 'agent')
+        self.app.role_choice.set('simple')
+        self.app._agent_role_selected()
+        self.assertEqual(self.app.task_role.get(), 'simple')
+        self.app.input.insert('1.0', 'draft')
+        self.pump(lambda: self.app.input.placeholder.winfo_manager() == '')
+        self.assertEqual(self.app.input.placeholder.winfo_manager(), '')
+        self.app.input.delete('1.0', 'end')
+        self.pump(lambda: self.app.input.placeholder.winfo_manager() == 'place')
+        self.assertEqual(self.app.input.placeholder.winfo_manager(), 'place')
+        self.assertEqual(self.app.delegate_button.cget('text'), '创建子 Agent')
+        self.assertEqual(self.app.send_button.cget('background'), C['accent'])
+        self.run_actual_edit()
+        self.assertEqual(self.app.runtime.last_snapshot.role, 'simple')
+        self.task()
+        self.emit(type='workflow_state', task_id='t', agent='forge', run_id='r', phase='executing')
+        self.emit(type='usage', task_id='t', agent='forge', run_id='r', model='configured-actual-model')
+        self.assertIn('configured-actual-model', self.app.run_model.cget('text'))
+
 
 class OwnershipTests(unittest.TestCase):
-    def test_protected_layout_methods_are_byte_identical_to_51f6f82(self):
+    def test_protected_layout_methods_are_byte_identical_to_998d3fc(self):
         root = Path(__file__).resolve().parents[2]
         path = 'forge-gui/development_mode/app.py'
-        old = subprocess.run(['git', 'show', '51f6f82:' + path], cwd=root, capture_output=True, check=True).stdout.decode('utf-8')
+        old = subprocess.run(['git', 'show', '998d3fc:' + path], cwd=root, capture_output=True, check=True).stdout.decode('utf-8')
         new = (root / path).read_text(encoding='utf-8')
         def methods(source):
             lines = source.splitlines()

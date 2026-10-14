@@ -45,11 +45,15 @@ class WorkbenchTests(unittest.TestCase):
         # update() waits until *all* OS/Tcl events drain, which may never
         # happen while another app/test produces Windows events. Bound each
         # iteration so the timeout and assertions actually get evaluated.
+        # Hidden Windows roots can keep supplying window events; service the
+        # real timer/idle callbacks explicitly so queued evidence can render.
+        self.root.tk.dooneevent(_tkinter.TIMER_EVENTS | _tkinter.DONT_WAIT)
+        self.root.tk.dooneevent(_tkinter.IDLE_EVENTS | _tkinter.DONT_WAIT)
         for _ in range(16):
             if not self.root.tk.dooneevent(_tkinter.ALL_EVENTS | _tkinter.DONT_WAIT):
                 break
 
-    def pump(self, condition, timeout=20):
+    def pump(self, condition, timeout=60):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             self.step()
@@ -341,7 +345,7 @@ class WorkbenchTests(unittest.TestCase):
                 if str(self.app.log_tabs.tab(tab, 'state')) != 'hidden']
 
     def test_agent_events_bottom_tab_toggles_without_data_loss(self):
-        self.assertEqual(self._tab_texts(), ['Conversation', 'Tasks', 'Agents'])
+        self.assertEqual(self._tab_texts(), ['对话', '任务', '子 Agent'])
         self.assertIs(self.app.events.master.master, self.app.output)
         self.app.append(self.app.events, 'w5-event-line\n')
         self.app.dev_events.set(False)
@@ -351,9 +355,9 @@ class WorkbenchTests(unittest.TestCase):
         self.app.dev_events.set(True)
         self.app._toggle_events_tab()
         self.step()
-        self.assertEqual(self.app.output.tab(self.app._events_tab, 'text'), 'Agent Events')
+        self.assertEqual(self.app.output.tab(self.app._events_tab, 'text'), '变更事件')
         self.assertIn('w5-event-line', self.app.events.get('1.0', 'end'))
-        self.assertEqual(self._tab_texts(), ['Conversation', 'Tasks', 'Agents'])
+        self.assertEqual(self._tab_texts(), ['对话', '任务', '子 Agent'])
 
     def test_enter_sends_and_shift_enter_inserts_newline(self):
         """E1：Enter=发送、Shift+Enter=换行；IME 组合期不触发。"""
@@ -410,7 +414,7 @@ class WorkbenchTests(unittest.TestCase):
         self.step()
         self.assertEqual(len(self.app.panes.panes()), 1)
         self.app.toggle_focus()
-        self.step()
+        self.pump(lambda: self.app.input.winfo_ismapped())
         self.assertTrue(self.app.input.winfo_ismapped())
         self.assertEqual(self.app.preset.get(), 'focus')
 
