@@ -1,0 +1,253 @@
+{
+  "environment": {
+    "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+    "executable": "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "TCL_LIBRARY": null,
+    "TK_LIBRARY": null,
+    "model_transport": "offline fixtures"
+  },
+  "source_sha256": {
+    "forge-gui/development_mode/app.py": "746e1e62386b03be2da87c3bb3fea53823e1fdfbe6798d0bdff765aa25b84ccf",
+    "forge-gui/development_mode/test_agent_panel.py": "47edf4126ffe129fa4b7e6c6a8ed53601ecd261cd073fff1beb55acc170f87ef",
+    "tests/test_coding_agent_ux.py": "b68976bc0e7bcba157ba9e1d8b9b9b8eb3eb432f065c6b5636a91f6dabdc9762",
+    "forge-gui/development_mode/test_app.py": "9062316ee76d63d2fa364e03de9366e2315cfd5b09b950849da3696191f4f155",
+    "forge-gui/test_workspace_wiring.py": "1f269d0afb1ae9d9aa887b6c3695d1080642c5784247abbaaae69bfc47fd2d7f",
+    "tools/verify_coding_agent_f1.py": "79417fa9e98236673e71b98996d5865e0252523648c2068b3c0144fc0170e6a3"
+  },
+  "runs": [
+    {
+      "name": "revert_01",
+      "exit_code": 0,
+      "seconds": 2.75,
+      "total": 1,
+      "command": [
+        "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+        "-B",
+        "-c",
+        "import sys,unittest; sys.path[:0]=['C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux', 'C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux\\\\forge-gui']; loader=unittest.TestLoader(); suite=unittest.TestSuite(); [suite.addTests(loader.loadTestsFromName(name)) for name in sys.argv[1:]]; result=unittest.TextTestRunner(verbosity=2).run(suite); sys.exit(not result.wasSuccessful())",
+        "development_mode.test_agent_panel.AgentPanelTests.test_revert_card_refuses_new_disk_revision"
+      ],
+      "log": "C:\\Users\\匡溯昀\\forge-coding-agent-f1-validation\\revert_01.log",
+      "log_sha256": "ce75bc6c4390bca85a3060b4307f38dbf5e0c8c5b297eccbc3a49ce2005a092d",
+      "tcl_installation_error": false,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "revert_02",
+      "exit_code": 0,
+      "seconds": 2.734,
+      "total": 1,
+      "command": [
+        "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+        "-B",
+        "-c",
+        "import sys,unittest; sys.path[:0]=['C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux', 'C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux\\\\forge-gui']; loader=unittest.TestLoader(); suite=unittest.TestSuite(); [suite.addTests(loader.loadTestsFromName(name)) for name in sys.argv[1:]]; result=unittest.TextTestRunner(verbosity=2).run(suite); sys.exit(not result.wasSuccessful())",
+        "development_mode.test_agent_panel.AgentPanelTests.test_revert_card_refuses_new_disk_revision"
+      ],
+      "log": "C:\\Users\\匡溯昀\\forge-coding-agent-f1-validation\\revert_02.log",
+      "log_sha256": "be9ca5360b5db5a28250206089ce2ffd9e679a9084a2860acf816562c1632bf5",
+      "tcl_installation_error": false,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "revert_03",
+      "exit_code": 0,
+      "seconds": 2.891,
+      "total": 1,
+      "command": [
+        "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+        "-B",
+        "-c",
+        "import sys,unittest; sys.path[:0]=['C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux', 'C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux\\\\forge-gui']; loader=unittest.TestLoader(); suite=unittest.TestSuite(); [suite.addTests(loader.loadTestsFromName(name)) for name in sys.argv[1:]]; result=unittest.TextTestRunner(verbosity=2).run(suite); sys.exit(not result.wasSuccessful())",
+        "development_mode.test_agent_panel.AgentPanelTests.test_revert_card_refuses_new_disk_revision"
+      ],
+      "log": "C:\\Users\\匡溯昀\\forge-coding-agent-f1-validation\\revert_03.log",
+      "log_sha256": "3298cddd8ee6d023046e83e4ca5e16f47089602aa08e1f9e4b94c50b18f94efd",
+      "tcl_installation_error": false,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "revert_04",
+      "exit_code": 0,
+      "seconds": 2.875,
+      "total": 1,
+      "command": [
+        "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+        "-B",
+        "-c",
+        "import sys,unittest; sys.path[:0]=['C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux', 'C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux\\\\forge-gui']; loader=unittest.TestLoader(); suite=unittest.TestSuite(); [suite.addTests(loader.loadTestsFromName(name)) for name in sys.argv[1:]]; result=unittest.TextTestRunner(verbosity=2).run(suite); sys.exit(not result.wasSuccessful())",
+        "development_mode.test_agent_panel.AgentPanelTests.test_revert_card_refuses_new_disk_revision"
+      ],
+      "log": "C:\\Users\\匡溯昀\\forge-coding-agent-f1-validation\\revert_04.log",
+      "log_sha256": "fb426bf51e2c78388570fad1aaef9fca025cd3716d144f792b3989e2df80cb77",
+      "tcl_installation_error": false,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "revert_05",
+      "exit_code": 0,
+      "seconds": 2.906,
+      "total": 1,
+      "command": [
+        "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+        "-B",
+        "-c",
+        "import sys,unittest; sys.path[:0]=['C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux', 'C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux\\\\forge-gui']; loader=unittest.TestLoader(); suite=unittest.TestSuite(); [suite.addTests(loader.loadTestsFromName(name)) for name in sys.argv[1:]]; result=unittest.TextTestRunner(verbosity=2).run(suite); sys.exit(not result.wasSuccessful())",
+        "development_mode.test_agent_panel.AgentPanelTests.test_revert_card_refuses_new_disk_revision"
+      ],
+      "log": "C:\\Users\\匡溯昀\\forge-coding-agent-f1-validation\\revert_05.log",
+      "log_sha256": "613bdc7279c1ab6b4bf52a48a5a66bafc56d667ea2c65a29539a0797242ef42e",
+      "tcl_installation_error": false,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "revert_06",
+      "exit_code": 0,
+      "seconds": 3.079,
+      "total": 1,
+      "command": [
+        "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+        "-B",
+        "-c",
+        "import sys,unittest; sys.path[:0]=['C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux', 'C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux\\\\forge-gui']; loader=unittest.TestLoader(); suite=unittest.TestSuite(); [suite.addTests(loader.loadTestsFromName(name)) for name in sys.argv[1:]]; result=unittest.TextTestRunner(verbosity=2).run(suite); sys.exit(not result.wasSuccessful())",
+        "development_mode.test_agent_panel.AgentPanelTests.test_revert_card_refuses_new_disk_revision"
+      ],
+      "log": "C:\\Users\\匡溯昀\\forge-coding-agent-f1-validation\\revert_06.log",
+      "log_sha256": "c92a3006cab5b4afb0e2f3cd7df7e5b0f4abeb3c854d1d1d956d8265868cd4d5",
+      "tcl_installation_error": false,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "revert_07",
+      "exit_code": 0,
+      "seconds": 3.187,
+      "total": 1,
+      "command": [
+        "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+        "-B",
+        "-c",
+        "import sys,unittest; sys.path[:0]=['C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux', 'C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux\\\\forge-gui']; loader=unittest.TestLoader(); suite=unittest.TestSuite(); [suite.addTests(loader.loadTestsFromName(name)) for name in sys.argv[1:]]; result=unittest.TextTestRunner(verbosity=2).run(suite); sys.exit(not result.wasSuccessful())",
+        "development_mode.test_agent_panel.AgentPanelTests.test_revert_card_refuses_new_disk_revision"
+      ],
+      "log": "C:\\Users\\匡溯昀\\forge-coding-agent-f1-validation\\revert_07.log",
+      "log_sha256": "89635bda8279f3788120789b9fd172237a524965ffad3742258b5fa815327aa0",
+      "tcl_installation_error": false,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "revert_08",
+      "exit_code": 0,
+      "seconds": 2.875,
+      "total": 1,
+      "command": [
+        "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+        "-B",
+        "-c",
+        "import sys,unittest; sys.path[:0]=['C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux', 'C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux\\\\forge-gui']; loader=unittest.TestLoader(); suite=unittest.TestSuite(); [suite.addTests(loader.loadTestsFromName(name)) for name in sys.argv[1:]]; result=unittest.TextTestRunner(verbosity=2).run(suite); sys.exit(not result.wasSuccessful())",
+        "development_mode.test_agent_panel.AgentPanelTests.test_revert_card_refuses_new_disk_revision"
+      ],
+      "log": "C:\\Users\\匡溯昀\\forge-coding-agent-f1-validation\\revert_08.log",
+      "log_sha256": "d93ea0385ba5f5be731bd3aa0465640805b08c7b4cb06cdc4d32a886ae84c4a3",
+      "tcl_installation_error": false,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "revert_09",
+      "exit_code": 0,
+      "seconds": 2.891,
+      "total": 1,
+      "command": [
+        "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+        "-B",
+        "-c",
+        "import sys,unittest; sys.path[:0]=['C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux', 'C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux\\\\forge-gui']; loader=unittest.TestLoader(); suite=unittest.TestSuite(); [suite.addTests(loader.loadTestsFromName(name)) for name in sys.argv[1:]]; result=unittest.TextTestRunner(verbosity=2).run(suite); sys.exit(not result.wasSuccessful())",
+        "development_mode.test_agent_panel.AgentPanelTests.test_revert_card_refuses_new_disk_revision"
+      ],
+      "log": "C:\\Users\\匡溯昀\\forge-coding-agent-f1-validation\\revert_09.log",
+      "log_sha256": "3945956112198e736f6575f82917bbb81173ef0d3c9aea1cc3f052dcde93a4b2",
+      "tcl_installation_error": false,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "revert_10",
+      "exit_code": 0,
+      "seconds": 3.187,
+      "total": 1,
+      "command": [
+        "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+        "-B",
+        "-c",
+        "import sys,unittest; sys.path[:0]=['C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux', 'C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux\\\\forge-gui']; loader=unittest.TestLoader(); suite=unittest.TestSuite(); [suite.addTests(loader.loadTestsFromName(name)) for name in sys.argv[1:]]; result=unittest.TextTestRunner(verbosity=2).run(suite); sys.exit(not result.wasSuccessful())",
+        "development_mode.test_agent_panel.AgentPanelTests.test_revert_card_refuses_new_disk_revision"
+      ],
+      "log": "C:\\Users\\匡溯昀\\forge-coding-agent-f1-validation\\revert_10.log",
+      "log_sha256": "9ddf1c6ecdf499efae64bcc7748939f655c1922d4eced3145ed92c503d21100a",
+      "tcl_installation_error": false,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "four_suites_round_1",
+      "exit_code": 0,
+      "seconds": 56.906,
+      "total": 64,
+      "command": [
+        "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+        "-B",
+        "-c",
+        "import sys,unittest; sys.path[:0]=['C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux', 'C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux\\\\forge-gui']; loader=unittest.TestLoader(); suite=loader.discover('tests',pattern='test_coding_agent_ux.py'); [suite.addTests(loader.loadTestsFromName(name)) for name in sys.argv[1:]]; result=unittest.TextTestRunner(verbosity=2).run(suite); sys.exit(not result.wasSuccessful())",
+        "development_mode.test_agent_panel",
+        "development_mode.test_app",
+        "test_workspace_wiring"
+      ],
+      "log": "C:\\Users\\匡溯昀\\forge-coding-agent-f1-validation\\four_suites_round_1.log",
+      "log_sha256": "5e74112f8048a6bc64289fb6328449fb205dc4f23dc16cc765613482dc15f0ca",
+      "tcl_installation_error": false,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "four_suites_round_2",
+      "exit_code": 0,
+      "seconds": 57.766,
+      "total": 64,
+      "command": [
+        "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+        "-B",
+        "-c",
+        "import sys,unittest; sys.path[:0]=['C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux', 'C:\\\\Users\\\\匡溯昀\\\\forge-coding-agent-ux\\\\forge-gui']; loader=unittest.TestLoader(); suite=loader.discover('tests',pattern='test_coding_agent_ux.py'); [suite.addTests(loader.loadTestsFromName(name)) for name in sys.argv[1:]]; result=unittest.TextTestRunner(verbosity=2).run(suite); sys.exit(not result.wasSuccessful())",
+        "development_mode.test_agent_panel",
+        "development_mode.test_app",
+        "test_workspace_wiring"
+      ],
+      "log": "C:\\Users\\匡溯昀\\forge-coding-agent-f1-validation\\four_suites_round_2.log",
+      "log_sha256": "c448ad55c868406f892556b49f2a9e8f3d2f25f86e94c1156687a075819863a5",
+      "tcl_installation_error": false,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  ],
+  "accepted": true
+}

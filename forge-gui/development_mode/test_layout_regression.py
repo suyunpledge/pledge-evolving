@@ -216,11 +216,17 @@ class LayoutRegressionTests(_WorkbenchFixture, unittest.TestCase):
                                 f'agent 栏宽 {width} 不足以容纳模型组')
 
     def test_log_tabs_is_the_only_expand_slave(self):
-        """log_tabs 必须是 agent_frame 内唯一 expand，否则固定组会被压缩。"""
+        """log_tabs 必须是 agent_frame 内唯一 expand，否则固定组会被压缩。
+
+        Codex 二轮起 Agent 区由 agent_panel.AgentPanel(Frame) 整体承载，
+        notebook 在容器内部 expand——断言适配两级结构：agent_frame 的唯一
+        expand 是 AgentPanel 容器，且 log_tabs 别名指向其内部 notebook。"""
         expanding = [c for c in self._agent_children()
                      if c.pack_info().get('expand')]
         self.assertEqual(len(expanding), 1)
-        self.assertIs(expanding[0], self.app.log_tabs)
+        from development_mode.agent_panel import AgentPanel
+        self.assertIsInstance(expanding[0], AgentPanel)
+        self.assertIs(self.app.log_tabs, self.app.agent_panel.notebook)
 
     # ── 3. 预设切换 / 折叠往返不回归 ───────────────────────────────
     def test_preset_roundtrip_restores_three_panes_in_order(self):

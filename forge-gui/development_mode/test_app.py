@@ -45,11 +45,15 @@ class WorkbenchTests(unittest.TestCase):
         # update() waits until *all* OS/Tcl events drain, which may never
         # happen while another app/test produces Windows events. Bound each
         # iteration so the timeout and assertions actually get evaluated.
+        # Hidden Windows roots can keep supplying window events; service the
+        # real timer/idle callbacks explicitly so queued evidence can render.
+        self.root.tk.dooneevent(_tkinter.TIMER_EVENTS | _tkinter.DONT_WAIT)
+        self.root.tk.dooneevent(_tkinter.IDLE_EVENTS | _tkinter.DONT_WAIT)
         for _ in range(16):
             if not self.root.tk.dooneevent(_tkinter.ALL_EVENTS | _tkinter.DONT_WAIT):
                 break
 
-    def pump(self, condition, timeout=20):
+    def pump(self, condition, timeout=60):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             self.step()
@@ -259,7 +263,7 @@ class WorkbenchTests(unittest.TestCase):
             self.step()
             self.assertEqual(len(self.app.panes.panes()), 1)
             self.app.toggle_focus()
-            self.step()
+            self.pump(lambda: self.app.input.winfo_ismapped())
             self.assertTrue(self.app.input.winfo_ismapped())
             self.assertGreater(self.app.input.winfo_height(), 30)
 
@@ -340,24 +344,20 @@ class WorkbenchTests(unittest.TestCase):
                 for tab in self.app.log_tabs.tabs()
                 if str(self.app.log_tabs.tab(tab, 'state')) != 'hidden']
 
-    def test_dev_events_tab_hidden_by_default_and_toggles_without_data_loss(self):
-        """B2：完整事件默认隐藏；开关恢复显示且历史不丢。"""
-        self.assertEqual(self._tab_texts(), ['对话', '任务 / 子 Agent'])
+    def test_agent_events_bottom_tab_toggles_without_data_loss(self):
+        self.assertEqual(self._tab_texts(), ['对话', '任务', '子 Agent'])
+        self.assertIs(self.app.events.master.master, self.app.output)
         self.app.append(self.app.events, 'w5-event-line\n')
-        self.app.dev_events.set(True)
-        self.app._toggle_events_tab()
-        self.step()
-        self.assertEqual(self._tab_texts(), ['对话', '任务 / 子 Agent', '完整事件'])
-        self.assertIn('w5-event-line', self.app.events.get('1.0', 'end'))
         self.app.dev_events.set(False)
         self.app._toggle_events_tab()
         self.step()
-        self.assertEqual(self._tab_texts(), ['对话', '任务 / 子 Agent'])
-        # 再次打开：隐藏期间的数据仍在
+        self.assertEqual(str(self.app.output.tab(self.app._events_tab, 'state')), 'hidden')
         self.app.dev_events.set(True)
         self.app._toggle_events_tab()
         self.step()
+        self.assertEqual(self.app.output.tab(self.app._events_tab, 'text'), '变更事件')
         self.assertIn('w5-event-line', self.app.events.get('1.0', 'end'))
+        self.assertEqual(self._tab_texts(), ['对话', '任务', '子 Agent'])
 
     def test_enter_sends_and_shift_enter_inserts_newline(self):
         """E1：Enter=发送、Shift+Enter=换行；IME 组合期不触发。"""
@@ -392,6 +392,7 @@ class WorkbenchTests(unittest.TestCase):
                        self.app.input, self.app.send_button, self.app.model_choice,
                        self.app.cancel_button, self.app.delegate_button,
                        self.app.run_model):
+            self.pump(lambda: widget.winfo_ismapped())
             self.assertTrue(widget.winfo_ismapped(), '分组后控件应可见')
         # 任务组与模型组的下拉变量随行布局存在
         for var in (self.app.planning, self.app.permission, self.app.task_role):
@@ -403,7 +404,7 @@ class WorkbenchTests(unittest.TestCase):
         labels = [w.cget('text') for w in model_row.winfo_children()
                   if isinstance(w, _ttk.Label)]
         self.assertIn('独立模型', texts)
-        self.assertIn('任务角色', labels)
+        self.assertNotIn('任务角色', labels, '任务角色移入配置弹窗，窄 Agent 栏不能挤压运行模型')
 
     def test_focus_toggle_contract_survives_button_removal(self):
         """B4：按钮移除后 toggle_focus 状态机与预设联动保持原契约。"""
@@ -413,7 +414,7 @@ class WorkbenchTests(unittest.TestCase):
         self.step()
         self.assertEqual(len(self.app.panes.panes()), 1)
         self.app.toggle_focus()
-        self.step()
+        self.pump(lambda: self.app.input.winfo_ismapped())
         self.assertTrue(self.app.input.winfo_ismapped())
         self.assertEqual(self.app.preset.get(), 'focus')
 
