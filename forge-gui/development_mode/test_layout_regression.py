@@ -83,7 +83,7 @@ from development_mode.app import DevelopmentWorkbench
 from development_mode import explorer
 from development_mode.editor_area import EditorArea, save_document_as
 from development_mode.explorer import ExplorerPanel
-from development_mode.layout import StatusBar
+from development_mode.layout import PRESETS, StatusBar
 
 
 class _WorkbenchFixture:
@@ -993,6 +993,180 @@ class BottomPanelTests(_WorkbenchFixture, unittest.TestCase):
         self.assertEqual(len(text.tag_ranges('diff_add')), 0)
         self.assertEqual(len(text.tag_ranges('diff_del')), 0)
         self.assertEqual(len(text.tag_ranges('diff_hunk')), 0)
+
+
+class LayoutPresetTests(_WorkbenchFixture, unittest.TestCase):
+    """M6 三布局预设守护：wanted 集合与权重 / Review Focus 内容侧重 /
+    中央 Git Diff 渲染与着色 / 切换保留 / review_fractions 独立槽。
+    只测布局容器层与 app 侧预设切换逻辑，不触碰 Agent 栏内部语义。"""
+
+    def _git(self, *args):
+        subprocess.run(['git', *args], cwd=self.project, check=True,
+                       capture_output=True, text=True)
+
+    def _pane_names(self):
+        """按当前挂载顺序返回 ['project'|'editor'|'agent', ...]。"""
+        out = []
+        for name in self.app.panes.panes():
+            widget = self.app.panes.nametowidget(name)
+            for key, frame in (('project', self.app.project_frame),
+                               ('editor', self.app.editor_frame),
+                               ('agent', self.app.agent_frame)):
+                if widget is frame:
+                    out.append(key)
+        return out
+
+    def _use_preset(self, preset):
+        self.app.preset.set(preset)
+        self.app.change_preset()
+        self.step()
+
+    def _make_dirty_repo(self):
+        """真实 git 仓库 + 一个已修改文件（含增删行）+ 一个未跟踪文件。"""
+        self._git('init', '-q')
+        self._git('config', 'user.name', 't')
+        self._git('config', 'user.email', 't@t')
+        self._git('add', '.')
+        self._git('commit', '-qm', 'init')
+        (self.project / 'one.py').write_text('print(9)\nprint(22)\n', encoding='utf-8')
+        (self.project / 'two.py').write_text('print(2)\n', encoding='utf-8')
+        self.app.refresh_project()
+        self.pump(lambda: len(self.app.changes.get_children()) == 2)
+
+    # ── 1. 预设表结构（layout.py PRESETS） ───────────────────────
+    def test_presets_table_three_modes_share_one_workspace(self):
+        """三预设 wanted 集合相同（同一套组件，不得三套 IDE）、权重互异
+        且合法；focus 不在此表（二栏模式由 toggle_focus 驱动）。"""
+        self.assertEqual(sorted(PRESETS), ['agent', 'editor', 'review'])
+        for name, spec in PRESETS.items():
+            with self.subTest(preset=name):
+                self.assertEqual(spec['wanted'],
+                                 ('project', 'editor', 'agent'))
+                f = spec['fractions']
+                self.assertLess(f[0], f[1])
+                self.assertGreaterEqual(f[0], .05)
+                self.assertLessEqual(f[1], .95)
+                self.assertTrue(spec['label'])
+        # 三档权重互异（Agent/Code/Review 各有侧重）。
+        weights = {spec['fractions'] for spec in PRESETS.values()}
+        self.assertEqual(len(weights), 3)
+        # Review Focus：中央区占比过半（Git Diff 是焦点）。
+        self.assertGreater(PRESETS['review']['fractions'][1]
+                           - PRESETS['review']['fractions'][0], .4)
+
+    def test_review_preset_mounts_three_panes_with_own_fractions(self):
+        """切到 review：三栏齐全、顺序不变、权重取 review 默认值；
+        agent/editor 预设权重不变（回归）。"""
+        self._use_preset('review')
+        self.assertEqual(self._pane_names(), ['project', 'editor', 'agent'])
+        self.assertEqual(self.state.layout['preset'], 'review')
+        self.assertEqual([round(v, 2) for v in self.state.layout['fractions']],
+                         [round(v, 2) for v in PRESETS['review']['fractions']])
+        self._use_preset('agent')
+        self.assertEqual([round(v, 2) for v in self.state.layout['fractions']],
+                         [.17, .49])
+        self._use_preset('editor')
+        self.assertEqual([round(v, 2) for v in self.state.layout['fractions']],
+                         [.17, .76])
+
+    # ── 2. Review Focus 内容侧重（共享组件、增量切换） ────────────
+    def test_review_focus_emphasis_switches_views_without_destroying(self):
+        """review：左栏切 Git 变更清单、中央切只读差异视图、右栏切任务
+        页、底部切测试页；切回 agent：编辑器本体与文件树复位——所有
+        控件始终存在（只 pack/unpack，不销毁）。"""
+        self._use_preset('agent')
+        self.assertTrue(self.app.editor_body.winfo_ismapped())
+        self.assertFalse(self.app.review_view.winfo_ismapped())
+        self._use_preset('review')
+        self.pump(lambda: self.app.review_view.winfo_ismapped())
+        self.assertFalse(self.app.editor_body.winfo_ismapped())
+        self.assertFalse(self.app.welcome.winfo_ismapped())
+        self.assertEqual(self.app.explorer._activity.active, 'git')
+        self.assertEqual(self.app.bottom.notebook.tab('current', 'text'),
+                         '测试(0)')
+        self.assertEqual(self.app.log_tabs.tab('current', 'text'),
+                         '任务 / 子 Agent')
+        # 组件未被销毁（winfo_exists 对 forget 的控件仍为 1）。
+        self.assertTrue(self.app.editor_body.winfo_exists())
+        self.assertTrue(self.app.welcome.winfo_exists())
+        self._use_preset('agent')
+        self.pump(lambda: self.app.editor_body.winfo_ismapped())
+        self.assertFalse(self.app.review_view.winfo_ismapped())
+        self.assertEqual(self.app.explorer._activity.active, 'files')
+
+    def test_review_central_diff_renders_and_colors(self):
+        """端到端：review 下选中变更文件 → 中央只读视图渲染真实
+        inspect_diff 文本并着色（add/del/hunk）。"""
+        self._make_dirty_repo()
+        self._use_preset('review')
+        self.app.changes.selection_set('one.py')
+        self.pump(lambda: 'one.py' in self.app.review_title['text'])
+        text = self.app.review_text.get('1.0', 'end-1c')
+        self.assertIn('+print(22)', text)
+        self.assertIn('-print(1)', text)
+        self.assertEqual(len(self.app.review_text.tag_ranges('diff_add')) // 2, 2)
+        self.assertEqual(len(self.app.review_text.tag_ranges('diff_del')) // 2, 1)
+        self.assertGreaterEqual(
+            len(self.app.review_text.tag_ranges('diff_hunk')) // 2, 1)
+        # 只读契约：视图 Text 恒 disabled。
+        self.assertEqual(str(self.app.review_text['state']), 'disabled')
+
+    def test_non_review_preset_keeps_show_diff_bottom_page(self):
+        """非 review 预设：变更选择仍走既有 show_diff（底部 Diff 页），
+        中央视图不抢占。"""
+        self._make_dirty_repo()
+        self._use_preset('agent')
+        self.app.changes.selection_set('one.py')
+        self.pump(lambda: '+print(22)' in self.app.output_views['Diff'].get('1.0', 'end-1c'))
+        self.assertFalse(self.app.review_view.winfo_ismapped())
+
+    # ── 3. 切换保留（任务书 §M6 显式要求） ───────────────────────
+    def test_preset_switch_preserves_documents_dirty_and_chat(self):
+        """任意预设往返：打开的文件 / 未保存编辑 / Agent 对话保留
+        （容器不销毁即可——editor_body / agent_frame 全程在装）。"""
+        target = (self.project / 'one.py').resolve()
+        self.app.open_file(target)
+        self.pump(lambda: self.app.documents.get(str(target)) is not None)
+        row = self.app.documents[str(target)]
+        row['area'].text.insert('1.0', '# dirty\n')
+        # on_change 绑 <<Modified>> 虚事件——程序级 insert 后需泵一次
+        # 事件循环，document_changed 才跑（dirty 同步置位）。
+        self.pump(lambda: row['document'].dirty)
+        self.assertTrue(row['document'].dirty)
+        self.app.append(self.app.chat, 'PRESERVE-CHAT\n')
+        for preset in ('review', 'agent', 'editor', 'review', 'focus',
+                       'agent', 'review'):
+            with self.subTest(preset=preset):
+                self._use_preset(preset)
+        self.assertIn(str(target), self.app.documents)
+        self.assertTrue(self.app.documents[str(target)]['document'].dirty)
+        self.assertIn('PRESERVE-CHAT', self.app.chat.get('1.0', 'end'))
+        self.assertEqual(self.app.documents[str(target)]['area'].text.get(
+            '1.0', 'end-1c').splitlines()[0], '# dirty')
+
+    # ── 4. review_fractions 独立槽（81acf1b 裁决 2） ─────────────
+    def test_review_fractions_persist_in_independent_slot(self):
+        """review 下用户的 sash 调整写入 review_fractions 独立槽；切到
+        其他预设（fractions 被覆盖）再切回 review，调整不丢失。"""
+        self._use_preset('review')
+        width = self.app.panes.winfo_width()
+        self.assertGreater(width, 50)
+        self.app.panes.sashpos(0, int(width * .25))
+        self.app.panes.sashpos(1, int(width * .8))
+        self.app.capture_layout()
+        layout = self.state.layout
+        self.assertAlmostEqual(layout['review_fractions'][0], .25, places=1)
+        self.assertAlmostEqual(layout['review_fractions'][1], .8, places=1)
+        # 切到 agent：fractions 被预设权重覆盖，独立槽不动。
+        self._use_preset('agent')
+        self.assertEqual([round(v, 2) for v in self.state.layout['fractions']],
+                         [.17, .49])
+        self.assertAlmostEqual(self.state.layout['review_fractions'][0],
+                               .25, places=1)
+        # 切回 review：从独立槽恢复（fractions 回到用户调整值）。
+        self._use_preset('review')
+        self.assertAlmostEqual(self.state.layout['fractions'][0], .25, places=1)
+        self.assertAlmostEqual(self.state.layout['fractions'][1], .8, places=1)
 
 
 def panel_legend(app):

@@ -11,7 +11,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 
 from gui_theme import (C, apply_ttk_theme, attach_tooltip, style_editor,
-    FONT_MONO_SM, FONT_TITLE, FONT_UI)
+    FONT_CAPTION, FONT_MONO_SM, FONT_TITLE, FONT_UI, FONT_UI_MED)
 from ui_icons import IconButton
 try:  # E1（UX 审查）：与 InputCard 同款可选行内 IME 守卫（默认关）
     from ime_inline import InlineIME
@@ -22,10 +22,10 @@ from forge.development.editor import Document
 from forge.development.runtime import DevelopmentRuntime
 from forge.development.evidence import TaskEvidence
 from forge.secrets import redact, install_tk_exception_redaction
-from .bottom_panel import ToolPanel, count_problems, count_tests
+from .bottom_panel import ToolPanel, count_problems, count_tests, highlight_diff_lines
 from .editor_area import EditorArea, save_document_as
 from .explorer import ExplorerPanel
-from .layout import NavigationBar, StatusBar
+from .layout import NavigationBar, StatusBar, PRESETS
 from .welcome import WelcomeView
 from .project import WorkspaceSource
 
@@ -55,6 +55,7 @@ class DevelopmentWorkbench(ttk.Frame):
         self._file_actions = {}
         self.task_evidence = TaskEvidence()
         self._diff_request = 0
+        self._review_request = 0
         self._compare_path = None
         self.expanded = set()
         self.model_ids = ['']
@@ -110,7 +111,8 @@ class DevelopmentWorkbench(ttk.Frame):
         self.project_button.pack(side='left')
         ttk.Button(options, text='近期项目', command=self.recent_projects).pack(side='left', padx=4)
         self.preset = tk.StringVar(value=self.state.layout['preset'])
-        presets = ttk.Combobox(options, textvariable=self.preset, values=['agent', 'editor', 'focus'], state='readonly', width=12)
+        # M6：+review（Review Focus，集成层已解锁白名单——81acf1b）。
+        presets = ttk.Combobox(options, textvariable=self.preset, values=['agent', 'editor', 'focus', 'review'], state='readonly', width=12)
         presets.pack(side='left')
         presets.bind('<<ComboboxSelected>>', self.change_preset)
         # B4（UX 审查）：移除「专注：编辑器 / Agent」按钮——与预设值 focus
@@ -204,7 +206,7 @@ class DevelopmentWorkbench(ttk.Frame):
             on_open_file=self.open_file,
             on_open_tree=self.open_tree,
             on_open_changed=self.open_changed,
-            on_show_diff=self.show_diff,
+            on_show_diff=self._explorer_show_diff,
             on_expand=self.expand_tree,
             on_refresh=self.refresh_project,
             on_run=self.run_tests,
@@ -281,6 +283,45 @@ class DevelopmentWorkbench(ttk.Frame):
         self.more_button = more
         self.tabs.pack(side='left', fill='both', expand=True)
         self.write_output('测试', '内置 shell_exec 在 Secret 隔离中不可用。这里只展示真实执行或拒绝事件；没有结构化结果时不推算通过数。\n')
+        # M6：Review Focus 的中央 Git Diff 只读视图——editor_frame 内
+        # 第三态（欢迎页 / 编辑器本体 / 本视图），与另两个子帧共享父
+        # 容器，切换只做 pack/pack_forget（_sync_central_view），不销毁
+        # 任何控件（任务书：共享同一套工作区组件）。差异文本经
+        # runtime.inspect_diff 取（与 show_diff 同一执行路径，不重新
+        # 实现 diff 逻辑），增删行着色复用 bottom_panel.highlight_diff_lines
+        # （单一真源）。滚动条先于 expand 正文 pack（M4 打包器超订
+        # 坍缩教训：后 pack 的 slave 在腔体超订时恒 1x1 不映射）。
+        self.review_view = ttk.Frame(self.editor_frame)
+        head = ttk.Frame(self.review_view)
+        head.pack(fill='x')
+        self.review_title = ttk.Label(head, text='Git Diff · 未选择文件',
+                                      font=FONT_UI_MED, padding=(2, 3))
+        self.review_title.pack(side='left')
+        self.review_hint = ttk.Label(
+            head, text='从左侧「Git 变更」列表选择文件查看差异',
+            foreground=C['ter'], font=FONT_CAPTION)
+        self.review_hint.pack(side='left', padx=10)
+        diff_body = ttk.Frame(self.review_view)
+        diff_body.pack(fill='both', expand=True)
+        # 先创建（未 pack）、后定 pack 次序：滚动条先 pack、expand 正文
+        # 最后（M4 打包器超订坍缩教训——后 pack 的 slave 在腔体超订时
+        # 恒 1x1 不映射；创建次序不影响分配，pack 次序才决定让位优先级）。
+        self.review_text = tk.Text(diff_body, wrap='none', font=FONT_MONO_SM,
+                                   state='disabled')
+        style_editor(self.review_text)
+        # 差异着色 tag（与底部 Diff 页同语义同色值；着色函数共用
+        # bottom_panel.highlight_diff_lines，tag 注册在各视图构建时
+        # 各自完成——同一真源、两份注册）。
+        self.review_text.tag_configure('diff_add', foreground=C['ok'])
+        self.review_text.tag_configure('diff_del', foreground=C['error'])
+        self.review_text.tag_configure('diff_hunk', foreground=C['accent'])
+        sy = ttk.Scrollbar(diff_body, command=self.review_text.yview)
+        sx = ttk.Scrollbar(diff_body, orient='horizontal',
+                           command=self.review_text.xview)
+        sy.pack(side='right', fill='y')
+        sx.pack(side='bottom', fill='x')
+        self.review_text.configure(yscrollcommand=sy.set, xscrollcommand=sx.set)
+        self.review_text.pack(side='left', fill='both', expand=True)
 
     def _build_welcome(self):
         """M2：欢迎页挂载 + 初始可见性。
@@ -307,23 +348,127 @@ class DevelopmentWorkbench(ttk.Frame):
         子树排在 Tk 的延迟重排队列里，依赖外部事件循环逐个排空
         （实测每层可滞后数百 ms 甚至不收敛），欢迎页/编辑器会长时间
         停在不可见状态。update_idletasks 只服务 idle 回调，不派发
-        窗口事件，无自激风险。"""
+        窗口事件，无自激风险。
+
+        M6：中央区增第三态（Review Focus 的 Git Diff 只读视图），
+        本方法保留 M2 签名与调用点，实际切换逻辑委派
+        _sync_central_view（三态真源）。"""
+        self._sync_central_view()
+
+    def _sync_central_view(self):
+        """M6：中央区三态切换——无项目 → 欢迎页（welcome.py）；
+        Review Focus 预设 → Git Diff 只读视图（review_view）；其余
+        → 编辑器本体（editor_body）。只做 editor_frame 内三个子帧的
+        pack/pack_forget 与 pack 后 idle 冲刷（原则同 M2），不触碰
+        三栏 pane 的增量挂载路径，不销毁任何控件（打开的文件 / 未保存
+        编辑随 editor_body 原样保留——它只是不可见，未被销毁）。
+        """
         welcome = getattr(self, 'welcome', None)
         body = getattr(self, 'editor_body', None)
-        if welcome is None or body is None:
+        review = getattr(self, 'review_view', None)
+        if welcome is None or body is None or review is None:
             return
+        for widget in (welcome, body, review):
+            widget.pack_forget()
         if self.source is None:
-            body.pack_forget()
             # 先 pack 再 refresh：子控件必须在父控件已获几何管理器后
             # 创建/挂载，否则整树映射时它们停留在 unmapped（实测：欢迎页
             # 已 mapped 而近期项目行仍 1x1 未映射，点击不触发）。
             welcome.pack(fill='both', expand=True)
             welcome.refresh()
             welcome.update_idletasks()
+        elif self._review_active():
+            review.pack(fill='both', expand=True)
+            review.update_idletasks()
         else:
-            welcome.pack_forget()
             body.pack(fill='both', expand=True)
             body.update_idletasks()
+
+    def _review_active(self):
+        """当前是否处于 Review Focus 且有项目（中央 Git Diff 视图的显式
+        条件；preset 从 state 读，不持有第二份布局状态）。"""
+        try:
+            return (self.source is not None
+                    and self.state.layout['preset'] == 'review')
+        except (AttributeError, KeyError):
+            return False
+
+    def _apply_preset_emphasis(self):
+        """M6：预设内容侧重——共享组件、增量切换，不销毁不重建
+        （任务书：三种模式共享同一套工作区组件）。
+
+        Review Focus：左栏切「Git 变更」清单（修改文件列表）、中央切
+        Git Diff 只读视图、右栏切「任务 / 子 Agent」页（审查结果输出
+        所在页）、底部切「测试」页。其余预设：中央回编辑器本体、左栏
+        回文件树（底部/右栏保持用户自选，不重置）。
+        """
+        if self._closed:
+            return
+        preset = self.state.layout['preset']
+        explorer = getattr(self, 'explorer', None)
+        bottom = getattr(self, 'bottom', None)
+        if preset == 'review':
+            if explorer is not None:
+                explorer.select_view('git')
+            self._sync_central_view()
+            workflow = getattr(self, '_workflow_tab', None)
+            if workflow is not None:
+                self.log_tabs.select(workflow)
+            if bottom is not None:
+                bottom.select('测试')
+        else:
+            if explorer is not None:
+                explorer.select_view('files')
+            self._sync_central_view()
+
+    def _explorer_show_diff(self, event=None):
+        """M6：Explorer「Git 变更」选择/视图切换的统一入口——Review
+        Focus 下差异渲染到中央 Git Diff 只读视图，其余预设走既有
+        show_diff（底部 Diff 页，含操作来源/审批记录头）。本方法只做
+        分发，两条路径的取数执行路径同一（runtime.inspect_diff）。
+        """
+        if self._review_active():
+            selected = self.changes.selection()
+            if selected:
+                self._render_review_diff(self.source.root / selected[0])
+                return
+        self.show_diff(event)
+
+    def _render_review_diff(self, path):
+        """M6：把 path 的 Git 差异渲染进中央只读视图（异步取数，
+        单调请求号防过期回包——与 show_diff 的 _diff_request 同范式）。
+        """
+        self._review_request += 1
+        request = self._review_request
+        source = self.source
+        view = self.diff_view.get()
+
+        def done(value, error):
+            if error or request != self._review_request or self._closed:
+                return
+            self._write_review_diff(path, value)
+
+        self.work(lambda: self.runtime.inspect_diff(source, path, view), done)
+
+    def _write_review_diff(self, path, text):
+        """M6：中央 Git Diff 视图的内容写入（只读 Text 临时切 normal，
+        写完还原 disabled；增删行着色经 bottom_panel.highlight_diff_lines
+        单一真源）。标题显示相对路径——空结果不伪造内容。"""
+        try:
+            relative = Path(path).resolve().relative_to(
+                self.source.root.resolve()).as_posix()
+        except (ValueError, OSError):
+            relative = str(path)
+        self.review_title.configure(text=f'Git Diff · {relative}')
+        self.review_hint.configure(
+            text='修改前后对比 · 新增 / 删除行按 Git 语义着色'
+            if text and text.strip() else '该文件暂无差异内容')
+        widget = self.review_text
+        widget.configure(state='normal')
+        widget.delete('1.0', 'end')
+        widget.insert('1.0', text or '')
+        widget.configure(state='disabled')
+        highlight_diff_lines(widget)
 
     def _build_agent(self):
         # B1（UX 审查）：语义分组重排——会话（状态/日志/输入/发送）、任务
@@ -353,6 +498,9 @@ class DevelopmentWorkbench(ttk.Frame):
         log_tabs.add(dialogue, text='对话')
         workflow = ttk.Frame(log_tabs)
         log_tabs.add(workflow, text='任务 / 子 Agent')
+        # M6：审查结果输出所在页的引用（Review Focus 右栏内容侧重
+        # 用；_events_tab 同范式存页引用）。
+        self._workflow_tab = workflow
         events = ttk.Frame(log_tabs)
         log_tabs.add(events, text='完整事件')
         self._events_tab = events
@@ -1483,9 +1631,27 @@ class DevelopmentWorkbench(ttk.Frame):
 
     def change_preset(self, event=None):
         preset = self.preset.get()
-        fractions = [.17, .49] if preset == 'agent' else [.17, .76]
-        self.state.set_layout(preset=preset, fractions=fractions, visible=True)
+        if preset == 'review':
+            # M6：review 预设的分数存独立槽 review_fractions（集成层
+            # 81acf1b 解锁的字段；裁决 2：避免与 agent/editor 共享
+            # fractions 互相污染）。无存档用 PRESETS 默认权重；写入时
+            # fractions 与 review_fractions 同值——place_sashes 读
+            # fractions，capture_layout 在 review 下把用户拖拽结果
+            # 同时写回两个键。
+            layout = self.state.layout
+            fractions = list(layout.get('review_fractions')
+                             or PRESETS['review']['fractions'])
+            self.state.set_layout(preset='review', fractions=fractions,
+                                  review_fractions=fractions, visible=True)
+        elif preset in PRESETS:
+            fractions = list(PRESETS[preset]['fractions'])
+            self.state.set_layout(preset=preset, fractions=fractions, visible=True)
+        else:
+            fractions = [.17, .49] if preset == 'agent' else [.17, .76]
+            self.state.set_layout(preset=preset, fractions=fractions, visible=True)
         self.apply_layout()
+        label = PRESETS.get(preset, {}).get('label', preset)
+        self.status.set(f'布局预设已切换 · {label}')
 
     def apply_layout(self):
         if self._closed:
@@ -1499,6 +1665,12 @@ class DevelopmentWorkbench(ttk.Frame):
             panels = [self.agent_frame]
         elif layout['preset'] == 'focus':
             panels = [self.editor_frame if layout['focus'] == 'editor' else self.agent_frame]
+        elif layout['preset'] in PRESETS:
+            # M6：wanted 集合由 layout.py 的 PRESETS 表驱动（三预设
+            # 共享同一套组件，差异只在权重与内容侧重）。
+            frames = {'project': self.project_frame, 'editor': self.editor_frame,
+                      'agent': self.agent_frame}
+            panels = [frames[key] for key in PRESETS[layout['preset']]['wanted']]
         else:
             panels = [self.project_frame, self.editor_frame, self.agent_frame]
         wanted = list(panels)
@@ -1561,6 +1733,13 @@ class DevelopmentWorkbench(ttk.Frame):
         if mounted:
             self._settle_mount()
         self.later(0, self.place_sashes)
+        # M6：预设内容侧重——仅在实际切换预设时执行一次（preset 未变
+        # 则不重置用户手动切过的视图/标签页；模式切换、IDE 收起/展开
+        # 等路径不重复触发）。
+        preset = layout['preset']
+        if preset != getattr(self, '_emphasized_preset', None):
+            self._emphasized_preset = preset
+            self._apply_preset_emphasis()
 
     def _settle_mount(self):
         """把挂载变化的物理效果（slave 映射与重排）同步落地。
@@ -1647,6 +1826,11 @@ class DevelopmentWorkbench(ttk.Frame):
             fractions = [self.panes.sashpos(i) / width for i in range(2)]
             if .05 <= fractions[0] < fractions[1] <= .95:
                 changes['fractions'] = fractions
+                # M6：review 预设下用户的 sash 拖拽结果同时写回独立槽
+                # review_fractions（切到其他预设会覆盖 fractions，独立
+                # 槽保证再切回 review 时用户的调整不丢失——81acf1b 裁决 2）。
+                if self.state.layout['preset'] == 'review':
+                    changes['review_fractions'] = fractions
         if height > 50 and len(self.vertical.panes()) == 2:
             changes['output'] = min(.9, max(.15, self.vertical.sashpos(0) / height))
         if changes:

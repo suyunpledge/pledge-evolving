@@ -85,6 +85,38 @@ def count_problems(evidence):
     return total
 
 
+def highlight_diff_lines(text):
+    """差异文本增删行着色（单一真源，M6 起中央 Git Diff 视图共用）。
+
+    逐行扫描：``@@`` hunk 头上 accent、``+`` 行（非 ``+++``）上 ok、
+    ``-`` 行（非 ``---``）上 error；非差异内容（无 +/- 行）不染色。
+    只读既有文本内容打 tag，不改内容；Text 处于 disabled 态时着色前
+    临时切 normal、结束后还原。调用方负责保证 tag 已配置（Diff 页与
+    review 视图均在构建时注册 diff_add / diff_del / diff_hunk）。
+    """
+    if text is None:
+        return
+    try:
+        if not text.get('1.0', 'end-1c').strip():
+            return
+        text.configure(state='normal')
+        for tag in ('diff_add', 'diff_del', 'diff_hunk'):
+            text.tag_remove(tag, '1.0', 'end')
+        last = int(text.index('end-1c').split('.')[0])
+        for number in range(1, last + 1):
+            start, end = f'{number}.0', f'{number}.end'
+            line = text.get(start, end)
+            if line.startswith('@@'):
+                text.tag_add('diff_hunk', start, end)
+            elif line.startswith('+') and not line.startswith('+++'):
+                text.tag_add('diff_add', start, end)
+            elif line.startswith('-') and not line.startswith('---'):
+                text.tag_add('diff_del', start, end)
+        text.configure(state='disabled')
+    except tk.TclError:
+        pass
+
+
 class ToolPanel(ttk.Frame):
     """全宽底部工具面板：四标签 Notebook + 真实计数徽标 + 差异页着色。
 
@@ -170,30 +202,6 @@ class ToolPanel(ttk.Frame):
         self._highlight_diff()
 
     def _highlight_diff(self):
-        """差异页增删行着色：逐行扫描，+/-(非 +++/---) 与 @@ 行上色。
-
-        只读既有文本内容打 tag，不改内容；Text 处于 disabled 态，
-        着色前临时切 normal。非差异内容（无 +/- 行）不染色。
-        """
-        text = self.views.get('Diff')
-        if text is None:
-            return
-        try:
-            if not text.get('1.0', 'end-1c').strip():
-                return
-            text.configure(state='normal')
-            for tag in ('diff_add', 'diff_del', 'diff_hunk'):
-                text.tag_remove(tag, '1.0', 'end')
-            last = int(text.index('end-1c').split('.')[0])
-            for number in range(1, last + 1):
-                start, end = f'{number}.0', f'{number}.end'
-                line = text.get(start, end)
-                if line.startswith('@@'):
-                    text.tag_add('diff_hunk', start, end)
-                elif line.startswith('+') and not line.startswith('+++'):
-                    text.tag_add('diff_add', start, end)
-                elif line.startswith('-') and not line.startswith('---'):
-                    text.tag_add('diff_del', start, end)
-            text.configure(state='disabled')
-        except tk.TclError:
-            pass
+        """差异页增删行着色（实现经模块级 :func:`highlight_diff_lines`
+        单一真源——M6 中央 Git Diff 视图共用同一套语义）。"""
+        highlight_diff_lines(self.views.get('Diff'))
