@@ -18,8 +18,7 @@
 **不引入第二条挂载路径**。
 
 M6 的四预设定义（各 preset 的 wanted 集合与权重、review 的
-fractions 语义）后续也放本文件，供 ``apply_layout`` 调用；本期只
-交付 M1 的两类 chrome 组件。
+fractions 语义）见下方 :data:`PRESETS`，供 ``apply_layout`` 调用。
 """
 import tkinter as tk
 from tkinter import ttk
@@ -28,6 +27,30 @@ from gui_theme import C, FONT_BRAND, FONT_CAPTION, FONT_UI, FONT_UI_BOLD, FONT_U
 
 # 字段值截断上限：项目路径等可能很长，无上限会撑爆状态栏布局。
 _VALUE_LIMIT = 48
+
+# M6 三布局预设（任务书 §M6）：各预设的可见面板（wanted）与默认 sash
+# 权重（fractions = [project 右界, editor 右界] 占 panes 宽的比例）。
+#
+# * Agent Focus（'agent'）：Agent 对话区扩大（右栏 51%），文件树紧凑
+#   （17%），编辑器居中——任务状态/对话是焦点；
+# * Code Focus（'editor'）：编辑器占主要空间（中栏 59%），文件树展开，
+#   Agent 面板缩小（24%）——写代码是焦点；
+# * Review Focus（'review'）：中央 Git Diff（中栏 52% 最大），左侧
+#   修改文件列表（19%），右侧审查结果（29%，保留模型组所需宽度
+#   ≥340px @1200）——审查是焦点。三预设 wanted 集合相同（同一套
+#   工作区组件，不得三套 IDE），差异在权重与内容侧重（app 侧
+#   _apply_preset_emphasis）。
+#
+# 'focus' 不在此表：它是二栏单视图模式（toggle_focus 驱动，wanted 由
+# layout['focus'] 动态决定），既有的行为与测试契约原样保留。
+PRESETS = {
+    'agent': {'label': 'Agent Focus', 'wanted': ('project', 'editor', 'agent'),
+              'fractions': (.17, .49)},
+    'editor': {'label': 'Code Focus', 'wanted': ('project', 'editor', 'agent'),
+               'fractions': (.17, .76)},
+    'review': {'label': 'Review Focus', 'wanted': ('project', 'editor', 'agent'),
+               'fractions': (.19, .71)},
+}
 
 
 def _clip(text):

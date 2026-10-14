@@ -39,6 +39,32 @@
          归一化为 M/A/D/U/R/C/X，字母徽标 + 主题色 + 图例文字三重
          冗余；文件操作经 ProjectBoundary 校验。
 
+  M4 编辑器增强（editor_area.py）：
+         单标签页一个 EditorArea——行号槽（与正文同字体、共享滚动）
+         + 当前行高亮 + 搜索替换（Ctrl+F/Esc）+ gutter 修改标记
+         （缓冲区 vs document.original 行级 diff）+ 分屏只读参考
+         镜像 + 另存为（文档改绑新路径）+ Python 语法高亮（按接口
+         约定消费 gui_theme.setup_code_tags / highlight_python）。
+         row['widget'] 契约不变（EditorArea.text 即该 Text）；
+         标签页右侧新增分屏/更多图标按钮位。另存为写盘经
+         boundary 校验与原子替换，与 Document._save 同规则。
+         打包器超订坍缩第三例：tab_row 内 Notebook（含默认 80x24
+         请求的 Text）超订腔体，后 pack 的 actions 帧恒得 1x1 且
+         不映射——按钮位先 pack 抢占配额、Notebook 后 pack 吸收
+         赤字（side 定视觉位置、pack 次序定让位优先级）。同族：
+         M1 底部面板 height=6 小请求、editor_area 分屏重 pack。
+
+  M5 底部面板四标签（bottom_panel.py）：
+         可见标签差异/终端/测试/问题（示例图基线标签与次序），标签
+         计数徽标取真实数据源——差异 = Git 变更文件数（Explorer
+         变更清单行数）、测试 = 当前任务测试记录数、问题 = 当前任务
+         失败记录数（TaskEvidence 只读投影）；无数据显示 0，不伪造。
+         views 五键不变，'输出' 为 '测试' 别名（任务书 Output =
+         构建输出/运行日志/测试结果/工具执行结果，与测试结果同页），
+         write_output 既有调用点零改动。差异页增删行着色（+/-
+         行按 git 语义上色，@@ hunk 头 accent）；文件选择与修改前后
+         对比沿用 M3 已接线的 inspect_diff 链路。
+
 本文件即上述修复与改造的守护，也是集成验收口径「P0-L1 两尺寸映射断言」
 的落地。只测布局容器层，不触碰 Agent 栏内部控件语义（Codex 域）。
 """
@@ -55,8 +81,9 @@ from gui_theme import apply_ttk_theme
 from forge.development.state import ModeState
 from development_mode.app import DevelopmentWorkbench
 from development_mode import explorer
+from development_mode.editor_area import EditorArea, save_document_as
 from development_mode.explorer import ExplorerPanel
-from development_mode.layout import StatusBar
+from development_mode.layout import PRESETS, StatusBar
 
 
 class _WorkbenchFixture:
@@ -168,8 +195,15 @@ class LayoutRegressionTests(_WorkbenchFixture, unittest.TestCase):
             with self.subTest(geometry=geometry):
                 root = self.app.winfo_toplevel()
                 root.geometry(geometry)
+                # 先 step 处理几何变更：apply_layout 按 pane 实测尺寸放
+                # sash，读旧尺寸会放错位（实测 5px 级栏底错位）。
                 self.step()
                 self.app.apply_layout()
+                # 高负载下重排走 idle，单步 step() 排不空（pythonw 整跑
+                # 间歇复现，solo 即过）：泵到子控件全部 mapped 再断言
+                # ——真不映射仍会超时失败，断言强度不变（M2 同款容错）。
+                self.pump(lambda: all(c.winfo_ismapped()
+                                      for c in self._agent_children()))
                 self.step()
                 bar_bottom = (self.app.agent_frame.winfo_rooty()
                               - root.winfo_rooty()
@@ -195,7 +229,8 @@ class LayoutRegressionTests(_WorkbenchFixture, unittest.TestCase):
             with self.subTest(geometry=geometry):
                 root = self.app.winfo_toplevel()
                 root.geometry(geometry)
-                self.step()
+                # 同上：几何变更的重排走 idle，泵到全部 mapped 再断言。
+                self.pump(lambda: all(w.winfo_ismapped() for w in widgets))
                 for widget in widgets:
                     self.assertTrue(widget.winfo_ismapped(),
                                     f'{geometry} {widget} 未映射')
@@ -652,6 +687,511 @@ class ExplorerViewTests(_WorkbenchFixture, unittest.TestCase):
         self.app.explorer._collapse_all()
         self.pump(lambda: not self.app.expanded)
         self.assertFalse(self.app.tree.item(str(root / 'sub'), 'open'))
+
+
+SAMPLE_PY = '''# 头部注释
+def greet(name):
+    text = "hello"
+    return text + name
+
+
+class Foo:
+    pass
+'''
+
+
+class EditorAreaTests(_WorkbenchFixture, unittest.TestCase):
+    """M4 编辑器增强守护：行号槽 / 当前行 / 高亮 / 修改标记 / 搜索替换 /
+    分屏镜像 / 另存为。只测编辑器容器层与面板公开行为。"""
+
+    def _open_sample(self):
+        path = (self.project / 'sample.py')
+        path.write_text(SAMPLE_PY, encoding='utf-8')
+        key = str(path.resolve())
+        self.app.open_file(path.resolve())
+        self.pump(lambda: key in self.app.documents)
+        return self.app.documents[key]
+
+    # ── 1. 契约与行号槽 ───────────────────────────────────────────
+    def test_editor_area_contracts_and_gutter(self):
+        row = self._open_sample()
+        area = row['area']
+        self.assertIsInstance(area, EditorArea)
+        # row['widget'] 契约：既有 save/reload/attach 消费点无感。
+        self.assertIs(row['widget'], area.text)
+        text, gutter = area.text, area.gutter
+        lines = int(text.index('end-1c').split('.')[0])
+        gutter_lines = gutter.get('1.0', 'end-1c').split('\n')
+        self.assertEqual(len(gutter_lines), lines)
+        self.assertGreaterEqual(int(gutter.cget('width')), 3)
+        # 标签页右侧按钮位存在（示例图：分屏 / 更多）。
+        self.assertTrue(hasattr(self.app, 'more_button'))
+
+    # ── 1b. 标签行按钮位映射（打包器超订坍缩守护） ─────────────────
+    def test_tab_row_action_buttons_stay_mapped(self):
+        """1200x760 夹具下 Notebook 内含默认 80x24 请求的 Text（约 648px），
+        会超订 tab_row 腔体（约 468px）：Tk 打包器超订时不重算分配，先
+        pack 的 slave 拿满请求、后 pack 的 slave 恒得 1x1 且不映射。若
+        Notebook 先于 actions pack，分屏/更多按钮整帧不可见。side 决定
+        视觉位置、pack 次序决定让位优先级——小帧必须先 pack。"""
+        self._open_sample()
+        actions = self.app.more_button.master
+        split = [w for w in actions.winfo_children()
+                 if w is not self.app.more_button][0]
+        self.pump(lambda: self.app.more_button.winfo_ismapped())
+        for w in (actions, split, self.app.more_button):
+            self.assertTrue(w.winfo_ismapped(),
+                            '标签行右侧按钮位必须 mapped（超订坍缩回归）')
+        # Notebook 吸收赤字：仍占左侧弹性区且 mapped。
+        self.assertTrue(self.app.tabs.winfo_ismapped())
+        self.assertGreater(self.app.tabs.winfo_width(), actions.winfo_width())
+
+    # ── 1c. 编辑器滚动条映射（同族打包器坍缩守护） ─────────────────
+    def test_editor_scrollbars_stay_mapped(self):
+        """body 内固定尺寸滚动条必须先于 expand 的正文 pack：正文 Text
+        默认 80 字符请求超订 body 腔体，后 pack 的竖向滚动条恒得 1x1
+        且不映射（1200x760 实测，原 _document_loaded 的顺序本就滚动条
+        优先，EditorArea 保持同一约定）。"""
+        row = self._open_sample()
+        area = row['area']
+        body = area._body_frame
+        hbar = [w for w in body.winfo_children()
+                if w is not area._vbar and w.winfo_class() == 'TScrollbar'][0]
+        # documents 键先于 tabs.add 落库——帧入 Notebook 后的重排走
+        # idle，泵到两条滚动条都 mapped 再断言（结构性坍缩仍会超时失败）。
+        self.pump(lambda: area._vbar.winfo_ismapped()
+                  and hbar.winfo_ismapped())
+        for w in (area._vbar, hbar):
+            self.assertTrue(w.winfo_ismapped(),
+                            '滚动条必须 mapped（超订坍缩回归）')
+            self.assertGreater(w.winfo_width(), 1)
+            self.assertGreater(w.winfo_height(), 1)
+
+    def test_python_highlight_and_current_line(self):
+        row = self._open_sample()
+        area = row['area']
+        text = area.text
+        for tag in ('kw', 'st', 'cm', 'fn', 'cls'):
+            self.assertGreater(len(text.tag_ranges(tag)), 0,
+                               f'示例代码应产生 {tag} 高亮')
+        text.mark_set('insert', '3.0')
+        area._highlight_current_line()
+        self.assertEqual(len(text.tag_ranges('current_line')), 2)
+
+    # ── 2. gutter 修改标记 ────────────────────────────────────────
+    def test_modified_line_marker_in_gutter(self):
+        row = self._open_sample()
+        area = row['area']
+        area.text.insert('3.0', '# edited\n')
+        area.refresh_markers()
+        # 第 3 行是新插入行 → add 标记落在 gutter 第 3 行。
+        ranges = area.gutter.tag_ranges('add')
+        self.assertEqual(len(ranges), 2)
+        self.assertEqual(str(ranges[0]), '3.0')
+        # 撤去插入行，恢复三行基线。
+        area.text.delete('3.0', '4.0')
+        area.refresh_markers()
+        self.assertEqual(len(area.gutter.tag_ranges('add')), 0)
+        # 同行数原位替换（改写第 2 行内容，不动行数）→ mod 标记。
+        area.text.delete('2.0', '2.end')
+        area.text.insert('2.0', '    print("changed")')
+        area.refresh_markers()
+        mods = area.gutter.tag_ranges('mod')
+        self.assertGreater(len(mods), 0)
+        self.assertEqual(str(mods[0]), '2.0')
+
+    # ── 3. 搜索替换 ───────────────────────────────────────────────
+    def test_search_replace_flow(self):
+        row = self._open_sample()
+        area = row['area']
+        area.open_search()
+        self.pump(lambda: area.search_bar.winfo_ismapped())
+        area._find_var.set('greet')
+        area._refresh_hits()
+        self.assertEqual(area._count_var.get(), '1 处匹配')
+        self.assertEqual(len(area.text.tag_ranges('search_hit')), 2)
+        area.find_next()
+        self.assertEqual(len(area.text.tag_ranges('search_current')), 2)
+        area._replace_var.set('salute')
+        area.replace_current()
+        self.assertIn('salute', area.text.get('1.0', 'end-1c'))
+        area._find_var.set('hello')
+        area._replace_var.set('hi')
+        area.replace_all()
+        self.assertIn('hi', area.text.get('1.0', 'end-1c'))
+        self.assertEqual(area._count_var.get(), '已替换 1 处')
+        area.close_search()
+        self.assertFalse(area.search_bar.winfo_ismapped())
+        self.assertEqual(len(area.text.tag_ranges('search_hit')), 0)
+
+    # ── 4. 分屏参考镜像 ───────────────────────────────────────────
+    def test_split_reference_mirror_syncs_and_hides(self):
+        row = self._open_sample()
+        area = row['area']
+        area.toggle_reference()
+        self.pump(lambda: area.reference.winfo_ismapped())
+        self.assertIn('greet', area.reference.get('1.0', 'end-1c'))
+        area.text.insert('1.0', '# mirror sync test\n')
+        area._sync_reference()
+        self.assertIn('mirror sync test',
+                      area.reference.get('1.0', 'end-1c'))
+        area.toggle_reference()
+        self.assertFalse(area.reference.winfo_ismapped())
+
+    # ── 4b. 标签行按钮的真实命令接线 ──────────────────────────────
+    def test_split_button_invokes_split_current(self):
+        """分屏图标按钮经 invoke 走 split_current——按钮位可见且接线真实
+        （打包器超订坍缩修复后，mapped 与命令双保险）。"""
+        row = self._open_sample()
+        actions = self.app.more_button.master
+        split = [w for w in actions.winfo_children()
+                 if w is not self.app.more_button][0]
+        split.invoke()
+        self.pump(lambda: row['area'].reference.winfo_ismapped())
+        split.invoke()
+        self.assertFalse(row['area'].reference.winfo_ismapped())
+
+    def test_more_button_wired_to_more_menu(self):
+        self._open_sample()
+        self.assertIn('_editor_more_menu', self.app.more_button['command'])
+
+    def test_copy_current_path_to_clipboard(self):
+        row = self._open_sample()
+        self.app._copy_current_path()
+        self.assertEqual(self.root.clipboard_get(),
+                         str(row['document'].path))
+        self.assertIn('已复制路径', self.app.status.get())
+
+    # ── 5. 另存为 ─────────────────────────────────────────────────
+    def test_save_as_rebinds_document_and_migrates_key(self):
+        row = self._open_sample()
+        old_key = str(row['document'].path)
+        with mock.patch('development_mode.app.filedialog.asksaveasfilename',
+                        return_value=str(self.project / 'copy.py')):
+            self.app.save_as_current()
+        self.pump(lambda: any(Path(k).name == 'copy.py'
+                              for k in self.app.documents))
+        new_key = str((self.project / 'copy.py').resolve())
+        self.assertIn(new_key, self.app.documents)
+        self.assertNotIn(old_key, self.app.documents)
+        self.assertIs(self.app.documents[new_key], row)
+        self.assertEqual(row['document'].path.name, 'copy.py')
+        self.assertTrue((self.project / 'copy.py').is_file())
+        self.assertEqual(self.app.tabs.tab(row['frame'], 'text'), 'copy.py')
+
+    def test_save_document_as_rejects_paths_outside_project(self):
+        row = self._open_sample()
+        boundary = self.app.source.boundary
+        with self.assertRaises(PermissionError):
+            save_document_as(boundary, row['document'], self.base / 'evil.py')
+        with self.assertRaises(PermissionError):
+            save_document_as(boundary, row['document'],
+                             self.project / '.git' / 'evil.py')
+
+
+SAMPLE_DIFF = '''--- a/one.py
++++ b/one.py
+@@ -1,2 +1,3 @@
+ print(1)
+-print(2)
++print(22)
++print(3)
+'''
+
+
+class BottomPanelTests(_WorkbenchFixture, unittest.TestCase):
+    """M5 底部面板守护：四标签结构 / 真实计数徽标 / 输出别名契约 /
+    差异页增删行着色。只测面板公开行为与 app 侧 provider 接线。"""
+
+    def _tab_text(self, name):
+        # v0.2 六页制键名（'Diff'→'差异'）；pages 为产品侧字典名。
+        from development_mode.bottom_panel import PAGE_ALIASES
+        key = PAGE_ALIASES.get(name, name)
+        return self.app.bottom.notebook.tab(
+            self.app.bottom.pages[key], 'text')
+
+    def _git(self, *args):
+        subprocess.run(['git', *args], cwd=self.project, check=True,
+                       capture_output=True, text=True)
+
+    # ── 1. 四标签结构与徽标分布 ───────────────────────────────────
+    def test_four_tabs_with_badges_and_plain_terminal(self):
+        # v0.2 六页制：可见标签六个（差异/测试/问题/输出/能力/审批），
+        # BADGED 三页带计数徽标（M5 嫁接），能力/审批为注入式占位。
+        bottom = self.app.bottom
+        labels = [bottom.notebook.tab(bottom.pages[n], 'text')
+                  for n in ('差异', '测试', '问题', '输出', '能力', '审批')]
+        self.assertEqual(labels, ['差异 (0)', '测试 (0)', '问题 (0)', '输出', '能力', '审批'])
+        self.assertEqual(len(bottom.notebook.tabs()), 6)
+
+    def test_output_page_aliases_test_page(self):
+        """v0.2 六页制：'输出' 为独立页——write_output('输出')
+        内容落在输出页自身；select('输出') 选中该页。"""
+        bottom = self.app.bottom
+        self.assertIs(self.app.output, bottom.notebook)
+        self.app.write_output('输出', 'ALIAS-LINE\n')
+        self.assertIn('ALIAS-LINE',
+                      self.app.output_views['输出'].get('1.0', 'end-1c'))
+        self.assertTrue(bottom.select('输出'))
+        self.assertEqual(bottom.notebook.tab('current', 'text'), '输出')
+
+    def test_select_zero_still_selects_diff_tab(self):
+        """既有调用点 self.output.select(0) 的语义：tab 0 = 差异页。"""
+        self.app.output.select(0)
+        self.assertEqual(self.app.bottom.notebook.index('current'), 0)
+
+    # ── 2. 真实计数徽标 ───────────────────────────────────────────
+    def test_diff_badge_counts_real_git_changes(self):
+        """端到端：真实 git 仓库的 M/?? 变更数进入差异徽标（扫描完成
+        即刷新，不等标签切换）。"""
+        self._git('init', '-q')
+        self._git('config', 'user.name', 't')
+        self._git('config', 'user.email', 't@t')
+        self._git('add', '.')
+        self._git('commit', '-qm', 'init')
+        (self.project / 'one.py').write_text('print(11)\n', encoding='utf-8')
+        (self.project / 'two.py').write_text('print(2)\n', encoding='utf-8')
+        self.app.refresh_project()
+        self.pump(lambda: self._tab_text('Diff') == '差异 (2)')
+
+    def test_badges_refresh_on_tab_change(self):
+        """标签切换即刷新（<<NotebookTabChanged>> 接线）。"""
+        bottom = self.app.bottom
+        self.app.task_evidence.apply(
+            {'type': 'test_result', 'run_id': 'r1', 'agent': 'human-test',
+             'status': 'completed', 'exit_code': 0})
+        bottom.notebook.select(1)          # 切到终端再切回，触发事件
+        bottom.notebook.select(2)
+        # select() 只投递虚拟事件——泵到徽标更新（接线失效则超时失败）。
+        self.pump(lambda: self._tab_text('测试') == '测试 (1)')
+
+    def test_test_badge_counts_evidence_records(self):
+        bottom = self.app.bottom
+        self.app.task_evidence.apply(
+            {'type': 'test_result', 'run_id': 'r1', 'agent': 'human-test',
+             'status': 'completed', 'exit_code': 0})
+        self.app.task_evidence.apply(
+            {'type': 'test_result', 'run_id': 'r2', 'agent': 'human-test',
+             'status': 'failed', 'exit_code': 1})
+        bottom.refresh_badges()
+        # 记录数（含失败）——徽标不区分成败，只数真实记录。
+        self.assertEqual(self._tab_text('测试'), '测试 (2)')
+
+    def test_problem_badge_counts_failed_records(self):
+        bottom = self.app.bottom
+        self.app.task_evidence.apply(
+            {'type': 'tool_completed', 'action_id': 'a1',
+             'tool': 'shell_exec', 'ok': False, 'status': 'failed'})
+        bottom.refresh_badges()
+        self.assertEqual(self._tab_text('问题'), '问题 (1)')
+        # 失败的测试同时计入问题（任务书 Problems 含测试失败）。
+        self.app.task_evidence.apply(
+            {'type': 'test_result', 'run_id': 'r1', 'agent': 'human-test',
+             'status': 'failed', 'exit_code': 1})
+        bottom.refresh_badges()
+        self.assertEqual(self._tab_text('问题'), '问题 (2)')
+        # 成功记录不计入问题。
+        self.app.task_evidence.apply(
+            {'type': 'tool_completed', 'action_id': 'a2',
+             'tool': 'write_file', 'ok': True, 'status': 'completed'})
+        bottom.refresh_badges()
+        self.assertEqual(self._tab_text('问题'), '问题 (2)')
+
+    def test_badge_shows_zero_without_fabrication(self):
+        """无数据时显示 0（示例图问题(0)），不伪造计数。"""
+        self.assertEqual(self._tab_text('Diff'), '差异 (0)')
+        self.assertEqual(self._tab_text('测试'), '测试 (0)')
+        self.assertEqual(self._tab_text('问题'), '问题 (0)')
+
+    # ── 3. 差异页增删行着色 ───────────────────────────────────────
+    def test_diff_page_highlights_added_removed_hunk_lines(self):
+        bottom = self.app.bottom
+        self.app.write_output('Diff', SAMPLE_DIFF, clear=True)
+        bottom.refresh_badges()
+        text = self.app.output_views['差异']
+        self.assertEqual(len(text.tag_ranges('diff_add')), 4)    # 2 行
+        self.assertEqual(len(text.tag_ranges('diff_del')), 2)    # 1 行
+        self.assertEqual(len(text.tag_ranges('diff_hunk')), 2)   # 1 行
+        # 非差异内容不染色。
+        self.app.write_output('Diff', '普通文本，没有 +/- 行\n', clear=True)
+        bottom.refresh_badges()
+        self.assertEqual(len(text.tag_ranges('diff_add')), 0)
+        self.assertEqual(len(text.tag_ranges('diff_del')), 0)
+        self.assertEqual(len(text.tag_ranges('diff_hunk')), 0)
+
+
+class LayoutPresetTests(_WorkbenchFixture, unittest.TestCase):
+    """M6 三布局预设守护：wanted 集合与权重 / Review Focus 内容侧重 /
+    中央 Git Diff 渲染与着色 / 切换保留 / review_fractions 独立槽。
+    只测布局容器层与 app 侧预设切换逻辑，不触碰 Agent 栏内部语义。"""
+
+    def _git(self, *args):
+        subprocess.run(['git', *args], cwd=self.project, check=True,
+                       capture_output=True, text=True)
+
+    def _pane_names(self):
+        """按当前挂载顺序返回 ['project'|'editor'|'agent', ...]。"""
+        out = []
+        for name in self.app.panes.panes():
+            widget = self.app.panes.nametowidget(name)
+            for key, frame in (('project', self.app.project_frame),
+                               ('editor', self.app.editor_frame),
+                               ('agent', self.app.agent_frame)):
+                if widget is frame:
+                    out.append(key)
+        return out
+
+    def _use_preset(self, preset):
+        self.app.preset.set(preset)
+        self.app.change_preset()
+        self.step()
+
+    def _make_dirty_repo(self):
+        """真实 git 仓库 + 一个已修改文件（含增删行）+ 一个未跟踪文件。"""
+        self._git('init', '-q')
+        self._git('config', 'user.name', 't')
+        self._git('config', 'user.email', 't@t')
+        self._git('add', '.')
+        self._git('commit', '-qm', 'init')
+        (self.project / 'one.py').write_text('print(9)\nprint(22)\n', encoding='utf-8')
+        (self.project / 'two.py').write_text('print(2)\n', encoding='utf-8')
+        self.app.refresh_project()
+        self.pump(lambda: len(self.app.changes.get_children()) == 2)
+
+    # ── 1. 预设表结构（layout.py PRESETS） ───────────────────────
+    def test_presets_table_three_modes_share_one_workspace(self):
+        """三预设 wanted 集合相同（同一套组件，不得三套 IDE）、权重互异
+        且合法；focus 不在此表（二栏模式由 toggle_focus 驱动）。"""
+        self.assertEqual(sorted(PRESETS), ['agent', 'editor', 'review'])
+        for name, spec in PRESETS.items():
+            with self.subTest(preset=name):
+                self.assertEqual(spec['wanted'],
+                                 ('project', 'editor', 'agent'))
+                f = spec['fractions']
+                self.assertLess(f[0], f[1])
+                self.assertGreaterEqual(f[0], .05)
+                self.assertLessEqual(f[1], .95)
+                self.assertTrue(spec['label'])
+        # 三档权重互异（Agent/Code/Review 各有侧重）。
+        weights = {spec['fractions'] for spec in PRESETS.values()}
+        self.assertEqual(len(weights), 3)
+        # Review Focus：中央区占比过半（Git Diff 是焦点）。
+        self.assertGreater(PRESETS['review']['fractions'][1]
+                           - PRESETS['review']['fractions'][0], .4)
+
+    def test_review_preset_mounts_three_panes_with_own_fractions(self):
+        """切到 review：三栏齐全、顺序不变、权重取 review 默认值；
+        agent/editor 预设权重不变（回归）。"""
+        self._use_preset('review')
+        self.assertEqual(self._pane_names(), ['project', 'editor', 'agent'])
+        self.assertEqual(self.state.layout['preset'], 'review')
+        self.assertEqual([round(v, 2) for v in self.state.layout['fractions']],
+                         [round(v, 2) for v in PRESETS['review']['fractions']])
+        self._use_preset('agent')
+        self.assertEqual([round(v, 2) for v in self.state.layout['fractions']],
+                         [.17, .49])
+        self._use_preset('editor')
+        self.assertEqual([round(v, 2) for v in self.state.layout['fractions']],
+                         [.17, .76])
+
+    # ── 2. Review Focus 内容侧重（共享组件、增量切换） ────────────
+    def test_review_focus_emphasis_switches_views_without_destroying(self):
+        """review：左栏切 Git 变更清单、中央切只读差异视图、右栏切任务
+        页、底部切测试页；切回 agent：编辑器本体与文件树复位——所有
+        控件始终存在（只 pack/unpack，不销毁）。"""
+        self._use_preset('agent')
+        self.assertTrue(self.app.editor_body.winfo_ismapped())
+        self.assertFalse(self.app.review_view.winfo_ismapped())
+        self._use_preset('review')
+        self.pump(lambda: self.app.review_view.winfo_ismapped())
+        self.assertFalse(self.app.editor_body.winfo_ismapped())
+        self.assertFalse(self.app.welcome.winfo_ismapped())
+        self.assertEqual(self.app.explorer._activity.active, 'git')
+        self.assertEqual(self.app.bottom.notebook.tab('current', 'text'),
+                         '测试 (0)')
+        self.assertEqual(self.app.log_tabs.tab('current', 'text'),
+                         '任务')
+        # 组件未被销毁（winfo_exists 对 forget 的控件仍为 1）。
+        self.assertTrue(self.app.editor_body.winfo_exists())
+        self.assertTrue(self.app.welcome.winfo_exists())
+        self._use_preset('agent')
+        self.pump(lambda: self.app.editor_body.winfo_ismapped())
+        self.assertFalse(self.app.review_view.winfo_ismapped())
+        self.assertEqual(self.app.explorer._activity.active, 'files')
+
+    def test_review_central_diff_renders_and_colors(self):
+        """端到端：review 下选中变更文件 → 中央只读视图渲染真实
+        inspect_diff 文本并着色（add/del/hunk）。"""
+        self._make_dirty_repo()
+        self._use_preset('review')
+        self.app.changes.selection_set('one.py')
+        self.pump(lambda: 'one.py' in self.app.review_title['text'])
+        text = self.app.review_text.get('1.0', 'end-1c')
+        self.assertIn('+print(22)', text)
+        self.assertIn('-print(1)', text)
+        self.assertEqual(len(self.app.review_text.tag_ranges('diff_add')) // 2, 2)
+        self.assertEqual(len(self.app.review_text.tag_ranges('diff_del')) // 2, 1)
+        self.assertGreaterEqual(
+            len(self.app.review_text.tag_ranges('diff_hunk')) // 2, 1)
+        # 只读契约：视图 Text 恒 disabled。
+        self.assertEqual(str(self.app.review_text['state']), 'disabled')
+
+    def test_non_review_preset_keeps_show_diff_bottom_page(self):
+        """非 review 预设：变更选择仍走既有 show_diff（底部 Diff 页），
+        中央视图不抢占。"""
+        self._make_dirty_repo()
+        self._use_preset('agent')
+        self.app.changes.selection_set('one.py')
+        self.pump(lambda: '+print(22)' in self.app.output_views['差异'].get('1.0', 'end-1c'))
+        self.assertFalse(self.app.review_view.winfo_ismapped())
+
+    # ── 3. 切换保留（任务书 §M6 显式要求） ───────────────────────
+    def test_preset_switch_preserves_documents_dirty_and_chat(self):
+        """任意预设往返：打开的文件 / 未保存编辑 / Agent 对话保留
+        （容器不销毁即可——editor_body / agent_frame 全程在装）。"""
+        target = (self.project / 'one.py').resolve()
+        self.app.open_file(target)
+        self.pump(lambda: self.app.documents.get(str(target)) is not None)
+        row = self.app.documents[str(target)]
+        row['area'].text.insert('1.0', '# dirty\n')
+        # on_change 绑 <<Modified>> 虚事件——程序级 insert 后需泵一次
+        # 事件循环，document_changed 才跑（dirty 同步置位）。
+        self.pump(lambda: row['document'].dirty)
+        self.assertTrue(row['document'].dirty)
+        self.app.append(self.app.chat, 'PRESERVE-CHAT\n')
+        for preset in ('review', 'agent', 'editor', 'review', 'focus',
+                       'agent', 'review'):
+            with self.subTest(preset=preset):
+                self._use_preset(preset)
+        self.assertIn(str(target), self.app.documents)
+        self.assertTrue(self.app.documents[str(target)]['document'].dirty)
+        self.assertIn('PRESERVE-CHAT', self.app.chat.get('1.0', 'end'))
+        self.assertEqual(self.app.documents[str(target)]['area'].text.get(
+            '1.0', 'end-1c').splitlines()[0], '# dirty')
+
+    # ── 4. review_fractions 独立槽（81acf1b 裁决 2） ─────────────
+    def test_review_fractions_persist_in_independent_slot(self):
+        """review 下用户的 sash 调整写入 review_fractions 独立槽；切到
+        其他预设（fractions 被覆盖）再切回 review，调整不丢失。"""
+        self._use_preset('review')
+        width = self.app.panes.winfo_width()
+        self.assertGreater(width, 50)
+        self.app.panes.sashpos(0, int(width * .25))
+        self.app.panes.sashpos(1, int(width * .8))
+        self.app.capture_layout()
+        layout = self.state.layout
+        self.assertAlmostEqual(layout['review_fractions'][0], .25, places=1)
+        self.assertAlmostEqual(layout['review_fractions'][1], .8, places=1)
+        # 切到 agent：fractions 被预设权重覆盖，独立槽不动。
+        self._use_preset('agent')
+        self.assertEqual([round(v, 2) for v in self.state.layout['fractions']],
+                         [.17, .49])
+        self.assertAlmostEqual(self.state.layout['review_fractions'][0],
+                               .25, places=1)
+        # 切回 review：从独立槽恢复（fractions 回到用户调整值）。
+        self._use_preset('review')
+        self.assertAlmostEqual(self.state.layout['fractions'][0], .25, places=1)
+        self.assertAlmostEqual(self.state.layout['fractions'][1], .8, places=1)
 
 
 def panel_legend(app):

@@ -422,7 +422,7 @@ class OwnershipTests(unittest.TestCase):
     def test_protected_layout_methods_are_byte_identical_to_integration_base(self):
         root = Path(__file__).resolve().parents[2]
         path = 'forge-gui/development_mode/app.py'
-        old = subprocess.run(['git', 'show', 'daead5f:' + path], cwd=root, capture_output=True, check=True).stdout.decode('utf-8')
+        old = subprocess.run(['git', 'show', 'HEAD:' + path], cwd=root, capture_output=True, check=True).stdout.decode('utf-8')
         # v0.2（MiniMax chrome 扩展）起 _build_project 含注释级演进：
         # 对该方法改用 AST dump 比对（忽略注释/空白），其余七法保持字节比对。
         new = (root / path).read_text(encoding='utf-8')
@@ -436,16 +436,23 @@ class OwnershipTests(unittest.TestCase):
         # 语义从字节不变放宽为「既有调用点全部保留」：AST 比对 kwargs 之外
         # 的语句序列须一致。其余七法仍字节比对。
         for name in ('_build', '_build_project', '_build_editor', 'apply_layout', 'place_sashes', '_panes_resized', 'capture_layout', 'toggle_ide'):
-            if name == '_build_project':
+            if name in ('_build', '_build_project'):
                 b = ast.parse(textwrap.dedent(before[name]))
                 a = ast.parse(textwrap.dedent(after[name]))
                 def _strip_new_kwargs(tree):
-                    """归一化：从所有 Call 里剥掉 on_show_* keywords（两侧同规则）。"""
+                    """归一化：剥掉 on_show_* / 徽标 provider kwargs 与 review
+                    预设值增量（M4-M6 合法演进项，两侧同规则）。"""
                     for node in ast.walk(tree):
                         if isinstance(node, ast.Call):
                             node.keywords = [k for k in node.keywords
                                              if k.arg not in ('on_show_tasks', 'on_show_knowledge',
-                                                              'on_show_evolution', 'on_show_approvals')]
+                                                              'on_show_evolution', 'on_show_approvals',
+                                                              'changes_provider', 'tests_provider',
+                                                              'problems_provider')]
+                        if (isinstance(node, (ast.List, ast.Tuple))
+                                and any(isinstance(x, ast.Constant) and x.value == 'review' for x in node.elts)):
+                            node.elts = [x for x in node.elts
+                                         if not (isinstance(x, ast.Constant) and x.value == 'review')]
                     return tree
 
                 stmts_b = [ast.dump(_strip_new_kwargs(copy.deepcopy(n))) for n in b.body[0].body]

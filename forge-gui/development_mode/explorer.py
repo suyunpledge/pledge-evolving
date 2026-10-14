@@ -451,6 +451,14 @@ class ExplorerPanel(ttk.Frame):
         view.pack(in_=self._evolution_tab, fill='both', expand=True)
 
     # ── 视图切换 ──────────────────────────────────────────────────
+    def select_view(self, key):
+        """公开视图切换入口（M6 Review Focus 等外部驱动用）。
+
+        内部经 ActivityBar.select → _select_view 既有回调链执行，
+        不引入第二条切换路径；键不存在时静默忽略（与活动栏一致）。
+        """
+        self._activity.select(key)
+
     def _select_view(self, key):
         if key in ('files', 'search', 'git'):
             self._placeholder.pack_forget()
