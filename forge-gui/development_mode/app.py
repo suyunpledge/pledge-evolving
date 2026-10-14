@@ -10,8 +10,9 @@ import sys
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 
-from gui_theme import (C, apply_ttk_theme, style_editor, FONT_MONO_SM,
-    FONT_TITLE, FONT_UI)
+from gui_theme import (C, apply_ttk_theme, attach_tooltip, style_editor,
+    FONT_MONO_SM, FONT_TITLE, FONT_UI)
+from ui_icons import IconButton
 try:  # E1（UX 审查）：与 InputCard 同款可选行内 IME 守卫（默认关）
     from ime_inline import InlineIME
 except Exception:  # pragma: no cover - 非 Windows / 缺 ctypes
@@ -22,6 +23,7 @@ from forge.development.runtime import DevelopmentRuntime
 from forge.development.evidence import TaskEvidence
 from forge.secrets import redact, install_tk_exception_redaction
 from .bottom_panel import ToolPanel
+from .editor_area import EditorArea, save_document_as
 from .explorer import ExplorerPanel
 from .layout import NavigationBar, StatusBar
 from .welcome import WelcomeView
@@ -234,9 +236,38 @@ class DevelopmentWorkbench(ttk.Frame):
         # M1：输出 Notebook 已上移到全宽底部工具面板（bottom_panel.py 的
         # ToolPanel，见 _build）。编辑器栏不再有竖向 Panedwindow，文档
         # 标签页直接占满剩余空间。
-        self.tabs = ttk.Notebook(body)
+        # M4：标签页与右侧操作按钮位（示例图：分屏 / 更多）同一行——
+        # Notebook 占左侧弹性区，两个图标按钮固定右侧。
+        tab_row = ttk.Frame(body)
+        tab_row.pack(fill='both', expand=True)
+        self.tabs = ttk.Notebook(tab_row)
         self.tabs.bind('<<NotebookTabChanged>>', lambda event: self.show_document_state())
-        self.tabs.pack(fill='both', expand=True)
+        # 右侧图标按钮帧必须先于 Notebook pack：Tk 打包器在腔体被超订时
+        # 不重算分配——先 pack 的 slave 拿满请求，后 pack 的 slave 恒得
+        # 1x1 且不映射（与 M1 底部面板 height=6、editor_area 分屏重 pack
+        # 同属打包器配额问题）。Notebook 内含默认 80x24 请求的 Text
+        # （约 648px），会超订 tab_row 腔体（1200x760 下约 468px）；
+        # 若 Notebook 先 pack，actions 整帧不可见。side 决定视觉位置、
+        # pack 次序决定超订让位优先级：小帧优先，expand 的 Notebook
+        # 吸收赤字。
+        actions = ttk.Frame(tab_row)
+        actions.pack(side='right', fill='y')
+        split = IconButton(actions, icon='sidebar', bg=C['bg'], fg=C['ter'],
+                           relief='flat', bd=0, cursor='hand2',
+                           activebackground=C['hover'],
+                           activeforeground=C['text'],
+                           command=self.split_current)
+        split.pack(side='right', anchor='n', padx=(4, 0), pady=2)
+        attach_tooltip(split, '分屏：同文件只读参考视图')
+        more = IconButton(actions, icon='more', bg=C['bg'], fg=C['ter'],
+                          relief='flat', bd=0, cursor='hand2',
+                          activebackground=C['hover'],
+                          activeforeground=C['text'],
+                          command=self._editor_more_menu)
+        more.pack(side='right', anchor='n', padx=(4, 0), pady=2)
+        attach_tooltip(more, '更多编辑器操作')
+        self.more_button = more
+        self.tabs.pack(side='left', fill='both', expand=True)
         self.write_output('测试', '内置 shell_exec 在 Secret 隔离中不可用。这里只展示真实执行或拒绝事件；没有结构化结果时不推算通过数。\n')
 
     def _build_welcome(self):
@@ -742,23 +773,23 @@ class DevelopmentWorkbench(ttk.Frame):
         if key in self.documents:
             self.tabs.select(self.documents[key]['frame'])
             return
+        # M4：编辑器本体换为 EditorArea（editor_area.py）——行号槽 /
+        # 当前行高亮 / 搜索替换 / gutter 修改标记 / 分屏参考镜像 /
+        # Python 语法高亮。row['widget'] 契约不变：EditorArea.text
+        # 就是那个 Text，既有 save/reload/close/attach 全部无感；
+        # 行为回调（修改 / Ctrl+S）经构造参数注入。
         frame = ttk.Frame(self.tabs)
-        widget = tk.Text(frame, wrap='none', font=FONT_MONO_SM, undo=True)
-        style_editor(widget)
-        sy = ttk.Scrollbar(frame, command=widget.yview)
-        sx = ttk.Scrollbar(frame, orient='horizontal', command=widget.xview)
-        sy.pack(side='right', fill='y')
-        sx.pack(side='bottom', fill='x')
-        widget.configure(yscrollcommand=sy.set, xscrollcommand=sx.set)
-        widget.pack(fill='both', expand=True)
-        widget.insert('1.0', document.text)
-        widget.edit_modified(False)
-        row = {'document': document, 'frame': frame, 'widget': widget, 'saving': False}
+        row = {'document': document, 'frame': frame, 'widget': None,
+               'saving': False, 'area': None}
+        area = EditorArea(frame, document,
+                          on_change=lambda _a: self.document_changed(row),
+                          on_save=self.save_current)
+        area.pack(fill='both', expand=True)
+        row['widget'] = area.text
+        row['area'] = area
         self.documents[key] = row
         self.tabs.add(frame, text=document.path.name)
         self.tabs.select(frame)
-        widget.bind('<<Modified>>', lambda e, r=row: self.document_changed(r))
-        widget.bind('<Control-s>', lambda e: (self.save_current(), 'break')[-1])
         self.state.remember_tabs(self.documents)
 
     def current_row(self):
@@ -800,8 +831,101 @@ class DevelopmentWorkbench(ttk.Frame):
             self.update_tab(row)
             if not error:
                 self.status.set('已保存 ' + row['document'].path.name)
+                # M4：保存后基线变化——刷新 gutter 修改标记。
+                area = row.get('area')
+                if area is not None:
+                    area.refresh_markers()
                 self.refresh_project()
         self.work(row['document'].save, complete)
+
+    def save_as_current(self):
+        """M4：另存为——当前缓冲区写到用户选择的新路径，并把文档改绑
+        到新文件（VS Code 语义：另存为后当前标签编辑新文件）。
+
+        经 boundary 校验（项目外 / .git 内拒绝）；目标已被其它标签
+        打开时拒绝（避免两个标签同一路径）；成功后 documents 按键
+        迁移、remember_tabs 持久化新路径、刷新文件树。
+        """
+        row = self.current_row()
+        if not row or row['saving']:
+            return
+        self.document_changed(row)
+        document = row['document']
+        path = filedialog.asksaveasfilename(
+            parent=self, initialdir=str(self.source.root),
+            initialfile=document.path.name, title='另存为')
+        if not path:
+            return
+        try:
+            target = self.source.boundary.path(path)
+        except Exception as exc:
+            self.status.set(redact(str(exc)))
+            return
+        target_key = str(target)
+        if target_key in self.documents and self.documents[target_key] is not row:
+            self.status.set('目标文件已在标签页中打开：' + target.name)
+            return
+        row['saving'] = True
+        row['widget'].configure(state='disabled')
+
+        def complete(value, error):
+            row['saving'] = False
+            row['widget'].configure(state='normal')
+            if error:
+                self.status.set('另存为失败：' + redact(str(error)))
+                self.update_tab(row)
+                return
+            old_key = next((k for k, r in self.documents.items() if r is row),
+                           None)
+            new_key = str(row['document'].path)
+            if old_key is not None and old_key != new_key:
+                del self.documents[old_key]
+                self.documents[new_key] = row
+            area = row.get('area')
+            if area is not None:
+                area.refresh_all()
+            self.update_tab(row)
+            self.status.set('已另存为 ' + row['document'].path.name)
+            self.state.remember_tabs(self.documents)
+            self.refresh_project()
+        self.work(lambda: save_document_as(self.source.boundary, document,
+                                           target), complete)
+
+    def split_current(self):
+        """M4：分屏按钮——切出当前文档的只读参考镜像（同文件双视图）。"""
+        row = self.current_row()
+        if row and row.get('area') is not None:
+            row['area'].toggle_reference()
+        else:
+            self.status.set('没有打开的文档可分屏')
+
+    def _editor_more_menu(self):
+        """M4：标签页右侧「更多」按钮——真实动作菜单。"""
+        row = self.current_row()
+        if not row:
+            self.status.set('尚无打开的文件')
+            return
+        menu = tk.Menu(self, tearoff=False, bg=C['bg'], fg=C['text'])
+        menu.add_command(label='另存为…', command=self.save_as_current)
+        menu.add_command(label='保存', command=self.save_current)
+        menu.add_command(label='重新载入', command=self.reload_current)
+        menu.add_command(label='关闭标签', command=self.close_current)
+        menu.add_separator()
+        menu.add_command(label='复制文件路径', command=self._copy_current_path)
+        x = self.more_button.winfo_rootx()
+        y = self.more_button.winfo_rooty() + self.more_button.winfo_height()
+        try:
+            menu.tk_popup(x, y)
+        finally:
+            menu.grab_release()
+
+    def _copy_current_path(self):
+        row = self.current_row()
+        if not row:
+            return
+        self.clipboard_clear()
+        self.clipboard_append(str(row['document'].path))
+        self.status.set('已复制路径 ' + row['document'].path.name)
 
     def reload_current(self):
         row = self.current_row()
@@ -818,6 +942,10 @@ class DevelopmentWorkbench(ttk.Frame):
                 row['widget'].delete('1.0', 'end')
                 row['widget'].insert('1.0', row['document'].text)
                 row['widget'].edit_modified(False)
+                # M4：重载后同步高亮 / 行号槽 / 修改标记 / 镜像。
+                area = row.get('area')
+                if area is not None:
+                    area.refresh_all()
                 self.update_tab(row)
         self.work(row['document'].reload, complete)
 
@@ -843,6 +971,10 @@ class DevelopmentWorkbench(ttk.Frame):
         widget.xview_moveto(x)
         widget.edit_reset()
         widget.edit_modified(False)
+        # M4：缓冲区整体替换后同步高亮 / 行号槽 / 修改标记 / 镜像。
+        area = row.get('area')
+        if area is not None:
+            area.refresh_all()
         self.update_tab(row)
 
     def _reconcile_external(self, value, error):

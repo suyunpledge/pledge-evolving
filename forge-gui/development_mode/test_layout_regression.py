@@ -39,6 +39,21 @@
          归一化为 M/A/D/U/R/C/X，字母徽标 + 主题色 + 图例文字三重
          冗余；文件操作经 ProjectBoundary 校验。
 
+  M4 编辑器增强（editor_area.py）：
+         单标签页一个 EditorArea——行号槽（与正文同字体、共享滚动）
+         + 当前行高亮 + 搜索替换（Ctrl+F/Esc）+ gutter 修改标记
+         （缓冲区 vs document.original 行级 diff）+ 分屏只读参考
+         镜像 + 另存为（文档改绑新路径）+ Python 语法高亮（按接口
+         约定消费 gui_theme.setup_code_tags / highlight_python）。
+         row['widget'] 契约不变（EditorArea.text 即该 Text）；
+         标签页右侧新增分屏/更多图标按钮位。另存为写盘经
+         boundary 校验与原子替换，与 Document._save 同规则。
+         打包器超订坍缩第三例：tab_row 内 Notebook（含默认 80x24
+         请求的 Text）超订腔体，后 pack 的 actions 帧恒得 1x1 且
+         不映射——按钮位先 pack 抢占配额、Notebook 后 pack 吸收
+         赤字（side 定视觉位置、pack 次序定让位优先级）。同族：
+         M1 底部面板 height=6 小请求、editor_area 分屏重 pack。
+
 本文件即上述修复与改造的守护，也是集成验收口径「P0-L1 两尺寸映射断言」
 的落地。只测布局容器层，不触碰 Agent 栏内部控件语义（Codex 域）。
 """
@@ -55,6 +70,7 @@ from gui_theme import apply_ttk_theme
 from forge.development.state import ModeState
 from development_mode.app import DevelopmentWorkbench
 from development_mode import explorer
+from development_mode.editor_area import EditorArea, save_document_as
 from development_mode.explorer import ExplorerPanel
 from development_mode.layout import StatusBar
 
@@ -168,8 +184,15 @@ class LayoutRegressionTests(_WorkbenchFixture, unittest.TestCase):
             with self.subTest(geometry=geometry):
                 root = self.app.winfo_toplevel()
                 root.geometry(geometry)
+                # 先 step 处理几何变更：apply_layout 按 pane 实测尺寸放
+                # sash，读旧尺寸会放错位（实测 5px 级栏底错位）。
                 self.step()
                 self.app.apply_layout()
+                # 高负载下重排走 idle，单步 step() 排不空（pythonw 整跑
+                # 间歇复现，solo 即过）：泵到子控件全部 mapped 再断言
+                # ——真不映射仍会超时失败，断言强度不变（M2 同款容错）。
+                self.pump(lambda: all(c.winfo_ismapped()
+                                      for c in self._agent_children()))
                 self.step()
                 bar_bottom = (self.app.agent_frame.winfo_rooty()
                               - root.winfo_rooty()
@@ -195,7 +218,8 @@ class LayoutRegressionTests(_WorkbenchFixture, unittest.TestCase):
             with self.subTest(geometry=geometry):
                 root = self.app.winfo_toplevel()
                 root.geometry(geometry)
-                self.step()
+                # 同上：几何变更的重排走 idle，泵到全部 mapped 再断言。
+                self.pump(lambda: all(w.winfo_ismapped() for w in widgets))
                 for widget in widgets:
                     self.assertTrue(widget.winfo_ismapped(),
                                     f'{geometry} {widget} 未映射')
@@ -629,6 +653,206 @@ class ExplorerViewTests(_WorkbenchFixture, unittest.TestCase):
         self.app.explorer._collapse_all()
         self.pump(lambda: not self.app.expanded)
         self.assertFalse(self.app.tree.item(str(root / 'sub'), 'open'))
+
+
+SAMPLE_PY = '''# 头部注释
+def greet(name):
+    text = "hello"
+    return text + name
+
+
+class Foo:
+    pass
+'''
+
+
+class EditorAreaTests(_WorkbenchFixture, unittest.TestCase):
+    """M4 编辑器增强守护：行号槽 / 当前行 / 高亮 / 修改标记 / 搜索替换 /
+    分屏镜像 / 另存为。只测编辑器容器层与面板公开行为。"""
+
+    def _open_sample(self):
+        path = (self.project / 'sample.py')
+        path.write_text(SAMPLE_PY, encoding='utf-8')
+        key = str(path.resolve())
+        self.app.open_file(path.resolve())
+        self.pump(lambda: key in self.app.documents)
+        return self.app.documents[key]
+
+    # ── 1. 契约与行号槽 ───────────────────────────────────────────
+    def test_editor_area_contracts_and_gutter(self):
+        row = self._open_sample()
+        area = row['area']
+        self.assertIsInstance(area, EditorArea)
+        # row['widget'] 契约：既有 save/reload/attach 消费点无感。
+        self.assertIs(row['widget'], area.text)
+        text, gutter = area.text, area.gutter
+        lines = int(text.index('end-1c').split('.')[0])
+        gutter_lines = gutter.get('1.0', 'end-1c').split('\n')
+        self.assertEqual(len(gutter_lines), lines)
+        self.assertGreaterEqual(int(gutter.cget('width')), 3)
+        # 标签页右侧按钮位存在（示例图：分屏 / 更多）。
+        self.assertTrue(hasattr(self.app, 'more_button'))
+
+    # ── 1b. 标签行按钮位映射（打包器超订坍缩守护） ─────────────────
+    def test_tab_row_action_buttons_stay_mapped(self):
+        """1200x760 夹具下 Notebook 内含默认 80x24 请求的 Text（约 648px），
+        会超订 tab_row 腔体（约 468px）：Tk 打包器超订时不重算分配，先
+        pack 的 slave 拿满请求、后 pack 的 slave 恒得 1x1 且不映射。若
+        Notebook 先于 actions pack，分屏/更多按钮整帧不可见。side 决定
+        视觉位置、pack 次序决定让位优先级——小帧必须先 pack。"""
+        self._open_sample()
+        actions = self.app.more_button.master
+        split = [w for w in actions.winfo_children()
+                 if w is not self.app.more_button][0]
+        self.pump(lambda: self.app.more_button.winfo_ismapped())
+        for w in (actions, split, self.app.more_button):
+            self.assertTrue(w.winfo_ismapped(),
+                            '标签行右侧按钮位必须 mapped（超订坍缩回归）')
+        # Notebook 吸收赤字：仍占左侧弹性区且 mapped。
+        self.assertTrue(self.app.tabs.winfo_ismapped())
+        self.assertGreater(self.app.tabs.winfo_width(), actions.winfo_width())
+
+    # ── 1c. 编辑器滚动条映射（同族打包器坍缩守护） ─────────────────
+    def test_editor_scrollbars_stay_mapped(self):
+        """body 内固定尺寸滚动条必须先于 expand 的正文 pack：正文 Text
+        默认 80 字符请求超订 body 腔体，后 pack 的竖向滚动条恒得 1x1
+        且不映射（1200x760 实测，原 _document_loaded 的顺序本就滚动条
+        优先，EditorArea 保持同一约定）。"""
+        row = self._open_sample()
+        area = row['area']
+        body = area._body_frame
+        hbar = [w for w in body.winfo_children()
+                if w is not area._vbar and w.winfo_class() == 'TScrollbar'][0]
+        # documents 键先于 tabs.add 落库——帧入 Notebook 后的重排走
+        # idle，泵到两条滚动条都 mapped 再断言（结构性坍缩仍会超时失败）。
+        self.pump(lambda: area._vbar.winfo_ismapped()
+                  and hbar.winfo_ismapped())
+        for w in (area._vbar, hbar):
+            self.assertTrue(w.winfo_ismapped(),
+                            '滚动条必须 mapped（超订坍缩回归）')
+            self.assertGreater(w.winfo_width(), 1)
+            self.assertGreater(w.winfo_height(), 1)
+
+    def test_python_highlight_and_current_line(self):
+        row = self._open_sample()
+        area = row['area']
+        text = area.text
+        for tag in ('kw', 'st', 'cm', 'fn', 'cls'):
+            self.assertGreater(len(text.tag_ranges(tag)), 0,
+                               f'示例代码应产生 {tag} 高亮')
+        text.mark_set('insert', '3.0')
+        area._highlight_current_line()
+        self.assertEqual(len(text.tag_ranges('current_line')), 2)
+
+    # ── 2. gutter 修改标记 ────────────────────────────────────────
+    def test_modified_line_marker_in_gutter(self):
+        row = self._open_sample()
+        area = row['area']
+        area.text.insert('3.0', '# edited\n')
+        area.refresh_markers()
+        # 第 3 行是新插入行 → add 标记落在 gutter 第 3 行。
+        ranges = area.gutter.tag_ranges('add')
+        self.assertEqual(len(ranges), 2)
+        self.assertEqual(str(ranges[0]), '3.0')
+        # 撤去插入行，恢复三行基线。
+        area.text.delete('3.0', '4.0')
+        area.refresh_markers()
+        self.assertEqual(len(area.gutter.tag_ranges('add')), 0)
+        # 同行数原位替换（改写第 2 行内容，不动行数）→ mod 标记。
+        area.text.delete('2.0', '2.end')
+        area.text.insert('2.0', '    print("changed")')
+        area.refresh_markers()
+        mods = area.gutter.tag_ranges('mod')
+        self.assertGreater(len(mods), 0)
+        self.assertEqual(str(mods[0]), '2.0')
+
+    # ── 3. 搜索替换 ───────────────────────────────────────────────
+    def test_search_replace_flow(self):
+        row = self._open_sample()
+        area = row['area']
+        area.open_search()
+        self.pump(lambda: area.search_bar.winfo_ismapped())
+        area._find_var.set('greet')
+        area._refresh_hits()
+        self.assertEqual(area._count_var.get(), '1 处匹配')
+        self.assertEqual(len(area.text.tag_ranges('search_hit')), 2)
+        area.find_next()
+        self.assertEqual(len(area.text.tag_ranges('search_current')), 2)
+        area._replace_var.set('salute')
+        area.replace_current()
+        self.assertIn('salute', area.text.get('1.0', 'end-1c'))
+        area._find_var.set('hello')
+        area._replace_var.set('hi')
+        area.replace_all()
+        self.assertIn('hi', area.text.get('1.0', 'end-1c'))
+        self.assertEqual(area._count_var.get(), '已替换 1 处')
+        area.close_search()
+        self.assertFalse(area.search_bar.winfo_ismapped())
+        self.assertEqual(len(area.text.tag_ranges('search_hit')), 0)
+
+    # ── 4. 分屏参考镜像 ───────────────────────────────────────────
+    def test_split_reference_mirror_syncs_and_hides(self):
+        row = self._open_sample()
+        area = row['area']
+        area.toggle_reference()
+        self.pump(lambda: area.reference.winfo_ismapped())
+        self.assertIn('greet', area.reference.get('1.0', 'end-1c'))
+        area.text.insert('1.0', '# mirror sync test\n')
+        area._sync_reference()
+        self.assertIn('mirror sync test',
+                      area.reference.get('1.0', 'end-1c'))
+        area.toggle_reference()
+        self.assertFalse(area.reference.winfo_ismapped())
+
+    # ── 4b. 标签行按钮的真实命令接线 ──────────────────────────────
+    def test_split_button_invokes_split_current(self):
+        """分屏图标按钮经 invoke 走 split_current——按钮位可见且接线真实
+        （打包器超订坍缩修复后，mapped 与命令双保险）。"""
+        row = self._open_sample()
+        actions = self.app.more_button.master
+        split = [w for w in actions.winfo_children()
+                 if w is not self.app.more_button][0]
+        split.invoke()
+        self.pump(lambda: row['area'].reference.winfo_ismapped())
+        split.invoke()
+        self.assertFalse(row['area'].reference.winfo_ismapped())
+
+    def test_more_button_wired_to_more_menu(self):
+        self._open_sample()
+        self.assertIn('_editor_more_menu', self.app.more_button['command'])
+
+    def test_copy_current_path_to_clipboard(self):
+        row = self._open_sample()
+        self.app._copy_current_path()
+        self.assertEqual(self.root.clipboard_get(),
+                         str(row['document'].path))
+        self.assertIn('已复制路径', self.app.status.get())
+
+    # ── 5. 另存为 ─────────────────────────────────────────────────
+    def test_save_as_rebinds_document_and_migrates_key(self):
+        row = self._open_sample()
+        old_key = str(row['document'].path)
+        with mock.patch('development_mode.app.filedialog.asksaveasfilename',
+                        return_value=str(self.project / 'copy.py')):
+            self.app.save_as_current()
+        self.pump(lambda: any(Path(k).name == 'copy.py'
+                              for k in self.app.documents))
+        new_key = str((self.project / 'copy.py').resolve())
+        self.assertIn(new_key, self.app.documents)
+        self.assertNotIn(old_key, self.app.documents)
+        self.assertIs(self.app.documents[new_key], row)
+        self.assertEqual(row['document'].path.name, 'copy.py')
+        self.assertTrue((self.project / 'copy.py').is_file())
+        self.assertEqual(self.app.tabs.tab(row['frame'], 'text'), 'copy.py')
+
+    def test_save_document_as_rejects_paths_outside_project(self):
+        row = self._open_sample()
+        boundary = self.app.source.boundary
+        with self.assertRaises(PermissionError):
+            save_document_as(boundary, row['document'], self.base / 'evil.py')
+        with self.assertRaises(PermissionError):
+            save_document_as(boundary, row['document'],
+                             self.project / '.git' / 'evil.py')
 
 
 def panel_legend(app):
