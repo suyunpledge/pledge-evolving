@@ -586,6 +586,10 @@ class DevelopmentWorkbench(ttk.Frame):
                     pass
         self.permission.trace_add('write', permission_display)
 
+        # ── 预存消息队列（上限 3，任务完成后自动发送）────────────
+        self._pending_prompts: list[dict] = []
+        self._queue_label = ttk.Label(self.agent_frame, text='', padding=(4, 1),
+                                      foreground=C['accent'])
         # 输入框 + 发送按钮（保留为 agent_frame 底部固定组）
         hint_label = ttk.Label(self.agent_frame,
                                 text='Enter 发送 · Shift+Enter 换行 · Ctrl+Enter 亦可',
@@ -1812,11 +1816,48 @@ class DevelopmentWorkbench(ttk.Frame):
             return
         self._permission = value
 
+    def _sync_queue_label(self):
+        """队列标签：空队列隐藏；有预存则显示计数与首条摘要。"""
+        n = len(getattr(self, '_pending_prompts', ()))
+        label = getattr(self, '_queue_label', None)
+        if label is None:
+            return
+        if not n:
+            label.pack_forget()
+            return
+        first = self._pending_prompts[0]['prompt']
+        summary = (first[:24] + '…') if len(first) > 24 else first
+        label.configure(text=f'⏳ 预存 {n}/3：{summary}' + (' 等' if n > 1 else ''))
+        # 输入框正上方（side='bottom' 序列里 input 已占位，before 保证
+        # 标签紧贴输入区而非跑到 agent_panel 顶部）
+        try:
+            label.pack(side='bottom', fill='x', padx=8, pady=(2, 0),
+                       before=self.input)
+        except tk.TclError:
+            pass
+
     def send(self, *, delegate=False):
         prompt = self.input.get('1.0', 'end-1c').strip()
-        if not prompt or not self.runtime.ready or self.runtime.busy or self._loading:
+        if not prompt:
+            return
+        if not self.runtime.ready or self._loading:
             self.status.set('请打开项目，或等待当前任务结束')
             return
+        # busy → 预存队列（上限 3，FIFO）；任务完成回调后自动发送。
+        if self.runtime.busy:
+            if len(self._pending_prompts) >= 3:
+                self.status.set('预存队列已满（3/3）；请等当前任务完成')
+                return
+            self._pending_prompts.append({'prompt': prompt, 'delegate': delegate})
+            self.input.delete('1.0', 'end')
+            self._sync_queue_label()
+            self.status.set(
+                f'已预存（{len(self._pending_prompts)}/3）；当前任务完成后自动发送')
+            return
+        self._dispatch(prompt, delegate)
+
+    def _dispatch(self, prompt, delegate):
+        """实际发起任务（原 send() 主体；send() 守卫/入队后转此处）。"""
         # v0.3：模型来源由 RuntimeContext.模型路由.primary 决定——没有
         # model_choice 时直接回落 RoutingChain 的 primary。
         model = None
@@ -1890,6 +1931,21 @@ class DevelopmentWorkbench(ttk.Frame):
             self.refresh_agent_versions()
             self.refresh_project()
             self.refresh_documents()
+            # 预存队列排空：任务结束（成败均可）→ after 300ms 自动发队首。
+            # 守卫双保险：届时若又 busy / loading，队首塞回去等下一轮。
+            if self._pending_prompts:
+                nxt = self._pending_prompts.pop(0)
+                self._sync_queue_label()
+                def _auto_send(nxt=nxt):
+                    if getattr(self, '_closed', False):
+                        return
+                    if self.runtime.busy or self._loading:
+                        self._pending_prompts.insert(0, nxt)
+                        self._sync_queue_label()
+                        return
+                    self.status.set('自动发送预存消息…')
+                    self._dispatch(nxt['prompt'], nxt['delegate'])
+                self.after(300, _auto_send)
         self.work(lambda: self.runtime.run(prompt, explicit_model=model, permission=permission,
                                             planning=planning, contexts=contexts, role=role, snapshot=snapshot,
                                             delegate=delegate), done)
