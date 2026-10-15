@@ -33,6 +33,7 @@ from .memory import ContextBudget, MemoryStore  # noqa: F401
 from .model import Completion, ModelRouter, TransportError
 from .pricing import CostLedger, cost_of, rate_for
 from .policy import Decision, Mode, Policy
+from .scienceclaw import ToolResultOffloader
 from .secrets import redact
 from .session import Session
 from .tools import ToolContext, ToolRegistry, ToolResult
@@ -347,6 +348,10 @@ class Agent:
                 _ModelProbe(self.router),
                 ledger=self.cost_ledger))))
         self.events: list[dict[str, Any]] = []
+        # ScienceClaw offload seat: oversized tool results land in workspace
+        # research_data/ with a summary + path handed to the model, instead of
+        # the silent tail-truncation the raw slice below used to do.
+        self.offloader = ToolResultOffloader(self.workspace)
 
     # -- context ---------------------------------------------------------
     def system_prompt(self) -> str:
@@ -1087,7 +1092,12 @@ class Agent:
                     step.action_id, step.meta = result.meta['action_id'], dict(result.meta)
                     if result.meta.get('checkpoint'):
                         step.note = 'checkpoint ' + result.meta['checkpoint'][:8]
-                    step.result = (result.content or result.error)[: self.limits.max_tool_result]
+                    full_text = result.content or result.error
+                    if self.offloader.policy.should_offload(tool_name, full_text):
+                        full_text = self.offloader.wrap_result_text(tool_name, result.meta.get('action_id', ''), full_text)
+                        self._emit(type="tool_result_offloaded", tool=tool_name,
+                                   path=self.offloader.last_path, chars=len(result.content or result.error))
+                    step.result = full_text[: self.limits.max_tool_result]
                     step.decision = ("deny" if not result.ok and result.meta.get("authorization") == "deny"
                                      else ("ok" if result.ok else "error"))
                     steps.append(step)
@@ -1118,7 +1128,12 @@ class Agent:
                     step.action_id, step.meta = result.meta['action_id'], dict(result.meta)
                     if result.meta.get('checkpoint'):
                         step.note = 'checkpoint ' + result.meta['checkpoint'][:8]
-                    step.result = (result.content or result.error)[: self.limits.max_tool_result]
+                    full_text = result.content or result.error
+                    if self.offloader.policy.should_offload(call.name, full_text):
+                        full_text = self.offloader.wrap_result_text(call.name, result.meta.get('action_id', ''), full_text)
+                        self._emit(type="tool_result_offloaded", tool=call.name,
+                                   path=self.offloader.last_path, chars=len(result.content or result.error))
+                    step.result = full_text[: self.limits.max_tool_result]
                     step.decision = ("deny" if not result.ok and result.meta.get("authorization") == "deny"
                                      else ("ok" if result.ok else "error"))
                     steps.append(step)
@@ -1155,7 +1170,6 @@ class Agent:
         Called on every exit path (final / error / max_steps) so the end of a
         run is always metabolised and always accounted for.
         """
-        from .secrets import redact
         report.run_id = getattr(self, '_run_id', '')
         report.task_id = getattr(self, 'task_id', '') or report.run_id
         report.parent_run_id = getattr(self, 'parent_run_id', '')

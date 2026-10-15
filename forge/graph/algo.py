@@ -1,4 +1,4 @@
-﻿"""Scheduler: turn ready channels into runnable tasks; apply node writes.
+"""Scheduler: turn ready channels into runnable tasks; apply node writes.
 
 Ported from langgraph/pregel/_algo.py (upstream 5eb60ae) — the
 ``prepare_next_tasks`` / ``apply_writes`` pair that sits at the heart of
@@ -114,28 +114,45 @@ _VERSION_KEY = "__version__"
 
 def _channel_version(channels: dict[str, BaseChannel], key: str, cache: dict | None = None) -> int:
     """Monotonic per-channel version tracked in a side table."""
-    versions = _VERSIONS.get(id(channels), {})
+    versions = _versions_entry(channels)
     return versions.get(key, 0)
 
 
-_VERSIONS: dict[int, dict[str, int]] = {}
+# Side table keyed by the channels dict itself (not id()) so a recycled
+# id() can never hand a fresh graph stale version numbers. Plain dict keys
+# are not weakref-able on CPython, so hold the channels set alive for the
+# table's lifetime via an explicit strong key — correctness over GC-timing:
+# entries are dropped deterministically in reset_versions()/run() teardown,
+# which forge's runner already calls (loop.py imports reset_versions).
+_VERSIONS: dict[int, tuple[dict, dict[str, int]]] = {}
+
+
+def _versions_entry(channels: dict[str, BaseChannel]) -> dict[str, int]:
+    entry = _VERSIONS.get(id(channels))
+    if entry is None or entry[0] is not channels:
+        # id collision after GC (or first sight): fresh version table
+        entry = (channels, {})
+        _VERSIONS[id(channels)] = entry
+    return entry[1]
 
 
 def bump_channel(channels: dict[str, BaseChannel], key: str) -> None:
-    _VERSIONS.setdefault(id(channels), {})
-    _VERSIONS[id(channels)][key] = _VERSIONS[id(channels)].get(key, 0) + 1
+    entry = _versions_entry(channels)
+    entry[key] = entry.get(key, 0) + 1
 
 
 def channel_versions(channels: dict[str, BaseChannel]) -> dict[str, int]:
-    return dict(_VERSIONS.get(id(channels), {}))
+    return dict(_versions_entry(channels))
 
 
 def set_channel_versions(channels: dict[str, BaseChannel], versions: dict[str, int]) -> None:
-    _VERSIONS[id(channels)] = dict(versions)
+    _VERSIONS[id(channels)] = (channels, dict(versions))
 
 
 def reset_versions(channels: dict[str, BaseChannel]) -> None:
-    _VERSIONS.pop(id(channels), None)
+    entry = _VERSIONS.get(id(channels))
+    if entry is not None and entry[0] is channels:
+        del _VERSIONS[id(channels)]
 
 
 def _channel_ready(ch: BaseChannel) -> bool:

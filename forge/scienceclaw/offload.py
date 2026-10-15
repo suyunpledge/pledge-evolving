@@ -122,6 +122,24 @@ class ToolResultOffloader:
         safe = re.sub(r"[/\s]", "_", tool_name)
         return self.workspace / self.offload_dir / f"{safe}_{short}.md"
 
+    def wrap_result_text(self, tool_name: str, call_id: str, text: str) -> str:
+        """Kernel-loop entry: offload a raw text payload, return the summary.
+
+        Used by forge/loop.py at its two result-shaping sites: when a tool
+        result exceeds the policy threshold the full text lands in
+        ``research_data/`` and the model receives this summary (which is
+        well under ``limits.max_tool_result``), so nothing is silently
+        tail-truncated anymore.
+        """
+        path = self._file_path(tool_name, call_id)
+        try:
+            self.writer(path, text)
+            self.offload_count += 1
+            self.last_path = str(path)
+            return make_summary(text, str(path), preview_length=self.policy.summary_length)
+        except OSError:
+            return text  # disk trouble: keep the original text
+
     def wrap(
         self,
         tool_name: str,
