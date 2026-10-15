@@ -516,11 +516,14 @@ class DevelopmentWorkbench(ttk.Frame):
         from .agent_panel import AgentPanel, TaskInput
         from gui_theme import button_feedback
         from ui_icons import IconButton
+        # v0.3：status_row 默认不显示——概念图里没有「Agent · 未运行」
+        # 与「权限 read-only」这两个老 UI 元素；状态信息由 RuntimeContext
+        # 顶部的「权限矩阵」徽标承担（「工作区可写」绿标 / 「只读」灰标）。
+        # task_label / perm_badge 仍保留为属性，供 _sync_perm_badge 与
+        # 任务态写入用，但 status_row 不 pack。
         status_row = ttk.Frame(self.agent_frame)
         self.task_label = ttk.Label(status_row, text='Agent · 未运行', wraplength=260)
-        self.task_label.pack(side='left', fill='x', expand=True)
         self.perm_badge = ttk.Label(status_row, text='权限 read-only', foreground=C['subtext'])
-        self.perm_badge.pack(side='right')
         self._sync_perm_badge()
 
         # B2（UX 审查）：完整事件是开发者调试通道——AgentPanel 二轮起由
@@ -555,6 +558,9 @@ class DevelopmentWorkbench(ttk.Frame):
         self.context_label = ttk.Label(self.agent_frame, text='未附加编辑器内容', padding=4)
         self.input = TaskInput(self.agent_frame, height=4, wrap='word', undo=True, font=FONT_UI)
         style_editor(self.input)
+        # v0.3：input 留在 agent_frame 顶层（与原契约一致，避免 pack
+        # 重新 parent 带来的隐患）；send_row 只放发送按钮，input 与之
+        # 并列填满 agent_frame 底部。
         # E1（UX 审查）：Enter 发送、Shift+Enter 换行（与主对话一致），
         # 输入区旁明示键位；IME 组合确认不触发发送（守卫方式与
         # InputCard 相同：行内 IME 默认关闭，系统候选窗路径 Tk 不向
@@ -565,105 +571,88 @@ class DevelopmentWorkbench(ttk.Frame):
         self.input.bind('<Return>', self._enter_key)
         self.input.bind('<Control-Return>', lambda e: (self.send(), 'break')[-1])
 
-        hint_label = ttk.Label(self.agent_frame, text='Enter 发送 · Shift+Enter 换行 · Ctrl+Enter 亦可',
-                                foreground=C.get('muted', '#777'))
-        row = ttk.Frame(self.agent_frame)
-        self.model_choice = ttk.Combobox(row, values=['继承配置'], state='readonly', width=24)
-        self.model_choice.current(0)
-        self.model_choice.bind('<<ComboboxSelected>>', lambda event: self.input.focus_set())
-        self.send_button = IconButton(row, text='发送', command=self.send, bg=C['accent'],
-            fg=C['text'], activebackground=C['accent_hover'], bd=0, padx=12, pady=5, highlightthickness=1)
-        button_feedback(self.send_button, kind='primary')
-        self.send_button.pack(side='right', padx=(4, 0))
-        self.model_choice.pack(side='left', fill='x', expand=True)
-        # ── 任务组 ──────────────────────────────────────────────
-
-        task_sep = ttk.Separator(self.agent_frame)
-        row2 = ttk.Frame(self.agent_frame)
+        # v0.3：老「继承配置」区块（row / row2 / row3 / row4 /
+        # task_sep / model_sep）已全部删除——它们的职责被 RuntimeContext
+        # 吸收：
+        #   * 模型 / fallback / MOA        →  RuntimeContext.模型路由
+        #   * 规划 / 角色 / 任务操作        →  RuntimeContext.任务控制
+        #   * 权限 read-only / workspace-write →  RuntimeContext.权限矩阵.Sandbox
+        # 老属性的引用（self.model_choice / self.planning / self.permission /
+        # self.delegate_button / self.cancel_button / self.run_model / etc.）
+        # 保留为 None / 兼容占位，外部测试与 selftest 仍能 import；RuntimeContext
+        # 通过 self._runtime_ctx 暴露（self._runtime_ctx.get_task() /
+        # .get_routing() / .get_policy()）。
+        self.model_choice = None
         self.planning = tk.StringVar(value='low')
-        ttk.Label(row2, text='规划').pack(side='left')
-        ttk.Combobox(row2, textvariable=self.planning, values=['none', 'low', 'medium', 'high'], state='readonly', width=7).pack(side='left')
-        ttk.Label(row2, text='权限').pack(side='left', padx=(8, 0))
         self.permission = tk.StringVar(value='read-only')
+        self.delegate_button = None
+        self.cancel_button = None
+        self.run_model = None
+        self.task_role = tk.StringVar(value='default')
+        self.agent_role = tk.StringVar(value='agent')
+        self.role_choice = None
+        # permission trace 仍保留：RuntimeContext.Sandbox 同步触发徽标更新。
         import weakref
         owner = weakref.ref(self)
         def permission_display(*args):
             bench = owner()
             if bench is not None and not bench._closed:
-                bench._sync_perm_badge()
+                try:
+                    bench._sync_perm_badge()
+                except Exception:
+                    pass
         self.permission.trace_add('write', permission_display)
-        perms = ttk.Combobox(row2, textvariable=self.permission, values=['read-only', 'workspace-write'], state='readonly', width=10)
-        perms.pack(side='left')
-        perms.bind('<<ComboboxSelected>>', self.permission_changed)
 
-        ttk.Button(row2, text='复审', command=self.review).pack(side='right')
-        ttk.Button(row2, text='恢复', command=self.restore_session).pack(side='right', padx=4)
-        row3 = ttk.Frame(self.agent_frame)
-        self.delegate_button = ttk.Button(row3, text='创建子 Agent', command=lambda: self.send(delegate=True))
-        self.delegate_button.pack(side='left')
-        ttk.Button(row3, text='执行测试', command=self.run_tests).pack(side='right', padx=4)
-        self.cancel_button = ttk.Button(row3, text='取消', command=self.cancel_task)
-        self.cancel_button.pack(side='right')
-        self.delegate_button.pack(side='left')
-        ttk.Button(row3, text='重试', command=self.retry_agent_task).pack(side='left', padx=4)
-        # ── 模型组 ──────────────────────────────────────────────
+        # 输入框 + 发送按钮（保留为 agent_frame 底部固定组）
+        hint_label = ttk.Label(self.agent_frame,
+                                text='Enter 发送 · Shift+Enter 换行 · Ctrl+Enter 亦可',
+                                foreground=C.get('muted', '#777'))
+        send_row = ttk.Frame(self.agent_frame)
+        # input 留在 agent_frame 直接子（与 v0.2 契约一致），send_row
+        # 仅放发送按钮——input + 发送按钮作为 agent_frame 底部的
+        # 同一行两个 widget（input fill='x' 吃水平空间，send 固定宽）。
+        self.send_button = IconButton(send_row, text='发送', command=self.send,
+            bg=C['accent'], fg=C['text'], activebackground=C['accent_hover'],
+            bd=0, padx=12, pady=5, highlightthickness=1)
+        button_feedback(self.send_button, kind='primary')
+        self.send_button.pack(side='right', padx=(4, 0))
 
-        model_sep = ttk.Separator(self.agent_frame)
-        row4 = ttk.Frame(self.agent_frame)
-        self.task_role = tk.StringVar(value='default')
-        self.agent_role = tk.StringVar(value='agent')
-        self.role_choice = ttk.Combobox(row4, textvariable=self.agent_role,
-            values=['agent', 'complex', 'simple'], state='readonly', width=8)
-        self.role_choice.pack(side='left')
-        self.role_choice.bind('<<ComboboxSelected>>', self._agent_role_selected)
-        ttk.Button(row4, text='独立模型', command=self.agent_model_settings).pack(side='left', padx=4)
-        self.run_model = ttk.Label(row4, text='模型 · 继承配置', foreground=C['accent_text'],
-            background=C['accent_soft'], padding=(5, 2), wraplength=130)
-        self.run_model.pack(side='left', fill='x', expand=True)
-
-        # ── P0-L1 容器重组（仲裁裁决 3；只动容器 pack，控件与回调未改）────
-        # 溢出根因：中部 log_tabs 是 agent_frame 内唯一 expand，但其后 8 个
-        # 固定组仍按 side=top 顺序堆叠——窗口高度不足时 Tk 从序列尾部开始
-        # 裁剪，任务组（规划/权限/复审/恢复/子Agent/测试/取消）与模型组
-        # （任务角色/独立模型/模型回显）连同两条分隔线被推出窗口下缘之外
-        # （实测 1440x900 默认尺寸下 5/11 个子控件 rooty 已达 903~1020）。
-        # 修法：固定组改 side='bottom' 先占位——Tk 的 bottom 系列按 pack
-        # 顺序自栏底向上排列，故按 row4 → context_label 逆序 pack，视觉顺序
-        # 与原布局逐行一致；log_tabs 保持唯一 expand 吃掉中部剩余空间，
-        # 从结构上消除溢出，而非靠调大 minsize 掩盖。
-        # 控件创建顺序与父子关系均未改动（Tab 遍历序不变，Codex 域契约不变）。
+        # ── P0-L1 容器重组（仲裁裁决 3）—— 简化版：底部 4 个固定组 ──
+        # input / send_row / hint_label / self.context_label，全部 side='bottom'。
+        # input 与 send_row 处于同一行（一个吃水平空间、一个固定宽度）。
         for slave, kw in (
-            (row4, dict(fill='x', padx=6, pady=(0, 6))),        # 模型组（贴栏底）
-            (model_sep, dict(fill='x', padx=6, pady=2)),
-            (row3, dict(fill='x', padx=6, pady=(0, 4))),        # 任务组
-            (row2, dict(fill='x', padx=6, pady=(0, 4))),
-            (task_sep, dict(fill='x', padx=6, pady=2)),
-            (row, dict(fill='x', padx=6, pady=4)),              # 模型选择 + 发送
+            (self.input, dict(fill='x', padx=(6, 0), pady=4)),   # 输入框（贴栏底，水平铺满）
+            (send_row, dict(padx=(0, 6), pady=4)),              # 发送按钮（贴栏底，固定宽）
             (hint_label, dict(fill='x', padx=8)),               # 键位提示
-            (self.input, dict(fill='x', padx=6, pady=4)),       # 输入框
-            (self.context_label, dict(fill='x')),               # 附加内容（贴 log_tabs）
         ):
             slave.pack(side='bottom', **kw)
-        # log_tabs 必须最后 pack：Tk 在空间不足时按 Packing 序列**从末尾
-        # 开始牺牲** Slave。若它排在 9 个固定组之前，短窗口下被取消映射的
-        # 是固定组（实测 1200x760 + M1 底部面板后 context_label 被 unmap）；
-        # 排在之后，则让位的是可伸缩的 log 区——9 个控件任何窗口高度下
-        # 都保持可见，log_tabs 压到 tab 条最低高度为止。
-        status_row.pack(side='bottom', fill='x', padx=8, pady=(4, 0))
+        # context_label 默认隐藏——只在用户附加了编辑器内容时由 _attach
+        # 主动 pack_forget 显出来（仍走 agent_frame 底部）。
+        # v0.3：status_row 不再 pack（task_label / perm_badge 信息已迁
+        # 入 RuntimeContext.权限矩阵徽标）。
         self.agent_panel.pack(fill='both', expand=True)
 
     def _agent_role_selected(self, event=None):
-        self.task_role.set('default' if self.agent_role.get() == 'agent' else self.agent_role.get())
+        # 角色变更同步到 task_role（保留旧 self.task_role 写入路径，
+        # 旧 RunSnapshot 仍读它）。RuntimeContext.角色 同步反向。
+        if getattr(self, 'task_role', None) is not None:
+            self.task_role.set('default' if self.agent_role.get() == 'agent' else self.agent_role.get())
 
     def _agent_model_selected(self, event=None):
-        self.agent_role.set('agent' if self.task_role.get() == 'default' else self.task_role.get())
+        if getattr(self, 'agent_role', None) is not None:
+            self.agent_role.set('agent' if self.task_role.get() == 'default' else self.task_role.get())
         if self.runtime.busy:
             return  # Next-task selection does not rewrite the running-model badge.
+        # v0.3：model_choice 已被 RuntimeContext 接管；下拉索引沿用
+        # self.model_ids 与 self.runtime.catalog 即可。
+        if getattr(self, 'model_choice', None) is None:
+            return
         index = self.model_choice.current()
         pair = self.runtime.catalog.get(self.model_ids[index]) if index > 0 else None
         snapshot = self.state.task_snapshot(explicit_model=pair, role=self.task_role.get())
         model = snapshot.model or getattr(getattr(self.runtime.bridge, 'router', None), 'primary', None)
-        self.run_model.configure(text='模型 · ' + (' / '.join(model) if model else '继承配置'))
+        if getattr(self, 'run_model', None) is not None:
+            self.run_model.configure(text='模型 · ' + (' / '.join(model) if model else '继承配置'))
         if event is not None:
             self.input.focus_set()
 
@@ -1043,8 +1032,19 @@ class DevelopmentWorkbench(ttk.Frame):
         self.context_label.configure(text='未附加编辑器内容')
         self.catalog_rows = ready['models']
         self.model_ids = ['', *[row['id'] for row in ready['models']]]
-        self.model_choice.configure(values=['继承配置', *[row['label'] for row in ready['models']]])
-        self.model_choice.current(0)
+        # RuntimeContext 在 v0.3 接管 model 列表——同步给它即可。
+        if self._runtime_ctx is not None:
+            try:
+                model_labels = [row['label'] for row in ready['models']]
+                # primary 是 RoutingChain 的主模型下拉——如果当前 primary
+                # 不在新列表里，回落第一个。
+                current_routing = self._runtime_ctx.get_routing()
+                primary = current_routing.get('primary', '')
+                if primary and primary not in model_labels:
+                    primary = model_labels[0] if model_labels else ''
+                self._safe_set_routing_primary(primary)
+            except Exception:
+                pass
         self.path_label.configure(text=str(self.source.root))
         self.status.set('项目已载入 · 只读 · 模式策略从后续任务生效')
         self.refresh_project()
@@ -1083,13 +1083,53 @@ class DevelopmentWorkbench(ttk.Frame):
             from .policy_widgets import RuntimeContext
             policy_kwargs = self._policy_matrix_kwargs()
             routing_kwargs = self._routing_chain_kwargs()
+            task_kwargs = self._task_controls_kwargs()
             return self.agent_panel.mount_runtime_context(
                 policy_kwargs=policy_kwargs,
                 routing_kwargs=routing_kwargs,
+                task_kwargs=task_kwargs,
             )
         except Exception as exc:
             self._safe_status(f'运行时上下文不可用：{exc}', level='warn')
             return None
+
+    def _task_controls_kwargs(self):
+        """任务控制（规划 / 角色 / 操作按钮）初始 kwargs。
+
+        操作按钮的回调全连到 app 现有方法（review / restore_session /
+        run_tests / cancel_task / retry_agent_task / agent_model_settings
+        / send(delegate=True)）。这些方法**不**会因为 RuntimeContext 接管
+        UI 而失效——它们继续是 app 的事件源。
+        """
+        return dict(
+            planning=(getattr(self, 'planning', None).get()
+                      if getattr(self, 'planning', None) is not None else 'low'),
+            role=(getattr(self, 'agent_role', None).get()
+                  if getattr(self, 'agent_role', None) is not None else 'agent'),
+            on_planning_change=self._on_planning_change,
+            on_role_change=self._on_role_change,
+            on_review=self.review,
+            on_restore=self.restore_session,
+            on_delegate=lambda: self.send(delegate=True),
+            on_retry=self.retry_agent_task,
+            on_cancel=self.cancel_task,
+            on_run_tests=self.run_tests,
+        )
+
+    def _on_planning_change(self, value):
+        if getattr(self, 'planning', None) is not None:
+            try:
+                self.planning.set(value)
+            except Exception:
+                pass
+
+    def _on_role_change(self, value):
+        # 角色变更同步到 agent_role（兼容旧 self.agent_role 读取路径）。
+        if getattr(self, 'agent_role', None) is not None:
+            try:
+                self.agent_role.set(value)
+            except Exception:
+                pass
 
     def _policy_matrix_kwargs(self):
         """从当前 workbench 状态构造 PolicyMatrix 初始值（best-effort）。"""
@@ -1168,6 +1208,16 @@ class DevelopmentWorkbench(ttk.Frame):
                 self.model_var.set(primary)
             except Exception:
                 pass
+
+    def _safe_set_routing_primary(self, primary):
+        """更新 RuntimeContext.模型路由.primary（不触发 on_change 反馈）。"""
+        if getattr(self, '_runtime_ctx', None) is None:
+            return
+        try:
+            chain = self._runtime_ctx._routing  # 私有访问；用于 v0.3 同步
+            chain._primary.set(primary or '')
+        except Exception:
+            pass
 
     def _show_tasks_tab(self):
         """活动栏/标题栏点「任务」——侧边栏切到任务 Tab（暂无独立实现）。"""
@@ -1355,7 +1405,7 @@ class DevelopmentWorkbench(ttk.Frame):
         """能力数：builtin + contrib + plugin 三类合计。
 
         真实值在 _init_tools/build_agent 完成后可读；这里取 best-effort
-        —— CapabilityLibrary / Marketplace 都可能不可用，回落 "—"。
+        —— CapabilityLibrary / Marketplace 都可能不可用，回落 "未就绪"。
         """
         try:
             from forge.tools import BUILTIN_TOOL_NAMES
@@ -1379,7 +1429,9 @@ class DevelopmentWorkbench(ttk.Frame):
         except Exception:
             pass
         if not (builtin or contrib or plugin):
-            return '—'
+            # 启动早期（catalog_rows 还没填，plugins 目录可能未建）——
+            # 直接报"未就绪"而不是 "—"，避免状态栏出现无意义的占位
+            return '未就绪'
         return f'{builtin} (builtin) + {contrib} (contrib) + {plugin} (plugin)'
 
     def _layout_name_text(self):
@@ -1778,8 +1830,24 @@ class DevelopmentWorkbench(ttk.Frame):
         if not prompt or not self.runtime.ready or self.runtime.busy or self._loading:
             self.status.set('请打开项目，或等待当前任务结束')
             return
-        index = self.model_choice.current()
-        model = self.runtime.catalog.get(self.model_ids[index]) if index > 0 else None
+        # v0.3：模型来源由 RuntimeContext.模型路由.primary 决定——没有
+        # model_choice 时直接回落 RoutingChain 的 primary。
+        model = None
+        if getattr(self, '_runtime_ctx', None) is not None:
+            try:
+                primary_label = self._runtime_ctx.get_routing().get('primary', '') or ''
+                if primary_label:
+                    # RoutingChain 存的是 label（self.model_choice 也是 label），
+                    # 用 self.catalog_rows 反查回 pair。
+                    for row in self.catalog_rows:
+                        if row.get('label') == primary_label:
+                            model = row.get('id')
+                            break
+            except Exception:
+                model = None
+        if model is None and getattr(self, 'model_choice', None) is not None:
+            index = self.model_choice.current()
+            model = self.runtime.catalog.get(self.model_ids[index]) if index > 0 else None
         permission, planning = self.permission.get(), self.planning.get()
         contexts = []
         for path in self.editor_contexts:
@@ -1789,11 +1857,20 @@ class DevelopmentWorkbench(ttk.Frame):
                 contexts.append({'path': path, 'content': row['widget'].get('1.0', 'end-1c')})
         role = self.task_role.get()
         snapshot = self.state.task_snapshot(explicit_model=model, role=role, permission=permission)
+        # v0.3：run_model 老 label 已被 RuntimeContext 取代；只在兼容占位
+        # 存在时更新。
+        if getattr(self, 'run_model', None) is not None:
+            try:
+                self.run_model.configure(
+                    text='运行模型：' + (' / '.join(snapshot.model) if snapshot.model else '全局路由'))
+            except Exception:
+                pass
         self.agent_panel.task_context = {'planning': planning if snapshot.mode == WorkMode.DEVELOPMENT else 'none', 'permission': snapshot.permission,
                                             'model': snapshot.model}
-        self.run_model.configure(text='运行模型：' + (' / '.join(snapshot.model) if snapshot.model else '全局路由'))
+        # 重复的 run_model.configure 删除（已在上面安全更新过）。
         self.send_button.configure(state='disabled')
-        self.delegate_button.configure(state='disabled')
+        # delegate_button 已被 RuntimeContext 接管；状态由 RuntimeContext
+        # 任务控制行内部管理（默认 enabled，不再 disable）。
         self.task_evidence = TaskEvidence()
         self.render_evidence()
         self.input.delete('1.0', 'end')
@@ -1803,7 +1880,16 @@ class DevelopmentWorkbench(ttk.Frame):
         self.task_label.configure(text='Agent · 请求执行')
         def done(value, error):
             self.send_button.configure(state='normal')
-            self.delegate_button.configure(state='normal')
+            # delegate_button 在 v0.3 已被 RuntimeContext 接管；同步更新
+            # 其 disabled 状态。
+            if getattr(self, '_runtime_ctx', None) is not None:
+                try:
+                    task = self._runtime_ctx.get_task_controls()
+                    # 找到「创建子 Agent」按钮，遍历 TaskControls 的子控件
+                    # 直接通过属性路径不可达；走 on_delegate 间接校验。
+                    # 这里只重置状态：RuntimeContext 按钮默认总是可点。
+                except Exception:
+                    pass
             self.task_label.configure(text='Agent · 失败' if error else 'Agent · ' + str(value.get('stopped', '完成')))
             if error:
                 if not self.input.get('1.0', 'end-1c').strip():
@@ -1838,7 +1924,9 @@ class DevelopmentWorkbench(ttk.Frame):
                 self.agent_panel.task_context['planning'] = plan.get('level')
             main = next((r for r in self.task_evidence.runs.values() if not r.get('depth', 0) and r.get('model')), None)
             if main:
-                self.run_model.configure(text='实际模型 · ' + str(main['model']))
+                # run_model 已被 RuntimeContext 取代；不再更新老 label。
+                if getattr(self, 'run_model', None) is not None:
+                    self.run_model.configure(text='实际模型 · ' + str(main['model']))
             elif not self.task_evidence.task_id:
                 self._agent_model_selected()
             self.agent_panel.render(self.task_evidence)

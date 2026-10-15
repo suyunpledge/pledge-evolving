@@ -202,34 +202,122 @@ class RoutingChain(ttk.Frame):
         )
 
 
-class RuntimeContext(ttk.Frame):
-    """「运行时上下文」容器：权限矩阵 + 模型路由 + 折叠按钮。
+class TaskControls(ttk.Frame):
+    """规划 + 角色 + 任务操作行：整合到 RuntimeContext 的第三条横排。
 
-    ``collapsed=True`` 时只显示一行标题与"展开"按钮；用户点击展开后
-    显示完整 chrome。默认展开（信息密度高，符合"全宽"工作台风格）。
+    三元素（规划 / 角色）+ 四按钮（复审 / 恢复 / 子 Agent / 重试 /
+    取消 / 执行测试）排成两行。注入到 RuntimeContext 之后，老的
+    "继承配置"区块可以彻底删除。
     """
 
-    def __init__(self, master, *, policy_kwargs, routing_kwargs, **kw):
+    def __init__(self, master, *, planning='low', role='agent',
+                 on_planning_change=None, on_role_change=None,
+                 on_review=None, on_restore=None, on_delegate=None,
+                 on_retry=None, on_cancel=None, on_run_tests=None,
+                 **kw):
         super().__init__(master, **kw)
-        self._build(policy_kwargs, routing_kwargs)
+        self._on_planning = on_planning_change
+        self._on_role = on_role_change
+        self._callbacks = dict(
+            review=on_review, restore=on_restore, delegate=on_delegate,
+            retry=on_retry, cancel=on_cancel, run_tests=on_run_tests)
+        self._build(planning, role)
 
-    def _build(self, policy_kwargs, routing_kwargs):
+    def _build(self, planning, role):
+        self.configure(padding=(8, 4))
+        # 第一行：规划 + 角色
+        row1 = ttk.Frame(self)
+        row1.pack(fill='x', pady=(0, 4))
+        tk.Label(row1, text='规划', font=FONT_CAPTION, bg=C['bg'],
+                 fg=C['ter']).pack(side='left')
+        self._planning = tk.StringVar(value=planning)
+        plan = ttk.Combobox(row1, textvariable=self._planning,
+                            values=('none', 'low', 'medium', 'high'),
+                            state='readonly', width=8)
+        plan.pack(side='left', padx=(4, 12))
+        plan.bind('<<ComboboxSelected>>', self._emit_planning)
+        tk.Label(row1, text='角色', font=FONT_CAPTION, bg=C['bg'],
+                 fg=C['ter']).pack(side='left')
+        self._role = tk.StringVar(value=role)
+        role_combo = ttk.Combobox(row1, textvariable=self._role,
+                                values=('agent', 'complex', 'simple', 'review'),
+                                state='readonly', width=8)
+        role_combo.pack(side='left', padx=(4, 0))
+        role_combo.bind('<<ComboboxSelected>>', self._emit_role)
+        # 第二行：操作按钮（右对齐）
+        row2 = ttk.Frame(self)
+        row2.pack(fill='x', pady=(0, 2))
+        for label, key in (('执行测试', 'run_tests'),
+                           ('取消', 'cancel'),
+                           ('重试', 'retry'),
+                           ('创建子 Agent', 'delegate'),
+                           ('恢复', 'restore'),
+                           ('复审', 'review')):
+            button = ttk.Button(row2, text=label, width=10)
+            callback = self._callbacks.get(key)
+            if callback is not None:
+                button.configure(command=callback)
+            else:
+                button.configure(state='disabled')
+            button.pack(side='right', padx=(4, 0))
+
+    def _emit_planning(self, _event=None):
+        if callable(self._on_planning):
+            try:
+                self._on_planning(self._planning.get())
+            except Exception:
+                pass
+
+    def _emit_role(self, _event=None):
+        if callable(self._on_role):
+            try:
+                self._on_role(self._role.get())
+            except Exception:
+                pass
+
+    def get_planning(self):
+        return self._planning.get()
+
+    def get_role(self):
+        return self._role.get()
+
+
+class RuntimeContext(ttk.Frame):
+    """「运行时上下文」容器：权限矩阵 + 模型路由 + 任务控制 + 折叠按钮。
+
+    排版：
+        标题行：「运行时上下文」标题 + 「收起 ▲」按钮
+        第一行：左 权限矩阵  4 列下拉  ＋  右 模型路由  3 元素
+        第二行：规划 ＋ 角色 ＋ 任务操作（执行测试 / 取消 / 重试 /
+                 创建子 Agent / 恢复 / 复审）
+
+    默认展开（信息密度高，符合"全宽"工作台风格）。点击标题右侧按钮
+    折叠 / 展开。
+    """
+
+    def __init__(self, master, *, policy_kwargs, routing_kwargs,
+                 task_kwargs=None, **kw):
+        super().__init__(master, **kw)
+        self._build(policy_kwargs, routing_kwargs, task_kwargs or {})
+
+    def _build(self, policy_kwargs, routing_kwargs, task_kwargs):
         self.configure(padding=(0, 4))
-        # 标题行：左侧标题、右侧折叠按钮
+        # 标题行：v0.3 起固定展示（不再有折叠按钮）—— 概念图里这块
+        # chrome 总是展开，让用户一眼看到权限矩阵 + 模型路由。右侧留
+        # 一个轻量「运行中 · 就绪」徽标，将来可挂状态指示。
         title_row = ttk.Frame(self)
         title_row.pack(fill='x', padx=8, pady=(4, 0))
         tk.Label(title_row, text='运行时上下文', font=FONT_SECTION, bg=C['bg'],
                  fg=C['text']).pack(side='left')
-        self._collapse_btn = ttk.Button(title_row, text='收起 ▲', width=10)
-        self._collapse_btn.pack(side='right')
-        self._collapse_btn.configure(command=self._toggle)
-        # 内容容器
+        # 内容容器（v0.3：永远展开，没有折叠）
         self._body = ttk.Frame(self)
         self._body.pack(fill='x')
-        # 两列：左 PolicyMatrix、右 RoutingChain
-        left = ttk.Frame(self._body)
+        # 主体两列：左 PolicyMatrix、右 RoutingChain
+        upper = ttk.Frame(self._body)
+        upper.pack(fill='x')
+        left = ttk.Frame(upper)
         left.pack(side='left', fill='both', expand=True, padx=(8, 4), pady=4)
-        right = ttk.Frame(self._body)
+        right = ttk.Frame(upper)
         right.pack(side='left', fill='both', expand=True, padx=(4, 8), pady=4)
         self._policy = PolicyMatrix(left, **policy_kwargs)
         self._policy.pack(fill='x')
@@ -239,20 +327,31 @@ class RuntimeContext(ttk.Frame):
             routing_kwargs['model_options'] = (routing_kwargs.get('primary') or '',)
         self._routing = RoutingChain(right, **routing_kwargs)
         self._routing.pack(fill='x')
-        self._collapsed = False
+        # 第二行：任务控制（规划 / 角色 / 操作）
+        self._task = TaskControls(self._body, **task_kwargs)
+        self._task.pack(fill='x', padx=8, pady=(0, 4))
 
     def _toggle(self):
         if self._collapsed:
             self._body.pack(fill='x')
-            self._collapse_btn.configure(text='收起 ▲')
-            self._collapsed = False
         else:
             self._body.pack_forget()
-            self._collapse_btn.configure(text='展开 ▼')
-            self._collapsed = True
+        self._collapsed = not self._collapsed
+        self._update_button()
+
+    def _update_button(self):
+        # 已展开 → "收起 ▲"；已折叠 → "展开 ▼"
+        self._collapse_btn.configure(text='收起 ▲' if not self._collapsed else '展开 ▼')
 
     def get_policy(self):
         return self._policy.get()
 
     def get_routing(self):
         return self._routing.get()
+
+    def get_task(self):
+        return dict(planning=self._task.get_planning(),
+                    role=self._task.get_role())
+
+    def get_task_controls(self):
+        return self._task

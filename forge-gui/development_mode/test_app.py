@@ -317,8 +317,17 @@ class WorkbenchTests(unittest.TestCase):
         self.assertTrue(execute.call_args.kwargs['trusted'])
 
     def test_cancel_button_requests_stop_without_marking_worker_complete(self):
+        # v0.3：「取消」按钮已搬到 RuntimeContext.任务控制——通过
+        # _runtime_ctx.get_task_controls() 找到对应按钮并触发。
         with patch.object(self.app.runtime, 'cancel', return_value=True) as cancel:
-            self.app.cancel_button.invoke()
+            task = self.app._runtime_ctx.get_task_controls()
+            from tkinter import ttk as _ttk
+            cancel_button = next(
+                (w for w in _iter_all_widgets(task) if isinstance(w, _ttk.Button)
+                 and w.cget('text') == '取消'),
+                None)
+            self.assertIsNotNone(cancel_button, 'RuntimeContext 应含「取消」按钮')
+            cancel_button.invoke()
             cancel.assert_called_once()
         self.assertIn('等待', self.app.status.get())
 
@@ -343,6 +352,18 @@ class WorkbenchTests(unittest.TestCase):
         return [self.app.log_tabs.tab(tab, 'text')
                 for tab in self.app.log_tabs.tabs()
                 if str(self.app.log_tabs.tab(tab, 'state')) != 'hidden']
+
+
+def _iter_all_widgets(root):
+    """深度优先遍历 root 及其所有 Tk 子控件（生成器）。"""
+    stack = [root]
+    while stack:
+        widget = stack.pop()
+        yield widget
+        try:
+            stack.extend(widget.winfo_children())
+        except Exception:
+            pass
 
     def test_agent_events_bottom_tab_toggles_without_data_loss(self):
         # v0.2：事件视图统一在 AgentPanel「完整事件」Tab；底部 Notebook
@@ -391,25 +412,40 @@ class WorkbenchTests(unittest.TestCase):
         self.assertIs(self.app.task_label.master, frame)
 
     def test_agent_groups_separate_session_task_and_model_rows(self):
-        """B1：三组语义分区的代表控件都在 Agent 栏内且映射可见。"""
+        """B1：三组语义分区的代表控件都在 Agent 栏内且映射可见。
+
+        v0.3：老「继承配置」区块（model_choice / cancel_button /
+        delegate_button / run_model）已被 RuntimeContext 取代——
+        模型下拉搬到 RuntimeContext.模型路由，操作按钮搬到
+        RuntimeContext.任务控制。本测试只验仍由 agent_frame 直接
+        承载的核心控件。
+        """
         from tkinter import ttk as _ttk
         for widget in (self.app.task_label, self.app.perm_badge, self.app.context_label,
-                       self.app.input, self.app.send_button, self.app.model_choice,
-                       self.app.cancel_button, self.app.delegate_button,
-                       self.app.run_model):
+                       self.app.input, self.app.send_button):
             self.pump(lambda: widget.winfo_ismapped())
             self.assertTrue(widget.winfo_ismapped(), '分组后控件应可见')
+        # RuntimeContext 是 v0.3 接管任务控制 / 模型 / 权限 的总入口——
+        # 在这里验证它确实被挂载到了 AgentPanel。
+        self.assertIsNotNone(self.app._runtime_ctx,
+                             'RuntimeContext 应在 _build_agent 阶段挂载')
         # 任务组与模型组的下拉变量随行布局存在
         for var in (self.app.planning, self.app.permission, self.app.task_role):
             self.assertEqual(var.get() in {'low', 'read-only', 'default'}, True)
-        # 模型类控件收敛：任务角色、独立模型与回显同处一行
-        model_row = self.app.run_model.master
-        texts = [w.cget('text') for w in model_row.winfo_children()
-                 if isinstance(w, _ttk.Button)]
-        labels = [w.cget('text') for w in model_row.winfo_children()
-                  if isinstance(w, _ttk.Label)]
-        self.assertIn('独立模型', texts)
-        self.assertNotIn('任务角色', labels, '任务角色移入配置弹窗，窄 Agent 栏不能挤压运行模型')
+        # v0.3：任务角色 / 独立模型 / 模型回显已迁到 RuntimeContext——
+        # agent_frame 不再承载这一行。验证 RuntimeContext 的任务控件
+        # 包含「创建子 Agent」「重试」「复审」「恢复」按钮。
+        task = self.app._runtime_ctx.get_task_controls()
+        from tkinter import ttk as _ttk
+        # TaskControls 内部用两行（row1 / row2）放控件，递归收集所有 button。
+        button_texts = []
+        for descendant in task.winfo_children():
+            button_texts.extend(w.cget('text') for w in descendant.winfo_children()
+                                 if isinstance(w, _ttk.Button))
+            button_texts.extend(w.cget('text') for w in task.winfo_children()
+                                 if isinstance(w, _ttk.Button))
+        for label in ('创建子 Agent', '重试', '复审', '恢复', '执行测试', '取消'):
+            self.assertIn(label, button_texts, f'RuntimeContext.任务控制缺 {label}')
 
     def test_focus_toggle_contract_survives_button_removal(self):
         """B4：按钮移除后 toggle_focus 状态机与预设联动保持原契约。"""
