@@ -889,10 +889,12 @@ class ForgeGuiApp:
         self._coding_bench = None   # P0-01：宿主持有 Coding Workbench 引用
 
         # ── 底部状态栏 ──
-        tk.Frame(self.root, bg=C["border"], height=1).pack(fill=tk.X, side=tk.BOTTOM)
+        self._bot_sep = tk.Frame(self.root, bg=C["border"], height=1)
+        self._bot_sep.pack(fill=tk.X, side=tk.BOTTOM)
         bot = tk.Frame(self.root, bg=C["bg"], height=theme.ui_px(self.root, 28))
         bot.pack(fill=tk.X, side=tk.BOTTOM)
         bot.pack_propagate(False)
+        self.bot = bot  # R3：Coding chrome 需要可逆隐藏宿主底栏
         self.status_var = i18n.StringVar(self.root, value="")
         self.status_lbl = i18n.Label(bot, textvariable=self.status_var, bg=C["bg"],
                                    fg=C["body"], font=FONT_CAPTION, anchor=tk.W,
@@ -1002,7 +1004,7 @@ class ForgeGuiApp:
                          else "Work Mode", "info")
 
     def _apply_workspace_chrome(self, kind):
-        """Coding 下收起 Work 专属顶栏控件（快照 pack 参数，可逆恢复）。"""
+        """Coding 下收起 Work 专属顶栏控件与宿主底栏（快照 pack 参数，可逆恢复）。"""
         coding = kind == self._workspace_kind.CODING
         if not hasattr(self, "_chrome_pack_cache"):
             self._chrome_pack_cache = {}
@@ -1022,6 +1024,23 @@ class ForgeGuiApp:
             except tk.TclError:
                 continue
 
+        # R3：Coding 下隐藏宿主底栏（28px bot + 1px 分隔线）——dev-mode 的
+        # StatusBar 已覆盖状态展示，双状态栏堆叠浪费一整行。Work 模式恢复。
+        for name in ("bot", "_bot_sep"):
+            widget = getattr(self, name, None)
+            if widget is None:
+                continue
+            try:
+                if coding:
+                    if widget.winfo_manager() == "pack" and name not in self._chrome_pack_cache:
+                        info = widget.pack_info()
+                        self._chrome_pack_cache[name] = {
+                            key: value for key, value in info.items() if key != "in"}
+                    widget.pack_forget()
+                elif name in self._chrome_pack_cache and not widget.winfo_manager():
+                    widget.pack(**self._chrome_pack_cache[name])
+            except tk.TclError:
+                pass
     # ── 顶栏 ──────────────────────────────────────────────
     def _build_topbar(self):
         # 品牌头像（对话消息里的 Forge 头像）：注入给 chat_widgets

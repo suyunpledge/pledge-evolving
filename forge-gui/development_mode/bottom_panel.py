@@ -33,12 +33,12 @@ from gui_theme import C, FONT_CAPTION, FONT_MONO_SM, FONT_SECTION, style_editor
 
 # 与 _build_editor 原实现完全一致的输出页集合（顺序即 Tab 顺序）。
 # 末尾「能力 / 审批」为新加；前四页与既有契约保持一致。
-PAGES = ('差异', '测试', '问题', '输出', '能力', '审批')
+PAGES = ('差异', '测试', '问题', '输出', '终端', '能力', '审批')
 
 # 旧名到新名的别名（兼容既有 select('Diff') / select('终端') 调用）。
 PAGE_ALIASES = {
     'Diff': '差异',
-    '终端': '差异',  # 旧「终端」折叠到「差异」（下层共用 Text 视图）
+    '终端': '终端',  # R4：终端恢复独立页（不再折叠进差异）
     '输出': '输出',
 }
 

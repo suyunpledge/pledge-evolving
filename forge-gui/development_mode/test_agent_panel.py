@@ -20,7 +20,7 @@ class AgentPanelTests(unittest.TestCase):
 
     def _view(self, name):
         """v0.2 页改名后按别名取输出视图（Diff→差异）。"""
-        alias = {'Diff': '差异', '终端': '差异'}.get(name, name)
+        alias = {'Diff': '差异'}.get(name, name)
         return self.app.output_views.get(alias) or self.app.output_views[name]
 
     setUp = test_app.WorkbenchTests.setUp

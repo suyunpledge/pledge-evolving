@@ -275,6 +275,14 @@ class TaskControls(ttk.Frame):
             except Exception:
                 pass
 
+    def set_role(self, value):
+        """程序化设角色（与下拉 _role 同一 StringVar，UI 同步刷新）。"""
+        self._role.set(value)
+
+    def get_role_var(self):
+        """角色 StringVar 直引用（app 侧别名挂载用）。"""
+        return self._role
+
     def get_planning(self):
         return self._planning.get()
 
@@ -298,6 +306,7 @@ class RuntimeContext(ttk.Frame):
     def __init__(self, master, *, policy_kwargs, routing_kwargs,
                  task_kwargs=None, **kw):
         super().__init__(master, **kw)
+        self._collapsed = False  # R1：初始化折叠状态（v0.3 删了这里导致 _toggle 必抛）
         self._build(policy_kwargs, routing_kwargs, task_kwargs or {})
 
     def _build(self, policy_kwargs, routing_kwargs, task_kwargs):
@@ -309,7 +318,10 @@ class RuntimeContext(ttk.Frame):
         title_row.pack(fill='x', padx=8, pady=(4, 0))
         tk.Label(title_row, text='运行时上下文', font=FONT_SECTION, bg=C['bg'],
                  fg=C['text']).pack(side='left')
-        # 内容容器（v0.3：永远展开，没有折叠）
+        # R1：恢复折叠按钮（v0.3 删了折叠；概念图 Agent 栏不占满，默认展开、可折叠）
+        self._collapse_btn = ttk.Button(title_row, text='收起 ▲', command=self._toggle)
+        self._collapse_btn.pack(side='right')
+        # 内容容器（展开态 pack，折叠态 _toggle 里 pack_forget）
         self._body = ttk.Frame(self)
         self._body.pack(fill='x')
         # 主体两列：左 PolicyMatrix、右 RoutingChain
@@ -330,6 +342,10 @@ class RuntimeContext(ttk.Frame):
         # 第二行：任务控制（规划 / 角色 / 操作）
         self._task = TaskControls(self._body, **task_kwargs)
         self._task.pack(fill='x', padx=8, pady=(0, 4))
+
+    def set_role(self, value):
+        """透传角色到 TaskControls（app 反向同步入口）。"""
+        self._task.set_role(value)
 
     def _toggle(self):
         if self._collapsed:

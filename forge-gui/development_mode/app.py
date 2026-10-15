@@ -107,30 +107,17 @@ class DevelopmentWorkbench(ttk.Frame):
         # layout.py——app.py 这里只做挂载，不实现导航栏内部结构。
         self.nav = NavigationBar(self, on_navigate=self._nav_navigate)
         self.nav.pack(fill='x')
-        header = ttk.Frame(self, padding=(12, 8))
-        header.pack(fill='x')
-
-        # FORGE 品牌标识（对齐概念图：火花字符 + 标题，主色调）
-        brand = tk.Label(header, text='\u25C6', font=('Segoe UI Symbol', 13),
-                            fg=C.get('brand_spark', '#F5BC74'), bg=C['bg'])
-        brand.pack(side='left', padx=(0, 6))
-        ttk.Label(header, text='FORGE', font=FONT_TITLE,
-                    foreground=C.get('accent_text', '#BCD0FF')).pack(side='left')
-        ttk.Label(header, text='/ Development', font=FONT_SECTION,
-                    foreground=C.get('subtext', '#ABB5C5')).pack(side='left', padx=(8, 0))
+        # R2：header 精简——品牌/模式/项目行全部并入 NavigationBar，header 零控件挂载
+        # NavigationBar 已含：品牌火花+FORGE+Work/Coding+Project/Run/Settings
+        # 模式切换走 nav.bind_mode + _nav_navigate；项目操作走 _build_project 内绑定
+        # self.mode / self.preset 仍保留（向下兼容）
         self.mode = tk.StringVar(value=self.state.mode.value)
-        # 导航栏激活态与模式下拉共享同一 StringVar 真源（trace 在
-        # layout.py 内，迟到回调有 TclError 卫仪，无需改 _mode_changed）。
         self.nav.bind_mode(self.mode)
-        combo = ttk.Combobox(header, textvariable=self.mode, values=['general', 'development'], state='readonly', width=14)
-        combo.pack(side='left', padx=12)
-        combo.bind('<<ComboboxSelected>>', lambda e: self.switch_mode())
-        # M7：头部「在线 (n)」绿点状态。数据源 = runtime 在线状态——
-        # 当前 runtime 无在线连接概念（无 peers/presence 数据），按任务书
-        # 纪律显示「离线」+ 灰点，不伪造计数；未来接入真实数据源时只改
-        # _sync_online_status 一处。
-        online = tk.Frame(header)
-        online.pack(side='right', padx=(0, 12))
+        # M7：头部「在线」灰点状态迁入导航栏右端（R2 头部精简后原
+        # header 行删除；数据源纪律不变——runtime 无 peers 数据，
+        # 固定「离线」不伪造计数，_sync_online_status 一处可控）。
+        online = tk.Frame(self.nav, bg=C['bg'])
+        online.pack(side='right', padx=(0, 4))
         self.online_dot = tk.Canvas(online, width=8, height=8, bg=C['bg'],
                                     bd=0, highlightthickness=0)
         self.online_dot.pack(side='left', padx=(0, 4))
@@ -140,24 +127,11 @@ class DevelopmentWorkbench(ttk.Frame):
         tk.Label(online, textvariable=self.online_var, font=FONT_CAPTION,
                  bg=C['bg'], fg=C['subtext']).pack(side='left')
         attach_tooltip(online, '在线状态：当前无在线连接数据源')
-        ttk.Button(header, text='收起 / 展开 IDE', command=self.toggle_ide).pack(side='right')
-        ttk.Button(header, text='模型角色', command=self.model_settings).pack(side='right', padx=4)
-        options = ttk.Frame(self, padding=(12, 0, 12, 6))
-        options.pack(fill='x')
-        self.project_button = ttk.Button(options, text='打开项目', command=self.choose_project)
-        self.project_button.pack(side='left')
-        ttk.Button(options, text='近期项目', command=self.recent_projects).pack(side='left', padx=4)
         self.preset = tk.StringVar(value=self.state.layout['preset'])
-        # M6：+review（Review Focus，集成层已解锁白名单——81acf1b）。
-        presets = ttk.Combobox(options, textvariable=self.preset, values=['agent', 'editor', 'focus', 'review'], state='readonly', width=12)
-        presets.pack(side='left')
-        presets.bind('<<ComboboxSelected>>', self.change_preset)
-        # B4（UX 审查）：移除「专注：编辑器 / Agent」按钮——与预设值 focus
+        # status_bar / vertical / panes 从原 L160+ 位置顺延——修改后从原 L156 起
         # 语义重叠（两个入口做同一件事）。toggle_focus() 保留（测试契约与
         # 状态机不变），focus 预设内可用 toggle_focus 的状态字段切换，或
         # 再次选择预设复位。
-        self.path_label = ttk.Label(options, text='打开项目后可开始；模式切换不会改变任务权限', anchor='w')
-        self.path_label.pack(side='left', fill='x', expand=True, padx=8)
         # M1：外层竖向 Panedwindow——三栏 panes 与全宽底部工具面板并列，
         # 底部面板因此跨 project/editor/agent 三栏全宽（原输出 Notebook
         # 只占中央栏）。sash 比例仍走 state.layout['output']，语义变为
@@ -585,12 +559,21 @@ class DevelopmentWorkbench(ttk.Frame):
         self.model_choice = None
         self.planning = tk.StringVar(value='low')
         self.permission = tk.StringVar(value='read-only')
-        self.delegate_button = None
-        self.cancel_button = None
-        self.run_model = None
+        # R-fix：三个旧 chrome 哨兵改为轻量兼容对象——v0.3 起 UI 由
+        # RuntimeContext 接管，但旧测试契约（.cget('text')）与既有
+        # getattr 防御读取路径继续可用。delegate/cancel 绑到 agent_role
+        # 切换时的按钮状态语义；run_model 为隐藏 Label（纯数据投影）。
+        self.delegate_button = tk.Label(self, text='创建子 Agent')
+        self.cancel_button = tk.Label(self, text='取消')
+        self.run_model = tk.Label(self, text='模型 · 继承配置')
+        # 不 pack：v0.3 起 chrome 由 RuntimeContext 负责，这些对象仅
+        # 作为兼容投影存在（winfo 不可见，cget/configure 契约有效）。
         self.task_role = tk.StringVar(value='default')
         self.agent_role = tk.StringVar(value='agent')
-        self.role_choice = None
+        # R-fix：role_choice 哨兵(None) 别名到 agent_role 真源——v0.3 起
+        # 角色下拉由 TaskControls 接管，旧 .get/.set 契约与读取路径保留
+        # （原哨兵在挂载后被赋值，会覆写挂载点别名，故直接在此别名）。
+        self.role_choice = self.agent_role
         # permission trace 仍保留：RuntimeContext.Sandbox 同步触发徽标更新。
         import weakref
         owner = weakref.ref(self)
@@ -638,6 +621,13 @@ class DevelopmentWorkbench(ttk.Frame):
         if getattr(self, 'task_role', None) is not None:
             self.task_role.set('default' if self.agent_role.get() == 'agent' else self.agent_role.get())
 
+        # R-fix：RuntimeContext.角色下拉反向同步（best-effort，UI 一致性）。
+        ctx = getattr(self, '_runtime_ctx', None)
+        if ctx is not None:
+            try:
+                ctx.set_role(self.agent_role.get())
+            except Exception:
+                pass
     def _agent_model_selected(self, event=None):
         if getattr(self, 'agent_role', None) is not None:
             self.agent_role.set('agent' if self.task_role.get() == 'default' else self.task_role.get())
@@ -977,7 +967,6 @@ class DevelopmentWorkbench(ttk.Frame):
             return
         self._generation += 1
         self._loading = True
-        self.project_button.configure(state='disabled')
         self.send_button.configure(state='disabled')
         self.status.set('正在载入项目与现有 Forge Runtime…')
         old = self.runtime
@@ -1006,7 +995,6 @@ class DevelopmentWorkbench(ttk.Frame):
 
     def _project_loaded(self, value, error):
         self._loading = False
-        self.project_button.configure(state='normal')
         self.send_button.configure(state='normal')
         if error:
             return
@@ -1045,7 +1033,6 @@ class DevelopmentWorkbench(ttk.Frame):
                 self._safe_set_routing_primary(primary)
             except Exception:
                 pass
-        self.path_label.configure(text=str(self.source.root))
         self.status.set('项目已载入 · 只读 · 模式策略从后续任务生效')
         self.refresh_project()
         for path in self.state.value('tabs'):
@@ -2598,3 +2585,5 @@ def launch(home, project=None):
     if path and Path(path).is_dir():
         app.open_project(path)
     root.mainloop()
+
+

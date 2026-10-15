@@ -406,10 +406,10 @@ class LayoutRegressionTests(_WorkbenchFixture, unittest.TestCase):
         self.assertEqual(slaves, [self.app.panes, self.app.bottom],
                          '展开态应恢复 [三栏, 底部面板] 次序')
 
-    def test_bottom_panel_keeps_all_six_pages(self):
-        """v0.2：六 Tab（差异/测试/问题/输出/能力/审批）替代旧五 Tab。"""
-        self.assertEqual(len(self.app.bottom.views), 6)
-        for name in ('差异', '测试', '问题', '输出', '能力', '审批'):
+    def test_bottom_panel_keeps_all_seven_pages(self):
+        """R4：七页制（差异/测试/问题/输出/终端/能力/审批）。"""
+        self.assertEqual(len(self.app.bottom.views), 7)
+        for name in ('差异', '测试', '问题', '输出', '终端', '能力', '审批'):
             self.assertIn(name, self.app.bottom.views)
         # write_output 旧名「输出」仍生效（兼容别名）。
         self.app.write_output('输出', 'M1 冒烟')
@@ -958,9 +958,9 @@ class BottomPanelTests(_WorkbenchFixture, unittest.TestCase):
         # BADGED 三页带计数徽标（M5 嫁接），能力/审批为注入式占位。
         bottom = self.app.bottom
         labels = [bottom.notebook.tab(bottom.pages[n], 'text')
-                  for n in ('差异', '测试', '问题', '输出', '能力', '审批')]
-        self.assertEqual(labels, ['差异 (0)', '测试 (0)', '问题 (0)', '输出', '能力', '审批'])
-        self.assertEqual(len(bottom.notebook.tabs()), 6)
+                  for n in ('差异', '测试', '问题', '输出', '终端', '能力', '审批')]
+        self.assertEqual(labels, ['差异 (0)', '测试 (0)', '问题 (0)', '输出', '终端', '能力', '审批'])
+        self.assertEqual(len(bottom.notebook.tabs()), 7)
 
     def test_output_page_aliases_test_page(self):
         """v0.2 六页制：'输出' 为独立页——write_output('输出')
