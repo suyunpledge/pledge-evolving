@@ -40,13 +40,16 @@ class Conversation(tk.Text):
     def __init__(self, parent, open_file, history_source=None):
         super().__init__(parent, height=6, wrap='word', font=FONT_UI)
         style_editor(self)
-        self.configure(state='disabled')
+        self.configure(state='disabled', background=C['chat'], highlightthickness=0,
+                       padx=10, pady=8, spacing1=3, spacing3=5)
         self.open_file = open_file
         self.history_source = history_source
         self._history_path = None
         self._history_times = defaultdict(deque)
         self.tag_configure('timestamp', foreground=C['comment'], spacing1=6)
         self.tag_configure('heading', font=FONT_SECTION, foreground=C['text'])
+        self.tag_configure('user_heading', font=FONT_UI_BOLD, foreground=C['accent2'], spacing1=8)
+        self.tag_configure('agent_heading', font=FONT_UI_BOLD, foreground=C['agent_accent'], spacing1=8)
         self.tag_configure('b', font=FONT_UI_BOLD)
         self.tag_configure('code', font=FONT_MONO_SM, background=C['code_bg'])
         self.tag_configure('quote', foreground=C['subtext'], lmargin1=12, lmargin2=12)
@@ -139,7 +142,8 @@ class Conversation(tk.Text):
         except (TypeError, ValueError, OverflowError, OSError):
             stamp = '时间未记录'
         self.insert('end', '\n' + stamp + '\n', 'timestamp')
-        self.insert('end', '\n' + str(redact(role)) + '\n', 'heading')
+        self.insert('end', '\n' + str(redact(role)) + '\n',
+                    'user_heading' if role in {'你', 'user'} else 'agent_heading')
         for block in parse_blocks(str(redact(body))):
             kind, value = block['type'], block.get('text', '')
             if kind == 'hr':
@@ -183,8 +187,8 @@ class Conversation(tk.Text):
 
 class ToolSummary(ttk.Frame):
     def __init__(self, parent):
-        super().__init__(parent, padding=6)
-        self.summary = ttk.Label(self, text='工具步骤', font=FONT_UI)
+        super().__init__(parent, padding=8, style='Card.TFrame')
+        self.summary = ttk.Label(self, text='工具步骤', font=FONT_UI, style='Card.TLabel')
         self.summary.pack(anchor='w')
         self.button = ttk.Button(self, text='View Details', command=self.toggle)
         self.button.pack(anchor='w')
@@ -217,13 +221,13 @@ class ToolSummary(ttk.Frame):
 
 class DiffCard(ttk.Frame):
     def __init__(self, parent, change, *, view, open_file, revert, pending):
-        super().__init__(parent, padding=6)
+        super().__init__(parent, padding=8, style='Card.TFrame')
         self.change = change
-        self.title = ttk.Label(self, wraplength=310, font=FONT_UI_BOLD)
+        self.title = ttk.Label(self, wraplength=310, font=FONT_UI_BOLD, style='Card.TLabel')
         self.title.pack(anchor='w')
-        self.state_label = ttk.Label(self, wraplength=310)
+        self.state_label = ttk.Label(self, wraplength=310, style='Muted.Card.TLabel')
         self.state_label.pack(anchor='w')
-        self.row = ttk.Frame(self)
+        self.row = ttk.Frame(self, style='Card.TFrame')
         self.row.pack(fill='x')
         self.buttons = {}
         self._width = 260
@@ -300,13 +304,13 @@ class PlanningCard(ttk.Frame):
     LEVELS = {'none': '无 (None)', 'low': '低 (Low)', 'medium': '中等 (Medium)', 'high': '高 (High)'}
 
     def __init__(self, parent, view_changes):
-        super().__init__(parent, padding=8)
-        ttk.Label(self, text='任务规划', font=FONT_UI_BOLD).pack(anchor='w')
-        self.level = ttk.Label(self, foreground=C['subtext'])
+        super().__init__(parent, padding=8, style='Card.TFrame')
+        ttk.Label(self, text='任务规划', font=FONT_UI_BOLD, style='Card.TLabel').pack(anchor='w')
+        self.level = ttk.Label(self, style='Muted.Card.TLabel')
         self.level.pack(anchor='w')
-        self.authorization = ttk.Label(self, wraplength=280)
+        self.authorization = ttk.Label(self, wraplength=280, style='Card.TLabel')
         self.authorization.pack(anchor='w')
-        self.permission = ttk.Label(self, foreground=C['subtext'])
+        self.permission = ttk.Label(self, style='Muted.Card.TLabel')
         self.permission.pack(anchor='w')
         self.view = ttk.Button(self, text='查看变更', command=view_changes, state='disabled')
         self.view.pack(anchor='w', pady=(4, 0))
@@ -361,7 +365,7 @@ class AgentPanel(ttk.Frame):
             self.header_buttons[key] = button
         # 运行时上下文（权限矩阵 + 模型路由）—— 4-Tab 之上、标题之下
         self._runtime_context = None  # 由 app 调 mount_runtime_context 注入
-        self.notebook = ttk.Notebook(self)
+        self.notebook = ttk.Notebook(self, style='Coding.TNotebook')
         self.notebook.pack(fill='both', expand=True)
         # 4 个 Tab：对话 / 任务 / 子 Agent / 完整事件
         conversation, tasks, agents, events = (ttk.Frame(self.notebook) for _ in range(4))
@@ -385,7 +389,7 @@ class AgentPanel(ttk.Frame):
         tools.pack(fill='x')
         ttk.Button(tools, text='模型配置', command=lambda: configure_model(self.selected_name())).pack(side='left')
         ttk.Button(tools, text='核实 Git 版本', command=refresh).pack(side='right')
-        self.tree = ttk.Treeview(agents, show='tree headings', columns=('state',), height=3)
+        self.tree = ttk.Treeview(agents, show='tree headings', columns=('state',), height=3, style='Coding.Treeview')
         self.tree.heading('#0', text='Agent')
         self.tree.heading('state', text='执行状态')
         self.tree.column('#0', width=180)

@@ -103,7 +103,7 @@ class NavigationBar(ttk.Frame):
                            fg=C['brand_spark'])
         spark.pack(side='left', padx=(0, 6))
         tk.Label(self, text='FORGE', font=FONT_BRAND, bg=C['bg'],
-                 fg=C['accent_text']).pack(side='left', padx=(0, 14))
+                 fg=C['text']).pack(side='left', padx=(0, 14))
         for value, title in self.MODES:
             cell = tk.Frame(self, bg=C['bg'])
             cell.pack(side='left', padx=(0, 4))
@@ -166,6 +166,7 @@ class NavigationBar(ttk.Frame):
             active = value == mode
             try:
                 label.configure(fg=C['accent_text'] if active else C['subtext'],
+                                bg=C['accent_soft'] if active else C['bg'],
                                 font=FONT_UI_BOLD if active else FONT_UI_MED)
                 indicator.configure(bg=C['accent'] if active else C['bg'])
             except tk.TclError:

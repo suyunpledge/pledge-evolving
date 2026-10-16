@@ -85,6 +85,7 @@ def highlight_diff_lines(text):
     if text is None:
         return
     try:
+        text.tag_configure('diff_hunk', foreground=C['accent2'])
         if not text.get('1.0', 'end-1c').strip():
             return
         text.configure(state='normal')
@@ -132,7 +133,7 @@ class ToolPanel(ttk.Frame):
                            '问题': problems_provider}
         self.pages = {}
         self._pages = self.pages  # M5 兼容别名（同一字典）
-        self.notebook = ttk.Notebook(self)
+        self.notebook = ttk.Notebook(self, style='Coding.TNotebook')
         self.notebook.pack(fill='both', expand=True)
         self.notebook.bind('<<NotebookTabChanged>>',
                            lambda _event: self.refresh_badges())
@@ -164,7 +165,7 @@ class ToolPanel(ttk.Frame):
         # 语义与 Git 状态装饰一致：新增 ok / 删除 error / hunk 头 accent。
         text.tag_configure('diff_add', foreground=C['ok'])
         text.tag_configure('diff_del', foreground=C['error'])
-        text.tag_configure('diff_hunk', foreground=C['accent'])
+        text.tag_configure('diff_hunk', foreground=C['accent2'])
         sy = ttk.Scrollbar(page, command=text.yview)
         sy.pack(side='right', fill='y')
         sx = ttk.Scrollbar(page, orient='horizontal', command=text.xview)

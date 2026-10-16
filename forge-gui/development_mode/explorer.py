@@ -322,7 +322,7 @@ class ExplorerPanel(ttk.Frame):
         ttk.Label(self._search_row, text='文件名搜索 · Enter',
                   foreground=C['subtext']).pack(anchor='w')
         # 6 个真实 Tab：文件 / Git / 搜索(过滤) / 任务 / 知识 / 演化
-        self.notebook = ttk.Notebook(content)
+        self.notebook = ttk.Notebook(content, style='Explorer.TNotebook')
         self._build_files_tab()
         self._build_git_tab()
         self._build_tasks_tab()
@@ -357,7 +357,7 @@ class ExplorerPanel(ttk.Frame):
                                 padx=2, pady=2, command=command)
             button.pack(side='left', padx=(6, 0))
             attach_tooltip(button, tip)
-        self.tree = ttk.Treeview(files, show='tree', selectmode='browse')
+        self.tree = ttk.Treeview(files, show='tree', selectmode='browse', style='Coding.Treeview')
         scroll = ttk.Scrollbar(files, command=self.tree.yview)
         scroll.pack(side='right', fill='y')
         self.tree.configure(yscrollcommand=scroll.set)
@@ -387,7 +387,7 @@ class ExplorerPanel(ttk.Frame):
             letter, token, label = GIT_STATUS_STYLE[code]
             tk.Label(legend, text=f'{letter} {label}', font=FONT_CAPTION,
                      bg=C['bg'], fg=C[token]).pack(side='left', padx=(0, 8))
-        self.changes = ttk.Treeview(git, show='tree', selectmode='browse')
+        self.changes = ttk.Treeview(git, show='tree', selectmode='browse', style='Coding.Treeview')
         self.changes.pack(fill='both', expand=True)
         self.changes.bind('<<TreeviewSelect>>', self._on_show_diff)
         self.changes.bind('<Double-1>', lambda _e: self._on_open_changed())

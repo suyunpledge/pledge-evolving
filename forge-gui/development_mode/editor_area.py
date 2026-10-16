@@ -128,7 +128,7 @@ class EditorArea(ttk.Frame):
         # 修改标记 / 当前行 / 搜索命中的 tag（gutter 与 text 各一套）。
         self.gutter.tag_configure('mod', foreground=C['warn'])
         self.gutter.tag_configure('add', foreground=C['ok'])
-        self.text.tag_configure('current_line', background=C['hover'])
+        self.text.tag_configure('current_line', background=C['editor_line'])
         self.text.tag_configure('search_hit', background=C['warn_soft'])
         self.text.tag_configure('search_current', background=C['warn'],
                                 foreground=C['black'])

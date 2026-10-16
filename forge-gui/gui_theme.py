@@ -29,41 +29,43 @@ IS_WINDOWS = platform.system() == "Windows"
 
 C: dict[str, str] = {
     # 背景层级
-    "bg": "#11151C",            # 主背景：深色 IDE 工作台
-    "activity": "#0D1018",
-    "sidebar": "#171C25",
+    "bg": "#0D141F",            # Shared near-black blue chrome
+    "activity": "#0A111C",
+    "sidebar": "#111C2B",
     "sidebar_history": "#131923",
-    "chat": "#11151C",
-    "surface": "#1D2430",
-    "surface2": "#19212D",
-    "surface_subtle": "#171F2B",
-    "hover": "#293344",
-    "sel": "#29364D",
-    "code_bg": "#131824",
-    "input_bg": "#151B25",
+    "chat": "#0F1927",
+    "surface": "#172439",
+    "surface2": "#142034",
+    "surface_subtle": "#111D2D",
+    "hover": "#20344E",
+    "sel": "#163B62",
+    "code_bg": "#0B131F",
+    "input_bg": "#111D2D",
+    "editor_line": "#142238",
+    "agent_accent": "#B79AF9",
     "black": "#000000",
 
     # 线条
-    "border": "#2C3446",
-    "border_hi": "#47536B",
-    "sel_border": "#625B98",
-    "scroll": "#45516B",
+    "border": "#26364D",
+    "border_hi": "#3B5270",
+    "sel_border": "#3974B5",
+    "scroll": "#334B69",
 
     # 控件状态
     "control_pressed": "#1F293D",
     "disabled_bg": "#191F2D",
     "disabled_fg": "#8894AD",
     "disabled_border": "#343D50",
-    "focus_ring": "#D2DEFF",
+    "focus_ring": "#78B5FF",
 
     # 主色
-    "accent": "#4664BB",
-    "accent_hover": "#5270C5",
-    "accent_pressed": "#38539E",
-    "accent2": "#7B9CFF",
-    "accent_soft": "#23314A",
-    "accent_border": "#607BB8",
-    "accent_text": "#BCD0FF",
+    "accent": "#2454AD",
+    "accent_hover": "#2A61BD",
+    "accent_pressed": "#1D448D",
+    "accent2": "#6AAEFF",
+    "accent_soft": "#173453",
+    "accent_border": "#3974B5",
+    "accent_text": "#BCD9FF",
     "brand_ice": "#BDCAFF",       # 仅用于品牌图形，避免混同状态颜色
     "brand_spark": "#F5BC74",
 
@@ -81,34 +83,34 @@ C: dict[str, str] = {
     "link_soft": "#23314A",
 
     # 文字
-    "text": "#EDF1F7",
-    "body": "#D6DEEA",
-    "subtext": "#ABB5C5",
+    "text": "#E6EEF8",
+    "body": "#CDD8E8",
+    "subtext": "#A4B4C9",
     "muted": "#A2ADC5",
     "ter": "#A2ADC5",
     "placeholder": "#A2ADC5",
-    "comment": "#909BAD",
+    "comment": "#8A9DB8",
 
     # 消息气泡：两侧要能看出「谁在说」，又不能让深色界面变花。
     # user 带一点主色倾向（“我说的话”），agent 用中性面；两者都配一道 hairline 描边。
     "msg_user_bg": "#23314A",         # 轻量、低饱和的用户气泡
     "msg_user_fg": "#FFFFFF",          # 用户气泡文字（白）
-    "msg_agent_bg": "#11151C",         # 助手正文融入文档背景
+    "msg_agent_bg": "#0F1927",         # 助手正文融入文档背景
     "msg_agent_fg": "#E8ECFA",         # AI 气泡文字（浅灰）
     "msg_user_bg_old": "#232134",
     "msg_agent_bg_old": "#1A1A22",
     "msg_user_border": "#334666",
-    "msg_agent_border": "#11151C",
+    "msg_agent_border": "#0F1927",
 
     # 代码高亮（One Dark 近似）
-    "code_kw": "#C678DD",
-    "code_cls": "#E5C07B",
-    "code_fn": "#61AFEF",
-    "code_str": "#98C379",
+    "code_kw": "#74B4EA",
+    "code_cls": "#67D4C0",
+    "code_fn": "#DCDCAA",
+    "code_str": "#CEAB8F",
     "code_const": "#E06C75",
-    "code_num": "#D19A66",
-    "code_comment": "#909BAD",
-    "code_plain": "#D2D2DC",
+    "code_num": "#B5CEA8",
+    "code_comment": "#7FA17A",
+    "code_plain": "#CDD8E8",
 
     # diff
     "diff_add": "#4ADE80",
@@ -1022,6 +1024,28 @@ def style_scrollbar(widget):
 
 def apply_ttk_theme(root):
     """ttk 控件（Combobox / Scrollbar / Notebook）深色主题。"""
+    root.configure(background=C['bg'])
+    for widget_class in ('Toplevel', 'Frame', 'Label', 'LabelFrame', 'PanedWindow', 'Menu'):
+        root.option_add(f'*{widget_class}.background', C['bg'])
+    for widget_class in ('Label', 'LabelFrame', 'Menu'):
+        root.option_add(f'*{widget_class}.foreground', C['body'])
+    for widget_class in ('Entry', 'Spinbox', 'Listbox', 'Text'):
+        for option, colour in (('background', 'input_bg'), ('foreground', 'body'),
+                               ('insertBackground', 'text'), ('selectBackground', 'accent_soft'),
+                               ('selectForeground', 'accent_text')):
+            root.option_add(f'*{widget_class}.{option}', C[colour])
+    for widget_class in ('Button', 'Checkbutton', 'Radiobutton'):
+        root.option_add(f'*{widget_class}.background', C['surface2'])
+        root.option_add(f'*{widget_class}.foreground', C['body'])
+        root.option_add(f'*{widget_class}.activeBackground', C['hover'])
+        root.option_add(f'*{widget_class}.activeForeground', C['text'])
+    root.option_add('*Button.relief', 'flat')
+    root.option_add('*Button.borderWidth', 0)
+    for widget_class in ('Checkbutton', 'Radiobutton'):
+        root.option_add(f'*{widget_class}.selectColor', C['surface2'])
+    root.option_add('*Menu.activeBackground', C['accent_soft'])
+    root.option_add('*Menu.activeForeground', C['accent_text'])
+    root.option_add('*Menu.disabledForeground', C['disabled_fg'])
     for widget_class in ('Checkbutton', 'Radiobutton', 'Entry', 'Text', 'Spinbox', 'Listbox'):
         root.option_add(f'*{widget_class}.highlightColor', C['focus_ring'])
         root.option_add(f'*{widget_class}.highlightBackground', C['border'])
@@ -1032,13 +1056,28 @@ def apply_ttk_theme(root):
         style.theme_use("clam")
     except tk.TclError:
         pass
+    # Cover the base elements too: clam's defaults otherwise leak beige labels,
+    # bright pane sashes and white tab/tree borders through the dark surfaces.
+    style.configure('.', background=C['bg'], foreground=C['body'], font=FONT_SMALL,
+                    bordercolor=C['border'], lightcolor=C['border'], darkcolor=C['border'],
+                    focuscolor=C['focus_ring'], troughcolor=C['bg'])
+    style.configure('TLabel', background=C['bg'], foreground=C['body'], font=FONT_SMALL)
+    style.map('TLabel', foreground=[('disabled', C['disabled_fg'])])
+    style.configure('TLabelframe', background=C['bg'], bordercolor=C['border'],
+                    lightcolor=C['border'], darkcolor=C['border'], relief='solid', borderwidth=1)
+    style.configure('TLabelframe.Label', background=C['bg'], foreground=C['subtext'], font=FONT_SMALL)
+    style.configure('TPanedwindow', background=C['border'], sashwidth=ui_px(root, 3))
     style.configure("TNotebook", background=C["bg"], borderwidth=0,
-                    tabmargins=(0, 0, 0, 0))
+                    tabmargins=(0, 0, 0, 0), bordercolor=C['border'],
+                    lightcolor=C['border'], darkcolor=C['border'])
     style.configure("TNotebook.Tab", background=C["bg"], foreground=C["ter"],
-                    padding=(14, 6), font=FONT_UI_BOLD, borderwidth=0)
+                    padding=(12, 6), font=FONT_SMALL, borderwidth=0,
+                    bordercolor=C['border'], lightcolor=C['bg'], darkcolor=C['bg'])
     style.map("TNotebook.Tab",
               background=[("selected", C["accent_soft"]), ("active", C["hover"])],
               foreground=[("selected", C["accent_text"]), ("active", C["text"])],
+              lightcolor=[('selected', C['accent_border']), ('!selected', C['border'])],
+              darkcolor=[('selected', C['border']), ('!selected', C['bg'])],
               expand=[("selected", (0, 0, 0, 0))])
     style.configure("TFrame", background=C["bg"])
     style.configure("Vertical.TScrollbar", background=C["scroll"],
@@ -1056,7 +1095,8 @@ def apply_ttk_theme(root):
               foreground=[("disabled", C['disabled_fg']), ("readonly", C["body"])],
               bordercolor=[("focus", C["focus_ring"])])
     style.configure('TEntry', fieldbackground=C['input_bg'], foreground=C['text'],
-                    insertcolor=C['text'], bordercolor=C['border'], padding=5)
+                    insertcolor=C['text'], bordercolor=C['border'], padding=5,
+                    lightcolor=C['input_bg'], darkcolor=C['input_bg'])
     style.configure('TSpinbox', fieldbackground=C['input_bg'], foreground=C['text'],
                     arrowcolor=C['subtext'], bordercolor=C['border'], padding=5)
     for name in ('TEntry', 'TSpinbox'):
@@ -1064,6 +1104,7 @@ def apply_ttk_theme(root):
                   foreground=[('disabled', C['disabled_fg'])])
     style.configure('Treeview', background=C['input_bg'], fieldbackground=C['input_bg'],
                     foreground=C['body'], borderwidth=0, font=FONT_SMALL,
+                    bordercolor=C['border'], lightcolor=C['input_bg'], darkcolor=C['input_bg'],
                     rowheight=ui_px(root, CONTROL_HEIGHT))
     style.configure('Treeview.Heading', background=C['surface'], foreground=C['subtext'],
                     relief=tk.FLAT, font=FONT_SMALL, padding=6)
@@ -1081,7 +1122,8 @@ def apply_ttk_theme(root):
     # 深色界面上一片白块（「黑白无常」问题的根源）。
     style.configure('TButton', background=C['surface2'], foreground=C['body'],
                     relief=tk.FLAT, borderwidth=0, focuscolor=C['border'],
-                    padding=(10, 4), font=FONT_SMALL, anchor='center')
+                    padding=(10, 4), font=FONT_SMALL, anchor='center',
+                    bordercolor=C['border'], lightcolor=C['surface2'], darkcolor=C['surface2'])
     style.map('TButton',
               background=[('disabled', C['disabled_bg']),
                           ('pressed', C['control_pressed']),
@@ -1091,7 +1133,8 @@ def apply_ttk_theme(root):
               lightcolor=[('pressed', C['control_pressed'])],
               darkcolor=[('pressed', C['control_pressed'])])
     style.configure('TCheckbutton', background=C['bg'], foreground=C['body'],
-                    focuscolor=C['border'], font=FONT_SMALL, padding=2)
+                    focuscolor=C['border'], font=FONT_SMALL, padding=2,
+                    indicatorcolor=C['surface2'], indicatorforeground=C['text'])
     style.map('TCheckbutton',
               background=[('active', C['bg'])],
               foreground=[('disabled', C['disabled_fg']), ('active', C['text'])],
@@ -1109,6 +1152,27 @@ def apply_ttk_theme(root):
                     darkcolor=C['scroll'])
     style.map('Horizontal.TScrollbar', background=[('active', C['ter'])])
     style.configure('TSeparator', background=C['border'])
+    # Shared language, local Coding density; Work keeps its larger tree rows.
+    style.configure('Coding.TNotebook', background=C['bg'], borderwidth=0)
+    style.configure('Coding.TNotebook.Tab', padding=(10, 5), font=FONT_SMALL)
+    style.configure('Explorer.TNotebook.Tab', padding=(4, 5), font=FONT_CAPTION)
+    style.configure('Coding.Treeview', background=C['sidebar'], fieldbackground=C['sidebar'],
+                    rowheight=ui_px(root, 25), font=FONT_SMALL)
+    style.configure('Card.TFrame', background=C['surface'], borderwidth=1,
+                    relief='solid', bordercolor=C['border'])
+    style.configure('Card.TLabel', background=C['surface'], foreground=C['body'])
+    style.configure('Muted.Card.TLabel', foreground=C['subtext'])
+    style.configure('Primary.TButton', background=C['accent'], foreground=C['text'],
+                    lightcolor=C['accent'], darkcolor=C['accent'], bordercolor=C['accent'])
+    style.map('Primary.TButton', background=[('disabled', C['disabled_bg']),
+        ('pressed', C['accent_pressed']), ('active', C['accent_hover'])],
+        foreground=[('disabled', C['disabled_fg'])])
+    # Slim, arrow-free tracks retain native trough/drag/keyboard behavior.
+    for orient, sticky in (('Vertical', 'ns'), ('Horizontal', 'we')):
+        name = orient + '.TScrollbar'
+        style.configure(name, arrowsize=ui_px(root, 10), width=ui_px(root, 10))
+        style.layout(name, [(orient + '.Scrollbar.trough', {'sticky': sticky,
+            'children': [(orient + '.Scrollbar.thumb', {'expand': 1, 'sticky': 'nswe'})]})])
     return style
 
 

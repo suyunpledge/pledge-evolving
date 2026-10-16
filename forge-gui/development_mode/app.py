@@ -589,7 +589,7 @@ class DevelopmentWorkbench(ttk.Frame):
         # ── 预存消息队列（上限 3，任务完成后自动发送）────────────
         self._pending_prompts: list[dict] = []
         self._queue_label = ttk.Label(self.agent_frame, text='', padding=(4, 1),
-                                      foreground=C['accent'])
+                                      foreground=C['accent2'])
         # 输入框 + 发送按钮（保留为 agent_frame 底部固定组）
         hint_label = ttk.Label(self.agent_frame,
                                 text='Enter 发送 · Shift+Enter 换行 · Ctrl+Enter 亦可',
@@ -881,9 +881,12 @@ class DevelopmentWorkbench(ttk.Frame):
                 line_start = widget.index(f'end-1c -{i} lines linestart')
                 line_end = widget.index(f'{line_start} lineend')
                 line_text = widget.get(line_start, line_end)
-                if line_text.lstrip().startswith(('PASS', 'PASS ')):
+                stripped = line_text.strip()
+                if (stripped.startswith('PASS') or stripped == 'OK' or
+                        (stripped.startswith('test') and stripped.endswith(' ... ok'))):
                     widget.tag_add(tag_name, line_start, line_end)
-                elif line_text.lstrip().startswith(('FAIL', 'ERROR', 'Error', 'error')):
+                elif (stripped.startswith(('FAIL', 'ERROR', 'Error', 'error')) or
+                        (stripped.startswith('test') and stripped.endswith((' ... FAIL', ' ... ERROR')))):
                     widget.tag_add(fail_tag, line_start, line_end)
         except Exception:
             pass  # 着色失败不影响内容输出
