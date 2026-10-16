@@ -1,0 +1,252 @@
+{
+  "baseline": "ddace89",
+  "environment": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+  "suites": [
+    {
+      "name": "test_coding_visual_integration",
+      "exit_code": 0,
+      "seconds": 9.17,
+      "command": [
+        "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+        "-B",
+        "-c",
+        "import sys,runpy;sys.path[:0]=['C:\\\\Users\\\\匡溯昀\\\\forge-coding-visual-integration', 'C:\\\\Users\\\\匡溯昀\\\\forge-coding-visual-integration\\\\forge-gui'];sys.argv[0]='unittest';runpy.run_module('unittest',run_name='__main__')",
+        "-v",
+        "test_coding_visual_integration"
+      ],
+      "log": "C:\\Users\\匡溯昀\\forge-coding-visual-evidence\\final-test_coding_visual_integration.log",
+      "sha256": "7611a69e5f023d001f637a19bd6a63ead6a8978d8f46ac0a930883fbd3900686",
+      "total": 6
+    },
+    {
+      "name": "test_visual_identity",
+      "exit_code": 0,
+      "seconds": 1.05,
+      "command": [
+        "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+        "-B",
+        "-c",
+        "import sys,runpy;sys.path[:0]=['C:\\\\Users\\\\匡溯昀\\\\forge-coding-visual-integration', 'C:\\\\Users\\\\匡溯昀\\\\forge-coding-visual-integration\\\\forge-gui'];sys.argv[0]='unittest';runpy.run_module('unittest',run_name='__main__')",
+        "-v",
+        "test_visual_identity"
+      ],
+      "log": "C:\\Users\\匡溯昀\\forge-coding-visual-evidence\\final-test_visual_identity.log",
+      "sha256": "f976aaf560107d4bef1ca4cee1ad86d82e0540a101081de9ab506af61f5664d2",
+      "total": 3
+    },
+    {
+      "name": "test_visual_system",
+      "exit_code": 0,
+      "seconds": 8.28,
+      "command": [
+        "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+        "-B",
+        "-c",
+        "import sys,runpy;sys.path[:0]=['C:\\\\Users\\\\匡溯昀\\\\forge-coding-visual-integration', 'C:\\\\Users\\\\匡溯昀\\\\forge-coding-visual-integration\\\\forge-gui'];sys.argv[0]='unittest';runpy.run_module('unittest',run_name='__main__')",
+        "-v",
+        "test_visual_system"
+      ],
+      "log": "C:\\Users\\匡溯昀\\forge-coding-visual-evidence\\final-test_visual_system.log",
+      "sha256": "1ac7a3d6f2011f972736cb8282d672c80b54ac9e2804172e0df2ab465221a56d",
+      "total": 9
+    },
+    {
+      "name": "development_mode.test_app",
+      "exit_code": 0,
+      "seconds": 44.08,
+      "command": [
+        "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+        "-B",
+        "-c",
+        "import sys,runpy;sys.path[:0]=['C:\\\\Users\\\\匡溯昀\\\\forge-coding-visual-integration', 'C:\\\\Users\\\\匡溯昀\\\\forge-coding-visual-integration\\\\forge-gui'];sys.argv[0]='unittest';runpy.run_module('unittest',run_name='__main__')",
+        "-v",
+        "development_mode.test_app"
+      ],
+      "log": "C:\\Users\\匡溯昀\\forge-coding-visual-evidence\\final-development_mode_test_app.log",
+      "sha256": "28b5fe16325dbda1930ef33d620597ca84a06b18b67bf3e4b90d9314d99c8427",
+      "total": 18
+    },
+    {
+      "name": "development_mode.test_agent_panel",
+      "exit_code": 0,
+      "seconds": 50.64,
+      "command": [
+        "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+        "-B",
+        "-c",
+        "import sys,runpy;sys.path[:0]=['C:\\\\Users\\\\匡溯昀\\\\forge-coding-visual-integration', 'C:\\\\Users\\\\匡溯昀\\\\forge-coding-visual-integration\\\\forge-gui'];sys.argv[0]='unittest';runpy.run_module('unittest',run_name='__main__')",
+        "-v",
+        "development_mode.test_agent_panel"
+      ],
+      "log": "C:\\Users\\匡溯昀\\forge-coding-visual-evidence\\final-development_mode_test_agent_panel.log",
+      "sha256": "28c61d4eb822b950ffe45ed44c72236ffa6dac775148aa7de0adaad5e3263f75",
+      "total": 21
+    },
+    {
+      "name": "development_mode.test_layout_regression",
+      "exit_code": 0,
+      "seconds": 117.41,
+      "command": [
+        "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+        "-B",
+        "-c",
+        "import sys,runpy;sys.path[:0]=['C:\\\\Users\\\\匡溯昀\\\\forge-coding-visual-integration', 'C:\\\\Users\\\\匡溯昀\\\\forge-coding-visual-integration\\\\forge-gui'];sys.argv[0]='unittest';runpy.run_module('unittest',run_name='__main__')",
+        "-v",
+        "development_mode.test_layout_regression"
+      ],
+      "log": "C:\\Users\\匡溯昀\\forge-coding-visual-evidence\\final-development_mode_test_layout_regression.log",
+      "sha256": "47f5abf0ff9575196c5ced3e8ae43d630466d4ad52447818ea3ac24ee3f3f0b8",
+      "total": 64
+    },
+    {
+      "name": "test_workspace_wiring",
+      "exit_code": 0,
+      "seconds": 18.83,
+      "command": [
+        "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+        "-B",
+        "-c",
+        "import sys,runpy;sys.path[:0]=['C:\\\\Users\\\\匡溯昀\\\\forge-coding-visual-integration', 'C:\\\\Users\\\\匡溯昀\\\\forge-coding-visual-integration\\\\forge-gui'];sys.argv[0]='unittest';runpy.run_module('unittest',run_name='__main__')",
+        "-v",
+        "test_workspace_wiring"
+      ],
+      "log": "C:\\Users\\匡溯昀\\forge-coding-visual-evidence\\final-test_workspace_wiring.log",
+      "sha256": "d3e372eb79fb88073d77acb1c6251fea41d30c48154ce60447ee5ef60dbe9280",
+      "total": 12
+    },
+    {
+      "name": "selftest",
+      "exit_code": 0,
+      "seconds": 25.41,
+      "command": [
+        "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+        "-B",
+        "run.py",
+        "selftest"
+      ],
+      "log": "C:\\Users\\匡溯昀\\forge-coding-visual-evidence\\final-selftest.log",
+      "sha256": "c11b99c2e8e8222c480efea64868665aef11ddfa25c806e8770c3307ebec330d",
+      "passed": 574,
+      "total": 574
+    }
+  ],
+  "source_sha256": {
+    "C:\\Users\\匡溯昀\\forge-coding-visual-integration\\forge-gui\\gui_theme.py": "d497a8a5bd8fedcc3b91b074fd998d8e3db50bcc78b2ea079b7e7594beda9c31",
+    "C:\\Users\\匡溯昀\\forge-coding-visual-integration\\forge-gui\\development_mode\\agent_panel.py": "33b056a88c8e2f0025355a7f8db316330d4faecca4e98a8975c71a9b4cc00174",
+    "C:\\Users\\匡溯昀\\forge-coding-visual-integration\\forge-gui\\development_mode\\app.py": "9807673a50f502c1f282e1643ea169753f748176bcfef26b26e01589fb2cff3c",
+    "C:\\Users\\匡溯昀\\forge-coding-visual-integration\\forge-gui\\development_mode\\bottom_panel.py": "794647bcafd04a1899154ebb88d2c0ad8ffd33d54d6f2e0978eba4a87bc1bcc8",
+    "C:\\Users\\匡溯昀\\forge-coding-visual-integration\\forge-gui\\development_mode\\debug_layout.py": "ddf57c6990e69ccfe5ecf1712c0b04a1c648b635addb558a3b90298be2b834af",
+    "C:\\Users\\匡溯昀\\forge-coding-visual-integration\\forge-gui\\development_mode\\editor_area.py": "21aceede3917a2cc73616cdec528b2509a9ac3d2842433639cead767cb828016",
+    "C:\\Users\\匡溯昀\\forge-coding-visual-integration\\forge-gui\\development_mode\\evolution_view.py": "e4898bb10ed58820fee2adb89d4fff446b8bd565f11299b1ecf963be5c05f224",
+    "C:\\Users\\匡溯昀\\forge-coding-visual-integration\\forge-gui\\development_mode\\explorer.py": "4b11800321804841a0171726a9d3b1103421ddf4389e9ffbdf3dbd4989d53899",
+    "C:\\Users\\匡溯昀\\forge-coding-visual-integration\\forge-gui\\development_mode\\knowledge_view.py": "149ac5108576e6e491580940199a590ef9216a2a1b9fd8dea90d7be3d001a446",
+    "C:\\Users\\匡溯昀\\forge-coding-visual-integration\\forge-gui\\development_mode\\layout.py": "1b42173f713084266aacc23ea4847d9fe72699e37961a9c39e3f299dd089291a",
+    "C:\\Users\\匡溯昀\\forge-coding-visual-integration\\forge-gui\\development_mode\\policy_widgets.py": "6850f91b88f7d6e47b47f843b0f1be91b13be9814e15ef53f1f5d2e2d045889c",
+    "C:\\Users\\匡溯昀\\forge-coding-visual-integration\\forge-gui\\development_mode\\project.py": "7e45a9bfd4b39061853d4d3a3700dac328f6f53a40656c0210b205593580aaf9",
+    "C:\\Users\\匡溯昀\\forge-coding-visual-integration\\forge-gui\\development_mode\\test_agent_panel.py": "c8d4104db580c311061fe04614006b706691b97cbe25953f706faf258456e770",
+    "C:\\Users\\匡溯昀\\forge-coding-visual-integration\\forge-gui\\development_mode\\test_app.py": "dc8b2d9e447726959ed28b9b3a2c22c34fd1a9531739d57ceffc85ac8894f225",
+    "C:\\Users\\匡溯昀\\forge-coding-visual-integration\\forge-gui\\development_mode\\test_layout_regression.py": "df5b3d4f7586230e6a056107dc45b2033d7bfd86a313444a12913482b70cc6b1",
+    "C:\\Users\\匡溯昀\\forge-coding-visual-integration\\forge-gui\\development_mode\\test_project.py": "6e503b8308d161f4564dff55386baef81a82dfeace6f3a84d81af3aea10e0245",
+    "C:\\Users\\匡溯昀\\forge-coding-visual-integration\\forge-gui\\development_mode\\welcome.py": "eea40651f6d2c577af6feff9c58453b811460eb225bd31a66509874c67cf4864",
+    "C:\\Users\\匡溯昀\\forge-coding-visual-integration\\forge-gui\\development_mode\\__init__.py": "c96d23771325bace89786d20a5da0209ba3f81962723c6f04b7fba87873be9b9",
+    "C:\\Users\\匡溯昀\\forge-coding-visual-integration\\forge-gui\\test_coding_visual_integration.py": "8cf1a601b34853ff4e7f078fc718be59eb312c1a794312d63eb89507011f36e6"
+  },
+  "client_date": "2026-10-16",
+  "timezone": "Asia/Shanghai",
+  "final_source_sha256": {
+    "C:\\Users\\匡溯昀\\forge-coding-visual-integration\\forge-gui\\gui_theme.py": "ecd8f28b7f085d5c2f32ca4ca9228ea576493a823eb23c8848325d8e99ce78f7",
+    "C:\\Users\\匡溯昀\\forge-coding-visual-integration\\forge-gui\\development_mode\\agent_panel.py": "33b056a88c8e2f0025355a7f8db316330d4faecca4e98a8975c71a9b4cc00174",
+    "C:\\Users\\匡溯昀\\forge-coding-visual-integration\\forge-gui\\development_mode\\app.py": "9807673a50f502c1f282e1643ea169753f748176bcfef26b26e01589fb2cff3c",
+    "C:\\Users\\匡溯昀\\forge-coding-visual-integration\\forge-gui\\development_mode\\bottom_panel.py": "794647bcafd04a1899154ebb88d2c0ad8ffd33d54d6f2e0978eba4a87bc1bcc8",
+    "C:\\Users\\匡溯昀\\forge-coding-visual-integration\\forge-gui\\development_mode\\debug_layout.py": "ddf57c6990e69ccfe5ecf1712c0b04a1c648b635addb558a3b90298be2b834af",
+    "C:\\Users\\匡溯昀\\forge-coding-visual-integration\\forge-gui\\development_mode\\editor_area.py": "21aceede3917a2cc73616cdec528b2509a9ac3d2842433639cead767cb828016",
+    "C:\\Users\\匡溯昀\\forge-coding-visual-integration\\forge-gui\\development_mode\\evolution_view.py": "e4898bb10ed58820fee2adb89d4fff446b8bd565f11299b1ecf963be5c05f224",
+    "C:\\Users\\匡溯昀\\forge-coding-visual-integration\\forge-gui\\development_mode\\explorer.py": "4b11800321804841a0171726a9d3b1103421ddf4389e9ffbdf3dbd4989d53899",
+    "C:\\Users\\匡溯昀\\forge-coding-visual-integration\\forge-gui\\development_mode\\knowledge_view.py": "149ac5108576e6e491580940199a590ef9216a2a1b9fd8dea90d7be3d001a446",
+    "C:\\Users\\匡溯昀\\forge-coding-visual-integration\\forge-gui\\development_mode\\layout.py": "1b42173f713084266aacc23ea4847d9fe72699e37961a9c39e3f299dd089291a",
+    "C:\\Users\\匡溯昀\\forge-coding-visual-integration\\forge-gui\\development_mode\\policy_widgets.py": "6850f91b88f7d6e47b47f843b0f1be91b13be9814e15ef53f1f5d2e2d045889c",
+    "C:\\Users\\匡溯昀\\forge-coding-visual-integration\\forge-gui\\development_mode\\project.py": "7e45a9bfd4b39061853d4d3a3700dac328f6f53a40656c0210b205593580aaf9",
+    "C:\\Users\\匡溯昀\\forge-coding-visual-integration\\forge-gui\\development_mode\\test_agent_panel.py": "c8d4104db580c311061fe04614006b706691b97cbe25953f706faf258456e770",
+    "C:\\Users\\匡溯昀\\forge-coding-visual-integration\\forge-gui\\development_mode\\test_app.py": "dc8b2d9e447726959ed28b9b3a2c22c34fd1a9531739d57ceffc85ac8894f225",
+    "C:\\Users\\匡溯昀\\forge-coding-visual-integration\\forge-gui\\development_mode\\test_layout_regression.py": "df5b3d4f7586230e6a056107dc45b2033d7bfd86a313444a12913482b70cc6b1",
+    "C:\\Users\\匡溯昀\\forge-coding-visual-integration\\forge-gui\\development_mode\\test_project.py": "6e503b8308d161f4564dff55386baef81a82dfeace6f3a84d81af3aea10e0245",
+    "C:\\Users\\匡溯昀\\forge-coding-visual-integration\\forge-gui\\development_mode\\welcome.py": "eea40651f6d2c577af6feff9c58453b811460eb225bd31a66509874c67cf4864",
+    "C:\\Users\\匡溯昀\\forge-coding-visual-integration\\forge-gui\\development_mode\\__init__.py": "c96d23771325bace89786d20a5da0209ba3f81962723c6f04b7fba87873be9b9",
+    "C:\\Users\\匡溯昀\\forge-coding-visual-integration\\forge-gui\\test_coding_visual_integration.py": "35dc21b1ffa66ee060aac29ef3a918a5fe203594ba843db21a7b937273cc3f3d"
+  },
+  "foundation_followup": {
+    "total": 18,
+    "exit_code": 0,
+    "log": "C:\\Users\\匡溯昀\\forge-coding-visual-evidence\\final-theme-followup.log",
+    "sha256": "adcecba8bcb144ca4ed9391bca2fe5cd2d58ce31390c94d0410899339d8c6b91",
+    "note": "classic Tk input/button defaults added after main batch start; all 18 theme/visual tests repeated on final source. No execution/layout method changed."
+  },
+  "initial_combined_failure": {
+    "total": 127,
+    "failures": 3,
+    "log": "C:\\Users\\匡溯昀\\forge-coding-visual-evidence\\regression.log",
+    "sha256": "a2b8dcd782b96037bb48aa5450bddcc7e87512badc6bef6dc5202a75a23e8ad3",
+    "note": "protected editor colour edit restored; status mapping timed out at two widths; isolated check and final complete layout suite pass. Cause of combined timeout unproven."
+  },
+  "known_tcl_warnings": {
+    "development_mode.test_app": 2,
+    "development_mode.test_agent_panel": 2,
+    "note": "deleted _fire callback warnings; not repaired by this visual change"
+  },
+  "screenshots": {
+    "before": {
+      "path": "C:\\Users\\匡溯昀\\forge-coding-visual-integration\\reports\\coding-visual-before.png",
+      "sha256": "a251b6c718af266b3daa4b43aef472b5c775ea6da1b853da1c05da63864a105e",
+      "metadata": {
+        "size": [
+          1440,
+          960
+        ],
+        "callback_errors": [],
+        "fixture_test_exit_code": 0,
+        "task_id": "707c042ad3654afd94feaf24dc587d25",
+        "screenshot": "C:\\Users\\匡溯昀\\forge-coding-visual-evidence\\before.png",
+        "transport": "offline fixture",
+        "panes": [
+          ".!developmentworkbench.!panedwindow.!panedwindow.!frame",
+          ".!developmentworkbench.!panedwindow.!panedwindow.!frame2",
+          ".!developmentworkbench.!panedwindow.!panedwindow.!frame3"
+        ],
+        "style": "clam"
+      }
+    },
+    "after": {
+      "path": "C:\\Users\\匡溯昀\\forge-coding-visual-integration\\reports\\coding-visual-after.png",
+      "sha256": "18bf1df5ce334eb2a1f560a01df3bf9dcb46ca55f8bb46ec1a7a7af53028ba46",
+      "metadata": {
+        "size": [
+          1440,
+          960
+        ],
+        "callback_errors": [],
+        "fixture_test_exit_code": 0,
+        "task_id": "60bd0a3099854892bf39c510388e84b9",
+        "screenshot": "C:\\Users\\匡溯昀\\forge-coding-visual-evidence\\after.png",
+        "transport": "offline fixture",
+        "panes": [
+          ".!developmentworkbench.!panedwindow.!panedwindow.!frame",
+          ".!developmentworkbench.!panedwindow.!panedwindow.!frame2",
+          ".!developmentworkbench.!panedwindow.!panedwindow.!frame3"
+        ],
+        "style": "clam"
+      }
+    },
+    "work": {
+      "path": "C:\\Users\\匡溯昀\\forge-coding-visual-integration\\reports\\coding-visual-work.png",
+      "sha256": "4b5de0736da840f22634a262bb2189e8c392a791263afb28d56342962d26a08b",
+      "metadata": {
+        "surface": "production Work Mode / isolated main-window fixture",
+        "callback_errors": [],
+        "screenshot": "C:\\Users\\匡溯昀\\forge-coding-visual-evidence\\work.png"
+      }
+    }
+  },
+  "computer_use_limitation": "Node helper failed to write kernel assets, os error 3; only process-owned HWND screenshot capture used.",
+  "preview_source_sha256": "23c82919abd1ae0065481ec9b600086603d0428812c8ccec83fbc15e4563470e",
+  "implementation_commit": "120deae"
+}
