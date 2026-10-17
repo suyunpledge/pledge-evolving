@@ -879,6 +879,7 @@ class ForgeGuiApp:
         from visual_system.components import WorkspaceDeck
         body = tk.Frame(self.root, bg=C["bg"])
         body.pack(fill=tk.BOTH, expand=True)
+        self._body_frame = body  # chrome 恢复时的 pack 顺序锚点（2026-10-16）
 
         self._workspace_deck = WorkspaceDeck(body, {
             WorkspaceKind.WORK: self._build_work_surface,
@@ -972,9 +973,16 @@ class ForgeGuiApp:
         # 的默认一致语义：project-local 但永不与项目重叠）。
         dev_home = Path.home() / ".forge-development"
         state = ModeState(dev_home)
-        bench = DevelopmentWorkbench(parent, state)
+        bench = DevelopmentWorkbench(parent, state, hosted=True)
         bench.pack(fill=tk.BOTH, expand=True)
         self._coding_bench = bench
+        # 双导航栏去重（2026-10-16）：宿主顶栏在 Coding 下整条收起
+        # （见 _apply_workspace_chrome），返回 Work 的出口由右上角浮动
+        # 徽标承担——place 悬浮在 bench 右上角，不新占一行。
+        self._coding_return = pill_button(
+            bench, "‹ Work Mode", lambda: self._request_workspace(self._workspace_kind.WORK),
+            kind="ghost", bg=C["surface2"], font=FONT_SMALL, padx=10)
+        self._coding_return.place(relx=1.0, rely=0.0, x=-12, y=6, anchor="ne")
         path = state.value("project")
         if path and Path(path).is_dir():
             bench.open_project(path)
@@ -1004,11 +1012,19 @@ class ForgeGuiApp:
                          else "Work Mode", "info")
 
     def _apply_workspace_chrome(self, kind):
-        """Coding 下收起 Work 专属顶栏控件与宿主底栏（快照 pack 参数，可逆恢复）。"""
+        """Coding 下收起 Work 专属顶栏与宿主底栏（快照 pack 参数，可逆恢复）。
+
+        2026-10-16 双导航栏去重：宿主顶栏（品牌/ModeSwitcher/项目芯片/
+        gateway 状态）在 Coding 下整条收起——内嵌工作台自带导航与状态栏
+        （hosted 形态去掉了品牌与 Work/Coding，避免两层导航重复）；
+        返回 Work 的出口 = coding surface 右上角「‹ Work Mode」徽标。
+        Work 模式恢复顶栏原样（含 telemetry 展开态）。
+        """
         coding = kind == self._workspace_kind.CODING
         if not hasattr(self, "_chrome_pack_cache"):
             self._chrome_pack_cache = {}
-        for name in ("sidebar_reveal_btn", "ws_toggle_btn", "_project_chip"):
+        for name in ("sidebar_reveal_btn", "ws_toggle_btn", "_project_chip",
+                     "_chrome", "_topbar_divider"):
             widget = getattr(self, name, None)
             if widget is None:
                 continue
@@ -1021,6 +1037,15 @@ class ForgeGuiApp:
                     widget.pack_forget()
                 elif name in self._chrome_pack_cache and not widget.winfo_manager():
                     widget.pack(**self._chrome_pack_cache[name])
+                    if name == "_chrome":
+                        # pack 重挂会追加到 slave 列表末尾，而 Tk 按列表顺序
+                        # 分配腔体——顶栏若排在 body 之后会被挤到窗口
+                        # 中部。恢复时显式插回 body 之前（顶栏归位）。
+                        # （_topbar_divider 是 chrome 的子控件，随 chrome
+                        # 整体归位，无需单独锚定。）
+                        body_frame = getattr(self, "_body_frame", None)
+                        if body_frame is not None and body_frame.winfo_manager():
+                            widget.pack_configure(before=body_frame)
             except tk.TclError:
                 continue
 

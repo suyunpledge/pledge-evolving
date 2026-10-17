@@ -69,14 +69,20 @@ class NavigationBar(ttk.Frame):
     用 ``tk.Label`` 而非 ttk 按钮实现导航项：Label 的前景/字体可
     逐状态精确控制（激活 = accent_text + 加粗 + 底部 2px 指示条），
     不依赖 clam 主题的 Button 状态映射，跨主题表现确定。
+
+    hosted 形态（2026-10-16 双导航栏去重）：被 forge_gui_v2 宿主内嵌
+    时传 ``hosted=True``——品牌与 Work/Coding 模式区不再渲染（那是
+    宿主顶栏的职责），本栏退化为「Project / Run / Settings」动作条；
+    独立运行（run_development.py）保持完整形态，测试契约不变。
     """
 
     MODES = (('general', 'Work'), ('development', 'Coding'))
     ACTIONS = (('project', 'Project'), ('run', 'Run'), ('settings', 'Settings'))
 
-    def __init__(self, master, on_navigate, **kw):
+    def __init__(self, master, on_navigate, hosted=False, **kw):
         super().__init__(master, **kw)
         self._on_navigate = on_navigate
+        self._hosted = bool(hosted)
         self._mode_var = None
         self._mode_items = {}      # mode value -> (label, indicator)
         self._items = {}           # 全部可导航键 -> label（含模式项）
@@ -96,28 +102,32 @@ class NavigationBar(ttk.Frame):
     # ── 构建 ──────────────────────────────────────────────────────
     def _build(self):
         self.configure(padding=(12, 6, 12, 4))
-        # M7：品牌火花图标（示例图顶部火焰 + FORGE）——颜色用
-        # gui_theme 的 brand_spark token（橙），与 chat 空态主视觉
-        # hero_banner 的火花同源同色。
-        spark = IconCanvas(self, 'flame', size=18, bg=C['bg'],
-                           fg=C['brand_spark'])
-        spark.pack(side='left', padx=(0, 6))
-        tk.Label(self, text='FORGE', font=FONT_BRAND, bg=C['bg'],
-                 fg=C['text']).pack(side='left', padx=(0, 14))
-        for value, title in self.MODES:
-            cell = tk.Frame(self, bg=C['bg'])
-            cell.pack(side='left', padx=(0, 4))
-            label = tk.Label(cell, text=title, font=FONT_UI_MED, bg=C['bg'],
-                             fg=C['subtext'], cursor='hand2', padx=8, pady=4)
-            label.pack(side='top')
-            indicator = tk.Frame(cell, bg=C['bg'], height=2)
-            indicator.pack(side='top', fill='x')
-            label.bind('<Button-1>', lambda _e, key=value: self._navigate(key))
-            label.bind('<Enter>', lambda _e, w=label: self._hover(w, True))
-            label.bind('<Leave>', lambda _e, w=label: self._hover(w, False))
-            self._mode_items[value] = (label, indicator)
-            self._items[value] = label
-        self._separator()
+        # hosted 形态（2026-10-16 双导航栏去重）：品牌与 Work/Coding
+        # 模式切换由宿主顶栏承担，这里不再重复渲染（宿主另以右上角
+        # 「‹ Work」徽标提供返回出口）；独立运行仍是完整形态。
+        if not self._hosted:
+            # M7：品牌火花图标（示例图顶部火焰 + FORGE）——颜色用
+            # gui_theme 的 brand_spark token（橙），与 chat 空态主视觉
+            # hero_banner 的火花同源同色。
+            spark = IconCanvas(self, 'flame', size=18, bg=C['bg'],
+                               fg=C['brand_spark'])
+            spark.pack(side='left', padx=(0, 6))
+            tk.Label(self, text='FORGE', font=FONT_BRAND, bg=C['bg'],
+                     fg=C['text']).pack(side='left', padx=(0, 14))
+            for value, title in self.MODES:
+                cell = tk.Frame(self, bg=C['bg'])
+                cell.pack(side='left', padx=(0, 4))
+                label = tk.Label(cell, text=title, font=FONT_UI_MED, bg=C['bg'],
+                                 fg=C['subtext'], cursor='hand2', padx=8, pady=4)
+                label.pack(side='top')
+                indicator = tk.Frame(cell, bg=C['bg'], height=2)
+                indicator.pack(side='top', fill='x')
+                label.bind('<Button-1>', lambda _e, key=value: self._navigate(key))
+                label.bind('<Enter>', lambda _e, w=label: self._hover(w, True))
+                label.bind('<Leave>', lambda _e, w=label: self._hover(w, False))
+                self._mode_items[value] = (label, indicator)
+                self._items[value] = label
+            self._separator()
         for key, title in self.ACTIONS:
             label = tk.Label(self, text=title, font=FONT_UI_MED, bg=C['bg'],
                              fg=C['subtext'], cursor='hand2', padx=8, pady=4)

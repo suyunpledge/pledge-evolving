@@ -42,9 +42,13 @@ _LANGUAGE_BY_SUFFIX = {
 
 
 class DevelopmentWorkbench(ttk.Frame):
-    def __init__(self, parent, state, *, runtime=None):
+    def __init__(self, parent, state, *, runtime=None, hosted=False):
         super().__init__(parent)
         self.state = state
+        # hosted（2026-10-16 双导航栏去重）：被 forge_gui_v2 宿主内嵌时为
+        # True——导航栏不渲染品牌/Work/Coding（宿主顶栏职责），也不建
+        # 在线状态点；独立运行（run_development.py / 测试）保持完整形态。
+        self._hosted = bool(hosted)
         self.runtime = runtime or DevelopmentRuntime(state, emit=self.enqueue_event)
         self._owns_runtime = runtime is None
         self._previous_emit = self.runtime.emit
@@ -105,7 +109,10 @@ class DevelopmentWorkbench(ttk.Frame):
         # 品牌字从 header 上移到导航栏；header 只留模式下拉与操作按钮。
         # 导航项回调走 _nav_navigate（本文件新增方法），布局组件本体在
         # layout.py——app.py 这里只做挂载，不实现导航栏内部结构。
-        self.nav = NavigationBar(self, on_navigate=self._nav_navigate)
+        # hosted 形态：品牌与 Work/Coding 由宿主顶栏承担，本栏仅剩
+        # Project / Run / Settings 动作（见 layout.NavigationBar）。
+        self.nav = NavigationBar(self, on_navigate=self._nav_navigate,
+                                 hosted=self._hosted)
         self.nav.pack(fill='x')
         # R2：header 精简——品牌/模式/项目行全部并入 NavigationBar，header 零控件挂载
         # NavigationBar 已含：品牌火花+FORGE+Work/Coding+Project/Run/Settings
@@ -116,17 +123,20 @@ class DevelopmentWorkbench(ttk.Frame):
         # M7：头部「在线」灰点状态迁入导航栏右端（R2 头部精简后原
         # header 行删除；数据源纪律不变——runtime 无 peers 数据，
         # 固定「离线」不伪造计数，_sync_online_status 一处可控）。
-        online = tk.Frame(self.nav, bg=C['bg'])
-        online.pack(side='right', padx=(0, 4))
-        self.online_dot = tk.Canvas(online, width=8, height=8, bg=C['bg'],
-                                    bd=0, highlightthickness=0)
-        self.online_dot.pack(side='left', padx=(0, 4))
-        self.online_dot.create_oval(1, 1, 7, 7, outline='', fill=C['ter'],
-                                    tags='dot')
-        self.online_var = tk.StringVar(value='离线')
-        tk.Label(online, textvariable=self.online_var, font=FONT_CAPTION,
-                 bg=C['bg'], fg=C['subtext']).pack(side='left')
-        attach_tooltip(online, '在线状态：当前无在线连接数据源')
+        # hosted 形态不建（宿主侧有真实的 gateway 状态展示，静态占位点
+        # 反而是噪音）；_sync_online_status 用 getattr 守卫，缺属性安全。
+        if not self._hosted:
+            online = tk.Frame(self.nav, bg=C['bg'])
+            online.pack(side='right', padx=(0, 4))
+            self.online_dot = tk.Canvas(online, width=8, height=8, bg=C['bg'],
+                                        bd=0, highlightthickness=0)
+            self.online_dot.pack(side='left', padx=(0, 4))
+            self.online_dot.create_oval(1, 1, 7, 7, outline='', fill=C['ter'],
+                                        tags='dot')
+            self.online_var = tk.StringVar(value='离线')
+            tk.Label(online, textvariable=self.online_var, font=FONT_CAPTION,
+                     bg=C['bg'], fg=C['subtext']).pack(side='left')
+            attach_tooltip(online, '在线状态：当前无在线连接数据源')
         self.preset = tk.StringVar(value=self.state.layout['preset'])
         # status_bar / vertical / panes 从原 L160+ 位置顺延——修改后从原 L156 起
         # 语义重叠（两个入口做同一件事）。toggle_focus() 保留（测试契约与
