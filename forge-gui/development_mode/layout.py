@@ -70,24 +70,37 @@ class NavigationBar(ttk.Frame):
     逐状态精确控制（激活 = accent_text + 加粗 + 底部 2px 指示条），
     不依赖 clam 主题的 Button 状态映射，跨主题表现确定。
 
-    hosted 形态（2026-10-16 双导航栏去重）：被 forge_gui_v2 宿主内嵌
-    时传 ``hosted=True``——品牌与 Work/Coding 模式区不再渲染（那是
-    宿主顶栏的职责），本栏退化为「Project / Run / Settings」动作条；
-    独立运行（run_development.py）保持完整形态，测试契约不变。
+    hosted 形态（2026-10-16 双导航栏去重，10-17 修正）：被
+    forge_gui_v2 宿主内嵌时传 ``hosted=True``——品牌与 Work/Coding
+    模式区仍然渲染（这是 Coding 下唯一一行导航），但 Work/Coding
+    点击经 ``workspace_request`` 回调转发给宿主顶层工作空间切换
+    （不再走 ModeState）；宿主自己的顶栏在 Coding 下整条收起。
+    独立运行（run_development.py）保持完整形态与既有语义，
+    测试契约不变。
     """
 
     MODES = (('general', 'Work'), ('development', 'Coding'))
     ACTIONS = (('project', 'Project'), ('run', 'Run'), ('settings', 'Settings'))
 
-    def __init__(self, master, on_navigate, hosted=False, **kw):
+    def __init__(self, master, on_navigate, hosted=False,
+                 workspace_request=None, **kw):
         super().__init__(master, **kw)
         self._on_navigate = on_navigate
         self._hosted = bool(hosted)
+        self._workspace_request = workspace_request
         self._mode_var = None
         self._mode_items = {}      # mode value -> (label, indicator)
         self._items = {}           # 全部可导航键 -> label（含模式项）
         self._active = None
         self._build()
+
+    def request_workspace(self, mode_value):
+        """外部（宿主）注入的切换入口：导航栏未持 workspace_request 时
+        直接回退到独立运行语义。宿主在挂载后注入自身切换逻辑。"""
+        if self._workspace_request is not None:
+            self._workspace_request(mode_value)
+        else:
+            self._navigate(mode_value)
 
     # ── 公开访问器（测试 / 验收探针用，不暴露私有结构）──────────────
     def item(self, key):
@@ -99,35 +112,43 @@ class NavigationBar(ttk.Frame):
         """当前激活的模式值（'general' / 'development' / None）。"""
         return self._active
 
+    def set_active_mode(self, mode):
+        """宿主直设激活态（hosted 形态）：高亮跟随顶层工作空间而非
+        ModeState——宿主挂载/切换时调用。值未知时静默忽略。"""
+        self._apply_active(mode)
+
     # ── 构建 ──────────────────────────────────────────────────────
     def _build(self):
         self.configure(padding=(12, 6, 12, 4))
-        # hosted 形态（2026-10-16 双导航栏去重）：品牌与 Work/Coding
-        # 模式切换由宿主顶栏承担，这里不再重复渲染（宿主另以右上角
-        # 「‹ Work」徽标提供返回出口）；独立运行仍是完整形态。
-        if not self._hosted:
-            # M7：品牌火花图标（示例图顶部火焰 + FORGE）——颜色用
-            # gui_theme 的 brand_spark token（橙），与 chat 空态主视觉
-            # hero_banner 的火花同源同色。
-            spark = IconCanvas(self, 'flame', size=18, bg=C['bg'],
-                               fg=C['brand_spark'])
-            spark.pack(side='left', padx=(0, 6))
-            tk.Label(self, text='FORGE', font=FONT_BRAND, bg=C['bg'],
-                     fg=C['text']).pack(side='left', padx=(0, 14))
-            for value, title in self.MODES:
-                cell = tk.Frame(self, bg=C['bg'])
-                cell.pack(side='left', padx=(0, 4))
-                label = tk.Label(cell, text=title, font=FONT_UI_MED, bg=C['bg'],
-                                 fg=C['subtext'], cursor='hand2', padx=8, pady=4)
-                label.pack(side='top')
-                indicator = tk.Frame(cell, bg=C['bg'], height=2)
-                indicator.pack(side='top', fill='x')
+        # M7：品牌火花图标（示例图顶部火焰 + FORGE）——颜色用
+        # gui_theme 的 brand_spark token（橙），与 chat 空态主视觉
+        # hero_banner 的火花同源同色。
+        # hosted 形态（10-17 修正）：品牌与 Work/Coding 保留渲染——
+        # Coding 下这是唯一一行导航；仅点击行为改经 workspace_request
+        # 转发宿主顶层工作空间切换。
+        spark = IconCanvas(self, 'flame', size=18, bg=C['bg'],
+                           fg=C['brand_spark'])
+        spark.pack(side='left', padx=(0, 6))
+        tk.Label(self, text='FORGE', font=FONT_BRAND, bg=C['bg'],
+                 fg=C['text']).pack(side='left', padx=(0, 14))
+        for value, title in self.MODES:
+            cell = tk.Frame(self, bg=C['bg'])
+            cell.pack(side='left', padx=(0, 4))
+            label = tk.Label(cell, text=title, font=FONT_UI_MED, bg=C['bg'],
+                             fg=C['subtext'], cursor='hand2', padx=8, pady=4)
+            label.pack(side='top')
+            indicator = tk.Frame(cell, bg=C['bg'], height=2)
+            indicator.pack(side='top', fill='x')
+            if self._hosted and self._workspace_request is not None:
+                label.bind('<Button-1>',
+                           lambda _e, key=value: self._workspace_request(key))
+            else:
                 label.bind('<Button-1>', lambda _e, key=value: self._navigate(key))
-                label.bind('<Enter>', lambda _e, w=label: self._hover(w, True))
-                label.bind('<Leave>', lambda _e, w=label: self._hover(w, False))
-                self._mode_items[value] = (label, indicator)
-                self._items[value] = label
-            self._separator()
+            label.bind('<Enter>', lambda _e, w=label: self._hover(w, True))
+            label.bind('<Leave>', lambda _e, w=label: self._hover(w, False))
+            self._mode_items[value] = (label, indicator)
+            self._items[value] = label
+        self._separator()
         for key, title in self.ACTIONS:
             label = tk.Label(self, text=title, font=FONT_UI_MED, bg=C['bg'],
                              fg=C['subtext'], cursor='hand2', padx=8, pady=4)

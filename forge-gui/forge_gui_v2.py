@@ -973,19 +973,30 @@ class ForgeGuiApp:
         # 的默认一致语义：project-local 但永不与项目重叠）。
         dev_home = Path.home() / ".forge-development"
         state = ModeState(dev_home)
-        bench = DevelopmentWorkbench(parent, state, hosted=True)
+        bench = DevelopmentWorkbench(parent, state, hosted=True,
+                                     workspace_request=self._nav_workspace_request)
         bench.pack(fill=tk.BOTH, expand=True)
         self._coding_bench = bench
-        # 双导航栏去重（2026-10-16）：宿主顶栏在 Coding 下整条收起
-        # （见 _apply_workspace_chrome），返回 Work 的出口由右上角浮动
-        # 徽标承担——place 悬浮在 bench 右上角，不新占一行。
-        self._coding_return = pill_button(
-            bench, "‹ Work Mode", lambda: self._request_workspace(self._workspace_kind.WORK),
-            kind="ghost", bg=C["surface2"], font=FONT_SMALL, padx=10)
-        self._coding_return.place(relx=1.0, rely=0.0, x=-12, y=6, anchor="ne")
+        # hosted 导航高亮直设：Coding 空间挂载即高亮 Coding（之后每次
+        # 切换由 _apply_workspace_chrome 同步）。
+        try:
+            bench.nav.set_active_mode("development")
+        except Exception:
+            pass
         path = state.value("project")
         if path and Path(path).is_dir():
             bench.open_project(path)
+
+    def _nav_workspace_request(self, mode_value):
+        """内嵌导航栏的 Work/Coding 点击 → 顶层工作空间切换。
+
+        导航栏模式值 'general'/'development' 是 DevelopmentWorkbench 的
+        独立运行语义；被宿主内嵌时映射为顶层 WORK/CODING 工作空间
+        （workspace kind），交 _request_workspace 确认制切换。
+        """
+        kind = (self._workspace_kind.WORK if str(mode_value) == 'general'
+                else self._workspace_kind.CODING)
+        self._request_workspace(kind)
 
     def _request_workspace(self, kind):
         """宿主确认制的空间切换（ModeSwitcher 只发请求，不自带状态）。"""
@@ -1004,6 +1015,15 @@ class ForgeGuiApp:
         except Exception:
             pass
         self._apply_workspace_chrome(kind)
+        # hosted 导航高亮同步：顶层空间切换 → 内嵌导航栏 Work/Coding
+        # 指示条跟随（bench 懒构建，首次挂载时由 _build_coding_surface
+        # 直设，这里覆盖之后的每次切换）。
+        if self._coding_bench is not None:
+            try:
+                self._coding_bench.nav.set_active_mode(
+                    "development" if kind == self._workspace_kind.CODING else "general")
+            except Exception:
+                pass
         try:
             save_desktop_config(workspace_mode=kind.value)
         except Exception:
@@ -1014,11 +1034,11 @@ class ForgeGuiApp:
     def _apply_workspace_chrome(self, kind):
         """Coding 下收起 Work 专属顶栏与宿主底栏（快照 pack 参数，可逆恢复）。
 
-        2026-10-16 双导航栏去重：宿主顶栏（品牌/ModeSwitcher/项目芯片/
-        gateway 状态）在 Coding 下整条收起——内嵌工作台自带导航与状态栏
-        （hosted 形态去掉了品牌与 Work/Coding，避免两层导航重复）；
-        返回 Work 的出口 = coding surface 右上角「‹ Work Mode」徽标。
-        Work 模式恢复顶栏原样（含 telemetry 展开态）。
+        2026-10-16 双导航栏去重，10-17 修正：宿主顶栏（品牌/ModeSwitcher/
+        项目芯片/gateway 状态）在 Coding 下整条收起——内嵌工作台的导航栏
+        （品牌 + Work/Coding + 动作项全保留，Work/Coding 点击经
+        workspace_request 转发回宿主）成为唯一一行导航。Work 模式恢复
+        顶栏原样（含 telemetry 展开态）。
         """
         coding = kind == self._workspace_kind.CODING
         if not hasattr(self, "_chrome_pack_cache"):

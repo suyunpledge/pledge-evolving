@@ -42,13 +42,17 @@ _LANGUAGE_BY_SUFFIX = {
 
 
 class DevelopmentWorkbench(ttk.Frame):
-    def __init__(self, parent, state, *, runtime=None, hosted=False):
+    def __init__(self, parent, state, *, runtime=None, hosted=False,
+                 workspace_request=None):
         super().__init__(parent)
         self.state = state
-        # hosted（2026-10-16 双导航栏去重）：被 forge_gui_v2 宿主内嵌时为
-        # True——导航栏不渲染品牌/Work/Coding（宿主顶栏职责），也不建
-        # 在线状态点；独立运行（run_development.py / 测试）保持完整形态。
+        # hosted（2026-10-16 双导航栏去重，10-17 修正）：被 forge_gui_v2
+        # 宿主内嵌时为 True——宿主顶栏在 Coding 下整条收起，本工作台导航栏
+        # 成为唯一一行导航（品牌 + Work/Coding + 动作项全保留）；Work/Coding
+        # 点击经 workspace_request 回调转发宿主顶层工作空间切换。独立运行
+        # （run_development.py / 测试）保持完整形态与既有语义。
         self._hosted = bool(hosted)
+        self._workspace_request = workspace_request
         self.runtime = runtime or DevelopmentRuntime(state, emit=self.enqueue_event)
         self._owns_runtime = runtime is None
         self._previous_emit = self.runtime.emit
@@ -109,17 +113,22 @@ class DevelopmentWorkbench(ttk.Frame):
         # 品牌字从 header 上移到导航栏；header 只留模式下拉与操作按钮。
         # 导航项回调走 _nav_navigate（本文件新增方法），布局组件本体在
         # layout.py——app.py 这里只做挂载，不实现导航栏内部结构。
-        # hosted 形态：品牌与 Work/Coding 由宿主顶栏承担，本栏仅剩
-        # Project / Run / Settings 动作（见 layout.NavigationBar）。
+        # hosted 形态：Work/Coding 点击经 workspace_request 转发宿主切换。
         self.nav = NavigationBar(self, on_navigate=self._nav_navigate,
-                                 hosted=self._hosted)
+                                 hosted=self._hosted,
+                                 workspace_request=self._workspace_request)
         self.nav.pack(fill='x')
         # R2：header 精简——品牌/模式/项目行全部并入 NavigationBar，header 零控件挂载
         # NavigationBar 已含：品牌火花+FORGE+Work/Coding+Project/Run/Settings
         # 模式切换走 nav.bind_mode + _nav_navigate；项目操作走 _build_project 内绑定
         # self.mode / self.preset 仍保留（向下兼容）
         self.mode = tk.StringVar(value=self.state.mode.value)
-        self.nav.bind_mode(self.mode)
+        if self._hosted and self._workspace_request is not None:
+            # hosted：高亮不跟随 ModeState（那是独立运行语义），由宿主
+            # 经 set_active_mode 直设（见 forge_gui_v2 的 chrome 应用）。
+            pass
+        else:
+            self.nav.bind_mode(self.mode)
         # M7：头部「在线」灰点状态迁入导航栏右端（R2 头部精简后原
         # header 行删除；数据源纪律不变——runtime 无 peers 数据，
         # 固定「离线」不伪造计数，_sync_online_status 一处可控）。
