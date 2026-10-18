@@ -1032,42 +1032,24 @@ class ForgeGuiApp:
                          else "Work Mode", "info")
 
     def _apply_workspace_chrome(self, kind):
-        """Coding 下收起 Work 专属顶栏与宿主底栏（快照 pack 参数，可逆恢复）。
+        """统一导航规范（Coding 嵌入时）：
+        - **顶部 chrome 永远在**：Coding 不再收起宿主顶栏——Coding 的内嵌
+          顶栏在 hosted=True 时已不 pack，宿主顶栏是唯一一行顶导航。
+        - **Coding 下隐藏宿主底栏**：dev-mode 自己的 StatusBar 覆盖底栏
+          状态展示，宿主底栏 28px + 1px 分隔线被 Coding 占去整行会浪费空间。
+          Work 模式恢复宿主底栏。
 
-        2026-10-16 双导航栏去重，10-17 修正：宿主顶栏（品牌/ModeSwitcher/
-        项目芯片/gateway 状态）在 Coding 下整条收起——内嵌工作台的导航栏
-        （品牌 + Work/Coding + 动作项全保留，Work/Coding 点击经
-        workspace_request 转发回宿主）成为唯一一行导航。Work 模式恢复
-        顶栏原样（含 telemetry 展开态）。
+        切换 Work/Coding 不改变窗口尺寸、顶部 chrome 高度（50px）、
+        侧栏宽度（220px）。
         """
         coding = kind == self._workspace_kind.CODING
         if not hasattr(self, "_chrome_pack_cache"):
             self._chrome_pack_cache = {}
-        for name in ("sidebar_reveal_btn", "ws_toggle_btn", "_project_chip",
-                     "_chrome", "_topbar_divider"):
-            widget = getattr(self, name, None)
-            if widget is None:
-                continue
-            try:
-                if coding:
-                    if widget.winfo_manager() == "pack" and name not in self._chrome_pack_cache:
-                        info = widget.pack_info()
-                        self._chrome_pack_cache[name] = {
-                            key: value for key, value in info.items() if key != "in"}
-                    widget.pack_forget()
-                elif name in self._chrome_pack_cache and not widget.winfo_manager():
-                    widget.pack(**self._chrome_pack_cache[name])
-                    if name == "_chrome":
-                        # pack 重挂会追加到 slave 列表末尾，而 Tk 按列表顺序
-                        # 分配腔体——顶栏若排在 body 之后会被挤到窗口
-                        # 中部。恢复时显式插回 body 之前（顶栏归位）。
-                        # （_topbar_divider 是 chrome 的子控件，随 chrome
-                        # 整体归位，无需单独锚定。）
-                        body_frame = getattr(self, "_body_frame", None)
-                        if body_frame is not None and body_frame.winfo_manager():
-                            widget.pack_configure(before=body_frame)
-            except tk.TclError:
-                continue
+        # 顶部 chrome（_chrome / _topbar_divider / sidebar_reveal_btn /
+        # ws_toggle_btn / _project_chip）：统一规范要求两个工作空间都
+        # 共享同一行顶导航。Coding 嵌入时这部分始终可见、不再收起。
+        # 不在循环里做任何 pack_forget/pack——只保留 Work 模式下的
+        # 显式恢复路径（以防其它路径误收）。
 
         # R3：Coding 下隐藏宿主底栏（28px bot + 1px 分隔线）——dev-mode 的
         # StatusBar 已覆盖状态展示，双状态栏堆叠浪费一整行。Work 模式恢复。

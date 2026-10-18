@@ -45,6 +45,17 @@ PAGE_ALIASES = {
 # 「能力」「审批」两类自定义 Tab 标记（区分于纯文本 Tab）。
 INJECTED_PAGES = {'能力', '审批'}
 
+# 空态引导文案：未写入真实内容前显示，避免底部面板在无任务时呈现为
+# 一大片纯黑空洞（"毛坯房"观感）。首次写入真实内容时由 app.append()
+# 按 'empty_hint' tag 抹除——提示是一次性的，不会与新内容混排。
+EMPTY_HINTS = {
+    '差异': '从左侧「Git 变更」选择文件，或运行一个任务后，这里显示真实差异。',
+    '测试': '运行任务或「执行测试」后显示真实测试结果；没有结构化结果时不推算通过数。',
+    '问题': '暂无失败记录。工具失败、测试失败与审查失败会汇总到这里。',
+    '输出': '工具调用与任务输出会实时显示在这里。',
+    '终端': '这里只展示真实执行或被策略拒绝的命令记录。',
+}
+
 
 def count_tests(evidence):
     """测试徽标数据源：当前任务的测试记录数。
@@ -174,6 +185,17 @@ class ToolPanel(ttk.Frame):
                        state='disabled')
         text.pack(fill='both', expand=True)
         self.views[name] = text
+        # 空态引导：一次性提示，tag 'empty_hint' 标记，app.append() 首
+        # 次写入真实内容时抹除。
+        hint = EMPTY_HINTS.get(name)
+        if hint:
+            try:
+                text.tag_configure('empty_hint', foreground=C['ter'])
+                text.configure(state='normal')
+                text.insert('1.0', hint, 'empty_hint')
+                text.configure(state='disabled')
+            except tk.TclError:
+                pass
 
     def _inject_placeholder(self, name, hint):
         """为非文本类 Tab 留好占位：app 后续用 install_* 替换。"""

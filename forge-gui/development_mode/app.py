@@ -114,10 +114,20 @@ class DevelopmentWorkbench(ttk.Frame):
         # 导航项回调走 _nav_navigate（本文件新增方法），布局组件本体在
         # layout.py——app.py 这里只做挂载，不实现导航栏内部结构。
         # hosted 形态：Work/Coding 点击经 workspace_request 转发宿主切换。
+        # 2026-10-17 导航统一：Coding 嵌入宿主时不再绘制自己的顶栏——
+        # 宿主顶栏（forge_gui_v2._build_topbar）是唯一一行顶导航。
+        # self.nav 仍保留为属性（forward_event / set_active_mode 等需要
+        # 引用 nav 实例做协调），但不 pack。
         self.nav = NavigationBar(self, on_navigate=self._nav_navigate,
                                  hosted=self._hosted,
                                  workspace_request=self._workspace_request)
-        self.nav.pack(fill='x')
+        if not self._hosted:
+            self.nav.pack(fill='x')
+        else:
+            # 嵌入宿主时：内部 Work/Coding 切换走 _workspace_request 回调
+            # 宿主层；高亮由 forge_gui_v2._apply_workspace_chrome 同步
+            # （本类 _build 内不再 bind_mode / pack_forget）。
+            self.nav.set_active_mode('development')
         # R2：header 精简——品牌/模式/项目行全部并入 NavigationBar，header 零控件挂载
         # NavigationBar 已含：品牌火花+FORGE+Work/Coding+Project/Run/Settings
         # 模式切换走 nav.bind_mode + _nav_navigate；项目操作走 _build_project 内绑定
@@ -289,7 +299,11 @@ class DevelopmentWorkbench(ttk.Frame):
         # Notebook 占左侧弹性区，两个图标按钮固定右侧。
         tab_row = ttk.Frame(body)
         tab_row.pack(fill='both', expand=True)
-        self.tabs = ttk.Notebook(tab_row)
+        # 视觉一致性：编辑器标签页此前用默认 TNotebook（padding/font 走
+        # 主题默认值），与底部工具面板、Agent 面板、Explorer 的
+        # Coding.TNotebook 不一致——同一界面里两套 tab 度量。统一到
+        # Coding.TNotebook（padding=(10,5) + FONT_SMALL）。
+        self.tabs = ttk.Notebook(tab_row, style='Coding.TNotebook')
         self.tabs.bind('<<NotebookTabChanged>>', lambda event: self.show_document_state())
         # 右侧图标按钮帧必须先于 Notebook pack：Tk 打包器在腔体被超订时
         # 不重算分配——先 pack 的 slave 拿满请求，后 pack 的 slave 恒得
@@ -317,6 +331,9 @@ class DevelopmentWorkbench(ttk.Frame):
         attach_tooltip(more, '更多编辑器操作')
         self.more_button = more
         self.tabs.pack(side='left', fill='both', expand=True)
+        # v0.4 产品化收紧：编辑区底部状态行 + 面包屑（合在 body 末尾）
+        # — 22px 高，左侧面包屑（项目 / 路径），右侧 行列 / 语言 / 修改状态。
+        self._build_editor_status_bar(body)
         self.write_output('测试', '内置 shell_exec 在 Secret 隔离中不可用。这里只展示真实执行或拒绝事件；没有结构化结果时不推算通过数。\n')
         # M6：Review Focus 的中央 Git Diff 只读视图——editor_frame 内
         # 第三态（欢迎页 / 编辑器本体 / 本视图），与另两个子帧共享父
@@ -357,6 +374,62 @@ class DevelopmentWorkbench(ttk.Frame):
         sx.pack(side='bottom', fill='x')
         self.review_text.configure(yscrollcommand=sy.set, xscrollcommand=sx.set)
         self.review_text.pack(side='left', fill='both', expand=True)
+
+    # ── v0.4 编辑区底部状态行 + 面包屑 ────────────────────────
+    # 22px 高的细条；左：面包屑（项目名 / 路径），右：行列 / 语言 / 修改状态。
+    # 不进入底部工具面板的 Tab 集合（这是 *编辑器* 状态，不是输出状态）。
+    # 文档切换时由 _refresh_editor_status() 主动调用。
+    def _build_editor_status_bar(self, body):
+        bar = tk.Frame(body, bg=C['surface2'], height=22)
+        bar.pack_propagate(False)
+        # 面包屑区（左）
+        self._crumb = tk.Label(bar, text='未打开文件', font=FONT_CAPTION,
+                               bg=C['surface2'], fg=C['ter'], anchor='w')
+        self._crumb.pack(side='left', padx=(10, 0), pady=3)
+        # 状态组（右）—— 行列 / 语言 / 修改状态
+        self._pos = tk.Label(bar, text='— : —', font=FONT_CAPTION,
+                            bg=C['surface2'], fg=C['text'], anchor='e', width=12)
+        self._pos.pack(side='right', padx=(10, 0), pady=3)
+        sep1 = tk.Frame(bar, bg=C['border'], width=1)
+        sep1.pack(side='right', fill='y', pady=4)
+        self._lang = tk.Label(bar, text='Plain', font=FONT_CAPTION,
+                             bg=C['surface2'], fg=C['text'], anchor='e', width=10)
+        self._lang.pack(side='right', padx=(10, 0), pady=3)
+        sep2 = tk.Frame(bar, bg=C['border'], width=1)
+        sep2.pack(side='right', fill='y', pady=4)
+        self._modified = tk.Label(bar, text=' ', font=FONT_CAPTION,
+                                   bg=C['surface2'], fg=C['ok'], anchor='e', width=8)
+        self._modified.pack(side='right', padx=(10, 0), pady=3)
+        # 必须先于 tabs 之后 pack；tabs expand=True 会吃掉剩余空间，但状态条
+        # 是固定 22px（pack_propagate=False），Tk 打包器在腔体超订时按 pack
+        # 顺序从末尾牺牲 expand=1——本条 expand=0 不会被牺牲。
+        bar.pack(side='bottom', fill='x', before=self.tabs)
+
+    def _refresh_editor_status(self, *, crumb=None, line=None, col=None,
+                               language=None, modified=None):
+        """推一次编辑器底部状态。文档切换 / 编辑时由调用方驱动。"""
+        if crumb is not None:
+            try:
+                self._crumb.configure(text=crumb, fg=C['text'] if crumb else C['ter'])
+            except tk.TclError:
+                pass
+        if line is not None or col is not None:
+            try:
+                self._pos.configure(text=f'{line or 0} : {col or 0}')
+            except tk.TclError:
+                pass
+        if language is not None:
+            try:
+                self._lang.configure(text=language or 'Plain')
+            except tk.TclError:
+                pass
+        if modified is not None:
+            try:
+                self._modified.configure(
+                    text=('● 已修改' if modified else '已保存'),
+                    fg=(C['warn'] if modified else C['ok']))
+            except tk.TclError:
+                pass
 
     def _build_welcome(self):
         """M2：欢迎页挂载 + 初始可见性。
@@ -545,6 +618,8 @@ class DevelopmentWorkbench(ttk.Frame):
         self.dev_events = tk.BooleanVar(value=True)
         # M6：审查结果输出页引用（AgentPanel 版任务页）。
         self._workflow_tab = self.agent_panel.notebook.tabs()[1]
+        # v0.4：状态条起点 = idle（等任务接入 done / running 切换）
+        self.set_agent_status('idle', '就绪 · 等待任务')
 
         self.editor_contexts = []
         # ── 会话组 ──────────────────────────────────────────────
@@ -778,21 +853,37 @@ class DevelopmentWorkbench(ttk.Frame):
         row = self.current_row()
         if row is None:
             bar.update(cursor='—', encoding='—', eol='—', language='—')
+            self._refresh_editor_status(crumb='', line=0, col=0,
+                                         language='Plain', modified=False)
         else:
             document = row['document']
             area = row.get('area')
             cursor = '行 1, 列 1'
+            line_num = col_num = 0
             if area is not None:
                 try:
                     line, column = area.text.index('insert').split('.')
-                    cursor = f'行 {line}, 列 {int(column) + 1}'
+                    line_num = int(line)
+                    col_num = int(column) + 1
+                    cursor = f'行 {line}, 列 {col_num}'
                 except (tk.TclError, ValueError):
                     pass
+            lang = _LANGUAGE_BY_SUFFIX.get(document.path.suffix.lower(), 'Plain')
             bar.update(cursor=cursor, encoding=document.encoding.upper(),
                        eol={'\\r\\n': 'CRLF', '\\r': 'CR'}.get(
                            document.newline, 'LF'),
-                       language=_LANGUAGE_BY_SUFFIX.get(
-                           document.path.suffix.lower(), 'Plain'))
+                       language=lang)
+            # v0.4：底部状态行（面包屑 + 行列 + 语言 + 修改状态）
+            project_root = self.source.root.name if self.source else '未打开项目'
+            rel = None
+            try:
+                rel = document.path.relative_to(self.source.root) if self.source else None
+            except ValueError:
+                rel = document.path.name
+            crumb = f'{project_root}  /  {rel if rel else document.path.name}'
+            self._refresh_editor_status(
+                crumb=crumb, line=line_num, col=col_num,
+                language=lang, modified=(document.status in ('modified', 'conflict')))
         bar.update(warnings=0, problems=count_problems(self.task_evidence))
 
 
@@ -878,6 +969,11 @@ class DevelopmentWorkbench(ttk.Frame):
 
     def append(self, widget, text):
         widget.configure(state='normal')
+        # 空态引导是一次性的：首次写入真实内容前先抹掉（bottom_panel 的
+        # EMPTY_HINTS 用 'empty_hint' tag 标记）。没有该 tag 的控件
+        # （对话 / 事件页）tag_ranges 返回空，本分支不触发。
+        if widget.tag_ranges('empty_hint'):
+            widget.delete('1.0', 'end')
         chunk = str(redact(text))
         widget.insert('end', chunk)
         self._paint_result_lines(widget, chunk)
@@ -1069,6 +1165,19 @@ class DevelopmentWorkbench(ttk.Frame):
         if previous and self._resume_project and Path(self._resume_project).resolve() == self.source.root:
             if Path(previous).exists() and Path(previous).resolve() != self.runtime.bridge.agent.session.path.resolve():
                 self.restore_session(previous)
+
+    # ── v0.4 Agent 状态条 wiring ─────────────────────────────────
+    # 单一入口：app 任何地方需要更新 Agent 顶部状态条都走这里。
+    # state ∈ {idle, running, waiting, error}，last_action 是可选时间戳。
+    # 缺 AgentPanel（独立运行 / 未 hosted）时静默 no-op。
+    def set_agent_status(self, state, text=None, last_action=None):
+        panel = getattr(self, 'agent_panel', None)
+        if panel is None or not hasattr(panel, 'set_status_state'):
+            return
+        try:
+            panel.set_status_state(state, text or '', last_action=last_action)
+        except tk.TclError:
+            pass
 
     def _sync_perm_badge(self):
         """P0-D1：当前权限常驻显示；高于 read-only 时高亮。"""
@@ -1924,10 +2033,14 @@ class DevelopmentWorkbench(ttk.Frame):
         self.task_evidence = TaskEvidence()
         self.render_evidence()
         self.input.delete('1.0', 'end')
+        # v0.4：派发即切到 running 态。
+        self.set_agent_status('running', f'运行中 · 任务 #{self._generation}')
         self.editor_contexts = []
         self.context_label.configure(text='未附加编辑器内容')
         self._retry_request = {'prompt': prompt, 'delegate': delegate}
         self.task_label.configure(text='Agent · 请求执行')
+        # v0.4：派发即切到 running 态——done 回调里再切终态。
+        self.set_agent_status('running', f'运行中 · 任务 #{self._generation}')
         def done(value, error):
             self.send_button.configure(state='normal')
             # delegate_button 在 v0.3 已被 RuntimeContext 接管；同步更新
@@ -1941,6 +2054,14 @@ class DevelopmentWorkbench(ttk.Frame):
                 except Exception:
                     pass
             self.task_label.configure(text='Agent · 失败' if error else 'Agent · ' + str(value.get('stopped', '完成')))
+            # v0.4：done 回调切终态。error → error；否则按 stopped 文本切
+            # idle / running（running 表示停在某个中间状态，idle 表示
+            # 干净完成——这里用「完成」即可视作 idle）。
+            if error:
+                self.set_agent_status('error', f'失败 · {str(error)[:80]}')
+            else:
+                stopped = str(value.get('stopped', '完成'))
+                self.set_agent_status('idle', f'就绪 · 上次任务：{stopped}')
             if error:
                 if not self.input.get('1.0', 'end-1c').strip():
                     self.input.insert('1.0', prompt)

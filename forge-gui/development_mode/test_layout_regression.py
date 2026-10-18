@@ -475,9 +475,43 @@ class WelcomeViewTests(_WorkbenchFixture, unittest.TestCase):
     open_project_on_start = False
 
     def _recent_labels(self):
+        """近期项目行代表控件列表。
+
+        v0.4：行从单 Label 改为 Frame（内含名字/父路径/时间戳，
+        <Button-1> 绑在行与主标签上）；旧结构仍是单 Label。返回行
+        控件本身（新旧都绑点击），路径文本经 _recent_text 取。
+        """
         box = self.app.welcome._recent_box
         return [w for w in box.winfo_children()
-                if isinstance(w, tk.Label) and w.cget('text') != '暂无项目记录']
+                if isinstance(w, (tk.Label, tk.Frame))
+                and self._recent_text(w) is not None]
+
+    @staticmethod
+    def _recent_text(widget):
+        """行的路径文本：旧=Label 自身；新=Frame 内名字+父路径拼接
+        （时间戳等其他列不计入）。"""
+        if isinstance(widget, tk.Label):
+            text = str(widget.cget('text'))
+            return None if text.startswith('暂无项目记录') else text
+        if isinstance(widget, tk.Frame):
+            parts = []
+            for child in widget.winfo_children():
+                if not isinstance(child, tk.Label):
+                    continue  # 图标容器等非文本列
+                text = str(child.cget('text')).strip()
+                if not text:
+                    continue
+                if text.startswith('刚刚') or text.startswith('约 '):
+                    continue  # 时间戳列
+                if not (text.startswith('C:') or text.startswith('/')
+                        or text.startswith('\\')):
+                    # 名字列（无盘符/根斜杠）拼到最前
+                    parts.insert(0, text)
+                else:
+                    parts.append(text)
+            if not parts:
+                return None
+            return ' '.join(parts)
 
     def _pump_content(self):
         """等欢迎页内容层映射到位。
@@ -513,9 +547,16 @@ class WelcomeViewTests(_WorkbenchFixture, unittest.TestCase):
         self.assertEqual(self.app.welcome.recent_count(), 1)
         labels = self._recent_labels()
         self.assertEqual(len(labels), 1)
-        # remember_project 存的是 resolve() 后的长路径（tempfile 在
-        # Windows 可能给出 8.3 短名），断言按持久化口径比长名。
-        self.assertIn(str(self.project.resolve()), labels[0].cget('text'))
+        # remember_project 存的是 resolve() 后的长路径；v0.4 行分列展示
+        # 名字+父路径（父路径过长时尾部省略），断言按展示口径：名字列
+        # 完整、父路径列前缀可见即可，不再要求整行拼出完整长路径。
+        self.assertIn(self.project.name, self._recent_text(labels[0]))
+        parent = str(self.project.resolve().parent)
+        self.assertTrue(
+            any(parent[:12] in str(c.cget('text'))
+                for c in labels[0].winfo_children()
+                if isinstance(c, tk.Label)),
+            '父路径列应可见完整前缀')
         labels[0].event_generate('<Button-1>')
         self.pump(lambda: self.app.source is not None)
         self.assertEqual(Path(self.app.source.root),
@@ -527,7 +568,11 @@ class WelcomeViewTests(_WorkbenchFixture, unittest.TestCase):
         self.assertEqual(self.app.welcome.recent_count(), 0)
         texts = [w.cget('text') for w in
                  self.app.welcome._recent_box.winfo_children()]
-        self.assertIn('暂无项目记录', texts)
+        # v0.4：欢迎页空态文案补全——不再用「暂无项目记录」单行，
+        # 改为「暂无项目记录——打开一个目录后会自动出现在这里。」；
+        # 测试以「暂无项目记录」为关键字做 substring 检查。
+        self.assertTrue(any('暂无项目记录' in t for t in texts),
+                        '近期项目空态文案必须包含「暂无项目记录」')
 
     def test_welcome_survives_mode_roundtrip(self):
         """模式切换（general↔development）会让 editor_frame 被

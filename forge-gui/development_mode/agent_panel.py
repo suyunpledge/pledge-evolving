@@ -8,9 +8,17 @@ import tkinter as tk
 from tkinter import ttk
 
 from chat_widgets import parse_blocks, inline_segments
-from gui_theme import C, FONT_UI, FONT_UI_BOLD, FONT_SECTION, FONT_MONO_SM, style_editor, button_feedback, attach_tooltip
+from gui_theme import C, FONT_UI, FONT_UI_BOLD, FONT_SECTION, FONT_CAPTION, FONT_MONO_SM, style_editor, button_feedback, attach_tooltip
 from ui_icons import IconButton
 from forge.secrets import redact
+
+
+# 对话区空态引导：无消息时显示，避免右侧 Agent 面板呈现为纯黑空洞。
+# 文案只描述"这里将会发生什么"，不伪造任何已发生的执行。
+CHAT_EMPTY_HINT = (
+    '在下方输入任务描述，按 Enter 发送。\n'
+    'Agent 的执行过程、工具步骤与产物会实时汇报在这里。'
+)
 
 
 def readonly(parent, **options):
@@ -53,10 +61,40 @@ class Conversation(tk.Text):
         self.tag_configure('b', font=FONT_UI_BOLD)
         self.tag_configure('code', font=FONT_MONO_SM, background=C['code_bg'])
         self.tag_configure('quote', foreground=C['subtext'], lmargin1=12, lmargin2=12)
+        # 空态引导：无消息时给一行友好的起始提示，避免对话区呈现为纯黑
+        # 空洞。tag 'empty_hint' 标记，message() / clear() 首次写入真实
+        # 内容前抹除——一次性，不与真实消息混排。
+        self.tag_configure('empty_hint', foreground=C['ter'], spacing1=10)
         self._links = 0
         self._windows = []
         self._last_width = 0
+        self._insert_empty_hint()
         self.bind('<Configure>', self._fit_cards)
+
+    def _insert_empty_hint(self):
+        """写入一次性空态引导（仅当控件为空时）。
+
+        不调用 self.delete()——那会走进 _clear_cards()，而 __init__ 阶段
+        self._windows 尚未建立；控件此刻本就是空的，无需先删。
+        """
+        try:
+            if self.get('1.0', 'end-1c').strip():
+                return
+            self.configure(state='normal')
+            self.insert('1.0', CHAT_EMPTY_HINT, 'empty_hint')
+            self.configure(state='disabled')
+        except tk.TclError:
+            pass
+
+    def _drop_empty_hint(self):
+        """抹除一次性空态引导（若存在）。只删 tag 覆盖的那一段，
+        不动其余内容——避免连带清掉已插入的卡片。"""
+        try:
+            ranges = self.tag_ranges('empty_hint')
+            if ranges:
+                self.delete(*ranges)
+        except tk.TclError:
+            pass
 
     def _fit_cards(self, event):
         if event.width == self._last_width:
@@ -69,7 +107,9 @@ class Conversation(tk.Text):
     def clear(self):
         self.configure(state='normal')
         self.delete('1.0', 'end')
+        self._clear_cards()
         self.configure(state='disabled')
+        self._insert_empty_hint()
 
     def delete(self, index1, index2=None):
         if index1 == '1.0' and index2 == 'end':
@@ -135,6 +175,7 @@ class Conversation(tk.Text):
 
     def message(self, role, body, *, timestamp=None, historical=False):
         self.configure(state='normal')
+        self._drop_empty_hint()
         if timestamp is None and not historical:
             timestamp = datetime.now().timestamp()  # actual message display time
         try:
@@ -367,6 +408,10 @@ class AgentPanel(ttk.Frame):
         self._runtime_context = None  # 由 app 调 mount_runtime_context 注入
         self.notebook = ttk.Notebook(self, style='Coding.TNotebook')
         self.notebook.pack(fill='both', expand=True)
+        # Agent 状态条（v0.4 产品化）：4-Tab 上方显示 idle / running / waiting
+        # / error 状态、最后动作时间。视觉上是 22px 高的细条，左侧 8px 圆点
+        # + 状态文字，右侧最近时间戳。
+        self._status_bar = self._build_status_bar()
         # 4 个 Tab：对话 / 任务 / 子 Agent / 完整事件
         conversation, tasks, agents, events = (ttk.Frame(self.notebook) for _ in range(4))
         self.tasks_page = tasks
@@ -447,6 +492,60 @@ class AgentPanel(ttk.Frame):
     def selected_name(self):
         selected = self.tree.selection()
         return self.rows.get(selected[0], {}).get('agent') if selected else None
+
+    # ── Agent 状态条（v0.4 产品化收紧）─────────────────────
+    # 22px 高的细条：左侧 8px 状态点 + 状态文字，右侧最近动作时间戳。
+    # 状态点用 fg 而不是 fill——和现有 ActivityGlyph 风格一致，圆点用 create_oval。
+    # 颜色 token 复用 status_bar 的 idle / running / waiting / error 语义。
+    def _build_status_bar(self):
+        bar = tk.Frame(self, bg=C['surface2'], height=22)
+        bar.pack_propagate(False)
+        bar.pack(fill='x', before=self.notebook)
+        # 左侧：状态点
+        self._status_dot = tk.Canvas(bar, width=10, height=10, bg=C['surface2'],
+                                       highlightthickness=0, bd=0)
+        self._status_dot.pack(side='left', padx=(10, 4), pady=6)
+        # 左侧：状态文字
+        self._status_text = tk.Label(bar, text='就绪 · 等待任务', font=FONT_CAPTION,
+                                    bg=C['surface2'], fg=C['text'], anchor='w')
+        self._status_text.pack(side='left', padx=(0, 8))
+        # 右侧：最近动作时间
+        self._status_last = tk.Label(bar, text='', font=FONT_CAPTION,
+                                     bg=C['surface2'], fg=C['ter'], anchor='e')
+        self._status_last.pack(side='right', padx=(0, 10))
+        # 初始化为 idle
+        self.set_status_state('idle', '就绪 · 等待任务')
+        return bar
+
+    def set_status_state(self, state, text, last_action=None):
+        """Agent 状态条更新。
+
+        state ∈ {'idle', 'running', 'waiting', 'error'} —— 决定状态点颜色
+        与文案前缀。last_action 可选（人类可读时间字符串）。
+        """
+        # 颜色 token（与 status_bar 内 StatusBar._sync_ready_status 一致）
+        tokens = {
+            'idle':    C['ter'],     # 灰
+            'running': C['warn'],    # 橙
+            'waiting': C['accent'],  # 蓝
+            'error':   C['error'],   # 红
+        }
+        token = tokens.get(state, C['ter'])
+        # 状态点（重画）
+        try:
+            self._status_dot.delete('dot')
+            self._status_dot.create_oval(1, 1, 9, 9, outline='', fill=token, tags='dot')
+        except tk.TclError:
+            pass
+        try:
+            self._status_text.configure(text=text or '')
+        except tk.TclError:
+            pass
+        if last_action is not None:
+            try:
+                self._status_last.configure(text=last_action)
+            except tk.TclError:
+                pass
 
     def show_agent(self, event=None):
         selected = self.tree.selection()
