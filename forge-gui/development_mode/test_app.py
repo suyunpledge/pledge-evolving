@@ -275,13 +275,13 @@ class WorkbenchTests(unittest.TestCase):
         self.app.planning.set('none')
         self.app.input.insert('1.0', 'real request')
         self.app.send()
-        self.pump(lambda: bool(fake.messages) and str(self.app.send_button['state']) == 'normal')
+        self.pump(lambda: bool(fake.messages) and not self.app._submission_active and self.app._jobs == 0)
         self.assertIn('Offline reply', self.app.chat.get('1.0', 'end'))
         self.assertIn('workflow_state', self.app.events.get('1.0', 'end'))
         with patch.object(self.app.runtime, 'run', side_effect=ValueError('offline failure')):
             self.app.input.insert('1.0', 'retry draft')
             self.app.send()
-            self.pump(lambda: str(self.app.send_button['state']) == 'normal')
+            self.pump(lambda: not self.app._submission_active and self.app._jobs == 0)
         self.assertEqual(self.app.input.get('1.0', 'end-1c'), 'retry draft')
 
     def test_mode_switch_resets_next_task_permission(self):

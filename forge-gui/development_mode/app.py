@@ -62,6 +62,9 @@ class DevelopmentWorkbench(ttk.Frame):
         self._after_ids = set()
         self._loading = False
         self._jobs = 0
+        self._submission_active = False
+        self._active_submission = None
+        self._queued_send_id = None
         self._generation = 0
         self._poll = None
         self._external_poll = None
@@ -756,7 +759,8 @@ class DevelopmentWorkbench(ttk.Frame):
 
 
     def _new_agent_conversation(self):
-        if not self.runtime.ready or self.runtime.busy or self._loading or self._jobs:
+        if (not self.runtime.ready or self.runtime.busy or self._loading or self._jobs
+                or self._submission_active or self._pending_prompts):
             self.status.set('请先打开项目并等待当前任务与后台操作结束，再创建新对话')
             return
         runtime = self.runtime
@@ -1027,7 +1031,11 @@ class DevelopmentWorkbench(ttk.Frame):
                 results.put((generation, callback, value, None, True))
             except Exception as exc:
                 results.put((generation, callback, None, redact(f'{type(exc).__name__}: {exc}'), True))
-        threading.Thread(target=run, daemon=True, name='forge-development-io').start()
+        try:
+            threading.Thread(target=run, daemon=True, name='forge-development-io').start()
+        except BaseException:
+            self._jobs -= 1
+            raise
 
     def enqueue_event(self, event):
         self.results.put((self._generation, self.handle_event, redact(event), None, False))
@@ -1070,7 +1078,8 @@ class DevelopmentWorkbench(ttk.Frame):
             ttk.Label(dialog, text='暂无项目记录', padding=16).pack()
 
     def open_project(self, path):
-        if self.runtime.busy or self._loading:
+        if (self.runtime.busy or self._loading or self._submission_active
+                or getattr(self, '_pending_prompts', ())):
             self.status.set('任务运行中，项目保持不变')
             return
         if any(row['document'].dirty for row in self.documents.values()):
@@ -1119,6 +1128,7 @@ class DevelopmentWorkbench(ttk.Frame):
         self._loading = False
         self.send_button.configure(state='normal')
         if error:
+            self._submission_notice('项目载入失败：' + error, error=True)
             return
         self.source, self.runtime, ready = value
         # M2：项目已载入，中央区从欢迎页切回编辑器本体。
@@ -1150,9 +1160,9 @@ class DevelopmentWorkbench(ttk.Frame):
                 # 不在新列表里，回落第一个。
                 current_routing = self._runtime_ctx.get_routing()
                 primary = current_routing.get('primary', '')
-                if primary and primary not in model_labels:
-                    primary = model_labels[0] if model_labels else ''
-                self._safe_set_routing_primary(primary)
+                options = ['继承配置', *model_labels]
+                self._runtime_ctx.set_model_options(options)
+                self._safe_set_routing_primary(primary if primary in options else '继承配置')
             except Exception:
                 pass
         self.status.set('项目已载入 · 只读 · 模式策略从后续任务生效')
@@ -1191,6 +1201,8 @@ class DevelopmentWorkbench(ttk.Frame):
             self.perm_badge.configure(
                 text=f'权限 {value}',
                 foreground=_C.get('error', '#e66') if hot else _C.get('subtext', '#888'))
+            if getattr(self, '_runtime_ctx', None) is not None:
+                self._runtime_ctx.set_sandbox(value)
         except Exception:
             pass
 
@@ -1250,14 +1262,15 @@ class DevelopmentWorkbench(ttk.Frame):
         if getattr(self, 'agent_role', None) is not None:
             try:
                 self.agent_role.set(value)
+                self.task_role.set('default' if value == 'agent' else value)
             except Exception:
                 pass
 
     def _policy_matrix_kwargs(self):
         """从当前 workbench 状态构造 PolicyMatrix 初始值（best-effort）。"""
-        mode = 'default'
-        sandbox = 'workspace-write'
-        read_scope = 'auto'
+        mode = 'read-only'
+        sandbox = 'read-only'
+        read_scope = 'workspace'
         secret_scope = 'isolated'
         try:
             perm = getattr(self, 'permission', None)
@@ -1271,7 +1284,8 @@ class DevelopmentWorkbench(ttk.Frame):
                     sandbox = 'workspace-write'
         except Exception:
             pass
-        return dict(mode=mode, sandbox=sandbox, read_scope=read_scope,
+        mode = 'read-only' if sandbox == 'read-only' else 'acceptEdits'
+        return dict(mode=mode, sandbox=sandbox, read_scope=read_scope, host_managed=True,
                     secret_scope=secret_scope,
                     on_change=self._on_policy_change)
 
@@ -1280,7 +1294,7 @@ class DevelopmentWorkbench(ttk.Frame):
         # 主模型选项 = 当前 catalog 的所有 model id；与顶部下拉共享。
         options = self._collect_model_options()
         return dict(primary=primary, fallback=fallback, moa=moa,
-                    model_options=options,
+                    model_options=options, host_managed=True,
                     on_change=self._on_routing_change)
 
     def _collect_routing(self):
@@ -1314,6 +1328,12 @@ class DevelopmentWorkbench(ttk.Frame):
     def _on_policy_change(self, *, mode, sandbox, read_scope, secret_scope):
         """RuntimeContext 矩阵变更 → 写回 self.permission 与状态栏。"""
         # 同步状态栏徽标（B1 修正回归点）。
+        if sandbox not in {'read-only', 'workspace-write'}:
+            self._sync_perm_badge()
+            self._submission_notice('Coding 任务仅支持只读或工作区写入，未启用危险全访问。', error=True)
+            return
+        if mode in {'read-only', 'plan'}:
+            sandbox = 'read-only'
         if hasattr(self, 'permission'):
             try:
                 self.permission.set(sandbox)
@@ -1336,8 +1356,7 @@ class DevelopmentWorkbench(ttk.Frame):
         if getattr(self, '_runtime_ctx', None) is None:
             return
         try:
-            chain = self._runtime_ctx._routing  # 私有访问；用于 v0.3 同步
-            chain._primary.set(primary or '')
+            self._runtime_ctx.set_routing_primary(primary or '')
         except Exception:
             pass
 
@@ -1429,7 +1448,7 @@ class DevelopmentWorkbench(ttk.Frame):
             self.refresh_project()
             if docs:
                 self.refresh_documents()
-        self._refresh_after_id = self.after(delay_ms, _fire)
+        self._refresh_after_id = self.later(delay_ms, _fire)
 
     def refresh_project(self):
         if not self.source:
@@ -1957,6 +1976,7 @@ class DevelopmentWorkbench(ttk.Frame):
             label.pack_forget()
             return
         first = self._pending_prompts[0]['prompt']
+        first = redact(first)
         summary = (first[:24] + '…') if len(first) > 24 else first
         label.configure(text=f'⏳ 预存 {n}/3：{summary}' + (' 等' if n > 1 else ''))
         # 输入框正上方（side='bottom' 序列里 input 已占位，before 保证
@@ -1967,55 +1987,108 @@ class DevelopmentWorkbench(ttk.Frame):
         except tk.TclError:
             pass
 
+    def _submission_notice(self, text, *, error=False):
+        """A send outcome must be visible next to the draft, not only in a status bar."""
+        text = redact(str(text))
+        self.status.set(text)
+        self.log_tabs.select(self.chat.master)
+        self.chat.message('无法发送' if error else '发送状态', text)
+        # A queued/refused draft is a notification, not a state transition of
+        # the Agent already running. Its status remains owned by execution events.
+
+    def _update_send_button(self):
+        pending = self._submission_active or self.runtime.busy or bool(self._pending_prompts)
+        self.send_button.configure(state='disabled' if self._loading else 'normal',
+                                   text='排队发送' if pending else '发送')
+
+    def _schedule_queued_send(self):
+        self._update_send_button()
+        if self._closed or not self._pending_prompts or self._queued_send_id is not None:
+            return
+        def advance():
+            self._queued_send_id = None
+            if self.runtime.busy or self._loading or self._submission_active:
+                self._schedule_queued_send()
+                return
+            request = self._pending_prompts.pop(0)
+            self._sync_queue_label()
+            self._dispatch(request['prompt'], request['delegate'], request=request, clear_input=False)
+        self._queued_send_id = self.later(300, advance)
+
     def send(self, *, delegate=False):
         prompt = self.input.get('1.0', 'end-1c').strip()
         if not prompt:
             return
         if not self.runtime.ready or self._loading:
-            self.status.set('请打开项目，或等待当前任务结束')
+            self._submission_notice('项目正在载入，请稍后发送。' if self._loading else
+                'Agent 尚未就绪，请先打开项目；载入失败时检查模型配置后重新打开。', error=True)
+            return
+        try:
+            request = self._capture_submission(prompt, delegate)
+        except Exception as exc:
+            self._submission_notice('任务未创建：' + str(exc), error=True)
             return
         # busy → 预存队列（上限 3，FIFO）；任务完成回调后自动发送。
-        if self.runtime.busy:
+        if self.runtime.busy or self._submission_active or self._pending_prompts:
             if len(self._pending_prompts) >= 3:
-                self.status.set('预存队列已满（3/3）；请等当前任务完成')
+                self._submission_notice('排队已满（3/3），草稿已保留；请等当前任务完成。', error=True)
                 return
-            self._pending_prompts.append({'prompt': prompt, 'delegate': delegate})
+            self._pending_prompts.append(request)
             self.input.delete('1.0', 'end')
+            self.editor_contexts = []
+            self.context_label.configure(text='未附加编辑器内容')
             self._sync_queue_label()
-            self.status.set(
-                f'已预存（{len(self._pending_prompts)}/3）；当前任务完成后自动发送')
+            self._submission_notice(f'已排队（{len(self._pending_prompts)}/3），当前任务结束后发送。')
+            self._schedule_queued_send()
             return
-        self._dispatch(prompt, delegate)
+        self._dispatch(prompt, delegate, request=request)
 
-    def _dispatch(self, prompt, delegate):
-        """实际发起任务（原 send() 主体；send() 守卫/入队后转此处）。"""
+    def _capture_submission(self, prompt, delegate):
+        """Freeze validated next-task choices on the Tk thread before consuming a draft."""
+        if len(prompt.encode('utf-8')) > 16384:
+            raise ValueError('任务描述不能超过 16 KiB；请缩短描述或附加文件。')
         # v0.3：模型来源由 RuntimeContext.模型路由.primary 决定——没有
         # model_choice 时直接回落 RoutingChain 的 primary。
         model = None
         if getattr(self, '_runtime_ctx', None) is not None:
-            try:
-                primary_label = self._runtime_ctx.get_routing().get('primary', '') or ''
-                if primary_label:
-                    # RoutingChain 存的是 label（self.model_choice 也是 label），
-                    # 用 self.catalog_rows 反查回 pair。
-                    for row in self.catalog_rows:
-                        if row.get('label') == primary_label:
-                            model = row.get('id')
-                            break
-            except Exception:
-                model = None
+            primary_label = self._runtime_ctx.get_routing().get('primary', '') or ''
+            if primary_label not in ('', '继承配置'):
+                row = next((r for r in self.catalog_rows if r.get('label') == primary_label), None)
+                model = self.runtime.catalog.get(row['id']) if row else None
+                if model is None:
+                    raise ValueError('所选模型已失效，请重新选择模型或重新打开项目。')
         if model is None and getattr(self, 'model_choice', None) is not None:
             index = self.model_choice.current()
             model = self.runtime.catalog.get(self.model_ids[index]) if index > 0 else None
         permission, planning = self.permission.get(), self.planning.get()
+        from forge.planning import planning_level
+        planning_level(planning)
         contexts = []
         for path in self.editor_contexts:
             row = self.documents.get(path)
             if row:
                 self.document_changed(row)
                 contexts.append({'path': path, 'content': row['widget'].get('1.0', 'end-1c')})
+        from forge.vscode_bridge import MAX_CONTEXT
+        if len(contexts) > 4 or sum(len(c['content'].encode('utf-8')) for c in contexts) > MAX_CONTEXT:
+            raise ValueError('最多附加四个文件，合计不能超过 128 KiB；请减少附加内容。')
         role = self.task_role.get()
         snapshot = self.state.task_snapshot(explicit_model=model, role=role, permission=permission)
+        return dict(prompt=prompt, delegate=delegate, model=model, permission=permission,
+                    planning=planning, role=role, contexts=contexts, snapshot=snapshot,
+                    generation=self._generation, cancellation=threading.Event())
+
+    def _dispatch(self, prompt, delegate, *, request=None, clear_input=True):
+        try:
+            request = request if request is not None else self._capture_submission(prompt, delegate)
+            if request['generation'] != self._generation:
+                raise ValueError('项目已变化，任务未执行；请在原项目重新提交。')
+        except Exception as exc:
+            self._submission_notice(str(exc), error=True)
+            self._schedule_queued_send()
+            return
+        model, permission, planning = (request[k] for k in ('model', 'permission', 'planning'))
+        role, contexts, snapshot = (request[k] for k in ('role', 'contexts', 'snapshot'))
         # v0.3：run_model 老 label 已被 RuntimeContext 取代；只在兼容占位
         # 存在时更新。
         if getattr(self, 'run_model', None) is not None:
@@ -2027,22 +2100,29 @@ class DevelopmentWorkbench(ttk.Frame):
         self.agent_panel.task_context = {'planning': planning if snapshot.mode == WorkMode.DEVELOPMENT else 'none', 'permission': snapshot.permission,
                                             'model': snapshot.model}
         # 重复的 run_model.configure 删除（已在上面安全更新过）。
-        self.send_button.configure(state='disabled')
+        self._submission_active = True
+        self._active_submission = request
+        self._update_send_button()
         # delegate_button 已被 RuntimeContext 接管；状态由 RuntimeContext
         # 任务控制行内部管理（默认 enabled，不再 disable）。
         self.task_evidence = TaskEvidence()
         self.render_evidence()
-        self.input.delete('1.0', 'end')
-        # v0.4：派发即切到 running 态。
-        self.set_agent_status('running', f'运行中 · 任务 #{self._generation}')
-        self.editor_contexts = []
-        self.context_label.configure(text='未附加编辑器内容')
-        self._retry_request = {'prompt': prompt, 'delegate': delegate}
-        self.task_label.configure(text='Agent · 请求执行')
+        if clear_input:
+            self.input.delete('1.0', 'end')
         # v0.4：派发即切到 running 态——done 回调里再切终态。
         self.set_agent_status('running', f'运行中 · 任务 #{self._generation}')
+        if clear_input:
+            self.editor_contexts = []
+            self.context_label.configure(text='未附加编辑器内容')
+        self._retry_request = {'prompt': prompt, 'delegate': delegate}
+        self.task_label.configure(text='Agent · 请求执行')
+        self._submission_notice('已提交，正在创建 Agent 任务…')
         def done(value, error):
-            self.send_button.configure(state='normal')
+            self._submission_active = False
+            self._active_submission = None
+            self._update_send_button()
+            if not error and not isinstance(value, dict):
+                error = '运行时没有返回有效任务结果；请检查完整事件。'
             # delegate_button 在 v0.3 已被 RuntimeContext 接管；同步更新
             # 其 disabled 状态。
             if getattr(self, '_runtime_ctx', None) is not None:
@@ -2074,24 +2154,18 @@ class DevelopmentWorkbench(ttk.Frame):
             self.refresh_agent_versions()
             self.refresh_project()
             self.refresh_documents()
-            # 预存队列排空：任务结束（成败均可）→ after 300ms 自动发队首。
-            # 守卫双保险：届时若又 busy / loading，队首塞回去等下一轮。
-            if self._pending_prompts:
-                nxt = self._pending_prompts.pop(0)
-                self._sync_queue_label()
-                def _auto_send(nxt=nxt):
-                    if getattr(self, '_closed', False):
-                        return
-                    if self.runtime.busy or self._loading:
-                        self._pending_prompts.insert(0, nxt)
-                        self._sync_queue_label()
-                        return
-                    self.status.set('自动发送预存消息…')
-                    self._dispatch(nxt['prompt'], nxt['delegate'])
-                self.after(300, _auto_send)
-        self.work(lambda: self.runtime.run(prompt, explicit_model=model, permission=permission,
+            self._schedule_queued_send()
+        try:
+            self.work(lambda: self.runtime.run(prompt, explicit_model=model, permission=permission,
                                             planning=planning, contexts=contexts, role=role, snapshot=snapshot,
-                                            delegate=delegate), done)
+                                            delegate=delegate, cancellation=request['cancellation']), done)
+        except Exception as exc:
+            self._submission_active = False
+            self._active_submission = None
+            if clear_input and not self.input.get('1.0', 'end-1c').strip():
+                self.input.insert('1.0', prompt)
+            self._submission_notice('任务未启动：' + str(exc), error=True)
+            self._schedule_queued_send()
 
     def render_evidence(self):
         # One idle update per event burst; events themselves are never dropped.
@@ -2199,13 +2273,28 @@ class DevelopmentWorkbench(ttk.Frame):
                                 ('\n[预览已截断，请查看上述 artifact]\n' if len(output) > 16384 else '\n'))
 
     def cancel_task(self):
-        if self.runtime.cancel():
-            self.status.set('已请求取消；等待当前模型请求或工具返回，之后停止执行。已写入文件会保留。')
+        queued = len(self._pending_prompts)
+        for request in self._pending_prompts:
+            request['cancellation'].set()
+        self._pending_prompts.clear()
+        self._sync_queue_label()
+        if self._queued_send_id is not None:
+            self.after_cancel(self._queued_send_id)
+            self._after_ids.discard(self._queued_send_id)
+            self._queued_send_id = None
+        if self._active_submission is not None:
+            self._active_submission['cancellation'].set()
+        if self.runtime.cancel() or self._submission_active:
+            self._submission_notice('已请求取消，排队任务已清除；等待当前模型或工具返回。已写入文件会保留。')
+        elif queued:
+            self._submission_notice(f'已取消 {queued} 条排队任务，当前草稿保留。')
         else:
-            self.status.set('当前没有可取消的任务')
+            self._submission_notice('当前没有可取消的任务。')
+        self._update_send_button()
 
     def run_tests(self):
-        if self.runtime.busy or self._loading or self.state.mode != WorkMode.DEVELOPMENT:
+        if (self.runtime.busy or self._loading or self._submission_active or self._pending_prompts
+                or self.state.mode != WorkMode.DEVELOPMENT):
             self.status.set('请在开发模式完成当前任务后执行测试')
             return
         snap = self.runtime.last_snapshot
@@ -2232,13 +2321,15 @@ class DevelopmentWorkbench(ttk.Frame):
                     lambda value, error: (self.refresh_project(), self.refresh_documents()) if not error else None)
 
     def review(self):
-        if self.runtime.busy or not self.runtime.ready or self._loading:
+        if (self.runtime.busy or not self.runtime.ready or self._loading
+                or self._submission_active or self._pending_prompts):
             self.status.set('请先完成任务')
             return
         self.work(self.runtime.review, lambda v, e: self.write_output('输出', json.dumps(v, ensure_ascii=False, indent=2) + '\n') if not e else None)
 
     def restore_session(self, path=None):
-        if not self.runtime.ready or self.runtime.busy or self._loading:
+        if (not self.runtime.ready or self.runtime.busy or self._loading
+                or self._submission_active or self._pending_prompts):
             self.status.set('请先打开原项目，并等待任务结束')
             return
         path = path or filedialog.askopenfilename(parent=self, initialdir=self.runtime.home / 'sessions', filetypes=[('Forge Session', '*.jsonl')])
@@ -2405,7 +2496,7 @@ class DevelopmentWorkbench(ttk.Frame):
 
     def retry_agent_task(self):
         request = getattr(self, '_retry_request', None)
-        if not request or self.runtime.busy or self._loading:
+        if not request or self.runtime.busy or self._loading or self._submission_active or self._pending_prompts:
             self.status.set('没有可重试任务，或仍在执行')
             return
         if self.task_evidence.phase in {'interrupted', 'unknown'} or any(

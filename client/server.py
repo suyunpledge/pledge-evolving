@@ -29,7 +29,6 @@ import threading
 import time
 import traceback
 import urllib.parse
-import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -37,19 +36,21 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from forge.client_runs import RunStore, RUN_ID_RE, TERMINAL_STATES
+from forge.execution import RunRequest
+from forge.secrets import redact
+
 FORGE_HOME = Path.home() / ".forge"
 # W3 P0-02：与内核/GUI/VSCode 桥共用同一凭据存储 ~/.forge/secrets.json
 # （此前读 keys.json——内核没有任何代码读它，等价于凭据链路断裂）。
 # 命名约定与 vscode_bridge._load_credentials 一致：name → FORGE_<NAME>_KEY。
 SECRETS_FILE = FORGE_HOME / "secrets.json"
-_CANCEL_FLAGS: dict[str, bool] = {}
 
 # ── Constants ──────────────────────────────────────────────────────────────
 MAX_PAYLOAD_BYTES    = 1_048_576   # 1 MB POST body cap
 STORE_CLEAN_INTERVAL = 600         # seconds between cleanup runs
 SSE_DEADLINE_SECS    = 600
 SSE_POLL_INTERVAL    = 0.8        # seconds between SSE polls
-RUN_ID_RE = re.compile(r"^[0-9a-f]{12}$")  # hex-12 run IDs from uuid4
 
 ROOT.mkdir(parents=True, exist_ok=True)
 (ROOT / "workspace").mkdir(parents=True, exist_ok=True)
@@ -175,67 +176,7 @@ def _resolved_provider_row(hit: dict) -> dict:
     return row
 
 
-class RunStore:
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._runs: dict[str, dict] = {}
-
-    def create(self, task: str) -> dict:
-        run_id = uuid.uuid4().hex[:12]
-        rec = {"id": run_id, "task": task, "state": "queued",
-               "created": time.time(), "started": 0.0, "finished": 0.0,
-               "steps": [], "text": "", "delivery": [], "usage": {},
-               "error": "", "traceback": "", "model": "",
-               "strategy": "", "thinking": "", "bundle": "",
-               "policy_mode": "", "cancelled": False, "events": []}
-        with self._lock:
-            self._runs[run_id] = rec
-        return rec
-
-    def get(self, run_id: str) -> dict | None:
-        with self._lock:
-            return self._runs.get(run_id)
-
-    def list_recent(self, n: int = 50) -> list[dict]:
-        with self._lock:
-            runs = sorted(self._runs.values(),
-                          key=lambda r: r["created"], reverse=True)
-        return runs[:n]
-
-    def update(self, run_id: str, **kw) -> None:
-        with self._lock:
-            rec = self._runs.get(run_id)
-            if rec:
-                rec.update(kw)
-
-    def push_step(self, run_id: str, step: dict) -> None:
-        with self._lock:
-            rec = self._runs.get(run_id)
-            if rec:
-                rec["steps"].append(step)
-                rec["events"].append({"type": "step", "ts": time.time(), **step})
-
-    def push_event(self, run_id: str, event: dict) -> None:
-        with self._lock:
-            rec = self._runs.get(run_id)
-            if rec:
-                evts = rec["events"]
-                if len(evts) > 5000:
-                    evts[:] = evts[-2500:]
-                evts.append({"ts": time.time(), **event})
-
-    def cleanup(self, max_age: float = 7200) -> None:
-        """Remove runs older than max_age seconds (default 2h)."""
-        cutoff = time.time() - max_age
-        with self._lock:
-            stale = [rid for rid, r in self._runs.items()
-                     if r["created"] < cutoff and r["state"] in
-                     ("done", "error", "cancelled")]
-            for rid in stale:
-                del self._runs[rid]
-                _CANCEL_FLAGS.pop(rid, None)
-
-
+# Imports/programmatic embedders are side-effect free; the CLI opts into durable history.
 STORE = RunStore()
 
 DELIVERY_DIRS = ("outputs", "deliveries", "reports", "dist", "build")
@@ -346,106 +287,151 @@ def get_config_snapshot() -> dict:
         return {"error": "config load failed"}
 
 
+def validate_run_payload(payload):
+    """Validate before creating a task or composing any permission-bearing config."""
+    if not isinstance(payload, dict):
+        raise ValueError('request must be an object')
+    task = payload.get('task')
+    if not isinstance(task, str) or not task.strip():
+        raise ValueError('task required')
+    choices = {'model': tuple(m['label'] for m in CATALOG), 'strategy': STRATEGIES,
+               'thinking': THINKING_MODES, 'bundle': tuple(BUNDLES), 'policy_mode': POLICY_MODES}
+    for key, values in choices.items():
+        value = payload.get(key)
+        if value is not None and value not in values:
+            raise ValueError('invalid ' + key)
+    for key, maximum in [('max_steps', 1000), ('max_depth', 16), ('spawn_budget', 1000)]:
+        value = payload.get(key)
+        if value is not None and (type(value) is not int or not 1 <= value <= maximum):
+            raise ValueError('invalid ' + key)
+    if payload.get('workspace') is not None and not isinstance(payload['workspace'], str):
+        raise ValueError('invalid workspace')
+    return {**payload, 'task': task.strip()}
+
+
+def compose_run_config(workspace, model_label=None, strategy=None, thinking=None,
+                       bundle=None, policy_mode=None):
+    from forge.cli import _compose
+    ns = argparse.Namespace(home=str(FORGE_HOME), workspace=str(workspace), bundle=None,
+        overlay=[], no_user_layer=False, profile=None, i_know=True, coding=(bundle == 'coding'))
+    # UI bundle names are selectors, not arbitrary paths supplied to _compose.
+    cfg = _compose(ns)
+    patches = []
+    old = cfg.row('model')
+    model = dict(old.config) if old else {}
+    if model_label:
+        hit = next(m for m in CATALOG if m['label'] == model_label)
+        row = _resolved_provider_row(hit)
+        row['config']['model'] = hit['model']
+        patches.append(row)
+        model['primary'] = [hit['id'], hit['model']]
+    if strategy:
+        model['routing'] = {**(model.get('routing') or {}), 'strategy': strategy}
+    if model_label or strategy:
+        patches.append({'id': 'model', 'name': 'model:router', 'config': model})
+    if thinking:
+        old = cfg.row('thinking')
+        patches.append({'id': 'thinking', 'name': 'thinking:mode',
+                        'config': {**(dict(old.config) if old else {}), 'mode': thinking}})
+    if policy_mode:
+        old = cfg.row('policy')
+        patches.append({'id': 'policy', 'name': 'policy:core',
+                        'config': {**(dict(old.config) if old else {}), 'mode': policy_mode}})
+    if patches:
+        cfg.apply_patch(patches, label='client:config-select')
+    return cfg
+
+
 def run_forge(run_id: str, task: str, model_label: str | None,
               strategy: str | None, thinking: str | None,
               bundle: str | None, policy_mode: str | None,
               max_steps: int | None, max_depth: int | None,
               spawn_budget: int | None,
-              workspace: Path) -> None:
-    from forge.cli import _compose
+              workspace: Path, *, store=None) -> None:
     from forge.loop import LoopLimits, build_agent
     from forge.model import ModelRouter
     from forge.routing import SmartRouter
+    from forge.phase_models import phase_router
 
-    STORE.update(run_id, state="running", started=time.time(),
-                 strategy=strategy or "", thinking=thinking or "",
-                 bundle=bundle or "base", policy_mode=policy_mode or "")
-    STORE.push_event(run_id, {"type": "state", "state": "running"})
+    store = store if store is not None else STORE
+    cancel = store.claim(run_id)
+    if cancel is None:
+        return  # A completed, detached or already-running task cannot be replayed.
     t0 = time.time()
+    agent = None
     try:
-        ns = argparse.Namespace(
-            home=str(FORGE_HOME), workspace=str(workspace), bundle=bundle,
-            overlay=[], no_user_layer=False, profile="balanced",
-            i_know=True, coding=(bundle == "coding"))
-        cfg = _compose(ns)
-
-        patch_rows: list[dict] = []
-        if model_label:
-            hit = next((m for m in CATALOG if m["label"] == model_label), None)
-            if hit:
-                patch_rows.append(_resolved_provider_row(hit))
-                patch_rows.append({"id": "model", "name": "model:router",
-                                   "config": {"primary": [hit["id"], hit["model"]]}})
-        if strategy:
-            old = cfg.row("model")
-            merged = dict(old.config) if old is not None else {}
-            rc = dict(merged.get("routing") or {})
-            rc["strategy"] = strategy
-            merged["routing"] = rc
-            patch_rows.append({"id": "model", "name": "model:router",
-                               "config": merged})
-        if policy_mode:
-            old_p = cfg.row("policy")
-            pc = dict(old_p.config) if old_p else {}
-            pc["mode"] = policy_mode
-            patch_rows.append({"id": "policy", "name": "policy:core",
-                               "config": pc})
-        if patch_rows:
-            cfg.apply_patch(patch_rows, label="client:config-select")
+        validate_run_payload({'task': task, 'model': model_label, 'strategy': strategy,
+            'thinking': thinking, 'bundle': bundle, 'policy_mode': policy_mode,
+            'max_steps': max_steps, 'max_depth': max_depth, 'spawn_budget': spawn_budget})
+        if cancel.is_set():
+            store.transition(run_id, state='cancelled', outcome='cancelled',
+                execution_state='not_started', error_code='cancelled', cancelled=True, finished=time.time())
+            return
+        store.transition(run_id, state='running', started=t0, execution_state='running',
+            strategy=strategy or '', thinking=thinking or '', bundle=bundle or 'base',
+            policy_mode=policy_mode or '', workspace=str(workspace))
+        cfg = compose_run_config(workspace, model_label, strategy, thinking, bundle, policy_mode)
 
         routing_block = cfg.get("model", "routing", None)
         router = (SmartRouter.from_config(cfg) if routing_block is not None
                   else ModelRouter.from_config(cfg))
+        if model_label:
+            # A named model wins over automatic routing, just as phase-model
+            # selection does elsewhere. Preserve config, transport and secrets.
+            router = phase_router(router, cfg.get('model', 'primary'), router)
 
         limits = LoopLimits(
             max_steps=max_steps or int(cfg.get("loop", "maxSteps", 12)),
             max_depth=max_depth or int(cfg.get("loop", "maxDepth", 2)),
             spawn_budget=spawn_budget or int(cfg.get("loop", "spawnBudget", 8)))
 
-        # TRAE 审查 P0-4：并发 run 不得共享 current.jsonl（ordinal 交错/双写）。
+        def observe(event):
+            store.push_event(run_id, event)
+            if event.get('type') == 'tool_call':
+                store.push_step(run_id, {**event, 'event_id': event['event_id'] + '-step',
+                    'index': event.get('step'), 'note': '', 'result': event.get('result', '')})
+
         run_session = FORGE_HOME / "sessions" / f"s-{run_id}.jsonl"
         agent = build_agent(
             home=FORGE_HOME, workspace=workspace, config=cfg, router=router,
             expose=cfg.get("tools", "expose", None), limits=limits,
-            session_path=run_session)
+            session_path=run_session, observer=observe)
+        agent.cancellation_event = cancel
+        agent.child_observer = observe
         actual_model = model_label or "(auto routing)"
-        STORE.update(run_id, model=actual_model)
-        STORE.push_event(run_id, {"type": "state", "state": "running",
-                                   "model": actual_model})
-
-        if _CANCEL_FLAGS.get(run_id):
-            STORE.update(run_id, state="cancelled", finished=time.time())
-            STORE.push_event(run_id, {"type": "state", "state": "cancelled"})
-            return
+        store.update(run_id, model=actual_model, sessionPath=str(run_session),
+                     routing_mode='explicit' if model_label else 'automatic')
+        rec = store.get(run_id)
+        request = RunRequest(run_id=run_id, task_id=rec['task_id'], entry='client')
 
         with agent.session:
-            report = agent.run(task)
+            report = agent.run(task, run_request=request)
 
-        if _CANCEL_FLAGS.get(run_id):
-            STORE.update(run_id, state="cancelled", finished=time.time())
-            STORE.push_event(run_id, {"type": "state", "state": "cancelled"})
-            return
-
-        for s in report.steps:
-            STORE.push_step(run_id, {
-                "index": s.index, "tool": s.tool, "decision": s.decision,
-                "note": (s.note or "")[:200],
-                "result": (s.result or "")[:400]})
-
+        result = report.as_result().as_dict()
+        state = {'succeeded': 'done', 'cancelled': 'cancelled'}.get(result['outcome'], 'error')
         delivery = scan_delivery(workspace, t0, report.text)
-        STORE.update(run_id, state="done", finished=time.time(),
-                     text=report.text, usage=report.usage,
-                     delivery=delivery, stopped=report.stopped)
-        STORE.push_event(run_id, {"type": "state", "state": "done",
-                                   "text": report.text, "usage": report.usage,
-                                   "delivery": delivery})
-
-    except Exception as exc:
+        store.transition(run_id, **result, state=state, finished=time.time(),
+            usage=report.usage, delivery=delivery, stopped=report.stopped,
+            cancelled=result['outcome'] == 'cancelled',
+            requires_inspection=result['outcome'] == 'unknown',
+            error='' if state == 'done' else result['error_code'])
+    except BaseException as exc:
         tb = traceback.format_exc()[-2000:]
-        STORE.update(run_id, state="error", finished=time.time(),
-                     error=f"{type(exc).__name__}: {exc}", traceback=tb)
-        STORE.push_event(run_id, {"type": "state", "state": "error",
-                                   "error": str(exc), "traceback": tb})
+        # A thrown handler or process interruption can leave side effects.
+        # Inspect durable actions; do not convert an exception into safe retry.
+        unknown = agent is not None
+        store.transition(run_id, state='error', finished=time.time(),
+            outcome='unknown' if unknown else 'failed',
+            execution_state='unknown' if unknown else 'not_started',
+            error_code='execution_interrupted' if unknown else 'configuration_error',
+            requires_inspection=unknown, error=f'{type(exc).__name__}: {exc}', traceback=tb)
+        if not isinstance(exc, Exception):
+            raise
+    finally:
+        if agent is not None:
+            agent.session.close()
+            agent.secret_scope.close()
+        store.release(run_id)
 
 
 INDEX_PAGE = ROOT / "client" / "index.html"
@@ -458,7 +444,7 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def _send_json(self, payload: dict, code: int = 200) -> None:
-        body = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
+        body = json.dumps(redact(payload), ensure_ascii=False, default=str).encode("utf-8")
         self.send_response(code)
         self.send_header("content-type", "application/json; charset=utf-8")
         self.send_header("content-length", str(len(body)))
@@ -474,34 +460,50 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def _send_sse(self, run_id: str) -> None:
+    def _send_sse(self, run_id: str, after=0) -> None:
         self.send_response(200)
         self.send_header("content-type", "text/event-stream")
         self.send_header("cache-control", "no-cache")
-        self.send_header("connection", "keep-alive")
+        self.send_header('connection', 'close')
+        self.close_connection = True
         self.end_headers()
-        idx = 0
-        deadline = time.time() + SSE_DEADLINE_SECS
+        deadline = time.monotonic() + SSE_DEADLINE_SECS
         try:
-            while time.time() < deadline:
-                rec = STORE.get(run_id)
+            while time.monotonic() < deadline:
+                rec = self.server.store.get(run_id)
                 if not rec:
                     self._sse_event({"type": "error", "msg": "run not found"})
                     break
-                evts = rec["events"]
-                while idx < len(evts):
-                    self._sse_event(evts[idx])
-                    idx += 1
-                if rec["state"] in ("done", "error", "cancelled"):
-                    self._sse_event({"type": "terminal", "state": rec["state"]})
+                page = self.server.store.event_page(run_id, after)
+                if page['reset_required']:
+                    self._sse_event({'type': 'reset', 'run_id': run_id,
+                                     'message': 'Reload the task snapshot before consuming retained events.'})
+                for event in page['events']:
+                    self._sse_event(event)
+                after = page['next_after']
+                if page['has_more']:
+                    continue
+                # Read state after taking the event snapshot. A terminal update
+                # racing this page is drained on the next iteration, not lost.
+                latest = self.server.store.get(run_id)
+                if latest and latest['cursor'] > rec['cursor']:
+                    continue
+                if rec['state'] in TERMINAL_STATES:
+                    if rec.get('recovered'):
+                        self._sse_event({'type': 'state', **{k: v for k, v in rec.items() if k != 'events'}})
+                    self._sse_event({"type": "terminal", "state": rec["state"],
+                                     'run_id': run_id, 'outcome': rec['outcome']})
                     break
+                self.wfile.write(b': heartbeat\n\n')
+                self.wfile.flush()
                 time.sleep(SSE_POLL_INTERVAL)
-        except (BrokenPipeError, ConnectionResetError):
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             pass
 
     def _sse_event(self, data: dict) -> None:
-        payload = json.dumps(data, ensure_ascii=False, default=str)
-        self.wfile.write(f"data: {payload}\n\n".encode("utf-8"))
+        payload = json.dumps(redact(data), ensure_ascii=False, default=str)
+        identity = f"id: {data['cursor']}\n" if 'cursor' in data else ''
+        self.wfile.write(f"{identity}data: {payload}\n\n".encode("utf-8"))
         self.wfile.flush()
 
 
@@ -539,23 +541,36 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/bundles":
             self._send_json(BUNDLES)
         elif path == "/api/run":
-            self._send_json({"runs": STORE.list_recent(50)})
+            self._send_json({"runs": self.server.store.list_recent(50)})
         elif path.startswith("/api/run/") and path.endswith("/events"):
             run_id = self._extract_run_id(path)
             if not run_id:
                 self._send_json({"error": "invalid run id"}, 400)
                 return
-            self._send_sse(run_id)
+            if self.server.store.get(run_id) is None:
+                self._send_json({'error': 'run not found'}, 404)
+                return
+            try:
+                after = int(self.headers.get('Last-Event-ID', qs.get('after', '0')))
+                if after < 0:
+                    raise ValueError()
+            except ValueError:
+                self._send_json({'error': 'invalid event cursor'}, 400)
+                return
+            if qs.get('format') == 'json':
+                self._send_json(self.server.store.event_page(run_id, after))
+            else:
+                self._send_sse(run_id, after)
         elif path.startswith("/api/run/"):
             run_id = self._extract_run_id(path)
             if not run_id:
                 self._send_json({"error": "invalid run id"}, 400)
                 return
-            rec = STORE.get(run_id)
+            rec = self.server.store.get(run_id)
             self._send_json(rec if rec else {"error": "run not found"},
                            200 if rec else 404)
         elif path == "/api/files":
-            workspace = ROOT / "workspace"
+            workspace = self.server.workspace
             workspace.mkdir(parents=True, exist_ok=True)
             files = list_files(workspace, subdir=qs.get("path", ""))
             self._send_json({"files": files, "root": str(workspace)})
@@ -564,7 +579,7 @@ class Handler(BaseHTTPRequestHandler):
             if not rel:
                 self._send_json({"error": "path required"}, 400)
                 return
-            workspace = ROOT / "workspace"
+            workspace = self.server.workspace
             self._send_json(read_file(workspace, rel))
         elif path == "/api/diag":
             key_status = {k: bool(v) for k, v in load_keys().items()}
@@ -574,7 +589,7 @@ class Handler(BaseHTTPRequestHandler):
                 "keys_exists": SECRETS_FILE.is_file(),
                 "env_status": key_status,
                 "forge_version": "0.3",
-                "workspace": str(ROOT / "workspace")})
+                "workspace": str(self.server.workspace)})
         elif path == "/api/health":
             self._send_json({"ok": True, "version": "0.3", "home": str(FORGE_HOME)})
         else:
@@ -596,59 +611,116 @@ class Handler(BaseHTTPRequestHandler):
 
     def _handle_start_run(self) -> None:
         try:
-            length = min(int(self.headers.get("content-length", 0)), MAX_PAYLOAD_BYTES)
-            payload = json.loads(self.rfile.read(length).decode("utf-8"))
-        except (ValueError, json.JSONDecodeError):
-            self._send_json({"error": "bad json"}, 400)
+            length = int(self.headers.get('content-length', 0))
+            if length > MAX_PAYLOAD_BYTES:
+                self._send_json({'error': 'request too large'}, 413)
+                return
+            if length <= 0:
+                raise ValueError('body required')
+            payload = validate_run_payload(json.loads(self.rfile.read(length).decode('utf-8')))
+            raw_ws = payload.get('workspace') or str(self.server.workspace)
+            workspace = Path(raw_ws).resolve()
+            if not workspace.is_relative_to(self.server.workspace):
+                raise ValueError('workspace outside configured project')
+            workspace.mkdir(parents=True, exist_ok=True)
+        except (ValueError, OSError) as exc:
+            self._send_json({'error': str(exc)}, 400)
             return
-        task = str(payload.get("task", "")).strip()
-        if not task:
-            self._send_json({"error": "task required"}, 400)
+        try:
+            rec = self.server.store.create(payload['task'])
+        except OSError:
+            self._send_json({'error': 'could not persist task'}, 503)
             return
-        rec = STORE.create(task)
-        raw_ws = payload.get("workspace") or str(ROOT / "workspace")
-        workspace = Path(raw_ws).resolve()
-        if not workspace.is_relative_to(ROOT.resolve()):
-            self._send_json({"error": "workspace outside project root"}, 400)
-            return
-        workspace.mkdir(parents=True, exist_ok=True)
-        _CANCEL_FLAGS[rec["id"]] = False
-        threading.Thread(
-            target=run_forge, daemon=True,
-            args=(rec["id"], task, payload.get("model"),
+        try:
+            self.server.submit(rec['id'],
+                  (rec["id"], payload['task'], payload.get("model"),
                   payload.get("strategy"), payload.get("thinking"),
                   payload.get("bundle"), payload.get("policy_mode"),
                   payload.get("max_steps"), payload.get("max_depth"),
-                  payload.get("spawn_budget"), workspace),
-        ).start()
-        self._send_json({"run_id": rec["id"]}, 202)
+                   payload.get("spawn_budget"), workspace))
+        except RuntimeError:
+            self.server.store.transition(rec['id'], state='error', outcome='failed',
+                execution_state='not_started', error_code='worker_unavailable')
+            self._send_json({'error': 'worker unavailable'}, 503)
+            return
+        self._send_json({'run_id': rec['id'], 'task_id': rec['task_id'], 'protocol_version': 1}, 202)
 
     def _handle_cancel(self, run_id: str) -> None:
-        rec = STORE.get(run_id)
-        if not rec:
+        try:
+            length = int(self.headers.get('content-length', 0))
+            if not 0 <= length <= MAX_PAYLOAD_BYTES:
+                self._send_json({'error': 'invalid request size'}, 400)
+                return
+            if length:
+                self.rfile.read(length)  # Drain before closing, including POST {}.
+        except ValueError:
+            self._send_json({'error': 'invalid request size'}, 400)
+            return
+        try:
+            self.server.store.request_cancel(run_id)
+        except KeyError:
             self._send_json({"error": "run not found"}, 404)
             return
-        if rec["state"] in ("done", "error", "cancelled"):
-            self._send_json({"error": f"run already {rec['state']}"}, 400)
+        except ValueError as exc:
+            self._send_json({'error': str(exc)}, 409)
             return
-        _CANCEL_FLAGS[run_id] = True
-        STORE.update(run_id, state="cancelling")
-        STORE.push_event(run_id, {"type": "state", "state": "cancelling"})
-        self._send_json({"ok": True, "state": "cancelling"})
+        self._send_json({'ok': True, 'state': 'cancelling', 'cancel_requested': True, 'run_id': run_id})
 
 
 class ClientServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
+    def __init__(self, address, handler=Handler, *, workspace=None, store=None):
+        self.workspace = Path(workspace or ROOT / 'workspace').resolve()
+        self.store = store if store is not None else STORE
+        self._workers = {}
+        self._worker_lock = threading.Lock()
+        self._closing = False
+        super().__init__(address, handler)
+
+    def submit(self, rid, args):
+        def invoke():
+            try:
+                run_forge(*args, store=self.store)
+            finally:
+                with self._worker_lock:
+                    self._workers.pop(threading.current_thread(), None)
+        with self._worker_lock:
+            if self._closing:
+                raise RuntimeError('server is closing')
+            worker = threading.Thread(target=invoke, daemon=True, name='forge-client-' + rid[:8])
+            self._workers[worker] = rid
+            try:
+                worker.start()
+            except BaseException:
+                del self._workers[worker]
+                raise
+
+    def server_close(self):
+        super().server_close()
+        with self._worker_lock:
+            self._closing = True
+            workers = list(self._workers.items())
+        for worker, rid in workers:
+            try:
+                self.store.request_cancel(rid)
+            except (KeyError, ValueError, OSError):
+                pass
+        deadline = time.monotonic() + 5
+        for worker, _ in workers:
+            worker.join(max(0, deadline - time.monotonic()))
+
 
 def main(argv: list[str] | None = None) -> int:
+    global STORE
     ap = argparse.ArgumentParser(description="Planet evolving delivery client")
     ap.add_argument("--port", type=int, default=7712)
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--workspace", default=str(ROOT / "workspace"))
     args = ap.parse_args(argv)
-    srv = ClientServer((args.host, args.port), Handler)
+    STORE = RunStore(FORGE_HOME / 'sessions' / 'client')
+    srv = ClientServer((args.host, args.port), Handler, workspace=args.workspace)
     print(f"[planet-evolving] v0.3 on http://{args.host}:{args.port}"
           f"  (home={FORGE_HOME})")
     # Periodic cleanup of stale runs and cancel flags
@@ -665,6 +737,7 @@ def main(argv: list[str] | None = None) -> int:
         pass
     finally:
         srv.server_close()
+        STORE.close()
     return 0
 
 
