@@ -229,7 +229,7 @@ class IconCanvas(tk.Canvas):
         if self._focused and self._state == tk.NORMAL:
             inset = max(1, round(self._size / 16))
             self.create_rectangle(inset, inset, self._size - inset, self._size - inset,
-                                  outline="#A19BFF", width=1, tags="focus")
+                                  outline="#78B5FF", width=1, tags="focus")  # v0.5: 与 gui_theme.focus_ring 同源
 
     def configure(self, cnf=None, **kwargs):
         if isinstance(cnf, dict):

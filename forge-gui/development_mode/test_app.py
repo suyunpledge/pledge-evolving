@@ -323,7 +323,9 @@ class WorkbenchTests(unittest.TestCase):
             task = self.app._runtime_ctx.get_task_controls()
             from tkinter import ttk as _ttk
             cancel_button = next(
-                (w for w in _iter_all_widgets(task) if isinstance(w, _ttk.Button)
+                # v0.5：任务控制按钮换 dev_button（IconButton 底座 = tk.Button）
+                (w for w in _iter_all_widgets(task)
+                 if isinstance(w, (_ttk.Button, __import__('tkinter').Button))
                  and w.cget('text') == '取消'),
                 None)
             self.assertIsNotNone(cancel_button, 'RuntimeContext 应含「取消」按钮')
@@ -438,11 +440,12 @@ class WorkbenchTests(unittest.TestCase):
         from tkinter import ttk as _ttk
         # TaskControls 内部用两行（row1 / row2）放控件，递归收集所有 button。
         button_texts = []
+        import tkinter as _tk
         for descendant in task.winfo_children():
             button_texts.extend(w.cget('text') for w in descendant.winfo_children()
-                                 if isinstance(w, _ttk.Button))
+                                 if isinstance(w, (_ttk.Button, _tk.Button)))
             button_texts.extend(w.cget('text') for w in task.winfo_children()
-                                 if isinstance(w, _ttk.Button))
+                                 if isinstance(w, (_ttk.Button, _tk.Button)))
         for label in ('创建子 Agent', '重试', '复审', '恢复', '执行测试', '取消'):
             self.assertIn(label, button_texts, f'RuntimeContext.任务控制缺 {label}')
 

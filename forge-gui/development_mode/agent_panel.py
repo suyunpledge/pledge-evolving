@@ -8,6 +8,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from chat_widgets import parse_blocks, inline_segments
+from .buttons import dev_button
 from gui_theme import C, FONT_UI, FONT_UI_BOLD, FONT_SECTION, FONT_CAPTION, FONT_MONO_SM, style_editor, button_feedback, attach_tooltip
 from ui_icons import IconButton
 from forge.secrets import redact
@@ -231,7 +232,7 @@ class ToolSummary(ttk.Frame):
         super().__init__(parent, padding=8, style='Card.TFrame')
         self.summary = ttk.Label(self, text='工具步骤', font=FONT_UI, style='Card.TLabel')
         self.summary.pack(anchor='w')
-        self.button = ttk.Button(self, text='View Details', command=self.toggle)
+        self.button = dev_button(self, 'View Details', self.toggle, kind='quiet')
         self.button.pack(anchor='w')
         self.detail_frame = ttk.Frame(self)
         self.detail = readonly(self.detail_frame, width=38)
@@ -294,7 +295,7 @@ class DiffCard(ttk.Frame):
         elif state == 'written' and change.get('checkpoint') and change.get('before_revision') is not None and not change.get('revision_changed'):
             operations.append(('revert', 'Revert'))
         for key, label in operations:
-            button = ttk.Button(self.row, text=label, command=lambda k=key: self.callbacks[k](self.change))
+            button = dev_button(self.row, label, lambda k=key: self.callbacks[k](self.change), kind='ghost')
             self.buttons[key] = button
         self.fit(self._width)
 
@@ -353,7 +354,7 @@ class PlanningCard(ttk.Frame):
         self.authorization.pack(anchor='w')
         self.permission = ttk.Label(self, style='Muted.Card.TLabel')
         self.permission.pack(anchor='w')
-        self.view = ttk.Button(self, text='查看变更', command=view_changes, state='disabled')
+        self.view = dev_button(self, '查看变更', view_changes, kind='ghost', state='disabled')
         self.view.pack(anchor='w', pady=(4, 0))
         self._view_changes = view_changes
         self._display = None
@@ -432,8 +433,9 @@ class AgentPanel(ttk.Frame):
             self.workflow.tag_configure(tag, foreground=C[token])
         tools = ttk.Frame(agents)
         tools.pack(fill='x')
-        ttk.Button(tools, text='模型配置', command=lambda: configure_model(self.selected_name())).pack(side='left')
-        ttk.Button(tools, text='核实 Git 版本', command=refresh).pack(side='right')
+        dev_button(tools, '模型配置', lambda: configure_model(self.selected_name()),
+                   kind='ghost').pack(side='left')
+        dev_button(tools, '核实 Git 版本', refresh, kind='ghost').pack(side='right')
         self.tree = ttk.Treeview(agents, show='tree headings', columns=('state',), height=3, style='Coding.Treeview')
         self.tree.heading('#0', text='Agent')
         self.tree.heading('state', text='执行状态')

@@ -718,7 +718,7 @@ class DevelopmentWorkbench(ttk.Frame):
         self.context_label = ttk.Label(self.input_bar, text='未附加编辑器内容', padding=4)
         hint_label = ttk.Label(self.input_bar,
                                text='Enter 发送 · Shift+Enter 换行',
-                               foreground=C.get('muted', '#777'))
+                               foreground=C['muted'])
         # 输入行：input 吃满剩余宽度，send 固定在右——同一行内布局。
         input_row = self._input_row
         self.send_button = IconButton(input_row, text='发送', command=self.send,
@@ -1022,10 +1022,10 @@ class DevelopmentWorkbench(ttk.Frame):
         try:
             tag_name = 'forge_pass'
             if tag_name not in widget.tag_names():
-                widget.tag_configure(tag_name, foreground=C.get('ok', '#48B89A'))
+                widget.tag_configure(tag_name, foreground=C['ok'])
             fail_tag = 'forge_fail'
             if fail_tag not in widget.tag_names():
-                widget.tag_configure(fail_tag, foreground=C.get('error', '#E57373'))
+                widget.tag_configure(fail_tag, foreground=C['error'])
             start = widget.index('end-1c linestart')
             # 只处理本次新插入区域的行
             line_count = chunk.count('\n') + 1
@@ -1281,7 +1281,7 @@ class DevelopmentWorkbench(ttk.Frame):
             hot = (value != 'read-only')
             self.perm_badge.configure(
                 text=f'权限 {value}',
-                foreground=_C.get('error', '#e66') if hot else _C.get('subtext', '#888'))
+                foreground=_C['error'] if hot else _C['subtext'])
             if getattr(self, '_runtime_ctx', None) is not None:
                 self._runtime_ctx.set_sandbox(value)
         except Exception:
@@ -2504,7 +2504,7 @@ class DevelopmentWorkbench(ttk.Frame):
                 self.state.configure_role(role, pair)
             self.status.set('Development 模型角色已保存')
             window.destroy()
-        ttk.Button(window, text='保存', command=save).pack(anchor='e', padx=12, pady=12)
+        dev_button(window, '保存', save, kind='primary').pack(anchor='e', padx=12, pady=12)
 
     def agent_model_settings(self, selected_name=None):
         if not self.runtime.ready:

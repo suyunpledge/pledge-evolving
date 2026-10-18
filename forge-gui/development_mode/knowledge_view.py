@@ -19,6 +19,7 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk
 
+from .buttons import dev_button
 from gui_theme import C, FONT_CAPTION, FONT_SECTION, FONT_UI
 
 
@@ -66,8 +67,8 @@ class KnowledgeView(ttk.Frame):
         entry = ttk.Entry(bar, textvariable=self._query)
         entry.pack(side='left', fill='x', expand=True)
         entry.bind('<Return>', lambda _e: self.refresh(self._query.get()))
-        ttk.Button(bar, text='检索', command=lambda: self.refresh(self._query.get())).pack(
-            side='left', padx=(6, 0))
+        dev_button(bar, '检索', lambda: self.refresh(self._query.get()),
+                  kind='primary').pack(side='left', padx=(6, 0))
         # 列表
         self._tree = ttk.Treeview(self, show='tree headings',
                                   columns=('kind', 'source'),

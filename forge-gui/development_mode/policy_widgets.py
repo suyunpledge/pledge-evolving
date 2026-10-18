@@ -26,6 +26,7 @@
 import tkinter as tk
 from tkinter import ttk
 
+from .buttons import dev_button
 from gui_theme import C, FONT_CAPTION, FONT_SECTION, FONT_UI, FONT_UI_BOLD, button_feedback, attach_tooltip
 
 # 模式可选取值（与 forge.policy.Mode 枚举对齐——禁 BYPASS 进入默认选项）。
@@ -289,12 +290,10 @@ class TaskControls(ttk.Frame):
                            ('创建子 Agent', 'delegate'),
                            ('恢复', 'restore'),
                            ('复审', 'review')):
-            button = ttk.Button(row2, text=label, width=10)
             callback = self._callbacks.get(key)
-            if callback is not None:
-                button.configure(command=callback)
-            else:
-                button.configure(state='disabled')
+            button = dev_button(row2, label, callback,
+                                kind='ghost' if key != 'cancel' else 'danger',
+                                state='normal' if callback else 'disabled')
             button.pack(side='right', padx=(4, 0))
 
     def _emit_planning(self, _event=None):
@@ -355,7 +354,7 @@ class RuntimeContext(ttk.Frame):
         tk.Label(title_row, text='运行时上下文', font=FONT_SECTION, bg=C['bg'],
                  fg=C['text']).pack(side='left')
         # R1：恢复折叠按钮（v0.3 删了折叠；概念图 Agent 栏不占满，默认展开、可折叠）
-        self._collapse_btn = ttk.Button(title_row, text='收起 ▲', command=self._toggle)
+        self._collapse_btn = dev_button(title_row, '收起 ▲', self._toggle, kind='quiet')
         self._collapse_btn.pack(side='right')
         # 内容容器（展开态 pack，折叠态 _toggle 里 pack_forget）
         self._body = ttk.Frame(self)

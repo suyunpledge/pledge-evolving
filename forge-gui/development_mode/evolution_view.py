@@ -13,6 +13,7 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk
 
+from .buttons import dev_button
 from gui_theme import C, FONT_CAPTION, FONT_SECTION, FONT_UI
 
 
@@ -44,12 +45,12 @@ class EvolutionView(ttk.Frame):
         self.configure(padding=(8, 6))
         bar = ttk.Frame(self)
         bar.pack(fill='x')
-        ttk.Button(bar, text='刷新', command=self.refresh).pack(side='left')
-        ttk.Button(bar, text='批准', command=lambda: self._act('approve')).pack(
+        dev_button(bar, '刷新', self.refresh, kind='ghost').pack(side='left')
+        dev_button(bar, '批准', lambda: self._act('approve'), kind='primary').pack(
             side='left', padx=(6, 0))
-        ttk.Button(bar, text='拒绝', command=lambda: self._act('reject')).pack(
+        dev_button(bar, '拒绝', lambda: self._act('reject'), kind='danger').pack(
             side='left', padx=(6, 0))
-        ttk.Button(bar, text='隔离', command=lambda: self._act('quarantine')).pack(
+        dev_button(bar, '隔离', lambda: self._act('quarantine'), kind='ghost').pack(
             side='left', padx=(6, 0))
         self._tree = ttk.Treeview(self, show='tree headings',
                                   columns=('kind', 'risk', 'target'),
