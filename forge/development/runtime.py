@@ -24,13 +24,14 @@ DEVELOPMENT_GUIDANCE = (
 
 
 class DevelopmentRuntime:
-    def __init__(self, state, *, bridge=None, emit=None, runtime_home=None):
+    def __init__(self, state, *, bridge=None, emit=None, runtime_home=None, model_router_factory=None):
         install_logging_redaction()
         self.state = state
         self.home = Path(runtime_home or state.home).expanduser().resolve()
         self.emit = emit or (lambda event: None)
         self._owns_bridge = bridge is None
-        self.bridge = bridge or EditorBridge(self._emit)
+        self._model_router_factory = model_router_factory
+        self.bridge = bridge or EditorBridge(self._emit, model_router_factory=model_router_factory)
         self._previous_bridge_emit = getattr(bridge, 'emit', None) if bridge is not None else None
         if self._previous_bridge_emit is not None:
             self.bridge.emit = self._emit
@@ -52,6 +53,27 @@ class DevelopmentRuntime:
         # Host extension seams, not new knowledge/evolution engines.
         self.context_sources = []
         self.result_observers = []
+        self.initialization_error = ''
+
+    def readiness(self, explicit_model=None):
+        if not self.ready:
+            return {'ready': False, 'code': 'initialization_failed' if self.initialization_error else 'project_required',
+                    'message': self.initialization_error or '请先选择 Coding 项目。'}
+        from .models import model_readiness
+        return model_readiness(self.bridge.router, explicit_model)
+
+    def refresh_models(self):
+        if not self.ready or self.busy or not getattr(self.bridge, 'model_router_factory', None):
+            return None
+        if not self._lane.acquire(False):
+            return None
+        try:
+            result = self.bridge.refresh_models()
+            if result is not None:
+                self.catalog = dict(self.bridge.models)
+            return result
+        finally:
+            self._lane.release()
 
     @property
     def busy(self):
@@ -110,7 +132,6 @@ class DevelopmentRuntime:
         try:
             result = self.bridge.initialize({'workspace': str(project), 'home': str(home)})
             self.catalog = {row['id']: self.bridge.models[row['id']] for row in result['models']}
-            self.ready = True
             # F-09（QA）：最小宿主桥（agent 未就绪）也能初始化；
             # child seam 基线照录（Development Loop 接线需要）。
             _agent = getattr(self.bridge, 'agent', None)
@@ -125,7 +146,18 @@ class DevelopmentRuntime:
                 _agent.checkpoints = CheckpointStore(home / 'projects' / identity, project)
             self.state.remember_project(project)
             self.state.remember_session(result['sessionPath'])
+            self.ready = True
+            self.initialization_error = ''
             return result
+        except Exception as exc:
+            self.ready = False
+            self.catalog = {}
+            self.initialization_error = redact(str(exc))
+            if self._owns_bridge:
+                self.bridge.close()
+                self.bridge = EditorBridge(self._emit, model_router_factory=self._model_router_factory)
+                self.bridge._development_lane = self._lane
+            raise
         finally:
             self._lane.release()
 

@@ -128,7 +128,7 @@ def _load_credentials(home, scope):
 
 
 class EditorBridge:
-    def __init__(self, emit):
+    def __init__(self, emit, *, model_router_factory=None):
         self.emit = emit
         self.agent = None
         self.history = []
@@ -136,6 +136,43 @@ class EditorBridge:
         self.models = {}
         self.current_request = ''
         self.last_result = None
+        # Trusted Python host capability; intentionally absent from RPC params.
+        # It substitutes models only, never config/Policy/tools/session storage.
+        self.model_router_factory = model_router_factory
+        self.model_revision = None
+
+    def _load_model_router(self, config):
+        if self.model_router_factory is not None:
+            return self.model_router_factory(config, self.home)
+        return (SmartRouter.from_config(config) if config.get('model', 'routing', None)
+                is not None else ModelRouter.from_config(config))
+
+    @staticmethod
+    def _model_catalog(router):
+        models = {}
+        for name, provider in router.providers.items():
+            for model in dict.fromkeys((provider.default_model, *provider.models, provider.small_model)):
+                if model:
+                    models[json.dumps([name, model], ensure_ascii=False)] = (name, model)
+        return models
+
+    def refresh_models(self):
+        """Host holds the execution lane; prepare fully before replacing routes."""
+        if self.model_router_factory is None:
+            return None
+        revision = self.model_router_factory.signature(self.home)
+        if revision == self.model_revision:
+            return None
+        bundles = Path(__file__).parent / 'bundles'
+        config = load_config(self.home, bundles=[*sorted(bundles.glob('*.json')), bundles / 'modes' / 'coding.json'])
+        router = self._load_model_router(config)
+        models = self._model_catalog(router)
+        if revision != self.model_router_factory.signature(self.home):
+            raise ValueError('模型设置正在变化，草稿已保留，请稍后重试发送。')
+        self.router, self.models = router, models
+        self.agent.router = router
+        self.model_revision = revision
+        return {'models': [{'id': key, 'label': ' / '.join(pair)} for key, pair in models.items()]}
 
     def initialize(self, params):
         if self.agent is not None:
@@ -145,21 +182,18 @@ class EditorBridge:
             raise ValueError('Open a local workspace folder before starting Forge')
         self.workspace = workspace.resolve()
         self.home = Path(str(params.get('home') or Path.home() / '.forge')).expanduser().resolve()
-        _load_credentials(self.home, self.credentials)
+        if self.model_router_factory is None:
+            _load_credentials(self.home, self.credentials)
         package_bundles = Path(__file__).parent / 'bundles'
         config = load_config(self.home, bundles=[*sorted(package_bundles.glob('*.json')),
                                                 package_bundles / 'modes' / 'coding.json'])
         self.base_policy = Policy.from_config(config, workspace=self.workspace, non_interactive=True)
-        self.router = (SmartRouter.from_config(config) if config.get('model', 'routing', None)
-                       is not None else ModelRouter.from_config(config))
-        catalog = []
-        for name, provider in self.router.providers.items():
-            for model in dict.fromkeys((provider.default_model, *provider.models, provider.small_model)):
-                if not model:
-                    continue
-                identifier = json.dumps([name, model], ensure_ascii=False)
-                self.models[identifier] = (name, model)
-                catalog.append({'id': identifier, 'label': name + ' / ' + model})
+        revision = self.model_router_factory.signature(self.home) if self.model_router_factory else None
+        self.router = self._load_model_router(config)
+        self.models = self._model_catalog(self.router)
+        catalog = [{'id': key, 'label': ' / '.join(pair)} for key, pair in self.models.items()]
+        if self.model_router_factory and revision != self.model_router_factory.signature(self.home):
+            raise ValueError('模型设置正在变化，请重试载入项目。')
         limits = LoopLimits(max_steps=min(40, max(1, int(config.get('loop', 'maxSteps', 12)))),
                             max_depth=min(3, max(0, int(config.get('loop', 'maxDepth', 2)))),
                             spawn_budget=min(16, max(0, int(config.get('loop', 'spawnBudget', 8)))),
@@ -169,6 +203,7 @@ class EditorBridge:
             expose=config.get('tools', 'expose', None), observer=self.observe,
             session_path=self.home / 'sessions' / 'vscode' / (uuid.uuid4().hex + '.jsonl'))
         self.history = self.agent.secret_scope.protect(_history(params.get('history', [])))
+        self.model_revision = revision
         return {'protocol': PROTOCOL, 'models': catalog, 'workspace': str(self.workspace),
                 'onboarding': _onboarding_state(self.router),
                 'config_dir': str(self.home),

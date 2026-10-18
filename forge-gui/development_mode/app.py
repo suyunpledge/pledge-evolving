@@ -43,7 +43,7 @@ _LANGUAGE_BY_SUFFIX = {
 
 class DevelopmentWorkbench(ttk.Frame):
     def __init__(self, parent, state, *, runtime=None, hosted=False,
-                 workspace_request=None):
+                 workspace_request=None, model_settings_home=None):
         super().__init__(parent)
         self.state = state
         # hosted（2026-10-16 双导航栏去重，10-17 修正）：被 forge_gui_v2
@@ -53,7 +53,10 @@ class DevelopmentWorkbench(ttk.Frame):
         # （run_development.py / 测试）保持完整形态与既有语义。
         self._hosted = bool(hosted)
         self._workspace_request = workspace_request
-        self.runtime = runtime or DevelopmentRuntime(state, emit=self.enqueue_event)
+        from forge.development.models import ModelSettingsSource
+        self._model_router_factory = ModelSettingsSource(model_settings_home) if model_settings_home else None
+        self.runtime = runtime or DevelopmentRuntime(state, emit=self.enqueue_event,
+                                                     model_router_factory=self._model_router_factory)
         self._owns_runtime = runtime is None
         self._previous_emit = self.runtime.emit
         self.runtime.emit = self.enqueue_event if self._owns_runtime else self._forward_event
@@ -66,6 +69,10 @@ class DevelopmentWorkbench(ttk.Frame):
         self._active_submission = None
         self._queued_send_id = None
         self._generation = 0
+        self._last_project_attempt = None
+        self._initialization_error = ''
+        self._pending_initial_send = None
+        self._last_submission_notice = None
         self._poll = None
         self._external_poll = None
         self._external_busy = False
@@ -1050,7 +1057,7 @@ class DevelopmentWorkbench(ttk.Frame):
             try:
                 value = operation()
                 results.put((generation, callback, value, None, True))
-            except Exception as exc:
+            except BaseException as exc:
                 results.put((generation, callback, None, redact(f'{type(exc).__name__}: {exc}'), True))
         try:
             threading.Thread(target=run, daemon=True, name='forge-development-io').start()
@@ -1102,21 +1109,24 @@ class DevelopmentWorkbench(ttk.Frame):
         if (self.runtime.busy or self._loading or self._submission_active
                 or getattr(self, '_pending_prompts', ())):
             self.status.set('任务运行中，项目保持不变')
-            return
-        if any(row['document'].dirty for row in self.documents.values()):
+            return False
+        same_project = self.source is not None and Path(path).resolve() == self.source.root
+        if not same_project and any(row['document'].dirty for row in self.documents.values()):
             # P0-D2（UX 审查）：阻塞用户流程的条件必须模态可见——
             # 状态栏是易失通道，下一条消息即覆盖，用户看不到就会
             # 困惑「为什么点了没反应」。
             from tkinter import messagebox as _mb
             _mb.showinfo('无法切换项目', '请先保存或关闭未保存的标签页，再切换项目。', parent=self)
             self.status.set('请先保存或关闭未保存标签，再切换项目')
-            return
-        if self.source and Path(path).resolve() == self.source.root:
+            return False
+        if same_project and self.runtime.ready:
             self.refresh_project()
-            return
+            return False
         if self.source and not self._owns_runtime and self.runtime.ready:
             self.status.set('项目切换由宿主负责；保留借用的 Agent 与会话')
-            return
+            return False
+        self._last_project_attempt = str(path)
+        self._initialization_error = ''
         self._generation += 1
         self._loading = True
         self.send_button.configure(state='disabled')
@@ -1131,7 +1141,8 @@ class DevelopmentWorkbench(ttk.Frame):
                 identity = hashlib.sha256(str(home).encode('utf-8')).hexdigest()[:16]
                 home = source.root.parent / ('.forge-development-' + identity)
             if self._owns_runtime and (old.ready or old.home != home):
-                runtime = DevelopmentRuntime(self.state, emit=self.enqueue_event, runtime_home=home)
+                runtime = DevelopmentRuntime(self.state, emit=self.enqueue_event, runtime_home=home,
+                                             model_router_factory=self._model_router_factory)
             else:
                 runtime = old
             try:
@@ -1143,14 +1154,23 @@ class DevelopmentWorkbench(ttk.Frame):
             if runtime is not old:
                 old.close()
             return source, runtime, result
-        self.work(load, self._project_loaded)
+        try:
+            self.work(load, self._project_loaded)
+        except Exception as exc:
+            self._project_loaded(None, redact(str(exc)))
+            return False
+        return True
 
     def _project_loaded(self, value, error):
         self._loading = False
         self.send_button.configure(state='normal')
         if error:
+            self._initialization_error = error
+            self._pending_initial_send = None
+            self.set_agent_status('error', '项目初始化失败 · 修正配置后重新发送可重试')
             self._submission_notice('项目载入失败：' + error, error=True)
             return
+        self._initialization_error = ''
         self.source, self.runtime, ready = value
         # M2：项目已载入，中央区从欢迎页切回编辑器本体。
         self._sync_welcome()
@@ -1171,6 +1191,36 @@ class DevelopmentWorkbench(ttk.Frame):
         self._external_pending = False
         self.editor_contexts = []
         self.context_label.configure(text='未附加编辑器内容')
+        self._model_catalog_loaded(ready)
+        self.status.set('项目已载入 · 只读 · 模式策略从后续任务生效')
+        self.set_agent_status('idle', '项目已载入 · 等待任务')
+        self.refresh_project()
+        for path in self.state.value('tabs'):
+            if Path(path).is_relative_to(self.source.root):
+                self.open_file(path)
+        previous = self._session_to_restore
+        self._session_to_restore = None
+        if previous and self._resume_project and Path(self._resume_project).resolve() == self.source.root:
+            if Path(previous).exists() and Path(previous).resolve() != self.runtime.bridge.agent.session.path.resolve():
+                self.restore_session(previous)
+        # A first Send is still the user's request, but only resume that exact
+        # unchanged draft in the explicitly selected project, once loading ends.
+        pending = self._pending_initial_send
+        if pending is not None:
+            def resume():
+                if self._pending_initial_send is not pending:
+                    return
+                self._pending_initial_send = None
+                if pending['generation'] != self._generation:
+                    self._submission_notice('项目已变化，待发送任务已取消；草稿已保留。', error=True)
+                    return
+                if self.input.get('1.0', 'end-1c') == pending['draft']:
+                    self.send(delegate=pending['delegate'])
+                else:
+                    self._submission_notice('项目已载入；草稿已有更改，请确认后再次发送。')
+            self.later(0, resume)
+
+    def _model_catalog_loaded(self, ready, *, preserve_selection=False):
         self.catalog_rows = ready['models']
         self.model_ids = ['', *[row['id'] for row in ready['models']]]
         # RuntimeContext 在 v0.3 接管 model 列表——同步给它即可。
@@ -1183,19 +1233,24 @@ class DevelopmentWorkbench(ttk.Frame):
                 primary = current_routing.get('primary', '')
                 options = ['继承配置', *model_labels]
                 self._runtime_ctx.set_model_options(options)
-                self._safe_set_routing_primary(primary if primary in options else '继承配置')
+                self._safe_set_routing_primary(primary if preserve_selection or primary in options else '继承配置')
             except Exception:
                 pass
-        self.status.set('项目已载入 · 只读 · 模式策略从后续任务生效')
-        self.refresh_project()
-        for path in self.state.value('tabs'):
-            if Path(path).is_relative_to(self.source.root):
-                self.open_file(path)
-        previous = self._session_to_restore
-        self._session_to_restore = None
-        if previous and self._resume_project and Path(self._resume_project).resolve() == self.source.root:
-            if Path(previous).exists() and Path(previous).resolve() != self.runtime.bridge.agent.session.path.resolve():
-                self.restore_session(previous)
+
+    def _prepare_initial_send(self, delegate):
+        path = self._last_project_attempt or (str(self.source.root) if self.source else '') or self.state.value('project')
+        draft = self.input.get('1.0', 'end-1c')
+        if not path or not Path(path).is_dir():
+            path = filedialog.askdirectory(parent=self, title='选择 Coding 项目以发送任务')
+        if not path:
+            self._submission_notice('发送需要项目目录；未选择项目，草稿已保留。', error=True)
+            return
+        self._pending_initial_send = {'draft': draft, 'delegate': delegate, 'generation': self._generation + 1}
+        self._submission_notice('正在准备项目与 Agent；原始草稿将在就绪后发送。')
+        if not self.open_project(path):
+            self._pending_initial_send = None
+            if not self._initialization_error:
+                self._submission_notice('项目尚未就绪，草稿已保留；请检查项目载入状态。', error=True)
 
     # ── v0.4 Agent 状态条 wiring ─────────────────────────────────
     # 单一入口：app 任何地方需要更新 Agent 顶部状态条都走这里。
@@ -2013,6 +2068,10 @@ class DevelopmentWorkbench(ttk.Frame):
         text = redact(str(text))
         self.status.set(text)
         self.log_tabs.select(self.chat.master)
+        key = (text, error)
+        if self._last_submission_notice == key and text in self.chat.get('1.0', 'end'):
+            return
+        self._last_submission_notice = key
         self.chat.message('无法发送' if error else '发送状态', text)
         # A queued/refused draft is a notification, not a state transition of
         # the Agent already running. Its status remains owned by execution events.
@@ -2040,11 +2099,23 @@ class DevelopmentWorkbench(ttk.Frame):
         prompt = self.input.get('1.0', 'end-1c').strip()
         if not prompt:
             return
-        if not self.runtime.ready or self._loading:
-            self._submission_notice('项目正在载入，请稍后发送。' if self._loading else
-                'Agent 尚未就绪，请先打开项目；载入失败时检查模型配置后重新打开。', error=True)
+        if self._loading:
+            self._submission_notice('项目正在载入，草稿已保留；请等待初始化完成。')
+            return
+        if not self.runtime.ready:
+            try:
+                self._prepare_initial_send(delegate)
+            except Exception as exc:
+                self._pending_initial_send = None
+                self._submission_notice('无法准备任务，草稿已保留：' + str(exc), error=True)
             return
         try:
+            # This reads local model settings only and takes the Runtime
+            # lane. Running/queued requests retain their accepted model snapshot.
+            if not self.runtime.busy and not self._submission_active and not self._pending_prompts:
+                refreshed = self.runtime.refresh_models()
+                if refreshed is not None:
+                    self._model_catalog_loaded(refreshed, preserve_selection=True)
             request = self._capture_submission(prompt, delegate)
         except Exception as exc:
             self._submission_notice('任务未创建：' + str(exc), error=True)
@@ -2095,6 +2166,9 @@ class DevelopmentWorkbench(ttk.Frame):
             raise ValueError('最多附加四个文件，合计不能超过 128 KiB；请减少附加内容。')
         role = self.task_role.get()
         snapshot = self.state.task_snapshot(explicit_model=model, role=role, permission=permission)
+        readiness = self.runtime.readiness(snapshot.model)
+        if not readiness['ready']:
+            raise ValueError(readiness['message'])
         return dict(prompt=prompt, delegate=delegate, model=model, permission=permission,
                     planning=planning, role=role, contexts=contexts, snapshot=snapshot,
                     generation=self._generation, cancellation=threading.Event())
@@ -2294,6 +2368,8 @@ class DevelopmentWorkbench(ttk.Frame):
                                 ('\n[预览已截断，请查看上述 artifact]\n' if len(output) > 16384 else '\n'))
 
     def cancel_task(self):
+        initializing = self._pending_initial_send is not None
+        self._pending_initial_send = None
         queued = len(self._pending_prompts)
         for request in self._pending_prompts:
             request['cancellation'].set()
@@ -2307,6 +2383,8 @@ class DevelopmentWorkbench(ttk.Frame):
             self._active_submission['cancellation'].set()
         if self.runtime.cancel() or self._submission_active:
             self._submission_notice('已请求取消，排队任务已清除；等待当前模型或工具返回。已写入文件会保留。')
+        elif initializing:
+            self._submission_notice('已取消待发送任务；项目载入可继续，草稿已保留。')
         elif queued:
             self._submission_notice(f'已取消 {queued} 条排队任务，当前草稿保留。')
         else:
@@ -2885,7 +2963,7 @@ def launch(home, project=None):
     root.configure(bg=C['bg'])
     apply_ttk_theme(root)
     install_tk_exception_redaction(root)
-    app = DevelopmentWorkbench(root, state)
+    app = DevelopmentWorkbench(root, state, model_settings_home=Path.home() / '.forge')
     app.pack(fill='both', expand=True)
     def close():
         if app.can_close():

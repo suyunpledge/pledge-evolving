@@ -973,8 +973,10 @@ class ForgeGuiApp:
         # 的默认一致语义：project-local 但永不与项目重叠）。
         dev_home = Path.home() / ".forge-development"
         state = ModeState(dev_home)
+        state.switch('development')
         bench = DevelopmentWorkbench(parent, state, hosted=True,
-                                     workspace_request=self._nav_workspace_request)
+                                     workspace_request=self._nav_workspace_request,
+                                     model_settings_home=self.home)
         bench.pack(fill=tk.BOTH, expand=True)
         self._coding_bench = bench
         # hosted 导航高亮直设：Coding 空间挂载即高亮 Coding（之后每次

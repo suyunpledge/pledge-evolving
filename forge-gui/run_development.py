@@ -1,4 +1,4 @@
-"""Independent launcher; never reads/writes the General GUI's runtime home."""
+"""Independent execution stores with explicit host model-settings inheritance."""
 import argparse
 from pathlib import Path
 import sys

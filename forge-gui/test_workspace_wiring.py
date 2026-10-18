@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
+import time
 import unittest
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
@@ -26,6 +27,47 @@ from test_layout_dpi import pump, isolated_app  # noqa: E402
 
 
 class WorkspaceWiringTests(unittest.TestCase):
+    def test_coding_first_send_uses_host_models_with_separate_policy_and_session(self):
+        from forge.development.models import ModelSettingsSource
+        from forge.development.runtime import DevelopmentRuntime
+        from forge.model import Usage
+        original_source, initialize = ModelSettingsSource.__call__, DevelopmentRuntime.initialize
+        calls = []
+        class Transport:
+            def complete(_, provider, model, messages, **options):
+                calls.append((provider.name, model))
+                return 'hosted response', Usage(5, 5, provider.name, model)
+        def source(owner, config, home):
+            router = original_source(owner, config, home)
+            router.transport = Transport()
+            return router
+        def init(runtime, project):
+            result = initialize(runtime, project)
+            runtime.bridge.agent.thinking = False
+            runtime.bridge.agent.thinking_mode = 'off'
+            return result
+        with isolated_app() as (root, app, errors), patch.object(ModelSettingsSource,'__call__',source), patch.object(DevelopmentRuntime,'initialize',init):
+            project = app.home/'project'
+            project.mkdir()
+            app._request_workspace(app._workspace_kind.CODING)
+            bench = app._coding_bench
+            self.assertEqual(bench.state.mode.value, 'development')
+            bench.planning.set('none')
+            bench.input.insert('1.0','hosted first send')
+            with patch('development_mode.app.filedialog.askdirectory',return_value=str(project)):
+                bench.send_button.invoke()
+            deadline = time.monotonic()+30
+            while time.monotonic()<deadline:
+                pump(root,.04)
+                if bench.runtime.tasks and not bench._jobs and not bench._submission_active:
+                    break
+            self.assertEqual(len(bench.runtime.tasks),1,bench.status.get()+'\n'+bench.chat.get('1.0','end'))
+            self.assertEqual(calls,[('mimo','mimo-v2.6-flash-long-model-name-for-layout-testing')])
+            self.assertNotEqual(bench.runtime.home, app.home)
+            self.assertEqual(bench.runtime.bridge.agent.policy.mode.value,'read-only')
+            self.assertTrue(bench.runtime.bridge.agent.session.path.is_relative_to(bench.runtime.home))
+            self.assertEqual(errors,[])
+
     def test_roundtrip_preserves_surfaces_draft_and_objects(self):
         with isolated_app() as (root, app, errors):
             work_frame = app._workspace_deck.frames[app._workspace_kind.WORK]

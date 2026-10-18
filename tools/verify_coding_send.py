@@ -12,7 +12,7 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 GUI_SUITES = [
-    ('coding_submission', ['development_mode.test_submission']),
+    ('coding_submission', ['development_mode.test_submission', 'development_mode.test_readiness']),
     ('coding_app_agent', ['development_mode.test_app', 'development_mode.test_agent_panel']),
     ('coding_layout', ['development_mode.test_layout_regression']),
     ('workspace_visual', ['test_workspace_wiring', 'test_visual_system', 'test_coding_visual_integration']),
@@ -20,7 +20,9 @@ GUI_SUITES = [
 SOURCES = ['forge-gui/development_mode/app.py', 'forge-gui/development_mode/policy_widgets.py',
            'forge-gui/development_mode/test_app.py', 'forge-gui/development_mode/test_submission.py',
            'forge-gui/test_coding_visual_integration.py',
-           'forge/development/runtime.py']
+           'forge-gui/test_workspace_wiring.py', 'forge-gui/forge_gui_v2.py',
+           'forge-gui/development_mode/test_readiness.py', 'tests/test_development_readiness.py',
+           'forge/development/runtime.py', 'forge/development/models.py', 'forge/vscode_bridge.py']
 
 
 def main():

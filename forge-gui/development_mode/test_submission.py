@@ -60,7 +60,10 @@ class SubmissionTests(unittest.TestCase):
     def test_not_ready_has_visible_reason_and_preserves_draft(self):
         self.app.runtime.ready = False
         self.app.input.insert('1.0', 'draft must stay')
-        self.app.send_button.invoke()
+        # Readiness now offers same-project initialization instead of leaving
+        # the user at a dead-end notice. Simulate a refused/failed retry.
+        with patch.object(self.app, 'open_project', return_value=False):
+            self.app.send_button.invoke()
         self.assertEqual(self.app.input.get('1.0', 'end-1c'), 'draft must stay')
         self.assertIn('无法发送', self.app.chat.get('1.0', 'end'))
         self.assertEqual(self.app.log_tabs.select(), str(self.app.chat.master))
