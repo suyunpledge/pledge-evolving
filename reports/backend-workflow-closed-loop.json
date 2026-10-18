@@ -1,0 +1,26 @@
+{
+  "run_id": "33977115014a44e79aed1285b15824ac",
+  "task_id": "9e431f3e06784e708d6123a5ed2bcd54",
+  "outcome": "succeeded",
+  "action_ids": [
+    "ab326b7dff7e41c485cc6cdd2bc44555",
+    "48977e933574466096713a69f6248268"
+  ],
+  "sessionPath": "C:\\Users\\匡溯昀\\forge-backend-workflow-closed-loop\\control\\sessions\\s-33977115014a44e79aed1285b15824ac.jsonl",
+  "checkpoint": "537f9f4a378687354ea5671a53b578044321abed",
+  "changed_text": "VALUE = 2\n",
+  "restored_text": "VALUE = 1\n",
+  "tests_exit_code": 0,
+  "history_recovered": true,
+  "model_transport": "scripted offline; real Agent, tools, HTTP, Git and subprocess tests",
+  "artifacts": {
+    "diff.patch": {
+      "path": "C:\\Users\\匡溯昀\\forge-backend-workflow-closed-loop\\diff.patch",
+      "sha256": "9220ec965edfa811631972ba17c8a8ad6edd3088f51c597191d1e760cfb1eb39"
+    },
+    "tests.log": {
+      "path": "C:\\Users\\匡溯昀\\forge-backend-workflow-closed-loop\\tests.log",
+      "sha256": "70ba75adae80f31120b1150d0653cf8cf3dda5a5dee30b9bf639b42bb1752de6"
+    }
+  }
+}
