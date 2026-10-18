@@ -433,8 +433,9 @@ class Agent:
         event.setdefault('depth', self.depth)
         run = self._run_id or self._context_id
         event.setdefault('run_id', run)
-        event.setdefault('task_id', self.task_id or run)
-        event.setdefault('parent_run_id', self.parent_run_id)
+        request = getattr(self, '_host_run_request', None)
+        event.setdefault('task_id', request.task_id if request else self.task_id or run)
+        event.setdefault('parent_run_id', request.parent_run_id if request else self.parent_run_id)
         event.setdefault('event_id', uuid.uuid4().hex)
         event.setdefault('protocol_version', 1)
         record = redact(self.secret_scope.protect(dict(event)))
@@ -479,7 +480,8 @@ class Agent:
         run = self._run_id or self._context_id
         return create_execution_context(home=self.home, workspace=self.workspace,
             policy=self.policy, registry=self.registry, isolate_registry=False,
-            run=RunRequest(run, self.task_id or run, self.parent_run_id, entry='agent'),
+            run=(getattr(self, '_host_run_request', None)
+                 or RunRequest(run, self.task_id or run, self.parent_run_id, entry='agent')),
             session=self.session, cancellation=self.cancellation_event,
             secret_scope=self.secret_scope, checkpoints=self.checkpoints, file_guard=self.file_guard,
             subscriber=self._observe_event, tool_emit=self._emit, agent=self.name, depth=self.depth,
@@ -826,13 +828,32 @@ class Agent:
                     note='manual code review')
 
     def run(self, task: str, *, history: list[dict[str, Any]] | None = None,
-            context_paths: Iterable[str] = ()) -> RunReport:
+            context_paths: Iterable[str] = (), run_request: RunRequest | None = None) -> RunReport:
         # A mutable Agent is one session lane. Parallel conversations need
         # distinct Agents; refusing re-entry avoids cross-run state corruption.
         if not self._run_lock.acquire(blocking=False):
             raise RuntimeError("Agent is already running; use a separate session")
         try:
-            self._run_id = uuid.uuid4().hex
+            if run_request is not None:
+                if not isinstance(run_request, RunRequest):
+                    raise ValueError('run_request must be a host-created RunRequest')
+                if self.session is not None:
+                    from .runtime_lock import resource_lock
+                    with resource_lock('host-run:' + run_request.run_id, self.session.path):
+                        if any(e.type != 'session_meta' and e.data.get('run_id') == run_request.run_id
+                               for e in self.session.replay()):
+                            raise ValueError('Run identity was already submitted; inspect its recorded outcome')
+                        self.session.append('run_submitted', **run_request.as_dict(), event_id=uuid.uuid4().hex)
+                        self.session.sync()
+        except BaseException:
+            self._run_lock.release()
+            raise
+        previous_identity = self.task_id, self.parent_run_id
+        try:
+            self._run_id = run_request.run_id if run_request is not None else uuid.uuid4().hex
+            self._host_run_request = run_request
+            if run_request is not None:
+                self.task_id, self.parent_run_id = run_request.task_id, run_request.parent_run_id
             self.events = []
             planning_level(self.planning_level)
             if self.planning_level != 'none':
@@ -863,6 +884,8 @@ class Agent:
             self._emit(type="workflow_state", run_id=self._run_id, phase="failed")
             raise
         finally:
+            if run_request is not None:
+                self.task_id, self.parent_run_id = previous_identity
             self._run_lock.release()
 
     def _check_cancel(self):
