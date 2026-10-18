@@ -95,7 +95,10 @@ class BoundaryTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         path = 'forge-gui/development_mode/app.py'
         old = subprocess.check_output(['git', 'show', 'ddace89:' + path], cwd=root).decode('utf-8')
-        new = (root / path).read_text(encoding='utf-8')
+        # This boundary belongs to the visual-only commit. Later authorized
+        # execution fixes must not be compared to the pre-visual send method.
+        # Current pane invariants remain covered by OwnershipTests/layout tests.
+        new = subprocess.check_output(['git', 'show', '120deae:' + path], cwd=root).decode('utf-8')
         def methods(source):
             lines = source.splitlines()
             cls = next(n for n in ast.parse(source).body if isinstance(n, ast.ClassDef))

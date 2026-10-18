@@ -131,7 +131,7 @@ class DevelopmentRuntime:
 
     def run(self, prompt, *, explicit_model=None, agent_model=None, role='default',
             permission='read-only', planning='low', contexts=(), snapshot=None,
-            delegate=False, child_model=None):
+            delegate=False, child_model=None, cancellation=None):
         if not self.ready:
             raise RuntimeError('Open a project first')
         if not self._lane.acquire(False):
@@ -142,7 +142,7 @@ class DevelopmentRuntime:
                       'cancellation_event', 'file_guard', 'task_id')
         previous = {key: getattr(agent, key) for key in attributes if agent is not None and hasattr(agent, key)}
         with self._control:
-            self._cancel_event = threading.Event()
+            self._cancel_event = cancellation if cancellation is not None else threading.Event()
         started = False
         try:
             snap = snapshot or self.state.task_snapshot(explicit_model=explicit_model, agent_model=agent_model,

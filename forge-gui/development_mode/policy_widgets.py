@@ -45,9 +45,10 @@ class PolicyMatrix(ttk.Frame):
     """
 
     def __init__(self, master, *, mode, sandbox, read_scope, secret_scope,
-                 on_change=None, **kw):
+                 on_change=None, host_managed=False, **kw):
         super().__init__(master, **kw)
         self._on_change = on_change
+        self._host_managed = host_managed
         self._mode = tk.StringVar(value=mode)
         self._sandbox = tk.StringVar(value=sandbox)
         self._read_scope = tk.StringVar(value=read_scope)
@@ -69,6 +70,8 @@ class PolicyMatrix(ttk.Frame):
             ('SecretScope', self._secret_scope, SECRET_SCOPES),
         )
         for index, (title, var, values) in enumerate(rows, start=1):
+            if self._host_managed and title == 'Sandbox':
+                values = ('read-only', 'workspace-write')
             tk.Label(self, text=title, font=FONT_CAPTION, bg=C['bg'],
                      fg=C['ter']).grid(row=index, column=0, sticky='w',
                                        padx=(0, 6), pady=2)
@@ -77,6 +80,9 @@ class PolicyMatrix(ttk.Frame):
             combo.grid(row=index, column=1, sticky='we', pady=2)
             combo.bind('<<ComboboxSelected>>', lambda _e: self._emit())
             self._attach_confirm(combo, title)
+            if self._host_managed and title != 'Sandbox':
+                combo.configure(state='disabled')
+                attach_tooltip(combo, '由 Coding 宿主控制；当前任务只支持只读或工作区写入。')
         self.columnconfigure(1, weight=1)
         # 状态徽标（"工作区可写" / "危险全访问" / "隔离启用"）— 第 5 列。
         self._badge = tk.Label(self, text='', font=FONT_CAPTION, bg=C['bg'],
@@ -103,6 +109,10 @@ class PolicyMatrix(ttk.Frame):
         combo.bind('<<ComboboxSelected>>', _on_select, add='+')
 
     def _emit(self):
+        if self._host_managed:
+            self._mode.set('read-only' if self._sandbox.get() == 'read-only' else 'acceptEdits')
+            self._read_scope.set('workspace')
+            self._secret_scope.set('isolated')
         self._sync_badge()
         if callable(self._on_change):
             try:
@@ -134,6 +144,13 @@ class PolicyMatrix(ttk.Frame):
             secret_scope=self._secret_scope.get(),
         )
 
+    def set_sandbox(self, value):
+        """Project the host's grant without dispatching a permission change."""
+        self._sandbox.set(value)
+        if self._host_managed:
+            self._mode.set('read-only' if value == 'read-only' else 'acceptEdits')
+        self._sync_badge()
+
 
 class RoutingChain(ttk.Frame):
     """模型路由：主模型 / fallback / MOA 三元素。
@@ -144,9 +161,10 @@ class RoutingChain(ttk.Frame):
     """
 
     def __init__(self, master, *, primary, fallback, moa,
-                 model_options, on_change=None, **kw):
+                 model_options, on_change=None, host_managed=False, **kw):
         super().__init__(master, **kw)
         self._on_change = on_change
+        self._host_managed = host_managed
         self._primary = tk.StringVar(value=primary or '')
         self._fallback = tk.StringVar(value=fallback or '')
         self._moa = tk.StringVar(value=moa or 'off')
@@ -165,6 +183,7 @@ class RoutingChain(ttk.Frame):
                                width=18)
         primary.grid(row=1, column=1, sticky='we', padx=(0, 8))
         primary.bind('<<ComboboxSelected>>', lambda _e: self._emit())
+        self._primary_choice = primary
         # fallback
         tk.Label(self, text='fallback', font=FONT_CAPTION, bg=C['bg'],
                  fg=C['ter']).grid(row=1, column=2, sticky='w', padx=(0, 6))
@@ -173,6 +192,7 @@ class RoutingChain(ttk.Frame):
                                 width=14)
         fallback.grid(row=1, column=3, sticky='we')
         fallback.bind('<<ComboboxSelected>>', lambda _e: self._emit())
+        self._fallback_choice = fallback
         # MOA
         tk.Label(self, text='MOA', font=FONT_CAPTION, bg=C['bg'],
                  fg=C['ter']).grid(row=2, column=0, sticky='w', padx=(0, 6), pady=(4, 0))
@@ -180,6 +200,10 @@ class RoutingChain(ttk.Frame):
                            values=('off', 'on'), width=18)
         moa.grid(row=2, column=1, sticky='we', padx=(0, 8), pady=(4, 0))
         moa.bind('<<ComboboxSelected>>', lambda _e: self._emit())
+        if self._host_managed:
+            for control in (fallback, moa):
+                control.configure(state='disabled')
+                attach_tooltip(control, '由宿主模型路由配置控制；此处不覆盖 fallback 或 MOA。')
         self.columnconfigure(1, weight=1)
         self.columnconfigure(3, weight=1)
 
@@ -200,6 +224,18 @@ class RoutingChain(ttk.Frame):
             fallback=self._fallback.get(),
             moa=self._moa.get(),
         )
+
+    def set_model_options(self, options):
+        self._model_options = tuple(dict.fromkeys(options))
+        self._primary_choice.configure(values=self._model_options)
+        self._fallback_choice.configure(values=tuple(dict.fromkeys(('', *self._model_options))))
+        if self._primary.get() not in self._model_options:
+            self._primary.set(self._model_options[0] if self._model_options else '')
+        if self._fallback.get() not in ('', *self._model_options):
+            self._fallback.set('')
+
+    def set_primary(self, value):
+        self._primary.set(value)
 
 
 class TaskControls(ttk.Frame):
@@ -371,3 +407,15 @@ class RuntimeContext(ttk.Frame):
 
     def get_task_controls(self):
         return self._task
+
+    def set_model_options(self, options):
+        self._routing.set_model_options(options)
+
+    def set_routing_primary(self, value):
+        self._routing.set_primary(value)
+
+    def set_sandbox(self, value):
+        self._policy.set_sandbox(value)
+
+    def set_role(self, value):
+        self._task.set_role(value)
