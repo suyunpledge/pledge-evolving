@@ -353,18 +353,6 @@ class WorkbenchTests(unittest.TestCase):
                 for tab in self.app.log_tabs.tabs()
                 if str(self.app.log_tabs.tab(tab, 'state')) != 'hidden']
 
-
-def _iter_all_widgets(root):
-    """深度优先遍历 root 及其所有 Tk 子控件（生成器）。"""
-    stack = [root]
-    while stack:
-        widget = stack.pop()
-        yield widget
-        try:
-            stack.extend(widget.winfo_children())
-        except Exception:
-            pass
-
     def test_agent_events_bottom_tab_toggles_without_data_loss(self):
         # v0.2：事件视图统一在 AgentPanel「完整事件」Tab；底部 Notebook
         # 不再承载（_toggle_events_tab 改控 AgentPanel notebook）。
@@ -419,10 +407,21 @@ def _iter_all_widgets(root):
         模型下拉搬到 RuntimeContext.模型路由，操作按钮搬到
         RuntimeContext.任务控制。本测试只验仍由 agent_frame 直接
         承载的核心控件。
+        W2 修正：task_label / perm_badge / context_label 自 v0.3 起
+        不再 pack（信息迁入 RuntimeContext/状态条）——历史断言
+        「应可见」与设计矛盾（且本测试因 _iter_all_widgets 错位
+        从未运行，矛盾一直未暴露）。现改为：属性存在 + 未映射
+        契约，输入区核心控件（input/send/input_bar）映射可见。
         """
         from tkinter import ttk as _ttk
-        for widget in (self.app.task_label, self.app.perm_badge, self.app.context_label,
-                       self.app.input, self.app.send_button):
+        # v0.3 迁出 UI 的三个属性：存在但不再映射（防回归到老 chrome）
+        for attr in ('task_label', 'perm_badge', 'context_label'):
+            self.assertTrue(hasattr(self.app, attr), f'app.{attr} 属性应保留')
+            widget = getattr(self.app, attr)
+            self.assertEqual(widget.winfo_manager(), '',
+                             f'{attr} 自 v0.3 起不应 pack（信息由 RuntimeContext 承载）')
+        # W2：统一输入容器内的核心控件映射可见
+        for widget in (self.app.input, self.app.send_button, self.app.input_bar):
             self.pump(lambda: widget.winfo_ismapped())
             self.assertTrue(widget.winfo_ismapped(), '分组后控件应可见')
         # RuntimeContext 是 v0.3 接管任务控制 / 模型 / 权限 的总入口——
@@ -462,3 +461,20 @@ def _iter_all_widgets(root):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+def _iter_all_widgets(root):
+    """深度优先遍历 root 及其所有 Tk 子控件（生成器）。
+
+    历史位置修复（W2）：此函数带 0 缩进，曾误插在 WorkbenchTests
+    类体中间——它之后的 5 个缩进测试方法语法上脱离类、从未被
+    unittest 发现。现移到文件末尾模块层，美 5 个测试回归类内。
+    """
+    stack = [root]
+    while stack:
+        widget = stack.pop()
+        yield widget
+        try:
+            stack.extend(widget.winfo_children())
+        except Exception:
+            pass

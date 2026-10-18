@@ -436,27 +436,47 @@ class OwnershipTests(unittest.TestCase):
         # 语义从字节不变放宽为「既有调用点全部保留」：AST 比对 kwargs 之外
         # 的语句序列须一致。其余七法仍字节比对。
         for name in ('_build', '_build_project', '_build_editor', 'apply_layout', 'place_sashes', '_panes_resized', 'capture_layout', 'toggle_ide'):
-            if name in ('_build', '_build_project'):
+            if name in ('_build', '_build_project', '_build_editor'):
+                # W3（2026-10-18）：_build_editor 编辑器工具栏按钮从裸 ttk.Button
+                # 换成统一 dev_button（工单授权的合法演进），从字节比对组
+                # 移入 AST 比对组（与 _build/_build_project 同规则：
+                # 剥离合法演进项后语句序列须一致，防其它改动借机混入）。
                 b = ast.parse(textwrap.dedent(before[name]))
                 a = ast.parse(textwrap.dedent(after[name]))
                 def _strip_new_kwargs(tree):
-                    """归一化：剥掉 on_show_* / 徽标 provider kwargs 与 review
-                    预设值增量（M4-M6 合法演进项，两侧同规则）。"""
+                    """归一化：剥掉 on_show_* / 徽标 provider kwargs、review
+                    预设值增量（M4-M6 合法演进）与 W3 按钮工厂替换
+                    （ttk.Button → dev_button，两侧同规则；局部 import
+                    在 _body_without_button_import 里先行剔除）。
+                    """
                     for node in ast.walk(tree):
                         if isinstance(node, ast.Call):
                             node.keywords = [k for k in node.keywords
                                              if k.arg not in ('on_show_tasks', 'on_show_knowledge',
                                                               'on_show_evolution', 'on_show_approvals',
                                                               'changes_provider', 'tests_provider',
-                                                              'problems_provider')]
+                                                              'problems_provider', 'kind', 'tooltip')]
+                            # W3：ttk.Button(...) → dev_button(...) 同参等价
+                            # （text/command/pack 不变，仅新增 kind/tooltip 键）
+                            if (isinstance(node.func, ast.Attribute)
+                                    and node.func.attr == 'Button'):
+                                node.func = ast.Name(id='dev_button', ctx=ast.Load())
                         if (isinstance(node, (ast.List, ast.Tuple))
                                 and any(isinstance(x, ast.Constant) and x.value == 'review' for x in node.elts)):
                             node.elts = [x for x in node.elts
                                          if not (isinstance(x, ast.Constant) and x.value == 'review')]
                     return tree
 
-                stmts_b = [ast.dump(_strip_new_kwargs(copy.deepcopy(n))) for n in b.body[0].body]
-                stmts_a = [ast.dump(_strip_new_kwargs(copy.deepcopy(n))) for n in a.body[0].body]
+                # W3：先在函数体级别剥掉局部 import（buttons.dev_button），
+                # 再逐句归一化比对。
+                def _body_without_button_import(parse_tree):
+                    fn = parse_tree.body[0]
+                    return [n for n in fn.body
+                            if not (isinstance(n, ast.ImportFrom) and n.module == 'buttons')]
+                stmts_b = [ast.dump(_strip_new_kwargs(copy.deepcopy(n)))
+                           for n in _body_without_button_import(b)]
+                stmts_a = [ast.dump(_strip_new_kwargs(copy.deepcopy(n)))
+                           for n in _body_without_button_import(a)]
                 self.assertEqual(stmts_b, stmts_a, name)
             else:
                 self.assertEqual(before[name], after[name], name)

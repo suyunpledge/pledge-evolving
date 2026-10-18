@@ -278,12 +278,18 @@ class DevelopmentWorkbench(ttk.Frame):
         body.pack(fill='both', expand=True)
         bar = ttk.Frame(body)
         bar.pack(fill='x', pady=4)
-        ttk.Button(bar, text='保存', command=self.save_current).pack(side='left')
-        ttk.Button(bar, text='重新载入', command=self.reload_current).pack(side='left', padx=4)
-        ttk.Button(bar, text='关闭标签', command=self.close_current).pack(side='left')
+        # W3：编辑器工具栏改走统一按钮规范（尺寸/反馈/提示定版）。
+        from .buttons import dev_button
+        dev_button(bar, text='保存', command=self.save_current, kind='primary',
+                   tooltip='保存当前文档（Ctrl+S）').pack(side='left')
+        dev_button(bar, text='重新载入', command=self.reload_current, kind='ghost',
+                   tooltip='从磁盘重读当前文档').pack(side='left', padx=4)
+        dev_button(bar, text='关闭标签', command=self.close_current, kind='ghost',
+                   tooltip='关闭当前标签页').pack(side='left')
         state_bar = ttk.Frame(body)
         state_bar.pack(fill='x', pady=(0, 4))
-        ttk.Button(state_bar, text='编码', command=self.open_encoding).pack(side='left')
+        dev_button(state_bar, text='编码', command=self.open_encoding, kind='quiet',
+                   tooltip='查看/切换文件编码').pack(side='left')
         actions = ttk.Menubutton(state_bar, text='文件审查')
         actions.pack(side='left', padx=4)
         menu = tk.Menu(actions, tearoff=False, bg=C['bg'], fg=C['text'])
@@ -292,7 +298,8 @@ class DevelopmentWorkbench(ttk.Frame):
         menu.add_separator()
         menu.add_command(label='检查点差异 / 恢复此文件', command=self.checkpoints)
         actions.configure(menu=menu)
-        ttk.Button(state_bar, text='附加给 Agent', command=self.attach_current).pack(side='right')
+        dev_button(state_bar, text='附加给 Agent', command=self.attach_current, kind='accent_soft',
+                   tooltip='把当前文档附加进下一条任务（发送前保护 Secret）').pack(side='right')
         self.document_state = ttk.Label(body, text='Ctrl+S 保存 · 尚无打开文件', padding=(4, 0, 4, 4))
         self.document_state.pack(fill='x')
         # M1：输出 Notebook 已上移到全宽底部工具面板（bottom_panel.py 的
@@ -626,7 +633,8 @@ class DevelopmentWorkbench(ttk.Frame):
 
         self.editor_contexts = []
         # ── 会话组 ──────────────────────────────────────────────
-        self.context_label = ttk.Label(self.agent_frame, text='未附加编辑器内容', padding=4)
+        # context_label 的创建移到 W2 统一输入容器（input_bar）内，
+        # 附件提示贴着输入行而非栏底。
         self.input = TaskInput(self.agent_frame, height=4, wrap='word', undo=True, font=FONT_UI)
         style_editor(self.input)
         # v0.3：input 留在 agent_frame 顶层（与原契约一致，避免 pack
@@ -685,31 +693,43 @@ class DevelopmentWorkbench(ttk.Frame):
 
         # ── 预存消息队列（上限 3，任务完成后自动发送）────────────
         self._pending_prompts: list[dict] = []
-        self._queue_label = ttk.Label(self.agent_frame, text='', padding=(4, 1),
+        # ── W2：统一输入容器 ──
+        # 底部输入区收敛为一个 self.input_bar（side='bottom' 全宽容器）：
+        #   queue_label（有队列时才显）/ context_label（有附件时才显）
+        #   → hint_label → input + send 同一行。
+        # 动机：此前 input 与 send_row 是 agent_frame 底部两个并列的
+        # side='bottom' slave，同一行关系靠两个 slave 的分配默契维持；
+        # 容器化后同行关系由 input_row 内 pack 显式声明，缩放行为可断言。
+        # 契约保留：self.input / self.send_button 属性名不变，hint /
+        # queue / context 的显示逻辑（_sync_queue_label / attach）不变。
+        self.input_bar = ttk.Frame(self.agent_frame)
+        self._queue_label = ttk.Label(self.input_bar, text='', padding=(4, 1),
                                       foreground=C['accent2'])
-        # 输入框 + 发送按钮（保留为 agent_frame 底部固定组）
-        hint_label = ttk.Label(self.agent_frame,
-                                text='Enter 发送 · Shift+Enter 换行 · Ctrl+Enter 亦可',
-                                foreground=C.get('muted', '#777'))
-        send_row = ttk.Frame(self.agent_frame)
-        # input 留在 agent_frame 直接子（与 v0.2 契约一致），send_row
-        # 仅放发送按钮——input + 发送按钮作为 agent_frame 底部的
-        # 同一行两个 widget（input fill='x' 吃水平空间，send 固定宽）。
-        self.send_button = IconButton(send_row, text='发送', command=self.send,
+        # context_label 父级改为 input_bar：附件信息仍贴在输入行上方。
+        self.context_label = ttk.Label(self.input_bar, text='未附加编辑器内容', padding=4)
+        hint_label = ttk.Label(self.input_bar,
+                               text='Enter 发送 · Shift+Enter 换行 · Ctrl+Enter 亦可',
+                               foreground=C.get('muted', '#777'))
+        # 输入行：input 吃满剩余宽度，send 固定在右——同一行内布局。
+        input_row = ttk.Frame(self.input_bar)
+        self.send_button = IconButton(input_row, text='发送', command=self.send,
             bg=C['accent'], fg=C['text'], activebackground=C['accent_hover'],
             bd=0, padx=12, pady=5, highlightthickness=1)
         button_feedback(self.send_button, kind='primary')
-        self.send_button.pack(side='right', padx=(4, 0))
-
-        # ── P0-L1 容器重组（仲裁裁决 3）—— 简化版：底部 4 个固定组 ──
-        # input / send_row / hint_label / self.context_label，全部 side='bottom'。
-        # input 与 send_row 处于同一行（一个吃水平空间、一个固定宽度）。
-        for slave, kw in (
-            (self.input, dict(fill='x', padx=(6, 0), pady=4)),   # 输入框（贴栏底，水平铺满）
-            (send_row, dict(padx=(0, 6), pady=4)),              # 发送按钮（贴栏底，固定宽）
-            (hint_label, dict(fill='x', padx=8)),               # 键位提示
-        ):
-            slave.pack(side='bottom', **kw)
+        self.send_button.pack(side='right', padx=(6, 0))
+        # input 用 in_= 挂进 input_row（master 不变，契约零改动）；
+        # send 先 right 占位，input 再 left+expand 吃满剩余宽。
+        self.input.pack(in_=input_row, side='left', fill='x', expand=True,
+                        padx=(6, 0), pady=4)
+        # 容器内部（side='bottom'：先 pack 者贴底）：input_row 先 pack
+        # 占底，hint 其次在其上；queue/context 动态显示时经
+        # before=hint 插到 hint 之前（即输入行正上方）。
+        input_row.pack(side='bottom', fill='x')
+        self._input_row = input_row  # 输入行（send/input 所在）
+        self._input_hint = hint_label  # queue/context 的 before 锚点
+        hint_label.pack(side='bottom', fill='x', padx=8)
+        # 容器本身作为 agent_frame 底部唯一输入组（取代原 3 个并列 slave）。
+        self.input_bar.pack(side='bottom', fill='x')
         # context_label 默认隐藏——只在用户附加了编辑器内容时由 _attach
         # 主动 pack_forget 显出来（仍走 agent_frame 底部）。
         # v0.3：status_row 不再 pack（task_label / perm_badge 信息已迁
@@ -1979,11 +1999,11 @@ class DevelopmentWorkbench(ttk.Frame):
         first = redact(first)
         summary = (first[:24] + '…') if len(first) > 24 else first
         label.configure(text=f'⏳ 预存 {n}/3：{summary}' + (' 等' if n > 1 else ''))
-        # 输入框正上方（side='bottom' 序列里 input 已占位，before 保证
-        # 标签紧贴输入区而非跑到 agent_panel 顶部）
+        # 输入行正上方（before=hint：side='bottom' 列表中 hint 在
+        # input_row 之上，插到 hint 前即贴着输入行）
         try:
             label.pack(side='bottom', fill='x', padx=8, pady=(2, 0),
-                       before=self.input)
+                       before=self._input_hint)
         except tk.TclError:
             pass
 
