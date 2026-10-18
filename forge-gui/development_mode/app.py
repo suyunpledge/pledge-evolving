@@ -717,7 +717,7 @@ class DevelopmentWorkbench(ttk.Frame):
         # context_label 父级为 input_bar：附件信息仍贴在输入行上方。
         self.context_label = ttk.Label(self.input_bar, text='未附加编辑器内容', padding=4)
         hint_label = ttk.Label(self.input_bar,
-                               text='Enter 发送 · Shift+Enter 换行 · Ctrl+Enter 亦可',
+                               text='Enter 发送 · Shift+Enter 换行',
                                foreground=C.get('muted', '#777'))
         # 输入行：input 吃满剩余宽度，send 固定在右——同一行内布局。
         input_row = self._input_row
@@ -1006,6 +1006,11 @@ class DevelopmentWorkbench(ttk.Frame):
         # （对话 / 事件页）tag_ranges 返回空，本分支不触发。
         if widget.tag_ranges('empty_hint'):
             widget.delete('1.0', 'end')
+        # v0.5 空态卡：与 empty_hint 同生命周期，真实内容到达时一并撤下
+        card = getattr(widget, '_empty_card', None)
+        if card is not None and card.winfo_exists():
+            card.destroy()
+            widget._empty_card = None
         chunk = str(redact(text))
         widget.insert('end', chunk)
         self._paint_result_lines(widget, chunk)

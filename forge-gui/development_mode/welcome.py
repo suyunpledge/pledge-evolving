@@ -184,12 +184,27 @@ class WelcomeView(ttk.Frame):
             icon_lbl = tk.Label(icon_holder, image=img, bg=C['surface'], bd=0)
             icon_lbl.image = img
             icon_lbl.pack(expand=True)
-        # 标题 + 描述
+        # 标题 + 描述（描述宽度跟随卡片实际宽度换行——固定 wraplength 在窄窗口
+        # 会把「工作区创建空文件」横向切掉半句，观感毛坯。_fit_desc 在卡片
+        # Resize 时同步 wraplength，宽窗口照常一行放下。）
         tk.Label(card.content, text=title, font=FONT_UI_BOLD, bg=C['surface'],
                  fg=C['text']).pack(anchor='w', pady=(8, 2))
-        tk.Label(card.content, text=desc, font=FONT_CAPTION, bg=C['surface'],
-                 fg=C['subtext'], wraplength=180, justify='left').pack(
-            anchor='w', fill='x')
+        desc_lbl = tk.Label(card.content, text=desc, font=FONT_CAPTION,
+                            bg=C['surface'], fg=C['subtext'],
+                            wraplength=176, justify='left')
+        desc_lbl.pack(anchor='w', fill='x', pady=(2, 0))
+
+        def _fit_desc(_event=None, lbl=desc_lbl, box=card.content):
+            try:
+                width = box.winfo_width()
+                if width > 48:
+                    lbl.configure(wraplength=max(64, width - 6))
+            except tk.TclError:
+                pass
+        desc_lbl.bind('<Configure>', _fit_desc)
+        # sash 压缩卡片时 label 自身可能不触发 Configure——同时挂 content 层
+        card.content.bind('<Configure>', _fit_desc)
+        card.desc_label = desc_lbl  # v0.5：验证探针 / 后续主题化用
         # 不可见 button（承担点击 + 键盘焦点）。
         #
         # ★ 渲染修复：tk.Button 必须 lower() 回栈底。place() 默认把新控件

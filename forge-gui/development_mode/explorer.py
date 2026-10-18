@@ -163,6 +163,25 @@ def delete_path(boundary, path):
     return path
 
 
+def _empty_placeholder(parent, title, hint):
+    """居中空态占位（v0.5 视觉规范，与 bottom_panel._empty_state_card
+    同一语言）：图标 + 标题 + 副文案，替代原来的左上角灰字 Label。"""
+    box = tk.Frame(parent, bg=C['sidebar'])
+    box.pack(expand=True)
+    icon_holder = tk.Frame(box, bg=C['sidebar'], width=32, height=32)
+    icon_holder.pack(pady=(0, 6))
+    icon_holder.pack_propagate(False)
+    img = icon_image(icon_holder, 'files', size=24, fg=C['ter'])
+    if img is not None:
+        lbl = tk.Label(icon_holder, image=img, bg=C['sidebar'], bd=0)
+        lbl.image = img
+        lbl.pack(expand=True)
+    tk.Label(box, text=title, font=FONT_SECTION, bg=C['sidebar'],
+             fg=C['subtext']).pack()
+    tk.Label(box, text=hint, font=FONT_CAPTION, bg=C['sidebar'],
+             fg=C['ter'], wraplength=200, justify='center').pack(pady=(4, 0))
+    return box
+
 class ActivityBar(ttk.Frame):
     """48px 活动栏：图标列 + 激活态左侧 2px 指示条 + 悬停换色。
 
@@ -391,7 +410,7 @@ class ExplorerPanel(ttk.Frame):
         self.changes.pack(fill='both', expand=True)
         self.changes.bind('<<TreeviewSelect>>', self._on_show_diff)
         self.changes.bind('<Double-1>', lambda _e: self._on_open_changed())
-        self.notebook.add(git, text='Git 变更')
+        self.notebook.add(git, text='Git')
         self._configure_status_tags(self.changes)
 
     def _configure_status_tags(self, tree):
@@ -402,12 +421,8 @@ class ExplorerPanel(ttk.Frame):
         """任务 Tab：当前任务的子代理 / 调度队列占位。真实内容由 app 注入。"""
         tasks = ttk.Frame(self.notebook)
         self._tasks_tab = tasks
-        self._tasks_placeholder = ttk.Label(
-            tasks,
-            text='任务视图由 app 注入（子代理 / 调度 / 工作流状态）。',
-            foreground=C['subtext'], wraplength=200, justify='left',
-            padding=16)
-        self._tasks_placeholder.pack(anchor='nw')
+        self._tasks_placeholder = _empty_placeholder(
+            tasks, '任务', '子代理与调度数据由运行时注入。')
         self.notebook.add(tasks, text='任务')
         return tasks
 
@@ -415,12 +430,8 @@ class ExplorerPanel(ttk.Frame):
         """知识库 Tab：MemoryStore + KnowledgeBase 占位。真实内容由 app 注入。"""
         knowledge = ttk.Frame(self.notebook)
         self._knowledge_tab = knowledge
-        self._knowledge_placeholder = ttk.Label(
-            knowledge,
-            text='知识库视图由 app 注入（pitfall / lesson / note 检索与注入预览）。',
-            foreground=C['subtext'], wraplength=200, justify='left',
-            padding=16)
-        self._knowledge_placeholder.pack(anchor='nw')
+        self._knowledge_placeholder = _empty_placeholder(
+            knowledge, '知识库', 'pitfall / lesson / note 由运行时注入。')
         self.notebook.add(knowledge, text='知识')
         return knowledge
 
@@ -428,12 +439,8 @@ class ExplorerPanel(ttk.Frame):
         """演化 Tab：EvolutionEngine 候选审批占位。真实内容由 app 注入。"""
         evolution = ttk.Frame(self.notebook)
         self._evolution_tab = evolution
-        self._evolution_placeholder = ttk.Label(
-            evolution,
-            text='演化视图由 app 注入（pending 候选 / approve · reject · quarantine）。',
-            foreground=C['subtext'], wraplength=200, justify='left',
-            padding=16)
-        self._evolution_placeholder.pack(anchor='nw')
+        self._evolution_placeholder = _empty_placeholder(
+            evolution, '演化', '候选审批数据由运行时注入。')
         self.notebook.add(evolution, text='演化')
         return evolution
 

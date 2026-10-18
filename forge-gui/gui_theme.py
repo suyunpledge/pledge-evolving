@@ -1155,7 +1155,7 @@ def apply_ttk_theme(root):
     # Shared language, local Coding density; Work keeps its larger tree rows.
     style.configure('Coding.TNotebook', background=C['bg'], borderwidth=0)
     style.configure('Coding.TNotebook.Tab', padding=(10, 5), font=FONT_SMALL)
-    style.configure('Explorer.TNotebook.Tab', padding=(4, 5), font=FONT_CAPTION)
+    style.configure('Explorer.TNotebook.Tab', padding=(2, 5), font=FONT_CAPTION)
     style.configure('Coding.Treeview', background=C['sidebar'], fieldbackground=C['sidebar'],
                     rowheight=ui_px(root, 25), font=FONT_SMALL)
     style.configure('Card.TFrame', background=C['surface'], borderwidth=1,

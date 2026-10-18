@@ -641,7 +641,7 @@ class ExplorerViewTests(_WorkbenchFixture, unittest.TestCase):
         bar.select('git')
         self.assertEqual(bar.active, 'git')
         self.assertEqual(panel.notebook.tab(panel.notebook.select(), 'text'),
-                         'Git 变更')
+                         'Git')  # v0.5 Tab 更名防截断（230px 栏宽显示不全）
         bar.select('files')
         self.assertEqual(panel.notebook.tab(panel.notebook.select(), 'text'), '文件')
         # v0.2：占位入口从「扩展」改为「设置」——活动栏切到 settings 时

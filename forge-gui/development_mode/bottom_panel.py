@@ -84,6 +84,36 @@ def count_problems(evidence):
     return total
 
 
+def _empty_state_card(parent, title, hint):
+    """居中空态卡（v0.5 视觉规范）：图标点 + 标题 + 副文案。
+
+    替代原来的单行左上角灰字——底部面板空态是「毛坯房」观感的
+    重灾区：一行 9px 灰字贴在纯黑面板左上角，既无层级也无引导。
+    新空态：居中 16px 间距的竖排（视觉锚点为 ICONS 位图图标），
+    文案色调 subtext/ter 两级，保持克制。
+    """
+    from ui_icons import icon_image
+    box = tk.Frame(parent, bg=C['code_bg'])
+    # place 居中悬浮：page 内 Text 已 pack(fill both expand) 吃满腔体，
+    # 再 pack 会挤进底部残区（unmapped）。空态是「覆盖层」语义——
+    # place(relx=.5, rely=.5, anchor='c') 悬浮在 Text 上方，Text 保持
+    # 映射（滚动条/着色 tag 不动），app.append() 到达真实内容时销毁本卡。
+    box.place(relx=0.5, rely=0.5, anchor='c')
+    icon_holder = tk.Frame(box, bg=C['code_bg'], width=32, height=32)
+    icon_holder.pack(pady=(0, 6))
+    icon_holder.pack_propagate(False)
+    img = icon_image(icon_holder, 'files', size=24, fg=C['ter'])
+    if img is not None:
+        icon_lbl = tk.Label(icon_holder, image=img, bg=C['code_bg'], bd=0)
+        icon_lbl.image = img
+        icon_lbl.pack(expand=True)
+    tk.Label(box, text=title, font=FONT_SECTION, bg=C['code_bg'],
+             fg=C['subtext']).pack()
+    tk.Label(box, text=hint, font=FONT_CAPTION, bg=C['code_bg'],
+             fg=C['ter'], wraplength=360, justify='center').pack(pady=(4, 0))
+    return box
+
+
 def highlight_diff_lines(text):
     """差异文本增删行着色（单一真源，M6 起中央 Git Diff 视图共用）。
 
@@ -187,13 +217,15 @@ class ToolPanel(ttk.Frame):
         self.views[name] = text
         # 空态引导：一次性提示，tag 'empty_hint' 标记，app.append() 首
         # 次写入真实内容时抹除。
+        # v0.5：空态改为居中空态卡（_empty_state_card）——旧实现是
+        # 左上角一行 9px 灰字，无层级无引导。empty_hint tag 语义保留：
+        # app.append() 写入真实内容时仍按 tag 抹除（空态卡同步销毁）。
         hint = EMPTY_HINTS.get(name)
         if hint:
             try:
                 text.tag_configure('empty_hint', foreground=C['ter'])
-                text.configure(state='normal')
-                text.insert('1.0', hint, 'empty_hint')
-                text.configure(state='disabled')
+                card = _empty_state_card(page, name, hint)
+                text._empty_card = card  # noqa: SLF001 — app.append 抹除钩子
             except tk.TclError:
                 pass
 
