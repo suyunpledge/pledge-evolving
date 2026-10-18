@@ -1,0 +1,446 @@
+{
+  "schema_version": 1,
+  "branch": "fix/coding-runtime-readiness",
+  "baseline": "14edfeb653f9a9d71f5398cc808a1c238d70cd55",
+  "implementation_commit": "848fb0a1b9363ef1b59f9b3b4cae78c5f2509521",
+  "environment": {
+    "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+    "executable": "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "Tk": "8.6.15",
+    "PyYAML": "6.0.3"
+  },
+  "initial_driver": {
+    "exit_code": 1,
+    "sources_unchanged": false,
+    "suites": [
+      {
+        "name": "coding_submission",
+        "exit_code": 0,
+        "total": 27,
+        "seconds": 67.469,
+        "log": "C:\\Users\\匡溯昀\\forge-readiness-validation\\coding_submission.log",
+        "command": [
+          "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+          "-B",
+          "-c",
+          "import sys,runpy;sys.path[:0]=['C:\\\\Users\\\\匡溯昀\\\\forge-backend-workflow', 'C:\\\\Users\\\\匡溯昀\\\\forge-backend-workflow\\\\forge-gui'];sys.argv[0]='unittest';runpy.run_module('unittest',run_name='__main__')",
+          "development_mode.test_submission",
+          "development_mode.test_readiness",
+          "-v"
+        ],
+        "log_sha256": "83ee700b93e4317fcdf957746033348babc4e52373db07a2993699b8910cf545",
+        "tcl_deleted_callback_warnings": 0,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "passed": 27
+      },
+      {
+        "name": "coding_app_agent",
+        "exit_code": 1,
+        "total": 44,
+        "seconds": 188.844,
+        "log": "C:\\Users\\匡溯昀\\forge-readiness-validation\\coding_app_agent.log",
+        "command": [
+          "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+          "-B",
+          "-c",
+          "import sys,runpy;sys.path[:0]=['C:\\\\Users\\\\匡溯昀\\\\forge-backend-workflow', 'C:\\\\Users\\\\匡溯昀\\\\forge-backend-workflow\\\\forge-gui'];sys.argv[0]='unittest';runpy.run_module('unittest',run_name='__main__')",
+          "development_mode.test_app",
+          "development_mode.test_agent_panel",
+          "-v"
+        ],
+        "log_sha256": "917031ae2749cb61e4865fde4374e4b4ba34100b43b6c7e669643295e2889b3f",
+        "tcl_deleted_callback_warnings": 3,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0,
+        "passed": 43
+      },
+      {
+        "name": "coding_layout",
+        "exit_code": 0,
+        "total": 64,
+        "seconds": 154.281,
+        "log": "C:\\Users\\匡溯昀\\forge-readiness-validation\\coding_layout.log",
+        "command": [
+          "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+          "-B",
+          "-c",
+          "import sys,runpy;sys.path[:0]=['C:\\\\Users\\\\匡溯昀\\\\forge-backend-workflow', 'C:\\\\Users\\\\匡溯昀\\\\forge-backend-workflow\\\\forge-gui'];sys.argv[0]='unittest';runpy.run_module('unittest',run_name='__main__')",
+          "development_mode.test_layout_regression",
+          "-v"
+        ],
+        "log_sha256": "0bf6fe1b41c3efc5948ca1b66bf165838b5831859ffa939f501c4291b5a5b7d9",
+        "tcl_deleted_callback_warnings": 0,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "passed": 64
+      },
+      {
+        "name": "workspace_visual",
+        "exit_code": 0,
+        "total": 28,
+        "seconds": 47.515,
+        "log": "C:\\Users\\匡溯昀\\forge-readiness-validation\\workspace_visual.log",
+        "command": [
+          "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+          "-B",
+          "-c",
+          "import sys,runpy;sys.path[:0]=['C:\\\\Users\\\\匡溯昀\\\\forge-backend-workflow', 'C:\\\\Users\\\\匡溯昀\\\\forge-backend-workflow\\\\forge-gui'];sys.argv[0]='unittest';runpy.run_module('unittest',run_name='__main__')",
+          "test_workspace_wiring",
+          "test_visual_system",
+          "test_coding_visual_integration",
+          "-v"
+        ],
+        "log_sha256": "30966712891f5026c6d242edc985613e22a08fe12162e4192e26194a6fd052e8",
+        "tcl_deleted_callback_warnings": 0,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "passed": 28
+      }
+    ],
+    "report_path": "C:\\Users\\匡溯昀\\forge-readiness-validation\\validation.json",
+    "report_sha256": "9cc562fe6d38844ec910383157669e1020e4a5eaee45490e26fc84ca9a14e8d2",
+    "reason": "Preflight initially treated a borrowed custom Router as an empty standard router. Corrected, added regression, reran affected GUI suites; initial results retained."
+  },
+  "final_suites": [
+    {
+      "name": "coding_submission_app_agent_final",
+      "exit_code": 0,
+      "total": 100,
+      "passed": 100,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 235.813,
+      "log": "C:\\Users\\匡溯昀\\forge-readiness-validation\\gui-final.log",
+      "log_sha256": "0eb3a5c7db26d3c156f58fb8dc2942e045af85811494fbe7517f73555337a129",
+      "tcl_deleted_callback_warnings": 3,
+      "modules": [
+        "development_mode.test_submission",
+        "development_mode.test_readiness",
+        "development_mode.test_app",
+        "development_mode.test_agent_panel",
+        "test_workspace_wiring",
+        "test_visual_system",
+        "test_coding_visual_integration"
+      ]
+    },
+    {
+      "name": "coding_layout",
+      "exit_code": 0,
+      "total": 64,
+      "seconds": 154.281,
+      "log": "C:\\Users\\匡溯昀\\forge-readiness-validation\\coding_layout.log",
+      "command": [
+        "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+        "-B",
+        "-c",
+        "import sys,runpy;sys.path[:0]=['C:\\\\Users\\\\匡溯昀\\\\forge-backend-workflow', 'C:\\\\Users\\\\匡溯昀\\\\forge-backend-workflow\\\\forge-gui'];sys.argv[0]='unittest';runpy.run_module('unittest',run_name='__main__')",
+        "development_mode.test_layout_regression",
+        "-v"
+      ],
+      "log_sha256": "0bf6fe1b41c3efc5948ca1b66bf165838b5831859ffa939f501c4291b5a5b7d9",
+      "tcl_deleted_callback_warnings": 0,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 64
+    },
+    {
+      "name": "tests",
+      "exit_code": 0,
+      "seconds": 86.5,
+      "command": [
+        "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+        "-B",
+        "-c",
+        "import sys,runpy; sys.path[:0]=['C:\\\\Users\\\\匡溯昀\\\\forge-backend-workflow', 'C:\\\\Users\\\\匡溯昀\\\\forge-backend-workflow\\\\forge-gui']; sys.argv[0]='unittest'; runpy.run_module('unittest',run_name='__main__')",
+        "discover",
+        "-s",
+        "tests",
+        "-p",
+        "test*.py"
+      ],
+      "log": "C:\\Users\\匡溯昀\\forge-readiness-validation\\full\\tests.log",
+      "log_sha256": "e91ad80ff9a304dbf325e7e8e39f027fc0291b4d8012a2794fe7c739ddf85fc2",
+      "total": 169,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 1,
+      "passed": 168
+    },
+    {
+      "name": "forge",
+      "exit_code": 0,
+      "seconds": 31.25,
+      "command": [
+        "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+        "-B",
+        "-c",
+        "import sys,runpy; sys.path[:0]=['C:\\\\Users\\\\匡溯昀\\\\forge-backend-workflow', 'C:\\\\Users\\\\匡溯昀\\\\forge-backend-workflow\\\\forge-gui']; sys.argv[0]='unittest'; runpy.run_module('unittest',run_name='__main__')",
+        "discover",
+        "-s",
+        "forge",
+        "-p",
+        "test*.py",
+        "-t",
+        "."
+      ],
+      "log": "C:\\Users\\匡溯昀\\forge-readiness-validation\\full\\forge.log",
+      "log_sha256": "a5118b173b00574a12b368686505dd803e83dc21d6800d8c951a7c13a43e386b",
+      "total": 229,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 1,
+      "passed": 228
+    },
+    {
+      "name": "selftest",
+      "exit_code": 0,
+      "seconds": 27.328,
+      "command": [
+        "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+        "-B",
+        "run.py",
+        "selftest"
+      ],
+      "log": "C:\\Users\\匡溯昀\\forge-readiness-validation\\full\\selftest.log",
+      "log_sha256": "3882933dce68350c009723509f7b76709c8ff157af1ce81123ba6a788e0b5d5b",
+      "passed": 574,
+      "total": 574,
+      "failures": 0
+    },
+    {
+      "name": "gui_adapters",
+      "exit_code": 0,
+      "seconds": 116.234,
+      "command": [
+        "C:\\Users\\匡溯昀\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+        "-B",
+        "-c",
+        "import sys,runpy; sys.path[:0]=['C:\\\\Users\\\\匡溯昀\\\\forge-backend-workflow', 'C:\\\\Users\\\\匡溯昀\\\\forge-backend-workflow\\\\forge-gui']; sys.argv[0]='unittest'; runpy.run_module('unittest',run_name='__main__')",
+        "test_plugin_capabilities",
+        "test_plugin_skills",
+        "test_plugin_runtime",
+        "test_plugin_lifecycle",
+        "test_phase_models",
+        "test_runtime_review",
+        "test_task_planning",
+        "test_sub_agent",
+        "test_forge_client",
+        "test_interaction_intent"
+      ],
+      "log": "C:\\Users\\匡溯昀\\forge-readiness-validation\\full\\gui_adapters.log",
+      "log_sha256": "395e7e57fd0a55ffa717582771fe0fc88f872c87fb6212d593957e39273b570c",
+      "total": 120,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 120
+    }
+  ],
+  "all_final_suites_passed": true,
+  "final_source_sha256": {
+    "forge-gui/development_mode/app.py": "e8374bafa553581e0681e89066e68237682c52145bc111e85a45f3528ae06edd",
+    "forge-gui/development_mode/policy_widgets.py": "6303e570f8f5f70c2a56137aabc1b74302ce59434ba9ea2c14dc16793e438acb",
+    "forge-gui/development_mode/test_app.py": "bbf7b3726bc906198368d1597ea39c80adc948d81ec9460f6730b6adb6d3431b",
+    "forge-gui/development_mode/test_submission.py": "45b8caf4f897bee8c8e77b10cfd5d18469c47c2d131ab5b2791ad8e58bf642c1",
+    "forge-gui/test_coding_visual_integration.py": "0e7cc23c92628f7a39ca54a985b7eba84c81b17923b55373642fdf10b656e51c",
+    "forge-gui/test_workspace_wiring.py": "108ca0125033775c21dc9229947625d2b416eb55130acdf3a87799ac4f598f00",
+    "forge-gui/forge_gui_v2.py": "be810f8eefced18b7f22e1badbe99946653d4a13d4b97183f00a842e9bcb4f0f",
+    "forge-gui/development_mode/test_readiness.py": "c2ca2bca77e298c1417dda95c42cd1e240a04c843601c314d5945cfcea96cb00",
+    "tests/test_development_readiness.py": "cded2b883c3981c80b83fb3a96c746368e9e19bbdce2cf5cc34eb17db66631b7",
+    "forge/development/runtime.py": "64b410fec89423817c688af484621189d7b2e81c7676086fad7c718c85fc5558",
+    "forge/development/models.py": "cba2a8ff41ff6411563240a659daffc7ef7bf79955f93ce58365232501c858ba",
+    "forge/vscode_bridge.py": "630b4c5699d700f177568d895e3f645d0fb2cfd01e39d1e94cea712430b59dfa"
+  },
+  "full_run_core_sha256": {
+    "forge\\adapters.py": "4ac2896cd43655f6dc5fafe318361f36ef48078eb0fcd89947fb5c2049b248e3",
+    "forge\\batch_execution.py": "76c0850425dc61b9dbf3aeaf250de7530d0beda28e66b9e573ea2d9cb02662f9",
+    "forge\\cache_state.py": "3696b30def927e21e68bad27ccee2e9bbd9c7df6fa16d449fad5595695840f40",
+    "forge\\capability.py": "0bfdfce63beb3020315df417db3f60b79e5e4c4a63b545cf536aa19128586312",
+    "forge\\checkpoint.py": "c28cec29ce707e4b524ef454184c2d93b4787ab1b5733929d0865d0ed52cc506",
+    "forge\\cli.py": "fccf9a29d3baf4930e033b98ceccd601fdd2ad92c34a62b214b4069d4e246208",
+    "forge\\client_runs.py": "4d1696d42dc72158d3c2a0818b008155793a78f7dc29b7d25bae06c25666df4c",
+    "forge\\cmd_setup.py": "f2596c1a37e04b9883ca2405b8158f9f72a1acdcf7cf263635117843b6a36696",
+    "forge\\code_review.py": "24fbcb055109d2fa31b4f021ce6ccf4632940882bfc011b6cdc265ec0daf8068",
+    "forge\\compaction.py": "584829b614036713c6b65f35e3bbeb39c21aa04a2379507cb5001cb6738a7b31",
+    "forge\\config.py": "93dbc104a6ffc5ea1459b046c703d22a691b86a3e2d8c5e592cae0ea93df5caa",
+    "forge\\config_edit.py": "97fea7e029d3dd86e4df8bf3bfde499955a69c7abccf424bd9125a7ebf7a02ed",
+    "forge\\context_plan.py": "62d6a164daa34552b47a51d329009c1caf62de318971d7991876c3c14ae77063",
+    "forge\\desktop_services.py": "d4ee717f065d756bb23ef5b1228c529b57132efe4e7ac789635306f8122013ba",
+    "forge\\evolution.py": "8631e189b6129dcf6947afe16a6e1fb8cb9cf3370adab72b082af832b6e45f6f",
+    "forge\\execution.py": "379e23fc8c097b23cbbede829d09b52b4a637293f65f48fa6a77c8de3849b5f5",
+    "forge\\execution_guard.py": "ae7299687eb1ec161182a2057b6b19be5b0a604df5bbc15277b9775b7f64df6a",
+    "forge\\federation.py": "485792b866cc23b9ff66e37354c721f8a3096dd4107b4f094b26e1c6c3028551",
+    "forge\\gateway.py": "31225796e54fc6c5e07ae15333a9f3fd52deea0f72446b5f892ffcec914c63d6",
+    "forge\\guard.py": "3a64672f859fc4ba643c69472548cd85ef832057d81a439769544c1ffaa3fb37",
+    "forge\\knowledge.py": "a97756606573fe8c0802c5a1238ef4cf496b271a2f14c2b2dee434041f2cb7ba",
+    "forge\\local_service.py": "91618c8656c10867c08e323a9592eb27bf198929e8edd6ebad4a0b418355070a",
+    "forge\\loop.py": "2ffca2a97e47497702b02c51d52dab4c57e8b17e627d5a9f766ea1b4c69c5c75",
+    "forge\\memory.py": "930008ce1eac84ad499c2337ba2773db8b92e39adfe53214770d8ba8182d6b5f",
+    "forge\\model.py": "fce5c0b74689ec2ff06c8a5fd1cd6f90a4081e0d64e76ee91a2e7fffbc5709c3",
+    "forge\\phase_models.py": "ce4d56f1faa9eea287bf482e606a18b17629ef4e9a32d1d3938f8ee4384f0582",
+    "forge\\planning.py": "4e29ae7bf21ea6176d75d1c9552fc9ee68bdf1b701a3ca5dd7a142e1e7270b76",
+    "forge\\policy.py": "8df33ec1f465675bc89673f2d9da0c7df6f6dc440841fe327d13cf70cd9bad77",
+    "forge\\pricing.py": "d252a4818a57cb915f6a81dd46f137ab62fe74bb6f637336cdbb3d04ea1e0664",
+    "forge\\project_rules.py": "3cebf4d59f7d86f1bf8dceae75eb9db7edf05c36e86269b736591614137d3190",
+    "forge\\registry.py": "a2cf598c95f80d0823a48f1fd5a908e245bdb6e9717189a663dd9bd0ab353ef5",
+    "forge\\request_execution.py": "668ff6f42d281a16adc85c8d7364c1457f948b9cc67d49e23aa4341e4ae5ac41",
+    "forge\\routing.py": "86223a31ef9f26fd3a5cd9a64f193133561b0f58d3b300f9555865a7bf78792f",
+    "forge\\runtime_lock.py": "a46c158e8bc06c978d6b90e3587cfe89e5bd48fd23f3e89631aec5d11081c71a",
+    "forge\\sampling.py": "4c4c8d5426b0ae15522064a207efc0204964776a8d7192a6dd0e1da8e15f4920",
+    "forge\\secrets.py": "0914815c35b4d617c0a6cd4b23d009df7a0752fa96813256f733eca86d4f4d1e",
+    "forge\\secret_http.py": "327b740341515155b3fa5ebb391cb787947462bc0fdf09cb628f21bcf98f4517",
+    "forge\\selftest.py": "6e99dd87f4c02e0d39ff955912a9e42f3f26fd8fdbabc178d16991c052726a58",
+    "forge\\session.py": "1fe190e10cf765e2aba3a05a7fbd1681f0f2dc1d41edcf082bf9b73fdea10d7d",
+    "forge\\smoke.py": "417e600eb04ea68bc2d935786a50219d2a7977ca265e7a366b4d187e10b3fba9",
+    "forge\\subagent.py": "b84b129e3088f669db506c86033b77812a6b2bc58b0a48b8a44d46aadee61dfc",
+    "forge\\test_adapters.py": "f8f4a56eb367f3b1bb9da691a15e9aa6c3bd752f0d6da84cb9effa8c768cb565",
+    "forge\\test_desktop_services.py": "a8ade02fb3eebf5f751042b56e7ca2f0486bc96391ceb59a3e5b24ddb13105c2",
+    "forge\\test_e2e_modes.py": "d7d118c41268203d23fd8624be5913be8bfdae689d2b522dd6e869447a5bec03",
+    "forge\\test_execution_review.py": "aa26e5aeef073772da1f3e02e012ee65074ea1fb27431ed0d7ae09bfe36168aa",
+    "forge\\test_isolated_default.py": "0fccdbf5e692fd052efc3e3b842ecd53a767284b57078ee7042f86a0d1d87a18",
+    "forge\\test_model_adaptation.py": "292a15997bd930728ce3511eeb776ce0c36ed680e3ca22a638b46676b616c91f",
+    "forge\\test_new_modules.py": "03630c5a69aef55aeaa4285f9b2bb562acb6a115fa3e675a2a160677f7487a52",
+    "forge\\test_phase_models.py": "daf2ce16ec2112a0d283d4a5aacf18ecc40e563a49bc7a638e56fd5e2d185f15",
+    "forge\\test_project_rules.py": "52ae88f7375ab509365a0e6d142156a5e9b31f350b3b37cedcf13132aa76cc3d",
+    "forge\\test_read_scope.py": "04f839ddda2f749cfdb61f0f7b42a6513aae73fee87d78805aabc7a916944e2f",
+    "forge\\test_secret_adversarial.py": "bfdc1465c992b184676f80a0992ee70cc52c7b145452bf814cf0ad776146845e",
+    "forge\\test_secret_architecture.py": "bc97bf7f1de0770d1bba938557ea5d7be5a348618d1f72ddc5635bd5e19e6572",
+    "forge\\test_secret_virtualization.py": "abcd0ae938e3523d1e88ece9ca79555a3544fb44a9c142a2ffcca27507d8a3e8",
+    "forge\\test_task_planning.py": "2ffa551515364f10304a78859710c531475b40031de679d89896484a1fbeaa43",
+    "forge\\test_vendors.py": "8e6223880fff835f3869e3d0dd553e0d8a0ebe02375881fd5f7c5f8e02ac4d23",
+    "forge\\test_vscode_bridge.py": "d51c14bbb686530cadc16806e7d4334e06febedcb859d2454e46c3dee6cfbb76",
+    "forge\\thinking.py": "547f556edb5fb01c0e9cb77b5ea143de904a54f806290e7a02cafd6d8708833d",
+    "forge\\tools.py": "a334de4e595785132d024eb9035862dfbda2e0c33cc1158d7786579db112ab4a",
+    "forge\\toolwire.py": "23d02db03c8d6c6e05761ff7cc2099eecd5e0982681092782951e939c90cd450",
+    "forge\\tool_adapter.py": "dbe23e2924feedda495e4c5df5245253c3dccec23e48957867242cd6c2045e4c",
+    "forge\\types.py": "89696b4aa64d4feb461cdfce711eb274400e404e00e6df586d8c009d1be32b5d",
+    "forge\\vendors.py": "4be2d0899c01718fbdbe904b6cadce06d6fd91148744f8594102f9d0ee7e202f",
+    "forge\\verify_execution.py": "9ea0b3494f95d221f43acd7930eeaa9544b7b60a5d07ab07850cddf1f2e828a5",
+    "forge\\verify_secrets.py": "9b52a3c3fd97e16c98362b40a47e38dc7dede687b9fe034ff0f4ac6e367e880c",
+    "forge\\vscode_bridge.py": "630b4c5699d700f177568d895e3f645d0fb2cfd01e39d1e94cea712430b59dfa",
+    "forge\\wire.py": "5463540ba16cf0c2ea1896446aec33d6c2185b1355929d2e7249ba0a71ceb7e1",
+    "forge\\__init__.py": "4dd34358d33aeaf99f17747fc42ddf4b51f6fbc6193dcd4e80518f94cbb34e64",
+    "tests\\test_runtime_convergence.py": "0c027846fe3f03c27b2e4c66ca68a324786aaccd447aadfebebdb768b7cf4207"
+  },
+  "runtime_source_observation": {
+    "captured_at_unix": 1792318376.6773667,
+    "source_sha256": {
+      "forge/development/models.py": "cba2a8ff41ff6411563240a659daffc7ef7bf79955f93ce58365232501c858ba",
+      "forge/development/runtime.py": "64b410fec89423817c688af484621189d7b2e81c7676086fad7c718c85fc5558",
+      "forge/vscode_bridge.py": "630b4c5699d700f177568d895e3f645d0fb2cfd01e39d1e94cea712430b59dfa",
+      "forge-gui/development_mode/app.py": "f33b5091448d665e7783b656d022da4297a46ffd7afbe3ffe84473796975b9aa",
+      "forge-gui/forge_gui_v2.py": "be810f8eefced18b7f22e1badbe99946653d4a13d4b97183f00a842e9bcb4f0f",
+      "tests/test_development_readiness.py": "cded2b883c3981c80b83fb3a96c746368e9e19bbdce2cf5cc34eb17db66631b7",
+      "forge-gui/development_mode/test_readiness.py": "73bc4c516ce3114dbde5da9fd82a0c8ae42a9822c865c8d7a7bb49679c090392"
+    },
+    "observed_phase": "after tests/ full run, while remaining full validation was running",
+    "full_driver_created_at_unix": 1792318272.2065449,
+    "source_mtimes_before_full_driver": {
+      "forge/development/models.py": true,
+      "forge/development/runtime.py": true,
+      "forge/vscode_bridge.py": true,
+      "forge-gui/development_mode/app.py": true,
+      "forge-gui/forge_gui_v2.py": true,
+      "tests/test_development_readiness.py": true,
+      "forge-gui/development_mode/test_readiness.py": true
+    }
+  },
+  "final_gui_sources": {
+    "captured_at_unix": 1792318645.6803071,
+    "source_sha256": {
+      "forge-gui/development_mode/app.py": "e8374bafa553581e0681e89066e68237682c52145bc111e85a45f3528ae06edd",
+      "forge-gui/development_mode/policy_widgets.py": "6303e570f8f5f70c2a56137aabc1b74302ce59434ba9ea2c14dc16793e438acb",
+      "forge-gui/development_mode/test_app.py": "bbf7b3726bc906198368d1597ea39c80adc948d81ec9460f6730b6adb6d3431b",
+      "forge-gui/development_mode/test_submission.py": "45b8caf4f897bee8c8e77b10cfd5d18469c47c2d131ab5b2791ad8e58bf642c1",
+      "forge-gui/test_coding_visual_integration.py": "0e7cc23c92628f7a39ca54a985b7eba84c81b17923b55373642fdf10b656e51c",
+      "forge-gui/test_workspace_wiring.py": "108ca0125033775c21dc9229947625d2b416eb55130acdf3a87799ac4f598f00",
+      "forge-gui/forge_gui_v2.py": "be810f8eefced18b7f22e1badbe99946653d4a13d4b97183f00a842e9bcb4f0f",
+      "forge-gui/development_mode/test_readiness.py": "c2ca2bca77e298c1417dda95c42cd1e240a04c843601c314d5945cfcea96cb00",
+      "tests/test_development_readiness.py": "cded2b883c3981c80b83fb3a96c746368e9e19bbdce2cf5cc34eb17db66631b7",
+      "forge/development/runtime.py": "64b410fec89423817c688af484621189d7b2e81c7676086fad7c718c85fc5558",
+      "forge/development/models.py": "cba2a8ff41ff6411563240a659daffc7ef7bf79955f93ce58365232501c858ba",
+      "forge/vscode_bridge.py": "630b4c5699d700f177568d895e3f645d0fb2cfd01e39d1e94cea712430b59dfa"
+    }
+  },
+  "changed_after_full_run": [
+    "forge-gui/development_mode/app.py",
+    "forge-gui/development_mode/test_readiness.py"
+  ],
+  "scoped_rerun_reason": "After backend validation, UI worker boundary catches BaseException interruptions and adds a regression; all affected GUI modules were rerun. Backend production source unchanged.",
+  "protected_layout_methods": {
+    "_build": true,
+    "_build_project": true,
+    "_build_editor": true,
+    "apply_layout": true,
+    "place_sashes": true,
+    "_panes_resized": true,
+    "capture_layout": true,
+    "toggle_ide": true
+  },
+  "host_methods_changed": [
+    "_build_coding_surface"
+  ],
+  "local_settings_probe": {
+    "checked_at": "2026-10-18T18:09:52.757583+08:00",
+    "original_coding_project_selected": false,
+    "original_coding_session_selected": false,
+    "provider_count": 18,
+    "model_count": 28,
+    "runtime_initialized": true,
+    "local_preflight": {
+      "ready": true,
+      "code": "ready",
+      "message": "Agent 已就绪（尚未验证供应商网络）"
+    },
+    "policy": "read-only",
+    "live_provider_requests": 0,
+    "execution_stores_isolated": true,
+    "source_files_unchanged": true
+  },
+  "warnings": {
+    "coding_submission_app_agent_final": {
+      "tcl_deleted_callback": 3,
+      "resource_warning": 0
+    },
+    "coding_layout": {
+      "tcl_deleted_callback": 0,
+      "resource_warning": 0
+    },
+    "tests": {
+      "tcl_deleted_callback": 0,
+      "resource_warning": 0
+    },
+    "forge": {
+      "tcl_deleted_callback": 0,
+      "resource_warning": 2
+    },
+    "selftest": {
+      "tcl_deleted_callback": 0,
+      "resource_warning": 0
+    },
+    "gui_adapters": {
+      "tcl_deleted_callback": 0,
+      "resource_warning": 0
+    }
+  },
+  "patch_check": {
+    "exit_code": 0,
+    "sha256": "0badf62f05b8be5ce094fdb409d8af0b7060f9d6d7218c6a3969d1c736996301",
+    "applied": false
+  },
+  "main_head_at_patch_check": "14edfeb653f9a9d71f5398cc808a1c238d70cd55",
+  "scope": [
+    "12 new backend tests; 11 new Tk tests; 1 new hosted first-send integration test.",
+    "Real Agent and file tools with controlled offline model transport; no paid API probes.",
+    "tests/ and forge/ full discovery, full selftest, listed GUI suites and adapter modules.",
+    "No main source changes, merge or push."
+  ]
+}

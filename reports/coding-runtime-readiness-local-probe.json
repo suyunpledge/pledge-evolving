@@ -1,0 +1,17 @@
+{
+  "checked_at": "2026-10-18T18:09:52.757583+08:00",
+  "original_coding_project_selected": false,
+  "original_coding_session_selected": false,
+  "provider_count": 18,
+  "model_count": 28,
+  "runtime_initialized": true,
+  "local_preflight": {
+    "ready": true,
+    "code": "ready",
+    "message": "Agent 已就绪（尚未验证供应商网络）"
+  },
+  "policy": "read-only",
+  "live_provider_requests": 0,
+  "execution_stores_isolated": true,
+  "source_files_unchanged": true
+}
