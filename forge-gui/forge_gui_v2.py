@@ -1529,6 +1529,7 @@ class ForgeGuiApp:
         section = tk.Frame(parent, bg=C["sidebar"])
         section.pack(fill=tk.X, padx=14, pady=(6, 4))
         self._agents_expanded = False
+        self._agents_children = children  # 2026-10-19：行操作回调后重建列表用
         self._agents_group_count = len(children)
         self._agents_group_header = section
         self._agents_toggle_btn = pill_button(
@@ -1551,16 +1552,45 @@ class ForgeGuiApp:
             row.pack(fill=tk.X, pady=1, padx=2)
             IconCanvas(row, "model", size=18, bg=C["sidebar"], fg=C["accent2"]).pack(
                 side=tk.LEFT, padx=(8, 6))
-            i18n.Label(row, text=q.name, bg=C["sidebar"], fg=C["subtext"],
-                     font=FONT_SMALL, anchor="w").pack(side=tk.LEFT, pady=3,
-                                                       fill=tk.X, expand=True)
+            name_lbl = i18n.Label(row, text=q.name, bg=C["sidebar"], fg=C["subtext"],
+                     font=FONT_SMALL, anchor="w")
+            name_lbl.pack(side=tk.LEFT, pady=3, fill=tk.X, expand=True)
+            # 2026-10-19：行内操作（hover 浮现）——重命名 / 删除
+            ops = tk.Frame(row, bg=C["sidebar"])
+            edit_btn = IconCanvas(ops, "edit", size=14, bg=C["sidebar"],
+                                  fg=C["ter"],
+                                  command=lambda path=str(q): self._rename_agent_dir(path))
+            edit_btn.pack(side=tk.LEFT, padx=(4, 2))
+            attach_tooltip(edit_btn, "重命名智能体编号（目录名）")
+            del_btn = IconCanvas(ops, "close", size=14, bg=C["sidebar"],
+                                 fg=C["ter"],
+                                 command=lambda path=str(q): self._delete_agent_dir(path))
+            del_btn.pack(side=tk.LEFT, padx=(2, 4))
+            attach_tooltip(del_btn, "删除智能体目录（可恢复回收站）")
+            ops.pack(side=tk.RIGHT)
+            ops.pack_forget()  # hover 才浮现，平时不占行宽
+
+            def _show_ops(r=row, m=ops):
+                r.configure(bg=C["hover"])
+                for c in m.winfo_children():
+                    c.configure(bg=C["hover"])
+                if not m.winfo_ismapped():
+                    m.pack(side=tk.RIGHT)
+            def _hide_ops(r=row, m=ops):
+                r.configure(bg=C["sidebar"])
+                for c in m.winfo_children():
+                    c.configure(bg=C["sidebar"])
+                m.pack_forget()
             attach_tooltip(row, str(q))
             bind_keyboard_action(row, lambda path=str(q): self._show_agent_info(path))
-            for w in (row, *row.winfo_children()):
+            for w in (row, name_lbl):
                 w.bind("<Button-1>",
                        lambda _e, path=str(q): self._show_agent_info(path))
-                w.bind("<Enter>", lambda _e, r=row: r.configure(bg=C["hover"]), add="+")
-                w.bind("<Leave>", lambda _e, r=row: r.configure(bg=C["sidebar"]), add="+")
+                w.bind("<Enter>", lambda _e, fn=_show_ops: fn(), add="+")
+                w.bind("<Leave>", lambda _e, fn=_hide_ops: fn(), add="+")
+            for w in ops.winfo_children():
+                w.bind("<Enter>", lambda _e, fn=_show_ops: fn(), add="+")
+                w.bind("<Leave>", lambda _e, fn=_hide_ops: fn(), add="+")
         if not children:
             i18n.Label(list_box, text=tr("还没有智能体"), bg=C["sidebar"],
                      fg=C["muted"], font=FONT_MICRO, anchor="w",
@@ -1592,6 +1622,84 @@ class ForgeGuiApp:
             self._set_status("智能体目录已不存在，请刷新侧边栏", "warn")
             return
         messagebox.showinfo(tr("智能体目录"), f"{agent_path.name}\n{agent_path}\n\n这是现有 AutoClaw 智能体目录。Forge 的分工预设在 Agents 页面配置。", parent=self.root)
+
+    # ── 2026-10-19：智能体目录行内管理 ─────────────────────────────
+    def _rebuild_agents_group(self):
+        """行操作（重命名/删除）后重建分组列表。"""
+        try:
+            header = getattr(self, "_agents_group_header", None)
+            host = header.master if header is not None else None
+            if header is not None and host is not None:
+                header.destroy()
+            frame = getattr(self, "_agents_list_frame", None)
+            if frame is not None and frame.winfo_exists():
+                frame.destroy()
+            if host is not None:
+                self._build_agents_group(host)
+                if getattr(self, "_agents_expanded", False):
+                    self._agents_list_frame.pack(fill=tk.X, padx=6, after=self._agents_group_header)
+        except tk.TclError:
+            pass
+
+    def _rename_agent_dir(self, path):
+        """重命名智能体编号（目录名）。约束：非法字符拒绝、重名拒绝。"""
+        from tkinter import simpledialog
+        agent_path = Path(path)
+        if not agent_path.is_dir():
+            self._set_status("智能体目录已不存在，请刷新侧边栏", "warn")
+            return
+        new_name = simpledialog.askstring(
+            tr("重命名智能体"), tr("新的智能体编号："),
+            initialvalue=agent_path.name, parent=self.root)
+        if new_name is None:
+            return  # 取消
+        new_name = new_name.strip()
+        if not new_name or new_name == agent_path.name:
+            return
+        bad = set('\\/:*?"<>|')
+        if any(ch in bad for ch in new_name) or new_name in ('.', '..'):
+            self._set_status("编号含非法字符（\\ / : * ? < > | 或点号）", "error")
+            return
+        target = agent_path.parent / new_name
+        if target.exists():
+            self._set_status(f"同名智能体已存在：{new_name}", "warn")
+            return
+        try:
+            agent_path.rename(target)
+        except OSError as exc:
+            self._set_status(f"重命名失败：{exc}", "error")
+            return
+        self._set_status(f"智能体已重命名：{agent_path.name} → {new_name}", "ok")
+        self._rebuild_agents_group()
+
+    def _delete_agent_dir(self, path):
+        """删除智能体目录。优先进回收站（send2trash），失败退标准库删除。"""
+        agent_path = Path(path)
+        if not agent_path.is_dir():
+            self._set_status("智能体目录已不存在，请刷新侧边栏", "warn")
+            return
+        confirmed = messagebox.askyesno(
+            tr("删除智能体"),
+            tr(f"确定删除智能体「{agent_path.name}」？\n{agent_path}\n\n优先移入回收站（可恢复）；无法回收时将直接删除。"),
+            icon="warning", parent=self.root)
+        if not confirmed:
+            return
+        try:
+            from send2trash import send2trash  # type: ignore
+            send2trash(str(agent_path))
+            how = "已移入回收站"
+        except ImportError:
+            try:
+                shutil.rmtree(agent_path)
+                how = "已删除"
+            except OSError as exc:
+                self._set_status(f"删除失败：{exc}", "error")
+                return
+        except OSError as exc:
+            self._set_status(f"删除失败：{exc}", "error")
+            return
+        self._set_status(f"智能体「{agent_path.name}」{how}", "ok")
+        self._rebuild_agents_group()
 
     def _show_about(self):
         try:
