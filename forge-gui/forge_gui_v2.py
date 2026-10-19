@@ -1143,7 +1143,7 @@ class ForgeGuiApp:
         self._more_menu.add_command(label=tr('连接器'), command=lambda:self.desktop_features.open(1))
         self._more_menu.add_command(label=tr('代码预览'), command=lambda:self.desktop_features.open(2))
         self._more_menu.add_separator()
-        for key in ("agents", "knowledge", "evolution"):
+        for key in ("knowledge", "evolution"):
             self._more_menu.add_command(
                 label=f"{NAV_LABEL[key]}（预览）", command=lambda k=key: self._show_view(k))
         # 右侧只保留 Workspace 与必要运行状态。
@@ -1372,14 +1372,21 @@ class ForgeGuiApp:
         i18n.Label(nav_host, text=tr("功能导航"), bg=C["sidebar"], fg=C["muted"],
                  font=FONT_MICRO, anchor="w").pack(fill=tk.X, padx=8, pady=(2, 6))
         self.sidebar_navigation = {}
-        for key, label, glyph in (("connectors", tr("连接器"), "connector"),
+        # 2026-10-19：智能体（Agents）恢复为直达导航行——独立记忆 /
+        # 每路独立模型 / 子 Agent 分工的配置页不该藏在「更多」里。
+        for key, label, glyph in (("agents", NAV_LABEL["agents"], "agents"),
+                                  ("connectors", tr("连接器"), "connector"),
                                   ("knowledge", NAV_LABEL["knowledge"], "knowledge"),
                                   ("evolution", NAV_LABEL["evolution"], "evolution"),
                                   ("config", tr("配置API"), "config")):
             holder = self._make_side_nav(nav_host, key, label, glyph)
             holder.pack(fill=tk.X, pady=1)
             self.sidebar_navigation[key] = holder
-        # 更多入口：Agents / 知识库 / 演化 / 文件与项目 / 配置
+        # 2026-10-19：恢复侧栏智能体分组（10-10 eaee1ce 导航重排时被摘除；
+        # 扫描 ~/.openclaw-autoclaw/agents/ 列目录 + 添加入口，配置仍在 Agents 页）。
+        self._build_agents_group(chat_panel)
+
+        # 更多入口：知识库 / 演化 / 文件与项目 / 配置等低频页
         more_holder = self._make_side_nav_more(chat_panel)
         more_holder.pack(fill=tk.X, padx=6, pady=(2, 6))
 
@@ -1528,7 +1535,7 @@ class ForgeGuiApp:
             section, f"▸ 智能体 · {len(children)}", self._toggle_agents_group,
             kind="quiet", bg=C["sidebar"], font=FONT_CAPTION, padx=0)
         self._agents_toggle_btn.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        attach_tooltip(self._agents_toggle_btn, "展开已有 AutoClaw 智能体目录；Forge 分工预设在 Agents 页面配置")
+        attach_tooltip(self._agents_toggle_btn, "展开已有 AutoClaw 智能体目录；Forge 的记忆模式 / 集群 / 子 Agent 分工在「智能体」导航页配置")
         plus = glyph_button(section, "＋", self._prompt_create_agent,
                             bg=C["sidebar"], size=11, tooltip=tr("添加 Forge 分工预设"))
         plus.pack(side=tk.RIGHT)

@@ -434,18 +434,16 @@ class RefactorAcceptance(unittest.TestCase):
 
     # ── 11. Activity Bar 与 contextual Sidebar 真正分层 ──
     def test_sidebar_is_single_column_concept_layout(self):
-        # 顶部三个快捷入口，下面四个功能导航，沿用同一侧栏容器。
+        # 顶部三个快捷入口，下面五个功能导航（2026-10-19 智能体恢复直达），沿用同一侧栏容器。
         self.assertEqual(set(self.app._activity_markers),
-                         {"connectors", "knowledge", "evolution", "config"})
+                         {"agents", "connectors", "knowledge", "evolution", "config"})
         self.assertEqual(tuple(self.app.sidebar_shortcuts), ("chat", "tools", "schedules"))
-        self.assertEqual(len(self.app._activity_markers), 4)
-        # 占位视图不占主导航（走更多菜单）
-        for key in ("agents", "files"):
-            entries = self.app._nav_widgets.get(key)
-            if entries:
-                for holder, _inner in entries:
-                    self.assertFalse(holder.winfo_ismapped(),
-                                     f"{key} 不应出现在主导航区")
+        self.assertEqual(len(self.app._activity_markers), 5)
+        # 智能体现在是主导航行；仍占「更多」菜单的只剩 files
+        for holder, _inner in self.app._nav_widgets.get("agents", ()):
+            self.assertTrue(holder.winfo_ismapped(), "agents 直达行应出现在主导航区")
+        for holder, _inner in self.app._nav_widgets.get("files", ()):
+            self.assertFalse(holder.winfo_ismapped(), "files 不应出现在主导航区")
         # 窄轨道已移除（不 pack，宽度 0），侧栏是唯一的左栏
         self.assertLessEqual(self.app.activity_bar.winfo_width(), 1)
         # 主导航和历史可见；新建对话与集群入口位于聊天区。

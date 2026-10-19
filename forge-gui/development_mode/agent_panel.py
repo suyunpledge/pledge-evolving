@@ -62,10 +62,11 @@ class Conversation(tk.Text):
         self.tag_configure('b', font=FONT_UI_BOLD)
         self.tag_configure('code', font=FONT_MONO_SM, background=C['code_bg'])
         self.tag_configure('quote', foreground=C['subtext'], lmargin1=12, lmargin2=12)
-        # 空态引导：无消息时给一行友好的起始提示，避免对话区呈现为纯黑
-        # 空洞。tag 'empty_hint' 标记，message() / clear() 首次写入真实
-        # 内容前抹除——一次性，不与真实消息混排。
-        self.tag_configure('empty_hint', foreground=C['ter'], spacing1=10)
+        # 空态引导：居中空态卡（图标 + 标题 + 说明，与 bottom_panel 的
+        # _empty_state_card 同一视觉语言），place 悬浮在 Text 之上；
+        # message() 首次写入真实内容时撤下，clear() 时重建——一次性，
+        # 不与真实消息混排。
+        self._empty_card = None
         self._links = 0
         self._windows = []
         self._last_width = 0
@@ -73,27 +74,41 @@ class Conversation(tk.Text):
         self.bind('<Configure>', self._fit_cards)
 
     def _insert_empty_hint(self):
-        """写入一次性空态引导（仅当控件为空时）。
+        """居中空态卡（仅当对话区无内容且无现存卡时）。
 
         不调用 self.delete()——那会走进 _clear_cards()，而 __init__ 阶段
-        self._windows 尚未建立；控件此刻本就是空的，无需先删。
+        self._windows 尚未建立；控件此刻本就是空的，无需先删。卡以
+        place 悬浮在 Text 上，Text 自身保持空与禁用，不引入文本态。
         """
         try:
             if self.get('1.0', 'end-1c').strip():
                 return
-            self.configure(state='normal')
-            self.insert('1.0', CHAT_EMPTY_HINT, 'empty_hint')
-            self.configure(state='disabled')
+            if self._empty_card is not None and self._empty_card.winfo_exists():
+                return
+            from ui_icons import icon_image
+            box = tk.Frame(self, bg=C['chat'])
+            box.place(relx=0.5, rely=0.42, anchor='c')
+            img = icon_image(box, 'chat', size=28, fg=C['ter'])
+            if img is not None:
+                icon = tk.Label(box, image=img, bg=C['chat'], bd=0)
+                icon.image = img  # 防 GC
+                icon.pack(pady=(0, 8))
+            tk.Label(box, text='和 Coding Agent 开始一个任务', font=FONT_SECTION,
+                     bg=C['chat'], fg=C['subtext']).pack()
+            tk.Label(box, text=CHAT_EMPTY_HINT, font=FONT_CAPTION, bg=C['chat'],
+                     fg=C['ter'], justify='center').pack(pady=(4, 0))
+            self._empty_card = box
         except tk.TclError:
             pass
 
     def _drop_empty_hint(self):
-        """抹除一次性空态引导（若存在）。只删 tag 覆盖的那一段，
-        不动其余内容——避免连带清掉已插入的卡片。"""
+        """撤下一次性空态卡（若存在）。只销毁覆盖层，不动 Text 内容——
+        避免连带清掉已插入的卡片。"""
         try:
-            ranges = self.tag_ranges('empty_hint')
-            if ranges:
-                self.delete(*ranges)
+            card = self._empty_card
+            self._empty_card = None
+            if card is not None and card.winfo_exists():
+                card.destroy()
         except tk.TclError:
             pass
 
