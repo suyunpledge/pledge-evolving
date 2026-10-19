@@ -1,0 +1,133 @@
+{
+  "gui": "C:\\Users\\匡溯昀\\forge-kimi-visual-completion\\forge-gui",
+  "source": "isolated Tk fixture / offline model transport",
+  "screenshots": {
+    "empty.png": [
+      1440,
+      900
+    ],
+    "project.png": [
+      1440,
+      900
+    ],
+    "model-dialog.png": [
+      620,
+      360
+    ]
+  },
+  "callback_errors": [],
+  "tk_scaling": 1.3339898243886428,
+  "welcome_cards": [
+    {
+      "geometry": "138x128+0+0",
+      "mapped": true,
+      "requested": [
+        1,
+        128
+      ]
+    },
+    {
+      "geometry": "139x128+150+0",
+      "mapped": true,
+      "requested": [
+        1,
+        128
+      ]
+    },
+    {
+      "geometry": "139x128+301+0",
+      "mapped": true,
+      "requested": [
+        1,
+        128
+      ]
+    }
+  ],
+  "actual_tool_changes": [
+    "('efcbf3d0ef0d4220b5b080daabb210c5', 'C:\\\\Users\\\\匡溯昀\\\\AppData\\\\Local\\\\Temp\\\\forge-visual-fixture-nuqyrfex\\\\project\\\\one.py')"
+  ],
+  "file_after": "def greet():\n    print(\"hello, Forge\")\n\ngreet()\n",
+  "task_count": 1,
+  "task_phase": "completed",
+  "send_button": "发送",
+  "busy": false,
+  "shared_button_padding": "10 4",
+  "palette": {
+    "bg": "#0D141F",
+    "activity": "#0A111C",
+    "sidebar": "#111C2B",
+    "sidebar_history": "#131923",
+    "chat": "#0F1927",
+    "surface": "#172439",
+    "surface2": "#142034",
+    "surface_subtle": "#111D2D",
+    "hover": "#20344E",
+    "sel": "#163B62",
+    "code_bg": "#0B131F",
+    "input_bg": "#111D2D",
+    "editor_line": "#142238",
+    "agent_accent": "#B79AF9",
+    "black": "#000000",
+    "border": "#26364D",
+    "border_hi": "#3B5270",
+    "sel_border": "#3974B5",
+    "scroll": "#334B69",
+    "control_pressed": "#1F293D",
+    "disabled_bg": "#191F2D",
+    "disabled_fg": "#8894AD",
+    "disabled_border": "#343D50",
+    "focus_ring": "#78B5FF",
+    "accent": "#2454AD",
+    "accent_hover": "#2A61BD",
+    "accent_pressed": "#1D448D",
+    "accent2": "#6AAEFF",
+    "accent_soft": "#173453",
+    "accent_border": "#3974B5",
+    "accent_text": "#BCD9FF",
+    "brand_ice": "#BDCAFF",
+    "brand_spark": "#F5BC74",
+    "ok": "#48B89A",
+    "ok_pressed": "#399B80",
+    "ok_soft": "#152C27",
+    "warn": "#E5B45C",
+    "warn_soft": "#2E2410",
+    "error": "#E57373",
+    "error_soft": "#321C2A",
+    "info": "#7B9CFF",
+    "info_soft": "#23314A",
+    "link": "#AFC4FF",
+    "link_soft": "#23314A",
+    "text": "#E6EEF8",
+    "body": "#CDD8E8",
+    "subtext": "#A4B4C9",
+    "muted": "#A2ADC5",
+    "ter": "#A2ADC5",
+    "placeholder": "#A2ADC5",
+    "comment": "#8A9DB8",
+    "msg_user_bg": "#23314A",
+    "msg_user_fg": "#FFFFFF",
+    "msg_agent_bg": "#0F1927",
+    "msg_agent_fg": "#E8ECFA",
+    "msg_user_bg_old": "#232134",
+    "msg_agent_bg_old": "#1A1A22",
+    "msg_user_border": "#334666",
+    "msg_agent_border": "#0F1927",
+    "code_kw": "#74B4EA",
+    "code_cls": "#67D4C0",
+    "code_fn": "#DCDCAA",
+    "code_str": "#CEAB8F",
+    "code_const": "#E06C75",
+    "code_num": "#B5CEA8",
+    "code_comment": "#7FA17A",
+    "code_plain": "#CDD8E8",
+    "diff_add": "#4ADE80",
+    "diff_del": "#F87171",
+    "diff_add_bg": "#122E1B",
+    "diff_del_bg": "#2C1416",
+    "diff_hunk_bg": "#1B1B33",
+    "git_m": "#F59E0B",
+    "git_a": "#22C55E",
+    "git_d": "#EF4444",
+    "git_u": "#7C7CF0"
+  }
+}

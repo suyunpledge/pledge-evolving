@@ -39,7 +39,7 @@ _PALETTES = {
     'danger': lambda base: (C['surface2'], C['error'], C['error_soft'], C['error'],
                             C['border_hi']),
     'accent_soft': lambda base: (C['accent_soft'], C['accent_text'], C['accent'],
-                                 '#FFFFFF', C['accent_border']),
+                                 C['text'], C['accent_border']),
 }
 
 

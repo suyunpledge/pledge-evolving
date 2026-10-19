@@ -10,15 +10,15 @@ from tkinter import ttk
 from chat_widgets import parse_blocks, inline_segments
 from .buttons import dev_button
 from gui_theme import C, FONT_UI, FONT_UI_BOLD, FONT_SECTION, FONT_CAPTION, FONT_MONO_SM, style_editor, button_feedback, attach_tooltip
-from ui_icons import IconButton
+from ui_icons import IconButton, IconCanvas
 from forge.secrets import redact
 
 
 # 对话区空态引导：无消息时显示，避免右侧 Agent 面板呈现为纯黑空洞。
 # 文案只描述"这里将会发生什么"，不伪造任何已发生的执行。
 CHAT_EMPTY_HINT = (
-    '在下方输入任务描述，按 Enter 发送。\n'
-    'Agent 的执行过程、工具步骤与产物会实时汇报在这里。'
+    '输入任务，按 Enter 发送。\n'
+    '执行步骤与产物会显示在这里。'
 )
 
 
@@ -62,10 +62,12 @@ class Conversation(tk.Text):
         self.tag_configure('b', font=FONT_UI_BOLD)
         self.tag_configure('code', font=FONT_MONO_SM, background=C['code_bg'])
         self.tag_configure('quote', foreground=C['subtext'], lmargin1=12, lmargin2=12)
-        # 空态引导：无消息时给一行友好的起始提示，避免对话区呈现为纯黑
-        # 空洞。tag 'empty_hint' 标记，message() / clear() 首次写入真实
-        # 内容前抹除——一次性，不与真实消息混排。
-        self.tag_configure('empty_hint', foreground=C['ter'], spacing1=10)
+        # 空态引导：居中空态卡（图标 + 标题 + 说明，与 bottom_panel 的
+        # _empty_state_card 同一视觉语言），place 悬浮在 Text 之上；
+        # message() 首次写入真实内容时撤下，clear() 时重建——一次性，
+        # 不与真实消息混排。
+        self._empty_card = None
+        self._empty_size = None
         self._links = 0
         self._windows = []
         self._last_width = 0
@@ -73,37 +75,88 @@ class Conversation(tk.Text):
         self.bind('<Configure>', self._fit_cards)
 
     def _insert_empty_hint(self):
-        """写入一次性空态引导（仅当控件为空时）。
+        """居中空态卡（仅当对话区无内容且无现存卡时）。
 
         不调用 self.delete()——那会走进 _clear_cards()，而 __init__ 阶段
-        self._windows 尚未建立；控件此刻本就是空的，无需先删。
+        self._windows 尚未建立；控件此刻本就是空的，无需先删。卡以
+        place 悬浮在 Text 上，Text 自身保持空与禁用，不引入文本态。
         """
         try:
             if self.get('1.0', 'end-1c').strip():
                 return
-            self.configure(state='normal')
-            self.insert('1.0', CHAT_EMPTY_HINT, 'empty_hint')
-            self.configure(state='disabled')
+            if self._empty_card is not None and self._empty_card.winfo_exists():
+                return
+            box = tk.Frame(self, bg=C['chat'])
+            box.place(relx=0.5, rely=0.42, anchor='c')
+            self._empty_icon = IconCanvas(box, 'chat', size=28, bg=C['chat'], fg=C['ter'])
+            self._empty_icon.pack(pady=(0, 8))
+            self._empty_title = tk.Label(box, text='和 Coding Agent 开始一个任务', font=FONT_SECTION,
+                                        bg=C['chat'], fg=C['subtext'], justify='center')
+            self._empty_title.pack(fill='x')
+            self._empty_body = tk.Label(box, text=CHAT_EMPTY_HINT, font=FONT_CAPTION, bg=C['chat'],
+                                       fg=C['ter'], justify='center')
+            self._empty_body.pack(fill='x', pady=(4, 0))
+            self._empty_card = box
+            self._empty_size = None
+            self._fit_empty_hint(self.winfo_width(), self.winfo_height())
         except tk.TclError:
             pass
 
     def _drop_empty_hint(self):
-        """抹除一次性空态引导（若存在）。只删 tag 覆盖的那一段，
-        不动其余内容——避免连带清掉已插入的卡片。"""
+        """撤下一次性空态卡（若存在）。只销毁覆盖层，不动 Text 内容——
+        避免连带清掉已插入的卡片。"""
         try:
-            ranges = self.tag_ranges('empty_hint')
-            if ranges:
-                self.delete(*ranges)
+            card = self._empty_card
+            self._empty_card = None
+            self._empty_size = None
+            if card is not None and card.winfo_exists():
+                card.destroy()
         except tk.TclError:
             pass
 
+    def _fit_empty_hint(self, width, height):
+        card = self._empty_card
+        if card is None or width < 2 or height < 2 or self._empty_size == (width, height):
+            return
+        self._empty_size = (width, height)
+        available = max(40, min(430, width - 32))
+        card.place_configure(width=available, rely=.5)
+        for part in (self._empty_icon, self._empty_title, self._empty_body):
+            if part is not None:
+                part.pack_forget()
+        if self._empty_icon is not None:
+            self._empty_icon.pack(pady=(0, 8))
+        self._empty_title.configure(text='开始任务' if available < 220 else '和 Coding Agent 开始一个任务',
+                                    font=FONT_SECTION, wraplength=available - 4)
+        self._empty_title.pack(fill='x')
+        self._empty_body.configure(wraplength=available - 4)
+        self._empty_body.pack(fill='x', pady=(4, 0))
+        card.update_idletasks()
+        if self._empty_card is not card or not card.winfo_exists():
+            return
+        # Collapse decorative/detail content before it could cover a small pane.
+        for part in (self._empty_icon, self._empty_body):
+            if card.winfo_reqheight() <= max(24, height - 16):
+                break
+            if part is not None:
+                part.pack_forget()
+                card.update_idletasks()
+                if self._empty_card is not card or not card.winfo_exists():
+                    return
+        if card.winfo_reqheight() > max(24, height - 16):
+            self._empty_title.configure(text='开始任务', font=FONT_CAPTION)
+
     def _fit_cards(self, event):
+        self._fit_empty_hint(event.width, event.height)
         if event.width == self._last_width:
             return
         self._last_width = event.width
         for widget in self._windows:
-            if widget.winfo_exists() and hasattr(widget, 'fit'):
-                widget.fit(max(100, event.width - 24))
+            if widget.winfo_exists():
+                if hasattr(widget, 'fit'):
+                    widget.fit(max(100, event.width - 24))
+                elif getattr(widget, '_conversation_rule', False):
+                    widget.configure(width=max(1, event.width - 32))
 
     def clear(self):
         self.configure(state='normal')
@@ -118,6 +171,7 @@ class Conversation(tk.Text):
         return super().delete(index1, index2)
 
     def _clear_cards(self):
+        self._drop_empty_hint()
         for widget in self._windows:
             if widget.winfo_exists():
                 widget.destroy()
@@ -130,6 +184,8 @@ class Conversation(tk.Text):
         match = re.fullmatch(r'\n(user|assistant)\n([\s\S]*)\n', str(chars)) if not tags else None
         if match:
             return self.message(match[1], match[2], timestamp=self._historical_time(match[1], match[2]), historical=True)
+        if str(chars) and str(self.cget('state')) != 'disabled':
+            self._drop_empty_hint()
         return super().insert(index, chars, *tags)
 
     def _historical_time(self, role, body):
@@ -189,7 +245,12 @@ class Conversation(tk.Text):
         for block in parse_blocks(str(redact(body))):
             kind, value = block['type'], block.get('text', '')
             if kind == 'hr':
-                self.insert('end', '────────\n')
+                line = tk.Frame(self, bg=C['border'], height=1,
+                                width=max(1, self.winfo_width() - 32))
+                line._conversation_rule = True
+                self._windows.append(line)
+                self.window_create('end', window=line, pady=8)
+                self.insert('end', '\n')
             elif kind in {'code', 'table'}:
                 self.insert('end', value + '\n', 'code')
             else:

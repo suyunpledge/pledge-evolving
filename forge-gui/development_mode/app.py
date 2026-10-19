@@ -29,6 +29,7 @@ from .explorer import ExplorerPanel
 from .layout import NavigationBar, StatusBar, PRESETS
 from .welcome import WelcomeView
 from .project import WorkspaceSource
+from .buttons import dev_button
 
 # M7：状态栏「语言」字段的扩展名映射（编辑器当前文档 → 语言名）。
 # 只列本项目真实会出现的类型；未命中显示 Plain（不猜）。
@@ -647,9 +648,21 @@ class DevelopmentWorkbench(ttk.Frame):
         # 候选框也因焦点漂移到屏中央）。因此 input_row 在此提前创建，
         # TaskInput 直接以它为父。
         self.input_bar = ttk.Frame(self.agent_frame)
-        self._input_row = ttk.Frame(self.input_bar)
+        # 输入行卡片化：surface2 底 + 1px 描边的「输入卡」，输入框聚焦时
+        # 描边提亮到 focus_ring（FocusIn/FocusOut 驱动）。用 tk.Frame
+        # 而非 ttk.Frame——ttk 的描边色无法由控件 option 逐态控制。
+        self._input_row = tk.Frame(self.input_bar, bg=C['surface2'],
+                                   highlightthickness=1,
+                                   highlightbackground=C['border'],
+                                   highlightcolor=C['focus_ring'])
         self.input = TaskInput(self._input_row, height=4, wrap='word', undo=True, font=FONT_UI)
         style_editor(self.input)
+        # 焦点环由外层输入卡承担，输入框自身不再画第二圈。
+        self.input.configure(highlightthickness=0)
+        self.input.bind('<FocusIn>', lambda _e: self._input_row.configure(
+            highlightbackground=C['focus_ring']), add='+')
+        self.input.bind('<FocusOut>', lambda _e: self._input_row.configure(
+            highlightbackground=C['border']), add='+')
         # v0.3：input 留在 agent_frame 顶层（与原契约一致，避免 pack
         # 重新 parent 带来的隐患）；send_row 只放发送按钮，input 与之
         # 并列填满 agent_frame 底部。
@@ -723,19 +736,22 @@ class DevelopmentWorkbench(ttk.Frame):
         input_row = self._input_row
         self.send_button = IconButton(input_row, text='发送', command=self.send,
             bg=C['accent'], fg=C['text'], activebackground=C['accent_hover'],
-            bd=0, padx=12, pady=5, highlightthickness=1)
+            bd=0, padx=14, pady=6, highlightthickness=1,
+            highlightbackground=C['accent'])
         button_feedback(self.send_button, kind='primary')
-        self.send_button.pack(side='right', padx=(6, 0))
+        self.send_button.pack(side='right', padx=(6, 8), pady=6)
         # input 与 send 同父 input_row：send 先 right 占位，input 再
         # left+expand 吃满剩余宽（真实父子关系，非 in_ 借挂）。
         self.input.pack(side='left', fill='x', expand=True,
-                        padx=(6, 0), pady=4)
+                        padx=(8, 0), pady=6)
         # 容器内部（side='bottom'：先 pack 者贴底）：input_row 先 pack
         # 占底，hint 其次在其上；queue/context 动态显示时经
         # before=hint 插到 hint 之前（即输入行正上方）。
-        input_row.pack(side='bottom', fill='x')
+        input_row.pack(side='bottom', fill='x', padx=8, pady=(4, 6))
         self._input_hint = hint_label  # queue/context 的 before 锚点
         hint_label.pack(side='bottom', fill='x', padx=8)
+        # 输入组与上方对话区之间一道 hairline，把「输入带」从内容层托起。
+        tk.Frame(self.input_bar, bg=C['border'], height=1).pack(side='top', fill='x')
         # 容器本身作为 agent_frame 底部唯一输入组（取代原 3 个并列 slave）。
         self.input_bar.pack(side='bottom', fill='x')
         # context_label 默认隐藏——只在用户附加了编辑器内容时由 _attach
@@ -1093,6 +1109,10 @@ class DevelopmentWorkbench(ttk.Frame):
                 callback(value, error)
             except Exception as exc:
                 self.status.set(redact(str(exc)))
+            if job:
+                # Completion may start a versions refresh that briefly owns
+                # the Runtime lane. Reconcile the label after that job too.
+                self._update_send_button()
             if time.monotonic() >= deadline:
                 break
         self._poll = self.later(40, self._drain)
@@ -1105,8 +1125,10 @@ class DevelopmentWorkbench(ttk.Frame):
     def recent_projects(self):
         dialog = tk.Toplevel(self)
         dialog.title('近期开发项目')
+        self._dialog_header(dialog, '近期项目', '打开一个项目，继续编辑与 Agent 协作。')
         for path in self.state.value('recent'):
-            ttk.Button(dialog, text=path, command=lambda p=path: (dialog.destroy(), self.open_project(p))).pack(fill='x', padx=12, pady=4)
+            dev_button(dialog, path, lambda p=path: (dialog.destroy(), self.open_project(p)),
+                       kind='quiet').pack(fill='x', padx=12, pady=2)
         if not self.state.value('recent'):
             ttk.Label(dialog, text='暂无项目记录', padding=16).pack()
 
@@ -2474,11 +2496,30 @@ class DevelopmentWorkbench(ttk.Frame):
                     self.write_output('问题', '旧日志末尾写入中断，原日志已保留；未知操作必须重新核实。\n')
         self.work(lambda: self.runtime.restore_history(path), restored)
 
+    def _dialog_header(self, window, title, description):
+        """Small shared dialog chrome; no task or permission state lives here."""
+        window.configure(bg=C['bg'])
+        header = tk.Frame(window, bg=C['bg'], padx=12, pady=10)
+        header.pack(fill='x')
+        tk.Label(header, text=title, font=FONT_SECTION, bg=C['bg'], fg=C['text'],
+                 anchor='w').pack(fill='x')
+        tk.Label(header, text=description, font=FONT_CAPTION, bg=C['bg'], fg=C['subtext'],
+                 justify='left', anchor='w', wraplength=510).pack(fill='x', pady=(5, 0))
+        tk.Frame(window, height=1, bg=C['border']).pack(fill='x', padx=12, pady=(0, 6))
+
+    @staticmethod
+    def _fit_dialog(window):
+        # Preserve the initial size at normal DPI; grow only when fonts and
+        # controls need more room, so the primary action remains reachable.
+        window.update_idletasks()
+        if window.winfo_exists():
+            window.minsize(window.winfo_reqwidth(), window.winfo_reqheight())
+
     def model_settings(self):
         window = tk.Toplevel(self)
         window.title('Development 模型角色')
         window.geometry('620x360')
-        ttk.Label(window, text='仅选择已配置模型；任务运行时修改只影响后续任务。', padding=12).pack(anchor='w')
+        self._dialog_header(window, '模型角色', '选择已配置模型；运行中的任务保持原配置，修改从后续任务生效。')
         task_row = ttk.Frame(window, padding=(12, 4))
         task_row.pack(fill='x')
         ttk.Label(task_row, text='后续任务角色', width=27).pack(side='left')
@@ -2505,6 +2546,7 @@ class DevelopmentWorkbench(ttk.Frame):
             self.status.set('Development 模型角色已保存')
             window.destroy()
         dev_button(window, '保存', save, kind='primary').pack(anchor='e', padx=12, pady=12)
+        self._fit_dialog(window)
 
     def agent_model_settings(self, selected_name=None):
         if not self.runtime.ready:
@@ -2517,8 +2559,8 @@ class DevelopmentWorkbench(ttk.Frame):
         window = tk.Toplevel(self)
         window.title('子 Agent 独立模型')
         window.geometry('560x320')
-        ttk.Label(window, text='配置实际运行名称，例如 forge/sub1；不创建第二套 Agent。\n'
-                    '显式任务指定 > 独立配置 > 子 Agent 默认 > 继承父模型。', padding=12).pack(anchor='w')
+        self._dialog_header(window, '子 Agent 模型', '为所选子 Agent 设置模型。\n'
+                    '显式任务指定 > 独立配置 > 子 Agent 默认 > 继承父模型。')
         names = set(self.state.value('agent_models')) | set(self.task_evidence.agents)
         parent = self.runtime.bridge.agent.name
         names.discard(parent)
@@ -2555,7 +2597,8 @@ class DevelopmentWorkbench(ttk.Frame):
                 return
             feedback.configure(text='已保存 · 当前任务不变，下次真实 spawn 时生效')
             self.status.set('子 Agent 独立模型已保存')
-        ttk.Button(window, text='保存', command=save).pack(anchor='e', padx=12, pady=12)
+        dev_button(window, '保存', save, kind='primary').pack(anchor='e', padx=12, pady=12)
+        self._fit_dialog(window)
 
     def open_agent_file(self, path):
         if not self.source:
@@ -2632,8 +2675,8 @@ class DevelopmentWorkbench(ttk.Frame):
             window = tk.Toplevel(self)
             window.title('检查点审查 · ' + Path(path).name)
             window.geometry('560x300')
-            ttk.Label(window, text='仅恢复此文件；先查看差异，再确认。\n'
-                        '保留工作区权限、Secret 和版本检查；写入使用原工具的系统换行。', padding=12).pack(anchor='w')
+            self._dialog_header(window, '检查点审查', '先查看此文件的差异，再确认恢复。\n'
+                                '未保存内容或磁盘版本变化时，需要先处理冲突。')
             combo = ttk.Combobox(window, values=[p['commit'][:8] + ' · ' + p['label'] for p in points],
                                     state='readonly', width=52)
             combo.pack(padx=12, pady=8, fill='x')
@@ -2642,7 +2685,8 @@ class DevelopmentWorkbench(ttk.Frame):
             else:
                 ttk.Label(window, text='暂无真实写入检查点', padding=12).pack()
             reviewed = {'value': None}
-            restore = ttk.Button(window, text='恢复已审查版本', state='disabled')
+            restore = dev_button(window, '恢复已审查版本', lambda: None,
+                                 kind='primary', state='disabled')
             def previewed(value, failure):
                 if not window.winfo_exists():
                     return
@@ -2664,9 +2708,10 @@ class DevelopmentWorkbench(ttk.Frame):
                 reviewed['value'] = None
                 restore.configure(state='disabled')
             combo.bind('<<ComboboxSelected>>', selection_changed)
-            ttk.Button(window, text='查看差异', command=preview).pack(anchor='w', padx=12, pady=6)
+            dev_button(window, '查看差异', preview, kind='ghost').pack(anchor='w', padx=12, pady=6)
             restore.configure(command=lambda: self.restore_reviewed_checkpoint(reviewed['value']))
             restore.pack(anchor='e', padx=12, pady=8)
+            self._fit_dialog(window)
         self.work(self.runtime.checkpoint_list, loaded)
 
     def restore_reviewed_checkpoint(self, preview):

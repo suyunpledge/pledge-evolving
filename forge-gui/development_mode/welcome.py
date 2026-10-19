@@ -203,7 +203,9 @@ class WelcomeView(ttk.Frame):
                 pass
         desc_lbl.bind('<Configure>', _fit_desc)
         # sash 压缩卡片时 label 自身可能不触发 Configure——同时挂 content 层
-        card.content.bind('<Configure>', _fit_desc)
+        # RoundedCard's own Configure handler computes the canvas height.
+        # Replacing it collapses all three cards to their initial 1px height.
+        card.content.bind('<Configure>', _fit_desc, add='+')
         card.desc_label = desc_lbl  # v0.5：验证探针 / 后续主题化用
         # 不可见 button（承担点击 + 键盘焦点）。
         #
@@ -339,9 +341,11 @@ class WelcomeView(ttk.Frame):
             self._recent_count_lbl.configure(
                 text=f'（{len(recent)}）' if recent else '（暂无）')
         if not recent:
-            tk.Label(self._recent_box, text='暂无项目记录——打开一个目录后会自动出现在这里。',
+            hint = tk.Label(self._recent_box, text='暂无项目记录——打开一个目录后会自动出现在这里。',
                      font=FONT_UI, bg=C['bg'], fg=C['ter'],
-                     justify='left').pack(anchor='w', pady=(4, 0))
+                     justify='left')
+            hint.pack(anchor='w', fill='x', pady=(4, 0))
+            hint.bind('<Configure>', lambda event: hint.configure(wraplength=max(40, event.width)))
             return
         for path in recent:
             self._build_recent_row(path)

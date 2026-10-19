@@ -31,6 +31,7 @@ from tkinter import ttk
 
 from gui_theme import C, FONT_MONO_SM, gutter_lines, highlight_python, \
     setup_code_tags, style_editor
+from .buttons import dev_button
 from forge.development.editor import MAX_DOCUMENT, fingerprint
 
 # 修改标记的行数上限：超过则放弃行级 diff（大文件保护）。
@@ -169,8 +170,8 @@ class EditorArea(ttk.Frame):
                               ('下一个', self.find_next),
                               ('替换', self.replace_current),
                               ('全部替换', self.replace_all)):
-            ttk.Button(bar, text=text, command=command).pack(side='left')
-        ttk.Button(bar, text='关闭', command=self.close_search).pack(
+            dev_button(bar, text, command, kind='quiet', padx=8).pack(side='left')
+        dev_button(bar, '关闭', self.close_search, kind='quiet', padx=8).pack(
             side='left', padx=(8, 0))
         self._find_entry = find
 

@@ -1153,9 +1153,18 @@ def apply_ttk_theme(root):
     style.map('Horizontal.TScrollbar', background=[('active', C['ter'])])
     style.configure('TSeparator', background=C['border'])
     # Shared language, local Coding density; Work keeps its larger tree rows.
-    style.configure('Coding.TNotebook', background=C['bg'], borderwidth=0)
-    style.configure('Coding.TNotebook.Tab', padding=(10, 5), font=FONT_SMALL)
-    style.configure('Explorer.TNotebook.Tab', padding=(2, 5), font=FONT_CAPTION)
+    style.configure('Coding.TNotebook', background=C['bg'], borderwidth=0,
+                    tabmargins=(2, 2, 2, 0))
+    style.configure('Coding.TNotebook.Tab', padding=(12, 6), font=FONT_SMALL)
+    # 选中页签「浮起到内容层」：底色与面板 surface 齐平、文字提亮、
+    # 上缘一道 accent 描边暗示当前位置（clam 画不出真下划线，用
+    # lightcolor/darkcolor 模拟）。
+    style.map('Coding.TNotebook.Tab',
+              background=[('selected', C['surface']), ('active', C['hover'])],
+              foreground=[('selected', C['text']), ('active', C['text'])],
+              lightcolor=[('selected', C['accent_border']), ('!selected', C['border'])],
+              darkcolor=[('selected', C['surface']), ('!selected', C['bg'])])
+    style.configure('Explorer.TNotebook.Tab', padding=(4, 4), font=FONT_CAPTION)
     style.configure('Coding.Treeview', background=C['sidebar'], fieldbackground=C['sidebar'],
                     rowheight=ui_px(root, 25), font=FONT_SMALL)
     style.configure('Card.TFrame', background=C['surface'], borderwidth=1,

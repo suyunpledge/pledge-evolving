@@ -114,7 +114,9 @@ def split_icon_text(text):
     return (key, rest.lstrip()) if key and separator else (None, text)
 
 
-def draw_icon(canvas, name, *, x=0, y=0, size=24, fg="#9A9AA8", tag="icon"):
+# 默认色与 gui_theme.C 同源（bg / muted）。ui_icons 被 gui_theme 导入，
+# 不能反向 import gui_theme（循环依赖），故此处保持字面值同步。
+def draw_icon(canvas, name, *, x=0, y=0, size=24, fg="#A2ADC5", tag="icon"):
     name = icon_key(name) or "file"
     factor = size / 24
     width = max(1.2, factor * 1.7)
@@ -135,7 +137,7 @@ def draw_icon(canvas, name, *, x=0, y=0, size=24, fg="#9A9AA8", tag="icon"):
 
 
 class IconCanvas(tk.Canvas):
-    def __init__(self, parent, name, *, size=20, bg="#141414", fg="#9A9AA8", command=None):
+    def __init__(self, parent, name, *, size=20, bg="#0D141F", fg="#A2ADC5", command=None):
         super().__init__(parent, width=size, height=size, bg=bg, bd=0, highlightthickness=0,
                          takefocus=bool(command), cursor="hand2" if command else "arrow")
         self.name, self._fg, self._size = (icon_key(name) or "file") if name else None, fg, size
