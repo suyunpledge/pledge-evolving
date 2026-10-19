@@ -203,7 +203,10 @@ class WelcomeView(ttk.Frame):
                 pass
         desc_lbl.bind('<Configure>', _fit_desc)
         # sash 压缩卡片时 label 自身可能不触发 Configure——同时挂 content 层
-        card.content.bind('<Configure>', _fit_desc)
+        # P0-1（Kimi 审查）：必须 add='+'——不带 add 的 bind 会整体替换
+        # RoundedCard 在 content 上注册的 _on_content（高度自适应），
+        # 画布永远停在 height=1，三张卡坍缩成不可见。
+        card.content.bind('<Configure>', _fit_desc, add='+')
         card.desc_label = desc_lbl  # v0.5：验证探针 / 后续主题化用
         # 不可见 button（承担点击 + 键盘焦点）。
         #

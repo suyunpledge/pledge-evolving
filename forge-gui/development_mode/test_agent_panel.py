@@ -443,6 +443,29 @@ class OwnershipTests(unittest.TestCase):
                 # 剥离合法演进项后语句序列须一致，防其它改动借机混入）。
                 b = ast.parse(textwrap.dedent(before[name]))
                 a = ast.parse(textwrap.dedent(after[name]))
+                def _strip_p1_editor_empty(node):
+                    """P1-3 合法增量：编辑器空态卡（_editor_empty 创建 /
+                    _empty_state_card 填充 / _sync_editor_empty 首同步）——
+                    语句中含这些名字的整句剔除，两侧同规则。输入是单条
+                    语句节点：只在「函数体 / 块」类容器里做剔除，单条
+                    非容器语句若命中 MARKS 则返回 None 占位（列表推导
+                    后过滤）。"""
+                    MARKS = ('_editor_empty', '_empty_state_card',
+                             '_sync_editor_empty', '_editor_visible')
+
+                    def hit(n):
+                        return any(isinstance(x, ast.Name) and x.id in MARKS
+                                   or isinstance(x, ast.Attribute) and x.attr in MARKS
+                                   for x in ast.walk(n))
+                    for container in ast.walk(node):
+                        if isinstance(container, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                                  ast.For, ast.While, ast.If, ast.With,
+                                                  ast.Try)):
+                            container.body = [n for n in container.body if not hit(n)]
+                            if hasattr(container, 'orelse'):
+                                container.orelse = [n for n in container.orelse if not hit(n)]
+                    return node
+
                 def _strip_new_kwargs(tree):
                     """归一化：剥掉 on_show_* / 徽标 provider kwargs、review
                     预设值增量（M4-M6 合法演进）与 W3 按钮工厂替换
@@ -471,12 +494,21 @@ class OwnershipTests(unittest.TestCase):
                 # 再逐句归一化比对。
                 def _body_without_button_import(parse_tree):
                     fn = parse_tree.body[0]
+                    # P1-3（Kimi 审查修复）：编辑器空态卡挂载增量——
+                    # import .bottom_panel._empty_state_card 同规则剥离。
                     return [n for n in fn.body
-                            if not (isinstance(n, ast.ImportFrom) and n.module == 'buttons')]
-                stmts_b = [ast.dump(_strip_new_kwargs(copy.deepcopy(n)))
-                           for n in _body_without_button_import(b)]
-                stmts_a = [ast.dump(_strip_new_kwargs(copy.deepcopy(n)))
-                           for n in _body_without_button_import(a)]
+                            if not (isinstance(n, ast.ImportFrom)
+                                    and n.module in ('buttons', 'bottom_panel'))]
+                def _p1_marked(n):
+                    MARKS = ('_editor_empty', '_empty_state_card',
+                             '_sync_editor_empty', '_editor_visible')
+                    return any(isinstance(x, ast.Name) and x.id in MARKS
+                               or isinstance(x, ast.Attribute) and x.attr in MARKS
+                               for x in ast.walk(n))
+                stmts_b = [ast.dump(_strip_p1_editor_empty(_strip_new_kwargs(copy.deepcopy(n))))
+                           for n in _body_without_button_import(b) if not _p1_marked(n)]
+                stmts_a = [ast.dump(_strip_p1_editor_empty(_strip_new_kwargs(copy.deepcopy(n))))
+                           for n in _body_without_button_import(a) if not _p1_marked(n)]
                 self.assertEqual(stmts_b, stmts_a, name)
             else:
                 self.assertEqual(before[name], after[name], name)

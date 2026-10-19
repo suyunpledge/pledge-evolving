@@ -24,6 +24,7 @@ from forge.development.runtime import DevelopmentRuntime
 from forge.development.evidence import TaskEvidence
 from forge.secrets import redact, install_tk_exception_redaction
 from .bottom_panel import ToolPanel, count_problems, count_tests, highlight_diff_lines
+from .buttons import dev_button  # P0 修复：模块级——对话框等非 _build_editor 作用域也要用
 from .editor_area import EditorArea, save_document_as
 from .explorer import ExplorerPanel
 from .layout import NavigationBar, StatusBar, PRESETS
@@ -348,6 +349,14 @@ class DevelopmentWorkbench(ttk.Frame):
         attach_tooltip(more, '更多编辑器操作')
         self.more_button = more
         self.tabs.pack(side='left', fill='both', expand=True)
+        # P1-3（Kimi 审查）：有项目但无打开文件时，中央区是一块裸 Text
+        # 黑框——补一张居中空态卡（与底部面板/侧栏空态同一视觉语言），
+        # 有文件打开时隐藏。挂在 body 上层（tabs 的兄弟），pack_forget 切换。
+        self._editor_empty = tk.Frame(body, bg=C['code_bg'])
+        from .bottom_panel import _empty_state_card
+        _empty_state_card(self._editor_empty, '编辑器',
+                          '从左侧文件树双击打开文件；Ctrl+P 快速打开。')
+        self._sync_editor_empty()
         # v0.4 产品化收紧：编辑区底部状态行 + 面包屑（合在 body 末尾）
         # — 22px 高，左侧面包屑（项目 / 路径），右侧 行列 / 语言 / 修改状态。
         self._build_editor_status_bar(body)
@@ -391,6 +400,29 @@ class DevelopmentWorkbench(ttk.Frame):
         sx.pack(side='bottom', fill='x')
         self.review_text.configure(yscrollcommand=sy.set, xscrollcommand=sx.set)
         self.review_text.pack(side='left', fill='both', expand=True)
+
+    def _sync_editor_empty(self):
+        """P1-3：编辑器空态卡显隐——无打开文档且编辑器本体可见时显示。"""
+        card = getattr(self, '_editor_empty', None)
+        if card is None or not card.winfo_exists():
+            return
+        has_doc = bool(self.documents)
+        visible = self._editor_visible()
+        if not has_doc and visible:
+            try:
+                card.place(in_=self.editor_body, relx=0.5, rely=0.5,
+                           anchor='c', relwidth=1.0, relheight=1.0)
+            except tk.TclError:
+                pass
+        else:
+            card.place_forget()
+
+    def _editor_visible(self):
+        """编辑器本体是否为当前中央视图（非欢迎页 / 非 Review 态）。"""
+        body = getattr(self, 'editor_body', None)
+        if body is None:
+            return False
+        return body.winfo_ismapped()
 
     # ── v0.4 编辑区底部状态行 + 面包屑 ────────────────────────
     # 22px 高的细条；左：面包屑（项目名 / 路径），右：行列 / 语言 / 修改状态。
@@ -508,6 +540,7 @@ class DevelopmentWorkbench(ttk.Frame):
         else:
             body.pack(fill='both', expand=True)
             body.update_idletasks()
+            self._sync_editor_empty()  # P1-3：编辑器可见但无文档 → 空态卡
 
     def _review_active(self):
         """当前是否处于 Review Focus 且有项目（中央 Git Diff 视图的显式
@@ -1777,6 +1810,7 @@ class DevelopmentWorkbench(ttk.Frame):
         self.documents[key] = row
         self.tabs.add(frame, text=document.path.name)
         self.tabs.select(frame)
+        self._sync_editor_empty()  # P1-3：有文档 → 撤空态卡
         self.state.remember_tabs(self.documents)
         # M7：新标签成为当前文档——编码/换行/语言/光标全量刷新一次
         # （on_cursor 只推光标字段；set_text 的首帧通知早于此赋值，
@@ -1957,6 +1991,7 @@ class DevelopmentWorkbench(ttk.Frame):
         self.tabs.forget(row['frame'])
         row['frame'].destroy()
         self.state.remember_tabs(self.documents)
+        self._sync_editor_empty()  # P1-3：关到最后一个标签 → 空态卡回来
         # M7：关闭后同步文档状态与状态栏编辑器字段——关的是最后一个
         # 标签时 Notebook 不产生 <<NotebookTabChanged>>，需显式刷新
         # （还有标签时该事件也会触发，双保险幂等）。
@@ -2978,6 +3013,14 @@ class DevelopmentWorkbench(ttk.Frame):
 
 def launch(home, project=None):
     state = ModeState(home)
+    # P0-2（Kimi 审查）：独立运行入口本身就是 Development Mode 应用——
+    # 持久化的 mode 若是 general（用户上次在宿主里用 Work），独立窗口
+    # 会以 Work 形态启动（只显示 Agent 单列，欢迎页/IDE 全藏），用户
+    # 感知为「Coding 窗口打开了但什么都没有」。这里强制切到
+    # development：独立实例没有宿主的顶层工作空间切换，general 形态
+    # 在此窗口内无出口，只会造成困死。
+    if state.mode.value != 'development':
+        state.switch('development')
     root = tk.Tk()
     root.title('Forge — Development Mode (isolated)')
     root.geometry('1440x900')
