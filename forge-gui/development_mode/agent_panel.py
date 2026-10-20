@@ -342,7 +342,7 @@ class TaskInput(tk.Text):
     def __init__(self, parent, **options):
         super().__init__(parent, **options)
         style_editor(self)
-        self.placeholder = tk.Label(self, text='输入任务描述，按 Enter 发送，\nShift+Enter 换行 …',
+        self.placeholder = tk.Label(self, text='输入任务描述 …',
             bg=self.cget('background'), fg=C['placeholder'], font=FONT_UI, justify='left')
         self.placeholder.bind('<Button-1>', lambda event: self.focus_set())
         self.bind('<<Modified>>', self._placeholder_changed, add='+')

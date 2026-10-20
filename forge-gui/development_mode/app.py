@@ -791,6 +791,9 @@ class DevelopmentWorkbench(ttk.Frame):
         # v0.3：status_row 不再 pack（task_label / perm_badge 信息已迁
         # 入 RuntimeContext.权限矩阵徽标）。
         self.agent_panel.pack(fill='both', expand=True)
+        # W4（Kimi 审查）：编辑器工具动作初始态同步（启动即无文档 →
+        # 保存等动作钮禁用，避免主色按钮空亮）。
+        self._sync_editor_actions()
 
     def _agent_role_selected(self, event=None):
         # 角色变更同步到 task_role（保留旧 self.task_role 写入路径，
@@ -1838,6 +1841,7 @@ class DevelopmentWorkbench(ttk.Frame):
 
     def show_document_state(self):
         row = self.current_row()
+        self._sync_editor_actions()
         if not row:
             self.document_state.configure(text='Ctrl+S 保存 · 尚无打开文件')
             # M7：无打开文件——编辑器状态组回占位。
@@ -1848,6 +1852,32 @@ class DevelopmentWorkbench(ttk.Frame):
         self.document_state.configure(text=labels[d.status] + ' · ' + d.encoding + ' · Ctrl+S 保存')
         # M7：标签切换——编码/换行/语言/光标随新当前文档刷新。
         self._sync_editor_status()
+
+    def _sync_editor_actions(self):
+        """W4（Kimi 审查）：无打开文档时编辑器工具动作全部禁用——空
+        状态下「保存」仍以主色高亮是最大的视觉噪音（主行动点指向
+        虚无）。按钮在受保护的 _build_editor 内匿名创建，这里按
+        text 遍历定位（不改受保护方法）；dev_button 的禁用态已有
+        disabled_bg/disabled_fg 反馈，无需额外样式。
+        """
+        body = getattr(self, 'editor_body', None)
+        if body is None:
+            return
+        enabled = self.current_row() is not None
+        wanted = ('保存', '重新载入', '关闭标签', '编码', '附加给 Agent', '文件审查')
+        stack = list(body.winfo_children())
+        while stack:
+            widget = stack.pop()
+            stack.extend(widget.winfo_children())
+            try:
+                text = str(widget.cget('text'))
+            except tk.TclError:
+                continue
+            if text in wanted:
+                try:
+                    widget.configure(state='normal' if enabled else 'disabled')
+                except tk.TclError:
+                    pass
 
     def save_current(self):
         row = self.current_row()

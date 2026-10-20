@@ -80,7 +80,6 @@ class NavigationBar(ttk.Frame):
     """
 
     MODES = (('general', 'Work'), ('development', 'Coding'))
-    ACTIONS = (('project', 'Project'), ('run', 'Run'), ('settings', 'Settings'))
 
     def __init__(self, master, on_navigate, hosted=False,
                  workspace_request=None, **kw):
@@ -148,21 +147,29 @@ class NavigationBar(ttk.Frame):
             label.bind('<Leave>', lambda _e, w=label: self._hover(w, False))
             self._mode_items[value] = (label, indicator)
             self._items[value] = label
-        self._separator()
-        for key, title in self.ACTIONS:
-            label = tk.Label(self, text=title, font=FONT_UI_MED, bg=C['bg'],
-                             fg=C['subtext'], cursor='hand2', padx=8, pady=4)
+        # W4（Kimi 审查）：动作项（Project/Run/Settings）挪到导航栏右端
+        # 并图标化——此前它们与 Work/Coding 模式项同列同样式，「Run」
+        # 纯文字易被误触为模式。右侧分组 + 图标后与模式切换形成视觉
+        # 分层。side='right' 按 pack 顺序从右向左占位，故倒序遍历得到
+        # Project→Run→Settings 的从左到右阅读顺序。
+        for key, title, icon in reversed((('project', 'Project', 'folder_open'),
+                                          ('run', 'Run', 'play'),
+                                          ('settings', 'Settings', 'config'))):
+            cell = tk.Frame(self, bg=C['bg'], cursor='hand2')
+            cell.pack(side='right', padx=(4, 0))
+            icon = IconCanvas(cell, icon, size=14, bg=C['bg'],
+                              fg=C['subtext'])
+            icon.pack(side='left', padx=(4, 3))
+            label = tk.Label(cell, text=title, font=FONT_UI_MED, bg=C['bg'],
+                             fg=C['subtext'], cursor='hand2', padx=2, pady=4)
             label.pack(side='left')
-            label.bind('<Button-1>', lambda _e, k=key: self._navigate(k))
+            for widget in (cell, icon, label):
+                widget.bind('<Button-1>', lambda _e, k=key: self._navigate(k))
             label.bind('<Enter>', lambda _e, w=label: self._hover(w, True))
             label.bind('<Leave>', lambda _e, w=label: self._hover(w, False))
             self._items[key] = label
         # 底部发丝线：把导航栏与下方 header 行在视觉上分层。
         tk.Frame(self, bg=C['border'], height=1).pack(side='bottom', fill='x')
-
-    def _separator(self):
-        tk.Frame(self, bg=C['border'], width=1).pack(
-            side='left', fill='y', padx=8, pady=4)
 
     # ── 交互 ──────────────────────────────────────────────────────
     def _navigate(self, key):
@@ -296,6 +303,12 @@ class StatusBar(ttk.Frame):
                 self._paint_indicator(C['ok'])
             tk.Label(cell, textvariable=var, font=FONT_CAPTION, bg=C['bg'],
                      fg=C['subtext']).pack(side='left')
+        # W4（Kimi 审查）：瞬态消息与编辑器状态组之间一道竖分隔线——
+        # 此前两侧文本直接相邻，无文件时的「— — — —」与瞬态文案挤作
+        # 一团，读不出字段边界。分隔线 pack 在编辑器组之后、瞬态消息
+        # 之前（side='right' 顺序分配，恰好落在两组之间）。
+        tk.Frame(row, bg=C['border'], width=1).pack(
+            side='right', fill='y', padx=(10, 10), pady=3)
         tk.Label(row, textvariable=status_var, anchor='e', font=FONT_CAPTION,
                  bg=C['bg'], fg=C['subtext']).pack(side='right')
 

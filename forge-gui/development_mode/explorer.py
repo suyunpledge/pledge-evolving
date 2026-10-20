@@ -389,6 +389,24 @@ class ExplorerPanel(ttk.Frame):
         self.tree.bind('<<TreeviewClose>>', lambda _e: self._on_expand(False))
         self.notebook.add(files, text='文件')
         self._configure_status_tags(self.tree)
+        # W4（Kimi 审查）：无项目时文件树是整片黑洞——补居中空态卡
+        # （与底部面板/编辑器空态同一视觉语言，底色跟侧栏），populate
+        # 有数据即撤。
+        from .bottom_panel import _empty_state_card
+        self._tree_empty = _empty_state_card(
+            files, '文件', '尚未打开项目\n从「Project → 打开项目」选择工作区',
+            bg=C['sidebar'], wrap=220, rely=0.42)
+        self._sync_tree_empty()
+
+    def _sync_tree_empty(self):
+        """W4：文件树空态卡显隐——树无节点（未打开项目）时显示。"""
+        card = getattr(self, '_tree_empty', None)
+        if card is None or not card.winfo_exists():
+            return
+        if self.tree.get_children():
+            card.place_forget()
+        else:
+            card.place(relx=0.5, rely=0.42, anchor='c')
 
     def _build_git_tab(self):
         git = ttk.Frame(self.notebook)
@@ -558,6 +576,7 @@ class ExplorerPanel(ttk.Frame):
         for path in changes_selection:
             if changes.exists(path):
                 changes.selection_set(path)
+        self._sync_tree_empty()
 
     def _node_image(self, kind, name):
         if kind == 'dir':

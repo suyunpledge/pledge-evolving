@@ -345,17 +345,21 @@ class RuntimeContext(ttk.Frame):
         self._build(policy_kwargs, routing_kwargs, task_kwargs or {})
 
     def _build(self, policy_kwargs, routing_kwargs, task_kwargs):
-        self.configure(padding=(0, 4))
-        # 标题行：v0.3 起固定展示（不再有折叠按钮）—— 概念图里这块
-        # chrome 总是展开，让用户一眼看到权限矩阵 + 模型路由。右侧留
-        # 一个轻量「运行中 · 就绪」徽标，将来可挂状态指示。
+        self.configure(padding=(0, 2))
+        # W4（Kimi 审查）：标题行瘦身为一条可点折叠带——此前粗体
+        # 12px 标题占一整行却只有右端一个「展开 ▼」小按钮可用，空
+        # 态下像一块无内容的章节头。现在整行即开关（chevron 前缀
+        # 提示折叠态），字级降到 FONT_CAPTION，弱化存在感。
         title_row = ttk.Frame(self)
-        title_row.pack(fill='x', padx=8, pady=(4, 0))
-        tk.Label(title_row, text='运行时上下文', font=FONT_SECTION, bg=C['bg'],
-                 fg=C['text']).pack(side='left')
-        # R1：恢复折叠按钮（v0.3 删了折叠；概念图 Agent 栏不占满，默认展开、可折叠）
-        self._collapse_btn = dev_button(title_row, '收起 ▲', self._toggle, kind='quiet')
-        self._collapse_btn.pack(side='right')
+        title_row.pack(fill='x', padx=8, pady=(2, 0))
+        self._title_lbl = tk.Label(title_row, text='▾ 运行时上下文', font=FONT_CAPTION,
+                                   bg=C['bg'], fg=C['subtext'], cursor='hand2')
+        self._title_lbl.pack(side='left')
+        for widget in (title_row, self._title_lbl):
+            widget.bind('<Button-1>', lambda _e: self._toggle())
+        self._title_lbl.bind('<Enter>', lambda _e: self._title_lbl.configure(fg=C['text']))
+        self._title_lbl.bind('<Leave>', lambda _e: self._title_lbl.configure(fg=C['subtext']))
+        attach_tooltip(self._title_lbl, '展开 / 收起运行时上下文（权限矩阵 · 模型路由 · 任务控制）')
         # 内容容器（展开态 pack，折叠态 _toggle 里 pack_forget）
         self._body = ttk.Frame(self)
         self._body.pack(fill='x')
@@ -391,8 +395,12 @@ class RuntimeContext(ttk.Frame):
         self._update_button()
 
     def _update_button(self):
-        # 已展开 → "收起 ▲"；已折叠 → "展开 ▼"
-        self._collapse_btn.configure(text='收起 ▲' if not self._collapsed else '展开 ▼')
+        # 已展开 → ▾；已折叠 → ▸（W4：chevron 前缀即折叠态指示）
+        try:
+            self._title_lbl.configure(
+                text=('▾' if not self._collapsed else '▸') + ' 运行时上下文')
+        except tk.TclError:
+            pass
 
     def get_policy(self):
         return self._policy.get()

@@ -84,33 +84,37 @@ def count_problems(evidence):
     return total
 
 
-def _empty_state_card(parent, title, hint):
+def _empty_state_card(parent, title, hint, *, bg=None, wrap=360, rely=0.5):
     """居中空态卡（v0.5 视觉规范）：图标点 + 标题 + 副文案。
 
     替代原来的单行左上角灰字——底部面板空态是「毛坯房」观感的
     重灾区：一行 9px 灰字贴在纯黑面板左上角，既无层级也无引导。
     新空态：居中 16px 间距的竖排（视觉锚点为 ICONS 位图图标），
     文案色调 subtext/ter 两级，保持克制。
+
+    ``bg`` 允许宿主面板用自身底色（如侧栏 sidebar 而非 code_bg）；
+    ``wrap``/``rely`` 供窄栏宿主收窄文案宽、上移锚点。
     """
     from ui_icons import icon_image
-    box = tk.Frame(parent, bg=C['code_bg'])
+    base = bg or C['code_bg']
+    box = tk.Frame(parent, bg=base)
     # place 居中悬浮：page 内 Text 已 pack(fill both expand) 吃满腔体，
     # 再 pack 会挤进底部残区（unmapped）。空态是「覆盖层」语义——
     # place(relx=.5, rely=.5, anchor='c') 悬浮在 Text 上方，Text 保持
     # 映射（滚动条/着色 tag 不动），app.append() 到达真实内容时销毁本卡。
-    box.place(relx=0.5, rely=0.5, anchor='c')
-    icon_holder = tk.Frame(box, bg=C['code_bg'], width=32, height=32)
+    box.place(relx=0.5, rely=rely, anchor='c')
+    icon_holder = tk.Frame(box, bg=base, width=32, height=32)
     icon_holder.pack(pady=(0, 6))
     icon_holder.pack_propagate(False)
     img = icon_image(icon_holder, 'files', size=24, fg=C['ter'])
     if img is not None:
-        icon_lbl = tk.Label(icon_holder, image=img, bg=C['code_bg'], bd=0)
+        icon_lbl = tk.Label(icon_holder, image=img, bg=base, bd=0)
         icon_lbl.image = img
         icon_lbl.pack(expand=True)
-    tk.Label(box, text=title, font=FONT_SECTION, bg=C['code_bg'],
+    tk.Label(box, text=title, font=FONT_SECTION, bg=base,
              fg=C['subtext']).pack()
-    tk.Label(box, text=hint, font=FONT_CAPTION, bg=C['code_bg'],
-             fg=C['ter'], wraplength=360, justify='center').pack(pady=(4, 0))
+    tk.Label(box, text=hint, font=FONT_CAPTION, bg=base,
+             fg=C['ter'], wraplength=wrap, justify='center').pack(pady=(4, 0))
     return box
 
 
