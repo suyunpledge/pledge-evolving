@@ -23,6 +23,18 @@ python run.py selftest        # 574/574，离线，不需要 API Key
 
 这就是全部 60 秒验证。下面写的是它检查了什么、以及每个设计选择为什么这么定。
 
+## 先看界面
+
+Work 模式——一个输入框，背后是内核（提示组装、路由、工具、权限）：
+
+![forge Work 模式](docs/screenshots/work-mode.png)
+
+Coding Mode——同一个内核上的三栏 IDE：左侧文件树与 Git 变更，中央多标签编辑器，右侧 Agent 面板，底部差异 / 测试 / 问题 / 输出：
+
+![forge Coding Mode](docs/screenshots/coding-mode.png)
+
+两张图都来自隔离实例（演示用 home），不包含任何私有数据。
+
 ## 它能做什么
 
 | 能力 | 实际发生的事 |

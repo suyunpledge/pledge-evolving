@@ -23,6 +23,18 @@ python run.py selftest        # 574/574, offline, no API key
 
 That is the whole 60-second proof. Everything below is what it checks and why the design choices are what they are.
 
+## See it
+
+Work mode — one input box, the kernel behind it (prompt assembly, routing, tools, permissions):
+
+![forge Work mode](docs/screenshots/work-mode.png)
+
+Coding Mode — a three-column IDE over the same kernel: file tree and Git changes on the left, a multi-tab editor in the centre, the Agent panel on the right, diff / tests / problems / output across the bottom:
+
+![forge Coding Mode](docs/screenshots/coding-mode.png)
+
+Both shots come from an isolated instance with a demo home, so no private data is shown.
+
 ## What it does
 
 | Capability | What actually happens |
