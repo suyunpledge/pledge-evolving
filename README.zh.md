@@ -1,25 +1,69 @@
-# forge — 统一智能体框架
+# forge — 统一智能体内核，以及一次「契约驱动的 AI 写码」实证
 
-[![在 Codespaces 中打开](https://github.com/codespaces/badge.svg)](https://codespaces.new/suyunpledge/pledge-evolving?quickstart=1)
+[![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Dependencies](https://img.shields.io/badge/dependencies-none-brightgreen)](.)
+[![Offline checks](https://img.shields.io/badge/selftest-574%2F574_pass-brightgreen)](.)
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![Entry points](https://img.shields.io/badge/deliverables-CLI%20%C2%B7%20%E6%A1%8C%E9%9D%A2%20%C2%B7%20VS%20Code%20%C2%B7%20IM-8957e5)](.)
 
-把 **Codex / Hermes Agent / DeepSeek Harness / Claude Code / OpenClaw / OpenCode** 七套框架里各自最值得抄的设计，收敛成一个可运行的最小内核。
+**forge 是一套只用 Python 标准库写完的智能体内核；其中 12 个模块由 7 个不同的 AI agent 在冻结契约下写成，只有通过静态安全扫描并跑过自带自检才被准入。**
 
-不是概念图，是能跑的代码：`forge selftest` 离线跑全套检查（无网络、无 API Key，项数以命令实际输出为准），覆盖配置合成、权限裁决、工具延迟加载、能力信任、记忆双写、会话回放、影子快照、模型降级、协议网关与协议翻译、原生工具调用、自我迭代进化、异构联邦、贡献模块一致性闸门与跨模块集成、成本核算、子代理编排，以及静态安全线（禁网/禁子进程/禁破坏性文件 API 的表对齐不变量与四路覆盖）。
+这个仓库有两点值得花时间看：
 
-零第三方依赖（纯标准库），Python ≥ 3.10。
+1. **什么都不装就能跑。** 不用 `pip install`、不联网、不需要 API Key。`python run.py selftest` 对真实内核执行 574 项端到端检查——配置合成、权限裁决、工具延迟加载、记忆、会话回放、模型降级、协议网关、子代理预算、成本核算、密钥脱敏——干净机器上直接打印 `574/574 checks passed`。
+2. **贡献模型本身就是实验。** [`forge/contrib/`](forge/contrib) 下的 12 个模块由 7 个不同的 agent / 工具（Step、Z Code、Trae Work、PI agent、Hermes、WorkBuddy、OpenCode）对着 [`CONTRACT.md`](CONTRACT.md) 的冻结 API 与硬性禁令写成；Claude Code 坐在交叉审查席，只读已入库模块、只交缺陷报告，不写代码。没有任何模块靠信任入库：`forge/registry.py` 静态拒绝网络调用、子进程、破坏性文件 API 与 `eval`，隔离加载，且模块必须自带并通过至少 8 条自检。不合格的模块带原因隔离，绝不半挂载。
 
-桌面界面：`python forge-gui/forge_gui_v2.py`（Windows 上也可用 `setup.cmd` 创建的桌面快捷方式）；VS Code 侧边栏见 [`vscode-extension/README.md`](vscode-extension/README.md)。
-### 一键云端 / Windows 一键配置
+第二点是这套东西存在的理由：与其**要求** AI 写出好代码再祈祷，不如让「好」变成**机器可判定**的。结果是一个真能跑的框架——内核 43k 行（122 个模块）、桌面 UI 46k 行、263 次提交——外加一套可以直接搬到别人代码库上的做法。
 
-- **云端**：点顶部「在 Codespaces 中打开」徽章，浏览器里直接用，无需本地环境。
-- **Windows**：下载仓库（Code → Download ZIP，解压）后双击 **`setup.cmd`** 即可——自动探测 Python 3.10+，没有就静默安装（优先 winget，回退 python.org 官方安装器），然后创建桌面快捷方式并打开界面，全程零手动安装。变体：`setup.cmd check`（只查环境）、`setup.cmd selftest`（离线自检）、`setup.cmd web`（浏览器界面代替桌面窗口）。
-macOS/Linux 对等脚本是 **`./setup.sh`**（缺 Python 时走 Homebrew / apt / dnf / yum / pacman 自动安装），变体同上。
+```bash
+git clone https://github.com/suyunpledge/pledge-evolving
+cd pledge-evolving
+python run.py selftest        # 574/574，离线，不需要 API Key
+```
 
-## 一眼看懂架构
+这就是全部 60 秒验证。下面写的是它检查了什么、以及每个设计选择为什么这么定。
+
+## 它能做什么
+
+| 能力 | 实际发生的事 |
+| --- | --- |
+| 智能体主循环 | 系统提示按有界层组装（能力索引、记忆切片、权限状态），上下文压缩保留尾部并写 `compaction` 事件，工具默认延迟、经 `tool_search` 激活 |
+| 权限 | 二维策略（mode × 沙箱档）+ 命令黑名单；**deny 恒胜**，子代理模式被父会话天花板钳制，任何写入先落影子 git 快照 |
+| 模型路由 | 三档（economy / balanced / premium），降级链按**错误类型**触发而非靠猜，MoA 聚合，premium 走两阶段（草稿 → 裁决）且裁决段任何失败都退回已付费草稿 |
+| 成本 | 逐请求计价表，未知价有明确且写进代码的约定；子代理 token 折进父账本 |
+| 记忆 | 类型化长期记忆双写，curator 只归档不删除，注入恒有界 |
+| 会话 | 追加式 JSONL 事件日志是事实源，派生索引是可重建缓存，支持 resume 与 fork |
+| 协议 | 环回网关双向翻译 Anthropic ↔ OpenAI，含 SSE 流式与工具调用增量 |
+| 编排 | 零依赖移植图/超步语义：per-key reducer 的 state channels、interrupt/resume、执行检查点、supervisor/worker |
+| 自我进化 | 信号 → 候选 → 闸门 → 账本 → 回滚；长期目标永远要人点头，没有配置能绕开 |
+| 异构机队 | CLI worker 声明式描述、派发、失败分类、输出归一、成本护栏 |
+
+## 四个入口，一个内核
+
+| 入口 | 怎么起 | 干什么 |
+| --- | --- | --- |
+| CLI | `python run.py <命令>` | 脚本化、CI、无人值守 |
+| 桌面 GUI | `python forge-gui/forge_gui_v2.py` | 日常对话，外加三栏 **Coding Mode**（文件树、多标签编辑器、Agent 面板、差异/测试/输出页） |
+| VS Code 扩展 | 安装 `forge-agent-*.vsix` | 不离开编辑器就能对话、解释/审查选中代码 |
+| IM 通道 | `python run.py channel weixin serve` | 手机侧接任务、读报告 |
+
+四个入口共用同一套策略引擎、密钥边界与会话日志——「什么被允许」只有一份实现。
+
+## 为什么让 agent 写代码（以及闸门为什么重要）
+
+agent 生成的代码通常死在同一处三连：乱伸手访问网络、偷偷起子进程、编造不存在的 API。`CONTRACT.md` 先把模块 API 冻结、把硬禁令列清；`forge/registry.py` 在任何一行代码执行之前**静态**强制它：
+
+- AST 扫描网络、子进程、破坏性文件系统与 `eval`（覆盖下标与解包形式——这是绕过朴素扫描器最省事的路子）
+- 隔离 import：抛异常就带 traceback 隔离，不会半挂载
+- 模块必须自带并跑过 ≥ 8 条自检，「能 import」永远不会被误当成「能工作」
+
+主内核（`contrib/` 之外的 43k 行）是维护者在 AI 辅助下写的；12 个 `contrib/` 模块才是真正的多 agent 实验。这套一致性闸门是多个 agent 能协同的原因，也是最容易搬出本仓库复用的部分：同一套模式对一群真人、一群 agent、或人与 agent 混编都成立。
+
+## 架构
 
 ```mermaid
 flowchart TB
-    R(("Forge 智能体内核")) --- A(("上下文"))
+    R(("forge 内核")) --- A(("上下文"))
     A --- A1(("任务与提示词"))
     A --- A2(("有界记忆"))
     R --- B(("模型"))
@@ -34,7 +78,55 @@ flowchart TB
     D --- D2(("可回放事件日志"))
 ```
 
-**一眼看效果：**同一个运行时协调模型选择、工具访问、子代理、记忆和会话；写入工具经过权限裁决与事前快照，决策写入追加式事件日志。协议网关和须经审批的自我进化流程是下文单独介绍的入口与生命周期能力。
+每一次决策都落进 `sessions/*.jsonl`：`session_meta`、`user_message`、`tool_decision`、`tool_call`、`subagent_spawn`、`compaction`、`checkpoint`、`assistant_message`。日志是事实，索引是缓存——`sessions --rebuild` 随时重建。
+
+## 和常见方案的区别
+
+| | forge | LangGraph / CrewAI | 常见的 agent 样板 |
+| --- | --- | --- | --- |
+| 依赖 | 无（纯标准库） | 框架 + 各家 SDK | 很多 |
+| 验证 | 一条命令 574 项离线检查 | 不等，常需联网 | 通常没有 |
+| 权限模型 | 一等公民：mode × 沙箱、deny 恒胜、子代理天花板 | 多交给宿主 | 临时拼 |
+| 贡献闸门 | 静态扫描 + 隔离加载 + 模块自带自检 | 不涉及 | 不涉及 |
+| 成本核算 | 逐请求计价，子代理折算 | 部分 | 无 |
+| 入口 | CLI · 桌面 · VS Code · IM 同一内核 | 只有库 | 通常一个 |
+
+## 状态，如实说
+
+- **年龄**：首次提交 2026-09-17，仍在密集开发（本文写作时 263 次提交）。面向用户态 API 尚未冻结——`CONTRACT.md` 冻结的是**模块**边界，不是公开接口。
+- **采用度**：单人维护、早期阶段、暂无下游用户。公开的原因是设计值得一读、贡献闸门可以复用，而不是因为它已有社区。
+- **范围纪律**：574 项检查覆盖的就是仓库声称的东西；已知缺口列在文末而不是藏起来。安全模型是「沙箱拦写入 + 黑名单拦程序」，不是内核级隔离；读侧靠声明约束而非路径沙箱。
+
+## 快速开始
+
+```bash
+cd pledge-evolving
+
+python run.py selftest            # 离线自检（574/574，不需要 API Key）
+python run.py dump-config         # 看合成出的配置树
+python run.py doctor              # 健康/漂移/密钥检查
+python run.py capabilities list   # 能力清单
+python run.py run "读一下 README 并总结"
+python run.py gateway --upstream https://api.deepseek.com --port 8799 --models claude-sonnet-5
+python run.py vendors --detect    # 厂商差异档案
+python run.py cache status        # 跨厂商缓存连续性
+python run.py channel list        # IM 通道清单
+python run.py review "代码或文本"  # 无工具审查
+```
+
+`run.py` 是必需的入口：AutoClaw 内嵌 Python 用 `._pth` 布局，`python -m forge.cli` 会报 `No module named 'forge'`；标准 Python 环境下 `python -m forge.cli` 可用。
+
+Python ≥ 3.10，零第三方依赖，MIT 许可。
+
+桌面界面：`python forge-gui/forge_gui_v2.py`（Windows 也可用 `setup.cmd` 创建的快捷方式）。VS Code 侧边栏见 [`vscode-extension/README.md`](vscode-extension/README.md)。
+
+### 一键云端 / Windows 一键配置
+
+- **云端**：点顶部 Codespaces 徽章，浏览器里直接用。
+- **Windows**：下载仓库（Code → Download ZIP，解压）后双击 **`setup.cmd`**——自动探测 Python 3.10+，缺失则静默安装（优先 winget，回退 python.org），随后创建桌面快捷方式并打开界面。变体：`setup.cmd check` / `selftest` / `web`。
+- **macOS / Linux**：`./setup.sh`，变体同上（Homebrew / apt / dnf / yum / pacman）。
+
+---
 
 ## v2 新增（0.2.0）
 
@@ -127,7 +219,7 @@ python run.py run "任务" --strategy economy      # CLI 显式指定（> 配置
 
 2026-10-05 全仓审查的加固：读路径沙箱执行（S1）、网关鉴权接线（S2）、子代理 token 折进父成本账（S3）、会话用量事件（S4）、贡献源码扫描覆盖下标/解包（S5），以及主线程分批渲染 / 持久化后台化防 UI 冻结。
 
-## 2026-10 现状：编排层、适配层与多入口
+## 2026-10 能力层：编排、机队适配、通道
 
 v0.8.0 之后长出三层东西：把别家编排语义移植进来的**编排层**、让框架在混合机队和本地引擎上不发虚的**适配层**，以及命令行之外的**多入口**——桌面窗口、编辑器插件、IM 通道都接在同一个内核上。
 
@@ -140,17 +232,6 @@ v0.8.0 之后长出三层东西：把别家编排语义移植进来的**编排�
 | IM 通道 | `forge/channels/` | `poll()` / `send()` 两方法契约 + 微信实现：入站消息变任务、报告变消息 | 通道不持有 agent 循环 |
 | 桌面与编辑器 | `desktop_services.py` `vscode_bridge.py` `vscode-extension/` | 桌面作业与中介连接器（凭据由宿主回调提供，写操作逐次确认）；编辑器走本地 JSONL 桥 | 是权限闸门，不是 OS 沙箱；桥不开监听端口 |
 | 工程加固 | `runtime_lock.py` `execution_guard.py` `project_rules.py` `code_review.py` | 协作进程用 OS 咨询锁（不拿扫描当锁）、动作/观察循环检测（中断动作不自动重放）、AGENTS.md 有界读取、无工具审查 | 仓库文本永远不会授予能力；审查结论不是权威 |
-
-### 四个入口，一个内核
-
-| 入口 | 怎么起 | 适合 |
-| --- | --- | --- |
-| CLI | `python run.py <命令>` | 脚本化、CI、无人值守 |
-| 桌面 GUI | `python forge-gui/forge_gui_v2.py` | 日常对话与 Coding Mode |
-| VS Code 扩展 | 安装 `forge-agent-*.vsix`，侧栏 Forge 面板 | 在编辑器里对话、解释/审查选中代码 |
-| IM 通道 | `python run.py channel weixin serve` | 手机侧收任务、收报告 |
-
-四个入口共用同一套 Policy、密钥边界与会话日志——不是四份实现各自为政。
 
 ### Coding Mode（`forge-gui/development_mode/`）
 
@@ -165,31 +246,6 @@ v0.8.0 之后长出三层东西：把别家编排语义移植进来的**编排�
 | 布局预设 | Code Focus / Agent Focus / Review Focus——同一套组件，只改 sash 权重与内容侧重 |
 
 视觉层单一来源是 `gui_theme.py`：圆角卡与居中空态、`dev_button` 统一三态反馈、Explorer 紧凑 Tab 度量；无打开文档时编辑器工具动作置灰，不拿主色按钮指向虚无。
-
-## 快速开始
-
-```bash
-cd pledge-evolving
-
-python run.py selftest            # 离线自检，项数以实际输出为准
-python run.py dump-config         # 看合成出的配置树
-python run.py doctor              # 健康/漂移/密钥检查
-python run.py capabilities list   # 能力清单
-python run.py run "读一下 README 并总结"
-python run.py gateway --upstream https://api.deepseek.com --port 8799 --models claude-sonnet-5
-python run.py vendors --detect      # 厂商差异档案
-python run.py cache status          # 跨厂商缓存连续性
-python run.py channel list          # IM 通道清单
-python run.py review "代码或文本"    # 无工具审查
-```
-
-`run.py` 是必需的入口：AutoClaw 内嵌 Python 用 `._pth` 布局，`python -m forge.cli` 会报 `No module named 'forge'`（当前目录不入 `sys.path`，`PYTHONPATH` 也失效）。外面用标准 Python 时 `python -m forge.cli` 可用。
-
-零第三方依赖（纯标准库），Python ≥ 3.10。
-### 一键云端 / Windows 一键配置
-
-- **云端**：点顶部「在 Codespaces 中打开」徽章，浏览器里直接用，无需本地环境。
-- **Windows**：下载仓库（Code → Download ZIP，解压）后双击 **`setup.cmd`** 即可——自动探测 Python 3.10+，没有就静默安装（优先 winget，回退 python.org 官方安装器），然后创建桌面快捷方式并打开界面，全程零手动安装。变体：`setup.cmd check`（只查环境）、`setup.cmd selftest`（离线自检）、`setup.cmd web`（浏览器界面代替桌面窗口）。
 
 ## 本地推理引擎（ollama / llamacpp / mnn）
 

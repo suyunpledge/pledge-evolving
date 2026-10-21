@@ -1,60 +1,132 @@
-# forge — A Unified Agent Framework
+# forge — a unified agent kernel, and a live experiment in contract-driven AI code generation
 
-[![Open in Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/suyunpledge/pledge-evolving?quickstart=1)
+[![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Dependencies](https://img.shields.io/badge/dependencies-none-brightgreen)](.)
+[![Offline checks](https://img.shields.io/badge/selftest-574%2F574_pass-brightgreen)](.)
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![GUI](https://img.shields.io/badge/deliverables-CLI%20%C2%B7%20desktop%20%C2%B7%20VS%20Code%20%C2%B7%20IM-8957e5)](.)
 
-A standard-library-only Python agent runtime that consolidates proven design patterns from **Codex, Hermes Agent, DeepSeek Harness, Claude Code, OpenClaw, and OpenCode** into a small, runnable kernel. [中文文档](README.zh.md)
+**forge is a production-shaped agent kernel written entirely against Python's standard library. Twelve of its modules were written by seven different AI agents under a frozen contract, and admitted only after a static security scan and their own self-checks passed.**
 
-`forge selftest` provides an offline verification suite—requiring neither network access nor API keys. It covers configuration synthesis, permission decisions, lazy tool loading, capability trust, dual-write memory, session replay, shadow snapshots, routing and fallback, protocol translation, native tool calling, self-evolution, heterogeneous federation, contribution-module gates and integration, cost accounting, and subagent orchestration. The suite also enforces a static security baseline through table-aligned invariants and four-way coverage of the network, subprocess, and destructive-file-API prohibitions. Test counts are reported from the command's actual output.
+Two things make this repository worth a maintainer's time:
 
-Requires Python 3.10 or later; no third-party Python packages are needed.
+1. **It runs with nothing installed.** No `pip install`, no network, no API key. `python run.py selftest` executes 574 end-to-end checks against the real kernel — config synthesis, permission adjudication, tool deferral, memory, session replay, model fallback, protocol gateways, subagent budgets, cost accounting, secret redaction — and prints `574/574 checks passed` on a clean machine.
+2. **The contribution model is the experiment.** Twelve modules in [`forge/contrib/`](forge/contrib) were written by seven different agents/tools — Step, Z Code, Trae Work, PI agent, Hermes, WorkBuddy, OpenCode — against [`CONTRACT.md`](CONTRACT.md), a frozen API with hard prohibitions. Claude Code sat as a review seat that read the admitted modules and filed defects instead of writing code. Nothing was admitted on trust: `forge/registry.py` statically rejects network calls, subprocess spawning, destructive file APIs and `eval`, loads the module in isolation, and requires it to pass at least eight self-checks of its own. A module that fails is quarantined with a reason, never half-mounted.
 
-## Quick start in the cloud (one click)
-
-Click the **Open in Codespaces** badge above — GitHub spins up a container with
-Python 3.12, the web client auto-starts, and the browser opens the UI. No local
-setup, no environment wrangling. Configure a provider key in the UI to start
-talking to a model.
-
-Local equivalent (also zero dependencies):
+That second point is why this exists: instead of *asking* an AI to write good code and hoping, the repository makes "good" **mechanically checkable**. The result is a real, runnable framework — 43k lines of kernel (122 modules), 46k lines of desktop UI, 263 commits — plus a reusable recipe for anyone putting agents on other people's codebases.
 
 ```bash
-python client/server.py            # http://127.0.0.1:7712
-python run.py selftest             # offline verification suite
+git clone https://github.com/suyunpledge/pledge-evolving
+cd pledge-evolving
+python run.py selftest        # 574/574, offline, no API key
 ```
 
-### One-click on Windows
+That is the whole 60-second proof. Everything below is what it checks and why the design choices are what they are.
 
-Download the repo (Code → Download ZIP, unzip), then double-click **`setup.cmd`**.
-It detects Python 3.10+ and, if missing, installs it silently (winget, falling
-back to the official python.org installer) — then creates a desktop shortcut and
-opens the GUI. No manual installs, no prompts to answer. Variants:
-`setup.cmd check` (environment probe only), `setup.cmd selftest` (offline suite),
-`setup.cmd web` (browser UI instead of the desktop window).
+## What it does
 
-On macOS/Linux the equivalent is **`./setup.sh`** (Homebrew / apt / dnf / yum /
-pacman auto-install when Python is missing), with the same `check` / `selftest`
-/ `web` variants.
+| Capability | What actually happens |
+| --- | --- |
+| Agent loop | System prompt assembled from bounded layers (capability index, memory slice, permission state), context compaction that keeps the tail and writes a `compaction` event, deferred tool loading behind `tool_search` |
+| Permissions | Two-dimensional policy (mode × sandbox tier) plus a command blacklist; **deny always wins**, subagent modes are clamped by the parent's ceiling, every write passes a shadow-git snapshot first |
+| Model routing | Three tiers (economy / balanced / premium), fallback chains triggered by *error class* rather than by guesswork, MoA aggregation, and a premium two-stage path (draft → adjudication) that degrades to the paid draft on any failure |
+| Cost | Per-request pricing table with an explicit, documented convention for unknown prices; subagent tokens fold into the parent ledger |
+| Memory | Typed long-term memory with dual-write, a curator that archives instead of deleting, and injection that is always bounded |
+| Sessions | Append-only JSONL event log as the source of truth, derived index as a rebuildable cache, resume and fork |
+| Protocol | Loopback gateway translating Anthropic ↔ OpenAI in both directions, including SSE streaming and tool-call deltas |
+| Orchestration | A dependency-free port of graph/superstep semantics: state channels with per-key reducers, interrupt/resume, execution checkpoints, supervisor/worker |
+| Self-evolution | Signal → candidate → gate → ledger → rollback; long-term targets always require human approval, no config can bypass it |
+| Fleet | Heterogeneous CLI workers described declaratively, dispatched, failure-classified, output-normalised, cost-capped |
 
-## Architecture at a glance
+## Four entry points, one kernel
+
+| Entry | Start it with | Use it for |
+| --- | --- | --- |
+| CLI | `python run.py <command>` | Scripting, CI, unattended runs |
+| Desktop GUI | `python forge-gui/forge_gui_v2.py` | Day-to-day chat, plus a three-column **Coding Mode** (file tree, multi-tab editor, Agent panel, diff/test/output pages) |
+| VS Code extension | install `forge-agent-*.vsix` | Chat, explain/review selected code without leaving the editor |
+| IM channel | `python run.py channel weixin serve` | Pick up tasks and read reports from a phone |
+
+All four share the same policy engine, secret boundary and session log. There is no second implementation of "what is allowed".
+
+## Why the code was written by agents (and why the gate matters)
+
+Agent-generated code usually fails in the same three places: it reaches for the network, it shells out, and it invents APIs that do not exist. `CONTRACT.md` freezes the module API up front and lists hard prohibitions; `forge/registry.py` enforces them *statically* before a single line runs:
+
+- AST scan for network, subprocess, destructive filesystem and `eval` usage (including subscript and unpack forms, which are the easy way to smuggle a call past a naive scanner)
+- isolated import — a module that raises is quarantined with its traceback, not partially mounted
+- the module must ship and pass its own self-checks (≥ 8), so "it imports" is never mistaken for "it works"
+
+The main kernel (the 43k lines outside `contrib/`) was written by the maintainer with AI assistance; the twelve `contrib/` modules are the multi-agent experiment proper. The consistency gate is what makes multiple agents composable. It is also the part most reusable outside this repo: the same pattern works for a team of humans, a team of agents, or any mix.
+
+## Architecture
 
 ```mermaid
 flowchart TB
-    R(("Forge agent runtime")) --- A(("Context"))
-    A --- A1(("Task + prompt"))
-    A --- A2(("Bounded memory"))
-    R --- B(("Model"))
-    B --- B1(("Cost-aware routing"))
-    B --- B2(("Native tools / fallback"))
-    R --- C(("Actions"))
-    C --- C1(("Tool permissions"))
-    C1 --- C2(("Snapshot before writes"))
-    C --- C3(("Capped subagents"))
-    R --- D(("Outcome"))
-    D --- D1(("Answer"))
-    D --- D2(("Replayable event log"))
+    R(("forge kernel")) --- A(("Context"))
+    A --- A1(("task & prompt"))
+    A --- A2(("bounded memory"))
+    R --- B(("Models"))
+    B --- B1(("cost-aware routing"))
+    B --- B2(("native tools & fallback"))
+    R --- C(("Action"))
+    C --- C1(("permission adjudication"))
+    C1 --- C2(("pre-write snapshot"))
+    C --- C3(("bounded subagents"))
+    R --- D(("Output"))
+    D --- D1(("answer"))
+    D --- D2(("replayable event log"))
 ```
 
-**What changes:** one runtime coordinates model selection, tool access, subagents, memory, and session history. Write tools pass through policy checks and a pre-write checkpoint; the append-only event log records decisions for replay. The protocol gateway and approved self-evolution path are additional entry points and lifecycle features described below.
+Every decision lands in `sessions/*.jsonl`: `session_meta`, `user_message`, `tool_decision`, `tool_call`, `subagent_spawn`, `compaction`, `checkpoint`, `assistant_message`. The log is fact; the index is cache — `sessions --rebuild` reconstructs it at any time.
+
+## How it compares
+
+| | forge | LangGraph / CrewAI | Typical agent boilerplate |
+| --- | --- | --- | --- |
+| Dependencies | none (stdlib only) | framework + provider SDKs | many |
+| Verification | 574 offline checks in one command | varies, often network-bound | rarely present |
+| Permission model | first-class: mode × sandbox, deny-wins, subagent ceilings | usually delegated to the host | ad-hoc |
+| Contribution gate | static scan + isolated import + per-module self-checks | n/a | n/a |
+| Cost accounting | per-request pricing, subagent folding | partial | absent |
+| Entry points | CLI · desktop · VS Code · IM on one kernel | library only | one |
+
+## Status, honestly
+
+- **Age**: first commit 2026-09-17, still under heavy development (263 commits at the time of writing). The API is not frozen for *users* yet — `CONTRACT.md` freezes the *module* boundary, not the public surface.
+- **Adoption**: single maintainer, early stage, no downstream users yet. It is published because the design is worth reading and because the contribution gate is reusable — not because it has a community.
+- **Scope discipline**: the 574 checks cover what the repo claims. Known gaps are listed at the bottom of this file rather than hidden; the security model is "sandbox writes + blacklist programs", not kernel-level isolation, and the read side is constrained by declaration rather than by path sandboxing.
+
+## Quick start
+
+```bash
+cd pledge-evolving
+
+python run.py selftest            # offline self-checks (574/574, no API key)
+python run.py dump-config         # inspect the synthesized config tree
+python run.py doctor              # health / drift / key checks
+python run.py capabilities list   # capability inventory
+python run.py run "read the README and summarise it"
+python run.py gateway --upstream https://api.deepseek.com --port 8799 --models claude-sonnet-5
+python run.py vendors --detect    # vendor difference profiles
+python run.py cache status        # cross-vendor cache continuity
+python run.py channel list        # IM channel inventory
+python run.py review "code or text"  # tool-free review
+```
+
+`run.py` is the required entry point: AutoClaw's embedded Python uses a `._pth` layout, so `python -m forge.cli` fails there with `No module named 'forge'`. With a standard Python install, `python -m forge.cli` works fine.
+
+Python ≥ 3.10. Zero third-party dependencies. MIT licensed.
+
+Desktop UI: `python forge-gui/forge_gui_v2.py` (or the shortcut `setup.cmd` creates on Windows). VS Code sidebar: [`vscode-extension/README.md`](vscode-extension/README.md).
+
+### One-click cloud / one-click Windows
+
+- **Cloud**: use the Codespaces badge at the top of this file — nothing to install locally.
+- **Windows**: download the repo (Code → Download ZIP, extract), double-click **`setup.cmd`**. It detects Python 3.10+, installs it silently if missing (winget first, python.org installer as fallback), then creates a desktop shortcut and opens the UI. Variants: `setup.cmd check`, `setup.cmd selftest`, `setup.cmd web`.
+- **macOS / Linux**: `./setup.sh` with the same variants (Homebrew / apt / dnf / yum / pacman).
+
+---
 
 ## v2 additions (0.2.0)
 
@@ -156,7 +228,7 @@ gateway auth wiring (S2), subagent token folding into the parent cost ledger (S3
 per-session usage events (S4), contribution source-scanner subscript/unpack coverage (S5),
 and main-thread chunked rendering / backgrounded persistence against UI freezes.
 
-## State of the repo (2026-10): orchestration layer, adaptation layer, multiple entry points
+## 2026-10 capability layers: orchestration, fleet adaptation, channels
 
 After v0.8.0 three layers were added: an **orchestration layer** ported from other frameworks' semantics, an **adaptation layer** so the framework holds up on a mixed fleet and on local engines, and **entry points** beyond the CLI — desktop window, editor extension and IM channels all sit on the same kernel.
 
@@ -169,17 +241,6 @@ After v0.8.0 three layers were added: an **orchestration layer** ported from oth
 | IM channels | `forge/channels/` | A two-method `poll()` / `send()` contract plus a WeChat implementation: an inbound message becomes a task, the report becomes a message | The channel does not own the agent loop |
 | Desktop & editor | `desktop_services.py` `vscode_bridge.py` `vscode-extension/` | Desktop jobs and mediated connectors (credentials from a trusted host callback, every write confirmed per invocation); the editor talks over a local JSONL bridge | A permission gate, not an OS sandbox; the bridge opens no listening socket |
 | Hardening | `runtime_lock.py` `execution_guard.py` `project_rules.py` `code_review.py` | OS advisory locks for cooperating processes (never scan-as-lock), action/observation loop detection (interrupted actions are never auto-replayed), bounded AGENTS.md reading, tool-free review | Repository text can never grant capability; review findings are not authority |
-
-### Four entry points, one kernel
-
-| Entry | How to start | Good for |
-| --- | --- | --- |
-| CLI | `python run.py <command>` | Scripting, CI, unattended runs |
-| Desktop GUI | `python forge-gui/forge_gui_v2.py` | Day-to-day chat and Coding Mode |
-| VS Code extension | Install `forge-agent-*.vsix`, open the Forge panel | Chat, explain/review selected code in place |
-| IM channel | `python run.py channel weixin serve` | Pick up tasks and reports from a phone |
-
-All four share the same Policy, secret boundary and session log — not four parallel implementations.
 
 ### Coding Mode (`forge-gui/development_mode/`)
 
@@ -194,29 +255,6 @@ The desktop window holds two workspaces: Work is chat, Coding is a three-column 
 | Layout presets | Code Focus / Agent Focus / Review Focus — the same component set, only sash weights and content emphasis change |
 
 The visual layer has a single source, `gui_theme.py`: rounded cards and centred empty states, `dev_button` with consistent hover/pressed/disabled feedback, a compact Explorer tab metric. Editor actions grey out when no document is open instead of leaving a primary button pointing at nothing.
-
-## Quick Start
-
-```bash
-cd pledge-evolving
-
-python run.py selftest            # Offline self-checks, item count follows actual output
-python run.py dump-config         # View the synthesized config tree
-python run.py doctor              # Health / drift / key checks
-python run.py capabilities list   # Capability listing
-python run.py run "Read the README and summarize it"
-python run.py gateway --upstream https://api.deepseek.com --port 8799 --models claude-sonnet-5
-python run.py vendors --detect      # vendor difference profiles
-python run.py cache status          # cross-vendor cache continuity
-python run.py channel list          # IM channel inventory
-python run.py review "code or text" # tool-free review
-```
-
-`run.py` is the required entry point: AutoClaw's embedded Python uses a `._pth` layout, so `python -m forge.cli` fails with `No module named 'forge'` (the current directory isn't added to `sys.path`, and `PYTHONPATH` has no effect either). With a standard Python install elsewhere, `python -m forge.cli` works fine.
-
-Zero third-party dependencies (pure standard library), Python ≥ 3.10.
-
-Desktop UI: `python forge-gui/forge_gui_v2.py` (or the desktop shortcut `setup.cmd` creates on Windows); the VS Code sidebar lives in [`vscode-extension/README.md`](vscode-extension/README.md).
 
 ## Local inference services (ollama / llamacpp / mnn)
 
