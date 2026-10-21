@@ -7,6 +7,8 @@
 不是概念图，是能跑的代码：`forge selftest` 离线跑全套检查（无网络、无 API Key，项数以命令实际输出为准），覆盖配置合成、权限裁决、工具延迟加载、能力信任、记忆双写、会话回放、影子快照、模型降级、协议网关与协议翻译、原生工具调用、自我迭代进化、异构联邦、贡献模块一致性闸门与跨模块集成、成本核算、子代理编排，以及静态安全线（禁网/禁子进程/禁破坏性文件 API 的表对齐不变量与四路覆盖）。
 
 零第三方依赖（纯标准库），Python ≥ 3.10。
+
+桌面界面：`python forge-gui/forge_gui_v2.py`（Windows 上也可用 `setup.cmd` 创建的桌面快捷方式）；VS Code 侧边栏见 [`vscode-extension/README.md`](vscode-extension/README.md)。
 ### 一键云端 / Windows 一键配置
 
 - **云端**：点顶部「在 Codespaces 中打开」徽章，浏览器里直接用，无需本地环境。
@@ -125,6 +127,45 @@ python run.py run "任务" --strategy economy      # CLI 显式指定（> 配置
 
 2026-10-05 全仓审查的加固：读路径沙箱执行（S1）、网关鉴权接线（S2）、子代理 token 折进父成本账（S3）、会话用量事件（S4）、贡献源码扫描覆盖下标/解包（S5），以及主线程分批渲染 / 持久化后台化防 UI 冻结。
 
+## 2026-10 现状：编排层、适配层与多入口
+
+v0.8.0 之后长出三层东西：把别家编排语义移植进来的**编排层**、让框架在混合机队和本地引擎上不发虚的**适配层**，以及命令行之外的**多入口**——桌面窗口、编辑器插件、IM 通道都接在同一个内核上。
+
+| 能力 | 模块 | 干什么 | 边界 |
+| --- | --- | --- | --- |
+| 图编排 | `forge/graph/` | LangGraph 语义的零依赖移植：state channels 与 per-key reducer、Pregel 超步循环、interrupt/resume、Send/Command、执行检查点、supervisor/worker | 同步单线程、每会话一路；不是分布式调度器 |
+| ScienceClaw 三件套 | `forge/scienceclaw/` | 工具结果超阈值外置成文件（agent 只见摘要与路径）、PlanStep 规范化、三家 reasoning 格式统一提取 | 外置文件落在工作区内 |
+| 混合机队适配 | `vendors.py` `adapters.py` `cache_state.py` `context_plan.py` `local_service.py` | 长上下文「断崖 vs 斜坡」的成本判断、跨厂商缓存连续性、单请求最优计划、本地引擎专属分支（ollama / llamacpp / mnn） | 本地分支靠 provider 行的 `service` 显式声明，写错一律按云端处理 |
+| 批量作业 | `batch_execution.py` | OpenAI 兼容 Batch API 的提交 / 查询 / 取结果 / 取消；计划与作业落盘不含凭据 | 不轮询、不自动重试 POST、不在本地执行返回的工具调用 |
+| IM 通道 | `forge/channels/` | `poll()` / `send()` 两方法契约 + 微信实现：入站消息变任务、报告变消息 | 通道不持有 agent 循环 |
+| 桌面与编辑器 | `desktop_services.py` `vscode_bridge.py` `vscode-extension/` | 桌面作业与中介连接器（凭据由宿主回调提供，写操作逐次确认）；编辑器走本地 JSONL 桥 | 是权限闸门，不是 OS 沙箱；桥不开监听端口 |
+| 工程加固 | `runtime_lock.py` `execution_guard.py` `project_rules.py` `code_review.py` | 协作进程用 OS 咨询锁（不拿扫描当锁）、动作/观察循环检测（中断动作不自动重放）、AGENTS.md 有界读取、无工具审查 | 仓库文本永远不会授予能力；审查结论不是权威 |
+
+### 四个入口，一个内核
+
+| 入口 | 怎么起 | 适合 |
+| --- | --- | --- |
+| CLI | `python run.py <命令>` | 脚本化、CI、无人值守 |
+| 桌面 GUI | `python forge-gui/forge_gui_v2.py` | 日常对话与 Coding Mode |
+| VS Code 扩展 | 安装 `forge-agent-*.vsix`，侧栏 Forge 面板 | 在编辑器里对话、解释/审查选中代码 |
+| IM 通道 | `python run.py channel weixin serve` | 手机侧收任务、收报告 |
+
+四个入口共用同一套 Policy、密钥边界与会话日志——不是四份实现各自为政。
+
+### Coding Mode（`forge-gui/development_mode/`）
+
+桌面窗口是双工作空间：Work 是对话，Coding 是三栏 IDE。
+
+| 区域 | 内容 |
+| --- | --- |
+| 左栏 | 48px 活动栏（文件 / 搜索 / Git / 任务 / 运行 / 知识 / 演化 / 审批 / 设置）+ 文件树、Git 变更、任务、知识、演化五个视图 |
+| 中央 | 多标签编辑器：行号槽、当前行高亮、搜索替换、分屏只读镜像、面包屑与行列 / 编码 / 换行 / 语言状态行；无项目时是欢迎页，无打开文件时是居中空态卡 |
+| 右栏 | Agent 面板：对话 / 任务 / 子 Agent / 完整事件四页，运行时上下文折叠带（权限矩阵 · 模型路由 · 任务控制），底部统一输入区（Enter 发送、队列上限 3） |
+| 底部 | 全宽七页：差异 / 测试 / 问题 / 输出 / 终端 / 能力 / 审批，计数徽标取真实数据源 |
+| 布局预设 | Code Focus / Agent Focus / Review Focus——同一套组件，只改 sash 权重与内容侧重 |
+
+视觉层单一来源是 `gui_theme.py`：圆角卡与居中空态、`dev_button` 统一三态反馈、Explorer 紧凑 Tab 度量；无打开文档时编辑器工具动作置灰，不拿主色按钮指向虚无。
+
 ## 快速开始
 
 ```bash
@@ -136,6 +177,10 @@ python run.py doctor              # 健康/漂移/密钥检查
 python run.py capabilities list   # 能力清单
 python run.py run "读一下 README 并总结"
 python run.py gateway --upstream https://api.deepseek.com --port 8799 --models claude-sonnet-5
+python run.py vendors --detect      # 厂商差异档案
+python run.py cache status          # 跨厂商缓存连续性
+python run.py channel list          # IM 通道清单
+python run.py review "代码或文本"    # 无工具审查
 ```
 
 `run.py` 是必需的入口：AutoClaw 内嵌 Python 用 `._pth` 布局，`python -m forge.cli` 会报 `No module named 'forge'`（当前目录不入 `sys.path`，`PYTHONPATH` 也失效）。外面用标准 Python 时 `python -m forge.cli` 可用。
@@ -145,6 +190,28 @@ python run.py gateway --upstream https://api.deepseek.com --port 8799 --models c
 
 - **云端**：点顶部「在 Codespaces 中打开」徽章，浏览器里直接用，无需本地环境。
 - **Windows**：下载仓库（Code → Download ZIP，解压）后双击 **`setup.cmd`** 即可——自动探测 Python 3.10+，没有就静默安装（优先 winget，回退 python.org 官方安装器），然后创建桌面快捷方式并打开界面，全程零手动安装。变体：`setup.cmd check`（只查环境）、`setup.cmd selftest`（离线自检）、`setup.cmd web`（浏览器界面代替桌面窗口）。
+
+## 本地推理引擎（ollama / llamacpp / mnn）
+
+有几条让自托管引擎能用的适配，放到云端 provider 上全是错的，所以它们被 provider 行上一个可选的 `service` 字段挡住。缺省或不认识就是「非本地」，下面全部不生效——写错一个字母不会把 provider 改道。
+
+闸门认的是 provider `model.primary` 指向的名字（未设置时取第一个带默认模型的 provider，也就是路由器会先试的那个）。解析不出来一律按「非本地」处理：未知不能把闸门打开。
+
+```json
+{"id": "local", "name": "provider:local",
+ "config": {"service": "ollama", "wire": "openai",
+            "baseURL": "http://127.0.0.1:11434", "model": "qwen3:8b"}}
+```
+
+闸门改了什么、为什么（两条都是对着 Ollama 0.34.0 跑 qwen3:8b 测出来的）：
+
+| 闸门 | 本地引擎 | 其它 |
+| --- | --- | --- |
+| 对话 / 工具循环路径 | `/v1/chat/completions`（只写 `host:port` 的 base URL 会补上 `/v1`） | `/chat/completions`，不变 |
+| 沉思模式 | 除非显式设 `on`，否则 `off`；`smart` 降级 | 按配置，不动 |
+| 沉思输出预算 | 恒有界（上限 `LOCAL_THINKING_CAP`，可用 `thinking.tokenCap` 往下压） | 不碰 |
+
+原因按顺序：原生 chat 面回放模型自己的 `tool_calls` 历史会直接 HTTP 400，多轮工具循环只能走 OpenAI 兼容面；小号本地模型的沉思可能不收敛（实测 420 秒没结果），有界输出预算能便宜地截断。云端 provider 的 base 路径与行为原样保留。
 
 ## 七套框架 → 一处落点
 
@@ -186,34 +253,55 @@ python run.py gateway --upstream https://api.deepseek.com --port 8799 --models c
 
 ```
 pledge-evolving/
-├── forge/
-│   ├── config.py       空根 + 补丁层合成（DSH）
-│   ├── policy.py       二维权限 + 三档沙箱 + 命令黑名单（CodeBuddy / Codex）
-│   ├── tools.py        工具注册 + 延迟加载 + ToolSearch（CodeBuddy）
-│   ├── capability.py   skills/plugins/connectors 统一契约（Hermes / Codex）
-│   ├── memory.py       类型化记忆双写 + curator（CodeBuddy / OpenClaw）
-│   ├── compaction.py   上下文压缩策略（从 memory 拆分，独立可测试）
-│   ├── subagent.py     子代理编排：派生/预算/输出净化（从 loop 拆分）
-│   ├── thinking.py     沉思引擎：预算控制/收敛判定/三档模式（从 loop 拆分）
-│   ├── session.py      追加式事件日志 + 派生索引 + fork（Codex）
-│   ├── model.py        provider 抽象 + 降级链 + MoA（OpenCode / Hermes）
-│   ├── routing.py      三档智能路由（economy / balanced / premium）
-│   ├── checkpoint.py   影子 git 快照与回滚（Hermes）
-│   ├── loop.py         agent 主循环（OpenClaw / CodeBuddy）
-│   ├── gateway.py      环回协议网关（本次集成实测产物）
-│   ├── wire.py         Anthropic ↔ OpenAI 协议翻译
-│   ├── toolwire.py     原生工具调用协议适配
-│   ├── federation.py   异构 CLI 联邦调度
-│   ├── evolution.py    自我迭代进化
-│   ├── registry.py     贡献模块注册表 + 一致性闸门
-│   ├── pricing.py      成本核算
-│   ├── guard.py        共享安全禁令表
-│   ├── smoke.py        端到端冒烟测试
-│   ├── selftest.py     离线验证套件
-│   ├── cli.py          命令行入口
-│   └── test_new_modules.py  新模块独立测试
-└── bundles/
-    └── base.json       基线配置层（provider / policy / loop / model）
+├── forge/                      内核（纯标准库，零第三方依赖）
+│   ├── config.py               空根 + 补丁层合成（DSH）
+│   ├── policy.py               二维权限 + 三档沙箱 + 命令黑名单（CodeBuddy / Codex）
+│   ├── tools.py                工具注册 + 延迟加载 + ToolSearch
+│   ├── capability.py           skills / plugins / connectors 统一契约
+│   ├── memory.py               类型化记忆双写 + curator
+│   ├── compaction.py           上下文压缩策略
+│   ├── context_plan.py         长上下文取舍：无损 vs 压缩（断崖/斜坡成本）
+│   ├── subagent.py             子代理编排：派生 / 预算 / 输出净化
+│   ├── thinking.py             沉思引擎：预算 / 收敛 / 三档模式
+│   ├── session.py              追加式事件日志 + 派生索引 + fork
+│   ├── model.py                provider 抽象 + 降级链 + MoA
+│   ├── routing.py              三档智能路由（economy / balanced / premium）
+│   ├── vendors.py              厂商差异档案（单机队 vs 混合机队）
+│   ├── adapters.py             逐厂商适配器：单请求的最优计划
+│   ├── cache_state.py          跨厂商缓存连续性
+│   ├── local_service.py        本地推理引擎分支（ollama / llamacpp / mnn）
+│   ├── batch_execution.py      显式 Batch 作业生命周期
+│   ├── checkpoint.py           影子 git 快照与回滚（Hermes）
+│   ├── loop.py                 agent 主循环（OpenClaw / CodeBuddy）
+│   ├── gateway.py              环回协议网关
+│   ├── wire.py                 Anthropic ↔ OpenAI 协议翻译
+│   ├── toolwire.py             原生工具调用协议适配
+│   ├── federation.py           异构 CLI 联邦调度
+│   ├── evolution.py            自我迭代进化
+│   ├── registry.py             贡献模块注册表 + 一致性闸门
+│   ├── pricing.py              成本核算
+│   ├── guard.py                共享安全禁令表
+│   ├── execution_guard.py      动作/观察循环检测（不自动重放中断动作）
+│   ├── runtime_lock.py         协作进程的 OS 咨询锁
+│   ├── project_rules.py        AGENTS.md 有界读取
+│   ├── code_review.py          无工具审查
+│   ├── desktop_services.py     桌面作业与中介连接器
+│   ├── vscode_bridge.py        编辑器本地 JSONL 桥
+│   ├── graph/                  图编排：channels / 超步循环 / interrupt / checkpoint / supervisor
+│   ├── scienceclaw/            工具结果外置 / PlanStep / reasoning 提取
+│   ├── channels/               IM 通道契约 + 微信实现
+│   ├── development/            Coding Mode 后端：编辑器模型 / 运行时 / 证据 / 状态
+│   ├── contrib/                各家 agent 自写的贡献模块（一致性闸门隔离）
+│   ├── selftest.py             离线验证套件
+│   └── cli.py                  命令行入口
+├── forge-gui/                  桌面 GUI：Work / Coding 双工作空间
+│   ├── forge_gui_v2.py         Work 工作空间 + 宿主外壳
+│   ├── development_mode/       Coding Mode（app / welcome / explorer / editor / agent_panel / layout / bottom_panel）
+│   ├── gui_theme.py            唯一视觉 token 源
+│   └── plugin_capabilities.py  声明式插件能力代理
+├── vscode-extension/           VS Code 侧边栏插件（九个命令 + webview 面板）
+├── bundles/                    配置层：base.json / modes/coding.json
+└── docs/                       架构与验收文档
 ```
 
 ## 已知边界

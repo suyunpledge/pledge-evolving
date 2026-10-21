@@ -156,23 +156,44 @@ gateway auth wiring (S2), subagent token folding into the parent cost ledger (S3
 per-session usage events (S4), contribution source-scanner subscript/unpack coverage (S5),
 and main-thread chunked rendering / backgrounded persistence against UI freezes.
 
-## v0.8.0: declarative plugin capability broker + market
+## State of the repo (2026-10): orchestration layer, adaptation layer, multiple entry points
 
-Plugins moved from “import third-party Python” to a **declarative capability broker**
-(`forge-gui/plugin_capabilities.py`): the GUI never imports plugin code — a plugin's
-`contributions.tools` are registered as local aliases whose execution goes through the
-Forge gateway's real Policy again. Grants are per-capability × per-workspace × per-session,
-bound to the plugin's content fingerprint; disable/uninstall/edit revokes them.
+After v0.8.0 three layers were added: an **orchestration layer** ported from other frameworks' semantics, an **adaptation layer** so the framework holds up on a mixed fleet and on local engines, and **entry points** beyond the CLI — desktop window, editor extension and IM channels all sit on the same kernel.
 
-The desktop market also gained: a read-sandboxed builtin tool bridge, remote catalogs
-(Claude official marketplace + ClawHub, 72h-throttled sync with per-source retry), an
-adapter for on-machine ecosystems (OpenClaw skills / Claude Code market / DSH bundles /
-Codex plugins — declarative, never executed), and an audit log with rotation.
+| Capability | Module | What it does | Boundary |
+| --- | --- | --- | --- |
+| Graph orchestration | `forge/graph/` | Dependency-free port of LangGraph semantics: state channels with per-key reducers, Pregel superstep loop, interrupt/resume, Send/Command, execution checkpoints, supervisor/worker | Synchronous, single-threaded, one lane per session; not a distributed scheduler |
+| ScienceClaw trio | `forge/scienceclaw/` | Tool results past a threshold are offloaded to workspace files (the agent sees a summary and a path), PlanStep normalisation, reasoning extraction unified across three vendor formats | Offloaded files stay inside the workspace |
+| Mixed-fleet adaptation | `vendors.py` `adapters.py` `cache_state.py` `context_plan.py` `local_service.py` | Cliff-vs-slope long-context costing, cross-vendor cache continuity, per-request optimal plan, local-engine branches (ollama / llamacpp / mnn) | The local branch is gated on an explicit `service` field; a typo is treated as cloud |
+| Batch jobs | `batch_execution.py` | Submit / status / results / cancel for OpenAI-compatible Batch APIs; plans and jobs persist without credentials | No polling loop, no automatic POST retry, no local execution of returned tool calls |
+| IM channels | `forge/channels/` | A two-method `poll()` / `send()` contract plus a WeChat implementation: an inbound message becomes a task, the report becomes a message | The channel does not own the agent loop |
+| Desktop & editor | `desktop_services.py` `vscode_bridge.py` `vscode-extension/` | Desktop jobs and mediated connectors (credentials from a trusted host callback, every write confirmed per invocation); the editor talks over a local JSONL bridge | A permission gate, not an OS sandbox; the bridge opens no listening socket |
+| Hardening | `runtime_lock.py` `execution_guard.py` `project_rules.py` `code_review.py` | OS advisory locks for cooperating processes (never scan-as-lock), action/observation loop detection (interrupted actions are never auto-replayed), bounded AGENTS.md reading, tool-free review | Repository text can never grant capability; review findings are not authority |
 
-Hardening from the 2026-10-05 full-repo audit: read-path sandbox enforcement (S1),
-gateway auth wiring (S2), subagent token folding into the parent cost ledger (S3),
-per-session usage events (S4), contribution source-scanner subscript/unpack coverage (S5),
-and main-thread chunked rendering / backgrounded persistence against UI freezes.
+### Four entry points, one kernel
+
+| Entry | How to start | Good for |
+| --- | --- | --- |
+| CLI | `python run.py <command>` | Scripting, CI, unattended runs |
+| Desktop GUI | `python forge-gui/forge_gui_v2.py` | Day-to-day chat and Coding Mode |
+| VS Code extension | Install `forge-agent-*.vsix`, open the Forge panel | Chat, explain/review selected code in place |
+| IM channel | `python run.py channel weixin serve` | Pick up tasks and reports from a phone |
+
+All four share the same Policy, secret boundary and session log — not four parallel implementations.
+
+### Coding Mode (`forge-gui/development_mode/`)
+
+The desktop window holds two workspaces: Work is chat, Coding is a three-column IDE.
+
+| Area | Contents |
+| --- | --- |
+| Left | A 48px activity bar (files / search / git / tasks / run / knowledge / evolution / approvals / settings) plus five views: file tree, Git changes, tasks, knowledge, evolution |
+| Centre | Multi-tab editor: line-number gutter, current-line highlight, find/replace, read-only split mirror, breadcrumbs and a cursor / encoding / EOL / language status row; welcome page with no project, a centred empty-state card with no open file |
+| Right | Agent panel: conversation / tasks / sub-agents / full events, a collapsible runtime-context band (permission matrix · model routing · task control), unified input area (Enter sends, queue capped at 3) |
+| Bottom | Seven full-width pages: diff / tests / problems / output / terminal / capabilities / approvals, counters read from real sources |
+| Layout presets | Code Focus / Agent Focus / Review Focus — the same component set, only sash weights and content emphasis change |
+
+The visual layer has a single source, `gui_theme.py`: rounded cards and centred empty states, `dev_button` with consistent hover/pressed/disabled feedback, a compact Explorer tab metric. Editor actions grey out when no document is open instead of leaving a primary button pointing at nothing.
 
 ## Quick Start
 
@@ -185,11 +206,17 @@ python run.py doctor              # Health / drift / key checks
 python run.py capabilities list   # Capability listing
 python run.py run "Read the README and summarize it"
 python run.py gateway --upstream https://api.deepseek.com --port 8799 --models claude-sonnet-5
+python run.py vendors --detect      # vendor difference profiles
+python run.py cache status          # cross-vendor cache continuity
+python run.py channel list          # IM channel inventory
+python run.py review "code or text" # tool-free review
 ```
 
 `run.py` is the required entry point: AutoClaw's embedded Python uses a `._pth` layout, so `python -m forge.cli` fails with `No module named 'forge'` (the current directory isn't added to `sys.path`, and `PYTHONPATH` has no effect either). With a standard Python install elsewhere, `python -m forge.cli` works fine.
 
 Zero third-party dependencies (pure standard library), Python ≥ 3.10.
+
+Desktop UI: `python forge-gui/forge_gui_v2.py` (or the desktop shortcut `setup.cmd` creates on Windows); the VS Code sidebar lives in [`vscode-extension/README.md`](vscode-extension/README.md).
 
 ## Local inference services (ollama / llamacpp / mnn)
 
@@ -253,35 +280,55 @@ Every decision is logged into `sessions/*.jsonl`: `session_meta`, `user_message`
 
 ```
 pledge-evolving/
-├── forge/
-│   ├── config.py       Empty root + patch-layer synthesis (DSH)
-│   ├── policy.py       Two-dimensional permissions + three-tier sandbox + command blacklist (CodeBuddy / Codex)
-│   ├── tools.py         Tool registration + lazy loading + ToolSearch (CodeBuddy)
-│   ├── capability.py    Unified contract for skills/plugins/connectors (Hermes / Codex)
-│   ├── memory.py        Typed dual-write memory + curator (CodeBuddy / OpenClaw)
-│   ├── compaction.py    Context-compaction strategy (split out from memory, independently testable)
-│   ├── subagent.py      Subagent orchestration: spawning/budget/output sanitization (split out from loop)
-│   ├── thinking.py      Deliberation engine: budget control / convergence detection / three-tier mode (split out from loop)
-│   ├── session.py       Append-only event log + derived index + fork (Codex)
-│   ├── model.py         Provider abstraction + fallback chain + MoA (OpenCode / Hermes)
-│   ├── routing.py       Three-tier smart routing (economy / balanced / premium)
-│   ├── local_service.py  Engine gate: ollama / llamacpp / mnn get local-only paths
-│   ├── checkpoint.py    Shadow-git snapshots and rollback (Hermes)
-│   ├── loop.py          Agent main loop (OpenClaw / CodeBuddy)
-│   ├── gateway.py       Loopback protocol gateway (built and tested through this integration)
-│   ├── wire.py          Anthropic ↔ OpenAI protocol translation
-│   ├── toolwire.py      Native tool-calling protocol adapter
-│   ├── federation.py    Heterogeneous CLI federation dispatch
-│   ├── evolution.py     Self-evolution
-│   ├── registry.py      Contrib-module registry + consistency gate
-│   ├── pricing.py       Cost accounting
-│   ├── guard.py         Shared security ban table
-│   ├── smoke.py         End-to-end smoke tests
-│   ├── selftest.py      Offline verification suite
-│   ├── cli.py            Command-line entry point
-│   └── test_new_modules.py  Standalone tests for the new modules
-└── bundles/
-    └── base.json        Baseline config layer (provider / policy / loop / model)
+├── forge/                      Kernel (standard library only, no third-party dependencies)
+│   ├── config.py               Empty root + patch-layer synthesis (DSH)
+│   ├── policy.py               Two-dimensional permissions + three-tier sandbox + command blacklist
+│   ├── tools.py                Tool registration + lazy loading + ToolSearch
+│   ├── capability.py           Unified contract for skills / plugins / connectors
+│   ├── memory.py               Typed dual-write memory + curator
+│   ├── compaction.py           Context-compaction strategy
+│   ├── context_plan.py         Long-context decision: lossless vs compressed (cliff/slope costing)
+│   ├── subagent.py             Subagent orchestration: spawning / budget / output sanitisation
+│   ├── thinking.py             Deliberation engine: budget / convergence / three-tier mode
+│   ├── session.py              Append-only event log + derived index + fork
+│   ├── model.py                Provider abstraction + fallback chain + MoA
+│   ├── routing.py              Three-tier smart routing (economy / balanced / premium)
+│   ├── vendors.py              Vendor difference profiles (single vs mixed fleet)
+│   ├── adapters.py             Per-vendor adapters: the optimal plan for one request
+│   ├── cache_state.py          Cross-vendor cache continuity
+│   ├── local_service.py        Local-engine branches (ollama / llamacpp / mnn)
+│   ├── batch_execution.py      Explicit Batch job lifecycle
+│   ├── checkpoint.py           Shadow-git snapshots and rollback (Hermes)
+│   ├── loop.py                 Agent main loop (OpenClaw / CodeBuddy)
+│   ├── gateway.py              Loopback protocol gateway
+│   ├── wire.py                 Anthropic ↔ OpenAI protocol translation
+│   ├── toolwire.py             Native tool-calling protocol adapter
+│   ├── federation.py           Heterogeneous CLI federation dispatch
+│   ├── evolution.py            Self-evolution
+│   ├── registry.py             Contrib-module registry + consistency gate
+│   ├── pricing.py              Cost accounting
+│   ├── guard.py                Shared security ban table
+│   ├── execution_guard.py      Action/observation loop detection (never auto-replays)
+│   ├── runtime_lock.py         OS advisory locks for cooperating processes
+│   ├── project_rules.py        Bounded AGENTS.md reading
+│   ├── code_review.py          Tool-free review
+│   ├── desktop_services.py     Desktop jobs and mediated connectors
+│   ├── vscode_bridge.py        Local JSONL bridge for editors
+│   ├── graph/                  Graph orchestration: channels / superstep loop / interrupt / checkpoint / supervisor
+│   ├── scienceclaw/            Tool-result offload / PlanStep / reasoning extraction
+│   ├── channels/               IM channel contract + WeChat implementation
+│   ├── development/            Coding Mode backend: editor model / runtime / evidence / state
+│   ├── contrib/                Agent-authored contribution modules (isolated by the consistency gate)
+│   ├── selftest.py             Offline verification suite
+│   └── cli.py                  Command-line entry point
+├── forge-gui/                  Desktop GUI: Work / Coding workspaces
+│   ├── forge_gui_v2.py         Work workspace + host shell
+│   ├── development_mode/       Coding Mode (app / welcome / explorer / editor / agent_panel / layout / bottom_panel)
+│   ├── gui_theme.py            Single source of visual tokens
+│   └── plugin_capabilities.py  Declarative plugin capability broker
+├── vscode-extension/           VS Code sidebar extension (nine commands + webview panel)
+├── bundles/                    Config layers: base.json / modes/coding.json
+└── docs/                       Architecture and acceptance documents
 ```
 
 ## Known Limitations
