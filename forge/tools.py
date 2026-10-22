@@ -305,13 +305,17 @@ class ToolRegistry:
 
     # -- invocation ------------------------------------------------------
     def invoke(self, name: str, args: dict[str, Any] | None, ctx: ToolContext) -> ToolResult:
+        if args is not None and not isinstance(args, dict):
+            return ToolResult(False, error='Tool arguments must be an object', meta={
+                'authorization': 'deny', 'error_code': 'invalid_arguments',
+                'execution_state': 'not_started', 'outcome': 'failed'})
         try:
             with self.write_guard(name, args, ctx):
                 result = self._invoke(name, args, ctx)
             result.content = ctx.secret_scope.protect_text(result.content)
             result.error = redact(result.error)
             result.meta = redact(result.meta)
-            result.meta.setdefault('outcome', 'unknown' if result.meta.get('execution_state') == 'unknown' else 'succeeded' if result.ok else 'failed')
+            result.meta.setdefault('outcome', 'unknown' if result.meta.get('execution_state') == 'unknown' else 'cancelled' if result.meta.get('error_code') == 'cancelled' else 'succeeded' if result.ok else 'failed')
             result.meta.setdefault('error_code', '' if result.ok else 'tool_rejected')
             result.meta.setdefault('execution_state', 'completed' if result.ok else 'not_started')
             return result
@@ -329,22 +333,42 @@ class ToolRegistry:
         if isinstance(decision, ToolResult):
             return decision
         spec = self._specs[name]
+        # Authorization may have waited for host approval; cancellation can
+        # arrive during that wait even though the initial check passed.
+        if ctx.cancellation is not None and ctx.cancellation.is_set():
+            return ToolResult(False, error='Tool cancelled before dispatch', meta={
+                'authorization': decision.value, 'error_code': 'cancelled', 'execution_state': 'not_started'})
         try:
             result = spec.handler(args or {}, ctx)
-            if (not isinstance(result, ToolResult) or not isinstance(result.content, str)
-                    or not isinstance(result.error, str) or result.meta is not None and not isinstance(result.meta, dict)):
-                raise TypeError('Handler must return ToolResult with string outputs and dict metadata')
         except Exception as exc:
             return ToolResult(False, error=f'{type(exc).__name__}: {exc}', meta={
                 'authorization': decision.value, 'error_code': 'tool_error',
                 'execution_state': 'unknown' if self.side_effects(name, args) else 'completed'})
-        if result.meta is None:
-            result.meta = {}
+        try:
+            if (not isinstance(result, ToolResult) or type(result.ok) is not bool
+                    or not isinstance(result.content, str) or not isinstance(result.error, str)
+                    or result.meta is not None and not isinstance(result.meta, dict)):
+                raise TypeError('Invalid ToolResult')
+            # Validate before redaction/journaling, and detach handler-owned data.
+            # Never stringify arbitrary objects: that can hide broken contracts
+            # and expose private object representations in the journal.
+            metadata = json.loads(json.dumps(result.meta or {}, allow_nan=False))
+            result = ToolResult(result.ok, result.content, result.error, metadata)
+        except (TypeError, ValueError, OverflowError, RecursionError):
+            return ToolResult(False, error='Tool returned an invalid or non-JSON result', meta={
+                'authorization': decision.value, 'error_code': 'invalid_tool_result',
+                'execution_state': 'unknown' if self.side_effects(name, args) else 'completed'})
         result.meta.setdefault('authorization', decision.value)
         result.meta.setdefault('execution_state', 'unknown' if not result.ok and self.side_effects(name, args) else 'completed')
         return result
 
     def _prepare(self, name: str, args: dict[str, Any] | None, ctx: ToolContext):
+        if args is not None and not isinstance(args, dict):
+            return ToolResult(False, error='Tool arguments must be an object', meta={
+                'authorization': 'deny', 'error_code': 'invalid_arguments', 'execution_state': 'not_started'})
+        if ctx.cancellation is not None and ctx.cancellation.is_set():
+            return ToolResult(False, error='Tool cancelled before dispatch', meta={
+                'authorization': 'deny', 'error_code': 'cancelled', 'execution_state': 'not_started'})
         spec = self._specs.get(name)
         if spec is None:
             return ToolResult(ok=False, error=f"unknown tool {name!r}", meta={'error_code': 'unknown_tool'})

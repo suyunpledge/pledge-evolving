@@ -33,9 +33,6 @@ def resource_lock(kind, path):
         root.mkdir(exist_ok=True)
         target = root / (hashlib.sha256(key.encode()).hexdigest() + '.lock')
         with target.open('a+b') as handle:
-            if handle.seek(0, 2) == 0:
-                handle.write(b'\0')
-                handle.flush()
             if os.name == 'nt':
                 import msvcrt
                 while True:
@@ -52,6 +49,12 @@ def resource_lock(kind, path):
                 fcntl.flock(handle, fcntl.LOCK_EX)
             held.add(key)
             try:
+                # Windows byte-range locks also cover bytes beyond EOF. Take
+                # the lock before initializing: two first openers may both see
+                # an empty file, then one writes into the other's locked byte.
+                if handle.seek(0, 2) == 0:
+                    handle.write(b'\0')
+                    handle.flush()
                 yield
             finally:
                 held.remove(key)
