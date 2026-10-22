@@ -366,6 +366,9 @@ class ToolRegistry:
         if args is not None and not isinstance(args, dict):
             return ToolResult(False, error='Tool arguments must be an object', meta={
                 'authorization': 'deny', 'error_code': 'invalid_arguments', 'execution_state': 'not_started'})
+        if args and (args.get('_truncated') or '_raw' in args):
+            return ToolResult(False, error='Tool arguments are incomplete or invalid; resend a complete JSON object',
+                meta={'authorization': 'deny', 'error_code': 'invalid_arguments', 'execution_state': 'not_started'})
         if ctx.cancellation is not None and ctx.cancellation.is_set():
             return ToolResult(False, error='Tool cancelled before dispatch', meta={
                 'authorization': 'deny', 'error_code': 'cancelled', 'execution_state': 'not_started'})

@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
@@ -122,10 +124,13 @@ def parse_tool_calls(message: dict[str, Any], wire: str = "openai",
         return calls
 
     if wire == "openai":
-        for row in message.get("tool_calls") or []:
+        rows = message.get("tool_calls") or []
+        for row in rows if isinstance(rows, list) else [rows]:
             if not isinstance(row, dict):
-                continue
+                row = {}
             function = row.get("function") or {}
+            if not isinstance(function, dict):
+                function = {}
             raw_args = function.get("arguments")
             # 经 tool_adapter 分层修复：清洗→解析→修复→补全→类型矫正
             args = repair_arguments(raw_args, model_name=model)
@@ -150,6 +155,55 @@ def parse_tool_calls(message: dict[str, Any], wire: str = "openai",
                                   args=args if isinstance(args, dict) else {}, wire="anthropic",
                                   raw=block))
     return calls
+
+
+def normalize_native_calls(rows, wire: str) -> list[ToolCall]:
+    """Validate a whole provider batch before any action; repair only arguments.
+
+    IDs correlate provider messages, not durable action identities. Missing IDs
+    can be assigned locally; duplicate IDs are ambiguous and reject the batch.
+    """
+    if not isinstance(rows, list) or wire not in WIRES:
+        raise ValueError('Invalid native tool call batch')
+    calls, seen = [], set()
+    for row in rows:
+        if (not isinstance(row, dict) or not isinstance(row.get('name'), str)
+                or not row['name'].strip() or row.get('wire', wire) != wire):
+            raise ValueError('Invalid native tool name or wire')
+        call_id = row.get('id') or ('call_' + uuid.uuid4().hex)
+        if not isinstance(call_id, str) or call_id in seen:
+            raise ValueError('Invalid or duplicate native tool call ID')
+        seen.add(call_id)
+        args = repair_arguments(row.get('args'))
+        try:
+            json.dumps(args, allow_nan=False)
+        except (TypeError, ValueError, OverflowError, RecursionError):
+            args = {'_raw': 'Arguments must be finite JSON values'}
+        calls.append(ToolCall(call_id, row['name'].strip(), args, wire))
+    return calls
+
+
+def replay_assistant_message(original, text, calls, wire):
+    """Keep provider reasoning/signatures while pairing locally assigned IDs.
+
+    Hermes fallbacks have no native blocks; synthesize those from parsed calls.
+    Never mutate the response object retained for auditing.
+    """
+    message = deepcopy(original) if isinstance(original, dict) else {}
+    rows = message.get('content' if wire == 'anthropic' else 'tool_calls')
+    if isinstance(rows, list):
+        blocks = [r for r in rows if isinstance(r, dict) and (
+            wire != 'anthropic' or r.get('type') == 'tool_use')]
+        if len(blocks) == len(calls):
+            for block, call in zip(blocks, calls):
+                block['id'] = call.id
+                if wire == 'anthropic':
+                    block['name'], block['input'] = call.name, call.args
+                else:
+                    block['function'] = {**(block.get('function') or {}), 'name': call.name,
+                                         'arguments': json.dumps(call.args, ensure_ascii=False)}
+            return message
+    return assistant_message(text, calls, wire)
 
 
 def openai_assistant_message(text: str, calls: list[ToolCall]) -> dict[str, Any]:
