@@ -49,6 +49,7 @@ Both shots come from an isolated instance with a demo home, so no private data i
 | Orchestration | A dependency-free port of graph/superstep semantics: state channels with per-key reducers, interrupt/resume, execution checkpoints, supervisor/worker |
 | Self-evolution | Signal → candidate → gate → ledger → rollback; long-term targets always require human approval, no config can bypass it |
 | Fleet | Heterogeneous CLI workers described declaratively, dispatched, failure-classified, output-normalised, cost-capped |
+| Computer use | Host-selected window binding on Windows: in-memory screenshots (the model never receives raw pixels), native-control observe/act through the same permission chain, optional vision analysis with per-request cloud authorisation |
 
 ## Four entry points, one kernel
 
@@ -91,6 +92,16 @@ flowchart TB
 ```
 
 Every decision lands in `sessions/*.jsonl`: `session_meta`, `user_message`, `tool_decision`, `tool_call`, `subagent_spawn`, `compaction`, `checkpoint`, `assistant_message`. The log is fact; the index is cache — `sessions --rebuild` reconstructs it at any time.
+
+### Computer use, on a short leash
+
+Windows desktop control exists, and every step of it is deliberate:
+
+1. The **host** picks a window (a picker lists titled top-level windows — no pixels, no focus changes). The model can never name a target HWND itself.
+2. **Screenshots stay local.** Capture runs in a bounded worker process (PrintWindow, ≤16 MP, ≤8 MiB PNG); the model receives size and a SHA-256 digest — never the image bytes.
+3. **Vision analysis is opt-in per request.** A chosen vision model can be shown the current capture only after an explicit grant; changing the window or model revokes it; nothing persists across restarts.
+4. **Native-control observe/act** (`computer_observe` / `computer_act`) goes through the same ToolRegistry, Policy and ActionExecutor as every other tool: single-use observation references with a 30 s TTL, state digests to detect drift, per-action host approval, and an observation after every action. Password and read-only fields are masked; unsupported controls advertise no actions.
+5. No global desktop capture fallback, no coordinate guessing, no auto-retry of failed actions. The host can revoke a session without waiting on I/O.
 
 ## How it compares
 
@@ -259,6 +270,7 @@ After v0.8.0 three layers were added: an **orchestration layer** ported from oth
 | Mixed-fleet adaptation | `vendors.py` `adapters.py` `cache_state.py` `context_plan.py` `local_service.py` | Cliff-vs-slope long-context costing, cross-vendor cache continuity, per-request optimal plan, local-engine branches (ollama / llamacpp / mnn) | The local branch is gated on an explicit `service` field; a typo is treated as cloud |
 | Batch jobs | `batch_execution.py` | Submit / status / results / cancel for OpenAI-compatible Batch APIs; plans and jobs persist without credentials | No polling loop, no automatic POST retry, no local execution of returned tool calls |
 | IM channels | `forge/channels/` | A two-method `poll()` / `send()` contract plus a WeChat implementation: an inbound message becomes a task, the report becomes a message | The channel does not own the agent loop |
+| Computer use | `computer_use.py` `computer_win32.py` `computer_capture.py` `forge-gui/computer_panel.py` | Scoped observe→act runtime over a host-selected window: single-use observation refs with TTL, state digests, per-action host approval, no auto-replay; native Button/Edit control driver (no global input, password fields masked); bounded in-memory screenshot capture with no whole-desktop fallback; a Work-mode panel with a window picker and optional vision-model analysis | The host — never the model — selects the target HWND; raw screenshots stay local, cloud vision requires an explicit per-request grant; unsupported controls advertise no actions |
 | Desktop & editor | `desktop_services.py` `vscode_bridge.py` `vscode-extension/` | Desktop jobs and mediated connectors (credentials from a trusted host callback, every write confirmed per invocation); the editor talks over a local JSONL bridge | A permission gate, not an OS sandbox; the bridge opens no listening socket |
 | Hardening | `runtime_lock.py` `execution_guard.py` `project_rules.py` `code_review.py` | OS advisory locks for cooperating processes (never scan-as-lock), action/observation loop detection (interrupted actions are never auto-replayed), bounded AGENTS.md reading, tool-free review | Repository text can never grant capability; review findings are not authority |
 
