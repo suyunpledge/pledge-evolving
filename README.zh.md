@@ -49,7 +49,7 @@ Coding Mode——同一个内核上的三栏 IDE：左侧文件树与 Git 变更
 | 编排 | 零依赖移植图/超步语义：per-key reducer 的 state channels、interrupt/resume、执行检查点、supervisor/worker |
 | 自我进化 | 信号 → 候选 → 闸门 → 账本 → 回滚；长期目标永远要人点头，没有配置能绕开 |
 | 异构机队 | CLI worker 声明式描述、派发、失败分类、输出归一、成本护栏 |
-| 电脑操作 | Windows 上宿主选定的窗口绑定：截图只留在内存（模型永远拿不到原始像素），原生控件观察/操作走同一条权限链，可选的视觉分析需逐次云端授权 |
+| 电脑操作 | Windows 上宿主选定的窗口绑定：截图只留在内存（模型永远拿不到原始像素），原生控件观察/操作走同一条权限链，可选的视觉分析需逐次云端授权，坐标点击逐点确认后派发 |
 
 ## 四个入口，一个内核
 
@@ -101,7 +101,8 @@ Windows 桌面控制是有的，而且每一步都是刻意设计：
 2. **截图留在本地。** 采集跑在有界工作进程里（PrintWindow，≤1600 万像素、PNG ≤8 MiB）；模型拿到的是尺寸和 SHA-256 摘要——永远不是图片字节。
 3. **视觉分析逐次授权。** 只有显式勾选授权后，所选视觉模型才能看到当前截图；换窗口或换模型即撤销；重启后不残留任何状态。
 4. **原生控件 observe/act**（`computer_observe` / `computer_act`）与其它工具走同一条 ToolRegistry、Policy、ActionExecutor 链：单次观察引用 30 秒过期、状态指纹检测漂移、逐动作宿主审批、每次动作后重新观察。密码框与只读框屏蔽；不支持的控件不公布动作。
-5. 没有全桌面回退、没有坐标猜测、没有失败自动重放。宿主撤销会话时不需要等待 I/O。
+5. **坐标点击绑定截图。** `computer_click(x, y, reason)` 只接受与绑定窗口某次观察绑定的坐标；确认弹窗会展示带落点标记的截图，人工确认后才派发一次原生左键单击。像素漂移、窗口移动、DPI 变化或过期都会使点击失效；未知结果直接停止运行而不是重放。
+6. 没有全桌面回退、不在活的桌面上猜坐标、没有失败自动重放。宿主撤销会话时不需要等待 I/O。
 
 ## 和常见方案的区别
 
@@ -261,7 +262,7 @@ v0.8.0 之后长出三层东西：把别家编排语义移植进来的**编排�
 | 混合机队适配 | `vendors.py` `adapters.py` `cache_state.py` `context_plan.py` `local_service.py` | 长上下文「断崖 vs 斜坡」的成本判断、跨厂商缓存连续性、单请求最优计划、本地引擎专属分支（ollama / llamacpp / mnn） | 本地分支靠 provider 行的 `service` 显式声明，写错一律按云端处理 |
 | 批量作业 | `batch_execution.py` | OpenAI 兼容 Batch API 的提交 / 查询 / 取结果 / 取消；计划与作业落盘不含凭据 | 不轮询、不自动重试 POST、不在本地执行返回的工具调用 |
 | IM 通道 | `forge/channels/` | `poll()` / `send()` 两方法契约 + 微信实现：入站消息变任务、报告变消息 | 通道不持有 agent 循环 |
-| 电脑操作 | `computer_use.py` `computer_win32.py` `computer_capture.py` `forge-gui/computer_panel.py` | 宿主选定窗口上的作用域 observe→act 运行时：单次观察引用带 TTL、状态指纹、逐动作宿主审批、失败不自动重放；原生 Button/Edit 控件驱动（无全局输入，密码框屏蔽）；有界内存截图采集，无全桌面回退；Work 模式面板提供窗口选择器与可选视觉模型分析 | 目标 HWND 由宿主选择、模型不能指定；原始截图留在本地，云端视觉需逐次显式授权；不支持的控件不公布动作 |
+| 电脑操作 | `computer_use.py` `computer_win32.py` `computer_capture.py` `forge-gui/computer_panel.py` | 宿主选定窗口上的作用域 observe→act 运行时：单次观察引用带 TTL、状态指纹、逐动作宿主审批、失败不自动重放；截图绑定坐标点击（逐点人工确认）；原生 Button/Edit 控件驱动（无全局输入，密码框屏蔽）；有界内存截图采集，无全桌面回退；Work 模式面板提供窗口选择器与可选视觉模型分析 | 目标 HWND 由宿主选择、模型不能指定；原始截图留在本地，云端视觉需逐次显式授权；不支持的控件不公布动作 |
 | 桌面与编辑器 | `desktop_services.py` `vscode_bridge.py` `vscode-extension/` | 桌面作业与中介连接器（凭据由宿主回调提供，写操作逐次确认）；编辑器走本地 JSONL 桥 | 是权限闸门，不是 OS 沙箱；桥不开监听端口 |
 | 工程加固 | `runtime_lock.py` `execution_guard.py` `project_rules.py` `code_review.py` | 协作进程用 OS 咨询锁（不拿扫描当锁）、动作/观察循环检测（中断动作不自动重放）、AGENTS.md 有界读取、无工具审查 | 仓库文本永远不会授予能力；审查结论不是权威 |
 
