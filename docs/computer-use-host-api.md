@@ -2,6 +2,8 @@
 
 后续已落实 [截图视觉与 GUI 窗口选择器](computer-screenshot-vision.md)：Work Mode 提供本地窗口绑定、预览与独立视觉模型分析。以下保留原生输入宿主接口；GUI 视觉面板不默认授予此输入能力。
 
+视觉坐标单击另见 [点击协议与 GUI 使用](computer-coordinate-click.md)，使用独立 `computer_click` 能力开关，不复用原生控件 ref 或自动提升 Code 模式权限。
+
 参考 [OpenAI Computer Use 集成流程](https://developers.openai.com/api/docs/guides/tools-computer-use-integration) 的动作后回读，以及 [OpenClaw 浏览器工具](https://docs.openclaw.ai/tools/browser/agent-tools) 的目标绑定/观察引用。本实现使用 Forge 现有工具协议，不依赖 OpenAI SDK 或 Codex 的私有运行时，不调用外部 Agent CLI。
 
 ## 实际支持

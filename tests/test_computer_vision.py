@@ -297,5 +297,38 @@ class WindowTests(unittest.TestCase):
                 self.assertIsNone(panel.poll_after)
                 app._post_ui.assert_not_called()
 
+    def test_preview_maps_original_pixels_and_pending_approval_closes(self):
+        from types import SimpleNamespace
+        from click_approval import ClickApprovals,ApprovalView
+        with tempfile.TemporaryDirectory() as tmp:
+            scope=SecretScope();self.addCleanup(scope.close)
+            app=Mock(root=self.root,home=Path(tmp),user_rows=ROWS)
+            app._input_secret_scope=lambda:scope
+            app._active_workspace=lambda:Path(tmp)
+            with patch('computer_panel.list_windows',return_value=[]):
+                panel=ComputerPanel(app)
+                try:
+                    self.pump(lambda:not panel.busy)
+                    panel.session=ComputerSession(FakeDriver())
+                    panel.clicks.set(True)
+                    panel.frame={'png':fixture_png(),'width':400,'height':300,'sha256':'fixture','observation_id':'owned'}
+                    panel.preview_factor=3
+                    lane=Mock(last_frame=panel.frame)
+                    lane.call.return_value={'ok':True}
+                    with patch.object(panel,'manual_lane',return_value=lane),patch.object(panel,'work') as work:
+                        panel.click_preview(SimpleNamespace(x=35,y=20))
+                        work.call_args.args[0]()
+                    args=lane.call.call_args.args[1]
+                    self.assertEqual((args['x'],args['y']),(105,60))
+                    broker=panel.approvals
+                    result=[]
+                    worker=threading.Thread(target=lambda:result.append(broker.request('owned',
+                        {'x':1,'y':0,'reason':'test'}, {'png':fixture_png(),'width':2,'height':1},threading.Event())))
+                    worker.start()
+                    self.pump(lambda:panel.approval_view.active is not None)
+                    panel.close();self.pump(lambda:not worker.is_alive())
+                    self.assertEqual(result,[False])
+                finally:panel.close()
+
 
 if __name__ == '__main__': unittest.main()

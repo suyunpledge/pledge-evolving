@@ -1,5 +1,7 @@
 # 截图视觉与 GUI 窗口选择器
 
+后续已接入 [视觉坐标单击](computer-coordinate-click.md)：独立开关、模型定位、逐点确认、Windows 原生输入与执行后截图。下面的截图/模型授权说明继续适用。
+
 ## 使用
 
 从本分支运行 `python forge-gui/forge_gui_v2.py`。Work Mode 聊天顶部选择「电脑操作」：
@@ -27,7 +29,7 @@
 - `ComputerLane`：GUI 可信宿主适配器。配置、目标、授权、取消 token、工作区在 UI 线程快照，经 `create_execution_context` 和公共 `ActionExecutor` 执行；保留既有 deny/ask/mode/sandbox，仅增加选定窗口的精确读取 grant。与 Coding Mode registry 分离。
 - `computer_observe({})`：原生控件观察；受其既有控件数量/文本预算约束。
 - `computer_screenshot({})`：本地采集，工具结果只包含尺寸、摘要及目标，主模型不会通过此工具获得图片。
-- `computer_vision({"question": "描述可见界面"})`：须云端授权，重新采集当前目标并交给所选视觉模型；返回视觉描述、用量、图像摘要与目标。结果是非可信观察证据，不证明任何操作成功。
+- `computer_vision({"question": "描述可见界面"})`：须云端授权，重新采集当前目标并交给所选视觉模型；返回视觉描述、用量、图像摘要与目标。可选 `target` 用于结构化定位，返回原图像素坐标及观察 ID。结果是非可信观察证据，不证明任何操作成功。
 
 每个工具结果携带 `run_id/task_id/action_id/execution_state/authorization`；`<ForgeHome>/gui/computer-use/sessions/runtime/` 中记录意图与结果，不记录 PNG/base64。不会把完整图片加入主聊天历史。面板保存预览仅在内存；窗口绑定和发送授权不跨重启恢复。
 
@@ -37,6 +39,6 @@
 
 使用 `PrintWindow`、GDI 和标准库 PNG 编码，独立采集进程最多等待 6 秒，取消后终止采集子进程。最多 1600 万像素、PNG 8 MiB；采集后重验窗口身份和几何。窗口最小化、已关闭、移动、PID 不符、超限或不支持采集时明确失败。
 
-GPU/受保护内容和部分自绘应用可能返回黑图；不能把 PrintWindow 返回成功等同于内容完整。没有全桌面回退、绕过受保护内容、自动坐标点击、键盘热键或拖拽。已有标准控件输入宿主接口继续保留，但本面板不注册 `computer_act`。
+GPU/受保护内容和部分自绘应用可能返回黑图；不能把 PrintWindow 返回成功等同于内容完整。没有全桌面回退、绕过受保护内容、键盘热键或拖拽。新增的 `computer_click` 需要独立开启并逐次确认；面板仍不注册原生控件 `computer_act`。
 
 撤销会中断本机后续采集和 HTTP 等待，无法召回服务端已经收到的图片。视觉请求有现有 60 秒网络超时；OS DNS 解析仍受系统解析器控制。窗口选择是 Forge 的能力边界，不是操作系统沙箱。

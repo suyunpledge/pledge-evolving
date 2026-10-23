@@ -5,6 +5,7 @@ PrintWindow failure never falls back to capturing the user's whole desktop.
 import ctypes as c
 from ctypes import wintypes as w
 import hashlib
+import json
 import os
 from pathlib import Path
 import struct
@@ -26,6 +27,7 @@ def _capture(window, process_id):
         raise ValueError('Restore the selected window before capture')
     u.SetThreadDpiAwarenessContext.argtypes = [w.HANDLE]
     u.SetThreadDpiAwarenessContext(w.HANDLE(-4))
+    geometry = driver.geometry()
     rect = w.RECT()
     if not u.GetWindowRect(window, c.byref(rect)): raise ValueError('Window geometry unavailable')
     width, height = rect.right - rect.left, rect.bottom - rect.top
@@ -60,7 +62,8 @@ def _capture(window, process_id):
         if not g.GdiFlush(): raise OSError('Screenshot drawing did not flush')
         driver._validate()
         after = w.RECT(); u.GetWindowRect(window, c.byref(after))
-        if bytes(after) != bytes(rect): raise ValueError('Window moved during capture; retry preview')
+        if bytes(after) != bytes(rect) or driver.geometry() != geometry:
+            raise ValueError('Window moved during capture; retry preview')
         raw = c.string_at(bits, width*height*4)
         rgba = bytearray(len(raw))
         rgba[0::4], rgba[1::4], rgba[2::4], rgba[3::4] = raw[2::4], raw[1::4], raw[0::4], b'\xff'*(width*height)
@@ -68,7 +71,15 @@ def _capture(window, process_id):
         png = b'\x89PNG\r\n\x1a\n' + _chunk(b'IHDR', struct.pack('>IIBBBBB',width,height,8,6,0,0,0))
         png += _chunk(b'IDAT', zlib.compress(scan, 6)) + _chunk(b'IEND', b'')
         if len(png) > 8*1024*1024: raise ValueError('Screenshot exceeds 8 MiB')
-        return png
+        cl,ct,cr,cb = geometry['client_rect']
+        left,top = cl-rect.left,ct-rect.top
+        if not (0 <= left < cr-rect.left <= width and 0 <= top < cb-rect.top <= height):
+            raise ValueError('Client geometry is outside the captured image')
+        client_hash = hashlib.sha256()
+        for row in range(top,cb-rect.top):
+            client_hash.update(rgba[(row*width+left)*4:(row*width+cr-rect.left)*4])
+        return {'png':png, 'width':width, 'height':height, **geometry,
+                'client_sha256':client_hash.hexdigest()}
     finally:
         if old: g.SelectObject(dc, old)
         if bitmap: g.DeleteObject(bitmap)
@@ -98,10 +109,17 @@ def capture_window(window, process_id, *, cancelled=None, timeout=6):
             except subprocess.TimeoutExpired: pass
         if process.returncode != 0:
             raise RuntimeError(error.decode('utf-8', 'replace')[-500:])
+        if len(data) < 4: raise ValueError('Incomplete capture metadata')
+        size = struct.unpack('>I',data[:4])[0]
+        if not 0 < size <= 4096: raise ValueError('Invalid capture metadata size')
+        metadata = json.loads(data[4:4+size])
+        data = data[4+size:]
         if not data.startswith(b'\x89PNG\r\n\x1a\n') or len(data) > 8*1024*1024:
             raise ValueError('Capture returned an invalid PNG')
         width, height = struct.unpack('>II', data[16:24])
-        return {'png': data, 'width': width, 'height': height, 'sha256': hashlib.sha256(data).hexdigest(),
+        if metadata['width'] != width or metadata['height'] != height:
+            raise ValueError('Capture metadata and PNG dimensions differ')
+        return {**metadata, 'png': data, 'sha256': hashlib.sha256(data).hexdigest(),
                 'target': f'win32:{int(process_id)}:{int(window)}'}
     finally:
         if process.poll() is None: process.kill()
@@ -110,6 +128,9 @@ def capture_window(window, process_id, *, cancelled=None, timeout=6):
 
 if __name__ == '__main__':
     try:
-        sys.stdout.buffer.write(_capture(int(sys.argv[1]), int(sys.argv[2])))
+        frame = _capture(int(sys.argv[1]), int(sys.argv[2]))
+        png = frame.pop('png')
+        metadata = json.dumps(frame).encode('utf-8')
+        sys.stdout.buffer.write(struct.pack('>I',len(metadata))+metadata+png)
     except Exception as exc:
         sys.stderr.write(str(exc)); raise SystemExit(1)

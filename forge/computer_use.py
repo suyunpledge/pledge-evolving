@@ -23,6 +23,8 @@ class ComputerSession:
         self._lock = threading.RLock()
         self._revoked = threading.Event()
         self._observations = weakref.WeakKeyDictionary()
+        from .computer_coordinates import VisualClickSession
+        self.visual = VisualClickSession(self)
 
     def revoke(self):
         """Host stop/revoke must not wait for a pending approval lock."""
@@ -107,6 +109,7 @@ class ComputerSession:
                 if ctx.cancellation is not None and ctx.cancellation.is_set():
                     return self._failure('cancelled', 'Computer action cancelled before input')
                 self._observations.clear()  # Other lanes must reobserve even if the UI looks unchanged.
+                self.visual.observations.clear()
                 self.driver.act(args['ref'], args['action'], args.get('text', ''))
                 after = self._capture(ctx.secret_scope)
                 # Cancellation after dispatch must not hide possible effects.

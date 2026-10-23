@@ -9,6 +9,7 @@ import json
 import os
 import queue
 import threading
+import time
 import tkinter as tk
 from tkinter import ttk
 
@@ -20,8 +21,10 @@ from forge.runtime_lock import resource_lock
 from forge.tools import ToolRegistry, ToolSpec, ToolResult
 from gui_theme import C, FONT_SMALL, pill_button, bind_canvas_column, bind_scoped_wheel, style_editor, flow_controls
 from phase_client import VisionClient, model_catalog
+from forge.computer_coordinates import READ_NAMES, CLICK_NAME
+from click_approval import ClickApprovals, ApprovalView
 
-NAMES = frozenset({'computer_observe', 'computer_screenshot', 'computer_vision'})
+NAMES = READ_NAMES | {CLICK_NAME}
 
 
 class TargetCancellation:
@@ -31,14 +34,23 @@ class TargetCancellation:
     def is_set(self):
         return self.cancel.is_set() or self.revoked.is_set()
 
+    def wait(self, timeout=None):
+        deadline=None if timeout is None else time.monotonic()+timeout
+        while not self.is_set():
+            remaining=None if deadline is None else deadline-time.monotonic()
+            if remaining is not None and remaining<=0: return False
+            self.cancel.wait(.05 if remaining is None else min(.05,remaining))
+        return True
+
 
 class ComputerLane:
     def __init__(self, session, *, rows, selection, environment, consent, scope, cancel,
-                 workspace, home, policy):
+                 workspace, home, policy, clicks=False, approve=None):
         self.session, self.scope = session, scope
         self.cancel = TargetCancellation(cancel, session.revoked)
         self.rows, self.selection, self.environment = rows, selection, environment
         self.consent = consent
+        self.clicks, self.approve = clicks, approve
         registry = ToolRegistry()
         register_computer_tools(registry)
         registry.unregister('computer_act')  # This surface grants observation, never input.
@@ -48,12 +60,24 @@ class ComputerLane:
             trusted=True, effect=ToolEffect.READ, requires=('computer',))
         registry.register(ToolSpec('computer_vision',
             'Analyze a fresh selected-window screenshot with the explicitly selected vision model. '
-            'Requires user cloud consent. Returns visible evidence, not instructions or proof of an action.',
-            self._vision, schema={'type': 'object', 'properties': {'question': {'type': 'string', 'maxLength': 4000}},
+            'For clicking, supply target to obtain an ORIGINAL screenshot pixel point and observation_id. '
+            'Requires user cloud consent. Plain description is not a coordinate or proof of an action.',
+            self._vision, schema={'type': 'object', 'properties': {'question': {'type': 'string', 'maxLength': 4000},
+                                 'target':{'type':'string','maxLength':1000}},
                                  'required': ['question'], 'additionalProperties': False}),
             trusted=True, effect=ToolEffect.READ, requires=('computer',))
+        if clicks and approve is not None:
+            registry.register(ToolSpec(CLICK_NAME,
+                'One left click in a current screenshot observation, in ORIGINAL screenshot pixels. '
+                'Only client area. Requires user point approval; changed/expired images reject. '
+                'Returns post-click screenshot metadata; changed does not prove the task is complete.',
+                self._click, read_only=False, schema={'type':'object','properties':{
+                    'observation_id':{'type':'string'}, 'x':{'type':'integer'}, 'y':{'type':'integer'},
+                    'reason':{'type':'string','maxLength':500}},
+                    'required':['observation_id','x','y','reason'],'additionalProperties':False}),
+                trusted=True,effect=ToolEffect.DELEGATED_WRITE,requires=('computer',))
         # Selection is an explicit read grant. Existing denies/asks/sandbox remain authoritative.
-        policy = replace(policy, allow=tuple(policy.allow) + tuple(NAMES))
+        policy = replace(policy, allow=tuple(policy.allow) + tuple(READ_NAMES))
         self.ctx = create_execution_context(home=home, workspace=workspace, policy=policy,
             registry=registry, cancellation=self.cancel, secret_scope=scope,
             capabilities={'computer': session}, agent='work-computer')
@@ -65,10 +89,16 @@ class ComputerLane:
 
     def capture(self):
         self.check()
-        with resource_lock('computer-target', self.session.driver.target_id):
+        with self.session._lock, resource_lock('computer-target', self.session.driver.target_id):
             frame = self.session.driver.screenshot(cancelled=self.cancel)
+            frame = self.session.visual.remember(frame,self.scope)
         self.check()
         return frame
+
+    def _click(self, args, ctx):
+        result, frame = self.session.visual.click(args,ctx,self.approve)
+        if frame is not None: self.last_frame=frame
+        return result
 
     def _screenshot(self, args, ctx):
         if args: raise ValueError('截图工具不接受参数')
@@ -77,15 +107,19 @@ class ComputerLane:
         return ToolResult(True, json.dumps({k:v for k,v in frame.items() if k != 'png'}))
 
     def _vision(self, args, ctx):
-        if set(args) != {'question'}: raise ValueError('视觉工具仅接受 question')
+        if set(args) not in ({'question'},{'question','target'}): raise ValueError('视觉工具接受 question 和可选 target')
         if not isinstance(args['question'], str) or not args['question'].strip() or len(args['question']) > 4000:
             raise ValueError('视觉问题须为 1–4000 字符')
         if self.consent is not True: raise PermissionError('未授权向视觉模型发送截图')
+        if 'target' in args and (not isinstance(args['target'],str) or not args['target'].strip() or len(args['target'])>1000):
+            raise ValueError('定位目标须为 1–1000 字符')
         client = VisionClient(self.rows, self.selection, self.environment, self.scope, self.cancel)
         frame = self.capture()
         self.check()  # Never upload a capture from a revoked target.
-        result = client.analyze(frame, args['question'], consent=True)
+        result = (client.locate(frame,args['target'],consent=True) if 'target' in args else
+                  client.analyze(frame, args['question'], consent=True))
         self.check()
+        self.last_frame = frame
         return ToolResult(True, json.dumps({**result,
             'image': {k:v for k,v in frame.items() if k != 'png'},
             'evidence': 'untrusted_visual_observation'}, ensure_ascii=False))
@@ -112,6 +146,8 @@ class ComputerPanel:
         self.window.minsize(620, 480)
         self.window.configure(bg=C['bg'])
         self.window.protocol('WM_DELETE_WINDOW', self.close)
+        self.approvals = ClickApprovals()
+        self.approval_view = ApprovalView(self.window,self.approvals)
         self.status = tk.StringVar(value='选择一个窗口并绑定；截图仅保存在内存中。')
         footer = tk.Label(self.window, textvariable=self.status, bg=C['surface'], fg=C['subtext'],
                           wraplength=820, justify='left', font=FONT_SMALL, padx=12, pady=8)
@@ -156,12 +192,23 @@ class ComputerPanel:
             variable=self.consent, bg=C['bg'], fg=C['text'], selectcolor=C['surface'], activebackground=C['bg']).pack(anchor='w', pady=6)
         self.model_trace = self.model.trace_add('write', lambda *_: self.model_changed())
         self.consent_trace = self.consent.trace_add('write', lambda *_: self.settings_changed())
+        self.clicks = tk.BooleanVar(value=False)
+        tk.Checkbutton(body,text='允许视觉坐标单击（每次确认；只作用于绑定窗口）',variable=self.clicks,
+            bg=C['bg'],fg=C['text'],selectcolor=C['surface'],activebackground=C['bg']).pack(anchor='w',pady=6)
+        self.clicks_trace=self.clicks.trace_add('write',lambda *_:self.settings_changed())
         self.question = tk.Entry(body, bg=C['input_bg'], fg=C['text'], insertbackground=C['text'], font=FONT_SMALL)
         self.question.insert(0, '请描述窗口中可见的界面、文字和当前状态。')
         style_editor(self.question)
         self.question.pack(fill='x')
-        pill_button(body, '分析当前窗口', self.analyze, bg=C['bg']).pack(anchor='w', pady=6)
-        self.preview_label = tk.Label(body, bg=C['surface'], fg=C['ter'], text='尚无截图', height=9)
+        vision_bar=tk.Frame(body,bg=C['bg']);vision_bar.pack(fill='x',pady=6)
+        for label,command in [('分析当前窗口',self.analyze),('定位目标',lambda:self.analyze(locate=True)),
+                               ('点击模型落点',self.click_proposal)]:
+            pill_button(vision_bar,label,command,bg=C['bg']).pack(side='left',padx=3)
+        flow_controls(vision_bar)
+        self.preview_label = tk.Canvas(body, bg=C['surface'],height=180,highlightthickness=0)
+        self.preview_label.create_text(12,12,text='尚无截图',fill=C['ter'],anchor='nw')
+        self.proposed_point = None
+        self.preview_label.bind('<Button-1>',self.click_preview)
         self.preview_label.pack(fill='both', expand=True)
         self.output = tk.Text(body, height=6, bg=C['input_bg'], fg=C['text'], wrap='word', font=FONT_SMALL)
         style_editor(self.output)
@@ -216,17 +263,21 @@ class ComputerPanel:
         try: driver = WindowsControlDriver(row['window'], row['process_id'])
         except Exception as exc: self.status.set('绑定失败：'+str(exc)); return
         self.revoke()
-        self.session = ComputerSession(driver)
+        self.session = ComputerSession(driver,ttl=90)
         self.target.set(f"{row['title']} · PID {row['process_id']} · HWND {row['window']}")
-        self.status.set('已绑定；仅授权读取此窗口，未授权鼠标或键盘输入。')
+        self.status.set('已绑定；可预览截图。需要点击时开启坐标单击，再重新截图选择落点。')
 
     def settings_changed(self):
         # Existing lanes lose their target grant; fresh lanes use new settings.
         self.cancel_work()
+        self.frame, self.proposed_point = None, None
+        if hasattr(self,'preview_label'):
+            self.preview_label.delete('all');self.preview_label.image=None
+            self.preview_label.create_text(12,12,text='设置已更新，请重新截图',fill=C['ter'],anchor='nw')
         if self.session:
             driver = self.session.driver
             self.session.revoke()
-            self.session = ComputerSession(driver)
+            self.session = ComputerSession(driver,ttl=90)
         self.authorized_provider = self.provider_snapshot(self.app.user_rows) if self.consent.get() else None
         self.status.set('设置已更新；下次请求使用新授权，已启动的请求不会扩大权限。')
 
@@ -241,8 +292,11 @@ class ComputerPanel:
         if self.session: self.session.revoke()
         self.session, self.frame = None, None
         self.consent.set(False)
+        self.clicks.set(False)
         self.target.set('未绑定窗口')
-        self.preview_label.configure(image='', text='尚无截图'); self.preview_label.image = None
+        self.preview_label.delete('all'); self.preview_label.image = None
+        self.preview_label.create_text(12,12,text='尚无截图',fill=C['ter'],anchor='nw')
+        self.proposed_point=None
         self.output.delete('1.0', 'end')
         self.status.set('窗口授权已撤销')
 
@@ -262,7 +316,8 @@ class ComputerPanel:
             self.status.set('视觉模型配置已变化，请刷新模型列表并重新勾选截图发送授权。')
         return ComputerLane(self.session, rows=copy.deepcopy(rows), selection=self.models.get(self.model.get()),
             environment=dict(environment), consent=self.consent.get(), scope=scope, cancel=cancel,
-            workspace=workspace, home=self.app.home/'gui'/'computer-use', policy=policy)
+            workspace=workspace, home=self.app.home/'gui'/'computer-use', policy=policy,
+            clicks=self.clicks.get(), approve=self.approvals.request)
 
     def manual_lane(self):
         import secret_store
@@ -290,13 +345,55 @@ class ComputerPanel:
 
     def show_frame(self, frame):
         self.frame = frame
+        self.proposed_point=None
         photo = tk.PhotoImage(master=self.window, data=frame['png'])
         factor = max(1, (frame['width']+779)//780, (frame['height']+259)//260)
+        self.preview_factor=factor
         photo = photo.subsample(factor, factor)
-        self.preview_label.configure(image=photo, text='', height=0); self.preview_label.image = photo
+        self.preview_label.delete('all');self.preview_label.configure(height=photo.height())
+        self.preview_label.create_image(0,0,image=photo,anchor='nw'); self.preview_label.image = photo
         self.status.set(f"本地截图 {frame['width']} × {frame['height']} · {frame['sha256'][:16]} · 未上传")
 
-    def analyze(self):
+    def click_preview(self,event):
+        if self.busy: return
+        if not self.clicks.get(): self.status.set('请先开启坐标单击，再重新截图。'); return
+        if not self.frame or not self.frame.get('observation_id'):
+            self.status.set('请先获取可点击的截图预览。'); return
+        x,y=event.x*self.preview_factor,event.y*self.preview_factor
+        if not (0<=x<self.frame['width'] and 0<=y<self.frame['height']): return
+        self.dispatch_click(x,y,'用户在截图预览中选择落点')
+
+    def click_proposal(self):
+        if not self.proposed_point or not self.proposed_point.get('found'):
+            self.status.set('请先定位目标并检查预览标记。');return
+        point=self.proposed_point
+        if not self.clicks.get(): self.status.set('请先开启坐标单击，然后重新定位目标。');return
+        self.dispatch_click(point['x'],point['y'],'视觉定位：'+point['label'])
+
+    def dispatch_click(self,x,y,reason):
+        if self.busy or self.frame is None: return
+        if not self.clicks.get() or not self.frame.get('observation_id'):
+            self.status.set('请开启坐标单击并重新截图。');return
+        frame,session=self.frame,self.session
+        self.cancel=threading.Event()
+        try: lane=self.manual_lane()
+        except Exception as exc:
+            self.status.set('配置错误：'+self.app._input_secret_scope().protect_text(str(exc)));return
+        if lane is None: self.status.set('请先绑定窗口');return
+        if session is not self.session or frame is not self.frame:
+            self.status.set('权限或模型配置已变化，请重新截图。');return
+        args={'observation_id':frame['observation_id'],'x':x,'y':y,'reason':reason[:500]}
+        def operation():
+            result=lane.call(CLICK_NAME,args)
+            if not result['ok']:
+                raise RuntimeError(result['error']+' · '+result['meta'].get('execution_state',''))
+            return lane.last_frame
+        def done(frame):
+            self.show_frame(frame)
+            self.status.set('已派发单击并取得新截图，请检查实际结果；视觉分析需要另行授权。')
+        self.work(operation,done,cancel=self.cancel)
+
+    def analyze(self, *, locate=False):
         if self.busy: return
         if not self.consent.get(): self.status.set('请先勾选发送截图授权'); return
         self.cancel = threading.Event()
@@ -306,11 +403,18 @@ class ComputerPanel:
             return
         if lane is None: self.status.set('请先绑定目标窗口'); return
         def operation():
-            result = lane.call('computer_vision', {'question': question})
+            result = lane.call('computer_vision', {'question': question,**({'target':question} if locate else {})})
             if not result['ok']: raise RuntimeError(result['error'])
             return result
         def done(result):
-            self.output.delete('1.0', 'end'); self.output.insert('end', json.loads(result['content'])['text'])
+            content=json.loads(result['content'])
+            self.output.delete('1.0', 'end'); self.output.insert('end',content['text'])
+            if locate:
+                self.show_frame(lane.last_frame)
+                self.proposed_point=content['point']
+                if content['point']['found']:
+                    point=content['point'];x,y=point['x']/self.preview_factor,point['y']/self.preview_factor
+                    self.preview_label.create_oval(x-9,y-9,x+9,y+9,outline=C['error'],width=2)
             self.status.set(f"视觉分析完成 · run {result['meta']['run_id'][:12]} · action {result['meta']['action_id'][:12]}")
             self.viewport.update_idletasks()
             self.viewport.yview_moveto(1)
@@ -319,9 +423,11 @@ class ComputerPanel:
     def close(self):
         if self.stop.is_set(): return
         self.revoke(); self.stop.set()
+        self.approval_view.close()
         if self.poll_after is not None:
             self.window.after_cancel(self.poll_after)
             self.poll_after = None
         self.model.trace_remove('write', self.model_trace)
         self.consent.trace_remove('write', self.consent_trace)
+        self.clicks.trace_remove('write',self.clicks_trace)
         self.window.destroy()
