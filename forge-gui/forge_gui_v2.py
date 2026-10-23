@@ -5131,6 +5131,9 @@ class ForgeGuiApp:
         self.clear_chat_btn = pill_button(right, tr("新建对话"), self._new_session,
                                          icon="＋", kind="ghost", bg=C["chat"], padx=8)
         self.clear_chat_btn.pack(side=tk.RIGHT, padx=(0, 6))
+        self.computer_entry_btn = pill_button(right, '电脑操作', self._open_computer_panel,
+                                             kind='ghost', bg=C['chat'], padx=8)
+        self.computer_entry_btn.pack(side=tk.RIGHT, padx=(0, 6))
         self.market_entry_btn = pill_button(right, tr("插件市场"), self._open_plugin_market,
                                             kind="quiet", bg=C["chat"])
         # Marketplace is reached from the sidebar shortcut.
@@ -7505,6 +7508,15 @@ class ForgeGuiApp:
             previous = self._fallback_secret_scope = (sid, SecretScope())
         return previous[1]
 
+    def _open_computer_panel(self):
+        from computer_panel import ComputerPanel
+        panel = getattr(self, 'computer_panel', None)
+        if panel is None or panel.stop.is_set():
+            self.computer_panel = ComputerPanel(self)
+        else:
+            panel.window.deiconify()
+            panel.window.lift()
+
     def _do_send(self):
         if self._sending:
             return
@@ -7617,6 +7629,15 @@ class ForgeGuiApp:
             if desktop is not None:
                 desktop.current_workspace = selected_workspace
                 with desktop.lock: desktop.rows = copy.deepcopy(self.user_rows)
+            computer_lane = None
+            panel = getattr(self, 'computer_panel', None)
+            if panel is not None and not panel.stop.is_set():
+                from forge.config import Config
+                from forge.policy import Policy
+                computer_config = Config(); computer_config.apply_patch(phase_rows)
+                computer_lane = panel.lane(rows=phase_rows, environment=phase_env, scope=phase_scope,
+                    cancel=cancel_event, workspace=selected_workspace,
+                    policy=Policy.from_config(computer_config, workspace=selected_workspace, non_interactive=True))
 
             def worker():
                 try:
@@ -7672,7 +7693,11 @@ class ForgeGuiApp:
                             self._post_ui(desktop.refresh_workspace)
                         return response
                     from forge.desktop_services import OPERATIONS as connector_operations
-                    plugin_schemas, plugin_rt = self._reload_plugin_tools(reserved_names=bridge_names | set(connector_operations),
+                    from computer_panel import NAMES as computer_names
+                    computer_schemas = computer_lane.schemas() if computer_lane is not None else []
+                    if computer_lane is not None and bridge_names & computer_names:
+                        raise GatewayError('电脑工具名称与 Gateway 冲突，请停止旧的电脑工具宿主后重试')
+                    plugin_schemas, plugin_rt = self._reload_plugin_tools(reserved_names=bridge_names | set(connector_operations) | computer_names,
                         workspace=plugin_workspace, session=plugin_session,
                         dispatch=mediated_dispatch)
                     if plugin_schemas:
@@ -7683,6 +7708,7 @@ class ForgeGuiApp:
                                          if item['function']['name'] not in occupied]
                     connector_names = {item['function']['name'] for item in connector_schemas}
                     tools = list(tools or []) + connector_schemas
+                    tools += computer_schemas
                     if cancel_event.is_set():
                         raise GenerationCancelled("已停止生成")
                     n_bridge = len(bridge_names)
@@ -7693,6 +7719,8 @@ class ForgeGuiApp:
                         parts.append(f"插件 {len(plugin_schemas)}")
                     if connector_schemas:
                         parts.append(tr('连接器')+' '+str(len(connector_schemas)))
+                    if computer_schemas:
+                        parts.append('窗口视觉 '+str(len(computer_schemas)))
                     if parts:
                         self._post_ui(self._set_request_status,
                                       f"已加载 {' + '.join(parts)} 工具，正在生成…")
@@ -7708,6 +7736,7 @@ class ForgeGuiApp:
 
                     TOOL_ROUNDS = 8   # 防失控：模型最多连续调 8 轮工具
                     from forge.execution_guard import ExecutionGuard
+                    from work_tools import prepare_calls, invoke as invoke_work_tool
                     execution_guard = ExecutionGuard()
                     rounds = 0
                     while True:
@@ -7723,7 +7752,7 @@ class ForgeGuiApp:
                         # 但测试 stub/异常实现可能返回 None —— 不能因此炸掉整轮
                         turn_text = "".join(acc[round_start:]) or (
                             result.text if result is not None else "")
-                        calls = (list(getattr(result, "tool_calls", None) or [])
+                        calls = (prepare_calls(getattr(result, "tool_calls", None) or [])
                                  if result is not None else [])
                         if not calls:
                             break   # 纯文本 → 本轮对话完成
@@ -7743,27 +7772,35 @@ class ForgeGuiApp:
                                 args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
                             except ValueError:
                                 args = {"_raw": str(raw_args)}
-                            if not isinstance(args, dict):
-                                args = {"value": args}
                             try:
                                 # The gateway owns its names even if a stale runtime claims them.
                                 _call_t0 = time.monotonic()
-                                if name in bridge_names:
-                                    if desktop is not None:
-                                        args = desktop.review_change(name,args,selected_workspace,phase_scope,cancel_event)
-                                    resp = client.call_tool(name, args)
-                                    if desktop is not None and isinstance(resp,dict) and resp.get('ok') and '_expected_revisions' in args:
-                                        self._post_ui(desktop.refresh_workspace)
-                                elif name in connector_names:
-                                    resp = desktop.call(name,args,cancel_event)
-                                elif plugin_rt is not None and name in plugin_rt.tools:
-                                    resp = plugin_rt.call(name, args)
-                                else:
-                                    resp = client.call_tool(name, args)
-                                ok_flag = bool(resp.get("ok")) if isinstance(resp, dict) else True
+                                def dispatch_work():
+                                    nonlocal args
+                                    if cancel_event.is_set():
+                                        raise GenerationCancelled('已停止工具调用')
+                                    if name in bridge_names:
+                                        if desktop is not None:
+                                            args = desktop.review_change(name,args,selected_workspace,phase_scope,cancel_event)
+                                        response = client.call_tool(name, args)
+                                        if desktop is not None and response.get('ok') and '_expected_revisions' in args:
+                                            self._post_ui(desktop.refresh_workspace)
+                                        return response
+                                    if name in connector_names:
+                                        return desktop.call(name,args,cancel_event)
+                                    if name in computer_names:
+                                        if computer_lane is None:
+                                            return {'ok': False, 'error': '请先在电脑操作面板绑定目标窗口',
+                                                    'meta': {'execution_state': 'not_started'}}
+                                        return computer_lane.call(name, args)
+                                    if plugin_rt is not None and name in plugin_rt.tools:
+                                        return plugin_rt.call(name, args)
+                                    return client.call_tool(name, args)
+                                resp = invoke_work_tool(args, dispatch_work)
+                                ok_flag = resp['ok']
                                 body_text = json.dumps(resp, ensure_ascii=False)
                             except Exception as tool_exc:
-                                resp = {"ok": False,
+                                resp = {"ok": False, "meta": {"execution_state": "unknown"},
                                         "error": f"{type(tool_exc).__name__}: {tool_exc}"}
                                 ok_flag = False
                                 body_text = str(tool_exc)
@@ -7783,6 +7820,9 @@ class ForgeGuiApp:
                                 "elapsed": round(_call_elapsed, 2),
                                 "ok": ok_flag,
                             })
+                            if resp.get('meta', {}).get('execution_state') == 'unknown':
+                                self._post_ui(self._post_tool_round, rows, rounds + 1)
+                                raise GatewayError('工具执行结果未知，已停止后续操作；请检查目标状态与工具记录后再继续。')
                         rounds += 1
                         if rows:
                             self._post_ui(self._post_tool_round, rows, rounds)
@@ -7791,7 +7831,7 @@ class ForgeGuiApp:
                         if rounds >= TOOL_ROUNDS:
                             self._post_ui(self._post_note_to_msg,
                                           f"已达工具调用轮数上限（{TOOL_ROUNDS} 轮），停止继续调用")
-                            break
+                            raise GatewayError('已达工具调用轮数上限，任务尚未验证完成；请检查工具结果后继续。')
 
                     full = "".join(acc)
                     if cancel_event.is_set():
@@ -7922,15 +7962,18 @@ class ForgeGuiApp:
             if not msg._text_source and not msg._has_details:
                 msg.pack_forget()  # No empty assistant shell beside the error.
         area = getattr(self, "chat_area", None)
+        uncertain = '工具执行结果未知' in message
         if area is not None:
-            area.add_notice(message, tone="error", title=tr("模型请求失败"), actions=[
+            actions = [{"label": tr("打开工作区"), "command": self._open_workspace}] if uncertain else [
                 {"label": tr("切换模型"), "command": self._open_model_menu},
                 {"label": tr("编辑后重试"), "command": lambda: (self.send_var.set(prompt), self.input_card.focus_entry())},
-            ])
+            ]
+            area.add_notice(message, tone="error", title=tr("工具结果待确认") if uncertain else tr("模型请求失败"), actions=actions)
         self._push_terminal(str(redact(f'[chat] {message}')))
         if not self.send_var.get():
             self.send_var.set(prompt)
-        self._set_status("请求失败，消息已保留；检查 gateway 后可重试", "error")
+        self._set_status("操作结果待确认，请先检查目标状态与工具记录" if uncertain else
+                         "请求失败，消息已保留；检查 gateway 后可重试", "error")
 
     def _stop_send(self):
         """请求中止当前回复，即时反馈并等待工作线程结束连接。"""
@@ -8067,6 +8110,9 @@ class ForgeGuiApp:
                 pass
 
     def _close_for_real(self):
+        panel = getattr(self, 'computer_panel', None)
+        if panel is not None:
+            panel.close()
         self._closing = True
         desktop = getattr(self,'desktop_features',None)
         if desktop is not None:

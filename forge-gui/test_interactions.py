@@ -13,7 +13,7 @@ from unittest.mock import Mock, patch
 
 import forge_gui_v2 as gui
 import workspace as ws
-from forge_client import ChatMessage, ForgeGatewayClient, GenerationCancelled
+from forge_client import ChatMessage, ForgeGatewayClient, GenerationCancelled, CompletionResult
 from interaction_model import (model_label,read_attachment, compose_prompt, task_command, task_outcome,
                                gateway_settings, select_provider)
 
@@ -70,7 +70,8 @@ class ContractTests(unittest.TestCase):
         args.workspace = "."
         server = Mock()
         server.serve_forever.side_effect = KeyboardInterrupt
-        with patch("forge.gateway.serve", return_value=server) as serve:
+        with tempfile.TemporaryDirectory() as home, patch("forge.gateway.serve", return_value=server) as serve:
+            args.home = home  # Normally supplied by cli.main before cmd_gateway.
             self.assertEqual(cmd_gateway(args), 0)
         self.assertEqual(serve.call_args.args[0].wire, "openai")
 
@@ -284,6 +285,150 @@ class GuiInteractionTests(unittest.TestCase):
         self.assertFalse(self.app.client.called)
         self.assertEqual(self.app._chat_history, [])
         self.assertEqual(self.app.send_var.get(), "cancel me")
+
+    def test_work_unknown_receipt_stops_batch_and_next_model_turn(self):
+        calls, turns = [], []
+        target = Path(self.tmp.name) / 'action.txt'
+        class Client:
+            def health(self, **kw): return True, 'ok'
+            def list_tools(self):
+                return [{'type': 'function', 'function': {'name': 'operate', 'parameters': {'type': 'object'}}}]
+            def stream_chat(self, messages, **kw):
+                turns.append(1)
+                return CompletionResult('', tool_calls=[
+                    {'id': str(i), 'function': {'name': 'operate', 'arguments': '{}'}} for i in range(2)])
+            def call_tool(self, name, args):
+                calls.append(name)
+                target.write_text('changed')
+                return {'ok': False, 'meta': {'execution_state': 'unknown'}}
+        self.app.client = Client()
+        self.app.send_var.set('operate then inspect')
+        with patch.object(self.app, '_chat_failed') as failed:
+            self.app._do_send()
+            self.pump(lambda: not self.app._sending)
+        self.assertEqual(calls, ['operate'])
+        self.assertEqual(turns, [1])
+        self.assertEqual(target.read_text(), 'changed')
+        self.assertIn('结果未知', failed.call_args.args[0])
+        self.assertEqual(self.app._chat_history, [])
+
+    def test_selected_window_vision_is_consumed_by_work_agent(self):
+        from computer_panel import ComputerLane
+        from forge.computer_use import ComputerSession
+        from forge.policy import Policy
+        class FakeDriver:
+            target_id = 'owned:fixture'
+            captures = 0
+            def screenshot(self, **kwargs):
+                self.captures += 1
+                return {'png':b'fixture', 'width':2, 'height':1,'sha256':'fixture','target':self.target_id}
+        driver = FakeDriver()
+        session = ComputerSession(driver)
+        panel = Mock()
+        panel.stop.is_set.return_value = False
+        def make_lane(**kwargs):
+            kwargs.pop('policy')
+            kwargs.pop('rows')
+            return ComputerLane(session, rows=[], selection=('vision','doubao-seed-evolving'),
+                consent=True, home=self.app.home/'computer', policy=Policy(workspace=kwargs['workspace']), **kwargs)
+        panel.lane.side_effect = make_lane
+        self.app.computer_panel = panel
+        consumed, schemas = [], []
+        class Client:
+            def health(self, **kw): return True, 'ok'
+            def list_tools(self): return []
+            def stream_chat(self, messages, **kw):
+                schemas.extend(kw['tools'])
+                receipts = [m for m in messages if m.role == 'tool']
+                if not receipts:
+                    return CompletionResult('', tool_calls=[{'id':'vision-1','function': {
+                        'name':'computer_vision', 'arguments':json.dumps({'question':'Describe window'})}}])
+                consumed.append(json.loads(receipts[-1].content))
+                kw['on_chunk']('已根据视觉结果回答')
+                return CompletionResult('已根据视觉结果回答')
+            def call_tool(self, *args): raise AssertionError('Local vision must not use Gateway')
+        self.app.client = Client()
+        self.app.send_var.set('看看绑定窗口')
+        with patch('computer_panel.VisionClient') as vision, patch.object(self.app,'_chat_failed') as failed:
+            vision.return_value.analyze.return_value = {'text':'Fixture image visible','model':'fixture','usage':{}}
+            self.app._do_send()
+            self.pump(lambda:not self.app._sending)
+        failed.assert_not_called()
+        self.assertEqual(driver.captures,1)
+        self.assertTrue(consumed[0]['ok'])
+        self.assertTrue(consumed[0]['meta']['run_id'])
+        self.assertIn('computer_vision', [s['function']['name'] for s in schemas])
+        self.assertNotIn('computer_act', [s['function']['name'] for s in schemas])
+        self.assertIn('Fixture image visible', consumed[0]['content'])
+
+    def test_work_grounding_click_and_post_evidence_stay_on_same_run(self):
+        from computer_panel import ComputerLane
+        from forge.computer_use import ComputerSession
+        from forge.policy import Policy
+        class Driver:
+            target_id='owned:coordinate'
+            clicked=False
+            def screenshot(self,**kw):
+                return {'png':b'fixture','width':400,'height':300,'rect':[0,0,400,300],
+                    'client_rect':[10,30,390,290],'dpi':144,'client_sha256':str(self.clicked),
+                    'sha256':str(self.clicked),'target':self.target_id}
+            def prepare_coordinate(self,frame,x,y):return {'x':x,'y':y}
+            def coordinate_click(self,*args,**kw):self.clicked=True
+        driver=Driver();computer=ComputerSession(driver)
+        panel=Mock();panel.stop.is_set.return_value=False
+        def lane(**kw):
+            kw.pop('policy');kw.pop('rows')
+            return ComputerLane(computer,rows=[],selection=None,consent=True,home=self.app.home/'computer',
+                policy=Policy(workspace=kw['workspace']),clicks=True,approve=lambda *args:True,**kw)
+        panel.lane.side_effect=lane;self.app.computer_panel=panel
+        receipts=[]
+        class Client:
+            def health(self,**kw):return True,'ok'
+            def list_tools(self):return []
+            def stream_chat(self,messages,**kw):
+                tools=[json.loads(m.content) for m in messages if m.role=='tool']
+                if not tools:
+                    name,args='computer_vision',{'question':'Find VERIFY','target':'VERIFY'}
+                elif len(tools)==1:
+                    content=json.loads(tools[-1]['content'])
+                    name,args='computer_click',{'observation_id':content['image']['observation_id'],
+                        'x':content['point']['x'],'y':content['point']['y'],'reason':'VERIFY'}
+                else:
+                    receipts.extend(tools);kw['on_chunk']('已取得点击后证据')
+                    return CompletionResult('已取得点击后证据')
+                return CompletionResult('',tool_calls=[{'id':str(len(tools)),'function':{
+                    'name':name,'arguments':json.dumps(args)}}])
+            def call_tool(self,*args):raise AssertionError('Local input must not use Gateway')
+        self.app.client=Client();self.app.send_var.set('定位后点击 VERIFY')
+        with patch('computer_panel.VisionClient') as vision,patch.object(self.app,'_chat_failed') as failed:
+            vision.return_value.locate.return_value={'text':'VERIFY','model':'fixture','usage':{},
+                'point':{'found':True,'x':200,'y':150,'label':'VERIFY'}}
+            self.app._do_send();self.pump(lambda:not self.app._sending)
+        failed.assert_not_called();self.assertTrue(driver.clicked)
+        self.assertEqual(len(receipts),2)
+        self.assertEqual(receipts[0]['meta']['run_id'],receipts[1]['meta']['run_id'])
+        self.assertNotEqual(receipts[0]['meta']['action_id'],receipts[1]['meta']['action_id'])
+        self.assertEqual(receipts[1]['meta']['verification'],'post_screenshot')
+
+    def test_work_round_limit_is_not_archived_as_success(self):
+        turns = []
+        class Client:
+            def health(self, **kw): return True, 'ok'
+            def list_tools(self):
+                return [{'type': 'function', 'function': {'name': 'operate'}}]
+            def stream_chat(self, messages, **kw):
+                turns.append(1)
+                return CompletionResult('', tool_calls=[{'id': str(len(turns)), 'function': {
+                    'name': 'operate', 'arguments': json.dumps({'step': len(turns)})}}])
+            def call_tool(self, name, args): return {'ok': True, 'content': str(args)}
+        self.app.client = Client()
+        self.app.send_var.set('continuous operation')
+        with patch.object(self.app, '_chat_failed') as failed:
+            self.app._do_send()
+            self.pump(lambda: not self.app._sending)
+        self.assertEqual(len(turns), 8)
+        self.assertIn('轮数上限', failed.call_args.args[0])
+        self.assertEqual(self.app._chat_history, [])
 
     def test_multiline_input_and_local_command(self):
         # 重构后 send_var 不再绑 entry 的 textvariable（Text 不支持多行

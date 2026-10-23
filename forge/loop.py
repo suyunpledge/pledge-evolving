@@ -540,6 +540,7 @@ class Agent:
             checkpoints=self.checkpoints,
             session=self.session,
             limits=self.limits,
+            wire_hint=self.wire_hint,
             name=child_name,
             depth=self.depth + 1,
             budget=self.budget,
@@ -566,8 +567,16 @@ class Agent:
         try:
             report = child.run(task)
         except Exception as exc:  # a failed child must not kill the parent
-            self._emit(type="subagent_error", error=f"{type(exc).__name__}: {exc}")
-            return ToolResult(ok=False, error=f"subagent failed: {exc}")
+            from .execution_guard import workflow_status
+            status = workflow_status(child.events, child._run_id)
+            unknown = status['requires_inspection']
+            self._emit(type="subagent_error", error=f"{type(exc).__name__}: {exc}",
+                       child_run_id=child._run_id, execution_state='unknown' if unknown else 'completed')
+            return ToolResult(ok=False, error=f"subagent failed: {exc}", meta={
+                'child_run_id': child._run_id, 'error_code': 'subagent_error',
+                'execution_state': 'unknown' if unknown else 'completed'})
+        finally:
+            child.secret_scope.close()
         # A child's events are part of the parent's audit story: fold them
         # into the parent stream (marked), so "covers subagents" is
         # verifiable from the root report, not just the shared session log.
@@ -598,9 +607,18 @@ class Agent:
         child_delta += int(getattr(child, "_child_tokens", 0) or 0)
         self._child_tokens = int(getattr(self, "_child_tokens", 0)) + child_delta
         clean = sanitise_child_output(report.text)
+        child_result = report.as_result()
         self._emit(type="subagent_result", chars=len(clean), steps=len(report.steps),
-                   child_run_id=report.run_id, child_task_id=report.task_id)
-        return ToolResult(ok=True, content=clean[: self.limits.max_tool_result], meta={"depth": child.depth})
+                   child_run_id=report.run_id, child_task_id=report.task_id,
+                   outcome=child_result.outcome, error_code=child_result.error_code,
+                   execution_state=child_result.execution_state)
+        succeeded = child_result.outcome == 'succeeded'
+        return ToolResult(ok=succeeded,
+            content=clean[:self.limits.max_tool_result] if succeeded else '',
+            error='' if succeeded else clean[:self.limits.max_tool_result], meta={
+                'depth': child.depth, 'child_run_id': report.run_id, 'child_task_id': report.task_id,
+                'child_outcome': child_result.outcome, 'error_code': child_result.error_code,
+                'execution_state': child_result.execution_state})
 
     def _dispatch_consult(self, task: str, child_name: str, child_policy: Policy) -> dict[str, Any]:
         """Ask the router/teams seats about an upcoming subagent dispatch.
@@ -1063,7 +1081,7 @@ class Agent:
 
             text = completion.text or ""
             self._check_cancel()
-            native_raw = list(getattr(completion, "tool_calls", None) or [])
+            native_raw = getattr(completion, "tool_calls", None) or []
             wire = str(getattr(completion, "wire", None) or self.wire_hint)
             native_calls: list[toolwire.ToolCall] = []
 
@@ -1071,13 +1089,21 @@ class Agent:
                 # answer EVERY call the model issued this turn: real models batch
                 # several tool calls into one assistant message, and OpenAI-shaped
                 # APIs reject the replay unless each id gets its own tool message
-                for first in native_raw:
-                    native_calls.append(toolwire.ToolCall(
-                        id=str(first.get("id") or ""),
-                        name=str(first.get("name") or ""),
-                        args=dict(first.get("args") or {}),
-                        wire=str(first.get("wire") or wire),
-                    ))
+                try:
+                    native_calls = toolwire.normalize_native_calls(native_raw, wire)
+                except ValueError as exc:
+                    format_errors += 1
+                    steps.append(Step(index=len(steps) + 1, note=str(exc)))
+                    self._emit(type="tool_format_error", attempts=format_errors, limit=3, error=str(exc))
+                    if format_errors >= 3:
+                        return self._finish(RunReport(text="[stopped: invalid tool protocol after 3 attempts]",
+                            steps=steps, usage=usage_total, stopped="format_error", events=self.events))
+                    # No call in this malformed batch ran. Do not replay invalid
+                    # native messages (unmatched IDs make the next request fail).
+                    messages.append({"role": "user", "content":
+                        "Tool call batch rejected before execution: " + str(exc) +
+                        ". Resend valid calls with unique IDs, tool names and JSON object arguments."})
+                    continue
                 prose = text.strip()
                 # 瘦身 B：tool_call_native 不再单独成事件——wire/call_id 并入
                 # 对应的 tool_call 事件（下方合并），三元拍平为一元
@@ -1130,6 +1156,8 @@ class Agent:
                                action_id=result.meta.get('action_id'), meta=result.meta,
                                result=step.result[:1500], ok=result.ok, decision=step.decision,
                                step=step.index, native=False, authorization=authz)
+                    if result.meta.get('execution_state') == 'unknown':
+                        return self._stop_unknown(steps, usage_total)
                     if self._guard.observe(tool_name, args, result.ok, result.content or result.error):
                         self._emit(type="loop_stop", reason="stalled", steps=len(steps))
                         return self._finish(RunReport(text="[stopped: repeated action/result; inspect the failure or change approach]",
@@ -1167,12 +1195,14 @@ class Agent:
                                result=step.result[:1500], ok=result.ok,
                                decision=step.decision, step=step.index,
                                call_id=call.id, wire=wire, authorization=authz)
+                    if result.meta.get('execution_state') == 'unknown':
+                        return self._stop_unknown(steps, usage_total)
                     if self._guard.observe(call.name, call.args, result.ok, result.content or result.error):
                         self._emit(type="loop_stop", reason="stalled", steps=len(steps))
                         return self._finish(RunReport(text="[stopped: repeated action/result; inspect the failure or change approach]",
                             steps=steps, usage=usage_total, stopped="stalled", events=self.events))
-                messages.append(completion.assistant_message
-                                or toolwire.assistant_message(prose, native_calls, wire))
+                messages.append(toolwire.replay_assistant_message(
+                    completion.assistant_message, prose, native_calls, wire))
                 messages.extend(toolwire.tool_result_messages(answered, wire))
                 continue
 
@@ -1186,6 +1216,13 @@ class Agent:
             stopped=stopped,
             events=self.events,
         ))
+
+    def _stop_unknown(self, steps, usage):
+        self._emit(type="loop_stop", reason="unknown_outcome", steps=len(steps),
+                   action_id=steps[-1].action_id)
+        return self._finish(RunReport(
+            text="[stopped: tool outcome unknown; inspect files, diff and action journal before continuing]",
+            steps=steps, usage=usage, stopped="unknown_outcome", events=self.events))
 
     def _finish(self, report: RunReport) -> RunReport:
         """Run-end stage: metabolism seats + the runtime's call audit.
@@ -1220,7 +1257,7 @@ class Agent:
         # 结束反思（phase=reflection）：在 extension_calls 审计事件之前完成；
         # 反思轮 token 并入账本 delta（诚实计费：沉思不是免费午餐）。smart
         # 模式下未启用的跑次同样跳过反思（_run_thinking_active 在 run() 判定）。
-        if report.stopped != 'cancelled' and self._run_thinking_active and "thinking" in self.extensions:
+        if report.stopped not in {'cancelled', 'unknown_outcome'} and self._run_thinking_active and "thinking" in self.extensions:
             try:
                 self._contemplate("reflection", self._run_task or "",
                                   last_outputs=[str(report.text or "")])

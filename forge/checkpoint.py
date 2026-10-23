@@ -37,12 +37,14 @@ class CheckpointStore:
         self._history: list[Checkpoint] = []
 
     # -- plumbing --------------------------------------------------------
-    def _git(self, *args: str, check: bool = True) -> subprocess.CompletedProcess:
+    def _git(self, *args: str, check: bool = True, env=None) -> subprocess.CompletedProcess:
         return subprocess.run(
             ["git", f"--git-dir={self.git_dir}", f"--work-tree={self.workspace}", *args],
             capture_output=True,
             text=True,
             check=check,
+            env=env,
+            timeout=30,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
 
@@ -62,9 +64,9 @@ class CheckpointStore:
         self.git_dir.parent.mkdir(parents=True, exist_ok=True)
         if not self.git_dir.exists():
             subprocess.run(["git", "init", "--bare", "--quiet", str(self.git_dir)],
-                           capture_output=True, text=True, check=False,
+                           capture_output=True, text=True, check=True, timeout=30,
                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-            self._git("config", "core.worktree", str(self.workspace), check=False)
+            self._git("config", "core.worktree", str(self.workspace))
         return True
 
     def snapshot(self, label: str) -> Checkpoint | None:
@@ -85,25 +87,14 @@ class CheckpointStore:
         if not self.enabled or not self.init():
             return None
         env = self._sync_env()
-        subprocess.run(
-            ["git", f"--git-dir={self.git_dir}", f"--work-tree={self.workspace}", "add", "-A"],
-            capture_output=True, text=True, env=env, check=False,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-        commit = subprocess.run(
-            ["git", f"--git-dir={self.git_dir}", f"--work-tree={self.workspace}",
-             "commit", "--allow-empty", "-m", f"{label} @ {time.strftime('%H:%M:%S')}"],
-            capture_output=True, text=True, env=env, check=False,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-        rev = subprocess.run(
-            ["git", f"--git-dir={self.git_dir}", "rev-parse", "HEAD"],
-            capture_output=True, text=True, check=False,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
+        # Failed staging/commit must never be presented as a fresh checkpoint
+        # by reading an older HEAD. ActionExecutor stops before tool dispatch.
+        self._git("add", "-A", env=env)
+        self._git("commit", "--allow-empty", "-m", f"{label} @ {time.strftime('%H:%M:%S')}", env=env)
+        rev = self._git("rev-parse", "HEAD")
         sha = rev.stdout.strip()
         if not sha:
-            return None
+            raise RuntimeError('Checkpoint commit did not produce an identity')
         point = Checkpoint(commit=sha, label=label)
         if not self._history or self._history[-1].commit != sha:
             self._history.append(point)

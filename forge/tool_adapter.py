@@ -400,12 +400,20 @@ def repair_arguments(
     if raw_args is None:
         return {}
     if not isinstance(raw_args, str):
-        raw_args = str(raw_args)
+        return {"_raw": str(raw_args)[:2000]}
 
     quirks = get_quirks(model_name)
 
     # L1 清洗
     s = _clean(raw_args, quirks)
+
+    # Valid JSON of the wrong type is not an embedded object to salvage.
+    try:
+        decoded = json.loads(s)
+        if not isinstance(decoded, (dict, str)):
+            return {"_raw": raw_args[:2000]}
+    except (json.JSONDecodeError, ValueError):
+        pass
 
     # L2 标准解析
     obj = _try_json(s)
@@ -470,20 +478,18 @@ def normalize_text_call(obj: dict[str, Any]) -> tuple[str, dict[str, Any]] | Non
                 obj = {**obj, "arguments": fn["arguments"]}
     if not isinstance(name, str) or not name.strip():
         return None
-    args = obj.get("arguments")
-    if args is None:
-        args = obj.get("parameters")
-    if args is None:
-        args = obj.get("args")
-    if isinstance(args, str):
-        # arguments 可能是 JSON 字符串（"arguments": "{\"city\":...}"）
-        try:
-            args = json.loads(args)
-        except (json.JSONDecodeError, ValueError):
-            pass
-    if not isinstance(args, dict):
-        # 平铺参数形态：除结构键外的顶层键即参数
+    argument_key = next((key for key in ("arguments", "parameters", "args") if key in obj), None)
+    if argument_key is not None:
+        # An explicit malformed wrapper must not become empty/default arguments.
+        args = repair_arguments(obj[argument_key])
+    else:
         args = {k: v for k, v in obj.items() if k not in _CALL_RESERVED_KEYS}
+    if obj.get("_truncated"):
+        args = {**args, "_truncated": True}
+    try:
+        json.dumps(args, allow_nan=False)
+    except (TypeError, ValueError, OverflowError, RecursionError):
+        args = {"_raw": "Arguments must be finite JSON values"}
     return name.strip(), args
 
 

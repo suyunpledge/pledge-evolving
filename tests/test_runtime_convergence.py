@@ -4,6 +4,7 @@ import contextlib
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -91,6 +92,120 @@ class RuntimeConvergenceTests(unittest.TestCase):
                 result = self.execute(self.context(mode=mode, registry=registry), 'innocent')
                 self.assertFalse(result.ok)
                 self.assertEqual(calls, [])
+
+    def test_invalid_nested_results_are_recorded_without_replaying_writes(self):
+        cycle = {}
+        cycle['self'] = cycle
+        invalid = [ToolResult(True, meta={'nested': object()}),
+                   ToolResult(True, meta={'nested': float('nan')}),
+                   ToolResult(True, meta=cycle), ToolResult('false'),
+                   ToolResult(True, content=None)]
+        for index, bad in enumerate(invalid):
+            with self.subTest(index=index):
+                calls = []
+                def handler(args, tc):
+                    calls.append(1)
+                    self.path.write_text('written', encoding='utf-8')
+                    return bad
+                registry = ToolRegistry()
+                registry.register(ToolSpec('writer', '', handler, read_only=False), trusted=True)
+                ctx = self.context(registry=registry)
+                request = ActionRequest('writer', {'path': str(self.path)})
+                first = self.executor.execute(ctx, request)
+                self.assertEqual(first.error_code, 'invalid_tool_result')
+                self.assertEqual(first.execution_state, 'unknown')
+                json.dumps(first.as_dict(), allow_nan=False)
+                fresh = ActionExecutor()
+                again = fresh.execute(ctx, request)
+                self.assertEqual(again.execution_state, 'unknown')
+                self.assertTrue(again.meta['deduplicated'])
+                self.assertEqual(calls, [1])
+                self.assertEqual(self.path.read_text(encoding='utf-8'), 'written')
+                self.assertEqual(fresh.query(ctx, request.action_id)['meta']['error_code'], 'invalid_tool_result')
+
+    def test_invalid_reader_result_does_not_break_next_action(self):
+        registry = ToolRegistry()
+        results = iter([ToolResult(True, meta={'bad': {1, 2}}), ToolResult(True, 'healthy')])
+        registry.register(ToolSpec('reader', '', lambda a,c:next(results)), trusted=True)
+        ctx = self.context(registry=registry, mode=Mode.READ_ONLY)
+        bad = self.execute(ctx, 'reader')
+        self.assertFalse(bad.ok)
+        self.assertEqual(bad.meta['execution_state'], 'completed')
+        self.assertEqual(self.execute(ctx, 'reader').content, 'healthy')
+
+    def test_registry_detaches_handler_owned_result_metadata(self):
+        original = ToolResult(True, 'ok', meta={'items': [1, {'value': 2}]})
+        registry = ToolRegistry()
+        registry.register(ToolSpec('reader', '', lambda a,c:original), trusted=True)
+        ctx = self.context(registry=registry)
+        result = ctx.registry.invoke('reader', {}, ctx.tool_context())
+        original.meta['items'][1]['value'] = 9
+        self.assertEqual(result.meta['items'][1]['value'], 2)
+        self.assertNotIn('authorization', original.meta)
+
+    def test_registry_rejects_non_object_arguments_before_dispatch(self):
+        registry = ToolRegistry()
+        calls = []
+        registry.register(ToolSpec('writer', '', lambda a,c:calls.append(a) or ToolResult(True),
+                                   read_only=False), trusted=True)
+        ctx = self.context(registry=registry).tool_context()
+        for value in ([], '', False, 0, ['path']):
+            with self.subTest(value=value):
+                result = registry.invoke('writer', value, ctx)
+                self.assertEqual(result.meta['error_code'], 'invalid_arguments')
+                self.assertEqual(result.meta['execution_state'], 'not_started')
+        self.assertEqual(calls, [])
+        self.assertTrue(registry.invoke('writer', None, ctx).ok)
+
+    def test_registry_rechecks_cancellation_after_write_lock(self):
+        cancel = threading.Event()
+        calls = []
+        registry = ToolRegistry()
+        registry.register(ToolSpec('writer', '', lambda a,c:calls.append(1) or ToolResult(True),
+                                   read_only=False), trusted=True)
+        ctx = self.context(registry=registry, cancellation=cancel).tool_context()
+        @contextlib.contextmanager
+        def cancelled_lock(*args):
+            cancel.set()  # Cancellation arrives while acquiring the write lock.
+            yield
+        with patch.object(registry, 'write_guard', cancelled_lock):
+            result = registry.invoke('writer', {}, ctx)
+        self.assertEqual(calls, [])
+        self.assertEqual(result.meta['outcome'], 'cancelled')
+        self.assertEqual(result.meta['execution_state'], 'not_started')
+        cancel.clear()
+        self.assertTrue(registry.invoke('writer', {}, ctx).ok)
+
+    def test_gateway_returns_durable_invalid_result_instead_of_http_failure(self):
+        registry = ToolRegistry()
+        calls = []
+        registry.register(ToolSpec('reader', '', lambda a,c:calls.append(1) or
+                                   ToolResult(True, meta={'bad': object()})), trusted=True)
+        _, base = self.gateway(registry=registry)
+        body = {'run_id': 'invalid_result', 'action_id': 'one', 'name': 'reader', 'arguments': {}}
+        code, result = self.http(base, '/v1/tools/call', body)
+        self.assertEqual(code, 200)
+        self.assertFalse(result['ok'])
+        self.assertEqual(result['meta']['error_code'], 'invalid_tool_result')
+        self.assertEqual(self.http(base, '/v1/tools/call', body)[0], 200)
+        self.assertEqual(calls, [1])
+
+    def test_cancellation_during_authorization_prevents_handler_dispatch(self):
+        cancel = threading.Event()
+        calls = []
+        registry = ToolRegistry()
+        registry.register(ToolSpec('reader', '', lambda a,c:calls.append(1) or ToolResult(True)), trusted=True)
+        ctx = self.context(registry=registry, cancellation=cancel).tool_context()
+        prepare = registry._prepare
+        def approval(*args):
+            decision = prepare(*args)
+            self.assertIsNotNone(decision)
+            cancel.set()
+            return decision
+        with patch.object(registry, '_prepare', approval):
+            result = registry.invoke('reader', {}, ctx)
+        self.assertEqual(calls, [])
+        self.assertEqual(result.meta['outcome'], 'cancelled')
 
     def test_forged_host_filename_does_not_verify_a_tool(self):
         registry = ToolRegistry()
@@ -683,7 +798,39 @@ r=build_builtin_registry().invoke('write_file',{'path':'value.txt','content':i,'
 print(json.dumps(r.as_dict()))
 ''', count=4)
         self.assertEqual(sum(r['ok'] for r in outputs), 1)
-        self.assertEqual([r['meta']['error_code'] for r in outputs if not r['ok']], ['revision_conflict'] * 3)
+        self.assertEqual([r['meta']['error_code'] for r in outputs if not r['ok']], ['revision_conflict'] * 3, outputs)
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows byte-range locking')
+    def test_empty_lock_file_initialization_waits_for_existing_owner(self):
+        import msvcrt
+        from forge.runtime_lock import resource_lock
+        key = 'initialization:' + os.path.normcase(str(self.path.resolve()))
+        directory = self.root / 'forge-runtime-locks'
+        directory.mkdir()
+        target = directory / (hashlib.sha256(key.encode()).hexdigest() + '.lock')
+        errors, acquired = [], threading.Event()
+        started = threading.Event()
+        def contender():
+            started.set()
+            try:
+                with resource_lock('initialization', self.path):
+                    acquired.set()
+            except Exception as exc:
+                errors.append(exc)
+        with target.open('w+b') as owner, patch('forge.runtime_lock.tempfile.gettempdir', return_value=str(self.root)):
+            msvcrt.locking(owner.fileno(), msvcrt.LK_NBLCK, 1)
+            worker = threading.Thread(target=contender)
+            worker.start()
+            try:
+                self.assertTrue(started.wait(2))
+                self.assertFalse(acquired.wait(.1))
+            finally:
+                owner.seek(0)
+                msvcrt.locking(owner.fileno(), msvcrt.LK_UNLCK, 1)
+                worker.join(5)
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(errors, [])
+            self.assertTrue(acquired.is_set())
 
 
 if __name__ == '__main__':

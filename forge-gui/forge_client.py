@@ -129,7 +129,8 @@ class ForgeGatewayClient:
     def call_tool(self, name: str, arguments: dict, *, timeout: float | None = None,
                   plugin_context: dict | None = None) -> dict:
         """POST /v1/tools/call → gateway 走完整 policy gate 执行一个 forge 工具。"""
-        body = {"name": name, "arguments": arguments or {}}
+        run_id, action_id = (__import__('uuid').uuid4().hex for _ in range(2))
+        body = {"name": name, "arguments": arguments or {}, 'run_id': run_id, 'action_id': action_id}
         if plugin_context is not None:
             if self.plugin_policy_version != 1:
                 self.list_tools(timeout=timeout)
@@ -140,10 +141,11 @@ class ForgeGatewayClient:
         try:
             with open_response(req, timeout=self.timeout if timeout is None else timeout, cancel_event=None) as resp:
                 return redact(json.loads(resp.read().decode("utf-8", "replace")))
-        except urllib.error.HTTPError as e:
-            raise GatewayError(f"HTTP {e.code}: {http_error_detail(e)}") from None
-        except (urllib.error.URLError, OSError) as e:
-            raise GatewayError(str(e)) from None
+        except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException) as e:
+            detail = f"HTTP {e.code}: {http_error_detail(e)}" if isinstance(e, urllib.error.HTTPError) else str(e)
+            error = GatewayError(detail)
+            error.run_id, error.action_id = run_id, action_id
+            raise error from None  # Query these IDs; never resend on transport failure.
 
     # ── 健康检查 ──
     def health(self, *, cancel_event=None) -> tuple[bool, str]:
