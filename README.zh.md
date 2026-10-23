@@ -114,7 +114,7 @@ flowchart TB
 ```bash
 cd pledge-evolving
 
-python run.py selftest            # 离线自检（574/574，不需要 API Key）
+python run.py selftest            # 离线自检（574/574，不需要 API Key，任意克隆路径可跑）
 python run.py dump-config         # 看合成出的配置树
 python run.py doctor              # 健康/漂移/密钥检查
 python run.py capabilities list   # 能力清单
@@ -139,6 +139,14 @@ Python ≥ 3.10，零第三方依赖，MIT 许可。
 - **macOS / Linux**：`./setup.sh`，变体同上（Homebrew / apt / dnf / yum / pacman）。
 
 ---
+
+### 关于非 ASCII 路径
+
+维护者的开发机是 Windows，**用户名本身含非 ASCII 字符**（中文姓名）。因此项目代码在要紧的位置一律用 `__file__` 相对解析、不依赖 `os.getcwd()` 假设。如果你自己的用户目录也含非 ASCII 字符：
+
+- `python run.py selftest` 与全部测试套件可从任意路径运行——测试文件通过 `Path(__file__)` 解析导入，不再硬编码绝对路径（2026 年 10 月已为此替换掉三处历史硬编码）。
+- 桌面 GUI 与 VS Code 扩展就是在这台中文用户名机器上开发与验证的——这是更苛刻的环境：路径假设若在非 ASCII 用户名上出问题，会**先在这里暴露**。纯 ASCII 机器反而是容易的情形。
+- **不处理**的部分：`docs/` 与 `reports/` 下的报告按历史原样引用绝对路径（它们是证据文档，保持记录原貌）；可选的本地推理示例只指向 `127.0.0.1` 端点。
 
 ## v2 新增（0.2.0）
 

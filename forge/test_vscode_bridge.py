@@ -284,7 +284,7 @@ class OnboardingRPCsTests(unittest.TestCase):
 
     def test_python_path_check_validates_real_python(self):
         bridge = EditorBridge.__new__(EditorBridge)
-        bridge.workspace = pathlib.Path(r"C:\Users\匡溯昀\pledge-evolving")
+        bridge.workspace = pathlib.Path(__file__).resolve().parents[1]
         out = bridge.python_path_check({"path": sys.executable})
         self.assertTrue(out.get("ok"), out)
         self.assertIn("version", out)
@@ -293,7 +293,11 @@ class OnboardingRPCsTests(unittest.TestCase):
     def test_python_path_check_rejects_pythonw(self):
         bridge = EditorBridge.__new__(EditorBridge)
         bridge.workspace = pathlib.Path("/tmp")
-        out = bridge.python_path_check({"path": r"C:\Users\匡溯昀\AppData\Local\Programs\Python\Python312\pythonw.exe"})
+        import sysconfig
+        pythonw = pathlib.Path(sys.executable).with_name("pythonw.exe")
+        if not pythonw.exists():  # 非 Windows 或无 pythonw：跳过而非硬编码路径
+            self.skipTest("pythonw not available on this interpreter")
+        out = bridge.python_path_check({"path": str(pythonw)})
         self.assertFalse(out["ok"])
         self.assertIn("python.exe", out["reason"])
 

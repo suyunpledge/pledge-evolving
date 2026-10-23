@@ -129,7 +129,7 @@ class TestClaudeScan(unittest.TestCase):
             self.assertEqual(cs.scan_claude_marketplace(root=root), [])
 
     def test_manifest_passes_parse(self):
-        sys.path.insert(0, r"C:\Users\匡溯昀\pledge-evolving\forge-gui")
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
         from plugin_market import parse_manifest
         import tempfile
         with tempfile.TemporaryDirectory() as td:
@@ -170,7 +170,7 @@ class TestDshScan(unittest.TestCase):
             self.assertIn("未激活", skin.manifest["summary"])
 
     def test_manifest_passes_parse(self):
-        sys.path.insert(0, r"C:\Users\匡溯昀\pledge-evolving\forge-gui")
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
         from plugin_market import parse_manifest
         import tempfile
         with tempfile.TemporaryDirectory() as td:

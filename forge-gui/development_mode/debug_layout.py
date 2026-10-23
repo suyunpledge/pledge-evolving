@@ -1,5 +1,7 @@
 import sys
-sys.path.insert(0, r'C:\Users\匡溯昀\pledge-evolving\forge-gui\development_mode')
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))       # forge-gui/
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))  # repo root
 import tempfile
 import tkinter as tk
 from pathlib import Path

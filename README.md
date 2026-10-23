@@ -114,7 +114,7 @@ Every decision lands in `sessions/*.jsonl`: `session_meta`, `user_message`, `too
 ```bash
 cd pledge-evolving
 
-python run.py selftest            # offline self-checks (574/574, no API key)
+python run.py selftest            # offline self-checks (574/574, no API key, runs from any clone path)
 python run.py dump-config         # inspect the synthesized config tree
 python run.py doctor              # health / drift / key checks
 python run.py capabilities list   # capability inventory
@@ -139,6 +139,14 @@ Desktop UI: `python forge-gui/forge_gui_v2.py` (or the shortcut `setup.cmd` crea
 - **macOS / Linux**: `./setup.sh` with the same variants (Homebrew / apt / dnf / yum / pacman).
 
 ---
+
+### A note on non-ASCII paths
+
+The maintainer develops on a Windows machine whose **username contains non-ASCII characters** (a CJK name). All project code therefore avoids `os.getcwd()` assumptions in the places where it matters and resolves paths from `__file__` instead. If your own home directory contains non-ASCII characters:
+
+- `python run.py selftest` and the full test suite run from any path — the test files resolve their imports via `Path(__file__)`, not hardcoded absolute paths (three historical hardcoded paths were replaced in Oct 2026 for exactly this reason).
+- The desktop GUI and the VS Code extension were exercised on the CJK-username machine itself, which is the harsher environment: if a path assumption breaks on non-ASCII names, it breaks *here first*. Running on an ASCII-only machine is the easy case.
+- What is **not** handled: reports under `docs/` and `reports/` quote historical absolute paths verbatim (they are evidence documents, left as recorded), and the optional local-services examples point at `127.0.0.1` endpoints only.
 
 ## v2 additions (0.2.0)
 
