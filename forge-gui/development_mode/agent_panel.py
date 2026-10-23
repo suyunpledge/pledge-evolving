@@ -408,6 +408,18 @@ class AgentPanel(ttk.Frame):
         titlebar.pack(fill='x')
         self.title = ttk.Label(titlebar, text='AI Agent', font=FONT_UI_BOLD)
         self.title.pack(side='left', fill='x', expand=True)
+        # P0-D1：权限常驻徽标。权限矩阵在「运行时上下文」里且默认折叠，
+        # 过去 perm_badge 建在未 pack 的 status_row 上（探针实测
+        # mapped=False）——用户在默认 UI 下看不到"下一个任务将以什么
+        # 权限运行"。徽标放标题行，任何时刻可见；点击展开运行时上下文。
+        # app._sync_perm_badge 调 set_permission() 同步。
+        self._perm_chip = tk.Label(titlebar, text='只读', font=FONT_CAPTION,
+                                   bg=C['surface2'], fg=C['subtext'],
+                                   padx=7, pady=2, cursor='hand2')
+        attach_tooltip(self._perm_chip,
+                       '当前权限：下一个任务的文件写入范围。点击展开「运行时上下文」修改。')
+        self._perm_chip.pack(side='left', padx=(6, 2))
+        self._perm_chip.bind('<Button-1>', lambda _e: self._expand_runtime_context())
         self.header_buttons = {}
         for key, icon, label, callback in (
                 ('new', 'plus', '新对话', new_conversation),
@@ -492,6 +504,35 @@ class AgentPanel(ttk.Frame):
             except Exception:
                 pass
         return self._runtime_context
+
+    # ── 权限徽标（P0-D1）──────────────────────────────────────
+    _PERM_TONES = {
+        'read-only': ('只读', 'surface2', 'subtext'),
+        'workspace-write': ('工作区可写', 'ok_soft', 'ok'),
+        'danger-full-access': ('危险全访问', 'warn_soft', 'warn'),
+    }
+
+    def set_permission(self, sandbox):
+        """更新标题行权限徽标（app._sync_perm_badge 调用）。
+
+        颜色走语义 token：只读=中性灰、工作区可写=ok 绿、危险全访问=
+        warn 橙——高于只读时必须"看起来不一样"，否则等于没有提示。
+        """
+        text, bg_token, fg_token = self._PERM_TONES.get(
+            sandbox, (str(sandbox), 'surface2', 'subtext'))
+        try:
+            self._perm_chip.configure(text=text, bg=C[bg_token], fg=C[fg_token])
+        except (tk.TclError, KeyError):
+            pass
+
+    def _expand_runtime_context(self):
+        """点击权限徽标 → 展开被折叠的运行时上下文（若可用）。"""
+        ctx = self._runtime_context
+        if ctx is not None and getattr(ctx, '_collapsed', False):
+            try:
+                ctx._toggle()
+            except Exception:
+                pass
 
     def mount_events(self, notebook):
         """WorkBuddy container seam: attach once without rebuilding its layout.

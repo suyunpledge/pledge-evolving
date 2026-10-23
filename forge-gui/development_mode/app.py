@@ -10,7 +10,7 @@ import sys
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 
-from gui_theme import (C, apply_ttk_theme, attach_tooltip, style_editor,
+from gui_theme import (C, apply_ttk_theme, attach_tooltip, chip, style_editor,
     FONT_CAPTION, FONT_MONO_SM, FONT_TITLE, FONT_SECTION, FONT_UI, FONT_UI_MED,
     setup_code_tags, highlight_python)
 from ui_icons import IconButton
@@ -761,9 +761,13 @@ class DevelopmentWorkbench(ttk.Frame):
                                       foreground=C['accent2'])
         # context_label 父级为 input_bar：附件信息仍贴在输入行上方。
         self.context_label = ttk.Label(self.input_bar, text='未附加编辑器内容', padding=4)
-        hint_label = ttk.Label(self.input_bar,
-                               text='Enter 发送 · Shift+Enter 换行',
-                               foreground=C['muted'])
+        # 输入带键位提示：从「一行 10px 灰字」改成 chips。
+        # 纯文字行在深色输入带里对比度低、扫读成本高；chips 有底色 +
+        # hairline 描边，与 Work Mode 输入区的胶囊语言一致。三个键位都
+        # 是真实绑定（<Return> / <Shift-Return> / <Control-Return>）。
+        hint_row = tk.Frame(self.input_bar, bg=C['bg'])
+        for hint in ('Enter 发送', 'Shift+Enter 换行', 'Ctrl+Enter 亦可'):
+            chip(hint_row, hint, bg=C['bg']).pack(side='left', padx=(0, 6))
         # 输入行：input 吃满剩余宽度，send 固定在右——同一行内布局。
         input_row = self._input_row
         self.send_button = IconButton(input_row, text='发送', command=self.send,
@@ -780,8 +784,10 @@ class DevelopmentWorkbench(ttk.Frame):
         # 占底，hint 其次在其上；queue/context 动态显示时经
         # before=hint 插到 hint 之前（即输入行正上方）。
         input_row.pack(side='bottom', fill='x', padx=8, pady=(4, 6))
-        self._input_hint = hint_label  # queue/context 的 before 锚点
-        hint_label.pack(side='bottom', fill='x', padx=8)
+        # _input_hint 仍是 queue/context 的 before 锚点——由 Label 换成
+        # 承载 chips 的 Frame，锚点契约不变（外部只用它作 pack before）。
+        self._input_hint = hint_row
+        hint_row.pack(side='bottom', fill='x', padx=8)
         # 输入组与上方对话区之间一道 hairline，把「输入带」从内容层托起。
         tk.Frame(self.input_bar, bg=C['border'], height=1).pack(side='top', fill='x')
         # 容器本身作为 agent_frame 底部唯一输入组（取代原 3 个并列 slave）。
@@ -1323,7 +1329,14 @@ class DevelopmentWorkbench(ttk.Frame):
             pass
 
     def _sync_perm_badge(self):
-        """P0-D1：当前权限常驻显示；高于 read-only 时高亮。"""
+        """P0-D1：当前权限常驻显示；高于 read-only 时高亮。
+
+        两处呈现：
+          1. AgentPanel 标题行的 _perm_chip（任何时刻可见，可点击展开）；
+          2. 运行时上下文折叠带的摘要（_update_button）。
+        过去只更新建在未 pack 的 status_row 上的 perm_badge——探针实测
+        mapped=False，等于没有可见呈现。
+        """
         perm = getattr(self, 'permission', None)
         if perm is None:
             return
@@ -1334,8 +1347,15 @@ class DevelopmentWorkbench(ttk.Frame):
             self.perm_badge.configure(
                 text=f'权限 {value}',
                 foreground=_C['error'] if hot else _C['subtext'])
+            panel = getattr(self, 'agent_panel', None)
+            if panel is not None and hasattr(panel, 'set_permission'):
+                panel.set_permission(value)
             if getattr(self, '_runtime_ctx', None) is not None:
                 self._runtime_ctx.set_sandbox(value)
+                # 折叠带摘要跟随权限变化
+                updater = getattr(self._runtime_ctx, '_update_button', None)
+                if callable(updater):
+                    updater()
         except Exception:
             pass
 

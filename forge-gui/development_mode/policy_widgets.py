@@ -396,11 +396,30 @@ class RuntimeContext(ttk.Frame):
 
     def _update_button(self):
         # 已展开 → ▾；已折叠 → ▸（W4：chevron 前缀即折叠态指示）
+        # P0-D1：折叠态追加摘要（权限 · 角色）——否则"收起"退化成
+        # "隐藏关键状态"，用户看不到下一个任务将以什么权限/角色运行。
         try:
-            self._title_lbl.configure(
-                text=('▾' if not self._collapsed else '▸') + ' 运行时上下文')
+            prefix = '▾' if not self._collapsed else '▸'
+            summary = self._summary_text() if self._collapsed else ''
+            self._title_lbl.configure(text=f'{prefix} 运行时上下文{summary}')
         except tk.TclError:
             pass
+
+    def _summary_text(self):
+        """折叠带摘要：当前 Sandbox 权限 + 任务角色。"""
+        try:
+            sandbox = self._policy.get().get('sandbox', '')
+            role = self._task.get_role()
+        except Exception:
+            return ''
+        labels = {'read-only': '只读', 'workspace-write': '工作区可写',
+                  'danger-full-access': '危险全访问'}
+        parts = []
+        if sandbox:
+            parts.append(labels.get(sandbox, sandbox))
+        if role:
+            parts.append(str(role))
+        return '  · ' + ' · '.join(parts) if parts else ''
 
     def get_policy(self):
         return self._policy.get()
