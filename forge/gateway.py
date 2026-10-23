@@ -103,6 +103,7 @@ class GatewayConfig:
         warmth_path: Path | None = None,
         _credential=None,
         home: Path | None = None,
+        computer=None,
     ) -> None:
         self.upstream = upstream.rstrip("/")
         from .secrets import VendorCredential, install_logging_redaction
@@ -125,6 +126,8 @@ class GatewayConfig:
         # When attached, GET /v1/tools lists OpenAI function schemas and
         # POST /v1/tools/call executes a tool through the full policy gate.
         self.registry = registry
+        # Trusted host only: no HTTP payload may supply or replace this handle.
+        self.computer = computer
         from .execution import ActionExecutor
         self.home = Path(home).resolve() if home is not None else None
         self._runtime_temp = None
@@ -162,7 +165,8 @@ class GatewayConfig:
                 self.home = Path(self._runtime_temp.name)
             if discovery:
                 return create_execution_context(home=self.home, workspace=self.workspace,
-                    registry=self.registry, policy=self.policy, secret_scope=secret_scope, journal=False)
+                    registry=self.registry, policy=self.policy, secret_scope=secret_scope, journal=False,
+                    capabilities={'computer': self.computer})
             if run_id:
                 validate_id(run_id)
                 if run_id in self._contexts:
@@ -202,7 +206,8 @@ class GatewayConfig:
                                 task_id=run.task_id, parent_run_id=run.parent_run_id)
             ctx = create_execution_context(home=self.home, workspace=self.workspace,
                 registry=self.registry, policy=self.policy, run=run, session=journal,
-                cancellation=threading.Event(), secret_scope=secret_scope, recovered=recovered)
+                cancellation=threading.Event(), secret_scope=secret_scope, recovered=recovered,
+                capabilities={'computer': self.computer})
             self._contexts[run.run_id] = ctx
             if secret_scope is not None:
                 self._protected_runs.add(run.run_id)
@@ -585,7 +590,13 @@ def build_handler(cfg: GatewayConfig):
                 if spec.is_deferred:
                     current_registry.activate(name)
                 current.extras['registry'] = current_registry
+                current.extras['computer'] = cfg.computer
                 preflight = current_registry.authorize(name, arguments, current)
+                if (preflight is None and name in {'computer_observe', 'computer_act'}
+                        and context.capabilities.get('computer') is not cfg.computer):
+                    from .tools import ToolResult
+                    preflight = ToolResult(False, error='Computer target capability changed; create a new run',
+                        meta={'error_code': 'capability_changed', 'execution_state': 'not_started', 'authorization': 'deny'})
                 if preflight is None:
                     preflight = context.registry.authorize(name, arguments, context.tool_context())
             if preflight is not None and plugin_context is not None:
