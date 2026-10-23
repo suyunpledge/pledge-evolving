@@ -9,15 +9,13 @@ import json
 import os
 import queue
 import threading
-import time
 import tkinter as tk
 from tkinter import ttk
 
-from forge.computer_use import ComputerSession, register_computer_tools
+from forge.computer_use import ComputerSession, register_computer_tools, TargetCancellation
 from forge.computer_win32 import WindowsControlDriver, list_windows
 from forge.execution import ActionExecutor, ActionRequest, create_execution_context
 from forge.policy import Policy, ToolEffect
-from forge.runtime_lock import resource_lock
 from forge.tools import ToolRegistry, ToolSpec, ToolResult
 from gui_theme import C, FONT_SMALL, pill_button, bind_canvas_column, bind_scoped_wheel, style_editor, flow_controls
 from phase_client import VisionClient, model_catalog
@@ -25,22 +23,6 @@ from forge.computer_coordinates import READ_NAMES, CLICK_NAME
 from click_approval import ClickApprovals, ApprovalView
 
 NAMES = READ_NAMES | {CLICK_NAME}
-
-
-class TargetCancellation:
-    def __init__(self, cancel, revoked):
-        self.cancel, self.revoked = cancel, revoked
-
-    def is_set(self):
-        return self.cancel.is_set() or self.revoked.is_set()
-
-    def wait(self, timeout=None):
-        deadline=None if timeout is None else time.monotonic()+timeout
-        while not self.is_set():
-            remaining=None if deadline is None else deadline-time.monotonic()
-            if remaining is not None and remaining<=0: return False
-            self.cancel.wait(.05 if remaining is None else min(.05,remaining))
-        return True
 
 
 class ComputerLane:
@@ -53,7 +35,7 @@ class ComputerLane:
         self.clicks, self.approve = clicks, approve
         registry = ToolRegistry()
         register_computer_tools(registry)
-        registry.unregister('computer_act')  # This surface grants observation, never input.
+        registry.unregister('computer_act')  # Input uses the separately approved visual click tool.
         registry.register(ToolSpec('computer_screenshot',
             'Capture the selected window locally; returns dimensions and hash, not image pixels.',
             self._screenshot, schema={'type': 'object', 'properties': {}, 'additionalProperties': False}),
@@ -89,7 +71,7 @@ class ComputerLane:
 
     def capture(self):
         self.check()
-        with self.session._lock, resource_lock('computer-target', self.session.driver.target_id):
+        with self.session.operation(self.cancel):
             frame = self.session.driver.screenshot(cancelled=self.cancel)
             frame = self.session.visual.remember(frame,self.scope)
         self.check()
@@ -176,7 +158,7 @@ class ComputerPanel:
         self.tree.bind('<MouseWheel>', lambda e:(self.tree.yview_scroll(-1 if e.delta>0 else 1,'units'),'break')[1])
         bar = tk.Frame(body, bg=C['bg']); bar.pack(fill='x')
         for label, command in [('刷新窗口', self.refresh), ('绑定所选窗口', self.bind),
-                               ('撤销授权', self.revoke), ('截图预览', self.preview), ('停止分析', self.cancel_work)]:
+                               ('撤销授权', self.revoke), ('截图预览', self.preview), ('停止操作', self.cancel_work)]:
             pill_button(bar, label, command, kind='quiet', bg=C['bg']).pack(side='left', padx=3)
         flow_controls(bar)
         self.target = tk.StringVar(value='未绑定窗口')
@@ -215,7 +197,7 @@ class ComputerPanel:
         self.output.pack(fill='x', pady=6)
         self.refresh()
 
-    def work(self, operation, done, *, cancel=None):
+    def work(self, operation, done, *, cancel=None, deliver_cancelled=False):
         if self.busy or self.stop.is_set(): return
         self.busy = True
         self.cancel = cancel or threading.Event()
@@ -235,7 +217,7 @@ class ComputerPanel:
                 self.poll_after = self.window.after(40, poll)
                 return
             self.busy = False
-            if request_cancel.is_set(): self.status.set('已停止；可重新执行'); return
+            if request_cancel.is_set() and not deliver_cancelled: self.status.set('已停止'); return
             if error: self.status.set('失败：'+str(self.app._input_secret_scope().protect_text(error))); return
             done(value)
         self.poll_after = self.window.after(40, poll)
@@ -383,15 +365,31 @@ class ComputerPanel:
         if session is not self.session or frame is not self.frame:
             self.status.set('权限或模型配置已变化，请重新截图。');return
         args={'observation_id':frame['observation_id'],'x':x,'y':y,'reason':reason[:500]}
+        # The observation is consumed even on denial/failure. Never leave a model
+        # marker or thumbnail armed for a second click with an obsolete identity.
+        self.frame, self.proposed_point = None, None
+        request_cancel = self.cancel
         def operation():
-            result=lane.call(CLICK_NAME,args)
-            if not result['ok']:
-                raise RuntimeError(result['error']+' · '+result['meta'].get('execution_state',''))
-            return lane.last_frame
-        def done(frame):
-            self.show_frame(frame)
-            self.status.set('已派发单击并取得新截图，请检查实际结果；视觉分析需要另行授权。')
-        self.work(operation,done,cancel=self.cancel)
+            try:
+                result=lane.call(CLICK_NAME,args)
+            except Exception as exc:
+                # An exception can also be a receipt-persistence failure after input.
+                result={'ok':False,'error':str(exc),'meta':{'execution_state':'unknown'}}
+            return result, getattr(lane,'last_frame',None)
+        def done(value):
+            result, after = value
+            state=result.get('meta',{}).get('execution_state','unknown')
+            if state=='unknown':
+                self.status.set('点击结果未知，可能已经生效；请检查目标并重新截图，不要重复点击。')
+            elif not result['ok']:
+                error=self.app._input_secret_scope().protect_text(result.get('error',''))
+                self.status.set('未执行点击：'+error+'；请重新截图。')
+            elif request_cancel.is_set() or session is not self.session:
+                self.status.set('点击已派发，随后停止或撤销授权；请检查目标，重新绑定或截图。')
+            else:
+                self.show_frame(after)
+                self.status.set('已派发单击并取得新截图，请检查实际结果；视觉分析需要另行授权。')
+        self.work(operation,done,cancel=self.cancel,deliver_cancelled=True)
 
     def analyze(self, *, locate=False):
         if self.busy: return

@@ -19,6 +19,7 @@ from forge.execution import ActionRequest
 from forge.policy import Policy,Mode,Sandbox
 from forge.secrets import SecretScope
 from phase_client import VisionClient
+from forge.runtime_lock import named_resource_lock
 
 
 class Driver:
@@ -137,6 +138,42 @@ class CoordinateTests(unittest.TestCase):
         revoked=threading.Event();token=TargetCancellation(self.cancel,revoked)
         self.assertFalse(token.wait(.01))
         revoked.set();self.assertTrue(token.wait(1))
+
+    def test_cancel_and_revoke_while_waiting_on_session_or_desktop_lock(self):
+        for kind in ('session', 'desktop'):
+            for signal in ('cancel', 'revoke'):
+                self.cancel.clear(); self.computer=ComputerSession(self.driver)
+                lane=self.lane(); frame=self.observe(lane)
+                blocker=(self.computer._lock if kind=='session' else
+                         named_resource_lock('computer-input','desktop'))
+                results=[]; started=threading.Event()
+                def run():
+                    started.set()
+                    results.append(lane.call('computer_click',self.args(frame)))
+                with blocker:
+                    worker=threading.Thread(target=run,daemon=True);worker.start()
+                    self.assertTrue(started.wait(2));time.sleep(.1)
+                    if signal=='cancel':self.cancel.set()
+                    else:self.computer.revoke()
+                    worker.join(2)
+                    self.assertFalse(worker.is_alive(),(kind,signal))
+                self.assertEqual(results[0]['meta']['execution_state'],'not_started',results)
+                self.assertEqual(results[0]['meta']['error_code'],'cancelled',results)
+        self.assertFalse(self.driver.sent)
+
+    def test_direct_session_revocation_reaches_pending_approval_token(self):
+        lane=self.lane();frame=self.observe(lane)
+        entered=threading.Event();results=[]
+        def approve(target,args,frame,token):
+            entered.set()
+            self.assertTrue(token.wait(2))
+            return False
+        self.approve.side_effect=approve
+        worker=threading.Thread(target=lambda:results.append(
+            self.computer.visual.click(self.args(frame),lane.ctx.tool_context(),self.approve)),daemon=True)
+        worker.start();self.assertTrue(entered.wait(2));self.computer.revoke();worker.join(2)
+        self.assertFalse(worker.is_alive());self.assertFalse(results[0][0].ok)
+        self.assertFalse(self.driver.sent)
 
     def test_scope_and_other_lane_invalidation(self):
         other_scope=SecretScope();self.addCleanup(other_scope.close)

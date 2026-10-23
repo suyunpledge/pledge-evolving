@@ -11,15 +11,25 @@ class ClickApprovals:
         self.queue = queue.Queue(maxsize=8)
         self.stop = threading.Event()
 
+    def resolve(self, row, accepted):
+        """First decision wins; an expired/cancelled prompt can never be accepted."""
+        with row['lock']:
+            if row['done'].is_set(): return
+            row['accepted'] = bool(accepted and not self.stop.is_set()
+                and not (row['cancel'] is not None and row['cancel'].is_set())
+                and time.monotonic() < row['deadline'])
+            row['done'].set()
+
     def request(self, target, args, frame, cancel):
         row = {'target':target, 'args':args, 'frame':frame, 'cancel':cancel,
-               'done':threading.Event(), 'accepted':False, 'deadline':time.monotonic()+60}
+               'done':threading.Event(), 'lock':threading.Lock(),
+               'accepted':False, 'deadline':time.monotonic()+60}
         if self.stop.is_set(): return False
         try: self.queue.put_nowait(row)
         except queue.Full: return False
         while not row['done'].wait(.05):
             if self.stop.is_set() or cancel is not None and cancel.is_set() or time.monotonic()>row['deadline']:
-                row['done'].set(); return False
+                self.resolve(row,False); return False
         return row['accepted'] and not self.stop.is_set() and not (cancel is not None and cancel.is_set())
 
 
@@ -34,11 +44,25 @@ class ApprovalView:
         if self.active is None:
             try: row=self.broker.queue.get_nowait()
             except queue.Empty: row=None
-            if row is not None and not row['done'].is_set(): self.show(row)
+            if row is not None and not row['done'].is_set():
+                try: self.show(row)
+                except Exception:
+                    # Bad image/Tk failure must reject this prompt, not stop the
+                    # entire approval pump and strand all subsequent requests.
+                    self.broker.resolve(row,False)
+                    if self.active: self.active[2](False)
         self.after = self.owner.after(50,self.poll)
 
     def show(self, row):
         window=tk.Toplevel(self.owner); window.title('确认视觉坐标单击')
+        check_after=None
+        def resolve(accepted):
+            nonlocal check_after
+            if check_after is not None: window.after_cancel(check_after);check_after=None
+            self.broker.resolve(row,accepted)
+            if window.winfo_exists(): window.destroy()
+            self.active=None
+        self.active=(window,row,resolve)
         window.configure(bg=C['bg']); window.transient(self.owner)
         args,frame=row['args'],row['frame']
         tk.Label(window,text=f"目标 {row['target']}\n截图像素 ({args['x']}, {args['y']}) · {args['reason']}",
@@ -53,17 +77,9 @@ class ApprovalView:
         canvas.create_line(x-15,y,x+15,y,fill=C['error'],width=2)
         canvas.create_line(x,y-15,x,y+15,fill=C['error'],width=2)
         bar=tk.Frame(window,bg=C['bg']);bar.pack(fill='x',padx=12,pady=10)
-        check_after=None
-        def resolve(accepted):
-            nonlocal check_after
-            if check_after is not None: window.after_cancel(check_after);check_after=None
-            row['accepted']=accepted;row['done'].set()
-            if window.winfo_exists(): window.destroy()
-            self.active=None
         pill_button(bar,'确认单击',lambda:resolve(True),kind='primary',bg=C['bg']).pack(side='left',padx=6)
         pill_button(bar,'拒绝',lambda:resolve(False),kind='quiet',bg=C['bg']).pack(side='left',padx=6)
         window.protocol('WM_DELETE_WINDOW',lambda:resolve(False))
-        self.active=(window,row,resolve)
         def check():
             nonlocal check_after
             check_after=None
@@ -79,5 +95,5 @@ class ApprovalView:
         if self.active:
             self.active[2](False)
         while not self.broker.queue.empty():
-            try: self.broker.queue.get_nowait()['done'].set()
+            try: self.broker.resolve(self.broker.queue.get_nowait(),False)
             except queue.Empty: break

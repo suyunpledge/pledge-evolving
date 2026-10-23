@@ -1,7 +1,8 @@
-"""Bounded Windows standard-control driver (Button/Edit), no global input.
+"""Bounded Windows controls and explicitly approved physical coordinate input.
 
 The trusted host selects an HWND AND owner PID. This is deliberately not a
-general browser/UIA driver: unsupported controls advertise no actions.
+general browser/UIA driver: unsupported controls advertise no native actions.
+Visual clicks have a separate screenshot, approval and final hit-test lifecycle.
 """
 import ctypes as c
 from ctypes import wintypes as w

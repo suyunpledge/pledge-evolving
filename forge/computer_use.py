@@ -9,10 +9,28 @@ import threading
 import time
 import uuid
 import weakref
+from contextlib import contextmanager
 
-from .runtime_lock import resource_lock
+from .runtime_lock import named_resource_lock, cancellable_lock, LockCancelled
 from .tools import ToolResult, ToolSpec
 from .policy import ToolEffect
+
+
+class TargetCancellation:
+    """Event-like cancellation combining one request and host revocation."""
+    def __init__(self, cancel, revoked):
+        self.cancel, self.revoked = cancel, revoked
+
+    def is_set(self):
+        return self.revoked.is_set() or self.cancel is not None and self.cancel.is_set()
+
+    def wait(self, timeout=None):
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while not self.is_set():
+            remaining = None if deadline is None else deadline - time.monotonic()
+            if remaining is not None and remaining <= 0: return False
+            self.revoked.wait(.05 if remaining is None else min(.05, remaining))
+        return True
 
 
 class ComputerSession:
@@ -34,6 +52,13 @@ class ComputerSession:
     def revoked(self):
         """Worker-safe host cancellation signal; revocation never waits for I/O."""
         return self._revoked
+
+    @contextmanager
+    def operation(self, cancelled=None):
+        token = TargetCancellation(cancelled, self.revoked)
+        with cancellable_lock(self._lock, token), named_resource_lock(
+                'computer-target', self.driver.target_id, cancelled=token):
+            yield token
 
     @staticmethod
     def _failure(code, message, *, unknown=False):
@@ -61,7 +86,14 @@ class ComputerSession:
         return observation
 
     def observe(self, ctx):
-        with self._lock, resource_lock('computer-target', self.driver.target_id):
+        try:
+            with self.operation(ctx.cancellation):
+                return self._observe(ctx)
+        except LockCancelled as exc:
+            return self._failure('cancelled', str(exc))
+
+    def _observe(self, ctx):
+        with self._lock:
             self._observations.pop(ctx.secret_scope, None)
             if self._revoked.is_set():
                 return self._failure('capability_revoked', 'Computer capability was revoked')
@@ -76,6 +108,13 @@ class ComputerSession:
                 return self._failure('observation_failed', str(exc))
 
     def act(self, args, ctx):
+        try:
+            with self.operation(ctx.cancellation):
+                return self._act(args, ctx)
+        except LockCancelled as exc:
+            return self._failure('cancelled', str(exc))
+
+    def _act(self, args, ctx):
         if (set(args) - {'observation_id', 'ref', 'action', 'text'}
                 or not isinstance(args.get('action'), str)
                 or args.get('action') not in {'click', 'type_text'}
@@ -83,7 +122,7 @@ class ComputerSession:
                 or not isinstance(args.get('text', ''), str)
                 or len(args.get('text', '')) > 10000 or '\0' in args.get('text', '')):
             return self._failure('invalid_arguments', 'Use a current ref and click/type_text action')
-        with self._lock, resource_lock('computer-target', self.driver.target_id):
+        with self._lock:
             before = self._observations.pop(ctx.secret_scope, None)
             if (before is None or before['observation_id'] != args.get('observation_id')
                     or self.clock() - before['captured_at'] > self.ttl):

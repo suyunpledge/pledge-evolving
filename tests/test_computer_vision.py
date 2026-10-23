@@ -330,5 +330,66 @@ class WindowTests(unittest.TestCase):
                     self.assertEqual(result,[False])
                 finally:panel.close()
 
+    def test_click_cancel_after_dispatch_keeps_unknown_and_disarms_old_preview(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            scope=SecretScope();self.addCleanup(scope.close)
+            app=Mock(root=self.root,home=Path(tmp),user_rows=ROWS)
+            app._input_secret_scope=lambda:scope
+            app._active_workspace=lambda:Path(tmp)
+            with patch('computer_panel.list_windows',return_value=[]):
+                panel=ComputerPanel(app)
+                try:
+                    self.pump(lambda:not panel.busy)
+                    panel.session=ComputerSession(FakeDriver());panel.clicks.set(True)
+                    panel.frame={'observation_id':'owned'}
+                    panel.proposed_point={'found':True,'x':1,'y':0}
+                    lane=Mock()
+                    def unknown(*args):
+                        panel.cancel.set()
+                        return {'ok':False,'error':'post capture cancelled',
+                                'meta':{'execution_state':'unknown'}}
+                    lane.call.side_effect=unknown
+                    with patch.object(panel,'manual_lane',return_value=lane):
+                        panel.dispatch_click(1,0,'test')
+                        self.pump(lambda:not panel.busy)
+                    self.assertIn('结果未知',panel.status.get())
+                    self.assertNotIn('可重新执行',panel.status.get())
+                    self.assertIsNone(panel.frame);self.assertIsNone(panel.proposed_point)
+                    panel.dispatch_click(1,0,'retry')
+                    self.assertEqual(lane.call.call_count,1)
+                finally:panel.close()
+
+    def test_invalid_approval_image_is_rejected_and_next_prompt_still_works(self):
+        from click_approval import ClickApprovals,ApprovalView
+        broker=ClickApprovals();view=ApprovalView(self.root,broker)
+        results=[]
+        try:
+            for png in (b'bad png',fixture_png()):
+                worker=threading.Thread(target=lambda png=png:results.append(broker.request('owned',
+                    {'x':1,'y':0,'reason':'test'}, {'png':png,'width':2,'height':1},threading.Event())),daemon=True)
+                worker.start()
+                if png==b'bad png':
+                    self.pump(lambda:not worker.is_alive())
+                    self.assertEqual(results,[False]);self.assertIsNone(view.active)
+                else:
+                    self.pump(lambda:view.active is not None)
+                    view.active[2](True)
+                    self.pump(lambda:not worker.is_alive())
+                    self.assertEqual(results,[False,True])
+        finally:view.close()
+
+    def test_expired_or_resolved_confirmation_cannot_be_accepted_late(self):
+        from click_approval import ClickApprovals
+        broker=ClickApprovals()
+        for kind in ('expired','denied','cancelled'):
+            token=threading.Event()
+            row={'lock':threading.Lock(),'done':threading.Event(),'accepted':False,
+                 'deadline':time.monotonic()+60,'cancel':token}
+            if kind=='expired':row['deadline']=time.monotonic()-1
+            if kind=='denied':broker.resolve(row,False)
+            if kind=='cancelled':token.set()
+            broker.resolve(row,True)
+            self.assertTrue(row['done'].is_set());self.assertFalse(row['accepted'])
+
 
 if __name__ == '__main__': unittest.main()
