@@ -30,6 +30,10 @@ def execute(argv, workspace, home, cancelled, *, timeout=120, task_id='', run_id
     if (not isinstance(argv, (list, tuple)) or not argv or
             any(not isinstance(x, str) or '\0' in x for x in argv) or not 0 < timeout <= 600):
         raise ValueError('Use an argument list and a timeout of at most 600 seconds')
+    if cancelled.is_set():
+        return _persist(argv, workspace, home, task_id, run_id, {
+            'status': 'cancelled', 'exit_code': None, 'output': '', 'output_truncated': False,
+            'passed': None, 'failed': None, 'execution_state': 'not_started'})
     environment = {k: v for k, v in os.environ.items()
                    if k.upper() in {'PATH', 'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'TEMP', 'TMP', 'LANG'}}
     environment['PYTHONIOENCODING'] = 'utf-8'
@@ -72,11 +76,18 @@ def execute(argv, workspace, home, cancelled, *, timeout=120, task_id='', run_id
         _stop(process)
         reader.join(timeout=5)
         truncated = True
+        if status == 'completed':
+            status = 'unknown'  # Exit 0 does not establish a complete test receipt.
     output = redact(b''.join(chunks).decode('utf-8', 'replace'))
     if status == 'completed' and process.returncode != 0:
         status = 'failed'
     result = {'status': status, 'exit_code': process.returncode, 'output': output,
-              'output_truncated': truncated, 'passed': None, 'failed': None}
+              'output_truncated': truncated, 'passed': None, 'failed': None,
+              'execution_state': 'unknown' if status == 'unknown' else 'completed'}
+    return _persist(argv, workspace, home, task_id, run_id, result)
+
+
+def _persist(argv, workspace, home, task_id, run_id, result):
     folder = Path(home) / 'artifacts'
     folder.mkdir(parents=True, exist_ok=True)
     artifact = folder / ('test-' + uuid.uuid4().hex + '.json')

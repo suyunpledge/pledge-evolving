@@ -13,7 +13,7 @@ from unittest.mock import Mock, patch
 
 import forge_gui_v2 as gui
 import workspace as ws
-from forge_client import ChatMessage, ForgeGatewayClient, GenerationCancelled
+from forge_client import ChatMessage, ForgeGatewayClient, GenerationCancelled, CompletionResult
 from interaction_model import (model_label,read_attachment, compose_prompt, task_command, task_outcome,
                                gateway_settings, select_provider)
 
@@ -70,7 +70,8 @@ class ContractTests(unittest.TestCase):
         args.workspace = "."
         server = Mock()
         server.serve_forever.side_effect = KeyboardInterrupt
-        with patch("forge.gateway.serve", return_value=server) as serve:
+        with tempfile.TemporaryDirectory() as home, patch("forge.gateway.serve", return_value=server) as serve:
+            args.home = home  # Normally supplied by cli.main before cmd_gateway.
             self.assertEqual(cmd_gateway(args), 0)
         self.assertEqual(serve.call_args.args[0].wire, "openai")
 
@@ -284,6 +285,52 @@ class GuiInteractionTests(unittest.TestCase):
         self.assertFalse(self.app.client.called)
         self.assertEqual(self.app._chat_history, [])
         self.assertEqual(self.app.send_var.get(), "cancel me")
+
+    def test_work_unknown_receipt_stops_batch_and_next_model_turn(self):
+        calls, turns = [], []
+        target = Path(self.tmp.name) / 'action.txt'
+        class Client:
+            def health(self, **kw): return True, 'ok'
+            def list_tools(self):
+                return [{'type': 'function', 'function': {'name': 'operate', 'parameters': {'type': 'object'}}}]
+            def stream_chat(self, messages, **kw):
+                turns.append(1)
+                return CompletionResult('', tool_calls=[
+                    {'id': str(i), 'function': {'name': 'operate', 'arguments': '{}'}} for i in range(2)])
+            def call_tool(self, name, args):
+                calls.append(name)
+                target.write_text('changed')
+                return {'ok': False, 'meta': {'execution_state': 'unknown'}}
+        self.app.client = Client()
+        self.app.send_var.set('operate then inspect')
+        with patch.object(self.app, '_chat_failed') as failed:
+            self.app._do_send()
+            self.pump(lambda: not self.app._sending)
+        self.assertEqual(calls, ['operate'])
+        self.assertEqual(turns, [1])
+        self.assertEqual(target.read_text(), 'changed')
+        self.assertIn('结果未知', failed.call_args.args[0])
+        self.assertEqual(self.app._chat_history, [])
+
+    def test_work_round_limit_is_not_archived_as_success(self):
+        turns = []
+        class Client:
+            def health(self, **kw): return True, 'ok'
+            def list_tools(self):
+                return [{'type': 'function', 'function': {'name': 'operate'}}]
+            def stream_chat(self, messages, **kw):
+                turns.append(1)
+                return CompletionResult('', tool_calls=[{'id': str(len(turns)), 'function': {
+                    'name': 'operate', 'arguments': json.dumps({'step': len(turns)})}}])
+            def call_tool(self, name, args): return {'ok': True, 'content': str(args)}
+        self.app.client = Client()
+        self.app.send_var.set('continuous operation')
+        with patch.object(self.app, '_chat_failed') as failed:
+            self.app._do_send()
+            self.pump(lambda: not self.app._sending)
+        self.assertEqual(len(turns), 8)
+        self.assertIn('轮数上限', failed.call_args.args[0])
+        self.assertEqual(self.app._chat_history, [])
 
     def test_multiline_input_and_local_command(self):
         # 重构后 send_var 不再绑 entry 的 textvariable（Text 不支持多行

@@ -7708,6 +7708,7 @@ class ForgeGuiApp:
 
                     TOOL_ROUNDS = 8   # 防失控：模型最多连续调 8 轮工具
                     from forge.execution_guard import ExecutionGuard
+                    from work_tools import prepare_calls, invoke as invoke_work_tool
                     execution_guard = ExecutionGuard()
                     rounds = 0
                     while True:
@@ -7723,7 +7724,7 @@ class ForgeGuiApp:
                         # 但测试 stub/异常实现可能返回 None —— 不能因此炸掉整轮
                         turn_text = "".join(acc[round_start:]) or (
                             result.text if result is not None else "")
-                        calls = (list(getattr(result, "tool_calls", None) or [])
+                        calls = (prepare_calls(getattr(result, "tool_calls", None) or [])
                                  if result is not None else [])
                         if not calls:
                             break   # 纯文本 → 本轮对话完成
@@ -7743,27 +7744,30 @@ class ForgeGuiApp:
                                 args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
                             except ValueError:
                                 args = {"_raw": str(raw_args)}
-                            if not isinstance(args, dict):
-                                args = {"value": args}
                             try:
                                 # The gateway owns its names even if a stale runtime claims them.
                                 _call_t0 = time.monotonic()
-                                if name in bridge_names:
-                                    if desktop is not None:
-                                        args = desktop.review_change(name,args,selected_workspace,phase_scope,cancel_event)
-                                    resp = client.call_tool(name, args)
-                                    if desktop is not None and isinstance(resp,dict) and resp.get('ok') and '_expected_revisions' in args:
-                                        self._post_ui(desktop.refresh_workspace)
-                                elif name in connector_names:
-                                    resp = desktop.call(name,args,cancel_event)
-                                elif plugin_rt is not None and name in plugin_rt.tools:
-                                    resp = plugin_rt.call(name, args)
-                                else:
-                                    resp = client.call_tool(name, args)
-                                ok_flag = bool(resp.get("ok")) if isinstance(resp, dict) else True
+                                def dispatch_work():
+                                    nonlocal args
+                                    if cancel_event.is_set():
+                                        raise GenerationCancelled('已停止工具调用')
+                                    if name in bridge_names:
+                                        if desktop is not None:
+                                            args = desktop.review_change(name,args,selected_workspace,phase_scope,cancel_event)
+                                        response = client.call_tool(name, args)
+                                        if desktop is not None and response.get('ok') and '_expected_revisions' in args:
+                                            self._post_ui(desktop.refresh_workspace)
+                                        return response
+                                    if name in connector_names:
+                                        return desktop.call(name,args,cancel_event)
+                                    if plugin_rt is not None and name in plugin_rt.tools:
+                                        return plugin_rt.call(name, args)
+                                    return client.call_tool(name, args)
+                                resp = invoke_work_tool(args, dispatch_work)
+                                ok_flag = resp['ok']
                                 body_text = json.dumps(resp, ensure_ascii=False)
                             except Exception as tool_exc:
-                                resp = {"ok": False,
+                                resp = {"ok": False, "meta": {"execution_state": "unknown"},
                                         "error": f"{type(tool_exc).__name__}: {tool_exc}"}
                                 ok_flag = False
                                 body_text = str(tool_exc)
@@ -7783,6 +7787,9 @@ class ForgeGuiApp:
                                 "elapsed": round(_call_elapsed, 2),
                                 "ok": ok_flag,
                             })
+                            if resp.get('meta', {}).get('execution_state') == 'unknown':
+                                self._post_ui(self._post_tool_round, rows, rounds + 1)
+                                raise GatewayError('工具执行结果未知，已停止后续操作；请检查目标状态与工具记录后再继续。')
                         rounds += 1
                         if rows:
                             self._post_ui(self._post_tool_round, rows, rounds)
@@ -7791,7 +7798,7 @@ class ForgeGuiApp:
                         if rounds >= TOOL_ROUNDS:
                             self._post_ui(self._post_note_to_msg,
                                           f"已达工具调用轮数上限（{TOOL_ROUNDS} 轮），停止继续调用")
-                            break
+                            raise GatewayError('已达工具调用轮数上限，任务尚未验证完成；请检查工具结果后继续。')
 
                     full = "".join(acc)
                     if cancel_event.is_set():
@@ -7922,15 +7929,18 @@ class ForgeGuiApp:
             if not msg._text_source and not msg._has_details:
                 msg.pack_forget()  # No empty assistant shell beside the error.
         area = getattr(self, "chat_area", None)
+        uncertain = '工具执行结果未知' in message
         if area is not None:
-            area.add_notice(message, tone="error", title=tr("模型请求失败"), actions=[
+            actions = [{"label": tr("打开工作区"), "command": self._open_workspace}] if uncertain else [
                 {"label": tr("切换模型"), "command": self._open_model_menu},
                 {"label": tr("编辑后重试"), "command": lambda: (self.send_var.set(prompt), self.input_card.focus_entry())},
-            ])
+            ]
+            area.add_notice(message, tone="error", title=tr("工具结果待确认") if uncertain else tr("模型请求失败"), actions=actions)
         self._push_terminal(str(redact(f'[chat] {message}')))
         if not self.send_var.get():
             self.send_var.set(prompt)
-        self._set_status("请求失败，消息已保留；检查 gateway 后可重试", "error")
+        self._set_status("操作结果待确认，请先检查目标状态与工具记录" if uncertain else
+                         "请求失败，消息已保留；检查 gateway 后可重试", "error")
 
     def _stop_send(self):
         """请求中止当前回复，即时反馈并等待工作线程结束连接。"""
