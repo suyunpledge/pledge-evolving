@@ -34,7 +34,7 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 
-from gui_theme import C, FONT_CAPTION, FONT_SECTION, attach_tooltip
+from gui_theme import C, FONT_CAPTION, FONT_MICRO, FONT_SECTION, attach_tooltip
 from ui_icons import IconButton, IconCanvas, icon_image
 
 # 活动栏宽度（示例图左区第一列 48px）。
@@ -213,21 +213,29 @@ class ActivityBar(ttk.Frame):
         self._entries = {}          # key -> (holder, icon, marker)
         self._active = None
         for key, glyph, label in self.ITEMS:
-            holder = tk.Frame(self, bg=C['activity'], height=44)
+            # v0.6：图标下方加 9px 文字标签——纯图标列的选中态与用途
+            # 都不可辨（WorkBuddy 遗留项）；双行结构同时给选中态留出
+            # 「整块底色 + 左侧 3px 指示条 + 图标提亮」的完整表达空间。
+            holder = tk.Frame(self, bg=C['activity'], height=52)
             holder.pack(fill='x')
             holder.pack_propagate(False)
-            marker = tk.Frame(holder, bg=C['activity'], width=2)
+            marker = tk.Frame(holder, bg=C['activity'], width=3)
             marker.pack(side='left', fill='y')
-            icon = IconCanvas(holder, glyph, size=20,
+            body = tk.Frame(holder, bg=C['activity'])
+            body.pack(side='left', fill='both', expand=True)
+            icon = IconCanvas(body, glyph, size=18,
                               bg=C['activity'], fg=C['ter'])
-            icon.pack(expand=True)
+            icon.pack(pady=(6, 1))
+            caption = tk.Label(body, text=label[:2], font=FONT_MICRO,
+                               bg=C['activity'], fg=C['ter'])
+            caption.pack(pady=(0, 4))
             attach_tooltip(icon, label)
-            for widget in (holder, icon):
+            for widget in (holder, body, icon, caption):
                 widget.bind('<Button-1>', lambda _e, k=key: self.select(k))
                 widget.bind('<Enter>', lambda _e, k=key: self._paint(k, hover=True))
                 widget.bind('<Leave>', lambda _e, k=key: self._paint(k))
                 widget.configure(cursor='hand2')
-            self._entries[key] = (holder, icon, marker)
+            self._entries[key] = (holder, icon, marker, caption)
         # 底部弹性占位：图标列整体靠上（与示例图一致）。
         tk.Frame(self, bg=C['activity']).pack(expand=True, fill='both')
 
@@ -238,7 +246,8 @@ class ActivityBar(ttk.Frame):
         return self._active
 
     def entry(self, key):
-        """取某项的 (holder, icon, marker) 三元组（键不存在返回 None）。"""
+        """取某项的 (holder, icon, marker, caption) 四元组（键不存在
+        返回 None）。v0.6 前是三元组；解包方均已随双行结构同步。"""
         return self._entries.get(key)
 
     # ── 交互 ──────────────────────────────────────────────────────
@@ -257,9 +266,10 @@ class ActivityBar(ttk.Frame):
         active = key == self._active
         bg = C['sel'] if active else C['hover'] if hover else C['activity']
         fg = C['accent_text'] if active else C['text'] if hover else C['ter']
-        holder, icon, marker = self._entries[key]
+        holder, icon, marker, caption = self._entries[key]
         holder.configure(bg=bg)
         icon.configure(bg=bg, fg=fg)
+        caption.configure(bg=bg, fg=fg)
         marker.configure(bg=C['accent'] if active else C['activity'])
 
 
@@ -366,15 +376,20 @@ class ExplorerPanel(ttk.Frame):
         header = ttk.Frame(files)
         header.pack(fill='x')
         ttk.Label(header, text='文件', font=FONT_SECTION).pack(side='left')
-        for icon, tip, command in (('plus', '新建文件', self._new_file),
+        # v0.6：工具按钮右对齐、统一 16px 图标（tooltip 承载语义）——
+        # 原左对齐混排里图标按钮与「文件」标题挤在一行，视觉毛坯
+        # （WorkBuddy 遗留项）。
+        actions = ttk.Frame(header)
+        actions.pack(side='right')
+        for icon, tip, command in (('refresh', '刷新', self._on_refresh),
                                    ('chevron_up', '折叠全部', self._collapse_all),
-                                   ('refresh', '刷新', self._on_refresh)):
-            button = IconButton(header, icon=icon, bg=C['bg'], fg=C['ter'],
+                                   ('plus', '新建文件', self._new_file)):
+            button = IconButton(actions, icon=icon, bg=C['bg'], fg=C['ter'],
                                 relief='flat', bd=0, cursor='hand2',
                                 activebackground=C['hover'],
                                 activeforeground=C['text'],
-                                padx=2, pady=2, command=command)
-            button.pack(side='left', padx=(6, 0))
+                                padx=3, pady=2, command=command)
+            button.pack(side='right')
             attach_tooltip(button, tip)
         self.tree = ttk.Treeview(files, show='tree', selectmode='browse', style='Coding.Treeview')
         scroll = ttk.Scrollbar(files, command=self.tree.yview)

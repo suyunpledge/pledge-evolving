@@ -360,7 +360,9 @@ class DevelopmentWorkbench(ttk.Frame):
         # v0.4 产品化收紧：编辑区底部状态行 + 面包屑（合在 body 末尾）
         # — 22px 高，左侧面包屑（项目 / 路径），右侧 行列 / 语言 / 修改状态。
         self._build_editor_status_bar(body)
-        self.write_output('测试', '内置 shell_exec 在 Secret 隔离中不可用。这里只展示真实执行或拒绝事件；没有结构化结果时不推算通过数。\n')
+        # v0.6：测试页说明改由 bottom_panel 的空态卡承载（EMPTY_HINTS 已
+        # 覆盖同义文案）——此前构造期 write_output 会让 has_content 恒真，
+        # 空内容自动折叠永不触发。
         # M6：Review Focus 的中央 Git Diff 只读视图——editor_frame 内
         # 第三态（欢迎页 / 编辑器本体 / 本视图），与另两个子帧共享父
         # 容器，切换只做 pack/pack_forget（_sync_central_view），不销毁
@@ -1104,6 +1106,7 @@ class DevelopmentWorkbench(ttk.Frame):
         # v0.2 页改名兼容：旧页名（Diff/终端）经 bottom 面板别名表映射
         # 到新页（差异），保持既有调用点零改动。
         from .bottom_panel import PAGE_ALIASES
+        self._bottom_content_arrived()
         widget = self.output_views[PAGE_ALIASES.get(name, name)]
         if clear:
             widget.configure(state='normal')
@@ -1225,6 +1228,7 @@ class DevelopmentWorkbench(ttk.Frame):
         return True
 
     def _project_loaded(self, value, error):
+        self._bottom_content_arrived()
         self._loading = False
         self.send_button.configure(state='normal')
         if error:
@@ -2947,6 +2951,18 @@ class DevelopmentWorkbench(ttk.Frame):
             self.update_idletasks()
         finally:
             self._settling = False
+        self._sync_bottom_auto_fold()
+
+    def _bottom_content_arrived(self):
+        """真实内容到达：若底部被自动折叠过则展开并锁定（本次会话
+        不再自动折叠）。open_project 成功也走这里——文件树填充后底部
+        的差异/测试/问题三页即将有数据，且开项目态不自动折叠。"""
+        self._bottom_kept = True
+        if getattr(self, '_bottom_auto_folded', False):
+            self._bottom_auto_folded = False
+            if self._sync_bottom_panel(True):
+                self._settle_mount()
+                self.later(0, self.place_sashes)
 
     def _sync_bottom_panel(self, show):
         """M1：IDE 收起时把底部工具面板移出外层竖向 pane，展开时补回。
@@ -2956,6 +2972,10 @@ class DevelopmentWorkbench(ttk.Frame):
         时它同样不可见）。补回用 add 追加到队尾，保持 [panes, bottom]
         的固定次序。同样注意 panes() 返回字符串，须 nametowidget 换算。
         返回 True 表示本次确实改变了挂载集合（调用方据此冲刷重排）。
+
+        v0.6（挂点说明）：空内容自动折叠的逻辑不在 apply_layout 里加
+        （该方法在 Ownership 字节保护组），而是挂在本方法 show=True
+        的挂载路径之后——见 _sync_bottom_auto_fold。
         """
         if getattr(self, '_closed', False):
             return False
@@ -2973,6 +2993,27 @@ class DevelopmentWorkbench(ttk.Frame):
         except (tk.TclError, AttributeError):
             return False  # 构造早期 / 已销毁：无底部面板可同步
         return changed
+
+    def _sync_bottom_auto_fold(self):
+        """v0.6：底部空内容自动折叠（仅在欢迎页态）。
+
+        挂点约束：apply_layout 属 Ownership 字节保护组，不能改字节；
+        因此由 apply_layout 的既有调用链间接到达——本方法由
+        _settle_mount（apply_layout 之后必经）末尾调用。逻辑与
+        _bottom_content_arrived 配对：内容到达（write_output /
+        _project_loaded）即展开并锁定。
+        """
+        if (self.state.layout['visible'] and self.source is None
+                and not getattr(self, '_bottom_kept', False)):
+            try:
+                empty = not self.bottom.has_content()
+            except Exception:
+                empty = False
+            if empty:
+                if self._sync_bottom_panel(False):
+                    self._bottom_auto_folded = True
+                    return True
+        return False
 
     def place_sashes(self):
         if self._closed or getattr(self, '_placing_sashes', False):

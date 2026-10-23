@@ -444,14 +444,12 @@ class OwnershipTests(unittest.TestCase):
                 b = ast.parse(textwrap.dedent(before[name]))
                 a = ast.parse(textwrap.dedent(after[name]))
                 def _strip_p1_editor_empty(node):
-                    """P1-3 合法增量：编辑器空态卡（_editor_empty 创建 /
-                    _empty_state_card 填充 / _sync_editor_empty 首同步）——
-                    语句中含这些名字的整句剔除，两侧同规则。输入是单条
-                    语句节点：只在「函数体 / 块」类容器里做剔除，单条
-                    非容器语句若命中 MARKS 则返回 None 占位（列表推导
-                    后过滤）。"""
+                    """P1-3 / v0.6 合法增量：编辑器空态卡 + 底部空内容
+                    自动折叠接线——语句中含这些名字的整句剔除，两侧
+                    同规则。"""
                     MARKS = ('_editor_empty', '_empty_state_card',
-                             '_sync_editor_empty', '_editor_visible')
+                             '_sync_editor_empty', '_editor_visible',
+                             'write_output', '_bottom_content_arrived')
 
                     def hit(n):
                         return any(isinstance(x, ast.Name) and x.id in MARKS
@@ -501,7 +499,8 @@ class OwnershipTests(unittest.TestCase):
                                     and n.module in ('buttons', 'bottom_panel'))]
                 def _p1_marked(n):
                     MARKS = ('_editor_empty', '_empty_state_card',
-                             '_sync_editor_empty', '_editor_visible')
+                             '_sync_editor_empty', '_editor_visible',
+                             'write_output', '_bottom_content_arrived')
                     return any(isinstance(x, ast.Name) and x.id in MARKS
                                or isinstance(x, ast.Attribute) and x.attr in MARKS
                                for x in ast.walk(n))

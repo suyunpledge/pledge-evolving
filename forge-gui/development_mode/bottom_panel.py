@@ -283,6 +283,29 @@ class ToolPanel(ttk.Frame):
         except Exception:
             pass
 
+    def has_content(self):
+        """任何一页有真实内容（非空态）→ True。
+
+        判定走两层：BADGED 三页用注入 provider 的计数（变更/测试/问题
+        任一非零即有内容）；文本页逐页检查 Text 是否有超出空态卡以外
+        的内容（append 会销毁空态卡，故 card 不存在且有字符即真内容）。
+        """
+        for name in BADGED:
+            provider = self._providers.get(name)
+            try:
+                if provider is not None and int(provider()) > 0:
+                    return True
+            except Exception:
+                pass
+        for name, view in self.views.items():
+            if getattr(view, 'tag_ranges', None) is None:
+                continue  # 注入类视图（能力/审批）不算文本内容
+            if getattr(view, '_empty_card', None) is not None:
+                continue  # 空态卡还在 = 无真实内容
+            if str(view.get('1.0', 'end-1c')).strip():
+                return True
+        return False
+
     def select(self, name):
         """按页名（兼容旧别名）选中输出页。"""
         target = PAGE_ALIASES.get(name, name)
