@@ -28,6 +28,11 @@ class ComputerSession:
         """Host stop/revoke must not wait for a pending approval lock."""
         self._revoked.set()
 
+    @property
+    def revoked(self):
+        """Worker-safe host cancellation signal; revocation never waits for I/O."""
+        return self._revoked
+
     @staticmethod
     def _failure(code, message, *, unknown=False):
         return ToolResult(False, error=message, meta={'error_code': code,

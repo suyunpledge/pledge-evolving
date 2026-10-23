@@ -1,5 +1,7 @@
 # Computer Use 宿主接口（第一阶段）
 
+后续已落实 [截图视觉与 GUI 窗口选择器](computer-screenshot-vision.md)：Work Mode 提供本地窗口绑定、预览与独立视觉模型分析。以下保留原生输入宿主接口；GUI 视觉面板不默认授予此输入能力。
+
 参考 [OpenAI Computer Use 集成流程](https://developers.openai.com/api/docs/guides/tools-computer-use-integration) 的动作后回读，以及 [OpenClaw 浏览器工具](https://docs.openclaw.ai/tools/browser/agent-tools) 的目标绑定/观察引用。本实现使用 Forge 现有工具协议，不依赖 OpenAI SDK 或 Codex 的私有运行时，不调用外部 Agent CLI。
 
 ## 实际支持
@@ -10,7 +12,7 @@
 
 ## 宿主接线
 
-仅可信宿主从用户选择的窗口记录中取得 HWND/PID，不能从模型参数构造目标。普通 GUI/CLI 启动默认不开放电脑控制；本轮未新增 GUI 窗口选择器。ZCode 可按以下接口接线，无需依赖 Agent 内部字段或修改布局框架。
+仅可信宿主从用户选择的窗口记录中取得 HWND/PID，不能从模型参数构造目标。普通 GUI/CLI 启动默认不开放电脑输入控制。其他宿主可按以下接口接线，无需依赖 Agent 内部字段或修改布局框架。
 
 ```python
 from forge.computer_use import ComputerSession, register_computer_tools
@@ -72,7 +74,7 @@ server = serve(cfg)
 
 ## 限制
 
-本阶段没有屏幕截图/视觉坐标通道、UIA 全树、浏览器 DOM/标签页适配，也不支持 Electron、自绘界面、热键或拖拽。不能声称达到 Codex/OpenClaw 全部能力。标准控件消息不是物理点击；应用是否接受及业务效果必须根据新状态判断。
+原生控件驱动不提供视觉坐标输入、UIA 全树、浏览器 DOM/标签页适配、热键或拖拽。截图与视觉分析由后续接口提供，但不会把截图坐标自动转换为点击。不能声称达到 Codex/OpenClaw 全部能力。标准控件消息不是物理点击；应用是否接受及业务效果必须根据新状态判断。
 
 控件消息等待有 500ms 上限，观察最多 64 个子控件、3 秒检查预算及完整 4096 字符缓冲区；超过预算拒绝观察，避免截断状态用于动作。宿主审批回调仍需自行响应取消。进程/窗口身份和回读缩小误操作风险，但无法使观察与任意第三方应用状态变化原子化；协作锁也不约束用户和其他程序。
 

@@ -153,6 +153,7 @@ PRESETS: tuple[ProviderPreset, ...] = (
         source=SOURCE_USER, docs="https://console.volcengine.com/ark",
         plans=(
             Plan("标准 API", "https://ark.cn-beijing.volces.com/api/v3"),
+            Plan("Coding Plan（OpenAI）", "https://ark.cn-beijing.volces.com/api/coding/v3", source=SOURCE_DOCS),
             Plan("套餐 / Plan", "https://ark.cn-beijing.volces.com/api/plan/v3",
                  note="本机配置里为此形态"),
         ),

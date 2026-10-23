@@ -312,6 +312,55 @@ class GuiInteractionTests(unittest.TestCase):
         self.assertIn('结果未知', failed.call_args.args[0])
         self.assertEqual(self.app._chat_history, [])
 
+    def test_selected_window_vision_is_consumed_by_work_agent(self):
+        from computer_panel import ComputerLane
+        from forge.computer_use import ComputerSession
+        from forge.policy import Policy
+        class FakeDriver:
+            target_id = 'owned:fixture'
+            captures = 0
+            def screenshot(self, **kwargs):
+                self.captures += 1
+                return {'png':b'fixture', 'width':2, 'height':1,'sha256':'fixture','target':self.target_id}
+        driver = FakeDriver()
+        session = ComputerSession(driver)
+        panel = Mock()
+        panel.stop.is_set.return_value = False
+        def make_lane(**kwargs):
+            kwargs.pop('policy')
+            kwargs.pop('rows')
+            return ComputerLane(session, rows=[], selection=('vision','doubao-seed-evolving'),
+                consent=True, home=self.app.home/'computer', policy=Policy(workspace=kwargs['workspace']), **kwargs)
+        panel.lane.side_effect = make_lane
+        self.app.computer_panel = panel
+        consumed, schemas = [], []
+        class Client:
+            def health(self, **kw): return True, 'ok'
+            def list_tools(self): return []
+            def stream_chat(self, messages, **kw):
+                schemas.extend(kw['tools'])
+                receipts = [m for m in messages if m.role == 'tool']
+                if not receipts:
+                    return CompletionResult('', tool_calls=[{'id':'vision-1','function': {
+                        'name':'computer_vision', 'arguments':json.dumps({'question':'Describe window'})}}])
+                consumed.append(json.loads(receipts[-1].content))
+                kw['on_chunk']('已根据视觉结果回答')
+                return CompletionResult('已根据视觉结果回答')
+            def call_tool(self, *args): raise AssertionError('Local vision must not use Gateway')
+        self.app.client = Client()
+        self.app.send_var.set('看看绑定窗口')
+        with patch('computer_panel.VisionClient') as vision, patch.object(self.app,'_chat_failed') as failed:
+            vision.return_value.analyze.return_value = {'text':'Fixture image visible','model':'fixture','usage':{}}
+            self.app._do_send()
+            self.pump(lambda:not self.app._sending)
+        failed.assert_not_called()
+        self.assertEqual(driver.captures,1)
+        self.assertTrue(consumed[0]['ok'])
+        self.assertTrue(consumed[0]['meta']['run_id'])
+        self.assertIn('computer_vision', [s['function']['name'] for s in schemas])
+        self.assertNotIn('computer_act', [s['function']['name'] for s in schemas])
+        self.assertIn('Fixture image visible', consumed[0]['content'])
+
     def test_work_round_limit_is_not_archived_as_success(self):
         turns = []
         class Client:

@@ -9,6 +9,30 @@ import os
 import time
 
 
+def list_windows(*, exclude_pid=None):
+    """User-requested picker inventory; no pixels, focus changes or input."""
+    if os.name != 'nt':
+        raise RuntimeError('Window selection requires Windows')
+    u = c.WinDLL('user32', use_last_error=True)
+    callback_type = c.WINFUNCTYPE(w.BOOL, w.HWND, w.LPARAM)
+    u.EnumWindows.argtypes = [callback_type, w.LPARAM]
+    u.IsWindowVisible.argtypes = [w.HWND]
+    u.GetWindowTextW.argtypes = [w.HWND, w.LPWSTR, c.c_int]
+    u.GetWindowThreadProcessId.argtypes = [w.HWND, c.POINTER(w.DWORD)]
+    rows = []
+    def visit(window, _):
+        owner = w.DWORD()
+        u.GetWindowThreadProcessId(window, c.byref(owner))
+        title = c.create_unicode_buffer(512)
+        if owner.value != exclude_pid and u.IsWindowVisible(window):
+            u.GetWindowTextW(window, title, len(title))
+            if title.value:
+                rows.append({'window': int(window), 'process_id': owner.value, 'title': title.value})
+        return len(rows) < 128
+    u.EnumWindows(callback_type(visit), 0)
+    return rows
+
+
 class WindowsControlDriver:
     def __init__(self, window, process_id):
         if os.name != 'nt':
@@ -29,6 +53,11 @@ class WindowsControlDriver:
                                              w.UINT, w.UINT, c.POINTER(c.c_size_t)]
         self.u.SendMessageTimeoutW.restype = w.LPARAM
         self._validate()
+
+    def screenshot(self, *, cancelled=None):
+        from .computer_capture import capture_window
+        self._validate()
+        return capture_window(self.window, self.process_id, cancelled=cancelled)
 
     def _validate(self):
         owner = w.DWORD()
