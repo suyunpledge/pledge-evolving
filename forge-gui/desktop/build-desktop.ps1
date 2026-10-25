@@ -7,12 +7,14 @@ forge-gui 桌面应用一键构建
     -PythonExe <路径>   指定构建用的 Python（默认自动探测，需带 tkinter）
     -SkipIcon           跳过图标生成（沿用已有 desktop\forge.ico）
     -SkipBrandMarks     跳过模型品牌标志生成（沿用已有 assets\brands）
+    -SkipUiAssets       沿用仓库已有界面图标，避免构建环境字体差异改写资源
     -Clean              打包前清掉 desktop\build 与 desktop\dist
 #>
 param(
     [string]$PythonExe = "",
     [switch]$SkipIcon,
     [switch]$SkipBrandMarks,
+    [switch]$SkipUiAssets,
     [switch]$Clean
 )
 
@@ -55,6 +57,8 @@ function Find-BuildPython {
 $py = Find-BuildPython -Explicit $PythonExe
 Write-Host "构建 Python: $py" -ForegroundColor Cyan
 & $py -c "import sys; print('  version:', sys.version.split()[0])"
+& $py (Join-Path $DesktopDir 'prepare-browser.py')
+if ($LASTEXITCODE -ne 0) { throw 'Chromium 准备或启动校验失败；请先安装项目的 [browser] 依赖' }
 
 if (-not $SkipIcon) {
     Write-Host "`n[1/4] 生成图标 ..." -ForegroundColor Cyan
@@ -74,9 +78,11 @@ if (-not $SkipBrandMarks) {
     Write-Host "`n[2/4] 跳过品牌标志生成" -ForegroundColor DarkGray
 }
 
-Write-Host "`n生成功能图标与表情资源 ..." -ForegroundColor Cyan
-& $py (Join-Path $DesktopDir "make_ui_assets.py")
-if ($LASTEXITCODE -ne 0) { throw "功能图标与表情资源生成失败" }
+if (-not $SkipUiAssets) {
+    Write-Host "`n生成功能图标与表情资源 ..." -ForegroundColor Cyan
+    & $py (Join-Path $DesktopDir "make_ui_assets.py")
+    if ($LASTEXITCODE -ne 0) { throw "功能图标与表情资源生成失败" }
+}
 
 if ($Clean) {
     $desktopRoot = [IO.Path]::GetFullPath($DesktopDir).TrimEnd('\') + '\'
@@ -96,22 +102,40 @@ try {
         --distpath (Join-Path $DesktopDir "dist") `
         --workpath (Join-Path $DesktopDir "build") `
         (Join-Path $DesktopDir "forge-desktop.spec")
-    # PyInstaller 7.0 warning（如 deprecation）会设 $LASTEXITCODE 但产物生成 OK；
-    # 只看产物存在与否，EXITCODE 仅供参考。
     if ($LASTEXITCODE -ne 0) {
-        $exeChk = Join-Path $DesktopDir "dist\forge-desktop.exe"
-        if (-not (Test-Path $exeChk)) {
-            throw "PyInstaller 失败（退出码 $LASTEXITCODE）"
-        }
-        Write-Host "  PyInstaller EXITCODE=$LASTEXITCODE（warning），继续" -ForegroundColor Yellow
+        throw "PyInstaller 失败（退出码 $LASTEXITCODE）；不能将旧 EXE 当成本次产物"
     }
 } finally {
     Pop-Location
 }
 
 Write-Host "`n[4/4] 校验产物 ..." -ForegroundColor Cyan
+# Chromium stays beside the EXE so it is not unpacked on every GUI launch.
+$browserSource = Join-Path $DesktopDir 'browsers'
+$browserTarget = Join-Path $DesktopDir 'dist\browsers'
+$distributionRoot = [IO.Path]::GetFullPath((Join-Path $DesktopDir 'dist')).TrimEnd('\') + '\'
+$browserTarget = [IO.Path]::GetFullPath($browserTarget)
+if (-not $browserTarget.StartsWith($distributionRoot, [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'Chromium 分发清理路径超出构建输出目录'
+}
+if (Test-Path -LiteralPath $browserTarget) { Remove-Item -LiteralPath $browserTarget -Recurse -Force }
+New-Item -ItemType Directory -Path $browserTarget -Force | Out-Null
+Get-ChildItem -LiteralPath $browserSource -Force |
+    Where-Object { $_.Name -notin @('.links', '__dirlock') } |
+    Copy-Item -Destination $browserTarget -Recurse -Force
+if (-not (Test-Path (Join-Path $browserTarget 'forge-browser.json'))) { throw 'Chromium 分发目录不完整' }
 $exe = Join-Path $DesktopDir "dist\forge-desktop.exe"
 if (-not (Test-Path $exe)) { throw "没有生成 $exe" }
+$browserReport = Join-Path $DesktopDir 'dist\browser-smoke.json'
+Remove-Item -LiteralPath $browserReport -ErrorAction SilentlyContinue
+$browserSmoke = Start-Process -FilePath $exe -ArgumentList @('--browser-smoke', ('"' + $browserReport + '"')) -PassThru -WindowStyle Hidden
+if (-not $browserSmoke.WaitForExit(60000)) {
+    & taskkill /PID $browserSmoke.Id /T /F | Out-Null
+    throw '打包后的 Chromium 启动测试超时'
+}
+if ($browserSmoke.ExitCode -ne 0 -or -not (Test-Path $browserReport)) { throw '打包后的 Chromium 启动失败' }
+$browserResult = Get-Content -LiteralPath $browserReport -Raw | ConvertFrom-Json
+if (-not $browserResult.ok -or -not $browserResult.closed) { throw '打包后的 Chromium 自检或清理失败' }
 $size = [math]::Round((Get-Item $exe).Length / 1MB, 2)
 $hash = (Get-FileHash $exe -Algorithm SHA256).Hash
 Write-Host "  产物: $exe"

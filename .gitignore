@@ -49,3 +49,4 @@ mimo26-test-artifacts/
 !.env.example
 forge-gui/.secret_store.json
 .forge-development-home/
+forge-gui/desktop/browsers/

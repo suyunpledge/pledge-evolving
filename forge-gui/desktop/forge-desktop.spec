@@ -26,6 +26,10 @@ HIDDEN = [
     "secret_store",
     "interaction_model",
     "desktop_features",
+    "browser_panel",
+    "forge.browser",
+    "forge.browser_tools",
+    "playwright.sync_api",
     "change_preview",
     "brand_marks",
     "model_picker",
@@ -63,6 +67,7 @@ a = Analysis(
     # 界面资源（品牌标志 + 模型厂商标识）。打包后由 _MEIPASS/assets 提供。
     # 注意：brands/ 是子目录，*.png 通配不会递归，必须单独列一条。
     datas=[
+        (str(GUI_DIR / 'desktop' / 'browsers' / 'forge-browser-integrity.json'), '.'),
         (str(GUI_DIR / "locales" / "*.json"), "locales"),
         (str(GUI_DIR / "assets" / "*.png"), "assets"),
         (str(GUI_DIR / "assets" / "brands" / "*.png"), "assets/brands"),

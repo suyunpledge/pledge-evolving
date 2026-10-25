@@ -18,6 +18,7 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
+browser = ["playwright==1.64.1"]
 secrets = ["PyYAML>=6,<7", "tomli>=2; python_version < '3.11'"]
 
 [project.scripts]

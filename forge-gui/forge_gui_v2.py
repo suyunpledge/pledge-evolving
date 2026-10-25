@@ -1141,6 +1141,7 @@ class ForgeGuiApp:
         # 重复入口移除；「更多」只留低频功能与 desktop_features 专属入口。
         # 定时任务已进全局导航（Phase 2A 补充），弹窗入口移除
         self._more_menu.add_command(label=tr('连接器'), command=lambda:self.desktop_features.open(1))
+        self._more_menu.add_command(label='Chromium 浏览器', command=self._open_browser_panel)
         self._more_menu.add_command(label=tr('代码预览'), command=lambda:self.desktop_features.open(2))
         self._more_menu.add_separator()
         for key in ("knowledge", "evolution"):
@@ -7508,6 +7509,15 @@ class ForgeGuiApp:
             previous = self._fallback_secret_scope = (sid, SecretScope())
         return previous[1]
 
+    def _open_browser_panel(self):
+        from browser_panel import BrowserPanel
+        if getattr(self, 'browser_panel', None) is None:
+            self.browser_panel = BrowserPanel(self)
+        try:
+            self.browser_panel.open()
+        except Exception as exc:
+            self._set_status(str(exc), 'error')
+
     def _open_computer_panel(self):
         from computer_panel import ComputerPanel
         panel = getattr(self, 'computer_panel', None)
@@ -7629,6 +7639,11 @@ class ForgeGuiApp:
             if desktop is not None:
                 desktop.current_workspace = selected_workspace
                 with desktop.lock: desktop.rows = copy.deepcopy(self.user_rows)
+            browser_lane = None
+            browser_panel = getattr(self, 'browser_panel', None)
+            if browser_panel is not None:
+                browser_lane = browser_panel.lane(workspace=selected_workspace, rows=phase_rows,
+                                                   scope=phase_scope, cancel=cancel_event)
             computer_lane = None
             panel = getattr(self, 'computer_panel', None)
             if panel is not None and not panel.stop.is_set():
@@ -7694,10 +7709,14 @@ class ForgeGuiApp:
                         return response
                     from forge.desktop_services import OPERATIONS as connector_operations
                     from computer_panel import NAMES as computer_names
+                    from forge.browser_tools import NAMES as browser_names
+                    browser_schemas = browser_lane.schemas() if browser_lane is not None else []
+                    if bridge_names & browser_names:
+                        raise GatewayError('浏览器工具名称与 Gateway 冲突，请停止重复的浏览器宿主')
                     computer_schemas = computer_lane.schemas() if computer_lane is not None else []
                     if computer_lane is not None and bridge_names & computer_names:
                         raise GatewayError('电脑工具名称与 Gateway 冲突，请停止旧的电脑工具宿主后重试')
-                    plugin_schemas, plugin_rt = self._reload_plugin_tools(reserved_names=bridge_names | set(connector_operations) | computer_names,
+                    plugin_schemas, plugin_rt = self._reload_plugin_tools(reserved_names=bridge_names | set(connector_operations) | computer_names | browser_names,
                         workspace=plugin_workspace, session=plugin_session,
                         dispatch=mediated_dispatch)
                     if plugin_schemas:
@@ -7709,6 +7728,7 @@ class ForgeGuiApp:
                     connector_names = {item['function']['name'] for item in connector_schemas}
                     tools = list(tools or []) + connector_schemas
                     tools += computer_schemas
+                    tools += browser_schemas
                     if cancel_event.is_set():
                         raise GenerationCancelled("已停止生成")
                     n_bridge = len(bridge_names)
@@ -7721,6 +7741,8 @@ class ForgeGuiApp:
                         parts.append(tr('连接器')+' '+str(len(connector_schemas)))
                     if computer_schemas:
                         parts.append('窗口视觉 '+str(len(computer_schemas)))
+                    if browser_schemas:
+                        parts.append('Chromium '+str(len(browser_schemas)))
                     if parts:
                         self._post_ui(self._set_request_status,
                                       f"已加载 {' + '.join(parts)} 工具，正在生成…")
@@ -7788,6 +7810,11 @@ class ForgeGuiApp:
                                         return response
                                     if name in connector_names:
                                         return desktop.call(name,args,cancel_event)
+                                    if name in browser_names:
+                                        if browser_lane is None:
+                                            return {'ok': False, 'error': '请先在 Chromium 浏览器面板授权本会话',
+                                                    'meta': {'execution_state': 'not_started'}}
+                                        return browser_lane.call(name, args, tool_call_id=str(call.get('id', '')))
                                     if name in computer_names:
                                         if computer_lane is None:
                                             return {'ok': False, 'error': '请先在电脑操作面板绑定目标窗口',
@@ -8110,6 +8137,7 @@ class ForgeGuiApp:
                 pass
 
     def _close_for_real(self):
+        browser_panel = getattr(self, 'browser_panel', None)
         panel = getattr(self, 'computer_panel', None)
         if panel is not None:
             panel.close()
@@ -8157,7 +8185,7 @@ class ForgeGuiApp:
                 alive = False
             if alive and all(existing is not proc for existing in processes):
                 processes.append(proc)
-        if not processes and monitor is None:
+        if not processes and monitor is None and browser_panel is None:
             self.root.destroy()
             return
 
@@ -8171,6 +8199,8 @@ class ForgeGuiApp:
 
         def terminate_children():
             try:
+                if browser_panel is not None:
+                    browser_panel.close()
                 if monitor is not None:
                     try:
                         monitor.stop()
@@ -8256,6 +8286,13 @@ def _diagnose() -> int:
 
 
 def main():
+    if '--browser-worker' in sys.argv:
+        from forge.browser import worker_main
+        raise SystemExit(worker_main())
+    if '--browser-smoke' in sys.argv:
+        from forge.browser import smoke_report
+        index = sys.argv.index('--browser-smoke')
+        raise SystemExit(smoke_report(sys.argv[index + 1]))
     if "--forge-plugin-worker" in sys.argv:
         from plugin_worker import worker_main
         index = sys.argv.index("--forge-plugin-worker")
