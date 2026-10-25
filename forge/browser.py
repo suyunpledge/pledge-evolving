@@ -3,7 +3,7 @@
 No installed-browser fallback, remote debugging port, persistent user profile,
 or arbitrary JavaScript interface. Browser operations never retry automatically.
 """
-from concurrent.futures import Future
+from concurrent.futures import Future, TimeoutError as FutureTimeout
 from contextlib import ExitStack
 import hashlib
 import json
@@ -101,7 +101,14 @@ class _BrowserActor:
             if self._thread is None:
                 self._thread = threading.Thread(target=self._run, name='Forge-Chromium', daemon=False)
                 self._thread.start()
-        return future.result()
+        while True:
+            try:
+                return future.result(timeout=.1)
+            except FutureTimeout:
+                # Cancelling a queued future is safe. Once the owner claims it,
+                # wait for the actual receipt instead of pretending it was undone.
+                if (self.revoked.is_set() or cancel is not None and cancel.is_set()) and future.cancel():
+                    return failure('cancelled', 'Browser action cancelled before dispatch')
 
     def close(self, *, wait=True):
         with self._gate:
@@ -121,6 +128,8 @@ class _BrowserActor:
                         future, op, args, cancel = self._queue.get(timeout=.1)
                     except queue.Empty:
                         continue
+                    if not future.set_running_or_notify_cancel():
+                        continue
                     if self.revoked.is_set() or cancel is not None and cancel.is_set():
                         result = failure('cancelled', 'Browser action cancelled before dispatch')
                     else:
@@ -138,7 +147,8 @@ class _BrowserActor:
                     while True:
                         try:
                             future, *_ = self._queue.get_nowait()
-                            future.set_result(failure('browser_closed', 'Browser session closed before dispatch'))
+                            if future.set_running_or_notify_cancel():
+                                future.set_result(failure('browser_closed', 'Browser session closed before dispatch'))
                         except queue.Empty:
                             break
                 self._observations.clear()

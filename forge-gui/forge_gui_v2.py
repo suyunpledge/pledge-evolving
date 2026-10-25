@@ -7444,7 +7444,7 @@ class ForgeGuiApp:
         return injection if any(r.ok for r in results) else ""
 
     def _post_tool_round(self, rows: list[dict], round_no: int):
-        """模型发起的工具调用：每轮一张折叠卡片挂在本轮消息上。"""
+        """已完成的工具结果立即展示，卡片标明所属轮次。"""
         msg = getattr(self, "_agent_msg", None)
         if msg is None or not rows:
             return
@@ -7693,10 +7693,14 @@ class ForgeGuiApp:
                     # 网关工具（bridge）：/v1/tools 拉取，走 gateway 执行
                     tools = None
                     try:
-                        tools = client.list_tools() or None
-                    except Exception:
+                        tools = client.list_tools(timeout=5.0, cancel_event=cancel_event) or None
+                    except GenerationCancelled:
+                        raise
+                    except Exception as exc:
                         # 老 gateway / 未开 --tools：按无工具模式对话（保持旧行为）
                         tools = None
+                        self._post_ui(self._post_note_to_msg,
+                            f'网关工具暂不可用，本轮仅使用已加载的本地工具或文字回复：{redact(str(exc))[:240]}')
                     # Plugin aliases are declarative, scoped and granted. Never import third-party Python.
                     bridge_names = {str((item.get("function") or {}).get("name", ""))
                                     for item in (tools or []) if isinstance(item, dict)}
@@ -7772,11 +7776,15 @@ class ForgeGuiApp:
                         )
                         # 防御：stream_chat 理论必返回 CompletionResult，
                         # 但测试 stub/异常实现可能返回 None —— 不能因此炸掉整轮
-                        turn_text = "".join(acc[round_start:]) or (
-                            result.text if result is not None else "")
+                        turn_text = "".join(acc[round_start:])
+                        if not turn_text and result is not None and result.text:
+                            on_chunk(result.text)
+                            turn_text = result.text
                         calls = (prepare_calls(getattr(result, "tool_calls", None) or [])
                                  if result is not None else [])
                         if not calls:
+                            if not turn_text.strip():
+                                raise GatewayError('模型未返回有效回复，请检查模型配置后重试。')
                             break   # 纯文本 → 本轮对话完成
                         # 模型发起了工具调用：按 OpenAI 协议回填 assistant(tool_calls)
                         # + 每个 call 一条 tool 结果，然后再问一轮
@@ -7784,7 +7792,7 @@ class ForgeGuiApp:
                             role="assistant", content=turn_text, tool_calls=calls,
                             reasoning_content=str(getattr(result, "reasoning_content", "") or "")))
                         rows = []
-                        for call in calls:
+                        for call_index, call in enumerate(calls, 1):
                             if cancel_event.is_set():
                                 raise GenerationCancelled("已停止生成")
                             fn = call.get("function") or {}
@@ -7797,6 +7805,8 @@ class ForgeGuiApp:
                             try:
                                 # The gateway owns its names even if a stale runtime claims them.
                                 _call_t0 = time.monotonic()
+                                self._post_ui(self._set_request_status,
+                                    f'正在执行 {name}（第 {rounds + 1} 轮，{call_index}/{len(calls)}）…')
                                 def dispatch_work():
                                     nonlocal args
                                     if cancel_event.is_set():
@@ -7835,8 +7845,6 @@ class ForgeGuiApp:
                             messages.append(ChatMessage(
                                 role="tool", content=body_text,
                                 tool_call_id=str(call.get("id") or "")))
-                            if execution_guard.observe(name, args, ok_flag, body_text):
-                                raise GatewayError("重复工具调用没有进展，已停止；请检查错误或调整任务。")
                             rows.append({
                                 "name": name,
                                 "desc": json.dumps(args, ensure_ascii=False)[:70],
@@ -7847,14 +7855,16 @@ class ForgeGuiApp:
                                 "elapsed": round(_call_elapsed, 2),
                                 "ok": ok_flag,
                             })
+                            # Publish each completed receipt before the next action or cancellation.
+                            self._post_ui(self._post_tool_round, [rows[-1]], rounds + 1)
                             if resp.get('meta', {}).get('execution_state') == 'unknown':
-                                self._post_ui(self._post_tool_round, rows, rounds + 1)
                                 raise GatewayError('工具执行结果未知，已停止后续操作；请检查目标状态与工具记录后再继续。')
+                            if execution_guard.observe(name, args, ok_flag, body_text):
+                                raise GatewayError("重复工具调用没有进展，已停止；请检查错误或调整任务。")
                         rounds += 1
                         if rows:
-                            self._post_ui(self._post_tool_round, rows, rounds)
                             self._post_ui(self._set_request_status,
-                                          f"正在执行工具（第 {rounds} 轮）…")
+                                          f"第 {rounds} 轮工具已返回，正在整理结果…")
                         if rounds >= TOOL_ROUNDS:
                             self._post_ui(self._post_note_to_msg,
                                           f"已达工具调用轮数上限（{TOOL_ROUNDS} 轮），停止继续调用")
@@ -7874,8 +7884,8 @@ class ForgeGuiApp:
                     self._post_ui(self._send_finished)
 
         except Exception as exc:
+            self._chat_failed(f'发送准备失败：{exc}', text)
             self._send_finished()
-            self._set_status(f"发送失败：{exc}", "error")
             return
 
         threading.Thread(target=worker, daemon=True).start()
@@ -7979,7 +7989,8 @@ class ForgeGuiApp:
         self._set_status("已停止生成，原消息已保留", "warn")
 
     def _chat_failed(self, message, prompt):
-        if self._abort_requested:
+        uncertain = '工具执行结果未知' in message
+        if self._abort_requested and not uncertain:
             self._chat_cancelled(prompt)
             return
         msg = getattr(self, "_agent_msg", None)
@@ -7989,7 +8000,6 @@ class ForgeGuiApp:
             if not msg._text_source and not msg._has_details:
                 msg.pack_forget()  # No empty assistant shell beside the error.
         area = getattr(self, "chat_area", None)
-        uncertain = '工具执行结果未知' in message
         if area is not None:
             actions = [{"label": tr("打开工作区"), "command": self._open_workspace}] if uncertain else [
                 {"label": tr("切换模型"), "command": self._open_model_menu},

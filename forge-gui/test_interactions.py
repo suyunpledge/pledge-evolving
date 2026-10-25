@@ -291,7 +291,7 @@ class GuiInteractionTests(unittest.TestCase):
         target = Path(self.tmp.name) / 'action.txt'
         class Client:
             def health(self, **kw): return True, 'ok'
-            def list_tools(self):
+            def list_tools(self, **kwargs):
                 return [{'type': 'function', 'function': {'name': 'operate', 'parameters': {'type': 'object'}}}]
             def stream_chat(self, messages, **kw):
                 turns.append(1)
@@ -336,7 +336,7 @@ class GuiInteractionTests(unittest.TestCase):
         consumed, schemas = [], []
         class Client:
             def health(self, **kw): return True, 'ok'
-            def list_tools(self): return []
+            def list_tools(self, **kwargs): return []
             def stream_chat(self, messages, **kw):
                 schemas.extend(kw['tools'])
                 receipts = [m for m in messages if m.role == 'tool']
@@ -384,7 +384,7 @@ class GuiInteractionTests(unittest.TestCase):
         receipts=[]
         class Client:
             def health(self,**kw):return True,'ok'
-            def list_tools(self):return []
+            def list_tools(self, **kwargs):return []
             def stream_chat(self,messages,**kw):
                 tools=[json.loads(m.content) for m in messages if m.role=='tool']
                 if not tools:
@@ -414,7 +414,7 @@ class GuiInteractionTests(unittest.TestCase):
         turns = []
         class Client:
             def health(self, **kw): return True, 'ok'
-            def list_tools(self):
+            def list_tools(self, **kwargs):
                 return [{'type': 'function', 'function': {'name': 'operate'}}]
             def stream_chat(self, messages, **kw):
                 turns.append(1)

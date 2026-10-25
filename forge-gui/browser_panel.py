@@ -18,6 +18,7 @@ class BrowserPanel:
         self.key = None
         self.granted = {}
         self.busy = False
+        self.closed = False
 
     def _key(self):
         return (str(self.app._active_workspace().resolve()),
@@ -31,7 +32,13 @@ class BrowserPanel:
                 return
             self.window.destroy()
         self.key = key
-        self.current = self.manager.session(*key)
+        notice = ''
+        try:
+            self.current = self.manager.session(*key)
+        except RuntimeError as exc:
+            # Keep cleanup controls accessible even when all four slots are full.
+            self.current = None
+            notice = str(exc) + '；可关闭全部浏览器后重试。'
         window = self.window = tk.Toplevel(self.app.root)
         window.title('Forge Chromium 浏览器')
         window.geometry('700x250')
@@ -49,11 +56,15 @@ class BrowserPanel:
         pill_button(bar, '打开网页', self.navigate, kind='primary').pack(side='left')
         pill_button(bar, '关闭当前浏览器并撤销授权', self.revoke).pack(side='left', padx=8)
         pill_button(bar, '关闭全部浏览器', self.close_all).pack(side='left')
-        self.status = tk.StringVar(value=f'{key[1]} · {key[0]} · 登录资料在关闭浏览器后清除')
+        self.status = tk.StringVar(value=notice or f'{key[1]} · {key[0]} · 登录资料在关闭浏览器后清除')
         tk.Label(window, textvariable=self.status, bg=C['bg'], fg=C['subtext'], wraplength=610,
                  justify='left', font=FONT_SMALL).pack(anchor='w', padx=16, pady=10)
 
     def _grant(self):
+        if self.enabled.get() and self.key != self._key():
+            self.enabled.set(False)
+            self.status.set('项目、模式或聊天已切换，请重新打开浏览器面板后授权')
+            return
         if self.enabled.get():
             self.granted.setdefault(self.key, threading.Event())
         else:
@@ -62,10 +73,17 @@ class BrowserPanel:
                 token.set()
 
     def navigate(self):
-        if self.busy:
+        if self.busy or self.closed:
             return
-        if self.current is None:
+        if self.key != self._key():
+            self.status.set('项目、模式或聊天已切换，请重新打开浏览器面板')
+            return
+        try:
+            # A new explicit click may create a new session; never retry an action.
             self.current = self.manager.session(*self.key)
+        except RuntimeError as exc:
+            self._done(str(exc) + '；请稍后重试，或关闭全部浏览器。')
+            return
         session, url = self.current, self.url.get().strip()
         self.busy = True
         self.status.set('正在启动 Chromium / 加载网页…')
@@ -91,7 +109,7 @@ class BrowserPanel:
         self.enabled.set(False)
         if self.current is not None:
             self.current.close(wait=False)
-        self.status.set('已撤销授权，浏览器正在关闭；重新打开面板可创建新会话')
+        self.status.set('已撤销授权，浏览器正在关闭；关闭完成后可再次点击打开网页')
 
     def close_all(self):
         if self.busy:
@@ -109,6 +127,8 @@ class BrowserPanel:
         threading.Thread(target=worker, name='Forge-Browser-Close', daemon=True).start()
 
     def _reset_done(self, closed):
+        if self.closed:
+            return
         if closed:
             self.manager = BrowserManager()
             self.current = None
@@ -128,6 +148,7 @@ class BrowserPanel:
         return lane
 
     def close(self):
+        self.closed = True
         for token in self.granted.values():
             token.set()
         self.granted.clear()

@@ -109,12 +109,14 @@ class ForgeGatewayClient:
 
     # ── 工具桥（gateway 需以 --tools 启动）──
 
-    def list_tools(self, *, timeout: float | None = None) -> list[dict]:
+    def list_tools(self, *, timeout: float | None = None, cancel_event=None) -> list[dict]:
         """GET /v1/tools → OpenAI function 工具定义列表。gateway 未开工具桥时抛 GatewayError。"""
         req = self._request("GET", "/v1/tools")
         try:
-            with open_response(req, timeout=self.timeout if timeout is None else timeout, cancel_event=None) as resp:
+            with open_response(req, timeout=self.timeout if timeout is None else timeout, cancel_event=cancel_event) as resp:
                 data = redact(json.loads(resp.read().decode("utf-8", "replace")))
+        except RequestCancelled as exc:
+            raise GenerationCancelled('已停止加载工具') from exc
         except urllib.error.HTTPError as e:
             raise GatewayError(f"HTTP {e.code}: {http_error_detail(e)}") from None
         except (urllib.error.URLError, OSError) as e:

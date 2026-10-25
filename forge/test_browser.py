@@ -220,6 +220,36 @@ class BrowserContractTests(unittest.TestCase):
             self.assertEqual(second.result().meta['execution_state'], 'not_started')
         self.assertEqual(calls, ['first'])
 
+    def test_queued_cancellation_returns_while_inflight_action_is_still_running(self):
+        entered, release = threading.Event(), threading.Event()
+        calls = []
+        class Actor(_BrowserActor):
+            def _dispatch(self, op, args, cancel):
+                calls.append(op)
+                entered.set()
+                release.wait(3)
+                return ToolResult(True, 'done')
+        actor = Actor()
+        self.addCleanup(actor.close)
+        token = threading.Event()
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(actor.call, 'first')
+            try:
+                self.assertTrue(entered.wait(1))
+                second = pool.submit(actor.call, 'queued', {}, token)
+                deadline = time.monotonic() + 1
+                while actor._queue.empty() and time.monotonic() < deadline:
+                    time.sleep(.005)
+                self.assertFalse(actor._queue.empty())
+                token.set()
+                self.assertEqual(second.result(timeout=.7).meta['execution_state'], 'not_started')
+                self.assertFalse(first.done())
+            finally:
+                release.set()
+            self.assertTrue(first.result(timeout=1).ok)
+        self.assertTrue(actor.call('next').ok)
+        self.assertEqual(calls, ['first', 'next'])
+
 
 @unittest.skipUnless(os.environ.get('FORGE_BROWSER_TEST') == '1', 'Set FORGE_BROWSER_TEST=1 after preparing bundled Chromium')
 class ChromiumIntegrationTests(unittest.TestCase):
