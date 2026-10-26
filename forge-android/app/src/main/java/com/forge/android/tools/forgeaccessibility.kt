@@ -36,34 +36,42 @@ class ForgeAccessibility : AccessibilityService() {
         private const val TAG = "ForgeA11y"
         @Volatile private var instance: ForgeAccessibility? = null
         val isEnabled: Boolean get() = instance != null
+        fun foregroundPackage(): String? = instance?.rootInActiveWindow?.packageName?.toString()
 
         /** 近似 uiautomator 的 XML dump（深度限制 30 层 / 每层 120 节点）。 */
         fun dumpXml(maxDepth: Int = 30): String? {
             val svc = instance ?: return null
             val root = svc.rootInActiveWindow ?: return null
-            val sb = StringBuilder("<hierarchy rotation=0>")
+            val sb = StringBuilder("<hierarchy>")
+            var total=0
+            fun escape(s:String)=s.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace("\"","&quot;")
             fun walk(node: AccessibilityNodeInfo?, depth: Int) {
-                if (node == null || depth > maxDepth) return
+                if (node == null || depth > maxDepth || total>=1000 || sb.length>=60000) return
+                total++
                 val sb2 = sb
                 val cls = node.className?.toString() ?: "android.view.View"
                 val r = Rect().also { node.getBoundsInScreen(it) }
-                sb2.append("<node class=\"").append(cls).append("\"")
+                sb2.append("<node class=\"").append(escape(cls)).append("\"")
                     .append(" bounds=\"").append(r.toShortString()).append("\"")
-                val text = node.text?.toString()?.take(80)
+                val text = if(node.isPassword) null else node.text?.toString()?.take(80)
                 if (!text.isNullOrBlank()) {
-                    sb2.append(" text=\"").append(text.replace("\"", "&quot;")).append("\"")
+                    sb2.append(" text=\"").append(escape(text)).append("\"")
                 }
-                val desc = node.contentDescription?.toString()?.take(80)
+                val desc = if(node.isPassword) null else node.contentDescription?.toString()?.take(80)
                 if (!desc.isNullOrBlank()) {
-                    sb2.append(" content-desc=\"").append(desc.replace("\"", "&quot;")).append("\"")
+                    sb2.append(" content-desc=\"").append(escape(desc)).append("\"")
                 }
                 val clickable = node.isClickable
                 if (clickable) sb2.append(" clickable=\"true\"")
+                sb2.append(" enabled=\"").append(node.isEnabled).append("\"")
+                    .append(" editable=\"").append(node.isEditable).append("\"")
+                    .append(" focused=\"").append(node.isFocused).append("\"")
+                    .append(" password=\"").append(node.isPassword).append("\"")
                 val children = node.childCount
                 if (children == 0) { sb2.append("/>"); return }
                 sb2.append(">")
                 var n = 0
-                for (i in 0 until children) {
+                for (i in 0 until minOf(children,120)) {
                     node.getChild(i)?.let { child ->
                         walk(child, depth + 1); n++
                         if (n >= 120) return@let
@@ -97,6 +105,8 @@ class ForgeAccessibility : AccessibilityService() {
             return node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
         }
 
+        fun hasEditableInput(): Boolean = instance?.let { findFocusedEditable(it) != null } ?: false
+
         /** 截图（API 30+；TakeScreenshotCallback 异步转同步等待）。 */
         fun takeScreenshot(timeoutMs: Long = 3000): Bitmap? {
             val svc = instance ?: return null
@@ -106,6 +116,8 @@ class ForgeAccessibility : AccessibilityService() {
 
         @androidx.annotation.RequiresApi(30)
         private fun takeScreenshot30(svc: ForgeAccessibility, timeoutMs: Long): Bitmap? {
+            val guard=Any()
+            var expired=false
             var holder: Bitmap? = null
             val latch = java.util.concurrent.CountDownLatch(1)
             svc.takeScreenshot(android.view.Display.DEFAULT_DISPLAY, executor,
@@ -113,15 +125,17 @@ class ForgeAccessibility : AccessibilityService() {
                     override fun onSuccess(result: ScreenshotResult) {
                         result.hardwareBuffer.use { buffer ->
                             val hardware = Bitmap.wrapHardwareBuffer(buffer, result.colorSpace)
-                            holder = hardware?.copy(Bitmap.Config.ARGB_8888, false)
+                            val image = hardware?.copy(Bitmap.Config.ARGB_8888, false)
                             hardware?.recycle()
+                            synchronized(guard) { if(expired) image?.recycle() else holder=image }
                         }
                         latch.countDown()
                     }
                     override fun onFailure(errorCode: Int) { latch.countDown() }
                 })
-            latch.await(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
-            @Suppress("UNCHECKED_CAST") return holder
+            try { latch.await(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS) }
+            finally { synchronized(guard) { expired=true } }
+            return synchronized(guard) { holder }
         }
 
         // ── 内部 ──────────────────────────────────────────────────
@@ -144,7 +158,8 @@ class ForgeAccessibility : AccessibilityService() {
         private fun findFocusedEditable(svc: AccessibilityService): AccessibilityNodeInfo? {
             var node = svc.rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
             while (node != null) {
-                if (node.isEditable) return node
+                if (node.isPassword) return null
+                if (node.isEditable && node.isEnabled && !node.isPassword) return node
                 node = node.parent
             }
             return null
