@@ -59,7 +59,7 @@ Both shots come from an isolated instance with a demo home, so no private data i
 | Desktop GUI | `python forge-gui/forge_gui_v2.py` | Day-to-day chat, plus a three-column **Coding Mode** (file tree, multi-tab editor, Agent panel, diff/test/output pages) |
 | VS Code extension | install `forge-agent-*.vsix` | Chat, explain/review selected code without leaving the editor |
 | IM channel | `python run.py channel weixin serve` | Pick up tasks and read reports from a phone |
-| **Mobile (Android)** | install the forge-android APK | Personal-assistant mode on the phone, MCP connectors, built-in web search |
+| **Mobile (Android)** | [download the APK from Releases](https://github.com/suyunpledge/pledge-evolving/releases/tag/forge-android-v0.4) | Personal-assistant mode, MCP connector market, built-in web search |
 
 All four share the same policy engine, secret boundary and session log. There is no second implementation of "what is allowed".
 
@@ -146,6 +146,9 @@ Python ≥ 3.10. Zero third-party dependencies. MIT licensed.
 Desktop UI: `python forge-gui/forge_gui_v2.py` (or the shortcut `setup.cmd` creates on Windows). VS Code sidebar: [`vscode-extension/README.md`](vscode-extension/README.md).
 
 ### One-click cloud / one-click Windows
+
+> **Desktop fast path**: Code → Download ZIP → extract → double-click `setup.cmd` (installs Python silently if missing).
+> **Mobile fast path**: grab the APK from [Releases](https://github.com/suyunpledge/pledge-evolving/releases/tag/forge-android-v0.4).
 
 - **Cloud**: use the Codespaces badge at the top of this file — nothing to install locally.
 - **Windows**: download the repo (Code → Download ZIP, extract), double-click **`setup.cmd`**. It detects Python 3.10+, installs it silently if missing (winget first, python.org installer as fallback), then creates a desktop shortcut and opens the UI. Variants: `setup.cmd check`, `setup.cmd selftest`, `setup.cmd web`.

@@ -59,7 +59,7 @@ Coding Mode——同一个内核上的三栏 IDE：左侧文件树与 Git 变更
 | 桌面 GUI | `python forge-gui/forge_gui_v2.py` | 日常对话，外加三栏 **Coding Mode**（文件树、多标签编辑器、Agent 面板、差异/测试/输出页） |
 | VS Code 扩展 | 安装 `forge-agent-*.vsix` | 不离开编辑器就能对话、解释/审查选中代码 |
 | IM 通道 | `python run.py channel weixin serve` | 手机侧接任务、读报告 |
-| **手机（Android）** | 安装 forge-android APK | 手机上的个人助理模式、MCP 连接器市场、内置联网搜索 |
+| **手机（Android）** | [Releases 下载 APK 直装](https://github.com/suyunpledge/pledge-evolving/releases/tag/forge-android-v0.4) | 手机上的个人助理模式、MCP 连接器市场、内置联网搜索 |
 
 四个入口共用同一套策略引擎、密钥边界与会话日志——「什么被允许」只有一份实现。
 
@@ -146,6 +146,9 @@ Python ≥ 3.10，零第三方依赖，MIT 许可。
 桌面界面：`python forge-gui/forge_gui_v2.py`（Windows 也可用 `setup.cmd` 创建的快捷方式）。VS Code 侧边栏见 [`vscode-extension/README.md`](vscode-extension/README.md)。
 
 ### 一键云端 / Windows 一键配置
+
+> **电脑版最快路径**：Code → Download ZIP → 解压 → 双击 `setup.cmd`，全自动（缺 Python 会静默装好）。
+> **手机版最快路径**：[Releases](https://github.com/suyunpledge/pledge-evolving/releases/tag/forge-android-v0.4) 下载 APK 安装。
 
 - **云端**：点顶部 Codespaces 徽章，浏览器里直接用。
 - **Windows**：下载仓库（Code → Download ZIP，解压）后双击 **`setup.cmd`**——自动探测 Python 3.10+，缺失则静默安装（优先 winget，回退 python.org），随后创建桌面快捷方式并打开界面。变体：`setup.cmd check` / `selftest` / `web`。
