@@ -59,6 +59,7 @@ Coding Mode——同一个内核上的三栏 IDE：左侧文件树与 Git 变更
 | 桌面 GUI | `python forge-gui/forge_gui_v2.py` | 日常对话，外加三栏 **Coding Mode**（文件树、多标签编辑器、Agent 面板、差异/测试/输出页） |
 | VS Code 扩展 | 安装 `forge-agent-*.vsix` | 不离开编辑器就能对话、解释/审查选中代码 |
 | IM 通道 | `python run.py channel weixin serve` | 手机侧接任务、读报告 |
+| **手机（Android）** | 安装 forge-android APK | 手机上的个人助理模式、MCP 连接器市场、内置联网搜索 |
 
 四个入口共用同一套策略引擎、密钥边界与会话日志——「什么被允许」只有一份实现。
 
@@ -250,6 +251,19 @@ python run.py run "任务" --strategy economy      # CLI 显式指定（> 配置
 桌面市场同时新增：读沙箱限定的内置工具桥、远程目录（Claude 官方市场 + ClawHub，72 小时节流同步、按源重试）、本机生态适配层（OpenClaw 技能 / Claude Code 市场 / DSH bundles / Codex 插件 —— 声明式，不执行），以及带轮转的审计日志。
 
 2026-10-05 全仓审查的加固：读路径沙箱执行（S1）、网关鉴权接线（S2）、子代理 token 折进父成本账（S3）、会话用量事件（S4）、贡献源码扫描覆盖下标/解包（S5），以及主线程分批渲染 / 持久化后台化防 UI 冻结。
+
+## 两个版本：桌面与手机
+
+同一个内核，两种形态：
+
+| | 桌面版（`forge-gui/`） | 手机版（`forge-android/`） |
+| --- | --- | --- |
+| 运行形态 | Windows 原生 Tk 应用 | Kotlin Compose 原生应用；Python Agent 跑在设备上的 PRoot Ubuntu 24 用户态（免 root、免 Termux） |
+| 模式 | Work（对话）+ Coding Mode（三栏 IDE） | 对话 + **个人助理**（连接器市场，MCP 一键接入） |
+| AI 工具 | 完整工具注册表、computer use（观察/操作/坐标点击，逐点审批） | 设备工具走无障碍 + Shizuku 双通道（只读优先，写操作确认），`phone.*`（短信/通话/联系人） |
+| 联网搜索 | — | **内置 `web_search` 工具**：博查 → Brave → Bing RSS 三级降级（零凭据兜底国内可用） |
+| MCP 连接器 | — | 47 服务按场景分组目录（置顶：高德/12306/飞书/Notion/小红书/淘宝比价/GitHub）；stdio + 官方远程 HTTP 双传输 |
+| 构建 | `python forge-gui/forge_gui_v2.py` | `./gradlew :app:assembleDebug`（rootfs 与宿主二进制见 `forge-android/scripts/fetch-host-bins.py`、`forge-android/docs/GRAY-RELEASE.md`） |
 
 ## 2026-10 能力层：编排、机队适配、通道
 

@@ -59,6 +59,7 @@ Both shots come from an isolated instance with a demo home, so no private data i
 | Desktop GUI | `python forge-gui/forge_gui_v2.py` | Day-to-day chat, plus a three-column **Coding Mode** (file tree, multi-tab editor, Agent panel, diff/test/output pages) |
 | VS Code extension | install `forge-agent-*.vsix` | Chat, explain/review selected code without leaving the editor |
 | IM channel | `python run.py channel weixin serve` | Pick up tasks and read reports from a phone |
+| **Mobile (Android)** | install the forge-android APK | Personal-assistant mode on the phone, MCP connectors, built-in web search |
 
 All four share the same policy engine, secret boundary and session log. There is no second implementation of "what is allowed".
 
@@ -259,6 +260,19 @@ Hardening from the 2026-10-05 full-repo audit: read-path sandbox enforcement (S1
 gateway auth wiring (S2), subagent token folding into the parent cost ledger (S3),
 per-session usage events (S4), contribution source-scanner subscript/unpack coverage (S5),
 and main-thread chunked rendering / backgrounded persistence against UI freezes.
+
+## Two editions: desktop and mobile
+
+The same kernel, two shapes:
+
+| | Desktop (`forge-gui/`) | Mobile (`forge-android/`) |
+| --- | --- | --- |
+| Runtime | native Tk app on Windows | Kotlin Compose app; Python agent runs in a PRoot Ubuntu 24 userland on-device (no root, no Termux) |
+| Modes | Work (chat) + Coding Mode (three-column IDE) | Chat + **Personal Assistant** (connector market, one-tap MCP install) |
+| AI tools | full tool registry, computer use (observe/act/click with per-point approval) | device tools via Accessibility + Shizuku dual channel (read-only first, writes confirmed), `phone.*` (SMS/call-log/contacts) |
+| Web search | — | **built-in `web_search` tool**: provider chain Bocha → Brave → Bing RSS (zero-credential fallback works in CN) |
+| MCP connectors | — | 47-service catalog grouped by scene (pinned: Amap / 12306 / Feishu / Notion / Xiaohongshu / Taobao / GitHub); stdio + official remote HTTP transports |
+| Build | `python forge-gui/forge_gui_v2.py` | `./gradlew :app:assembleDebug` (rootfs + host binaries via `scripts/fetch-host-bins.py`, see `forge-android/docs/GRAY-RELEASE.md`) |
 
 ## 2026-10 capability layers: orchestration, fleet adaptation, channels
 
