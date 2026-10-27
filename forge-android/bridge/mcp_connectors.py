@@ -20,6 +20,7 @@ import json
 import os
 import re
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -61,6 +62,7 @@ class Connector:
         self.error: str | None = None
         self._req_id = 0
         self._started_at = 0.0
+        self._rpc_lock = threading.RLock()
 
     # ── 生命周期 ─────────────────────────────────────────────
     def start(self) -> bool:
@@ -68,8 +70,17 @@ class Connector:
             return True
         try:
             full_env = {**os.environ, **self.env}
+            # 目录里的命令可以使用 {ENV_NAME}/$ENV_NAME 占位符；替换
+            # 发生在 argv 层，不经过 shell，避免凭据被重新解释为命令。
+            command = []
+            for token in self.command:
+                value = str(token)
+                for key, secret in self.env.items():
+                    value = value.replace("{" + key + "}", str(secret))
+                    value = value.replace("$" + key, str(secret))
+                command.append(value)
             self.proc = subprocess.Popen(
-                self.command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL, env=full_env, cwd=str(HOME.parent))
             self.status = "starting"
             self._started_at = time.time()
@@ -98,28 +109,33 @@ class Connector:
 
     def _rpc(self, method: str, params: dict[str, Any] | None = None,
              timeout: float = 30.0) -> dict[str, Any]:
-        if not self.proc or self.proc.poll() is not None:
-            raise RuntimeError(f"connector {self.name} not running")
-        self._req_id += 1
-        req = {"jsonrpc": "2.0", "id": self._req_id, "method": method,
-               "params": params or {}}
-        self.proc.stdin.write((json.dumps(req) + "\n").encode())
-        self.proc.stdin.flush()
-        # 同步读一行（桥在 asyncio 线程池里调本方法）
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            line = self.proc.stdout.readline()
-            if not line:
-                raise RuntimeError(f"connector {self.name} closed stdout")
-            try:
-                resp = json.loads(line)
-            except json.JSONDecodeError:
-                continue    # server 的日志行混进 stdout 时跳过
-            if resp.get("id") == self._req_id:
-                if "error" in resp:
-                    raise RuntimeError(f"mcp error: {resp['error']}")
-                return resp.get("result", {})
-        raise TimeoutError(f"connector {self.name} rpc timeout ({timeout}s)")
+        # 一个 stdio 会话只有一条输入/输出流；串行化请求可避免并发
+        # ask 交错读取彼此响应，造成工具结果错配。
+        with self._rpc_lock:
+            if not self.proc or self.proc.poll() is not None:
+                raise RuntimeError(f"connector {self.name} not running")
+            self._req_id += 1
+            req_id = self._req_id
+            req = {"jsonrpc": "2.0", "id": req_id, "method": method,
+                   "params": params or {}}
+            self.proc.stdin.write((json.dumps(req) + "\n").encode())
+            self.proc.stdin.flush()
+            # 同步读一行（桥在 asyncio 线程池里调本方法）。
+            # 锁确保多个 Agent 不会同时消费 stdout。
+            deadline = time.time() + timeout
+            while time.time() < deadline:
+                line = self.proc.stdout.readline()
+                if not line:
+                    raise RuntimeError(f"connector {self.name} closed stdout")
+                try:
+                    resp = json.loads(line)
+                except json.JSONDecodeError:
+                    continue    # server 的日志行混进 stdout 时跳过
+                if resp.get("id") == req_id:
+                    if "error" in resp:
+                        raise RuntimeError(f"mcp error: {resp['error']}")
+                    return resp.get("result", {})
+            raise TimeoutError(f"connector {self.name} rpc timeout ({timeout}s)")
 
     def handshake(self) -> bool:
         """initialize → tools/list。成功 → ready + tools 快照。"""
@@ -149,9 +165,12 @@ class Connector:
             self.error = None
             return True
         except Exception as exc:            # noqa: BLE001
-            self.status = "failed"
-            self.error = str(exc)[:300]
+            error = str(exc)[:300]
             self.stop()
+            # stop() 清理进程时会把状态设回 stopped；握手失败必须保留
+            # failed，供 install/status/UI 区分“尚未启动”和“启动失败”。
+            self.status = "failed"
+            self.error = error
             return False
 
     def call_tool(self, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:

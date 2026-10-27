@@ -26,8 +26,8 @@ CATALOG = [
         "id": "baidu_maps", "name": "百度地图", "category": "出行", "icon": "🗺️",
         "desc": "定位/路线/天气/地点搜索（官方，⭐447）",
         "scene": "life",
-        "transport": "stdio",
-        "command": ["npx", "-y", "@baidu-maps/mcp"],
+        "transport": "http",
+        "url": "https://mcp.map.baidu.com/mcp?ak={BAIDU_MAPS_API_KEY}",
         "auth": {"kind": "api_key", "fields": [
             {"env": "BAIDU_MAPS_API_KEY", "label": "百度地图 AK"}],
             "console_url": "https://lbs.baidu.com/apiconsole/key"},
@@ -66,7 +66,7 @@ CATALOG = [
         "desc": "文档/表格/IM/日历（官方 ⭐838）",
         "scene": "work", "pinned": True,
         "transport": "stdio",
-        "command": ["npx", "-y", "@larksuiteoapi/lark-mcp"],
+        "command": ["npx", "-y", "@larksuiteoapi/lark-mcp", "mcp", "-a", "{APP_ID}", "-s", "{APP_SECRET}"],
         "auth": {"kind": "api_key", "fields": [
             {"env": "APP_ID", "label": "飞书应用 App ID"},
             {"env": "APP_SECRET", "label": "飞书应用 App Secret"}],
@@ -302,7 +302,7 @@ CATALOG = [
         "desc": "Issue/项目/周期管理（官方远程 mcp.linear.app）",
         "scene": "work",
         "transport": "http",
-        "url": "https://mcp.linear.app/sse",
+        "url": "https://mcp.linear.app/mcp",
         "auth": {"kind": "api_key", "fields": [
             {"env": "AUTH_TOKEN", "label": "Linear API Key"}],
             "console_url": "https://linear.app/settings/api"},
@@ -333,7 +333,7 @@ CATALOG = [
         "desc": "支付/客户/发票/订阅（官方远程 mcp.stripe.com）",
         "scene": "global",
         "transport": "http",
-        "url": "https://mcp.stripe.com/mcp",
+        "url": "https://mcp.stripe.com",
         "auth": {"kind": "api_key", "fields": [
             {"env": "AUTH_TOKEN", "label": "Stripe Secret Key"}],
             "console_url": "https://dashboard.stripe.com/apikeys"},
@@ -449,11 +449,11 @@ CATALOG = [
         "id": "figma", "name": "Figma", "category": "国际·内容", "icon": "🎨",
         "desc": "设计稿→代码（官方 Dev Mode MCP）",
         "scene": "work",
-        "transport": "stdio",
-        "command": ["npx", "-y", "figma-developer-mcp", "--stdio"],
-        "auth": {"kind": "api_key", "fields": [
-            {"env": "FIGMA_API_KEY", "label": "Figma PAT"}],
-            "console_url": "https://www.figma.com/developers/api"},
+        "transport": "http",
+        "url": "https://mcp.figma.com/mcp",
+        "auth": {"kind": "oauth", "fields": [
+            {"env": "AUTH_TOKEN", "label": "Figma OAuth Token"}],
+            "console_url": "https://developers.figma.com/docs/figma-mcp-server/remote-server-installation/"},
     },
     {
         "id": "zoom", "name": "Zoom", "category": "国际·内容", "icon": "🎥",
@@ -486,6 +486,25 @@ CATALOG = [
             {"env": "TEXTIN_API_KEY", "label": "TextIn API Key"}],
             "console_url": "https://www.textin.com/"},
     },
+    # ── 美国/国际：搜索与知识 ─────────────────────────────
+    {
+        "id": "exa", "name": "Exa 搜索", "category": "国际·搜索", "icon": "🔎",
+        "desc": "语义/神经网络网页搜索（官方远程，免 Key 有速率限制）",
+        "scene": "global", "pinned": True,
+        "transport": "http",
+        "url": "https://mcp.exa.ai/mcp",
+        "auth": {"kind": "none", "fields": [],
+            "console_url": "https://exa.ai/mcp"},
+    },
+    {
+        "id": "microsoft_learn", "name": "Microsoft Learn", "category": "国际·搜索", "icon": "📘",
+        "desc": "微软官方文档搜索与检索（官方远程，免 Key）",
+        "scene": "dev",
+        "transport": "http",
+        "url": "https://learn.microsoft.com/api/mcp",
+        "auth": {"kind": "none", "fields": [],
+            "console_url": "https://learn.microsoft.com/"},
+    },
 ]
 
 
@@ -505,11 +524,54 @@ SCENES = [
 
 
 def grouped() -> dict:
-    """目录的分组视图：pinned 置顶数组 + scene 分组（供 UI 折叠渲染）。"""
-    pinned = [c for c in CATALOG if c.get("pinned")]
+    """目录的分组视图。
+
+    ``regions`` 是新的稳定视图：中国区/美国区 → 分类 → 热门排序；
+    ``pinned``/``scenes`` 保留给旧版客户端。热度是目录维护的相对
+    优先级，不冒充实时安装量。
+    """
+    china_ids = {
+        "amap", "baidu_maps", "qq_maps", "train12306", "didi", "feishu",
+        "yuque", "tencent_docs", "wemeet", "wps", "qichacha", "tianyancha",
+        "xiaohongshu", "bilibili", "weibo", "weread", "akshare", "xuangubao",
+        "taobao", "jd_deals", "xianyu", "luckin", "mcd", "kuaidi100", "gitee",
+        "caiyun", "textin",
+    }
+    popularity = {
+        "github": 100, "notion": 96, "feishu": 95, "amap": 94,
+        "playwright": 93, "linear": 92, "slack": 91, "figma": 90,
+        "baidu_maps": 89, "exa": 88, "context7": 87, "microsoft_learn": 86,
+        "xiaohongshu": 85, "taobao": 84, "stripe": 83, "supabase": 82,
+        "firecrawl": 81, "atlassian": 80, "qq_maps": 79, "gitee": 78,
+        "train12306": 77, "textin": 76,
+    }
+    for item in CATALOG:
+        item.setdefault("region", "china" if item["id"] in china_ids else "us")
+        item.setdefault("popularity", popularity.get(item["id"], 50))
+        item.setdefault("verification", "official" if "官方" in item.get("desc", "") or item["id"] in {
+            "github", "notion", "linear", "stripe", "figma", "exa", "microsoft_learn",
+            "slack", "playwright", "baidu_maps", "feishu"
+        } else "community")
+    pinned = sorted((c for c in CATALOG if c.get("pinned")),
+                    key=lambda c: (-c.get("popularity", 0), c["name"]))
     groups = []
     for key, label, desc in SCENES:
-        items = [c for c in CATALOG if c.get("scene") == key and not c.get("pinned")]
+        items = sorted((c for c in CATALOG if c.get("scene") == key and not c.get("pinned")),
+                       key=lambda c: (-c.get("popularity", 0), c["name"]))
         if items:
             groups.append({"key": key, "label": label, "desc": desc, "items": items})
-    return {"pinned": pinned, "scenes": groups}
+    region_labels = {"china": "中国区", "us": "美国区"}
+    regions = []
+    for rkey in ("china", "us"):
+        region_items = [c for c in CATALOG if c["region"] == rkey]
+        categories = []
+        for category in dict.fromkeys(c["category"] for c in region_items):
+            items = sorted((c for c in region_items if c["category"] == category),
+                           key=lambda c: (-c.get("popularity", 0), c["name"]))
+            categories.append({"key": category, "label": category,
+                               "items": items})
+        categories.sort(key=lambda g: (-max((x.get("popularity", 0) for x in g["items"]), default=0), g["label"]))
+        regions.append({"key": rkey, "label": region_labels[rkey],
+                        "count": len(region_items), "categories": categories,
+                        "items": sorted(region_items, key=lambda c: (-c.get("popularity", 0), c["name"]))})
+    return {"pinned": pinned, "scenes": groups, "regions": regions}

@@ -20,7 +20,7 @@ import json
 from typing import Any
 
 from fastapi import HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import mcp_connectors as mc
 
@@ -44,7 +44,7 @@ class AskBody(BaseModel):
 
 class CatalogInstallBody(BaseModel):
     id: str
-    credentials: dict[str, str] = {}
+    credentials: dict[str, str] = Field(default_factory=dict)
 
 
 # 内置联网搜索（v0.4：搜索服务不再走连接器——Agent 直接可用）
@@ -63,6 +63,66 @@ ASSISTANT_SYSTEM_HINT = (
 )
 
 
+def attach_assistant_tools(agent) -> int:
+    """将 ready MCP 工具和内置搜索挂入助理 Agent 的 registry。
+
+    该适配器是公开的桥层契约：只接收拥有 ``registry`` 的 Forge Agent，
+    不改变 Coding/Work 的 registry。每次问答刷新，支持运行中安装连接器。
+    """
+    from forge.tools import ToolResult, ToolSpec
+    from forge.policy import ToolEffect
+    registry = agent.registry
+    attached = 0
+    for item in mc.all_tools():
+        name = item["qualified"]
+        if any(s.name == name for s in registry.all_specs()):
+            registry.unregister(name)
+
+        def handler(args, _ctx, _item=item):
+            result = mc.call(_item["server"], _item["tool"], args or {})
+            if result.get("ok"):
+                return ToolResult(True, content=str(result.get("text", "")),
+                                  meta={"connector": _item["server"], "tool": _item["tool"]})
+            return ToolResult(False, error=str(result.get("error", "connector call failed")),
+                              content=str(result.get("text", "")),
+                              meta={"connector": _item["server"], "tool": _item["tool"],
+                                    "execution_state": "unknown" if not _item["readOnly"] else "completed"})
+
+        read_only = bool(item.get("readOnly"))
+        registry.register(ToolSpec(
+            name=name,
+            description=f"[{item['server']}] {item.get('description', '')}"[:700],
+            handler=handler,
+            read_only=read_only,
+            tags=("connector", "mcp"),
+            schema=item.get("inputSchema") or {"type": "object", "properties": {}},
+        ), trusted=True,
+            effect=ToolEffect.READ if read_only else ToolEffect.DELEGATED_WRITE)
+        attached += 1
+
+    for item in _BUILTIN_ASSISTANT_TOOLS:
+        name = item.get("name")
+        if not name:
+            continue
+        if any(s.name == name for s in registry.all_specs()):
+            registry.unregister(name)
+
+        def builtin_handler(args, _ctx, _item=item):
+            result = _item["fn"](**(args or {}))
+            if not isinstance(result, dict):
+                result = {"result": result}
+            return ToolResult(bool(result.get("ok", True)), content=json.dumps(result, ensure_ascii=False),
+                              error=str(result.get("error", "")))
+
+        registry.register(ToolSpec(name=name, description=item.get("description", ""),
+                                   handler=builtin_handler, read_only=True,
+                                   tags=("builtin", "network"),
+                                   schema=item.get("parameters") or {}),
+                          trusted=True, effect=ToolEffect.READ)
+        attached += 1
+    return attached
+
+
 def register_routes(app) -> None:
     """把助理模式路由挂到 FastAPI app（forge_bridge 启动时调用）。"""
 
@@ -76,7 +136,8 @@ def register_routes(app) -> None:
         """
         from connector_catalog import CATALOG, grouped
         g = grouped()
-        return {"pinned": g["pinned"], "scenes": g["scenes"], "catalog": CATALOG}
+        return {"pinned": g["pinned"], "scenes": g["scenes"],
+                "regions": g.get("regions", []), "catalog": CATALOG}
 
     @app.post("/assistant/catalog/install")
     def catalog_install(body: "CatalogInstallBody"):
@@ -109,6 +170,11 @@ def register_routes(app) -> None:
             ensure = mc.ensure_one(body.id)
             result["connector"] = ensure
             result["name"] = item["name"]
+            # upsert 成功只代表配置落盘；只有握手完成才允许 UI/Agent
+            # 认为连接器可用，避免“安装成功但工具面为空”的假阳性。
+            result["ok"] = bool(ensure.get("ok") and ensure.get("status") == "ready")
+            if not result["ok"]:
+                result["error"] = ensure.get("error") or "connector handshake failed"
         return result
 
 
@@ -154,6 +220,9 @@ def register_routes(app) -> None:
                 if agent is None:
                     agent = _build_session_agent(session_id)
                     _sessions[session_id] = agent
+        # 连接器可能在会话建立后才安装/重连；每轮刷新一次工具面，避免
+        # 需要重启手机 Agent 才能看到新工具。
+        attach_assistant_tools(agent)
 
         import asyncio
 
@@ -165,17 +234,17 @@ def register_routes(app) -> None:
                     report = agent.run(task, history=body.history or [])
                 loop = done.get_loop()
                 loop.call_soon_threadsafe(done.set_result, {
-                    "answer": getattr(report, "answer", "") or "",
+                    "answer": getattr(report, "text", "") or getattr(report, "answer", "") or "",
                     "steps": getattr(report, "steps", 0),
                     "cost": float(getattr(report, "cost", 0.0) or 0.0),
                 })
             except Exception as exc:        # noqa: BLE001
                 done.get_loop().call_soon_threadsafe(done.set_exception, exc)
 
-        import concurrent.futures
         loop = asyncio.get_running_loop()
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-            ex.submit(_worker)
+        # 不用 with ThreadPoolExecutor：with 退出会同步等待 worker，阻塞
+        # FastAPI 事件循环，造成手机端看起来“发送后没反应”。
+        loop.run_in_executor(None, _worker)
         try:
             summary = await done
             return {"ok": True, **summary}

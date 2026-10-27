@@ -106,6 +106,24 @@ check(r.get("ok") is True, "删除连接器")
 r = mc.remove("echo")
 check(r.get("ok") is False, "重复删除报 unknown")
 
+# ── 1b. Agent 工具面适配：MCP 工具实际进入 ToolRegistry ──
+from forge.tools import ToolRegistry, ToolContext
+from forge.policy import Policy
+import assistant_mode
+original_all_tools, original_call = mc.all_tools, mc.call
+mc.all_tools = lambda: [{"server": "fake", "tool": "get_time",
+                         "qualified": "fake__get_time", "description": "time",
+                         "readOnly": True, "inputSchema": {"type": "object"}}]
+mc.call = lambda server, tool, args: {"ok": True, "text": "adapter-ok"}
+fake_agent = type("FakeAgent", (), {"registry": ToolRegistry()})()
+attached = assistant_mode.attach_assistant_tools(fake_agent)
+spec = next((s for s in fake_agent.registry.all_specs() if s.name == "fake__get_time"), None)
+check(attached >= 1 and spec is not None, "MCP 工具注册进助理 Agent registry")
+if spec is not None:
+    result = spec.handler({}, None)
+    check(result.ok and result.content == "adapter-ok", "MCP registry handler 调用往返")
+mc.all_tools, mc.call = original_all_tools, original_call
+
 # ── 2. HTTP 面（真 uvicorn + assistant 路由注册）──
 # token 生成：不用 secrets 模块（forge/secrets.py 与标准库同名冲突），os.urandom 等价
 TEST_TOKEN = os.urandom(24).hex()

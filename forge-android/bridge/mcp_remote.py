@@ -18,6 +18,7 @@ import json
 import os
 import time
 import urllib.request
+import threading
 from typing import Any
 
 
@@ -36,6 +37,7 @@ class RemoteConnector:
         self._session_header: dict[str, str] = {}
         self._req_id = 0
         self._started_at = 0.0
+        self._rpc_lock = threading.RLock()
 
     def _headers(self) -> dict[str, str]:
         h = {
@@ -43,11 +45,13 @@ class RemoteConnector:
             "Accept": "application/json, text/event-stream",
             **self._session_header,
         }
-        tok = self.env.get("AUTH_TOKEN") or self.env.get("GITHUB_TOKEN") \
-            or self.env.get("NOTION_TOKEN") or ""
+        tok = (self.env.get("AUTH_TOKEN") or self.env.get("GITHUB_TOKEN")
+               or self.env.get("NOTION_TOKEN") or self.env.get("API_KEY")
+               or self.env.get("EXA_API_KEY") or "")
         if tok:
             auth = self.env.get("AUTH_SCHEME", "Bearer")
-            h["Authorization"] = f"{auth} {tok}"
+            header = self.env.get("AUTH_HEADER", "Authorization")
+            h[header] = f"{auth} {tok}" if header.lower() == "authorization" else tok
         return h
 
     def _post(self, payload: dict[str, Any], timeout: float = 30.0) -> dict[str, Any] | None:
@@ -75,12 +79,13 @@ class RemoteConnector:
 
     def _rpc(self, method: str, params: dict[str, Any] | None = None,
              timeout: float = 30.0) -> dict[str, Any]:
-        self._req_id += 1
-        resp = self._post({"jsonrpc": "2.0", "id": self._req_id,
-                           "method": method, "params": params or {}}, timeout)
-        if "error" in resp:
-            raise RuntimeError(f"mcp error: {resp['error']}")
-        return resp.get("result", {})
+        with self._rpc_lock:
+            self._req_id += 1
+            resp = self._post({"jsonrpc": "2.0", "id": self._req_id,
+                               "method": method, "params": params or {}}, timeout)
+            if "error" in resp:
+                raise RuntimeError(f"mcp error: {resp['error']}")
+            return resp.get("result", {})
 
     # 与 stdio Connector 同形的方法面（mcp_connectors 复用）
     def start(self) -> bool:

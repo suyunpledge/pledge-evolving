@@ -31,7 +31,7 @@ def check(c, m):
 
 
 # ── 1. 目录数据完整性 ──
-from connector_catalog import CATALOG, by_id
+from connector_catalog import CATALOG, by_id, grouped
 
 check(len(CATALOG) >= 28, f"目录规模（{len(CATALOG)} ≥ 28）")
 cats = {c["category"] for c in CATALOG}
@@ -46,6 +46,16 @@ for c in CATALOG:
     for f in c["auth"]["fields"]:
         assert f["env"] and f["label"], (c["id"], f)
 check(True, "全部条目字段合法")
+view = grouped()
+check({r["key"] for r in view["regions"]} == {"china", "us"},
+      "目录分为中国区/美国区")
+for region in view["regions"]:
+    for category in region["categories"]:
+        scores = [x.get("popularity", 0) for x in category["items"]]
+        check(scores == sorted(scores, reverse=True),
+              f"{region['label']}/{category['label']} 按热度降序")
+check(all(c.get("region") and c.get("verification") and "popularity" in c for c in CATALOG),
+      "目录条目含区域、热度与验证状态")
 
 free = [c["id"] for c in CATALOG if c["auth"]["kind"] == "none"]
 check(len(free) >= 4, f"零凭据直连服务（{free}）")

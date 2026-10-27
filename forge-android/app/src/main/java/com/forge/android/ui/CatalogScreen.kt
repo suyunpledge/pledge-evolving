@@ -17,10 +17,9 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * CatalogScreen — 连接器目录页（场景分组 + 折叠 + 置顶）。
+ * CatalogScreen — 连接器目录页（中国区/美国区 + 分类折叠 + 热门排序）。
  *
- * 结构：常用（pinned，用户点名的核心服务直列）+
- * 场景分组（办公协作/生活日常/开发运维/专业服务，默认折叠，点标题展开）。
+ * 新接口优先渲染 regions；旧 bridge 仍返回 pinned/scenes 时自动回退。
  * 联网搜索已内置进 Agent（web_search 工具），不在目录占位。
  */
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
@@ -30,6 +29,7 @@ fun CatalogScreen(onInstalled: () -> Unit) {
     val scope = rememberCoroutineScope()
     var pinned by remember { mutableStateOf(listOf<CatalogItem>()) }
     var scenes by remember { mutableStateOf(listOf<SceneGroup>()) }
+    var regions by remember { mutableStateOf(listOf<RegionGroup>()) }
     var loading by remember { mutableStateOf(true) }
     var selected by remember { mutableStateOf<CatalogItem?>(null) }
 
@@ -45,6 +45,20 @@ fun CatalogScreen(onInstalled: () -> Unit) {
                 val g = sarr.getJSONObject(i)
                 SceneGroup(g.optString("key"), g.optString("label"),
                     g.optString("desc"), parseArr(g.optJSONArray("items")))
+            }
+        } ?: emptyList()
+        regions = resp?.optJSONArray("regions")?.let { rarr ->
+            (0 until rarr.length()).map { i ->
+                val r = rarr.getJSONObject(i)
+                val cats = r.optJSONArray("categories")?.let { carr ->
+                    (0 until carr.length()).map { j ->
+                        val c = carr.getJSONObject(j)
+                        CategoryGroup(c.optString("key"), c.optString("label"),
+                            parseArr(c.optJSONArray("items")))
+                    }
+                } ?: emptyList()
+                RegionGroup(r.optString("key"), r.optString("label"),
+                    r.optInt("count", 0), cats)
             }
         } ?: emptyList()
         loading = false
@@ -78,12 +92,39 @@ fun CatalogScreen(onInstalled: () -> Unit) {
             }
             LazyColumn(Modifier.padding(pad).padding(horizontal = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                if (pinned.isNotEmpty()) {
+                if (regions.isEmpty() && pinned.isNotEmpty()) {
                     item { Text("★ 常用", style = MaterialTheme.typography.titleSmall,
                         modifier = Modifier.padding(top = 12.dp)) }
                     items(pinned) { CatalogCard(it) { selected = it } }
                 }
-                scenes.forEach { sg ->
+                if (regions.isNotEmpty()) {
+                    regions.forEach { region ->
+                        item(key = "region-${region.key}") {
+                            Text("${region.label} · ${region.count}",
+                                style = MaterialTheme.typography.titleMedium,
+                                modifier = Modifier.padding(top = 14.dp, bottom = 4.dp))
+                        }
+                        region.categories.forEach { category ->
+                            item(key = "cat-${region.key}-${category.key}") {
+                                val expanded = expandedStates["${region.key}:${category.key}"] ?: false
+                                Row(Modifier.fillMaxWidth()
+                                    .clickable { expandedStates["${region.key}:${category.key}"] = !expanded }
+                                    .padding(vertical = 8.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text(if (expanded) "▾" else "▸",
+                                        style = MaterialTheme.typography.titleSmall)
+                                    Text("${category.label} · ${category.items.size}",
+                                        style = MaterialTheme.typography.titleSmall)
+                                }
+                            }
+                            if (expandedStates["${region.key}:${category.key}"] == true) {
+                                items(category.items, key = { it.id }) {
+                                    CatalogCard(it) { selected = it }
+                                }
+                            }
+                        }
+                    }
+                } else scenes.forEach { sg ->
                     item(key = "hdr-${sg.key}") {
                         val expanded = expandedStates[sg.key] ?: false
                         Row(Modifier.fillMaxWidth()
@@ -115,6 +156,12 @@ fun CatalogScreen(onInstalled: () -> Unit) {
 
 data class SceneGroup(val key: String, val label: String, val desc: String,
                       val items: List<CatalogItem>)
+
+data class CategoryGroup(val key: String, val label: String,
+                         val items: List<CatalogItem>)
+
+data class RegionGroup(val key: String, val label: String, val count: Int,
+                       val categories: List<CategoryGroup>)
 
 data class CatalogItem(
     val id: String, val name: String, val category: String, val icon: String,
