@@ -284,15 +284,16 @@ class TaskControls(ttk.Frame):
         # 第二行：操作按钮（右对齐）
         row2 = ttk.Frame(self)
         row2.pack(fill='x', pady=(0, 2))
-        for label, key in (('执行测试', 'run_tests'),
-                           ('取消', 'cancel'),
-                           ('重试', 'retry'),
-                           ('创建子 Agent', 'delegate'),
-                           ('恢复', 'restore'),
-                           ('复审', 'review')):
+        for label, key, icon, tip in (('执行测试', 'run_tests', 'play', '运行工作区测试'),
+                                      ('取消', 'cancel', 'stop', '取消正在执行的任务'),
+                                      ('重试', 'retry', 'refresh', '重试上一次任务'),
+                                      ('创建子 Agent', 'delegate', 'agents', '创建新的子 Agent 分工'),
+                                      ('恢复', 'restore', 'refresh', '恢复受管文件版本'),
+                                      ('复审', 'review', 'check', '发起代码复审')):
             callback = self._callbacks.get(key)
             button = dev_button(row2, label, callback,
                                 kind='ghost' if key != 'cancel' else 'danger',
+                                icon=icon, tooltip=tip,
                                 state='normal' if callback else 'disabled')
             button.pack(side='right', padx=(4, 0))
 

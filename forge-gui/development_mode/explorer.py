@@ -267,6 +267,12 @@ class ActivityBar(ttk.Frame):
         bg = C['sel'] if active else C['hover'] if hover else C['activity']
         fg = C['accent_text'] if active else C['text'] if hover else C['ter']
         holder, icon, marker, caption = self._entries[key]
+        for child in holder.winfo_children():
+            if isinstance(child, tk.Frame) and child is not marker:
+                try:
+                    child.configure(bg=bg)
+                except tk.TclError:
+                    pass
         holder.configure(bg=bg)
         icon.configure(bg=bg, fg=fg)
         caption.configure(bg=bg, fg=fg)
@@ -348,8 +354,17 @@ class ExplorerPanel(ttk.Frame):
                                       textvariable=self._search_var)
         self.search_entry.pack(fill='x')
         self.search_entry.bind('<Return>', lambda _e: self._on_refresh())
-        ttk.Label(self._search_row, text='文件名搜索 · Enter',
-                  foreground=C['subtext']).pack(anchor='w')
+        # 提示文案改「标签 + 键帽」两段：'文件名搜索 · Enter' 把快捷键
+        # 混进正文，和浮层脚注/输入区的键帽语法不一致，扫读时也分不出
+        # 哪部分是按键。键位仍从 shortcuts 单一真源取。
+        hint_row = tk.Frame(self._search_row, bg=C['bg'])
+        hint_row.pack(anchor='w')
+        ttk.Label(hint_row, text='文件名搜索',
+                  foreground=C['subtext']).pack(side='left')
+        from .buttons import keycap
+        from . import shortcuts
+        keycap(hint_row, shortcuts.display('Return'), bg=C['bg']).pack(
+            side='left', padx=(6, 0))
         # 6 个真实 Tab：文件 / Git / 搜索(过滤) / 任务 / 知识 / 演化
         self.notebook = ttk.Notebook(content, style='Explorer.TNotebook')
         self._build_files_tab()

@@ -520,7 +520,8 @@ def button_feedback(button: IconButton, *, kind="ghost") -> IconButton:
                       C["error_soft"] if kind == "danger" else
                       C["ok_pressed"] if kind == "ok" else C["control_pressed"],
         "hover_border": C["accent2"] if kind in {"primary", "accent_soft"} else
-                        C["error"] if kind == "danger" else C["border_hi"],
+                        C["error"] if kind == "danger" else
+                        C["ok"] if kind == "ok" else C["border_hi"],
         "disabled_bg": C["disabled_bg"], "disabled_border": C["disabled_border"],
     })
 
@@ -1176,6 +1177,16 @@ def apply_ttk_theme(root):
     style.map('Primary.TButton', background=[('disabled', C['disabled_bg']),
         ('pressed', C['accent_pressed']), ('active', C['accent_hover'])],
         foreground=[('disabled', C['disabled_fg'])])
+    style.configure('Danger.TButton', background=C['surface2'], foreground=C['error'],
+                    lightcolor=C['surface2'], darkcolor=C['surface2'], bordercolor=C['border_hi'])
+    style.map('Danger.TButton', background=[('disabled', C['disabled_bg']),
+        ('pressed', C['error_soft']), ('active', C['error_soft'])],
+        foreground=[('disabled', C['disabled_fg']), ('active', C['error'])])
+    style.configure('Ok.TButton', background=C['ok'], foreground='#0B0B10',
+                    lightcolor=C['ok'], darkcolor=C['ok'], bordercolor=C['ok'])
+    style.map('Ok.TButton', background=[('disabled', C['disabled_bg']),
+        ('pressed', C['ok_pressed']), ('active', '#34D399')],
+        foreground=[('disabled', C['disabled_fg'])])
     # Slim, arrow-free tracks retain native trough/drag/keyboard behavior.
     for orient, sticky in (('Vertical', 'ns'), ('Horizontal', 'we')):
         name = orient + '.TScrollbar'
@@ -1268,10 +1279,16 @@ def human_size(n: float) -> str:
 
 def rounded_label(parent, text, *, fill=None, outline=None, fg=None, font=None,
                   radius=R_PILL, padx=10, pady=4, command=None, bg=None,
-                  tooltip=None):
+                  tooltip=None, inset=0.5):
     """圆角小胶囊（模型选择器 / 附件 / 智能路由 这类 pill）。
 
     返回一个 Canvas，可用 `.set_text()` 改文字。
+
+    ``inset`` 是描边相对画布边缘的内缩量。默认 0.5（描边正好压在半像素
+    线上）——胶囊外层通常还有 padding，看不出问题；但键帽这类「画布即
+    控件边界」的紧凑元素，0.5 会让右边和下边的 1px 描边落到画布外被裁掉
+    （Tk 多边形描边按线心对称，x=w-0.5 的那半像素没有可落的列）。这类
+    场景传 1.0，四条边才都完整。
     """
     from tkinter import font as tkfont
     base = bg or _bg_of(parent)
@@ -1282,7 +1299,7 @@ def rounded_label(parent, text, *, fill=None, outline=None, fg=None, font=None,
             max(fnt.metrics("linespace"), 20 if icon else 0) + pady * 2)
     cv = tk.Canvas(parent, width=w, height=h, bg=base, highlightthickness=0, bd=0)
     fill_c = fill or C["surface2"]
-    shape = round_rect(cv, 0.5, 0.5, w - 0.5, h - 0.5, radius, fill=fill_c,
+    shape = round_rect(cv, inset, inset, w - inset, h - inset, radius, fill=fill_c,
                        outline=outline or "", width=1)
     txt = cv.create_text(padx + (24 if icon else 0), h / 2, text=label, anchor="w",
                          fill=fg or C["body"], font=font or FONT_SMALL)
@@ -1296,7 +1313,7 @@ def rounded_label(parent, text, *, fill=None, outline=None, fg=None, font=None,
         nw = fnt.measure(label) + padx * 2 + (24 if icon else 0)
         cv.configure(width=nw)
         cv.coords(txt, padx + (24 if icon else 0), h / 2)
-        cv.coords(shape, *rounded_points(0.5, 0.5, nw - 0.5, h - 0.5, radius))
+        cv.coords(shape, *rounded_points(inset, inset, nw - inset, h - inset, radius))
         cv.delete("icon")
         if icon:
             draw_icon(cv, icon, x=padx, y=(h-20)/2, size=20, fg=fg or C["body"])
@@ -1307,6 +1324,9 @@ def rounded_label(parent, text, *, fill=None, outline=None, fg=None, font=None,
         bind_keyboard_action(cv, command)
         cv.bind("<Button-1>", lambda _e: command())
         cv.configure(cursor="hand2")
+        hov_fill = C["hover"] if fill_c == C["surface2"] else C["sel"]
+        cv.bind("<Enter>", lambda _e: cv.itemconfigure(shape, fill=hov_fill), add="+")
+        cv.bind("<Leave>", lambda _e: cv.itemconfigure(shape, fill=fill_c), add="+")
     if tooltip:
         attach_tooltip(cv, tooltip)
     return cv

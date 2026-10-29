@@ -84,8 +84,9 @@ def count_problems(evidence):
     return total
 
 
-def _empty_state_card(parent, title, hint, *, bg=None, wrap=360, rely=0.5):
-    """居中空态卡（v0.5 视觉规范）：图标点 + 标题 + 副文案。
+def _empty_state_card(parent, title, hint, *, bg=None, wrap=360, rely=0.5,
+                      actions=None, icon='files'):
+    """居中空态卡（v0.5 视觉规范）：图标点 + 标题 + 副文案（+ 可选动作行）。
 
     替代原来的单行左上角灰字——底部面板空态是「毛坯房」观感的
     重灾区：一行 9px 灰字贴在纯黑面板左上角，既无层级也无引导。
@@ -94,6 +95,12 @@ def _empty_state_card(parent, title, hint, *, bg=None, wrap=360, rely=0.5):
 
     ``bg`` 允许宿主面板用自身底色（如侧栏 sidebar 而非 code_bg）；
     ``wrap``/``rely`` 供窄栏宿主收窄文案宽、上移锚点。
+
+    ``actions``（v0.7 增量，默认 None 保持既有调用点零改动）：形如
+    ``((标签, 回调), ...)`` 的动作行。空态此前只「说明」不「可操作」
+    ——编辑器整块留白却不给任何入口，用户只能自己去左栏找文件。
+    给了 actions 的空态在文案下方多一行 ghost 按钮，视觉仍是同一套
+    空态语言（同底色、同字号、无填充块）。
     """
     from ui_icons import icon_image
     base = bg or C['code_bg']
@@ -106,7 +113,7 @@ def _empty_state_card(parent, title, hint, *, bg=None, wrap=360, rely=0.5):
     icon_holder = tk.Frame(box, bg=base, width=32, height=32)
     icon_holder.pack(pady=(0, 6))
     icon_holder.pack_propagate(False)
-    img = icon_image(icon_holder, 'files', size=24, fg=C['ter'])
+    img = icon_image(icon_holder, icon or 'files', size=24, fg=C['ter'])
     if img is not None:
         icon_lbl = tk.Label(icon_holder, image=img, bg=base, bd=0)
         icon_lbl.image = img
@@ -115,6 +122,37 @@ def _empty_state_card(parent, title, hint, *, bg=None, wrap=360, rely=0.5):
              fg=C['subtext']).pack()
     tk.Label(box, text=hint, font=FONT_CAPTION, bg=base,
              fg=C['ter'], wraplength=wrap, justify='center').pack(pady=(4, 0))
+    if actions:
+        # 动作行：空态从「只说明」变成「可操作」。按钮走 dev-mode 统一
+        # 按钮规范（与编辑器工具栏同源），不另起一套空态专属样式。
+        #
+        # v0.8 动作项支持第三/第四位：
+        #   (标签, 回调)                       —— 纯按钮
+        #   (标签, 回调, 键位id)               —— 按钮 + 右侧键帽
+        #   (标签, 回调, 键位id, kind)         —— 指定视觉层级
+        # 此前快捷键以「快速打开 · Ctrl+P」的纯文本形式塞进按钮文案：
+        # 既稀释了按钮语义（标签该说"做什么"，不该兼职说"怎么按"），
+        # 也和浮层脚注/输入区的键帽语法打架。改为按钮右侧跟一枚键帽。
+        from .buttons import dev_button, keycap
+        from . import shortcuts as _shortcuts
+        row = tk.Frame(box, bg=base)
+        row.pack(pady=(10, 0))
+        for item in actions:
+            if not item:
+                continue
+            label, callback = item[0], item[1]
+            if callback is None:
+                continue
+            key = item[2] if len(item) > 2 else None
+            kind = item[3] if len(item) > 3 else 'ghost'
+            # 每个动作独占一个 cell：按钮与它自己的键帽成组，
+            # 动作之间的间距才不会被键帽宽度带偏。
+            cell = tk.Frame(row, bg=base)
+            cell.pack(side='left', padx=(0, 6))
+            dev_button(cell, label, callback, kind=kind).pack(side='left')
+            if key:
+                keycap(cell, _shortcuts.hint(key, ''), bg=base,
+                       tone='quiet').pack(side='left', padx=(5, 0))
     return box
 
 

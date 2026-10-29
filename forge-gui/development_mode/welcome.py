@@ -157,12 +157,31 @@ class WelcomeView(ttk.Frame):
         # 列表容器（滚动窗口预留）
         self._recent_box = tk.Frame(self, bg=C['bg'])
         self._recent_box.pack(anchor='w', fill='x')
+        # 容器宽度随窗口变化，长文案（空态说明 / 项目路径）要跟着折行，
+        # 否则中央栏一窄就整行溢出、首尾字符被裁掉。
+        self._recent_box.bind('<Configure>', self._rewrap_recent, add='+')
 
         # ④ 快捷键 chips（替代原来的纯文字行——chips 与 Work Mode 输入区同语言）
+        # v0.8：默认渲染改为「键帽 + 说明」，键位与文案都取自 shortcuts
+        # 键位表（提示与真实绑定同源）。宿主若注入 shortcuts_provider，
+        # 仍按旧契约渲染成 chip——不破坏既有调用点。
         shortcuts_bar = tk.Frame(self, bg=C['bg'])
         shortcuts_bar.pack(anchor='w', fill='x', pady=(24, 0))
-        for hint in self._get_shortcut_chips():
-            chip(shortcuts_bar, hint, bg=C['bg']).pack(side='left', padx=(0, 8))
+        if self._shortcuts_provider is None:
+            from .buttons import key_hint
+            from . import shortcuts
+            # 两列网格：四个键位提示一行放不下（中央栏窄时会被裁掉尾巴，
+            # 实拍里第四组直接切在边框上）。
+            for index, key in enumerate(('quick_open', 'save', 'close_tab', 'run_tests')):
+                item = shortcuts.get(key)
+                if item is None:
+                    continue
+                key_hint(shortcuts_bar, key, item.label, bg=C['bg']).grid(
+                    row=index // 2, column=index % 2, sticky='w',
+                    padx=(0, 16), pady=(0, 6))
+        else:
+            for hint in self._get_shortcut_chips():
+                chip(shortcuts_bar, hint, bg=C['bg']).pack(side='left', padx=(0, 8))
 
         # 启动时先刷一次
         self.refresh()
@@ -187,8 +206,9 @@ class WelcomeView(ttk.Frame):
         # 标题 + 描述（描述宽度跟随卡片实际宽度换行——固定 wraplength 在窄窗口
         # 会把「工作区创建空文件」横向切掉半句，观感毛坯。_fit_desc 在卡片
         # Resize 时同步 wraplength，宽窗口照常一行放下。）
-        tk.Label(card.content, text=title, font=FONT_UI_BOLD, bg=C['surface'],
-                 fg=C['text']).pack(anchor='w', pady=(8, 2))
+        title_lbl = tk.Label(card.content, text=title, font=FONT_UI_BOLD, bg=C['surface'],
+                             fg=C['text'])
+        title_lbl.pack(anchor='w', pady=(8, 2))
         desc_lbl = tk.Label(card.content, text=desc, font=FONT_CAPTION,
                             bg=C['surface'], fg=C['subtext'],
                             wraplength=176, justify='left')
@@ -225,11 +245,15 @@ class WelcomeView(ttk.Frame):
         # 键盘焦点环画在卡片描边上（button 本身被内容遮住，看不见）
         button.bind('<FocusIn>', lambda _e, c=card: self._paint_focus(c, True))
         button.bind('<FocusOut>', lambda _e, c=card: self._paint_focus(c, False))
-        # hover 效果（卡片整张换底色）
-        for w in (card, card.content, icon_holder):
-            w.bind('<Enter>', lambda _e, c=card: self._paint_card(c, hover=True))
-            w.bind('<Leave>', lambda _e, c=card: self._paint_card(c, hover=False))
-            w.bind('<Button-1>', lambda _e, k=key: self._on_action(k)())
+        # hover 效果（卡片整张换底色与高亮描边）与全卡片点击联动
+        all_card_widgets = [card, card.content, icon_holder, title_lbl, desc_lbl]
+        if 'icon_lbl' in locals() and icon_lbl is not None:
+            all_card_widgets.append(icon_lbl)
+        for w in all_card_widgets:
+            w.bind('<Enter>', lambda _e, c=card: self._paint_card(c, hover=True), add='+')
+            w.bind('<Leave>', lambda _e, c=card: self._paint_card(c, hover=False), add='+')
+            w.bind('<Button-1>', lambda _e, k=key: self._on_action(k)(), add='+')
+            w.configure(cursor='hand2')
         button.bind('<Enter>', lambda _e, c=card: self._paint_card(c, hover=True))
         button.bind('<Leave>', lambda _e, c=card: self._paint_card(c, hover=False))
         # 把按钮和 key 都挂在 card 上：调用方需要时直接 card.action_button /
@@ -249,22 +273,30 @@ class WelcomeView(ttk.Frame):
         """整张卡换 hover 态底色（RoundedCard 走 set_fill 重绘圆角底）。"""
         try:
             bg = C['hover'] if hover else C['surface']
+            outline = C['accent_border'] if hover else C['border_hi']
             if hasattr(card, 'set_fill'):
-                card.set_fill(bg)
+                card.set_fill(bg, outline)
             else:
                 card.configure(bg=bg)
-            for child in card.winfo_children():
-                if isinstance(child, tk.Frame):
-                    child.configure(bg=bg)
+            def _recolor(w):
+                for child in w.winfo_children():
+                    if isinstance(child, (tk.Frame, tk.Label)):
+                        try:
+                            child.configure(bg=bg)
+                        except tk.TclError:
+                            pass
+                    _recolor(child)
+            _recolor(card)
         except tk.TclError:
             pass
 
     def _paint_focus(self, card, focused):
         """键盘焦点环：卡片描边换 accent（hover 之外的第二种高亮）。"""
         try:
-            color = C['accent_border'] if focused else C['border_hi']
+            color = C['focus_ring'] if focused else C['border_hi']
             if hasattr(card, 'set_fill'):
-                card.set_fill(C['surface'], color)
+                fill = getattr(card, '_fill', C['surface'])
+                card.set_fill(fill, color)
             else:
                 card.configure(highlightbackground=color)
         except tk.TclError:
@@ -318,9 +350,36 @@ class WelcomeView(ttk.Frame):
             if len(parts) > 1:
                 return parts
             return [str(raw)]
-        return ['Ctrl+Shift+P  命令面板', 'Ctrl+P  快速打开文件', 'Ctrl+B  切换侧栏']
+        # v0.7：默认 chips 只列**真的绑定了**的键——此前是
+        # 「Ctrl+Shift+P 命令面板 / Ctrl+P 快速打开 / Ctrl+B 切换侧栏」，
+        # 三个都没有绑定，用户按下去毫无反应（空头承诺比不写更糟）。
+        # 现在 Ctrl+P / Ctrl+W 由 app._install_shortcuts 绑定，
+        # Ctrl+S 由编辑器文本组件绑定，Ctrl+Enter 由任务输入框绑定。
+        return ['Ctrl+P  快速打开文件', 'Ctrl+S  保存文档',
+                'Ctrl+W  关闭标签', 'Ctrl+Enter  发送任务']
 
     # ── 数据填充 ─────────────────────────────────────────────────
+    def _rewrap_recent(self, event=None):
+        """把近期项目列表里标记了 ``_forge_wrap`` 的文案按容器宽度折行。
+
+        只在 ``_recent_box`` 的 ``<Configure>`` 上挂一个处理器（构建期
+        绑一次），刷新时改文案不用重新绑；容器窄到没有意义（<80px）
+        时不动，避免窗口最小化过程中算出 0 宽。
+        """
+        try:
+            width = event.width if event is not None else self._recent_box.winfo_width()
+        except (AttributeError, tk.TclError):
+            return
+        if not width or width < 80:
+            return
+        for child in self._recent_box.winfo_children():
+            if not getattr(child, '_forge_wrap', False):
+                continue
+            try:
+                child.configure(wraplength=max(80, width - 2))
+            except tk.TclError:
+                continue
+
     def refresh(self):
         """按 recent_provider 重绘近期项目（按 mtime 倒序）。"""
         for child in self._recent_box.winfo_children():
@@ -342,9 +401,15 @@ class WelcomeView(ttk.Frame):
             self._recent_count_lbl.configure(
                 text=f'（{len(recent)}）' if recent else '（暂无）')
         if not recent:
-            tk.Label(self._recent_box, text='暂无项目记录——打开一个目录后会自动出现在这里。',
-                     font=FONT_UI, bg=C['bg'], fg=C['ter'],
-                     justify='left').pack(anchor='w', pady=(4, 0))
+            hint = tk.Label(self._recent_box,
+                            text='暂无项目记录——打开一个目录后会自动出现在这里。',
+                            font=FONT_UI, bg=C['bg'], fg=C['ter'],
+                            justify='left', anchor='w')
+            hint.pack(anchor='w', fill='x', pady=(4, 0))
+            # 标记为「跟随容器宽度折行」——此前无 wraplength，中央栏
+            # 窄于文字宽度时整行溢出，「暂无」和「这里。」都被裁掉。
+            hint._forge_wrap = True
+            self._rewrap_recent()
             return
         for path in recent:
             self._build_recent_row(path)
@@ -369,22 +434,38 @@ class WelcomeView(ttk.Frame):
         main_lbl = tk.Label(row, text=name, font=FONT_UI, bg=C['bg'],
                             fg=C['link'], anchor='w', cursor='hand2')
         main_lbl.pack(side='left')
+        parent_lbl = None
         if parent:
-            tk.Label(row, text=f'  {parent}', font=FONT_CAPTION, bg=C['bg'],
-                     fg=C['ter'], anchor='w').pack(side='left')
+            parent_lbl = tk.Label(row, text=f'  {parent}', font=FONT_CAPTION, bg=C['bg'],
+                                  fg=C['ter'], anchor='w')
+            parent_lbl.pack(side='left')
         # 时间戳（右侧）
         ts = _format_recent_time(path)
+        ts_lbl = None
         if ts:
-            tk.Label(row, text=ts, font=FONT_CAPTION, bg=C['bg'],
-                     fg=C['ter']).pack(side='right')
-        # hover：整行换 surface2 底色 + 主标签提亮，比原来的 hover 更明确
-        def _hover(w, entering, label=main_lbl):
+            ts_lbl = tk.Label(row, text=ts, font=FONT_CAPTION, bg=C['bg'],
+                              fg=C['ter'])
+            ts_lbl.pack(side='right')
+
+        # 统一整行联动：整行任一点 hover / 移出，整行所有控件同步变色；
+        # 点击任一部分（图标 / 路径 / 时间）均可打开项目。
+        all_widgets = [w for w in (row, icon_holder, icon_lbl if 'icon_lbl' in locals() else None,
+                                  main_lbl, parent_lbl, ts_lbl) if w is not None]
+
+        def _hover(entering):
+            bg = C['hover'] if entering else C['bg']
+            for w in all_widgets:
+                try:
+                    w.configure(bg=bg)
+                except tk.TclError:
+                    pass
             try:
-                w.configure(bg=C['hover'] if entering else C['bg'])
-                label.configure(fg=C['accent_text'] if entering else C['link'])
+                main_lbl.configure(fg=C['accent_text'] if entering else C['link'])
             except tk.TclError:
                 pass
-        for w in (row, main_lbl):
-            w.bind('<Enter>', lambda _e, ww=w: _hover(ww, True))
-            w.bind('<Leave>', lambda _e, ww=w: _hover(ww, False))
+
+        for w in all_widgets:
+            w.bind('<Enter>', lambda _e: _hover(True))
+            w.bind('<Leave>', lambda _e: _hover(False))
             w.bind('<Button-1>', lambda _e, p=path: self._open_recent(p))
+            w.configure(cursor='hand2')

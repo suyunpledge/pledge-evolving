@@ -25,6 +25,7 @@ from forge.development.evidence import TaskEvidence
 from forge.secrets import redact, install_tk_exception_redaction
 from .bottom_panel import ToolPanel, count_problems, count_tests, highlight_diff_lines
 from .buttons import dev_button  # P0 修复：模块级——对话框等非 _build_editor 作用域也要用
+from . import shortcuts  # v0.8：键位表（模块级导入——保护方法内不得新增 import 语句）
 from .editor_area import EditorArea, save_document_as
 from .explorer import ExplorerPanel
 from .layout import NavigationBar, StatusBar, PRESETS
@@ -94,6 +95,10 @@ class DevelopmentWorkbench(ttk.Frame):
         self._session_to_restore = self.state.value('session')
         self._resume_project = self.state.value('project')
         self._build()
+        # v0.8：键盘层（Ctrl+P / Ctrl+W / F5 …）在 _build 之外安装——
+        # _build 属 Ownership 字节保护组（test_agent_panel.
+        # OwnershipTests），不得新增语句；这里只做一次绑定，不改布局。
+        self._install_shortcuts()
         self._status_notice_at = float('-inf')
         self._status_background_write = False
         self.status.trace_add('write', self._status_written)
@@ -225,6 +230,175 @@ class DevelopmentWorkbench(ttk.Frame):
         # 之后建——它复用 editor_frame 作父容器，与编辑器本体二态切换。
         self._build_welcome()
 
+    # ── 键盘层（v0.8：由 shortcuts 键位表驱动）────────────────────
+    def _install_shortcuts(self):
+        """按 ``shortcuts.SHORTCUTS`` 表注册工作台级快捷键（幂等）。
+
+        绑定挂在 toplevel 上（hosted 形态与 WorkBuddy 共用同一个
+        root），因此每条都过 ``_guarded``：只有 Coding 空间真的在前台
+        时才执行并吃掉按键，否则原样放行给宿主。
+        """
+        self._quick = None          # Ctrl+P 浮层句柄（同时用作去重）
+        self._quick_files = None    # 项目文件清单缓存（切项目失效）
+        handlers = {
+            'quick_open': self.quick_open,
+            'save': self.save_current,
+            'save_as': self.save_as_current,
+            'close_tab': self._shortcut_close_tab,
+            'next_tab': lambda: self._cycle_tab(1),
+            'prev_tab': lambda: self._cycle_tab(-1),
+            'focus_explorer': self._focus_explorer,
+            'focus_search': self._focus_search,
+            'run_tests': self._shortcut_run_tests,
+        }
+        try:
+            root = self.winfo_toplevel()
+        except tk.TclError:
+            return
+        for sequence, key in shortcuts.bindings():
+            action = handlers.get(key)
+            if action is None:
+                continue
+            try:
+                root.bind(sequence, self._guarded(action), add='+')
+            except tk.TclError:
+                pass
+
+    def _guarded(self, action):
+        """快捷键守卫：Coding 不在前台就不响应，响应时吃掉按键。"""
+        def invoke(event=None):
+            if not self._shortcut_scope():
+                return None
+            try:
+                action()
+            except tk.TclError:
+                return None
+            return 'break'
+        return invoke
+
+    def _shortcut_scope(self):
+        """该不该响应工作台快捷键：未销毁且工作台当前可见。"""
+        if getattr(self, '_closed', False):
+            return False
+        try:
+            return bool(self.winfo_ismapped())
+        except tk.TclError:
+            return False
+
+    def _agent_input_focused(self):
+        """焦点是否在任务输入框里——输入态下多数全局键要让位。"""
+        try:
+            return self.focus_get() is getattr(self, 'input', None)
+        except (tk.TclError, KeyError):
+            return False
+
+    def _shortcut_close_tab(self):
+        if self._agent_input_focused() or not self.documents:
+            return
+        self.close_current()
+
+    def _cycle_tab(self, delta):
+        """Ctrl+Tab / Ctrl+Shift+Tab：在已打开的文档标签间循环。"""
+        tabs = list(self.tabs.tabs())
+        if len(tabs) < 2:
+            return
+        current = self.tabs.select()
+        index = tabs.index(current) if current in tabs else 0
+        self.tabs.select(tabs[(index + delta) % len(tabs)])
+
+    def _focus_explorer(self):
+        """Ctrl+Shift+E：回到文件视图并把焦点交给文件树。"""
+        try:
+            self.explorer.select_view('files')
+        except Exception:
+            pass
+        try:
+            self.tree.focus_set()
+        except tk.TclError:
+            pass
+
+    def _focus_search(self):
+        """Ctrl+F：聚焦左栏的文件名搜索框（编辑器内部由编辑器自己接管）。"""
+        if self._agent_input_focused():
+            return
+        entry = getattr(self.explorer, 'search_entry', None)
+        if entry is None:
+            return
+        try:
+            entry.focus_set()
+            entry.selection_range(0, 'end')
+        except tk.TclError:
+            pass
+
+    def _shortcut_run_tests(self):
+        """F5：没有项目时如实说明，不把用户丢进权限校验的报错里。"""
+        if self.source is None:
+            self.status.set('运行测试 · 请先打开一个项目')
+            return
+        self.run_tests()
+
+    def quick_open(self):
+        """Ctrl+P：项目内按文件名快速打开（浮层，见 quick_open.py）。"""
+        from .quick_open import QuickOpen
+        if self.source is None:
+            self.status.set('快速打开 · 请先打开一个项目')
+            return None
+        current = getattr(self, '_quick', None)
+        if current is not None and current.alive:
+            # 已开着：再按一次 Ctrl+P 视为「聚焦回输入框」而不是叠一层。
+            try:
+                current.entry.focus_set()
+            except tk.TclError:
+                pass
+            return current
+        paths = self._quick_open_paths()
+        if not paths:
+            self.status.set('快速打开 · 当前项目没有可打开的文件')
+            return None
+        self._quick = QuickOpen(self, paths, self.open_file,
+                                on_close=self._quick_open_closed)
+        return self._quick
+
+    def _quick_open_closed(self):
+        self._quick = None
+
+    def _quick_open_paths(self):
+        """项目文件清单（相对路径，按字典序；缓存到切项目为止）。
+
+        只走 ``workspace._scan_tree`` 这一条扫描路径——与文件树、搜索
+        框同源，不新建第二个爬虫；扫描上限与搜索一致（4000 节点）。
+        """
+        cached = getattr(self, '_quick_files', None)
+        if cached is not None:
+            return cached
+        source = self.source
+        if source is None:
+            return []
+        try:
+            from workspace import _scan_tree
+            nodes = _scan_tree(source.root, expanded=None, max_nodes=4000)
+        except Exception:
+            self._quick_files = []
+            return []
+        paths = []
+        root = str(source.root)
+        for node in nodes:
+            if node.get('is_dir'):
+                continue
+            try:
+                # _scan_tree 给的是绝对 Path；用 os.path.relpath 而不是
+                # Path.relative_to——后者对「未解析的 root / 已解析的条目」
+                # 会直接抛 ValueError，静默丢掉整个项目。
+                relative = os.path.relpath(str(node['path']), root)
+            except (KeyError, ValueError, OSError):
+                continue
+            if relative.startswith('..'):
+                continue
+            paths.append(relative.replace('\\', '/'))
+        paths.sort()
+        self._quick_files = paths
+        return paths
+
     def _nav_navigate(self, key):
         """M1 导航栏回调：模式项复刻 switch_mode 的布局捕获语义，动作项
         委托既有方法。本方法只做分发，不改被委托方法的任何行为。"""
@@ -287,13 +461,16 @@ class DevelopmentWorkbench(ttk.Frame):
         bar = ttk.Frame(body)
         bar.pack(fill='x', pady=4)
         # W3：编辑器工具栏改走统一按钮规范（尺寸/反馈/提示定版）。
+        # v0.8：tooltip 文案改由 shortcuts 键位表派生（键位与提示同源）。
+        # 注：本方法在 Ownership 字节保护组内，只允许改被归一化剥离的
+        # kwargs（tooltip / kind）——加 icon= 需要同步更新保护清单，未做。
         from .buttons import dev_button
         dev_button(bar, text='保存', command=self.save_current, kind='primary',
-                   tooltip='保存当前文档（Ctrl+S）').pack(side='left')
+                   tooltip=shortcuts.tooltip('save')).pack(side='left')
         dev_button(bar, text='重新载入', command=self.reload_current, kind='ghost',
                    tooltip='从磁盘重读当前文档').pack(side='left', padx=4)
         dev_button(bar, text='关闭标签', command=self.close_current, kind='ghost',
-                   tooltip='关闭当前标签页').pack(side='left')
+                   tooltip=shortcuts.tooltip('close_tab', '关闭当前标签页')).pack(side='left')
         state_bar = ttk.Frame(body)
         state_bar.pack(fill='x', pady=(0, 4))
         dev_button(state_bar, text='编码', command=self.open_encoding, kind='quiet',
@@ -354,8 +531,16 @@ class DevelopmentWorkbench(ttk.Frame):
         # 有文件打开时隐藏。挂在 body 上层（tabs 的兄弟），pack_forget 切换。
         self._editor_empty = tk.Frame(body, bg=C['code_bg'])
         from .bottom_panel import _empty_state_card
-        _empty_state_card(self._editor_empty, '编辑器',
-                          '从左侧文件树双击打开文件；Ctrl+P 快速打开。')
+        # v0.7：空态从「只说明」升级为「可操作」——三处空白（编辑区 /
+        # Agent 对话 / 底部工具面板）此前都只有一句提示文案，用户被留在
+        # 一个没有入口的界面里。这里给编辑区空态补三个真实动作，全部
+        # 复用既有方法（不新增执行路径）：快速打开 / 打开项目 / 运行测试。
+        _empty_state_card(
+            self._editor_empty, '还没有打开文件',
+            '从左侧文件树双击打开，或用「快速打开」按文件名搜索整个项目。',
+            actions=(('快速打开', self.quick_open, 'quick_open'),
+                     ('打开项目…', self.choose_project),
+                     ('运行测试', self.run_tests, 'run_tests')))
         self._sync_editor_empty()
         # v0.4 产品化收紧：编辑区底部状态行 + 面包屑（合在 body 末尾）
         # — 22px 高，左侧面包屑（项目 / 路径），右侧 行列 / 语言 / 修改状态。
@@ -404,7 +589,15 @@ class DevelopmentWorkbench(ttk.Frame):
         self.review_text.pack(side='left', fill='both', expand=True)
 
     def _sync_editor_empty(self):
-        """P1-3：编辑器空态卡显隐——无打开文档且编辑器本体可见时显示。"""
+        """P1-3：编辑器空态卡显隐——无打开文档且编辑器本体可见时显示。
+
+        v0.8 修正：覆盖层从 ``editor_body`` 收到 ``self.tabs``。原先
+        relwidth/relheight=1 的整块覆盖会把编辑器工具栏（保存 / 重新
+        载入 / 关闭标签 / 编码 / 文件审查）和文档状态行一起盖住——
+        截图上编辑区顶部整片空白，看起来像"工具栏不存在"。成熟 IDE
+        的惯例是：chrome 永远在，空态只占编辑区。无文档时 Notebook
+        本来就是空的，盖住它正好。
+        """
         card = getattr(self, '_editor_empty', None)
         if card is None or not card.winfo_exists():
             return
@@ -412,8 +605,8 @@ class DevelopmentWorkbench(ttk.Frame):
         visible = self._editor_visible()
         if not has_doc and visible:
             try:
-                card.place(in_=self.editor_body, relx=0.5, rely=0.5,
-                           anchor='c', relwidth=1.0, relheight=1.0)
+                card.place(in_=self.tabs, relx=0, rely=0, anchor='nw',
+                           relwidth=1.0, relheight=1.0)
             except tk.TclError:
                 pass
         else:
@@ -763,13 +956,17 @@ class DevelopmentWorkbench(ttk.Frame):
                                       foreground=C['accent2'])
         # context_label 父级为 input_bar：附件信息仍贴在输入行上方。
         self.context_label = ttk.Label(self.input_bar, text='未附加编辑器内容', padding=4)
-        # 输入带键位提示：从「一行 10px 灰字」改成 chips。
-        # 纯文字行在深色输入带里对比度低、扫读成本高；chips 有底色 +
-        # hairline 描边，与 Work Mode 输入区的胶囊语言一致。三个键位都
-        # 是真实绑定（<Return> / <Shift-Return> / <Control-Return>）。
+        # 输入带键位提示：v0.8 从「三个灰底胶囊」改为「键帽 + 说明」——
+        # 成熟产品里快捷键的固定语法是 [Enter] 发送 / [Shift+Enter] 换行，
+        # 键帽有等宽字体和描边边界，修饰键与字母键一眼能分开；胶囊把
+        # 'Shift+Enter 换行' 整串当正文，扫读时和说明文字糊在一起。
+        # 键位文案从 shortcuts 键位表取（scope='local'，只借文案不绑定）。
+        from .buttons import key_hint
         hint_row = tk.Frame(self.input_bar, bg=C['bg'])
-        for hint in ('Enter 发送', 'Shift+Enter 换行', 'Ctrl+Enter 亦可'):
-            chip(hint_row, hint, bg=C['bg']).pack(side='left', padx=(0, 6))
+        for key, text in (('send', '发送'), ('newline', '换行'),
+                          ('send_force', '执行')):
+            key_hint(hint_row, key, text, bg=C['bg'], gap=5).pack(
+                side='left', padx=(0, 10))
         # 输入行：input 吃满剩余宽度，send 固定在右——同一行内布局。
         input_row = self._input_row
         self.send_button = IconButton(input_row, text='发送', command=self.send,
@@ -1249,6 +1446,9 @@ class DevelopmentWorkbench(ttk.Frame):
             row['frame'].destroy()
         self.documents.clear()
         self._file_actions.clear()
+        # v0.7：Ctrl+P 的文件清单按项目缓存，切项目必须失效——否则
+        # 在 B 项目里能搜到 A 项目的相对路径，打开必然失败。
+        self._quick_files = None
         self._changed_selection = ()
         self.task_evidence = TaskEvidence()
         self.render_evidence()
@@ -3083,6 +3283,15 @@ class DevelopmentWorkbench(ttk.Frame):
         if event.widget is not self:
             return
         self._closed = True
+        # v0.7：Ctrl+P 浮层是独立的 Toplevel，工作台销毁时必须一起收掉
+        # ——否则独立运行关窗后浮层会留在桌面上成为孤儿窗口。
+        quick = getattr(self, '_quick', None)
+        if quick is not None:
+            try:
+                quick.close()
+            except Exception:
+                pass
+            self._quick = None
         self._unsubscribe()
         for timer in tuple(self._after_ids):
             if timer:

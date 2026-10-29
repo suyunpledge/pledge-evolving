@@ -16,8 +16,11 @@ from forge.secrets import redact
 
 # 对话区空态引导：无消息时显示，避免右侧 Agent 面板呈现为纯黑空洞。
 # 文案只描述"这里将会发生什么"，不伪造任何已发生的执行。
+# v0.8：不再在这里写"按 Enter 发送"——输入区正下方已经用键帽标了
+# [Enter] 发送，纯文本再说一遍既重复又和键帽语法打架。空态只说
+# "会发生什么"，键位交给键帽。
 CHAT_EMPTY_HINT = (
-    '在下方输入任务描述，按 Enter 发送。\n'
+    '在下方输入任务描述，与 Agent 一起开始。\n'
     'Agent 的执行过程、工具步骤与产物会实时汇报在这里。'
 )
 
@@ -55,13 +58,16 @@ class Conversation(tk.Text):
         self.history_source = history_source
         self._history_path = None
         self._history_times = defaultdict(deque)
-        self.tag_configure('timestamp', foreground=C['comment'], spacing1=6)
-        self.tag_configure('heading', font=FONT_SECTION, foreground=C['text'])
-        self.tag_configure('user_heading', font=FONT_UI_BOLD, foreground=C['accent2'], spacing1=8)
-        self.tag_configure('agent_heading', font=FONT_UI_BOLD, foreground=C['agent_accent'], spacing1=8)
+        self.tag_configure('timestamp', foreground=C['comment'], font=FONT_CAPTION)
+        self.tag_configure('heading', font=FONT_SECTION, foreground=C['text'], spacing1=6, spacing3=3)
+        self.tag_configure('user_heading', font=FONT_UI_BOLD, foreground=C['accent2'], spacing1=6)
+        self.tag_configure('agent_heading', font=FONT_UI_BOLD, foreground=C['agent_accent'], spacing1=6)
+        self.tag_configure('error_heading', font=FONT_UI_BOLD, foreground=C['error'], spacing1=6)
+        self.tag_configure('success_heading', font=FONT_UI_BOLD, foreground=C['ok'], spacing1=6)
         self.tag_configure('b', font=FONT_UI_BOLD)
-        self.tag_configure('code', font=FONT_MONO_SM, background=C['code_bg'])
-        self.tag_configure('quote', foreground=C['subtext'], lmargin1=12, lmargin2=12)
+        self.tag_configure('code', font=FONT_MONO_SM, background=C['code_bg'], lmargin1=14, lmargin2=14, spacing1=3, spacing3=3)
+        self.tag_configure('quote', foreground=C['subtext'], lmargin1=14, lmargin2=14)
+        self.tag_configure('hr', foreground=C['border'], spacing1=4, spacing3=4)
         # 空态引导：居中空态卡（图标 + 标题 + 说明，与 bottom_panel 的
         # _empty_state_card 同一视觉语言），place 悬浮在 Text 之上；
         # message() 首次写入真实内容时撤下，clear() 时重建——一次性，
@@ -88,15 +94,15 @@ class Conversation(tk.Text):
             from ui_icons import icon_image
             box = tk.Frame(self, bg=C['chat'])
             box.place(relx=0.5, rely=0.42, anchor='c')
-            img = icon_image(box, 'chat', size=28, fg=C['ter'])
+            img = icon_image(box, 'chat', size=32, fg=C['accent2'])
             if img is not None:
                 icon = tk.Label(box, image=img, bg=C['chat'], bd=0)
                 icon.image = img  # 防 GC
                 icon.pack(pady=(0, 8))
             tk.Label(box, text='和 Coding Agent 开始一个任务', font=FONT_SECTION,
-                     bg=C['chat'], fg=C['subtext']).pack()
+                     bg=C['chat'], fg=C['text']).pack()
             tk.Label(box, text=CHAT_EMPTY_HINT, font=FONT_CAPTION, bg=C['chat'],
-                     fg=C['ter'], justify='center').pack(pady=(4, 0))
+                     fg=C['ter'], justify='center').pack(pady=(6, 0))
             self._empty_card = box
         except tk.TclError:
             pass
@@ -198,13 +204,21 @@ class Conversation(tk.Text):
             stamp = datetime.fromtimestamp(float(timestamp)).strftime('%H:%M')
         except (TypeError, ValueError, OverflowError, OSError):
             stamp = '时间未记录'
-        self.insert('end', '\n' + stamp + '\n', 'timestamp')
-        self.insert('end', '\n' + str(redact(role)) + '\n',
-                    'user_heading' if role in {'你', 'user'} else 'agent_heading')
+        role_str = str(redact(role))
+        heading_tag = ('user_heading' if role in {'你', 'user'}
+                       else 'error_heading' if role in {'无法发送', '执行失败'}
+                       else 'success_heading' if role in {'任务结果'}
+                       else 'agent_heading')
+        if self.get('1.0', 'end-1c').strip():
+            self.insert('end', '\n\n')
+        else:
+            self.insert('end', '\n')
+        self.insert('end', role_str, heading_tag)
+        self.insert('end', f'  {stamp}\n', 'timestamp')
         for block in parse_blocks(str(redact(body))):
             kind, value = block['type'], block.get('text', '')
             if kind == 'hr':
-                self.insert('end', '────────\n')
+                self.insert('end', '────────────────────────\n', 'hr')
             elif kind in {'code', 'table'}:
                 self.insert('end', value + '\n', 'code')
             else:
@@ -245,24 +259,26 @@ class Conversation(tk.Text):
 class ToolSummary(ttk.Frame):
     def __init__(self, parent):
         super().__init__(parent, padding=8, style='Card.TFrame')
-        self.summary = ttk.Label(self, text='工具步骤', font=FONT_UI, style='Card.TLabel')
-        self.summary.pack(anchor='w')
-        self.button = dev_button(self, 'View Details', self.toggle, kind='quiet')
-        self.button.pack(anchor='w')
-        self.detail_frame = ttk.Frame(self)
+        header = ttk.Frame(self, style='Card.TFrame')
+        header.pack(fill='x')
+        self.summary = ttk.Label(header, text='工具步骤', font=FONT_UI_BOLD, style='Card.TLabel')
+        self.summary.pack(side='left', fill='x', expand=True)
+        self.button = dev_button(header, 'View Details', self.toggle, kind='quiet')
+        self.button.pack(side='right')
+        self.detail_frame = ttk.Frame(self, style='Card.TFrame')
         self.detail = readonly(self.detail_frame, width=38)
         self.expanded = False
 
     def toggle(self):
         self.expanded = not self.expanded
         if self.expanded:
-            self.detail_frame.pack(fill='both', expand=True)
+            self.detail_frame.pack(fill='both', expand=True, pady=(6, 0))
         else:
             self.detail_frame.pack_forget()
         self.button.configure(text='Hide Details' if self.expanded else 'View Details')
 
     def fit(self, width):
-        self.summary.configure(wraplength=width)
+        self.summary.configure(wraplength=max(60, width - 110))
         from tkinter import font
         char = max(1, font.Font(root=self, font=FONT_UI).measure('0'))
         self.detail.configure(width=max(10, (width - 20) // char))
@@ -303,14 +319,17 @@ class DiffCard(ttk.Frame):
         self.state_label.configure(text=label + '\n' + counts)
         for button in self.buttons.values():
             button.destroy()
-        self.buttons.clear()
-        operations = [('view', 'View Diff'), ('open', 'Open File')]
+        operations = [
+            ('view', 'View Diff', 'ghost', 'diff', '查看变更差异'),
+            ('open', 'Open File', 'ghost', 'file', '在编辑器中打开文件'),
+        ]
         if state == 'pending':
-            operations.append(('pending', '处理授权 / 重试'))
+            operations.append(('pending', '处理授权 / 重试', 'accent_soft', 'check', '审批并继续执行'))
         elif state == 'written' and change.get('checkpoint') and change.get('before_revision') is not None and not change.get('revision_changed'):
-            operations.append(('revert', 'Revert'))
-        for key, label in operations:
-            button = dev_button(self.row, label, lambda k=key: self.callbacks[k](self.change), kind='ghost')
+            operations.append(('revert', 'Revert', 'danger', 'close', '放弃此变更并恢复文件'))
+        for key, label, kind, icon, tip in operations:
+            button = dev_button(self.row, label, lambda k=key: self.callbacks[k](self.change),
+                                kind=kind, icon=icon, tooltip=tip)
             self.buttons[key] = button
         self.fit(self._width)
 
@@ -415,11 +434,14 @@ class AgentPanel(ttk.Frame):
         # app._sync_perm_badge 调 set_permission() 同步。
         self._perm_chip = tk.Label(titlebar, text='只读', font=FONT_CAPTION,
                                    bg=C['surface2'], fg=C['subtext'],
-                                   padx=7, pady=2, cursor='hand2')
+                                   padx=8, pady=2, cursor='hand2',
+                                   highlightthickness=1, highlightbackground=C['border_hi'])
         attach_tooltip(self._perm_chip,
                        '当前权限：下一个任务的文件写入范围。点击展开「运行时上下文」修改。')
         self._perm_chip.pack(side='left', padx=(6, 2))
         self._perm_chip.bind('<Button-1>', lambda _e: self._expand_runtime_context())
+        self._perm_chip.bind('<Enter>', lambda _e: self._perm_chip.configure(highlightbackground=C['focus_ring']))
+        self._perm_chip.bind('<Leave>', lambda _e: self._sync_perm_chip_border())
         self.header_buttons = {}
         for key, icon, label, callback in (
                 ('new', 'plus', '新对话', new_conversation),
@@ -459,10 +481,11 @@ class AgentPanel(ttk.Frame):
         for tag, token in (('pending', 'subtext'), ('running', 'warn'), ('completed', 'ok')):
             self.workflow.tag_configure(tag, foreground=C[token])
         tools = ttk.Frame(agents)
-        tools.pack(fill='x')
+        tools.pack(fill='x', pady=(0, 4))
         dev_button(tools, '模型配置', lambda: configure_model(self.selected_name()),
-                   kind='ghost').pack(side='left')
-        dev_button(tools, '核实 Git 版本', refresh, kind='ghost').pack(side='right')
+                   kind='ghost', icon='config', tooltip='配置选定 Agent 的模型与推理参数').pack(side='left')
+        dev_button(tools, '核实 Git 版本', refresh, kind='ghost', icon='refresh',
+                   tooltip='核实当前工作区 Git 提交与版本').pack(side='right')
         self.tree = ttk.Treeview(agents, show='tree headings', columns=('state',), height=3, style='Coding.Treeview')
         self.tree.heading('#0', text='Agent')
         self.tree.heading('state', text='执行状态')
@@ -507,10 +530,17 @@ class AgentPanel(ttk.Frame):
 
     # ── 权限徽标（P0-D1）──────────────────────────────────────
     _PERM_TONES = {
-        'read-only': ('只读', 'surface2', 'subtext'),
-        'workspace-write': ('工作区可写', 'ok_soft', 'ok'),
-        'danger-full-access': ('危险全访问', 'warn_soft', 'warn'),
+        'read-only': ('只读', 'surface2', 'subtext', 'border_hi'),
+        'workspace-write': ('工作区可写', 'ok_soft', 'ok', 'ok'),
+        'danger-full-access': ('危险全访问', 'warn_soft', 'warn', 'warn'),
     }
+
+    def _sync_perm_chip_border(self):
+        try:
+            border_token = getattr(self, '_perm_border_token', 'border_hi')
+            self._perm_chip.configure(highlightbackground=C.get(border_token, C['border_hi']))
+        except tk.TclError:
+            pass
 
     def set_permission(self, sandbox):
         """更新标题行权限徽标（app._sync_perm_badge 调用）。
@@ -518,10 +548,15 @@ class AgentPanel(ttk.Frame):
         颜色走语义 token：只读=中性灰、工作区可写=ok 绿、危险全访问=
         warn 橙——高于只读时必须"看起来不一样"，否则等于没有提示。
         """
-        text, bg_token, fg_token = self._PERM_TONES.get(
-            sandbox, (str(sandbox), 'surface2', 'subtext'))
+        match = self._PERM_TONES.get(sandbox)
+        if match:
+            text, bg_token, fg_token, border_token = match
+        else:
+            text, bg_token, fg_token, border_token = (str(sandbox), 'surface2', 'subtext', 'border_hi')
+        self._perm_border_token = border_token
         try:
-            self._perm_chip.configure(text=text, bg=C[bg_token], fg=C[fg_token])
+            self._perm_chip.configure(text=text, bg=C[bg_token], fg=C[fg_token],
+                                      highlightbackground=C.get(border_token, C['border_hi']))
         except (tk.TclError, KeyError):
             pass
 
