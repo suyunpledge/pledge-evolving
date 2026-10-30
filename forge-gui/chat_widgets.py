@@ -37,12 +37,13 @@ except Exception:  # pragma: no cover
 import time
 import tkinter as tk
 from tkinter import font as tkfont
+from tkinter import ttk
 import math
 from typing import Callable, Optional
 
 import decor
 import gui_theme as theme
-from ui_icons import IconButton, IconCanvas, emoji_image, emoji_parts, draw_icon
+from ui_icons import IconButton, IconCanvas, emoji_image, emoji_parts, draw_icon, icon_key
 from gui_theme import (
     position_popover,
     C, FONT_CAPTION, FONT_MICRO, FONT_MONO, FONT_MONO_SM, FONT_MONO_XS, FONT_SECTION,
@@ -691,12 +692,13 @@ def _render_single_block(host, block, *, base, wrap):
                 pass
         line_count = max(1, len(tx.get('1.0','end-1c').split('\n')))
         tx.configure(height=min(line_count, 24), state=tk.DISABLED)
-        sx = tk.Scrollbar(card.content, orient=tk.HORIZONTAL, command=tx.xview)
+        # 设计稿：原生 tk.Scrollbar 在深色界面里是一条白轨道；改用主题 ttk 滚动条。
+        sx = ttk.Scrollbar(card.content, orient=tk.HORIZONTAL, command=tx.xview)
         tx.configure(xscrollcommand=sx.set)
         tx.pack(fill=tk.X)
         sx.pack(fill=tk.X)
         if line_count > 24:
-            sy = tk.Scrollbar(card.content, orient=tk.VERTICAL, command=tx.yview)
+            sy = ttk.Scrollbar(card.content, orient=tk.VERTICAL, command=tx.yview)
             tx.configure(yscrollcommand=sy.set)
             tx.pack_forget()
             sx.pack_forget()
@@ -1617,21 +1619,30 @@ class MessageArea(tk.Frame):
                    actions=()):
         self.clear()
         box = tk.Frame(self.scroll.inner, bg=self._bg)
-        box.pack(fill=tk.X, pady=(14, 12))
-        # 欢迎屏主视觉：柔光球 + 星座 + 点阵的组合画（Tk 原生，无动画）
-        try:
-            banner = decor.hero_banner(box, 480, 112, bg=self._bg,
-                                       accent=C["accent2"], accent2=C["brand_ice"],
-                                       spark=C["brand_spark"])
-            banner.pack(pady=(0, 10))
-        except tk.TclError:
-            banner = None
-        title_label = i18n.Label(box, text=title, bg=self._bg, fg=C["text"], font=FONT_TITLE)
+        box.pack(fill=tk.X, pady=(ui_px(self, 56), 12))
+        # 设计稿（2026-10-30）：主视觉收成一枚 52px 圆角图标块，标题加大，
+        # 工作区信息做成一枚胶囊；说明句由下方「试试」建议胶囊替代。
+        size = ui_px(self, 52)
+        banner = tk.Canvas(box, width=size, height=size, bg=self._bg,
+                           highlightthickness=0, bd=0)
+        round_rect(banner, 1, 1, size - 2, size - 2, ui_px(self, 14),
+                   fill=C["accent_soft"], outline=C["accent_border"], tags=("decor",))
+        glyph = ui_px(self, 26)
+        draw_icon(banner, "model", x=(size - glyph) / 2, y=(size - glyph) / 2,
+                  size=glyph, fg=C["accent2"], tag="decor")
+        banner.pack(pady=(0, ui_px(self, 16)))
+        title_label = i18n.Label(box, text=title, bg=self._bg, fg=C["text"],
+                                 font=(FONT_TITLE[0], 16, "bold"))
         title_label.pack()
-        context = i18n.Label(box, textvariable=self._context_var, bg=self._bg,
-                           fg=C["subtext"], font=FONT_SMALL, justify=tk.CENTER)
-        context.pack(fill=tk.X, pady=(8, 0))
-        bind_wrap(context)
+        context = rounded_label(box, self._context_var.get() or " ", fill=C["surface"],
+                                outline=C["line"], fg=C["subtext"], font=FONT_SMALL,
+                                bg=self._bg, padx=ui_px(self, 12), pady=ui_px(self, 3))
+        context.pack(pady=(ui_px(self, 12), 0))
+        trace = self._context_var.trace_add(
+            "write", lambda *_: context.winfo_exists() and context.set_text(
+                self._context_var.get() or " "))
+        context.bind("<Destroy>", lambda _e: self._context_var.trace_remove("write", trace),
+                     add="+")
         for line in lines:
             label = i18n.Label(box, text=line, bg=self._bg, fg=C["ter"],
                              font=FONT_SMALL, wraplength=500, justify=tk.CENTER)
@@ -1640,39 +1651,57 @@ class MessageArea(tk.Frame):
                 wraplength=max(80, e.width - 16)))
         if actions:
             choices = tk.Frame(box, bg=self._bg)
-            choices.pack(fill=tk.X, padx=24, pady=(18, 0))
+            choices.pack(fill=tk.X, padx=24, pady=(ui_px(self, 30), 0))
             action_rows = []
-            for index, (title, detail, callback) in enumerate(actions):
-                row = tk.Frame(choices, bg=C["surface2"], padx=12, pady=10,
-                               cursor="hand2")
-                label = i18n.Label(row, text=title, bg=C["surface2"],
-                                 fg=C["accent_text"] if index == 0 else C["body"],
-                                 font=FONT_SMALL, anchor="w", cursor="hand2")
+            # 设计稿：surface 底 + 1px line 描边 + 顶部强调色图标块；悬停描边转蓝。
+            # 可选第 4 项指定图标名。
+            card_bg, card_hover = C["surface"], C["hover"]
+            default_icons = ("chat", "task", "workspace")
+            tile = ui_px(self, 30)
+            for index, action in enumerate(actions):
+                title, detail, callback = action[:3]
+                icon_name = action[3] if len(action) > 3 else default_icons[index % 3]
+                row = tk.Frame(choices, bg=card_bg, padx=ui_px(self, 16), pady=ui_px(self, 14),
+                               cursor="hand2", highlightthickness=1,
+                               highlightbackground=C["line"])
+                icon = tk.Canvas(row, width=tile, height=tile, bg=card_bg,
+                                 highlightthickness=0, bd=0, cursor="hand2")
+                round_rect(icon, 0, 0, tile - 1, tile - 1, ui_px(self, 8),
+                           fill=C["accent_soft"], outline="")
+                glyph = ui_px(self, 18)
+                draw_icon(icon, icon_name, x=(tile - glyph) / 2, y=(tile - glyph) / 2,
+                          size=glyph, fg=C["accent2"])
+                icon.pack(anchor="w", pady=(0, ui_px(self, 10)))
+                label = i18n.Label(row, text=title, bg=card_bg, fg=C["text"],
+                                 font=FONT_UI_BOLD, anchor="w", cursor="hand2")
                 label.pack(fill=tk.X)
-                hint = i18n.Label(row, text=detail, bg=C["surface2"], fg=C["muted"],
-                                font=FONT_CAPTION, anchor="w", justify=tk.LEFT,
+                hint = i18n.Label(row, text=detail, bg=card_bg, fg=C["subtext"],
+                                font=FONT_SMALL, anchor="w", justify=tk.LEFT,
                                 cursor="hand2")
-                hint.pack(fill=tk.X, pady=(2, 0))
+                hint.pack(fill=tk.X, pady=(ui_px(self, 3), 0))
                 bind_keyboard_action(row, callback)
+                row.configure(highlightbackground=C["line"])
                 action_rows.append((row, label, hint))
-                for widget in (row, label, hint):
+                parts = (row, icon, label, hint)
+
+                def paint(fill, edge, parts=parts):
+                    parts[0].configure(highlightbackground=edge)
+                    for w in parts:
+                        w.configure(bg=fill)
+                for widget in parts:
                     widget.bind("<Button-1>", lambda _e, fn=callback: fn())
-                    widget.bind("<Enter>", lambda _e, r=row, l=label, h=hint: (
-                        r.configure(bg=C["hover"]), l.configure(bg=C["hover"]),
-                        h.configure(bg=C["hover"])))
-                    widget.bind("<Leave>", lambda _e, r=row, l=label, h=hint: (
-                        r.configure(bg=C["surface2"]), l.configure(bg=C["surface2"]),
-                        h.configure(bg=C["surface2"])))
+                    widget.bind("<Enter>", lambda _e, fn=paint: fn(card_hover, C["accent_border"]))
+                    widget.bind("<Leave>", lambda _e, fn=paint: fn(card_bg, C["line"]))
 
             def fit_choices(event):
                 columns = len(action_rows) if event.width >= 720 else 1
                 for col in range(len(action_rows)):
                     choices.grid_columnconfigure(col, weight=1 if col < columns else 0,
                                                  uniform="actions" if col < columns else "")
-                width = max(120, event.width // columns - 42)
+                width = max(120, event.width // columns - ui_px(self, 48))
                 for index, (row, label, hint) in enumerate(action_rows):
                     row.grid(row=index // columns, column=index % columns,
-                             sticky="nsew", padx=4, pady=4)
+                             sticky="nsew", padx=ui_px(self, 6), pady=ui_px(self, 6))
                     label.configure(wraplength=width)
                     hint.configure(wraplength=width)
 
@@ -1681,13 +1710,17 @@ class MessageArea(tk.Frame):
             for index, (row, label, hint) in enumerate(action_rows):
                 row.grid(row=index, column=0, sticky="ew", pady=4)
 
+        self._suggest_row = tk.Frame(box, bg=self._bg)
+        self._suggest_row.pack(pady=(ui_px(self, 18), 0))
+        self._fill_suggestions()
+
         def fit_banner(event):
             if banner is None:
                 return
             if event.height < 450 or event.width < 520:
                 banner.pack_forget()
             elif not banner.winfo_manager():
-                banner.pack(pady=(0, 10), before=title_label)
+                banner.pack(pady=(0, ui_px(self, 16)), before=title_label)
 
         binding = self.scroll.canvas.bind("<Configure>", fit_banner, add="+")
         # The callback belongs to this empty state, not to later conversation views.
@@ -1707,9 +1740,30 @@ class MessageArea(tk.Frame):
         self._count = 0
         self._context_hint = None
 
+    def _fill_suggestions(self):
+        row = getattr(self, "_suggest_row", None)
+        if row is None or not row.winfo_exists():
+            return
+        for child in row.winfo_children():
+            child.destroy()
+        actions = getattr(self, "_context_actions", ()) or ()
+        if not actions:
+            return
+        i18n.Label(row, text=tr("试试"), bg=self._bg, fg=C["faint"],
+                   font=FONT_CAPTION).pack(side=tk.LEFT, padx=(0, ui_px(self, 6)))
+        for title, callback in actions:
+            rounded_label(row, title, fill=self._bg, outline=C["line"], fg=C["body"],
+                          font=FONT_SMALL, bg=self._bg, command=callback,
+                          padx=ui_px(self, 12), pady=ui_px(self, 4)).pack(
+                side=tk.LEFT, padx=ui_px(self, 4))
+
     def set_work_context(self, repo, changed=None, *, actions=()):
         self._work_context = repo
+        fresh = [title for title, _cb in actions] != [
+            title for title, _cb in (getattr(self, "_context_actions", ()) or ())]
         self._context_actions = actions
+        if fresh and self._empty is not None:
+            self._fill_suggestions()
         text = tr("当前工作区：{name}", name=repo) if repo else tr("尚未选择工作区")
         if repo and changed is not None:
             detail = tr(" · {count} 个文件有修改", count=changed) if changed else tr(" · 工作区没有未提交修改")
@@ -1830,7 +1884,7 @@ class TeamTogglePill(tk.Frame):
         self._on_change = on_change
         self._btn = rounded_label(
             self, text=self.LABELS[self._mode], fill=C["input_bg"],
-            outline=C["border_hi"], fg=C["subtext"], font=FONT_CAPTION,
+            outline=C["line"], fg=C["subtext"], font=FONT_SMALL,
             bg=base, command=self._cycle, radius=R_PILL, padx=8, pady=2,
             tooltip=tr("Agent 集群/分工：关=单模型；开=按配置并行；AI 决断=本地规则按问题判断"))
         self._btn.pack()
@@ -2067,6 +2121,22 @@ class _IMECaretAnchor:
             self._anchor_func()
 
 
+def _composer_tool(parent, text, icon, command, tooltip):
+    """输入卡工具栏按钮：16px 线性图标 + 可选文字，安静色，悬停浮起。"""
+    btn = glyph_button(parent, text, command, bg=C["input_bg"], fg=C["subtext"], size=9,
+                       tooltip=tooltip)
+    # 显式图标：IconButton.configure(text=…) 会保留它（i18n / 紧凑切换不丢图标）。
+    btn._explicit_icon = btn._icon_name = icon_key(icon)
+    btn._icon_size = 16
+    # Tk 的图片按钮忽略 pady；纯图标按钮带一个细空格，占出与带字按钮相同的行高。
+    btn.configure(text=text or "\u2009", padx=ui_px(parent, 6 if text else 3))
+    return btn
+
+
+def _composer_divider(parent):
+    return tk.Frame(parent, bg=C["border_hi"], width=1, height=ui_px(parent, 16))
+
+
 class InputCard(tk.Frame):
     """底部 Composer：输入是主体，低频控制统一收进水平工具栏。"""
 
@@ -2167,15 +2237,13 @@ class InputCard(tk.Frame):
         if attach_button:
             low = attachments
             self._low_controls = low
-            for text, tip, callback in (
-                    (tr("上下文"), "查看历史与附件，检查本轮实际发送内容", on_context),
-                    ("/ 命令", "工具与命令", on_commands)):
-                pill = rounded_label(low, text, fill=C["input_bg"], outline="",
-                                     fg=C["subtext"], font=FONT_CAPTION,
-                                     bg=C["input_bg"], tooltip=tip,
-                                     command=callback, radius=R_PILL, padx=6,
-                                     pady=2)
-                pill.pack(side=tk.LEFT, padx=(0, 4))
+            # 设计稿：工具栏统一「图标 + 文字」安静按钮，同一种灰，悬停才浮起。
+            for text, icon, tip, callback in (
+                    (tr("上下文"), "copy", "查看历史与附件，检查本轮实际发送内容", on_context),
+                    (tr("命令"), "terminal", "工具与命令（也可在输入框里输入 /）", on_commands)):
+                pill = _composer_tool(low, text, icon, callback or (lambda: None), tip)
+                pill.pack(side=tk.LEFT, padx=(0, 2))
+            _composer_divider(low).pack(side=tk.LEFT, padx=ui_px(self, 6))
 
         # ── Agent 集群/分工三态开关（关 / AI 决断 / 开）──
         self.team_pill = TeamTogglePill(low if attach_button else bar,
@@ -2184,18 +2252,17 @@ class InputCard(tk.Frame):
         self.team_pill.pack(side=tk.LEFT, padx=(4, 0))
         self.project_btn = self.project_files_btn = self.team_settings_btn = None
         if on_project is not None:
-            self.project_btn = glyph_button(bar, tr("📂 项目"), on_project,
-                bg=C["input_bg"], size=10, tooltip=tr("选择项目工作区"))
+            self.project_btn = _composer_tool(bar, tr("项目"), "folder_open", on_project,
+                                              tr("选择项目工作区"))
             self.project_btn.pack(side=tk.LEFT)
         if on_project_files is not None:
-            self.project_files_btn = glyph_button(bar, tr("项目文件"), on_project_files,
-                bg=C["input_bg"], size=10, tooltip=tr("项目文件"))
+            self.project_files_btn = _composer_tool(bar, "", "file", on_project_files,
+                                                    tr("项目文件"))
             self.project_files_btn.pack(side=tk.LEFT)
         if on_team_settings is not None:
-            self.team_settings_btn = glyph_button(bar, tr("🤖 Agent 集群"), on_team_settings,
-                bg=C["input_bg"], size=10, tooltip=tr("Agent 集群"))
-            self.team_settings_btn.configure(highlightbackground=C["accent_border"],
-                                              fg=C["accent_text"])
+            # 设计稿：Agent 集群设置只留图标；开关状态在左侧「智能体」胶囊上。
+            self.team_settings_btn = _composer_tool(bar, "", "agents", on_team_settings,
+                                                    tr("Agent 集群"))
             self.team_settings_btn.pack(side=tk.LEFT)
 
         # Third layer: real provider/model/mode. Sending has its own column,
@@ -2208,11 +2275,11 @@ class InputCard(tk.Frame):
         metadata.grid(row=0, column=0, sticky="ew", padx=(0, 8))
         self.provider_var = i18n.StringVar(self, value=tr("Provider：未配置"))
         self.provider_label = i18n.Label(metadata, textvariable=self.provider_var,
-                                       font=FONT_CAPTION, bg=C["input_bg"], fg=C["muted"], anchor="w")
+                                       font=FONT_CAPTION, bg=C["input_bg"], fg=C["faint"], anchor="w")
         self.provider_label.grid(row=0, column=0, sticky="w", padx=(0, 8))
         model_host = self._model_host = tk.Frame(metadata, bg=C["input_bg"])
         model_host.grid(row=0, column=1, sticky="ew", padx=(0, 8))
-        metadata.grid_columnconfigure(1, weight=1)
+        metadata.grid_columnconfigure(3, weight=1)
         self.mode_var = i18n.StringVar(self, value=tr("模式：标准"))
         # 思考强度入口：点模式按钮弹出 Codex 式分级滑杆卡。
         self._reasoning_var = thinking_var
@@ -2223,15 +2290,16 @@ class InputCard(tk.Frame):
         self.mode_pill = glyph_button(metadata, tr("模式：标准"), self._toggle_reasoning_popup,
                                       bg=C["input_bg"], fg=C["subtext"], size=10,
                                       tooltip=tr("当前思考强度；点击调整，实际支持能力取决于模型"))
-        self.mode_pill.grid(row=0, column=2, sticky="e")
+        self.mode_pill.grid(row=0, column=2, sticky="w")
         self.planning_pill = None
         if on_planning is not None:
             self.planning_pill = glyph_button(self._tools_row, planning_text, on_planning,
-                bg=C["input_bg"], fg=C["subtext"], size=10,
+                bg=C["input_bg"], fg=C["subtext"], size=9,
                 tooltip=tr("事前规划"))
             self.planning_pill.pack(side=tk.RIGHT,padx=(6,0))
+            # 边框色保留 warn（契约），文字只在启用规划时才提亮（见 set_planning_active）。
             self.planning_pill.configure(highlightbackground=C["warn"],
-                                         highlightcolor=C["warn"], fg=C["warn"])
+                                         highlightcolor=C["warn"], fg=C["subtext"])
         right = tk.Frame(state_row, bg=C["input_bg"])
         right.grid(row=0, column=1, sticky="ne")
         self._primary_controls = right
@@ -2288,12 +2356,12 @@ class InputCard(tk.Frame):
         foot = tk.Frame(self, bg=base)
         foot.pack(fill=tk.X, pady=(6, 2))
         self.footer_left = i18n.Label(foot, text=footer_left or tr("空闲"), bg=base,
-                                    fg=C["muted"], font=FONT_CAPTION)
+                                    fg=C["faint"], font=FONT_CAPTION)
         self.footer_left.pack(side=tk.LEFT)
         if footer_right is None:
             footer_right = "Enter ↵  ·  Shift+Enter 换行"
         self.footer_right = i18n.Label(foot, text=footer_right, bg=base,
-                                     fg=C["muted"], font=FONT_CAPTION)
+                                     fg=C["faint"], font=FONT_CAPTION)
         self.footer_right.pack(side=tk.RIGHT)
 
         self._sync_hint()
@@ -2310,9 +2378,8 @@ class InputCard(tk.Frame):
             return
         self._actions_compact = compact
         if self.project_btn is not None:
-            self.project_btn.configure(text="📂" if compact else tr("📂 项目"))
-        if self.team_settings_btn is not None:
-            self.team_settings_btn.configure(text="🤖" if compact else tr("🤖 Agent 集群"))
+            self.project_btn.configure(text="\u2009" if compact else tr("项目"),
+                                       padx=ui_px(self, 3 if compact else 6))
 
     def _resize_entry(self):
         """按显示行增长，长输入保留内部滚动，不把时间线挤出屏幕。"""
@@ -2489,21 +2556,27 @@ class InputCard(tk.Frame):
         compact = available < fixed + ui_px(self, 140)
         if compact != self._toolbar_compact:
             self._toolbar_compact = compact
-            self._metadata.grid_columnconfigure(1, weight=0 if compact else 1)
+            # 设计稿：模型选择器按内容宽度，余量给第 3 列空白；紧凑时才整行。
+            self._metadata.grid_columnconfigure(1, weight=1 if compact else 0)
+            self._metadata.grid_columnconfigure(3, weight=0 if compact else 1)
             self._metadata.grid_columnconfigure(0, weight=1 if compact else 0)
             if compact:
                 self._model_host.grid(row=0, column=0, columnspan=3, sticky="ew", padx=0, pady=(0, 4))
                 self.provider_label.grid(row=1, column=0, columnspan=2, sticky="w")
-                self.mode_pill.grid(row=1, column=2, sticky="e")
+                self.mode_pill.grid(row=1, column=2, columnspan=2, sticky="e")
             else:
                 self.provider_label.grid(row=0, column=0, columnspan=1, sticky="w")
                 self._model_host.grid(row=0, column=1, columnspan=1, sticky="ew", padx=(0, 8), pady=0)
-                self.mode_pill.grid(row=0, column=2, sticky="e")
-        budget = available if compact else max(1, available - fixed)
+                self.mode_pill.grid(row=0, column=2, sticky="w")
+        budget = available if compact else min(max(1, available - fixed), ui_px(self, 380))
         if self.model_widget is not None and hasattr(self.model_widget, "set_width_budget"):
             self.model_widget.set_width_budget(budget)
         elif self.model_pill is not None:
             self.model_pill.configure(width=budget)
+
+    def set_planning_active(self, active: bool):
+        if self.planning_pill is not None:
+            self.planning_pill.configure(fg=C["warn"] if active else C["subtext"])
 
     def set_metadata(self, *, provider, mode):
         self.provider_var.set(tr("Provider：{provider}", provider=provider))

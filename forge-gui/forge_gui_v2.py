@@ -75,6 +75,7 @@ from gui_theme import (  # noqa: E402
     C,
     FONT_MONO_XS,
     FONT_CAPTION,
+    FONT_CAPTION_BOLD,
     FONT_MICRO,
     FONT_MONO,
     FONT_MONO_SM,
@@ -1120,13 +1121,14 @@ class ForgeGuiApp:
                                            selected=self._workspace_kind.WORK)
         self._mode_switcher.pack(side=tk.LEFT, padx=(8, 0))
 
-        self._project_chip = tk.Frame(bar, bg=C["surface2"], padx=9, pady=4)
+        # 设计稿：项目标签不再是色块，和顶栏同底，只靠图标 + 文字。
+        self._project_chip = tk.Frame(bar, bg=C["bg"], padx=8, pady=4)
         self._project_chip.pack(side=tk.LEFT, padx=(8, 0))
-        IconCanvas(self._project_chip, "files", size=18, bg=C["surface2"], fg=C["accent2"]).pack(
-            side=tk.LEFT, padx=(0, 5))
+        IconCanvas(self._project_chip, "folder_open", size=theme.ui_px(bar, 16), bg=C["bg"],
+                   fg=C["subtext"]).pack(side=tk.LEFT, padx=(0, 6))
         self._project_name_var = tk.StringVar(value=self._active_workspace().name)
         i18n.Label(self._project_chip, textvariable=self._project_name_var,
-                 bg=C["surface2"], fg=C["subtext"], font=FONT_SMALL).pack(side=tk.LEFT)
+                 bg=C["bg"], fg=C["body"], font=FONT_SMALL).pack(side=tk.LEFT)
 
         # 保留「更多」能力合约，可见入口移到 Activity Bar 底部。
         self._more_menu = i18n.Menu(self.root, tearoff=0, bg=C["surface"],
@@ -1308,12 +1310,13 @@ class ForgeGuiApp:
     def _paint_activity(self, key, *, hover=False):
         active = key == getattr(self, "_active_nav", "chat")
         bg = C["sel"] if active else C["hover"] if hover else C["sidebar"]
-        fg = C["accent_text"] if active else C["text"] if hover else C["ter"]
+        fg = C["text"] if active or hover else C["body"]
+        icon_fg = C["accent2"] if active else C["text"] if hover else C["subtext"]
         for holder, inner in self._nav_widgets.get(key, []):
             holder.configure(bg=bg, highlightbackground=bg)
             inner.configure(bg=bg)
         for icon, text in self._activity_labels.get(key, []):
-            icon.configure(bg=bg, fg=fg)
+            icon.configure(bg=bg, fg=icon_fg)
             text.configure(bg=bg, fg=fg)
 
     def _first_sidebar_child(self):
@@ -1345,8 +1348,11 @@ class ForgeGuiApp:
         self._sidebar_panels["chat"] = chat_panel
 
         # Stable primary navigation remains accessible from task and settings views.
-        shortcuts = tk.Frame(chat_panel, bg=C["sidebar"])
-        shortcuts.pack(fill=tk.X, padx=8, pady=(14, 10))
+        # 重设计：三个入口做成一条分段控件（同一底槽、无描边），
+        # 选中段浮起一层；原先是三块各自带框的色块。
+        shortcuts = tk.Frame(chat_panel, bg=C["sidebar"], padx=2, pady=2,
+                             highlightthickness=1, highlightbackground=C["line"])
+        shortcuts.pack(fill=tk.X, padx=12, pady=(12, 8))
         self.sidebar_shortcuts = {}
         for column, (key, label, action) in enumerate((
                 ("chat", tr("对话"), self._return_to_chat),
@@ -1354,8 +1360,8 @@ class ForgeGuiApp:
                 ("schedules", tr("定时任务"), lambda: self.desktop_features.open(0)))):
             shortcuts.grid_columnconfigure(column, weight=1, uniform="shortcuts")
             button = pill_button(shortcuts, label, action, kind="ghost",
-                                 bg=C["sidebar"], font=FONT_MICRO, padx=2, width=1)
-            button.grid(row=0, column=column, sticky="nsew", padx=1)
+                                 bg=C["sidebar"], font=FONT_SMALL, padx=2, width=1)
+            button.grid(row=0, column=column, sticky="nsew")
             self.sidebar_shortcuts[key] = button
         def fit_shortcuts(event):
             # Use the fixed container width. Deriving each button's request from
@@ -1368,9 +1374,7 @@ class ForgeGuiApp:
 
         # ── 2) 功能导航 ──
         nav_host = tk.Frame(chat_panel, bg=C["sidebar"])
-        nav_host.pack(fill=tk.X, padx=6, pady=(0, 4))
-        i18n.Label(nav_host, text=tr("功能导航"), bg=C["sidebar"], fg=C["muted"],
-                 font=FONT_MICRO, anchor="w").pack(fill=tk.X, padx=8, pady=(2, 6))
+        nav_host.pack(fill=tk.X, padx=8, pady=(2, 0))
         self.sidebar_navigation = {}
         # 2026-10-19：智能体（Agents）恢复为直达导航行——独立记忆 /
         # 每路独立模型 / 子 Agent 分工的配置页不该藏在「更多」里。
@@ -1388,21 +1392,21 @@ class ForgeGuiApp:
 
         # 更多入口：知识库 / 演化 / 文件与项目 / 配置等低频页
         more_holder = self._make_side_nav_more(chat_panel)
-        more_holder.pack(fill=tk.X, padx=6, pady=(2, 6))
+        more_holder.pack(fill=tk.X, padx=8, pady=(0, 4))
 
         # 导航与历史之间：全宽分隔线 + 上下留白（视觉分层，别混成一块）
 
-        divider(chat_panel, bg=C["border_hi"]).pack(fill=tk.X, padx=0, pady=(12, 6))
 
         # ── 4) 最近对话（时间分组）──
         head = tk.Frame(chat_panel, bg=C["sidebar"])
-        head.pack(fill=tk.X, padx=14, pady=(10, 4))
-        # 分组标题强化，跟导航项形成层级差
-        i18n.Label(head, text=tr("历史记录"), bg=C["sidebar"], fg=C["ter"],
-                 font=FONT_MICRO).pack(side=tk.LEFT)
-        glyph_button(head, "搜索", self._toggle_session_search, bg=C["sidebar"],
-                     fg=C["muted"], size=9, tooltip=tr("搜索对话 · Ctrl+K")).pack(
-            side=tk.RIGHT)
+        head.pack(fill=tk.X, padx=(18, 12), pady=(10, 2))
+        # 设计稿分组标题：11px 加粗 faint，右侧操作图标
+        i18n.Label(head, text=tr("历史记录"), bg=C["sidebar"], fg=C["faint"],
+                 font=FONT_CAPTION_BOLD).pack(side=tk.LEFT)
+        search_icon = IconCanvas(head, "search", size=theme.ui_px(head, 14), bg=C["sidebar"],
+                                 fg=C["faint"], command=self._toggle_session_search)
+        search_icon.pack(side=tk.RIGHT)
+        attach_tooltip(search_icon, tr("搜索对话 · Ctrl+K"))
         self._search_visible = False
         self.session_search_var = tk.StringVar()
         self.session_search = tk.Entry(
@@ -1436,9 +1440,13 @@ class ForgeGuiApp:
 
         tools_row = tk.Frame(bottom, bg=C["sidebar"])
         tools_row.pack(fill=tk.X)
-        pill_button(tools_row, tr("ⓘ 关于"), self._show_about, kind="quiet",
-                    bg=C["sidebar"], font=FONT_MICRO, padx=8).pack(
-            side=tk.LEFT, fill=tk.X, expand=True, padx=(4, 0))
+        about = pill_button(tools_row, tr("关于 Forge"), self._show_about, kind="quiet",
+                            bg=C["sidebar"], font=FONT_SMALL, padx=8)
+        about._explicit_icon = about._icon_name = "info"
+        about._icon_size = 16
+        about.configure(text=tr("关于 Forge"))
+        about.configure(anchor="w")
+        about.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(4, 0))
         self.sidebar_toggle_btn = glyph_button(
             tools_row, "≪", self._toggle_sidebar, bg=C["sidebar"],
             fg=C["muted"], size=11, tooltip=tr("收起 / 展开侧边栏"))
@@ -1460,12 +1468,13 @@ class ForgeGuiApp:
         holder = tk.Frame(parent, bg=C["sidebar"], cursor="hand2")
         bind_keyboard_action(holder, lambda: self._nav_click(key))
         inner = tk.Frame(holder, bg=C["sidebar"])
-        inner.pack(fill=tk.X, padx=8, pady=7)
-        icon = IconCanvas(inner, glyph, size=20, bg=C["sidebar"], fg=C["ter"])
+        inner.pack(fill=tk.X, padx=10, pady=theme.ui_px(parent, 6))
+        icon = IconCanvas(inner, glyph, size=theme.ui_px(parent, 16), bg=C["sidebar"],
+                          fg=C["subtext"])
         icon.pack(side=tk.LEFT)
-        text = i18n.Label(inner, text=label, bg=C["sidebar"], fg=C["ter"],
-                        font=FONT_SMALL, anchor="w")
-        text.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 0))
+        text = i18n.Label(inner, text=label, bg=C["sidebar"], fg=C["body"],
+                        font=FONT_UI, anchor="w")
+        text.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(10, 0))
         def fit_label(event):
             width = max(40, event.width)
             if int(text.cget("wraplength")) != width:
@@ -1491,12 +1500,13 @@ class ForgeGuiApp:
         """「⋯ 更多」行：打开菜单（Agents / 知识库 / 演化 / 文件与项目 / 配置）。"""
         holder = tk.Frame(parent, bg=C["sidebar"], cursor="hand2")
         inner = tk.Frame(holder, bg=C["sidebar"])
-        inner.pack(fill=tk.X, padx=8, pady=7)
-        icon = IconCanvas(inner, "more", size=20, bg=C["sidebar"], fg=C["muted"])
+        inner.pack(fill=tk.X, padx=10, pady=theme.ui_px(parent, 6))
+        icon = IconCanvas(inner, "more", size=theme.ui_px(parent, 16), bg=C["sidebar"],
+                          fg=C["subtext"])
         icon.pack(side=tk.LEFT)
-        text = i18n.Label(inner, text=tr("更多"), bg=C["sidebar"], fg=C["muted"],
-                        font=FONT_SMALL, anchor="w")
-        text.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 0))
+        text = i18n.Label(inner, text=tr("更多"), bg=C["sidebar"], fg=C["subtext"],
+                        font=FONT_UI, anchor="w")
+        text.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(10, 0))
         attach_tooltip(text, "Agents / 知识库 / 演化 / 文件与项目 / 配置")
 
         def popup(_event=None):
@@ -1527,14 +1537,15 @@ class ForgeGuiApp:
         except OSError:
             children = []
         section = tk.Frame(parent, bg=C["sidebar"])
-        section.pack(fill=tk.X, padx=14, pady=(6, 4))
+        section.pack(fill=tk.X, padx=(18, 12), pady=(10, 2))
         self._agents_expanded = False
         self._agents_children = children  # 2026-10-19：行操作回调后重建列表用
         self._agents_group_count = len(children)
         self._agents_group_header = section
         self._agents_toggle_btn = pill_button(
             section, f"▸ 智能体 · {len(children)}", self._toggle_agents_group,
-            kind="quiet", bg=C["sidebar"], font=FONT_CAPTION, padx=0)
+            kind="quiet", bg=C["sidebar"], font=FONT_CAPTION_BOLD, padx=0)
+        self._agents_toggle_btn.configure(anchor="w", fg=C["faint"])
         self._agents_toggle_btn.pack(side=tk.LEFT, fill=tk.X, expand=True)
         attach_tooltip(self._agents_toggle_btn, "展开已有 AutoClaw 智能体目录；Forge 的记忆模式 / 集群 / 子 Agent 分工在「智能体」导航页配置")
         plus = glyph_button(section, "＋", self._prompt_create_agent,
@@ -3596,9 +3607,10 @@ class ForgeGuiApp:
     def _set_nav_active(self, key: str):
         self._active_nav = key
         for nav_key, button in getattr(self, "sidebar_shortcuts", {}).items():
-            button.configure(bg=C["sel"] if nav_key == key else C["surface2"],
-                             fg=C["accent_text"] if nav_key == key else C["ter"],
-                             highlightbackground=C["sel_border"] if nav_key == key else C["border"])
+            active = nav_key == key
+            button.configure(bg=C["raised"] if active else C["sidebar"],
+                             fg=C["text"] if active else C["subtext"],
+                             highlightbackground=C["raised"] if active else C["sidebar"])
         for nav_key, widgets in self._nav_widgets.items():
             active = nav_key == key
             for holder, inner in widgets:
@@ -3609,10 +3621,11 @@ class ForgeGuiApp:
                 bg = C["sel"] if active else base
                 holder.configure(bg=bg)
                 inner.configure(bg=bg)
-            fg = C["accent_text"] if active else C["ter"]
             for icon, text in self._activity_labels.get(nav_key, []):
-                icon.configure(bg=C["sel"] if active else C["sidebar"], fg=fg)
-                text.configure(bg=C["sel"] if active else C["sidebar"], fg=fg)
+                icon.configure(bg=C["sel"] if active else C["sidebar"],
+                               fg=C["accent2"] if active else C["subtext"])
+                text.configure(bg=C["sel"] if active else C["sidebar"],
+                               fg=C["text"] if active else C["body"])
             marker = getattr(self, "_activity_markers", {}).get(nav_key)
             if marker is not None:
                 marker.configure(bg=C["accent"] if active else C["sidebar"])
@@ -4038,8 +4051,8 @@ class ForgeGuiApp:
         只有一轮对话时中间大半是深灰空区——把它利用起来；产生对话后自动消失。
         """
         self._cancel_history_render()
+        # 设计稿：说明句由「试试」建议胶囊替代（_context_suggestions）。
         lines = []
-        lines.append(tr("你可以让我审查更改、运行测试、解释代码，或描述一个新目标。"))
         self.chat_area.show_empty(
             tr("今天想完成什么？"),
             tuple(lines),
@@ -5231,7 +5244,9 @@ class ForgeGuiApp:
         self.input_card.set_metadata(provider=name, mode=mode)
         pill = getattr(self.input_card, "planning_pill", None)
         if pill is not None:
-            pill.configure(text=PLANNING_LABELS[self._read_planning_level()])
+            level = self._read_planning_level()
+            pill.configure(text=PLANNING_LABELS[level])
+            self.input_card.set_planning_active(level != "none")
 
     def _on_model_picked(self, value: str) -> None:
         """从下拉里选中一个模型：model_var 的 trace 负责后续（必要时重启 gateway）。"""

@@ -89,6 +89,11 @@ C: dict[str, str] = {
     "muted": "#9AA2AF",
     "ter": "#9AA2AF",
     "placeholder": "#8F98A6",
+    # Work Mode 设计稿（2026-10-30）新增：最弱一级文字（分组标题、时间戳、
+    # 快捷键提示），对 surface 仍 ≥4.5:1；卡内二级控件底；1px 分隔线。
+    "faint": "#808898",
+    "raised": "#20242E",
+    "line": "#232833",
     "comment": "#7E8796",
 
     # 消息气泡：两侧要能看出「谁在说」，又不能让深色界面变花。
@@ -139,7 +144,8 @@ ICON_SIZE = 16
 ICON_HIT_SIZE = 32
 OVERLAY_WIDTH = 448
 FOCUS_WIDTH = 1
-CONTENT_WIDTH = 1040
+# Work Mode 设计稿：正文与输入卡同列宽，宽屏不再铺满（须 > FORM_WIDTH）。
+CONTENT_WIDTH = 840
 FORM_WIDTH = 800
 CONTENT_GUTTER = 20
 MOTION_MS = 0

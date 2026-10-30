@@ -1035,7 +1035,9 @@ class RefactorAcceptance(unittest.TestCase):
         self.assertTrue(found, "欢迎屏应有带 decor 标签的画布")
         hero = found[0]
         self.assertTrue(hero.winfo_ismapped(), "主视觉必须可见")
-        self.assertEqual(len(hero.find_withtag("decor")), 25)
+        # Work Mode 设计稿（2026-10-30）：480×112 主视觉画收成 52px 图标块，
+        # decor 元素不再是固定的 25 个；契约保留「有、可见、不越界」。
+        self.assertGreater(len(hero.find_withtag("decor")), 0)
         for i in hero.find_all():
             b = hero.bbox(i)
             if b:
