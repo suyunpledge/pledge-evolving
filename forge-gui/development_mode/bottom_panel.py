@@ -29,7 +29,7 @@ ttk.Notebook 实测会指向子 widget 而非 page frame。
 import tkinter as tk
 from tkinter import ttk
 
-from gui_theme import C, FONT_CAPTION, FONT_MONO_SM, FONT_SECTION, style_editor
+from gui_theme import C, FONT_CAPTION, FONT_MONO_SM, FONT_SECTION, style_editor, ui_px
 
 # 与 _build_editor 原实现完全一致的输出页集合（顺序即 Tab 顺序）。
 # 末尾「能力 / 审批」为新加；前四页与既有契约保持一致。
@@ -113,8 +113,10 @@ def _empty_state_card(parent, title, hint, *, bg=None, wrap=360, rely=0.5):
         icon_lbl.pack(expand=True)
     tk.Label(box, text=title, font=FONT_SECTION, bg=base,
              fg=C['subtext']).pack()
+    # wrap 以 96-DPI 单位给出，按当前缩放换算；否则高 DPI 下中文会在
+    # 词中间被硬折行（如「Git｜变更」）。
     tk.Label(box, text=hint, font=FONT_CAPTION, bg=base,
-             fg=C['ter'], wraplength=wrap, justify='center').pack(pady=(4, 0))
+             fg=C['ter'], wraplength=ui_px(box, wrap), justify='center').pack(pady=(4, 0))
     return box
 
 
@@ -206,6 +208,8 @@ class ToolPanel(ttk.Frame):
         # 文本类 Tab：双向滚动条 + 禁用编辑的 Text。
         text = tk.Text(page, wrap='none', font=FONT_MONO_SM, height=6, undo=False)
         style_editor(text)
+        # 只读输出页不需要编辑框的焦点描边（四周一圈 1px 框线），改留内边距。
+        text.configure(highlightthickness=0, padx=ui_px(text, 12), pady=ui_px(text, 6))
         # M5：差异页增删行着色 tag（任务书 Git Diff：新增删除行高亮）。
         # 语义与 Git 状态装饰一致：新增 ok / 删除 error / hunk 头 accent。
         text.tag_configure('diff_add', foreground=C['ok'])
@@ -228,7 +232,7 @@ class ToolPanel(ttk.Frame):
         if hint:
             try:
                 text.tag_configure('empty_hint', foreground=C['ter'])
-                card = _empty_state_card(page, name, hint)
+                card = _empty_state_card(page, name, hint, bg=C['input_bg'], wrap=420)
                 text._empty_card = card  # noqa: SLF001 — app.append 抹除钩子
             except tk.TclError:
                 pass

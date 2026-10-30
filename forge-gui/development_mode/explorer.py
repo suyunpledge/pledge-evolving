@@ -34,7 +34,8 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 
-from gui_theme import C, FONT_CAPTION, FONT_MICRO, FONT_SECTION, attach_tooltip
+from gui_theme import (C, FONT_CAPTION, FONT_CAPTION_BOLD, FONT_MICRO, FONT_SECTION, FONT_SMALL,
+                       attach_tooltip, ui_px)
 from ui_icons import IconButton, IconCanvas, icon_image
 
 # 活动栏宽度（示例图左区第一列 48px）。
@@ -200,37 +201,39 @@ class ActivityBar(ttk.Frame):
         ('git', 'diff', 'Git 变更'),
         ('tasks', 'task', '任务'),
         ('run', 'play', '运行'),
-        ('knowledge', 'book', '知识库'),
-        ('evolution', 'spark', '演化'),
+        ('knowledge', 'knowledge', '知识库'),
+        ('evolution', 'evolution', '演化'),
         ('approvals', 'check', '审批'),
         ('settings', 'config', '设置'),
     )
 
     def __init__(self, master, on_select, **kw):
-        super().__init__(master, width=ACTIVITY_WIDTH, **kw)
+        super().__init__(master, width=ui_px(master, ACTIVITY_WIDTH),
+                         style='Activity.TFrame', **kw)
         self.pack_propagate(False)
         self._on_select = on_select
-        self._entries = {}          # key -> (holder, icon, marker)
+        self._entries = {}          # key -> (holder, icon, marker, caption)
         self._active = None
+        # 重设计：纯图标列（VS Code 式）。v0.6 的「图标 + 9px 两字标签」
+        # 在 48px 栏里把「Git 变更」截成「Gi」，且字小到不可读；用途改由
+        # tooltip 承担，选中态 = 左侧 2px 主色指示条 + 图标提亮，不再铺
+        # 整块 sel 底色。caption 仍建（entry() 四元组契约），但不 pack。
+        icon_size = ui_px(self, 20)
         for key, glyph, label in self.ITEMS:
-            # v0.6：图标下方加 9px 文字标签——纯图标列的选中态与用途
-            # 都不可辨（WorkBuddy 遗留项）；双行结构同时给选中态留出
-            # 「整块底色 + 左侧 3px 指示条 + 图标提亮」的完整表达空间。
-            holder = tk.Frame(self, bg=C['activity'], height=52)
+            holder = tk.Frame(self, bg=C['activity'], height=ui_px(self, 44))
             holder.pack(fill='x')
             holder.pack_propagate(False)
-            marker = tk.Frame(holder, bg=C['activity'], width=3)
-            marker.pack(side='left', fill='y')
+            marker = tk.Frame(holder, bg=C['activity'], width=ui_px(self, 2))
+            marker.pack(side='left', fill='y', pady=ui_px(self, 8))
             body = tk.Frame(holder, bg=C['activity'])
             body.pack(side='left', fill='both', expand=True)
-            icon = IconCanvas(body, glyph, size=18,
+            icon = IconCanvas(body, glyph, size=icon_size,
                               bg=C['activity'], fg=C['ter'])
-            icon.pack(pady=(6, 1))
+            icon.place(relx=0.5, rely=0.5, anchor='c', x=-ui_px(self, 1))
             caption = tk.Label(body, text=label[:2], font=FONT_MICRO,
                                bg=C['activity'], fg=C['ter'])
-            caption.pack(pady=(0, 4))
             attach_tooltip(icon, label)
-            for widget in (holder, body, icon, caption):
+            for widget in (holder, body, icon):
                 widget.bind('<Button-1>', lambda _e, k=key: self.select(k))
                 widget.bind('<Enter>', lambda _e, k=key: self._paint(k, hover=True))
                 widget.bind('<Leave>', lambda _e, k=key: self._paint(k))
@@ -264,13 +267,13 @@ class ActivityBar(ttk.Frame):
 
     def _paint(self, key, *, hover=False):
         active = key == self._active
-        bg = C['sel'] if active else C['hover'] if hover else C['activity']
-        fg = C['accent_text'] if active else C['text'] if hover else C['ter']
+        bg = C['activity']
+        fg = C['text'] if active or hover else C['muted']
         holder, icon, marker, caption = self._entries[key]
         holder.configure(bg=bg)
         icon.configure(bg=bg, fg=fg)
         caption.configure(bg=bg, fg=fg)
-        marker.configure(bg=C['accent'] if active else C['activity'])
+        marker.configure(bg=C['accent2'] if active else C['activity'])
 
 
 class ExplorerPanel(ttk.Frame):
@@ -339,18 +342,60 @@ class ExplorerPanel(ttk.Frame):
         self._activity.select('files')
 
     # ── 构建 ──────────────────────────────────────────────────────
+    # 活动栏键 → 面板标题（重设计：标题跟随视图，取代重复的页签行）。
+    VIEW_TITLES = {
+        'files': '资源管理器', 'search': '搜索', 'git': '源代码管理',
+        'tasks': '任务', 'knowledge': '知识库', 'evolution': '演化',
+        'approvals': '审批', 'settings': '设置',
+    }
+
     def _build_content(self):
-        content = self._content = ttk.Frame(self)
-        # 搜索行（既有位置与行为：Enter → on_refresh）。
-        self._search_row = ttk.Frame(content)
-        self._search_row.pack(fill='x', pady=(0, 6))
-        self.search_entry = ttk.Entry(self._search_row,
-                                      textvariable=self._search_var)
-        self.search_entry.pack(fill='x')
+        content = self._content = ttk.Frame(self, style='Sidebar.TFrame')
+        pad = ui_px(self, 12)
+        # 面板标题行：左标题（跟随活动栏视图）+ 右侧文件操作图标（仅文件视图）。
+        header = self._header = tk.Frame(content, bg=C['sidebar'], height=ui_px(self, 36))
+        header.pack(fill='x')
+        header.pack_propagate(False)
+        self._view_title = tk.Label(header, text=self.VIEW_TITLES['files'],
+                                    font=FONT_CAPTION_BOLD, bg=C['sidebar'], fg=C['muted'])
+        self._view_title.pack(side='left', padx=(pad, 0))
+        self._file_actions = tk.Frame(header, bg=C['sidebar'])
+        self._file_actions.pack(side='right', padx=(0, ui_px(self, 6)))
+        from .buttons import tool_button
+        for icon, tip, command in (('refresh', '刷新', self._on_refresh),
+                                   ('chevron_up', '折叠全部', self._collapse_all),
+                                   ('plus', '新建文件', self._new_file)):
+            tool_button(self._file_actions, icon, command, tip,
+                        bg=C['sidebar']).pack(side='right', padx=1)
+        # 搜索框：圆角感的输入卡（hairline 描边，聚焦提亮）+ 放大镜 +
+        # 占位提示。既有行为不变：Enter → on_refresh，绑定 search_var。
+        self._search_row = tk.Frame(content, bg=C['sidebar'])
+        self._search_row.pack(fill='x', padx=pad, pady=(0, ui_px(self, 8)))
+        field = tk.Frame(self._search_row, bg=C['input_bg'], highlightthickness=1,
+                         highlightbackground=C['border'], highlightcolor=C['accent_border'])
+        field.pack(fill='x')
+        glass = IconCanvas(field, 'search', size=ui_px(self, 14), bg=C['input_bg'], fg=C['muted'])
+        glass.pack(side='left', padx=(ui_px(self, 8), ui_px(self, 4)))
+        self.search_entry = tk.Entry(field, textvariable=self._search_var, font=FONT_SMALL,
+                                     relief='flat', bd=0, highlightthickness=0,
+                                     bg=C['input_bg'], fg=C['text'],
+                                     insertbackground=C['text'],
+                                     selectbackground=C['accent_soft'],
+                                     selectforeground=C['text'])
+        self.search_entry.pack(side='left', fill='x', expand=True, ipady=ui_px(self, 5))
         self.search_entry.bind('<Return>', lambda _e: self._on_refresh())
-        ttk.Label(self._search_row, text='文件名搜索 · Enter',
-                  foreground=C['subtext']).pack(anchor='w')
-        # 6 个真实 Tab：文件 / Git / 搜索(过滤) / 任务 / 知识 / 演化
+        self._search_hint = tk.Label(field, text='搜索文件名 · Enter', font=FONT_SMALL,
+                                     bg=C['input_bg'], fg=C['placeholder'], cursor='xterm')
+        self._search_hint.bind('<Button-1>', lambda _e: self.search_entry.focus_set())
+        for sequence in ('<FocusIn>', '<FocusOut>'):
+            self.search_entry.bind(sequence, lambda e, f=field: (
+                f.configure(highlightbackground=C['accent_border'] if e.type == tk.EventType.FocusIn
+                            else C['border']), self._sync_search_hint()), add='+')
+        self._search_var.trace_add('write', lambda *_a: self._sync_search_hint())
+        self._sync_search_hint()
+        # 6 个真实 Tab：文件 / Git / 搜索(过滤) / 任务 / 知识 / 演化。
+        # 页签行隐藏（Explorer.TNotebook.Tab 布局为空）——切换由活动栏
+        # 驱动；Tab 文本仍保留，notebook.tab(..., 'text') 契约不变。
         self.notebook = ttk.Notebook(content, style='Explorer.TNotebook')
         self._build_files_tab()
         self._build_git_tab()
@@ -371,26 +416,8 @@ class ExplorerPanel(ttk.Frame):
         self._placeholder_hint.pack(anchor='w', pady=(6, 0))
 
     def _build_files_tab(self):
-        files = ttk.Frame(self.notebook)
+        files = ttk.Frame(self.notebook, style='Sidebar.TFrame')
         self._files_tab = files
-        header = ttk.Frame(files)
-        header.pack(fill='x')
-        ttk.Label(header, text='文件', font=FONT_SECTION).pack(side='left')
-        # v0.6：工具按钮右对齐、统一 16px 图标（tooltip 承载语义）——
-        # 原左对齐混排里图标按钮与「文件」标题挤在一行，视觉毛坯
-        # （WorkBuddy 遗留项）。
-        actions = ttk.Frame(header)
-        actions.pack(side='right')
-        for icon, tip, command in (('refresh', '刷新', self._on_refresh),
-                                   ('chevron_up', '折叠全部', self._collapse_all),
-                                   ('plus', '新建文件', self._new_file)):
-            button = IconButton(actions, icon=icon, bg=C['bg'], fg=C['ter'],
-                                relief='flat', bd=0, cursor='hand2',
-                                activebackground=C['hover'],
-                                activeforeground=C['text'],
-                                padx=3, pady=2, command=command)
-            button.pack(side='right')
-            attach_tooltip(button, tip)
         self.tree = ttk.Treeview(files, show='tree', selectmode='browse', style='Coding.Treeview')
         scroll = ttk.Scrollbar(files, command=self.tree.yview)
         scroll.pack(side='right', fill='y')
@@ -424,21 +451,21 @@ class ExplorerPanel(ttk.Frame):
             card.place(relx=0.5, rely=0.42, anchor='c')
 
     def _build_git_tab(self):
-        git = ttk.Frame(self.notebook)
+        git = ttk.Frame(self.notebook, style="Sidebar.TFrame")
         self._git_tab = git
         choice = ttk.Combobox(git, textvariable=self._diff_var,
                               state='readonly',
                               values=['combined', 'working', 'staged'],
                               width=18)
-        choice.pack(fill='x', pady=4)
+        choice.pack(fill='x', padx=ui_px(self, 12), pady=(0, ui_px(self, 6)))
         choice.bind('<<ComboboxSelected>>', self._on_show_diff)
         # 图例行：字母 + 中文标签的文字冗余（不依赖颜色也能读状态）。
-        legend = self.status_legend = ttk.Frame(git)
-        legend.pack(fill='x')
+        legend = self.status_legend = ttk.Frame(git, style='Sidebar.TFrame')
+        legend.pack(fill='x', padx=ui_px(self, 12), pady=(0, ui_px(self, 6)))
         for code in ('M', 'A', 'D', 'U', 'R', 'X'):
             letter, token, label = GIT_STATUS_STYLE[code]
             tk.Label(legend, text=f'{letter} {label}', font=FONT_CAPTION,
-                     bg=C['bg'], fg=C[token]).pack(side='left', padx=(0, 8))
+                     bg=C['sidebar'], fg=C[token]).pack(side='left', padx=(0, ui_px(self, 6)))
         self.changes = ttk.Treeview(git, show='tree', selectmode='browse', style='Coding.Treeview')
         self.changes.pack(fill='both', expand=True)
         self.changes.bind('<<TreeviewSelect>>', self._on_show_diff)
@@ -452,7 +479,7 @@ class ExplorerPanel(ttk.Frame):
 
     def _build_tasks_tab(self):
         """任务 Tab：当前任务的子代理 / 调度队列占位。真实内容由 app 注入。"""
-        tasks = ttk.Frame(self.notebook)
+        tasks = ttk.Frame(self.notebook, style="Sidebar.TFrame")
         self._tasks_tab = tasks
         self._tasks_placeholder = _empty_placeholder(
             tasks, '任务', '子代理与调度数据由运行时注入。')
@@ -461,7 +488,7 @@ class ExplorerPanel(ttk.Frame):
 
     def _build_knowledge_tab(self):
         """知识库 Tab：MemoryStore + KnowledgeBase 占位。真实内容由 app 注入。"""
-        knowledge = ttk.Frame(self.notebook)
+        knowledge = ttk.Frame(self.notebook, style="Sidebar.TFrame")
         self._knowledge_tab = knowledge
         self._knowledge_placeholder = _empty_placeholder(
             knowledge, '知识库', 'pitfall / lesson / note 由运行时注入。')
@@ -470,7 +497,7 @@ class ExplorerPanel(ttk.Frame):
 
     def _build_evolution_tab(self):
         """演化 Tab：EvolutionEngine 候选审批占位。真实内容由 app 注入。"""
-        evolution = ttk.Frame(self.notebook)
+        evolution = ttk.Frame(self.notebook, style="Sidebar.TFrame")
         self._evolution_tab = evolution
         self._evolution_placeholder = _empty_placeholder(
             evolution, '演化', '候选审批数据由运行时注入。')
@@ -499,10 +526,39 @@ class ExplorerPanel(ttk.Frame):
         """
         self._activity.select(key)
 
+    def _sync_search_hint(self):
+        """占位提示：输入框为空且未聚焦时显示。"""
+        hint = getattr(self, '_search_hint', None)
+        if hint is None:
+            return
+        try:
+            empty = not self._search_var.get()
+            focused = self.search_entry.focus_get() is self.search_entry
+        except (tk.TclError, KeyError):
+            empty, focused = True, False
+        if empty and not focused:
+            hint.place(in_=self.search_entry, x=0, rely=0.5, anchor='w')
+        else:
+            hint.place_forget()
+
+    def _sync_header(self, key):
+        if key not in self.VIEW_TITLES:
+            return
+        self._view_title.configure(text=self.VIEW_TITLES[key])
+        if key in ('files', 'search'):
+            self._file_actions.pack(side='right', padx=(0, ui_px(self, 6)))
+        else:
+            self._file_actions.pack_forget()
+
     def _select_view(self, key):
+        self._sync_header(key)
         if key in ('files', 'search', 'git'):
             self._placeholder.pack_forget()
-            self._search_row.pack(fill='x', pady=(0, 6))
+            if self.notebook.winfo_manager():
+                self._search_row.pack(fill='x', padx=ui_px(self, 12),
+                                      pady=(0, ui_px(self, 8)), before=self.notebook)
+            else:
+                self._search_row.pack(fill='x', padx=ui_px(self, 12), pady=(0, ui_px(self, 8)))
             self.notebook.pack(fill='both', expand=True)
             self.notebook.select(self._git_tab if key == 'git' else self._files_tab)
             if key == 'search':
@@ -598,10 +654,19 @@ class ExplorerPanel(ttk.Frame):
             icon = 'folder_open'
         else:
             icon = file_icon_name(name)
-        image = icon_image(self.tree, icon, size=16, fg=C['subtext'])
+        cache = self.__dict__.setdefault('_padded_icons', {})
+        if icon in cache:
+            return cache[icon]
+        image = icon_image(self.tree, icon, size=ui_px(self.tree, 14), fg=C['subtext'])
         if image is None:
             return ''
-        return image
+        # Treeview 把图标和文字贴着画；拷进右侧留白的画布，拉开间距。
+        gap = ui_px(self.tree, 6)
+        padded = tk.PhotoImage(master=self.tree, width=image.width() + gap,
+                               height=image.height())
+        padded.tk.call(str(padded), 'copy', str(image), '-to', 0, 0)
+        cache[icon] = padded
+        return padded
 
     # ── 选择与文件操作 ─────────────────────────────────────────────
     def _selected(self):

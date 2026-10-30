@@ -29,78 +29,78 @@ IS_WINDOWS = platform.system() == "Windows"
 
 C: dict[str, str] = {
     # 背景层级
-    "bg": "#0D141F",            # Shared near-black blue chrome
-    "activity": "#0A111C",
-    "sidebar": "#111C2B",
-    "sidebar_history": "#131923",
-    "chat": "#0F1927",
-    "surface": "#172439",
-    "surface2": "#142034",
-    "surface_subtle": "#111D2D",
-    "hover": "#20344E",
-    "sel": "#163B62",
-    "code_bg": "#0B131F",
-    "input_bg": "#111D2D",
-    "editor_line": "#142238",
+    "bg": "#0F1116",            # Shared near-black blue chrome
+    "activity": "#0C0E13",
+    "sidebar": "#12151B",
+    "sidebar_history": "#12151B",
+    "chat": "#14171D",
+    "surface": "#1A1E26",
+    "surface2": "#171A21",
+    "surface_subtle": "#15181F",
+    "hover": "#222733",
+    "sel": "#1E2C45",
+    "code_bg": "#111318",
+    "input_bg": "#171A21",
+    "editor_line": "#1A1E26",
     "agent_accent": "#B79AF9",
     "black": "#000000",
 
     # 线条
-    "border": "#26364D",
-    "border_hi": "#3B5270",
-    "sel_border": "#3974B5",
-    "scroll": "#334B69",
+    "border": "#252A34",
+    "border_hi": "#343B48",
+    "sel_border": "#3A6FD8",
+    "scroll": "#2E3440",
 
     # 控件状态
-    "control_pressed": "#1F293D",
-    "disabled_bg": "#191F2D",
-    "disabled_fg": "#8894AD",
-    "disabled_border": "#343D50",
-    "focus_ring": "#78B5FF",
+    "control_pressed": "#1B1F28",
+    "disabled_bg": "#181B22",
+    "disabled_fg": "#8E95A2",
+    "disabled_border": "#2A2F39",
+    "focus_ring": "#BCD3FF",
 
     # 主色
-    "accent": "#2454AD",
-    "accent_hover": "#2A61BD",
-    "accent_pressed": "#1D448D",
-    "accent2": "#6AAEFF",
-    "accent_soft": "#173453",
-    "accent_border": "#3974B5",
-    "accent_text": "#BCD9FF",
+    "accent": "#2E6BE6",
+    "accent_hover": "#2862D6",
+    "accent_pressed": "#2253B8",
+    "accent2": "#6FA3FF",
+    "accent_soft": "#1B2A44",
+    "accent_border": "#3A6FD8",
+    "accent_text": "#B4CEFF",
     "brand_ice": "#BDCAFF",       # 仅用于品牌图形，避免混同状态颜色
     "brand_spark": "#F5BC74",
 
     # 语义
-    "ok": "#48B89A",
-    "ok_pressed": "#399B80",
-    "ok_soft": "#152C27",
-    "warn": "#E5B45C",
-    "warn_soft": "#2E2410",
-    "error": "#E57373",
-    "error_soft": "#321C2A",
-    "info": "#7B9CFF",
-    "info_soft": "#23314A",
-    "link": "#AFC4FF",
-    "link_soft": "#23314A",
+    "ok": "#4CC19F",
+    "ok_pressed": "#3AA585",
+    "ok_soft": "#14261F",
+    "warn": "#E8B85F",
+    "warn_soft": "#2A2214",
+    "error": "#F07A7A",
+    "error_soft": "#2E1A1D",
+    "info": "#82A8FF",
+    "info_soft": "#1C2538",
+    "link": "#9DBBFF",
+    "link_soft": "#1C2538",
 
     # 文字
-    "text": "#E6EEF8",
-    "body": "#CDD8E8",
-    "subtext": "#A4B4C9",
-    "muted": "#A2ADC5",
-    "ter": "#A2ADC5",
-    "placeholder": "#A2ADC5",
-    "comment": "#8A9DB8",
+    "text": "#ECEEF2",
+    "body": "#CDD2DA",
+    "subtext": "#A3ABB8",
+    "muted": "#9AA2AF",
+    "ter": "#9AA2AF",
+    "placeholder": "#8F98A6",
+    "comment": "#7E8796",
 
     # 消息气泡：两侧要能看出「谁在说」，又不能让深色界面变花。
     # user 带一点主色倾向（“我说的话”），agent 用中性面；两者都配一道 hairline 描边。
-    "msg_user_bg": "#23314A",         # 轻量、低饱和的用户气泡
+    "msg_user_bg": "#1F2633",         # 轻量、低饱和的用户气泡
     "msg_user_fg": "#FFFFFF",          # 用户气泡文字（白）
-    "msg_agent_bg": "#0F1927",         # 助手正文融入文档背景
-    "msg_agent_fg": "#E8ECFA",         # AI 气泡文字（浅灰）
+    "msg_agent_bg": "#14171D",         # 助手正文融入文档背景
+    "msg_agent_fg": "#E6E9EE",         # AI 气泡文字（浅灰）
     "msg_user_bg_old": "#232134",
     "msg_agent_bg_old": "#1A1A22",
-    "msg_user_border": "#334666",
-    "msg_agent_border": "#0F1927",
+    "msg_user_border": "#2C3545",
+    "msg_agent_border": "#14171D",
 
     # 代码高亮（One Dark 近似）
     "code_kw": "#74B4EA",
@@ -110,14 +110,14 @@ C: dict[str, str] = {
     "code_const": "#E06C75",
     "code_num": "#B5CEA8",
     "code_comment": "#7FA17A",
-    "code_plain": "#CDD8E8",
+    "code_plain": "#CDD2DA",
 
     # diff
     "diff_add": "#4ADE80",
     "diff_del": "#F87171",
-    "diff_add_bg": "#122E1B",
-    "diff_del_bg": "#2C1416",
-    "diff_hunk_bg": "#1B1B33",
+    "diff_add_bg": "#13261C",
+    "diff_del_bg": "#2A1618",
+    "diff_hunk_bg": "#1A1F33",
 
     # git 徽章
     "git_m": "#F59E0B",
@@ -146,27 +146,32 @@ MOTION_MS = 0
 SHADOW = None
 
 # ─── 字体 ──────────────────────────────────────────────────
-# 参考稿用 Inter / JetBrains Mono；本机没有，退回 Windows 自带等价字体
-# （Segoe UI / Microsoft YaHei UI 承担拉丁+中文，Cascadia Code 承担等宽）。
+# 界面以中文为主：Windows 上统一用 Microsoft YaHei UI 承担拉丁+中文
+# （其拉丁字形与 Segoe UI 同源），避免 Segoe UI 回落 CJK 时中英文基线与
+# 行高不一致；Cascadia Code 承担等宽。
+#
+# 字号阶梯（pt，随 tk scaling 缩放）：标题 14 / 分区 11 / 正文 10 /
+# 次要 9 / 说明 9（靠颜色区分层级）/ 微标 8；代码 10。
 
-UI_FAMILY = "Segoe UI" if IS_WINDOWS else "Helvetica"
-CJK_FAMILY = "Microsoft YaHei UI" if IS_WINDOWS else UI_FAMILY
+UI_FAMILY = "Microsoft YaHei UI" if IS_WINDOWS else "Helvetica"
+CJK_FAMILY = UI_FAMILY
 MONO_FAMILY = "Cascadia Code" if IS_WINDOWS else "Menlo"
 
-FONT_UI = (UI_FAMILY, 11)
-FONT_UI_BOLD = (UI_FAMILY, 11, "bold")
-FONT_UI_MED = (UI_FAMILY, 11, "normal")
-FONT_TITLE = (UI_FAMILY, 15, "bold")
-FONT_SECTION = (UI_FAMILY, 12, "bold")
-FONT_SMALL = (UI_FAMILY, 10)
+FONT_UI = (UI_FAMILY, 10)
+FONT_UI_BOLD = (UI_FAMILY, 10, "bold")
+FONT_UI_MED = (UI_FAMILY, 10, "normal")
+FONT_TITLE = (UI_FAMILY, 14, "bold")
+FONT_SECTION = (UI_FAMILY, 11, "bold")
+FONT_SMALL = (UI_FAMILY, 9)
 FONT_CAPTION = (UI_FAMILY, 9)
+FONT_CAPTION_BOLD = (UI_FAMILY, 9, "bold")
 FONT_MICRO = (UI_FAMILY, 8)
-FONT_BRAND = (UI_FAMILY, 15, "bold")
-FONT_MONO = (MONO_FAMILY, 11)
-FONT_MONO_SM = (MONO_FAMILY, 10)
+FONT_BRAND = (UI_FAMILY, 14, "bold")
+FONT_MONO = (MONO_FAMILY, 10)
+FONT_MONO_SM = (MONO_FAMILY, 9)
 FONT_MONO_XS = (MONO_FAMILY, 9)
-FONT_MONO_BOLD = (MONO_FAMILY, 11, "bold")
-FONT_GLYPH = (UI_FAMILY, 11)
+FONT_MONO_BOLD = (MONO_FAMILY, 10, "bold")
+FONT_GLYPH = (UI_FAMILY, 10)
 
 
 def ui_px(widget, value):
@@ -1022,6 +1027,135 @@ def style_scrollbar(widget):
         pass
 
 
+# ─── ttk 自绘元素（抗锯齿圆角滑块 / 下划线页签）──────────────
+# clam 自带的滑块有浮雕抓手纹、页签是方框描边，深色界面上很粗糙。
+# 这里用标准库现场编码带 alpha 的 PNG 作 image 元素：透明处露出宿主
+# 底色，所以同一套元素在侧栏、编辑器、底部面板上都不会出现色块。
+
+def _hex_rgb(colour):
+    return tuple(int(colour[i:i + 2], 16) for i in (1, 3, 5))
+
+
+def _png_rgba(width, height, coverage, colour):
+    """coverage(x, y) -> 0..1 的覆盖率，编码成单色 RGBA PNG（base64）。"""
+    import base64
+    import struct
+    import zlib
+    r, g, b = _hex_rgb(colour)
+    rows = bytearray()
+    for y in range(height):
+        rows.append(0)
+        for x in range(width):
+            rows += bytes((r, g, b, round(255 * max(0.0, min(1.0, coverage(x, y))))))
+
+    def chunk(kind, data):
+        body = kind + data
+        return struct.pack('>I', len(data)) + body + struct.pack('>I', zlib.crc32(body) & 0xFFFFFFFF)
+
+    header = struct.pack('>IIBBBBB', width, height, 8, 6, 0, 0, 0)
+    png = (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', header)
+           + chunk(b'IDAT', zlib.compress(bytes(rows), 9)) + chunk(b'IEND', b''))
+    return base64.b64encode(png).decode('ascii')
+
+
+def _pill_coverage(x0, y0, x1, y1, radius, samples=4):
+    """圆角矩形 [x0,x1)×[y0,y1) 的超采样覆盖率函数。"""
+    step = 1.0 / samples
+
+    def inside(px, py):
+        if not (x0 <= px < x1 and y0 <= py < y1):
+            return False
+        cx = min(max(px, x0 + radius), x1 - radius)
+        cy = min(max(py, y0 + radius), y1 - radius)
+        return (px - cx) ** 2 + (py - cy) ** 2 <= radius ** 2
+
+    def coverage(x, y):
+        hits = sum(inside(x + (i + .5) * step, y + (j + .5) * step)
+                   for i in range(samples) for j in range(samples))
+        return hits / (samples * samples)
+    return coverage
+
+
+def _photo(root, width, height, coverage, colour):
+    return tk.PhotoImage(master=root, data=_png_rgba(width, height, coverage, colour))
+
+
+def _install_flat_elements(root, style):
+    """注册 Flat.* 元素：细圆角滚动滑块 + 下划线页签指示条。
+
+    PhotoImage 必须被引用住，否则会被回收成空白；挂在 root 上随窗口存活。
+    重复调用（多次 apply_ttk_theme）时元素已存在，只复用不重建。
+    """
+    images = getattr(root, '_forge_flat_images', None)
+    if images is not None:
+        return images
+    images = {}
+    track = ui_px(root, 10)
+    inset = max(2, ui_px(root, 2))
+    length = track * 4
+    radius = (track - 2 * inset) / 2
+    for state, colour in (('normal', C['scroll']), ('active', C['border_hi']),
+                          ('pressed', C['muted'])):
+        images[f'v-{state}'] = _photo(root, track, length,
+            _pill_coverage(inset, inset, track - inset, length - inset, radius), colour)
+        images[f'h-{state}'] = _photo(root, length, track,
+            _pill_coverage(inset, inset, length - inset, track - inset, radius), colour)
+    blank = tk.PhotoImage(master=root, width=track, height=track)
+    images['trough'] = blank
+    cap = int(inset + radius + 1)
+    style.element_create('Flat.Vertical.Scrollbar.thumb', 'image', images['v-normal'],
+                         ('pressed', images['v-pressed']), ('active', images['v-active']),
+                         border=(0, cap, 0, cap), sticky='ns')
+    style.element_create('Flat.Horizontal.Scrollbar.thumb', 'image', images['h-normal'],
+                         ('pressed', images['h-pressed']), ('active', images['h-active']),
+                         border=(cap, 0, cap, 0), sticky='we')
+    style.element_create('Flat.Scrollbar.trough', 'image', blank, border=0, sticky='nswe')
+
+    # 页签：整体透明，底边 2px 指示条（选中=主色，悬停=中性亮线）。
+    bar = max(2, ui_px(root, 2))
+    size = bar * 4
+
+    def underline(x, y):
+        return 1.0 if y >= size - bar else 0.0
+    images['tab-off'] = tk.PhotoImage(master=root, width=size, height=size)
+    images['tab-on'] = _photo(root, size, size, underline, C['accent2'])
+    images['tab-hover'] = _photo(root, size, size, underline, C['border_hi'])
+    style.element_create('Flat.Notebook.tab', 'image', images['tab-off'],
+                         ('selected', images['tab-on']), ('active', images['tab-hover']),
+                         border=(0, 0, 0, bar), sticky='nswe')
+    root._forge_flat_images = images
+    return images
+
+
+def _install_scrollbar_autohide():
+    """内容装得下时隐藏滑块（不 unmap 滚动条本身，布局与几何零变化）。
+
+    clam 在无需滚动时仍画一根满长滑块，深色面板里像一道灰色立柱。
+    包一层 ttk.Scrollbar.set：(0, 1) 时切到 Idle.* 样式（只有透明轨道），
+    否则切回原样式。只接管默认样式的滚动条，自定义样式的不碰。
+    """
+    if getattr(ttk.Scrollbar, '_forge_autohide', False):
+        return
+    original = ttk.Scrollbar.set
+
+    def set(self, first, last):
+        original(self, first, last)
+        try:
+            idle = float(first) <= 0.0 and float(last) >= 1.0
+            current = str(self.cget('style'))
+            orient = 'Horizontal' if str(self.cget('orient')) == 'horizontal' else 'Vertical'
+            if current not in ('', f'Idle.{orient}.TScrollbar'):
+                return
+            wanted = f'Idle.{orient}.TScrollbar' if idle else ''
+            if current != wanted:
+                self.configure(style=wanted)
+        except (tk.TclError, ValueError):
+            pass
+
+    ttk.Scrollbar.set = set
+    ttk.Scrollbar._forge_autohide = True
+
+
 def apply_ttk_theme(root):
     """ttk 控件（Combobox / Scrollbar / Notebook）深色主题。"""
     root.configure(background=C['bg'])
@@ -1066,18 +1200,23 @@ def apply_ttk_theme(root):
     style.configure('TLabelframe', background=C['bg'], bordercolor=C['border'],
                     lightcolor=C['border'], darkcolor=C['border'], relief='solid', borderwidth=1)
     style.configure('TLabelframe.Label', background=C['bg'], foreground=C['subtext'], font=FONT_SMALL)
-    style.configure('TPanedwindow', background=C['border'], sashwidth=ui_px(root, 3))
+    style.configure('TPanedwindow', background=C['border'], sashwidth=ui_px(root, 2))
+    style.configure('Sash', sashthickness=ui_px(root, 2), gripcount=0,
+                    background=C['border'], lightcolor=C['border'], darkcolor=C['border'],
+                    bordercolor=C['border'])
+    _install_flat_elements(root, style)
+    # 页签：无边框文字页签 + 底部指示条（Flat.Notebook.tab），内容区不画框。
+    style.layout('TNotebook', [('Notebook.client', {'sticky': 'nswe'})])
+    style.layout('TNotebook.Tab', [('Flat.Notebook.tab', {'sticky': 'nswe', 'children': [
+        ('Notebook.padding', {'side': 'top', 'sticky': 'nswe', 'children': [
+            ('Notebook.label', {'side': 'top', 'sticky': ''})]})]})])
     style.configure("TNotebook", background=C["bg"], borderwidth=0,
-                    tabmargins=(0, 0, 0, 0), bordercolor=C['border'],
-                    lightcolor=C['border'], darkcolor=C['border'])
-    style.configure("TNotebook.Tab", background=C["bg"], foreground=C["ter"],
-                    padding=(12, 6), font=FONT_SMALL, borderwidth=0,
-                    bordercolor=C['border'], lightcolor=C['bg'], darkcolor=C['bg'])
+                    tabmargins=(ui_px(root, 8), 0, 0, 0), bordercolor=C['bg'],
+                    lightcolor=C['bg'], darkcolor=C['bg'])
+    style.configure("TNotebook.Tab", background=C["bg"], foreground=C["muted"],
+                    padding=(ui_px(root, 10), ui_px(root, 7)), font=FONT_SMALL, borderwidth=0)
     style.map("TNotebook.Tab",
-              background=[("selected", C["accent_soft"]), ("active", C["hover"])],
-              foreground=[("selected", C["accent_text"]), ("active", C["text"])],
-              lightcolor=[('selected', C['accent_border']), ('!selected', C['border'])],
-              darkcolor=[('selected', C['border']), ('!selected', C['bg'])],
+              foreground=[("selected", C["text"]), ("active", C["body"])],
               expand=[("selected", (0, 0, 0, 0))])
     style.configure("TFrame", background=C["bg"])
     style.configure("Vertical.TScrollbar", background=C["scroll"],
@@ -1104,7 +1243,7 @@ def apply_ttk_theme(root):
                   foreground=[('disabled', C['disabled_fg'])])
     style.configure('Treeview', background=C['input_bg'], fieldbackground=C['input_bg'],
                     foreground=C['body'], borderwidth=0, font=FONT_SMALL,
-                    bordercolor=C['border'], lightcolor=C['input_bg'], darkcolor=C['input_bg'],
+                    bordercolor=C['input_bg'], lightcolor=C['input_bg'], darkcolor=C['input_bg'],
                     rowheight=ui_px(root, CONTROL_HEIGHT))
     style.configure('Treeview.Heading', background=C['surface'], foreground=C['subtext'],
                     relief=tk.FLAT, font=FONT_SMALL, padding=6)
@@ -1122,16 +1261,17 @@ def apply_ttk_theme(root):
     # 深色界面上一片白块（「黑白无常」问题的根源）。
     style.configure('TButton', background=C['surface2'], foreground=C['body'],
                     relief=tk.FLAT, borderwidth=0, focuscolor=C['focus_ring'],
-                    padding=(12, 6), font=FONT_SMALL, anchor='center',
-                    bordercolor=C['border'], lightcolor=C['surface2'], darkcolor=C['surface2'])
+                    padding=(ui_px(root, 12), ui_px(root, 5)), font=FONT_SMALL, anchor='center',
+                    bordercolor=C['surface2'], lightcolor=C['surface2'], darkcolor=C['surface2'])
     style.map('TButton',
               background=[('disabled', C['disabled_bg']),
                           ('pressed', C['control_pressed']),
                           ('active', C['hover'])],
               foreground=[('disabled', C['disabled_fg']),
                           ('active', C['text'])],
-              lightcolor=[('pressed', C['control_pressed'])],
-              darkcolor=[('pressed', C['control_pressed'])])
+              bordercolor=[('focus', C['focus_ring'])],
+              lightcolor=[('pressed', C['control_pressed']), ('active', C['hover'])],
+              darkcolor=[('pressed', C['control_pressed']), ('active', C['hover'])])
     style.configure('TCheckbutton', background=C['bg'], foreground=C['body'],
                     focuscolor=C['border'], font=FONT_SMALL, padding=2,
                     indicatorcolor=C['surface2'], indicatorforeground=C['text'])
@@ -1153,20 +1293,29 @@ def apply_ttk_theme(root):
     style.map('Horizontal.TScrollbar', background=[('active', C['ter'])])
     style.configure('TSeparator', background=C['border'])
     # Shared language, local Coding density; Work keeps its larger tree rows.
-    style.configure('Coding.TNotebook', background=C['bg'], borderwidth=0,
-                    tabmargins=(2, 2, 2, 0))
-    style.configure('Coding.TNotebook.Tab', padding=(12, 6), font=FONT_SMALL)
-    # 选中页签「浮起到内容层」：底色与面板 surface 齐平、文字提亮、
-    # 上缘一道 accent 描边暗示当前位置（clam 画不出真下划线，用
-    # lightcolor/darkcolor 模拟）。
-    style.map('Coding.TNotebook.Tab',
-              background=[('selected', C['surface']), ('active', C['hover'])],
-              foreground=[('selected', C['text']), ('active', C['text'])],
-              lightcolor=[('selected', C['accent_border']), ('!selected', C['border'])],
-              darkcolor=[('selected', C['surface']), ('!selected', C['bg'])])
-    style.configure('Explorer.TNotebook.Tab', padding=(4, 4), font=FONT_CAPTION)
+    # 页签形态由 TNotebook.Tab 的 Flat 布局统一提供，这里只调密度与底色。
+    style.configure('Coding.TNotebook', background=C['bg'],
+                    tabmargins=(ui_px(root, 6), 0, 0, 0))
+    style.configure('Coding.TNotebook.Tab', padding=(ui_px(root, 10), ui_px(root, 6)), font=FONT_SMALL)
+    style.configure('Explorer.TNotebook', background=C['sidebar'],
+                    tabmargins=(ui_px(root, 4), 0, 0, 0))
+    style.configure('Explorer.TNotebook.Tab', background=C['sidebar'],
+                    padding=(ui_px(root, 6), ui_px(root, 5)), font=FONT_SMALL)
     style.configure('Coding.Treeview', background=C['sidebar'], fieldbackground=C['sidebar'],
-                    rowheight=ui_px(root, 25), font=FONT_SMALL)
+                    rowheight=ui_px(root, 24), font=FONT_SMALL, indent=ui_px(root, 14),
+                    bordercolor=C['sidebar'], lightcolor=C['sidebar'], darkcolor=C['sidebar'])
+    style.map('Coding.Treeview', background=[('selected', C['sel'])],
+              foreground=[('selected', C['text'])])
+    # 重设计：Coding Mode 各区底色分层（活动栏最暗 → 侧栏 → 编辑区），
+    # 区与区之间只靠 1px 分隔线，不再整片同色 + 留白缝。
+    style.configure('Activity.TFrame', background=C['activity'])
+    style.configure('Sidebar.TFrame', background=C['sidebar'])
+    style.configure('Editor.TFrame', background=C['code_bg'])
+    style.configure('Explorer.TNotebook', background=C['sidebar'])
+    # 侧栏页签行由活动栏取代：空布局 = 不绘制页签（notebook.tab 文本仍在）。
+    style.layout('Explorer.TNotebook.Tab', [])
+    style.configure('Editor.TNotebook', background=C['bg'],
+                    tabmargins=(0, 0, 0, 0))
     style.configure('Card.TFrame', background=C['surface'], borderwidth=1,
                     relief='solid', bordercolor=C['border'])
     style.configure('Card.TLabel', background=C['surface'], foreground=C['body'])
@@ -1175,13 +1324,22 @@ def apply_ttk_theme(root):
                     lightcolor=C['accent'], darkcolor=C['accent'], bordercolor=C['accent'])
     style.map('Primary.TButton', background=[('disabled', C['disabled_bg']),
         ('pressed', C['accent_pressed']), ('active', C['accent_hover'])],
-        foreground=[('disabled', C['disabled_fg'])])
+        foreground=[('disabled', C['disabled_fg'])],
+        lightcolor=[('pressed', C['accent_pressed']), ('active', C['accent_hover'])],
+        darkcolor=[('pressed', C['accent_pressed']), ('active', C['accent_hover'])],
+        bordercolor=[('focus', C['focus_ring'])])
     # Slim, arrow-free tracks retain native trough/drag/keyboard behavior.
+    # 透明轨道 + 抗锯齿圆角滑块（Flat.* 元素），无浮雕抓手纹。
     for orient, sticky in (('Vertical', 'ns'), ('Horizontal', 'we')):
         name = orient + '.TScrollbar'
-        style.configure(name, arrowsize=ui_px(root, 10), width=ui_px(root, 10))
-        style.layout(name, [(orient + '.Scrollbar.trough', {'sticky': sticky,
-            'children': [(orient + '.Scrollbar.thumb', {'expand': 1, 'sticky': 'nswe'})]})])
+        style.configure(name, arrowsize=ui_px(root, 10), width=ui_px(root, 10),
+                        background=C['bg'], troughcolor=C['bg'], borderwidth=0)
+        style.layout(name, [('Flat.Scrollbar.trough', {'sticky': sticky, 'children': [
+            (f'Flat.{orient}.Scrollbar.thumb', {'expand': 1, 'sticky': 'nswe'})]})])
+        style.configure('Idle.' + name, arrowsize=ui_px(root, 10), width=ui_px(root, 10),
+                        background=C['bg'], troughcolor=C['bg'], borderwidth=0)
+        style.layout('Idle.' + name, [('Flat.Scrollbar.trough', {'sticky': sticky})])
+    _install_scrollbar_autohide()
     return style
 
 

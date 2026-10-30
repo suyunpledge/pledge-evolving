@@ -504,10 +504,50 @@ class OwnershipTests(unittest.TestCase):
                     return any(isinstance(x, ast.Name) and x.id in MARKS
                                or isinstance(x, ast.Attribute) and x.attr in MARKS
                                for x in ast.walk(n))
-                stmts_b = [ast.dump(_strip_p1_editor_empty(_strip_new_kwargs(copy.deepcopy(n))))
-                           for n in _body_without_button_import(b) if not _p1_marked(n)]
-                stmts_a = [ast.dump(_strip_p1_editor_empty(_strip_new_kwargs(copy.deepcopy(n))))
-                           for n in _body_without_button_import(a) if not _p1_marked(n)]
+                # UI 重设计（2026-10-30，feature/ui-redesign，用户裁决登记）：
+                # 1) style= / padding= 只管视觉分层，两侧剥离；
+                # 2) _build 的 self.vertical.pack 去掉 padx=8 四周留白缝；
+                # 3) _build_editor 的两排工具栏（保存/重新载入/关闭标签、
+                #    编码/文件审查/附加给 Agent）+ 文档状态行收进标签行右侧
+                #    图标组（tool_button + 更多菜单）。工具栏局部名所在语句
+                #    两侧整句剔除，document_state 赋值本身仍受比对。
+                REDESIGN_EDITOR_MARKS = ('bar', 'state_bar', 'menu', 'actions',
+                                         'split', 'more', 'attach', 'save',
+                                         'dev_button', 'tool_button', 'IconButton',
+                                         'attach_tooltip', '_editor_action_widgets')
+
+                def _strip_redesign(tree):
+                    for node in ast.walk(tree):
+                        if isinstance(node, ast.Call):
+                            node.keywords = [k for k in node.keywords
+                                             if k.arg not in ('style', 'padding')]
+                            f = node.func
+                            if (isinstance(f, ast.Attribute) and f.attr == 'pack'
+                                    and isinstance(f.value, ast.Attribute)
+                                    and f.value.attr == 'vertical'):
+                                node.keywords = [k for k in node.keywords if k.arg != 'padx']
+                    return tree
+
+                def _redesign_marked(n):
+                    if name != '_build_editor':
+                        return False
+                    for x in ast.walk(n):
+                        if isinstance(x, ast.Name) and x.id in REDESIGN_EDITOR_MARKS:
+                            return True
+                        # 文档状态行不再 pack（状态并入底部状态行）。
+                        if (isinstance(x, ast.Attribute) and x.attr == 'pack'
+                                and isinstance(x.value, ast.Attribute)
+                                and x.value.attr == 'document_state'):
+                            return True
+                    return False
+
+                def _norm(n):
+                    return ast.dump(_strip_redesign(_strip_p1_editor_empty(
+                        _strip_new_kwargs(copy.deepcopy(n)))))
+                stmts_b = [_norm(n) for n in _body_without_button_import(b)
+                           if not _p1_marked(n) and not _redesign_marked(n)]
+                stmts_a = [_norm(n) for n in _body_without_button_import(a)
+                           if not _p1_marked(n) and not _redesign_marked(n)]
                 self.assertEqual(stmts_b, stmts_a, name)
             else:
                 self.assertEqual(before[name], after[name], name)

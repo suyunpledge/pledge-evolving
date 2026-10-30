@@ -9,7 +9,7 @@ from tkinter import ttk
 
 from chat_widgets import parse_blocks, inline_segments
 from .buttons import dev_button
-from gui_theme import C, FONT_UI, FONT_UI_BOLD, FONT_SECTION, FONT_CAPTION, FONT_MONO_SM, style_editor, button_feedback, attach_tooltip
+from gui_theme import C, FONT_UI, FONT_UI_BOLD, FONT_SECTION, FONT_CAPTION, FONT_MONO_SM, style_editor, button_feedback, attach_tooltip, ui_px
 from ui_icons import IconButton
 from forge.secrets import redact
 
@@ -404,9 +404,9 @@ class AgentPanel(ttk.Frame):
                  new_conversation=None, history=None, settings=None, view_changes=None, history_source=None,
                  on_show_approvals=None):
         super().__init__(parent)
-        titlebar = ttk.Frame(self, padding=(8, 6))
+        titlebar = ttk.Frame(self, padding=(ui_px(self, 12), ui_px(self, 6), ui_px(self, 6), 0))
         titlebar.pack(fill='x')
-        self.title = ttk.Label(titlebar, text='AI Agent', font=FONT_UI_BOLD)
+        self.title = ttk.Label(titlebar, text='AI Agent', font=FONT_UI_BOLD, foreground=C['text'])
         self.title.pack(side='left', fill='x', expand=True)
         # P0-D1：权限常驻徽标。权限矩阵在「运行时上下文」里且默认折叠，
         # 过去 perm_badge 建在未 pack 的 status_row 上（探针实测
@@ -425,12 +425,15 @@ class AgentPanel(ttk.Frame):
                 ('new', 'plus', '新对话', new_conversation),
                 ('history', 'clock', '历史', history), ('settings', 'config', '设置', settings),
                 ('approvals', 'check', '审批', on_show_approvals)):
-            button = IconButton(titlebar, icon=icon, icon_size=16, text='', command=callback,
-                bg=C['bg'], fg=C['subtext'], bd=0, padx=7, pady=5, takefocus=True, highlightthickness=1,
-                state='normal' if callback else 'disabled')
-            button_feedback(button)
+            button = IconButton(titlebar, icon=icon, icon_size=ui_px(self, 15), text='', command=callback,
+                bg=C['bg'], fg=C['subtext'], bd=0, padx=ui_px(self, 5), pady=ui_px(self, 4),
+                takefocus=True, highlightthickness=1, highlightbackground=C['bg'],
+                state='normal' if callback else 'disabled', cursor='hand2')
+            # 标题行图标：与编辑器工具图标同款「安静」反馈（无描边、无禁用色块）。
+            button.set_feedback({'pressed_bg': C['control_pressed'], 'hover_border': C['bg'],
+                                 'disabled_bg': C['bg'], 'disabled_border': C['bg']})
             attach_tooltip(button, label)
-            button.pack(side='left', padx=2)
+            button.pack(side='left', padx=1)
             self.header_buttons[key] = button
         # 运行时上下文（权限矩阵 + 模型路由）—— 4-Tab 之上、标题之下
         self._runtime_context = None  # 由 app 调 mount_runtime_context 注入
@@ -556,21 +559,22 @@ class AgentPanel(ttk.Frame):
     # 状态点用 fg 而不是 fill——和现有 ActivityGlyph 风格一致，圆点用 create_oval。
     # 颜色 token 复用 status_bar 的 idle / running / waiting / error 语义。
     def _build_status_bar(self):
-        bar = tk.Frame(self, bg=C['surface2'], height=22)
+        # 重设计：状态条去掉 surface2 色块，作为标题下方的一行副标题。
+        bar = tk.Frame(self, bg=C['bg'], height=ui_px(self, 22))
         bar.pack_propagate(False)
         bar.pack(fill='x', before=self.notebook)
         # 左侧：状态点
-        self._status_dot = tk.Canvas(bar, width=10, height=10, bg=C['surface2'],
+        self._status_dot = tk.Canvas(bar, width=10, height=10, bg=C['bg'],
                                        highlightthickness=0, bd=0)
-        self._status_dot.pack(side='left', padx=(10, 4), pady=6)
+        self._status_dot.pack(side='left', padx=(ui_px(self, 12), ui_px(self, 4)))
         # 左侧：状态文字
         self._status_text = tk.Label(bar, text='就绪 · 等待任务', font=FONT_CAPTION,
-                                    bg=C['surface2'], fg=C['text'], anchor='w')
+                                    bg=C['bg'], fg=C['subtext'], anchor='w')
         self._status_text.pack(side='left', padx=(0, 8))
         # 右侧：最近动作时间
         self._status_last = tk.Label(bar, text='', font=FONT_CAPTION,
-                                     bg=C['surface2'], fg=C['ter'], anchor='e')
-        self._status_last.pack(side='right', padx=(0, 10))
+                                     bg=C['bg'], fg=C['ter'], anchor='e')
+        self._status_last.pack(side='right', padx=(0, ui_px(self, 12)))
         # 初始化为 idle
         self.set_status_state('idle', '就绪 · 等待任务')
         return bar

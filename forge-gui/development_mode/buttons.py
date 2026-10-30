@@ -78,3 +78,27 @@ def dev_button(parent, text, command, *, kind='ghost', icon=None, icon_size=16,
     if tooltip:
         attach_tooltip(btn, tooltip)
     return btn
+
+
+def tool_button(parent, icon, command, tooltip, *, bg=None):
+    """工具栏图标按钮：无底色、无描边，悬停才浮出 hover 底。
+
+    编辑器标签行 / 面板标题行这类「常驻但次要」的动作用它——dev_button
+    的 ghost/quiet 都带描边或底色，一排并列时会变成一串色块。
+    命中区按 DPI 换算到约 26px（96-DPI 单位），满足最小点击尺寸。
+    """
+    from gui_theme import ui_px
+    base = bg or _bg_of(parent)
+    size = ui_px(parent, 26)
+    btn = IconButton(parent, text='', command=command, icon=icon,
+                     icon_size=ui_px(parent, 15), bg=base, fg=C['ter'],
+                     activebackground=C['hover'], activeforeground=C['text'],
+                     relief=tk.FLAT, bd=0, cursor='hand2', highlightthickness=1,
+                     highlightbackground=base, highlightcolor=C['focus_ring'],
+                     disabledforeground=C['disabled_fg'], width=size, height=size)
+    # 禁用态只把图标调暗，不铺 disabled_bg 色块；描边平时与底色同色，
+    # 只在键盘焦点时显出 focus_ring。
+    btn.set_feedback({'pressed_bg': C['control_pressed'], 'hover_border': base,
+                      'disabled_bg': base, 'disabled_border': base})
+    attach_tooltip(btn, tooltip)
+    return btn

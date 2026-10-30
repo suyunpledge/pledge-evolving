@@ -11,8 +11,8 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 
 from gui_theme import (C, apply_ttk_theme, attach_tooltip, chip, style_editor,
-    FONT_CAPTION, FONT_MONO_SM, FONT_TITLE, FONT_SECTION, FONT_UI, FONT_UI_MED,
-    setup_code_tags, highlight_python)
+    FONT_CAPTION, FONT_MONO_SM, FONT_SMALL, FONT_TITLE, FONT_SECTION, FONT_UI, FONT_UI_MED,
+    setup_code_tags, highlight_python, ui_px)
 from ui_icons import IconButton
 try:  # E1（UX 审查）：与 InputCard 同款可选行内 IME 守卫（默认关）
     from ime_inline import InlineIME
@@ -189,7 +189,7 @@ class DevelopmentWorkbench(ttk.Frame):
         self.status_bar = StatusBar(self, status_var=self.status)
         self.status_bar.pack(side='bottom', fill='x')
         self.vertical = ttk.Panedwindow(self, orient='vertical')
-        self.vertical.pack(fill='both', expand=True, padx=8)
+        self.vertical.pack(fill='both', expand=True)
         self.panes = ttk.Panedwindow(self.vertical, orient='horizontal')
         self.vertical.add(self.panes, weight=4)
         # M5：底部面板四标签 + 真实计数徽标。徽标数据源经 provider
@@ -215,8 +215,8 @@ class DevelopmentWorkbench(ttk.Frame):
         self.vertical.bind('<ButtonRelease-1>', lambda e: self.capture_layout())
         self._last_pane_width = 0
         self.panes.bind('<Configure>', self._panes_resized)
-        self.project_frame = ttk.Frame(self.panes, width=230)
-        self.editor_frame = ttk.Frame(self.panes, width=650)
+        self.project_frame = ttk.Frame(self.panes, width=230, style='Sidebar.TFrame')
+        self.editor_frame = ttk.Frame(self.panes, width=650, style='Editor.TFrame')
         self.agent_frame = ttk.Frame(self.panes, width=420)
         self._build_project()
         self._build_editor()
@@ -281,41 +281,21 @@ class DevelopmentWorkbench(ttk.Frame):
         # 欢迎页（welcome.py 的 WelcomeView，见 _build_welcome /
         # _sync_welcome 二态切换），打开项目后切回。控件父子与既有属性
         # 契约（self.tabs / self.document_state 等）不变，调用方无感。
-        body = ttk.Frame(self.editor_frame)
+        body = ttk.Frame(self.editor_frame, style='Editor.TFrame')
         self.editor_body = body
         body.pack(fill='both', expand=True)
-        bar = ttk.Frame(body)
-        bar.pack(fill='x', pady=4)
-        # W3：编辑器工具栏改走统一按钮规范（尺寸/反馈/提示定版）。
-        from .buttons import dev_button
-        dev_button(bar, text='保存', command=self.save_current, kind='primary',
-                   tooltip='保存当前文档（Ctrl+S）').pack(side='left')
-        dev_button(bar, text='重新载入', command=self.reload_current, kind='ghost',
-                   tooltip='从磁盘重读当前文档').pack(side='left', padx=4)
-        dev_button(bar, text='关闭标签', command=self.close_current, kind='ghost',
-                   tooltip='关闭当前标签页').pack(side='left')
-        state_bar = ttk.Frame(body)
-        state_bar.pack(fill='x', pady=(0, 4))
-        dev_button(state_bar, text='编码', command=self.open_encoding, kind='quiet',
-                   tooltip='查看/切换文件编码').pack(side='left')
-        actions = ttk.Menubutton(state_bar, text='文件审查')
-        actions.pack(side='left', padx=4)
-        menu = tk.Menu(actions, tearoff=False, bg=C['bg'], fg=C['text'])
-        menu.add_command(label='比较磁盘与草稿', command=self.compare_external)
-        menu.add_command(label='安全合并到草稿（不保存）', command=self.merge_external)
-        menu.add_separator()
-        menu.add_command(label='检查点差异 / 恢复此文件', command=self.checkpoints)
-        actions.configure(menu=menu)
-        dev_button(state_bar, text='附加给 Agent', command=self.attach_current, kind='accent_soft',
-                   tooltip='把当前文档附加进下一条任务（发送前保护 Secret）').pack(side='right')
-        self.document_state = ttk.Label(body, text='Ctrl+S 保存 · 尚无打开文件', padding=(4, 0, 4, 4))
-        self.document_state.pack(fill='x')
+        # 重设计：原「保存/重新载入/关闭标签」「编码/文件审查/附加给 Agent」
+        # 两排按钮 + 一行文档状态，占掉编辑区顶部约 90px 且层级混乱。
+        # 现收进标签行右侧：保存 / 附加给 Agent 两个高频图标 + 「更多」
+        # 菜单（重新载入、关闭、编码、文件审查）；文档状态并入底部状态行。
+        # document_state 仍保留为属性（show_document_state 写入它），不 pack。
+        self.document_state = ttk.Label(body, text='Ctrl+S 保存 · 尚无打开文件')
         # M1：输出 Notebook 已上移到全宽底部工具面板（bottom_panel.py 的
         # ToolPanel，见 _build）。编辑器栏不再有竖向 Panedwindow，文档
         # 标签页直接占满剩余空间。
         # M4：标签页与右侧操作按钮位（示例图：分屏 / 更多）同一行——
         # Notebook 占左侧弹性区，两个图标按钮固定右侧。
-        tab_row = ttk.Frame(body)
+        tab_row = ttk.Frame(body, style='Editor.TFrame')
         tab_row.pack(fill='both', expand=True)
         # 视觉一致性：编辑器标签页此前用默认 TNotebook（padding/font 走
         # 主题默认值），与底部工具面板、Agent 面板、Explorer 的
@@ -331,23 +311,28 @@ class DevelopmentWorkbench(ttk.Frame):
         # 若 Notebook 先 pack，actions 整帧不可见。side 决定视觉位置、
         # pack 次序决定超订让位优先级：小帧优先，expand 的 Notebook
         # 吸收赤字。
+        # 重设计：动作组悬浮在标签条右端（place），不再 pack 成整列——
+        # 4 个图标横排时，pack(fill=y) 的动作列会从编辑区右侧切走一整条，
+        # 代码区与底部状态行一起变窄。place 不参与打包器配额，原「小帧
+        # 先 pack」的超订让位问题也随之消失。
         actions = ttk.Frame(tab_row)
-        actions.pack(side='right', fill='y')
-        split = IconButton(actions, icon='sidebar', bg=C['bg'], fg=C['ter'],
-                           relief='flat', bd=0, cursor='hand2',
-                           activebackground=C['hover'],
-                           activeforeground=C['text'],
-                           command=self.split_current)
-        split.pack(side='right', anchor='n', padx=(4, 0), pady=2)
-        attach_tooltip(split, '分屏：同文件只读参考视图')
-        more = IconButton(actions, icon='more', bg=C['bg'], fg=C['ter'],
-                          relief='flat', bd=0, cursor='hand2',
-                          activebackground=C['hover'],
-                          activeforeground=C['text'],
-                          command=self._editor_more_menu)
-        more.pack(side='right', anchor='n', padx=(4, 0), pady=2)
-        attach_tooltip(more, '更多编辑器操作')
+        actions.place(relx=1.0, x=0, y=0, anchor='ne')
+        from .buttons import tool_button
+        # 创建次序即契约：分屏须是 more_button 之外的第一个兄弟（测试经
+        # winfo_children()[0] 取它）；pack side=right，视觉自右向左排。
+        split = tool_button(actions, 'sidebar', self.split_current, '分屏：同文件只读参考视图')
+        split.pack(side='right', anchor='n', padx=(2, ui_px(self, 6)), pady=ui_px(self, 3))
+        more = tool_button(actions, 'more', self._editor_more_menu,
+                           '更多：重新载入 / 关闭 / 编码 / 文件审查')
+        more.pack(side='right', anchor='n', padx=2, pady=ui_px(self, 3))
         self.more_button = more
+        attach = tool_button(actions, 'paperclip', self.attach_current,
+                             '附加给 Agent：把当前文档附加进下一条任务（发送前保护 Secret）')
+        attach.pack(side='right', anchor='n', padx=2, pady=ui_px(self, 3))
+        save = tool_button(actions, 'save', self.save_current, '保存（Ctrl+S）')
+        save.pack(side='right', anchor='n', padx=2, pady=ui_px(self, 3))
+        # 无文档时禁用（_sync_editor_actions）——图标按钮无文字，显式登记。
+        self._editor_action_widgets = [save, attach]
         self.tabs.pack(side='left', fill='both', expand=True)
         # P1-3（Kimi 审查）：有项目但无打开文件时，中央区是一块裸 Text
         # 黑框——补一张居中空态卡（与底部面板/侧栏空态同一视觉语言），
@@ -685,11 +670,11 @@ class DevelopmentWorkbench(ttk.Frame):
         # 输入行卡片化：surface2 底 + 1px 描边的「输入卡」，输入框聚焦时
         # 描边提亮到 accent_border（FocusIn/FocusOut 驱动）。用 tk.Frame
         # 而非 ttk.Frame——ttk 的描边色无法由控件 option 逐态控制。
-        self._input_row = tk.Frame(self.input_bar, bg=C['surface2'],
+        self._input_row = tk.Frame(self.input_bar, bg=C['input_bg'],
                                    highlightthickness=1,
                                    highlightbackground=C['border'],
                                    highlightcolor=C['accent_border'])
-        self.input = TaskInput(self._input_row, height=4, wrap='word', undo=True, font=FONT_UI)
+        self.input = TaskInput(self._input_row, height=3, wrap='word', undo=True, font=FONT_UI)
         style_editor(self.input)
         # 焦点环由外层输入卡承担，输入框自身不再画第二圈。
         self.input.configure(highlightthickness=0)
@@ -763,35 +748,31 @@ class DevelopmentWorkbench(ttk.Frame):
                                       foreground=C['accent2'])
         # context_label 父级为 input_bar：附件信息仍贴在输入行上方。
         self.context_label = ttk.Label(self.input_bar, text='未附加编辑器内容', padding=4)
-        # 输入带键位提示：从「一行 10px 灰字」改成 chips。
-        # 纯文字行在深色输入带里对比度低、扫读成本高；chips 有底色 +
-        # hairline 描边，与 Work Mode 输入区的胶囊语言一致。三个键位都
-        # 是真实绑定（<Return> / <Shift-Return> / <Control-Return>）。
-        hint_row = tk.Frame(self.input_bar, bg=C['bg'])
-        for hint in ('Enter 发送', 'Shift+Enter 换行', 'Ctrl+Enter 亦可'):
-            chip(hint_row, hint, bg=C['bg']).pack(side='left', padx=(0, 6))
-        # 输入行：input 吃满剩余宽度，send 固定在右——同一行内布局。
+        # 重设计：输入卡 = 上方多行输入 + 卡内底栏（左键位提示 / 右发送）。
+        # 原三个键位 chips 有底色和描边，看起来像可点按钮却点不了；改为卡内
+        # 一行占位色说明文字（三个键位仍是真实绑定）。
         input_row = self._input_row
-        self.send_button = IconButton(input_row, text='发送', command=self.send,
-            bg=C['accent'], fg=C['text'], activebackground=C['accent_hover'],
-            bd=0, padx=14, pady=6, highlightthickness=1,
-            highlightbackground=C['accent'])
+        pad = ui_px(self, 10)
+        footer = tk.Frame(input_row, bg=C['input_bg'])
+        footer.pack(side='bottom', fill='x', padx=(pad, ui_px(self, 6)), pady=(0, ui_px(self, 6)))
+        self._input_footer = footer
+        self.send_button = IconButton(footer, text='发送', icon='send', icon_size=ui_px(self, 14),
+            command=self.send, bg=C['accent'], fg='#FFFFFF', activebackground=C['accent_hover'],
+            activeforeground='#FFFFFF', font=FONT_SMALL, bd=0, padx=ui_px(self, 10),
+            pady=ui_px(self, 3), highlightthickness=1, highlightbackground=C['accent'],
+            cursor='hand2')
         button_feedback(self.send_button, kind='primary')
-        self.send_button.pack(side='right', padx=(6, 8), pady=6)
-        # input 与 send 同父 input_row：send 先 right 占位，input 再
-        # left+expand 吃满剩余宽（真实父子关系，非 in_ 借挂）。
-        self.input.pack(side='left', fill='x', expand=True,
-                        padx=(8, 0), pady=6)
-        # 容器内部（side='bottom'：先 pack 者贴底）：input_row 先 pack
-        # 占底，hint 其次在其上；queue/context 动态显示时经
-        # before=hint 插到 hint 之前（即输入行正上方）。
-        input_row.pack(side='bottom', fill='x', padx=8, pady=(4, 6))
-        # _input_hint 仍是 queue/context 的 before 锚点——由 Label 换成
-        # 承载 chips 的 Frame，锚点契约不变（外部只用它作 pack before）。
+        self.send_button.pack(side='right')
+        tk.Label(footer, text='Enter 发送 · Shift+Enter 换行', font=FONT_CAPTION,
+                 bg=C['input_bg'], fg=C['placeholder']).pack(side='left')
+        self.input.pack(side='top', fill='x', expand=True,
+                        padx=pad, pady=(ui_px(self, 8), ui_px(self, 4)))
+        input_row.pack(side='bottom', fill='x', padx=pad, pady=(ui_px(self, 4), pad))
+        # _input_hint 仍是 queue/context 的 before 锚点（外部只用它作
+        # pack before），现为输入卡正上方的一条细缝。
+        hint_row = tk.Frame(self.input_bar, bg=C['bg'], height=1)
         self._input_hint = hint_row
-        hint_row.pack(side='bottom', fill='x', padx=8)
-        # 输入组与上方对话区之间一道 hairline，把「输入带」从内容层托起。
-        tk.Frame(self.input_bar, bg=C['border'], height=1).pack(side='top', fill='x')
+        hint_row.pack(side='bottom', fill='x', padx=pad)
         # 容器本身作为 agent_frame 底部唯一输入组（取代原 3 个并列 slave）。
         self.input_bar.pack(side='bottom', fill='x')
         # context_label 默认隐藏——只在用户附加了编辑器内容时由 _attach
@@ -1888,6 +1869,11 @@ class DevelopmentWorkbench(ttk.Frame):
         if body is None:
             return
         enabled = self.current_row() is not None
+        for widget in getattr(self, '_editor_action_widgets', ()):
+            try:
+                widget.configure(state='normal' if enabled else 'disabled')
+            except tk.TclError:
+                pass
         wanted = ('保存', '重新载入', '关闭标签', '编码', '附加给 Agent', '文件审查')
         stack = list(body.winfo_children())
         while stack:
@@ -1990,11 +1976,20 @@ class DevelopmentWorkbench(ttk.Frame):
         if not row:
             self.status.set('尚无打开的文件')
             return
-        menu = tk.Menu(self, tearoff=False, bg=C['bg'], fg=C['text'])
+        menu = tk.Menu(self, tearoff=False, bg=C['surface'], fg=C['text'])
         menu.add_command(label='另存为…', command=self.save_as_current)
         menu.add_command(label='保存', command=self.save_current)
         menu.add_command(label='重新载入', command=self.reload_current)
         menu.add_command(label='关闭标签', command=self.close_current)
+        menu.add_separator()
+        # 重设计：原编辑区第二排的「编码」「文件审查」并入此菜单。
+        menu.add_command(label='编码…', command=self.open_encoding)
+        review = tk.Menu(menu, tearoff=False, bg=C['surface'], fg=C['text'])
+        review.add_command(label='比较磁盘与草稿', command=self.compare_external)
+        review.add_command(label='安全合并到草稿（不保存）', command=self.merge_external)
+        review.add_separator()
+        review.add_command(label='检查点差异 / 恢复此文件', command=self.checkpoints)
+        menu.add_cascade(label='文件审查', menu=review)
         menu.add_separator()
         menu.add_command(label='复制文件路径', command=self._copy_current_path)
         x = self.more_button.winfo_rootx()

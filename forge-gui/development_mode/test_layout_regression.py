@@ -619,7 +619,9 @@ class ExplorerViewTests(_WorkbenchFixture, unittest.TestCase):
         panel = self.app.explorer
         self.assertIsInstance(panel, ExplorerPanel)
         bar = panel._activity
-        self.assertEqual(bar.winfo_width(), 48)
+        # 48 个 96-DPI 设计单位（随 tk scaling 换算），高 DPI 下不再缩成细条。
+        from gui_theme import ui_px
+        self.assertEqual(bar.winfo_width(), ui_px(bar, 48))
         # v0.2：活动栏 9 图标（任务 / 知识 / 演化 / 审批 四个新 Tab）。
         self.assertEqual([key for key, _g, _l in bar.ITEMS],
                          ['files', 'search', 'git', 'tasks', 'run',

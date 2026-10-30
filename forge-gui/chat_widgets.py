@@ -2484,7 +2484,9 @@ class InputCard(tk.Frame):
         self._toolbar_signature = signature
         available = max(1, content_width - self._primary_controls.winfo_reqwidth() - 8)
         fixed = self.provider_label.winfo_reqwidth() + self.mode_pill.winfo_reqwidth() + 16
-        compact = available < fixed + ui_px(self, 150)
+        # 模型选择器至少留 140（96-DPI 单位）再折行：它会按预算省略显示；
+        # 雅黑的拉丁字形比 Segoe UI 略宽，150 会让最窄窗口的工具栏多折一行。
+        compact = available < fixed + ui_px(self, 140)
         if compact != self._toolbar_compact:
             self._toolbar_compact = compact
             self._metadata.grid_columnconfigure(1, weight=0 if compact else 1)
