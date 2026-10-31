@@ -44,7 +44,7 @@ _LANGUAGE_BY_SUFFIX = {
 
 class DevelopmentWorkbench(ttk.Frame):
     def __init__(self, parent, state, *, runtime=None, hosted=False,
-                 workspace_request=None, model_settings_home=None):
+                 workspace_request=None, model_settings_home=None, models_changed=None):
         super().__init__(parent)
         self.state = state
         # hosted（2026-10-16 双导航栏去重，10-17 修正）：被 forge_gui_v2
@@ -56,6 +56,10 @@ class DevelopmentWorkbench(ttk.Frame):
         self._workspace_request = workspace_request
         from forge.development.models import ModelSettingsSource
         self._model_router_factory = ModelSettingsSource(model_settings_home) if model_settings_home else None
+        # 上手清单在 Coding 里直接写模型配置（model_onboarding）；宿主借此刷新
+        # 它缓存的用户层，避免之后在 Work Mode 保存时被判「配置已被修改」。
+        self._model_settings_home = Path(model_settings_home).expanduser() if model_settings_home else None
+        self._models_changed = models_changed
         self.runtime = runtime or DevelopmentRuntime(state, emit=self.enqueue_event,
                                                      model_router_factory=self._model_router_factory)
         self._owns_runtime = runtime is None
@@ -479,8 +483,93 @@ class DevelopmentWorkbench(ttk.Frame):
             on_open=self.choose_project,
             on_recent=self.open_project,
             recent_provider=lambda: self.state.value('recent'),
+            setup_home=self._model_settings_home,
+            on_models_saved=self._on_models_saved,
         )
         self._sync_welcome()
+
+    def _request_permission(self, value):
+        """Agent 面板的大白话权限入口：复用 permission_changed 的确认与回退。"""
+        if value not in {'read-only', 'workspace-write'} or self.permission.get() == value:
+            return
+        self.permission.set(value)
+        self.permission_changed()
+        self._sync_perm_badge()
+
+    def _use_template(self, prompt):
+        """任务模板：只把草稿填进输入框，不自动发送。"""
+        if self.input.get('1.0', 'end-1c').strip():
+            self.status.set('输入框里已有草稿，请先发送或清空，再选模板。')
+            self.input.focus_set()
+            return
+        self.input.insert('1.0', prompt)
+        self.input.focus_set()
+
+    def _sync_agent_readiness(self):
+        """对话空态说清楚还差什么：先模型，再项目。"""
+        chat = getattr(self, 'chat', None)
+        if chat is None or not hasattr(chat, 'set_locked'):
+            return
+        chat.on_template = self._use_template
+        reason, action = '', None
+        pick = ('选择 AI 模型', self.open_model_setup)
+        welcome = getattr(self, 'welcome', None)
+        setup = getattr(welcome, 'setup', None)
+        runtime = getattr(self, 'runtime', None)
+        if self.source is not None and runtime is not None and getattr(runtime, 'ready', False):
+            # 项目已打开：以运行时自己的就绪检查为准（项目可自带模型配置）。
+            try:
+                state = runtime.readiness()
+            except Exception:
+                state = {'ready': True}
+            if not state.get('ready', True):
+                code = state.get('code')
+                if code in {'model_missing', 'credential_missing'}:
+                    reason = ('还没有可用的 AI 模型。\n选一家厂商、粘贴密钥，Agent 就能开始。'
+                              if code == 'model_missing' else
+                              '所选模型还没有 API 密钥。\n重新粘贴一次密钥即可。')
+                else:
+                    reason = '所选模型的配置有问题。\n重新选择一家厂商即可修好。'
+                action = pick if self._model_settings_home is not None else None
+        elif setup is not None and not setup.model_ready():
+            reason = '还没有选择 AI 模型。\n在中间的清单第 ① 步选一家、粘贴密钥即可。'
+        elif self.source is None:
+            reason = '还没有打开项目。\n在中间页面打开一个文件夹，Agent 只在里面工作。'
+        chat.set_locked(reason, action)
+        self._sync_perm_badge()
+
+    def open_model_setup(self):
+        """项目已打开时的模型配置入口：只含第 ① 步的小窗口。"""
+        if self._model_settings_home is None:
+            return
+        existing = getattr(self, '_model_setup_window', None)
+        if existing is not None and existing.winfo_exists():
+            existing.lift()
+            return
+        from .onboarding import SetupChecklist
+        window = tk.Toplevel(self)
+        window.title('选择 AI 模型')
+        window.configure(bg=C['surface'])
+        window.transient(self.winfo_toplevel())
+
+        def saved(outcome):
+            self._on_models_saved(outcome)
+            window.destroy()
+        panel = SetupChecklist(window, home=self._model_settings_home, on_open=lambda: None,
+                               on_saved=saved, model_only=True)
+        panel.pack(fill='both', expand=True)
+        self._model_setup_window = window
+        panel.key_entry.focus_set()
+
+    def _on_models_saved(self, outcome):
+        """上手清单保存了模型：通知宿主刷新，并在状态栏说人话。"""
+        if callable(self._models_changed):
+            try:
+                self._models_changed()
+            except Exception:
+                pass
+        self.status.set(f"模型已就绪：{outcome.get('model', '')}。下一步：打开一个项目。")
+        self._sync_agent_readiness()
 
     def _sync_welcome(self):
         """M2：按 self.source 二态切换中央区——无项目 → 欢迎页；
@@ -498,6 +587,7 @@ class DevelopmentWorkbench(ttk.Frame):
         本方法保留 M2 签名与调用点，实际切换逻辑委派
         _sync_central_view（三态真源）。"""
         self._sync_central_view()
+        self._sync_agent_readiness()
 
     def _sync_central_view(self):
         """M6：中央区三态切换——无项目 → 欢迎页（welcome.py）；
@@ -1335,6 +1425,8 @@ class DevelopmentWorkbench(ttk.Frame):
             panel = getattr(self, 'agent_panel', None)
             if panel is not None and hasattr(panel, 'set_permission'):
                 panel.set_permission(value)
+                panel.on_permission_request = self._request_permission
+                panel.set_permission_hint(self.source is not None and value == 'read-only')
             if getattr(self, '_runtime_ctx', None) is not None:
                 self._runtime_ctx.set_sandbox(value)
                 # 折叠带摘要跟随权限变化

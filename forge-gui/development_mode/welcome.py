@@ -81,9 +81,17 @@ def _detect_kind(path):
 class WelcomeView(ttk.Frame):
     """产品化欢迎页：品牌 + 3 动作卡 + 近期项目 + 快捷键。"""
 
+    _NO_SETUP = object()
+
     def __init__(self, master, *, on_open, on_recent, on_clone=None,
-                 recent_provider, shortcuts_provider=None, **kw):
+                 recent_provider, shortcuts_provider=None,
+                 setup_home=_NO_SETUP, on_models_saved=None, **kw):
         super().__init__(master, **kw)
+        # 上手清单（onboarding.py）：setup_home 未传 = 不启用（旧调用方
+        # 与独立运行保持原样）；传 None = 无模型来源，只引导打开项目。
+        self._setup_home = setup_home
+        self._on_models_saved = on_models_saved
+        self.setup = None
         self._on_open = on_open
         self._on_recent = on_recent
         self._on_clone = on_clone
@@ -97,7 +105,9 @@ class WelcomeView(ttk.Frame):
     # ── 公开访问器（测试 / 验收探针用）────────────────────────────
     @property
     def open_button(self):
-        """「打开项目」按钮（兼容旧测试，指向第一张动作卡）。"""
+        """「打开项目」按钮：清单显示时指向清单第 ② 步，否则指向第一张动作卡。"""
+        if self.setup is not None and self.setup.winfo_manager():
+            return self.setup.open_button
         return self._action_cards[0].action_button if self._action_cards else None
 
     @property
@@ -136,9 +146,17 @@ class WelcomeView(ttk.Frame):
                  font=FONT_UI, bg=C['bg'], fg=C['subtext']).pack(
             anchor='w', pady=(6, 20))
 
+        # ①½ 上手清单：没配模型或第一次用时替代动作卡（见 _sync_setup）。
+        if self._setup_home is not self._NO_SETUP:
+            from .onboarding import SetupChecklist
+            self.setup = SetupChecklist(self, home=self._setup_home, on_open=self._open,
+                                        on_clone=self._clone if self._on_clone else None,
+                                        on_saved=self._models_saved)
+
         # ② 3 张动作卡（RoundedCard 圆角卡，与 Work Mode 同一视觉语言）
         action_row = tk.Frame(self, bg=C['bg'])
         action_row.pack(anchor='w', fill='x', pady=(0, 20))
+        self._action_row = action_row
         for column, (glyph, title, desc, key) in enumerate(ACTIONS):
             card = self._build_action_card(action_row, glyph, title, desc, key)
             card.grid(row=0, column=column, padx=(0, 12), sticky='nsew')
@@ -148,6 +166,7 @@ class WelcomeView(ttk.Frame):
         # ③ 近期项目：标题 + 计数 + 分隔线 + 列表（按 mtime 倒序）
         recent_header = tk.Frame(self, bg=C['bg'])
         recent_header.pack(anchor='w', fill='x', pady=(0, 10))
+        self._recent_header = recent_header
         tk.Label(recent_header, text='近期项目', font=FONT_SECTION, bg=C['bg'],
                  fg=C['text']).pack(side='left')
         self._recent_count_lbl = tk.Label(recent_header, text='', font=FONT_CAPTION,
@@ -341,6 +360,7 @@ class WelcomeView(ttk.Frame):
         if hasattr(self, '_recent_count_lbl'):
             self._recent_count_lbl.configure(
                 text=f'（{len(recent)}）' if recent else '（暂无）')
+        self._sync_setup()
         if not recent:
             tk.Label(self._recent_box, text='暂无项目记录——打开一个目录后会自动出现在这里。',
                      font=FONT_UI, bg=C['bg'], fg=C['ter'],
@@ -348,6 +368,26 @@ class WelcomeView(ttk.Frame):
             return
         for path in recent:
             self._build_recent_row(path)
+
+    def _sync_setup(self):
+        """清单与动作卡二选一：需要引导时清单在上、动作卡收起。"""
+        setup, row = self.setup, getattr(self, '_action_row', None)
+        if setup is None or row is None:
+            return
+        if setup.needed(bool(self.recent_paths)):
+            setup.refresh()
+            if not setup.winfo_manager():
+                setup.pack(anchor='w', fill='x', pady=(0, 24), before=row)
+            row.pack_forget()
+        else:
+            setup.pack_forget()
+            if not row.winfo_manager():
+                row.pack(anchor='w', fill='x', pady=(0, 20), before=self._recent_header)
+
+    def _models_saved(self, outcome):
+        if self._on_models_saved is not None:
+            self._on_models_saved(outcome)
+        self._sync_setup()
 
     def _build_recent_row(self, path):
         """单条近期项目：类型图标 + 路径 + 时间戳。"""

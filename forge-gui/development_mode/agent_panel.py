@@ -9,10 +9,21 @@ from tkinter import ttk
 
 from chat_widgets import parse_blocks, inline_segments
 from .buttons import dev_button
-from gui_theme import C, FONT_UI, FONT_UI_BOLD, FONT_SECTION, FONT_CAPTION, FONT_MONO_SM, style_editor, button_feedback, attach_tooltip, ui_px
+from gui_theme import C, FONT_UI, FONT_UI_BOLD, FONT_SECTION, FONT_CAPTION, FONT_SMALL, FONT_MONO_SM, style_editor, button_feedback, attach_tooltip, ui_px
 from ui_icons import IconButton
 from forge.secrets import redact
 
+
+# 新手任务模板（图标 / 标题 / 是否改文件 / 填入输入框的草稿）。草稿只填入、
+# 不自动发送；「会改文件」提示与权限三档对应。
+TASK_TEMPLATES = (
+    ('info', '解释这个项目是怎么组织的', '只读',
+     '请先阅读这个项目的 README 和目录结构，用通俗的话解释它是做什么的、主要代码在哪里。不要修改任何文件。'),
+    ('check', '找出并修复失败的测试', '会改文件',
+     '请运行项目已有的测试，找出失败的用例，定位原因并修复；修完再跑一遍测试确认全部通过。'),
+    ('plus', '加一个新功能（我来描述）', '会改文件',
+     '我想加一个新功能：（在这里描述）。请先给出实现计划，等我确认后再改代码，并补上测试。'),
+)
 
 # 对话区空态引导：无消息时显示，避免右侧 Agent 面板呈现为纯黑空洞。
 # 文案只描述"这里将会发生什么"，不伪造任何已发生的执行。
@@ -67,6 +78,11 @@ class Conversation(tk.Text):
         # message() 首次写入真实内容时撤下，clear() 时重建——一次性，
         # 不与真实消息混排。
         self._empty_card = None
+        # 新手层：app 注入 on_template（把草稿填进输入框）与锁定原因
+        # （没模型 / 没项目时说清楚还差什么）；均可缺省，旧行为不变。
+        self.on_template = None
+        self._locked_reason = ''
+        self._locked_action = None
         self._links = 0
         self._windows = []
         self._last_width = 0
@@ -87,19 +103,67 @@ class Conversation(tk.Text):
                 return
             from ui_icons import icon_image
             box = tk.Frame(self, bg=C['chat'])
-            box.place(relx=0.5, rely=0.42, anchor='c')
+            # 内容含模板后变高：从顶部往下排，避免居中时图标被裁掉。
+            box.place(relx=0.5, y=ui_px(self, 28), anchor='n')
             img = icon_image(box, 'chat', size=28, fg=C['ter'])
             if img is not None:
                 icon = tk.Label(box, image=img, bg=C['chat'], bd=0)
                 icon.image = img  # 防 GC
                 icon.pack(pady=(0, 8))
-            tk.Label(box, text='和 Coding Agent 开始一个任务', font=FONT_SECTION,
-                     bg=C['chat'], fg=C['subtext']).pack()
-            tk.Label(box, text=CHAT_EMPTY_HINT, font=FONT_CAPTION, bg=C['chat'],
-                     fg=C['ter'], justify='center').pack(pady=(4, 0))
+            locked = bool(self._locked_reason)
+            tk.Label(box, text='完成设置后就能开始' if locked else '和 Coding Agent 开始一个任务',
+                     font=FONT_SECTION, bg=C['chat'], fg=C['subtext']).pack()
+            tk.Label(box, text=self._locked_reason if locked else CHAT_EMPTY_HINT,
+                     font=FONT_CAPTION, bg=C['chat'], fg=C['ter'], justify='center').pack(pady=(4, 0))
+            if locked and self._locked_action is not None:
+                label, callback = self._locked_action
+                self.locked_button = dev_button(box, label, callback, kind='primary')
+                self.locked_button.pack(pady=(ui_px(self, 10), 0))
+            self._build_templates(box, enabled=not locked)
             self._empty_card = box
         except tk.TclError:
             pass
+
+    def _build_templates(self, box, *, enabled):
+        if self.on_template is None:
+            return
+        tk.Label(box, text='或者从这里开始：', font=FONT_CAPTION, bg=C['chat'],
+                 fg=C['faint']).pack(anchor='w', pady=(ui_px(self, 14), ui_px(self, 4)))
+        for icon, title, note, prompt in TASK_TEMPLATES:
+            row = tk.Frame(box, bg=C['surface'], highlightthickness=1, highlightbackground=C['line'],
+                           cursor='hand2' if enabled else 'arrow',
+                           padx=ui_px(self, 10), pady=ui_px(self, 7))
+            row.pack(fill='x', pady=(0, ui_px(self, 6)))
+            glyph = tk.Canvas(row, width=ui_px(self, 16), height=ui_px(self, 16), bg=C['surface'],
+                              highlightthickness=0, bd=0)
+            from ui_icons import draw_icon
+            draw_icon(glyph, icon, size=ui_px(self, 16), fg=C['subtext'] if enabled else C['faint'])
+            glyph.pack(side='left', padx=(0, ui_px(self, 8)))
+            label = tk.Label(row, text=title, font=FONT_SMALL, bg=C['surface'],
+                             fg=C['body'] if enabled else C['faint'], anchor='w')
+            label.pack(side='left', fill='x', expand=True)
+            tag = tk.Label(row, text=note, font=FONT_CAPTION, bg=C['surface'],
+                           fg=C['warn'] if note == '会改文件' and enabled else C['faint'])
+            tag.pack(side='right', padx=(ui_px(self, 12), 0))
+            if not enabled:
+                continue
+            parts = (row, glyph, label, tag)
+            for widget in parts:
+                widget.bind('<Button-1>', lambda _e, text=prompt: self.on_template(text))
+                widget.bind('<Enter>', lambda _e, ws=parts: [w.configure(bg=C['hover']) for w in ws])
+                widget.bind('<Leave>', lambda _e, ws=parts: [w.configure(bg=C['surface']) for w in ws])
+
+    def set_locked(self, reason, action=None):
+        """未就绪（没模型 / 没项目）时空态说明还差什么，模板置灰；就绪后恢复。
+
+        action=(按钮文字, 回调) 时在说明下给一个直达按钮。"""
+        reason = reason or ''
+        if (reason, action) == (self._locked_reason, self._locked_action) and self._empty_card is not None:
+            return
+        self._locked_reason, self._locked_action = reason, action
+        if self._empty_card is not None:
+            self._drop_empty_hint()
+            self._insert_empty_hint()
 
     def _drop_empty_hint(self):
         """撤下一次性空态卡（若存在）。只销毁覆盖层，不动 Text 内容——
@@ -413,13 +477,15 @@ class AgentPanel(ttk.Frame):
         # mapped=False）——用户在默认 UI 下看不到"下一个任务将以什么
         # 权限运行"。徽标放标题行，任何时刻可见；点击展开运行时上下文。
         # app._sync_perm_badge 调 set_permission() 同步。
-        self._perm_chip = tk.Label(titlebar, text='只读', font=FONT_CAPTION,
+        self._perm_chip = tk.Label(titlebar, text='只看不改', font=FONT_CAPTION,
                                    bg=C['surface2'], fg=C['subtext'],
                                    padx=7, pady=2, cursor='hand2')
         attach_tooltip(self._perm_chip,
-                       '当前权限：下一个任务的文件写入范围。点击展开「运行时上下文」修改。')
+                       'Agent 下一个任务能做什么。点击切换；高级选项在菜单底部。')
         self._perm_chip.pack(side='left', padx=(6, 2))
-        self._perm_chip.bind('<Button-1>', lambda _e: self._expand_runtime_context())
+        self._perm_chip.bind('<Button-1>', lambda _e: self._permission_menu())
+        # app 注入：on_permission_request(value) 走既有确认流程（permission_changed）。
+        self.on_permission_request = None
         self.header_buttons = {}
         for key, icon, label, callback in (
                 ('new', 'plus', '新对话', new_conversation),
@@ -435,6 +501,18 @@ class AgentPanel(ttk.Frame):
             attach_tooltip(button, label)
             button.pack(side='left', padx=1)
             self.header_buttons[key] = button
+        # 只读提示条：项目已打开但 Agent 还不能改文件时，用大白话给出一键授权入口。
+        self._perm_hint = tk.Frame(self, bg=C['accent_soft'], padx=ui_px(self, 12),
+                                   pady=ui_px(self, 6))
+        tk.Label(self._perm_hint, text='Agent 现在只能看、不能改文件', font=FONT_CAPTION,
+                 bg=C['accent_soft'], fg=C['accent_text']).pack(side='left')
+        allow = tk.Label(self._perm_hint, text='允许修改这个项目', font=FONT_CAPTION,
+                         bg=C['accent'], fg='#FFFFFF', padx=ui_px(self, 8), pady=ui_px(self, 2),
+                         cursor='hand2')
+        allow.pack(side='right')
+        allow.bind('<Button-1>', lambda _e: self._request_permission('workspace-write'))
+        self.perm_hint_button = allow
+        self._perm_hint_anchor = titlebar
         # 运行时上下文（权限矩阵 + 模型路由）—— 4-Tab 之上、标题之下
         self._runtime_context = None  # 由 app 调 mount_runtime_context 注入
         self.notebook = ttk.Notebook(self, style='Coding.TNotebook')
@@ -509,11 +587,48 @@ class AgentPanel(ttk.Frame):
         return self._runtime_context
 
     # ── 权限徽标（P0-D1）──────────────────────────────────────
+    # 设计稿：权限用大白话（只看不改 / 可改项目文件），颜色语义不变。
     _PERM_TONES = {
-        'read-only': ('只读', 'surface2', 'subtext'),
-        'workspace-write': ('工作区可写', 'ok_soft', 'ok'),
-        'danger-full-access': ('危险全访问', 'warn_soft', 'warn'),
+        'read-only': ('只看不改', 'surface2', 'subtext'),
+        'workspace-write': ('可改项目文件', 'ok_soft', 'ok'),
+        'danger-full-access': ('完全访问', 'warn_soft', 'warn'),
     }
+
+    def _request_permission(self, value):
+        if self.on_permission_request is not None:
+            self.on_permission_request(value)
+
+    def _permission_menu(self):
+        """点击权限徽标：两档大白话 + 不支持的完全访问（置灰）+ 高级矩阵。"""
+        if self.on_permission_request is None:
+            self._expand_runtime_context()
+            return
+        menu = tk.Menu(self, tearoff=False, bg=C['surface'], fg=C['text'],
+                       activebackground=C['accent_soft'], activeforeground=C['text'],
+                       disabledforeground=C['faint'])
+        menu.add_command(label='只看不改 —— 只读文件、回答问题',
+                         command=lambda: self._request_permission('read-only'))
+        menu.add_command(label='可改项目文件 —— 能改这个项目、跑测试（需确认）',
+                         command=lambda: self._request_permission('workspace-write'))
+        menu.add_command(label='完全访问 —— Coding 暂不支持', state='disabled')
+        menu.add_separator()
+        menu.add_command(label='高级：权限矩阵 / 模型路由…', command=self._expand_runtime_context)
+        chip = self._perm_chip
+        try:
+            menu.tk_popup(chip.winfo_rootx(), chip.winfo_rooty() + chip.winfo_height())
+        finally:
+            menu.grab_release()
+
+    def set_permission_hint(self, visible):
+        """只读且项目已打开时显示一键授权提示条。"""
+        hint = self._perm_hint
+        try:
+            if visible and not hint.winfo_manager():
+                hint.pack(fill='x', after=self._perm_hint_anchor, pady=(ui_px(self, 6), 0))
+            elif not visible and hint.winfo_manager():
+                hint.pack_forget()
+        except tk.TclError:
+            pass
 
     def set_permission(self, sandbox):
         """更新标题行权限徽标（app._sync_perm_badge 调用）。

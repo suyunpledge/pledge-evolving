@@ -977,7 +977,8 @@ class ForgeGuiApp:
         state.switch('development')
         bench = DevelopmentWorkbench(parent, state, hosted=True,
                                      workspace_request=self._nav_workspace_request,
-                                     model_settings_home=self.home)
+                                     model_settings_home=self.home,
+                                     models_changed=self._reload_configuration)
         bench.pack(fill=tk.BOTH, expand=True)
         self._coding_bench = bench
         # hosted 导航高亮直设：Coding 空间挂载即高亮 Coding（之后每次

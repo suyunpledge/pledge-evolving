@@ -436,7 +436,7 @@ class ExplorerPanel(ttk.Frame):
         # 有数据即撤。
         from .bottom_panel import _empty_state_card
         self._tree_empty = _empty_state_card(
-            files, '文件', '尚未打开项目\n从「Project → 打开项目」选择工作区',
+            files, '文件', '还没有打开项目\n在中间页面打开一个文件夹',
             bg=C['sidebar'], wrap=220, rely=0.42)
         self._sync_tree_empty()
 
