@@ -7619,6 +7619,8 @@ class ForgeGuiApp:
             plugin_workspace, plugin_session = self._active_workspace(), self._session_id
             reasoning_effort = ("high" if self._reasoning_effort == "contemplate"
                                 else None if self._reasoning_effort == "off" else self._reasoning_effort)
+            # 分级检索长期记忆：只接 Work Mode（Coding 需要精确上下文，有意不接）。
+            work_memory = getattr(self, "_workspace_mode", None) != self._workspace_kind.CODING
             planning = self._read_planning_level()  # capture all Tk/config state on the UI thread
             planning_model = self._phase_setting('planning', 'model')
             phase_rows = copy.deepcopy(self.user_rows)
@@ -7646,6 +7648,19 @@ class ForgeGuiApp:
                         raise GatewayError(f"gateway 未连接：{msg}。请先启动 gateway 后重试。")
                     if cancel_event.is_set():
                         raise GenerationCancelled("已停止生成")
+                    # 插件未启用 → None，零网络调用；服务挂了 → ''，对话照常。
+                    memory = self._work_memory_bridge() if work_memory else None
+                    if memory is not None:
+                        self._post_ui(self._set_request_status, "检索长期记忆…")
+                        memory_ctx = memory.context_for(text)
+                        notice = memory.consume_notice()
+                        if notice:
+                            self._post_ui(self._set_status, notice, "warn")
+                        if memory_ctx:
+                            # 同知识库提示：独立 user 消息、插在本轮提问之前，不进 retained_history。
+                            messages.insert(max(0, len(messages) - 1), ChatMessage("user", memory_ctx))
+                        if cancel_event.is_set():
+                            raise GenerationCancelled("已停止生成")
                     if planning != "none":
                         self._post_ui(self._set_request_status, tr("事前规划"))
                         planner = client
@@ -7836,6 +7851,8 @@ class ForgeGuiApp:
                     full = "".join(acc)
                     if cancel_event.is_set():
                         raise GenerationCancelled("已停止生成")
+                    if memory is not None and full.strip():
+                        memory.ingest_turn_async(text, full, session=plugin_session)
                     self._post_ui(self._chat_succeeded, retained_history, full, text,
                                   str(getattr(result, "reasoning_content", "") or ""))
                 except GenerationCancelled:
@@ -7852,6 +7869,23 @@ class ForgeGuiApp:
             return
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _work_memory_bridge(self):
+        """分级检索桥（工作线程调用）：插件未安装/未启用返回 None。
+        按端口缓存，保证「服务挂了」的提示跨轮只出现一次。"""
+        try:
+            import memory_retrieval
+            port = memory_retrieval.plugin_port(self.home)
+        except Exception:
+            return None
+        if port is None:
+            self._memory_bridge = None
+            return None
+        bridge = getattr(self, "_memory_bridge", None)
+        if bridge is None or bridge.client.base_url != f"http://127.0.0.1:{port}":
+            bridge = memory_retrieval.memory_bridge_for(self.home)
+            self._memory_bridge = bridge
+        return bridge
 
     def _chat_succeeded(self, messages, full, original_prompt=None, reasoning_content=""):
         if self._abort_requested:
