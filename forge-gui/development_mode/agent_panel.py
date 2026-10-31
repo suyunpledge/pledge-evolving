@@ -296,6 +296,8 @@ class Conversation(tk.Text):
         self.see('end')
 
     def card(self, widget):
+        # 计划 / 步骤 / 改动卡也算真实内容：撤下空态覆盖层，否则它会盖在卡片上。
+        self._drop_empty_hint()
         self.configure(state='normal')
         self.insert('end', '\n')
         self.window_create('end', window=widget)
@@ -306,16 +308,89 @@ class Conversation(tk.Text):
         self.configure(state='disabled')
 
 
+# 时间线每行的状态：图标 + 颜色 token（与权限徽标同一套语义色）。
+STEP_MARKS = {
+    'completed': ('check', 'ok'), 'failed': ('close', 'error'), 'cancelled': ('close', 'faint'),
+    'running': ('refresh', 'accent2'), 'awaiting_approval': ('warning', 'warn'),
+    'not_started': ('minus', 'faint'), 'unknown': ('info', 'warn'),
+}
+TIMELINE_ROWS = 8
+
+
+def step_subject(row):
+    """一步工具调用的「对象」：路径 / 命令 / 查询，取不到就空。"""
+    args = row.get('args') or {}
+    for key in ('path', 'command', 'pattern', 'query', 'url', 'name'):
+        value = args.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip().replace('\n', ' ')
+    blocks = args.get('patches') or args.get('edits') or []
+    paths = [b.get('path') for b in blocks if isinstance(b, dict) and b.get('path')]
+    return '、'.join(paths[:2]) + (f' 等 {len(paths)} 个' if len(paths) > 2 else '') if paths else ''
+
+
+def format_seconds(seconds):
+    if seconds is None:
+        return ''
+    return f'{seconds * 1000:.0f}ms' if seconds < 1 else f'{seconds:.1f}s' if seconds < 60 else \
+        f'{int(seconds // 60)}m{int(seconds % 60):02d}s'
+
+
+def estimate_cost(runs):
+    """按 forge.pricing 的账单混合单价估算花费。
+
+    返回 (¥ 合计, 是否有价格未知的运行)。pricing 把「未知价」记为 0.0，
+    这里不把它当免费：有 token 却没有单价的运行单独标记为未知。
+    """
+    from forge.pricing import cost_of, rate_for
+    total, unknown = 0.0, False
+    for run in runs:
+        tokens = int(run.get('tokens') or 0)
+        if not tokens:
+            continue
+        model = str(run.get('model') or '')
+        if rate_for(model) > 0:
+            total += cost_of(model, tokens)
+        else:
+            unknown = True
+    return total, unknown
+
+
+def format_cost(total, unknown):
+    if not total and not unknown:
+        return ''
+    if not total:
+        return '价格未知'
+    amount = f'≈¥{total:.4f}' if total < 0.01 else f'≈¥{total:.2f}'
+    return amount + (' · 部分价格未知' if unknown else '')
+
+
+def format_tokens(tokens):
+    if not tokens:
+        return ''
+    return f'{tokens / 1000:.1f}k tokens' if tokens >= 1000 else f'{tokens} tokens'
+
+
 class ToolSummary(ttk.Frame):
+    """执行时间线卡：标题（步数 / 状态计数 / token）+ 最近步骤 + 可展开原始结果。
+
+    耗时是界面按事件到达时刻量的（运行时事件不带时间戳），标注为约值；
+    token 只取运行时 usage 事件的真实合计，不估算花费。
+    """
+
     def __init__(self, parent):
         super().__init__(parent, padding=8, style='Card.TFrame')
-        self.summary = ttk.Label(self, text='工具步骤', font=FONT_UI, style='Card.TLabel')
+        self.summary = ttk.Label(self, text='工具步骤', font=FONT_UI_BOLD, style='Card.TLabel')
         self.summary.pack(anchor='w')
-        self.button = dev_button(self, 'View Details', self.toggle, kind='quiet')
+        self.timeline = tk.Frame(self, bg=C['surface'])
+        self.timeline.pack(fill='x', pady=(ui_px(self, 6), ui_px(self, 2)))
+        self.button = dev_button(self, '展开原始结果', self.toggle, kind='quiet')
         self.button.pack(anchor='w')
         self.detail_frame = ttk.Frame(self)
         self.detail = readonly(self.detail_frame, width=38)
         self.expanded = False
+        self._width = 300
+        self._signature = None
 
     def toggle(self):
         self.expanded = not self.expanded
@@ -323,21 +398,80 @@ class ToolSummary(ttk.Frame):
             self.detail_frame.pack(fill='both', expand=True)
         else:
             self.detail_frame.pack_forget()
-        self.button.configure(text='Hide Details' if self.expanded else 'View Details')
+        self.button.configure(text='收起原始结果' if self.expanded else '展开原始结果')
 
     def fit(self, width):
+        self._width = width
         self.summary.configure(wraplength=width)
         from tkinter import font
         char = max(1, font.Font(root=self, font=FONT_UI).measure('0'))
         self.detail.configure(width=max(10, (width - 20) // char))
+        self._signature = None
 
-    def update_actions(self, actions):
+    def update_actions(self, actions, *, tokens=None, clock=None, cost=''):
+        clock = clock or {}
         counts = {}
         for row in actions:
             counts[row['status']] = counts.get(row['status'], 0) + 1
-        self.summary.configure(text='工具 · ' + ' / '.join(f'{k}: {v}' for k, v in counts.items()))
+        parts = [f'执行步骤 · {len(actions)} 步', ' / '.join(f'{k}: {v}' for k, v in counts.items())]
+        if tokens:
+            parts.append(format_tokens(tokens))
+        if cost:
+            parts.append(cost)
+        self.summary.configure(text=' · '.join(parts))
         replace(self.detail, '\n'.join(f"{r.get('agent', 'forge')} · {r.get('tool', '')} · {r['status']}\n"
             + str(r.get('result', ''))[:1500] for r in actions[-100:]))
+        self._render_timeline(actions, clock)
+
+    def _render_timeline(self, actions, clock):
+        import time
+        now = time.monotonic()
+        recent = actions[-TIMELINE_ROWS:]
+        rows = []
+        for row in recent:
+            started, finished = clock.get(row.get('action_id'), (None, None))
+            elapsed = (finished or now) - started if started is not None else None
+            rows.append((row.get('action_id'), row.get('agent', 'forge'), row.get('tool', ''),
+                         step_subject(row), row['status'],
+                         format_seconds(elapsed) if row['status'] != 'running' else
+                         ('进行中' if elapsed is None else f'进行中 {format_seconds(elapsed)}')))
+        signature = (tuple(rows), len(actions), self._width)
+        if signature == self._signature:
+            return
+        self._signature = signature
+        for child in self.timeline.winfo_children():
+            child.destroy()
+        from ui_icons import draw_icon
+        hidden = len(actions) - len(recent)
+        if hidden:
+            tk.Label(self.timeline, text=f'… 更早的 {hidden} 步在详情里', font=FONT_CAPTION,
+                     bg=C['surface'], fg=C['faint'], anchor='w').pack(fill='x')
+        size = ui_px(self, 12)
+        from tkinter import font as tkfont
+        mono, caption = tkfont.Font(root=self, font=FONT_MONO_SM), tkfont.Font(root=self, font=FONT_CAPTION)
+        for _id, agent, tool, subject, status, timing in rows:
+            line = tk.Frame(self.timeline, bg=C['surface'])
+            line.pack(fill='x', pady=1)
+            icon, tone = STEP_MARKS.get(status, ('info', 'faint'))
+            mark = tk.Canvas(line, width=size, height=size, bg=C['surface'], highlightthickness=0, bd=0)
+            draw_icon(mark, icon, size=size, fg=C[tone])
+            mark.pack(side='left', padx=(0, ui_px(self, 6)))
+            name = tool if agent in ('forge', '') else f'{agent} · {tool}'
+            tk.Label(line, text=name, font=FONT_MONO_SM, bg=C['surface'], fg=C['accent2']).pack(side='left')
+            if subject:
+                # 按字体实测可用宽度截断，保留结尾（文件名 / 命令尾部最有信息量）。
+                room = (self._width - size - mono.measure(name) - caption.measure(timing or '')
+                        - ui_px(self, 28))
+                text = subject
+                while len(text) > 4 and caption.measure(text) > room:
+                    text = text[2:]
+                if text != subject:
+                    text = '…' + text
+                tk.Label(line, text=text, font=FONT_CAPTION, bg=C['surface'], fg=C['body'],
+                         anchor='w').pack(side='left', fill='x', expand=True, padx=(ui_px(self, 6), 0))
+            if timing:
+                tk.Label(line, text=timing, font=FONT_CAPTION, bg=C['surface'], fg=C['faint']).pack(
+                    side='right')
 
 
 class DiffCard(ttk.Frame):
@@ -357,22 +491,22 @@ class DiffCard(ttk.Frame):
 
     def update_change(self, change):
         self.change = dict(change)
-        self.title.configure(text='Agent Modified: ' + change['path'])
+        self.title.configure(text='已改动：' + change['path'])
         state = change['state']
         label = {'pending': '待审批 · 未写入', 'written': '已写入工作区', 'committed': '已提交 Git'}.get(state, state)
         counts = ('行数预览不可用' if change.get('added') is None else
-                  f"+ {change['added']} lines / - {change['removed']} lines")
+                  f"+{change['added']} 行 / −{change['removed']} 行")
         if change.get('revision_changed'):
             label += ' · 当前文件版本已变化'
         self.state_label.configure(text=label + '\n' + counts)
         for button in self.buttons.values():
             button.destroy()
         self.buttons.clear()
-        operations = [('view', 'View Diff'), ('open', 'Open File')]
+        operations = [('view', '查看 Diff'), ('open', '打开文件')]
         if state == 'pending':
             operations.append(('pending', '处理授权 / 重试'))
         elif state == 'written' and change.get('checkpoint') and change.get('before_revision') is not None and not change.get('revision_changed'):
-            operations.append(('revert', 'Revert'))
+            operations.append(('revert', '撤销（先看 Diff）'))
         for key, label in operations:
             button = dev_button(self.row, label, lambda k=key: self.callbacks[k](self.change), kind='ghost')
             self.buttons[key] = button
@@ -386,6 +520,82 @@ class DiffCard(ttk.Frame):
         columns = max(1, width // 110)
         for index, button in enumerate(self.buttons.values()):
             button.grid(row=index // columns, column=index % columns, sticky='w', padx=(0, 4), pady=2)
+
+
+class ChangesSummary(ttk.Frame):
+    """本次任务的改动汇总：文件数与 +/− 合计、每个文件一行，点行看 Diff。"""
+
+    ROWS = 6
+
+    def __init__(self, parent, *, view, review_all=None):
+        super().__init__(parent, padding=8, style='Card.TFrame')
+        head = tk.Frame(self, bg=C['surface'])
+        head.pack(fill='x')
+        self.title = tk.Label(head, text='', font=FONT_UI_BOLD, bg=C['surface'], fg=C['text'])
+        self.title.pack(side='left')
+        self.totals = tk.Label(head, text='', font=FONT_MONO_SM, bg=C['surface'], fg=C['subtext'])
+        self.totals.pack(side='left', padx=(ui_px(self, 8), 0))
+        if review_all is not None:
+            self.review_button = dev_button(head, '逐个审查', review_all, kind='ghost')
+            self.review_button.pack(side='right')
+        self.rows = tk.Frame(self, bg=C['surface'])
+        self.rows.pack(fill='x', pady=(ui_px(self, 6), 0))
+        self._view = view
+        self._signature = None
+
+    def fit(self, width):
+        self._signature = None
+
+    def view_file(self, index):
+        if 0 <= index < len(getattr(self, 'files', ())):
+            self._view(self.files[index]['change'])
+
+    def update_changes(self, changes):
+        by_path = {}
+        for change in changes:
+            row = by_path.setdefault(change['path'], {'path': change['path'], 'added': 0, 'removed': 0,
+                                                      'known': True, 'pending': False, 'change': change})
+            if change.get('added') is None:
+                row['known'] = False
+            else:
+                row['added'] += change['added'] or 0
+                row['removed'] += change['removed'] or 0
+            row['pending'] = row['pending'] or change.get('state') == 'pending'
+            row['change'] = change
+        files = list(by_path.values())
+        self.files = files
+        signature = tuple((f['path'], f['added'], f['removed'], f['known'], f['pending']) for f in files)
+        if signature == self._signature:
+            return
+        self._signature = signature
+        added = sum(f['added'] for f in files)
+        removed = sum(f['removed'] for f in files)
+        self.title.configure(text=f'改动 {len(files)} 个文件')
+        self.totals.configure(text=f'+{added} −{removed}' + ('' if all(f['known'] for f in files) else ' · 部分行数未知'))
+        for child in self.rows.winfo_children():
+            child.destroy()
+        for index, item in enumerate(files[:self.ROWS]):
+            line = tk.Frame(self.rows, bg=C['surface'], cursor='hand2')
+            line.pack(fill='x', pady=1)
+            path = tk.Label(line, text=item['path'], font=FONT_MONO_SM, bg=C['surface'], fg=C['body'],
+                            anchor='w', cursor='hand2')
+            path.pack(side='left', fill='x', expand=True)
+            parts = [line, path]
+            if item['pending']:
+                tag = tk.Label(line, text='待授权', font=FONT_CAPTION, bg=C['surface'], fg=C['warn'])
+                tag.pack(side='right', padx=(ui_px(self, 6), 0))
+                parts.append(tag)
+            if item['known']:
+                for text, tone in ((f"−{item['removed']}", 'diff_del'), (f"+{item['added']}", 'diff_add')):
+                    label = tk.Label(line, text=text, font=FONT_MONO_SM, bg=C['surface'], fg=C[tone])
+                    label.pack(side='right', padx=(ui_px(self, 6), 0))
+                    parts.append(label)
+            for widget in parts:
+                widget.bind('<Button-1>', lambda _e, i=index: self.view_file(i))
+        hidden = len(files) - self.ROWS
+        if hidden > 0:
+            tk.Label(self.rows, text=f'… 还有 {hidden} 个文件，点「逐个审查」查看全部', font=FONT_CAPTION,
+                     bg=C['surface'], fg=C['faint'], anchor='w').pack(fill='x')
 
 
 class AgentEvents(ttk.Frame):
@@ -483,6 +693,13 @@ class AgentPanel(ttk.Frame):
         attach_tooltip(self._perm_chip,
                        'Agent 下一个任务能做什么。点击切换；高级选项在菜单底部。')
         self._perm_chip.pack(side='left', padx=(6, 2))
+        # 信息密度：简洁只留对话与结果；专业显示底部面板与运行时上下文。
+        self._density_chip = tk.Label(titlebar, text='专业', font=FONT_CAPTION,
+                                      bg=C['bg'], fg=C['faint'], padx=6, pady=2, cursor='hand2')
+        attach_tooltip(self._density_chip, '信息密度：点击在「简洁」与「专业」之间切换')
+        self._density_chip.pack(side='left', padx=(2, 2))
+        self._density_chip.bind('<Button-1>', lambda _e: self.on_density_toggle and self.on_density_toggle())
+        self.on_density_toggle = None
         self._perm_chip.bind('<Button-1>', lambda _e: self._permission_menu())
         # app 注入：on_permission_request(value) 走既有确认流程（permission_changed）。
         self.on_permission_request = None
@@ -515,6 +732,9 @@ class AgentPanel(ttk.Frame):
         self._perm_hint_anchor = titlebar
         # 运行时上下文（权限矩阵 + 模型路由）—— 4-Tab 之上、标题之下
         self._runtime_context = None  # 由 app 调 mount_runtime_context 注入
+        # 执行时间线的界面计时：action_id → (开始, 结束)，monotonic 秒。
+        self.action_clock = {}
+        self._changes_summary = None
         self.notebook = ttk.Notebook(self, style='Coding.TNotebook')
         self.notebook.pack(fill='both', expand=True)
         # Agent 状态条（v0.4 产品化）：4-Tab 上方显示 idle / running / waiting
@@ -577,6 +797,8 @@ class AgentPanel(ttk.Frame):
         self._runtime_context = RuntimeContext(self, **kwargs)
         # 插在 titlebar 与 notebook 之间
         self._runtime_context.pack(fill='x', before=self.notebook)
+        if getattr(self, '_density', 'pro') == 'simple':
+            self._runtime_context.pack_forget()
         # 窄窗契约（1200x760）：默认收起，展开由用户点击——避免 chrome
         # 高度把 P0-L1 保护的底部固定组挤出栏底（实测溢出 4px）。
         if hasattr(self._runtime_context, '_toggle'):
@@ -618,6 +840,38 @@ class AgentPanel(ttk.Frame):
             menu.tk_popup(chip.winfo_rootx(), chip.winfo_rooty() + chip.winfo_height())
         finally:
             menu.grab_release()
+
+    def set_density(self, density):
+        """简洁：收起运行时上下文条；专业：恢复。"""
+        simple = density == 'simple'
+        self._density = density
+        self._density_chip.configure(text='简洁' if simple else '专业',
+                                     fg=C['accent2'] if simple else C['faint'])
+        ctx = self._runtime_context
+        if ctx is None:
+            return
+        try:
+            if simple and ctx.winfo_manager():
+                ctx.pack_forget()
+            elif not simple and not ctx.winfo_manager():
+                ctx.pack(fill='x', before=self.notebook)
+        except tk.TclError:
+            pass
+
+    def note_event(self, event):
+        """记录工具步骤的到达时刻（运行时事件没有时间戳，耗时为界面测得的约值）。"""
+        import time
+        action = event.get('action_id')
+        kind = event.get('type')
+        if not action or kind not in {'tool_started', 'tool_completed'}:
+            return
+        started, finished = self.action_clock.get(action, (None, None))
+        now = time.monotonic()
+        if kind == 'tool_started' and started is None:
+            started = now
+        elif kind == 'tool_completed':
+            started, finished = (started if started is not None else now), now
+        self.action_clock[action] = (started, finished)
 
     def set_permission_hint(self, visible):
         """只读且项目已打开时显示一键授权提示条。"""
@@ -758,6 +1012,7 @@ class AgentPanel(ttk.Frame):
                 self.workflow.tag_add(tag, f'{number}.0', f'{number}.end')
         if self._last_task != evidence.task_id:
             self._summary = None
+            self._changes_summary = None
             self._last_task = evidence.task_id
             self._planning_card = None
         if evidence.task_id or evidence.plan:
@@ -775,7 +1030,17 @@ class AgentPanel(ttk.Frame):
             if self._summary is None or not self._summary.winfo_exists():
                 self._summary = ToolSummary(self.chat)
                 self.chat.card(self._summary)
-            self._summary.update_actions(list(evidence.actions.values()))
+            tokens = sum(int(r.get('tokens') or 0) for r in evidence.runs.values())
+            cost = format_cost(*estimate_cost(evidence.runs.values()))
+            self._summary.update_actions(list(evidence.actions.values()), tokens=tokens,
+                                         clock=self.action_clock, cost=cost)
+        if evidence.changes:
+            if self._changes_summary is None or not self._changes_summary.winfo_exists():
+                review_all = (lambda e=evidence: self._view_changes(e)) if self._view_changes else None
+                self._changes_summary = ChangesSummary(self.chat, view=self._callbacks['view'],
+                                                       review_all=review_all)
+                self.chat.card(self._changes_summary)
+            self._changes_summary.update_changes(list(evidence.changes.values()))
         for key, change in evidence.changes.items():
             card = self._cards.get(key)
             if card is None or not card.winfo_exists():

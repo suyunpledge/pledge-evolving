@@ -337,7 +337,9 @@ class WelcomeView(ttk.Frame):
             if len(parts) > 1:
                 return parts
             return [str(raw)]
-        return ['Ctrl+Shift+P  命令面板', 'Ctrl+P  快速打开文件', 'Ctrl+B  切换侧栏']
+        from . import shortcuts
+        return [f"{shortcuts.hint(key)}  {shortcuts.get(key).label}"
+                for key in ('command_palette', 'quick_open', 'focus_explorer')]
 
     # ── 数据填充 ─────────────────────────────────────────────────
     def refresh(self):

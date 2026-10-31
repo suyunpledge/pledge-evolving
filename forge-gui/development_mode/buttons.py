@@ -102,3 +102,21 @@ def tool_button(parent, icon, command, tooltip, *, bg=None):
                       'disabled_bg': base, 'disabled_border': base})
     attach_tooltip(btn, tooltip)
     return btn
+
+
+def keycap(parent, text, *, bg=None, tone='normal'):
+    """单个键帽：圆角 + 1px 描边 + 等宽小字（快速打开 / 命令面板底部提示用）。
+
+    ``tone='quiet'`` 只留描边不上底色；``tone='accent'`` 用于高亮。
+    （取自 wip/gui-20261027；该分支给 rounded_label 加的 inset 参数未移植。）
+    """
+    from gui_theme import FONT_MONO_XS, rounded_label
+    base = bg or _bg_of(parent)
+    if tone == 'accent':
+        fill, outline, fg = C['accent_soft'], C['accent_border'], C['accent_text']
+    elif tone == 'normal':
+        fill, outline, fg = C['surface2'], C['border_hi'], C['subtext']
+    else:  # quiet
+        fill, outline, fg = base, C['border'], C['ter']
+    return rounded_label(parent, text, fill=fill, outline=outline, fg=fg,
+                         font=FONT_MONO_XS, radius=4, padx=5, pady=1, bg=base)

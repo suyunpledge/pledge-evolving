@@ -25,6 +25,7 @@ from forge.development.evidence import TaskEvidence
 from forge.secrets import redact, install_tk_exception_redaction
 from .bottom_panel import ToolPanel, count_problems, count_tests, highlight_diff_lines
 from .buttons import dev_button  # P0 修复：模块级——对话框等非 _build_editor 作用域也要用
+from . import shortcuts  # 键位表（模块级导入——保护方法内不得新增 import 语句）
 from .editor_area import EditorArea, save_document_as
 from .explorer import ExplorerPanel
 from .layout import NavigationBar, StatusBar, PRESETS
@@ -98,6 +99,10 @@ class DevelopmentWorkbench(ttk.Frame):
         self._session_to_restore = self.state.value('session')
         self._resume_project = self.state.value('project')
         self._build()
+        # 键盘层（Ctrl+P / Ctrl+Shift+P / F5 …）在 _build 之外安装——
+        # _build 属 Ownership 保护组，不得新增语句；这里只做一次绑定。
+        self._install_shortcuts()
+        self._init_density()
         self._status_notice_at = float('-inf')
         self._status_background_write = False
         self.status.trace_add('write', self._status_written)
@@ -570,6 +575,234 @@ class DevelopmentWorkbench(ttk.Frame):
                 pass
         self.status.set(f"模型已就绪：{outcome.get('model', '')}。下一步：打开一个项目。")
         self._sync_agent_readiness()
+
+    # ── 键盘层（v0.8：由 shortcuts 键位表驱动）────────────────────
+    def _install_shortcuts(self):
+        """按 ``shortcuts.SHORTCUTS`` 表注册工作台级快捷键（幂等）。
+
+        绑定挂在 toplevel 上（hosted 形态与 WorkBuddy 共用同一个
+        root），因此每条都过 ``_guarded``：只有 Coding 空间真的在前台
+        时才执行并吃掉按键，否则原样放行给宿主。
+        """
+        self._quick = None          # Ctrl+P 浮层句柄（同时用作去重）
+        self._quick_files = None    # 项目文件清单缓存（切项目失效）
+        self._palette = None        # Ctrl+Shift+P 浮层句柄
+        handlers = {
+            'command_palette': self.command_palette,
+            'quick_open': self.quick_open,
+            'save': self.save_current,
+            'save_as': self.save_as_current,
+            'close_tab': self._shortcut_close_tab,
+            'next_tab': lambda: self._cycle_tab(1),
+            'prev_tab': lambda: self._cycle_tab(-1),
+            'focus_explorer': self._focus_explorer,
+            'focus_search': self._focus_search,
+            'run_tests': self._shortcut_run_tests,
+        }
+        try:
+            root = self.winfo_toplevel()
+        except tk.TclError:
+            return
+        for sequence, key in shortcuts.bindings():
+            action = handlers.get(key)
+            if action is None:
+                continue
+            try:
+                root.bind(sequence, self._guarded(action), add='+')
+            except tk.TclError:
+                pass
+
+    def _guarded(self, action):
+        """快捷键守卫：Coding 不在前台就不响应，响应时吃掉按键。"""
+        def invoke(event=None):
+            if not self._shortcut_scope():
+                return None
+            try:
+                action()
+            except tk.TclError:
+                return None
+            return 'break'
+        return invoke
+
+    def _shortcut_scope(self):
+        """该不该响应工作台快捷键：未销毁且工作台当前可见。"""
+        if getattr(self, '_closed', False):
+            return False
+        try:
+            return bool(self.winfo_ismapped())
+        except tk.TclError:
+            return False
+
+    def _agent_input_focused(self):
+        """焦点是否在任务输入框里——输入态下多数全局键要让位。"""
+        try:
+            return self.focus_get() is getattr(self, 'input', None)
+        except (tk.TclError, KeyError):
+            return False
+
+    def _shortcut_close_tab(self):
+        if self._agent_input_focused() or not self.documents:
+            return
+        self.close_current()
+
+    def _cycle_tab(self, delta):
+        """Ctrl+Tab / Ctrl+Shift+Tab：在已打开的文档标签间循环。"""
+        tabs = list(self.tabs.tabs())
+        if len(tabs) < 2:
+            return
+        current = self.tabs.select()
+        index = tabs.index(current) if current in tabs else 0
+        self.tabs.select(tabs[(index + delta) % len(tabs)])
+
+    def _focus_explorer(self):
+        """Ctrl+Shift+E：回到文件视图并把焦点交给文件树。"""
+        try:
+            self.explorer.select_view('files')
+        except Exception:
+            pass
+        try:
+            self.tree.focus_set()
+        except tk.TclError:
+            pass
+
+    def _focus_search(self):
+        """Ctrl+F：聚焦左栏的文件名搜索框（编辑器内部由编辑器自己接管）。"""
+        if self._agent_input_focused():
+            return
+        entry = getattr(self.explorer, 'search_entry', None)
+        if entry is None:
+            return
+        try:
+            entry.focus_set()
+            entry.selection_range(0, 'end')
+        except tk.TclError:
+            pass
+
+    def _shortcut_run_tests(self):
+        """F5：没有项目时如实说明，不把用户丢进权限校验的报错里。"""
+        if self.source is None:
+            self.status.set('运行测试 · 请先打开一个项目')
+            return
+        self.run_tests()
+
+    def quick_open(self):
+        """Ctrl+P：项目内按文件名快速打开（浮层，见 quick_open.py）。"""
+        from .quick_open import QuickOpen
+        if self.source is None:
+            self.status.set('快速打开 · 请先打开一个项目')
+            return None
+        current = getattr(self, '_quick', None)
+        if current is not None and current.alive:
+            # 已开着：再按一次 Ctrl+P 视为「聚焦回输入框」而不是叠一层。
+            try:
+                current.entry.focus_set()
+            except tk.TclError:
+                pass
+            return current
+        paths = self._quick_open_paths()
+        if not paths:
+            self.status.set('快速打开 · 当前项目没有可打开的文件')
+            return None
+        self._quick = QuickOpen(self, paths, self.open_file,
+                                on_close=self._quick_open_closed)
+        return self._quick
+
+    def command_palette(self):
+        """Ctrl+Shift+P：所有工作台命令的统一入口（见 command_palette.py）。"""
+        from .command_palette import CommandPalette
+        current = getattr(self, '_palette', None)
+        if current is not None and current.alive:
+            try:
+                current.entry.focus_set()
+            except tk.TclError:
+                pass
+            return current
+        self._palette = CommandPalette(
+            self, self._palette_commands(),
+            on_close=lambda: setattr(self, '_palette', None),
+            on_unavailable=lambda command: self.status.set(f'{command.label} · {command.unavailable}'))
+        return self._palette
+
+    def _palette_commands(self):
+        """命令清单：每次打开现取，可用性随项目 / 模型 / 文档 / 任务状态变化。"""
+        from .command_palette import Command
+        no_project = '需先打开项目' if self.source is None else ''
+        no_doc = '没有打开的文件' if not self.documents else ''
+        busy = bool(getattr(self.runtime, 'busy', False)) if getattr(self, 'runtime', None) else False
+        perm = self.permission.get()
+        key = shortcuts.hint
+        panel = getattr(self, 'agent_panel', None)
+        items = [
+            Command('quick_open', '快速打开文件…', '导航', self.quick_open, key('quick_open'), no_project),
+            Command('open_project', '打开项目…', '项目', self.choose_project),
+            Command('focus_explorer', '聚焦文件树', '导航', self._focus_explorer, key('focus_explorer')),
+            Command('focus_search', '搜索文件名', '导航', self._focus_search, key('focus_search')),
+            Command('focus_input', '给 Agent 下任务（聚焦输入框）', 'Agent', self.input.focus_set),
+            Command('new_conversation', '新对话', 'Agent', self._new_agent_conversation, '', no_project),
+            Command('restore_session', '恢复历史对话…', 'Agent', self.restore_session, '', no_project),
+            Command('cancel_task', '停止当前任务', 'Agent', self.cancel_task, '',
+                    '' if busy else '当前没有运行中的任务'),
+            Command('retry_task', '重试上一次任务', 'Agent', self.retry_agent_task, '', no_project),
+            Command('perm_read', '权限：只看不改', '权限', lambda: self._request_permission('read-only'), '',
+                    no_project or ('已是当前权限' if perm == 'read-only' else '')),
+            Command('perm_write', '权限：可改项目文件（需确认）', '权限',
+                    lambda: self._request_permission('workspace-write'), '',
+                    no_project or ('已是当前权限' if perm == 'workspace-write' else '')),
+            Command('perm_advanced', '高级：权限矩阵 / 模型路由', '权限',
+                    (panel._expand_runtime_context if panel is not None else (lambda: None))),
+            Command('model_setup', '选择 AI 模型…', '模型', self.open_model_setup, '',
+                    '' if self._model_settings_home is not None else '独立运行时不可用'),
+            Command('model_roles', '模型角色（默认 / 复杂 / 复审 / 子 Agent）…', '模型', self.model_settings),
+            Command('run_tests', '运行测试', '任务', self._shortcut_run_tests, key('run_tests'), no_project),
+            Command('review', '复审当前改动', '任务', self.review, '', no_project),
+            Command('view_changes', '查看 Agent 改动', '任务', self._view_agent_changes, '', no_project),
+            Command('density', '视图：切换为「专业」（显示全部面板）' if self._density == 'simple'
+                    else '视图：切换为「简洁」（只留对话与结果）', '视图', self.toggle_density),
+            Command('save', '保存当前文档', '编辑', self.save_current, key('save'), no_doc),
+            Command('save_as', '另存为…', '编辑', self.save_as_current, key('save_as'), no_doc),
+            Command('close_tab', '关闭当前标签', '编辑', self.close_current, key('close_tab'), no_doc),
+        ]
+        return items
+
+    def _quick_open_closed(self):
+        self._quick = None
+
+    def _quick_open_paths(self):
+        """项目文件清单（相对路径，按字典序；缓存到切项目为止）。
+
+        只走 ``workspace._scan_tree`` 这一条扫描路径——与文件树、搜索
+        框同源，不新建第二个爬虫；扫描上限与搜索一致（4000 节点）。
+        """
+        cached = getattr(self, '_quick_files', None)
+        if cached is not None:
+            return cached
+        source = self.source
+        if source is None:
+            return []
+        try:
+            from workspace import _scan_tree
+            nodes = _scan_tree(source.root, expanded=None, max_nodes=4000)
+        except Exception:
+            self._quick_files = []
+            return []
+        paths = []
+        root = str(source.root)
+        for node in nodes:
+            if node.get('is_dir'):
+                continue
+            try:
+                # _scan_tree 给的是绝对 Path；用 os.path.relpath 而不是
+                # Path.relative_to——后者对「未解析的 root / 已解析的条目」
+                # 会直接抛 ValueError，静默丢掉整个项目。
+                relative = os.path.relpath(str(node['path']), root)
+            except (KeyError, ValueError, OSError):
+                continue
+            if relative.startswith('..'):
+                continue
+            paths.append(relative.replace('\\', '/'))
+        paths.sort()
+        self._quick_files = paths
+        return paths
 
     def _sync_welcome(self):
         """M2：按 self.source 二态切换中央区——无项目 → 欢迎页；
@@ -1320,6 +1553,8 @@ class DevelopmentWorkbench(ttk.Frame):
             row['frame'].destroy()
         self.documents.clear()
         self._file_actions.clear()
+        # Ctrl+P 的文件清单按项目缓存，切项目必须失效。
+        self._quick_files = None
         self._changed_selection = ()
         self.task_evidence = TaskEvidence()
         self.render_evidence()
@@ -2503,6 +2738,7 @@ class DevelopmentWorkbench(ttk.Frame):
         elif same_task and data.get('type') == 'development_recovery':
             self.agent_panel.task_context = {}
         self.task_evidence.apply(data)
+        self.agent_panel.note_event(data)
 
         self.render_evidence()
         self.agent_panel.events.append_event(data)
@@ -3045,6 +3281,8 @@ class DevelopmentWorkbench(ttk.Frame):
         不再自动折叠）。open_project 成功也走这里——文件树填充后底部
         的差异/测试/问题三页即将有数据，且开项目态不自动折叠。"""
         self._bottom_kept = True
+        if getattr(self, '_density', 'pro') == 'simple':
+            return  # 简洁视图不因内容到达而展开底部面板
         if getattr(self, '_bottom_auto_folded', False):
             self._bottom_auto_folded = False
             if self._sync_bottom_panel(True):
@@ -3081,6 +3319,49 @@ class DevelopmentWorkbench(ttk.Frame):
             return False  # 构造早期 / 已销毁：无底部面板可同步
         return changed
 
+    # ── 信息密度（简洁 / 专业）────────────────────────────────────
+    def _density_path(self):
+        return Path(self.state.home) / 'coding_view.json'
+
+    def _init_density(self):
+        self._density = 'pro'
+        try:
+            value = json.loads(self._density_path().read_text(encoding='utf-8')).get('density')
+            if value in {'simple', 'pro'}:
+                self._density = value
+        except (OSError, ValueError, AttributeError):
+            pass
+        panel = getattr(self, 'agent_panel', None)
+        if panel is not None:
+            panel.on_density_toggle = self.toggle_density
+            panel.set_density(self._density)
+        if self._density == 'simple':
+            self.set_density('simple', persist=False)
+
+    def toggle_density(self):
+        self.set_density('pro' if self._density == 'simple' else 'simple')
+
+    def set_density(self, density, *, persist=True):
+        if density not in {'simple', 'pro'}:
+            return
+        self._density = density
+        if persist:
+            try:
+                self._density_path().write_text(json.dumps({'density': density}), encoding='utf-8')
+            except OSError:
+                pass
+        panel = getattr(self, 'agent_panel', None)
+        if panel is not None:
+            panel.set_density(density)
+        if density == 'simple':
+            changed = self._sync_bottom_panel(False)
+        else:
+            changed = self.state.layout['visible'] and self.source is not None and self._sync_bottom_panel(True)
+        if changed:
+            self._settle_mount()
+            self.later(0, self.place_sashes)
+        self.status.set('视图：简洁 · 只留对话与结果' if density == 'simple' else '视图：专业 · 显示全部面板')
+
     def _sync_bottom_auto_fold(self):
         """v0.6：底部空内容自动折叠（仅在欢迎页态）。
 
@@ -3090,6 +3371,9 @@ class DevelopmentWorkbench(ttk.Frame):
         _bottom_content_arrived 配对：内容到达（write_output /
         _project_loaded）即展开并锁定。
         """
+        if getattr(self, '_density', 'pro') == 'simple' and self.state.layout['visible']:
+            # 简洁视图：底部工具面板始终让位（apply_layout 每次补回后这里再收起）。
+            return self._sync_bottom_panel(False)
         if (self.state.layout['visible'] and self.source is None
                 and not getattr(self, '_bottom_kept', False)):
             try:
