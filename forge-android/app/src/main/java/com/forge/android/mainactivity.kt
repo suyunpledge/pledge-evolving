@@ -16,6 +16,7 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import com.forge.android.bridge.Events
 import androidx.compose.ui.unit.dp
 import com.forge.android.bridge.AgentBridgeService
@@ -100,14 +101,22 @@ class MainActivity : ComponentActivity() {
         var tab by remember { mutableIntStateOf(0) }
         var onboarded by remember { mutableStateOf<Boolean?>(null) }
         val ctx = androidx.compose.ui.platform.LocalContext.current
-        LaunchedEffect(Unit) {
-            val st = withContext(Dispatchers.IO) { bridgeGetStatus(ctx) }
-            onboarded = !(st?.optBoolean("needed") ?: false)
+        val bridge by bridgeState.collectAsState()
+        // 等桥就绪再查是否需要引导。首次启动要先解包运行环境（1-3 分钟），
+        // 此前一开 App 就查必然失败，失败又被当成「不需要引导」，新用户被直接跳过。
+        LaunchedEffect(bridge) {
+            if (bridge != "ready" || onboarded != null) return@LaunchedEffect
+            var st: JSONObject? = null
+            for (attempt in 0 until 5) {
+                st = withContext(Dispatchers.IO) { bridgeGetStatus(ctx) }
+                if (st != null) break
+                delay(1000L)
+            }
+            // 桥已就绪仍查不到状态：进入主界面（对话页空态会说明），不卡在加载页。
+            onboarded = st?.let { !it.optBoolean("needed") } ?: true
         }
         if (onboarded == null) {
-            Box(Modifier.fillMaxSize()) {
-                CircularProgressIndicator(Modifier.align(androidx.compose.ui.Alignment.Center))
-            }
+            BootScreen(bridge)
         } else if (onboarded == false) {
             OnboardingScreen(onDone = { onboarded = true })
         } else {
@@ -135,6 +144,27 @@ class MainActivity : ComponentActivity() {
             }
         }
         }   // else(onboarded) 闭合
+    }
+
+    /** 等待桥就绪时的启动页：按桥状态说清楚在做什么、要等多久。 */
+    @Composable
+    private fun BootScreen(state: String) {
+        val (title, detail) = when (state) {
+            "extracting" -> "首次启动：正在解包运行环境" to "约 1-3 分钟，只有第一次需要等这么久。"
+            "booting" -> "正在启动 Agent" to "马上就好。"
+            "connecting", "restarting" -> "正在连接 Agent" to "马上就好。"
+            "ready" -> "正在检查配置" to ""
+            "failed" -> "运行环境启动失败" to "请完全退出 forge 后重新打开。"
+            else -> "正在准备" to ""
+        }
+        Column(Modifier.fillMaxSize().padding(32.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
+            horizontalAlignment = Alignment.CenterHorizontally) {
+            if (state != "failed") CircularProgressIndicator()
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            if (detail.isNotEmpty()) Text(detail, style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 
     @Composable

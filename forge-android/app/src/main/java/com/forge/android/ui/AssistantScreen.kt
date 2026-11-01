@@ -17,10 +17,12 @@ private val client = OkHttpClient.Builder()
     .readTimeout(35, TimeUnit.SECONDS)
     .build()
 
+// 鉴权头必须是 "Bearer <token>"（桥端 forge_bridge.py 逐字节比对）。v0.7 合并时
+// 这里曾被脱敏工具误改成 "***"，目录 / 遥控 / 引导的请求因此全部 401 而静默失败。
 internal fun bridgeGet(context: Context, path: String): JSONObject? = runCatching {
     val req = Request.Builder()
         .url("http://127.0.0.1:8000$path")
-        .header("Authorization", "***" + com.forge.android.bridge.BridgeToken.get(context))
+        .header("Authorization", "Bearer " + com.forge.android.bridge.BridgeToken.get(context))
         .build()
     client.newCall(req).execute().use { resp ->
         if (resp.isSuccessful) JSONObject(resp.body?.string() ?: "{}") else null
@@ -31,7 +33,7 @@ internal fun bridgePost(context: Context, path: String, body: JSONObject): JSONO
     runCatching {
         val req = Request.Builder()
             .url("http://127.0.0.1:8000$path")
-            .header("Authorization", "***" + com.forge.android.bridge.BridgeToken.get(context))
+            .header("Authorization", "Bearer " + com.forge.android.bridge.BridgeToken.get(context))
             .post(body.toString().toRequestBody("application/json".toMediaTypeOrNull()))
             .build()
         client.newCall(req).execute().use { resp ->
