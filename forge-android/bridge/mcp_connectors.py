@@ -21,6 +21,7 @@ import os
 import re
 import subprocess
 import threading
+import queue
 import time
 from pathlib import Path
 from typing import Any
@@ -112,19 +113,30 @@ class Connector:
         # 一个 stdio 会话只有一条输入/输出流；串行化请求可避免并发
         # ask 交错读取彼此响应，造成工具结果错配。
         with self._rpc_lock:
-            if not self.proc or self.proc.poll() is not None:
+            proc = self.proc
+            if not proc or proc.poll() is not None:
                 raise RuntimeError(f"connector {self.name} not running")
             self._req_id += 1
             req_id = self._req_id
             req = {"jsonrpc": "2.0", "id": req_id, "method": method,
                    "params": params or {}}
-            self.proc.stdin.write((json.dumps(req) + "\n").encode())
-            self.proc.stdin.flush()
+            proc.stdin.write((json.dumps(req) + "\n").encode())
+            proc.stdin.flush()
             # 同步读一行（桥在 asyncio 线程池里调本方法）。
             # 锁确保多个 Agent 不会同时消费 stdout。
             deadline = time.time() + timeout
             while time.time() < deadline:
-                line = self.proc.stdout.readline()
+                # Popen.stdout.readline() 本身不可取消；在线程池里直接调用
+                # 会让 30s timeout 形同虚设。用一次性 reader thread + queue
+                # 给每一行加硬超时，超时后上层会终止该 connector 进程。
+                remaining = max(0.0, deadline - time.time())
+                lines: queue.Queue[bytes] = queue.Queue(maxsize=1)
+                threading.Thread(target=lambda: lines.put(proc.stdout.readline()),
+                                 daemon=True).start()
+                try:
+                    line = lines.get(timeout=remaining)
+                except queue.Empty as exc:
+                    raise TimeoutError(f"connector {self.name} rpc timeout ({timeout}s)") from exc
                 if not line:
                     raise RuntimeError(f"connector {self.name} closed stdout")
                 try:
@@ -173,9 +185,9 @@ class Connector:
             self.error = error
             return False
 
-    def call_tool(self, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    def call_tool(self, tool: str, arguments: dict[str, Any], *, timeout: float = 30.0) -> dict[str, Any]:
         result = self._rpc("tools/call", {"name": tool, "arguments": arguments},
-                           timeout=30.0)
+                           timeout=timeout)
         content = result.get("content", [])
         text_parts = [c.get("text", "") for c in content if isinstance(c, dict)]
         return {"ok": not result.get("isError", False),
@@ -296,6 +308,9 @@ def call(server: str, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
     try:
         return conn.call_tool(tool, arguments)
     except Exception as exc:                # noqa: BLE001
+        # 读取超时/协议损坏后不能复用半失效的 stdio 会话；杀掉进程，
+        # 保留 failed 状态，下一次 ensure_one 才会创建全新会话。
+        conn.stop()
         conn.status = "failed"
         conn.error = str(exc)[:300]
         return {"ok": False, "error": str(exc)[:300]}

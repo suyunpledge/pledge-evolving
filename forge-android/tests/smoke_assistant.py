@@ -39,7 +39,7 @@ mc.CONFIG_PATH = tmp_home / "mcp_connectors.json"
 
 # 假 MCP server：echo 工具
 ECHO_SERVER = r'''
-import json, sys
+import json, sys, time
 while True:
     line = sys.stdin.readline()
     if not line:
@@ -64,6 +64,8 @@ while True:
              "inputSchema": {"type": "object", "properties": {"text": {"type": "string"}}}},
             {"name": "bad name!", "description": "invalid, should drop"}]}}
     elif method == "tools/call":
+        if req.get("params", {}).get("name") == "hang":
+            time.sleep(5)
         resp = {"jsonrpc": "2.0", "id": rid, "result": {
             "content": [{"type": "text", "text": "echo:" + json.dumps(req["params"]["arguments"])}],
             "isError": False}}
@@ -100,6 +102,16 @@ check(r.get("ok") is True, "写工具调用")
 
 snaps = {s["name"]: s for s in mc.status()}
 check(snaps["echo"]["status"] == "ready" and len(snaps["echo"]["tools"]) == 2, "状态快照含工具")
+
+started = time.time()
+try:
+    mc._connectors["echo"].call_tool("hang", {}, timeout=0.2)
+    check(False, "stdio RPC 硬超时")
+except TimeoutError:
+    check(time.time() - started < 1.0, "stdio RPC 硬超时")
+    mc._connectors["echo"].stop()
+    mc._connectors["echo"].status = "failed"
+    check(mc._connectors["echo"].status == "failed", "超时后连接器进入 failed")
 
 r = mc.remove("echo")
 check(r.get("ok") is True, "删除连接器")
