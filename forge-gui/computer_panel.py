@@ -19,10 +19,10 @@ from forge.policy import Policy, ToolEffect
 from forge.tools import ToolRegistry, ToolSpec, ToolResult
 from gui_theme import C, FONT_SMALL, pill_button, bind_canvas_column, bind_scoped_wheel, style_editor, flow_controls
 from phase_client import VisionClient, model_catalog
-from forge.computer_coordinates import READ_NAMES, CLICK_NAME
+from forge.computer_coordinates import READ_NAMES, CLICK_NAME, TYPE_NAME, KEY_NAME, INPUT_NAMES, POINTER_ACTIONS
 from click_approval import ClickApprovals, ApprovalView
 
-NAMES = READ_NAMES | {CLICK_NAME}
+NAMES = READ_NAMES | INPUT_NAMES
 
 
 class ComputerLane:
@@ -35,28 +35,61 @@ class ComputerLane:
         self.clicks, self.approve = clicks, approve
         registry = ToolRegistry()
         register_computer_tools(registry)
-        registry.unregister('computer_act')  # Input uses the separately approved visual click tool.
+        registry.unregister('computer_act')  # Input uses the separately approved screenshot-bound tools.
         registry.register(ToolSpec('computer_screenshot',
-            'Capture the selected window locally; returns dimensions and hash, not image pixels.',
+            'Capture the selected window locally; returns size, hash and a fresh observation_id, not pixels. '
+            'You cannot see the image: use computer_vision to read it or locate a target.',
             self._screenshot, schema={'type': 'object', 'properties': {}, 'additionalProperties': False}),
             trusted=True, effect=ToolEffect.READ, requires=('computer',))
         registry.register(ToolSpec('computer_vision',
             'Analyze a fresh selected-window screenshot with the explicitly selected vision model. '
-            'For clicking, supply target to obtain an ORIGINAL screenshot pixel point and observation_id. '
+            'With target (e.g. "the search box"), returns an ORIGINAL screenshot pixel point plus an '
+            'observation_id for computer_click. Use it again after input to verify the result. '
             'Requires user cloud consent. Plain description is not a coordinate or proof of an action.',
-            self._vision, schema={'type': 'object', 'properties': {'question': {'type': 'string', 'maxLength': 4000},
-                                 'target':{'type':'string','maxLength':1000}},
-                                 'required': ['question'], 'additionalProperties': False}),
+            self._vision, schema={'type': 'object', 'properties': {
+                'question': {'type': 'string', 'maxLength': 4000, 'description': 'What to read or check in the window'},
+                'target': {'type':'string','maxLength':1000, 'description': 'Element to locate for a click'}},
+                'required': ['question'], 'additionalProperties': False}),
             trusted=True, effect=ToolEffect.READ, requires=('computer',))
         if clicks and approve is not None:
+            observation = {'type':'string','description':'observation_id from the latest screenshot, vision or input result'}
+            reason = {'type':'string','maxLength':500,'description':'Short reason shown to the user in the approval prompt'}
             registry.register(ToolSpec(CLICK_NAME,
-                'One left click in a current screenshot observation, in ORIGINAL screenshot pixels. '
-                'Only client area. Requires user point approval; changed/expired images reject. '
-                'Returns post-click screenshot metadata; changed does not prove the task is complete.',
+                'Pointer input at a screenshot pixel of the selected window client area: click (default), '
+                'double_click, right_click, or scroll_up/scroll_down there (amount = wheel notches). '
+                'Each call needs user approval; changed/expired screenshots reject. Right-click menus are '
+                'separate windows that screenshots do not show: choose items with computer_key. Returns '
+                'a post-input screenshot with a new observation_id; changed does not prove success.',
                 self._click, read_only=False, schema={'type':'object','properties':{
-                    'observation_id':{'type':'string'}, 'x':{'type':'integer'}, 'y':{'type':'integer'},
-                    'reason':{'type':'string','maxLength':500}},
+                    'observation_id':observation,
+                    'x':{'type':'integer','description':'Original screenshot pixel x'},
+                    'y':{'type':'integer','description':'Original screenshot pixel y'},
+                    'action':{'type':'string','enum':list(POINTER_ACTIONS),'description':'Default click'},
+                    'amount':{'type':'integer','minimum':1,'maximum':10,'description':'Scroll notches, only for scroll actions (default 3)'},
+                    'reason':reason},
                     'required':['observation_id','x','y','reason'],'additionalProperties':False}),
+                trusted=True,effect=ToolEffect.DELEGATED_WRITE,requires=('computer',))
+            registry.register(ToolSpec(TYPE_NAME,
+                'Type text into whatever has keyboard focus in the selected window (click the field first). '
+                'Newline presses Enter and tab presses Tab, so they may submit forms. The user approves '
+                'the exact text. Returns a post-input screenshot with a new observation_id.',
+                self._type, read_only=False, schema={'type':'object','properties':{
+                    'observation_id':observation,
+                    'text':{'type':'string','maxLength':2000,'description':'Exact text to type, up to 2000 characters'},
+                    'reason':reason},
+                    'required':['observation_id','text','reason'],'additionalProperties':False}),
+                trusted=True,effect=ToolEffect.DELEGATED_WRITE,requires=('computer',))
+            registry.register(ToolSpec(KEY_NAME,
+                'Press one key or shortcut in the selected window, e.g. enter, esc, tab, down, ctrl+s, '
+                'ctrl+a, shift+tab, alt+d, f5. Not for text (use computer_type). Window switching/closing '
+                'keys (alt+tab, alt+f4, ctrl+w, Win) are refused. Needs user approval; returns a '
+                'post-input screenshot with a new observation_id.',
+                self._key, read_only=False, schema={'type':'object','properties':{
+                    'observation_id':observation,
+                    'key':{'type':'string','maxLength':40,'description':'Key name or modifier+key combination'},
+                    'repeat':{'type':'integer','minimum':1,'maximum':20,'description':'Press count, e.g. down x3 (default 1)'},
+                    'reason':reason},
+                    'required':['observation_id','key','reason'],'additionalProperties':False}),
                 trusted=True,effect=ToolEffect.DELEGATED_WRITE,requires=('computer',))
         # Selection is an explicit read grant. Existing denies/asks/sandbox remain authoritative.
         policy = replace(policy, allow=tuple(policy.allow) + tuple(READ_NAMES))
@@ -78,7 +111,16 @@ class ComputerLane:
         return frame
 
     def _click(self, args, ctx):
-        result, frame = self.session.visual.click(args,ctx,self.approve)
+        return self._input(self.session.visual.click, args, ctx)
+
+    def _type(self, args, ctx):
+        return self._input(self.session.visual.type_text, args, ctx)
+
+    def _key(self, args, ctx):
+        return self._input(self.session.visual.press_key, args, ctx)
+
+    def _input(self, method, args, ctx):
+        result, frame = method(args,ctx,self.approve)
         if frame is not None: self.last_frame=frame
         return result
 
@@ -175,7 +217,7 @@ class ComputerPanel:
         self.model_trace = self.model.trace_add('write', lambda *_: self.model_changed())
         self.consent_trace = self.consent.trace_add('write', lambda *_: self.settings_changed())
         self.clicks = tk.BooleanVar(value=False)
-        tk.Checkbutton(body,text='允许视觉坐标单击（每次确认；只作用于绑定窗口）',variable=self.clicks,
+        tk.Checkbutton(body,text='允许鼠标与键盘输入：单击、双击、右键、滚动、打字、按键（每次确认；只作用于绑定窗口）',variable=self.clicks,
             bg=C['bg'],fg=C['text'],selectcolor=C['surface'],activebackground=C['bg']).pack(anchor='w',pady=6)
         self.clicks_trace=self.clicks.trace_add('write',lambda *_:self.settings_changed())
         self.question = tk.Entry(body, bg=C['input_bg'], fg=C['text'], insertbackground=C['text'], font=FONT_SMALL)
@@ -247,7 +289,7 @@ class ComputerPanel:
         self.revoke()
         self.session = ComputerSession(driver,ttl=90)
         self.target.set(f"{row['title']} · PID {row['process_id']} · HWND {row['window']}")
-        self.status.set('已绑定；可预览截图。需要点击时开启坐标单击，再重新截图选择落点。')
+        self.status.set('已绑定；可预览截图。需要操作时勾选“允许鼠标与键盘输入”，再重新截图选择落点。')
 
     def settings_changed(self):
         # Existing lanes lose their target grant; fresh lanes use new settings.
@@ -338,7 +380,7 @@ class ComputerPanel:
 
     def click_preview(self,event):
         if self.busy: return
-        if not self.clicks.get(): self.status.set('请先开启坐标单击，再重新截图。'); return
+        if not self.clicks.get(): self.status.set('请先勾选“允许鼠标与键盘输入”，再重新截图。'); return
         if not self.frame or not self.frame.get('observation_id'):
             self.status.set('请先获取可点击的截图预览。'); return
         x,y=event.x*self.preview_factor,event.y*self.preview_factor
@@ -349,13 +391,13 @@ class ComputerPanel:
         if not self.proposed_point or not self.proposed_point.get('found'):
             self.status.set('请先定位目标并检查预览标记。');return
         point=self.proposed_point
-        if not self.clicks.get(): self.status.set('请先开启坐标单击，然后重新定位目标。');return
+        if not self.clicks.get(): self.status.set('请先勾选“允许鼠标与键盘输入”，然后重新定位目标。');return
         self.dispatch_click(point['x'],point['y'],'视觉定位：'+point['label'])
 
     def dispatch_click(self,x,y,reason):
         if self.busy or self.frame is None: return
         if not self.clicks.get() or not self.frame.get('observation_id'):
-            self.status.set('请开启坐标单击并重新截图。');return
+            self.status.set('请勾选“允许鼠标与键盘输入”并重新截图。');return
         frame,session=self.frame,self.session
         self.cancel=threading.Event()
         try: lane=self.manual_lane()

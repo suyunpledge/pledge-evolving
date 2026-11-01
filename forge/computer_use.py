@@ -82,6 +82,10 @@ class ComputerSession:
         digest = hashlib.sha256(json.dumps(state, sort_keys=True).encode()).hexdigest()
         observation = {'observation_id': uuid.uuid4().hex, 'target': self.driver.target_id,
                        'state': state, 'captured_at': self.clock(), 'revision': digest}
+        if not state['elements'] or state.get('truncated'):
+            # Browsers, Electron and Office draw their own controls; this list cannot see them.
+            observation['hint'] = ('Native control list is empty or partial for this window. '
+                                   'Use computer_screenshot or computer_vision, then coordinate/keyboard tools.')
         self._observations[scope] = observation
         return observation
 
@@ -171,7 +175,9 @@ def register_computer_tools(registry):
         return ctx.extras['computer'].observe(ctx)
     def act(args, ctx):
         return ctx.extras['computer'].act(args, ctx)
-    registry.register(ToolSpec('computer_observe', 'Observe the host-selected window; obtain fresh element refs.',
+    registry.register(ToolSpec('computer_observe',
+        'List classic native controls (buttons, text boxes) of the host-selected window with fresh refs. '
+        'Modern apps (browsers, Electron, Office, WeChat) usually return none; then use screenshots instead.',
         observe, schema={'type': 'object', 'properties': {}, 'additionalProperties': False}),
         trusted=True, effect=ToolEffect.READ, requires=('computer',))
     registry.register(ToolSpec('computer_act', 'One approved action using a current observation/ref; returns fresh state.',

@@ -267,8 +267,8 @@ class CoordinateTests(unittest.TestCase):
 
 
 class OwnedWindow:
-    def __init__(self,dpi):
-        self.process=subprocess.Popen([sys.executable,'-u','-B',str(Path(__file__).with_name('fixture_coordinate_window.py')),dpi],
+    def __init__(self,dpi,script='fixture_coordinate_window.py'):
+        self.process=subprocess.Popen([sys.executable,'-u','-B',str(Path(__file__).with_name(script)),dpi],
             stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,
             creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
         self.output=queue.Queue()

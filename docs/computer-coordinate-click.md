@@ -1,15 +1,15 @@
-# 视觉坐标单击
+# 视觉坐标输入：单击、双击、右键、滚动、打字、按键
 
 ## 使用
 
-从本工作树启动 `python forge-gui/forge_gui_v2.py`，进入 Work Mode 顶部「电脑操作」。绑定窗口后勾选「允许视觉坐标单击」。权限模式必须允许输入；READ_ONLY、PLAN、只读 Sandbox 和显式 deny 不会因勾选而升级。
+从本工作树启动 `python forge-gui/forge_gui_v2.py`，进入 Work Mode 顶部「电脑操作」。绑定窗口后勾选「允许鼠标与键盘输入」。权限模式必须允许输入；READ_ONLY、PLAN、只读 Sandbox 和显式 deny 不会因勾选而升级。
 
 两条流程均已接入：
 
 - 本地操作：截图预览 → 在预览中选择落点 → 检查确认窗口中的红色落点标记 → 确认单击 → 查看更新后的截图。无需把图片发送给模型。
 - 模型定位：选择豆包 Evolving 等已配置视觉模型、勾选截图发送授权 → 在问题栏填写目标 →「定位目标」→ 检查标记 →「点击模型落点」→ 确认 → 查看新截图。Work Agent 也可依次调用定位与点击工具。
 
-点击会移动系统鼠标，并尝试激活选定窗口。目标点必须实际可见且属于绑定窗口及其校验过的子窗口；遮挡、菜单、鼠标捕获或用户正按住鼠标/修饰键时拒绝派发。Windows 不允许程序激活窗口时，不绕过系统限制；被遮挡的目标需要先由用户移到前面，再重新观察。仅支持客户区的左键单击，不点标题栏、系统关闭按钮或其他顶层弹窗。
+点击会移动系统鼠标，并尝试激活选定窗口。目标点必须实际可见且属于绑定窗口及其校验过的子窗口；遮挡、菜单、鼠标捕获或用户正按住鼠标/修饰键时拒绝派发。Windows 不允许程序激活窗口时，不绕过系统限制；被遮挡的目标需要先由用户移到前面，再重新观察。指针动作只作用于客户区（单击、双击、右键、滚轮），不点标题栏、系统关闭按钮或其他顶层弹窗。
 
 窗口、模型、授权变化会使旧观察失效。GUI 观察最长有效 90 秒；点击确认最多等待 60 秒，等待期间仍计算观察有效期。截图过期或客户区内容变化时重新观察，不自动重试点击。
 
@@ -34,6 +34,23 @@
 `computer_click` 只有在 GUI 独立点击开关开启时注册；使用宿主确认回调及 `ToolEffect.DELEGATED_WRITE`，继续走 Policy、公共 ActionExecutor 和持久化生命周期。精确读取 grant 只增加读取工具，不增加点击 grant。GUI 使用 `ClickApprovals` 数据队列和 `ApprovalView`，后台线程不调用 Tk，也不持有 Tk 确认回调。
 
 成功结果包含新 `observation_id`、`run_id/task_id/action_id`、`verification=post_screenshot`、`dispatch=send_input`、`changed`。后续业务判断应重新分析新截图；`changed` 仅表示客户区像素不同，API 事件成功插入也不证明业务目标完成。
+
+## 其他指针动作与键盘输入
+
+`computer_click` 可选 `action`：`click`（默认）、`double_click`、`right_click`、`scroll_up`、`scroll_down`；滚动可加 `amount`（1–10 格，默认 3），其他动作带 `amount` 直接拒绝。流程、命中检查和失效规则与单击完全相同，双击在同一 SendInput 批次内提交两次按下/释放。右键菜单是独立顶层窗口，截图看不到，用 `computer_key` 的 up/down/enter/esc 选择。
+
+`computer_type`：`{"observation_id","text","reason"}`，1–2000 字符，以 Unicode 键入当前键盘焦点（先点击输入框）。换行按回车、制表符按 Tab，可能直接提交表单，确认窗口会提示；其他控制字符拒绝。
+
+`computer_key`：`{"observation_id","key","reason","repeat"?}`。允许 enter/tab/esc/backspace/delete/insert/space/方向键/home/end/pageup/pagedown/menu/F1–F12，及 ctrl/alt + 字母或数字、可加 shift；单独字母要用 `computer_type`。`alt+tab`、`alt+f4`、`alt+esc`、`ctrl+esc`、`ctrl+shift+esc`、`ctrl+w`、`ctrl+f4` 与 Win 键永不发送。`repeat` 1–20。
+
+键盘输入与点击的差别：
+
+- 观察复核只比较目标、尺寸、位置和 DPI，不比较客户区像素摘要——输入框中闪烁的光标会让两次截图摘要不同，按键也不落在某个像素上。
+- 确认后取得桌面输入锁，要求目标在 1 秒内真正成为前台窗口（属于绑定进程），否则 `not_started`：按键只会发给前台焦点，绝不发给别的窗口。
+- 派发前再次检查前台窗口、用户是否按住鼠标/修饰键/Win 键、鼠标捕获或窗口移动；目标自己的菜单模式允许（按键正是用来选菜单项的）。
+- 全部按键一次 SendInput 提交；部分提交时只释放已按下的键（含修饰键），结果为 `unknown`，不重放。
+
+每次输入都会返回新截图与新的 `observation_id`，可以直接接下一步（如输入后按回车），不必另行截图。
 
 ## 执行与失效
 
@@ -62,6 +79,6 @@ GUI 发起点击后立即清除可执行的旧观察和模型落点。点击后�
 
 为避免标题栏激活颜色造成无关失效，比较客户区像素摘要，而非全 PNG 摘要。客户区任意变化仍会拒绝，包括动画、时钟、光标、焦点样式或异步更新；暂不做宽松图像匹配。模型定位精度受模型影响，确认界面显示实际落点，不把模型坐标当成可信操作指令。
 
-Windows UIPI/安全桌面、受保护或黑图窗口、不可见目标不绕过；不支持右键、双击、拖拽、滚轮或键盘输入。新的顶层弹窗必须另选目标。跨进程锁只协调 Forge，不能锁住用户、第三方程序或窗口自身状态，最终检查到系统输入之间仍有微小竞态。
+Windows UIPI/安全桌面、受保护或黑图窗口、不可见目标不绕过；不支持拖拽，也不提供原生控件树（UIA）。新的顶层弹窗必须另选目标。跨进程锁只协调 Forge，不能锁住用户、第三方程序或窗口自身状态，最终检查到系统输入之间仍有微小竞态。
 
 实现依据：[SendInput](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput)、[窗口命中检查](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-windowfrompoint)、[DPI 点映射](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-physicaltologicalpointforpermonitordpi)。

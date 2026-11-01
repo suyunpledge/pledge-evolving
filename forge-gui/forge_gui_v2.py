@@ -7777,7 +7777,9 @@ class ForgeGuiApp:
                         acc.append(piece)
                         self._post_ui(self._append_stream_delta, piece)
 
-                    TOOL_ROUNDS = 8   # 防失控：模型最多连续调 8 轮工具
+                    # 防失控：模型最多连续调 8 轮工具。绑定了窗口时放宽到 16 轮——
+                    # 截图→定位→点击→输入→回车→核对就要 6 轮，且每步输入都由用户逐次确认。
+                    TOOL_ROUNDS = 16 if computer_schemas else 8
                     from forge.execution_guard import ExecutionGuard
                     from work_tools import prepare_calls, invoke as invoke_work_tool
                     execution_guard = ExecutionGuard()
