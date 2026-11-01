@@ -89,7 +89,8 @@ class PrefixCacheTests(unittest.TestCase):
         history_at = next(i for i, m in enumerate(turn2) if m.get("content") == "第一个问题")
         self.assertLess(index, history_at, "规则必须在历史之前")
         self.assertEqual(turn2[:index + 1], turn1[:index + 1], "system → 记忆 → 规则 跨轮逐字节不变")
-        self.assertEqual(turn2[-1]["content"], "第二个问题")
+        # 只要求本轮提问在末尾；任务消息尾部可能另有运行时投影（如任务契约）。
+        self.assertTrue(turn2[-1]["content"].startswith("第二个问题"))
 
 
 if __name__ == "__main__":
