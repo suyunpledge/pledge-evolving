@@ -320,6 +320,8 @@ class Agent:
         self._rule_targets: list[str] = []
         self._rule_context = ''
         self._rule_audit = None
+        self._rule_superseded: list[str] = []
+        self._prefix_sent = 0    # 上一个请求发出的消息条数（前缀缓存：其后才可改动）
         self._plan: TaskPlan | None = None
         self._run_id = ""
         self._run_lock = threading.Lock()
@@ -402,12 +404,28 @@ class Agent:
         snapshot = ProjectRules(self.workspace, self.policy, self.secret_scope,
                                 enabled=enabled).load(self._rule_targets)
         audit = (snapshot.sources, snapshot.issues)
+        previous_sources = (self._rule_audit or ((), ()))[0]
         if audit != self._rule_audit and (snapshot.sources or snapshot.issues or self._rule_context):
             self._emit(type='project_rules', run_id=self._run_id,
                        sources=snapshot.sources, issues=snapshot.issues)
         self._rule_audit = audit
         if snapshot.context != self._rule_context:
             old = self._rule_context
+            old_index = next((i for i, m in enumerate(messages)
+                              if old and m.get('role') == 'user' and m.get('content') == old), None)
+            sent = min(getattr(self, '_prefix_sent', 0), len(messages))
+            # 纯新增 = 旧快照里每个文件（路径 + 版本）都原样留在新快照中，例如读到
+            # 子目录后新发现了 src/AGENTS.md。已有文件被改动则旧内容已过时，必须照旧移除。
+            extension = bool(snapshot.context) and all(s in snapshot.sources for s in previous_sources)
+            if extension and old_index is not None and old_index < sent:
+                # 前缀缓存：旧规则已随上一个请求发出，就地改写会让它之后的整段
+                # 前缀（含全部历史）失配。旧快照仍然有效，保留；把新快照接在已发送
+                # 前缀之后（仍在本步 assistant / tool_result 之前，不成为最新任务）。
+                self._rule_context = snapshot.context
+                self._rule_superseded.append(old)
+                messages.insert(sent, {'role': 'user', 'content': snapshot.context})
+                self._emit(type='project_rules_appended', run_id=self._run_id, index=sent)
+                return
             # Only our own ordinary user-context message is replaced. Native
             # assistant call / tool result blocks retain their original order.
             if old:
@@ -889,6 +907,8 @@ class Agent:
             self._rule_context = ''
             self._rule_audit = None
             self._rule_task_content = None
+            self._rule_superseded = []
+            self._prefix_sent = 0
             self._cancel_steps = []
             self._cancel_usage = {}
             self._run_model = 'unknown'
@@ -957,9 +977,11 @@ class Agent:
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": self.system_prompt()},
             *self._inject_memory(),
-            *previous,
         ]
+        # 前缀缓存：项目规则放在历史之前，跨轮位置固定（system → 记忆 → 规则 →
+        # 历史 → 本轮任务）。放在历史之后时它每轮后移一格，整段历史随之失配。
         self._refresh_project_rules(messages)
+        messages.extend(previous)
         messages.append({"role": "user", "content": task})
         # 启动沉思（phase=thinking）：三档门控——off 不起；on 直接起；smart 由
         # 模块库函数 looks_complex 决定（有运行期消费者，非装饰）。沉思文本
@@ -1053,6 +1075,7 @@ class Agent:
                         self._compaction_noop_reported = True
             messages = self.secret_scope.protect(messages)
             self._last_messages = messages
+            self._prefix_sent = len(messages)
             try:
                 completion: Completion = self.router.complete(
                     messages, small=False,

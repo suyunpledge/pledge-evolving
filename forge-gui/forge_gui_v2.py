@@ -645,6 +645,16 @@ def _probe_user_layer() -> Path | None:
 # ─── 主应用 ──────────────────────────────────────────────
 
 
+def insert_turn_context(messages, message):
+    """把本轮专属的背景块（知识库提示 / 长期记忆）插在本轮提问之前。
+
+    前缀缓存：这类块按本轮问题检索、每轮不同，只能落在请求尾部；插到历史
+    之前会让整段历史失配。最后一条必须仍是用户本轮提问（不改其本体）。
+    """
+    messages.insert(max(0, len(messages) - 1), message)
+    return messages
+
+
 class ForgeGuiApp:
 
     def __init__(self, root: tk.Tk):
@@ -7596,8 +7606,9 @@ class ForgeGuiApp:
             self.chat_area.scroll.scroll_to_end()
             messages = (list(self._chat_history) if self._include_history else []) + [ChatMessage("user", prompt)]
             retained_history = list(self._chat_history) + [ChatMessage("user", prompt)]
-            # 知识库检索注入：相关踩坑/经验作为背景上下文（不改用户消息本体，
-            # user-role 注入保持 system prompt 前缀稳定利于缓存命中）。
+            # 知识库检索注入：相关踩坑/经验作为背景上下文（不改用户消息本体）。
+            # 前缀缓存：它按本轮问题检索、每轮可能不同，必须紧贴本轮提问之前；
+            # 放在历史最前会让每一轮的整段历史都失配、全价重算。
             kb_ctx = ""
             try:
                 if self.knowledge is not None:
@@ -7605,7 +7616,8 @@ class ForgeGuiApp:
             except Exception:
                 kb_ctx = ""
             if kb_ctx:
-                messages = [ChatMessage("user", f"[知识库提示] 以下是过往任务的相关教训，仅供参考，避免重蹈覆辙：\n{kb_ctx}")] + list(messages)
+                insert_turn_context(messages, ChatMessage(
+                    "user", f"[知识库提示] 以下是过往任务的相关教训，仅供参考，避免重蹈覆辙：\n{kb_ctx}"))
             self.input_card.set_busy(True)
             self.clear_chat_btn.configure(state=tk.DISABLED)
             self.gw_btn.configure(state=tk.DISABLED)
@@ -7674,7 +7686,7 @@ class ForgeGuiApp:
                             self._post_ui(self._set_status, notice, "warn")
                         if memory_ctx:
                             # 同知识库提示：独立 user 消息、插在本轮提问之前，不进 retained_history。
-                            messages.insert(max(0, len(messages) - 1), ChatMessage("user", memory_ctx))
+                            insert_turn_context(messages, ChatMessage("user", memory_ctx))
                         if cancel_event.is_set():
                             raise GenerationCancelled("已停止生成")
                     if planning != "none":
