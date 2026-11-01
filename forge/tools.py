@@ -36,7 +36,34 @@ BUILTIN_TOOL_NAMES = frozenset({
     "apply_patch", "edit_config", "read_range", "file_outline", "shell_exec",
     "tool_search", "skill_list", "spawn_subagent", "memory_recall",
     "web_search", "fetch_url", "datetime", "calculator",
+    "find_files", "review_changes",
 })
+
+#: 代码搜索 / 查找时整棵跳过的目录：版本控制、依赖、虚拟环境、各类缓存。
+#: 用 os.walk 剪枝，不进入这些目录（node_modules 动辄上万文件）。
+SEARCH_SKIP_DIRS = frozenset({
+    ".git", ".hg", ".svn", "node_modules", ".venv", "venv", "__pycache__",
+    ".mypy_cache", ".pytest_cache", ".ruff_cache", ".tox", ".nox", ".gradle",
+    ".next", ".nuxt", ".svelte-kit", ".turbo", ".parcel-cache", "site-packages",
+})
+
+
+def _walk_files(root: Path):
+    """Deterministic, pruned file walk (sorted dirs and names)."""
+    import os
+
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames
+                             if d not in SEARCH_SKIP_DIRS and not d.endswith(".egg-info"))
+        for name in sorted(filenames):
+            yield Path(dirpath) / name
+
+
+def _shown_path(path: Path, workspace: Path) -> str:
+    try:
+        return path.relative_to(workspace).as_posix()
+    except ValueError:
+        return str(path)
 
 
 @dataclass
@@ -93,6 +120,7 @@ class ToolRegistry:
     def __init__(self, *, expose: Iterable[str] | None = None, hide: Iterable[str] = ()) -> None:
         self._specs: dict[str, ToolSpec] = {}
         self._activated: set[str] = set()
+        self._originals: dict[str, str | None] = {}
         self._expose = list(expose) if expose is not None else None
         self._hide = list(hide)
         self._effects: dict[str, ToolEffect] = {}
@@ -258,6 +286,7 @@ class ToolRegistry:
         out = ToolRegistry(expose=self._expose, hide=self._hide)
         out._specs = dict(self._specs)
         out._activated = set(self._activated)
+        out._originals = self._originals
         out._effects = dict(self._effects)
         out._requires = dict(self._requires)
         return out
@@ -310,6 +339,7 @@ class ToolRegistry:
                 'authorization': 'deny', 'error_code': 'invalid_arguments',
                 'execution_state': 'not_started', 'outcome': 'failed'})
         try:
+            self._remember_originals(name, args, ctx)
             with self.write_guard(name, args, ctx):
                 result = self._invoke(name, args, ctx)
             result.content = ctx.secret_scope.protect_text(result.content)
@@ -323,6 +353,35 @@ class ToolRegistry:
             return ToolResult(False, error=redact(f"{type(exc).__name__}: {exc}"),
                               meta={'authorization': 'unknown', 'error_code': 'result_processing_failed',
                                     'execution_state': 'unknown' if self.side_effects(name, args) else 'completed'})
+
+    def _remember_originals(self, name: str, args: dict[str, Any] | None, ctx: ToolContext) -> None:
+        """First write to a file in this agent session: keep its prior text for review_changes.
+
+        Only public, readable text files are remembered; anything else is skipped
+        (the write itself is still decided by Policy in _invoke). Never raises.
+        """
+        if not args or not self.writes(name, args):
+            return
+        targets = [args.get("path")] + [b.get("path") for b in (args.get("patches") or args.get("edits") or [])
+                                        if isinstance(b, dict)]
+        for target in targets:
+            if not isinstance(target, str) or not target:
+                continue
+            try:
+                path = ctx.policy.abs_path(target)
+                key = str(path)
+                if key in self._originals:
+                    continue
+                if not path.exists():
+                    self._originals[key] = None
+                    continue
+                assert_public_path(path)
+                raw = read_public_bytes(path, limit=512 * 1024)
+                if b"\0" in raw:
+                    continue  # binary: not reviewable as text; None would mean "did not exist"
+                self._originals[key] = raw.decode("utf-8")
+            except Exception:
+                continue
 
     def _invoke(self, name: str, args: dict[str, Any] | None, ctx: ToolContext) -> ToolResult:
         try:
@@ -519,7 +578,9 @@ def build_builtin_registry(
         from .config_edit import edit_config
         return edit_config(args, ctx)
 
-    @host_tool("read_file", "Read a UTF-8 text file from disk.", schema={"path": "string"})
+    @host_tool("read_file", "Read a UTF-8 text file. Returns at most the first 400 lines / 6000 characters; "
+               "for larger files use file_outline to locate code, then read_range for the lines you need.",
+               schema={"path": {'type': 'string', 'description': "File path relative to the workspace root, e.g. 'src/app.py'."}})
     def read_file(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         path = _resolve(ctx.workspace, args.get("path", ""))
         if not path.is_file():
@@ -539,7 +600,9 @@ def build_builtin_registry(
                                 "truncated": len(lines) > limit or char_truncated,
                                 "char_truncated": char_truncated})
 
-    @host_tool("list_dir", "List entries of a directory.", schema={"path": "string"})
+    @host_tool("list_dir", "List the entries of one directory (names; folders end with '/'), up to 200. "
+               "To find files by name anywhere below a folder use find_files.",
+               schema={"path": {"type": "string", "description": "Directory relative to the workspace root. Default '.'."}})
     def list_dir(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         path = _resolve(ctx.workspace, args.get("path", "."))
         if not path.is_dir():
@@ -547,22 +610,129 @@ def build_builtin_registry(
         entries = sorted(p.name + ("/" if p.is_dir() else "") for p in path.iterdir())
         return ToolResult(ok=True, content="\n".join(entries[:200]))
 
-    @host_tool("grep", "Search a regex over files under a root.", schema={"pattern": "string", "root": "string"})
+    @host_tool(
+        "grep",
+        "Search file contents with a Python regular expression under a directory (default: the workspace). "
+        "Returns up to 100 matches as 'path:line: text'. Skips version-control, dependency and cache folders "
+        "(.git, node_modules, .venv, __pycache__, ...) and binary files. Narrow results with glob or root.",
+        schema={
+            "pattern": {"type": "string", "description": "Python regex, e.g. 'def \\w+_cache' or 'TODO|FIXME'."},
+            "root": {"type": "string", "description": "Directory to search, relative to the workspace. Default '.'."},
+            "glob": {"type": "string", "description": "Only search files whose name matches, e.g. '*.py' or 'test_*.ts'."},
+            "ignore_case": {"type": "boolean", "description": "Case-insensitive match. Default false."},
+            "context": {"type": "integer", "description": "Lines of context around each match, 0-3. Default 0."},
+        },
+    )
     def grep(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+        import fnmatch
         import re
 
-        # 排除缓存/版本控制目录与二进制产物：pyc 里的字符串常量会命中任意
-        # 源码 pattern（2026-09-23 实测 T4 结果四行全是 .pyc 假命中，把真
-        # 正的源码命中挤出 100 条窗口）。
-        skip_dirs = {"__pycache__", ".git", "node_modules", ".venv", "venv"}
+        # 二进制产物里的字符串常量会命中任意源码 pattern（2026-09-23 实测 .pyc
+        # 假命中挤掉真命中），按后缀排除；目录在 _walk_files 里整棵剪枝。
         skip_suffixes = {".pyc", ".pyo", ".pyd"}
-        pattern = re.compile(str(args.get("pattern", "")))
+        try:
+            pattern = re.compile(str(args.get("pattern", "")), re.IGNORECASE if args.get("ignore_case") else 0)
+        except re.error as exc:
+            return ToolResult(ok=False, error=f"invalid regular expression: {exc}")
         root = _resolve(ctx.workspace, args.get("root", "."))
+        if not root.is_dir():
+            return ToolResult(ok=False, error=f"not a directory: {root}")
+        glob = str(args.get("glob") or "")
+        try:
+            context = max(0, min(3, int(args.get("context") or 0)))
+        except (TypeError, ValueError):
+            context = 0
+        # 预筛：密钥脱敏（file_text）是主要耗时（实测 946 文件 12.6s，读原文仅 0.2s）。
+        # 先用原文整篇匹配，不可能命中的文件不做脱敏；输出与计数只来自脱敏后
+        # 逐行匹配，预筛只决定「跳过哪些文件」，不输出任何原文。MULTILINE 让
+        # ^/$ 与逐行语义一致；\A / \Z 语义不同，这类 pattern 不预筛。
+        raw_text = str(args.get("pattern", ""))
+        prefilter = None if ("\\A" in raw_text or "\\Z" in raw_text) else re.compile(
+            raw_text, pattern.flags | re.MULTILINE)
         hits: list[str] = []
-        for path in sorted(root.rglob("*")):
-            if not path.is_file() or path.suffix in skip_suffixes:
+        matches = 0
+        skipped: list[str] = []
+        limit_hit = False
+        for path in _walk_files(root):
+            if path.suffix in skip_suffixes or (glob and not fnmatch.fnmatch(path.name, glob)):
                 continue
-            if any(part in skip_dirs for part in path.parts):
+            try:
+                assert_public_path(path)
+                if not ctx.policy.allows_read(path) or path.stat().st_size > 512_000:
+                    continue
+                raw = read_public_bytes(path, limit=512_000)
+            except (PermissionError, OSError):
+                continue
+            if b"\0" in raw[:8192]:
+                continue  # binary
+            # 换行统一成 \n：Windows CRLF 下 `$` 前多一个 \r，逐行匹配（splitlines）
+            # 能命中而整篇预筛会漏。
+            if prefilter is not None and not prefilter.search(
+                    raw.decode("utf-8", "ignore").replace("\r\n", "\n").replace("\r", "\n")):
+                continue
+            # root 可指向 workspace 外（绝对路径）：_shown_path 越界回退绝对路径。
+            shown = _shown_path(path, ctx.workspace)
+            try:
+                lines = ctx.secret_scope.file_text(path).splitlines()
+            except (UnicodeError, OSError):
+                continue
+            except ValueError:
+                # 带注释的 JSON（tsconfig.json / devcontainer.json / .vscode/*.json）
+                # 无法为密钥脱敏而解析：跳过这一个文件，不让整次搜索失败。
+                skipped.append(shown)
+                continue
+            for number, line in enumerate(lines, 1):
+                if not pattern.search(line):
+                    continue
+                matches += 1
+                if context:
+                    if hits:
+                        hits.append("--")
+                    for other in range(max(1, number - context), min(len(lines), number + context) + 1):
+                        mark = ":" if other == number else "-"
+                        hits.append(f"{shown}{mark}{other}{mark} {lines[other - 1].strip()[:160]}")
+                else:
+                    hits.append(f"{shown}:{number}: {line.strip()[:160]}")
+                if matches >= 100:
+                    limit_hit = True
+                    break
+            if limit_hit:
+                break
+        notes = []
+        if limit_hit:
+            notes.append("[stopped at 100 matches; narrow with glob, root or a more specific pattern]")
+        if skipped:
+            notes.append(f"[skipped {len(skipped)} file(s) that could not be parsed for secret masking "
+                         f"(e.g. JSON with comments): {', '.join(skipped[:5])}]")
+        body = "\n".join(hits + notes) if hits or notes else ""
+        return ToolResult(ok=True, content=body,
+                          meta={"matches": matches, "truncated": limit_hit, "skipped_unparseable": len(skipped)})
+
+    @host_tool(
+        "find_files",
+        "Find files by name under a directory (default: the workspace) and list their paths relative to the "
+        "workspace, up to 200. Skips version-control, dependency and cache folders. Use grep to search contents.",
+        schema={
+            "pattern": {"type": "string", "description": "Glob on the file name, e.g. 'test_*.py' or '*.tsx'. "
+                                                         "Include '/' to match the relative path, e.g. 'src/**/*.py'."},
+            "root": {"type": "string", "description": "Directory to search, relative to the workspace. Default '.'."},
+        },
+    )
+    def find_files(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+        import fnmatch
+
+        pattern = str(args.get("pattern") or "*")
+        root = _resolve(ctx.workspace, args.get("root", "."))
+        if not root.is_dir():
+            return ToolResult(ok=False, error=f"not a directory: {root}")
+        on_path = "/" in pattern
+        flat = pattern.replace("**/", "")
+        found: list[str] = []
+        more = False
+        for path in _walk_files(root):
+            shown = _shown_path(path, ctx.workspace)
+            target = shown if on_path else path.name
+            if not (fnmatch.fnmatch(target, pattern) or (on_path and fnmatch.fnmatch(target, flat))):
                 continue
             try:
                 assert_public_path(path)
@@ -570,34 +740,71 @@ def build_builtin_registry(
                     continue
             except (PermissionError, OSError):
                 continue
-            try:
-                if path.stat().st_size > 512_000:
-                    continue
-            except OSError:
-                continue
-            try:
-                for number, line in enumerate(ctx.secret_scope.file_text(path).splitlines(), 1):
-                    if pattern.search(line):
-                        # root 可指向 workspace 外（绝对路径）时 relative_to 会抛
-                        # ValueError 让整个工具崩掉（实测 2 次）；越界回退绝对路径。
-                        try:
-                            shown: Any = path.relative_to(ctx.workspace)
-                        except ValueError:
-                            shown = path
-                        hits.append(f"{shown}:{number}: {line.strip()[:160]}")
-                        if len(hits) >= 100:
-                            raise StopIteration
-            except StopIteration:
+            if len(found) >= 200:
+                more = True
                 break
-            except (UnicodeError, OSError):
+            found.append(shown)
+        body = "\n".join(found) if found else "(no files matched)"
+        if more:
+            body += "\n[stopped at 200 files; narrow the pattern or root]"
+        return ToolResult(ok=True, content=body, meta={"files": len(found), "truncated": more})
+
+    @host_tool(
+        "review_changes",
+        "Show a unified diff of every file written in this agent session (including subagents), against its "
+        "content before the first write. Use it to self-review before you finish. Read-only.",
+        schema={"path": {"type": "string", "description": "Optional: only this file (relative to the workspace)."}},
+    )
+    def review_changes(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+        import difflib
+
+        registry = ctx.extras.get("registry")
+        originals = dict(getattr(registry, "_originals", {}) or {})
+        only = args.get("path")
+        if only:
+            key = str(ctx.policy.abs_path(str(only)))
+            originals = {k: v for k, v in originals.items() if k == key}
+        blocks: list[str] = []
+        changed = 0
+        budget = 16_000
+        for key in sorted(originals):
+            path = Path(key)
+            shown = _shown_path(path, ctx.workspace)
+            before = originals[key]
+            try:
+                after = ctx.secret_scope.file_text(path) if path.exists() else None
+            except (UnicodeError, OSError, ValueError):
+                blocks.append(f"{shown}: changed (content not shown)")
+                changed += 1
                 continue
-        return ToolResult(ok=True, content="\n".join(hits))
+            if before == after:
+                continue
+            changed += 1
+            if after is None:
+                blocks.append(f"{shown}: deleted")
+                continue
+            before_text = "" if before is None else ctx.secret_scope.protect_text(before)
+            # splitlines + lineterm=""：CRLF 文件的 diff 也以 \n 输出，不夹带 \r。
+            diff = "\n".join(difflib.unified_diff(before_text.splitlines(), after.splitlines(),
+                                                  fromfile=f"a/{shown}" if before is not None else "/dev/null",
+                                                  tofile=f"b/{shown}", lineterm=""))
+            blocks.append(diff)
+        if not changed:
+            return ToolResult(ok=True, content="(no changes in this session)", meta={"files": 0})
+        body = "\n".join(blocks)
+        truncated = len(body) > budget
+        if truncated:
+            body = body[:budget] + "\n[diff truncated; pass path to review one file]"
+        return ToolResult(ok=True, content=body, meta={"files": changed, "truncated": truncated})
 
     @host_tool(
         "write_file",
-        "Write UTF-8 text to a file (append mode optional). Gated by the sandbox and permission mode.",
+        "Create or overwrite a UTF-8 text file with the full content (append=true adds to the end). "
+        "Creates missing folders. For changing part of an existing file prefer edit_file or apply_patch.",
         read_only=False,
-        schema={"path": "string", "content": "string", "append": "boolean"},
+        schema={"path": {'type': 'string', 'description': "File path relative to the workspace root, e.g. 'src/app.py'."},
+                "content": {"type": "string", "description": "Complete new file content."},
+                "append": {"type": "boolean", "description": "Append instead of overwrite. Default false."}},
     )
     def write_file(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         path = _resolve(ctx.workspace, args.get("path", ""))
@@ -633,8 +840,13 @@ def build_builtin_registry(
         "Refuses an absent or ambiguous anchor unless replace_all; pass either 'old' "
         "or a line range, not both.",
         read_only=False,
-        schema={"path": "string", "old": "string", "new": "string",
-                "replace_all": "boolean", "start_line": "integer", "end_line": "integer"},
+        schema={"path": {'type': 'string', 'description': "File path relative to the workspace root, e.g. 'src/app.py'."},
+                "old": {"type": "string", "description": "Exact existing text to replace (copy it from a read; "
+                                                         "include enough lines to be unique)."},
+                "new": {"type": "string", "description": "Replacement text."},
+                "replace_all": {"type": "boolean", "description": "Replace every occurrence of old. Default false."},
+                "start_line": {"type": "integer", "description": "First line (1-indexed) to overwrite, instead of old."},
+                "end_line": {"type": "integer", "description": "Last line (inclusive) to overwrite."}},
     )
     def edit_file(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         path = _resolve(ctx.workspace, args.get("path", ""))
@@ -693,7 +905,12 @@ def build_builtin_registry(
         "first, then every file is written (per-file atomic replace); a failed "
         "validation leaves all files untouched.",
         read_only=False,
-        schema={"patches": "array"},
+        schema={"patches": {"type": "array", "description": "Edits applied all-or-nothing.",
+                            "items": {"type": "object", "properties": {
+                                "path": {'type': 'string', 'description': "File path relative to the workspace root, e.g. 'src/app.py'."},
+                                "old": {"type": "string", "description": "Exact existing text."},
+                                "new": {"type": "string", "description": "Replacement text."}},
+                                "required": ["path", "old", "new"]}}},
     )
     def apply_patch(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         blocks = args.get("patches") or args.get("edits") or []
@@ -755,8 +972,11 @@ def build_builtin_registry(
 
     @host_tool(
         "read_range",
-        "Read a 1-indexed line range from a UTF-8 file (cheaper than a whole-file read).",
-        schema={"path": "string", "start": "integer", "end": "integer"},
+        "Read a 1-indexed, inclusive line range from a UTF-8 file (cheaper than a whole-file read). "
+        "Pair with file_outline or grep to find the lines first.",
+        schema={"path": {'type': 'string', 'description': "File path relative to the workspace root, e.g. 'src/app.py'."},
+                "start": {"type": "integer", "description": "First line, 1-indexed."},
+                "end": {"type": "integer", "description": "Last line, inclusive."}},
     )
     def read_range(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         path = _resolve(ctx.workspace, args.get("path", ""))
@@ -774,8 +994,8 @@ def build_builtin_registry(
 
     @host_tool(
         "file_outline",
-        "List top-level symbols (def/class signatures) of a source file without reading it whole.",
-        schema={"path": "string"},
+        "List the symbols (class/def signatures with line numbers) of a source file without reading it whole.",
+        schema={"path": {'type': 'string', 'description': "File path relative to the workspace root, e.g. 'src/app.py'."}},
     )
     def file_outline(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         import re as _re
