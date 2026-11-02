@@ -272,8 +272,8 @@ The same kernel, two shapes:
 | --- | --- | --- |
 | Runtime | native Tk app on Windows | Kotlin Compose app; Python agent runs in a PRoot Ubuntu 24 userland on-device (no root, no Termux) |
 | Modes | Work (chat) + Coding Mode (three-column IDE) | Chat + **Personal Assistant** (connector market, one-tap MCP install) |
-| AI tools | full tool registry, computer use (observe/act/click with per-point approval) | device tools via Accessibility + Shizuku dual channel (read-only first, writes confirmed), `phone.*` (SMS/call-log/contacts) |
-| Web search | — | **built-in `web_search` tool**: provider chain Bocha → Brave → Bing RSS (zero-credential fallback works in CN) |
+| AI tools | full tool registry, computer use (screenshot + vision, click/double/right/scroll, typing and whitelisted keys, each approved) | device tools via Accessibility + Shizuku dual channel (read-only first, writes confirmed), `phone.*` (SMS/call-log/contacts) |
+| Web search | **built-in `web_search` + `fetch_url`**: Chinese web (Bocha → Bing CN) and US/international web (Brave → Bing US → DuckDuckGo), `region` auto/cn/global/both; page reader strips menus/ads, handles GBK, refuses localhost/LAN | **built-in `web_search` tool**: provider chain Bocha → Brave → Bing RSS (zero-credential fallback works in CN) |
 | MCP connectors | — | 47-service catalog grouped by scene (pinned: Amap / 12306 / Feishu / Notion / Xiaohongshu / Taobao / GitHub); stdio + official remote HTTP transports |
 | Build | `python forge-gui/forge_gui_v2.py` | `./gradlew :app:assembleDebug` (rootfs + host binaries via `scripts/fetch-host-bins.py`, see `forge-android/docs/GRAY-RELEASE.md`) |
 

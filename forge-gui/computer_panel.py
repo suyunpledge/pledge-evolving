@@ -38,7 +38,9 @@ class ComputerLane:
         registry.unregister('computer_act')  # Input uses the separately approved screenshot-bound tools.
         registry.register(ToolSpec('computer_screenshot',
             'Capture the selected window locally; returns size, hash and a fresh observation_id, not pixels. '
-            'You cannot see the image: use computer_vision to read it or locate a target.',
+            'You cannot see the image: use computer_vision to read it or locate a target. '
+            'To only read public web pages, web_search/fetch_url are faster than driving a browser; '
+            'use the window when the page needs a login or interaction.',
             self._screenshot, schema={'type': 'object', 'properties': {}, 'additionalProperties': False}),
             trusted=True, effect=ToolEffect.READ, requires=('computer',))
         registry.register(ToolSpec('computer_vision',
@@ -81,7 +83,10 @@ class ComputerLane:
                 trusted=True,effect=ToolEffect.DELEGATED_WRITE,requires=('computer',))
             registry.register(ToolSpec(KEY_NAME,
                 'Press one key or shortcut in the selected window, e.g. enter, esc, tab, down, ctrl+s, '
-                'ctrl+a, shift+tab, alt+d, f5. Not for text (use computer_type). Window switching/closing '
+                'ctrl+a, shift+tab, alt+d, f5. In a browser: ctrl+l focuses the address bar (then '
+                'computer_type the URL and press enter), ctrl+f finds on page, f5 reloads, alt+left goes '
+                'back, ctrl+t opens a tab, ctrl+tab switches tabs, pagedown/space scroll. '
+                'Not for text (use computer_type). Window switching/closing '
                 'keys (alt+tab, alt+f4, ctrl+w, Win) are refused. Needs user approval; returns a '
                 'post-input screenshot with a new observation_id.',
                 self._key, read_only=False, schema={'type':'object','properties':{

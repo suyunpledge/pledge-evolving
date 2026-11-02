@@ -263,8 +263,8 @@ python run.py run "任务" --strategy economy      # CLI 显式指定（> 配置
 | --- | --- | --- |
 | 运行形态 | Windows 原生 Tk 应用 | Kotlin Compose 原生应用；Python Agent 跑在设备上的 PRoot Ubuntu 24 用户态（免 root、免 Termux） |
 | 模式 | Work（对话）+ Coding Mode（三栏 IDE） | 对话 + **个人助理**（连接器市场，MCP 一键接入） |
-| AI 工具 | 完整工具注册表、computer use（观察/操作/坐标点击，逐点审批） | 设备工具走无障碍 + Shizuku 双通道（只读优先，写操作确认），`phone.*`（短信/通话/联系人） |
-| 联网搜索 | — | **内置 `web_search` 工具**：博查 → Brave → Bing RSS 三级降级（零凭据兜底国内可用） |
+| AI 工具 | 完整工具注册表、computer use（截图+视觉，单击/双击/右键/滚动、打字与白名单按键，逐次审批） | 设备工具走无障碍 + Shizuku 双通道（只读优先，写操作确认），`phone.*`（短信/通话/联系人） |
+| 联网搜索 | **内置 `web_search` + `fetch_url`**：中文网（博查 → Bing 中国）与美国/国际网（Brave → Bing 美国 → DuckDuckGo），`region` 可选 auto/cn/global/both；读网页去掉菜单广告、识别 GBK、拒绝本机与内网地址 | **内置 `web_search` 工具**：博查 → Brave → Bing RSS 三级降级（零凭据兜底国内可用） |
 | MCP 连接器 | — | 47 服务按场景分组目录（置顶：高德/12306/飞书/Notion/小红书/淘宝比价/GitHub）；stdio + 官方远程 HTTP 双传输 |
 | 构建 | `python forge-gui/forge_gui_v2.py` | `./gradlew :app:assembleDebug`（rootfs 与宿主二进制见 `forge-android/scripts/fetch-host-bins.py`、`forge-android/docs/GRAY-RELEASE.md`） |
 

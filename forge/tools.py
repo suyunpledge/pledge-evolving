@@ -1087,31 +1087,44 @@ def build_builtin_registry(
 
     @host_tool(
         "web_search",
-        "Search the web (Bing + Baidu aggregated, Sogou/Yahoo fallback). "
-        "site: all/zhihu/xiaohongshu/baidu/bing/weixin.",
-        deferred=True,
+        "Search the web and return titles, links and snippets. region: auto (Chinese query -> Chinese web, "
+        "otherwise US/international web), cn, global, or both. Then read promising pages with fetch_url.",
+        no_defer=True,
         tags=("web", "search", "network"),
-        schema={"query": "string", "num": "integer", "site": "string"},
+        schema={
+            "query": {"type": "string", "description": "Search words; supports operators such as site: and quotes."},
+            "num": {"type": "integer", "description": "Results per region, 1-10. Default 5."},
+            "site": {"type": "string", "description": "Optional: all (default), zhihu, xiaohongshu, weixin, bilibili, "
+                                                      "github, reddit, stackoverflow, wikipedia, or any domain."},
+            "region": {"type": "string", "enum": ["auto", "cn", "global", "both"],
+                       "description": "Which web to search. Default auto."},
+        },
     )
     def web_search(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         query = str(args.get("query", "")).strip()
         if not query:
             return ToolResult(ok=False, error="web_search needs a non-empty 'query'")
-        num = min(int(args.get("num", 5) or 5), 10)
-        site = str(args.get("site", "all") or "all")
-        base = ctx.extras.get("web_search")
-        if base is None:
-            return ToolResult(ok=False,
-                              error="web_search backend not attached; set extras['web_search']")
         try:
-            results = base(query=query, num=num, site=site)
+            num = min(int(args.get("num", 5) or 5), 10)
+        except (TypeError, ValueError):
+            return ToolResult(ok=False, error="num must be an integer from 1 to 10")
+        site = str(args.get("site", "all") or "all")
+        region = str(args.get("region", "auto") or "auto")
+        base = ctx.extras.get("web_search")
+        try:
+            if base is None:
+                from . import web_backends
+                results = web_backends.search(query=query, num=num, site=site, region=region)
+            else:
+                results = base(query=query, num=num, site=site, region=region)
         except Exception as exc:
             return ToolResult(ok=False, error=f"web_search failed: {exc}")
         if not results:
             return ToolResult(ok=True, content="(no results)")
         lines = []
         for i, r in enumerate(results, 1):
-            lines.append(f"{i}. {r.get('title','')}")
+            engine = f"  [{r['engine']}]" if r.get("engine") else ""
+            lines.append(f"{i}. {r.get('title','')}{engine}")
             if r.get("url"):
                 lines.append(f"   {r['url']}")
             if r.get("snippet"):
@@ -1120,27 +1133,37 @@ def build_builtin_registry(
 
     @host_tool(
         "fetch_url",
-        "Fetch a URL and extract readable text (HTML tags stripped). "
-        "Aligned with Always fetch_webpage (url + max_chars).",
-        deferred=True,
+        "Read a public web page (http/https) as plain text: scripts and markup removed, headings kept, "
+        "Chinese encodings handled. Local and private-network addresses are refused. Not for PDFs or "
+        "pages that need a login; for those, operate the user's browser with the computer tools.",
+        no_defer=True,
         tags=("web", "fetch", "network"),
-        schema={"url": "string", "max_chars": "integer"},
+        schema={
+            "url": {"type": "string", "description": "Full http(s) address, e.g. from web_search results."},
+            "max_chars": {"type": "integer", "description": "Characters of page text to return, up to 50000. "
+                                                            "Default 5000; the reply says when text was cut."},
+        },
     )
     def fetch_url(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         url = str(args.get("url", "")).strip()
         if not url.startswith(("http://", "https://")):
             return ToolResult(ok=False, error="fetch_url needs an http(s) URL")
-        max_chars = min(int(args.get("max_chars", 5000) or 5000), 50000)
-        fetcher = ctx.extras.get("fetch_url")
-        if fetcher is None:
-            return ToolResult(ok=False,
-                              error="fetch_url backend not attached; set extras['fetch_url']")
         try:
-            title, body = fetcher(url=url, max_chars=max_chars)
+            max_chars = max(200, min(int(args.get("max_chars", 5000) or 5000), 50000))
+        except (TypeError, ValueError):
+            return ToolResult(ok=False, error="max_chars must be an integer")
+        fetcher = ctx.extras.get("fetch_url")
+        try:
+            if fetcher is None:
+                from . import web_backends
+                title, body = web_backends.fetch(url=url, max_chars=max_chars)
+            else:
+                title, body = fetcher(url=url, max_chars=max_chars)
         except Exception as exc:
             return ToolResult(ok=False, error=f"fetch_url failed: {exc}")
         head = f"# {title}\n\n" if title else ""
-        return ToolResult(ok=True, content=(head + body)[:max_chars],
+        # The backend already bounds the text and appends its own truncation/source note.
+        return ToolResult(ok=True, content=head + body,
                           meta={"url": url, "chars": len(head + body)})
 
     @host_tool(

@@ -390,7 +390,9 @@ def build_handler(cfg: GatewayConfig):
                     props = {}
                     required = []
                     for key, val in (spec.schema or {}).items():
-                        props[key] = {"type": val, "description": key}
+                        # Rich specs carry their own JSON schema (type + description + items).
+                        props[key] = (dict(val) if isinstance(val, dict)
+                                      else {"type": val, "description": key})
                     required = [k for k, v in (spec.schema or {}).items()
                                 if not k.startswith("_")]
                     tools.append({
