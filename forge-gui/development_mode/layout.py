@@ -220,7 +220,7 @@ class StatusBar(ttk.Frame):
 
 
     右侧扩展（v0.2 起）：
-    * 「能力」—— capability_count = "19 (builtin) + 6 (contrib) + 3 (plugin)"
+    * 「能力」—— capability_count = "19 内置 + 6 扩展 + 3 插件"（只列非零来源）
     * 「布局」—— layout_name（来自 state.layout['preset']，agent / editor / focus）
 
     能力 / 布局也支持 update() 推送，键名 ``capability`` / ``layout``；
@@ -279,7 +279,7 @@ class StatusBar(ttk.Frame):
             var = tk.StringVar(value='—')
             self._vars[key] = var
             cell = tk.Frame(row, bg=C['bg'])
-            cell.pack(side='right')
+            cell.pack(side='right', padx=(12, 0))
             tk.Label(cell, text=title, font=FONT_CAPTION, bg=C['bg'],
                      fg=C['ter']).pack(side='left')
             tk.Label(cell, textvariable=var, font=FONT_CAPTION, bg=C['bg'],
@@ -290,10 +290,13 @@ class StatusBar(ttk.Frame):
         # 从左到右 cursor → … → problems 的阅读顺序；瞬态消息最后
         # pack 占最右（M1 契约：右对齐不变）。
         for key, default in reversed(self.EDITOR_FIELDS):
-            cell = tk.Frame(row, bg=C['bg'])
-            cell.pack(side='right', padx=(12, 0))
             var = tk.StringVar(value=default)
             self._vars[key] = var
+            if key == 'warnings':
+                # 本项目没有独立诊断器，警告恒为 0（见上）：保留字段值，不占状态栏位置。
+                continue
+            cell = tk.Frame(row, bg=C['bg'])
+            cell.pack(side='right', padx=(12, 0))
             if key == 'ready':
                 # 就绪态圆点：Canvas 画 oval（Label 的 '●' 字符跨字体
                 # 渲染不稳），颜色经 set_indicator 按语义 token 切换。
@@ -301,6 +304,10 @@ class StatusBar(ttk.Frame):
                                             bd=0, highlightthickness=0)
                 self._indicator.pack(side='left', padx=(0, 3))
                 self._paint_indicator(C['ok'])
+            if key == 'problems':
+                # 值被 update() 推成纯数字；标签单独一格，避免状态栏出现光秃秃的「0」。
+                tk.Label(cell, text='问题', font=FONT_CAPTION, bg=C['bg'],
+                         fg=C['ter']).pack(side='left', padx=(0, 4))
             tk.Label(cell, textvariable=var, font=FONT_CAPTION, bg=C['bg'],
                      fg=C['subtext']).pack(side='left')
         # W4（Kimi 审查）：瞬态消息与编辑器状态组之间一道竖分隔线——

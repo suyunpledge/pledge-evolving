@@ -126,7 +126,9 @@ class DpiLayoutTests(unittest.TestCase):
                     card = app.input_card
                     metrics[scale] = tkfont.Font(root=root, font=theme.FONT_UI).metrics("linespace")
                     for widget in (card.entry, card.plus, card.model_widget, card.mode_pill, card.provider_label, card.send_circle):
-                        self.assert_inside(widget, card._card._cv)
+                        if widget.winfo_ismapped():  # provider_label 在有模型选择器时隐藏（选择器自带厂商标志）
+                            self.assert_inside(widget, card._card._cv)
+                    self.assertFalse(card.provider_label.winfo_ismapped())
                     self.assertLess(card.entry.winfo_rooty(), card._tools_row.winfo_rooty())
                     self.assertLess(card._tools_row.winfo_rooty(), card._toolbar.winfo_rooty())
                     self.assertEqual(card.model_widget.get(), app.model_var.get())

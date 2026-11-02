@@ -183,6 +183,28 @@ class Conversation(tk.Text):
         for widget in self._windows:
             if widget.winfo_exists() and hasattr(widget, 'fit'):
                 widget.fit(max(100, event.width - 24))
+                self._stretch(widget, max(100, event.width - 24))
+
+    @staticmethod
+    def _stretch(widget, width):
+        """卡片铺满对话列：底部一条 1px、与卡同色的撑宽条。
+
+        嵌在 Text 里的窗口按内容自然宽度显示，fit() 只改折行宽度，卡片会窄成一截。
+        卡内部用 grid 时不能混 pack，此时保持原样。
+        """
+        try:
+            pad = sum(int(float(v)) for v in str(widget.cget('padding') or '0').split()[:1]) * 2
+        except (tk.TclError, ValueError):
+            pad = 0
+        try:
+            strut = getattr(widget, '_forge_strut', None)
+            if strut is None or not strut.winfo_exists():
+                strut = tk.Frame(widget, height=1, bg=C['surface'], bd=0, highlightthickness=0)
+                strut.pack(side='bottom', fill='x')
+                widget._forge_strut = strut
+            strut.configure(width=max(1, width - pad))
+        except tk.TclError:
+            pass
 
     def clear(self):
         self.configure(state='normal')
@@ -305,6 +327,7 @@ class Conversation(tk.Text):
         self._windows.append(widget)
         if hasattr(widget, 'fit'):
             widget.fit(max(100, self.winfo_width() - 24))
+            self._stretch(widget, max(100, self.winfo_width() - 24))
         self.configure(state='disabled')
 
 
@@ -371,6 +394,11 @@ def format_tokens(tokens):
     return f'{tokens / 1000:.1f}k tokens' if tokens >= 1000 else f'{tokens} tokens'
 
 
+# 时间线标题里的状态计数用中文；未知状态原样显示，不吞信息。
+STATUS_WORDS = {'completed': '完成', 'running': '进行中', 'failed': '失败', 'awaiting_approval': '待审批',
+                'denied': '已拒绝', 'cancelled': '已取消', 'unknown': '结果未知'}
+
+
 class ToolSummary(ttk.Frame):
     """执行时间线卡：标题（步数 / 状态计数 / token）+ 最近步骤 + 可展开原始结果。
 
@@ -413,7 +441,8 @@ class ToolSummary(ttk.Frame):
         counts = {}
         for row in actions:
             counts[row['status']] = counts.get(row['status'], 0) + 1
-        parts = [f'执行步骤 · {len(actions)} 步', ' / '.join(f'{k}: {v}' for k, v in counts.items())]
+        parts = [f'执行步骤 · {len(actions)} 步', ' · '.join(
+            f'{STATUS_WORDS.get(k, k)} {v}' for k, v in counts.items())]
         if tokens:
             parts.append(format_tokens(tokens))
         if cost:
@@ -671,6 +700,17 @@ class PlanningCard(ttk.Frame):
         self.permission.configure(text='权限 · ' + label)
         self.authorization.configure(text='授权 · ' + auth)
         self.view.configure(state='normal' if enabled else 'disabled')
+        # 运行时还没上报的项不显示「未记录」占位：全空时只留一句等待说明。
+        unknown = {self.level: level == '级别未记录', self.permission: label == '权限未记录',
+                   self.authorization: auth == '未提交授权'}
+        if all(unknown.values()):
+            unknown[self.authorization] = False
+            self.authorization.configure(text='等待运行时上报规划与授权')
+        for widget in (self.level, self.authorization, self.permission):
+            widget.pack_forget()
+        for widget in (self.level, self.authorization, self.permission):
+            if not unknown[widget]:
+                widget.pack(anchor='w', before=self.view)
 
 
 class AgentPanel(ttk.Frame):

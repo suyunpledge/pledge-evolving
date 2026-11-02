@@ -2038,7 +2038,9 @@ class DevelopmentWorkbench(ttk.Frame):
             # 启动早期（catalog_rows 还没填，plugins 目录可能未建）——
             # 直接报"未就绪"而不是 "—"，避免状态栏出现无意义的占位
             return '未就绪'
-        return f'{builtin} (builtin) + {contrib} (contrib) + {plugin} (plugin)'
+        # 只列非零来源：「21 内置」比「21 (builtin) + 0 (contrib) + 0 (plugin)」好读。
+        parts = [f'{n} {name}' for n, name in ((builtin, '内置'), (contrib, '扩展'), (plugin, '插件')) if n]
+        return ' + '.join(parts)
 
     def _layout_name_text(self):
         try:

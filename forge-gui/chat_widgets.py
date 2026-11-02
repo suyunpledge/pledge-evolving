@@ -1225,7 +1225,8 @@ class AgentMessage(tk.Frame):
             self.subtitle = i18n.Label(self, text=subtitle, bg=base, fg=C["ter"],
                                      font=FONT_SMALL, anchor="w", justify=tk.LEFT,
                                      wraplength=MAX_BUBBLE_WIDTH)
-            self.subtitle.pack(fill=tk.X, pady=(4, 0))
+            # 与名字、正文同一条左对齐线（头像 28 + 间距 8）。
+            self.subtitle.pack(fill=tk.X, padx=(ui_px(self, 36), 0), pady=(2, 0))
 
         # 正文气孔：圆角卡 + hairline 描边，跟用户侧对称。整体宽度跟随对话列，
         # 这样代码块/工具卡/表格都能拿到完整宽度（不为了「抱得紧」把内容压窄）。
@@ -1432,7 +1433,7 @@ class AgentMessage(tk.Frame):
         if getattr(self, "_action_row", None) is not None:
             return self._action_row
         host = tk.Frame(self, bg=self._base)
-        host.pack(fill=tk.X, anchor="w", pady=(2, 0))
+        host.pack(fill=tk.X, anchor="w", padx=(ui_px(self, 36), 0), pady=(ui_px(self, 4), 0))
 
         def _copy():
             try:
@@ -1493,10 +1494,11 @@ class AgentMessage(tk.Frame):
             ("👎", "踩", lambda: _vote("踩")),
         ]
         for glyph, tip, cmd in actions:
-            btn = IconCanvas(host, glyph, size=20, bg=self._base, fg=C["subtext"], command=cmd)
-            btn.pack(side=tk.LEFT, padx=1)
-            btn.bind("<Enter>", lambda _e, b=btn: b.configure(fg=C["text"]))
-            btn.bind("<Leave>", lambda _e, b=btn: b.configure(fg=C["muted"]))
+            btn = IconCanvas(host, glyph, size=22, bg=self._base, fg=C["muted"], command=cmd)
+            btn.pack(side=tk.LEFT, padx=(0, ui_px(self, 6)))
+            # add="+"：保留 IconCanvas 自带的悬停底色，只叠加前景色变化。
+            btn.bind("<Enter>", lambda _e, b=btn: b.configure(fg=C["text"]), add="+")
+            btn.bind("<Leave>", lambda _e, b=btn: b.configure(fg=C["muted"]), add="+")
             attach_tooltip(btn, tip)
         self._action_row = host
         return host
@@ -2278,7 +2280,8 @@ class InputCard(tk.Frame):
                                        font=FONT_CAPTION, bg=C["input_bg"], fg=C["faint"], anchor="w")
         self.provider_label.grid(row=0, column=0, sticky="w", padx=(0, 8))
         model_host = self._model_host = tk.Frame(metadata, bg=C["input_bg"])
-        model_host.grid(row=0, column=1, sticky="ew", padx=(0, 8))
+        # 模型胶囊按内容宽度，不拉满整行：这一行读起来是「模型 · 模式」，不是表单。
+        model_host.grid(row=0, column=1, sticky="w", padx=(0, 8))
         metadata.grid_columnconfigure(3, weight=1)
         self.mode_var = i18n.StringVar(self, value=tr("模式：标准"))
         # 思考强度入口：点模式按钮弹出 Codex 式分级滑杆卡。
@@ -2306,10 +2309,13 @@ class InputCard(tk.Frame):
         self._toolbar_compact = None
         state_row.bind("<Configure>", self._fit_toolbar)
         self.model_var = model_var or tk.StringVar(value="default")
+        self._show_provider = model_widget is None
         if model_widget is not None:
             self.model_pill = None
             self.model_widget = model_widget(model_host)
             self.model_widget.pack_configure(padx=0)
+            # 选择器自带厂商标志，再写一遍「Provider：…」只是重复；值仍随 set_metadata 更新。
+            self.provider_label.grid_remove()
         else:
             self.model_widget = None
             self.model_pill = rounded_label(model_host, f"▣ {self.model_var.get()}",
@@ -2550,7 +2556,8 @@ class InputCard(tk.Frame):
             return
         self._toolbar_signature = signature
         available = max(1, content_width - self._primary_controls.winfo_reqwidth() - 8)
-        fixed = self.provider_label.winfo_reqwidth() + self.mode_pill.winfo_reqwidth() + 16
+        provider_width = self.provider_label.winfo_reqwidth() if self._show_provider else 0
+        fixed = provider_width + self.mode_pill.winfo_reqwidth() + 16
         # 模型选择器至少留 140（96-DPI 单位）再折行：它会按预算省略显示；
         # 雅黑的拉丁字形比 Segoe UI 略宽，150 会让最窄窗口的工具栏多折一行。
         compact = available < fixed + ui_px(self, 140)
@@ -2562,13 +2569,16 @@ class InputCard(tk.Frame):
             self._metadata.grid_columnconfigure(0, weight=1 if compact else 0)
             if compact:
                 self._model_host.grid(row=0, column=0, columnspan=3, sticky="ew", padx=0, pady=(0, 4))
-                self.provider_label.grid(row=1, column=0, columnspan=2, sticky="w")
+                if self._show_provider:
+                    self.provider_label.grid(row=1, column=0, columnspan=2, sticky="w")
                 self.mode_pill.grid(row=1, column=2, columnspan=2, sticky="e")
             else:
-                self.provider_label.grid(row=0, column=0, columnspan=1, sticky="w")
-                self._model_host.grid(row=0, column=1, columnspan=1, sticky="ew", padx=(0, 8), pady=0)
+                if self._show_provider:
+                    self.provider_label.grid(row=0, column=0, columnspan=1, sticky="w")
+                self._model_host.grid(row=0, column=1, columnspan=1, sticky="w", padx=(0, 8), pady=0)
                 self.mode_pill.grid(row=0, column=2, sticky="w")
-        budget = available if compact else min(max(1, available - fixed), ui_px(self, 380))
+        # 宽屏下模型胶囊封顶 280：长模型名省略显示，不再把这一行撑成表单。
+        budget = available if compact else min(max(1, available - fixed), ui_px(self, 280))
         if self.model_widget is not None and hasattr(self.model_widget, "set_width_budget"):
             self.model_widget.set_width_budget(budget)
         elif self.model_pill is not None:

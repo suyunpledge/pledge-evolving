@@ -69,7 +69,7 @@ class AgentPanelTests(unittest.TestCase):
         self.emit(type='tool_started', task_id='t', action_id='a', tool='read_file')
         summary = self.app.agent_panel._summary
         self.assertFalse(summary.expanded)
-        self.assertIn('running', summary.summary.cget('text'))
+        self.assertIn('进行中 1', summary.summary.cget('text'))
         self.emit(type='tool_completed', task_id='t', action_id='a', tool='read_file', ok=False, result='denied')
         self.assertIn('failed', self.app.workflow.get('1.0', 'end'))
         self.assertNotIn('running', self.app.workflow.get('1.0', 'end'))
