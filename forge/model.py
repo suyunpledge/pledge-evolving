@@ -22,7 +22,8 @@ import time
 from .local_service import chat_request_path
 from .tool_adapter import fill_gemini_name_fields, sanitize_messages
 from .adapters import PlanContext, adapter_for
-from .cache_state import CacheWarmth, prefix_fingerprint
+from .cache_state import CacheWarmth, prefix_fingerprint, reasoning_signature
+from .canonical import dumps as _canonical_dumps
 from .vendors import (
     VendorProfile,
     normalize_usage,
@@ -39,6 +40,29 @@ from typing import Any, Callable, Iterable, Protocol
 # 进程级单例：记录「哪个前缀在哪家厂商仍然是热的」。缓存隔离是按厂商的，
 # 混排下这个信念决定了升级跳要不要真的执行。惰性创建，不碰文件系统除非用到。
 _WARMTH: CacheWarmth | None = None
+
+# Reasoning 参数的缓存命名空间追踪（2026-11-02，DSH 实证：effort 切换可使
+# DeepSeek 线前缀命中 99.9%→12.7% 甚至 0.3%）。forge 的历史回放忠实于返回
+# 内容、不随当前 effort 重过滤，因此免疫回放差异型的全灭；这里的追踪只为
+# 把"同内容、仅 reasoning 变化"的那一跳显式写进运行报告——切换代价不再
+# 隐形，温暖度（指纹已含 reasoning 维度）也不再误报"仍热"。
+_REQ_NS_LOCK = threading.Lock()
+_REQ_NS_LAST: dict[tuple[str, str], tuple[str, str]] = {}
+
+
+def _record_namespace(key: tuple[str, str], content_fingerprint: str,
+                      reasoning_sig: str) -> dict[str, Any] | None:
+    """Return hop info when only the reasoning params changed for this series.
+
+    同一 (provider, model) 上，内容指纹不变而 reasoning 签名变化 = 一次
+    缓存命名空间跳跃：该厂商上此前缀需按全价重读一次后才会重新变热。
+    """
+    with _REQ_NS_LOCK:
+        previous = _REQ_NS_LAST.get(key)
+        _REQ_NS_LAST[key] = (content_fingerprint, reasoning_sig)
+    if previous is None or previous[0] != content_fingerprint or previous[1] == reasoning_sig:
+        return None
+    return {"from": previous[1], "to": reasoning_sig}
 
 
 def warmth_store() -> CacheWarmth:
@@ -314,6 +338,15 @@ def _plan_and_shape(payload: dict[str, Any], messages: list[dict[str, Any]],
                                      endpoint=provider.base_url,
                                      account=provider._credential._account_fingerprint, wire=provider.wire,
                                      cache_mode=provider.cache_control)
+    content_fingerprint = prefix_fingerprint(payload, model=model,
+                                             endpoint=provider.base_url,
+                                             account=provider._credential._account_fingerprint,
+                                             wire=provider.wire,
+                                             cache_mode=provider.cache_control,
+                                             include_reasoning=False)
+    reasoning_hop = _record_namespace(
+        (provider.name, model), content_fingerprint,
+        _canonical_dumps(reasoning_signature(payload)))
     ctx = PlanContext(
         profile=profile, model=model,
         base_input=float(base_in or 0.0), base_output=float(base_out or 0.0),
@@ -340,6 +373,12 @@ def _plan_and_shape(payload: dict[str, Any], messages: list[dict[str, Any]],
         payload = shaped
 
     raw = plan.to_raw()
+    if reasoning_hop:
+        raw.setdefault("notes", []).append(
+            f"reasoning 参数变化（{reasoning_hop['from']}→{reasoning_hop['to']}）："
+            "该维度参与前缀缓存命名空间（DSH 实证 effort 切换可使命中率 99.9%→12.7%），"
+            "本段前缀在同厂商需按全价重读一次后重新变热")
+        raw["reasoning_hop"] = reasoning_hop
     raw["fingerprint"] = fingerprint
     raw["execution"] = execution
     raw["estimate_scope"] = "reuse_window"

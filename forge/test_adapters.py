@@ -99,10 +99,10 @@ def test_adapters() -> None:
     check("deepseek: est_tokens includes system prompt", ds.est_tokens > 1500,
           str(ds.est_tokens))
 
-    # Anthropic: marker on, two breakpoints (tools + system)
+    # Anthropic: marker on, three breakpoints (tools + system + history edge)
     an = adapter_for(PROFILES["anthropic"]).plan(p, p["messages"], _ctx("anthropic"))
     check("anthropic: marks the wire", an.cache_control is True)
-    check("anthropic: two breakpoints", an.breakpoints == 2, str(an.breakpoints))
+    check("anthropic: three breakpoints", an.breakpoints == 3, str(an.breakpoints))
     check("anthropic: ttl chosen", an.ttl in ("5m", "1h"), an.ttl)
 
     # 1 call only -> caching cannot pay for itself, adapter says so
@@ -277,6 +277,43 @@ def test_warmth() -> None:
     check("prune removes expired", removed >= 1, str(removed))
 
 
+def test_reasoning_namespace() -> None:
+    print("\n-- reasoning 参数与缓存命名空间 --")
+    from .cache_state import prefix_fingerprint, reasoning_signature
+    from . import model as model_mod
+
+    base = {"system": "s", "tools": [{"name": "a"}],
+            "messages": [{"role": "user", "content": "q"}]}
+    hi = {**base, "reasoning_effort": "high"}
+    mx = {**base, "reasoning_effort": "max"}
+    check("fingerprint: effort 是命名空间维度",
+          prefix_fingerprint(hi) != prefix_fingerprint(mx))
+    check("fingerprint: 同内容同 effort 仍一致",
+          prefix_fingerprint(hi) == prefix_fingerprint({**base, "reasoning_effort": "high"}))
+    check("fingerprint: 剔除 reasoning 后同内容一致",
+          prefix_fingerprint(hi, include_reasoning=False)
+          == prefix_fingerprint(mx, include_reasoning=False))
+    check("signature: 只收在场的参数",
+          reasoning_signature(hi) == {"reasoning_effort": "high"}
+          and reasoning_signature(base) == {})
+
+    # 温暖度诚实性：effort 切换后不得报告“仍热”（DSH 教训的核心）
+    store = CacheWarmth()
+    store.remember("deepseek", prefix_fingerprint(hi))
+    check("warmth: effort 切换后判冷",
+          not store.is_warm(PROFILES["deepseek"], prefix_fingerprint(mx)))
+    check("warmth: 同 effort 仍判热",
+          store.is_warm(PROFILES["deepseek"], prefix_fingerprint(hi)))
+
+    # 命名空间跳跃检测：同内容仅 reasoning 变化才报跳；首见/内容变化不报
+    model_mod._REQ_NS_LAST.clear()
+    check("hop: 首见不报", model_mod._record_namespace(("t", "m"), "c1", "sig-a") is None)
+    check("hop: 无变化不报", model_mod._record_namespace(("t", "m"), "c1", "sig-a") is None)
+    check("hop: 内容变化不报", model_mod._record_namespace(("t", "m"), "c2", "sig-b") is None)
+    hop = model_mod._record_namespace(("t", "m"), "c2", "sig-c")
+    check("hop: 仅 reasoning 变化报跳", hop == {"from": "sig-b", "to": "sig-c"}, str(hop))
+
+
 def main() -> int:
     print("forge adapter + fleet-cache assertions")
     test_breakeven()
@@ -285,6 +322,7 @@ def main() -> int:
     test_peak_deferral()
     test_compare()
     test_warmth()
+    test_reasoning_namespace()
     total = len(_PASS) + len(_FAIL)
     print(f"\n{len(_PASS)}/{total} passed")
     if _FAIL:

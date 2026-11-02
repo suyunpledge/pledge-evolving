@@ -11,6 +11,8 @@ vendor's billing shape gets a number it can be checked against.
 
 from __future__ import annotations
 
+import copy
+import json
 import sys
 from pathlib import Path
 
@@ -182,13 +184,68 @@ def test_shaping() -> None:
     check("anthropic: system converted to blocks",
           isinstance(out["system"], list)
           and out["system"][-1].get("cache_control", {}).get("type") == "ephemeral")
-    check("anthropic: messages untouched",
-          out["messages"][0]["content"] == "hi")
+    check("anthropic: history edge marked (string content wrapped)",
+          isinstance(out["messages"][-1]["content"], list)
+          and out["messages"][-1]["content"][-1].get("cache_control", {}).get("type") == "ephemeral"
+          and out["messages"][-1]["content"][-1].get("text") == "hi")
 
     ttl_payload = {"system": "s", "tools": [{"name": "a"}], "messages": []}
     out_ttl = shape_anthropic(ttl_payload, PROFILES["anthropic"], ttl="1h")
     check("anthropic: 1h ttl marker",
           out_ttl["system"][-1]["cache_control"].get("ttl") == "1h")
+
+    # 滚动写入点（2026-11-01）：历史层断点必须随对话边缘前移，且不能
+    # 让断点总数越过该厂商 4 个的上限——旧标记要摘，新标记打在新边缘。
+    turn1 = {"system": "s", "tools": [{"name": "a"}],
+             "messages": [{"role": "user", "content": "task"}]}
+    shaped1 = shape_anthropic(copy.deepcopy(turn1), PROFILES["anthropic"])
+    turn2 = copy.deepcopy(shaped1)
+    turn2["messages"].append({"role": "assistant", "content": [
+        {"type": "tool_use", "id": "t1", "name": "a", "input": {}}]})
+    turn2["messages"].append({"role": "user", "content": [
+        {"type": "tool_result", "tool_use_id": "t1", "content": "ok"}]})
+    shaped2 = shape_anthropic(turn2, PROFILES["anthropic"])
+
+    def _strip(msgs):
+        out_msgs = copy.deepcopy(msgs)
+        for m in out_msgs:
+            content = m.get("content")
+            if isinstance(content, list):
+                for b in content:
+                    if isinstance(b, dict):
+                        b.pop("cache_control", None)
+        return out_msgs
+
+    # 标记是注解、不进缓存前缀键：两轮请求的“内容前缀”必须逐字节一致。
+    check("anthropic: turn-2 content prefix is byte-identical to turn-1",
+          json.dumps(_strip(shaped2["messages"])[:len(shaped1["messages"])],
+                     ensure_ascii=False, sort_keys=True)
+          == json.dumps(_strip(shaped1["messages"]),
+                        ensure_ascii=False, sort_keys=True))
+    check("anthropic: old edge marker rolled off",
+          "cache_control" not in shaped2["messages"][0]["content"][-1])
+    check("anthropic: new edge marked",
+          shaped2["messages"][-1]["content"][-1].get("cache_control", {}).get("type") == "ephemeral")
+
+    def _marker_count(payload):
+        n = sum(1 for t in payload.get("tools", [])
+                if isinstance(t, dict) and "cache_control" in t)
+        sys_list = payload.get("system")
+        if isinstance(sys_list, list):
+            n += sum(1 for b in sys_list if isinstance(b, dict) and "cache_control" in b)
+        for m in payload.get("messages", []):
+            content = m.get("content") if isinstance(m, dict) else None
+            if isinstance(content, list):
+                n += sum(1 for b in content if isinstance(b, dict) and "cache_control" in b)
+        return n
+
+    check("anthropic: total breakpoints stay within vendor cap",
+          _marker_count(shaped2) <= 4, str(_marker_count(shaped2)))
+    # 幂等：defer 重规划会对同一 payload 二次整形，字节必须不变。
+    reshaped = shape_anthropic(copy.deepcopy(shaped2), PROFILES["anthropic"])
+    check("anthropic: re-shaping is byte-idempotent",
+          json.dumps(reshaped, ensure_ascii=False, sort_keys=True)
+          == json.dumps(shaped2, ensure_ascii=False, sort_keys=True))
 
     bl = {"messages": [{"role": "system", "content": "sys"},
                        {"role": "user", "content": "q"}]}

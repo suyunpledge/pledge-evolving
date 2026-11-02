@@ -77,6 +77,52 @@ class PrefixCacheTests(unittest.TestCase):
         self.assertEqual(len(rule_messages), 2, "子目录规则以新快照追加，旧快照原样保留")
         self.assertIn("src", rule_messages[-1]["content"])
 
+    def test_mode_switch_keeps_head_bytes_and_rides_the_tail(self):
+        self.rec.script = ["ok"]
+        self.agent.run("第一问")
+        head1 = self.rec.calls[-1]["messages"][0]["content"]
+        # 切换权限模式 + 注入开发指引（Coding Mode 每任务边界都改 extra_system）
+        from dataclasses import replace
+        self.agent.policy = replace(self.agent.policy, mode=Mode.PLAN)
+        self.agent.extra_system = "Development guidance."
+        self.rec.script = ["ok"]
+        self.agent.run("第二问")
+        turn2 = self.rec.calls[-1]["messages"]
+        self.assertEqual(turn2[0]["content"], head1, "头部跨模式切换必须逐字节不变")
+        env = [m for m in turn2 if str(m.get("content", "")).startswith("[运行环境]")]
+        self.assertEqual(len(env), 1, "运行环境信封恰好一条")
+        self.assertIn("plan", env[0]["content"].lower())
+        self.assertIn("Development guidance", env[0]["content"])
+        self.assertLess(turn2.index(env[0]), len(turn2) - 1, "信封在本轮任务之前")
+        self.assertTrue(turn2[-1]["content"].startswith("第二问"))
+
+    def test_memory_growth_appends_delta_without_rewriting_the_head(self):
+        self.rec.script = ["ok"]
+        self.agent.run("第一问")
+        turn1 = self.rec.calls[-1]["messages"]
+        mem1 = next((m for m in turn1
+                     if str(m.get("content", "")).startswith("[长期记忆上下文]")), None)
+        self.assertIsNotNone(mem1, "夹具记忆应注入冻结切片")
+        # 记忆增长（用户会话中途 remember）
+        self.agent.memory.remember("新的踩坑教训", kind="pitfall", source="human")
+        self.rec.script = ["ok"]
+        self.agent.run("第二问")
+        turn2 = self.rec.calls[-1]["messages"]
+        mem2 = next((m for m in turn2
+                     if str(m.get("content", "")).startswith("[长期记忆上下文]")), None)
+        self.assertIsNotNone(mem2)
+        self.assertEqual(mem2["content"], mem1["content"], "冻结切片不得改写")
+        delta = [m for m in turn2 if str(m.get("content", "")).startswith("[长期记忆更新]")]
+        self.assertEqual(len(delta), 1, "增量恰好播报一次")
+        self.assertIn("新的踩坑教训", delta[0]["content"])
+        # 无新增的后续轮次不再播报
+        self.rec.script = ["ok"]
+        self.agent.run("第三问")
+        turn3 = self.rec.calls[-1]["messages"]
+        self.assertEqual(
+            [m for m in turn3 if str(m.get("content", "")).startswith("[长期记忆更新]")],
+            [], "无增长时不得重复播报")
+
     def test_rules_sit_before_history_so_next_turn_keeps_the_prefix(self):
         self.rec.script = ["第一轮完成"]
         first = self.agent.run("第一个问题")

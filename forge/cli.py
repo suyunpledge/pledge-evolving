@@ -32,6 +32,7 @@ from .model import ModelRouter, warmth_store
 from .policy import Policy
 from .routing import STRATEGIES, SmartRouter
 from .vendors import PROFILES, VENDOR_ORDER, profile_for
+from .protocol import PROTOCOL_VERSION, run_payload
 
 DEFAULT_HOME = Path.home() / ".forge"
 # D2: bundles ship BOTH as a repo-root directory (editable checkout) and
@@ -375,22 +376,8 @@ def cmd_run(args) -> int:
     failed = report.as_result().outcome != 'succeeded'
     progress.finish()
     if args.json:
-        print(json.dumps({
-            "ok": not failed,
-            "run_id": report.run_id, "task_id": report.task_id,
-            "parent_run_id": report.parent_run_id, "protocol_version": 1,
-            "outcome": report.as_result().outcome,
-            "error_code": report.as_result().error_code,
-            "execution_state": report.as_result().execution_state,
-            "sessionPath": str(agent.session.path),
-            "text": report.text,
-            "stopped": report.stopped,
-            "usage": report.usage,
-            "planning": report.planning,
-            "steps": [{"index": s.index, "tool": s.tool, "decision": s.decision,
-                       "note": s.note, "result": s.result[:400],
-                       "action_id": s.action_id, "meta": s.meta} for s in report.steps],
-        }, ensure_ascii=False, indent=2))
+        print(json.dumps(run_payload(report, session_path=str(agent.session.path),
+                                     include_steps=True), ensure_ascii=False, indent=2))
     elif failed:
         # 失败不是答案：错误走 stderr，stdout 保持干净。否则
         # `forge run x > answer.md` 会把错误写进用户的成果文件。

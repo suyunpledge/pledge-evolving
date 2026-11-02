@@ -15,8 +15,9 @@ from .policy import Policy
 from .runtime_lock import resource_lock
 from .secrets import SecretScope, redact
 from .tools import ToolContext, ToolResult
+from .protocol import PROTOCOL_VERSION
 
-VERSION = 1
+VERSION = PROTOCOL_VERSION
 
 
 def identity():

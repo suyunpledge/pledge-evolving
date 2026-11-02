@@ -12,6 +12,7 @@ by a curator pass — archived, never silently deleted, and always reversible.
 from __future__ import annotations
 
 import json
+import hashlib
 import threading
 import time
 from dataclasses import dataclass, field
@@ -38,6 +39,23 @@ class Entry:
     # QA-03（独立 QA 回归）：agent 写入的记忆默认不进生效上下文，
     # 经宿主审批（promote_to_context / curate）放行后才注入 prompt。
     approved: bool = True
+    entry_id: str = ""
+    valid_from: float = 0.0
+    valid_to: float | None = None
+    superseded_by: str = ""
+    transferable_to: tuple[str, ...] = ()
+    topic: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.valid_from:
+            self.valid_from = self.created_at
+        if not self.entry_id:
+            seed = f"{self.created_at:.6f}\0{self.kind}\0{self.text}"
+            self.entry_id = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
+
+    @property
+    def current(self) -> bool:
+        return not self.archived and not self.superseded_by and self.valid_to is None
 
     def to_raw(self) -> dict[str, Any]:
         return {
@@ -49,6 +67,12 @@ class Entry:
             "archived": self.archived,
             "created_at": self.created_at,
             "tags": list(self.tags),
+            "id": self.entry_id,
+            "valid_from": self.valid_from,
+            "valid_to": self.valid_to,
+            "superseded_by": self.superseded_by,
+            "transferable_to": list(self.transferable_to),
+            "topic": self.topic,
         }
 
     @staticmethod
@@ -62,6 +86,12 @@ class Entry:
             created_at=float(raw.get("created_at", time.time())),
             tags=tuple(raw.get("tags") or ()),
             approved=bool(raw.get("approved", True)),
+            entry_id=str(raw.get("id", "")),
+            valid_from=float(raw.get("valid_from", raw.get("created_at", time.time()))),
+            valid_to=(float(raw["valid_to"]) if raw.get("valid_to") is not None else None),
+            superseded_by=str(raw.get("superseded_by", "")),
+            transferable_to=tuple(str(x) for x in (raw.get("transferable_to") or ())),
+            topic=str(raw.get("topic", "")),
         )
 
 
@@ -137,7 +167,7 @@ class MemoryStore:
             pass  # 磁盘读取失败不阻断保存（保持原行为）
         lines = ["# Memory", "", "<!-- human-readable view; the JSON block below is authoritative -->", ""]
         for entry in self.entries:
-            if entry.archived:
+            if entry.archived or entry.superseded_by or entry.valid_to is not None:
                 continue
             mark = "📌 " if entry.pinned else ""
             lines.append(f"- **[{entry.kind}]** {mark}{entry.text}")
@@ -162,7 +192,7 @@ class MemoryStore:
             for existing in self.entries:
                 # F-05（QA 审查）：同文本再次 remember 时同步更新
                 # kind/tags/source（不再静默丢弃第二个调用方的语义）。
-                if existing.text.strip() == text.strip():
+                if existing.text.strip() == text.strip() and existing.current:
                     existing.kind = kind
                     existing.tags = tuple(tags) if tags else existing.tags
                     if source:
@@ -178,13 +208,63 @@ class MemoryStore:
                limit: int = 50) -> list[Entry]:
         out = []
         for entry in self.entries:
-            if entry.archived and not include_archived:
+            if not include_archived and not entry.current:
                 continue
             if kind and entry.kind != kind:
                 continue
             out.append(entry)
         out.sort(key=lambda e: (not e.pinned, -e.created_at))
         return out[:limit]
+
+    def supersede(self, text: str, replacement: str, *, kind: str | None = None,
+                  source: str = "human", tags: Iterable[str] = (),
+                  transferable_to: Iterable[str] = (), topic: str = "") -> Entry:
+        """Seal one current entry and append its replacement.
+
+        The old row remains in the authoritative file with ``valid_to`` and a
+        ``superseded_by`` pointer.  Normal recall returns only the new leaf;
+        ``include_archived=True`` retains the full audit trail.
+        """
+        old = next((entry for entry in self.entries
+                    if entry.current and entry.text.strip() == str(text).strip()
+                    and (kind is None or entry.kind == kind)), None)
+        if old is None:
+            raise KeyError(f"unknown current memory entry: {text!r}")
+        replacement = str(replacement).strip()
+        if not replacement:
+            raise ValueError("replacement memory text must not be empty")
+        now = time.time()
+        new = Entry(kind=kind or old.kind, text=redact(replacement),
+                    source=redact(source), tags=tuple(redact(list(tags))) or old.tags,
+                    approved=(source != "agent"), created_at=now,
+                    transferable_to=tuple(str(x) for x in transferable_to), topic=str(topic))
+        old.valid_to = now
+        old.superseded_by = new.entry_id
+        with self._lock:
+            self.entries.append(new)
+            self.save()
+        return new
+
+    def validate_chains(self) -> list[str]:
+        """Return supersession-chain defects without mutating the store."""
+        by_id = {entry.entry_id: entry for entry in self.entries if entry.entry_id}
+        problems: list[str] = []
+        for entry in self.entries:
+            target = entry.superseded_by
+            if not target:
+                continue
+            if target not in by_id:
+                problems.append(f"{entry.entry_id}: missing superseded target {target}")
+                continue
+            seen = {entry.entry_id}
+            cursor = target
+            while cursor:
+                if cursor in seen:
+                    problems.append(f"{entry.entry_id}: supersession cycle")
+                    break
+                seen.add(cursor)
+                cursor = by_id.get(cursor).superseded_by if by_id.get(cursor) else ""
+        return problems
 
     def promote_to_context(self, text: str) -> bool:
         """QA-03: 宿主/审批流程显式放行一条 agent 记忆进入生效上下文。"""
@@ -195,6 +275,18 @@ class MemoryStore:
                     self.save()
                     return True
         return False
+
+    @property
+    def generation(self) -> tuple[int, float]:
+        """Cheap fingerprint of the current (non-archived) entries.
+
+        remember / supersede / restore / curate 都会改变活跃条目数或最新
+        created_at，这对二元组足以检出每一次内容变化，而无需每请求对全
+        部文本做哈希。调用方用它冻结记忆快照（前缀缓存稳定）并探测增长。
+        """
+        current = [e for e in self.entries if e.current]
+        newest = max((e.created_at for e in current), default=0.0)
+        return (len(current), newest)
 
     def context_slice(self, max_chars: int = 2000) -> str:
         """The bounded slice that gets injected into the system prompt."""

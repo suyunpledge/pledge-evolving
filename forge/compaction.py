@@ -4,7 +4,7 @@ Extracted from memory.py (0.7.0) to separate the compaction policy from
 the memory store. This module owns:
 
 * ``ContextBudget`` — size-based compaction with system-pmessage pinning
-* ``CompactionPolicy`` — pricing-aware budget ceiling
+* the pricing-aware budget ceiling is supplied by the runtime loop
 
 The separation makes compaction independently testable and allows
 alternative compaction strategies (e.g. semantic summarisation) without
@@ -55,7 +55,8 @@ class ContextBudget:
             squeezed: list[dict[str, Any]] = []
             changed = False
             for m in messages:
-                if (str(m.get("role", "")) == "system" or m.get("content") in pinned_contents
+                if (str(m.get("role", "")) in {"system", "user"}
+                        or m.get("content") in pinned_contents
                         or m.get("tool_calls") or m.get("role") == "tool"
                         or isinstance(m.get("content"), list)):
                     squeezed.append(m)

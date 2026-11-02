@@ -20,10 +20,11 @@ from .model import ModelRouter
 from .policy import Mode, Policy, Sandbox
 from .routing import SmartRouter
 from .secrets import SecretScope, assert_public_path, install_logging_redaction, protect_store_path, redact
+from .protocol import MAX_FRAME_BYTES, PROTOCOL_VERSION, run_payload
 import subprocess
 
-PROTOCOL = 1
-MAX_FRAME = 2 * 1024 * 1024
+PROTOCOL = PROTOCOL_VERSION
+MAX_FRAME = MAX_FRAME_BYTES
 MAX_CONTEXT = 128 * 1024
 MAX_HISTORY = 64 * 1024
 
@@ -336,15 +337,7 @@ class EditorBridge:
                                 {'role': 'assistant', 'content': report.text}])
         if report.as_result().outcome == 'succeeded':
             self.last_result = (report.run_id, report.text)
-        return {'ok': report.as_result().outcome == 'succeeded', 'text': report.text, 'stopped': report.stopped,
-                'usage': report.usage, 'toolCalls': report.tool_calls,
-                'planning': report.planning,
-                'messageId': report.run_id,
-                'run_id': report.run_id, 'task_id': report.task_id,
-                'parent_run_id': report.parent_run_id, 'protocol_version': 1,
-                'outcome': report.as_result().outcome, 'error_code': report.as_result().error_code,
-                'execution_state': report.as_result().execution_state,
-                'sessionPath': str(self.agent.session.path)}
+        return run_payload(report, session_path=str(self.agent.session.path))
 
     def _phase_model(self, identifier):
         if not isinstance(identifier, str): raise ValueError('Invalid phase model identifier')

@@ -25,6 +25,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+from .protocol import PROTOCOL_VERSION
+
 HOP_BY_HOP = {
     "host", "connection", "content-length", "transfer-encoding",
     "accept-encoding", "keep-alive", "proxy-authenticate", "te",
@@ -346,7 +348,7 @@ def build_handler(cfg: GatewayConfig):
                         for e in context.session.replay() if e.type != 'session_meta'
                         and e.data.get('run_id') == parts[3] and e.ordinal > after]
                     page = events[:200]
-                    self._json(200, {'protocol_version': 1, 'run_id': parts[3], 'data': page,
+                    self._json(200, {'protocol_version': PROTOCOL_VERSION, 'run_id': parts[3], 'data': page,
                         'next_after': page[-1]['ordinal'] if page else after, 'has_more': len(events) > 200})
                 except ValueError as exc:
                     self._json(400, {'error': {'message': str(exc)}})
@@ -467,7 +469,7 @@ def build_handler(cfg: GatewayConfig):
                     context.cancellation.set()
                     context.publish('run_cancel_requested', outcome='cancel_requested')
                     self._json(200, {'run_id': context.run.run_id, 'task_id': context.run.task_id,
-                        'outcome': 'cancel_requested', 'protocol_version': 1})
+                        'outcome': 'cancel_requested', 'protocol_version': PROTOCOL_VERSION})
                 except ValueError as exc:
                     self._json(400, {'error': {'message': str(exc)}})
                 return
@@ -499,7 +501,7 @@ def build_handler(cfg: GatewayConfig):
             if not isinstance(payload, dict):
                 self._json(400, {"error": {"type": "invalid_request_error", "message": "body must be an object"}})
                 return
-            if payload.get('protocol_version', 1) != 1:
+            if payload.get('protocol_version', PROTOCOL_VERSION) != PROTOCOL_VERSION:
                 self._json(400, {'error': {'message': 'Unsupported action protocol'}})
                 return
             name = str(payload.get("name", "")).strip()

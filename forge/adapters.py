@@ -376,7 +376,20 @@ class VendorAdapter:
 
     # -- helpers ----------------------------------------------------------
     def breakpoint_count(self, payload: dict[str, Any]) -> int:
-        """One breakpoint per cacheable layer: tools, then system."""
+        """One breakpoint per cacheable layer the shaper actually marks.
+
+        explicit_anthropic: tools, system, and the rolling history edge
+        (shape_anthropic marks all three — the history breakpoint is what
+        makes long agent loops affordable on that wire). explicit_bailian
+        shapes a single marker onto the stable system message, so its plan
+        must not claim more. Implicit vendors keep the informational
+        tools+system count.
+        """
+        if self.profile.cache_mode == "explicit_anthropic":
+            n = sum(1 for key in ("tools", "system", "messages") if payload.get(key))
+            return min(n, 4) or 1
+        if self.profile.cache_mode == "explicit_bailian":
+            return 1
         n = 0
         if payload.get("tools"):
             n += 1

@@ -94,6 +94,7 @@ api.say("...")                                # 写日志
 | **Z Code** | 会话回放 | `forge/contrib/replay.py` | 从事件流重建时间线、分叉、两次运行 diff | `replay` / `fork_plan` / `diff_runs` |
 | **Trae Work** | 工具宿主 | `forge/contrib/toolhost.py` | 外部工具/MCP 描述 → 统一工具规格 + 权限挂钩 | `register_tools` / `authorize` |
 | **PI agent** | 模型目录 | `forge/contrib/catalog.py` | provider 能力矩阵 + 健康状态建模 + 降级链构建 | `catalog` / `build_chain` |
+| **Forge runtime** | 收敛监督 | `forge/contrib/supervisor.py` | 工具轨迹的阶段化评分 + 有界 advisory/abort 分流 | `supervise` |
 
 ## 3. 第二轮（第一轮入库后开工）
 

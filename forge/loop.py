@@ -20,7 +20,9 @@ truth). Everything else hangs off it:
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -30,7 +32,8 @@ from .capability import CapabilityLibrary
 from .checkpoint import CheckpointStore
 from .local_service import resolve_thinking_mode, service_from_config, thinking_token_cap
 from .memory import ContextBudget, MemoryStore  # noqa: F401
-from .model import Completion, ModelRouter, TransportError
+from .model import Completion, ModelRouter, TransportError, _safe_count
+from .protocol import PROTOCOL_VERSION
 from .pricing import CostLedger, cost_of, rate_for
 from .policy import Decision, Mode, Policy
 from .scienceclaw import ToolResultOffloader
@@ -45,6 +48,7 @@ import time
 import threading
 import uuid
 from .planning import TaskPlan, PlanningError, planning_level, planning_prompt, token_cap
+from .task_contract import ContractStatus, TaskContract, advance_status, extract_task_contract
 from .phase_models import model_pair, phase_router
 from .project_rules import ProjectRules, MAX_TARGETS
 from .execution_guard import ExecutionGuard
@@ -182,7 +186,7 @@ class RunReport:
     text: str
     steps: list[Step]
     usage: dict[str, Any]
-    stopped: str = "final"          # final | max_steps | error | planning_error | format_error | stalled
+    stopped: str = "final"          # final | max_steps | error | planning_error | format_error | stalled | converged | unknown_outcome | cancelled
     events: list[dict[str, Any]] = field(default_factory=list)
     planning: dict[str, Any] | None = None
     run_id: str = ''
@@ -322,7 +326,14 @@ class Agent:
         self._rule_audit = None
         self._rule_superseded: list[str] = []
         self._prefix_sent = 0    # 上一个请求发出的消息条数（前缀缓存：其后才可改动）
+        # 会话前缀纪律（DSH session prefix）：记忆切片一经发出即冻结，跨 run
+        # 字节不变；增量走尾部 [长期记忆更新] 一次性播报。头部指纹用于诊断事件。
+        self._memory_snapshot = ''
+        self._memory_generation: tuple[int, float] | None = None
+        self._memory_keys: frozenset = frozenset()
+        self._last_head_digest = ''
         self._plan: TaskPlan | None = None
+        self.task_contract: TaskContract | None = None
         self._run_id = ""
         self._run_lock = threading.Lock()
         # 本地引擎 + 沉思启用时附加的输出预算上限（None = 不动请求）。
@@ -350,6 +361,14 @@ class Agent:
                 _ModelProbe(self.router),
                 ledger=self.cost_ledger))))
         self.events: list[dict[str, Any]] = []
+        # Supervisor state is deliberately run-scoped and serialisable: the
+        # contribution receives this list as ordinary data and cannot retain
+        # hidden process state between runs.
+        self._supervisor_turns: list[dict[str, Any]] = []
+        self._supervisor_warned = False
+        self._supervisor_bus: dict[str, Any] = {"last_render": {}}
+        self._supervisor_pending: list[str] = []
+        self._supervisor_pending_bus: list[str] = []
         # ScienceClaw offload seat: oversized tool results land in workspace
         # research_data/ with a summary + path handed to the model, instead of
         # the silent tail-truncation the raw slice below used to do.
@@ -357,6 +376,17 @@ class Agent:
 
     # -- context ---------------------------------------------------------
     def system_prompt(self) -> str:
+        """Byte-stable identity head — the session prefix (DSH discipline).
+
+        只放 agent 生命周期内不变的内容：身份、工具面、能力索引、密钥纪律、
+        深度标记。任何跨 run 可变的内容——权限模式、沙箱、模式指引
+        （extra_system，Coding Mode 每任务边界都会改写它）、恢复提示——一律
+        走 run_envelope() 落在请求尾部。否则切换权限/进入开发模式会改写
+        消息 0，DeepSeek / Anthropic 的前缀缓存从第 0 个 token 起全部失配
+        （参照 DSH systemPromptUpdate: in-history——系统提示变化不重写头部；
+        本实现更进一步：易变内容从头部分离，不依赖端点「最新 system 生效」
+        的语义，对任何厂商都成立）。
+        """
         parts = [
             DEFAULT_SYSTEM.format(
                 name=self.name,
@@ -370,32 +400,75 @@ class Agent:
                 parts.append("Capabilities available (load one only when needed):\n" + index)
         # Memory excluded from system prompt for cache alignment.
         # See _inject_memory() — memory goes as user message.
-        parts.append(f"Permission mode: {self.policy.mode.value}; sandbox: {self.policy.sandbox.value}.")
         parts.append("Secrets are opaque session references. Inspect sensitive configurations with edit_config, "
                      "then send a structured patch and its revision. Preserve credential fields. "
                      "Native shell execution and secret resolution/export are unavailable in protected agents.")
         if self.depth:
             parts.append(f"You are a subagent at depth {self.depth}; report findings, do not plan the whole job.")
-        if self.extra_system:
-            parts.append(self.extra_system)
         return self.secret_scope.protect_text("\n\n".join(parts))
 
-    def _inject_memory(self) -> list[dict[str, Any]]:
-        """Inject memory as a user-role message for cache alignment.
+    def run_envelope(self) -> str:
+        """Per-run volatile context, riding the request tail (never the head)."""
+        parts = [f"Permission mode: {self.policy.mode.value}; sandbox: {self.policy.sandbox.value}."]
+        if self.extra_system:
+            parts.append(self.extra_system)
+        return "[运行环境]\n" + "\n\n".join(parts)
 
-        Placing memory in user-role messages (not the system prompt) means new
-        entries only grow the message tail -- the system prompt prefix stays
-        stable across rounds and cache hits.
+    def _inject_memory(self) -> list[dict[str, Any]]:
+        """Inject the FROZEN memory snapshot as an early user message.
+
+        这条消息位于历史的紧前方，一经发出即冻结：记忆库后续增长不再改写它
+        （改写会使之后整段历史失配），增量由 _memory_delta_message() 一次性
+        播报在请求尾部（DSH session-prefix 纪律）。冻结以 Agent 生命周期为
+        界——同一会话内字节恒定，新进程自然重建。
 
         The message is labelled so the model treats it as background context
         rather than a user instruction.
         """
         if self.memory is None:
             return []
-        slice_ = self.memory.context_slice(max_chars=2000)
-        if not slice_:
+        if self._memory_snapshot == "" and self._memory_generation is None:
+            slice_ = self.memory.context_slice(max_chars=2000)
+            if not slice_:
+                return []
+            self._memory_snapshot = slice_
+            self._memory_generation = self.memory.generation
+            self._memory_keys = frozenset(
+                (e.kind, e.text) for e in self.memory.recall())
+        if not self._memory_snapshot:
             return []
-        return self.secret_scope.protect([{"role": "user", "content": f"[长期记忆上下文]\n{slice_}"}])
+        return self.secret_scope.protect(
+            [{"role": "user", "content": f"[长期记忆上下文]\n{self._memory_snapshot}"}])
+
+    def _memory_delta_message(self) -> dict[str, Any] | None:
+        """Tail message announcing memory entries added since the freeze.
+
+        Each delta is announced exactly once; the frozen head snapshot stays
+        byte-identical for the life of this agent, so growth never re-prices
+        the conversation history.
+        """
+        if self.memory is None or not self._memory_snapshot:
+            return None
+        generation = self.memory.generation
+        if generation == self._memory_generation:
+            return None
+        self._memory_generation = generation
+        fresh = [e for e in self.memory.recall()
+                 if (e.kind, e.text) not in self._memory_keys]
+        self._memory_keys = frozenset(
+            (e.kind, e.text) for e in self.memory.recall())
+        lines: list[str] = []
+        used = 0
+        for entry in fresh:
+            line = f"[{entry.kind}] {entry.text}"
+            if used + len(line) > 1000:
+                break
+            lines.append(line)
+            used += len(line) + 1
+        if not lines:
+            return None
+        return self.secret_scope.protect(
+            [{"role": "user", "content": "[长期记忆更新]\n" + "\n".join(lines)}])[0]
 
     def _refresh_project_rules(self, messages):
         # Honour tool exposure as well as Policy. Only refresh a bounded set of
@@ -455,7 +528,7 @@ class Agent:
         event.setdefault('task_id', request.task_id if request else self.task_id or run)
         event.setdefault('parent_run_id', request.parent_run_id if request else self.parent_run_id)
         event.setdefault('event_id', uuid.uuid4().hex)
-        event.setdefault('protocol_version', 1)
+        event.setdefault('protocol_version', PROTOCOL_VERSION)
         record = redact(self.secret_scope.protect(dict(event)))
         if self.session is not None:
             payload = dict(record)
@@ -727,6 +800,80 @@ class Agent:
             return True
         return verdict
 
+    def _supervisor_tool_row(self, name: str, args: dict[str, Any], result: ToolResult) -> dict[str, Any]:
+        """Project one tool result into the supervisor's small fact schema."""
+        meta = result.meta if isinstance(result.meta, dict) else {}
+        changed = meta.get("changed") if isinstance(meta.get("changed"), bool) else None
+        if changed is None and name in {"write_file", "edit_file", "apply_patch", "delete_file", "edit_config"}:
+            changed = None if meta.get("execution_state") == "unknown" else bool(result.ok)
+        target = args.get("path") if isinstance(args, dict) else None
+        if not isinstance(target, str) or not target:
+            target = args.get("file") if isinstance(args, dict) else None
+        if not isinstance(target, str) or not target:
+            blocks = []
+            if isinstance(args, dict):
+                blocks = args.get("patches") or args.get("edits") or []
+            if isinstance(blocks, list):
+                paths = [b.get("path") for b in blocks
+                         if isinstance(b, dict) and isinstance(b.get("path"), str)]
+                target = "|".join(sorted(set(paths))) if paths else ""
+        return {"tool": str(name), "args": dict(args or {}), "ok": bool(result.ok),
+                "changed": changed, "target": target or "", "meta": dict(meta)}
+
+    def _supervisor_phase(self, rows: list[dict[str, Any]]) -> str:
+        """Infer verify/deliver only where Forge lacks explicit phase events."""
+        names = [str(row.get("tool") or "").lower() for row in rows]
+        has_write = any(name in {"write_file", "edit_file", "apply_patch",
+                                 "delete_file", "edit_config"} for name in names)
+        has_verify = any(name.startswith(("run", "test", "check", "verify"))
+                         or "pytest" in name for name in names)
+        if has_verify and not has_write:
+            return "verify"
+        if self._plan is not None and getattr(self._plan, "acceptance", ()) and not has_write:
+            return "deliver"
+        return "execute"
+
+    def _supervisor_consult(self, index: int, rows: list[dict[str, Any]], text: str = ""):
+        """Run the optional convergence seat once per model turn."""
+        if "supervisor" not in self.extensions:
+            return None
+        turn = {"turn": int(index), "tools": list(rows), "text": str(text or "")[:400]}
+        self._supervisor_turns.append(turn)
+        phase = self._supervisor_phase(rows)
+        verdict = self._use_extension(
+            "supervisor", self._supervisor_turns, index,
+            phase=phase, context_chars=self.compactor.max_chars,
+            warned=self._supervisor_warned, text=str(text or ""),
+            bus_state=self._supervisor_bus)
+        if not isinstance(verdict, dict):
+            return None
+        turn["score"] = verdict.get("score")
+        if isinstance(verdict.get("bus_state"), dict):
+            self._supervisor_bus = verdict["bus_state"]
+        level = int(verdict.get("level") or 0)
+        if level >= 2:
+            self._supervisor_warned = True
+        self._emit(type="convergence", phase=phase, level=level, score=verdict.get("score"),
+                   reason=verdict.get("reason"), should_abort=bool(verdict.get("should_abort")),
+                   signals=verdict.get("signals") or {})
+        advisories = verdict.get("advisories") or []
+        for advisory in advisories if isinstance(advisories, list) else []:
+            if not isinstance(advisory, dict):
+                continue
+            message = str(advisory.get("text") or "")[:500]
+            if not message:
+                continue
+            channel = str(advisory.get("channel") or "bus")
+            self._emit(type="convergence_advisory", level=level,
+                       channel=channel, category=advisory.get("category"),
+                       message=message)
+            if channel == "system-reminder":
+                self._supervisor_pending.append(message)
+        bus_block = str(verdict.get("bus_block") or "")
+        if bus_block:
+            self._supervisor_pending_bus.append(bus_block)
+        return verdict
+
     # -- thinking suite (capability thinking.mode) -------------------------
     def _thinking_call(self, hook: str, *args: Any, **kwargs: Any) -> Any:
         """Consult one hook of the mounted thinking suite; counted per hook.
@@ -895,10 +1042,16 @@ class Agent:
             if self.planning_level != 'none':
                 phase_router(self.phase_catalog, self.planning_model, self.router)
             self._plan = None
+            self.task_contract = None
             self._guard = ExecutionGuard()
             self._run_thinking_active = False
             self._compaction_noop_reported = False
             self._rule_targets = []
+            self._supervisor_turns = []
+            self._supervisor_warned = False
+            self._supervisor_bus = {"last_render": {}}
+            self._supervisor_pending = []
+            self._supervisor_pending_bus = []
             for path in context_paths:
                 if len(self._rule_targets) >= MAX_TARGETS:
                     break
@@ -954,8 +1107,10 @@ class Agent:
             previous.append({'role': message['role'], 'content': message['content']})
         previous = self.secret_scope.protect(previous)
         task = self.secret_scope.protect_text(task)
+        self.task_contract = extract_task_contract(task, turn=0)
         if self.session is not None:
             self._emit(type="user_message", content=task)
+        self._emit(type="task_contract", contract=self.task_contract.to_raw())
         # H14 (rev.H14-3.7): one un-recorded run in flight per agent. The
         # ledger entry is written in _finish from report.usage — session
         # events carry no token data (only RunReport.usage does), and the
@@ -978,11 +1133,27 @@ class Agent:
             {"role": "system", "content": self.system_prompt()},
             *self._inject_memory(),
         ]
+        # 头部指纹诊断（DSH request/context 思路）：头部或工具面真的变了就发
+        # 事件，命中率回退时能从会话记录里直接看到是哪一轮、变的是什么。
+        head_digest = hashlib.sha256(
+            (str(messages[0].get("content", "")) + "|" + ", ".join(self.registry.names()))
+            .encode("utf-8")).hexdigest()[:16]
+        if self._last_head_digest and head_digest != self._last_head_digest:
+            self._emit(type="prefix_context_changed", head_digest=head_digest,
+                       previous_head_digest=self._last_head_digest)
+        self._last_head_digest = head_digest
         # 前缀缓存：项目规则放在历史之前，跨轮位置固定（system → 记忆 → 规则 →
-        # 历史 → 本轮任务）。放在历史之后时它每轮后移一格，整段历史随之失配。
+        # 历史 → 尾部上下文 → 本轮任务）。放在历史之后时它每轮后移一格，整段
+        # 历史随之失配。
         self._refresh_project_rules(messages)
         messages.extend(previous)
-        messages.append({"role": "user", "content": task})
+        # 尾部上下文（DSH 纪律：易变内容只追加在可复用前缀之后）：权限模式/
+        # 沙箱/模式指引每 run 重渲染但不碰头部；记忆增量同理一次性播报。
+        messages.append({"role": "user", "content": self.run_envelope()})
+        memory_delta = self._memory_delta_message()
+        if memory_delta is not None:
+            messages.append(memory_delta)
+        messages.append({"role": "user", "content": task + "\n\n" + self.task_contract.render_projection()})
         # 启动沉思（phase=thinking）：三档门控——off 不起；on 直接起；smart 由
         # 模块库函数 looks_complex 决定（有运行期消费者，非装饰）。沉思文本
         # 注入任务消息的 <contemplation> 段——消费者不是摆设，主跑真的用到它。
@@ -1004,11 +1175,15 @@ class Agent:
                     messages[-1] = {"role": "user",
                                    "content": f"{task}\n\n<contemplation>\n{notes[:4000]}\n</contemplation>"}
         steps: list[Step] = []
-        usage_total = {"prompt_tokens": 0, "completion_tokens": 0}
+        usage_total = {"prompt_tokens": 0, "completion_tokens": 0,
+                       "cached_tokens": 0, "cache_write_tokens": 0,
+                       "reasoning_tokens": 0}
         self._cancel_steps, self._cancel_usage = steps, usage_total
         self._check_cancel()
         pinned_task = str(messages[-1].get("content", task))
         if self.planning_level != "none":
+            self.task_contract = advance_status(self.task_contract, ContractStatus.PLANNING)
+            self._emit(type="task_contract", contract=self.task_contract.to_raw())
             self._emit(type="workflow_state", run_id=self._run_id, phase="planning",
                        level=self.planning_level)
             try:
@@ -1033,6 +1208,9 @@ class Agent:
                     max_tokens=token_cap(self.planning_level))
                 usage_total["prompt_tokens"] += plan_completion.usage.prompt_tokens
                 usage_total["completion_tokens"] += plan_completion.usage.completion_tokens
+                usage_total["cached_tokens"] += _safe_count(getattr(plan_completion.usage, "cached_tokens", 0))
+                usage_total["cache_write_tokens"] += _safe_count(getattr(plan_completion.usage, "cache_write_tokens", 0))
+                usage_total["reasoning_tokens"] += _safe_count(getattr(plan_completion.usage, "reasoning_tokens", 0))
                 usage_total.setdefault("requests", []).extend(getattr(plan_completion, "requests", []))
                 if getattr(plan_completion, "tool_calls", None):
                     raise PlanningError("Planner attempted to call tools")
@@ -1046,6 +1224,8 @@ class Agent:
             messages[-1] = {"role": "user", "content": pinned_task}
             self._emit(type="task_plan", run_id=self._run_id, plan=self._plan.to_dict())
         self._emit(type="workflow_state", run_id=self._run_id, phase="ready")
+        self.task_contract = advance_status(self.task_contract, ContractStatus.EXECUTING)
+        self._emit(type="task_contract", contract=self.task_contract.to_raw())
         self._emit(type="workflow_state", run_id=self._run_id, phase="executing")
         self._rule_task_content = pinned_task
         format_errors = 0
@@ -1073,6 +1253,14 @@ class Agent:
                                shrunk=after < before)
                     if after >= before:
                         self._compaction_noop_reported = True
+            if self._supervisor_pending or self._supervisor_pending_bus:
+                blocks = list(self._supervisor_pending_bus[:1])
+                if self._supervisor_pending:
+                    blocks.append("<system-reminder>\n" + "\n".join(
+                        self._supervisor_pending[:3]) + "\n</system-reminder>")
+                messages.append({"role": "user", "content": "\n\n".join(blocks)})
+                self._supervisor_pending = []
+                self._supervisor_pending_bus = []
             messages = self.secret_scope.protect(messages)
             self._last_messages = messages
             self._prefix_sent = len(messages)
@@ -1097,6 +1285,16 @@ class Agent:
                                               usage=usage_total, stopped="error", events=self.events))
             usage_total["prompt_tokens"] += completion.usage.prompt_tokens
             usage_total["completion_tokens"] += completion.usage.completion_tokens
+            usage_total["cached_tokens"] += _safe_count(getattr(completion.usage, "cached_tokens", 0))
+            usage_total["cache_write_tokens"] += _safe_count(getattr(completion.usage, "cache_write_tokens", 0))
+            usage_total["reasoning_tokens"] += _safe_count(getattr(completion.usage, "reasoning_tokens", 0))
+            turn_usage_delta = {
+                "prompt_tokens": int(getattr(completion.usage, "prompt_tokens", 0)),
+                "completion_tokens": int(getattr(completion.usage, "completion_tokens", 0)),
+                "cached_tokens": int(getattr(completion.usage, "cached_tokens", 0)),
+                "cache_write_tokens": int(getattr(completion.usage, "cache_write_tokens", 0)),
+                "reasoning_tokens": int(getattr(completion.usage, "reasoning_tokens", 0)),
+            }
             # A premium/MoA completion may contain several paid requests.
             # Preserve their own plans and usage in the report; reuse-window
             # estimates cannot be added into a real invoice.
@@ -1134,6 +1332,17 @@ class Agent:
                 text_calls = toolwire.parse_text_protocol_calls(text, self._run_model)
                 if not text_calls:
                     if not toolwire.looks_like_tool_attempt(text):
+                        verdict = self._supervisor_consult(index, [], text)
+                        if isinstance(verdict, dict) and verdict.get("should_abort"):
+                            self._emit(type="stop_reason", source="convergence:no-tool",
+                                       turn=index, voluntary=False, score=verdict.get("score"),
+                                       level=verdict.get("level"),
+                                       no_tool_turns=verdict.get("no_tool_turns"))
+                            self._emit(type="loop_stop", reason="converged", steps=len(steps),
+                                       score=verdict.get("score"))
+                            return self._finish(RunReport(
+                                text="[stopped: convergence supervisor requested a bounded stop]",
+                                steps=steps, usage=usage_total, stopped="converged", events=self.events))
                         if self.session is not None:
                             self._emit(type="assistant_message", content=text)
                         return self._finish(RunReport(text=text.strip(), steps=steps, usage=usage_total,
@@ -1156,12 +1365,14 @@ class Agent:
                 # 串在一条回复里（2026-09-23 MiMo V2.6 T7 实测三块串联，旧
                 # 非贪婪正则只抓第一块且嵌套 args 必截断）
                 answered_text: list[tuple[str, str, bool]] = []
+                supervisor_rows: list[dict[str, Any]] = []
                 for one in text_calls:
                     tool_name = str(one.get("name") or "")
                     args = dict(one.get("arguments") or {})
                     step = Step(index=len(steps) + 1, tool=tool_name, args=args)
                     result = self._invoke_recorded(tool_name, args)
                     step.action_id, step.meta = result.meta['action_id'], dict(result.meta)
+                    step.meta["usage_delta"] = dict(turn_usage_delta)
                     if result.meta.get('checkpoint'):
                         step.note = 'checkpoint ' + result.meta['checkpoint'][:8]
                     full_text = result.content or result.error
@@ -1170,10 +1381,13 @@ class Agent:
                         self._emit(type="tool_result_offloaded", tool=tool_name,
                                    path=self.offloader.last_path, chars=len(result.content or result.error))
                     step.result = full_text[: self.limits.max_tool_result]
+                    if len(full_text) > self.limits.max_tool_result:
+                        step.meta["result_full"] = full_text
                     step.decision = ("deny" if not result.ok and result.meta.get("authorization") == "deny"
                                      else ("ok" if result.ok else "error"))
                     steps.append(step)
                     answered_text.append((tool_name, step.result, result.ok))
+                    supervisor_rows.append(self._supervisor_tool_row(tool_name, args, result))
                     authz = (result.meta or {}).get("authorization") if isinstance(result.meta, dict) else None
                     self._emit(type="tool_call", tool=tool_name, args=args,
                                action_id=result.meta.get('action_id'), meta=result.meta,
@@ -1185,6 +1399,17 @@ class Agent:
                         self._emit(type="loop_stop", reason="stalled", steps=len(steps))
                         return self._finish(RunReport(text="[stopped: repeated action/result; inspect the failure or change approach]",
                             steps=steps, usage=usage_total, stopped="stalled", events=self.events))
+                verdict = self._supervisor_consult(index, supervisor_rows, text)
+                if isinstance(verdict, dict) and verdict.get("should_abort"):
+                    self._emit(type="stop_reason", source="convergence:" + str(verdict.get("reason") or "score"),
+                               turn=index, voluntary=False, score=verdict.get("score"),
+                               level=verdict.get("level"),
+                               no_tool_turns=verdict.get("no_tool_turns"))
+                    self._emit(type="loop_stop", reason="converged", steps=len(steps),
+                               score=verdict.get("score"))
+                    return self._finish(RunReport(
+                        text="[stopped: convergence supervisor requested a bounded stop]",
+                        steps=steps, usage=usage_total, stopped="converged", events=self.events))
                 messages.append({"role": "assistant", "content": text})
                 for tool_name, body, ok in answered_text:
                     messages.append({
@@ -1195,11 +1420,13 @@ class Agent:
 
             if native_calls:
                 answered: list[tuple[toolwire.ToolCall, str, bool]] = []
+                supervisor_rows: list[dict[str, Any]] = []
                 for call in native_calls:
                     step = Step(index=len(steps) + 1, tool=call.name, args=call.args,
                                 note=f"native/{wire} id={call.id or '-'}")
                     result = self._invoke_recorded(call.name, call.args, tool_call_id=call.id or '')
                     step.action_id, step.meta = result.meta['action_id'], dict(result.meta)
+                    step.meta["usage_delta"] = dict(turn_usage_delta)
                     if result.meta.get('checkpoint'):
                         step.note = 'checkpoint ' + result.meta['checkpoint'][:8]
                     full_text = result.content or result.error
@@ -1208,10 +1435,13 @@ class Agent:
                         self._emit(type="tool_result_offloaded", tool=call.name,
                                    path=self.offloader.last_path, chars=len(result.content or result.error))
                     step.result = full_text[: self.limits.max_tool_result]
+                    if len(full_text) > self.limits.max_tool_result:
+                        step.meta["result_full"] = full_text
                     step.decision = ("deny" if not result.ok and result.meta.get("authorization") == "deny"
                                      else ("ok" if result.ok else "error"))
                     steps.append(step)
                     answered.append((call, step.result, result.ok))
+                    supervisor_rows.append(self._supervisor_tool_row(call.name, call.args, result))
                     authz = (result.meta or {}).get("authorization") if isinstance(result.meta, dict) else None
                     self._emit(type="tool_call", tool=call.name, args=call.args,
                                action_id=result.meta.get('action_id'), meta=result.meta,
@@ -1224,6 +1454,17 @@ class Agent:
                         self._emit(type="loop_stop", reason="stalled", steps=len(steps))
                         return self._finish(RunReport(text="[stopped: repeated action/result; inspect the failure or change approach]",
                             steps=steps, usage=usage_total, stopped="stalled", events=self.events))
+                verdict = self._supervisor_consult(index, supervisor_rows, text)
+                if isinstance(verdict, dict) and verdict.get("should_abort"):
+                    self._emit(type="stop_reason", source="convergence:" + str(verdict.get("reason") or "score"),
+                               turn=index, voluntary=False, score=verdict.get("score"),
+                               level=verdict.get("level"),
+                               no_tool_turns=verdict.get("no_tool_turns"))
+                    self._emit(type="loop_stop", reason="converged", steps=len(steps),
+                               score=verdict.get("score"))
+                    return self._finish(RunReport(
+                        text="[stopped: convergence supervisor requested a bounded stop]",
+                        steps=steps, usage=usage_total, stopped="converged", events=self.events))
                 messages.append(toolwire.replay_assistant_message(
                     completion.assistant_message, prose, native_calls, wire))
                 messages.extend(toolwire.tool_result_messages(answered, wire))
@@ -1302,8 +1543,17 @@ class Agent:
         # honest sum of all its runs.
         _p = int(report.usage.get("prompt_tokens", 0))
         _c = int(report.usage.get("completion_tokens", 0))
+        # 缓存命中可读化（2026-11-01）：命中读 / 全部输入即命中率，直接
+        # 反映前缀稳定策略的收益；纯本地跑（prompt=0）不定义，避免 0/0。
+        _cached = _safe_count(report.usage.get("cached_tokens", 0))
+        _cw = _safe_count(report.usage.get("cache_write_tokens", 0))
+        if _p > 0:
+            report.usage["cache_hit_rate"] = round(_cached / _p, 4)
         self._emit(type="usage", prompt_tokens=_p, completion_tokens=_c,
-                   total_tokens=_p + _c, model=self._run_model)
+                   total_tokens=_p + _c, cached_tokens=_cached,
+                   cache_write_tokens=_cw,
+                   cache_hit_rate=report.usage.get("cache_hit_rate"),
+                   model=self._run_model)
 
         if self.cost_ledger is not None and self._run_scope:
             delta = _p + _c
@@ -1516,12 +1766,18 @@ def mount_contrib_extensions(
         warnings.append(f"home contrib discovery failed: {exc}")
 
     slots: dict[str, Any] = {}
+    disabled_seats = {item.strip() for item in os.environ.get("FORGE_DISABLE_SEATS", "").split(",")
+                      if item.strip()}
     for module_name, canonical in (("scheduler", "due_jobs"),
                                    ("router", "match"),
                                    ("teams", "deliver"),
+                                   ("supervisor", "supervise"),
                                    ("curator", "curate"),
                                    ("compactor", "should_compact"),
                                    ("replay", "replay")):
+        if module_name in disabled_seats:
+            warnings.append(f"contrib seat '{module_name}' disabled by FORGE_DISABLE_SEATS")
+            continue
         # 包内保底席位
         base = pkg_registry.contributions.get(module_name)
         base_hook = None

@@ -353,6 +353,32 @@ def test_memory() -> None:
         compacted = budget.compact(messages)
         check("memory:compaction-keeps-tail", compacted[-1]["content"] == "tail" and "compacted" in compacted[0]["content"])
 
+        frozen = [
+            {"role": "user", "content": "first user survives"},
+            {"role": "assistant", "content": "a" * 200},
+            {"role": "user", "content": "last user survives"},
+        ]
+        frozen_users = [m["content"] for m in frozen if m["role"] == "user"]
+        squeezed = ContextBudget(max_chars=80, keep_tail=3).compact(frozen)
+        check("memory:surviving-user-bytes-stable",
+              [m["content"] for m in squeezed if m.get("role") == "user"] == frozen_users,
+              str(squeezed))
+
+        chain_store = MemoryStore(Path(tmp) / "CHAIN.md").load()
+        old = chain_store.remember("Run the old test command", kind="lesson", source="human")
+        new = chain_store.supersede(
+            old.text, "Run the repository test command", kind="lesson",
+            transferable_to=("project",), topic="testing")
+        current = chain_store.recall(kind="lesson")
+        history = chain_store.recall(kind="lesson", include_archived=True)
+        check("memory:supersede-current-leaf-only",
+              len(current) == 1 and current[0].entry_id == new.entry_id
+              and len(history) == 2, str((current, history)))
+        check("memory:supersede-chain-auditable",
+              old.valid_to is not None and old.superseded_by == new.entry_id
+              and new.transferable_to == ("project",)
+              and chain_store.validate_chains() == [], str(chain_store.validate_chains()))
+
 
 def test_session() -> None:
     with tempfile.TemporaryDirectory() as tmp:
@@ -1280,7 +1306,9 @@ def test_native_tool_loop() -> None:
                 message = {"role": "assistant", "content": "looking", "tool_calls": [{
                     "id": "call_9", "type": "function",
                     "function": {"name": "read_file", "arguments": '{"path": "data.txt"}'}}]}
-                return ("looking", Usage(prompt_tokens=5, completion_tokens=2),
+                return ("looking", Usage(prompt_tokens=5, completion_tokens=2,
+                                          cached_tokens=3, cache_write_tokens=1,
+                                          reasoning_tokens=2),
                         {"tool_calls": [{"id": "call_9", "name": "read_file",
                                          "args": {"path": "data.txt"}, "wire": "openai"}],
                          "wire": "openai", "assistant_message": message})
@@ -1305,6 +1333,14 @@ def test_native_tool_loop() -> None:
               str([s.tool for s in report.steps]))
         check("loop:native-step-marked", "native/openai" in (report.steps[0].note if report.steps else ""),
               report.steps[0].note if report.steps else "")
+        check("loop:native-step-usage-delta",
+              bool(report.steps) and report.steps[0].meta.get("usage_delta", {}).get("prompt_tokens") == 5,
+              str(report.steps[0].meta if report.steps else {}))
+        check("loop:usage-cache-fields-accumulated",
+              report.usage.get("cached_tokens") == 3
+              and report.usage.get("cache_write_tokens") == 1
+              and report.usage.get("reasoning_tokens") == 2,
+              str(report.usage))
         check("loop:native-replay-ids-preserved", report.text == "native ok", report.text)
         native_events = [e for e in report.events if e.get("type") == "tool_call_native"]
         check("loop:native-event-emitted", len(native_events) == 0,
@@ -1357,10 +1393,11 @@ def test_contrib_integration() -> None:
         teams = registry.contributions.get("teams")
         compactor = registry.contributions.get("compactor")
         curator = registry.contributions.get("curator")
+        supervisor = registry.contributions.get("supervisor")
         check("integration:all-six-modules-mounted",
-              all(m is not None and m.ok for m in (scheduler, router, teams, compactor, curator)),
-              str([m.name for m in (scheduler, router, teams, compactor, curator) if m is None or not m.ok]))
-        if not all(m is not None and m.ok for m in (scheduler, router, teams, compactor, curator)):
+              all(m is not None and m.ok for m in (scheduler, router, teams, compactor, curator, supervisor)),
+              str([m.name for m in (scheduler, router, teams, compactor, curator, supervisor) if m is None or not m.ok]))
+        if not all(m is not None and m.ok for m in (scheduler, router, teams, compactor, curator, supervisor)):
             return
 
         check("integration:capability-index-spans-modules", len(caps) >= 10, str(sorted(caps)))
@@ -1896,8 +1933,11 @@ def test_global_optimizations() -> None:
     from .loop import mount_contrib_extensions
     from .types import Outcome, OutcomeClock, as_outcome
 
-    from .loop import ThinkingSuite as _ThinkingSuite
-    seats = {"scheduler", "router", "teams", "curator", "compactor", "replay"}
+    from .loop import ThinkingSuite as _ThinkingSuite, RunReport, Step
+    from .protocol import PROTOCOL_VERSION, run_payload, validate_protocol_version
+    from .task_contract import (ContractStatus, advance_status, classify_turn_mode,
+                                extract_task_contract)
+    seats = {"scheduler", "router", "teams", "curator", "compactor", "replay", "supervisor"}
     slots = mount_contrib_extensions(home=Path(tempfile.gettempdir()))
     check("global:contrib-modules-mounted", seats <= set(slots),
           f"slots={sorted(slots)}")
@@ -1910,6 +1950,49 @@ def test_global_optimizations() -> None:
                                "split_thinking", "estimate_budget", "converged",
                                "looks_complex")),
           f"suite={type(slots.get('thinking')).__name__}")
+    protocol_report = RunReport(
+        text="done", steps=[Step(index=1, tool="read_file", result="ok")],
+        usage={"prompt_tokens": 2, "completion_tokens": 1}, run_id="r-protocol",
+        task_id="t-protocol")
+    protocol_payload = run_payload(protocol_report, session_path="session.jsonl", include_steps=True)
+    check("global:protocol-shared-envelope",
+          protocol_payload["protocol_version"] == PROTOCOL_VERSION
+          and protocol_payload["ok"] is True
+          and protocol_payload["toolCalls"] == 1
+          and protocol_payload["steps"][0]["tool"] == "read_file",
+          str(protocol_payload))
+    check("global:protocol-version-guard",
+          validate_protocol_version(PROTOCOL_VERSION) == PROTOCOL_VERSION
+          and _raises(lambda: validate_protocol_version(99)))
+    previous_disabled = os.environ.get("FORGE_DISABLE_SEATS")
+    os.environ["FORGE_DISABLE_SEATS"] = "supervisor"
+    try:
+        disabled_slots = mount_contrib_extensions(home=Path(tempfile.gettempdir()))
+    finally:
+        if previous_disabled is None:
+            os.environ.pop("FORGE_DISABLE_SEATS", None)
+        else:
+            os.environ["FORGE_DISABLE_SEATS"] = previous_disabled
+    check("global:supervisor-seat-disable-switch", "supervisor" not in disabled_slots,
+          str(sorted(disabled_slots)))
+    contract = extract_task_contract("修复 forge/loop.py，不要修改 user 消息，完成后运行测试")
+    check("global:task-contract-extracts-scope",
+          "forge/loop.py" in contract.mentioned_files
+          and contract.constraints and contract.constraints[0].startswith("修改 user 消息"), str(contract))
+    progressed = advance_status(contract, ContractStatus.EXECUTING)
+    regressed = advance_status(progressed, ContractStatus.PLANNING)
+    rework = advance_status(advance_status(progressed, ContractStatus.READY_TO_DELIVER),
+                            ContractStatus.EXECUTING)
+    check("global:task-contract-monotonic-and-rework",
+          progressed.status == "executing" and regressed.status == "executing"
+          and rework.status == "executing"
+          and classify_turn_mode("继续修复这个文件", progressed) == "followUp",
+          str((progressed, regressed, rework)))
+    projection = contract.render_projection()
+    check("global:task-contract-projection-stable",
+          projection == contract.render_projection()
+          and "authoritative=\"true\"" in projection,
+          projection)
 
     # F2-2：home/contrib 用户安装模块必须被发现且可替换同名参考模块——
     # 挂载层曾只扫包内 contrib，用户模块永远不可见（g3 受控实验 F）
@@ -2073,6 +2156,22 @@ def test_global_optimizations() -> None:
     # 场景：同一 agent 连跑两轮工具调用，比较两轮发出的 requests 里
     # messages[0]（system prompt）与 tools 声明的 hash 是否一致。
     from .model import HttpTransport
+    from .canonical import dumps as canonical_dumps
+    from .cache_state import prefix_fingerprint
+    import math
+    canonical_a = {"z": None, "nested": {"b": 2, "a": 1}, "items": ("x", None)}
+    canonical_b = {"items": ["x", None], "nested": {"a": 1, "b": 2}}
+    check("cache:canonical-json-stable",
+          canonical_dumps(canonical_a) == '{"items":["x",null],"nested":{"a":1,"b":2}}'
+          and canonical_dumps(canonical_a) == canonical_dumps(canonical_b),
+          canonical_dumps(canonical_a))
+    check("cache:canonical-json-rejects-nan",
+          _raises(lambda: canonical_dumps({"value": math.nan})))
+    fp_a = prefix_fingerprint({"messages": [{"role": "system", "content": {"b": 2, "a": 1}}],
+                               "tools": [{"name": "x", "optional": None}]})
+    fp_b = prefix_fingerprint({"tools": [{"optional": None, "name": "x"}],
+                               "messages": [{"content": {"a": 1, "b": 2}, "role": "system"}]})
+    check("cache:fingerprint-uses-canonical-json", fp_a == fp_b, f"{fp_a} != {fp_b}")
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     import threading, urllib.request, hashlib
     with tempfile.TemporaryDirectory() as tmp:
@@ -2356,7 +2455,9 @@ def test_global_optimizations() -> None:
         check("h15:construction-snapshot-priced", frozen == 45141, str(frozen))
 
         def _big(n):
-            return [{"role": "user", "content": "x" * n}]
+            # Historical assistant output is lossy-compaction material. User
+            # messages are frozen and must remain byte-identical if retained.
+            return [{"role": "assistant", "content": "x" * n}]
 
         # before any spend: 40k chars fits under the 45141 snapshot ceiling
         check("h15:pre-spend-within-budget", not agent_h15._should_compact(_big(40_000)))
@@ -2401,7 +2502,8 @@ def test_global_optimizations() -> None:
         ledger2.record("deepseek-flash", 200_000_000)      # live ceiling -> 2821
         fat = "y" * 3065
         messages = [{"role": "system", "content": agent2.system_prompt()},
-                    {"role": "user", "content": fat}]
+                    {"role": "assistant", "content": fat},
+                    {"role": "user", "content": "keep this user boundary"}]
         check("h16:judgement-fires-midflight", agent2._should_compact(messages))
         system_text = messages[0]["content"]
         before = agent2.compactor.size(messages)
@@ -2741,7 +2843,7 @@ def test_contrib_runtime_service() -> None:
         def complete(self, provider, model, messages, **options):
             return ("inline done", Usage(prompt_tokens=3, completion_tokens=1), {})
 
-    expected = {"scheduler", "router", "teams", "curator", "compactor", "replay"}
+    expected = {"scheduler", "router", "teams", "curator", "compactor", "replay", "supervisor"}
 
     with tempfile.TemporaryDirectory() as tmp:
         workspace = Path(tmp)
@@ -2772,6 +2874,8 @@ def test_contrib_runtime_service() -> None:
         check("contrib-runtime:dispatch-event-recorded", "subagent_dispatch" in event_types,
               str(sorted(event_types)))
         check("contrib-runtime:delivery-event-recorded", "subagent_delivery" in event_types)
+        check("contrib-runtime:supervisor-event-recorded", "convergence" in event_types,
+              str(sorted(event_types)))
         check("contrib-runtime:metabolism-event-recorded", "run_metabolised" in event_types)
         check("contrib-runtime:call-audit-emitted", "extension_calls" in event_types,
               f"counts={counts}")
@@ -2902,6 +3006,27 @@ def test_contrib_runtime_service() -> None:
         check("contrib-runtime:raised-seat-is-an-error",
               bool(errs) and bool(meta) and meta[0].get("errors") == ["curator"],
               f"errors={errs[:1]} meta={meta[:1]}")
+
+    # Supervisor failure must fall back to the normal run path.
+    with tempfile.TemporaryDirectory() as tmp:
+        workspace = Path(tmp)
+        router = ModelRouter([Provider(name="main", base_url="http://x")],
+                             transport=FinalTransport(), chain=[("main", "m")],
+                             retries_per_provider=0)
+
+        def _supervisor_boom(*args, **kwargs):
+            raise RuntimeError("supervisor boom")
+
+        agent = Agent(home=workspace, workspace=workspace, router=router,
+                      registry=build_builtin_registry(),
+                      policy=Policy(mode=Mode.PLAN, workspace=workspace, non_interactive=True),
+                      limits=LoopLimits(max_steps=2),
+                      extensions={"supervisor": _supervisor_boom})
+        report = agent.run("hello")
+        errors = [e for e in report.events if e.get("type") == "extension_error"]
+        check("contrib-runtime:supervisor-failure-falls-back",
+              report.stopped == "final" and any(e.get("module") == "supervisor" for e in errors),
+              f"stopped={report.stopped} errors={errors[:1]}")
 
 
 def test_cli_surface() -> None:

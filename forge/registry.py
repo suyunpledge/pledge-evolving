@@ -122,6 +122,7 @@ HOOK_ALIASES: dict[str, tuple[str, ...]] = {
     "authorize_hook": ("authorize_hook", "on_authorize_hook"),
     "dispatch": ("dispatch", "on_dispatch"),
     "describe": ("describe", "on_describe"),
+    "supervise": ("supervise", "on_supervise"),
     # rev.4.1 接线轮：thinking 引擎的四个运行期消费名（同轮由 loop 消费，
     # capability thinking.mode；converged 是库函数、不登记）。
     "should_think": ("should_think", "on_should_think"),

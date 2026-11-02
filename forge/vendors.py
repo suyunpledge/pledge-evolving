@@ -604,14 +604,21 @@ def shape_anthropic(
 ) -> dict[str, Any]:
     """Attach ``cache_control`` to the stable prefix of an Anthropic request.
 
-    Two breakpoints are used, one per cacheable *layer* rather than one per
-    block: tools first (they change the least), then the system prompt. That
-    matches the vendor's own hierarchy (``tools`` → ``system`` → ``messages``)
-    so a change to the system prompt does not invalidate the tools entry.
+    Three breakpoints are used, one per cacheable *layer* rather than one per
+    block: tools first (they change the least), then the system prompt, then
+    the rolling edge of the conversation history. That matches the vendor's
+    own hierarchy (``tools`` → ``system`` → ``messages``) so a change to the
+    system prompt does not invalidate the tools entry.
 
     The marker is placed on the **last** element of each layer — the marker
     means "cache everything up to and including this block", so putting it on
-    the last tool and the last system block covers both layers in full.
+    the last tool, the last system block and the last content block of the
+    last message covers all three layers in full. The history breakpoint is
+    what makes an agent loop affordable on this wire: turn k+1 reads turn
+    k's write at the hit price for the entire shared prefix, and the write
+    premium only ever covers the new tail (2026-11-01 — the history layer
+    previously never carried a marker, so every turn re-paid full input
+    price for the whole conversation).
 
     2026-10-07 修正：去掉“工具数超过 32 就不打标记”的旧上限。那一行会让
     工具很多的 agent（真实场景常见）彻底拿不到工具层缓存，而断点数量与
@@ -639,6 +646,37 @@ def shape_anthropic(
         last = system[-1]
         if isinstance(last, dict) and "cache_control" not in last:
             last["cache_control"] = dict(marker)
+
+    # -- messages ------------------------------------------------------------
+    # 2026-11-01：会话历史是 agent 循环里最大的可缓存资产，此前却从不承载
+    # 断点——这一线厂商每轮都要为整段历史付全价。滚动标记打在最后一条
+    # 消息的最后一个内容块上：写入点覆盖到对话末尾，下一轮请求对上一轮
+    # 写入的整段共享前缀按命中价读取，只有新增尾部按写入价计费。上方
+    # tools / system 两个断点在尾部被改写或重生成时仍保住头部命中。
+    #
+    # 滚动必须先摘旧再打新：上一轮的写入点标记若不摘除，第 3 轮起断点
+    # 总数就会超过该厂商 4 个的上限，请求被 400 拒绝。标记本身是注解、
+    # 不参与缓存前缀键，摘旧标记不会使已写入的缓存失效。
+    messages = payload.get("messages")
+    if isinstance(messages, list) and messages:
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            content = message.get("content")
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict):
+                        block.pop("cache_control", None)
+        last_message = messages[-1]
+        if isinstance(last_message, dict):
+            content = last_message.get("content")
+            if isinstance(content, str) and content.strip():
+                last_message["content"] = [{"type": "text", "text": content,
+                                            "cache_control": dict(marker)}]
+            elif isinstance(content, list) and content:
+                block = content[-1]
+                if isinstance(block, dict):
+                    block["cache_control"] = dict(marker)
 
     return payload
 

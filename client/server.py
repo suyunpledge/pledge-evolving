@@ -38,6 +38,7 @@ if str(ROOT) not in sys.path:
 
 from forge.client_runs import RunStore, RUN_ID_RE, TERMINAL_STATES
 from forge.execution import RunRequest
+from forge.protocol import PROTOCOL_VERSION
 from forge.secrets import redact
 
 FORGE_HOME = Path.home() / ".forge"
@@ -643,7 +644,8 @@ class Handler(BaseHTTPRequestHandler):
                 execution_state='not_started', error_code='worker_unavailable')
             self._send_json({'error': 'worker unavailable'}, 503)
             return
-        self._send_json({'run_id': rec['id'], 'task_id': rec['task_id'], 'protocol_version': 1}, 202)
+        self._send_json({'run_id': rec['id'], 'task_id': rec['task_id'],
+                         'protocol_version': PROTOCOL_VERSION}, 202)
 
     def _handle_cancel(self, run_id: str) -> None:
         try:

@@ -12,6 +12,7 @@ import time
 import uuid
 
 from .execution import RunRequest
+from .protocol import PROTOCOL_VERSION
 from .secrets import redact
 from .session import Session
 
@@ -60,7 +61,7 @@ class RunStore:
             event.setdefault('run_id', rid)
             event.setdefault('task_id', rec['task_id'])
             event.setdefault('parent_run_id', '')
-            event.setdefault('protocol_version', 1)
+            event.setdefault('protocol_version', PROTOCOL_VERSION)
             rec['events'].append(event)
             self._seen[rid].add(event['event_id'])
             if event.get('type') == 'step':
@@ -182,7 +183,7 @@ class RunStore:
                     event.setdefault('run_id', rid)
                     event.setdefault('task_id', rec['task_id'])
                     event.setdefault('parent_run_id', '')
-                    event.setdefault('protocol_version', 1)
+                    event.setdefault('protocol_version', PROTOCOL_VERSION)
                     rows.append(event)
                     if len(rows) > limit:
                         break

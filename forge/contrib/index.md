@@ -2,7 +2,7 @@
 
 由 `forge/registry.py` 的一致性闸门维护。**入库** = 过闸门（静态禁令 + 动态加载 + 作者自带证据）；**适配入库** = 外壳由 legacy-script 适配层补，作者不变。
 
-当前：**contributed 12 · healthy 12 · assertions 240 · 能力 31**，框架全量自检 **460/460**。
+当前：**contributed 13 · healthy 13 · assertions 256 · 能力 33**，框架全量自检 **591/591**。
 
 > **2026-09-15 复验闭环**：外部审计的两条 P0 已全部修复。闸门侧不再合成证据（无证据即隔离）；作者侧 Trae 重写两份模块（声明 `SELFTEST_CASES` + 补全契约入口 + 去 BOM + 工具名改 `server__tool` 双下划线），已重新过闸入库。`seam:server-prefixed-tools-round-trip` 从「已声明缺陷看守」变成**真实通过**——接缝是真修好了，不是被登记掉的。审计负对照（删空测试体仍入库）的同类洞已由 `smoke:judge-catches-no-work` 等断言常驻看守。
 
@@ -24,6 +24,7 @@
 | `toolhost.py` | Trae（修复版 09-15） | 430+ | `tools.register_tools/authorize` |
 | `mcp_bridge.py` | Trae（修复版 09-15，含 `server__tool` 改名） | 402+ | `mcp.plan/discover/health` |
 | `thinking.py` | Trae（rev.4.1 二修；集成方 v2.1/v2.2 微修） | 676 | `thinking.mode` |
+| `supervisor.py` | Forge runtime | 429 | `convergence/advisory` |
 
 ## 已隔离（0）
 

@@ -40,6 +40,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable
 
 from .vendors import VendorProfile
+from .canonical import dumps as canonical_dumps
 
 # TTL in seconds, keyed by the label used in vendors.PROFILES.
 _TTL_SECONDS: dict[str, float] = {
@@ -61,9 +62,21 @@ _TTL_SECONDS: dict[str, float] = {
 _UNTRUSTWORTHY = {"unknown", "none"}
 
 
+# 参与缓存命名空间分区的 reasoning 请求参数（2026-11-02 DSH 实证：effort
+# 切换使 DeepSeek 线前缀命中率 99.9%→12.7% 甚至 0.3%——thinking/output 配置
+# 在该后端计入缓存键）。forge 的历史回放不随当前 effort 重过滤，这些参数是
+# 唯一的此类维度。过度分区只会让温暖度更保守，从不说谎。
+_REASONING_KEYS = ("reasoning_effort", "thinking", "thinking_budget", "enable_thinking")
+
+
+def reasoning_signature(payload: dict[str, Any]) -> dict[str, Any]:
+    """The request-level reasoning params that can partition a vendor cache."""
+    return {key: payload.get(key) for key in _REASONING_KEYS if key in payload}
+
+
 def prefix_fingerprint(payload: dict[str, Any], *, model: str = "",
                        endpoint: str = "", account: str = "", wire: str = "",
-                       cache_mode: str = "") -> str:
+                       cache_mode: str = "", include_reasoning: bool = True) -> str:
     """Stable hash of everything a vendor's cache would key on.
 
     Included: tools, the top-level ``system`` value **in full structure**
@@ -79,12 +92,20 @@ def prefix_fingerprint(payload: dict[str, Any], *, model: str = "",
 
     The account string is hashed, never stored, so a key cannot leak through
     the plan that carries the fingerprint.
+
+    Included since 2026-11-02: the request-level reasoning params
+    (``reasoning_signature``). DSH field data shows an effort switch crashing
+    prefix hit rates from 99.9% to 12.7% and lower on the DeepSeek Messages
+    backend — the thinking/output configuration participates in that cache
+    key, so treating it as part of the namespace keeps warmth honest.
+    ``include_reasoning=False`` strips the dimension for callers that only
+    want the *content* identity of a prefix.
     """
     system_messages = []
     for message in (payload.get("messages") or []):
         if isinstance(message, dict) and message.get("role") in ("system", "developer"):
             system_messages.append(message.get("content"))
-    blob = json.dumps(
+    blob = canonical_dumps(
         {
             "tools": payload.get("tools") or [],
             "system": payload.get("system"),
@@ -93,8 +114,8 @@ def prefix_fingerprint(payload: dict[str, Any], *, model: str = "",
             "endpoint": str(endpoint or ""),
             "account": str(account or ""),
             "wire": wire, "cache_mode": cache_mode,
+            "reasoning": reasoning_signature(payload) if include_reasoning else {},
         },
-        ensure_ascii=False, sort_keys=True, default=str,
     )
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
 
@@ -375,4 +396,5 @@ __all__ = [
     "CacheWarmth",
     "Hop",
     "prefix_fingerprint",
+    "reasoning_signature",
 ]

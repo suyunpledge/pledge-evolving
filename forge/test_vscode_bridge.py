@@ -136,7 +136,7 @@ class EditorBridgeTests(unittest.TestCase):
         messages = router.messages[1]
         self.assertTrue(any(m['role'] == 'user' and m['content'] == 'Remember the editor task alpha.' for m in messages))
         self.assertTrue(any(m['role'] == 'assistant' and m['content'] == 'Offline reply 1' for m in messages))
-        self.assertEqual(messages[-1]['content'], 'Continue that task.')
+        self.assertTrue(messages[-1]['content'].startswith('Continue that task.'))
         self.assertEqual(len([m for m in messages if m['role'] == 'system']), 1)
 
     def test_read_only_and_workspace_edits_enforce_real_policy(self):
