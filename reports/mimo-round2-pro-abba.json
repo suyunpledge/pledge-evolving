@@ -1,0 +1,263 @@
+{
+  "mode": "live",
+  "suite": "compare",
+  "thinking": "auto",
+  "selected_models": [
+    "mimo-v2.6-pro"
+  ],
+  "started_utc": "2026-11-07T08:00:28.797255+00:00",
+  "models": [
+    {
+      "model": "mimo-v2.6-pro",
+      "requests": [
+        {
+          "stage": "compare-1-on/agent-turn-1",
+          "model": "mimo-v2.6-pro",
+          "url": "https://token-plan-cn.xiaomimimo.com/v1/chat/completions",
+          "parameters": {
+            "thinking": {
+              "type": "enabled"
+            },
+            "tool_choice": "auto",
+            "max_tokens": 1024
+          },
+          "message_count": 4,
+          "common_prefix_messages": 0,
+          "messages_digest": "1464a67f825b81d196bc60c98837592949c73c82bcb60e5a587cd1cad1e3d707",
+          "tools_digest": "345b924083ebe4dd71b7dfdad6a4ad88fb0daa6879ba6fc7b0973afeff45d421",
+          "payload_digest": "0044ef29ceceed512561a2f1eb68d542c2e5192d6e891fdb2548079a29c7185e",
+          "message_chars": 3365,
+          "assistant_reasoning_fields": 0,
+          "tools": [
+            "file_outline",
+            "list_dir",
+            "read_file",
+            "read_range",
+            "skill_list",
+            "tool_search",
+            "write_file"
+          ],
+          "status": 200,
+          "raw_usage": {
+            "completion_tokens": 27,
+            "prompt_tokens": 1483,
+            "total_tokens": 1510,
+            "completion_tokens_details": {
+              "reasoning_tokens": 8
+            },
+            "prompt_tokens_details": {
+              "cached_tokens": 640
+            }
+          },
+          "finish_reason": "tool_calls",
+          "response_id": "db8bf5c6-6628-4b5d-9ee7-efa66184096d_d7e4c4c5ea7b45c1abcd8285caa64463",
+          "response_model": "mimo-v2.6-pro",
+          "reasoning_chars": 31,
+          "tool_calls": [
+            {
+              "id": "call_4361a16af5bc4312b8faa11a",
+              "function": {
+                "arguments": "{\"path\": \"catalog.json\"}",
+                "name": "read_file"
+              },
+              "type": "function"
+            }
+          ],
+          "text": "",
+          "seconds": 4.234,
+          "usage": {
+            "prompt_tokens": 1483,
+            "completion_tokens": 27,
+            "model": "mimo-v2.6-pro",
+            "provider": "mimo-live",
+            "cached_tokens": 640,
+            "cache_write_tokens": 0,
+            "reasoning_tokens": 8,
+            "cache_observed": true
+          },
+          "adaptation": {
+            "vendor": "mimo",
+            "vendor_label": "小米 MiMo",
+            "actions": [
+              "依赖厂商自动缓存（命中 0.00833333×），无需标记",
+              "MiMo 思考模式使用厂商固定采样，已摘除 temperature"
+            ],
+            "notes": [
+              "Token Plan 订阅池：倍率仅供比例参考，命中已实证且被 usage 如实计入",
+              "thinking 仅 on/off 两态，默认 enabled；没有已验证的 effort 强度分档",
+              "2.6 家族 tool_choice 仅 auto；工具调用需回放 reasoning_content，不能假定强制选工具生效",
+              "该模型无目录价，金额按单位价折算，仅用于比较比例，不代表真实账单"
+            ],
+            "cache_control": false,
+            "breakpoints": 1,
+            "ttl": "managed",
+            "est_tokens": 2389,
+            "est_cost": 0.000253,
+            "baseline_cost": 0.00036,
+            "saving": 0.000107,
+            "saving_pct": 29.7,
+            "cliff_action": "pass",
+            "reasoning_budget": null,
+            "defer": false,
+            "cache_engages": true,
+            "route_capabilities": {},
+            "request_budget": {},
+            "adapter_id": "mimo.v2.6.pro",
+            "model_kind_id": "mimo.v2.6.pro",
+            "model_family_id": "mimo.v2.6",
+            "manufacturer_id": "mimo",
+            "behavior_fingerprint": "4225bec28b552059",
+            "model_match_source": "model_id",
+            "model_evidence": "live",
+            "model_traits": [
+              "thinking_type",
+              "nullable_cache_details",
+              "native_tool_replay",
+              "auto_tool_choice_only",
+              "fixed_sampling_when_thinking"
+            ],
+            "reasoning_shaped": true,
+            "fingerprint": "87eb7c218ba37916",
+            "execution": {
+              "reasoning_default": {
+                "mode": "on",
+                "source": "provider"
+              }
+            },
+            "estimate_scope": "reuse_window",
+            "includes_output_cost": false,
+            "price_known": false,
+            "model": "mimo-v2.6-pro"
+          }
+        },
+        {
+          "stage": "compare-1-on/agent-turn-1",
+          "model": "mimo-v2.6-pro",
+          "url": "https://token-plan-cn.xiaomimimo.com/v1/chat/completions",
+          "parameters": {
+            "thinking": {
+              "type": "enabled"
+            },
+            "tool_choice": "auto",
+            "max_tokens": 1024
+          },
+          "message_count": 6,
+          "common_prefix_messages": 4,
+          "messages_digest": "4d6aac394cc760a5478d563ed20e4a6ed8723adbc8f8015fbd7b01052567579d",
+          "tools_digest": "345b924083ebe4dd71b7dfdad6a4ad88fb0daa6879ba6fc7b0973afeff45d421",
+          "payload_digest": "6ba509bc432bc62c4abdbbabbe82c80d0bf774b0edf913f39a577be5d15f1239",
+          "message_chars": 3786,
+          "assistant_reasoning_fields": 1,
+          "tools": [
+            "file_outline",
+            "list_dir",
+            "read_file",
+            "read_range",
+            "skill_list",
+            "tool_search",
+            "write_file"
+          ],
+          "error_type": "URLError",
+          "status": null,
+          "seconds": 5.015
+        }
+      ],
+      "results": [
+        {
+          "sample": 1,
+          "reasoning_mode": "on",
+          "ok": false,
+          "cases": [
+            {
+              "turn": 1,
+              "ok": false,
+              "stopped": "error",
+              "output": null,
+              "tools": [
+                {
+                  "tool": "read_file",
+                  "path": "catalog.json",
+                  "decision": "ok"
+                }
+              ],
+              "prefix_reused": false,
+              "envelope_reused": false,
+              "acceptance": [],
+              "coverage": {
+                "all_observed": {
+                  "requests": 1,
+                  "input_tokens": 1483,
+                  "cached_tokens": 640,
+                  "hit_rate": 0.4316
+                },
+                "rebuild": {
+                  "requests": 0,
+                  "input_tokens": 0,
+                  "cached_tokens": 0,
+                  "hit_rate": null
+                },
+                "non_rebuild": {
+                  "requests": 1,
+                  "input_tokens": 1483,
+                  "cached_tokens": 640,
+                  "hit_rate": 0.4316
+                },
+                "eligible_prefix": {
+                  "requests": 0,
+                  "input_tokens": 0,
+                  "cached_tokens": 0,
+                  "excluded_tail_tokens": 0,
+                  "hit_rate": null
+                },
+                "unknown_requests": 0,
+                "invalid_requests": 0,
+                "duplicate_observations": 0,
+                "denominator": "observed input tokens; eligible_prefix excludes declared structural tail"
+              }
+            }
+          ],
+          "requests": 2,
+          "failed_attempts": 1,
+          "input_tokens": 1483,
+          "output_tokens": 27,
+          "reasoning_tokens": 8,
+          "seconds": 9.249,
+          "coverage": {
+            "all_observed": {
+              "requests": 1,
+              "input_tokens": 1483,
+              "cached_tokens": 640,
+              "hit_rate": 0.4316
+            },
+            "rebuild": {
+              "requests": 0,
+              "input_tokens": 0,
+              "cached_tokens": 0,
+              "hit_rate": null
+            },
+            "non_rebuild": {
+              "requests": 1,
+              "input_tokens": 1483,
+              "cached_tokens": 640,
+              "hit_rate": 0.4316
+            },
+            "eligible_prefix": {
+              "requests": 0,
+              "input_tokens": 0,
+              "cached_tokens": 0,
+              "excluded_tail_tokens": 0,
+              "hit_rate": null
+            },
+            "unknown_requests": 0,
+            "invalid_requests": 0,
+            "duplicate_observations": 0,
+            "denominator": "observed input tokens; eligible_prefix excludes declared structural tail"
+          }
+        }
+      ],
+      "ok": false
+    }
+  ],
+  "all_requested_models_attempted": true,
+  "ok": false
+}

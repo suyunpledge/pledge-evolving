@@ -1,0 +1,83 @@
+{
+  "backup": "C:\\Users\\匡溯昀\\forge-artifact-backup-20261106-210741",
+  "files": [
+    {
+      "path": "forge/execution.py",
+      "new": false,
+      "before_sha256": "91e907af4fc011ddb3277997a9cdc62909e61c0429e1d462881eb894a544be01",
+      "after_sha256": "8c7c6872a560df700ee289f62d4745ed197608909cf430bb2e023e062d8a298c"
+    },
+    {
+      "path": "forge/loop.py",
+      "new": false,
+      "before_sha256": "3e95b27eaed66f6f50b71f1078b8a5156a06adbd5ae49998fb8c9c216b651544",
+      "after_sha256": "2fcd797d4fdd9628bdb39f760939c702f89a6a53384f30fcedec1804cf9ce14f"
+    },
+    {
+      "path": "forge/tools.py",
+      "new": false,
+      "before_sha256": "39fea560d8342648f6b21388f6b95f5e0a8745e0ca6deb0d445a20ce3703e362",
+      "after_sha256": "68d2ee39a731ae945b33efc3d7aaeb9901ac196afd46eeab74c2e2b6daac02aa"
+    },
+    {
+      "path": "forge/tool_turn.py",
+      "new": false,
+      "before_sha256": "0eac9c1ed775f4cc22c2e2792a38902b2f3bd74deb259684f587a2311264785e",
+      "after_sha256": "4543db999b9e6fa80fbe2409c937d3862890ac2bfad8a5c1d03150322f871c6e"
+    },
+    {
+      "path": "forge/scienceclaw/offload.py",
+      "new": false,
+      "before_sha256": "ea370c3fc90ac31b08626dcb35b1dd8b4c944193b9c6db02082e3c55a50732f8",
+      "after_sha256": "fd0f5b45a784c01f60e6031956ed7bb46ad1cad657d707db886f0b691699c269"
+    },
+    {
+      "path": "forge-budgets.json",
+      "new": false,
+      "before_sha256": "c11fa8026b9d2c074f9eae9dda0c8993df27e870954bf806c0daf1bf2e87ca7f",
+      "after_sha256": "007556dc3cff0d389f897677c610af1423e2ea36d00cc7c020dbc5c811e46d93"
+    },
+    {
+      "path": "bundles/modes/coding.json",
+      "new": false,
+      "before_sha256": "50aa24f6089194901308d7a66d86c12c3ae8fd3785d6d6ddb75b339bdf466e73",
+      "after_sha256": "910c5af96f73db48173f7ac7e68e1a3916f0e731010f4eb070fc59a03c0754bb"
+    },
+    {
+      "path": "forge/bundles/modes/coding.json",
+      "new": false,
+      "before_sha256": "50aa24f6089194901308d7a66d86c12c3ae8fd3785d6d6ddb75b339bdf466e73",
+      "after_sha256": "910c5af96f73db48173f7ac7e68e1a3916f0e731010f4eb070fc59a03c0754bb"
+    },
+    {
+      "path": "forge/artifacts.py",
+      "new": true,
+      "before_sha256": null,
+      "after_sha256": "8c23be74c0b89f4973d064f20a94798baba120a1cab76ecdb339e490eff81bd0"
+    },
+    {
+      "path": "forge/artifact_tools.py",
+      "new": true,
+      "before_sha256": null,
+      "after_sha256": "6b3d422612f1492a8ca6acd83c7d6e600e85fb6350fc55d0810b621a1b00bee3"
+    },
+    {
+      "path": "forge/test_artifacts.py",
+      "new": true,
+      "before_sha256": null,
+      "after_sha256": "a4635cba80f827d9de570a82528e54ab6a5ea782c2c9c859de071260049afc70"
+    },
+    {
+      "path": "tests/test_artifact_gateway.py",
+      "new": true,
+      "before_sha256": null,
+      "after_sha256": "6fba392dc150d4b63a9b2e74c0c0f4b8a5ce1a0f412396392fc653a0efb5c55c"
+    },
+    {
+      "path": "docs/LOOM-ARTIFACT-INTEGRATION.md",
+      "new": true,
+      "before_sha256": null,
+      "after_sha256": "d28ea86074541974406c0951b6959760effb8e914dd6987180bca7e6ca922f71"
+    }
+  ]
+}

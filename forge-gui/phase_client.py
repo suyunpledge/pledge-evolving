@@ -61,6 +61,8 @@ class PhaseClient:
             inputs = [{'role': 'system', 'content': contract},
                       *[m.to_dict(self.scope) for m in messages if m.role in {'user', 'assistant'}]]
             result = self.router.complete(self.scope.protect(inputs), small=False, max_tokens=token_cap(level))
+            if result.finish_reason in {'length', 'max_tokens'}:
+                raise PlanningError('Planner exhausted its output budget; no execution started')
             if result.tool_calls: raise PlanningError('Planner attempted a tool call')
             return TaskPlan.parse(self.scope.protect_text(result.text), level), {
                 'prompt_tokens': result.usage.prompt_tokens, 'completion_tokens': result.usage.completion_tokens,

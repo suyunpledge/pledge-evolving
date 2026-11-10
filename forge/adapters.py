@@ -40,6 +40,7 @@ from .vendors import (
     VendorProfile,
     price_multiplier,
 )
+from .model_kinds import MODEL_KINDS
 
 MILLION = 1_000_000.0
 
@@ -211,8 +212,14 @@ class VendorAdapter:
 
     def __init__(self, profile: VendorProfile) -> None:
         self.profile = profile
+        self.adapter_id = ("local.default" if profile.id == "local" else
+                           profile.model_kind_id or profile.id + ".default")
 
     # -- overridable ------------------------------------------------------
+    def shape_request(self, payload: dict[str, Any], *, wire: str = '') -> tuple[dict[str, Any], list[str]]:
+        """厂商请求兼容约束；在缓存指纹计算前执行，不修改调用方对象。"""
+        return payload, []
+
     def prefix_text(self, payload: dict[str, Any],
                     messages: list[dict[str, Any]]) -> str:
         """The cacheable prefix as text: top-level system + system-role
@@ -419,6 +426,33 @@ class DeepSeekAdapter(VendorAdapter):
 
     vendor_id = "deepseek"
 
+    def shape_request(self, payload: dict[str, Any], *, wire: str = 'openai') -> tuple[dict[str, Any], list[str]]:
+        # Verified Chat Completions models only; unknown models/wires pass through.
+        if wire != 'openai' or self.profile.canonical_model_id not in {'deepseek-flash', 'deepseek-v4-pro'}:
+            return payload, []
+        out, actions = dict(payload), []
+        out.setdefault('thinking', {'type': 'enabled'})
+        thinking = out.get('thinking')
+        disabled = isinstance(thinking, dict) and thinking.get('type') == 'disabled'
+        if not disabled:
+            out.setdefault('reasoning_effort', 'high')
+            ignored = ['temperature', 'presence_penalty', 'frequency_penalty']
+            if self.profile.canonical_model_id == 'deepseek-v4-pro':
+                ignored.append('top_p')
+        else:
+            ignored = ['reasoning_effort']
+            if self.profile.canonical_model_id == 'deepseek-flash':
+                ignored.append('top_p')
+        removed = [key for key in ignored if key in out]
+        for key in removed:
+            out.pop(key)
+        if removed:
+            actions.append('DeepSeek 已摘除当前模式忽略的参数: ' + '/'.join(removed))
+        # Preserve caller constraints (none/required/forced functions) exactly.
+        if out.get('tools'):
+            out.setdefault('tool_choice', 'auto')
+        return out, actions
+
     def extra_actions(self, ctx: PlanContext, plan: RequestPlan, prefix_tokens: int) -> None:
         if ctx.profile.peak_valley:
             from .vendors import is_peak
@@ -536,6 +570,96 @@ class KimiAdapter(VendorAdapter):
         plan.notes.append("缓存写入单独计费（k3）；命中后 TTL 自动续期，不再收写入费")
 
 
+class MiMoAdapter(VendorAdapter):
+    """Token Plan 端点实测（2026-11-04）：隐式前缀缓存真实存在（同题重发
+    1856/1862 命中、换尾题 1024 部分命中）；usage 为 OpenAI details 风格且
+    无缓存回执时 prompt_tokens_details 为 null（不能把未知记作零）。默认启用思考，
+    thinking.type=on/off 干净生效（关闭时 reasoning_tokens=0）。"""
+
+    vendor_id = "mimo"
+
+    def shape_request(self, payload: dict[str, Any], *, wire: str = 'openai') -> tuple[dict[str, Any], list[str]]:
+        # 只约束已核实的 2.6 家族；模型别名通过画像绑定同样生效。
+        if self.profile.model_family_id != 'mimo.v2.6':
+            return payload, []
+        out = dict(payload)
+        actions = []
+        choice = out.get('tool_choice')
+        auto_choice = {'type': 'auto'} if wire == 'anthropic' else 'auto'
+        if (wire == 'anthropic' and isinstance(choice, dict) and choice.get('type') == 'auto'
+                and not set(choice) - {'type', 'disable_parallel_tool_use'}
+                and ('disable_parallel_tool_use' not in choice or type(choice['disable_parallel_tool_use']) is bool)):
+            # MiMo 原生 Messages 允许 auto 同时限制并行，不能丢弃调用方的串行约束。
+            auto_choice = dict(choice)
+        if choice is not None and choice != auto_choice:
+            # 官方说明非 auto 被后端丢弃；不可默默把 none/required/指定工具降级。
+            raise ValueError('MiMo v2.6 only supports tool_choice=auto; '
+                             'none, required and forced functions cannot be guaranteed')
+        # 默认与显式 enabled/auto 统一到同一请求形状，避免本地缓存命名空间碎片。
+        if out.get('tools'):
+            out['tool_choice'] = auto_choice
+        if 'thinking' not in out:
+            out['thinking'] = {'type': 'enabled'}
+        thinking = out.get('thinking')
+        disabled = isinstance(thinking, dict) and thinking.get('type') == 'disabled'
+        if not disabled:
+            removed = [key for key in ('temperature', 'top_p') if key in out]
+            for key in removed:
+                out.pop(key)
+            if removed:
+                actions.append('MiMo 思考模式使用厂商固定采样，已摘除 ' + '/'.join(removed))
+        else:
+            temperature = out.get('temperature')
+            if temperature is not None and (isinstance(temperature, bool)
+                    or not isinstance(temperature, (int, float)) or not 0 <= temperature <= 1.5):
+                raise ValueError('MiMo temperature must be between 0 and 1.5')
+        return out, actions
+
+    def extra_actions(self, ctx: PlanContext, plan: RequestPlan,
+                      prefix_tokens: int) -> None:
+        plan.notes.append("Token Plan 订阅池：倍率仅供比例参考，命中已实证且被 usage 如实计入")
+        plan.notes.append("thinking 仅 on/off 两态，默认 enabled；没有已验证的 effort 强度分档")
+        plan.notes.append("2.6 家族 tool_choice 仅 auto；工具调用需回放 reasoning_content，不能假定强制选工具生效")
+
+
+class MiniMaxAdapter(VendorAdapter):
+    """M3 实测（2026-11-04）：reasoning_effort low/medium/high 分档生效
+    （思考 token 58/100/175）；thinking.type 只认 adaptive/disabled，其余 400。
+    隐式缓存命中呈部分/非单调（首调也可能有存量命中）。"""
+
+    vendor_id = "minimax"
+
+    def extra_actions(self, ctx: PlanContext, plan: RequestPlan,
+                      prefix_tokens: int) -> None:
+        plan.notes.append("分档用 reasoning_effort；thinking.type 仅 adaptive/disabled")
+        plan.notes.append("缓存命中按块部分计入，单次命中数可能非单调")
+
+
+class VolcengineAdapter(VendorAdapter):
+    """ark coding 端点实测（2026-11-04）：隐式缓存实证（同题重发 2378/2378、
+    换尾题 1848/2379）。返回带 encrypted_content，原样回放实测 200。"""
+
+    vendor_id = "volcengine"
+
+    def extra_actions(self, ctx: PlanContext, plan: RequestPlan,
+                      prefix_tokens: int) -> None:
+        plan.notes.append("缓存命中已实证但折扣未公布，金额按原价保守估算")
+        plan.notes.append("回放可保留 encrypted_content（三变体回放探针全 200）")
+
+
+class HunyuanAdapter(VendorAdapter):
+    """WorkBuddy(CodeBuddy) 配置+轨迹实证（2026-11-04）：hy3/hy4 为
+    onlyReasoning（思考不可关）；hy3 有 low/high，hy4 只有 high。"""
+
+    vendor_id = "hunyuan"
+
+    def extra_actions(self, ctx: PlanContext, plan: RequestPlan,
+                      prefix_tokens: int) -> None:
+        efforts = "/".join(ctx.profile.reasoning_efforts)
+        plan.notes.append(f"{ctx.model or '混元'} 思考不可关闭（onlyReasoning），effort 档位 {efforts}")
+        plan.notes.append("WorkBuddy 产品配置采样 temperature=0.9/top_p=1；并非直连 API 实测结论")
+
+
 class ConservativeAdapter(VendorAdapter):
     """Unknown vendors: no marker, no invented discount, and say so."""
 
@@ -574,20 +698,33 @@ _ADAPTERS: dict[str, type[VendorAdapter]] = {
     "bailian": BailianAdapter,
     "zhipu": ZhipuAdapter,
     "kimi": KimiAdapter,
+    "mimo": MiMoAdapter,
+    "minimax": MiniMaxAdapter,
+    "volcengine": VolcengineAdapter,
+    "hunyuan": HunyuanAdapter,
     "local": LocalAdapter,
     "generic": ConservativeAdapter,
 }
+
+# Model kind IDs are the primary dispatch keys. Related models reuse the
+# implementation, while their immutable profiles carry different overrides.
+MODEL_ADAPTERS = {kind.id: _ADAPTERS.get(kind.manufacturer_id, ConservativeAdapter)
+                  for kind in MODEL_KINDS.values()}
 
 
 def adapter_for(profile: VendorProfile) -> VendorAdapter:
     """Adapter for a profile. Vendors without a dedicated class get the
     conservative base — never a silent assumption that they behave like
     somebody else."""
-    cls = _ADAPTERS.get(profile.id, ConservativeAdapter)
+    cls = (LocalAdapter if profile.id == "local" else
+           MODEL_ADAPTERS.get(profile.model_kind_id) or _ADAPTERS.get(profile.id, ConservativeAdapter))
     return cls(profile)
 
 
 def adapter_for_id(vendor_id: str) -> VendorAdapter:
+    if vendor_id in MODEL_KINDS:
+        from .vendors import profile_for
+        return adapter_for(profile_for(model_kind_id=vendor_id))
     return adapter_for(PROFILES.get(vendor_id, PROFILES["generic"]))
 
 
@@ -623,11 +760,18 @@ __all__ = [
     "DeepSeekAdapter",
     "GeminiAdapter",
     "KimiAdapter",
+    "HunyuanAdapter",
     "LocalAdapter",
+    "MiMoAdapter",
+    "MiniMaxAdapter",
     "OpenAIAdapter",
     "PlanContext",
     "RequestPlan",
     "VendorAdapter",
+    "HunyuanAdapter",
+    "MiMoAdapter",
+    "MiniMaxAdapter",
+    "VolcengineAdapter",
     "ZhipuAdapter",
     "adapter_for",
     "adapter_for_id",

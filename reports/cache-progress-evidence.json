@@ -1,0 +1,90 @@
+{
+  "evidence_verified": true,
+  "cases": [
+    {
+      "report": "cache-progress-mimo-a2.json",
+      "turn": 1,
+      "reported_ok": true,
+      "replay_passed": true,
+      "evidence_verified": true,
+      "test_output": "----------------------------------------------------------------------\nRan 11 tests in 0.001s\n\nOK\n",
+      "sources_sha256": {
+        "turn-1-pricing.py": "a9440c265d96f2c7b1d3e98e6725676507be52c86b3fa8dda2d4073f20696ab8",
+        "turn-1-reporting.py": "6fbb8c411cc46ebe35f5a981287647f30e668e7732b0d3112a24fea7d2aade9c"
+      }
+    },
+    {
+      "report": "cache-progress-mimo-a2.json",
+      "turn": 2,
+      "reported_ok": true,
+      "replay_passed": true,
+      "evidence_verified": true,
+      "test_output": "----------------------------------------------------------------------\nRan 14 tests in 0.000s\n\nOK\n",
+      "sources_sha256": {
+        "turn-2-pricing.py": "a9440c265d96f2c7b1d3e98e6725676507be52c86b3fa8dda2d4073f20696ab8",
+        "turn-2-reporting.py": "7de937a11471ff56b20a07fc1283df98b8ed75ac6ca6d8f317e1e88ebc5f2f43"
+      }
+    },
+    {
+      "report": "cache-progress-mimo-b.json",
+      "turn": 1,
+      "reported_ok": false,
+      "replay_passed": true,
+      "evidence_verified": true,
+      "test_output": "----------------------------------------------------------------------\nRan 11 tests in 0.000s\n\nOK\n",
+      "sources_sha256": {
+        "turn-1-pricing.py": "ecf1a1379a2e1ba6503effcc65f12a9684a54713f96e7b6dd8cb527315e7b233",
+        "turn-1-reporting.py": "e873d54d5c3592978ef213e21955d1e1b10983bea343986ccd80fb3483a4a743"
+      }
+    },
+    {
+      "report": "cache-progress-mimo-final-b.json",
+      "turn": 1,
+      "reported_ok": true,
+      "replay_passed": true,
+      "evidence_verified": true,
+      "test_output": "----------------------------------------------------------------------\nRan 11 tests in 0.000s\n\nOK\n",
+      "sources_sha256": {
+        "turn-1-pricing.py": "155b53ce04fcf020d96b08f4e0346f49b0d59a2f25676b9232631bb6f843a8e9",
+        "turn-1-reporting.py": "bb8ad77570ec264765ac1e67651fb12718ddc976cb0d41637f08938fdf05f704"
+      }
+    },
+    {
+      "report": "cache-progress-mimo-final-b.json",
+      "turn": 2,
+      "reported_ok": true,
+      "replay_passed": true,
+      "evidence_verified": true,
+      "test_output": "----------------------------------------------------------------------\nRan 14 tests in 0.000s\n\nOK\n",
+      "sources_sha256": {
+        "turn-2-pricing.py": "155b53ce04fcf020d96b08f4e0346f49b0d59a2f25676b9232631bb6f843a8e9",
+        "turn-2-reporting.py": "efec4c6d770457075fc63befc84ddbf5afa66e6140c9c61b7d65bfa17110f285"
+      }
+    },
+    {
+      "report": "cache-progress-seed-a.json",
+      "turn": 1,
+      "reported_ok": false,
+      "replay_passed": false,
+      "evidence_verified": true,
+      "test_output": "ling.BillingTests.test_type)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"C:\\Users\\D442~1\\AppData\\Local\\Temp\\forge-cache-audit-06pjh4fu\\tests\\test_billing.py\", line 11, in test_type\n    def test_type(self): self.assertIsInstance(line_total(\"2.50\",2),Decimal)\n                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 5.0 is not an instance of <class 'decimal.Decimal'>\n\n----------------------------------------------------------------------\nRan 11 tests in 0.009s\n\nFAILED (failures=17, errors=1)\n",
+      "sources_sha256": {
+        "turn-1-pricing.py": "f980fab2ba6037f45c2620c4332df729d7252e8323679b7aa6d9b42a22052107",
+        "turn-1-reporting.py": "eeeda039f9d2e945edf50cd3bc5e758313c0c5d3a0372cb3aa02ea1c42234414"
+      }
+    },
+    {
+      "report": "cache-progress-seed-final-b.json",
+      "turn": 1,
+      "reported_ok": false,
+      "replay_passed": false,
+      "evidence_verified": true,
+      "test_output": "ling.BillingTests.test_type)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"C:\\Users\\D442~1\\AppData\\Local\\Temp\\forge-cache-audit-b0qplze0\\tests\\test_billing.py\", line 11, in test_type\n    def test_type(self): self.assertIsInstance(line_total(\"2.50\",2),Decimal)\n                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 5.0 is not an instance of <class 'decimal.Decimal'>\n\n----------------------------------------------------------------------\nRan 11 tests in 0.008s\n\nFAILED (failures=17, errors=1)\n",
+      "sources_sha256": {
+        "turn-1-pricing.py": "f980fab2ba6037f45c2620c4332df729d7252e8323679b7aa6d9b42a22052107",
+        "turn-1-reporting.py": "eeeda039f9d2e945edf50cd3bc5e758313c0c5d3a0372cb3aa02ea1c42234414"
+      }
+    }
+  ],
+  "scope": "Fresh immutable fixture execution; failed experiments must reproduce their recorded failure."
+}

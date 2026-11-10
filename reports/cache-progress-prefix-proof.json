@@ -1,0 +1,19 @@
+{
+  "before": {
+    "common_serialized_message_prefix_chars": 128,
+    "identical_complete_prefix_messages": 0,
+    "system_head_equal": false,
+    "workspace_guards_differ": true,
+    "tool_declarations_equal": true,
+    "workspace_in_environment": false
+  },
+  "after": {
+    "common_serialized_message_prefix_chars": 1178,
+    "identical_complete_prefix_messages": 1,
+    "system_head_equal": true,
+    "workspace_guards_differ": true,
+    "tool_declarations_equal": true,
+    "workspace_in_environment": true
+  },
+  "scope": "Real Agent request projection; character prefix evidence, not server cache usage or a token savings measurement."
+}

@@ -1,0 +1,474 @@
+--- a/forge/loop.py
++++ b/forge/loop.py
+@@ -99,7 +99,9 @@
+ 
+ Operating rules:
+ 1. Prefer evidence over recall. Read the file before you describe it.
+-2. Call one tool at a time. Emit exactly one block:
++2. Call one tool at a time using the native tool-call interface when tool declarations are provided.
++   Do not write XML or prose tool calls when the native interface is available.
++   Only without a native interface, emit one fallback block:
+    <tool_call>{{"tool": "<name>", "args": {{...}}}}</tool_call>
+ 3. When you are done, answer in plain prose with no tool block.
+ 4. Available tools: {tools}
+@@ -216,6 +218,8 @@
+         self.action_executor = ActionExecutor()
+         self.phase_catalog = router
+         self.registry = registry
++        from .tool_surface import ToolSurface
++        self._tool_surface = ToolSurface()
+         self.policy = policy
+         self.memory = memory
+         self.capabilities = capabilities
+@@ -348,7 +352,7 @@
+             DEFAULT_SYSTEM.format(
+                 name=self.name,
+                 workspace=self.workspace,
+-                tools=", ".join(self.registry.names()),
++                tools="provided in the current request's tool declarations",
+             )
+         ]
+         if self.capabilities is not None:
+@@ -371,6 +375,9 @@
+             parts.append(self.extra_system)
+         return "[运行环境]\n" + "\n\n".join(parts)
+ 
++    def _tool_declarations(self):
++        return self._tool_surface.project(self.registry.visible(), self.wire_hint)
++
+     def _conversation_guard(self, head):
+         from .conversation_prefix import digest
+         routes = []
+@@ -383,7 +390,7 @@
+                         provider.profile_for_model(model).behavior_fingerprint])
+         return digest({'head': head, 'policy': repr(self.policy), 'wire': self.wire_hint,
+             'mode': self.context_mode, 'routes': routes,
+-            'tools': toolwire.tool_declarations(self.registry.visible(), self.wire_hint),
++            'tools': self._tool_declarations(),
+             'handlers': [(s.name, id(s.handler), self.registry.effect(s.name).value)
+                          for s in self.registry.visible()]})
+ 
+@@ -608,6 +615,7 @@
+             parent_run_id=self._run_id,
+             context_mode=self.context_mode,
+         )
++        child._tool_surface = self._tool_surface.fork()
+         child.task_id = self.task_id or self._run_id
+         self._emit(type="subagent_spawn", task=task[:300], mode=child_policy.mode.value,
+                    depth=child.depth, budget_left=self.budget[0])
+@@ -824,7 +832,7 @@
+                     "limit": self._effective_budget(), "run": self._run_id,
+                     "route": route, "mode": self.context_mode, "keep_tail": self.compactor.keep_tail,
+                     "session": str(self.session.path) if self.session else "",
+-                    "tools": toolwire.tool_declarations(self.registry.visible(), self.wire_hint)}
++                    "tools": self._tool_declarations()}
+ 
+         candidate, audit = compact_transaction(
+             messages, self.compactor, directory=self.home / "context-archives", max_chars=limit,
+@@ -1329,7 +1337,7 @@
+                 self._supervisor_pending = []
+                 self._supervisor_pending_bus = []
+             messages = self.secret_scope.protect(messages)
+-            declarations = toolwire.tool_declarations(self.registry.visible(), self.wire_hint)
++            declarations = self._tool_declarations()
+             budget = self._request_context_budget(messages, declarations)
+             hard_overflow = bool(budget and not budget["fits"])
+             if self.context_mode != 'lossless' and (self._should_compact(messages) or hard_overflow):
+--- a/forge/toolwire.py
++++ b/forge/toolwire.py
+@@ -103,7 +103,7 @@
+     return schema
+ 
+ 
+-def tool_declarations(specs: Iterable, wire: str = "openai") -> list[dict[str, Any]]:
++def tool_declarations(specs: Iterable, wire: str = "openai", *, sort: bool = True) -> list[dict[str, Any]]:
+     """Turn registry specs into a wire-shaped tool declaration list."""
+     if wire not in WIRES:
+         raise ValueError(f"unknown wire {wire!r}; expected one of {WIRES}")
+@@ -124,11 +124,10 @@
+                 "description": getattr(spec, "description", "") or "",
+                 "input_schema": _spec_schema(spec),
+             })
+-    # Cache-alignment invariant: tool declarations must be sorted by name
+-    # so the same visible set always produces the same token sequence.
+-    # DSH achieves this with a configurable toolOrder; we sort alphabetically
+-    # and verify below.
+-    out.sort(key=lambda d: d.get("function", d).get("name", d.get("name", "")))
++    # 无会话的调用方仍按字母确定排序；ToolSurface 提供会话内既定顺序，
++    # 让工具发现只追加新声明，不把新名称插入已经发送的工具前缀。
++    if sort:
++        out.sort(key=lambda d: d.get("function", d).get("name", d.get("name", "")))
+ 
+     # 发送前最后检查：空 enum / 缺 description / additionalProperties
+     return sanitize_request_tools(out)
+--- a/forge/tool_adapter.py
++++ b/forge/tool_adapter.py
+@@ -22,6 +22,7 @@
+ from __future__ import annotations
+ 
+ import ast
++from copy import deepcopy
+ import html
+ import json
+ import re
+@@ -625,7 +626,7 @@
+     """
+     cleaned = []
+     for tool in tools:
+-        t = dict(tool)
++        t = deepcopy(tool)
+         fn = t.get("function") or t
+         params = fn.get("parameters")
+         if isinstance(params, dict):
+--- a/forge-budgets.json
++++ b/forge-budgets.json
+@@ -73,7 +73,7 @@
+     "forge/guard.py": 177,
+     "forge/knowledge.py": 118,
+     "forge/local_service.py": 293,
+-    "forge/loop.py": 1711,
++    "forge/loop.py": 1719,
+     "forge/memory.py": 354,
+     "forge/model.py": 935,
+     "forge/model_kinds.py": 152,
+@@ -131,16 +131,18 @@
+     "forge/test_secret_architecture.py": 138,
+     "forge/test_secret_virtualization.py": 649,
+     "forge/test_task_planning.py": 287,
++    "forge/test_tool_surface.py": 128,
+     "forge/test_vendor_reasoning.py": 329,
+     "forge/test_vendor_wire.py": 248,
+     "forge/test_vendors.py": 409,
+     "forge/test_vscode_bridge.py": 384,
+     "forge/test_web_tools.py": 205,
+     "forge/thinking.py": 172,
+-    "forge/tool_adapter.py": 801,
++    "forge/tool_adapter.py": 802,
++    "forge/tool_surface.py": 23,
+     "forge/tool_turn.py": 68,
+     "forge/tools.py": 1435,
+-    "forge/toolwire.py": 334,
++    "forge/toolwire.py": 333,
+     "forge/types.py": 104,
+     "forge/vendors.py": 1128,
+     "forge/verify_execution.py": 178,
+--- a/scripts/verify_mimo_live.py
++++ b/scripts/verify_mimo_live.py
+@@ -26,7 +26,7 @@
+ from forge.policy import Mode, Policy, Sandbox
+ from forge.secret_http import open_authenticated
+ from forge.secrets import redact
+-from forge.tools import build_builtin_registry
++from forge.tools import build_builtin_registry, ToolSpec, ToolResult
+ 
+ 
+ MODELS = ('mimo-v2.6-flash', 'mimo-v2.6-pro')
+@@ -80,6 +80,8 @@
+                 'reasoning_effort', 'tool_choice', 'max_tokens') if k in payload},
+             'message_count': len(messages), 'common_prefix_messages': common,
+             'messages_digest': digest(messages), 'tools_digest': digest(payload.get('tools')),
++            'toolset_digest': digest(sorted(payload.get('tools') or [],
++                key=lambda tool: (tool.get('function') or tool).get('name', ''))),
+             'payload_digest': digest(payload),
+             'message_chars': sum(len(json.dumps(m, ensure_ascii=False)) for m in messages),
+             'assistant_reasoning_fields': sum('reasoning_content' in m for m in messages),
+@@ -238,11 +240,61 @@
+     return samples
+ 
+ 
++def compare_tool_order(provider, recorder, root):
++    """相同工具集、相同任务的 ABBA，比较发现新工具后的排序方式。"""
++    workspace = root / 'tool-order'
++    workspace.mkdir(exist_ok=True)
++    samples = []
++
++    class AlphabeticalBaseline:
++        def project(self, specs, wire):
++            return toolwire.tool_declarations(specs, wire)
++
++    for index, strategy in enumerate(('sorted', 'append', 'append', 'sorted')):
++        observed = []
++        def total(args, ctx):
++            observed.append(copy.deepcopy(args))
++            return ToolResult(True, str(args['a'] + args['b']))
++        registry = build_builtin_registry(expose=['read_file', 'write_file', 'list_dir',
++            'file_outline', 'read_range', 'grep', 'tool_search', 'skill_list', 'aaa_total'])
++        registry.register(ToolSpec('aaa_total', 'Add the supplied integers a and b. Discover this optional tool first.',
++            total, deferred=True, schema={'a': {'type': 'integer'}, 'b': {'type': 'integer'}}), trusted=True)
++        agent = Agent(home=root / 'home', workspace=workspace, router=router_for(provider, recorder),
++            registry=registry, policy=Policy(workspace=workspace, mode=Mode.READ_ONLY, non_interactive=True),
++            limits=LoopLimits(max_steps=5, context_chars=100000), project_rules=False)
++        if strategy == 'sorted':
++            agent._tool_surface = AlphabeticalBaseline()
++        recorder.stage = f'tool-order-{index + 1}-{strategy}'
++        start = len(recorder.rows)
++        try:
++            report = agent.run('First call tool_search with query aaa_total and limit 1 to discover the optional tool. '
++                'Then call aaa_total with a=17,b=25 exactly once. Finally return only the tool result. '
++                'Do not calculate without calling aaa_total. Do not use any other tool.')
++            rows = recorder.rows[start:]
++            good = [row for row in rows if row.get('usage')]
++            ok = (report.stopped == 'final' and observed == [{'a': 17, 'b': 25}]
++                and [s.tool for s in report.steps] == ['tool_search', 'aaa_total']
++                and all(s.decision == 'ok' for s in report.steps) and report.text.strip() == '42')
++            activation = next((row for row in good if 'aaa_total' in row['tools']), None)
++            samples.append({'sample': index + 1, 'strategy': strategy, 'ok': ok,
++                'tool_calls': [s.tool for s in report.steps], 'observed': observed,
++                'failure_detail': report.text[:500] if not ok else '', 'requests': len(rows),
++                'seconds': round(sum(row['seconds'] for row in rows), 3),
++                'coverage': cache_coverage(good),
++                'after_activation': ({'usage': activation['usage'], 'tools': activation['tools'],
++                    'common_prefix_messages': activation['common_prefix_messages']} if activation else None)})
++        finally:
++            agent.secret_scope.close()
++        if not samples[-1]['ok']:
++            break
++    return samples
++
++
+ def main():
+     parser = argparse.ArgumentParser(description=__doc__)
+     parser.add_argument('--live', action='store_true')
+     parser.add_argument('--model', choices=MODELS, action='append')
+-    parser.add_argument('--suite', choices=('wire', 'agent', 'compare', 'switch'), required=True)
++    parser.add_argument('--suite', choices=('wire', 'agent', 'compare', 'switch', 'tool-order'), required=True)
+     parser.add_argument('--thinking', choices=('auto', 'on', 'off'), default='auto')
+     parser.add_argument('--request-limit', type=int, default=24)
+     parser.add_argument('--retries', type=int, choices=(0, 1), default=0)
+@@ -272,6 +324,8 @@
+                     row['results'] = compare_reasoning(provider, recorder, root)
+                 elif args.suite == 'switch':
+                     row['results'] = agent_probe(provider, recorder, root, development=True, mode_schedule=('off', 'on'))
++                elif args.suite == 'tool-order':
++                    row['results'] = compare_tool_order(provider, recorder, root)
+                 else:
+                     row['results'] = (wire_probe(provider, recorder) if args.suite == 'wire'
+                                       else agent_probe(provider, recorder, root))
+--- /dev/null
++++ b/forge/tool_surface.py
+@@ -0,0 +1,23 @@
++"""会话内的原生工具声明顺序：首次排序，新增追加，撤销立即移除。"""
++from __future__ import annotations
++
++from .toolwire import tool_declarations
++
++
++class ToolSurface:
++    def __init__(self):
++        self._orders = {}
++
++    def fork(self):
++        child = ToolSurface()
++        child._orders = dict(self._orders)  # tuple 值不可变；子会话后续更新独立。
++        return child
++
++    def project(self, specs, wire):
++        current = {spec.name: spec for spec in specs}
++        order = [name for name in self._orders.get(wire, ()) if name in current]
++        known = set(order)
++        order.extend(sorted(name for name in current if name not in known))
++        self._orders[wire] = tuple(order)
++        # 每次用当前定义重建，绝不为了命中保留旧 schema 或已撤销的工具。
++        return tool_declarations([current[name] for name in order], wire, sort=False)
+--- /dev/null
++++ b/forge/test_tool_surface.py
+@@ -0,0 +1,128 @@
++"""原生工具发现不重排既有前缀；权限和 schema 更新不因缓存被延迟。"""
++import copy
++import io
++import json
++from pathlib import Path
++import tempfile
++import unittest
++
++from .loop import Agent, LoopLimits
++from .model import HttpTransport, ModelRouter, Provider
++from .policy import Mode, Policy
++from .tool_surface import ToolSurface
++from .tools import ToolRegistry, ToolResult, ToolSpec, build_builtin_registry
++from .toolwire import tool_declarations
++
++
++def spec(name, **kwargs):
++    return ToolSpec(name, 'test ' + name, lambda args, ctx: ToolResult(True, 'ok'), **kwargs)
++
++
++def names(declarations):
++    return [(d.get('function') or d)['name'] for d in declarations]
++
++
++class ToolSurfaceTests(unittest.TestCase):
++    def test_new_tools_append_for_both_native_protocols(self):
++        for wire in ('openai', 'anthropic'):
++            surface = ToolSurface()
++            before = surface.project([spec('z'), spec('m')], wire)
++            after = surface.project([spec('a'), spec('z'), spec('m')], wire)
++            self.assertEqual(names(after), ['m', 'z', 'a'])
++            self.assertEqual(after[:len(before)], before)
++
++    def test_removed_tools_disappear_immediately_and_readdition_is_new(self):
++        surface = ToolSurface()
++        before = surface.project([spec('a'), spec('z')], 'openai')
++        removed = surface.project([spec('z')], 'openai')
++        self.assertEqual(names(removed), ['z'])
++        self.assertEqual(names(surface.project([spec('a'), spec('z')], 'openai')), ['z', 'a'])
++        self.assertEqual(names(before), ['a', 'z'])
++
++    def test_current_schema_updates_without_mutating_prior_projection(self):
++        surface = ToolSurface()
++        original = spec('read', schema={'path': {'type': 'string', 'enum': []}})
++        source = copy.deepcopy(original.schema)
++        before = surface.project([original], 'openai')
++        self.assertEqual(original.schema, source)
++        original.schema['path']['type'] = 'integer'
++        original.description = 'updated description'
++        after = surface.project([original], 'openai')
++        self.assertEqual(before[0]['function']['parameters']['properties']['path']['type'], 'string')
++        self.assertEqual(after[0]['function']['parameters']['properties']['path']['type'], 'integer')
++        self.assertEqual(after[0]['function']['description'], 'updated description')
++
++    def test_hidden_activated_tools_are_not_resurrected(self):
++        registry = ToolRegistry(hide=('secret_tool',))
++        registry.register(spec('read'), trusted=True)
++        registry.register(spec('secret_tool', deferred=True), trusted=True)
++        registry.activate('secret_tool')
++        surface = ToolSurface()
++        self.assertEqual(names(surface.project(registry.visible(), 'openai')), ['read'])
++        registry.unregister('read')
++        self.assertEqual(surface.project(registry.visible(), 'openai'), [])
++
++    def test_order_is_session_and_wire_local(self):
++        left, right = ToolSurface(), ToolSurface()
++        left.project([spec('z')], 'openai')
++        self.assertEqual(names(left.project([spec('a'), spec('z')], 'openai')), ['z', 'a'])
++        self.assertEqual(names(right.project([spec('a'), spec('z')], 'openai')), ['a', 'z'])
++        self.assertEqual(names(left.project([spec('a'), spec('z')], 'anthropic')), ['a', 'z'])
++
++    def test_subagent_fork_inherits_order_but_filters_its_own_scope(self):
++        parent = ToolSurface()
++        parent.project([spec('z')], 'openai')
++        parent.project([spec('a'), spec('z')], 'openai')
++        child = parent.fork()
++        self.assertEqual(names(child.project([spec('a'), spec('b')], 'openai')), ['a', 'b'])
++        self.assertEqual(names(parent.project([spec('a'), spec('z')], 'openai')), ['z', 'a'])
++
++    def test_stateless_public_projection_keeps_alphabetical_default(self):
++        self.assertEqual(names(tool_declarations([spec('z'), spec('a')])), ['a', 'z'])
++        self.assertEqual(names(tool_declarations([spec('z'), spec('a')], sort=False)), ['z', 'a'])
++
++
++class AgentToolSurfaceTests(unittest.TestCase):
++    def test_real_http_body_appends_discovered_schema_and_preserves_next_turn(self):
++        captured, executed = [], []
++        def opener(request, **kwargs):
++            captured.append(json.loads(request.data))
++            if len(captured) <= 2:
++                name, args = ('tool_search', {'query': 'aaa_total', 'limit': 1}) if len(captured) == 1 else (
++                    'aaa_total', {'a': 17, 'b': 25})
++                message = {'role': 'assistant', 'content': '', 'tool_calls': [{
++                    'id': 'fixture-' + str(len(captured)), 'type': 'function', 'function': {
++                        'name': name, 'arguments': json.dumps(args)}}]}
++                finish = 'tool_calls'
++            else:
++                message, finish = {'role': 'assistant', 'content': '42'}, 'stop'
++            return io.BytesIO(json.dumps({'choices': [{'message': message, 'finish_reason': finish}]}).encode())
++        def total(args, ctx):
++            executed.append(args)
++            return ToolResult(True, str(args['a'] + args['b']))
++        registry = build_builtin_registry()
++        registry.register(ToolSpec('aaa_total', 'Add integers.', total, deferred=True,
++            schema={'a': 'integer', 'b': 'integer'}), trusted=True)
++        router = ModelRouter([Provider('fixture', 'http://fixture.invalid', default_model='mimo-v2.6-pro')],
++                             transport=HttpTransport(response_opener=opener), retries_per_provider=0)
++        with tempfile.TemporaryDirectory() as tmp:
++            root = Path(tmp)
++            agent = Agent(home=root, workspace=root, router=router, registry=registry,
++                policy=Policy(workspace=root, mode=Mode.READ_ONLY), limits=LoopLimits(max_steps=5))
++            self.addCleanup(agent.secret_scope.close)
++            head = agent.system_prompt()
++            first = agent.run('discover aaa_total and add 17,25')
++            self.assertEqual(first.stopped, 'final')
++            self.assertEqual(executed, [{'a': 17, 'b': 25}])
++            self.assertEqual(captured[0]['tools'], captured[1]['tools'][:-1])
++            self.assertEqual(names(captured[1]['tools'])[-1], 'aaa_total')
++            self.assertEqual(captured[1]['tools'], captured[2]['tools'])
++            self.assertEqual(agent.system_prompt(), head)
++            second = agent.run('continue', history=[{'role': 'user', 'content': 'discover aaa_total and add 17,25'},
++                                                  {'role': 'assistant', 'content': first.text}])
++            self.assertTrue(any(e['type'] == 'cache_prefix_reused' for e in second.events))
++            self.assertEqual(captured[3]['messages'][:len(captured[2]['messages'])], captured[2]['messages'])
++
++
++if __name__ == '__main__':
++    unittest.main()
+--- /dev/null
++++ b/docs/MIMO-CACHE-TOOL-SURFACE.md
+@@ -0,0 +1,68 @@
++# MiMo 缓存第三轮：新工具发现后的前缀稳定性
++
++本轮直接检查缓存失配点，并以同模型、同账户、同工作区的 A/B/B/A 工具发现任务验证。没有切换推理模式、增加重复声明或填充文本来抬高命中数字。
++
++## 找到并修复的问题
++
++旧实现每次根据当前可见工具按名称排序。原来声明为 `[file_outline,...,write_file]`，发现 `aaa_total` 后会变成 `[aaa_total,file_outline,...,write_file]`：新工具插入已经发送的声明前方，改变后续整个前缀。跨轮系统提示还会重新拼接可见工具名，使已保存的真实工具历史因头部变化而放弃复用。
++
++新增 `forge/tool_surface.py`：首次投影确定顺序，后续发现的工具追加在末尾；工具撤销立即移除，定义修改立即采用当前 schema，不会为了缓存保留失效能力。子 Agent 继承父声明顺序，但按自己的工具范围重新过滤，之后各自维护顺序。
++
++Agent 的运行、缓存 guard、压缩事务预算统一使用这个投影。系统提示改为引用当前请求里的工具声明，避免再次复制可变工具名。独立调用 `toolwire.tool_declarations()` 的缺省字母排序保持兼容。
++
++同时修复了工具声明清洗器的浅拷贝：补 description、移除空 enum 等操作现在作用于深拷贝，原始注册表和已投影的旧声明不会被后续清洗改写。权限、隐藏规则、延迟加载及执行确认仍经过原来的 Registry / ActionExecutor。
++
++## 真实 API 对照
++
++每个模型运行四个样本：字母重排 A → 会话追加 B → 会话追加 B → 字母重排 A。
++
++每次任务都要求先 `tool_search` 发现一个可执行的算术夹具工具，再实际调用 `aaa_total(17,25)`，最后返回 42。宿主校验函数只执行一次、参数正确、搜索与执行步骤成功以及最终结果正确。两个策略使用完全相同的内置开发工具面和新增工具，区别只是新增后的位置。
++
++四组最初的实际 HTTP JSON 摘要分别在各模型内完全相同。flash 还核对了忽略顺序后的工具声明摘要，证明变化是工具顺序而不是不同工具集合。
++
++| 模型 / 策略 | 完成任务 | 已观测缓存 token / 已观测输入 | 加权命中率 | 缺失缓存回执 |
++| --- | --- | ---: | ---: | ---: |
++| pro / A 字母重排 | 2/2 | 2,816 / 8,763 | 32.14% | 0 |
++| pro / B 会话追加 | 2/2 | 6,784 / 8,881 | 76.39% | 0 |
++| flash / A 字母重排 | 2/2 | 4,416 / 7,644 | 57.77% | 1 |
++| flash / B 会话追加 | 2/2 | 5,952 / 7,676 | 77.54% | 1 |
++
++两个模型共 **8/8 工具任务通过、16 次实际工具动作成功**。每个样本都是三个成功模型请求，未增加模型轮数。pro 和 flash 完成对照时各有一次 TLS 失败后同模型重试，失败尝试保留在原始记录中。
++
++pro 的已观测未缓存输入为 A 5,947、B 2,097 token。该批数据支持修复这类前缀破坏，但不代表完整账单或所有任务的固定收益。
++
++进一步只看发现新工具后的第一个请求：pro 的 A 两次均明确为 0 命中；B 两次分别为 0 和 1,408 命中。flash 的 A 为 0/未知，B 为未知/1,024。因此追加声明不能保证每次命中；服务端仍有明显波动。最初请求即使 JSON 相同也有命中差异，整组比例包含这种波动，不能全部归因于排序。flash 的未知回执未按零处理，也未参与该命中率分母。
++
++原始结果：`reports/mimo-cache3-order-pro-native.json`、`reports/mimo-cache3-order-flash.json`。本场景针对动态工具发现，不能直接和前两轮文件任务的整体比例比较。
++
++## 实测暴露的协议冲突
++
++第一轮尝试保留在 `reports/mimo-cache3-order-pro.json`：旧系统提示在提供原生工具接口时还要求输出 XML，pro 出现三次不完整文本工具调用，导致一个样本失败。这不是缓存优化成功的数据，未混入上表。
++
++系统提示已改为优先原生工具接口，XML 只作为无原生接口时的兼容说明。随后完成的对照没有格式错误重试；flash 的八次工具调用均走原生返回，pro 有一次完整文本调用被既有兼容解析器接受。没有把不完整参数执行为动作，也未删除失败记录。
++
++## 适用边界
++
++追加顺序主要保留工具声明中已经存在的部分。新增 schema 仍会改变其后序列，不能保证系统提示或全部历史在服务端继续命中。工具被撤销、schema 更新、切换模型/端点/账户、上下文压缩等仍可能产生必要失配。
++
++MiMo [官方计费说明](https://mimo.mi.com/docs/en-US/pricing) 将命中归因于请求前缀；其[推理系统说明](https://mimo.mi.com/docs/en-US/news/latest/updqate)也涉及缓存亲和路由和分层回收。本文仅以本机请求和 usage 判断客户端改动及实际观测，不推断某一次服务端未命中的具体原因。
++
++## 验证与复验
++
++新增测试覆盖两种原生协议、追加顺序、撤销与重新注册、隐藏工具、schema 更新、原始 schema 不变、子 Agent 顺序隔离，并通过真实 HttpTransport 请求体夹具验证工具发现后的跨轮历史延续。
++
++核心回归 449 项（2 跳过），客户端/运行链 206 项（1 跳过），合计 **652 项通过、3 项跳过、0 失败**。框架自检 **595/595**；代码预算 149 个文件及 Git 空白检查通过。
++
++包括协议问题定位的首次尝试，本轮共 33 次 HTTP 尝试、30 次成功响应及 3 次 TLS 失败。成功回执输入合计 44,597、输出 1,436 token；失败尝试的实际服务端消费未知，未作为已核对账单。
++
++```powershell
++python -m unittest forge.test_tool_surface forge.test_runtime_structure -q
++python -m unittest discover -s forge -t . -q
++python -m forge.cli selftest
++python scripts/budget_check.py
++
++# 真实 API，消耗现有 Token Plan 额度；每个模型上限 20 次 HTTP 尝试。
++python scripts/verify_mimo_live.py --live --suite tool-order --model mimo-v2.6-pro --retries 1 --request-limit 20 --output reports/tool-order-repeat.json
++```
++
++日志为 `reports/mimo-cache3-surface-tests.log`、`reports/mimo-cache3-core.log`、`reports/mimo-cache3-runtime.log`、`reports/mimo-cache3-selftest.log`。独立补丁为 `reports/mimo-cache3.patch`，文件清单为 `reports/mimo-cache3-files.json`，开始时的工作区快照位置见 `reports/mimo-cache3-backup.txt`。

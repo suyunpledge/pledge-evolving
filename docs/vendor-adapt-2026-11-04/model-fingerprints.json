@@ -1,0 +1,3666 @@
+{
+  "schema_version": 1,
+  "mode": "offline_receipt_catalogue",
+  "limits": [
+    "Capability identity is not proof of remote model weights or authorship.",
+    "Behaviour fingerprints do not merge model/endpoint/account cache namespaces.",
+    "Registry/configured traits are not live verification; family matches inherit defaults.",
+    "Channel restrictions and observed credit apply only to the named scope.",
+    "Short probes do not establish steady-state cache hit rates or quality rankings.",
+    "Scenario failures are retained; no runtime rules are learned from one answer."
+  ],
+  "manufacturer_defaults": [
+    {
+      "manufacturer_id": "anthropic",
+      "registered_kinds": 2,
+      "scope": "fallback_defaults_not_universal_guarantees",
+      "profile": {
+        "id": "anthropic",
+        "label": "Anthropic",
+        "wire": "anthropic",
+        "cache_mode": "explicit_anthropic",
+        "cache_read_multiplier": 0.1,
+        "cache_write_multiplier": 1.25,
+        "min_cache_tokens": 1024,
+        "cache_ttl": "5m",
+        "batch_discount": 0.5,
+        "supports_flex": false,
+        "peak_valley": false,
+        "long_context_threshold": 0,
+        "long_context_multiplier": 1.0,
+        "reasoning_billed_as_output": true,
+        "inject_cache_control": true,
+        "reasoning_style": "",
+        "reasoning_efforts": [],
+        "supports_reasoning_effort": false,
+        "can_disable_thinking": true,
+        "min_output_tokens": 0,
+        "context_floor_chars": 0,
+        "steps_hint": 0,
+        "memory_char_budget": 1500,
+        "memory_min_score": 0.0,
+        "memory_top_k": 0,
+        "model_kind_id": "",
+        "model_family_id": "",
+        "manufacturer_id": "anthropic",
+        "canonical_model_id": "",
+        "model_match_source": "",
+        "model_evidence": "",
+        "model_traits": [],
+        "behavior_fingerprint": ""
+      }
+    },
+    {
+      "manufacturer_id": "bailian",
+      "registered_kinds": 2,
+      "scope": "fallback_defaults_not_universal_guarantees",
+      "profile": {
+        "id": "bailian",
+        "label": "阿里云百炼",
+        "wire": "openai",
+        "cache_mode": "explicit_bailian",
+        "cache_read_multiplier": 0.1,
+        "cache_write_multiplier": 1.25,
+        "min_cache_tokens": 1024,
+        "cache_ttl": "5m",
+        "batch_discount": 0.5,
+        "supports_flex": false,
+        "peak_valley": false,
+        "long_context_threshold": 0,
+        "long_context_multiplier": 1.0,
+        "reasoning_billed_as_output": true,
+        "inject_cache_control": false,
+        "reasoning_style": "enable_thinking",
+        "reasoning_efforts": [],
+        "supports_reasoning_effort": false,
+        "can_disable_thinking": true,
+        "min_output_tokens": 0,
+        "context_floor_chars": 0,
+        "steps_hint": 0,
+        "memory_char_budget": 1500,
+        "memory_min_score": 0.0,
+        "memory_top_k": 0,
+        "model_kind_id": "",
+        "model_family_id": "",
+        "manufacturer_id": "bailian",
+        "canonical_model_id": "",
+        "model_match_source": "",
+        "model_evidence": "",
+        "model_traits": [],
+        "behavior_fingerprint": ""
+      }
+    },
+    {
+      "manufacturer_id": "deepseek",
+      "registered_kinds": 3,
+      "scope": "fallback_defaults_not_universal_guarantees",
+      "profile": {
+        "id": "deepseek",
+        "label": "DeepSeek",
+        "wire": "openai",
+        "cache_mode": "implicit",
+        "cache_read_multiplier": 0.02,
+        "cache_write_multiplier": 1.0,
+        "min_cache_tokens": 0,
+        "cache_ttl": "disk",
+        "batch_discount": 1.0,
+        "supports_flex": false,
+        "peak_valley": true,
+        "long_context_threshold": 0,
+        "long_context_multiplier": 1.0,
+        "reasoning_billed_as_output": true,
+        "inject_cache_control": false,
+        "reasoning_style": "thinking_type",
+        "reasoning_efforts": [
+          "low",
+          "high",
+          "max"
+        ],
+        "supports_reasoning_effort": true,
+        "can_disable_thinking": true,
+        "min_output_tokens": 4096,
+        "context_floor_chars": 96000,
+        "steps_hint": 0,
+        "memory_char_budget": 2000,
+        "memory_min_score": 0.0,
+        "memory_top_k": 8,
+        "model_kind_id": "",
+        "model_family_id": "",
+        "manufacturer_id": "deepseek",
+        "canonical_model_id": "",
+        "model_match_source": "",
+        "model_evidence": "",
+        "model_traits": [],
+        "behavior_fingerprint": ""
+      }
+    },
+    {
+      "manufacturer_id": "gemini",
+      "registered_kinds": 1,
+      "scope": "fallback_defaults_not_universal_guarantees",
+      "profile": {
+        "id": "gemini",
+        "label": "Google Gemini",
+        "wire": "openai",
+        "cache_mode": "implicit",
+        "cache_read_multiplier": 0.1,
+        "cache_write_multiplier": 1.0,
+        "min_cache_tokens": 4096,
+        "cache_ttl": "managed",
+        "batch_discount": 0.5,
+        "supports_flex": true,
+        "peak_valley": false,
+        "long_context_threshold": 200000,
+        "long_context_multiplier": 2.0,
+        "reasoning_billed_as_output": true,
+        "inject_cache_control": false,
+        "reasoning_style": "",
+        "reasoning_efforts": [],
+        "supports_reasoning_effort": false,
+        "can_disable_thinking": true,
+        "min_output_tokens": 0,
+        "context_floor_chars": 0,
+        "steps_hint": 0,
+        "memory_char_budget": 1000,
+        "memory_min_score": 0.25,
+        "memory_top_k": 0,
+        "model_kind_id": "",
+        "model_family_id": "",
+        "manufacturer_id": "gemini",
+        "canonical_model_id": "",
+        "model_match_source": "",
+        "model_evidence": "",
+        "model_traits": [],
+        "behavior_fingerprint": ""
+      }
+    },
+    {
+      "manufacturer_id": "hunyuan",
+      "registered_kinds": 4,
+      "scope": "fallback_defaults_not_universal_guarantees",
+      "profile": {
+        "id": "hunyuan",
+        "label": "腾讯混元",
+        "wire": "openai",
+        "cache_mode": "implicit",
+        "cache_read_multiplier": 1.0,
+        "cache_write_multiplier": 1.0,
+        "min_cache_tokens": 0,
+        "cache_ttl": "managed",
+        "batch_discount": 1.0,
+        "supports_flex": false,
+        "peak_valley": false,
+        "long_context_threshold": 0,
+        "long_context_multiplier": 1.0,
+        "reasoning_billed_as_output": true,
+        "inject_cache_control": false,
+        "reasoning_style": "effort",
+        "reasoning_efforts": [
+          "low",
+          "high"
+        ],
+        "supports_reasoning_effort": false,
+        "can_disable_thinking": false,
+        "min_output_tokens": 4096,
+        "context_floor_chars": 96000,
+        "steps_hint": 0,
+        "memory_char_budget": 2000,
+        "memory_min_score": 0.0,
+        "memory_top_k": 8,
+        "model_kind_id": "",
+        "model_family_id": "",
+        "manufacturer_id": "hunyuan",
+        "canonical_model_id": "",
+        "model_match_source": "",
+        "model_evidence": "",
+        "model_traits": [],
+        "behavior_fingerprint": ""
+      }
+    },
+    {
+      "manufacturer_id": "kimi",
+      "registered_kinds": 4,
+      "scope": "fallback_defaults_not_universal_guarantees",
+      "profile": {
+        "id": "kimi",
+        "label": "Kimi 月之暗面",
+        "wire": "openai",
+        "cache_mode": "implicit",
+        "cache_read_multiplier": 0.1,
+        "cache_write_multiplier": 1.0,
+        "min_cache_tokens": 0,
+        "cache_ttl": "5m",
+        "batch_discount": 1.0,
+        "supports_flex": false,
+        "peak_valley": false,
+        "long_context_threshold": 0,
+        "long_context_multiplier": 1.0,
+        "reasoning_billed_as_output": true,
+        "inject_cache_control": false,
+        "reasoning_style": "effort",
+        "reasoning_efforts": [
+          "low",
+          "high",
+          "max"
+        ],
+        "supports_reasoning_effort": false,
+        "can_disable_thinking": true,
+        "min_output_tokens": 0,
+        "context_floor_chars": 0,
+        "steps_hint": 0,
+        "memory_char_budget": 1500,
+        "memory_min_score": 0.0,
+        "memory_top_k": 0,
+        "model_kind_id": "",
+        "model_family_id": "",
+        "manufacturer_id": "kimi",
+        "canonical_model_id": "",
+        "model_match_source": "",
+        "model_evidence": "",
+        "model_traits": [],
+        "behavior_fingerprint": ""
+      }
+    },
+    {
+      "manufacturer_id": "mimo",
+      "registered_kinds": 3,
+      "scope": "fallback_defaults_not_universal_guarantees",
+      "profile": {
+        "id": "mimo",
+        "label": "小米 MiMo",
+        "wire": "openai",
+        "cache_mode": "implicit",
+        "cache_read_multiplier": 0.008333333333333333,
+        "cache_write_multiplier": 1.0,
+        "min_cache_tokens": 0,
+        "cache_ttl": "managed",
+        "batch_discount": 1.0,
+        "supports_flex": false,
+        "peak_valley": false,
+        "long_context_threshold": 0,
+        "long_context_multiplier": 1.0,
+        "reasoning_billed_as_output": true,
+        "inject_cache_control": false,
+        "reasoning_style": "thinking_type",
+        "reasoning_efforts": [],
+        "supports_reasoning_effort": false,
+        "can_disable_thinking": true,
+        "min_output_tokens": 4096,
+        "context_floor_chars": 96000,
+        "steps_hint": 0,
+        "memory_char_budget": 2000,
+        "memory_min_score": 0.0,
+        "memory_top_k": 8,
+        "model_kind_id": "",
+        "model_family_id": "",
+        "manufacturer_id": "mimo",
+        "canonical_model_id": "",
+        "model_match_source": "",
+        "model_evidence": "",
+        "model_traits": [],
+        "behavior_fingerprint": ""
+      }
+    },
+    {
+      "manufacturer_id": "minimax",
+      "registered_kinds": 3,
+      "scope": "fallback_defaults_not_universal_guarantees",
+      "profile": {
+        "id": "minimax",
+        "label": "MiniMax",
+        "wire": "openai",
+        "cache_mode": "implicit",
+        "cache_read_multiplier": 0.2,
+        "cache_write_multiplier": 1.0,
+        "min_cache_tokens": 512,
+        "cache_ttl": "managed",
+        "batch_discount": 1.0,
+        "supports_flex": false,
+        "peak_valley": false,
+        "long_context_threshold": 0,
+        "long_context_multiplier": 1.0,
+        "reasoning_billed_as_output": true,
+        "inject_cache_control": false,
+        "reasoning_style": "effort",
+        "reasoning_efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "supports_reasoning_effort": false,
+        "can_disable_thinking": true,
+        "min_output_tokens": 4096,
+        "context_floor_chars": 96000,
+        "steps_hint": 0,
+        "memory_char_budget": 1500,
+        "memory_min_score": 0.0,
+        "memory_top_k": 0,
+        "model_kind_id": "",
+        "model_family_id": "",
+        "manufacturer_id": "minimax",
+        "canonical_model_id": "",
+        "model_match_source": "",
+        "model_evidence": "",
+        "model_traits": [],
+        "behavior_fingerprint": ""
+      }
+    },
+    {
+      "manufacturer_id": "openai",
+      "registered_kinds": 2,
+      "scope": "fallback_defaults_not_universal_guarantees",
+      "profile": {
+        "id": "openai",
+        "label": "OpenAI",
+        "wire": "openai",
+        "cache_mode": "implicit",
+        "cache_read_multiplier": 0.1,
+        "cache_write_multiplier": 1.25,
+        "min_cache_tokens": 1024,
+        "cache_ttl": "30m",
+        "batch_discount": 0.5,
+        "supports_flex": true,
+        "peak_valley": false,
+        "long_context_threshold": 0,
+        "long_context_multiplier": 2.0,
+        "reasoning_billed_as_output": true,
+        "inject_cache_control": false,
+        "reasoning_style": "effort",
+        "reasoning_efforts": [],
+        "supports_reasoning_effort": false,
+        "can_disable_thinking": true,
+        "min_output_tokens": 0,
+        "context_floor_chars": 0,
+        "steps_hint": 0,
+        "memory_char_budget": 1500,
+        "memory_min_score": 0.0,
+        "memory_top_k": 0,
+        "model_kind_id": "",
+        "model_family_id": "",
+        "manufacturer_id": "openai",
+        "canonical_model_id": "",
+        "model_match_source": "",
+        "model_evidence": "",
+        "model_traits": [],
+        "behavior_fingerprint": ""
+      }
+    },
+    {
+      "manufacturer_id": "stepfun",
+      "registered_kinds": 1,
+      "scope": "fallback_defaults_not_universal_guarantees",
+      "profile": {
+        "id": "stepfun",
+        "label": "阶跃星辰 StepFun",
+        "wire": "openai",
+        "cache_mode": "unknown",
+        "cache_read_multiplier": 1.0,
+        "cache_write_multiplier": 1.0,
+        "min_cache_tokens": 0,
+        "cache_ttl": "unknown",
+        "batch_discount": 1.0,
+        "supports_flex": false,
+        "peak_valley": false,
+        "long_context_threshold": 0,
+        "long_context_multiplier": 1.0,
+        "reasoning_billed_as_output": true,
+        "inject_cache_control": false,
+        "reasoning_style": "effort",
+        "reasoning_efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "supports_reasoning_effort": false,
+        "can_disable_thinking": false,
+        "min_output_tokens": 0,
+        "context_floor_chars": 0,
+        "steps_hint": 0,
+        "memory_char_budget": 1500,
+        "memory_min_score": 0.0,
+        "memory_top_k": 0,
+        "model_kind_id": "",
+        "model_family_id": "",
+        "manufacturer_id": "stepfun",
+        "canonical_model_id": "",
+        "model_match_source": "",
+        "model_evidence": "",
+        "model_traits": [],
+        "behavior_fingerprint": ""
+      }
+    },
+    {
+      "manufacturer_id": "volcengine",
+      "registered_kinds": 2,
+      "scope": "fallback_defaults_not_universal_guarantees",
+      "profile": {
+        "id": "volcengine",
+        "label": "火山方舟（豆包）",
+        "wire": "openai",
+        "cache_mode": "implicit",
+        "cache_read_multiplier": 1.0,
+        "cache_write_multiplier": 1.0,
+        "min_cache_tokens": 0,
+        "cache_ttl": "managed",
+        "batch_discount": 1.0,
+        "supports_flex": false,
+        "peak_valley": false,
+        "long_context_threshold": 0,
+        "long_context_multiplier": 1.0,
+        "reasoning_billed_as_output": true,
+        "inject_cache_control": false,
+        "reasoning_style": "thinking_type",
+        "reasoning_efforts": [],
+        "supports_reasoning_effort": false,
+        "can_disable_thinking": true,
+        "min_output_tokens": 4096,
+        "context_floor_chars": 96000,
+        "steps_hint": 0,
+        "memory_char_budget": 2000,
+        "memory_min_score": 0.0,
+        "memory_top_k": 8,
+        "model_kind_id": "",
+        "model_family_id": "",
+        "manufacturer_id": "volcengine",
+        "canonical_model_id": "",
+        "model_match_source": "",
+        "model_evidence": "",
+        "model_traits": [],
+        "behavior_fingerprint": ""
+      }
+    },
+    {
+      "manufacturer_id": "zhipu",
+      "registered_kinds": 2,
+      "scope": "fallback_defaults_not_universal_guarantees",
+      "profile": {
+        "id": "zhipu",
+        "label": "智谱 GLM",
+        "wire": "openai",
+        "cache_mode": "implicit",
+        "cache_read_multiplier": 0.25,
+        "cache_write_multiplier": 1.0,
+        "min_cache_tokens": 512,
+        "cache_ttl": "managed",
+        "batch_discount": 0.5,
+        "supports_flex": false,
+        "peak_valley": false,
+        "long_context_threshold": 0,
+        "long_context_multiplier": 1.0,
+        "reasoning_billed_as_output": true,
+        "inject_cache_control": false,
+        "reasoning_style": "thinking_type",
+        "reasoning_efforts": [
+          "low",
+          "high",
+          "max"
+        ],
+        "supports_reasoning_effort": false,
+        "can_disable_thinking": true,
+        "min_output_tokens": 0,
+        "context_floor_chars": 96000,
+        "steps_hint": 0,
+        "memory_char_budget": 2000,
+        "memory_min_score": 0.0,
+        "memory_top_k": 8,
+        "model_kind_id": "",
+        "model_family_id": "",
+        "manufacturer_id": "zhipu",
+        "canonical_model_id": "",
+        "model_match_source": "",
+        "model_evidence": "",
+        "model_traits": [],
+        "behavior_fingerprint": ""
+      }
+    }
+  ],
+  "model_kinds": [
+    {
+      "model_kind_id": "anthropic.claude.opus5.5",
+      "manufacturer_id": "anthropic",
+      "family_id": "anthropic.claude5",
+      "canonical_model": "claude-opus-5-5",
+      "aliases": [],
+      "family_prefixes": [],
+      "evidence_grade": "configured",
+      "behavior_fingerprint": "7d6e38ff549649a7",
+      "traits": [],
+      "effective_profile": {
+        "id": "anthropic",
+        "label": "Anthropic",
+        "wire": "anthropic",
+        "cache_mode": "explicit_anthropic",
+        "cache_read_multiplier": 0.1,
+        "cache_write_multiplier": 1.25,
+        "min_cache_tokens": 1024,
+        "cache_ttl": "5m",
+        "batch_discount": 0.5,
+        "supports_flex": false,
+        "peak_valley": false,
+        "long_context_threshold": 0,
+        "long_context_multiplier": 1.0,
+        "reasoning_billed_as_output": true,
+        "inject_cache_control": true,
+        "reasoning_style": "",
+        "reasoning_efforts": [],
+        "supports_reasoning_effort": false,
+        "can_disable_thinking": true,
+        "min_output_tokens": 0,
+        "context_floor_chars": 0,
+        "steps_hint": 0,
+        "memory_char_budget": 1500,
+        "memory_min_score": 0.0,
+        "memory_top_k": 0,
+        "model_kind_id": "anthropic.claude.opus5.5",
+        "model_family_id": "anthropic.claude5",
+        "manufacturer_id": "anthropic",
+        "canonical_model_id": "claude-opus-5-5",
+        "model_match_source": "explicit_kind",
+        "model_evidence": "configured",
+        "model_traits": [],
+        "behavior_fingerprint": "7d6e38ff549649a7"
+      },
+      "observations": []
+    },
+    {
+      "model_kind_id": "anthropic.claude.sonnet5",
+      "manufacturer_id": "anthropic",
+      "family_id": "anthropic.claude5",
+      "canonical_model": "claude-sonnet-5",
+      "aliases": [],
+      "family_prefixes": [],
+      "evidence_grade": "configured",
+      "behavior_fingerprint": "fb10022bb91c10b2",
+      "traits": [],
+      "effective_profile": {
+        "id": "anthropic",
+        "label": "Anthropic",
+        "wire": "anthropic",
+        "cache_mode": "explicit_anthropic",
+        "cache_read_multiplier": 0.1,
+        "cache_write_multiplier": 1.25,
+        "min_cache_tokens": 1024,
+        "cache_ttl": "5m",
+        "batch_discount": 0.5,
+        "supports_flex": false,
+        "peak_valley": false,
+        "long_context_threshold": 0,
+        "long_context_multiplier": 1.0,
+        "reasoning_billed_as_output": true,
+        "inject_cache_control": true,
+        "reasoning_style": "",
+        "reasoning_efforts": [],
+        "supports_reasoning_effort": false,
+        "can_disable_thinking": true,
+        "min_output_tokens": 0,
+        "context_floor_chars": 0,
+        "steps_hint": 0,
+        "memory_char_budget": 1500,
+        "memory_min_score": 0.0,
+        "memory_top_k": 0,
+        "model_kind_id": "anthropic.claude.sonnet5",
+        "model_family_id": "anthropic.claude5",
+        "manufacturer_id": "anthropic",
+        "canonical_model_id": "claude-sonnet-5",
+        "model_match_source": "explicit_kind",
+        "model_evidence": "configured",
+        "model_traits": [],
+        "behavior_fingerprint": "fb10022bb91c10b2"
+      },
+      "observations": []
+    },
+    {
+      "model_kind_id": "deepseek.v4.1.flash",
+      "manufacturer_id": "deepseek",
+      "family_id": "deepseek.v4.1",
+      "canonical_model": "deepseek-v4.1-flash",
+      "aliases": [],
+      "family_prefixes": [],
+      "evidence_grade": "registry_trace",
+      "behavior_fingerprint": "13793e522d461572",
+      "traits": [
+        "prompt_cache_details"
+      ],
+      "effective_profile": {
+        "id": "deepseek",
+        "label": "DeepSeek",
+        "wire": "openai",
+        "cache_mode": "implicit",
+        "cache_read_multiplier": 0.02,
+        "cache_write_multiplier": 1.0,
+        "min_cache_tokens": 0,
+        "cache_ttl": "disk",
+        "batch_discount": 1.0,
+        "supports_flex": false,
+        "peak_valley": true,
+        "long_context_threshold": 0,
+        "long_context_multiplier": 1.0,
+        "reasoning_billed_as_output": true,
+        "inject_cache_control": false,
+        "reasoning_style": "thinking_type",
+        "reasoning_efforts": [
+          "low",
+          "high",
+          "max"
+        ],
+        "supports_reasoning_effort": true,
+        "can_disable_thinking": true,
+        "min_output_tokens": 4096,
+        "context_floor_chars": 96000,
+        "steps_hint": 0,
+        "memory_char_budget": 2000,
+        "memory_min_score": 0.0,
+        "memory_top_k": 8,
+        "model_kind_id": "deepseek.v4.1.flash",
+        "model_family_id": "deepseek.v4.1",
+        "manufacturer_id": "deepseek",
+        "canonical_model_id": "deepseek-v4.1-flash",
+        "model_match_source": "explicit_kind",
+        "model_evidence": "registry_trace",
+        "model_traits": [
+          "prompt_cache_details"
+        ],
+        "behavior_fingerprint": "13793e522d461572"
+      },
+      "observations": []
+    },
+    {
+      "model_kind_id": "deepseek.v4.flash",
+      "manufacturer_id": "deepseek",
+      "family_id": "deepseek.v4",
+      "canonical_model": "deepseek-flash",
+      "aliases": [
+        "deepseek-v4-flash"
+      ],
+      "family_prefixes": [],
+      "evidence_grade": "live",
+      "behavior_fingerprint": "800f0497a847319d",
+      "traits": [
+        "thinking_type_and_effort",
+        "native_tool_replay"
+      ],
+      "effective_profile": {
+        "id": "deepseek",
+        "label": "DeepSeek",
+        "wire": "openai",
+        "cache_mode": "implicit",
+        "cache_read_multiplier": 0.02,
+        "cache_write_multiplier": 1.0,
+        "min_cache_tokens": 0,
+        "cache_ttl": "disk",
+        "batch_discount": 1.0,
+        "supports_flex": false,
+        "peak_valley": true,
+        "long_context_threshold": 0,
+        "long_context_multiplier": 1.0,
+        "reasoning_billed_as_output": true,
+        "inject_cache_control": false,
+        "reasoning_style": "thinking_type",
+        "reasoning_efforts": [
+          "low",
+          "high",
+          "max"
+        ],
+        "supports_reasoning_effort": true,
+        "can_disable_thinking": true,
+        "min_output_tokens": 4096,
+        "context_floor_chars": 96000,
+        "steps_hint": 0,
+        "memory_char_budget": 2000,
+        "memory_min_score": 0.0,
+        "memory_top_k": 8,
+        "model_kind_id": "deepseek.v4.flash",
+        "model_family_id": "deepseek.v4",
+        "manufacturer_id": "deepseek",
+        "canonical_model_id": "deepseek-flash",
+        "model_match_source": "explicit_kind",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type_and_effort",
+          "native_tool_replay"
+        ],
+        "behavior_fingerprint": "800f0497a847319d"
+      },
+      "observations": [
+        {
+          "requested_model": "deepseek-flash",
+          "source": "forge-effort-deepseek.json",
+          "record": 0,
+          "request": 0,
+          "scope": "https://api.deepseek.com",
+          "scenario_passed": true,
+          "controls": {
+            "reasoning_effort": "high",
+            "max_tokens": 256
+          },
+          "usage": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 0,
+            "output_tokens": 49,
+            "input_tokens": 50,
+            "reasoning_tokens": 45
+          },
+          "response_received": true,
+          "finish_reason": "stop",
+          "tool_names": []
+        },
+        {
+          "requested_model": "deepseek-flash",
+          "source": "forge-wire-deepseek.json",
+          "record": 0,
+          "request": 0,
+          "scope": "https://api.deepseek.com",
+          "scenario_passed": true,
+          "controls": {
+            "max_tokens": 256,
+            "thinking": {
+              "type": "disabled"
+            }
+          },
+          "usage": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 0,
+            "output_tokens": 47,
+            "input_tokens": 302,
+            "reasoning_tokens": 0
+          },
+          "response_received": true,
+          "finish_reason": "tool_calls",
+          "tool_names": [
+            "add"
+          ]
+        },
+        {
+          "requested_model": "deepseek-flash",
+          "source": "forge-wire-deepseek.json",
+          "record": 0,
+          "request": 1,
+          "scope": "https://api.deepseek.com",
+          "scenario_passed": true,
+          "controls": {
+            "max_tokens": 256,
+            "thinking": {
+              "type": "disabled"
+            }
+          },
+          "usage": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 128,
+            "output_tokens": 6,
+            "input_tokens": 362,
+            "reasoning_tokens": 0
+          },
+          "response_received": true,
+          "finish_reason": "stop",
+          "tool_names": []
+        },
+        {
+          "requested_model": "deepseek-flash",
+          "source": "forge-wire-deepseek.json",
+          "record": 0,
+          "request": 2,
+          "scope": "https://api.deepseek.com",
+          "scenario_passed": true,
+          "controls": {
+            "max_tokens": 256,
+            "thinking": {
+              "type": "enabled"
+            }
+          },
+          "usage": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 0,
+            "output_tokens": 20,
+            "input_tokens": 43,
+            "reasoning_tokens": 18
+          },
+          "response_received": true,
+          "finish_reason": "stop",
+          "tool_names": []
+        },
+        {
+          "requested_model": "deepseek-flash",
+          "source": "vendor-probe-results.json",
+          "scenario": "basic",
+          "scope": "https://api.deepseek.com",
+          "provenance": "archived_probe",
+          "scenario_passed": true,
+          "controls": {},
+          "usage": {
+            "output_tokens": 26,
+            "cached_tokens": 0,
+            "input_tokens": 41,
+            "reasoning_tokens": 24
+          },
+          "response_received": true,
+          "status": 200,
+          "finish_reason": "stop"
+        },
+        {
+          "requested_model": "deepseek-flash",
+          "source": "vendor-probe-results.json",
+          "scenario": "temperature_0.7",
+          "scope": "https://api.deepseek.com",
+          "provenance": "archived_probe",
+          "scenario_passed": true,
+          "controls": {},
+          "usage": {
+            "output_tokens": 21,
+            "cached_tokens": 0,
+            "input_tokens": 41,
+            "reasoning_tokens": 19
+          },
+          "response_received": true,
+          "status": 200,
+          "finish_reason": "stop"
+        },
+        {
+          "requested_model": "deepseek-flash",
+          "source": "vendor-probe-results.json",
+          "scenario": "tool_single",
+          "scope": "https://api.deepseek.com",
+          "provenance": "archived_probe",
+          "scenario_passed": true,
+          "controls": {},
+          "usage": {
+            "output_tokens": 46,
+            "cached_tokens": 0,
+            "input_tokens": 306,
+            "reasoning_tokens": 0
+          },
+          "response_received": true,
+          "status": 200,
+          "finish_reason": "tool_calls"
+        },
+        {
+          "requested_model": "deepseek-flash",
+          "source": "vendor-probe-results.json",
+          "scenario": "tool_parallel",
+          "scope": "https://api.deepseek.com",
+          "provenance": "archived_probe",
+          "scenario_passed": true,
+          "controls": {},
+          "usage": {
+            "output_tokens": 98,
+            "cached_tokens": 128,
+            "input_tokens": 309,
+            "reasoning_tokens": 24
+          },
+          "response_received": true,
+          "status": 200,
+          "finish_reason": "tool_calls"
+        },
+        {
+          "requested_model": "deepseek-flash",
+          "source": "vendor-probe-results.json",
+          "scenario": "cache_A1_write",
+          "scope": "https://api.deepseek.com",
+          "provenance": "archived_probe",
+          "scenario_passed": true,
+          "controls": {},
+          "usage": {
+            "output_tokens": 7,
+            "cached_tokens": 0,
+            "input_tokens": 2300,
+            "reasoning_tokens": 0
+          },
+          "response_received": true,
+          "status": 200,
+          "finish_reason": "stop"
+        },
+        {
+          "requested_model": "deepseek-flash",
+          "source": "vendor-probe-results.json",
+          "scenario": "cache_A2_repeat",
+          "scope": "https://api.deepseek.com",
+          "provenance": "archived_probe",
+          "scenario_passed": true,
+          "controls": {},
+          "usage": {
+            "output_tokens": 28,
+            "cached_tokens": 2048,
+            "input_tokens": 2300,
+            "reasoning_tokens": 21
+          },
+          "response_received": true,
+          "status": 200,
+          "finish_reason": "stop"
+        },
+        {
+          "requested_model": "deepseek-flash",
+          "source": "vendor-probe-results.json",
+          "scenario": "cache_B_prefixread",
+          "scope": "https://api.deepseek.com",
+          "provenance": "archived_probe",
+          "scenario_passed": true,
+          "controls": {},
+          "usage": {
+            "output_tokens": 44,
+            "cached_tokens": 2048,
+            "input_tokens": 2301,
+            "reasoning_tokens": 40
+          },
+          "response_received": true,
+          "status": 200,
+          "finish_reason": "stop"
+        }
+      ]
+    },
+    {
+      "model_kind_id": "deepseek.v4.pro",
+      "manufacturer_id": "deepseek",
+      "family_id": "deepseek.v4",
+      "canonical_model": "deepseek-v4-pro",
+      "aliases": [],
+      "family_prefixes": [],
+      "evidence_grade": "live",
+      "behavior_fingerprint": "b935a061ff86ac66",
+      "traits": [
+        "thinking_type_and_effort",
+        "native_tool_replay"
+      ],
+      "effective_profile": {
+        "id": "deepseek",
+        "label": "DeepSeek",
+        "wire": "openai",
+        "cache_mode": "implicit",
+        "cache_read_multiplier": 0.02,
+        "cache_write_multiplier": 1.0,
+        "min_cache_tokens": 0,
+        "cache_ttl": "disk",
+        "batch_discount": 1.0,
+        "supports_flex": false,
+        "peak_valley": true,
+        "long_context_threshold": 0,
+        "long_context_multiplier": 1.0,
+        "reasoning_billed_as_output": true,
+        "inject_cache_control": false,
+        "reasoning_style": "thinking_type",
+        "reasoning_efforts": [
+          "low",
+          "high",
+          "max"
+        ],
+        "supports_reasoning_effort": true,
+        "can_disable_thinking": true,
+        "min_output_tokens": 4096,
+        "context_floor_chars": 96000,
+        "steps_hint": 0,
+        "memory_char_budget": 2000,
+        "memory_min_score": 0.0,
+        "memory_top_k": 8,
+        "model_kind_id": "deepseek.v4.pro",
+        "model_family_id": "deepseek.v4",
+        "manufacturer_id": "deepseek",
+        "canonical_model_id": "deepseek-v4-pro",
+        "model_match_source": "explicit_kind",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type_and_effort",
+          "native_tool_replay"
+        ],
+        "behavior_fingerprint": "b935a061ff86ac66"
+      },
+      "observations": [
+        {
+          "requested_model": "deepseek-v4-pro",
+          "source": "forge-effort-deepseek.json",
+          "record": 1,
+          "request": 0,
+          "scope": "https://api.deepseek.com",
+          "scenario_passed": true,
+          "controls": {
+            "reasoning_effort": "high",
+            "max_tokens": 256
+          },
+          "usage": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 0,
+            "output_tokens": 125,
+            "input_tokens": 103,
+            "reasoning_tokens": 121
+          },
+          "response_received": true,
+          "finish_reason": "stop",
+          "tool_names": []
+        },
+        {
+          "requested_model": "deepseek-v4-pro",
+          "source": "forge-wire-deepseek.json",
+          "record": 1,
+          "request": 0,
+          "scope": "https://api.deepseek.com",
+          "scenario_passed": true,
+          "controls": {
+            "max_tokens": 256,
+            "thinking": {
+              "type": "disabled"
+            }
+          },
+          "usage": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 0,
+            "output_tokens": 51,
+            "input_tokens": 313,
+            "reasoning_tokens": 0
+          },
+          "response_received": true,
+          "finish_reason": "tool_calls",
+          "tool_names": [
+            "add"
+          ]
+        },
+        {
+          "requested_model": "deepseek-v4-pro",
+          "source": "forge-wire-deepseek.json",
+          "record": 1,
+          "request": 1,
+          "scope": "https://api.deepseek.com",
+          "scenario_passed": true,
+          "controls": {
+            "max_tokens": 256,
+            "thinking": {
+              "type": "disabled"
+            }
+          },
+          "usage": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 256,
+            "output_tokens": 7,
+            "input_tokens": 377,
+            "reasoning_tokens": 0
+          },
+          "response_received": true,
+          "finish_reason": "stop",
+          "tool_names": []
+        },
+        {
+          "requested_model": "deepseek-v4-pro",
+          "source": "forge-wire-deepseek.json",
+          "record": 1,
+          "request": 2,
+          "scope": "https://api.deepseek.com",
+          "scenario_passed": true,
+          "controls": {
+            "max_tokens": 256,
+            "thinking": {
+              "type": "enabled"
+            }
+          },
+          "usage": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 0,
+            "output_tokens": 38,
+            "input_tokens": 96,
+            "reasoning_tokens": 36
+          },
+          "response_received": true,
+          "finish_reason": "stop",
+          "tool_names": []
+        },
+        {
+          "requested_model": "deepseek-v4-pro",
+          "source": "vendor-probe-results.json",
+          "scenario": "basic_deepseek-v4-pro",
+          "scope": "https://api.deepseek.com",
+          "provenance": "archived_probe",
+          "scenario_passed": true,
+          "controls": {},
+          "usage": {
+            "output_tokens": 44,
+            "cached_tokens": 0,
+            "input_tokens": 94,
+            "reasoning_tokens": 42
+          },
+          "response_received": true,
+          "status": 200,
+          "finish_reason": "stop"
+        }
+      ]
+    },
+    {
+      "model_kind_id": "doubao.seed-evolving",
+      "manufacturer_id": "volcengine",
+      "family_id": "doubao.seed",
+      "canonical_model": "doubao-seed-evolving",
+      "aliases": [],
+      "family_prefixes": [],
+      "evidence_grade": "live",
+      "behavior_fingerprint": "9c7f8429976ba0d0",
+      "traits": [
+        "thinking_type",
+        "opaque_assistant_replay",
+        "native_tool_replay"
+      ],
+      "effective_profile": {
+        "id": "volcengine",
+        "label": "火山方舟（豆包）",
+        "wire": "openai",
+        "cache_mode": "implicit",
+        "cache_read_multiplier": 1.0,
+        "cache_write_multiplier": 1.0,
+        "min_cache_tokens": 0,
+        "cache_ttl": "managed",
+        "batch_discount": 1.0,
+        "supports_flex": false,
+        "peak_valley": false,
+        "long_context_threshold": 0,
+        "long_context_multiplier": 1.0,
+        "reasoning_billed_as_output": true,
+        "inject_cache_control": false,
+        "reasoning_style": "thinking_type",
+        "reasoning_efforts": [],
+        "supports_reasoning_effort": false,
+        "can_disable_thinking": true,
+        "min_output_tokens": 4096,
+        "context_floor_chars": 96000,
+        "steps_hint": 0,
+        "memory_char_budget": 2000,
+        "memory_min_score": 0.0,
+        "memory_top_k": 8,
+        "model_kind_id": "doubao.seed-evolving",
+        "model_family_id": "doubao.seed",
+        "manufacturer_id": "volcengine",
+        "canonical_model_id": "doubao-seed-evolving",
+        "model_match_source": "explicit_kind",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type",
+          "opaque_assistant_replay",
+          "native_tool_replay"
+        ],
+        "behavior_fingerprint": "9c7f8429976ba0d0"
+      },
+      "observations": [
+        {
+          "requested_model": "doubao-seed-evolving",
+          "source": "forge-wire-volcengine.json",
+          "record": 0,
+          "request": 0,
+          "scope": "https://ark.cn-beijing.volces.com/api/coding/v3",
+          "scenario_passed": true,
+          "controls": {
+            "max_tokens": 256,
+            "thinking": {
+              "type": "disabled"
+            }
+          },
+          "usage": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 0,
+            "output_tokens": 46,
+            "input_tokens": 506,
+            "reasoning_tokens": 0
+          },
+          "response_received": true,
+          "finish_reason": "tool_calls",
+          "tool_names": [
+            "add"
+          ]
+        },
+        {
+          "requested_model": "doubao-seed-evolving",
+          "source": "forge-wire-volcengine.json",
+          "record": 0,
+          "request": 1,
+          "scope": "https://ark.cn-beijing.volces.com/api/coding/v3",
+          "scenario_passed": true,
+          "controls": {
+            "max_tokens": 256,
+            "thinking": {
+              "type": "disabled"
+            }
+          },
+          "usage": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 0,
+            "output_tokens": 7,
+            "input_tokens": 566,
+            "reasoning_tokens": 0
+          },
+          "response_received": true,
+          "finish_reason": "stop",
+          "tool_names": []
+        },
+        {
+          "requested_model": "doubao-seed-evolving",
+          "source": "forge-wire-volcengine.json",
+          "record": 0,
+          "request": 2,
+          "scope": "https://ark.cn-beijing.volces.com/api/coding/v3",
+          "scenario_passed": true,
+          "controls": {
+            "max_tokens": 256,
+            "thinking": {
+              "type": "enabled"
+            }
+          },
+          "usage": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 0,
+            "output_tokens": 297,
+            "input_tokens": 59,
+            "reasoning_tokens": 296
+          },
+          "response_received": true,
+          "finish_reason": "stop",
+          "tool_names": []
+        },
+        {
+          "requested_model": "doubao-seed-evolving",
+          "source": "vendor-probe-results.json",
+          "scenario": "basic",
+          "scope": "https://ark.cn-beijing.volces.com/api/coding/v3",
+          "provenance": "archived_probe",
+          "scenario_passed": true,
+          "controls": {},
+          "usage": {
+            "output_tokens": 27,
+            "input_tokens": 57,
+            "reasoning_tokens": 26,
+            "cached_tokens": 0
+          },
+          "response_received": true,
+          "status": 200,
+          "finish_reason": "stop"
+        },
+        {
+          "requested_model": "doubao-seed-evolving",
+          "source": "vendor-probe-results.json",
+          "scenario": "temperature_0.7",
+          "scope": "https://ark.cn-beijing.volces.com/api/coding/v3",
+          "provenance": "archived_probe",
+          "scenario_passed": true,
+          "controls": {},
+          "usage": {
+            "output_tokens": 29,
+            "input_tokens": 57,
+            "reasoning_tokens": 28,
+            "cached_tokens": 0
+          },
+          "response_received": true,
+          "status": 200,
+          "finish_reason": "stop"
+        },
+        {
+          "requested_model": "doubao-seed-evolving",
+          "source": "vendor-probe-results.json",
+          "scenario": "tool_single",
+          "scope": "https://ark.cn-beijing.volces.com/api/coding/v3",
+          "provenance": "archived_probe",
+          "scenario_passed": true,
+          "controls": {},
+          "usage": {
+            "output_tokens": 66,
+            "input_tokens": 487,
+            "reasoning_tokens": 33,
+            "cached_tokens": 0
+          },
+          "response_received": true,
+          "status": 200,
+          "finish_reason": "tool_calls"
+        },
+        {
+          "requested_model": "doubao-seed-evolving",
+          "source": "vendor-probe-results.json",
+          "scenario": "tool_parallel",
+          "scope": "https://ark.cn-beijing.volces.com/api/coding/v3",
+          "provenance": "archived_probe",
+          "scenario_passed": true,
+          "controls": {},
+          "usage": {
+            "output_tokens": 90,
+            "input_tokens": 490,
+            "reasoning_tokens": 35,
+            "cached_tokens": 0
+          },
+          "response_received": true,
+          "status": 200,
+          "finish_reason": "tool_calls"
+        },
+        {
+          "requested_model": "doubao-seed-evolving",
+          "source": "vendor-probe-results.json",
+          "scenario": "cache_A1_write",
+          "scope": "https://ark.cn-beijing.volces.com/api/coding/v3",
+          "provenance": "archived_probe",
+          "scenario_passed": true,
+          "controls": {},
+          "usage": {
+            "output_tokens": 53,
+            "input_tokens": 2378,
+            "reasoning_tokens": 47,
+            "cached_tokens": 0
+          },
+          "response_received": true,
+          "status": 200,
+          "finish_reason": "stop"
+        },
+        {
+          "requested_model": "doubao-seed-evolving",
+          "source": "vendor-probe-results.json",
+          "scenario": "cache_A2_repeat",
+          "scope": "https://ark.cn-beijing.volces.com/api/coding/v3",
+          "provenance": "archived_probe",
+          "scenario_passed": true,
+          "controls": {},
+          "usage": {
+            "output_tokens": 104,
+            "input_tokens": 2378,
+            "reasoning_tokens": 98,
+            "cached_tokens": 2378
+          },
+          "response_received": true,
+          "status": 200,
+          "finish_reason": "stop"
+        },
+        {
+          "requested_model": "doubao-seed-evolving",
+          "source": "vendor-probe-results.json",
+          "scenario": "cache_B_prefixread",
+          "scope": "https://ark.cn-beijing.volces.com/api/coding/v3",
+          "provenance": "archived_probe",
+          "scenario_passed": true,
+          "controls": {},
+          "usage": {
+            "output_tokens": 96,
+            "input_tokens": 2379,
+            "reasoning_tokens": 93,
+            "cached_tokens": 1848
+          },
+          "response_received": true,
+          "status": 200,
+          "finish_reason": "stop"
+        }
+      ]
+    },
+    {
+      "model_kind_id": "doubao.seed2.1.turbo",
+      "manufacturer_id": "volcengine",
+      "family_id": "doubao.seed2.1",
+      "canonical_model": "doubao-seed-2.1-turbo",
+      "aliases": [],
+      "family_prefixes": [],
+      "evidence_grade": "live",
+      "behavior_fingerprint": "b4f1126bfed44ebb",
+      "traits": [
+        "thinking_type",
+        "native_tool_replay"
+      ],
+      "effective_profile": {
+        "id": "volcengine",
+        "label": "火山方舟（豆包）",
+        "wire": "openai",
+        "cache_mode": "implicit",
+        "cache_read_multiplier": 1.0,
+        "cache_write_multiplier": 1.0,
+        "min_cache_tokens": 0,
+        "cache_ttl": "managed",
+        "batch_discount": 1.0,
+        "supports_flex": false,
+        "peak_valley": false,
+        "long_context_threshold": 0,
+        "long_context_multiplier": 1.0,
+        "reasoning_billed_as_output": true,
+        "inject_cache_control": false,
+        "reasoning_style": "thinking_type",
+        "reasoning_efforts": [],
+        "supports_reasoning_effort": false,
+        "can_disable_thinking": true,
+        "min_output_tokens": 4096,
+        "context_floor_chars": 96000,
+        "steps_hint": 0,
+        "memory_char_budget": 2000,
+        "memory_min_score": 0.0,
+        "memory_top_k": 8,
+        "model_kind_id": "doubao.seed2.1.turbo",
+        "model_family_id": "doubao.seed2.1",
+        "manufacturer_id": "volcengine",
+        "canonical_model_id": "doubao-seed-2.1-turbo",
+        "model_match_source": "explicit_kind",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type",
+          "native_tool_replay"
+        ],
+        "behavior_fingerprint": "b4f1126bfed44ebb"
+      },
+      "observations": [
+        {
+          "requested_model": "doubao-seed-2.1-turbo",
+          "source": "forge-wire-volcengine.json",
+          "record": 1,
+          "request": 0,
+          "scope": "https://ark.cn-beijing.volces.com/api/coding/v3",
+          "scenario_passed": true,
+          "controls": {
+            "max_tokens": 256,
+            "thinking": {
+              "type": "disabled"
+            }
+          },
+          "usage": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 0,
+            "output_tokens": 46,
+            "input_tokens": 506,
+            "reasoning_tokens": 0
+          },
+          "response_received": true,
+          "finish_reason": "tool_calls",
+          "tool_names": [
+            "add"
+          ]
+        },
+        {
+          "requested_model": "doubao-seed-2.1-turbo",
+          "source": "forge-wire-volcengine.json",
+          "record": 1,
+          "request": 1,
+          "scope": "https://ark.cn-beijing.volces.com/api/coding/v3",
+          "scenario_passed": true,
+          "controls": {
+            "max_tokens": 256,
+            "thinking": {
+              "type": "disabled"
+            }
+          },
+          "usage": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 0,
+            "output_tokens": 7,
+            "input_tokens": 566,
+            "reasoning_tokens": 0
+          },
+          "response_received": true,
+          "finish_reason": "stop",
+          "tool_names": []
+        },
+        {
+          "requested_model": "doubao-seed-2.1-turbo",
+          "source": "forge-wire-volcengine.json",
+          "record": 1,
+          "request": 2,
+          "scope": "https://ark.cn-beijing.volces.com/api/coding/v3",
+          "scenario_passed": true,
+          "controls": {
+            "max_tokens": 256,
+            "thinking": {
+              "type": "enabled"
+            }
+          },
+          "usage": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 0,
+            "output_tokens": 49,
+            "input_tokens": 59,
+            "reasoning_tokens": 48
+          },
+          "response_received": true,
+          "finish_reason": "stop",
+          "tool_names": []
+        }
+      ]
+    },
+    {
+      "model_kind_id": "glm.5.3",
+      "manufacturer_id": "zhipu",
+      "family_id": "glm.5.3",
+      "canonical_model": "glm-5.3",
+      "aliases": [],
+      "family_prefixes": [],
+      "evidence_grade": "archived_probe",
+      "behavior_fingerprint": "1ce7b7af3732f484",
+      "traits": [
+        "thinking_type"
+      ],
+      "effective_profile": {
+        "id": "zhipu",
+        "label": "智谱 GLM",
+        "wire": "openai",
+        "cache_mode": "implicit",
+        "cache_read_multiplier": 0.25,
+        "cache_write_multiplier": 1.0,
+        "min_cache_tokens": 512,
+        "cache_ttl": "managed",
+        "batch_discount": 0.5,
+        "supports_flex": false,
+        "peak_valley": false,
+        "long_context_threshold": 0,
+        "long_context_multiplier": 1.0,
+        "reasoning_billed_as_output": true,
+        "inject_cache_control": false,
+        "reasoning_style": "thinking_type",
+        "reasoning_efforts": [
+          "low",
+          "high",
+          "max"
+        ],
+        "supports_reasoning_effort": false,
+        "can_disable_thinking": true,
+        "min_output_tokens": 0,
+        "context_floor_chars": 96000,
+        "steps_hint": 0,
+        "memory_char_budget": 2000,
+        "memory_min_score": 0.0,
+        "memory_top_k": 8,
+        "model_kind_id": "glm.5.3",
+        "model_family_id": "glm.5.3",
+        "manufacturer_id": "zhipu",
+        "canonical_model_id": "glm-5.3",
+        "model_match_source": "explicit_kind",
+        "model_evidence": "archived_probe",
+        "model_traits": [
+          "thinking_type"
+        ],
+        "behavior_fingerprint": "1ce7b7af3732f484"
+      },
+      "observations": [
+        {
+          "requested_model": "glm-5.3",
+          "source": "vendor-probe-results.json",
+          "scenario": "basic",
+          "scope": "https://open.bigmodel.cn/api/coding/paas/v4",
+          "provenance": "archived_probe",
+          "scenario_passed": true,
+          "controls": {},
+          "usage": {
+            "output_tokens": 48,
+            "input_tokens": 23,
+            "reasoning_tokens": 45,
+            "cached_tokens": 0
+          },
+          "response_received": true,
+          "status": 200,
+          "finish_reason": "stop"
+        },
+        {
+          "requested_model": "glm-5.3",
+          "source": "vendor-probe-results.json",
+          "scenario": "temperature_0.7",
+          "scope": "https://open.bigmodel.cn/api/coding/paas/v4",
+          "provenance": "archived_probe",
+          "scenario_passed": true,
+          "controls": {},
+          "usage": {
+            "output_tokens": 40,
+            "input_tokens": 23,
+            "reasoning_tokens": 37,
+            "cached_tokens": 0
+          },
+          "response_received": true,
+          "status": 200,
+          "finish_reason": "stop"
+        },
+        {
+          "requested_model": "glm-5.3",
+          "source": "vendor-probe-results.json",
+          "scenario": "tool_single",
+          "scope": "https://open.bigmodel.cn/api/coding/paas/v4",
+          "provenance": "archived_probe",
+          "scenario_passed": true,
+          "controls": {},
+          "usage": {
+            "output_tokens": 41,
+            "input_tokens": 172,
+            "reasoning_tokens": 29,
+            "cached_tokens": 0
+          },
+          "response_received": true,
+          "status": 200,
+          "finish_reason": "tool_calls"
+        },
+        {
+          "requested_model": "glm-5.3",
+          "source": "vendor-probe-results.json",
+          "scenario": "tool_parallel",
+          "scope": "https://open.bigmodel.cn/api/coding/paas/v4",
+          "provenance": "archived_probe",
+          "scenario_passed": true,
+          "controls": {},
+          "usage": {
+            "output_tokens": 64,
+            "input_tokens": 175,
+            "reasoning_tokens": 42,
+            "cached_tokens": 128
+          },
+          "response_received": true,
+          "status": 200,
+          "finish_reason": "tool_calls"
+        },
+        {
+          "requested_model": "glm-5.3",
+          "source": "vendor-probe-results.json",
+          "scenario": "cache_A1_write",
+          "scope": "https://open.bigmodel.cn/api/coding/paas/v4",
+          "provenance": "archived_probe",
+          "scenario_passed": true,
+          "controls": {},
+          "usage": {
+            "output_tokens": 8,
+            "input_tokens": 2357,
+            "reasoning_tokens": 0,
+            "cached_tokens": 0
+          },
+          "response_received": true,
+          "status": 200,
+          "finish_reason": "stop"
+        },
+        {
+          "requested_model": "glm-5.3",
+          "source": "vendor-probe-results.json",
+          "scenario": "cache_A2_repeat",
+          "scope": "https://open.bigmodel.cn/api/coding/paas/v4",
+          "provenance": "archived_probe",
+          "scenario_passed": true,
+          "controls": {},
+          "usage": {
+            "output_tokens": 50,
+            "input_tokens": 2357,
+            "reasoning_tokens": 42,
+            "cached_tokens": 2304
+          },
+          "response_received": true,
+          "status": 200,
+          "finish_reason": "stop"
+        },
+        {
+          "requested_model": "glm-5.3",
+          "source": "vendor-probe-results.json",
+          "scenario": "cache_B_prefixread",
+          "scope": "https://open.bigmodel.cn/api/coding/paas/v4",
+          "provenance": "archived_probe",
+          "scenario_passed": true,
+          "controls": {},
+          "usage": {
+            "output_tokens": 54,
+            "input_tokens": 2357,
+            "reasoning_tokens": 49,
+            "cached_tokens": 2304
+          },
+          "response_received": true,
+          "status": 200,
+          "finish_reason": "stop"
+        }
+      ]
+    },
+    {
+      "model_kind_id": "glm.5.3.flash",
+      "manufacturer_id": "zhipu",
+      "family_id": "glm.5.3",
+      "canonical_model": "glm-5.3-flash",
+      "aliases": [],
+      "family_prefixes": [],
+      "evidence_grade": "configured",
+      "behavior_fingerprint": "4151c70fb6567330",
+      "traits": [
+        "thinking_type"
+      ],
+      "effective_profile": {
+        "id": "zhipu",
+        "label": "智谱 GLM",
+        "wire": "openai",
+        "cache_mode": "implicit",
+        "cache_read_multiplier": 0.25,
+        "cache_write_multiplier": 1.0,
+        "min_cache_tokens": 512,
+        "cache_ttl": "managed",
+        "batch_discount": 0.5,
+        "supports_flex": false,
+        "peak_valley": false,
+        "long_context_threshold": 0,
+        "long_context_multiplier": 1.0,
+        "reasoning_billed_as_output": true,
+        "inject_cache_control": false,
+        "reasoning_style": "thinking_type",
+        "reasoning_efforts": [
+          "low",
+          "high",
+          "max"
+        ],
+        "supports_reasoning_effort": false,
+        "can_disable_thinking": true,
+        "min_output_tokens": 0,
+        "context_floor_chars": 96000,
+        "steps_hint": 0,
+        "memory_char_budget": 2000,
+        "memory_min_score": 0.0,
+        "memory_top_k": 8,
+        "model_kind_id": "glm.5.3.flash",
+        "model_family_id": "glm.5.3",
+        "manufacturer_id": "zhipu",
+        "canonical_model_id": "glm-5.3-flash",
+        "model_match_source": "explicit_kind",
+        "model_evidence": "configured",
+        "model_traits": [
+          "thinking_type"
+        ],
+        "behavior_fingerprint": "4151c70fb6567330"
+      },
+      "observations": [
+        {
+          "requested_model": "glm-5.3-flash",
+          "source": "vendor-probe-results.json",
+          "scenario": "basic_glm-5.3-flash",
+          "scope": "https://open.bigmodel.cn/api/coding/paas/v4",
+          "provenance": "archived_probe",
+          "scenario_passed": true,
+          "controls": {},
+          "usage": {
+            "output_tokens": 74,
+            "input_tokens": 23,
+            "reasoning_tokens": 71,
+            "cached_tokens": 0
+          },
+          "response_received": true,
+          "status": 200,
+          "finish_reason": "stop"
+        }
+      ]
+    },
+    {
+      "model_kind_id": "google.gemini3.8.flash",
+      "manufacturer_id": "gemini",
+      "family_id": "google.gemini3.8",
+      "canonical_model": "gemini-3.8-flash",
+      "aliases": [
+        "gemini-3.8-flash-tiered"
+      ],
+      "family_prefixes": [],
+      "evidence_grade": "local_client",
+      "behavior_fingerprint": "9766f58a047b5e46",
+      "traits": [],
+      "effective_profile": {
+        "id": "gemini",
+        "label": "Google Gemini",
+        "wire": "openai",
+        "cache_mode": "implicit",
+        "cache_read_multiplier": 0.1,
+        "cache_write_multiplier": 1.0,
+        "min_cache_tokens": 4096,
+        "cache_ttl": "managed",
+        "batch_discount": 0.5,
+        "supports_flex": true,
+        "peak_valley": false,
+        "long_context_threshold": 200000,
+        "long_context_multiplier": 2.0,
+        "reasoning_billed_as_output": true,
+        "inject_cache_control": false,
+        "reasoning_style": "",
+        "reasoning_efforts": [],
+        "supports_reasoning_effort": false,
+        "can_disable_thinking": true,
+        "min_output_tokens": 0,
+        "context_floor_chars": 0,
+        "steps_hint": 0,
+        "memory_char_budget": 1000,
+        "memory_min_score": 0.25,
+        "memory_top_k": 0,
+        "model_kind_id": "google.gemini3.8.flash",
+        "model_family_id": "google.gemini3.8",
+        "manufacturer_id": "gemini",
+        "canonical_model_id": "gemini-3.8-flash",
+        "model_match_source": "explicit_kind",
+        "model_evidence": "local_client",
+        "model_traits": [],
+        "behavior_fingerprint": "9766f58a047b5e46"
+      },
+      "observations": []
+    },
+    {
+      "model_kind_id": "hunyuan.hy3",
+      "manufacturer_id": "hunyuan",
+      "family_id": "hunyuan.hy3",
+      "canonical_model": "hy3",
+      "aliases": [],
+      "family_prefixes": [
+        "hy3-"
+      ],
+      "evidence_grade": "registry_trace",
+      "behavior_fingerprint": "e2b1d58310f5eec3",
+      "traits": [
+        "always_reasoning"
+      ],
+      "effective_profile": {
+        "id": "hunyuan",
+        "label": "腾讯混元",
+        "wire": "openai",
+        "cache_mode": "implicit",
+        "cache_read_multiplier": 1.0,
+        "cache_write_multiplier": 1.0,
+        "min_cache_tokens": 0,
+        "cache_ttl": "managed",
+        "batch_discount": 1.0,
+        "supports_flex": false,
+        "peak_valley": false,
+        "long_context_threshold": 0,
+        "long_context_multiplier": 1.0,
+        "reasoning_billed_as_output": true,
+        "inject_cache_control": false,
+        "reasoning_style": "effort",
+        "reasoning_efforts": [
+          "low",
+          "high"
+        ],
+        "supports_reasoning_effort": false,
+        "can_disable_thinking": false,
+        "min_output_tokens": 4096,
+        "context_floor_chars": 96000,
+        "steps_hint": 0,
+        "memory_char_budget": 2000,
+        "memory_min_score": 0.0,
+        "memory_top_k": 8,
+        "model_kind_id": "hunyuan.hy3",
+        "model_family_id": "hunyuan.hy3",
+        "manufacturer_id": "hunyuan",
+        "canonical_model_id": "hy3",
+        "model_match_source": "explicit_kind",
+        "model_evidence": "registry_trace",
+        "model_traits": [
+          "always_reasoning"
+        ],
+        "behavior_fingerprint": "e2b1d58310f5eec3"
+      },
+      "observations": []
+    },
+    {
+      "model_kind_id": "hunyuan.hy4",
+      "manufacturer_id": "hunyuan",
+      "family_id": "hunyuan.hy4",
+      "canonical_model": "hy4",
+      "aliases": [],
+      "family_prefixes": [
+        "hy4-",
+        "hy4preview-"
+      ],
+      "evidence_grade": "registry",
+      "behavior_fingerprint": "7c3d2a09fd86d369",
+      "traits": [
+        "always_reasoning"
+      ],
+      "effective_profile": {
+        "id": "hunyuan",
+        "label": "腾讯混元",
+        "wire": "openai",
+        "cache_mode": "implicit",
+        "cache_read_multiplier": 1.0,
+        "cache_write_multiplier": 1.0,
+        "min_cache_tokens": 0,
+        "cache_ttl": "managed",
+        "batch_discount": 1.0,
+        "supports_flex": false,
+        "peak_valley": false,
+        "long_context_threshold": 0,
+        "long_context_multiplier": 1.0,
+        "reasoning_billed_as_output": true,
+        "inject_cache_control": false,
+        "reasoning_style": "effort",
+        "reasoning_efforts": [
+          "high"
+        ],
+        "supports_reasoning_effort": false,
+        "can_disable_thinking": false,
+        "min_output_tokens": 4096,
+        "context_floor_chars": 96000,
+        "steps_hint": 0,
+        "memory_char_budget": 2000,
+        "memory_min_score": 0.0,
+        "memory_top_k": 8,
+        "model_kind_id": "hunyuan.hy4",
+        "model_family_id": "hunyuan.hy4",
+        "manufacturer_id": "hunyuan",
+        "canonical_model_id": "hy4",
+        "model_match_source": "explicit_kind",
+        "model_evidence": "registry",
+        "model_traits": [
+          "always_reasoning"
+        ],
+        "behavior_fingerprint": "7c3d2a09fd86d369"
+      },
+      "observations": []
+    },
+    {
+      "model_kind_id": "hunyuan.hy4.free",
+      "manufacturer_id": "hunyuan",
+      "family_id": "hunyuan.hy4",
+      "canonical_model": "hy4free",
+      "aliases": [
+        "hy4-free"
+      ],
+      "family_prefixes": [],
+      "evidence_grade": "live_workbuddy",
+      "behavior_fingerprint": "d85ade05dfc787a6",
+      "traits": [
+        "always_reasoning",
+        "workbuddy_stream_only",
+        "workbuddy_tool_choice_string",
+        "native_tool_replay",
+        "workbuddy_zero_credit_observed"
+      ],
+      "effective_profile": {
+        "id": "hunyuan",
+        "label": "腾讯混元",
+        "wire": "openai",
+        "cache_mode": "implicit",
+        "cache_read_multiplier": 1.0,
+        "cache_write_multiplier": 1.0,
+        "min_cache_tokens": 0,
+        "cache_ttl": "managed",
+        "batch_discount": 1.0,
+        "supports_flex": false,
+        "peak_valley": false,
+        "long_context_threshold": 0,
+        "long_context_multiplier": 1.0,
+        "reasoning_billed_as_output": true,
+        "inject_cache_control": false,
+        "reasoning_style": "effort",
+        "reasoning_efforts": [
+          "high"
+        ],
+        "supports_reasoning_effort": false,
+        "can_disable_thinking": false,
+        "min_output_tokens": 4096,
+        "context_floor_chars": 96000,
+        "steps_hint": 0,
+        "memory_char_budget": 2000,
+        "memory_min_score": 0.0,
+        "memory_top_k": 8,
+        "model_kind_id": "hunyuan.hy4.free",
+        "model_family_id": "hunyuan.hy4",
+        "manufacturer_id": "hunyuan",
+        "canonical_model_id": "hy4free",
+        "model_match_source": "explicit_kind",
+        "model_evidence": "live_workbuddy",
+        "model_traits": [
+          "always_reasoning",
+          "workbuddy_stream_only",
+          "workbuddy_tool_choice_string",
+          "native_tool_replay",
+          "workbuddy_zero_credit_observed"
+        ],
+        "behavior_fingerprint": "d85ade05dfc787a6"
+      },
+      "observations": [
+        {
+          "requested_model": "hy4free",
+          "source": "workbuddy-hy4-tools-rejected.json",
+          "request": 0,
+          "scope": "workbuddy-broker",
+          "scenario_passed": false,
+          "controls": {
+            "reasoning_effort": "high",
+            "max_tokens": 512
+          },
+          "usage": {},
+          "response_received": true,
+          "status": 400,
+          "finish_reason": [],
+          "tool_names": [],
+          "content_type": "application/json; charset=utf-8"
+        },
+        {
+          "requested_model": "hy4free",
+          "source": "workbuddy-hy4-tools.json",
+          "request": 0,
+          "scope": "workbuddy-broker",
+          "scenario_passed": true,
+          "controls": {
+            "reasoning_effort": "high",
+            "max_tokens": 512
+          },
+          "usage": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 0,
+            "output_tokens": 217,
+            "input_tokens": 252,
+            "reasoning_tokens": 198
+          },
+          "response_received": true,
+          "status": 200,
+          "finish_reason": [
+            "tool_calls"
+          ],
+          "tool_names": [
+            "add"
+          ],
+          "content_type": "text/event-stream",
+          "observed_channel_credit": 0
+        },
+        {
+          "requested_model": "hy4free",
+          "source": "workbuddy-hy4-tools.json",
+          "request": 1,
+          "scope": "workbuddy-broker",
+          "scenario_passed": true,
+          "controls": {
+            "reasoning_effort": "high",
+            "max_tokens": 512
+          },
+          "usage": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 0,
+            "output_tokens": 362,
+            "input_tokens": 283,
+            "reasoning_tokens": 359
+          },
+          "response_received": true,
+          "status": 200,
+          "finish_reason": [
+            "stop"
+          ],
+          "tool_names": [],
+          "content_type": "text/event-stream",
+          "observed_channel_credit": 0
+        }
+      ]
+    },
+    {
+      "model_kind_id": "hunyuan.hy4.standard",
+      "manufacturer_id": "hunyuan",
+      "family_id": "hunyuan.hy4",
+      "canonical_model": "hy4std",
+      "aliases": [
+        "hy4-std"
+      ],
+      "family_prefixes": [],
+      "evidence_grade": "registry",
+      "behavior_fingerprint": "458f10e9327f8a0a",
+      "traits": [
+        "always_reasoning"
+      ],
+      "effective_profile": {
+        "id": "hunyuan",
+        "label": "腾讯混元",
+        "wire": "openai",
+        "cache_mode": "implicit",
+        "cache_read_multiplier": 1.0,
+        "cache_write_multiplier": 1.0,
+        "min_cache_tokens": 0,
+        "cache_ttl": "managed",
+        "batch_discount": 1.0,
+        "supports_flex": false,
+        "peak_valley": false,
+        "long_context_threshold": 0,
+        "long_context_multiplier": 1.0,
+        "reasoning_billed_as_output": true,
+        "inject_cache_control": false,
+        "reasoning_style": "effort",
+        "reasoning_efforts": [
+          "high"
+        ],
+        "supports_reasoning_effort": false,
+        "can_disable_thinking": false,
+        "min_output_tokens": 4096,
+        "context_floor_chars": 96000,
+        "steps_hint": 0,
+        "memory_char_budget": 2000,
+        "memory_min_score": 0.0,
+        "memory_top_k": 8,
+        "model_kind_id": "hunyuan.hy4.standard",
+        "model_family_id": "hunyuan.hy4",
+        "manufacturer_id": "hunyuan",
+        "canonical_model_id": "hy4std",
+        "model_match_source": "explicit_kind",
+        "model_evidence": "registry",
+        "model_traits": [
+          "always_reasoning"
+        ],
+        "behavior_fingerprint": "458f10e9327f8a0a"
+      },
+      "observations": []
+    },
+    {
+      "model_kind_id": "kimi.k2.6",
+      "manufacturer_id": "kimi",
+      "family_id": "kimi.k2.6",
+      "canonical_model": "kimi-k2.6",
+      "aliases": [],
+      "family_prefixes": [],
+      "evidence_grade": "configured",
+      "behavior_fingerprint": "0acdf44d244d7c2d",
+      "traits": [],
+      "effective_profile": {
+        "id": "kimi",
+        "label": "Kimi 月之暗面",
+        "wire": "openai",
+        "cache_mode": "implicit",
+        "cache_read_multiplier": 0.1,
+        "cache_write_multiplier": 1.0,
+        "min_cache_tokens": 0,
+        "cache_ttl": "5m",
+        "batch_discount": 1.0,
+        "supports_flex": false,
+        "peak_valley": false,
+        "long_context_threshold": 0,
+        "long_context_multiplier": 1.0,
+        "reasoning_billed_as_output": true,
+        "inject_cache_control": false,
+        "reasoning_style": "effort",
+        "reasoning_efforts": [
+          "low",
+          "high",
+          "max"
+        ],
+        "supports_reasoning_effort": false,
+        "can_disable_thinking": true,
+        "min_output_tokens": 0,
+        "context_floor_chars": 0,
+        "steps_hint": 0,
+        "memory_char_budget": 1500,
+        "memory_min_score": 0.0,
+        "memory_top_k": 0,
+        "model_kind_id": "kimi.k2.6",
+        "model_family_id": "kimi.k2.6",
+        "manufacturer_id": "kimi",
+        "canonical_model_id": "kimi-k2.6",
+        "model_match_source": "explicit_kind",
+        "model_evidence": "configured",
+        "model_traits": [],
+        "behavior_fingerprint": "0acdf44d244d7c2d"
+      },
+      "observations": []
+    },
+    {
+      "model_kind_id": "kimi.k2.8",
+      "manufacturer_id": "kimi",
+      "family_id": "kimi.k2.8",
+      "canonical_model": "kimi-k2.8",
+      "aliases": [
+        "k2.8"
+      ],
+      "family_prefixes": [
+        "kimi-k2.8-"
+      ],
+      "evidence_grade": "registry",
+      "behavior_fingerprint": "d74fcaf813fe0fa2",
+      "traits": [],
+      "effective_profile": {
+        "id": "kimi",
+        "label": "Kimi 月之暗面",
+        "wire": "openai",
+        "cache_mode": "implicit",
+        "cache_read_multiplier": 0.1,
+        "cache_write_multiplier": 1.0,
+        "min_cache_tokens": 0,
+        "cache_ttl": "5m",
+        "batch_discount": 1.0,
+        "supports_flex": false,
+        "peak_valley": false,
+        "long_context_threshold": 0,
+        "long_context_multiplier": 1.0,
+        "reasoning_billed_as_output": true,
+        "inject_cache_control": false,
+        "reasoning_style": "effort",
+        "reasoning_efforts": [
+          "low",
+          "high",
+          "max"
+        ],
+        "supports_reasoning_effort": false,
+        "can_disable_thinking": true,
+        "min_output_tokens": 0,
+        "context_floor_chars": 0,
+        "steps_hint": 0,
+        "memory_char_budget": 1500,
+        "memory_min_score": 0.0,
+        "memory_top_k": 0,
+        "model_kind_id": "kimi.k2.8",
+        "model_family_id": "kimi.k2.8",
+        "manufacturer_id": "kimi",
+        "canonical_model_id": "kimi-k2.8",
+        "model_match_source": "explicit_kind",
+        "model_evidence": "registry",
+        "model_traits": [],
+        "behavior_fingerprint": "d74fcaf813fe0fa2"
+      },
+      "observations": []
+    },
+    {
+      "model_kind_id": "kimi.k3",
+      "manufacturer_id": "kimi",
+      "family_id": "kimi.k3",
+      "canonical_model": "kimi-k3",
+      "aliases": [
+        "k3",
+        "k3-256k",
+        "kimi-k3-1",
+        "kimi-for-coding"
+      ],
+      "family_prefixes": [
+        "kimi-k3-",
+        "k3-",
+        "kimi-for-coding-"
+      ],
+      "evidence_grade": "registry",
+      "behavior_fingerprint": "fdc95c48ee364522",
+      "traits": [
+        "always_reasoning"
+      ],
+      "effective_profile": {
+        "id": "kimi",
+        "label": "Kimi 月之暗面",
+        "wire": "openai",
+        "cache_mode": "implicit",
+        "cache_read_multiplier": 0.1,
+        "cache_write_multiplier": 1.0,
+        "min_cache_tokens": 0,
+        "cache_ttl": "5m",
+        "batch_discount": 1.0,
+        "supports_flex": false,
+        "peak_valley": false,
+        "long_context_threshold": 0,
+        "long_context_multiplier": 1.0,
+        "reasoning_billed_as_output": true,
+        "inject_cache_control": false,
+        "reasoning_style": "effort",
+        "reasoning_efforts": [
+          "low",
+          "high",
+          "max"
+        ],
+        "supports_reasoning_effort": false,
+        "can_disable_thinking": false,
+        "min_output_tokens": 0,
+        "context_floor_chars": 0,
+        "steps_hint": 0,
+        "memory_char_budget": 1500,
+        "memory_min_score": 0.0,
+        "memory_top_k": 0,
+        "model_kind_id": "kimi.k3",
+        "model_family_id": "kimi.k3",
+        "manufacturer_id": "kimi",
+        "canonical_model_id": "kimi-k3",
+        "model_match_source": "explicit_kind",
+        "model_evidence": "registry",
+        "model_traits": [
+          "always_reasoning"
+        ],
+        "behavior_fingerprint": "fdc95c48ee364522"
+      },
+      "observations": []
+    },
+    {
+      "model_kind_id": "kimi.k3.1.pro",
+      "manufacturer_id": "kimi",
+      "family_id": "kimi.k3.1",
+      "canonical_model": "k3.1-pro",
+      "aliases": [
+        "kimi-k3.1-pro"
+      ],
+      "family_prefixes": [
+        "k3.1-pro-",
+        "kimi-k3.1-pro-"
+      ],
+      "evidence_grade": "registry",
+      "behavior_fingerprint": "af4cc54cab674330",
+      "traits": [
+        "always_reasoning"
+      ],
+      "effective_profile": {
+        "id": "kimi",
+        "label": "Kimi 月之暗面",
+        "wire": "openai",
+        "cache_mode": "implicit",
+        "cache_read_multiplier": 0.1,
+        "cache_write_multiplier": 1.0,
+        "min_cache_tokens": 0,
+        "cache_ttl": "5m",
+        "batch_discount": 1.0,
+        "supports_flex": false,
+        "peak_valley": false,
+        "long_context_threshold": 0,
+        "long_context_multiplier": 1.0,
+        "reasoning_billed_as_output": true,
+        "inject_cache_control": false,
+        "reasoning_style": "effort",
+        "reasoning_efforts": [
+          "low",
+          "high",
+          "max"
+        ],
+        "supports_reasoning_effort": false,
+        "can_disable_thinking": false,
+        "min_output_tokens": 0,
+        "context_floor_chars": 0,
+        "steps_hint": 0,
+        "memory_char_budget": 1500,
+        "memory_min_score": 0.0,
+        "memory_top_k": 0,
+        "model_kind_id": "kimi.k3.1.pro",
+        "model_family_id": "kimi.k3.1",
+        "manufacturer_id": "kimi",
+        "canonical_model_id": "k3.1-pro",
+        "model_match_source": "explicit_kind",
+        "model_evidence": "registry",
+        "model_traits": [
+          "always_reasoning"
+        ],
+        "behavior_fingerprint": "af4cc54cab674330"
+      },
+      "observations": []
+    },
+    {
+      "model_kind_id": "mimo.v2.6.flash",
+      "manufacturer_id": "mimo",
+      "family_id": "mimo.v2.6",
+      "canonical_model": "mimo-v2.6-flash",
+      "aliases": [],
+      "family_prefixes": [],
+      "evidence_grade": "live",
+      "behavior_fingerprint": "47f729f7e55efaac",
+      "traits": [
+        "thinking_type",
+        "nullable_cache_details",
+        "native_tool_replay"
+      ],
+      "effective_profile": {
+        "id": "mimo",
+        "label": "小米 MiMo",
+        "wire": "openai",
+        "cache_mode": "implicit",
+        "cache_read_multiplier": 0.008333333333333333,
+        "cache_write_multiplier": 1.0,
+        "min_cache_tokens": 0,
+        "cache_ttl": "managed",
+        "batch_discount": 1.0,
+        "supports_flex": false,
+        "peak_valley": false,
+        "long_context_threshold": 0,
+        "long_context_multiplier": 1.0,
+        "reasoning_billed_as_output": true,
+        "inject_cache_control": false,
+        "reasoning_style": "thinking_type",
+        "reasoning_efforts": [],
+        "supports_reasoning_effort": false,
+        "can_disable_thinking": true,
+        "min_output_tokens": 4096,
+        "context_floor_chars": 96000,
+        "steps_hint": 0,
+        "memory_char_budget": 2000,
+        "memory_min_score": 0.0,
+        "memory_top_k": 8,
+        "model_kind_id": "mimo.v2.6.flash",
+        "model_family_id": "mimo.v2.6",
+        "manufacturer_id": "mimo",
+        "canonical_model_id": "mimo-v2.6-flash",
+        "model_match_source": "explicit_kind",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type",
+          "nullable_cache_details",
+          "native_tool_replay"
+        ],
+        "behavior_fingerprint": "47f729f7e55efaac"
+      },
+      "observations": [
+        {
+          "requested_model": "mimo-v2.6-flash",
+          "source": "forge-wire-mimo.json",
+          "record": 0,
+          "request": 0,
+          "scope": "https://token-plan-cn.xiaomimimo.com/v1",
+          "scenario_passed": true,
+          "controls": {
+            "max_tokens": 256,
+            "thinking": {
+              "type": "disabled"
+            }
+          },
+          "usage": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 0,
+            "output_tokens": 25,
+            "input_tokens": 128,
+            "reasoning_tokens": 0
+          },
+          "response_received": true,
+          "finish_reason": "tool_calls",
+          "tool_names": [
+            "add"
+          ]
+        },
+        {
+          "requested_model": "mimo-v2.6-flash",
+          "source": "forge-wire-mimo.json",
+          "record": 0,
+          "request": 1,
+          "scope": "https://token-plan-cn.xiaomimimo.com/v1",
+          "scenario_passed": true,
+          "controls": {
+            "max_tokens": 256,
+            "thinking": {
+              "type": "disabled"
+            }
+          },
+          "usage": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 0,
+            "output_tokens": 8,
+            "input_tokens": 164,
+            "reasoning_tokens": 0
+          },
+          "response_received": true,
+          "finish_reason": "stop",
+          "tool_names": []
+        },
+        {
+          "requested_model": "mimo-v2.6-flash",
+          "source": "forge-wire-mimo.json",
+          "record": 0,
+          "request": 2,
+          "scope": "https://token-plan-cn.xiaomimimo.com/v1",
+          "scenario_passed": true,
+          "controls": {
+            "max_tokens": 256,
+            "thinking": {
+              "type": "enabled"
+            }
+          },
+          "usage": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 0,
+            "output_tokens": 5,
+            "input_tokens": 20,
+            "reasoning_tokens": 2
+          },
+          "response_received": true,
+          "finish_reason": "stop",
+          "tool_names": []
+        },
+        {
+          "requested_model": "mimo-v2.6-flash",
+          "source": "vendor-probe-mimo.json",
+          "scenario": "basic",
+          "scope": "https://token-plan-cn.xiaomimimo.com/v1",
+          "provenance": "archived_probe",
+          "scenario_passed": true,
+          "controls": {},
+          "usage": {
+            "output_tokens": 22,
+            "input_tokens": 18,
+            "reasoning_tokens": 19
+          },
+          "response_received": true
+        },
+        {
+          "requested_model": "mimo-v2.6-flash",
+          "source": "vendor-probe-mimo.json",
+          "scenario": "temperature_0.7",
+          "scope": "https://token-plan-cn.xiaomimimo.com/v1",
+          "provenance": "archived_probe",
+          "scenario_passed": true,
+          "controls": {},
+          "usage": {
+            "output_tokens": 19,
+            "input_tokens": 18,
+            "reasoning_tokens": 16
+          },
+          "response_received": true
+        },
+        {
+          "requested_model": "mimo-v2.6-flash",
+          "source": "vendor-probe-mimo.json",
+          "scenario": "tool_single",
+          "scope": "https://token-plan-cn.xiaomimimo.com/v1",
+          "provenance": "archived_probe",
+          "scenario_passed": true,
+          "controls": {},
+          "usage": {
+            "output_tokens": 31,
+            "input_tokens": 97,
+            "reasoning_tokens": 12
+          },
+          "response_received": true
+        },
+        {
+          "requested_model": "mimo-v2.6-flash",
+          "source": "vendor-probe-mimo.json",
+          "scenario": "tool_parallel",
+          "scope": "https://token-plan-cn.xiaomimimo.com/v1",
+          "provenance": "archived_probe",
+          "scenario_passed": true,
+          "controls": {},
+          "usage": {
+            "output_tokens": 61,
+            "input_tokens": 100,
+            "reasoning_tokens": 25
+          },
+          "response_received": true
+        },
+        {
+          "requested_model": "mimo-v2.6-flash",
+          "source": "vendor-probe-mimo.json",
+          "scenario": "cache_A1",
+          "scope": "https://token-plan-cn.xiaomimimo.com/v1",
+          "provenance": "archived_probe",
+          "scenario_passed": true,
+          "controls": {},
+          "usage": {
+            "output_tokens": 36,
+            "input_tokens": 1862,
+            "reasoning_tokens": 28
+          },
+          "response_received": true
+        },
+        {
+          "requested_model": "mimo-v2.6-flash",
+          "source": "vendor-probe-mimo.json",
+          "scenario": "cache_A2",
+          "scope": "https://token-plan-cn.xiaomimimo.com/v1",
+          "provenance": "archived_probe",
+          "scenario_passed": true,
+          "controls": {},
+          "usage": {
+            "output_tokens": 54,
+            "input_tokens": 1862,
+            "reasoning_tokens": 46,
+            "cached_tokens": 1856
+          },
+          "response_received": true
+        },
+        {
+          "requested_model": "mimo-v2.6-flash",
+          "source": "vendor-probe-mimo.json",
+          "scenario": "cache_B",
+          "scope": "https://token-plan-cn.xiaomimimo.com/v1",
+          "provenance": "archived_probe",
+          "scenario_passed": true,
+          "controls": {},
+          "usage": {
+            "output_tokens": 26,
+            "input_tokens": 1862,
+            "reasoning_tokens": 21,
+            "cached_tokens": 1024
+          },
+          "response_received": true
+        }
+      ]
+    },
+    {
+      "model_kind_id": "mimo.v2.6.pro",
+      "manufacturer_id": "mimo",
+      "family_id": "mimo.v2.6",
+      "canonical_model": "mimo-v2.6-pro",
+      "aliases": [],
+      "family_prefixes": [],
+      "evidence_grade": "live",
+      "behavior_fingerprint": "4b8b71efd2a905d2",
+      "traits": [
+        "thinking_type",
+        "nullable_cache_details",
+        "native_tool_replay"
+      ],
+      "effective_profile": {
+        "id": "mimo",
+        "label": "小米 MiMo",
+        "wire": "openai",
+        "cache_mode": "implicit",
+        "cache_read_multiplier": 0.008333333333333333,
+        "cache_write_multiplier": 1.0,
+        "min_cache_tokens": 0,
+        "cache_ttl": "managed",
+        "batch_discount": 1.0,
+        "supports_flex": false,
+        "peak_valley": false,
+        "long_context_threshold": 0,
+        "long_context_multiplier": 1.0,
+        "reasoning_billed_as_output": true,
+        "inject_cache_control": false,
+        "reasoning_style": "thinking_type",
+        "reasoning_efforts": [],
+        "supports_reasoning_effort": false,
+        "can_disable_thinking": true,
+        "min_output_tokens": 4096,
+        "context_floor_chars": 96000,
+        "steps_hint": 0,
+        "memory_char_budget": 2000,
+        "memory_min_score": 0.0,
+        "memory_top_k": 8,
+        "model_kind_id": "mimo.v2.6.pro",
+        "model_family_id": "mimo.v2.6",
+        "manufacturer_id": "mimo",
+        "canonical_model_id": "mimo-v2.6-pro",
+        "model_match_source": "explicit_kind",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type",
+          "nullable_cache_details",
+          "native_tool_replay"
+        ],
+        "behavior_fingerprint": "4b8b71efd2a905d2"
+      },
+      "observations": [
+        {
+          "requested_model": "mimo-v2.6-pro",
+          "source": "forge-wire-mimo.json",
+          "record": 1,
+          "request": 0,
+          "scope": "https://token-plan-cn.xiaomimimo.com/v1",
+          "scenario_passed": true,
+          "controls": {
+            "max_tokens": 256,
+            "thinking": {
+              "type": "disabled"
+            }
+          },
+          "usage": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 0,
+            "output_tokens": 25,
+            "input_tokens": 123,
+            "reasoning_tokens": 0
+          },
+          "response_received": true,
+          "finish_reason": "tool_calls",
+          "tool_names": [
+            "add"
+          ]
+        },
+        {
+          "requested_model": "mimo-v2.6-pro",
+          "source": "forge-wire-mimo.json",
+          "record": 1,
+          "request": 1,
+          "scope": "https://token-plan-cn.xiaomimimo.com/v1",
+          "scenario_passed": true,
+          "controls": {
+            "max_tokens": 256,
+            "thinking": {
+              "type": "disabled"
+            }
+          },
+          "usage": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 0,
+            "output_tokens": 8,
+            "input_tokens": 159,
+            "reasoning_tokens": 0
+          },
+          "response_received": true,
+          "finish_reason": "stop",
+          "tool_names": []
+        },
+        {
+          "requested_model": "mimo-v2.6-pro",
+          "source": "forge-wire-mimo.json",
+          "record": 1,
+          "request": 2,
+          "scope": "https://token-plan-cn.xiaomimimo.com/v1",
+          "scenario_passed": true,
+          "controls": {
+            "max_tokens": 256,
+            "thinking": {
+              "type": "enabled"
+            }
+          },
+          "usage": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 0,
+            "output_tokens": 5,
+            "input_tokens": 20,
+            "reasoning_tokens": 2
+          },
+          "response_received": true,
+          "finish_reason": "stop",
+          "tool_names": []
+        },
+        {
+          "requested_model": "mimo-v2.6-pro",
+          "source": "vendor-probe-mimo.json",
+          "scenario": "basic_mimo-v2.6-pro",
+          "scope": "https://token-plan-cn.xiaomimimo.com/v1",
+          "provenance": "archived_probe",
+          "scenario_passed": true,
+          "controls": {},
+          "usage": {
+            "output_tokens": 5,
+            "input_tokens": 18,
+            "reasoning_tokens": 2,
+            "cached_tokens": 0
+          },
+          "response_received": true
+        }
+      ]
+    },
+    {
+      "model_kind_id": "mimo.v2.6.pro-ultraspeed",
+      "manufacturer_id": "mimo",
+      "family_id": "mimo.v2.6",
+      "canonical_model": "mimo-v2.6-pro-ultraspeed",
+      "aliases": [],
+      "family_prefixes": [],
+      "evidence_grade": "live_rejection",
+      "behavior_fingerprint": "1d9392ca49dde96b",
+      "traits": [
+        "token_plan_model_rejected"
+      ],
+      "effective_profile": {
+        "id": "mimo",
+        "label": "小米 MiMo",
+        "wire": "openai",
+        "cache_mode": "implicit",
+        "cache_read_multiplier": 0.008333333333333333,
+        "cache_write_multiplier": 1.0,
+        "min_cache_tokens": 0,
+        "cache_ttl": "managed",
+        "batch_discount": 1.0,
+        "supports_flex": false,
+        "peak_valley": false,
+        "long_context_threshold": 0,
+        "long_context_multiplier": 1.0,
+        "reasoning_billed_as_output": true,
+        "inject_cache_control": false,
+        "reasoning_style": "thinking_type",
+        "reasoning_efforts": [],
+        "supports_reasoning_effort": false,
+        "can_disable_thinking": true,
+        "min_output_tokens": 4096,
+        "context_floor_chars": 96000,
+        "steps_hint": 0,
+        "memory_char_budget": 2000,
+        "memory_min_score": 0.0,
+        "memory_top_k": 8,
+        "model_kind_id": "mimo.v2.6.pro-ultraspeed",
+        "model_family_id": "mimo.v2.6",
+        "manufacturer_id": "mimo",
+        "canonical_model_id": "mimo-v2.6-pro-ultraspeed",
+        "model_match_source": "explicit_kind",
+        "model_evidence": "live_rejection",
+        "model_traits": [
+          "token_plan_model_rejected"
+        ],
+        "behavior_fingerprint": "1d9392ca49dde96b"
+      },
+      "observations": [
+        {
+          "requested_model": "mimo-v2.6-pro-ultraspeed",
+          "source": "forge-wire-mimo-ultraspeed.json",
+          "record": 0,
+          "request": 0,
+          "scope": "https://token-plan-cn.xiaomimimo.com/v1",
+          "scenario_passed": false,
+          "controls": {
+            "max_tokens": 256,
+            "thinking": {
+              "type": "disabled"
+            }
+          },
+          "usage": {},
+          "response_received": false,
+          "error_type": "BadRequest",
+          "error_category": "model_rejected_on_this_endpoint"
+        },
+        {
+          "requested_model": "mimo-v2.6-pro-ultraspeed",
+          "source": "forge-wire-mimo.json",
+          "record": 2,
+          "request": 0,
+          "scope": "https://token-plan-cn.xiaomimimo.com/v1",
+          "scenario_passed": false,
+          "controls": {
+            "max_tokens": 256,
+            "thinking": {
+              "type": "disabled"
+            }
+          },
+          "usage": {},
+          "response_received": false,
+          "error_type": "BadRequest",
+          "error_category": "request_failed"
+        }
+      ]
+    },
+    {
+      "model_kind_id": "minimax.m2.7",
+      "manufacturer_id": "minimax",
+      "family_id": "minimax.m2.7",
+      "canonical_model": "minimax-m2.7",
+      "aliases": [],
+      "family_prefixes": [],
+      "evidence_grade": "registry",
+      "behavior_fingerprint": "9ec6eb61fdfe1e0a",
+      "traits": [
+        "adaptive_thinking"
+      ],
+      "effective_profile": {
+        "id": "minimax",
+        "label": "MiniMax",
+        "wire": "openai",
+        "cache_mode": "implicit",
+        "cache_read_multiplier": 0.2,
+        "cache_write_multiplier": 1.0,
+        "min_cache_tokens": 512,
+        "cache_ttl": "managed",
+        "batch_discount": 1.0,
+        "supports_flex": false,
+        "peak_valley": false,
+        "long_context_threshold": 0,
+        "long_context_multiplier": 1.0,
+        "reasoning_billed_as_output": true,
+        "inject_cache_control": false,
+        "reasoning_style": "effort",
+        "reasoning_efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "supports_reasoning_effort": false,
+        "can_disable_thinking": true,
+        "min_output_tokens": 4096,
+        "context_floor_chars": 96000,
+        "steps_hint": 0,
+        "memory_char_budget": 1500,
+        "memory_min_score": 0.0,
+        "memory_top_k": 0,
+        "model_kind_id": "minimax.m2.7",
+        "model_family_id": "minimax.m2.7",
+        "manufacturer_id": "minimax",
+        "canonical_model_id": "minimax-m2.7",
+        "model_match_source": "explicit_kind",
+        "model_evidence": "registry",
+        "model_traits": [
+          "adaptive_thinking"
+        ],
+        "behavior_fingerprint": "9ec6eb61fdfe1e0a"
+      },
+      "observations": []
+    },
+    {
+      "model_kind_id": "minimax.m2.7.highspeed",
+      "manufacturer_id": "minimax",
+      "family_id": "minimax.m2.7",
+      "canonical_model": "minimax-m2.7-highspeed",
+      "aliases": [],
+      "family_prefixes": [],
+      "evidence_grade": "live",
+      "behavior_fingerprint": "d1d3cb7bca443323",
+      "traits": [
+        "adaptive_thinking",
+        "effort_levels",
+        "native_tool_replay"
+      ],
+      "effective_profile": {
+        "id": "minimax",
+        "label": "MiniMax",
+        "wire": "openai",
+        "cache_mode": "implicit",
+        "cache_read_multiplier": 0.2,
+        "cache_write_multiplier": 1.0,
+        "min_cache_tokens": 512,
+        "cache_ttl": "managed",
+        "batch_discount": 1.0,
+        "supports_flex": false,
+        "peak_valley": false,
+        "long_context_threshold": 0,
+        "long_context_multiplier": 1.0,
+        "reasoning_billed_as_output": true,
+        "inject_cache_control": false,
+        "reasoning_style": "effort",
+        "reasoning_efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "supports_reasoning_effort": false,
+        "can_disable_thinking": true,
+        "min_output_tokens": 4096,
+        "context_floor_chars": 96000,
+        "steps_hint": 0,
+        "memory_char_budget": 1500,
+        "memory_min_score": 0.0,
+        "memory_top_k": 0,
+        "model_kind_id": "minimax.m2.7.highspeed",
+        "model_family_id": "minimax.m2.7",
+        "manufacturer_id": "minimax",
+        "canonical_model_id": "minimax-m2.7-highspeed",
+        "model_match_source": "explicit_kind",
+        "model_evidence": "live",
+        "model_traits": [
+          "adaptive_thinking",
+          "effort_levels",
+          "native_tool_replay"
+        ],
+        "behavior_fingerprint": "d1d3cb7bca443323"
+      },
+      "observations": [
+        {
+          "requested_model": "minimax-m2.7-highspeed",
+          "source": "forge-effort-minimax.json",
+          "record": 1,
+          "request": 0,
+          "scope": "https://api.minimaxi.com/v1",
+          "scenario_passed": true,
+          "controls": {
+            "reasoning_effort": "low",
+            "max_tokens": 256
+          },
+          "usage": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 197,
+            "output_tokens": 44,
+            "input_tokens": 222,
+            "reasoning_tokens": 38
+          },
+          "response_received": true,
+          "finish_reason": "stop",
+          "tool_names": []
+        },
+        {
+          "requested_model": "minimax-m2.7-highspeed",
+          "source": "forge-effort-minimax.json",
+          "record": 1,
+          "request": 1,
+          "scope": "https://api.minimaxi.com/v1",
+          "scenario_passed": true,
+          "controls": {
+            "reasoning_effort": "medium",
+            "max_tokens": 256
+          },
+          "usage": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 221,
+            "output_tokens": 39,
+            "input_tokens": 222,
+            "reasoning_tokens": 33
+          },
+          "response_received": true,
+          "finish_reason": "stop",
+          "tool_names": []
+        },
+        {
+          "requested_model": "minimax-m2.7-highspeed",
+          "source": "forge-effort-minimax.json",
+          "record": 1,
+          "request": 2,
+          "scope": "https://api.minimaxi.com/v1",
+          "scenario_passed": true,
+          "controls": {
+            "reasoning_effort": "high",
+            "max_tokens": 256
+          },
+          "usage": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 221,
+            "output_tokens": 38,
+            "input_tokens": 222,
+            "reasoning_tokens": 32
+          },
+          "response_received": true,
+          "finish_reason": "stop",
+          "tool_names": []
+        },
+        {
+          "requested_model": "minimax-m2.7-highspeed",
+          "source": "forge-wire-minimax.json",
+          "record": 1,
+          "request": 0,
+          "scope": "https://api.minimaxi.com/v1",
+          "scenario_passed": true,
+          "controls": {
+            "max_tokens": 256,
+            "thinking": {
+              "type": "disabled"
+            }
+          },
+          "usage": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 186,
+            "output_tokens": 34,
+            "input_tokens": 456,
+            "reasoning_tokens": 0
+          },
+          "response_received": true,
+          "finish_reason": "tool_calls",
+          "tool_names": [
+            "add"
+          ]
+        },
+        {
+          "requested_model": "minimax-m2.7-highspeed",
+          "source": "forge-wire-minimax.json",
+          "record": 1,
+          "request": 1,
+          "scope": "https://api.minimaxi.com/v1",
+          "scenario_passed": true,
+          "controls": {
+            "max_tokens": 256,
+            "thinking": {
+              "type": "disabled"
+            }
+          },
+          "usage": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 455,
+            "output_tokens": 8,
+            "input_tokens": 506,
+            "reasoning_tokens": 0
+          },
+          "response_received": true,
+          "finish_reason": "stop",
+          "tool_names": []
+        },
+        {
+          "requested_model": "minimax-m2.7-highspeed",
+          "source": "forge-wire-minimax.json",
+          "record": 1,
+          "request": 2,
+          "scope": "https://api.minimaxi.com/v1",
+          "scenario_passed": true,
+          "controls": {
+            "max_tokens": 256,
+            "thinking": {
+              "type": "adaptive"
+            }
+          },
+          "usage": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 128,
+            "output_tokens": 3,
+            "input_tokens": 215,
+            "reasoning_tokens": 1
+          },
+          "response_received": true,
+          "finish_reason": "stop",
+          "tool_names": []
+        },
+        {
+          "requested_model": "MiniMax-M2.7-highspeed",
+          "source": "vendor-probe-results.json",
+          "scenario": "basic_minimax-m2.7-highspeed",
+          "scope": "https://api.minimaxi.com/v1",
+          "provenance": "archived_probe",
+          "scenario_passed": true,
+          "controls": {},
+          "usage": {
+            "output_tokens": 3,
+            "input_tokens": 213,
+            "reasoning_tokens": 0,
+            "cached_tokens": 197
+          },
+          "response_received": true,
+          "status": 200,
+          "finish_reason": "stop"
+        }
+      ]
+    },
+    {
+      "model_kind_id": "minimax.m3",
+      "manufacturer_id": "minimax",
+      "family_id": "minimax.m3",
+      "canonical_model": "minimax-m3",
+      "aliases": [],
+      "family_prefixes": [],
+      "evidence_grade": "live",
+      "behavior_fingerprint": "051cd62907caebaf",
+      "traits": [
+        "adaptive_thinking",
+        "effort_levels",
+        "leading_think_block",
+        "native_tool_replay"
+      ],
+      "effective_profile": {
+        "id": "minimax",
+        "label": "MiniMax",
+        "wire": "openai",
+        "cache_mode": "implicit",
+        "cache_read_multiplier": 0.2,
+        "cache_write_multiplier": 1.0,
+        "min_cache_tokens": 512,
+        "cache_ttl": "managed",
+        "batch_discount": 1.0,
+        "supports_flex": false,
+        "peak_valley": false,
+        "long_context_threshold": 0,
+        "long_context_multiplier": 1.0,
+        "reasoning_billed_as_output": true,
+        "inject_cache_control": false,
+        "reasoning_style": "effort",
+        "reasoning_efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "supports_reasoning_effort": false,
+        "can_disable_thinking": true,
+        "min_output_tokens": 4096,
+        "context_floor_chars": 96000,
+        "steps_hint": 24,
+        "memory_char_budget": 1000,
+        "memory_min_score": 0.3,
+        "memory_top_k": 0,
+        "model_kind_id": "minimax.m3",
+        "model_family_id": "minimax.m3",
+        "manufacturer_id": "minimax",
+        "canonical_model_id": "minimax-m3",
+        "model_match_source": "explicit_kind",
+        "model_evidence": "live",
+        "model_traits": [
+          "adaptive_thinking",
+          "effort_levels",
+          "leading_think_block",
+          "native_tool_replay"
+        ],
+        "behavior_fingerprint": "051cd62907caebaf"
+      },
+      "observations": [
+        {
+          "requested_model": "minimax-m3",
+          "source": "forge-effort-minimax.json",
+          "record": 0,
+          "request": 0,
+          "scope": "https://api.minimaxi.com/v1",
+          "scenario_passed": false,
+          "controls": {
+            "reasoning_effort": "low",
+            "max_tokens": 256
+          },
+          "usage": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 0,
+            "output_tokens": 53,
+            "input_tokens": 218,
+            "reasoning_tokens": 47
+          },
+          "response_received": true,
+          "finish_reason": "stop",
+          "tool_names": []
+        },
+        {
+          "requested_model": "minimax-m3",
+          "source": "forge-effort-minimax.json",
+          "record": 0,
+          "request": 1,
+          "scope": "https://api.minimaxi.com/v1",
+          "scenario_passed": false,
+          "controls": {
+            "reasoning_effort": "medium",
+            "max_tokens": 256
+          },
+          "usage": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 0,
+            "output_tokens": 5,
+            "input_tokens": 218,
+            "reasoning_tokens": 0
+          },
+          "response_received": true,
+          "finish_reason": "stop",
+          "tool_names": []
+        },
+        {
+          "requested_model": "minimax-m3",
+          "source": "forge-effort-minimax.json",
+          "record": 0,
+          "request": 2,
+          "scope": "https://api.minimaxi.com/v1",
+          "scenario_passed": false,
+          "controls": {
+            "reasoning_effort": "high",
+            "max_tokens": 256
+          },
+          "usage": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 0,
+            "output_tokens": 5,
+            "input_tokens": 218,
+            "reasoning_tokens": 0
+          },
+          "response_received": true,
+          "finish_reason": "stop",
+          "tool_names": []
+        },
+        {
+          "requested_model": "minimax-m3",
+          "source": "forge-wire-minimax.json",
+          "record": 0,
+          "request": 0,
+          "scope": "https://api.minimaxi.com/v1",
+          "scenario_passed": true,
+          "controls": {
+            "max_tokens": 256,
+            "thinking": {
+              "type": "disabled"
+            }
+          },
+          "usage": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 159,
+            "output_tokens": 33,
+            "input_tokens": 430,
+            "reasoning_tokens": 0
+          },
+          "response_received": true,
+          "finish_reason": "tool_calls",
+          "tool_names": [
+            "add"
+          ]
+        },
+        {
+          "requested_model": "minimax-m3",
+          "source": "forge-wire-minimax.json",
+          "record": 0,
+          "request": 1,
+          "scope": "https://api.minimaxi.com/v1",
+          "scenario_passed": true,
+          "controls": {
+            "max_tokens": 256,
+            "thinking": {
+              "type": "disabled"
+            }
+          },
+          "usage": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 430,
+            "output_tokens": 2,
+            "input_tokens": 480,
+            "reasoning_tokens": 0
+          },
+          "response_received": true,
+          "finish_reason": "stop",
+          "tool_names": []
+        },
+        {
+          "requested_model": "minimax-m3",
+          "source": "forge-wire-minimax.json",
+          "record": 0,
+          "request": 2,
+          "scope": "https://api.minimaxi.com/v1",
+          "scenario_passed": true,
+          "controls": {
+            "max_tokens": 256,
+            "thinking": {
+              "type": "adaptive"
+            }
+          },
+          "usage": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 128,
+            "output_tokens": 3,
+            "input_tokens": 211,
+            "reasoning_tokens": 0
+          },
+          "response_received": true,
+          "finish_reason": "stop",
+          "tool_names": []
+        },
+        {
+          "requested_model": "MiniMax-M3",
+          "source": "vendor-probe-results.json",
+          "scenario": "basic",
+          "scope": "https://api.minimaxi.com/v1",
+          "provenance": "archived_probe",
+          "scenario_passed": true,
+          "controls": {},
+          "usage": {
+            "output_tokens": 3,
+            "input_tokens": 209,
+            "reasoning_tokens": 0,
+            "cached_tokens": 0
+          },
+          "response_received": true,
+          "status": 200,
+          "finish_reason": "stop"
+        },
+        {
+          "requested_model": "MiniMax-M3",
+          "source": "vendor-probe-results.json",
+          "scenario": "temperature_0.7",
+          "scope": "https://api.minimaxi.com/v1",
+          "provenance": "archived_probe",
+          "scenario_passed": true,
+          "controls": {},
+          "usage": {
+            "output_tokens": 3,
+            "input_tokens": 209,
+            "reasoning_tokens": 0,
+            "cached_tokens": 0
+          },
+          "response_received": true,
+          "status": 200,
+          "finish_reason": "stop"
+        },
+        {
+          "requested_model": "MiniMax-M3",
+          "source": "vendor-probe-results.json",
+          "scenario": "tool_single",
+          "scope": "https://api.minimaxi.com/v1",
+          "provenance": "archived_probe",
+          "scenario_passed": true,
+          "controls": {},
+          "usage": {
+            "output_tokens": 38,
+            "input_tokens": 441,
+            "reasoning_tokens": 0,
+            "cached_tokens": 225
+          },
+          "response_received": true,
+          "status": 200,
+          "finish_reason": "tool_calls"
+        },
+        {
+          "requested_model": "MiniMax-M3",
+          "source": "vendor-probe-results.json",
+          "scenario": "tool_parallel",
+          "scope": "https://api.minimaxi.com/v1",
+          "provenance": "archived_probe",
+          "scenario_passed": true,
+          "controls": {},
+          "usage": {
+            "output_tokens": 60,
+            "input_tokens": 444,
+            "reasoning_tokens": 0,
+            "cached_tokens": 185
+          },
+          "response_received": true,
+          "status": 200,
+          "finish_reason": "tool_calls"
+        },
+        {
+          "requested_model": "MiniMax-M3",
+          "source": "vendor-probe-results.json",
+          "scenario": "cache_A1_write",
+          "scope": "https://api.minimaxi.com/v1",
+          "provenance": "archived_probe",
+          "scenario_passed": true,
+          "controls": {},
+          "usage": {
+            "output_tokens": 8,
+            "input_tokens": 2391,
+            "reasoning_tokens": 0,
+            "cached_tokens": 182
+          },
+          "response_received": true,
+          "status": 200,
+          "finish_reason": "stop"
+        },
+        {
+          "requested_model": "MiniMax-M3",
+          "source": "vendor-probe-results.json",
+          "scenario": "cache_A2_repeat",
+          "scope": "https://api.minimaxi.com/v1",
+          "provenance": "archived_probe",
+          "scenario_passed": true,
+          "controls": {},
+          "usage": {
+            "output_tokens": 8,
+            "input_tokens": 2391,
+            "reasoning_tokens": 0,
+            "cached_tokens": 128
+          },
+          "response_received": true,
+          "status": 200,
+          "finish_reason": "stop"
+        },
+        {
+          "requested_model": "MiniMax-M3",
+          "source": "vendor-probe-results.json",
+          "scenario": "cache_B_prefixread",
+          "scope": "https://api.minimaxi.com/v1",
+          "provenance": "archived_probe",
+          "scenario_passed": true,
+          "controls": {},
+          "usage": {
+            "output_tokens": 5,
+            "input_tokens": 2391,
+            "reasoning_tokens": 0,
+            "cached_tokens": 128
+          },
+          "response_received": true,
+          "status": 200,
+          "finish_reason": "stop"
+        }
+      ]
+    },
+    {
+      "model_kind_id": "openai.gpt6.1.sol",
+      "manufacturer_id": "openai",
+      "family_id": "openai.gpt6.1",
+      "canonical_model": "gpt-6.1-sol",
+      "aliases": [],
+      "family_prefixes": [],
+      "evidence_grade": "configured",
+      "behavior_fingerprint": "975b0075440f00c7",
+      "traits": [],
+      "effective_profile": {
+        "id": "openai",
+        "label": "OpenAI",
+        "wire": "openai",
+        "cache_mode": "implicit",
+        "cache_read_multiplier": 0.1,
+        "cache_write_multiplier": 1.25,
+        "min_cache_tokens": 1024,
+        "cache_ttl": "30m",
+        "batch_discount": 0.5,
+        "supports_flex": true,
+        "peak_valley": false,
+        "long_context_threshold": 0,
+        "long_context_multiplier": 2.0,
+        "reasoning_billed_as_output": true,
+        "inject_cache_control": false,
+        "reasoning_style": "effort",
+        "reasoning_efforts": [],
+        "supports_reasoning_effort": false,
+        "can_disable_thinking": true,
+        "min_output_tokens": 0,
+        "context_floor_chars": 0,
+        "steps_hint": 0,
+        "memory_char_budget": 1500,
+        "memory_min_score": 0.0,
+        "memory_top_k": 0,
+        "model_kind_id": "openai.gpt6.1.sol",
+        "model_family_id": "openai.gpt6.1",
+        "manufacturer_id": "openai",
+        "canonical_model_id": "gpt-6.1-sol",
+        "model_match_source": "explicit_kind",
+        "model_evidence": "configured",
+        "model_traits": [],
+        "behavior_fingerprint": "975b0075440f00c7"
+      },
+      "observations": []
+    },
+    {
+      "model_kind_id": "openai.gpt6.sol",
+      "manufacturer_id": "openai",
+      "family_id": "openai.gpt6",
+      "canonical_model": "gpt-6-sol",
+      "aliases": [],
+      "family_prefixes": [],
+      "evidence_grade": "configured",
+      "behavior_fingerprint": "ffd399dd577aab69",
+      "traits": [],
+      "effective_profile": {
+        "id": "openai",
+        "label": "OpenAI",
+        "wire": "openai",
+        "cache_mode": "implicit",
+        "cache_read_multiplier": 0.1,
+        "cache_write_multiplier": 1.25,
+        "min_cache_tokens": 1024,
+        "cache_ttl": "30m",
+        "batch_discount": 0.5,
+        "supports_flex": true,
+        "peak_valley": false,
+        "long_context_threshold": 0,
+        "long_context_multiplier": 2.0,
+        "reasoning_billed_as_output": true,
+        "inject_cache_control": false,
+        "reasoning_style": "effort",
+        "reasoning_efforts": [],
+        "supports_reasoning_effort": false,
+        "can_disable_thinking": true,
+        "min_output_tokens": 0,
+        "context_floor_chars": 0,
+        "steps_hint": 0,
+        "memory_char_budget": 1500,
+        "memory_min_score": 0.0,
+        "memory_top_k": 0,
+        "model_kind_id": "openai.gpt6.sol",
+        "model_family_id": "openai.gpt6",
+        "manufacturer_id": "openai",
+        "canonical_model_id": "gpt-6-sol",
+        "model_match_source": "explicit_kind",
+        "model_evidence": "configured",
+        "model_traits": [],
+        "behavior_fingerprint": "ffd399dd577aab69"
+      },
+      "observations": []
+    },
+    {
+      "model_kind_id": "qwen3.8.flash",
+      "manufacturer_id": "bailian",
+      "family_id": "qwen3.8",
+      "canonical_model": "qwen3.8-flash",
+      "aliases": [],
+      "family_prefixes": [],
+      "evidence_grade": "subscription_unavailable",
+      "behavior_fingerprint": "923b47f477b37683",
+      "traits": [
+        "enable_thinking_documented"
+      ],
+      "effective_profile": {
+        "id": "bailian",
+        "label": "阿里云百炼",
+        "wire": "openai",
+        "cache_mode": "explicit_bailian",
+        "cache_read_multiplier": 0.1,
+        "cache_write_multiplier": 1.25,
+        "min_cache_tokens": 1024,
+        "cache_ttl": "5m",
+        "batch_discount": 0.5,
+        "supports_flex": false,
+        "peak_valley": false,
+        "long_context_threshold": 0,
+        "long_context_multiplier": 1.0,
+        "reasoning_billed_as_output": true,
+        "inject_cache_control": false,
+        "reasoning_style": "enable_thinking",
+        "reasoning_efforts": [],
+        "supports_reasoning_effort": false,
+        "can_disable_thinking": true,
+        "min_output_tokens": 0,
+        "context_floor_chars": 0,
+        "steps_hint": 0,
+        "memory_char_budget": 1500,
+        "memory_min_score": 0.0,
+        "memory_top_k": 0,
+        "model_kind_id": "qwen3.8.flash",
+        "model_family_id": "qwen3.8",
+        "manufacturer_id": "bailian",
+        "canonical_model_id": "qwen3.8-flash",
+        "model_match_source": "explicit_kind",
+        "model_evidence": "subscription_unavailable",
+        "model_traits": [
+          "enable_thinking_documented"
+        ],
+        "behavior_fingerprint": "923b47f477b37683"
+      },
+      "observations": []
+    },
+    {
+      "model_kind_id": "qwen3.8.max",
+      "manufacturer_id": "bailian",
+      "family_id": "qwen3.8",
+      "canonical_model": "qwen3.8-max",
+      "aliases": [],
+      "family_prefixes": [],
+      "evidence_grade": "subscription_unavailable",
+      "behavior_fingerprint": "594d6dc5651553d9",
+      "traits": [
+        "enable_thinking_documented"
+      ],
+      "effective_profile": {
+        "id": "bailian",
+        "label": "阿里云百炼",
+        "wire": "openai",
+        "cache_mode": "explicit_bailian",
+        "cache_read_multiplier": 0.1,
+        "cache_write_multiplier": 1.25,
+        "min_cache_tokens": 1024,
+        "cache_ttl": "5m",
+        "batch_discount": 0.5,
+        "supports_flex": false,
+        "peak_valley": false,
+        "long_context_threshold": 0,
+        "long_context_multiplier": 1.0,
+        "reasoning_billed_as_output": true,
+        "inject_cache_control": false,
+        "reasoning_style": "enable_thinking",
+        "reasoning_efforts": [],
+        "supports_reasoning_effort": false,
+        "can_disable_thinking": true,
+        "min_output_tokens": 0,
+        "context_floor_chars": 0,
+        "steps_hint": 0,
+        "memory_char_budget": 1500,
+        "memory_min_score": 0.0,
+        "memory_top_k": 0,
+        "model_kind_id": "qwen3.8.max",
+        "model_family_id": "qwen3.8",
+        "manufacturer_id": "bailian",
+        "canonical_model_id": "qwen3.8-max",
+        "model_match_source": "explicit_kind",
+        "model_evidence": "subscription_unavailable",
+        "model_traits": [
+          "enable_thinking_documented"
+        ],
+        "behavior_fingerprint": "594d6dc5651553d9"
+      },
+      "observations": []
+    },
+    {
+      "model_kind_id": "stepfun.step5",
+      "manufacturer_id": "stepfun",
+      "family_id": "stepfun.step5",
+      "canonical_model": "step-5-preview",
+      "aliases": [],
+      "family_prefixes": [],
+      "evidence_grade": "registry_trace",
+      "behavior_fingerprint": "2e6d87d6fcf93d40",
+      "traits": [
+        "always_reasoning"
+      ],
+      "effective_profile": {
+        "id": "stepfun",
+        "label": "阶跃星辰 StepFun",
+        "wire": "openai",
+        "cache_mode": "unknown",
+        "cache_read_multiplier": 1.0,
+        "cache_write_multiplier": 1.0,
+        "min_cache_tokens": 0,
+        "cache_ttl": "unknown",
+        "batch_discount": 1.0,
+        "supports_flex": false,
+        "peak_valley": false,
+        "long_context_threshold": 0,
+        "long_context_multiplier": 1.0,
+        "reasoning_billed_as_output": true,
+        "inject_cache_control": false,
+        "reasoning_style": "effort",
+        "reasoning_efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "supports_reasoning_effort": false,
+        "can_disable_thinking": false,
+        "min_output_tokens": 0,
+        "context_floor_chars": 0,
+        "steps_hint": 0,
+        "memory_char_budget": 1500,
+        "memory_min_score": 0.0,
+        "memory_top_k": 0,
+        "model_kind_id": "stepfun.step5",
+        "model_family_id": "stepfun.step5",
+        "manufacturer_id": "stepfun",
+        "canonical_model_id": "step-5-preview",
+        "model_match_source": "explicit_kind",
+        "model_evidence": "registry_trace",
+        "model_traits": [
+          "always_reasoning"
+        ],
+        "behavior_fingerprint": "2e6d87d6fcf93d40"
+      },
+      "observations": []
+    }
+  ]
+}

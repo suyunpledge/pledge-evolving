@@ -234,9 +234,12 @@ class SmartRouter(ModelRouter):
 
     # -- public surface ----------------------------------------------------
     def complete(self, messages: list[dict[str, Any]], *, primary: tuple[str, str] | None = None,
-                 small: bool = False, **options: Any) -> Completion:
+                 small: bool = False, task_context: str | None = None, **options: Any) -> Completion:
         from .secrets import SecretScope
         scope = options.pop('secret_scope', None) or SecretScope()
+        if task_context is not None and not isinstance(task_context, str):
+            raise ValueError('task_context must be host-owned task text')
+        task_context = scope.protect_text(task_context) if task_context is not None else None
         messages, options = scope.protect(messages), scope.protect(options)
         strategy = self.routing.strategy
         # 显式 primary 优先（调用方点名 = 直接走冻结语义）。
@@ -261,7 +264,7 @@ class SmartRouter(ModelRouter):
         if strategy == "base":
             return self._complete_economy(messages, **options)
         if strategy == "premium":
-            return self._complete_premium(messages, **options)
+            return self._complete_premium(messages, task_context=task_context, **options)
         return self._complete_balanced(messages, **options)
 
     # -- shared walk (R2-3: one retry/walk implementation, not three) -------
@@ -324,7 +327,7 @@ class SmartRouter(ModelRouter):
         completion, _ = self._walk(order, messages, "medium", **options)
         return completion
 
-    def _complete_premium(self, messages: list[dict[str, Any]], **options: Any) -> Completion:
+    def _complete_premium(self, messages: list[dict[str, Any]], *, task_context=None, **options: Any) -> Completion:
         drafters, finishers = self._premium_pair()
         if not drafters or not finishers:
             # 配置不全 = 退回 medium 语义（诚实降级，不假装走了两阶段）。
@@ -352,10 +355,10 @@ class SmartRouter(ModelRouter):
         # R4-2: the finisher gets ONLY the original task + the draft — the
         # full conversation (tool results included) does NOT leak to the
         # premium provider; data plane shrinks instead of grows.
-        task_text = ""
-        for m in messages:
-            if m.get("role") == "user":
-                task_text = str(m.get("content") or "")
+        task_text = task_context
+        if task_text is None:
+            task_text = next((m['content'] for m in reversed(messages)
+                if m.get('role') == 'user' and isinstance(m.get('content'), str)), '')
         refine_messages = [
             {"role": "system", "content": "You are the integration stage of a two-stage pipeline. Refine the assistant draft into the final answer for the user task."},
             {"role": "user", "content": task_text or "(see draft)"},

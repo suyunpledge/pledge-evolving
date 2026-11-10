@@ -75,6 +75,11 @@ The main kernel (the 43k lines outside `contrib/`) was written by the maintainer
 
 ## Architecture
 
+Loom-inspired host acceptance checks and shared file revision guards are described
+in [Loom integration](docs/LOOM-INTEGRATION.md). Use `forge run TASK --acceptance FILE.json`
+to require independently checked file/command criteria before a task can succeed.
+Command checks retain the existing shell permissions and secret isolation.
+
 ```mermaid
 flowchart TB
     R(("forge kernel")) --- A(("Context"))

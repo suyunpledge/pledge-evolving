@@ -1,0 +1,258 @@
+{
+  "mode": "live",
+  "records": [
+    {
+      "vendor": "mimo",
+      "model": "mimo-v2.6-flash",
+      "endpoint": "https://token-plan-cn.xiaomimimo.com/v1",
+      "requests": [
+        {
+          "url": "https://token-plan-cn.xiaomimimo.com/v1/chat/completions",
+          "parameters": {
+            "model": "mimo-v2.6-flash",
+            "thinking": {
+              "type": "disabled"
+            },
+            "max_tokens": 256,
+            "tool_choice": {
+              "type": "function",
+              "function": {
+                "name": "add"
+              }
+            }
+          },
+          "message_roles": [
+            "system",
+            "user"
+          ],
+          "seconds": 4.05,
+          "usage": {
+            "prompt_tokens": 128,
+            "completion_tokens": 25,
+            "model": "mimo-v2.6-flash",
+            "provider": "mimo",
+            "cached_tokens": 0,
+            "cache_write_tokens": 0,
+            "reasoning_tokens": 0
+          },
+          "finish_reason": "tool_calls",
+          "tool_names": [
+            "add"
+          ],
+          "text": "",
+          "adaptation": [
+            "依赖厂商自动缓存（命中 0.00833333×），无需标记",
+            "小米 MiMo 已发送关闭思考请求（thinking.type=disabled）"
+          ]
+        },
+        {
+          "url": "https://token-plan-cn.xiaomimimo.com/v1/chat/completions",
+          "parameters": {
+            "model": "mimo-v2.6-flash",
+            "thinking": {
+              "type": "disabled"
+            },
+            "max_tokens": 256
+          },
+          "message_roles": [
+            "system",
+            "user",
+            "assistant",
+            "tool"
+          ],
+          "seconds": 1.05,
+          "usage": {
+            "prompt_tokens": 164,
+            "completion_tokens": 8,
+            "model": "mimo-v2.6-flash",
+            "provider": "mimo",
+            "cached_tokens": 0,
+            "cache_write_tokens": 0,
+            "reasoning_tokens": 0
+          },
+          "finish_reason": "stop",
+          "tool_names": [],
+          "text": "The result is 42.",
+          "adaptation": [
+            "依赖厂商自动缓存（命中 0.00833333×），无需标记",
+            "小米 MiMo 已发送关闭思考请求（thinking.type=disabled）"
+          ]
+        },
+        {
+          "url": "https://token-plan-cn.xiaomimimo.com/v1/chat/completions",
+          "parameters": {
+            "model": "mimo-v2.6-flash",
+            "thinking": {
+              "type": "enabled"
+            },
+            "max_tokens": 256
+          },
+          "message_roles": [
+            "user"
+          ],
+          "seconds": 1.34,
+          "usage": {
+            "prompt_tokens": 20,
+            "completion_tokens": 5,
+            "model": "mimo-v2.6-flash",
+            "provider": "mimo",
+            "cached_tokens": 0,
+            "cache_write_tokens": 0,
+            "reasoning_tokens": 2
+          },
+          "finish_reason": "stop",
+          "tool_names": [],
+          "text": "4",
+          "adaptation": [
+            "依赖厂商自动缓存（命中 0.00833333×），无需标记",
+            "小米 MiMo enable_thinking=true 译作 thinking.type=enabled"
+          ]
+        }
+      ],
+      "replay_ok": true,
+      "on_probe_complete": true,
+      "ok": true
+    },
+    {
+      "vendor": "mimo",
+      "model": "mimo-v2.6-pro",
+      "endpoint": "https://token-plan-cn.xiaomimimo.com/v1",
+      "requests": [
+        {
+          "url": "https://token-plan-cn.xiaomimimo.com/v1/chat/completions",
+          "parameters": {
+            "model": "mimo-v2.6-pro",
+            "thinking": {
+              "type": "disabled"
+            },
+            "max_tokens": 256,
+            "tool_choice": {
+              "type": "function",
+              "function": {
+                "name": "add"
+              }
+            }
+          },
+          "message_roles": [
+            "system",
+            "user"
+          ],
+          "seconds": 1.66,
+          "usage": {
+            "prompt_tokens": 123,
+            "completion_tokens": 25,
+            "model": "mimo-v2.6-pro",
+            "provider": "mimo",
+            "cached_tokens": 0,
+            "cache_write_tokens": 0,
+            "reasoning_tokens": 0
+          },
+          "finish_reason": "tool_calls",
+          "tool_names": [
+            "add"
+          ],
+          "text": "",
+          "adaptation": [
+            "依赖厂商自动缓存（命中 0.00833333×），无需标记",
+            "小米 MiMo 已发送关闭思考请求（thinking.type=disabled）"
+          ]
+        },
+        {
+          "url": "https://token-plan-cn.xiaomimimo.com/v1/chat/completions",
+          "parameters": {
+            "model": "mimo-v2.6-pro",
+            "thinking": {
+              "type": "disabled"
+            },
+            "max_tokens": 256
+          },
+          "message_roles": [
+            "system",
+            "user",
+            "assistant",
+            "tool"
+          ],
+          "seconds": 1.73,
+          "usage": {
+            "prompt_tokens": 159,
+            "completion_tokens": 8,
+            "model": "mimo-v2.6-pro",
+            "provider": "mimo",
+            "cached_tokens": 0,
+            "cache_write_tokens": 0,
+            "reasoning_tokens": 0
+          },
+          "finish_reason": "stop",
+          "tool_names": [],
+          "text": "The result is 42.",
+          "adaptation": [
+            "依赖厂商自动缓存（命中 0.00833333×），无需标记",
+            "小米 MiMo 已发送关闭思考请求（thinking.type=disabled）"
+          ]
+        },
+        {
+          "url": "https://token-plan-cn.xiaomimimo.com/v1/chat/completions",
+          "parameters": {
+            "model": "mimo-v2.6-pro",
+            "thinking": {
+              "type": "enabled"
+            },
+            "max_tokens": 256
+          },
+          "message_roles": [
+            "user"
+          ],
+          "seconds": 2.36,
+          "usage": {
+            "prompt_tokens": 20,
+            "completion_tokens": 5,
+            "model": "mimo-v2.6-pro",
+            "provider": "mimo",
+            "cached_tokens": 0,
+            "cache_write_tokens": 0,
+            "reasoning_tokens": 2
+          },
+          "finish_reason": "stop",
+          "tool_names": [],
+          "text": "4",
+          "adaptation": [
+            "依赖厂商自动缓存（命中 0.00833333×），无需标记",
+            "小米 MiMo enable_thinking=true 译作 thinking.type=enabled"
+          ]
+        }
+      ],
+      "replay_ok": true,
+      "on_probe_complete": true,
+      "ok": true
+    },
+    {
+      "vendor": "mimo",
+      "model": "mimo-v2.6-pro-ultraspeed",
+      "endpoint": "https://token-plan-cn.xiaomimimo.com/v1",
+      "requests": [
+        {
+          "url": "https://token-plan-cn.xiaomimimo.com/v1/chat/completions",
+          "parameters": {
+            "model": "mimo-v2.6-pro-ultraspeed",
+            "thinking": {
+              "type": "disabled"
+            },
+            "max_tokens": 256,
+            "tool_choice": {
+              "type": "function",
+              "function": {
+                "name": "add"
+              }
+            }
+          },
+          "message_roles": [
+            "system",
+            "user"
+          ]
+        }
+      ],
+      "ok": false,
+      "error_type": "BadRequest"
+    }
+  ]
+}

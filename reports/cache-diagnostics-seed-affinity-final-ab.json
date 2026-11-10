@@ -1,0 +1,1824 @@
+{
+  "vendor": "seed",
+  "scenario": "agent-compare",
+  "experimental_affinity": false,
+  "thinking": "off",
+  "cache_affinity": "auto",
+  "extended_repository": false,
+  "scope": "Hash-only wire evidence; repository input is the existing synthetic billing fixture, never production padding.",
+  "runtime_sha256": {
+    "scripts/verify_cache_diagnostics.py": "e99501c79b9a28a0740e87fa5f0458e4e7a72b949f9092e0b1bfb6a66b84ee9d",
+    "forge/model.py": "415cd84c1e198a5be53cb017b637f95d5c9257d2bc095fcaef0a10bfec25eb01",
+    "forge/loop.py": "2f6f2df1abe3e28e9ee3303c481b5a66518b23d26b4530451f81405272587f37",
+    "forge/cache_affinity.py": "f1cac53d71c1d61a65e7297e0977eb0a97d454d366b1a827570c2dc88a1f6e25",
+    "forge/cache_state.py": "a37413aba21dc24acee061a76d69fdcca436282ed055008325b67bd218f9258e",
+    "forge/conversation_prefix.py": "305fcaf781fd887555f9502e9337e0a52fc908b611ae55467b36e5575e935898",
+    "forge/compaction.py": "2ef74a994bf9478397f4bd0723ec040b100f227afee7cabc3e563b6a76777ec9",
+    "forge/compaction_notes.py": "2a0310f83e1986d2a8b0d8e895eb28c024b5c9b0310cca3708bb9ca7b98e0f12"
+  },
+  "cases": [
+    {
+      "sample": 1,
+      "mode": "off",
+      "turns": [
+        {
+          "turn": 1,
+          "ok": false,
+          "stopped": "error",
+          "text": "[model error] all providers failed: [{'provider': 'seed-live', 'model': 'doubao-seed-evolving', 'status': 'retryable', 'error': \"seed-live: URLError(TimeoutError('_ssl.c:993: The handshake operation timed out'))\"}, {'provider': 'seed-live', 'model': 'doubao-seed-evolving', 'status': 'retryable', 'er",
+          "tools": [],
+          "events": [
+            {
+              "type": "cache_prefix_checkpointed",
+              "reason": "model_transport",
+              "completed": false,
+              "agent": "forge",
+              "depth": 0,
+              "run_id": "dff2e33b9fec49f6939f8519df6808f3",
+              "task_id": "dff2e33b9fec49f6939f8519df6808f3",
+              "parent_run_id": "",
+              "event_id": "fc812fe90a3f496aa74230aa93cb0789",
+              "protocol_version": 1
+            }
+          ],
+          "native_pairs_valid": true,
+          "totals": {
+            "attempts": 2,
+            "successful_requests": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
+            "seconds": 50.078,
+            "coverage": {
+              "all_observed": {
+                "requests": 0,
+                "input_tokens": 0,
+                "cached_tokens": 0,
+                "hit_rate": null
+              },
+              "rebuild": {
+                "requests": 0,
+                "input_tokens": 0,
+                "cached_tokens": 0,
+                "hit_rate": null
+              },
+              "non_rebuild": {
+                "requests": 0,
+                "input_tokens": 0,
+                "cached_tokens": 0,
+                "hit_rate": null
+              },
+              "eligible_prefix": {
+                "requests": 0,
+                "input_tokens": 0,
+                "cached_tokens": 0,
+                "excluded_tail_tokens": 0,
+                "hit_rate": null
+              },
+              "unknown_requests": 2,
+              "invalid_requests": 0,
+              "duplicate_observations": 0,
+              "denominator": "observed input tokens; eligible_prefix excludes declared structural tail"
+            }
+          }
+        }
+      ],
+      "ok": false
+    },
+    {
+      "sample": 2,
+      "mode": "auto",
+      "turns": [
+        {
+          "turn": 1,
+          "ok": true,
+          "stopped": "final",
+          "text": "423",
+          "tools": [
+            "read_file",
+            "calculator"
+          ],
+          "events": [
+            {
+              "type": "compaction",
+              "transaction_id": "37c6ef77564245e2bb6e0ce6687a8fc8",
+              "before": 5003,
+              "after": 2033,
+              "source_digest": "0294c29fef1258e8657361fb6d9b2bed8aa20d565dc4378bc66a501a82d14a29",
+              "shrunk": true,
+              "committed": true,
+              "archive": {
+                "archive_id": "ctx-37c6ef77564245e2bb6e0ce6687a8fc8",
+                "path": "C:\\Users\\D442~1\\AppData\\Local\\Temp\\forge-cache-compare-71vz0th9\\home-1\\context-archives\\ctx-37c6ef77564245e2bb6e0ce6687a8fc8.json",
+                "archive_digest": "0294c29fef1258e8657361fb6d9b2bed8aa20d565dc4378bc66a501a82d14a29",
+                "message_count": 9
+              },
+              "candidate_digest": "c7a55f24c47503303bb6251d6df2f7ea998c7c92c0c20bd082696eae93699174",
+              "reason": "committed",
+              "checkpoint": {
+                "version": 1,
+                "archive_id": "ctx-37c6ef77564245e2bb6e0ce6687a8fc8",
+                "coverage": {
+                  "start": 0,
+                  "end_exclusive": 9
+                },
+                "summary_status": "unverified_excerpt"
+              },
+              "target_chars": 3250,
+              "preserved_prefix_messages": 1,
+              "agent": "forge",
+              "depth": 0,
+              "run_id": "d750cb1b2776459abce71ad0a32da129",
+              "task_id": "d750cb1b2776459abce71ad0a32da129",
+              "parent_run_id": "",
+              "event_id": "465d74cacb2c4c30bd89a43e573a4325",
+              "protocol_version": 1
+            }
+          ],
+          "native_pairs_valid": true,
+          "totals": {
+            "attempts": 3,
+            "successful_requests": 3,
+            "prompt_tokens": 4799,
+            "completion_tokens": 76,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
+            "seconds": 12.75,
+            "coverage": {
+              "all_observed": {
+                "requests": 3,
+                "input_tokens": 4799,
+                "cached_tokens": 0,
+                "hit_rate": 0.0
+              },
+              "rebuild": {
+                "requests": 0,
+                "input_tokens": 0,
+                "cached_tokens": 0,
+                "hit_rate": null
+              },
+              "non_rebuild": {
+                "requests": 3,
+                "input_tokens": 4799,
+                "cached_tokens": 0,
+                "hit_rate": 0.0
+              },
+              "eligible_prefix": {
+                "requests": 0,
+                "input_tokens": 0,
+                "cached_tokens": 0,
+                "excluded_tail_tokens": 0,
+                "hit_rate": null
+              },
+              "unknown_requests": 0,
+              "invalid_requests": 0,
+              "duplicate_observations": 0,
+              "denominator": "observed input tokens; eligible_prefix excludes declared structural tail"
+            }
+          }
+        },
+        {
+          "turn": 2,
+          "ok": true,
+          "stopped": "final",
+          "text": "423",
+          "tools": [
+            "calculator"
+          ],
+          "events": [
+            {
+              "type": "cache_prefix_reused",
+              "messages": 9,
+              "scope": "same-agent continuation; not proof of vendor cache hit",
+              "agent": "forge",
+              "depth": 0,
+              "run_id": "f946e18ec90849a983a34fe7f208e0ac",
+              "task_id": "f946e18ec90849a983a34fe7f208e0ac",
+              "parent_run_id": "",
+              "event_id": "ceec5335b196480582114216b19cd0a1",
+              "protocol_version": 1
+            }
+          ],
+          "native_pairs_valid": true,
+          "totals": {
+            "attempts": 2,
+            "successful_requests": 2,
+            "prompt_tokens": 2586,
+            "completion_tokens": 42,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
+            "seconds": 8.672,
+            "coverage": {
+              "all_observed": {
+                "requests": 2,
+                "input_tokens": 2586,
+                "cached_tokens": 0,
+                "hit_rate": 0.0
+              },
+              "rebuild": {
+                "requests": 0,
+                "input_tokens": 0,
+                "cached_tokens": 0,
+                "hit_rate": null
+              },
+              "non_rebuild": {
+                "requests": 2,
+                "input_tokens": 2586,
+                "cached_tokens": 0,
+                "hit_rate": 0.0
+              },
+              "eligible_prefix": {
+                "requests": 0,
+                "input_tokens": 0,
+                "cached_tokens": 0,
+                "excluded_tail_tokens": 0,
+                "hit_rate": null
+              },
+              "unknown_requests": 0,
+              "invalid_requests": 0,
+              "duplicate_observations": 0,
+              "denominator": "observed input tokens; eligible_prefix excludes declared structural tail"
+            }
+          }
+        }
+      ],
+      "ok": true
+    }
+  ],
+  "requests": [
+    {
+      "stage": "1-off/agent-turn-1",
+      "model": "doubao-seed-evolving",
+      "url": "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+      "parameters": {
+        "thinking": {
+          "type": "disabled"
+        },
+        "temperature": 0.7,
+        "max_tokens": 4096
+      },
+      "message_count": 5,
+      "common_prefix_messages": 0,
+      "messages_digest": "63e2c8b52ecf45aa41628672c3500bec83472746bceeee43a3f4c02c39a72e86",
+      "tools_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "toolset_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "payload_digest": "1bdb8fb664b692a5a40ca1f347c69df91bd87651d8108209b64e36840a9b1ea4",
+      "message_chars": 5022,
+      "assistant_reasoning_fields": 0,
+      "tools": [
+        "calculator",
+        "read_file"
+      ],
+      "error_type": "URLError",
+      "status": null,
+      "seconds": 45.047,
+      "message_components": [
+        {
+          "role": "system",
+          "digest": "a92f8e6c3821afe8723b7f2fd181fa8b1d591f6914828899630956c851904cd6",
+          "fields": {
+            "role": {
+              "digest": "0dc8cd0a92280156c12ba5073f5049586727ba0bef2ff72099577bd332db18f5",
+              "characters": 8
+            },
+            "content": {
+              "digest": "5d9ea34a8f4e9f179c97f6ba36b4d95b4c53b8c4f069c74ea1c6804d4e15af86",
+              "characters": 1042
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "b1ae98148be2f315799203272facc56f1946313fe7649d83ce3ba4f7b54daa54",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "f0b9807cbb919f4c3994ea2a81507c1ffa967d41b15abb160e2bca9e3c0ff702",
+              "characters": 66
+            }
+          }
+        },
+        {
+          "role": "assistant",
+          "digest": "6fc18c8fab792276d84ffe9ade1a3281f2337d186bd722381d0aba121564a217",
+          "fields": {
+            "role": {
+              "digest": "43f3a43f5a7fef31effcd812e256c8f245da366db65c225fcde611385a4df753",
+              "characters": 11
+            },
+            "content": {
+              "digest": "1d3085c30c184dd67e324aec53d3e4135214662db279f9c47683de1af8a1f2d6",
+              "characters": 3324
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "fb1cee533c8a81cd51ded4fcdfeb459b019c2a564e7ce736d00fd590be2bb15d",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "b240afda52d2221d4053b4ac7a535f5c047616fe2b878dd745819ac759675d08",
+              "characters": 156
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "8ceb1e8ecd046e1039c5767e7b72f11cac22fb33dc11e4ac49abd87a9703c1cf",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "4b468a82b10815bb975cb512eb7c6bca4cd83f53d6607de28dedd7d4a2bb72ce",
+              "characters": 282
+            }
+          }
+        }
+      ],
+      "common_serialized_message_prefix_chars": 1,
+      "wire_body_sha256": "846bb63f9d6180e54f616d0cdff924cc747cf213ab3b4772a9800c0dc9c286c1",
+      "prefix_relation": "first",
+      "first_changed_message": null,
+      "changed_message_fields": [],
+      "exact_payload_repeat": false,
+      "generation_parameters_digest": "03a032d4a409368024d6e3275ea9b3ed434cea26503b19f06f0e42ae3d9e3129",
+      "affinity_present": false,
+      "affinity_key_digest": null,
+      "affinity_digest": null
+    },
+    {
+      "stage": "1-off/agent-turn-1",
+      "model": "doubao-seed-evolving",
+      "url": "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+      "parameters": {
+        "thinking": {
+          "type": "disabled"
+        },
+        "temperature": 0.7,
+        "max_tokens": 4096
+      },
+      "message_count": 5,
+      "common_prefix_messages": 5,
+      "messages_digest": "63e2c8b52ecf45aa41628672c3500bec83472746bceeee43a3f4c02c39a72e86",
+      "tools_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "toolset_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "payload_digest": "1bdb8fb664b692a5a40ca1f347c69df91bd87651d8108209b64e36840a9b1ea4",
+      "message_chars": 5022,
+      "assistant_reasoning_fields": 0,
+      "tools": [
+        "calculator",
+        "read_file"
+      ],
+      "error_type": "URLError",
+      "status": null,
+      "seconds": 5.031,
+      "message_components": [
+        {
+          "role": "system",
+          "digest": "a92f8e6c3821afe8723b7f2fd181fa8b1d591f6914828899630956c851904cd6",
+          "fields": {
+            "role": {
+              "digest": "0dc8cd0a92280156c12ba5073f5049586727ba0bef2ff72099577bd332db18f5",
+              "characters": 8
+            },
+            "content": {
+              "digest": "5d9ea34a8f4e9f179c97f6ba36b4d95b4c53b8c4f069c74ea1c6804d4e15af86",
+              "characters": 1042
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "b1ae98148be2f315799203272facc56f1946313fe7649d83ce3ba4f7b54daa54",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "f0b9807cbb919f4c3994ea2a81507c1ffa967d41b15abb160e2bca9e3c0ff702",
+              "characters": 66
+            }
+          }
+        },
+        {
+          "role": "assistant",
+          "digest": "6fc18c8fab792276d84ffe9ade1a3281f2337d186bd722381d0aba121564a217",
+          "fields": {
+            "role": {
+              "digest": "43f3a43f5a7fef31effcd812e256c8f245da366db65c225fcde611385a4df753",
+              "characters": 11
+            },
+            "content": {
+              "digest": "1d3085c30c184dd67e324aec53d3e4135214662db279f9c47683de1af8a1f2d6",
+              "characters": 3324
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "fb1cee533c8a81cd51ded4fcdfeb459b019c2a564e7ce736d00fd590be2bb15d",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "b240afda52d2221d4053b4ac7a535f5c047616fe2b878dd745819ac759675d08",
+              "characters": 156
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "8ceb1e8ecd046e1039c5767e7b72f11cac22fb33dc11e4ac49abd87a9703c1cf",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "4b468a82b10815bb975cb512eb7c6bca4cd83f53d6607de28dedd7d4a2bb72ce",
+              "characters": 282
+            }
+          }
+        }
+      ],
+      "common_serialized_message_prefix_chars": 5013,
+      "wire_body_sha256": "846bb63f9d6180e54f616d0cdff924cc747cf213ab3b4772a9800c0dc9c286c1",
+      "prefix_relation": "unchanged",
+      "first_changed_message": null,
+      "changed_message_fields": [],
+      "exact_payload_repeat": true,
+      "generation_parameters_digest": "03a032d4a409368024d6e3275ea9b3ed434cea26503b19f06f0e42ae3d9e3129",
+      "affinity_present": false,
+      "affinity_key_digest": null,
+      "affinity_digest": null
+    },
+    {
+      "stage": "2-auto/agent-turn-1",
+      "model": "doubao-seed-evolving",
+      "url": "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+      "parameters": {
+        "thinking": {
+          "type": "disabled"
+        },
+        "temperature": 0.7,
+        "max_tokens": 4096
+      },
+      "message_count": 5,
+      "common_prefix_messages": 5,
+      "messages_digest": "63e2c8b52ecf45aa41628672c3500bec83472746bceeee43a3f4c02c39a72e86",
+      "tools_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "toolset_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "payload_digest": "8bc7601755bb7a5f90ef98ef198e6a403a04343ce86ac3a320363d8eb77216fe",
+      "message_chars": 5022,
+      "assistant_reasoning_fields": 0,
+      "tools": [
+        "calculator",
+        "read_file"
+      ],
+      "status": 200,
+      "upstream_request_id": "02179418732264739b762a1076dab7efa142e82428347fd1e67cc",
+      "system_fingerprint": null,
+      "raw_usage": {
+        "completion_tokens": 33,
+        "prompt_tokens": 1810,
+        "total_tokens": 1843,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0
+        }
+      },
+      "finish_reason": "tool_calls",
+      "response_id": "02179418732264739b762a1076dab7efa142e82428347fd1e67cc",
+      "response_model": "doubao-seed-evolving",
+      "reasoning_chars": 0,
+      "tool_calls": [
+        {
+          "function": {
+            "arguments": "{\"path\": \"values.json\"}",
+            "name": "read_file"
+          },
+          "id": "call_ak1l1zorpgelk8rz9muy88yh",
+          "type": "function"
+        }
+      ],
+      "text": "",
+      "seconds": 5.766,
+      "response_message_fields": [
+        "content",
+        "role",
+        "tool_calls"
+      ],
+      "encrypted_content_chars": 0,
+      "encrypted_replay_matches": 0,
+      "message_components": [
+        {
+          "role": "system",
+          "digest": "a92f8e6c3821afe8723b7f2fd181fa8b1d591f6914828899630956c851904cd6",
+          "fields": {
+            "role": {
+              "digest": "0dc8cd0a92280156c12ba5073f5049586727ba0bef2ff72099577bd332db18f5",
+              "characters": 8
+            },
+            "content": {
+              "digest": "5d9ea34a8f4e9f179c97f6ba36b4d95b4c53b8c4f069c74ea1c6804d4e15af86",
+              "characters": 1042
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "b1ae98148be2f315799203272facc56f1946313fe7649d83ce3ba4f7b54daa54",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "f0b9807cbb919f4c3994ea2a81507c1ffa967d41b15abb160e2bca9e3c0ff702",
+              "characters": 66
+            }
+          }
+        },
+        {
+          "role": "assistant",
+          "digest": "6fc18c8fab792276d84ffe9ade1a3281f2337d186bd722381d0aba121564a217",
+          "fields": {
+            "role": {
+              "digest": "43f3a43f5a7fef31effcd812e256c8f245da366db65c225fcde611385a4df753",
+              "characters": 11
+            },
+            "content": {
+              "digest": "1d3085c30c184dd67e324aec53d3e4135214662db279f9c47683de1af8a1f2d6",
+              "characters": 3324
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "fb1cee533c8a81cd51ded4fcdfeb459b019c2a564e7ce736d00fd590be2bb15d",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "b240afda52d2221d4053b4ac7a535f5c047616fe2b878dd745819ac759675d08",
+              "characters": 156
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "8ceb1e8ecd046e1039c5767e7b72f11cac22fb33dc11e4ac49abd87a9703c1cf",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "4b468a82b10815bb975cb512eb7c6bca4cd83f53d6607de28dedd7d4a2bb72ce",
+              "characters": 282
+            }
+          }
+        }
+      ],
+      "common_serialized_message_prefix_chars": 5013,
+      "wire_body_sha256": "3a4105207642241acc8333efaec599fdc12969f4ab668dd6cacb93a9e16d0eab",
+      "prefix_relation": "unchanged",
+      "first_changed_message": null,
+      "changed_message_fields": [],
+      "exact_payload_repeat": false,
+      "generation_parameters_digest": "07511dcf0a40b7b3b2b3e2f0c85599eb91e3668611cdb777a6eed4868ff4cef3",
+      "affinity_present": true,
+      "affinity_key_digest": "f84f49aad2dfe60f2b4dc821a9c64411bbe162a37b678de167952c5fc4d0e1ee",
+      "affinity_digest": "ecdd810fc9669cabb6b344dbc51d98fd2d7e04d955585fa4c16a6b5c1b46ebdd",
+      "usage": {
+        "prompt_tokens": 1810,
+        "completion_tokens": 33,
+        "model": "doubao-seed-evolving",
+        "provider": "seed-live",
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 0,
+        "cache_observed": true
+      },
+      "adaptation": {
+        "vendor": "volcengine",
+        "vendor_label": "火山方舟（豆包）",
+        "actions": [
+          "依赖厂商自动缓存（命中 1×），无需标记",
+          "火山方舟（豆包） 已发送关闭思考请求（thinking.type=disabled）"
+        ],
+        "notes": [
+          "缓存命中已实证但折扣未公布，金额按原价保守估算",
+          "回放可保留 encrypted_content（三变体回放探针全 200）",
+          "该模型无目录价，金额按单位价折算，仅用于比较比例，不代表真实账单"
+        ],
+        "cache_control": false,
+        "breakpoints": 1,
+        "ttl": "managed",
+        "est_tokens": 2170,
+        "est_cost": 0.00434,
+        "baseline_cost": 0.00434,
+        "saving": 0.0,
+        "saving_pct": 0.0,
+        "cliff_action": "pass",
+        "reasoning_budget": null,
+        "defer": false,
+        "cache_engages": true,
+        "route_capabilities": {},
+        "request_budget": {},
+        "adapter_id": "doubao.seed-evolving",
+        "model_kind_id": "doubao.seed-evolving",
+        "model_family_id": "doubao.seed",
+        "manufacturer_id": "volcengine",
+        "behavior_fingerprint": "9c7f8429976ba0d0",
+        "model_match_source": "model_id",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type",
+          "opaque_assistant_replay",
+          "native_tool_replay"
+        ],
+        "reasoning_shaped": true,
+        "fingerprint": "4cf71be80751a3df",
+        "execution": {
+          "cache_affinity": {
+            "status": "routing_hint",
+            "source": "host_scope",
+            "key_digest": "f84f49aad2dfe60f2b4dc821a9c64411bbe162a37b678de167952c5fc4d0e1ee",
+            "guaranteed_hit": false
+          }
+        },
+        "estimate_scope": "reuse_window",
+        "includes_output_cost": false,
+        "price_known": false,
+        "model": "doubao-seed-evolving"
+      }
+    },
+    {
+      "stage": "2-auto/agent-turn-1",
+      "model": "doubao-seed-evolving",
+      "url": "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+      "parameters": {
+        "thinking": {
+          "type": "disabled"
+        },
+        "temperature": 0.7,
+        "max_tokens": 4096
+      },
+      "message_count": 7,
+      "common_prefix_messages": 5,
+      "messages_digest": "42667ce8a7bac90519cfa4fc5b1a80b6b49f14c5488e74cd179a195d510826b4",
+      "tools_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "toolset_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "payload_digest": "026c50d45c50f59e74ba73f7e1b5262982ba8dc3cb511ceaa95b6a858568a9d6",
+      "message_chars": 5317,
+      "assistant_reasoning_fields": 0,
+      "tools": [
+        "calculator",
+        "read_file"
+      ],
+      "status": 200,
+      "upstream_request_id": "02179418732703716daf9d61fcfa3cb5e99a3c6f39361793d644d",
+      "system_fingerprint": null,
+      "raw_usage": {
+        "completion_tokens": 40,
+        "prompt_tokens": 1868,
+        "total_tokens": 1908,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0
+        }
+      },
+      "finish_reason": "tool_calls",
+      "response_id": "02179418732703716daf9d61fcfa3cb5e99a3c6f39361793d644d",
+      "response_model": "doubao-seed-evolving",
+      "reasoning_chars": 0,
+      "tool_calls": [
+        {
+          "function": {
+            "arguments": "{\"expression\": \"137 + 286\"}",
+            "name": "calculator"
+          },
+          "id": "call_ry3n9xd3o3g1dj2e9926bi04",
+          "type": "function"
+        }
+      ],
+      "text": "",
+      "seconds": 3.906,
+      "response_message_fields": [
+        "content",
+        "role",
+        "tool_calls"
+      ],
+      "encrypted_content_chars": 0,
+      "encrypted_replay_matches": 0,
+      "message_components": [
+        {
+          "role": "system",
+          "digest": "a92f8e6c3821afe8723b7f2fd181fa8b1d591f6914828899630956c851904cd6",
+          "fields": {
+            "role": {
+              "digest": "0dc8cd0a92280156c12ba5073f5049586727ba0bef2ff72099577bd332db18f5",
+              "characters": 8
+            },
+            "content": {
+              "digest": "5d9ea34a8f4e9f179c97f6ba36b4d95b4c53b8c4f069c74ea1c6804d4e15af86",
+              "characters": 1042
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "b1ae98148be2f315799203272facc56f1946313fe7649d83ce3ba4f7b54daa54",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "f0b9807cbb919f4c3994ea2a81507c1ffa967d41b15abb160e2bca9e3c0ff702",
+              "characters": 66
+            }
+          }
+        },
+        {
+          "role": "assistant",
+          "digest": "6fc18c8fab792276d84ffe9ade1a3281f2337d186bd722381d0aba121564a217",
+          "fields": {
+            "role": {
+              "digest": "43f3a43f5a7fef31effcd812e256c8f245da366db65c225fcde611385a4df753",
+              "characters": 11
+            },
+            "content": {
+              "digest": "1d3085c30c184dd67e324aec53d3e4135214662db279f9c47683de1af8a1f2d6",
+              "characters": 3324
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "fb1cee533c8a81cd51ded4fcdfeb459b019c2a564e7ce736d00fd590be2bb15d",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "b240afda52d2221d4053b4ac7a535f5c047616fe2b878dd745819ac759675d08",
+              "characters": 156
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "8ceb1e8ecd046e1039c5767e7b72f11cac22fb33dc11e4ac49abd87a9703c1cf",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "4b468a82b10815bb975cb512eb7c6bca4cd83f53d6607de28dedd7d4a2bb72ce",
+              "characters": 282
+            }
+          }
+        },
+        {
+          "role": "assistant",
+          "digest": "0d4c7e275010d893a9fd8b68932aed54c21954c132cc3bf5f767fd1ec030868b",
+          "fields": {
+            "content": {
+              "digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "characters": 4
+            },
+            "role": {
+              "digest": "43f3a43f5a7fef31effcd812e256c8f245da366db65c225fcde611385a4df753",
+              "characters": 11
+            },
+            "tool_calls": {
+              "digest": "de274b71faa7a6d7e332342c34837b7819713e31e2b92a276728ee8c5d36c478",
+              "characters": 140
+            }
+          }
+        },
+        {
+          "role": "tool",
+          "digest": "1279d29605e77ae817f8985d294b863effab0be48f768809b78a6bec88c28c18",
+          "fields": {
+            "role": {
+              "digest": "dd04afac1bebb050783a245ed0d88633759f352c85d4ab3bea3d416bf2019c75",
+              "characters": 6
+            },
+            "tool_call_id": {
+              "digest": "c9d8141c30c1b5ec7883ce8d48b4296d5ebeccdb70377e8a7416abeed2623443",
+              "characters": 31
+            },
+            "content": {
+              "digest": "756dbab6b2c0da7ed4da05193a4388866a3312846cc8e2153ebd36f0cfb1e452",
+              "characters": 23
+            }
+          }
+        }
+      ],
+      "common_serialized_message_prefix_chars": 5012,
+      "wire_body_sha256": "e2091736615c2495eea8257111426b74630580a6deffdbf0b41bc65abf06d5cd",
+      "prefix_relation": "appended",
+      "first_changed_message": null,
+      "changed_message_fields": [],
+      "exact_payload_repeat": false,
+      "generation_parameters_digest": "07511dcf0a40b7b3b2b3e2f0c85599eb91e3668611cdb777a6eed4868ff4cef3",
+      "affinity_present": true,
+      "affinity_key_digest": "f84f49aad2dfe60f2b4dc821a9c64411bbe162a37b678de167952c5fc4d0e1ee",
+      "affinity_digest": "ecdd810fc9669cabb6b344dbc51d98fd2d7e04d955585fa4c16a6b5c1b46ebdd",
+      "usage": {
+        "prompt_tokens": 1868,
+        "completion_tokens": 40,
+        "model": "doubao-seed-evolving",
+        "provider": "seed-live",
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 0,
+        "cache_observed": true
+      },
+      "adaptation": {
+        "vendor": "volcengine",
+        "vendor_label": "火山方舟（豆包）",
+        "actions": [
+          "依赖厂商自动缓存（命中 1×），无需标记",
+          "火山方舟（豆包） 已发送关闭思考请求（thinking.type=disabled）"
+        ],
+        "notes": [
+          "缓存命中已实证但折扣未公布，金额按原价保守估算",
+          "回放可保留 encrypted_content（三变体回放探针全 200）",
+          "该模型无目录价，金额按单位价折算，仅用于比较比例，不代表真实账单"
+        ],
+        "cache_control": false,
+        "breakpoints": 1,
+        "ttl": "managed",
+        "est_tokens": 2178,
+        "est_cost": 0.004356,
+        "baseline_cost": 0.004356,
+        "saving": 0.0,
+        "saving_pct": 0.0,
+        "cliff_action": "pass",
+        "reasoning_budget": null,
+        "defer": false,
+        "cache_engages": true,
+        "route_capabilities": {},
+        "request_budget": {},
+        "adapter_id": "doubao.seed-evolving",
+        "model_kind_id": "doubao.seed-evolving",
+        "model_family_id": "doubao.seed",
+        "manufacturer_id": "volcengine",
+        "behavior_fingerprint": "9c7f8429976ba0d0",
+        "model_match_source": "model_id",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type",
+          "opaque_assistant_replay",
+          "native_tool_replay"
+        ],
+        "reasoning_shaped": true,
+        "fingerprint": "4cf71be80751a3df",
+        "execution": {
+          "cache_affinity": {
+            "status": "routing_hint",
+            "source": "host_scope",
+            "key_digest": "f84f49aad2dfe60f2b4dc821a9c64411bbe162a37b678de167952c5fc4d0e1ee",
+            "guaranteed_hit": false
+          }
+        },
+        "estimate_scope": "reuse_window",
+        "includes_output_cost": false,
+        "price_known": false,
+        "model": "doubao-seed-evolving"
+      }
+    },
+    {
+      "stage": "2-auto/agent-turn-1",
+      "model": "doubao-seed-evolving",
+      "url": "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+      "parameters": {
+        "thinking": {
+          "type": "disabled"
+        },
+        "temperature": 0.7,
+        "max_tokens": 4096
+      },
+      "message_count": 8,
+      "common_prefix_messages": 1,
+      "messages_digest": "1b26271264da1cba4a830584f9531dade6efe8d3d3d178fe87cd557ebc141026",
+      "tools_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "toolset_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "payload_digest": "ed49364a6ca31bc087f9194fc8ddee9984ff85a2898943a4eac70f3ca8c9ee92",
+      "message_chars": 2468,
+      "assistant_reasoning_fields": 0,
+      "tools": [
+        "calculator",
+        "read_file"
+      ],
+      "status": 200,
+      "upstream_request_id": "0217941873310045ffee7bd9f8ed62699b3e2c08b3f237581b080",
+      "system_fingerprint": null,
+      "raw_usage": {
+        "completion_tokens": 3,
+        "prompt_tokens": 1121,
+        "total_tokens": 1124,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0
+        }
+      },
+      "finish_reason": "stop",
+      "response_id": "0217941873310045ffee7bd9f8ed62699b3e2c08b3f237581b080",
+      "response_model": "doubao-seed-evolving",
+      "reasoning_chars": 0,
+      "tool_calls": null,
+      "text": "423",
+      "seconds": 3.078,
+      "response_message_fields": [
+        "content",
+        "role"
+      ],
+      "encrypted_content_chars": 0,
+      "encrypted_replay_matches": 0,
+      "message_components": [
+        {
+          "role": "system",
+          "digest": "a92f8e6c3821afe8723b7f2fd181fa8b1d591f6914828899630956c851904cd6",
+          "fields": {
+            "role": {
+              "digest": "0dc8cd0a92280156c12ba5073f5049586727ba0bef2ff72099577bd332db18f5",
+              "characters": 8
+            },
+            "content": {
+              "digest": "5d9ea34a8f4e9f179c97f6ba36b4d95b4c53b8c4f069c74ea1c6804d4e15af86",
+              "characters": 1042
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "977bedb97a72eefb5c31a877857bb2ea456f3c0b2f14498503bc7372433748d9",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "9c4eb71368107cecb0896be868d3e840579cabdfdca0b194b835d23de236a126",
+              "characters": 281
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "fb1cee533c8a81cd51ded4fcdfeb459b019c2a564e7ce736d00fd590be2bb15d",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "b240afda52d2221d4053b4ac7a535f5c047616fe2b878dd745819ac759675d08",
+              "characters": 156
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "8ceb1e8ecd046e1039c5767e7b72f11cac22fb33dc11e4ac49abd87a9703c1cf",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "4b468a82b10815bb975cb512eb7c6bca4cd83f53d6607de28dedd7d4a2bb72ce",
+              "characters": 282
+            }
+          }
+        },
+        {
+          "role": "assistant",
+          "digest": "0d4c7e275010d893a9fd8b68932aed54c21954c132cc3bf5f767fd1ec030868b",
+          "fields": {
+            "content": {
+              "digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "characters": 4
+            },
+            "role": {
+              "digest": "43f3a43f5a7fef31effcd812e256c8f245da366db65c225fcde611385a4df753",
+              "characters": 11
+            },
+            "tool_calls": {
+              "digest": "de274b71faa7a6d7e332342c34837b7819713e31e2b92a276728ee8c5d36c478",
+              "characters": 140
+            }
+          }
+        },
+        {
+          "role": "tool",
+          "digest": "1279d29605e77ae817f8985d294b863effab0be48f768809b78a6bec88c28c18",
+          "fields": {
+            "role": {
+              "digest": "dd04afac1bebb050783a245ed0d88633759f352c85d4ab3bea3d416bf2019c75",
+              "characters": 6
+            },
+            "tool_call_id": {
+              "digest": "c9d8141c30c1b5ec7883ce8d48b4296d5ebeccdb70377e8a7416abeed2623443",
+              "characters": 31
+            },
+            "content": {
+              "digest": "756dbab6b2c0da7ed4da05193a4388866a3312846cc8e2153ebd36f0cfb1e452",
+              "characters": 23
+            }
+          }
+        },
+        {
+          "role": "assistant",
+          "digest": "4629ba7c19b49cbcd3b5d3cd990e556458331f6b125809b2bb751bf3b4e76ca5",
+          "fields": {
+            "content": {
+              "digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "characters": 4
+            },
+            "role": {
+              "digest": "43f3a43f5a7fef31effcd812e256c8f245da366db65c225fcde611385a4df753",
+              "characters": 11
+            },
+            "tool_calls": {
+              "digest": "00f47a0a5da68ba1df50202a6598c2ad38250a2a98199c1defd9e5bf5541d122",
+              "characters": 145
+            }
+          }
+        },
+        {
+          "role": "tool",
+          "digest": "5f26b7c15fcad387de13ab1e14b656e686c10b6934f99cb6541c6d4fd6363ed6",
+          "fields": {
+            "role": {
+              "digest": "dd04afac1bebb050783a245ed0d88633759f352c85d4ab3bea3d416bf2019c75",
+              "characters": 6
+            },
+            "tool_call_id": {
+              "digest": "a2894c8efaa8ad87507964778d30356a6d7ff40c68cefeaf4a69bdb477ad8088",
+              "characters": 31
+            },
+            "content": {
+              "digest": "7e1d20fdf7af6598e97ca76cd56b24991ac0b060311b4e65a3b3b7bf3eba894c",
+              "characters": 17
+            }
+          }
+        }
+      ],
+      "common_serialized_message_prefix_chars": 1098,
+      "wire_body_sha256": "1bd3d5ffd751324bf872c0b85f09cd968cd44360d467b1eec42f0fd99ca025cd",
+      "prefix_relation": "rewritten",
+      "first_changed_message": 1,
+      "changed_message_fields": [
+        "content"
+      ],
+      "exact_payload_repeat": false,
+      "generation_parameters_digest": "07511dcf0a40b7b3b2b3e2f0c85599eb91e3668611cdb777a6eed4868ff4cef3",
+      "affinity_present": true,
+      "affinity_key_digest": "f84f49aad2dfe60f2b4dc821a9c64411bbe162a37b678de167952c5fc4d0e1ee",
+      "affinity_digest": "ecdd810fc9669cabb6b344dbc51d98fd2d7e04d955585fa4c16a6b5c1b46ebdd",
+      "usage": {
+        "prompt_tokens": 1121,
+        "completion_tokens": 3,
+        "model": "doubao-seed-evolving",
+        "provider": "seed-live",
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 0,
+        "cache_observed": true
+      },
+      "adaptation": {
+        "vendor": "volcengine",
+        "vendor_label": "火山方舟（豆包）",
+        "actions": [
+          "依赖厂商自动缓存（命中 1×），无需标记",
+          "火山方舟（豆包） 已发送关闭思考请求（thinking.type=disabled）"
+        ],
+        "notes": [
+          "缓存命中已实证但折扣未公布，金额按原价保守估算",
+          "回放可保留 encrypted_content（三变体回放探针全 200）",
+          "该模型无目录价，金额按单位价折算，仅用于比较比例，不代表真实账单"
+        ],
+        "cache_control": false,
+        "breakpoints": 1,
+        "ttl": "managed",
+        "est_tokens": 998,
+        "est_cost": 0.001996,
+        "baseline_cost": 0.001996,
+        "saving": 0.0,
+        "saving_pct": 0.0,
+        "cliff_action": "pass",
+        "reasoning_budget": null,
+        "defer": false,
+        "cache_engages": true,
+        "route_capabilities": {},
+        "request_budget": {},
+        "adapter_id": "doubao.seed-evolving",
+        "model_kind_id": "doubao.seed-evolving",
+        "model_family_id": "doubao.seed",
+        "manufacturer_id": "volcengine",
+        "behavior_fingerprint": "9c7f8429976ba0d0",
+        "model_match_source": "model_id",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type",
+          "opaque_assistant_replay",
+          "native_tool_replay"
+        ],
+        "reasoning_shaped": true,
+        "fingerprint": "4cf71be80751a3df",
+        "execution": {
+          "cache_affinity": {
+            "status": "routing_hint",
+            "source": "host_scope",
+            "key_digest": "f84f49aad2dfe60f2b4dc821a9c64411bbe162a37b678de167952c5fc4d0e1ee",
+            "guaranteed_hit": false
+          }
+        },
+        "estimate_scope": "reuse_window",
+        "includes_output_cost": false,
+        "price_known": false,
+        "model": "doubao-seed-evolving"
+      }
+    },
+    {
+      "stage": "2-auto/agent-turn-2",
+      "model": "doubao-seed-evolving",
+      "url": "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+      "parameters": {
+        "thinking": {
+          "type": "disabled"
+        },
+        "temperature": 0.7,
+        "max_tokens": 4096
+      },
+      "message_count": 10,
+      "common_prefix_messages": 8,
+      "messages_digest": "68443e949c76551f7f381efac1cdcd6ba47c8e3df02f3eb83fc26ff6310b0e6d",
+      "tools_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "toolset_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "payload_digest": "c2a22d89b2f0d79dc147bd84886233be0d234a0656240f647b59afc901964382",
+      "message_chars": 3121,
+      "assistant_reasoning_fields": 0,
+      "tools": [
+        "calculator",
+        "read_file"
+      ],
+      "status": 200,
+      "upstream_request_id": "021794187335520502581f8d00332242c2f23708347b5a82eacf9",
+      "system_fingerprint": null,
+      "raw_usage": {
+        "completion_tokens": 39,
+        "prompt_tokens": 1261,
+        "total_tokens": 1300,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0
+        }
+      },
+      "finish_reason": "tool_calls",
+      "response_id": "021794187335520502581f8d00332242c2f23708347b5a82eacf9",
+      "response_model": "doubao-seed-evolving",
+      "reasoning_chars": 0,
+      "tool_calls": [
+        {
+          "function": {
+            "arguments": "{\"expression\": \"137 + 286\"}",
+            "name": "calculator"
+          },
+          "id": "call_n91op1wwtacg0y63zxxbvtli",
+          "type": "function"
+        }
+      ],
+      "text": "",
+      "seconds": 5.5,
+      "response_message_fields": [
+        "content",
+        "role",
+        "tool_calls"
+      ],
+      "encrypted_content_chars": 0,
+      "encrypted_replay_matches": 0,
+      "message_components": [
+        {
+          "role": "system",
+          "digest": "a92f8e6c3821afe8723b7f2fd181fa8b1d591f6914828899630956c851904cd6",
+          "fields": {
+            "role": {
+              "digest": "0dc8cd0a92280156c12ba5073f5049586727ba0bef2ff72099577bd332db18f5",
+              "characters": 8
+            },
+            "content": {
+              "digest": "5d9ea34a8f4e9f179c97f6ba36b4d95b4c53b8c4f069c74ea1c6804d4e15af86",
+              "characters": 1042
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "977bedb97a72eefb5c31a877857bb2ea456f3c0b2f14498503bc7372433748d9",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "9c4eb71368107cecb0896be868d3e840579cabdfdca0b194b835d23de236a126",
+              "characters": 281
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "fb1cee533c8a81cd51ded4fcdfeb459b019c2a564e7ce736d00fd590be2bb15d",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "b240afda52d2221d4053b4ac7a535f5c047616fe2b878dd745819ac759675d08",
+              "characters": 156
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "8ceb1e8ecd046e1039c5767e7b72f11cac22fb33dc11e4ac49abd87a9703c1cf",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "4b468a82b10815bb975cb512eb7c6bca4cd83f53d6607de28dedd7d4a2bb72ce",
+              "characters": 282
+            }
+          }
+        },
+        {
+          "role": "assistant",
+          "digest": "0d4c7e275010d893a9fd8b68932aed54c21954c132cc3bf5f767fd1ec030868b",
+          "fields": {
+            "content": {
+              "digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "characters": 4
+            },
+            "role": {
+              "digest": "43f3a43f5a7fef31effcd812e256c8f245da366db65c225fcde611385a4df753",
+              "characters": 11
+            },
+            "tool_calls": {
+              "digest": "de274b71faa7a6d7e332342c34837b7819713e31e2b92a276728ee8c5d36c478",
+              "characters": 140
+            }
+          }
+        },
+        {
+          "role": "tool",
+          "digest": "1279d29605e77ae817f8985d294b863effab0be48f768809b78a6bec88c28c18",
+          "fields": {
+            "role": {
+              "digest": "dd04afac1bebb050783a245ed0d88633759f352c85d4ab3bea3d416bf2019c75",
+              "characters": 6
+            },
+            "tool_call_id": {
+              "digest": "c9d8141c30c1b5ec7883ce8d48b4296d5ebeccdb70377e8a7416abeed2623443",
+              "characters": 31
+            },
+            "content": {
+              "digest": "756dbab6b2c0da7ed4da05193a4388866a3312846cc8e2153ebd36f0cfb1e452",
+              "characters": 23
+            }
+          }
+        },
+        {
+          "role": "assistant",
+          "digest": "4629ba7c19b49cbcd3b5d3cd990e556458331f6b125809b2bb751bf3b4e76ca5",
+          "fields": {
+            "content": {
+              "digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "characters": 4
+            },
+            "role": {
+              "digest": "43f3a43f5a7fef31effcd812e256c8f245da366db65c225fcde611385a4df753",
+              "characters": 11
+            },
+            "tool_calls": {
+              "digest": "00f47a0a5da68ba1df50202a6598c2ad38250a2a98199c1defd9e5bf5541d122",
+              "characters": 145
+            }
+          }
+        },
+        {
+          "role": "tool",
+          "digest": "5f26b7c15fcad387de13ab1e14b656e686c10b6934f99cb6541c6d4fd6363ed6",
+          "fields": {
+            "role": {
+              "digest": "dd04afac1bebb050783a245ed0d88633759f352c85d4ab3bea3d416bf2019c75",
+              "characters": 6
+            },
+            "tool_call_id": {
+              "digest": "a2894c8efaa8ad87507964778d30356a6d7ff40c68cefeaf4a69bdb477ad8088",
+              "characters": 31
+            },
+            "content": {
+              "digest": "7e1d20fdf7af6598e97ca76cd56b24991ac0b060311b4e65a3b3b7bf3eba894c",
+              "characters": 17
+            }
+          }
+        },
+        {
+          "role": "assistant",
+          "digest": "9ab8f406a35cec76b03ef8732bd2ec1379f8e17939cfafd26640c90cc647375d",
+          "fields": {
+            "content": {
+              "digest": "5ad2c8b168183b4b8464d0f3f85de77f2ff108edc169d1e2b124a470acd27048",
+              "characters": 5
+            },
+            "role": {
+              "digest": "43f3a43f5a7fef31effcd812e256c8f245da366db65c225fcde611385a4df753",
+              "characters": 11
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "44f48180ba444c5413699e743830cdc1bac588c73e06ba6d2919c06b86a84adb",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "686833157ad4f325804b08ac2ef310f3f4ed3bd1244c24535266c983b18b3097",
+              "characters": 585
+            }
+          }
+        }
+      ],
+      "common_serialized_message_prefix_chars": 2428,
+      "wire_body_sha256": "35cc0add89640ddf62ef5b5cf9ba06e3a8f267ec5b02718bf619a351eaa38da1",
+      "prefix_relation": "appended",
+      "first_changed_message": null,
+      "changed_message_fields": [],
+      "exact_payload_repeat": false,
+      "generation_parameters_digest": "07511dcf0a40b7b3b2b3e2f0c85599eb91e3668611cdb777a6eed4868ff4cef3",
+      "affinity_present": true,
+      "affinity_key_digest": "f84f49aad2dfe60f2b4dc821a9c64411bbe162a37b678de167952c5fc4d0e1ee",
+      "affinity_digest": "ecdd810fc9669cabb6b344dbc51d98fd2d7e04d955585fa4c16a6b5c1b46ebdd",
+      "usage": {
+        "prompt_tokens": 1261,
+        "completion_tokens": 39,
+        "model": "doubao-seed-evolving",
+        "provider": "seed-live",
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 0,
+        "cache_observed": true
+      },
+      "adaptation": {
+        "vendor": "volcengine",
+        "vendor_label": "火山方舟（豆包）",
+        "actions": [
+          "依赖厂商自动缓存（命中 1×），无需标记",
+          "火山方舟（豆包） 已发送关闭思考请求（thinking.type=disabled）"
+        ],
+        "notes": [
+          "缓存命中已实证但折扣未公布，金额按原价保守估算",
+          "回放可保留 encrypted_content（三变体回放探针全 200）",
+          "该模型无目录价，金额按单位价折算，仅用于比较比例，不代表真实账单"
+        ],
+        "cache_control": false,
+        "breakpoints": 1,
+        "ttl": "managed",
+        "est_tokens": 1230,
+        "est_cost": 0.00246,
+        "baseline_cost": 0.00246,
+        "saving": 0.0,
+        "saving_pct": 0.0,
+        "cliff_action": "pass",
+        "reasoning_budget": null,
+        "defer": false,
+        "cache_engages": true,
+        "route_capabilities": {},
+        "request_budget": {},
+        "adapter_id": "doubao.seed-evolving",
+        "model_kind_id": "doubao.seed-evolving",
+        "model_family_id": "doubao.seed",
+        "manufacturer_id": "volcengine",
+        "behavior_fingerprint": "9c7f8429976ba0d0",
+        "model_match_source": "model_id",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type",
+          "opaque_assistant_replay",
+          "native_tool_replay"
+        ],
+        "reasoning_shaped": true,
+        "fingerprint": "4cf71be80751a3df",
+        "execution": {
+          "cache_affinity": {
+            "status": "routing_hint",
+            "source": "host_scope",
+            "key_digest": "f84f49aad2dfe60f2b4dc821a9c64411bbe162a37b678de167952c5fc4d0e1ee",
+            "guaranteed_hit": false
+          }
+        },
+        "estimate_scope": "reuse_window",
+        "includes_output_cost": false,
+        "price_known": false,
+        "model": "doubao-seed-evolving"
+      }
+    },
+    {
+      "stage": "2-auto/agent-turn-2",
+      "model": "doubao-seed-evolving",
+      "url": "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+      "parameters": {
+        "thinking": {
+          "type": "disabled"
+        },
+        "temperature": 0.7,
+        "max_tokens": 4096
+      },
+      "message_count": 12,
+      "common_prefix_messages": 10,
+      "messages_digest": "0e409c00836f0774933bfadacbcbe489e9184ea8419c10cf60eb4fb802dec1e8",
+      "tools_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "toolset_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "payload_digest": "e426b453559140bdf6bddb2fc9fa26a31f25092e1fceba661c1ac1a94be6e632",
+      "message_chars": 3415,
+      "assistant_reasoning_fields": 0,
+      "tools": [
+        "calculator",
+        "read_file"
+      ],
+      "status": 200,
+      "upstream_request_id": "021794187339713f84c2818d8fd90f49442eb23100681a786789e",
+      "system_fingerprint": null,
+      "raw_usage": {
+        "completion_tokens": 3,
+        "prompt_tokens": 1325,
+        "total_tokens": 1328,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0
+        }
+      },
+      "finish_reason": "stop",
+      "response_id": "021794187339713f84c2818d8fd90f49442eb23100681a786789e",
+      "response_model": "doubao-seed-evolving",
+      "reasoning_chars": 0,
+      "tool_calls": null,
+      "text": "423",
+      "seconds": 3.172,
+      "response_message_fields": [
+        "content",
+        "role"
+      ],
+      "encrypted_content_chars": 0,
+      "encrypted_replay_matches": 0,
+      "message_components": [
+        {
+          "role": "system",
+          "digest": "a92f8e6c3821afe8723b7f2fd181fa8b1d591f6914828899630956c851904cd6",
+          "fields": {
+            "role": {
+              "digest": "0dc8cd0a92280156c12ba5073f5049586727ba0bef2ff72099577bd332db18f5",
+              "characters": 8
+            },
+            "content": {
+              "digest": "5d9ea34a8f4e9f179c97f6ba36b4d95b4c53b8c4f069c74ea1c6804d4e15af86",
+              "characters": 1042
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "977bedb97a72eefb5c31a877857bb2ea456f3c0b2f14498503bc7372433748d9",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "9c4eb71368107cecb0896be868d3e840579cabdfdca0b194b835d23de236a126",
+              "characters": 281
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "fb1cee533c8a81cd51ded4fcdfeb459b019c2a564e7ce736d00fd590be2bb15d",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "b240afda52d2221d4053b4ac7a535f5c047616fe2b878dd745819ac759675d08",
+              "characters": 156
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "8ceb1e8ecd046e1039c5767e7b72f11cac22fb33dc11e4ac49abd87a9703c1cf",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "4b468a82b10815bb975cb512eb7c6bca4cd83f53d6607de28dedd7d4a2bb72ce",
+              "characters": 282
+            }
+          }
+        },
+        {
+          "role": "assistant",
+          "digest": "0d4c7e275010d893a9fd8b68932aed54c21954c132cc3bf5f767fd1ec030868b",
+          "fields": {
+            "content": {
+              "digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "characters": 4
+            },
+            "role": {
+              "digest": "43f3a43f5a7fef31effcd812e256c8f245da366db65c225fcde611385a4df753",
+              "characters": 11
+            },
+            "tool_calls": {
+              "digest": "de274b71faa7a6d7e332342c34837b7819713e31e2b92a276728ee8c5d36c478",
+              "characters": 140
+            }
+          }
+        },
+        {
+          "role": "tool",
+          "digest": "1279d29605e77ae817f8985d294b863effab0be48f768809b78a6bec88c28c18",
+          "fields": {
+            "role": {
+              "digest": "dd04afac1bebb050783a245ed0d88633759f352c85d4ab3bea3d416bf2019c75",
+              "characters": 6
+            },
+            "tool_call_id": {
+              "digest": "c9d8141c30c1b5ec7883ce8d48b4296d5ebeccdb70377e8a7416abeed2623443",
+              "characters": 31
+            },
+            "content": {
+              "digest": "756dbab6b2c0da7ed4da05193a4388866a3312846cc8e2153ebd36f0cfb1e452",
+              "characters": 23
+            }
+          }
+        },
+        {
+          "role": "assistant",
+          "digest": "4629ba7c19b49cbcd3b5d3cd990e556458331f6b125809b2bb751bf3b4e76ca5",
+          "fields": {
+            "content": {
+              "digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "characters": 4
+            },
+            "role": {
+              "digest": "43f3a43f5a7fef31effcd812e256c8f245da366db65c225fcde611385a4df753",
+              "characters": 11
+            },
+            "tool_calls": {
+              "digest": "00f47a0a5da68ba1df50202a6598c2ad38250a2a98199c1defd9e5bf5541d122",
+              "characters": 145
+            }
+          }
+        },
+        {
+          "role": "tool",
+          "digest": "5f26b7c15fcad387de13ab1e14b656e686c10b6934f99cb6541c6d4fd6363ed6",
+          "fields": {
+            "role": {
+              "digest": "dd04afac1bebb050783a245ed0d88633759f352c85d4ab3bea3d416bf2019c75",
+              "characters": 6
+            },
+            "tool_call_id": {
+              "digest": "a2894c8efaa8ad87507964778d30356a6d7ff40c68cefeaf4a69bdb477ad8088",
+              "characters": 31
+            },
+            "content": {
+              "digest": "7e1d20fdf7af6598e97ca76cd56b24991ac0b060311b4e65a3b3b7bf3eba894c",
+              "characters": 17
+            }
+          }
+        },
+        {
+          "role": "assistant",
+          "digest": "9ab8f406a35cec76b03ef8732bd2ec1379f8e17939cfafd26640c90cc647375d",
+          "fields": {
+            "content": {
+              "digest": "5ad2c8b168183b4b8464d0f3f85de77f2ff108edc169d1e2b124a470acd27048",
+              "characters": 5
+            },
+            "role": {
+              "digest": "43f3a43f5a7fef31effcd812e256c8f245da366db65c225fcde611385a4df753",
+              "characters": 11
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "44f48180ba444c5413699e743830cdc1bac588c73e06ba6d2919c06b86a84adb",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "686833157ad4f325804b08ac2ef310f3f4ed3bd1244c24535266c983b18b3097",
+              "characters": 585
+            }
+          }
+        },
+        {
+          "role": "assistant",
+          "digest": "3c52dff822bb9fc4bd7dc2f410bf71afa10d6b3735ab322175f273bb32604e44",
+          "fields": {
+            "content": {
+              "digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "characters": 4
+            },
+            "role": {
+              "digest": "43f3a43f5a7fef31effcd812e256c8f245da366db65c225fcde611385a4df753",
+              "characters": 11
+            },
+            "tool_calls": {
+              "digest": "b0a4de574a09c02f34606f86cfd48e6cdaa495a266a8ae1d7d7eb64d921bb110",
+              "characters": 145
+            }
+          }
+        },
+        {
+          "role": "tool",
+          "digest": "42e508d1ba3edc04daad37a30100aec1b69b323c23718112c1e1df64e1d3dd99",
+          "fields": {
+            "role": {
+              "digest": "dd04afac1bebb050783a245ed0d88633759f352c85d4ab3bea3d416bf2019c75",
+              "characters": 6
+            },
+            "tool_call_id": {
+              "digest": "426bf7533d0daa329f5020923fb2050630814a5d046a9b0641878c456324a990",
+              "characters": 31
+            },
+            "content": {
+              "digest": "7e1d20fdf7af6598e97ca76cd56b24991ac0b060311b4e65a3b3b7bf3eba894c",
+              "characters": 17
+            }
+          }
+        }
+      ],
+      "common_serialized_message_prefix_chars": 3077,
+      "wire_body_sha256": "df90dd57eb888dbfc92ab2df4d8a33e342cd4e82e06a54554a3e5793e000c8b0",
+      "prefix_relation": "appended",
+      "first_changed_message": null,
+      "changed_message_fields": [],
+      "exact_payload_repeat": false,
+      "generation_parameters_digest": "07511dcf0a40b7b3b2b3e2f0c85599eb91e3668611cdb777a6eed4868ff4cef3",
+      "affinity_present": true,
+      "affinity_key_digest": "f84f49aad2dfe60f2b4dc821a9c64411bbe162a37b678de167952c5fc4d0e1ee",
+      "affinity_digest": "ecdd810fc9669cabb6b344dbc51d98fd2d7e04d955585fa4c16a6b5c1b46ebdd",
+      "usage": {
+        "prompt_tokens": 1325,
+        "completion_tokens": 3,
+        "model": "doubao-seed-evolving",
+        "provider": "seed-live",
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 0,
+        "cache_observed": true
+      },
+      "adaptation": {
+        "vendor": "volcengine",
+        "vendor_label": "火山方舟（豆包）",
+        "actions": [
+          "依赖厂商自动缓存（命中 1×），无需标记",
+          "火山方舟（豆包） 已发送关闭思考请求（thinking.type=disabled）"
+        ],
+        "notes": [
+          "缓存命中已实证但折扣未公布，金额按原价保守估算",
+          "回放可保留 encrypted_content（三变体回放探针全 200）",
+          "该模型无目录价，金额按单位价折算，仅用于比较比例，不代表真实账单"
+        ],
+        "cache_control": false,
+        "breakpoints": 1,
+        "ttl": "managed",
+        "est_tokens": 1237,
+        "est_cost": 0.002474,
+        "baseline_cost": 0.002474,
+        "saving": 0.0,
+        "saving_pct": 0.0,
+        "cliff_action": "pass",
+        "reasoning_budget": null,
+        "defer": false,
+        "cache_engages": true,
+        "route_capabilities": {},
+        "request_budget": {},
+        "adapter_id": "doubao.seed-evolving",
+        "model_kind_id": "doubao.seed-evolving",
+        "model_family_id": "doubao.seed",
+        "manufacturer_id": "volcengine",
+        "behavior_fingerprint": "9c7f8429976ba0d0",
+        "model_match_source": "model_id",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type",
+          "opaque_assistant_replay",
+          "native_tool_replay"
+        ],
+        "reasoning_shaped": true,
+        "fingerprint": "4cf71be80751a3df",
+        "execution": {
+          "cache_affinity": {
+            "status": "routing_hint",
+            "source": "host_scope",
+            "key_digest": "f84f49aad2dfe60f2b4dc821a9c64411bbe162a37b678de167952c5fc4d0e1ee",
+            "guaranteed_hit": false
+          }
+        },
+        "estimate_scope": "reuse_window",
+        "includes_output_cost": false,
+        "price_known": false,
+        "model": "doubao-seed-evolving"
+      }
+    }
+  ],
+  "totals": {
+    "attempts": 7,
+    "successful_requests": 5,
+    "prompt_tokens": 7385,
+    "completion_tokens": 118,
+    "cached_tokens": 0,
+    "reasoning_tokens": 0,
+    "seconds": 71.5,
+    "coverage": {
+      "all_observed": {
+        "requests": 5,
+        "input_tokens": 7385,
+        "cached_tokens": 0,
+        "hit_rate": 0.0
+      },
+      "rebuild": {
+        "requests": 0,
+        "input_tokens": 0,
+        "cached_tokens": 0,
+        "hit_rate": null
+      },
+      "non_rebuild": {
+        "requests": 5,
+        "input_tokens": 7385,
+        "cached_tokens": 0,
+        "hit_rate": 0.0
+      },
+      "eligible_prefix": {
+        "requests": 0,
+        "input_tokens": 0,
+        "cached_tokens": 0,
+        "excluded_tail_tokens": 0,
+        "hit_rate": null
+      },
+      "unknown_requests": 2,
+      "invalid_requests": 0,
+      "duplicate_observations": 0,
+      "denominator": "observed input tokens; eligible_prefix excludes declared structural tail"
+    }
+  },
+  "ok": false
+}

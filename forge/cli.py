@@ -77,8 +77,10 @@ def _primary_profile(cfg):
     上下文阶梯的判断才会和运行时选到同一家（否则会拿 A 家的阶梯线去限制 B 家）。
     """
     order: list[tuple[str, str]] = []
+    selected_router = None
     try:
-        order = list(SmartRouter.from_config(cfg)._order(None))
+        selected_router = SmartRouter.from_config(cfg)
+        order = list(selected_router._order(None))
     except Exception:
         order = []
     if not order:
@@ -89,14 +91,20 @@ def _primary_profile(cfg):
             order = [(primary, "")]
 
     row_id, model = order[0] if order else ("", "")
+    if selected_router is not None and row_id in selected_router.providers:
+        return selected_router.providers[row_id].profile_for_model(model)
     row = cfg.row(row_id) if row_id else None
     conf = dict(row.config) if row is not None else {}
+    actual_model = str(model or conf.get("model", conf.get("defaultModel", "")))
+    default_model = str(conf.get("model", conf.get("defaultModel", "")))
     return profile_for(
         base_url=str(conf.get("baseURL", conf.get("base_url", ""))),
-        model=str(model or conf.get("model", conf.get("defaultModel", ""))),
+        model=actual_model,
         service=str(conf.get("service", "")),
         vendor=str(conf.get("vendor", "")),
         wire=str(conf.get("wire", "")),
+        model_kind_id=(conf.get("modelKinds") or {}).get(actual_model, "") or
+                      (str(conf.get("modelKindId") or "") if actual_model == default_model else ""),
     )
 
 
@@ -264,6 +272,13 @@ def cmd_review(args) -> int:
 
 
 def cmd_run(args) -> int:
+    from .acceptance import AcceptanceContract
+    contract_path = getattr(args, 'acceptance', None)
+    acceptance = None
+    if contract_path:
+        from .secrets import read_public_bytes
+        acceptance = AcceptanceContract.from_raw(json.loads(
+            read_public_bytes(Path(contract_path), limit=128 * 1024).decode('utf-8-sig')))
     # 指令一（2026-09-15）：无头 run 链路默认即 balanced —— 工作区沙箱内
     # write_file/edit_file/apply_patch 免询问直写，越界（如系统目录）仍拦。
     # 显式传了 --profile 的以显式为准；保守/激进各自生效。
@@ -329,6 +344,22 @@ def cmd_run(args) -> int:
     base_chars = int(cfg.get("loop", "contextChars", 24000) or 24000)
     resolved_mode = plan.mode if plan.mode != "ask" else plan.default_mode
     ctx_budget = plan.adjust_budget(base_chars, profile, mode=resolved_mode)
+    # 2026-11-04 第三轮：按厂家抬压缩地板（大窗口+实证高命中厂商不在 24k 就压缩）。
+    if profile.context_floor_chars and ctx_budget > base_chars and resolved_mode != "lossless":
+        print(f"[context] {profile.label} 上下文地板 {profile.context_floor_chars:,} 字符"
+              f"（大窗口厂商，压缩阈值从 {base_chars:,} 抬高，避免前缀打回全价）", file=sys.stderr)
+    # 2026-11-04 第三轮：按厂家循环步数提示自动抬默认预算（配置显式声明优先）。
+    _loop_row = cfg.row("loop") if hasattr(cfg, "row") else None
+    _explicit_steps = bool(
+        _loop_row and "maxSteps" in (getattr(_loop_row, "config", None) or {})
+        # base.json 里写死的 maxSteps=12 是框架默认值而非用户意图；只有
+        # 用户层（forge.patch.json）重写过 loop 行并声明 maxSteps 才算显式。
+        and str(getattr(_loop_row, "source", "")) == USER_LAYER_NAME)
+    loop_max_steps = int(cfg.get("loop", "maxSteps", 12))
+    if not _explicit_steps and int(getattr(profile, "steps_hint", 0) or 0) > loop_max_steps:
+        loop_max_steps = int(profile.steps_hint)
+        print(f"[loop] {profile.label} 步数提示 {loop_max_steps} 生效"
+              f"（画像 steps_hint；配置未显式声明 maxSteps）", file=sys.stderr)
     if resolved_mode == "lossless" and profile.long_context_threshold:
         print(f"[context] 无损模式：{profile.label} 在 "
               f"{profile.long_context_threshold:,} token 以上单价 ×{profile.long_context_multiplier:g}，"
@@ -363,7 +394,7 @@ def cmd_run(args) -> int:
         # "请只用这几个" 强一个数量级）。默认无该行 -> None -> 行为零变化。
         expose=cfg.get("tools", "expose", None),
         limits=LoopLimits(
-            max_steps=int(cfg.get("loop", "maxSteps", 12)),
+            max_steps=loop_max_steps,
             max_depth=int(cfg.get("loop", "maxDepth", 2)),
             spawn_budget=int(cfg.get("loop", "spawnBudget", 8)),
             context_chars=ctx_budget,
@@ -371,7 +402,7 @@ def cmd_run(args) -> int:
         observer=progress,
     )
     with agent.session:
-        report = agent.run(args.task)
+        report = agent.run(args.task, acceptance=acceptance) if acceptance else agent.run(args.task)
 
     failed = report.as_result().outcome != 'succeeded'
     progress.finish()
@@ -833,6 +864,9 @@ def cmd_vendors(args) -> int:
                 flags.append(f"阶梯 {prof.long_context_threshold:,}")
             print(f"  {provider.name:<12} {prof.label:<16} 命中 {prof.cache_read_multiplier:g}×  "
                   f"{' · '.join(flags) or '—'}")
+            print(f"    种类 {prof.model_kind_id or prof.id + '.default'} / "
+                  f"家族 {prof.model_family_id or '未核实'} / "
+                  f"指纹 {prof.behavior_fingerprint}（{prof.model_match_source}）")
         return 0
 
     def _pad(text: str, width: int) -> str:
@@ -1099,6 +1133,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("task")
     run.add_argument("--json", action="store_true")
     run.add_argument("--verbose", action="store_true")
+    run.add_argument('--acceptance', metavar='JSON_FILE',
+                     help='host-defined file/command acceptance checks; failed checks prevent success')
     run.add_argument("--planning", choices=["none", "low", "medium", "high"],
                      default=argparse.SUPPRESS,
                      help="pre-execution plan depth, independent of thinking; none adds no request")

@@ -1,0 +1,2095 @@
+{
+ "doubao": {
+  "_endpoint": {
+   "base": "https://ark.cn-beijing.volces.com/api/coding/v3",
+   "note": ""
+  },
+  "models_list": {
+   "ok": true,
+   "status": 200,
+   "count": 55,
+   "ids": [
+    "kimi-k3-1-pro-261024",
+    "deepseek-v4-1-flash-economy-261017",
+    "deepseek-v4-1-flash-261017",
+    "doubao-seedream-5-0-flash-260915",
+    "doubao-seed-2-1-pro-260915",
+    "deepseek-v4-1-flash-260910",
+    "glm-5-3-flash-260828",
+    "doubao-seed-2-1-lite-260915",
+    "deepseek-v4-pro-ga-260813",
+    "deepseek-v4-flash-ga-260731",
+    "doubao-seedance-2-5-260628",
+    "doubao-seedream-5-0-pro-260628",
+    "glm-5-2-260617",
+    "doubao-seed-evolving",
+    "doubao-seed-character-260628",
+    "doubao-seed-2-1-turbo-260628",
+    "doubao-seed-2-1-pro-260628",
+    "doubao-seedance-2-0-mini-260615",
+    "deepseek-v4-pro-260425",
+    "doubao-seed-2-0-lite-260428",
+    "doubao-seed-2-0-mini-260428",
+    "doubao-seedream-4-0-20260415",
+    "doubao-seed3d-2-0-260328",
+    "hitem3d-2-0-251223",
+    "hyper3d-gen2-260112",
+    "doubao-seed-2-0-code-preview-260215",
+    "doubao-seedance-2-0-fast-260128",
+    "doubao-seed-2-0-pro-260215",
+    "doubao-seed-2-0-mini-260215",
+    "doubao-seedream-5-0-260128",
+    "doubao-seedance-2-0-260128",
+    "doubao-seed-2-0-lite-260215",
+    "doubao-seed-character-251128",
+    "doubao-embedding-vision-251215",
+    "doubao-seedream-4-5-251128",
+    "qwen3-14b-20250429",
+    "qwen3-0-6b-20250429",
+    "doubao-seedance-1-0-pro-fast-251015",
+    "doubao-smart-router-250928",
+    "doubao-seed-translation-250915",
+    "doubao-seedream-4-0-250828",
+    "qwen2-5-72b-20240919",
+    "qwen3-32b-20250429",
+    "qwen3-8b-20250429",
+    "glm-4-5-air-20250728",
+    "doubao-embedding-vision-250615",
+    "doubao-seedance-1-0-pro-250528",
+    "doubao-embedding-large-text-250515",
+    "doubao-seedance-1-0-lite-t2v-250428",
+    "doubao-seedance-1-0-lite-i2v-250428",
+    "doubao-embedding-vision-250328",
+    "doubao-embedding-vision-241215",
+    "doubao-embedding-large-text-240915",
+    "doubao-embedding-text-240715",
+    "doubao-embedding-text-240515"
+   ]
+  },
+  "discover": {
+   "tried": [
+    "doubao-seed-2.1-turbo",
+    "doubao-2.1-turbo",
+    "doubao-seed-code-2.1-turbo",
+    "doubao-seed-2.1-turbo-preview",
+    "doubao-2-1-turbo",
+    "doubao-seed-2.1-pro"
+   ],
+   "found": [
+    "doubao-seed-2.1-turbo"
+   ]
+  },
+  "basic": {
+   "ok": true,
+   "sec": 3.8,
+   "status": 200,
+   "top_keys": [
+    "choices",
+    "created",
+    "id",
+    "model",
+    "object",
+    "service_tier",
+    "usage"
+   ],
+   "model_echo": "doubao-seed-evolving",
+   "service_tier": "default",
+   "finish_reason": "stop",
+   "message": {
+    "keys": [
+     "content",
+     "encrypted_content",
+     "reasoning_content",
+     "role"
+    ],
+    "content_head": "2",
+    "reasoning_content_head": "用户现在问1+1等于几，将由我回复2。\n"
+   },
+   "usage": {
+    "completion_tokens": 27,
+    "prompt_tokens": 57,
+    "total_tokens": 84,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 26
+    }
+   },
+   "resp_headers": {
+    "x-request-id": "021793755122354650a0d96b6fbb24f32d06e91e8669805b27b49"
+   }
+  },
+  "temperature_0.7": {
+   "ok": true,
+   "sec": 1.8,
+   "status": 200,
+   "top_keys": [
+    "choices",
+    "created",
+    "id",
+    "model",
+    "object",
+    "service_tier",
+    "usage"
+   ],
+   "model_echo": "doubao-seed-evolving",
+   "service_tier": "default",
+   "finish_reason": "stop",
+   "message": {
+    "keys": [
+     "content",
+     "encrypted_content",
+     "reasoning_content",
+     "role"
+    ],
+    "content_head": "2",
+    "reasoning_content_head": "用户现在问1+1等于几，答2。\n"
+   },
+   "usage": {
+    "completion_tokens": 29,
+    "prompt_tokens": 57,
+    "total_tokens": 86,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 28
+    }
+   },
+   "resp_headers": {
+    "x-request-id": "0217937551260992ea45376b696365ea6d0529cc2566cf767c4cf"
+   }
+  },
+  "thinking_0": {
+   "param": "{\"thinking\": {\"type\": \"enabled\"}}",
+   "result": {
+    "ok": true,
+    "sec": 13.5,
+    "status": 200,
+    "top_keys": [
+     "choices",
+     "created",
+     "id",
+     "model",
+     "object",
+     "service_tier",
+     "usage"
+    ],
+    "model_echo": "doubao-seed-evolving",
+    "service_tier": "default",
+    "finish_reason": "stop",
+    "message": {
+     "keys": [
+      "content",
+      "encrypted_content",
+      "reasoning_content",
+      "role"
+     ],
+     "content_head": "我们按照小数大小比较的规则判断：\n1. 先比整数部分：两个数整数部分都是9，大小相等；\n2. 再从十分位（小数点后第一位）开始顺次比较小数部分：9.11的十分位是1，对应0.1；9.9的十分位是9，对应0.9，显然0.9＞0.1，无需再比较后续数位。\n\n结论：$\\boldsymbol{9.9 > 9.11}$",
+     "reasoning_content_head": "\n用户现在问9.11和9.9哪个大，经我确认，9.9更大，你问的是纯小数比较，不存在特殊梗的干扰。\n\n我已梳理好清晰的解答逻辑，会先说明小数比较规则，再结合数位拆解两个数的数值差异，直观得出9.9更大的结论，避免误导。\n"
+    },
+    "usage": {
+     "completion_tokens": 601,
+     "prompt_tokens": 68,
+     "total_tokens": 669,
+     "prompt_tokens_details": {
+      "cached_tokens": 0
+     },
+     "completion_tokens_details": {
+      "reasoning_tokens": 493
+     }
+    },
+    "resp_headers": {
+     "x-request-id": "021793755127899b6ef94156a979b704a6b85dbeb7998fa10ddde"
+    }
+   }
+  },
+  "thinking_1": {
+   "param": "{\"thinking\": {\"type\": \"disabled\"}}",
+   "result": {
+    "ok": true,
+    "sec": 2.6,
+    "status": 200,
+    "top_keys": [
+     "choices",
+     "created",
+     "id",
+     "model",
+     "object",
+     "service_tier",
+     "usage"
+    ],
+    "model_echo": "doubao-seed-evolving",
+    "service_tier": "default",
+    "finish_reason": "stop",
+    "message": {
+     "keys": [
+      "content",
+      "role"
+     ],
+     "content_head": "先比较整数部分，二者都是9，相等；再比较十分位：\n- 9.11的十分位是1\n- 9.9的十分位是9\n\n因为9 > 1，所以 **9.9 更大**。"
+    },
+    "usage": {
+     "completion_tokens": 55,
+     "prompt_tokens": 67,
+     "total_tokens": 122,
+     "prompt_tokens_details": {
+      "cached_tokens": 0
+     },
+     "completion_tokens_details": {
+      "reasoning_tokens": 0
+     }
+    },
+    "resp_headers": {
+     "x-request-id": "021793755141336e5dadbf20cfd2299792795a4ebfc3b4d26ebd9"
+    }
+   }
+  },
+  "tool_single": {
+   "ok": true,
+   "sec": 2.5,
+   "status": 200,
+   "top_keys": [
+    "choices",
+    "created",
+    "id",
+    "model",
+    "object",
+    "service_tier",
+    "usage"
+   ],
+   "model_echo": "doubao-seed-evolving",
+   "service_tier": "default",
+   "finish_reason": "tool_calls",
+   "message": {
+    "keys": [
+     "content",
+     "encrypted_content",
+     "reasoning_content",
+     "role",
+     "tool_calls"
+    ],
+    "content_head": "",
+    "reasoning_content_head": "用户现在需要查北京的天气，将调用查询工具查询北京天气。\n",
+    "tool_calls": [
+     {
+      "id": "call_55jquw47m2qtu6mrg84wevwa",
+      "type": "function",
+      "name": "get_weather",
+      "arguments": "{\"city\": \"北京\"}"
+     }
+    ]
+   },
+   "usage": {
+    "completion_tokens": 66,
+    "prompt_tokens": 487,
+    "total_tokens": 553,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 33
+    }
+   },
+   "resp_headers": {
+    "x-request-id": "0217937551440045ffee7bd9f8ed62699b3e2c08b3f2375a38253"
+   }
+  },
+  "tool_parallel": {
+   "ok": true,
+   "sec": 3.5,
+   "status": 200,
+   "top_keys": [
+    "choices",
+    "created",
+    "id",
+    "model",
+    "object",
+    "service_tier",
+    "usage"
+   ],
+   "model_echo": "doubao-seed-evolving",
+   "service_tier": "default",
+   "finish_reason": "tool_calls",
+   "message": {
+    "keys": [
+     "content",
+     "encrypted_content",
+     "reasoning_content",
+     "role",
+     "tool_calls"
+    ],
+    "content_head": "",
+    "reasoning_content_head": "用户需要同时查询北京和上海的天气，我将调用工具双城市并行查询。\n",
+    "tool_calls": [
+     {
+      "id": "call_g1czu7yxosl4mjng36siai9i",
+      "type": "function",
+      "name": "get_weather",
+      "arguments": "{\"city\": \"北京\"}"
+     },
+     {
+      "id": "call_gttbwngcyrvfw59c5v0qaqxi",
+      "type": "function",
+      "name": "get_weather",
+      "arguments": "{\"city\": \"上海\"}"
+     }
+    ]
+   },
+   "usage": {
+    "completion_tokens": 90,
+    "prompt_tokens": 490,
+    "total_tokens": 580,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 35
+    }
+   },
+   "resp_headers": {
+    "x-request-id": "021793755146514773dd14f0c42e8f8f111dbca897f71d3a5d3a1"
+   }
+  },
+  "cache_A1_write": {
+   "ok": true,
+   "sec": 3.5,
+   "status": 200,
+   "top_keys": [
+    "choices",
+    "created",
+    "id",
+    "model",
+    "object",
+    "service_tier",
+    "usage"
+   ],
+   "model_echo": "doubao-seed-evolving",
+   "service_tier": "default",
+   "finish_reason": "stop",
+   "message": {
+    "keys": [
+     "content",
+     "encrypted_content",
+     "reasoning_content",
+     "role"
+    ],
+    "content_head": "Paxos-On-Sea",
+    "reasoning_content_head": "We need answer only name per user. We need Chinese, plain text, no markdown, just names.\n"
+   },
+   "usage": {
+    "completion_tokens": 53,
+    "prompt_tokens": 2378,
+    "total_tokens": 2431,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 47
+    }
+   },
+   "resp_headers": {
+    "x-request-id": "0217937551503669a5685e33c81ebc7a325510351e9b1581bc5a5"
+   }
+  },
+  "cache_A2_repeat": {
+   "ok": true,
+   "sec": 6.2,
+   "status": 200,
+   "top_keys": [
+    "choices",
+    "created",
+    "id",
+    "model",
+    "object",
+    "service_tier",
+    "usage"
+   ],
+   "model_echo": "doubao-seed-evolving",
+   "service_tier": "default",
+   "finish_reason": "stop",
+   "message": {
+    "keys": [
+     "content",
+     "encrypted_content",
+     "reasoning_content",
+     "role"
+    ],
+    "content_head": "Paxos-On-Sea",
+    "reasoning_content_head": "We need answer only name per user,To comply with the user's requirement of only providing names, I will skip the developer's usual step-by-step introduction and"
+   },
+   "usage": {
+    "completion_tokens": 104,
+    "prompt_tokens": 2378,
+    "total_tokens": 2482,
+    "prompt_tokens_details": {
+     "cached_tokens": 2378
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 98
+    }
+   },
+   "resp_headers": {
+    "x-request-id": "021793755153574e998c48e47a8fdf8c126b44b0e0bc2a1f547b5"
+   }
+  },
+  "cache_B_prefixread": {
+   "ok": true,
+   "sec": 4.6,
+   "status": 200,
+   "top_keys": [
+    "choices",
+    "created",
+    "id",
+    "model",
+    "object",
+    "service_tier",
+    "usage"
+   ],
+   "model_echo": "doubao-seed-evolving",
+   "service_tier": "default",
+   "finish_reason": "stop",
+   "message": {
+    "keys": [
+     "content",
+     "encrypted_content",
+     "reasoning_content",
+     "role"
+    ],
+    "content_head": "ReefDB",
+    "reasoning_content_head": "We need answer Chinese,After verification, the candidate database is ReefDB. I will output only the name without any explanation as requested.\n"
+   },
+   "usage": {
+    "completion_tokens": 96,
+    "prompt_tokens": 2379,
+    "total_tokens": 2475,
+    "prompt_tokens_details": {
+     "cached_tokens": 1848
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 93
+    }
+   },
+   "resp_headers": {
+    "x-request-id": "021793755159804340ab7310049ce769f86e315fedc912edfe275"
+   }
+  },
+  "basic_doubao-seed-2.1-turbo": {
+   "ok": true,
+   "sec": 2.0,
+   "status": 200,
+   "top_keys": [
+    "choices",
+    "created",
+    "id",
+    "model",
+    "object",
+    "service_tier",
+    "usage"
+   ],
+   "model_echo": "doubao-seed-2-1-pro",
+   "service_tier": "default",
+   "finish_reason": "stop",
+   "message": {
+    "keys": [
+     "content",
+     "encrypted_content",
+     "reasoning_content",
+     "role"
+    ],
+    "content_head": "2",
+    "reasoning_content_head": "用户现在问1+1等于几，答2。\n"
+   },
+   "usage": {
+    "completion_tokens": 23,
+    "prompt_tokens": 57,
+    "total_tokens": 80,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 22
+    }
+   },
+   "resp_headers": {
+    "x-request-id": "021793755164332cd483641bd2945773645203cda9eaa13fc2e08"
+   }
+  }
+ },
+ "mimo": {
+  "_endpoint": {
+   "base": "https://token-plan-cn.xiaomimimo.com/v1",
+   "note": ""
+  },
+  "models_list": {
+   "ok": false,
+   "status": 401,
+   "error": "{\n    \"error\": {\n        \"message\": \"Invalid API Key\",\n        \"param\": \"Please provide valid API Key\",\n        \"code\": \"401\",\n        \"type\": \"invalid_key\"\n    }\n}\n"
+  },
+  "basic": {
+   "ok": false,
+   "sec": 0.4,
+   "status": 401,
+   "error": "{\n    \"error\": {\n        \"message\": \"Invalid API Key\",\n        \"param\": \"Please provide valid API Key\",\n        \"code\": \"401\",\n        \"type\": \"invalid_key\"\n    }\n}\n"
+  },
+  "temperature_0.7": {
+   "ok": false,
+   "sec": 0.4,
+   "status": 401,
+   "error": "{\n    \"error\": {\n        \"message\": \"Invalid API Key\",\n        \"param\": \"Please provide valid API Key\",\n        \"code\": \"401\",\n        \"type\": \"invalid_key\"\n    }\n}\n"
+  },
+  "thinking_0": {
+   "param": "{\"thinking\": {\"type\": \"enabled\"}}",
+   "result": {
+    "ok": false,
+    "sec": 0.4,
+    "status": 401,
+    "error": "{\n    \"error\": {\n        \"message\": \"Invalid API Key\",\n        \"param\": \"Please provide valid API Key\",\n        \"code\": \"401\",\n        \"type\": \"invalid_key\"\n    }\n}\n"
+   }
+  },
+  "thinking_1": {
+   "param": "{\"enable_thinking\": true}",
+   "result": {
+    "ok": false,
+    "sec": 0.4,
+    "status": 401,
+    "error": "{\n    \"error\": {\n        \"message\": \"Invalid API Key\",\n        \"param\": \"Please provide valid API Key\",\n        \"code\": \"401\",\n        \"type\": \"invalid_key\"\n    }\n}\n"
+   }
+  },
+  "tool_single": {
+   "ok": false,
+   "sec": 0.4,
+   "status": 401,
+   "error": "{\n    \"error\": {\n        \"message\": \"Invalid API Key\",\n        \"param\": \"Please provide valid API Key\",\n        \"code\": \"401\",\n        \"type\": \"invalid_key\"\n    }\n}\n"
+  },
+  "tool_parallel": {
+   "ok": false,
+   "sec": 0.4,
+   "status": 401,
+   "error": "{\n    \"error\": {\n        \"message\": \"Invalid API Key\",\n        \"param\": \"Please provide valid API Key\",\n        \"code\": \"401\",\n        \"type\": \"invalid_key\"\n    }\n}\n"
+  },
+  "cache_A1_write": {
+   "ok": false,
+   "sec": 0.4,
+   "status": 401,
+   "error": "{\n    \"error\": {\n        \"message\": \"Invalid API Key\",\n        \"param\": \"Please provide valid API Key\",\n        \"code\": \"401\",\n        \"type\": \"invalid_key\"\n    }\n}\n"
+  },
+  "cache_A2_repeat": {
+   "ok": false,
+   "sec": 0.4,
+   "status": 401,
+   "error": "{\n    \"error\": {\n        \"message\": \"Invalid API Key\",\n        \"param\": \"Please provide valid API Key\",\n        \"code\": \"401\",\n        \"type\": \"invalid_key\"\n    }\n}\n"
+  },
+  "cache_B_prefixread": {
+   "ok": false,
+   "sec": 0.4,
+   "status": 401,
+   "error": "{\n    \"error\": {\n        \"message\": \"Invalid API Key\",\n        \"param\": \"Please provide valid API Key\",\n        \"code\": \"401\",\n        \"type\": \"invalid_key\"\n    }\n}\n"
+  },
+  "basic_mimo-v2.6-pro": {
+   "ok": false,
+   "sec": 0.4,
+   "status": 401,
+   "error": "{\n    \"error\": {\n        \"message\": \"Invalid API Key\",\n        \"param\": \"Please provide valid API Key\",\n        \"code\": \"401\",\n        \"type\": \"invalid_key\"\n    }\n}\n"
+  }
+ },
+ "qwen": {
+  "_endpoint": {
+   "base": "https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1",
+   "note": ""
+  },
+  "models_list": {
+   "ok": true,
+   "status": 200,
+   "count": 21,
+   "ids": [
+    "qwen3.7-max",
+    "qwen3.7-plus",
+    "qwen3.6-flash",
+    "glm-5.2",
+    "deepseek-v4-pro",
+    "wan2.7-image",
+    "wan2.7-image-pro",
+    "qwen-audio-3.0-tts-plus",
+    "deepseek-v4-flash-0731",
+    "qwen3.8-max",
+    "qwen-audio-3.0-realtime-plus",
+    "deepseek-v4-pro-0813",
+    "qwen3.8-flash",
+    "deepseek-v4.1-flash",
+    "glm-5.3",
+    "auto",
+    "decision-model-preview",
+    "wan3.0-video",
+    "deepseek-v4.1-flash-1017",
+    "qwen-image-3.0-pro",
+    "qwen-audio-3.0-asr-flash"
+   ]
+  },
+  "basic": {
+   "ok": false,
+   "sec": 2.3,
+   "status": 403,
+   "error": "{\"error\":{\"message\":\"Access to model denied. Please make sure you are eligible for using the model.\",\"id\":\"54958464-6829-4f77-bded-05559b6faaac\",\"type\":\"AccessDenied.Unpurchased\",\"code\":\"AccessDenied.Unpurchased\"}}",
+   "resp_headers": {
+    "x-request-id": "54958464-6829-4f77-bded-05559b6faaac"
+   }
+  },
+  "temperature_0.7": {
+   "ok": false,
+   "sec": 2.1,
+   "status": 403,
+   "error": "{\"error\":{\"message\":\"Access to model denied. Please make sure you are eligible for using the model.\",\"id\":\"2c6f98db-871c-4419-98e7-fe53d04cfae2\",\"type\":\"AccessDenied.Unpurchased\",\"code\":\"AccessDenied.Unpurchased\"}}",
+   "resp_headers": {
+    "x-request-id": "2c6f98db-871c-4419-98e7-fe53d04cfae2"
+   }
+  },
+  "thinking_0": {
+   "param": "{\"enable_thinking\": true}",
+   "result": {
+    "ok": false,
+    "sec": 2.1,
+    "status": 403,
+    "error": "{\"error\":{\"message\":\"Access to model denied. Please make sure you are eligible for using the model.\",\"id\":\"ebdc386d-3c4f-4b50-8a42-ea4bd97cdaf2\",\"type\":\"AccessDenied.Unpurchased\",\"code\":\"AccessDenied.Unpurchased\"}}",
+    "resp_headers": {
+     "x-request-id": "ebdc386d-3c4f-4b50-8a42-ea4bd97cdaf2"
+    }
+   }
+  },
+  "thinking_1": {
+   "param": "{\"enable_thinking\": false}",
+   "result": {
+    "ok": false,
+    "sec": 2.2,
+    "status": 403,
+    "error": "{\"error\":{\"message\":\"Access to model denied. Please make sure you are eligible for using the model.\",\"id\":\"3f3da1da-7cbd-4b94-9560-4297ecec019b\",\"type\":\"AccessDenied.Unpurchased\",\"code\":\"AccessDenied.Unpurchased\"}}",
+    "resp_headers": {
+     "x-request-id": "3f3da1da-7cbd-4b94-9560-4297ecec019b"
+    }
+   }
+  },
+  "thinking_2": {
+   "param": "{\"thinking_budget\": 512}",
+   "result": {
+    "ok": false,
+    "sec": 2.4,
+    "status": 403,
+    "error": "{\"error\":{\"message\":\"Access to model denied. Please make sure you are eligible for using the model.\",\"id\":\"e2a7341f-e29c-49a1-8b01-80989ac9961d\",\"type\":\"AccessDenied.Unpurchased\",\"code\":\"AccessDenied.Unpurchased\"}}",
+    "resp_headers": {
+     "x-request-id": "e2a7341f-e29c-49a1-8b01-80989ac9961d"
+    }
+   }
+  },
+  "tool_single": {
+   "ok": false,
+   "sec": 2.1,
+   "status": 403,
+   "error": "{\"error\":{\"message\":\"Access to model denied. Please make sure you are eligible for using the model.\",\"id\":\"ddf08707-e9f0-4f66-84b9-e5124bd06943\",\"type\":\"AccessDenied.Unpurchased\",\"code\":\"AccessDenied.Unpurchased\"}}",
+   "resp_headers": {
+    "x-request-id": "ddf08707-e9f0-4f66-84b9-e5124bd06943"
+   }
+  },
+  "tool_parallel": {
+   "ok": false,
+   "sec": 2.2,
+   "status": 403,
+   "error": "{\"error\":{\"message\":\"Access to model denied. Please make sure you are eligible for using the model.\",\"id\":\"79aef1f5-ddf9-4cd1-bac5-c0d732b1cb3f\",\"type\":\"AccessDenied.Unpurchased\",\"code\":\"AccessDenied.Unpurchased\"}}",
+   "resp_headers": {
+    "x-request-id": "79aef1f5-ddf9-4cd1-bac5-c0d732b1cb3f"
+   }
+  },
+  "cache_A1_write": {
+   "ok": false,
+   "sec": 2.1,
+   "status": 403,
+   "error": "{\"error\":{\"message\":\"Access to model denied. Please make sure you are eligible for using the model.\",\"id\":\"060953ae-bb42-42f5-9001-4f71e834fc97\",\"type\":\"AccessDenied.Unpurchased\",\"code\":\"AccessDenied.Unpurchased\"}}",
+   "resp_headers": {
+    "x-request-id": "060953ae-bb42-42f5-9001-4f71e834fc97"
+   }
+  },
+  "cache_A2_repeat": {
+   "ok": false,
+   "sec": 2.0,
+   "status": 403,
+   "error": "{\"error\":{\"message\":\"Access to model denied. Please make sure you are eligible for using the model.\",\"id\":\"d7e1a466-d15a-4085-ae2d-e24c8ab7b4d2\",\"type\":\"AccessDenied.Unpurchased\",\"code\":\"AccessDenied.Unpurchased\"}}",
+   "resp_headers": {
+    "x-request-id": "d7e1a466-d15a-4085-ae2d-e24c8ab7b4d2"
+   }
+  },
+  "cache_B_prefixread": {
+   "ok": false,
+   "sec": 2.2,
+   "status": 403,
+   "error": "{\"error\":{\"message\":\"Access to model denied. Please make sure you are eligible for using the model.\",\"id\":\"1d1bcf36-9356-4b61-9c7e-fd724dbffc26\",\"type\":\"AccessDenied.Unpurchased\",\"code\":\"AccessDenied.Unpurchased\"}}",
+   "resp_headers": {
+    "x-request-id": "1d1bcf36-9356-4b61-9c7e-fd724dbffc26"
+   }
+  },
+  "basic_qwen3.8-flash": {
+   "ok": false,
+   "sec": 2.0,
+   "status": 403,
+   "error": "{\"error\":{\"message\":\"Access to model denied. Please make sure you are eligible for using the model.\",\"id\":\"e24d4297-439e-4346-b500-7edbfbbca4a4\",\"type\":\"AccessDenied.Unpurchased\",\"code\":\"AccessDenied.Unpurchased\"}}",
+   "resp_headers": {
+    "x-request-id": "e24d4297-439e-4346-b500-7edbfbbca4a4"
+   }
+  }
+ },
+ "glm": {
+  "_endpoint": {
+   "base": "https://open.bigmodel.cn/api/coding/paas/v4",
+   "note": ""
+  },
+  "models_list": {
+   "ok": true,
+   "status": 200,
+   "count": 12,
+   "ids": [
+    "glm-4.5",
+    "glm-4.5-air",
+    "glm-4.6",
+    "glm-4.7",
+    "glm-5",
+    "glm-5-turbo",
+    "glm-5.1",
+    "glm-5.2",
+    "glm-5.3",
+    "glm-5.3-flash",
+    "glm-5.3-flashx",
+    "glm-5.3-flashx-legal"
+   ]
+  },
+  "basic": {
+   "ok": true,
+   "sec": 2.4,
+   "status": 200,
+   "top_keys": [
+    "choices",
+    "created",
+    "id",
+    "model",
+    "object",
+    "request_id",
+    "usage"
+   ],
+   "model_echo": "glm-5.3",
+   "service_tier": null,
+   "finish_reason": "stop",
+   "message": {
+    "keys": [
+     "content",
+     "reasoning_content",
+     "role"
+    ],
+    "content_head": "2",
+    "reasoning_content_head": "The user is asking in Chinese: \"What is 1+1? Only answer with Arabic numerals.\"\n\nThe instruction is clear - only answer with Arabic numerals (阿拉伯数字). So I shoul"
+   },
+   "usage": {
+    "completion_tokens": 48,
+    "completion_tokens_details": {
+     "reasoning_tokens": 45
+    },
+    "prompt_tokens": 23,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    },
+    "total_tokens": 71
+   },
+   "resp_headers": {
+    "x-request-id": "0de828f1-d27d-4293-b52e-dad27dbb1956"
+   }
+  },
+  "temperature_0.7": {
+   "ok": true,
+   "sec": 2.5,
+   "status": 200,
+   "top_keys": [
+    "choices",
+    "created",
+    "id",
+    "model",
+    "object",
+    "request_id",
+    "usage"
+   ],
+   "model_echo": "glm-5.3",
+   "service_tier": null,
+   "finish_reason": "stop",
+   "message": {
+    "keys": [
+     "content",
+     "reasoning_content",
+     "role"
+    ],
+    "content_head": "2",
+    "reasoning_content_head": "The user is asking in Chinese: \"What is 1+1? Only answer with Arabic numerals.\"\n\nThey want just the answer in Arabic numerals (digits), no explanation."
+   },
+   "usage": {
+    "completion_tokens": 40,
+    "completion_tokens_details": {
+     "reasoning_tokens": 37
+    },
+    "prompt_tokens": 23,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    },
+    "total_tokens": 63
+   },
+   "resp_headers": {
+    "x-request-id": "d6835c8e-b9c3-4d3e-bdc0-4d2b85ef3624"
+   }
+  },
+  "thinking_0": {
+   "param": "{\"thinking\": {\"type\": \"enabled\"}}",
+   "result": {
+    "ok": true,
+    "sec": 12.0,
+    "status": 200,
+    "top_keys": [
+     "choices",
+     "created",
+     "id",
+     "model",
+     "object",
+     "request_id",
+     "usage"
+    ],
+    "model_echo": "glm-5.3",
+    "service_tier": null,
+    "finish_reason": "stop",
+    "message": {
+     "keys": [
+      "content",
+      "reasoning_content",
+      "role"
+     ],
+     "content_head": "# 分析过程\n\n**方法一：对齐小数位比较**\n\n把两个数补齐到相同的小数位数：\n- 9.11 = 9.11\n- 9.9 = 9.**90**\n\n整数部分都是 9，比较十分位：\n- 9.11 的十分位是 **1**\n- 9.90 的十分位是 **9**\n\n因为 1 < 9，所以 **9.90 > 9.11**。\n\n**",
+     "reasoning_content_head": "The user is asking in Chinese: \"Which is bigger, 9.11 or 9.9? Think carefully first, then answer with a conclusion.\"\n\nThis is a classic question that trips up m"
+    },
+    "usage": {
+     "completion_tokens": 849,
+     "completion_tokens_details": {
+      "reasoning_tokens": 561
+     },
+     "prompt_tokens": 34,
+     "prompt_tokens_details": {
+      "cached_tokens": 0
+     },
+     "total_tokens": 883
+    },
+    "resp_headers": {
+     "x-request-id": "74410b58-4d64-43cd-90ad-b08dab417658"
+    }
+   }
+  },
+  "thinking_1": {
+   "param": "{\"thinking\": {\"type\": \"disabled\"}}",
+   "result": {
+    "ok": true,
+    "sec": 3.9,
+    "status": 200,
+    "top_keys": [
+     "choices",
+     "created",
+     "id",
+     "model",
+     "object",
+     "request_id",
+     "usage"
+    ],
+    "model_echo": "glm-5.3",
+    "service_tier": null,
+    "finish_reason": "stop",
+    "message": {
+     "keys": [
+      "content",
+      "role"
+     ],
+     "content_head": "**9.11 比 9.9 大吗？不——9.9 更大。**\n\n**分析过程：**\n\n比较 9.11 和 9.9，关键在小数部分：\n\n- 9.11 = 9 + 0.11\n- 9.9 = 9 + 0.90\n\n比较 0.11 和 0.90：\n- 0.11 的十分位是 **1**\n- 0.90 的十分位是 **9**\n\n因为 9"
+    },
+    "usage": {
+     "completion_tokens": 196,
+     "completion_tokens_details": {
+      "reasoning_tokens": 0
+     },
+     "prompt_tokens": 34,
+     "prompt_tokens_details": {
+      "cached_tokens": 0
+     },
+     "total_tokens": 230
+    },
+    "resp_headers": {
+     "x-request-id": "b0e2b61b-ce03-4d7b-8442-59c597a3a63c"
+    }
+   }
+  },
+  "tool_single": {
+   "ok": true,
+   "sec": 7.7,
+   "status": 200,
+   "top_keys": [
+    "choices",
+    "created",
+    "id",
+    "model",
+    "object",
+    "request_id",
+    "usage"
+   ],
+   "model_echo": "glm-5.3",
+   "service_tier": null,
+   "finish_reason": "tool_calls",
+   "message": {
+    "keys": [
+     "content",
+     "reasoning_content",
+     "role",
+     "tool_calls"
+    ],
+    "content_head": "",
+    "reasoning_content_head": "The user wants to check the current weather in Beijing, and explicitly asks to use the tool. I should call get_weather with city \"北京\".",
+    "tool_calls": [
+     {
+      "id": "call_-7108088720745561681",
+      "type": "function",
+      "name": "get_weather",
+      "arguments": "{\"city\":\"北京\"}"
+     }
+    ]
+   },
+   "usage": {
+    "completion_tokens": 41,
+    "completion_tokens_details": {
+     "reasoning_tokens": 29
+    },
+    "prompt_tokens": 172,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    },
+    "total_tokens": 213
+   },
+   "resp_headers": {
+    "x-request-id": "bb454f70-6ee4-4e61-a463-5cb78581aee0"
+   }
+  },
+  "tool_parallel": {
+   "ok": true,
+   "sec": 5.1,
+   "status": 200,
+   "top_keys": [
+    "choices",
+    "created",
+    "id",
+    "model",
+    "object",
+    "request_id",
+    "usage"
+   ],
+   "model_echo": "glm-5.3",
+   "service_tier": null,
+   "finish_reason": "tool_calls",
+   "message": {
+    "keys": [
+     "content",
+     "reasoning_content",
+     "role",
+     "tool_calls"
+    ],
+    "content_head": "",
+    "reasoning_content_head": "The user wants to check the weather for both Beijing and Shanghai at the same time, and explicitly asks to use tools. Since these are independent calls, I shoul",
+    "tool_calls": [
+     {
+      "id": "call_-7108080302609658657",
+      "type": "function",
+      "name": "get_weather",
+      "arguments": "{\"city\":\"北京\"}"
+     },
+     {
+      "id": "call_-7108080302609658656",
+      "type": "function",
+      "name": "get_weather",
+      "arguments": "{\"city\":\"上海\"}"
+     }
+    ]
+   },
+   "usage": {
+    "completion_tokens": 64,
+    "completion_tokens_details": {
+     "reasoning_tokens": 42
+    },
+    "prompt_tokens": 175,
+    "prompt_tokens_details": {
+     "cached_tokens": 128
+    },
+    "total_tokens": 239
+   },
+   "resp_headers": {
+    "x-request-id": "a931c989-9cfd-40da-8e03-fda7c2cf655b"
+   }
+  },
+  "cache_A1_write": {
+   "ok": true,
+   "sec": 3.1,
+   "status": 200,
+   "top_keys": [
+    "choices",
+    "created",
+    "id",
+    "model",
+    "object",
+    "request_id",
+    "usage"
+   ],
+   "model_echo": "glm-5.3",
+   "service_tier": null,
+   "finish_reason": "stop",
+   "message": {
+    "keys": [
+     "content",
+     "role"
+    ],
+    "content_head": "Paxos-On-Sea"
+   },
+   "usage": {
+    "completion_tokens": 8,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    },
+    "prompt_tokens": 2357,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    },
+    "total_tokens": 2365
+   },
+   "resp_headers": {
+    "x-request-id": "d79ee775-916d-4020-a250-81fe768234f5"
+   }
+  },
+  "cache_A2_repeat": {
+   "ok": true,
+   "sec": 3.3,
+   "status": 200,
+   "top_keys": [
+    "choices",
+    "created",
+    "id",
+    "model",
+    "object",
+    "request_id",
+    "usage"
+   ],
+   "model_echo": "glm-5.3",
+   "service_tier": null,
+   "finish_reason": "stop",
+   "message": {
+    "keys": [
+     "content",
+     "reasoning_content",
+     "role"
+    ],
+    "content_head": "Paxos-On-Sea",
+    "reasoning_content_head": "The user is asking a simple question about the fictional technical document: what is the name of the consistency protocol run by the coordination layer? The ans"
+   },
+   "usage": {
+    "completion_tokens": 50,
+    "completion_tokens_details": {
+     "reasoning_tokens": 42
+    },
+    "prompt_tokens": 2357,
+    "prompt_tokens_details": {
+     "cached_tokens": 2304
+    },
+    "total_tokens": 2407
+   },
+   "resp_headers": {
+    "x-request-id": "f988e613-76bd-495b-a089-26b0c183ccb2"
+   }
+  },
+  "cache_B_prefixread": {
+   "ok": true,
+   "sec": 2.1,
+   "status": 200,
+   "top_keys": [
+    "choices",
+    "created",
+    "id",
+    "model",
+    "object",
+    "request_id",
+    "usage"
+   ],
+   "model_echo": "glm-5.3",
+   "service_tier": null,
+   "finish_reason": "stop",
+   "message": {
+    "keys": [
+     "content",
+     "reasoning_content",
+     "role"
+    ],
+    "content_head": "ReefDB",
+    "reasoning_content_head": "The user is asking a simple factual question about the fictional system described in the archive. The archive says: \"存储层使用列族引擎 ReefDB\" — the column family engin"
+   },
+   "usage": {
+    "completion_tokens": 54,
+    "completion_tokens_details": {
+     "reasoning_tokens": 49
+    },
+    "prompt_tokens": 2357,
+    "prompt_tokens_details": {
+     "cached_tokens": 2304
+    },
+    "total_tokens": 2411
+   },
+   "resp_headers": {
+    "x-request-id": "472cb10a-6d74-499f-beb3-a050522e48f9"
+   }
+  },
+  "basic_glm-5.3-flash": {
+   "ok": true,
+   "sec": 2.7,
+   "status": 200,
+   "top_keys": [
+    "choices",
+    "created",
+    "id",
+    "model",
+    "object",
+    "request_id",
+    "usage"
+   ],
+   "model_echo": "glm-5.3-flash",
+   "service_tier": null,
+   "finish_reason": "stop",
+   "message": {
+    "keys": [
+     "content",
+     "reasoning_content",
+     "role"
+    ],
+    "content_head": "2",
+    "reasoning_content_head": "The user is asking \"What is 1+1? Answer only in Arabic numerals.\"\n\nThis is a simple math question. 1+1 = 2.\n\nThe user explicitly asks to only answer in Arabic n"
+   },
+   "usage": {
+    "completion_tokens": 74,
+    "completion_tokens_details": {
+     "reasoning_tokens": 71
+    },
+    "prompt_tokens": 23,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    },
+    "total_tokens": 97
+   },
+   "resp_headers": {
+    "x-request-id": "6a347c7d-fa5b-4d19-957d-c7e24506ce67"
+   }
+  }
+ },
+ "minimax": {
+  "_endpoint": {
+   "base": "https://api.minimaxi.com/v1",
+   "note": ""
+  },
+  "models_list": {
+   "ok": true,
+   "status": 200,
+   "count": 9,
+   "ids": [
+    "MiniMax-M3.1-Flash",
+    "MiniMax-M3",
+    "MiniMax-M2.7",
+    "MiniMax-M2.7-highspeed",
+    "MiniMax-M2.5",
+    "MiniMax-M2.5-highspeed",
+    "MiniMax-M2.1",
+    "MiniMax-M2.1-highspeed",
+    "MiniMax-M2"
+   ]
+  },
+  "basic": {
+   "ok": true,
+   "sec": 1.1,
+   "status": 200,
+   "top_keys": [
+    "base_resp",
+    "choices",
+    "created",
+    "id",
+    "input_sensitive",
+    "input_sensitive_type",
+    "model",
+    "object",
+    "output_sensitive",
+    "output_sensitive_int",
+    "output_sensitive_type",
+    "service_tier",
+    "usage"
+   ],
+   "model_echo": "MiniMax-M3",
+   "service_tier": "standard",
+   "finish_reason": "stop",
+   "message": {
+    "keys": [
+     "content",
+     "role"
+    ],
+    "content_head": "2"
+   },
+   "usage": {
+    "total_tokens": 212,
+    "total_characters": 0,
+    "prompt_tokens": 209,
+    "completion_tokens": 3,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    },
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   }
+  },
+  "temperature_0.7": {
+   "ok": true,
+   "sec": 1.1,
+   "status": 200,
+   "top_keys": [
+    "base_resp",
+    "choices",
+    "created",
+    "id",
+    "input_sensitive",
+    "input_sensitive_type",
+    "model",
+    "object",
+    "output_sensitive",
+    "output_sensitive_int",
+    "output_sensitive_type",
+    "service_tier",
+    "usage"
+   ],
+   "model_echo": "MiniMax-M3",
+   "service_tier": "standard",
+   "finish_reason": "stop",
+   "message": {
+    "keys": [
+     "content",
+     "role"
+    ],
+    "content_head": "2"
+   },
+   "usage": {
+    "total_tokens": 212,
+    "total_characters": 0,
+    "prompt_tokens": 209,
+    "completion_tokens": 3,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    },
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   }
+  },
+  "thinking_0": {
+   "param": "{\"reasoning_effort\": \"high\"}",
+   "result": {
+    "ok": true,
+    "sec": 3.5,
+    "status": 200,
+    "top_keys": [
+     "base_resp",
+     "choices",
+     "created",
+     "id",
+     "input_sensitive",
+     "input_sensitive_type",
+     "model",
+     "object",
+     "output_sensitive",
+     "output_sensitive_int",
+     "output_sensitive_type",
+     "service_tier",
+     "usage"
+    ],
+    "model_echo": "MiniMax-M3",
+    "service_tier": "standard",
+    "finish_reason": "stop",
+    "message": {
+     "keys": [
+      "content",
+      "role"
+     ],
+     "content_head": "<think>We need answer Chinese. Need interpret decimals 9.11 vs 9.9. 9.9 = 9.90, 9.11 &lt; 9.90, so 9.9 larger. Need \"先想清楚再回答，给出结论\" likely concise with reasoning"
+    },
+    "usage": {
+     "total_tokens": 431,
+     "total_characters": 0,
+     "prompt_tokens": 219,
+     "completion_tokens": 212,
+     "completion_tokens_details": {
+      "reasoning_tokens": 175
+     },
+     "prompt_tokens_details": {
+      "cached_tokens": 193
+     }
+    }
+   }
+  },
+  "thinking_1": {
+   "param": "{\"thinking\": {\"type\": \"enabled\"}}",
+   "result": {
+    "ok": false,
+    "sec": 0.5,
+    "status": 400,
+    "error": "{\"type\":\"error\",\"error\":{\"type\":\"bad_request_error\",\"message\":\"invalid params, invalid thinking.type: \\\"enabled\\\" (allowed: adaptive, disabled) (2013)\",\"http_code\":\"400\"},\"request_id\":\"0739baf57fdc41621a1494afb8cf8664\"}"
+   }
+  },
+  "tool_single": {
+   "ok": true,
+   "sec": 1.6,
+   "status": 200,
+   "top_keys": [
+    "base_resp",
+    "choices",
+    "created",
+    "id",
+    "input_sensitive",
+    "input_sensitive_type",
+    "model",
+    "object",
+    "output_sensitive",
+    "output_sensitive_int",
+    "output_sensitive_type",
+    "service_tier",
+    "usage"
+   ],
+   "model_echo": "MiniMax-M3",
+   "service_tier": "standard",
+   "finish_reason": "tool_calls",
+   "message": {
+    "keys": [
+     "content",
+     "role",
+     "tool_calls"
+    ],
+    "content_head": "I'll check Beijing's current weather for you.",
+    "tool_calls": [
+     {
+      "id": "call_01a1a4231a5f7566905782e5",
+      "type": "function",
+      "name": "get_weather",
+      "arguments": "{\"city\":\"北京\"}"
+     }
+    ]
+   },
+   "usage": {
+    "total_tokens": 479,
+    "total_characters": 0,
+    "prompt_tokens": 441,
+    "completion_tokens": 38,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    },
+    "prompt_tokens_details": {
+     "cached_tokens": 225
+    }
+   }
+  },
+  "tool_parallel": {
+   "ok": true,
+   "sec": 1.4,
+   "status": 200,
+   "top_keys": [
+    "base_resp",
+    "choices",
+    "created",
+    "id",
+    "input_sensitive",
+    "input_sensitive_type",
+    "model",
+    "object",
+    "output_sensitive",
+    "output_sensitive_int",
+    "output_sensitive_type",
+    "service_tier",
+    "usage"
+   ],
+   "model_echo": "MiniMax-M3",
+   "service_tier": "standard",
+   "finish_reason": "tool_calls",
+   "message": {
+    "keys": [
+     "content",
+     "role",
+     "tool_calls"
+    ],
+    "content_head": "I'll check the weather for both cities now.",
+    "tool_calls": [
+     {
+      "id": "call_01a1a4231fb7727891077925",
+      "type": "function",
+      "name": "get_weather",
+      "arguments": "{\"city\":\"北京\"}"
+     },
+     {
+      "id": "call_01a1a4231fb7727891077926",
+      "type": "function",
+      "name": "get_weather",
+      "arguments": "{\"city\":\"上海\"}"
+     }
+    ]
+   },
+   "usage": {
+    "total_tokens": 504,
+    "total_characters": 0,
+    "prompt_tokens": 444,
+    "completion_tokens": 60,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    },
+    "prompt_tokens_details": {
+     "cached_tokens": 185
+    }
+   }
+  },
+  "cache_A1_write": {
+   "ok": true,
+   "sec": 2.3,
+   "status": 200,
+   "top_keys": [
+    "base_resp",
+    "choices",
+    "created",
+    "id",
+    "input_sensitive",
+    "input_sensitive_type",
+    "model",
+    "object",
+    "output_sensitive",
+    "output_sensitive_int",
+    "output_sensitive_type",
+    "service_tier",
+    "usage"
+   ],
+   "model_echo": "MiniMax-M3",
+   "service_tier": "standard",
+   "finish_reason": "stop",
+   "message": {
+    "keys": [
+     "content",
+     "role"
+    ],
+    "content_head": "Paxos-On-Sea"
+   },
+   "usage": {
+    "total_tokens": 2399,
+    "total_characters": 0,
+    "prompt_tokens": 2391,
+    "completion_tokens": 8,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    },
+    "prompt_tokens_details": {
+     "cached_tokens": 182
+    }
+   }
+  },
+  "cache_A2_repeat": {
+   "ok": true,
+   "sec": 1.5,
+   "status": 200,
+   "top_keys": [
+    "base_resp",
+    "choices",
+    "created",
+    "id",
+    "input_sensitive",
+    "input_sensitive_type",
+    "model",
+    "object",
+    "output_sensitive",
+    "output_sensitive_int",
+    "output_sensitive_type",
+    "service_tier",
+    "usage"
+   ],
+   "model_echo": "MiniMax-M3",
+   "service_tier": "standard",
+   "finish_reason": "stop",
+   "message": {
+    "keys": [
+     "content",
+     "role"
+    ],
+    "content_head": "Paxos-On-Sea"
+   },
+   "usage": {
+    "total_tokens": 2399,
+    "total_characters": 0,
+    "prompt_tokens": 2391,
+    "completion_tokens": 8,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    },
+    "prompt_tokens_details": {
+     "cached_tokens": 128
+    }
+   }
+  },
+  "cache_B_prefixread": {
+   "ok": true,
+   "sec": 2.0,
+   "status": 200,
+   "top_keys": [
+    "base_resp",
+    "choices",
+    "created",
+    "id",
+    "input_sensitive",
+    "input_sensitive_type",
+    "model",
+    "object",
+    "output_sensitive",
+    "output_sensitive_int",
+    "output_sensitive_type",
+    "service_tier",
+    "usage"
+   ],
+   "model_echo": "MiniMax-M3",
+   "service_tier": "standard",
+   "finish_reason": "stop",
+   "message": {
+    "keys": [
+     "content",
+     "role"
+    ],
+    "content_head": "ReefDB"
+   },
+   "usage": {
+    "total_tokens": 2396,
+    "total_characters": 0,
+    "prompt_tokens": 2391,
+    "completion_tokens": 5,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    },
+    "prompt_tokens_details": {
+     "cached_tokens": 128
+    }
+   }
+  },
+  "basic_minimax-m2.7-highspeed": {
+   "ok": true,
+   "sec": 1.9,
+   "status": 200,
+   "top_keys": [
+    "base_resp",
+    "choices",
+    "created",
+    "id",
+    "input_sensitive",
+    "input_sensitive_type",
+    "model",
+    "object",
+    "output_sensitive",
+    "output_sensitive_int",
+    "output_sensitive_type",
+    "usage"
+   ],
+   "model_echo": "MiniMax-M2.7-highspeed",
+   "service_tier": null,
+   "finish_reason": "stop",
+   "message": {
+    "keys": [
+     "content",
+     "role"
+    ],
+    "content_head": "2"
+   },
+   "usage": {
+    "total_tokens": 216,
+    "total_characters": 0,
+    "prompt_tokens": 213,
+    "completion_tokens": 3,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    },
+    "prompt_tokens_details": {
+     "cached_tokens": 197
+    }
+   }
+  }
+ },
+ "deepseek": {
+  "_endpoint": {
+   "base": "https://api.deepseek.com",
+   "note": ""
+  },
+  "models_list": {
+   "ok": true,
+   "status": 200,
+   "count": 2,
+   "ids": [
+    "deepseek-flash",
+    "deepseek-v4-pro"
+   ]
+  },
+  "basic": {
+   "ok": true,
+   "sec": 1.0,
+   "status": 200,
+   "top_keys": [
+    "choices",
+    "created",
+    "id",
+    "model",
+    "object",
+    "system_fingerprint",
+    "usage"
+   ],
+   "model_echo": "deepseek-flash",
+   "service_tier": null,
+   "finish_reason": "stop",
+   "message": {
+    "keys": [
+     "content",
+     "reasoning_content",
+     "role"
+    ],
+    "content_head": "2",
+    "reasoning_content_head": "We need answer only Arabic digit. 1+1=2. 只回答阿拉伯数字. Final 2."
+   },
+   "usage": {
+    "prompt_tokens": 41,
+    "completion_tokens": 26,
+    "total_tokens": 67,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 24
+    },
+    "prompt_cache_hit_tokens": 0,
+    "prompt_cache_miss_tokens": 41
+   }
+  },
+  "temperature_0.7": {
+   "ok": true,
+   "sec": 1.1,
+   "status": 200,
+   "top_keys": [
+    "choices",
+    "created",
+    "id",
+    "model",
+    "object",
+    "system_fingerprint",
+    "usage"
+   ],
+   "model_echo": "deepseek-flash",
+   "service_tier": null,
+   "finish_reason": "stop",
+   "message": {
+    "keys": [
+     "content",
+     "reasoning_content",
+     "role"
+    ],
+    "content_head": "2",
+    "reasoning_content_head": "We need answer only Arabic numeral. 1+1=2. Must only answer digit."
+   },
+   "usage": {
+    "prompt_tokens": 41,
+    "completion_tokens": 21,
+    "total_tokens": 62,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 19
+    },
+    "prompt_cache_hit_tokens": 0,
+    "prompt_cache_miss_tokens": 41
+   }
+  },
+  "thinking_0": {
+   "param": "{\"thinking\": {\"type\": \"enabled\"}}",
+   "result": {
+    "ok": true,
+    "sec": 1.5,
+    "status": 200,
+    "top_keys": [
+     "choices",
+     "created",
+     "id",
+     "model",
+     "object",
+     "system_fingerprint",
+     "usage"
+    ],
+    "model_echo": "deepseek-flash",
+    "service_tier": null,
+    "finish_reason": "stop",
+    "message": {
+     "keys": [
+      "content",
+      "reasoning_content",
+      "role"
+     ],
+     "content_head": "按数值比较：**9.9 大于 9.11**。\n\n因为 \\(9.9 = 9.90\\)，而 \\(9.90 > 9.11\\)。",
+     "reasoning_content_head": "We need answer in Chinese. Need think. Question \"9.11 和 9.9 哪个大？先想清楚再回答，给出结论。\" This is likely trick about decimals vs version numbers? Mathematically 9.11 < 9.9"
+    },
+    "usage": {
+     "prompt_tokens": 52,
+     "completion_tokens": 168,
+     "total_tokens": 220,
+     "prompt_tokens_details": {
+      "cached_tokens": 0
+     },
+     "completion_tokens_details": {
+      "reasoning_tokens": 127
+     },
+     "prompt_cache_hit_tokens": 0,
+     "prompt_cache_miss_tokens": 52
+    }
+   }
+  },
+  "thinking_1": {
+   "param": "{\"thinking\": {\"type\": \"disabled\"}}",
+   "result": {
+    "ok": true,
+    "sec": 2.1,
+    "status": 200,
+    "top_keys": [
+     "choices",
+     "created",
+     "id",
+     "model",
+     "object",
+     "system_fingerprint",
+     "usage"
+    ],
+    "model_echo": "deepseek-flash",
+    "service_tier": null,
+    "finish_reason": "stop",
+    "message": {
+     "keys": [
+      "content",
+      "role"
+     ],
+     "content_head": "好的，我们一步一步来分析这个问题。  \n\n首先，比较这两个数字 9.11 和 9.9 的大小。  \n它们的整数部分都是 9，所以要比较小数部分。\n\n- 9.11 的小数部分是 0.11  \n- 9.9 的小数部分是 0.9\n\n很明显，0.9 比 0.11 大，因此 9.9 比 9.11 大。  \n\n不过有时候人们会误以"
+    },
+    "usage": {
+     "prompt_tokens": 26,
+     "completion_tokens": 174,
+     "total_tokens": 200,
+     "prompt_tokens_details": {
+      "cached_tokens": 0
+     },
+     "prompt_cache_hit_tokens": 0,
+     "prompt_cache_miss_tokens": 26
+    }
+   }
+  },
+  "thinking_2": {
+   "param": "{\"reasoning_effort\": \"high\"}",
+   "result": {
+    "ok": true,
+    "sec": 1.5,
+    "status": 200,
+    "top_keys": [
+     "choices",
+     "created",
+     "id",
+     "model",
+     "object",
+     "system_fingerprint",
+     "usage"
+    ],
+    "model_echo": "deepseek-flash",
+    "service_tier": null,
+    "finish_reason": "stop",
+    "message": {
+     "keys": [
+      "content",
+      "reasoning_content",
+      "role"
+     ],
+     "content_head": "9.9 大。\n\n因为 9.9 = 9.90，而 9.90 > 9.11。",
+     "reasoning_content_head": "We need answer Chinese. Need be careful: 9.11 vs 9.9 decimal. 9.9 = 9.90 > 9.11. Some might think version? User says \"先想清楚再回答，给出结论\" likely trap for decimal. Ans"
+    },
+    "usage": {
+     "prompt_tokens": 52,
+     "completion_tokens": 96,
+     "total_tokens": 148,
+     "prompt_tokens_details": {
+      "cached_tokens": 0
+     },
+     "completion_tokens_details": {
+      "reasoning_tokens": 67
+     },
+     "prompt_cache_hit_tokens": 0,
+     "prompt_cache_miss_tokens": 52
+    }
+   }
+  },
+  "tool_single": {
+   "ok": true,
+   "sec": 0.9,
+   "status": 200,
+   "top_keys": [
+    "choices",
+    "created",
+    "id",
+    "model",
+    "object",
+    "system_fingerprint",
+    "usage"
+   ],
+   "model_echo": "deepseek-flash",
+   "service_tier": null,
+   "finish_reason": "tool_calls",
+   "message": {
+    "keys": [
+     "content",
+     "reasoning_content",
+     "role",
+     "tool_calls"
+    ],
+    "content_head": "我现在就用天气工具查询北京的天气。",
+    "tool_calls": [
+     {
+      "id": "call_00_ET_WPCze4KUax9rpV7FHBes2709",
+      "type": "function",
+      "name": "get_weather",
+      "arguments": "{\"city\": \"北京\"}"
+     }
+    ]
+   },
+   "usage": {
+    "prompt_tokens": 306,
+    "completion_tokens": 46,
+    "total_tokens": 352,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    },
+    "prompt_cache_hit_tokens": 0,
+    "prompt_cache_miss_tokens": 306
+   }
+  },
+  "tool_parallel": {
+   "ok": true,
+   "sec": 1.1,
+   "status": 200,
+   "top_keys": [
+    "choices",
+    "created",
+    "id",
+    "model",
+    "object",
+    "system_fingerprint",
+    "usage"
+   ],
+   "model_echo": "deepseek-flash",
+   "service_tier": null,
+   "finish_reason": "tool_calls",
+   "message": {
+    "keys": [
+     "content",
+     "reasoning_content",
+     "role",
+     "tool_calls"
+    ],
+    "content_head": "我来同时查询这两个城市的天气。",
+    "reasoning_content_head": "The user wants weather for Beijing and Shanghai simultaneously, must use the tool. I can make both calls in one block.",
+    "tool_calls": [
+     {
+      "id": "call_00_2HO6BNF6C0RLxq3qBRkf5370",
+      "type": "function",
+      "name": "get_weather",
+      "arguments": "{\"city\": \"北京\"}"
+     },
+     {
+      "id": "call_01_Xv4HYJmWlF2y6xpMTgTQ3783",
+      "type": "function",
+      "name": "get_weather",
+      "arguments": "{\"city\": \"上海\"}"
+     }
+    ]
+   },
+   "usage": {
+    "prompt_tokens": 309,
+    "completion_tokens": 98,
+    "total_tokens": 407,
+    "prompt_tokens_details": {
+     "cached_tokens": 128
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 24
+    },
+    "prompt_cache_hit_tokens": 128,
+    "prompt_cache_miss_tokens": 181
+   }
+  },
+  "cache_A1_write": {
+   "ok": true,
+   "sec": 0.8,
+   "status": 200,
+   "top_keys": [
+    "choices",
+    "created",
+    "id",
+    "model",
+    "object",
+    "system_fingerprint",
+    "usage"
+   ],
+   "model_echo": "deepseek-flash",
+   "service_tier": null,
+   "finish_reason": "stop",
+   "message": {
+    "keys": [
+     "content",
+     "reasoning_content",
+     "role"
+    ],
+    "content_head": "Paxos-On-Sea"
+   },
+   "usage": {
+    "prompt_tokens": 2300,
+    "completion_tokens": 7,
+    "total_tokens": 2307,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    },
+    "prompt_cache_hit_tokens": 0,
+    "prompt_cache_miss_tokens": 2300
+   }
+  },
+  "cache_A2_repeat": {
+   "ok": true,
+   "sec": 1.1,
+   "status": 200,
+   "top_keys": [
+    "choices",
+    "created",
+    "id",
+    "model",
+    "object",
+    "system_fingerprint",
+    "usage"
+   ],
+   "model_echo": "deepseek-flash",
+   "service_tier": null,
+   "finish_reason": "stop",
+   "message": {
+    "keys": [
+     "content",
+     "reasoning_content",
+     "role"
+    ],
+    "content_head": "Paxos-On-Sea",
+    "reasoning_content_head": "我们需要回答中文，只答名字。档案说 Paxos-On-Sea。需只答名字。"
+   },
+   "usage": {
+    "prompt_tokens": 2300,
+    "completion_tokens": 28,
+    "total_tokens": 2328,
+    "prompt_tokens_details": {
+     "cached_tokens": 2048
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 21
+    },
+    "prompt_cache_hit_tokens": 2048,
+    "prompt_cache_miss_tokens": 252
+   }
+  },
+  "cache_B_prefixread": {
+   "ok": true,
+   "sec": 2.0,
+   "status": 200,
+   "top_keys": [
+    "choices",
+    "created",
+    "id",
+    "model",
+    "object",
+    "system_fingerprint",
+    "usage"
+   ],
+   "model_echo": "deepseek-flash",
+   "service_tier": null,
+   "finish_reason": "stop",
+   "message": {
+    "keys": [
+     "content",
+     "reasoning_content",
+     "role"
+    ],
+    "content_head": "ReefDB",
+    "reasoning_content_head": "我们需要回答中文。问题：档案里存储层使用的列族引擎叫什么名字？只答名字。档案说存储层使用列族引擎 ReefDB。只答名字：ReefDB。"
+   },
+   "usage": {
+    "prompt_tokens": 2301,
+    "completion_tokens": 44,
+    "total_tokens": 2345,
+    "prompt_tokens_details": {
+     "cached_tokens": 2048
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 40
+    },
+    "prompt_cache_hit_tokens": 2048,
+    "prompt_cache_miss_tokens": 253
+   }
+  },
+  "basic_deepseek-v4-pro": {
+   "ok": true,
+   "sec": 1.7,
+   "status": 200,
+   "top_keys": [
+    "choices",
+    "created",
+    "id",
+    "model",
+    "object",
+    "system_fingerprint",
+    "usage"
+   ],
+   "model_echo": "deepseek-v4-pro",
+   "service_tier": null,
+   "finish_reason": "stop",
+   "message": {
+    "keys": [
+     "content",
+     "reasoning_content",
+     "role"
+    ],
+    "content_head": "2",
+    "reasoning_content_head": "我们需要回答用户中文问“1+1等于几？只回答阿拉伯数字。” 要求只回答阿拉伯数字。需要给“2”。无需其他。注意只回答阿拉伯数字。最终“2”。"
+   },
+   "usage": {
+    "prompt_tokens": 94,
+    "completion_tokens": 44,
+    "total_tokens": 138,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 42
+    },
+    "prompt_cache_hit_tokens": 0,
+    "prompt_cache_miss_tokens": 94
+   }
+  }
+ }
+}

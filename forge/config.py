@@ -101,6 +101,10 @@ class Row:
     config: dict[str, Any] = field(default_factory=dict)
     disabled: bool = False
     inject: tuple[str, ...] = ()
+    # 最后写入该行的层标签（2026-11-04 第三轮）：区分「bundle 默认」与
+    # 「用户层显式声明」——例如 base.json 里的 loop.maxSteps=12 是框架
+    # 默认值的另一种写法，不应抑制厂商画像的 steps_hint 自动适配。
+    source: str = ""
 
     @staticmethod
     def from_raw(raw: dict[str, Any]) -> "Row":
@@ -125,6 +129,12 @@ class Row:
         if self.inject:
             out["inject"] = list(self.inject)
         return out
+
+
+def _stamp(row: "Row", label: str) -> "Row":
+    """frozen Row 打上来源标签（最后写入层胜）。"""
+    from dataclasses import replace
+    return replace(row, source=str(label))
 
 
 def _eval_expr(expr: str, ctx: dict[str, Any]) -> Any:
@@ -203,12 +213,12 @@ class Config:
         for op in patch:
             if "insert" in op:
                 for raw in op["insert"]:
-                    self._upsert(Row.from_raw(raw), insert=True)
+                    self._upsert(_stamp(Row.from_raw(raw), label), insert=True)
                 continue
             if "remove" in op:
                 self._remove(str(op["remove"]))
                 continue
-            self._upsert(Row.from_raw(op), insert=False)
+            self._upsert(_stamp(Row.from_raw(op), label), insert=False)
         self.history.append(label)
 
     # Keys that carry behaviour; dropping them silently via whole-row
@@ -218,7 +228,7 @@ class Config:
         "primary", "fallback", "moa", "moaModels", "routing", "tiers",
         "small", "premium", "strategy", "wire", "baseURL", "apiKey",
         "model", "smallModel", "mode", "rpm", "models", "headers",
-        "temperature", "vendor", "cacheControl", "service",
+        "temperature", "vendor", "cacheControl", "cacheAffinity", "service", "reasoningMode",
     })
 
     def _upsert(self, row: Row, insert: bool) -> None:

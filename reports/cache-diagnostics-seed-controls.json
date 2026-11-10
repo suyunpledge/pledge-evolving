@@ -1,0 +1,1194 @@
+{
+  "vendor": "seed",
+  "scenario": "controls",
+  "experimental_affinity": false,
+  "scope": "Hash-only wire evidence; repository input is the existing synthetic billing fixture, never production padding.",
+  "cases": [
+    {
+      "case": "short-off",
+      "outcomes": [
+        {
+          "ok": false,
+          "error_type": "TransportError",
+          "error": "seed-live: URLError(TimeoutError('_ssl.c:993: The handshake operation timed out'))"
+        },
+        {
+          "ok": true,
+          "finish_reason": "stop"
+        }
+      ],
+      "totals": {
+        "attempts": 2,
+        "successful_requests": 1,
+        "prompt_tokens": 58,
+        "completion_tokens": 865,
+        "cached_tokens": 0,
+        "reasoning_tokens": 710,
+        "seconds": 69.5,
+        "coverage": {
+          "all_observed": {
+            "requests": 1,
+            "input_tokens": 58,
+            "cached_tokens": 0,
+            "hit_rate": 0.0
+          },
+          "rebuild": {
+            "requests": 0,
+            "input_tokens": 0,
+            "cached_tokens": 0,
+            "hit_rate": null
+          },
+          "non_rebuild": {
+            "requests": 1,
+            "input_tokens": 58,
+            "cached_tokens": 0,
+            "hit_rate": 0.0
+          },
+          "eligible_prefix": {
+            "requests": 0,
+            "input_tokens": 0,
+            "cached_tokens": 0,
+            "excluded_tail_tokens": 0,
+            "hit_rate": null
+          },
+          "unknown_requests": 1,
+          "invalid_requests": 0,
+          "duplicate_observations": 0,
+          "denominator": "observed input tokens; eligible_prefix excludes declared structural tail"
+        }
+      }
+    },
+    {
+      "case": "repository-off",
+      "outcomes": [
+        {
+          "ok": false,
+          "error_type": "TransportError",
+          "error": "seed-live: TimeoutError('The read operation timed out')"
+        },
+        {
+          "ok": true,
+          "finish_reason": "stop"
+        }
+      ],
+      "totals": {
+        "attempts": 2,
+        "successful_requests": 1,
+        "prompt_tokens": 934,
+        "completion_tokens": 1427,
+        "cached_tokens": 0,
+        "reasoning_tokens": 1288,
+        "seconds": 81.671,
+        "coverage": {
+          "all_observed": {
+            "requests": 1,
+            "input_tokens": 934,
+            "cached_tokens": 0,
+            "hit_rate": 0.0
+          },
+          "rebuild": {
+            "requests": 0,
+            "input_tokens": 0,
+            "cached_tokens": 0,
+            "hit_rate": null
+          },
+          "non_rebuild": {
+            "requests": 1,
+            "input_tokens": 934,
+            "cached_tokens": 0,
+            "hit_rate": 0.0
+          },
+          "eligible_prefix": {
+            "requests": 0,
+            "input_tokens": 0,
+            "cached_tokens": 0,
+            "excluded_tail_tokens": 0,
+            "hit_rate": null
+          },
+          "unknown_requests": 1,
+          "invalid_requests": 0,
+          "duplicate_observations": 0,
+          "denominator": "observed input tokens; eligible_prefix excludes declared structural tail"
+        }
+      }
+    },
+    {
+      "case": "repository-affinity",
+      "outcomes": [
+        {
+          "ok": true,
+          "finish_reason": "stop"
+        },
+        {
+          "ok": false,
+          "error_type": "TransportError",
+          "error": "seed-live: TimeoutError('The read operation timed out')"
+        }
+      ],
+      "totals": {
+        "attempts": 2,
+        "successful_requests": 1,
+        "prompt_tokens": 934,
+        "completion_tokens": 1163,
+        "cached_tokens": 0,
+        "reasoning_tokens": 1037,
+        "seconds": 78.281,
+        "coverage": {
+          "all_observed": {
+            "requests": 1,
+            "input_tokens": 934,
+            "cached_tokens": 0,
+            "hit_rate": 0.0
+          },
+          "rebuild": {
+            "requests": 0,
+            "input_tokens": 0,
+            "cached_tokens": 0,
+            "hit_rate": null
+          },
+          "non_rebuild": {
+            "requests": 1,
+            "input_tokens": 934,
+            "cached_tokens": 0,
+            "hit_rate": 0.0
+          },
+          "eligible_prefix": {
+            "requests": 0,
+            "input_tokens": 0,
+            "cached_tokens": 0,
+            "excluded_tail_tokens": 0,
+            "hit_rate": null
+          },
+          "unknown_requests": 1,
+          "invalid_requests": 0,
+          "duplicate_observations": 0,
+          "denominator": "observed input tokens; eligible_prefix excludes declared structural tail"
+        }
+      }
+    },
+    {
+      "case": "repository-affinity-repeat",
+      "outcomes": [
+        {
+          "ok": false,
+          "error_type": "TransportError",
+          "error": "seed-live: URLError(TimeoutError('_ssl.c:993: The handshake operation timed out'))"
+        },
+        {
+          "ok": false,
+          "error_type": "TransportError",
+          "error": "seed-live: TimeoutError('The read operation timed out')"
+        }
+      ],
+      "totals": {
+        "attempts": 2,
+        "successful_requests": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "cached_tokens": 0,
+        "reasoning_tokens": 0,
+        "seconds": 91.656,
+        "coverage": {
+          "all_observed": {
+            "requests": 0,
+            "input_tokens": 0,
+            "cached_tokens": 0,
+            "hit_rate": null
+          },
+          "rebuild": {
+            "requests": 0,
+            "input_tokens": 0,
+            "cached_tokens": 0,
+            "hit_rate": null
+          },
+          "non_rebuild": {
+            "requests": 0,
+            "input_tokens": 0,
+            "cached_tokens": 0,
+            "hit_rate": null
+          },
+          "eligible_prefix": {
+            "requests": 0,
+            "input_tokens": 0,
+            "cached_tokens": 0,
+            "excluded_tail_tokens": 0,
+            "hit_rate": null
+          },
+          "unknown_requests": 2,
+          "invalid_requests": 0,
+          "duplicate_observations": 0,
+          "denominator": "observed input tokens; eligible_prefix excludes declared structural tail"
+        }
+      }
+    },
+    {
+      "case": "repository-off-reverse",
+      "outcomes": [
+        {
+          "ok": true,
+          "finish_reason": "stop"
+        },
+        {
+          "ok": false,
+          "error_type": "TransportError",
+          "error": "seed-live: URLError(TimeoutError('_ssl.c:993: The handshake operation timed out'))"
+        }
+      ],
+      "totals": {
+        "attempts": 2,
+        "successful_requests": 1,
+        "prompt_tokens": 934,
+        "completion_tokens": 1040,
+        "cached_tokens": 0,
+        "reasoning_tokens": 921,
+        "seconds": 71.938,
+        "coverage": {
+          "all_observed": {
+            "requests": 1,
+            "input_tokens": 934,
+            "cached_tokens": 0,
+            "hit_rate": 0.0
+          },
+          "rebuild": {
+            "requests": 0,
+            "input_tokens": 0,
+            "cached_tokens": 0,
+            "hit_rate": null
+          },
+          "non_rebuild": {
+            "requests": 1,
+            "input_tokens": 934,
+            "cached_tokens": 0,
+            "hit_rate": 0.0
+          },
+          "eligible_prefix": {
+            "requests": 0,
+            "input_tokens": 0,
+            "cached_tokens": 0,
+            "excluded_tail_tokens": 0,
+            "hit_rate": null
+          },
+          "unknown_requests": 1,
+          "invalid_requests": 0,
+          "duplicate_observations": 0,
+          "denominator": "observed input tokens; eligible_prefix excludes declared structural tail"
+        }
+      }
+    }
+  ],
+  "requests": [
+    {
+      "stage": "short-off/1",
+      "model": "doubao-seed-evolving",
+      "url": "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+      "parameters": {
+        "temperature": 0.7,
+        "max_tokens": 4096
+      },
+      "message_count": 2,
+      "common_prefix_messages": 0,
+      "messages_digest": "9020b74590c697c6d3f1cdf941c699f76c4a028a22a25d87e38e9fc7af4bd34c",
+      "tools_digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "toolset_digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "payload_digest": "23631228ee7bdafe32335fdf63f00c8e883f2e2d5c9df03b080374c0fd5692b2",
+      "message_chars": 158,
+      "assistant_reasoning_fields": 0,
+      "tools": [],
+      "error_type": "URLError",
+      "status": null,
+      "seconds": 45.078,
+      "message_components": [
+        {
+          "role": "system",
+          "digest": "e8da91c799d1d000b8f0c39826e93827c44e43e4ebb1e8b019b3c622f0652c1a",
+          "fields": {
+            "role": {
+              "digest": "0dc8cd0a92280156c12ba5073f5049586727ba0bef2ff72099577bd332db18f5",
+              "characters": 8
+            },
+            "content": {
+              "digest": "6688c9b60add0b8e3ddeca30607048ae1cbd8c6cb285a8b1821bf590193445ca",
+              "characters": 38
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "a99952e306762c3a3025fd36ace4b8a60dba1b3ed8fc4861692701dde07ec8b4",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "cf6d644acc68844752ac19c15f920ab0d47097c158574eed7bdf7241b89b4e6b",
+              "characters": 60
+            }
+          }
+        }
+      ],
+      "common_serialized_message_prefix_chars": 1,
+      "exact_payload_repeat": false,
+      "generation_parameters_digest": "cdc04734180cc70acfe726ecf901fbbb2d4202f147684a6e6f907068f4da93d1",
+      "affinity_present": false,
+      "affinity_digest": null
+    },
+    {
+      "stage": "short-off/2",
+      "model": "doubao-seed-evolving",
+      "url": "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+      "parameters": {
+        "temperature": 0.7,
+        "max_tokens": 4096
+      },
+      "message_count": 2,
+      "common_prefix_messages": 2,
+      "messages_digest": "9020b74590c697c6d3f1cdf941c699f76c4a028a22a25d87e38e9fc7af4bd34c",
+      "tools_digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "toolset_digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "payload_digest": "23631228ee7bdafe32335fdf63f00c8e883f2e2d5c9df03b080374c0fd5692b2",
+      "message_chars": 158,
+      "assistant_reasoning_fields": 0,
+      "tools": [],
+      "status": 200,
+      "raw_usage": {
+        "completion_tokens": 865,
+        "prompt_tokens": 58,
+        "total_tokens": 923,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 710
+        }
+      },
+      "finish_reason": "stop",
+      "response_id": "021794186114961f5a6be93c8798a26ceedbf38a44bb89c15bdf4",
+      "response_model": "doubao-seed-evolving",
+      "reasoning_chars": 872,
+      "tool_calls": null,
+      "text": "### Bug: Incorrect decimal rounding from binary floating-point precision error\n`float` uses base-2 (binary) IEEE 754 encoding, which cannot exactly represent most base-10 decimal fractions. For example, if input `x = 2.675` (or string `\"2.675\"`), `round(float(x), 2)` returns `2.67` instead of the mathematically expected `2.68`, because the actual stored binary value of 2.675 is slightly smaller th",
+      "seconds": 24.422,
+      "response_message_fields": [
+        "content",
+        "encrypted_content",
+        "reasoning_content",
+        "role"
+      ],
+      "encrypted_content_chars": 2324,
+      "encrypted_replay_matches": 0,
+      "message_components": [
+        {
+          "role": "system",
+          "digest": "e8da91c799d1d000b8f0c39826e93827c44e43e4ebb1e8b019b3c622f0652c1a",
+          "fields": {
+            "role": {
+              "digest": "0dc8cd0a92280156c12ba5073f5049586727ba0bef2ff72099577bd332db18f5",
+              "characters": 8
+            },
+            "content": {
+              "digest": "6688c9b60add0b8e3ddeca30607048ae1cbd8c6cb285a8b1821bf590193445ca",
+              "characters": 38
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "a99952e306762c3a3025fd36ace4b8a60dba1b3ed8fc4861692701dde07ec8b4",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "cf6d644acc68844752ac19c15f920ab0d47097c158574eed7bdf7241b89b4e6b",
+              "characters": 60
+            }
+          }
+        }
+      ],
+      "common_serialized_message_prefix_chars": 155,
+      "exact_payload_repeat": true,
+      "generation_parameters_digest": "cdc04734180cc70acfe726ecf901fbbb2d4202f147684a6e6f907068f4da93d1",
+      "affinity_present": false,
+      "affinity_digest": null,
+      "usage": {
+        "prompt_tokens": 58,
+        "completion_tokens": 865,
+        "model": "doubao-seed-evolving",
+        "provider": "seed-live",
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 710,
+        "cache_observed": true
+      },
+      "adaptation": {
+        "vendor": "volcengine",
+        "vendor_label": "火山方舟（豆包）",
+        "actions": [
+          "依赖厂商自动缓存（命中 1×），无需标记"
+        ],
+        "notes": [
+          "缓存命中已实证但折扣未公布，金额按原价保守估算",
+          "回放可保留 encrypted_content（三变体回放探针全 200）",
+          "该模型无目录价，金额按单位价折算，仅用于比较比例，不代表真实账单"
+        ],
+        "cache_control": false,
+        "breakpoints": 1,
+        "ttl": "managed",
+        "est_tokens": 37,
+        "est_cost": 7.4e-05,
+        "baseline_cost": 7.4e-05,
+        "saving": 0.0,
+        "saving_pct": 0.0,
+        "cliff_action": "pass",
+        "reasoning_budget": null,
+        "defer": false,
+        "cache_engages": true,
+        "route_capabilities": {},
+        "request_budget": {},
+        "adapter_id": "doubao.seed-evolving",
+        "model_kind_id": "doubao.seed-evolving",
+        "model_family_id": "doubao.seed",
+        "manufacturer_id": "volcengine",
+        "behavior_fingerprint": "9c7f8429976ba0d0",
+        "model_match_source": "model_id",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type",
+          "opaque_assistant_replay",
+          "native_tool_replay"
+        ],
+        "fingerprint": "1334acd07100ab04",
+        "execution": {},
+        "estimate_scope": "reuse_window",
+        "includes_output_cost": false,
+        "price_known": false,
+        "model": "doubao-seed-evolving"
+      }
+    },
+    {
+      "stage": "repository-off/1",
+      "model": "doubao-seed-evolving",
+      "url": "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+      "parameters": {
+        "temperature": 0.7,
+        "max_tokens": 4096
+      },
+      "message_count": 2,
+      "common_prefix_messages": 0,
+      "messages_digest": "3d91d324217d54693db6511d1627ff05d0a77ae0503ce11bcf774656a0bbc936",
+      "tools_digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "toolset_digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "payload_digest": "fe80869a4585d7995a19545c39d4ab7cfaf97541a50bee150f2faaa54139183a",
+      "message_chars": 3585,
+      "assistant_reasoning_fields": 0,
+      "tools": [],
+      "error_type": "TimeoutError",
+      "status": null,
+      "seconds": 46.609,
+      "message_components": [
+        {
+          "role": "system",
+          "digest": "ac2741655985c74603b70163e9932c68576ea6f66cea1f3a4ae9ff7d61d2b5ea",
+          "fields": {
+            "role": {
+              "digest": "0dc8cd0a92280156c12ba5073f5049586727ba0bef2ff72099577bd332db18f5",
+              "characters": 8
+            },
+            "content": {
+              "digest": "d8005396727ed8b70a8e12a56386fbf4ec0ee9b1d42de299bf2435a3b0d71e64",
+              "characters": 121
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "07b2c8ea941482a34341842200c14182e07455736d38ee3f550638af3abb5c16",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "6fe3e2dfe68783315207732056eb090c6d7854a61877a42d097e0a997d3458e9",
+              "characters": 3404
+            }
+          }
+        }
+      ],
+      "common_serialized_message_prefix_chars": 29,
+      "exact_payload_repeat": false,
+      "generation_parameters_digest": "cdc04734180cc70acfe726ecf901fbbb2d4202f147684a6e6f907068f4da93d1",
+      "affinity_present": false,
+      "affinity_digest": null
+    },
+    {
+      "stage": "repository-off/2",
+      "model": "doubao-seed-evolving",
+      "url": "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+      "parameters": {
+        "temperature": 0.7,
+        "max_tokens": 4096
+      },
+      "message_count": 2,
+      "common_prefix_messages": 2,
+      "messages_digest": "3d91d324217d54693db6511d1627ff05d0a77ae0503ce11bcf774656a0bbc936",
+      "tools_digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "toolset_digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "payload_digest": "fe80869a4585d7995a19545c39d4ab7cfaf97541a50bee150f2faaa54139183a",
+      "message_chars": 3585,
+      "assistant_reasoning_fields": 0,
+      "tools": [],
+      "status": 200,
+      "raw_usage": {
+        "completion_tokens": 1427,
+        "prompt_tokens": 934,
+        "total_tokens": 2361,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 1288
+        }
+      },
+      "finish_reason": "stop",
+      "response_id": "021794186186943ccb5cb80d056078148fd97ed4662bb35c2c425",
+      "response_model": "doubao-seed-evolving",
+      "reasoning_chars": 1581,
+      "tool_calls": null,
+      "text": "1. `line_total` uses binary `float` and lacks validation, so `1.005` rounds to `1.0` instead of Decimal `1.01`, and invalid inputs are accepted.\n2. `build_report` ignores `status`: it adds cancelled/refunded orders instead of skipping/subtracting them.\n\n```python\ndef test_targeted_defects():\n    assert line_total(\"1.005\", 1) == Decimal(\"1.01\")\n    assert build_report([row(status=\"cancelled\"),\n    ",
+      "seconds": 35.062,
+      "response_message_fields": [
+        "content",
+        "encrypted_content",
+        "reasoning_content",
+        "role"
+      ],
+      "encrypted_content_chars": 3644,
+      "encrypted_replay_matches": 0,
+      "message_components": [
+        {
+          "role": "system",
+          "digest": "ac2741655985c74603b70163e9932c68576ea6f66cea1f3a4ae9ff7d61d2b5ea",
+          "fields": {
+            "role": {
+              "digest": "0dc8cd0a92280156c12ba5073f5049586727ba0bef2ff72099577bd332db18f5",
+              "characters": 8
+            },
+            "content": {
+              "digest": "d8005396727ed8b70a8e12a56386fbf4ec0ee9b1d42de299bf2435a3b0d71e64",
+              "characters": 121
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "07b2c8ea941482a34341842200c14182e07455736d38ee3f550638af3abb5c16",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "6fe3e2dfe68783315207732056eb090c6d7854a61877a42d097e0a997d3458e9",
+              "characters": 3404
+            }
+          }
+        }
+      ],
+      "common_serialized_message_prefix_chars": 3582,
+      "exact_payload_repeat": true,
+      "generation_parameters_digest": "cdc04734180cc70acfe726ecf901fbbb2d4202f147684a6e6f907068f4da93d1",
+      "affinity_present": false,
+      "affinity_digest": null,
+      "usage": {
+        "prompt_tokens": 934,
+        "completion_tokens": 1427,
+        "model": "doubao-seed-evolving",
+        "provider": "seed-live",
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 1288,
+        "cache_observed": true
+      },
+      "adaptation": {
+        "vendor": "volcengine",
+        "vendor_label": "火山方舟（豆包）",
+        "actions": [
+          "依赖厂商自动缓存（命中 1×），无需标记"
+        ],
+        "notes": [
+          "缓存命中已实证但折扣未公布，金额按原价保守估算",
+          "回放可保留 encrypted_content（三变体回放探针全 200）",
+          "该模型无目录价，金额按单位价折算，仅用于比较比例，不代表真实账单"
+        ],
+        "cache_control": false,
+        "breakpoints": 1,
+        "ttl": "managed",
+        "est_tokens": 1349,
+        "est_cost": 0.002698,
+        "baseline_cost": 0.002698,
+        "saving": 0.0,
+        "saving_pct": 0.0,
+        "cliff_action": "pass",
+        "reasoning_budget": null,
+        "defer": false,
+        "cache_engages": true,
+        "route_capabilities": {},
+        "request_budget": {},
+        "adapter_id": "doubao.seed-evolving",
+        "model_kind_id": "doubao.seed-evolving",
+        "model_family_id": "doubao.seed",
+        "manufacturer_id": "volcengine",
+        "behavior_fingerprint": "9c7f8429976ba0d0",
+        "model_match_source": "model_id",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type",
+          "opaque_assistant_replay",
+          "native_tool_replay"
+        ],
+        "fingerprint": "f2b57a608b6a7e94",
+        "execution": {},
+        "estimate_scope": "reuse_window",
+        "includes_output_cost": false,
+        "price_known": false,
+        "model": "doubao-seed-evolving"
+      }
+    },
+    {
+      "stage": "repository-affinity/1",
+      "model": "doubao-seed-evolving",
+      "url": "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+      "parameters": {
+        "temperature": 0.7,
+        "max_tokens": 4096
+      },
+      "message_count": 2,
+      "common_prefix_messages": 2,
+      "messages_digest": "3d91d324217d54693db6511d1627ff05d0a77ae0503ce11bcf774656a0bbc936",
+      "tools_digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "toolset_digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "payload_digest": "f58384a2d853586b0a6f28a8b9d47d8d6ca3e29c05bc1b435fc3814a6c2a7c27",
+      "message_chars": 3585,
+      "assistant_reasoning_fields": 0,
+      "tools": [],
+      "status": 200,
+      "raw_usage": {
+        "completion_tokens": 1163,
+        "prompt_tokens": 934,
+        "total_tokens": 2097,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 1037
+        }
+      },
+      "finish_reason": "stop",
+      "response_id": "021794186222224ad573fde1d3a0c584eb2d5cd74b76b3f4098f5",
+      "response_model": "doubao-seed-evolving",
+      "reasoning_chars": 1163,
+      "tool_calls": null,
+      "text": "- `line_total` uses float math, causing incorrect `ROUND_HALF_UP` results (e.g. `1.005`) and float drift; it also lacks required validation.\n- `build_report` adds every order instead of subtracting refunds and skipping cancellations, and does not sort currencies.\n\n```python\ndef test_orders():\n    assert build_report([row(currency=\"USD\"), row(currency=\"EUR\", status=\"refunded\"), row(status=\"cancelle",
+      "seconds": 31.735,
+      "response_message_fields": [
+        "content",
+        "encrypted_content",
+        "reasoning_content",
+        "role"
+      ],
+      "encrypted_content_chars": 2800,
+      "encrypted_replay_matches": 0,
+      "message_components": [
+        {
+          "role": "system",
+          "digest": "ac2741655985c74603b70163e9932c68576ea6f66cea1f3a4ae9ff7d61d2b5ea",
+          "fields": {
+            "role": {
+              "digest": "0dc8cd0a92280156c12ba5073f5049586727ba0bef2ff72099577bd332db18f5",
+              "characters": 8
+            },
+            "content": {
+              "digest": "d8005396727ed8b70a8e12a56386fbf4ec0ee9b1d42de299bf2435a3b0d71e64",
+              "characters": 121
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "07b2c8ea941482a34341842200c14182e07455736d38ee3f550638af3abb5c16",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "6fe3e2dfe68783315207732056eb090c6d7854a61877a42d097e0a997d3458e9",
+              "characters": 3404
+            }
+          }
+        }
+      ],
+      "common_serialized_message_prefix_chars": 3582,
+      "exact_payload_repeat": false,
+      "generation_parameters_digest": "a585a062fbf14225777a3f18109a5016833357efd93d4a6d462b9d5c0f60c410",
+      "affinity_present": true,
+      "affinity_digest": "dbfde58875956e7ccf4987c169a8bd2efecc04c44b159fee2f98cecd6bb16d56",
+      "usage": {
+        "prompt_tokens": 934,
+        "completion_tokens": 1163,
+        "model": "doubao-seed-evolving",
+        "provider": "seed-live",
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 1037,
+        "cache_observed": true
+      },
+      "adaptation": {
+        "vendor": "volcengine",
+        "vendor_label": "火山方舟（豆包）",
+        "actions": [
+          "依赖厂商自动缓存（命中 1×），无需标记"
+        ],
+        "notes": [
+          "缓存命中已实证但折扣未公布，金额按原价保守估算",
+          "回放可保留 encrypted_content（三变体回放探针全 200）",
+          "该模型无目录价，金额按单位价折算，仅用于比较比例，不代表真实账单"
+        ],
+        "cache_control": false,
+        "breakpoints": 1,
+        "ttl": "managed",
+        "est_tokens": 1349,
+        "est_cost": 0.002698,
+        "baseline_cost": 0.002698,
+        "saving": 0.0,
+        "saving_pct": 0.0,
+        "cliff_action": "pass",
+        "reasoning_budget": null,
+        "defer": false,
+        "cache_engages": true,
+        "route_capabilities": {},
+        "request_budget": {},
+        "adapter_id": "doubao.seed-evolving",
+        "model_kind_id": "doubao.seed-evolving",
+        "model_family_id": "doubao.seed",
+        "manufacturer_id": "volcengine",
+        "behavior_fingerprint": "9c7f8429976ba0d0",
+        "model_match_source": "model_id",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type",
+          "opaque_assistant_replay",
+          "native_tool_replay"
+        ],
+        "fingerprint": "f2b57a608b6a7e94",
+        "execution": {},
+        "estimate_scope": "reuse_window",
+        "includes_output_cost": false,
+        "price_known": false,
+        "model": "doubao-seed-evolving"
+      }
+    },
+    {
+      "stage": "repository-affinity/2",
+      "model": "doubao-seed-evolving",
+      "url": "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+      "parameters": {
+        "temperature": 0.7,
+        "max_tokens": 4096
+      },
+      "message_count": 2,
+      "common_prefix_messages": 2,
+      "messages_digest": "3d91d324217d54693db6511d1627ff05d0a77ae0503ce11bcf774656a0bbc936",
+      "tools_digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "toolset_digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "payload_digest": "f58384a2d853586b0a6f28a8b9d47d8d6ca3e29c05bc1b435fc3814a6c2a7c27",
+      "message_chars": 3585,
+      "assistant_reasoning_fields": 0,
+      "tools": [],
+      "error_type": "TimeoutError",
+      "status": null,
+      "seconds": 46.546,
+      "message_components": [
+        {
+          "role": "system",
+          "digest": "ac2741655985c74603b70163e9932c68576ea6f66cea1f3a4ae9ff7d61d2b5ea",
+          "fields": {
+            "role": {
+              "digest": "0dc8cd0a92280156c12ba5073f5049586727ba0bef2ff72099577bd332db18f5",
+              "characters": 8
+            },
+            "content": {
+              "digest": "d8005396727ed8b70a8e12a56386fbf4ec0ee9b1d42de299bf2435a3b0d71e64",
+              "characters": 121
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "07b2c8ea941482a34341842200c14182e07455736d38ee3f550638af3abb5c16",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "6fe3e2dfe68783315207732056eb090c6d7854a61877a42d097e0a997d3458e9",
+              "characters": 3404
+            }
+          }
+        }
+      ],
+      "common_serialized_message_prefix_chars": 3582,
+      "exact_payload_repeat": true,
+      "generation_parameters_digest": "a585a062fbf14225777a3f18109a5016833357efd93d4a6d462b9d5c0f60c410",
+      "affinity_present": true,
+      "affinity_digest": "dbfde58875956e7ccf4987c169a8bd2efecc04c44b159fee2f98cecd6bb16d56"
+    },
+    {
+      "stage": "repository-affinity-repeat/1",
+      "model": "doubao-seed-evolving",
+      "url": "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+      "parameters": {
+        "temperature": 0.7,
+        "max_tokens": 4096
+      },
+      "message_count": 2,
+      "common_prefix_messages": 2,
+      "messages_digest": "3d91d324217d54693db6511d1627ff05d0a77ae0503ce11bcf774656a0bbc936",
+      "tools_digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "toolset_digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "payload_digest": "f58384a2d853586b0a6f28a8b9d47d8d6ca3e29c05bc1b435fc3814a6c2a7c27",
+      "message_chars": 3585,
+      "assistant_reasoning_fields": 0,
+      "tools": [],
+      "error_type": "URLError",
+      "status": null,
+      "seconds": 45.047,
+      "message_components": [
+        {
+          "role": "system",
+          "digest": "ac2741655985c74603b70163e9932c68576ea6f66cea1f3a4ae9ff7d61d2b5ea",
+          "fields": {
+            "role": {
+              "digest": "0dc8cd0a92280156c12ba5073f5049586727ba0bef2ff72099577bd332db18f5",
+              "characters": 8
+            },
+            "content": {
+              "digest": "d8005396727ed8b70a8e12a56386fbf4ec0ee9b1d42de299bf2435a3b0d71e64",
+              "characters": 121
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "07b2c8ea941482a34341842200c14182e07455736d38ee3f550638af3abb5c16",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "6fe3e2dfe68783315207732056eb090c6d7854a61877a42d097e0a997d3458e9",
+              "characters": 3404
+            }
+          }
+        }
+      ],
+      "common_serialized_message_prefix_chars": 3582,
+      "exact_payload_repeat": true,
+      "generation_parameters_digest": "a585a062fbf14225777a3f18109a5016833357efd93d4a6d462b9d5c0f60c410",
+      "affinity_present": true,
+      "affinity_digest": "dbfde58875956e7ccf4987c169a8bd2efecc04c44b159fee2f98cecd6bb16d56"
+    },
+    {
+      "stage": "repository-affinity-repeat/2",
+      "model": "doubao-seed-evolving",
+      "url": "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+      "parameters": {
+        "temperature": 0.7,
+        "max_tokens": 4096
+      },
+      "message_count": 2,
+      "common_prefix_messages": 2,
+      "messages_digest": "3d91d324217d54693db6511d1627ff05d0a77ae0503ce11bcf774656a0bbc936",
+      "tools_digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "toolset_digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "payload_digest": "f58384a2d853586b0a6f28a8b9d47d8d6ca3e29c05bc1b435fc3814a6c2a7c27",
+      "message_chars": 3585,
+      "assistant_reasoning_fields": 0,
+      "tools": [],
+      "error_type": "TimeoutError",
+      "status": null,
+      "seconds": 46.609,
+      "message_components": [
+        {
+          "role": "system",
+          "digest": "ac2741655985c74603b70163e9932c68576ea6f66cea1f3a4ae9ff7d61d2b5ea",
+          "fields": {
+            "role": {
+              "digest": "0dc8cd0a92280156c12ba5073f5049586727ba0bef2ff72099577bd332db18f5",
+              "characters": 8
+            },
+            "content": {
+              "digest": "d8005396727ed8b70a8e12a56386fbf4ec0ee9b1d42de299bf2435a3b0d71e64",
+              "characters": 121
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "07b2c8ea941482a34341842200c14182e07455736d38ee3f550638af3abb5c16",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "6fe3e2dfe68783315207732056eb090c6d7854a61877a42d097e0a997d3458e9",
+              "characters": 3404
+            }
+          }
+        }
+      ],
+      "common_serialized_message_prefix_chars": 3582,
+      "exact_payload_repeat": true,
+      "generation_parameters_digest": "a585a062fbf14225777a3f18109a5016833357efd93d4a6d462b9d5c0f60c410",
+      "affinity_present": true,
+      "affinity_digest": "dbfde58875956e7ccf4987c169a8bd2efecc04c44b159fee2f98cecd6bb16d56"
+    },
+    {
+      "stage": "repository-off-reverse/1",
+      "model": "doubao-seed-evolving",
+      "url": "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+      "parameters": {
+        "temperature": 0.7,
+        "max_tokens": 4096
+      },
+      "message_count": 2,
+      "common_prefix_messages": 2,
+      "messages_digest": "3d91d324217d54693db6511d1627ff05d0a77ae0503ce11bcf774656a0bbc936",
+      "tools_digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "toolset_digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "payload_digest": "fe80869a4585d7995a19545c39d4ab7cfaf97541a50bee150f2faaa54139183a",
+      "message_chars": 3585,
+      "assistant_reasoning_fields": 0,
+      "tools": [],
+      "status": 200,
+      "raw_usage": {
+        "completion_tokens": 1040,
+        "prompt_tokens": 934,
+        "total_tokens": 1974,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 921
+        }
+      },
+      "finish_reason": "stop",
+      "response_id": "0217941863944355c53bb980d0b91addac92a88f9eb95989c596e",
+      "response_model": "doubao-seed-evolving",
+      "reasoning_chars": 1190,
+      "tool_calls": null,
+      "text": "1. `line_total` uses float arithmetic and Python `round`, returning a `float` instead of a `Decimal`; `1.005` incorrectly rounds to `1.00` rather than `1.01`.\n2. `build_report` ignores `status`, so refunds and cancellations are added, and currency order is not sorted.\n\nTargeted test:\n```python\nself.assertEqual(build_report([row(), row(status=\"refunded\"), row(status=\"cancelled\")]), {\"USD\": \"0.00\"})",
+      "seconds": 26.907,
+      "response_message_fields": [
+        "content",
+        "encrypted_content",
+        "reasoning_content",
+        "role"
+      ],
+      "encrypted_content_chars": 2892,
+      "encrypted_replay_matches": 0,
+      "message_components": [
+        {
+          "role": "system",
+          "digest": "ac2741655985c74603b70163e9932c68576ea6f66cea1f3a4ae9ff7d61d2b5ea",
+          "fields": {
+            "role": {
+              "digest": "0dc8cd0a92280156c12ba5073f5049586727ba0bef2ff72099577bd332db18f5",
+              "characters": 8
+            },
+            "content": {
+              "digest": "d8005396727ed8b70a8e12a56386fbf4ec0ee9b1d42de299bf2435a3b0d71e64",
+              "characters": 121
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "07b2c8ea941482a34341842200c14182e07455736d38ee3f550638af3abb5c16",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "6fe3e2dfe68783315207732056eb090c6d7854a61877a42d097e0a997d3458e9",
+              "characters": 3404
+            }
+          }
+        }
+      ],
+      "common_serialized_message_prefix_chars": 3582,
+      "exact_payload_repeat": false,
+      "generation_parameters_digest": "cdc04734180cc70acfe726ecf901fbbb2d4202f147684a6e6f907068f4da93d1",
+      "affinity_present": false,
+      "affinity_digest": null,
+      "usage": {
+        "prompt_tokens": 934,
+        "completion_tokens": 1040,
+        "model": "doubao-seed-evolving",
+        "provider": "seed-live",
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 921,
+        "cache_observed": true
+      },
+      "adaptation": {
+        "vendor": "volcengine",
+        "vendor_label": "火山方舟（豆包）",
+        "actions": [
+          "依赖厂商自动缓存（命中 1×），无需标记"
+        ],
+        "notes": [
+          "缓存命中已实证但折扣未公布，金额按原价保守估算",
+          "回放可保留 encrypted_content（三变体回放探针全 200）",
+          "该模型无目录价，金额按单位价折算，仅用于比较比例，不代表真实账单"
+        ],
+        "cache_control": false,
+        "breakpoints": 1,
+        "ttl": "managed",
+        "est_tokens": 1349,
+        "est_cost": 0.002698,
+        "baseline_cost": 0.002698,
+        "saving": 0.0,
+        "saving_pct": 0.0,
+        "cliff_action": "pass",
+        "reasoning_budget": null,
+        "defer": false,
+        "cache_engages": true,
+        "route_capabilities": {},
+        "request_budget": {},
+        "adapter_id": "doubao.seed-evolving",
+        "model_kind_id": "doubao.seed-evolving",
+        "model_family_id": "doubao.seed",
+        "manufacturer_id": "volcengine",
+        "behavior_fingerprint": "9c7f8429976ba0d0",
+        "model_match_source": "model_id",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type",
+          "opaque_assistant_replay",
+          "native_tool_replay"
+        ],
+        "fingerprint": "f2b57a608b6a7e94",
+        "execution": {},
+        "estimate_scope": "reuse_window",
+        "includes_output_cost": false,
+        "price_known": false,
+        "model": "doubao-seed-evolving"
+      }
+    },
+    {
+      "stage": "repository-off-reverse/2",
+      "model": "doubao-seed-evolving",
+      "url": "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+      "parameters": {
+        "temperature": 0.7,
+        "max_tokens": 4096
+      },
+      "message_count": 2,
+      "common_prefix_messages": 2,
+      "messages_digest": "3d91d324217d54693db6511d1627ff05d0a77ae0503ce11bcf774656a0bbc936",
+      "tools_digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "toolset_digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "payload_digest": "fe80869a4585d7995a19545c39d4ab7cfaf97541a50bee150f2faaa54139183a",
+      "message_chars": 3585,
+      "assistant_reasoning_fields": 0,
+      "tools": [],
+      "error_type": "URLError",
+      "status": null,
+      "seconds": 45.031,
+      "message_components": [
+        {
+          "role": "system",
+          "digest": "ac2741655985c74603b70163e9932c68576ea6f66cea1f3a4ae9ff7d61d2b5ea",
+          "fields": {
+            "role": {
+              "digest": "0dc8cd0a92280156c12ba5073f5049586727ba0bef2ff72099577bd332db18f5",
+              "characters": 8
+            },
+            "content": {
+              "digest": "d8005396727ed8b70a8e12a56386fbf4ec0ee9b1d42de299bf2435a3b0d71e64",
+              "characters": 121
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "07b2c8ea941482a34341842200c14182e07455736d38ee3f550638af3abb5c16",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "6fe3e2dfe68783315207732056eb090c6d7854a61877a42d097e0a997d3458e9",
+              "characters": 3404
+            }
+          }
+        }
+      ],
+      "common_serialized_message_prefix_chars": 3582,
+      "exact_payload_repeat": true,
+      "generation_parameters_digest": "cdc04734180cc70acfe726ecf901fbbb2d4202f147684a6e6f907068f4da93d1",
+      "affinity_present": false,
+      "affinity_digest": null
+    }
+  ],
+  "totals": {
+    "attempts": 10,
+    "successful_requests": 4,
+    "prompt_tokens": 2860,
+    "completion_tokens": 4495,
+    "cached_tokens": 0,
+    "reasoning_tokens": 3956,
+    "seconds": 393.046,
+    "coverage": {
+      "all_observed": {
+        "requests": 4,
+        "input_tokens": 2860,
+        "cached_tokens": 0,
+        "hit_rate": 0.0
+      },
+      "rebuild": {
+        "requests": 0,
+        "input_tokens": 0,
+        "cached_tokens": 0,
+        "hit_rate": null
+      },
+      "non_rebuild": {
+        "requests": 4,
+        "input_tokens": 2860,
+        "cached_tokens": 0,
+        "hit_rate": 0.0
+      },
+      "eligible_prefix": {
+        "requests": 0,
+        "input_tokens": 0,
+        "cached_tokens": 0,
+        "excluded_tail_tokens": 0,
+        "hit_rate": null
+      },
+      "unknown_requests": 6,
+      "invalid_requests": 0,
+      "duplicate_observations": 0,
+      "denominator": "observed input tokens; eligible_prefix excludes declared structural tail"
+    }
+  },
+  "ok": false
+}

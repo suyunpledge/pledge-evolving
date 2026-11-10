@@ -1,0 +1,3331 @@
+{
+  "vendor": "mimo",
+  "scenario": "trim-compare",
+  "experimental_affinity": false,
+  "thinking": "auto",
+  "cache_affinity": "auto",
+  "extended_repository": false,
+  "scope": "Hash-only wire evidence; repository input is the existing synthetic billing fixture, never production padding.",
+  "runtime_sha256": {
+    "scripts/verify_cache_diagnostics.py": "e99501c79b9a28a0740e87fa5f0458e4e7a72b949f9092e0b1bfb6a66b84ee9d",
+    "forge/model.py": "415cd84c1e198a5be53cb017b637f95d5c9257d2bc095fcaef0a10bfec25eb01",
+    "forge/loop.py": "2f6f2df1abe3e28e9ee3303c481b5a66518b23d26b4530451f81405272587f37",
+    "forge/cache_affinity.py": "f1cac53d71c1d61a65e7297e0977eb0a97d454d366b1a827570c2dc88a1f6e25",
+    "forge/cache_state.py": "a37413aba21dc24acee061a76d69fdcca436282ed055008325b67bd218f9258e",
+    "forge/conversation_prefix.py": "305fcaf781fd887555f9502e9337e0a52fc908b611ae55467b36e5575e935898",
+    "forge/compaction.py": "2ef74a994bf9478397f4bd0723ec040b100f227afee7cabc3e563b6a76777ec9",
+    "forge/compaction_notes.py": "2a0310f83e1986d2a8b0d8e895eb28c024b5c9b0310cca3708bb9ca7b98e0f12"
+  },
+  "baseline_prefix_sha256": "23e77f7ed191a1ad2c6c8e083fea39fca9a5d7b41e2f696db59d70c35fe65f42",
+  "cases": [
+    {
+      "sample": 1,
+      "mode": "baseline",
+      "turns": [
+        {
+          "turn": 1,
+          "ok": true,
+          "stopped": "final",
+          "text": "423",
+          "tools": [
+            "read_file",
+            "calculator"
+          ],
+          "events": [
+            {
+              "type": "compaction",
+              "transaction_id": "e9a7e241b6964596bb46db38e37cb8b1",
+              "before": 5152,
+              "after": 2182,
+              "source_digest": "581ad85b07fe9528b84688798e277501c021b1897e95d3574f80e81bf0fee127",
+              "shrunk": true,
+              "committed": true,
+              "archive": {
+                "archive_id": "ctx-e9a7e241b6964596bb46db38e37cb8b1",
+                "path": "C:\\Users\\D442~1\\AppData\\Local\\Temp\\forge-trim-compare-yg3swnw_\\home-0\\context-archives\\ctx-e9a7e241b6964596bb46db38e37cb8b1.json",
+                "archive_digest": "581ad85b07fe9528b84688798e277501c021b1897e95d3574f80e81bf0fee127",
+                "message_count": 9
+              },
+              "candidate_digest": "34d741dbc090c85eec5b40f158079b3367917b6cdf5181792c8a564da6c4da43",
+              "reason": "committed",
+              "checkpoint": {
+                "version": 1,
+                "archive_id": "ctx-e9a7e241b6964596bb46db38e37cb8b1",
+                "coverage": {
+                  "start": 0,
+                  "end_exclusive": 9
+                },
+                "summary_status": "unverified_excerpt"
+              },
+              "target_chars": 3250,
+              "preserved_prefix_messages": 1,
+              "agent": "forge",
+              "depth": 0,
+              "run_id": "414ed1a165304cf1a6449f2e8c22ab5a",
+              "task_id": "414ed1a165304cf1a6449f2e8c22ab5a",
+              "parent_run_id": "",
+              "event_id": "8f9b18bf8be1425a9fbbea55725f0cd7",
+              "protocol_version": 1
+            }
+          ],
+          "native_pairs_valid": true,
+          "totals": {
+            "attempts": 3,
+            "successful_requests": 3,
+            "prompt_tokens": 3442,
+            "completion_tokens": 102,
+            "cached_tokens": 2304,
+            "reasoning_tokens": 53,
+            "seconds": 13.438,
+            "coverage": {
+              "all_observed": {
+                "requests": 2,
+                "input_tokens": 2711,
+                "cached_tokens": 2304,
+                "hit_rate": 0.8499
+              },
+              "rebuild": {
+                "requests": 0,
+                "input_tokens": 0,
+                "cached_tokens": 0,
+                "hit_rate": null
+              },
+              "non_rebuild": {
+                "requests": 2,
+                "input_tokens": 2711,
+                "cached_tokens": 2304,
+                "hit_rate": 0.8499
+              },
+              "eligible_prefix": {
+                "requests": 0,
+                "input_tokens": 0,
+                "cached_tokens": 0,
+                "excluded_tail_tokens": 0,
+                "hit_rate": null
+              },
+              "unknown_requests": 1,
+              "invalid_requests": 0,
+              "duplicate_observations": 0,
+              "denominator": "observed input tokens; eligible_prefix excludes declared structural tail"
+            }
+          },
+          "host_trim_accepted": true
+        },
+        {
+          "turn": 2,
+          "ok": true,
+          "stopped": "final",
+          "text": "423",
+          "tools": [
+            "read_file",
+            "calculator"
+          ],
+          "events": [],
+          "native_pairs_valid": true,
+          "totals": {
+            "attempts": 3,
+            "successful_requests": 3,
+            "prompt_tokens": 2276,
+            "completion_tokens": 188,
+            "cached_tokens": 1344,
+            "reasoning_tokens": 138,
+            "seconds": 17.437,
+            "coverage": {
+              "all_observed": {
+                "requests": 2,
+                "input_tokens": 1640,
+                "cached_tokens": 1344,
+                "hit_rate": 0.8195
+              },
+              "rebuild": {
+                "requests": 0,
+                "input_tokens": 0,
+                "cached_tokens": 0,
+                "hit_rate": null
+              },
+              "non_rebuild": {
+                "requests": 2,
+                "input_tokens": 1640,
+                "cached_tokens": 1344,
+                "hit_rate": 0.8195
+              },
+              "eligible_prefix": {
+                "requests": 0,
+                "input_tokens": 0,
+                "cached_tokens": 0,
+                "excluded_tail_tokens": 0,
+                "hit_rate": null
+              },
+              "unknown_requests": 1,
+              "invalid_requests": 0,
+              "duplicate_observations": 0,
+              "denominator": "observed input tokens; eligible_prefix excludes declared structural tail"
+            }
+          },
+          "host_trim_accepted": true
+        }
+      ],
+      "ok": true
+    },
+    {
+      "sample": 2,
+      "mode": "improved",
+      "turns": [
+        {
+          "turn": 1,
+          "ok": true,
+          "stopped": "final",
+          "text": "423",
+          "tools": [
+            "read_file",
+            "calculator"
+          ],
+          "events": [
+            {
+              "type": "compaction",
+              "transaction_id": "ca524331724840beb50a2f71b908f2e6",
+              "before": 5041,
+              "after": 2071,
+              "source_digest": "6d326b07e3a37ad1ab2dc1b965e7162cb1d90c2f5ef7c9793a6e9547621110f9",
+              "shrunk": true,
+              "committed": true,
+              "archive": {
+                "archive_id": "ctx-ca524331724840beb50a2f71b908f2e6",
+                "path": "C:\\Users\\D442~1\\AppData\\Local\\Temp\\forge-trim-compare-yg3swnw_\\home-1\\context-archives\\ctx-ca524331724840beb50a2f71b908f2e6.json",
+                "archive_digest": "6d326b07e3a37ad1ab2dc1b965e7162cb1d90c2f5ef7c9793a6e9547621110f9",
+                "message_count": 7
+              },
+              "candidate_digest": "6f3ef884f45ebf95e7d24d33faf85f08d1b721e1ae888bcb3a8726c4b49c9b85",
+              "reason": "committed",
+              "checkpoint": {
+                "version": 1,
+                "archive_id": "ctx-ca524331724840beb50a2f71b908f2e6",
+                "coverage": {
+                  "start": 0,
+                  "end_exclusive": 7
+                },
+                "summary_status": "unverified_excerpt"
+              },
+              "target_chars": 3250,
+              "preserved_prefix_messages": 1,
+              "agent": "forge",
+              "depth": 0,
+              "run_id": "83ffeafe866145f0844a9c12836cae73",
+              "task_id": "83ffeafe866145f0844a9c12836cae73",
+              "parent_run_id": "",
+              "event_id": "5c2a4b2336fe4d43a3671268fdb1739b",
+              "protocol_version": 1
+            }
+          ],
+          "native_pairs_valid": true,
+          "totals": {
+            "attempts": 4,
+            "successful_requests": 3,
+            "prompt_tokens": 2744,
+            "completion_tokens": 107,
+            "cached_tokens": 2432,
+            "reasoning_tokens": 57,
+            "seconds": 25.374,
+            "coverage": {
+              "all_observed": {
+                "requests": 3,
+                "input_tokens": 2744,
+                "cached_tokens": 2432,
+                "hit_rate": 0.8863
+              },
+              "rebuild": {
+                "requests": 0,
+                "input_tokens": 0,
+                "cached_tokens": 0,
+                "hit_rate": null
+              },
+              "non_rebuild": {
+                "requests": 3,
+                "input_tokens": 2744,
+                "cached_tokens": 2432,
+                "hit_rate": 0.8863
+              },
+              "eligible_prefix": {
+                "requests": 0,
+                "input_tokens": 0,
+                "cached_tokens": 0,
+                "excluded_tail_tokens": 0,
+                "hit_rate": null
+              },
+              "unknown_requests": 1,
+              "invalid_requests": 0,
+              "duplicate_observations": 0,
+              "denominator": "observed input tokens; eligible_prefix excludes declared structural tail"
+            }
+          },
+          "host_trim_accepted": true
+        },
+        {
+          "turn": 2,
+          "ok": true,
+          "stopped": "final",
+          "text": "423",
+          "tools": [
+            "calculator"
+          ],
+          "events": [
+            {
+              "type": "cache_prefix_reused",
+              "messages": 9,
+              "scope": "same-agent continuation; not proof of vendor cache hit",
+              "agent": "forge",
+              "depth": 0,
+              "run_id": "812fe347b67b4c2f93cd15b25369ba71",
+              "task_id": "812fe347b67b4c2f93cd15b25369ba71",
+              "parent_run_id": "",
+              "event_id": "ab771d71c391449faba159350e1c996a",
+              "protocol_version": 1
+            }
+          ],
+          "native_pairs_valid": true,
+          "totals": {
+            "attempts": 2,
+            "successful_requests": 2,
+            "prompt_tokens": 1833,
+            "completion_tokens": 70,
+            "cached_tokens": 1536,
+            "reasoning_tokens": 39,
+            "seconds": 8.39,
+            "coverage": {
+              "all_observed": {
+                "requests": 2,
+                "input_tokens": 1833,
+                "cached_tokens": 1536,
+                "hit_rate": 0.838
+              },
+              "rebuild": {
+                "requests": 0,
+                "input_tokens": 0,
+                "cached_tokens": 0,
+                "hit_rate": null
+              },
+              "non_rebuild": {
+                "requests": 2,
+                "input_tokens": 1833,
+                "cached_tokens": 1536,
+                "hit_rate": 0.838
+              },
+              "eligible_prefix": {
+                "requests": 0,
+                "input_tokens": 0,
+                "cached_tokens": 0,
+                "excluded_tail_tokens": 0,
+                "hit_rate": null
+              },
+              "unknown_requests": 0,
+              "invalid_requests": 0,
+              "duplicate_observations": 0,
+              "denominator": "observed input tokens; eligible_prefix excludes declared structural tail"
+            }
+          },
+          "host_trim_accepted": true
+        }
+      ],
+      "ok": true
+    }
+  ],
+  "requests": [
+    {
+      "stage": "trim-0/agent-turn-1",
+      "model": "mimo-v2.6-flash",
+      "url": "https://token-plan-cn.xiaomimimo.com/v1/chat/completions",
+      "parameters": {
+        "thinking": {
+          "type": "enabled"
+        },
+        "tool_choice": "auto",
+        "max_tokens": 4096
+      },
+      "message_count": 5,
+      "common_prefix_messages": 0,
+      "messages_digest": "ca2f6090d023b6cc4fb9ed076d1c0b3cb3f6037e726ebba4177367734e70c546",
+      "tools_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "toolset_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "payload_digest": "816d920706cf3c4139cc9b7a7690033039dbd26f8d3b5c4325fd88778e088800",
+      "message_chars": 5021,
+      "assistant_reasoning_fields": 0,
+      "tools": [
+        "calculator",
+        "read_file"
+      ],
+      "status": 200,
+      "upstream_request_id": null,
+      "system_fingerprint": null,
+      "raw_usage": {
+        "completion_tokens": 45,
+        "prompt_tokens": 1323,
+        "total_tokens": 1368,
+        "completion_tokens_details": {
+          "reasoning_tokens": 26
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 1024
+        }
+      },
+      "finish_reason": "tool_calls",
+      "response_id": "ab138fe2-c2e1-47f7-9763-fe88bf73579f_908a941f86a6427da38abb3d44663c42",
+      "response_model": "mimo-v2.6-flash",
+      "reasoning_chars": 103,
+      "tool_calls": [
+        {
+          "id": "call_f2e8733cdcc449ccaeefbc5e",
+          "function": {
+            "arguments": "{\"path\": \"values.json\"}",
+            "name": "read_file"
+          },
+          "type": "function"
+        }
+      ],
+      "text": "",
+      "seconds": 5.516,
+      "response_message_fields": [
+        "content",
+        "reasoning_content",
+        "role",
+        "tool_calls"
+      ],
+      "encrypted_content_chars": 0,
+      "encrypted_replay_matches": 0,
+      "message_components": [
+        {
+          "role": "system",
+          "digest": "a92f8e6c3821afe8723b7f2fd181fa8b1d591f6914828899630956c851904cd6",
+          "fields": {
+            "role": {
+              "digest": "0dc8cd0a92280156c12ba5073f5049586727ba0bef2ff72099577bd332db18f5",
+              "characters": 8
+            },
+            "content": {
+              "digest": "5d9ea34a8f4e9f179c97f6ba36b4d95b4c53b8c4f069c74ea1c6804d4e15af86",
+              "characters": 1042
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "b1ae98148be2f315799203272facc56f1946313fe7649d83ce3ba4f7b54daa54",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "f0b9807cbb919f4c3994ea2a81507c1ffa967d41b15abb160e2bca9e3c0ff702",
+              "characters": 66
+            }
+          }
+        },
+        {
+          "role": "assistant",
+          "digest": "6fc18c8fab792276d84ffe9ade1a3281f2337d186bd722381d0aba121564a217",
+          "fields": {
+            "role": {
+              "digest": "43f3a43f5a7fef31effcd812e256c8f245da366db65c225fcde611385a4df753",
+              "characters": 11
+            },
+            "content": {
+              "digest": "1d3085c30c184dd67e324aec53d3e4135214662db279f9c47683de1af8a1f2d6",
+              "characters": 3324
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "27f3a3f50fd1b0ad9b75a9da14696d459be1c933d7c83e910b2004eecf8a4488",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "9c0132503451389a29311dfa3b649d3dadda80ba606a8b8f419b710e0ac2ca7a",
+              "characters": 155
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "8ceb1e8ecd046e1039c5767e7b72f11cac22fb33dc11e4ac49abd87a9703c1cf",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "4b468a82b10815bb975cb512eb7c6bca4cd83f53d6607de28dedd7d4a2bb72ce",
+              "characters": 282
+            }
+          }
+        }
+      ],
+      "common_serialized_message_prefix_chars": 1,
+      "wire_body_sha256": "62757cb771b28d14974e8712cc4415679e712f057ccce981ef158fbe1850d38c",
+      "prefix_relation": "first",
+      "first_changed_message": null,
+      "changed_message_fields": [],
+      "exact_payload_repeat": false,
+      "generation_parameters_digest": "c70a5f64e6fc760e3bd6fc348aedf8274572b8900755cc4effd4ad5b3ca1b1ac",
+      "affinity_present": false,
+      "affinity_key_digest": null,
+      "affinity_digest": null,
+      "usage": {
+        "prompt_tokens": 1323,
+        "completion_tokens": 45,
+        "model": "mimo-v2.6-flash",
+        "provider": "mimo-live",
+        "cached_tokens": 1024,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 26,
+        "cache_observed": true
+      },
+      "adaptation": {
+        "vendor": "mimo",
+        "vendor_label": "小米 MiMo",
+        "actions": [
+          "依赖厂商自动缓存（命中 0.00833333×），无需标记",
+          "MiMo 思考模式使用厂商固定采样，已摘除 temperature"
+        ],
+        "notes": [
+          "Token Plan 订阅池：倍率仅供比例参考，命中已实证且被 usage 如实计入",
+          "thinking 仅 on/off 两态，默认 enabled；没有已验证的 effort 强度分档",
+          "2.6 家族 tool_choice 仅 auto；工具调用需回放 reasoning_content，不能假定强制选工具生效",
+          "该模型无目录价，金额按单位价折算，仅用于比较比例，不代表真实账单"
+        ],
+        "cache_control": false,
+        "breakpoints": 1,
+        "ttl": "managed",
+        "est_tokens": 2169,
+        "est_cost": 0.000222,
+        "baseline_cost": 0.000327,
+        "saving": 0.000105,
+        "saving_pct": 32.2,
+        "cliff_action": "pass",
+        "reasoning_budget": null,
+        "defer": false,
+        "cache_engages": true,
+        "route_capabilities": {},
+        "request_budget": {},
+        "adapter_id": "mimo.v2.6.flash",
+        "model_kind_id": "mimo.v2.6.flash",
+        "model_family_id": "mimo.v2.6",
+        "manufacturer_id": "mimo",
+        "behavior_fingerprint": "6bc1ad5e8223d2e9",
+        "model_match_source": "model_id",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type",
+          "nullable_cache_details",
+          "native_tool_replay",
+          "auto_tool_choice_only",
+          "fixed_sampling_when_thinking"
+        ],
+        "reasoning_shaped": true,
+        "fingerprint": "e636b1a5d7f5d15d",
+        "execution": {},
+        "estimate_scope": "reuse_window",
+        "includes_output_cost": false,
+        "price_known": false,
+        "model": "mimo-v2.6-flash"
+      }
+    },
+    {
+      "stage": "trim-0/agent-turn-1",
+      "model": "mimo-v2.6-flash",
+      "url": "https://token-plan-cn.xiaomimimo.com/v1/chat/completions",
+      "parameters": {
+        "thinking": {
+          "type": "enabled"
+        },
+        "tool_choice": "auto",
+        "max_tokens": 4096
+      },
+      "message_count": 7,
+      "common_prefix_messages": 5,
+      "messages_digest": "61046bfa1fc5c077d11feaf81454c8c120354c96ebfb9e09bef1fcae4bc038d5",
+      "tools_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "toolset_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "payload_digest": "5f618f96b7157d63a5cc0d9ad536c4d10d39e7d3d40d38d385ad0d6a97d14216",
+      "message_chars": 5444,
+      "assistant_reasoning_fields": 1,
+      "tools": [
+        "calculator",
+        "read_file"
+      ],
+      "status": 200,
+      "upstream_request_id": null,
+      "system_fingerprint": null,
+      "raw_usage": {
+        "completion_tokens": 46,
+        "prompt_tokens": 1388,
+        "total_tokens": 1434,
+        "completion_tokens_details": {
+          "reasoning_tokens": 21
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 1280
+        }
+      },
+      "finish_reason": "tool_calls",
+      "response_id": "0ae7870d-20a2-4831-a85e-416d10bc4c34_e422c59446d34b98b9eefac7496a44e6",
+      "response_model": "mimo-v2.6-flash",
+      "reasoning_chars": 47,
+      "tool_calls": [
+        {
+          "id": "call_6509c596361a49f1bfbebcd2",
+          "function": {
+            "arguments": "{\"expression\": \"137+286\"}",
+            "name": "calculator"
+          },
+          "type": "function"
+        }
+      ],
+      "text": "",
+      "seconds": 4.766,
+      "response_message_fields": [
+        "content",
+        "reasoning_content",
+        "role",
+        "tool_calls"
+      ],
+      "encrypted_content_chars": 0,
+      "encrypted_replay_matches": 0,
+      "message_components": [
+        {
+          "role": "system",
+          "digest": "a92f8e6c3821afe8723b7f2fd181fa8b1d591f6914828899630956c851904cd6",
+          "fields": {
+            "role": {
+              "digest": "0dc8cd0a92280156c12ba5073f5049586727ba0bef2ff72099577bd332db18f5",
+              "characters": 8
+            },
+            "content": {
+              "digest": "5d9ea34a8f4e9f179c97f6ba36b4d95b4c53b8c4f069c74ea1c6804d4e15af86",
+              "characters": 1042
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "b1ae98148be2f315799203272facc56f1946313fe7649d83ce3ba4f7b54daa54",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "f0b9807cbb919f4c3994ea2a81507c1ffa967d41b15abb160e2bca9e3c0ff702",
+              "characters": 66
+            }
+          }
+        },
+        {
+          "role": "assistant",
+          "digest": "6fc18c8fab792276d84ffe9ade1a3281f2337d186bd722381d0aba121564a217",
+          "fields": {
+            "role": {
+              "digest": "43f3a43f5a7fef31effcd812e256c8f245da366db65c225fcde611385a4df753",
+              "characters": 11
+            },
+            "content": {
+              "digest": "1d3085c30c184dd67e324aec53d3e4135214662db279f9c47683de1af8a1f2d6",
+              "characters": 3324
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "27f3a3f50fd1b0ad9b75a9da14696d459be1c933d7c83e910b2004eecf8a4488",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "9c0132503451389a29311dfa3b649d3dadda80ba606a8b8f419b710e0ac2ca7a",
+              "characters": 155
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "8ceb1e8ecd046e1039c5767e7b72f11cac22fb33dc11e4ac49abd87a9703c1cf",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "4b468a82b10815bb975cb512eb7c6bca4cd83f53d6607de28dedd7d4a2bb72ce",
+              "characters": 282
+            }
+          }
+        },
+        {
+          "role": "assistant",
+          "digest": "41eef75d650ed277ecbc7045cdbd0b15034fb85a5a6ec57ee102d04a71ebd459",
+          "fields": {
+            "content": {
+              "digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "characters": 4
+            },
+            "role": {
+              "digest": "43f3a43f5a7fef31effcd812e256c8f245da366db65c225fcde611385a4df753",
+              "characters": 11
+            },
+            "tool_calls": {
+              "digest": "a9275e0d3bf0a51d6aa56b67fe68499a3244b0f9c41e6024669f2676c686bd24",
+              "characters": 140
+            },
+            "reasoning_content": {
+              "digest": "d89f29ee891a6ba9dac14c281d1318728d2fa25c1d5813be26067fefbadaa3b1",
+              "characters": 105,
+              "matches_prior_response": true
+            }
+          }
+        },
+        {
+          "role": "tool",
+          "digest": "77ee8d445473e2233f9ba0ac2d383da06716f561258dd5a34e52a1fd9f8f1bb1",
+          "fields": {
+            "role": {
+              "digest": "dd04afac1bebb050783a245ed0d88633759f352c85d4ab3bea3d416bf2019c75",
+              "characters": 6
+            },
+            "tool_call_id": {
+              "digest": "ab5e9362d757f05b53dab6a5223c5eeba34a1cd8dc56881120f3692465c2f9fc",
+              "characters": 31
+            },
+            "content": {
+              "digest": "756dbab6b2c0da7ed4da05193a4388866a3312846cc8e2153ebd36f0cfb1e452",
+              "characters": 23
+            }
+          }
+        }
+      ],
+      "common_serialized_message_prefix_chars": 5011,
+      "wire_body_sha256": "e85905979b5cf68f867ab586151b5ec83c5de3d4889201a34c9ca883a72d0079",
+      "prefix_relation": "appended",
+      "first_changed_message": null,
+      "changed_message_fields": [],
+      "exact_payload_repeat": false,
+      "generation_parameters_digest": "c70a5f64e6fc760e3bd6fc348aedf8274572b8900755cc4effd4ad5b3ca1b1ac",
+      "affinity_present": false,
+      "affinity_key_digest": null,
+      "affinity_digest": null,
+      "usage": {
+        "prompt_tokens": 1388,
+        "completion_tokens": 46,
+        "model": "mimo-v2.6-flash",
+        "provider": "mimo-live",
+        "cached_tokens": 1280,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 21,
+        "cache_observed": true
+      },
+      "adaptation": {
+        "vendor": "mimo",
+        "vendor_label": "小米 MiMo",
+        "actions": [
+          "依赖厂商自动缓存（命中 0.00833333×），无需标记",
+          "MiMo 思考模式使用厂商固定采样，已摘除 temperature"
+        ],
+        "notes": [
+          "Token Plan 订阅池：倍率仅供比例参考，命中已实证且被 usage 如实计入",
+          "thinking 仅 on/off 两态，默认 enabled；没有已验证的 effort 强度分档",
+          "2.6 家族 tool_choice 仅 auto；工具调用需回放 reasoning_content，不能假定强制选工具生效",
+          "该模型无目录价，金额按单位价折算，仅用于比较比例，不代表真实账单"
+        ],
+        "cache_control": false,
+        "breakpoints": 1,
+        "ttl": "managed",
+        "est_tokens": 2178,
+        "est_cost": 0.000223,
+        "baseline_cost": 0.000328,
+        "saving": 0.000105,
+        "saving_pct": 32.1,
+        "cliff_action": "pass",
+        "reasoning_budget": null,
+        "defer": false,
+        "cache_engages": true,
+        "route_capabilities": {},
+        "request_budget": {},
+        "adapter_id": "mimo.v2.6.flash",
+        "model_kind_id": "mimo.v2.6.flash",
+        "model_family_id": "mimo.v2.6",
+        "manufacturer_id": "mimo",
+        "behavior_fingerprint": "6bc1ad5e8223d2e9",
+        "model_match_source": "model_id",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type",
+          "nullable_cache_details",
+          "native_tool_replay",
+          "auto_tool_choice_only",
+          "fixed_sampling_when_thinking"
+        ],
+        "reasoning_shaped": true,
+        "fingerprint": "e636b1a5d7f5d15d",
+        "execution": {},
+        "estimate_scope": "reuse_window",
+        "includes_output_cost": false,
+        "price_known": false,
+        "model": "mimo-v2.6-flash"
+      }
+    },
+    {
+      "stage": "trim-0/agent-turn-1",
+      "model": "mimo-v2.6-flash",
+      "url": "https://token-plan-cn.xiaomimimo.com/v1/chat/completions",
+      "parameters": {
+        "thinking": {
+          "type": "enabled"
+        },
+        "tool_choice": "auto",
+        "max_tokens": 4096
+      },
+      "message_count": 8,
+      "common_prefix_messages": 1,
+      "messages_digest": "b929ee977a8bee8239d4f6aa78f38d7ae26291b58dd25e4d4d2c32d92a8adbd1",
+      "tools_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "toolset_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "payload_digest": "e8a7dc10b3a7d13362fa9f0956eeed0a5756db04174a4711ac859562587a2f75",
+      "message_chars": 2663,
+      "assistant_reasoning_fields": 2,
+      "tools": [
+        "calculator",
+        "read_file"
+      ],
+      "status": 200,
+      "upstream_request_id": null,
+      "system_fingerprint": null,
+      "raw_usage": {
+        "completion_tokens": 11,
+        "prompt_tokens": 731,
+        "total_tokens": 742,
+        "completion_tokens_details": {
+          "reasoning_tokens": 6
+        },
+        "prompt_tokens_details": null
+      },
+      "finish_reason": "stop",
+      "response_id": "206b6c9a-457d-42d0-86dc-ab440575aeac_69258c4f2ce14f8a975c2b92d8d74c06",
+      "response_model": "mimo-v2.6-flash",
+      "reasoning_chars": 23,
+      "tool_calls": null,
+      "text": "423",
+      "seconds": 3.156,
+      "response_message_fields": [
+        "content",
+        "reasoning_content",
+        "role",
+        "tool_calls"
+      ],
+      "encrypted_content_chars": 0,
+      "encrypted_replay_matches": 0,
+      "message_components": [
+        {
+          "role": "system",
+          "digest": "a92f8e6c3821afe8723b7f2fd181fa8b1d591f6914828899630956c851904cd6",
+          "fields": {
+            "role": {
+              "digest": "0dc8cd0a92280156c12ba5073f5049586727ba0bef2ff72099577bd332db18f5",
+              "characters": 8
+            },
+            "content": {
+              "digest": "5d9ea34a8f4e9f179c97f6ba36b4d95b4c53b8c4f069c74ea1c6804d4e15af86",
+              "characters": 1042
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "977bedb97a72eefb5c31a877857bb2ea456f3c0b2f14498503bc7372433748d9",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "9c4eb71368107cecb0896be868d3e840579cabdfdca0b194b835d23de236a126",
+              "characters": 281
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "27f3a3f50fd1b0ad9b75a9da14696d459be1c933d7c83e910b2004eecf8a4488",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "9c0132503451389a29311dfa3b649d3dadda80ba606a8b8f419b710e0ac2ca7a",
+              "characters": 155
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "8ceb1e8ecd046e1039c5767e7b72f11cac22fb33dc11e4ac49abd87a9703c1cf",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "4b468a82b10815bb975cb512eb7c6bca4cd83f53d6607de28dedd7d4a2bb72ce",
+              "characters": 282
+            }
+          }
+        },
+        {
+          "role": "assistant",
+          "digest": "41eef75d650ed277ecbc7045cdbd0b15034fb85a5a6ec57ee102d04a71ebd459",
+          "fields": {
+            "content": {
+              "digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "characters": 4
+            },
+            "role": {
+              "digest": "43f3a43f5a7fef31effcd812e256c8f245da366db65c225fcde611385a4df753",
+              "characters": 11
+            },
+            "tool_calls": {
+              "digest": "a9275e0d3bf0a51d6aa56b67fe68499a3244b0f9c41e6024669f2676c686bd24",
+              "characters": 140
+            },
+            "reasoning_content": {
+              "digest": "d89f29ee891a6ba9dac14c281d1318728d2fa25c1d5813be26067fefbadaa3b1",
+              "characters": 105,
+              "matches_prior_response": true
+            }
+          }
+        },
+        {
+          "role": "tool",
+          "digest": "77ee8d445473e2233f9ba0ac2d383da06716f561258dd5a34e52a1fd9f8f1bb1",
+          "fields": {
+            "role": {
+              "digest": "dd04afac1bebb050783a245ed0d88633759f352c85d4ab3bea3d416bf2019c75",
+              "characters": 6
+            },
+            "tool_call_id": {
+              "digest": "ab5e9362d757f05b53dab6a5223c5eeba34a1cd8dc56881120f3692465c2f9fc",
+              "characters": 31
+            },
+            "content": {
+              "digest": "756dbab6b2c0da7ed4da05193a4388866a3312846cc8e2153ebd36f0cfb1e452",
+              "characters": 23
+            }
+          }
+        },
+        {
+          "role": "assistant",
+          "digest": "96b1007f949ec1946daf9ee5b8a5d6dbe53c073ce12d35588fb1d17b00d0f7c4",
+          "fields": {
+            "content": {
+              "digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "characters": 4
+            },
+            "role": {
+              "digest": "43f3a43f5a7fef31effcd812e256c8f245da366db65c225fcde611385a4df753",
+              "characters": 11
+            },
+            "tool_calls": {
+              "digest": "33a4d9609b2a763f8889721ae633b5c8c8adc660c5bd19c9776531975109ea2a",
+              "characters": 143
+            },
+            "reasoning_content": {
+              "digest": "311861a04256d1f9ce0cebae66df033a0589942c08f697e2303394e93aea3741",
+              "characters": 49,
+              "matches_prior_response": true
+            }
+          }
+        },
+        {
+          "role": "tool",
+          "digest": "77e59a0cace046adb43d2c46d15845ee3382c4f74bd2233dbb419fbdc6d6cfd7",
+          "fields": {
+            "role": {
+              "digest": "dd04afac1bebb050783a245ed0d88633759f352c85d4ab3bea3d416bf2019c75",
+              "characters": 6
+            },
+            "tool_call_id": {
+              "digest": "18c1ebdac880de27a8c9aedec6b37af6be1fed28a8b8c681254ba27f8d0fe383",
+              "characters": 31
+            },
+            "content": {
+              "digest": "202caabde4e10f2388607eab4aaa1c00720de164149b310d42668bd7d7f1db02",
+              "characters": 15
+            }
+          }
+        }
+      ],
+      "common_serialized_message_prefix_chars": 1098,
+      "wire_body_sha256": "db79a9e5d93b7fb8e21496344d6eb35a4566f7432e59f8796aa766c276ff6c77",
+      "prefix_relation": "rewritten",
+      "first_changed_message": 1,
+      "changed_message_fields": [
+        "content"
+      ],
+      "exact_payload_repeat": false,
+      "generation_parameters_digest": "c70a5f64e6fc760e3bd6fc348aedf8274572b8900755cc4effd4ad5b3ca1b1ac",
+      "affinity_present": false,
+      "affinity_key_digest": null,
+      "affinity_digest": null,
+      "usage": {
+        "prompt_tokens": 731,
+        "completion_tokens": 11,
+        "model": "mimo-v2.6-flash",
+        "provider": "mimo-live",
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 6,
+        "cache_observed": false
+      },
+      "adaptation": {
+        "vendor": "mimo",
+        "vendor_label": "小米 MiMo",
+        "actions": [
+          "依赖厂商自动缓存（命中 0.00833333×），无需标记",
+          "MiMo 思考模式使用厂商固定采样，已摘除 temperature"
+        ],
+        "notes": [
+          "Token Plan 订阅池：倍率仅供比例参考，命中已实证且被 usage 如实计入",
+          "thinking 仅 on/off 两态，默认 enabled；没有已验证的 effort 强度分档",
+          "2.6 家族 tool_choice 仅 auto；工具调用需回放 reasoning_content，不能假定强制选工具生效",
+          "该模型无目录价，金额按单位价折算，仅用于比较比例，不代表真实账单"
+        ],
+        "cache_control": false,
+        "breakpoints": 1,
+        "ttl": "managed",
+        "est_tokens": 996,
+        "est_cost": 4.5e-05,
+        "baseline_cost": 0.00015,
+        "saving": 0.000105,
+        "saving_pct": 70.1,
+        "cliff_action": "pass",
+        "reasoning_budget": null,
+        "defer": false,
+        "cache_engages": true,
+        "route_capabilities": {},
+        "request_budget": {},
+        "adapter_id": "mimo.v2.6.flash",
+        "model_kind_id": "mimo.v2.6.flash",
+        "model_family_id": "mimo.v2.6",
+        "manufacturer_id": "mimo",
+        "behavior_fingerprint": "6bc1ad5e8223d2e9",
+        "model_match_source": "model_id",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type",
+          "nullable_cache_details",
+          "native_tool_replay",
+          "auto_tool_choice_only",
+          "fixed_sampling_when_thinking"
+        ],
+        "reasoning_shaped": true,
+        "fingerprint": "e636b1a5d7f5d15d",
+        "execution": {},
+        "estimate_scope": "reuse_window",
+        "includes_output_cost": false,
+        "price_known": false,
+        "model": "mimo-v2.6-flash"
+      }
+    },
+    {
+      "stage": "trim-0/agent-turn-2",
+      "model": "mimo-v2.6-flash",
+      "url": "https://token-plan-cn.xiaomimimo.com/v1/chat/completions",
+      "parameters": {
+        "thinking": {
+          "type": "enabled"
+        },
+        "tool_choice": "auto",
+        "max_tokens": 4096
+      },
+      "message_count": 5,
+      "common_prefix_messages": 1,
+      "messages_digest": "ba91150ec55ff7504c11ccad5c0ffd433643b4d1de34c5526541419e6c78d33d",
+      "tools_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "toolset_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "payload_digest": "b56f88ad06fdb4228222582797b619cc4f0ecc005cb6e39c22b675db14335161",
+      "message_chars": 2060,
+      "assistant_reasoning_fields": 0,
+      "tools": [
+        "calculator",
+        "read_file"
+      ],
+      "status": 200,
+      "upstream_request_id": null,
+      "system_fingerprint": null,
+      "raw_usage": {
+        "completion_tokens": 131,
+        "prompt_tokens": 636,
+        "total_tokens": 767,
+        "completion_tokens_details": {
+          "reasoning_tokens": 112
+        },
+        "prompt_tokens_details": null
+      },
+      "finish_reason": "tool_calls",
+      "response_id": "a852e9a2-5137-4db2-bcfd-c7c98056c29e_3bbb6ff93f384acc9b105770095db7f4",
+      "response_model": "mimo-v2.6-flash",
+      "reasoning_chars": 522,
+      "tool_calls": [
+        {
+          "id": "call_3de6eb7572144d1fa05aeceb",
+          "function": {
+            "arguments": "{\"path\": \"values.json\"}",
+            "name": "read_file"
+          },
+          "type": "function"
+        }
+      ],
+      "text": "",
+      "seconds": 7.375,
+      "response_message_fields": [
+        "content",
+        "reasoning_content",
+        "role",
+        "tool_calls"
+      ],
+      "encrypted_content_chars": 0,
+      "encrypted_replay_matches": 0,
+      "message_components": [
+        {
+          "role": "system",
+          "digest": "a92f8e6c3821afe8723b7f2fd181fa8b1d591f6914828899630956c851904cd6",
+          "fields": {
+            "role": {
+              "digest": "0dc8cd0a92280156c12ba5073f5049586727ba0bef2ff72099577bd332db18f5",
+              "characters": 8
+            },
+            "content": {
+              "digest": "5d9ea34a8f4e9f179c97f6ba36b4d95b4c53b8c4f069c74ea1c6804d4e15af86",
+              "characters": 1042
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "e237f86c756e14f18837f7b66cb8b3e669294282bb6b75adb22dbbb274aea865",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "0bb4bfdf83404bcd62350c79002d18a95be8d3ced61bea90ffa74b5346ad66f9",
+              "characters": 121
+            }
+          }
+        },
+        {
+          "role": "assistant",
+          "digest": "9ab8f406a35cec76b03ef8732bd2ec1379f8e17939cfafd26640c90cc647375d",
+          "fields": {
+            "role": {
+              "digest": "43f3a43f5a7fef31effcd812e256c8f245da366db65c225fcde611385a4df753",
+              "characters": 11
+            },
+            "content": {
+              "digest": "5ad2c8b168183b4b8464d0f3f85de77f2ff108edc169d1e2b124a470acd27048",
+              "characters": 5
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "27f3a3f50fd1b0ad9b75a9da14696d459be1c933d7c83e910b2004eecf8a4488",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "9c0132503451389a29311dfa3b649d3dadda80ba606a8b8f419b710e0ac2ca7a",
+              "characters": 155
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "44f48180ba444c5413699e743830cdc1bac588c73e06ba6d2919c06b86a84adb",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "686833157ad4f325804b08ac2ef310f3f4ed3bd1244c24535266c983b18b3097",
+              "characters": 585
+            }
+          }
+        }
+      ],
+      "common_serialized_message_prefix_chars": 1098,
+      "wire_body_sha256": "138ac4689225e6604147dbcf97df1e0b5b2c0d3ab4a387e4b8181d0adae53858",
+      "prefix_relation": "rewritten",
+      "first_changed_message": 1,
+      "changed_message_fields": [
+        "content"
+      ],
+      "exact_payload_repeat": false,
+      "generation_parameters_digest": "c70a5f64e6fc760e3bd6fc348aedf8274572b8900755cc4effd4ad5b3ca1b1ac",
+      "affinity_present": false,
+      "affinity_key_digest": null,
+      "affinity_digest": null,
+      "usage": {
+        "prompt_tokens": 636,
+        "completion_tokens": 131,
+        "model": "mimo-v2.6-flash",
+        "provider": "mimo-live",
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 112,
+        "cache_observed": false
+      },
+      "adaptation": {
+        "vendor": "mimo",
+        "vendor_label": "小米 MiMo",
+        "actions": [
+          "依赖厂商自动缓存（命中 0.00833333×），无需标记",
+          "MiMo 思考模式使用厂商固定采样，已摘除 temperature"
+        ],
+        "notes": [
+          "Token Plan 订阅池：倍率仅供比例参考，命中已实证且被 usage 如实计入",
+          "thinking 仅 on/off 两态，默认 enabled；没有已验证的 effort 强度分档",
+          "2.6 家族 tool_choice 仅 auto；工具调用需回放 reasoning_content，不能假定强制选工具生效",
+          "该模型无目录价，金额按单位价折算，仅用于比较比例，不代表真实账单"
+        ],
+        "cache_control": false,
+        "breakpoints": 1,
+        "ttl": "managed",
+        "est_tokens": 1041,
+        "est_cost": 5.2e-05,
+        "baseline_cost": 0.000157,
+        "saving": 0.000105,
+        "saving_pct": 67.1,
+        "cliff_action": "pass",
+        "reasoning_budget": null,
+        "defer": false,
+        "cache_engages": true,
+        "route_capabilities": {},
+        "request_budget": {},
+        "adapter_id": "mimo.v2.6.flash",
+        "model_kind_id": "mimo.v2.6.flash",
+        "model_family_id": "mimo.v2.6",
+        "manufacturer_id": "mimo",
+        "behavior_fingerprint": "6bc1ad5e8223d2e9",
+        "model_match_source": "model_id",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type",
+          "nullable_cache_details",
+          "native_tool_replay",
+          "auto_tool_choice_only",
+          "fixed_sampling_when_thinking"
+        ],
+        "reasoning_shaped": true,
+        "fingerprint": "e636b1a5d7f5d15d",
+        "execution": {},
+        "estimate_scope": "reuse_window",
+        "includes_output_cost": false,
+        "price_known": false,
+        "model": "mimo-v2.6-flash"
+      }
+    },
+    {
+      "stage": "trim-0/agent-turn-2",
+      "model": "mimo-v2.6-flash",
+      "url": "https://token-plan-cn.xiaomimimo.com/v1/chat/completions",
+      "parameters": {
+        "thinking": {
+          "type": "enabled"
+        },
+        "tool_choice": "auto",
+        "max_tokens": 4096
+      },
+      "message_count": 7,
+      "common_prefix_messages": 5,
+      "messages_digest": "31593e74945fcbac5d661b0ca9b3e699ffcc50f42f356f4f3536a5b853a2c343",
+      "tools_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "toolset_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "payload_digest": "527b51877e1e927f13bd03238e0fa0b3ecaf13554e9ab3380895ebf532c0a26f",
+      "message_chars": 2902,
+      "assistant_reasoning_fields": 1,
+      "tools": [
+        "calculator",
+        "read_file"
+      ],
+      "status": 200,
+      "upstream_request_id": null,
+      "system_fingerprint": null,
+      "raw_usage": {
+        "completion_tokens": 46,
+        "prompt_tokens": 787,
+        "total_tokens": 833,
+        "completion_tokens_details": {
+          "reasoning_tokens": 20
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 576
+        }
+      },
+      "finish_reason": "tool_calls",
+      "response_id": "579b2d4f-cb07-4809-8a12-aa0d2ade3ab8_87030eaa2dac48368b9a68e12f94fd1d",
+      "response_model": "mimo-v2.6-flash",
+      "reasoning_chars": 24,
+      "tool_calls": [
+        {
+          "id": "call_43427179e04543079c972cc5",
+          "function": {
+            "arguments": "{\"expression\": \"137 + 286\"}",
+            "name": "calculator"
+          },
+          "type": "function"
+        }
+      ],
+      "text": "",
+      "seconds": 6.687,
+      "response_message_fields": [
+        "content",
+        "reasoning_content",
+        "role",
+        "tool_calls"
+      ],
+      "encrypted_content_chars": 0,
+      "encrypted_replay_matches": 0,
+      "message_components": [
+        {
+          "role": "system",
+          "digest": "a92f8e6c3821afe8723b7f2fd181fa8b1d591f6914828899630956c851904cd6",
+          "fields": {
+            "role": {
+              "digest": "0dc8cd0a92280156c12ba5073f5049586727ba0bef2ff72099577bd332db18f5",
+              "characters": 8
+            },
+            "content": {
+              "digest": "5d9ea34a8f4e9f179c97f6ba36b4d95b4c53b8c4f069c74ea1c6804d4e15af86",
+              "characters": 1042
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "e237f86c756e14f18837f7b66cb8b3e669294282bb6b75adb22dbbb274aea865",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "0bb4bfdf83404bcd62350c79002d18a95be8d3ced61bea90ffa74b5346ad66f9",
+              "characters": 121
+            }
+          }
+        },
+        {
+          "role": "assistant",
+          "digest": "9ab8f406a35cec76b03ef8732bd2ec1379f8e17939cfafd26640c90cc647375d",
+          "fields": {
+            "role": {
+              "digest": "43f3a43f5a7fef31effcd812e256c8f245da366db65c225fcde611385a4df753",
+              "characters": 11
+            },
+            "content": {
+              "digest": "5ad2c8b168183b4b8464d0f3f85de77f2ff108edc169d1e2b124a470acd27048",
+              "characters": 5
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "27f3a3f50fd1b0ad9b75a9da14696d459be1c933d7c83e910b2004eecf8a4488",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "9c0132503451389a29311dfa3b649d3dadda80ba606a8b8f419b710e0ac2ca7a",
+              "characters": 155
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "44f48180ba444c5413699e743830cdc1bac588c73e06ba6d2919c06b86a84adb",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "686833157ad4f325804b08ac2ef310f3f4ed3bd1244c24535266c983b18b3097",
+              "characters": 585
+            }
+          }
+        },
+        {
+          "role": "assistant",
+          "digest": "34cebff954673aa188ca2a32322f11e81541a5608c379bd05445226620394400",
+          "fields": {
+            "content": {
+              "digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "characters": 4
+            },
+            "role": {
+              "digest": "43f3a43f5a7fef31effcd812e256c8f245da366db65c225fcde611385a4df753",
+              "characters": 11
+            },
+            "tool_calls": {
+              "digest": "ab18d72e994684cc9c6af83d54e4a8d463a9e76cc0517994383393f55d7288f3",
+              "characters": 140
+            },
+            "reasoning_content": {
+              "digest": "1baa757944b2e391e296239ba5397fd89830f5a682c65921ec80dab395fbfe65",
+              "characters": 524,
+              "matches_prior_response": true
+            }
+          }
+        },
+        {
+          "role": "tool",
+          "digest": "c258f191c654178bfdce5cd906dad29e5779e303fbfdc6feca0e16dceff11403",
+          "fields": {
+            "role": {
+              "digest": "dd04afac1bebb050783a245ed0d88633759f352c85d4ab3bea3d416bf2019c75",
+              "characters": 6
+            },
+            "tool_call_id": {
+              "digest": "a1c60dc7e360db8c7ffc574ca5f1c65696a1748a62fa10d0daf3d37e612dedc0",
+              "characters": 31
+            },
+            "content": {
+              "digest": "756dbab6b2c0da7ed4da05193a4388866a3312846cc8e2153ebd36f0cfb1e452",
+              "characters": 23
+            }
+          }
+        }
+      ],
+      "common_serialized_message_prefix_chars": 2050,
+      "wire_body_sha256": "d13ffd28967b5207d590fd322a7a95c9237e1cd066e96cb62d9e7e68d15d5164",
+      "prefix_relation": "appended",
+      "first_changed_message": null,
+      "changed_message_fields": [],
+      "exact_payload_repeat": false,
+      "generation_parameters_digest": "c70a5f64e6fc760e3bd6fc348aedf8274572b8900755cc4effd4ad5b3ca1b1ac",
+      "affinity_present": false,
+      "affinity_key_digest": null,
+      "affinity_digest": null,
+      "usage": {
+        "prompt_tokens": 787,
+        "completion_tokens": 46,
+        "model": "mimo-v2.6-flash",
+        "provider": "mimo-live",
+        "cached_tokens": 576,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 20,
+        "cache_observed": true
+      },
+      "adaptation": {
+        "vendor": "mimo",
+        "vendor_label": "小米 MiMo",
+        "actions": [
+          "依赖厂商自动缓存（命中 0.00833333×），无需标记",
+          "MiMo 思考模式使用厂商固定采样，已摘除 temperature"
+        ],
+        "notes": [
+          "Token Plan 订阅池：倍率仅供比例参考，命中已实证且被 usage 如实计入",
+          "thinking 仅 on/off 两态，默认 enabled；没有已验证的 effort 强度分档",
+          "2.6 家族 tool_choice 仅 auto；工具调用需回放 reasoning_content，不能假定强制选工具生效",
+          "该模型无目录价，金额按单位价折算，仅用于比较比例，不代表真实账单"
+        ],
+        "cache_control": false,
+        "breakpoints": 1,
+        "ttl": "managed",
+        "est_tokens": 1049,
+        "est_cost": 5.3e-05,
+        "baseline_cost": 0.000158,
+        "saving": 0.000105,
+        "saving_pct": 66.6,
+        "cliff_action": "pass",
+        "reasoning_budget": null,
+        "defer": false,
+        "cache_engages": true,
+        "route_capabilities": {},
+        "request_budget": {},
+        "adapter_id": "mimo.v2.6.flash",
+        "model_kind_id": "mimo.v2.6.flash",
+        "model_family_id": "mimo.v2.6",
+        "manufacturer_id": "mimo",
+        "behavior_fingerprint": "6bc1ad5e8223d2e9",
+        "model_match_source": "model_id",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type",
+          "nullable_cache_details",
+          "native_tool_replay",
+          "auto_tool_choice_only",
+          "fixed_sampling_when_thinking"
+        ],
+        "reasoning_shaped": true,
+        "fingerprint": "e636b1a5d7f5d15d",
+        "execution": {},
+        "estimate_scope": "reuse_window",
+        "includes_output_cost": false,
+        "price_known": false,
+        "model": "mimo-v2.6-flash"
+      }
+    },
+    {
+      "stage": "trim-0/agent-turn-2",
+      "model": "mimo-v2.6-flash",
+      "url": "https://token-plan-cn.xiaomimimo.com/v1/chat/completions",
+      "parameters": {
+        "thinking": {
+          "type": "enabled"
+        },
+        "tool_choice": "auto",
+        "max_tokens": 4096
+      },
+      "message_count": 9,
+      "common_prefix_messages": 7,
+      "messages_digest": "01bf741dda83b9f7e86b5e841afc654754313241c7fda92a45182c76687dba6f",
+      "tools_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "toolset_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "payload_digest": "084ed1bdaa001ff4334fed83e3996f6157473184b2d57b36856c4544c356f5a3",
+      "message_chars": 3245,
+      "assistant_reasoning_fields": 2,
+      "tools": [
+        "calculator",
+        "read_file"
+      ],
+      "status": 200,
+      "upstream_request_id": null,
+      "system_fingerprint": null,
+      "raw_usage": {
+        "completion_tokens": 11,
+        "prompt_tokens": 853,
+        "total_tokens": 864,
+        "completion_tokens_details": {
+          "reasoning_tokens": 6
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 768
+        }
+      },
+      "finish_reason": "stop",
+      "response_id": "9a8f8150-3af8-4d41-9e91-3495046d8aac_515b8895a1474cdb81bb68754971eed8",
+      "response_model": "mimo-v2.6-flash",
+      "reasoning_chars": 23,
+      "tool_calls": null,
+      "text": "423",
+      "seconds": 3.375,
+      "response_message_fields": [
+        "content",
+        "reasoning_content",
+        "role",
+        "tool_calls"
+      ],
+      "encrypted_content_chars": 0,
+      "encrypted_replay_matches": 0,
+      "message_components": [
+        {
+          "role": "system",
+          "digest": "a92f8e6c3821afe8723b7f2fd181fa8b1d591f6914828899630956c851904cd6",
+          "fields": {
+            "role": {
+              "digest": "0dc8cd0a92280156c12ba5073f5049586727ba0bef2ff72099577bd332db18f5",
+              "characters": 8
+            },
+            "content": {
+              "digest": "5d9ea34a8f4e9f179c97f6ba36b4d95b4c53b8c4f069c74ea1c6804d4e15af86",
+              "characters": 1042
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "e237f86c756e14f18837f7b66cb8b3e669294282bb6b75adb22dbbb274aea865",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "0bb4bfdf83404bcd62350c79002d18a95be8d3ced61bea90ffa74b5346ad66f9",
+              "characters": 121
+            }
+          }
+        },
+        {
+          "role": "assistant",
+          "digest": "9ab8f406a35cec76b03ef8732bd2ec1379f8e17939cfafd26640c90cc647375d",
+          "fields": {
+            "role": {
+              "digest": "43f3a43f5a7fef31effcd812e256c8f245da366db65c225fcde611385a4df753",
+              "characters": 11
+            },
+            "content": {
+              "digest": "5ad2c8b168183b4b8464d0f3f85de77f2ff108edc169d1e2b124a470acd27048",
+              "characters": 5
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "27f3a3f50fd1b0ad9b75a9da14696d459be1c933d7c83e910b2004eecf8a4488",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "9c0132503451389a29311dfa3b649d3dadda80ba606a8b8f419b710e0ac2ca7a",
+              "characters": 155
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "44f48180ba444c5413699e743830cdc1bac588c73e06ba6d2919c06b86a84adb",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "686833157ad4f325804b08ac2ef310f3f4ed3bd1244c24535266c983b18b3097",
+              "characters": 585
+            }
+          }
+        },
+        {
+          "role": "assistant",
+          "digest": "34cebff954673aa188ca2a32322f11e81541a5608c379bd05445226620394400",
+          "fields": {
+            "content": {
+              "digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "characters": 4
+            },
+            "role": {
+              "digest": "43f3a43f5a7fef31effcd812e256c8f245da366db65c225fcde611385a4df753",
+              "characters": 11
+            },
+            "tool_calls": {
+              "digest": "ab18d72e994684cc9c6af83d54e4a8d463a9e76cc0517994383393f55d7288f3",
+              "characters": 140
+            },
+            "reasoning_content": {
+              "digest": "1baa757944b2e391e296239ba5397fd89830f5a682c65921ec80dab395fbfe65",
+              "characters": 524,
+              "matches_prior_response": true
+            }
+          }
+        },
+        {
+          "role": "tool",
+          "digest": "c258f191c654178bfdce5cd906dad29e5779e303fbfdc6feca0e16dceff11403",
+          "fields": {
+            "role": {
+              "digest": "dd04afac1bebb050783a245ed0d88633759f352c85d4ab3bea3d416bf2019c75",
+              "characters": 6
+            },
+            "tool_call_id": {
+              "digest": "a1c60dc7e360db8c7ffc574ca5f1c65696a1748a62fa10d0daf3d37e612dedc0",
+              "characters": 31
+            },
+            "content": {
+              "digest": "756dbab6b2c0da7ed4da05193a4388866a3312846cc8e2153ebd36f0cfb1e452",
+              "characters": 23
+            }
+          }
+        },
+        {
+          "role": "assistant",
+          "digest": "15428d9a4f5d0689de9fee4c86cb378697a65dbe0e6abe6f69e4e56b7a478998",
+          "fields": {
+            "content": {
+              "digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "characters": 4
+            },
+            "role": {
+              "digest": "43f3a43f5a7fef31effcd812e256c8f245da366db65c225fcde611385a4df753",
+              "characters": 11
+            },
+            "tool_calls": {
+              "digest": "09e62f4573c329ac7e36c88c38fa5e3c666c7b359bdde01bc6491fe5fa8e402d",
+              "characters": 145
+            },
+            "reasoning_content": {
+              "digest": "ac4d51683b1b729ca85f68b0ef99ca56ed879ea03bd400d751f9972fb462feab",
+              "characters": 26,
+              "matches_prior_response": true
+            }
+          }
+        },
+        {
+          "role": "tool",
+          "digest": "8bc2da1577bad64bf0daeba26aab2b9862f85fecfc865d6c04198ca4a4228dae",
+          "fields": {
+            "role": {
+              "digest": "dd04afac1bebb050783a245ed0d88633759f352c85d4ab3bea3d416bf2019c75",
+              "characters": 6
+            },
+            "tool_call_id": {
+              "digest": "e7d683585227a27b640f9c8061ad0aa7e975d35033ba78aa1abf96f535e1bc70",
+              "characters": 31
+            },
+            "content": {
+              "digest": "7e1d20fdf7af6598e97ca76cd56b24991ac0b060311b4e65a3b3b7bf3eba894c",
+              "characters": 17
+            }
+          }
+        }
+      ],
+      "common_serialized_message_prefix_chars": 2874,
+      "wire_body_sha256": "f7d7b50e55d911351ff32f5c96c2785bd3079fb8622ca917babf0ce9c098714e",
+      "prefix_relation": "appended",
+      "first_changed_message": null,
+      "changed_message_fields": [],
+      "exact_payload_repeat": false,
+      "generation_parameters_digest": "c70a5f64e6fc760e3bd6fc348aedf8274572b8900755cc4effd4ad5b3ca1b1ac",
+      "affinity_present": false,
+      "affinity_key_digest": null,
+      "affinity_digest": null,
+      "usage": {
+        "prompt_tokens": 853,
+        "completion_tokens": 11,
+        "model": "mimo-v2.6-flash",
+        "provider": "mimo-live",
+        "cached_tokens": 768,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 6,
+        "cache_observed": true
+      },
+      "adaptation": {
+        "vendor": "mimo",
+        "vendor_label": "小米 MiMo",
+        "actions": [
+          "依赖厂商自动缓存（命中 0.00833333×），无需标记",
+          "MiMo 思考模式使用厂商固定采样，已摘除 temperature"
+        ],
+        "notes": [
+          "Token Plan 订阅池：倍率仅供比例参考，命中已实证且被 usage 如实计入",
+          "thinking 仅 on/off 两态，默认 enabled；没有已验证的 effort 强度分档",
+          "2.6 家族 tool_choice 仅 auto；工具调用需回放 reasoning_content，不能假定强制选工具生效",
+          "该模型无目录价，金额按单位价折算，仅用于比较比例，不代表真实账单"
+        ],
+        "cache_control": false,
+        "breakpoints": 1,
+        "ttl": "managed",
+        "est_tokens": 1057,
+        "est_cost": 5.4e-05,
+        "baseline_cost": 0.000159,
+        "saving": 0.000105,
+        "saving_pct": 66.0,
+        "cliff_action": "pass",
+        "reasoning_budget": null,
+        "defer": false,
+        "cache_engages": true,
+        "route_capabilities": {},
+        "request_budget": {},
+        "adapter_id": "mimo.v2.6.flash",
+        "model_kind_id": "mimo.v2.6.flash",
+        "model_family_id": "mimo.v2.6",
+        "manufacturer_id": "mimo",
+        "behavior_fingerprint": "6bc1ad5e8223d2e9",
+        "model_match_source": "model_id",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type",
+          "nullable_cache_details",
+          "native_tool_replay",
+          "auto_tool_choice_only",
+          "fixed_sampling_when_thinking"
+        ],
+        "reasoning_shaped": true,
+        "fingerprint": "e636b1a5d7f5d15d",
+        "execution": {},
+        "estimate_scope": "reuse_window",
+        "includes_output_cost": false,
+        "price_known": false,
+        "model": "mimo-v2.6-flash"
+      }
+    },
+    {
+      "stage": "trim-1/agent-turn-1",
+      "model": "mimo-v2.6-flash",
+      "url": "https://token-plan-cn.xiaomimimo.com/v1/chat/completions",
+      "parameters": {
+        "thinking": {
+          "type": "enabled"
+        },
+        "tool_choice": "auto",
+        "max_tokens": 4096
+      },
+      "message_count": 5,
+      "common_prefix_messages": 1,
+      "messages_digest": "ca2f6090d023b6cc4fb9ed076d1c0b3cb3f6037e726ebba4177367734e70c546",
+      "tools_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "toolset_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "payload_digest": "816d920706cf3c4139cc9b7a7690033039dbd26f8d3b5c4325fd88778e088800",
+      "message_chars": 5021,
+      "assistant_reasoning_fields": 0,
+      "tools": [
+        "calculator",
+        "read_file"
+      ],
+      "status": 200,
+      "upstream_request_id": null,
+      "system_fingerprint": null,
+      "raw_usage": {
+        "completion_tokens": 63,
+        "prompt_tokens": 1323,
+        "total_tokens": 1386,
+        "completion_tokens_details": {
+          "reasoning_tokens": 44
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 1280
+        }
+      },
+      "finish_reason": "tool_calls",
+      "response_id": "9872a183-8216-40c8-86be-25ed044dc5ea_08b4504388ce40cd9e898d598c9fce79",
+      "response_model": "mimo-v2.6-flash",
+      "reasoning_chars": 197,
+      "tool_calls": [
+        {
+          "id": "call_4b0cc126994c4079aae4f72e",
+          "function": {
+            "arguments": "{\"path\": \"values.json\"}",
+            "name": "read_file"
+          },
+          "type": "function"
+        }
+      ],
+      "text": "",
+      "seconds": 4.875,
+      "response_message_fields": [
+        "content",
+        "reasoning_content",
+        "role",
+        "tool_calls"
+      ],
+      "encrypted_content_chars": 0,
+      "encrypted_replay_matches": 0,
+      "message_components": [
+        {
+          "role": "system",
+          "digest": "a92f8e6c3821afe8723b7f2fd181fa8b1d591f6914828899630956c851904cd6",
+          "fields": {
+            "role": {
+              "digest": "0dc8cd0a92280156c12ba5073f5049586727ba0bef2ff72099577bd332db18f5",
+              "characters": 8
+            },
+            "content": {
+              "digest": "5d9ea34a8f4e9f179c97f6ba36b4d95b4c53b8c4f069c74ea1c6804d4e15af86",
+              "characters": 1042
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "b1ae98148be2f315799203272facc56f1946313fe7649d83ce3ba4f7b54daa54",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "f0b9807cbb919f4c3994ea2a81507c1ffa967d41b15abb160e2bca9e3c0ff702",
+              "characters": 66
+            }
+          }
+        },
+        {
+          "role": "assistant",
+          "digest": "6fc18c8fab792276d84ffe9ade1a3281f2337d186bd722381d0aba121564a217",
+          "fields": {
+            "role": {
+              "digest": "43f3a43f5a7fef31effcd812e256c8f245da366db65c225fcde611385a4df753",
+              "characters": 11
+            },
+            "content": {
+              "digest": "1d3085c30c184dd67e324aec53d3e4135214662db279f9c47683de1af8a1f2d6",
+              "characters": 3324
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "27f3a3f50fd1b0ad9b75a9da14696d459be1c933d7c83e910b2004eecf8a4488",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "9c0132503451389a29311dfa3b649d3dadda80ba606a8b8f419b710e0ac2ca7a",
+              "characters": 155
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "8ceb1e8ecd046e1039c5767e7b72f11cac22fb33dc11e4ac49abd87a9703c1cf",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "4b468a82b10815bb975cb512eb7c6bca4cd83f53d6607de28dedd7d4a2bb72ce",
+              "characters": 282
+            }
+          }
+        }
+      ],
+      "common_serialized_message_prefix_chars": 1098,
+      "wire_body_sha256": "62757cb771b28d14974e8712cc4415679e712f057ccce981ef158fbe1850d38c",
+      "prefix_relation": "rewritten",
+      "first_changed_message": 1,
+      "changed_message_fields": [
+        "content"
+      ],
+      "exact_payload_repeat": false,
+      "generation_parameters_digest": "c70a5f64e6fc760e3bd6fc348aedf8274572b8900755cc4effd4ad5b3ca1b1ac",
+      "affinity_present": false,
+      "affinity_key_digest": null,
+      "affinity_digest": null,
+      "usage": {
+        "prompt_tokens": 1323,
+        "completion_tokens": 63,
+        "model": "mimo-v2.6-flash",
+        "provider": "mimo-live",
+        "cached_tokens": 1280,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 44,
+        "cache_observed": true
+      },
+      "adaptation": {
+        "vendor": "mimo",
+        "vendor_label": "小米 MiMo",
+        "actions": [
+          "依赖厂商自动缓存（命中 0.00833333×），无需标记",
+          "MiMo 思考模式使用厂商固定采样，已摘除 temperature"
+        ],
+        "notes": [
+          "Token Plan 订阅池：倍率仅供比例参考，命中已实证且被 usage 如实计入",
+          "thinking 仅 on/off 两态，默认 enabled；没有已验证的 effort 强度分档",
+          "2.6 家族 tool_choice 仅 auto；工具调用需回放 reasoning_content，不能假定强制选工具生效",
+          "该模型无目录价，金额按单位价折算，仅用于比较比例，不代表真实账单"
+        ],
+        "cache_control": false,
+        "breakpoints": 1,
+        "ttl": "managed",
+        "est_tokens": 2169,
+        "est_cost": 0.000222,
+        "baseline_cost": 0.000327,
+        "saving": 0.000105,
+        "saving_pct": 32.2,
+        "cliff_action": "pass",
+        "reasoning_budget": null,
+        "defer": false,
+        "cache_engages": true,
+        "route_capabilities": {},
+        "request_budget": {},
+        "adapter_id": "mimo.v2.6.flash",
+        "model_kind_id": "mimo.v2.6.flash",
+        "model_family_id": "mimo.v2.6",
+        "manufacturer_id": "mimo",
+        "behavior_fingerprint": "6bc1ad5e8223d2e9",
+        "model_match_source": "model_id",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type",
+          "nullable_cache_details",
+          "native_tool_replay",
+          "auto_tool_choice_only",
+          "fixed_sampling_when_thinking"
+        ],
+        "reasoning_shaped": true,
+        "fingerprint": "e636b1a5d7f5d15d",
+        "execution": {},
+        "estimate_scope": "reuse_window",
+        "includes_output_cost": false,
+        "price_known": false,
+        "model": "mimo-v2.6-flash"
+      }
+    },
+    {
+      "stage": "trim-1/agent-turn-1",
+      "model": "mimo-v2.6-flash",
+      "url": "https://token-plan-cn.xiaomimimo.com/v1/chat/completions",
+      "parameters": {
+        "thinking": {
+          "type": "enabled"
+        },
+        "tool_choice": "auto",
+        "max_tokens": 4096
+      },
+      "message_count": 6,
+      "common_prefix_messages": 1,
+      "messages_digest": "a1702bc4624728e0f1b5dd14c7521ed22adaf41ad5db45db8c1397eeafa6e4f3",
+      "tools_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "toolset_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "payload_digest": "c0763ee7065521d90e98bd95cbc1531cfc83ff0f138e0ffb684919d5016f5787",
+      "message_chars": 2395,
+      "assistant_reasoning_fields": 1,
+      "tools": [
+        "calculator",
+        "read_file"
+      ],
+      "status": 200,
+      "upstream_request_id": null,
+      "system_fingerprint": null,
+      "raw_usage": {
+        "completion_tokens": 33,
+        "prompt_tokens": 684,
+        "total_tokens": 717,
+        "completion_tokens_details": {
+          "reasoning_tokens": 7
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 512
+        }
+      },
+      "finish_reason": "tool_calls",
+      "response_id": "0ed2462a-78ce-40b4-b902-052ae7c160bf_efc5d450de1147fe84165bbe2cce8df5",
+      "response_model": "mimo-v2.6-flash",
+      "reasoning_chars": 26,
+      "tool_calls": [
+        {
+          "id": "call_90b0f571daa042088d7cb6d2",
+          "function": {
+            "arguments": "{\"expression\": \"137 + 286\"}",
+            "name": "calculator"
+          },
+          "type": "function"
+        }
+      ],
+      "text": "",
+      "seconds": 11.828,
+      "response_message_fields": [
+        "content",
+        "reasoning_content",
+        "role",
+        "tool_calls"
+      ],
+      "encrypted_content_chars": 0,
+      "encrypted_replay_matches": 0,
+      "message_components": [
+        {
+          "role": "system",
+          "digest": "a92f8e6c3821afe8723b7f2fd181fa8b1d591f6914828899630956c851904cd6",
+          "fields": {
+            "role": {
+              "digest": "0dc8cd0a92280156c12ba5073f5049586727ba0bef2ff72099577bd332db18f5",
+              "characters": 8
+            },
+            "content": {
+              "digest": "5d9ea34a8f4e9f179c97f6ba36b4d95b4c53b8c4f069c74ea1c6804d4e15af86",
+              "characters": 1042
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "977bedb97a72eefb5c31a877857bb2ea456f3c0b2f14498503bc7372433748d9",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "9c4eb71368107cecb0896be868d3e840579cabdfdca0b194b835d23de236a126",
+              "characters": 281
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "27f3a3f50fd1b0ad9b75a9da14696d459be1c933d7c83e910b2004eecf8a4488",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "9c0132503451389a29311dfa3b649d3dadda80ba606a8b8f419b710e0ac2ca7a",
+              "characters": 155
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "8ceb1e8ecd046e1039c5767e7b72f11cac22fb33dc11e4ac49abd87a9703c1cf",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "4b468a82b10815bb975cb512eb7c6bca4cd83f53d6607de28dedd7d4a2bb72ce",
+              "characters": 282
+            }
+          }
+        },
+        {
+          "role": "assistant",
+          "digest": "dce497169d046f9fb55232e9a760243c9558950343472efd8fbf9d3a26201f33",
+          "fields": {
+            "content": {
+              "digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "characters": 4
+            },
+            "role": {
+              "digest": "43f3a43f5a7fef31effcd812e256c8f245da366db65c225fcde611385a4df753",
+              "characters": 11
+            },
+            "tool_calls": {
+              "digest": "00e474b40958834fa41381dba235ba7ce3d86aa69131299b24f763ab3d6afef2",
+              "characters": 140
+            },
+            "reasoning_content": {
+              "digest": "a0947ec5d08b3b9d4bd68c3be19952cb8afe5d5cceabc7298eae58ac36754dac",
+              "characters": 199,
+              "matches_prior_response": true
+            }
+          }
+        },
+        {
+          "role": "tool",
+          "digest": "a33636a21bda8ca098fdc5e0cc002a3b9a5a17ee262110c5ac9526da33719a1b",
+          "fields": {
+            "role": {
+              "digest": "dd04afac1bebb050783a245ed0d88633759f352c85d4ab3bea3d416bf2019c75",
+              "characters": 6
+            },
+            "tool_call_id": {
+              "digest": "78949aa6c192edbcab46e9b14a9caa46439dcf93e7af76f7ccdefed8cb037515",
+              "characters": 31
+            },
+            "content": {
+              "digest": "756dbab6b2c0da7ed4da05193a4388866a3312846cc8e2153ebd36f0cfb1e452",
+              "characters": 23
+            }
+          }
+        }
+      ],
+      "common_serialized_message_prefix_chars": 1098,
+      "wire_body_sha256": "c6c1158c12255d67c027d14390e688614040e10ce49effedf65f0d8cbc2df4df",
+      "prefix_relation": "rewritten",
+      "first_changed_message": 1,
+      "changed_message_fields": [
+        "content"
+      ],
+      "exact_payload_repeat": false,
+      "generation_parameters_digest": "c70a5f64e6fc760e3bd6fc348aedf8274572b8900755cc4effd4ad5b3ca1b1ac",
+      "affinity_present": false,
+      "affinity_key_digest": null,
+      "affinity_digest": null,
+      "usage": {
+        "prompt_tokens": 684,
+        "completion_tokens": 33,
+        "model": "mimo-v2.6-flash",
+        "provider": "mimo-live",
+        "cached_tokens": 512,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 7,
+        "cache_observed": true
+      },
+      "adaptation": {
+        "vendor": "mimo",
+        "vendor_label": "小米 MiMo",
+        "actions": [
+          "依赖厂商自动缓存（命中 0.00833333×），无需标记",
+          "MiMo 思考模式使用厂商固定采样，已摘除 temperature"
+        ],
+        "notes": [
+          "Token Plan 订阅池：倍率仅供比例参考，命中已实证且被 usage 如实计入",
+          "thinking 仅 on/off 两态，默认 enabled；没有已验证的 effort 强度分档",
+          "2.6 家族 tool_choice 仅 auto；工具调用需回放 reasoning_content，不能假定强制选工具生效",
+          "该模型无目录价，金额按单位价折算，仅用于比较比例，不代表真实账单"
+        ],
+        "cache_control": false,
+        "breakpoints": 1,
+        "ttl": "managed",
+        "est_tokens": 990,
+        "est_cost": 4.4e-05,
+        "baseline_cost": 0.000149,
+        "saving": 0.000105,
+        "saving_pct": 70.5,
+        "cliff_action": "pass",
+        "reasoning_budget": null,
+        "defer": false,
+        "cache_engages": true,
+        "route_capabilities": {},
+        "request_budget": {},
+        "adapter_id": "mimo.v2.6.flash",
+        "model_kind_id": "mimo.v2.6.flash",
+        "model_family_id": "mimo.v2.6",
+        "manufacturer_id": "mimo",
+        "behavior_fingerprint": "6bc1ad5e8223d2e9",
+        "model_match_source": "model_id",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type",
+          "nullable_cache_details",
+          "native_tool_replay",
+          "auto_tool_choice_only",
+          "fixed_sampling_when_thinking"
+        ],
+        "reasoning_shaped": true,
+        "fingerprint": "e636b1a5d7f5d15d",
+        "execution": {},
+        "estimate_scope": "reuse_window",
+        "includes_output_cost": false,
+        "price_known": false,
+        "model": "mimo-v2.6-flash"
+      }
+    },
+    {
+      "stage": "trim-1/agent-turn-1",
+      "model": "mimo-v2.6-flash",
+      "url": "https://token-plan-cn.xiaomimimo.com/v1/chat/completions",
+      "parameters": {
+        "thinking": {
+          "type": "enabled"
+        },
+        "tool_choice": "auto",
+        "max_tokens": 4096
+      },
+      "message_count": 8,
+      "common_prefix_messages": 6,
+      "messages_digest": "499c36f7379f52157cffa837b46eb90afc3450019a493866a59fcb01af6b94d9",
+      "tools_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "toolset_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "payload_digest": "2c5c3d50ea580a443b2ac0a301930fe2fc1c57549a8d62e79ce1d9e420eec6c8",
+      "message_chars": 2740,
+      "assistant_reasoning_fields": 2,
+      "tools": [
+        "calculator",
+        "read_file"
+      ],
+      "error_type": "URLError",
+      "status": null,
+      "seconds": 5.031,
+      "message_components": [
+        {
+          "role": "system",
+          "digest": "a92f8e6c3821afe8723b7f2fd181fa8b1d591f6914828899630956c851904cd6",
+          "fields": {
+            "role": {
+              "digest": "0dc8cd0a92280156c12ba5073f5049586727ba0bef2ff72099577bd332db18f5",
+              "characters": 8
+            },
+            "content": {
+              "digest": "5d9ea34a8f4e9f179c97f6ba36b4d95b4c53b8c4f069c74ea1c6804d4e15af86",
+              "characters": 1042
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "977bedb97a72eefb5c31a877857bb2ea456f3c0b2f14498503bc7372433748d9",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "9c4eb71368107cecb0896be868d3e840579cabdfdca0b194b835d23de236a126",
+              "characters": 281
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "27f3a3f50fd1b0ad9b75a9da14696d459be1c933d7c83e910b2004eecf8a4488",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "9c0132503451389a29311dfa3b649d3dadda80ba606a8b8f419b710e0ac2ca7a",
+              "characters": 155
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "8ceb1e8ecd046e1039c5767e7b72f11cac22fb33dc11e4ac49abd87a9703c1cf",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "4b468a82b10815bb975cb512eb7c6bca4cd83f53d6607de28dedd7d4a2bb72ce",
+              "characters": 282
+            }
+          }
+        },
+        {
+          "role": "assistant",
+          "digest": "dce497169d046f9fb55232e9a760243c9558950343472efd8fbf9d3a26201f33",
+          "fields": {
+            "content": {
+              "digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "characters": 4
+            },
+            "role": {
+              "digest": "43f3a43f5a7fef31effcd812e256c8f245da366db65c225fcde611385a4df753",
+              "characters": 11
+            },
+            "tool_calls": {
+              "digest": "00e474b40958834fa41381dba235ba7ce3d86aa69131299b24f763ab3d6afef2",
+              "characters": 140
+            },
+            "reasoning_content": {
+              "digest": "a0947ec5d08b3b9d4bd68c3be19952cb8afe5d5cceabc7298eae58ac36754dac",
+              "characters": 199,
+              "matches_prior_response": true
+            }
+          }
+        },
+        {
+          "role": "tool",
+          "digest": "a33636a21bda8ca098fdc5e0cc002a3b9a5a17ee262110c5ac9526da33719a1b",
+          "fields": {
+            "role": {
+              "digest": "dd04afac1bebb050783a245ed0d88633759f352c85d4ab3bea3d416bf2019c75",
+              "characters": 6
+            },
+            "tool_call_id": {
+              "digest": "78949aa6c192edbcab46e9b14a9caa46439dcf93e7af76f7ccdefed8cb037515",
+              "characters": 31
+            },
+            "content": {
+              "digest": "756dbab6b2c0da7ed4da05193a4388866a3312846cc8e2153ebd36f0cfb1e452",
+              "characters": 23
+            }
+          }
+        },
+        {
+          "role": "assistant",
+          "digest": "df27cf272ab198fd530ceb0f6c43a42c1e594a7b72b2dcc97bdf502314210358",
+          "fields": {
+            "content": {
+              "digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "characters": 4
+            },
+            "role": {
+              "digest": "43f3a43f5a7fef31effcd812e256c8f245da366db65c225fcde611385a4df753",
+              "characters": 11
+            },
+            "tool_calls": {
+              "digest": "9cef6356148331b909f3276f7d8bde235a1e34e2027430e9e25dfcfc7dc92252",
+              "characters": 145
+            },
+            "reasoning_content": {
+              "digest": "55f42bfe16da048bf4889ba8e5b81d35f033ff59b217f67cd8b0a6b5ae502761",
+              "characters": 28,
+              "matches_prior_response": true
+            }
+          }
+        },
+        {
+          "role": "tool",
+          "digest": "b9d38a5804cd43b7923a67eb829627f197e986283901ff0aa3e832222b06e563",
+          "fields": {
+            "role": {
+              "digest": "dd04afac1bebb050783a245ed0d88633759f352c85d4ab3bea3d416bf2019c75",
+              "characters": 6
+            },
+            "tool_call_id": {
+              "digest": "8546f99b080696e9967b8c7ed13498d6696fc5234a1635824d5a52e6addbc1fc",
+              "characters": 31
+            },
+            "content": {
+              "digest": "7e1d20fdf7af6598e97ca76cd56b24991ac0b060311b4e65a3b3b7bf3eba894c",
+              "characters": 17
+            }
+          }
+        }
+      ],
+      "common_serialized_message_prefix_chars": 2369,
+      "wire_body_sha256": "d3a5e47af93ba4d7e275357afe5781457be0af946c3717b133d6dd021ed58358",
+      "prefix_relation": "appended",
+      "first_changed_message": null,
+      "changed_message_fields": [],
+      "exact_payload_repeat": false,
+      "generation_parameters_digest": "c70a5f64e6fc760e3bd6fc348aedf8274572b8900755cc4effd4ad5b3ca1b1ac",
+      "affinity_present": false,
+      "affinity_key_digest": null,
+      "affinity_digest": null
+    },
+    {
+      "stage": "trim-1/agent-turn-1",
+      "model": "mimo-v2.6-flash",
+      "url": "https://token-plan-cn.xiaomimimo.com/v1/chat/completions",
+      "parameters": {
+        "thinking": {
+          "type": "enabled"
+        },
+        "tool_choice": "auto",
+        "max_tokens": 4096
+      },
+      "message_count": 8,
+      "common_prefix_messages": 8,
+      "messages_digest": "499c36f7379f52157cffa837b46eb90afc3450019a493866a59fcb01af6b94d9",
+      "tools_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "toolset_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "payload_digest": "2c5c3d50ea580a443b2ac0a301930fe2fc1c57549a8d62e79ce1d9e420eec6c8",
+      "message_chars": 2740,
+      "assistant_reasoning_fields": 2,
+      "tools": [
+        "calculator",
+        "read_file"
+      ],
+      "status": 200,
+      "upstream_request_id": null,
+      "system_fingerprint": null,
+      "raw_usage": {
+        "completion_tokens": 11,
+        "prompt_tokens": 737,
+        "total_tokens": 748,
+        "completion_tokens_details": {
+          "reasoning_tokens": 6
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 640
+        }
+      },
+      "finish_reason": "stop",
+      "response_id": "7fd97396-b260-4fbd-b904-8f0cc4fd174c_fb2ece425ebb46888ab245514784239c",
+      "response_model": "mimo-v2.6-flash",
+      "reasoning_chars": 23,
+      "tool_calls": null,
+      "text": "423",
+      "seconds": 3.64,
+      "response_message_fields": [
+        "content",
+        "reasoning_content",
+        "role",
+        "tool_calls"
+      ],
+      "encrypted_content_chars": 0,
+      "encrypted_replay_matches": 0,
+      "message_components": [
+        {
+          "role": "system",
+          "digest": "a92f8e6c3821afe8723b7f2fd181fa8b1d591f6914828899630956c851904cd6",
+          "fields": {
+            "role": {
+              "digest": "0dc8cd0a92280156c12ba5073f5049586727ba0bef2ff72099577bd332db18f5",
+              "characters": 8
+            },
+            "content": {
+              "digest": "5d9ea34a8f4e9f179c97f6ba36b4d95b4c53b8c4f069c74ea1c6804d4e15af86",
+              "characters": 1042
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "977bedb97a72eefb5c31a877857bb2ea456f3c0b2f14498503bc7372433748d9",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "9c4eb71368107cecb0896be868d3e840579cabdfdca0b194b835d23de236a126",
+              "characters": 281
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "27f3a3f50fd1b0ad9b75a9da14696d459be1c933d7c83e910b2004eecf8a4488",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "9c0132503451389a29311dfa3b649d3dadda80ba606a8b8f419b710e0ac2ca7a",
+              "characters": 155
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "8ceb1e8ecd046e1039c5767e7b72f11cac22fb33dc11e4ac49abd87a9703c1cf",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "4b468a82b10815bb975cb512eb7c6bca4cd83f53d6607de28dedd7d4a2bb72ce",
+              "characters": 282
+            }
+          }
+        },
+        {
+          "role": "assistant",
+          "digest": "dce497169d046f9fb55232e9a760243c9558950343472efd8fbf9d3a26201f33",
+          "fields": {
+            "content": {
+              "digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "characters": 4
+            },
+            "role": {
+              "digest": "43f3a43f5a7fef31effcd812e256c8f245da366db65c225fcde611385a4df753",
+              "characters": 11
+            },
+            "tool_calls": {
+              "digest": "00e474b40958834fa41381dba235ba7ce3d86aa69131299b24f763ab3d6afef2",
+              "characters": 140
+            },
+            "reasoning_content": {
+              "digest": "a0947ec5d08b3b9d4bd68c3be19952cb8afe5d5cceabc7298eae58ac36754dac",
+              "characters": 199,
+              "matches_prior_response": true
+            }
+          }
+        },
+        {
+          "role": "tool",
+          "digest": "a33636a21bda8ca098fdc5e0cc002a3b9a5a17ee262110c5ac9526da33719a1b",
+          "fields": {
+            "role": {
+              "digest": "dd04afac1bebb050783a245ed0d88633759f352c85d4ab3bea3d416bf2019c75",
+              "characters": 6
+            },
+            "tool_call_id": {
+              "digest": "78949aa6c192edbcab46e9b14a9caa46439dcf93e7af76f7ccdefed8cb037515",
+              "characters": 31
+            },
+            "content": {
+              "digest": "756dbab6b2c0da7ed4da05193a4388866a3312846cc8e2153ebd36f0cfb1e452",
+              "characters": 23
+            }
+          }
+        },
+        {
+          "role": "assistant",
+          "digest": "df27cf272ab198fd530ceb0f6c43a42c1e594a7b72b2dcc97bdf502314210358",
+          "fields": {
+            "content": {
+              "digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "characters": 4
+            },
+            "role": {
+              "digest": "43f3a43f5a7fef31effcd812e256c8f245da366db65c225fcde611385a4df753",
+              "characters": 11
+            },
+            "tool_calls": {
+              "digest": "9cef6356148331b909f3276f7d8bde235a1e34e2027430e9e25dfcfc7dc92252",
+              "characters": 145
+            },
+            "reasoning_content": {
+              "digest": "55f42bfe16da048bf4889ba8e5b81d35f033ff59b217f67cd8b0a6b5ae502761",
+              "characters": 28,
+              "matches_prior_response": true
+            }
+          }
+        },
+        {
+          "role": "tool",
+          "digest": "b9d38a5804cd43b7923a67eb829627f197e986283901ff0aa3e832222b06e563",
+          "fields": {
+            "role": {
+              "digest": "dd04afac1bebb050783a245ed0d88633759f352c85d4ab3bea3d416bf2019c75",
+              "characters": 6
+            },
+            "tool_call_id": {
+              "digest": "8546f99b080696e9967b8c7ed13498d6696fc5234a1635824d5a52e6addbc1fc",
+              "characters": 31
+            },
+            "content": {
+              "digest": "7e1d20fdf7af6598e97ca76cd56b24991ac0b060311b4e65a3b3b7bf3eba894c",
+              "characters": 17
+            }
+          }
+        }
+      ],
+      "common_serialized_message_prefix_chars": 2697,
+      "wire_body_sha256": "d3a5e47af93ba4d7e275357afe5781457be0af946c3717b133d6dd021ed58358",
+      "prefix_relation": "unchanged",
+      "first_changed_message": null,
+      "changed_message_fields": [],
+      "exact_payload_repeat": true,
+      "generation_parameters_digest": "c70a5f64e6fc760e3bd6fc348aedf8274572b8900755cc4effd4ad5b3ca1b1ac",
+      "affinity_present": false,
+      "affinity_key_digest": null,
+      "affinity_digest": null,
+      "usage": {
+        "prompt_tokens": 737,
+        "completion_tokens": 11,
+        "model": "mimo-v2.6-flash",
+        "provider": "mimo-live",
+        "cached_tokens": 640,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 6,
+        "cache_observed": true
+      },
+      "adaptation": {
+        "vendor": "mimo",
+        "vendor_label": "小米 MiMo",
+        "actions": [
+          "依赖厂商自动缓存（命中 0.00833333×），无需标记",
+          "MiMo 思考模式使用厂商固定采样，已摘除 temperature"
+        ],
+        "notes": [
+          "Token Plan 订阅池：倍率仅供比例参考，命中已实证且被 usage 如实计入",
+          "thinking 仅 on/off 两态，默认 enabled；没有已验证的 effort 强度分档",
+          "2.6 家族 tool_choice 仅 auto；工具调用需回放 reasoning_content，不能假定强制选工具生效",
+          "该模型无目录价，金额按单位价折算，仅用于比较比例，不代表真实账单"
+        ],
+        "cache_control": false,
+        "breakpoints": 1,
+        "ttl": "managed",
+        "est_tokens": 997,
+        "est_cost": 4.5e-05,
+        "baseline_cost": 0.00015,
+        "saving": 0.000105,
+        "saving_pct": 70.0,
+        "cliff_action": "pass",
+        "reasoning_budget": null,
+        "defer": false,
+        "cache_engages": true,
+        "route_capabilities": {},
+        "request_budget": {},
+        "adapter_id": "mimo.v2.6.flash",
+        "model_kind_id": "mimo.v2.6.flash",
+        "model_family_id": "mimo.v2.6",
+        "manufacturer_id": "mimo",
+        "behavior_fingerprint": "6bc1ad5e8223d2e9",
+        "model_match_source": "model_id",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type",
+          "nullable_cache_details",
+          "native_tool_replay",
+          "auto_tool_choice_only",
+          "fixed_sampling_when_thinking"
+        ],
+        "reasoning_shaped": true,
+        "fingerprint": "e636b1a5d7f5d15d",
+        "execution": {},
+        "estimate_scope": "reuse_window",
+        "includes_output_cost": false,
+        "price_known": false,
+        "model": "mimo-v2.6-flash"
+      }
+    },
+    {
+      "stage": "trim-1/agent-turn-2",
+      "model": "mimo-v2.6-flash",
+      "url": "https://token-plan-cn.xiaomimimo.com/v1/chat/completions",
+      "parameters": {
+        "thinking": {
+          "type": "enabled"
+        },
+        "tool_choice": "auto",
+        "max_tokens": 4096
+      },
+      "message_count": 10,
+      "common_prefix_messages": 8,
+      "messages_digest": "0839a73f29a8f97bbdda77619e59ddff6d6d4bbc256c0c4c1793713531a99f36",
+      "tools_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "toolset_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "payload_digest": "ba1044d7e18604769744bc7bc8e32a1946650455fe75be808564d6d027b5ec11",
+      "message_chars": 3461,
+      "assistant_reasoning_fields": 3,
+      "tools": [
+        "calculator",
+        "read_file"
+      ],
+      "status": 200,
+      "upstream_request_id": null,
+      "system_fingerprint": null,
+      "raw_usage": {
+        "completion_tokens": 57,
+        "prompt_tokens": 878,
+        "total_tokens": 935,
+        "completion_tokens_details": {
+          "reasoning_tokens": 31
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 704
+        }
+      },
+      "finish_reason": "tool_calls",
+      "response_id": "37b0ba8d-ff99-4248-9d56-1d3ab2efd9eb_2298f66fa0cb4ded8b7b494eac94aa11",
+      "response_model": "mimo-v2.6-flash",
+      "reasoning_chars": 100,
+      "tool_calls": [
+        {
+          "id": "call_c6a71c25ec21487499e89020",
+          "function": {
+            "arguments": "{\"expression\": \"137 + 286\"}",
+            "name": "calculator"
+          },
+          "type": "function"
+        }
+      ],
+      "text": "",
+      "seconds": 4.875,
+      "response_message_fields": [
+        "content",
+        "reasoning_content",
+        "role",
+        "tool_calls"
+      ],
+      "encrypted_content_chars": 0,
+      "encrypted_replay_matches": 0,
+      "message_components": [
+        {
+          "role": "system",
+          "digest": "a92f8e6c3821afe8723b7f2fd181fa8b1d591f6914828899630956c851904cd6",
+          "fields": {
+            "role": {
+              "digest": "0dc8cd0a92280156c12ba5073f5049586727ba0bef2ff72099577bd332db18f5",
+              "characters": 8
+            },
+            "content": {
+              "digest": "5d9ea34a8f4e9f179c97f6ba36b4d95b4c53b8c4f069c74ea1c6804d4e15af86",
+              "characters": 1042
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "977bedb97a72eefb5c31a877857bb2ea456f3c0b2f14498503bc7372433748d9",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "9c4eb71368107cecb0896be868d3e840579cabdfdca0b194b835d23de236a126",
+              "characters": 281
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "27f3a3f50fd1b0ad9b75a9da14696d459be1c933d7c83e910b2004eecf8a4488",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "9c0132503451389a29311dfa3b649d3dadda80ba606a8b8f419b710e0ac2ca7a",
+              "characters": 155
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "8ceb1e8ecd046e1039c5767e7b72f11cac22fb33dc11e4ac49abd87a9703c1cf",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "4b468a82b10815bb975cb512eb7c6bca4cd83f53d6607de28dedd7d4a2bb72ce",
+              "characters": 282
+            }
+          }
+        },
+        {
+          "role": "assistant",
+          "digest": "dce497169d046f9fb55232e9a760243c9558950343472efd8fbf9d3a26201f33",
+          "fields": {
+            "content": {
+              "digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "characters": 4
+            },
+            "role": {
+              "digest": "43f3a43f5a7fef31effcd812e256c8f245da366db65c225fcde611385a4df753",
+              "characters": 11
+            },
+            "tool_calls": {
+              "digest": "00e474b40958834fa41381dba235ba7ce3d86aa69131299b24f763ab3d6afef2",
+              "characters": 140
+            },
+            "reasoning_content": {
+              "digest": "a0947ec5d08b3b9d4bd68c3be19952cb8afe5d5cceabc7298eae58ac36754dac",
+              "characters": 199,
+              "matches_prior_response": true
+            }
+          }
+        },
+        {
+          "role": "tool",
+          "digest": "a33636a21bda8ca098fdc5e0cc002a3b9a5a17ee262110c5ac9526da33719a1b",
+          "fields": {
+            "role": {
+              "digest": "dd04afac1bebb050783a245ed0d88633759f352c85d4ab3bea3d416bf2019c75",
+              "characters": 6
+            },
+            "tool_call_id": {
+              "digest": "78949aa6c192edbcab46e9b14a9caa46439dcf93e7af76f7ccdefed8cb037515",
+              "characters": 31
+            },
+            "content": {
+              "digest": "756dbab6b2c0da7ed4da05193a4388866a3312846cc8e2153ebd36f0cfb1e452",
+              "characters": 23
+            }
+          }
+        },
+        {
+          "role": "assistant",
+          "digest": "df27cf272ab198fd530ceb0f6c43a42c1e594a7b72b2dcc97bdf502314210358",
+          "fields": {
+            "content": {
+              "digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "characters": 4
+            },
+            "role": {
+              "digest": "43f3a43f5a7fef31effcd812e256c8f245da366db65c225fcde611385a4df753",
+              "characters": 11
+            },
+            "tool_calls": {
+              "digest": "9cef6356148331b909f3276f7d8bde235a1e34e2027430e9e25dfcfc7dc92252",
+              "characters": 145
+            },
+            "reasoning_content": {
+              "digest": "55f42bfe16da048bf4889ba8e5b81d35f033ff59b217f67cd8b0a6b5ae502761",
+              "characters": 28,
+              "matches_prior_response": true
+            }
+          }
+        },
+        {
+          "role": "tool",
+          "digest": "b9d38a5804cd43b7923a67eb829627f197e986283901ff0aa3e832222b06e563",
+          "fields": {
+            "role": {
+              "digest": "dd04afac1bebb050783a245ed0d88633759f352c85d4ab3bea3d416bf2019c75",
+              "characters": 6
+            },
+            "tool_call_id": {
+              "digest": "8546f99b080696e9967b8c7ed13498d6696fc5234a1635824d5a52e6addbc1fc",
+              "characters": 31
+            },
+            "content": {
+              "digest": "7e1d20fdf7af6598e97ca76cd56b24991ac0b060311b4e65a3b3b7bf3eba894c",
+              "characters": 17
+            }
+          }
+        },
+        {
+          "role": "assistant",
+          "digest": "aa33bf48116f51002e497c8ec753f8e1882419aa1edf89171b92ab9a1f803bc2",
+          "fields": {
+            "content": {
+              "digest": "5ad2c8b168183b4b8464d0f3f85de77f2ff108edc169d1e2b124a470acd27048",
+              "characters": 5
+            },
+            "role": {
+              "digest": "43f3a43f5a7fef31effcd812e256c8f245da366db65c225fcde611385a4df753",
+              "characters": 11
+            },
+            "tool_calls": {
+              "digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "characters": 4
+            },
+            "reasoning_content": {
+              "digest": "22b69b117fd58f182ba698f7f2cf8f92f386c362e5921180c3dfb93f267b2022",
+              "characters": 25,
+              "matches_prior_response": true
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "44f48180ba444c5413699e743830cdc1bac588c73e06ba6d2919c06b86a84adb",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "686833157ad4f325804b08ac2ef310f3f4ed3bd1244c24535266c983b18b3097",
+              "characters": 585
+            }
+          }
+        }
+      ],
+      "common_serialized_message_prefix_chars": 2696,
+      "wire_body_sha256": "c6b867d776f8e1e73fca3fee06ba9ec6e0e6a2f779ae6fd31bc817de1698f68e",
+      "prefix_relation": "appended",
+      "first_changed_message": null,
+      "changed_message_fields": [],
+      "exact_payload_repeat": false,
+      "generation_parameters_digest": "c70a5f64e6fc760e3bd6fc348aedf8274572b8900755cc4effd4ad5b3ca1b1ac",
+      "affinity_present": false,
+      "affinity_key_digest": null,
+      "affinity_digest": null,
+      "usage": {
+        "prompt_tokens": 878,
+        "completion_tokens": 57,
+        "model": "mimo-v2.6-flash",
+        "provider": "mimo-live",
+        "cached_tokens": 704,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 31,
+        "cache_observed": true
+      },
+      "adaptation": {
+        "vendor": "mimo",
+        "vendor_label": "小米 MiMo",
+        "actions": [
+          "依赖厂商自动缓存（命中 0.00833333×），无需标记",
+          "MiMo 思考模式使用厂商固定采样，已摘除 temperature"
+        ],
+        "notes": [
+          "Token Plan 订阅池：倍率仅供比例参考，命中已实证且被 usage 如实计入",
+          "thinking 仅 on/off 两态，默认 enabled；没有已验证的 effort 强度分档",
+          "2.6 家族 tool_choice 仅 auto；工具调用需回放 reasoning_content，不能假定强制选工具生效",
+          "该模型无目录价，金额按单位价折算，仅用于比较比例，不代表真实账单"
+        ],
+        "cache_control": false,
+        "breakpoints": 1,
+        "ttl": "managed",
+        "est_tokens": 1229,
+        "est_cost": 8e-05,
+        "baseline_cost": 0.000185,
+        "saving": 0.000105,
+        "saving_pct": 56.8,
+        "cliff_action": "pass",
+        "reasoning_budget": null,
+        "defer": false,
+        "cache_engages": true,
+        "route_capabilities": {},
+        "request_budget": {},
+        "adapter_id": "mimo.v2.6.flash",
+        "model_kind_id": "mimo.v2.6.flash",
+        "model_family_id": "mimo.v2.6",
+        "manufacturer_id": "mimo",
+        "behavior_fingerprint": "6bc1ad5e8223d2e9",
+        "model_match_source": "model_id",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type",
+          "nullable_cache_details",
+          "native_tool_replay",
+          "auto_tool_choice_only",
+          "fixed_sampling_when_thinking"
+        ],
+        "reasoning_shaped": true,
+        "fingerprint": "e636b1a5d7f5d15d",
+        "execution": {},
+        "estimate_scope": "reuse_window",
+        "includes_output_cost": false,
+        "price_known": false,
+        "model": "mimo-v2.6-flash"
+      }
+    },
+    {
+      "stage": "trim-1/agent-turn-2",
+      "model": "mimo-v2.6-flash",
+      "url": "https://token-plan-cn.xiaomimimo.com/v1/chat/completions",
+      "parameters": {
+        "thinking": {
+          "type": "enabled"
+        },
+        "tool_choice": "auto",
+        "max_tokens": 4096
+      },
+      "message_count": 12,
+      "common_prefix_messages": 10,
+      "messages_digest": "91a7a7107af07280b7287fd71af5ccc9502839c3eb075971fc9e622ebde362af",
+      "tools_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "toolset_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "payload_digest": "8936f744ed92f1da98846725054b522e65eab4550cb071babb7c628d8464118a",
+      "message_chars": 3880,
+      "assistant_reasoning_fields": 4,
+      "tools": [
+        "calculator",
+        "read_file"
+      ],
+      "status": 200,
+      "upstream_request_id": null,
+      "system_fingerprint": null,
+      "raw_usage": {
+        "completion_tokens": 13,
+        "prompt_tokens": 955,
+        "total_tokens": 968,
+        "completion_tokens_details": {
+          "reasoning_tokens": 8
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 832
+        }
+      },
+      "finish_reason": "stop",
+      "response_id": "281bc9b2-a753-4a72-a4e5-fe01a18eb951_0c6ddf1a54914500aeffa0f64b026195",
+      "response_model": "mimo-v2.6-flash",
+      "reasoning_chars": 31,
+      "tool_calls": null,
+      "text": "423",
+      "seconds": 3.515,
+      "response_message_fields": [
+        "content",
+        "reasoning_content",
+        "role",
+        "tool_calls"
+      ],
+      "encrypted_content_chars": 0,
+      "encrypted_replay_matches": 0,
+      "message_components": [
+        {
+          "role": "system",
+          "digest": "a92f8e6c3821afe8723b7f2fd181fa8b1d591f6914828899630956c851904cd6",
+          "fields": {
+            "role": {
+              "digest": "0dc8cd0a92280156c12ba5073f5049586727ba0bef2ff72099577bd332db18f5",
+              "characters": 8
+            },
+            "content": {
+              "digest": "5d9ea34a8f4e9f179c97f6ba36b4d95b4c53b8c4f069c74ea1c6804d4e15af86",
+              "characters": 1042
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "977bedb97a72eefb5c31a877857bb2ea456f3c0b2f14498503bc7372433748d9",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "9c4eb71368107cecb0896be868d3e840579cabdfdca0b194b835d23de236a126",
+              "characters": 281
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "27f3a3f50fd1b0ad9b75a9da14696d459be1c933d7c83e910b2004eecf8a4488",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "9c0132503451389a29311dfa3b649d3dadda80ba606a8b8f419b710e0ac2ca7a",
+              "characters": 155
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "8ceb1e8ecd046e1039c5767e7b72f11cac22fb33dc11e4ac49abd87a9703c1cf",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "4b468a82b10815bb975cb512eb7c6bca4cd83f53d6607de28dedd7d4a2bb72ce",
+              "characters": 282
+            }
+          }
+        },
+        {
+          "role": "assistant",
+          "digest": "dce497169d046f9fb55232e9a760243c9558950343472efd8fbf9d3a26201f33",
+          "fields": {
+            "content": {
+              "digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "characters": 4
+            },
+            "role": {
+              "digest": "43f3a43f5a7fef31effcd812e256c8f245da366db65c225fcde611385a4df753",
+              "characters": 11
+            },
+            "tool_calls": {
+              "digest": "00e474b40958834fa41381dba235ba7ce3d86aa69131299b24f763ab3d6afef2",
+              "characters": 140
+            },
+            "reasoning_content": {
+              "digest": "a0947ec5d08b3b9d4bd68c3be19952cb8afe5d5cceabc7298eae58ac36754dac",
+              "characters": 199,
+              "matches_prior_response": true
+            }
+          }
+        },
+        {
+          "role": "tool",
+          "digest": "a33636a21bda8ca098fdc5e0cc002a3b9a5a17ee262110c5ac9526da33719a1b",
+          "fields": {
+            "role": {
+              "digest": "dd04afac1bebb050783a245ed0d88633759f352c85d4ab3bea3d416bf2019c75",
+              "characters": 6
+            },
+            "tool_call_id": {
+              "digest": "78949aa6c192edbcab46e9b14a9caa46439dcf93e7af76f7ccdefed8cb037515",
+              "characters": 31
+            },
+            "content": {
+              "digest": "756dbab6b2c0da7ed4da05193a4388866a3312846cc8e2153ebd36f0cfb1e452",
+              "characters": 23
+            }
+          }
+        },
+        {
+          "role": "assistant",
+          "digest": "df27cf272ab198fd530ceb0f6c43a42c1e594a7b72b2dcc97bdf502314210358",
+          "fields": {
+            "content": {
+              "digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "characters": 4
+            },
+            "role": {
+              "digest": "43f3a43f5a7fef31effcd812e256c8f245da366db65c225fcde611385a4df753",
+              "characters": 11
+            },
+            "tool_calls": {
+              "digest": "9cef6356148331b909f3276f7d8bde235a1e34e2027430e9e25dfcfc7dc92252",
+              "characters": 145
+            },
+            "reasoning_content": {
+              "digest": "55f42bfe16da048bf4889ba8e5b81d35f033ff59b217f67cd8b0a6b5ae502761",
+              "characters": 28,
+              "matches_prior_response": true
+            }
+          }
+        },
+        {
+          "role": "tool",
+          "digest": "b9d38a5804cd43b7923a67eb829627f197e986283901ff0aa3e832222b06e563",
+          "fields": {
+            "role": {
+              "digest": "dd04afac1bebb050783a245ed0d88633759f352c85d4ab3bea3d416bf2019c75",
+              "characters": 6
+            },
+            "tool_call_id": {
+              "digest": "8546f99b080696e9967b8c7ed13498d6696fc5234a1635824d5a52e6addbc1fc",
+              "characters": 31
+            },
+            "content": {
+              "digest": "7e1d20fdf7af6598e97ca76cd56b24991ac0b060311b4e65a3b3b7bf3eba894c",
+              "characters": 17
+            }
+          }
+        },
+        {
+          "role": "assistant",
+          "digest": "aa33bf48116f51002e497c8ec753f8e1882419aa1edf89171b92ab9a1f803bc2",
+          "fields": {
+            "content": {
+              "digest": "5ad2c8b168183b4b8464d0f3f85de77f2ff108edc169d1e2b124a470acd27048",
+              "characters": 5
+            },
+            "role": {
+              "digest": "43f3a43f5a7fef31effcd812e256c8f245da366db65c225fcde611385a4df753",
+              "characters": 11
+            },
+            "tool_calls": {
+              "digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "characters": 4
+            },
+            "reasoning_content": {
+              "digest": "22b69b117fd58f182ba698f7f2cf8f92f386c362e5921180c3dfb93f267b2022",
+              "characters": 25,
+              "matches_prior_response": true
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "44f48180ba444c5413699e743830cdc1bac588c73e06ba6d2919c06b86a84adb",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "686833157ad4f325804b08ac2ef310f3f4ed3bd1244c24535266c983b18b3097",
+              "characters": 585
+            }
+          }
+        },
+        {
+          "role": "assistant",
+          "digest": "dd1f7f3577545cbd37115754e661f1ddde089111341b5c1ec85e2edcf09febc6",
+          "fields": {
+            "content": {
+              "digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "characters": 4
+            },
+            "role": {
+              "digest": "43f3a43f5a7fef31effcd812e256c8f245da366db65c225fcde611385a4df753",
+              "characters": 11
+            },
+            "tool_calls": {
+              "digest": "980fd4c067353941028cd1250fdbc70aa5f6e44af016ecc4064e326603c24d25",
+              "characters": 145
+            },
+            "reasoning_content": {
+              "digest": "38d6d6917ee20411ffd1b29c88317e53cadcac0dd5888353ba1460b651b34173",
+              "characters": 102,
+              "matches_prior_response": true
+            }
+          }
+        },
+        {
+          "role": "tool",
+          "digest": "42461732cabb0cfa47348740fcc5de3096d7069d0349e43f944fb05e41f8277c",
+          "fields": {
+            "role": {
+              "digest": "dd04afac1bebb050783a245ed0d88633759f352c85d4ab3bea3d416bf2019c75",
+              "characters": 6
+            },
+            "tool_call_id": {
+              "digest": "092f31a53bf082363ceef2a50f05fd1645dffedd79674088c07f1bf45f7528db",
+              "characters": 31
+            },
+            "content": {
+              "digest": "7e1d20fdf7af6598e97ca76cd56b24991ac0b060311b4e65a3b3b7bf3eba894c",
+              "characters": 17
+            }
+          }
+        }
+      ],
+      "common_serialized_message_prefix_chars": 3409,
+      "wire_body_sha256": "3eef232922c0099c2877854b9884628f37d52bf04566aa05b6bacac0da582939",
+      "prefix_relation": "appended",
+      "first_changed_message": null,
+      "changed_message_fields": [],
+      "exact_payload_repeat": false,
+      "generation_parameters_digest": "c70a5f64e6fc760e3bd6fc348aedf8274572b8900755cc4effd4ad5b3ca1b1ac",
+      "affinity_present": false,
+      "affinity_key_digest": null,
+      "affinity_digest": null,
+      "usage": {
+        "prompt_tokens": 955,
+        "completion_tokens": 13,
+        "model": "mimo-v2.6-flash",
+        "provider": "mimo-live",
+        "cached_tokens": 832,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 8,
+        "cache_observed": true
+      },
+      "adaptation": {
+        "vendor": "mimo",
+        "vendor_label": "小米 MiMo",
+        "actions": [
+          "依赖厂商自动缓存（命中 0.00833333×），无需标记",
+          "MiMo 思考模式使用厂商固定采样，已摘除 temperature"
+        ],
+        "notes": [
+          "Token Plan 订阅池：倍率仅供比例参考，命中已实证且被 usage 如实计入",
+          "thinking 仅 on/off 两态，默认 enabled；没有已验证的 effort 强度分档",
+          "2.6 家族 tool_choice 仅 auto；工具调用需回放 reasoning_content，不能假定强制选工具生效",
+          "该模型无目录价，金额按单位价折算，仅用于比较比例，不代表真实账单"
+        ],
+        "cache_control": false,
+        "breakpoints": 1,
+        "ttl": "managed",
+        "est_tokens": 1237,
+        "est_cost": 8.1e-05,
+        "baseline_cost": 0.000187,
+        "saving": 0.000105,
+        "saving_pct": 56.4,
+        "cliff_action": "pass",
+        "reasoning_budget": null,
+        "defer": false,
+        "cache_engages": true,
+        "route_capabilities": {},
+        "request_budget": {},
+        "adapter_id": "mimo.v2.6.flash",
+        "model_kind_id": "mimo.v2.6.flash",
+        "model_family_id": "mimo.v2.6",
+        "manufacturer_id": "mimo",
+        "behavior_fingerprint": "6bc1ad5e8223d2e9",
+        "model_match_source": "model_id",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type",
+          "nullable_cache_details",
+          "native_tool_replay",
+          "auto_tool_choice_only",
+          "fixed_sampling_when_thinking"
+        ],
+        "reasoning_shaped": true,
+        "fingerprint": "e636b1a5d7f5d15d",
+        "execution": {},
+        "estimate_scope": "reuse_window",
+        "includes_output_cost": false,
+        "price_known": false,
+        "model": "mimo-v2.6-flash"
+      }
+    }
+  ],
+  "totals": {
+    "attempts": 12,
+    "successful_requests": 11,
+    "prompt_tokens": 10295,
+    "completion_tokens": 467,
+    "cached_tokens": 7616,
+    "reasoning_tokens": 287,
+    "seconds": 64.639,
+    "coverage": {
+      "all_observed": {
+        "requests": 9,
+        "input_tokens": 8928,
+        "cached_tokens": 7616,
+        "hit_rate": 0.853
+      },
+      "rebuild": {
+        "requests": 0,
+        "input_tokens": 0,
+        "cached_tokens": 0,
+        "hit_rate": null
+      },
+      "non_rebuild": {
+        "requests": 9,
+        "input_tokens": 8928,
+        "cached_tokens": 7616,
+        "hit_rate": 0.853
+      },
+      "eligible_prefix": {
+        "requests": 0,
+        "input_tokens": 0,
+        "cached_tokens": 0,
+        "excluded_tail_tokens": 0,
+        "hit_rate": null
+      },
+      "unknown_requests": 3,
+      "invalid_requests": 0,
+      "duplicate_observations": 0,
+      "denominator": "observed input tokens; eligible_prefix excludes declared structural tail"
+    }
+  },
+  "ok": true
+}

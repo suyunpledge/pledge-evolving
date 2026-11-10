@@ -1,0 +1,108 @@
+{
+  "baseline": "C:\\Users\\匡溯昀\\forge-mimo-round2-backup-20261107-025830",
+  "files": [
+    {
+      "path": "forge/adapters.py",
+      "status": "modified",
+      "before_sha256": "9e9b85b9c5fbc6dfb91df0e89495738bba52e72a5d5acccf76ae478b466a383b",
+      "after_sha256": "68539ddae34e2e0d9931e5ebab5906d9adf15cd51520323a86e891023297ac79"
+    },
+    {
+      "path": "forge/model.py",
+      "status": "modified",
+      "before_sha256": "446555fc986ec372e75cdc7a18aefcc84705095f73aa6e45de2d6de1057c3d4b",
+      "after_sha256": "665791bce641811550ade5a8577379533575bfb6b1058f75f318e36833dee34b"
+    },
+    {
+      "path": "forge/gateway.py",
+      "status": "modified",
+      "before_sha256": "fc0b9f6a5054769fae5fedb5dc8107389802b64f78bc88aabfa4c8083b82ceea",
+      "after_sha256": "58b5e400916ddd649659fd3b77bc81b4f826e1bd7651b3c0d3fbd93052bbc417"
+    },
+    {
+      "path": "forge/config.py",
+      "status": "modified",
+      "before_sha256": "4db06d93c1045ba747ad1052fcdd0643b715ceb36d18611cc040e96065ac0154",
+      "after_sha256": "0d0db0ce8913a2809f81837d405bdfc77cb6c32e8b8ba374083710c6237933cc"
+    },
+    {
+      "path": "forge/loop.py",
+      "status": "modified",
+      "before_sha256": "c98656336d8fa73a48832fd8c514a07c7471b5d7fb77870ba47d82a45b9f48d6",
+      "after_sha256": "11ff45ef31f679675f7d332ef44f0e8106bea18e321f67da685d7357428a6a52"
+    },
+    {
+      "path": "forge/conversation_prefix.py",
+      "status": "modified",
+      "before_sha256": "a07e0de6ada57e1b50b0add283403706c6262e2c38b79abcb7952b7d5b35048a",
+      "after_sha256": "773aef2455e06228f916c571bc31ec1dec0d7c57cf352f1170fb18015db8b5a9"
+    },
+    {
+      "path": "forge/toolwire.py",
+      "status": "modified",
+      "before_sha256": "b32d103544a49696306ac3f879436591c6295b08877f08f53a745e2300c1da3b",
+      "after_sha256": "f9bf338f5769be0d1f0ca710aa5e4f47e1155ab45aa6c25d5b5af74bbf0fc6ff"
+    },
+    {
+      "path": "forge/test_mimo_adapter.py",
+      "status": "modified",
+      "before_sha256": "b028b17b57d91b7e7cd8656e3b14084f2ff95d25e79d5fa22c12b967740ec302",
+      "after_sha256": "081844a34a8f93343d3bca21bd7cad4d7c6134baec5758b4b9914991e022013e"
+    },
+    {
+      "path": "forge/test_conversation_prefix.py",
+      "status": "modified",
+      "before_sha256": "3ad0070aa97e6aa52910cb97f9f6b97d5eec4362021d070a3d49a0c37ca3cc9b",
+      "after_sha256": "b70d97692d15b18a2b7282947891687604efee3959cf2d767b6f642852f5d846"
+    },
+    {
+      "path": "forge-budgets.json",
+      "status": "modified",
+      "before_sha256": "a9f35dc667d142ec3cc2f389e7dfd11806181c811865f743233977e88dfa9636",
+      "after_sha256": "e6a39fbd61403878465475ababf960bf89f0070cbb0b342ffb55331dc7d767a0"
+    },
+    {
+      "path": "scripts/verify_mimo_live.py",
+      "status": "modified",
+      "before_sha256": "76a4acf42a4a3a3dd8c17081b3cfa662d4cab5035769e0a2b1bdf3f25b8bf038",
+      "after_sha256": "7d97d8cacd2349519056d3178c184e8029b5b0c65e526cf3dc1608764b46b15f"
+    },
+    {
+      "path": "docs/MIMO-CACHE-ROUND2.md",
+      "status": "added",
+      "before_sha256": null,
+      "after_sha256": "68b83fd42f702d6a154c29dd1d0cdfd9a85b3e76ff3f3d1e6df7dbf8937b2b8f"
+    }
+  ],
+  "verification": {
+    "core": {
+      "run": 441,
+      "skipped": 2
+    },
+    "runtime": {
+      "run": 206,
+      "skipped": 1
+    },
+    "passed": 644,
+    "skipped": 3,
+    "selftest_passed": 595,
+    "selftest_total": 595,
+    "budget_files": 147
+  },
+  "live": {
+    "attempts": 43,
+    "successful_http": 41,
+    "failed_attempts": 2,
+    "reported_input_tokens": 76353,
+    "reported_output_tokens": 1848,
+    "ABBA_initial_messages_and_tools_identical": true,
+    "ABBA_tasks_passed": 8,
+    "mode_switch_tasks_passed": 2,
+    "vendor_hit_rate_uplift_proven": false,
+    "reports": [
+      "reports/mimo-round2-pro-abba.json",
+      "reports/mimo-round2-pro-abba-retry.json",
+      "reports/mimo-round2-mode-switch.json"
+    ]
+  }
+}

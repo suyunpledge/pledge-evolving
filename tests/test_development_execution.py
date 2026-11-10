@@ -135,7 +135,8 @@ class ExecutionTests(unittest.TestCase):
         result = rt.run('general', child_model=('missing', 'missing'))
         self.assertTrue(result['ok'])
         self.assertIs(rt.bridge.agent.policy, policy)
-        self.assertIsNone(rt.bridge.agent.file_guard)
+        self.assertFalse(rt.bridge.agent.file_guard.require_read)
+        self.assertFalse(rt.bridge.agent.file_guard.workspace_only)
         with self.assertRaises(PermissionError):
             rt.execute_tests([sys.executable, '-c', 'pass'], trusted=True)
 

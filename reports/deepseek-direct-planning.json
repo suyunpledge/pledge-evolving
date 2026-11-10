@@ -1,0 +1,96 @@
+[
+  {
+    "stage": "",
+    "model": "deepseek-flash",
+    "url": "https://api.deepseek.com/chat/completions",
+    "parameters": {
+      "max_tokens": 640
+    },
+    "message_count": 2,
+    "common_prefix_messages": 0,
+    "messages_digest": "2db16b3cc9bb97815e1f120ddf6c8eda31837f101a42de11b9a9547ed32bd59a",
+    "tools_digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+    "toolset_digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+    "payload_digest": "61f6e260c5fe877de4dc5b8d87859aff107a0b0a3df5b4e7574940091ad1dc4f",
+    "message_chars": 934,
+    "assistant_reasoning_fields": 0,
+    "tools": [],
+    "status": 200,
+    "raw_usage": {
+      "prompt_tokens": 197,
+      "completion_tokens": 640,
+      "total_tokens": 837,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      },
+      "completion_tokens_details": {
+        "reasoning_tokens": 361
+      },
+      "prompt_cache_hit_tokens": 0,
+      "prompt_cache_miss_tokens": 197
+    },
+    "finish_reason": "length",
+    "response_id": "e0472932-8b71-4589-b861-a1804d0281eb",
+    "response_model": "deepseek-flash",
+    "reasoning_chars": 1756,
+    "tool_calls": null,
+    "text": "{\"tasks\":[\"Inspect the repository for input.json, read it, and determine its schema and the location/type of the items to sum; stop and report if the file or schema is missing or ambiguous rather than assuming.\",\"Compute the sum of the numeric items from input.json, preserving the input unchanged and preserving any SecretRefs without resolving or exporting them.\",\"Write the computed sum to result.",
+    "seconds": 12.656,
+    "usage": {
+      "prompt_tokens": 197,
+      "completion_tokens": 640,
+      "model": "deepseek-flash",
+      "provider": "deepseek-live",
+      "cached_tokens": 0,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 361,
+      "cache_observed": true
+    },
+    "adaptation": {
+      "vendor": "deepseek",
+      "vendor_label": "DeepSeek",
+      "actions": [
+        "依赖厂商自动缓存（命中 0.02×），无需标记"
+      ],
+      "notes": [
+        "思考 token 按输出价计费；4096 仅为预算建议，以 execution 的执行状态为准"
+      ],
+      "cache_control": false,
+      "breakpoints": 1,
+      "ttl": "disk",
+      "est_tokens": 348,
+      "est_cost": 0.000413,
+      "baseline_cost": 0.000752,
+      "saving": 0.000339,
+      "saving_pct": 45.1,
+      "cliff_action": "pass",
+      "reasoning_budget": 4096,
+      "defer": false,
+      "cache_engages": true,
+      "route_capabilities": {},
+      "request_budget": {},
+      "adapter_id": "deepseek.v4.flash",
+      "model_kind_id": "deepseek.v4.flash",
+      "model_family_id": "deepseek.v4",
+      "manufacturer_id": "deepseek",
+      "behavior_fingerprint": "800f0497a847319d",
+      "model_match_source": "model_id",
+      "model_evidence": "live",
+      "model_traits": [
+        "thinking_type_and_effort",
+        "native_tool_replay"
+      ],
+      "fingerprint": "761f0148fbd5dbc0",
+      "execution": {
+        "reasoning": {
+          "status": "suggestion",
+          "requested": 4096
+        }
+      },
+      "estimate_scope": "reuse_window",
+      "includes_output_cost": false,
+      "price_known": true,
+      "model": "deepseek-flash"
+    }
+  }
+]

@@ -234,6 +234,18 @@ textarea#task{width:100%;height:72px;background:var(--bg);color:var(--text);bord
       </div>
     </div>
 
+    <div class="section">
+      <div class="section-head" onclick="toggleSection(this)"><span class="arrow">▼</span>事前规划</div>
+      <div class="section-body open">
+        <div class="field"><label for="planning">是否规划</label>
+          <select id="planning"><option value="none">不规划，直接执行</option><option value="low">简要规划</option><option value="medium">标准规划</option><option value="high">详细规划</option></select>
+        </div>
+        <div class="field"><label for="planningModel">规划模型</label>
+          <select id="planningModel"><option value="">沿用执行模型</option></select>
+        </div>
+        <div class="hint">规划方案会作为执行步骤传给执行模型，并按当前权限执行。</div>
+      </div>
+    </div>
     <!-- 执行循环限制 -->
     <div class="section">
       <div class="section-head" onclick="toggleSection(this)">
@@ -358,6 +370,8 @@ async function boot(){
   try{
     const data=await api('/api/models');
     models=data.models;
+    const planner=document.getElementById('planningModel');
+    models.forEach(m=>{const option=document.createElement('option');option.value=m.label;option.textContent=m.label+(m.keyReady?'':'（凭据未就绪）');planner.appendChild(option)});
     document.getElementById('conn').classList.add('up');
     document.getElementById('connText').textContent='已连接 · 内核就绪';
     renderModels();loadHistory();loadConfig();loadKeys();
@@ -425,6 +439,8 @@ function collectParams(){
   const t=document.getElementById('thinking').value;p.thinking=t||null;
   const b=document.getElementById('bundle').value;p.bundle=b||null;
   const pm=document.getElementById('policyMode').value;p.policy_mode=pm||null;
+  p.planning=document.getElementById('planning').value;
+  p.planning_model=document.getElementById('planningModel').value;
   const ms=document.getElementById('maxSteps').value;if(ms)p.max_steps=parseInt(ms);
   const md=document.getElementById('maxDepth').value;if(md)p.max_depth=parseInt(md);
   const sb=document.getElementById('spawnBudget').value;if(sb)p.spawn_budget=parseInt(sb);
@@ -457,6 +473,7 @@ function listenSSE(runId){
   evtSource.onmessage=(e)=>{
     let d;try{d=JSON.parse(e.data)}catch{return}
     if(d.type==='step')appendStep(d);
+    else if(d.type==='task_plan')renderPlan(d.plan);
     else if(d.type==='state'){
       document.getElementById('runState').textContent={running:'执行中…',done:'完成',error:'失败',cancelled:'已取消',cancelling:'取消中…'}[d.state]||d.state;
       if(d.state==='done'){renderFinal(d);renderDelivery(d.delivery||[]);renderUsage(d)}
@@ -479,6 +496,7 @@ function pollRun(runId){
 }
 function renderFromRec(rec){
   const s=document.getElementById('stream');s.innerHTML='';
+  if(rec.planning)renderPlan(rec.planning);
   (rec.steps||[]).forEach(step=>appendStep(step));
   if(rec.state==='done')renderFinal({text:rec.text,usage:rec.usage,delivery:rec.delivery});
   if(rec.state==='error')renderError({error:rec.error,traceback:rec.traceback});
@@ -491,7 +509,8 @@ function appendStep(s){
   d.innerHTML=`<div class="head"><span class="idx">${s.index}</span>${esc(s.tool||'reason')} → ${esc(s.decision||'')}</div><div class="body">${esc(s.note||s.result||'')}</div>`;
   document.getElementById('stream').appendChild(d);d.scrollIntoView({behavior:'smooth',block:'end'});
 }
-function renderFinal(d){if(!d.text)return;const b=document.createElement('div');b.className='final-box';b.innerHTML=`<h4>最终回复</h4><div class="body">${esc(d.text)}</div>`;document.getElementById('stream').appendChild(b);b.scrollIntoView({behavior:'smooth',block:'end'})}
+function renderPlan(plan){const id='currentPlan';let box=document.getElementById(id);if(!box){box=document.createElement('div');box.id=id;box.className='msg';document.getElementById('stream').prepend(box)}box.innerHTML='<div class="head">执行规划</div><div class="body">'+esc((plan.tasks||[]).map((t,i)=>(i+1)+'. '+t).join('\n'))+'</div>'}
+function renderFinal(d){if(d.planning)renderPlan(d.planning);if(!d.text)return;const b=document.createElement('div');b.className='final-box';b.innerHTML=`<h4>最终回复</h4><div class="body">${esc(d.text)}</div>`;document.getElementById('stream').appendChild(b);b.scrollIntoView({behavior:'smooth',block:'end'})}
 function renderError(d){const b=document.createElement('div');b.className='msg error';b.innerHTML=`<div class="head">错误</div><div class="body">${esc(d.error||'')}${d.traceback?'\n\n'+esc(d.traceback.slice(0,800)):''}</div>`;document.getElementById('stream').appendChild(b)}
 function renderUsage(d){if(!d.usage)return;const bar=document.getElementById('usage');bar.style.display='flex';document.getElementById('uTok').textContent=d.usage&&d.usage.total_tokens!==undefined?d.usage.total_tokens:'—';document.getElementById('uStep').textContent=d.steps?d.steps.length:'—';const s=d.finished&&d.created?Math.max(0,Math.round(d.finished-d.created)):0;document.getElementById('uTime').textContent=s+'s';document.getElementById('uModel').textContent=d.model||selModel||'—'}
 function renderDelivery(items){const dl=document.getElementById('deliveries');dl.innerHTML='';if(!items||!items.length){dl.innerHTML='<div class="empty">本次无独立交付文件</div>';return}items.forEach(item=>{const d=document.createElement('div');d.className='deliver-item';if(item.kind==='file'){d.innerHTML=`<div class="dtype">${esc(item.ext||'file')}</div><div class="dname">${esc(item.path)}</div><div class="dmeta">${fmtSize(item.size)} · ${fmtTime(item.mtime)}</div><div class="btn-row"><button class="sm" data-vpath="${escAttr(item.path)}">查看</button></div>`}else{d.innerHTML=`<div class="dtype">代码 · ${esc(item.lang)}</div><pre>${esc(item.preview)}</pre>`}dl.appendChild(d)});dl.addEventListener('click',e=>{const btn=e.target.closest('[data-vpath]');if(btn)viewFile(btn.dataset.vpath)})}

@@ -1,0 +1,527 @@
+--- a/forge/execution.py
++++ b/forge/execution.py
+@@ -234,6 +234,9 @@
+             raise ValueError('Host must supply a Policy or composed config')
+         policy = Policy.from_config(config, workspace=workspace, non_interactive=True)
+     run = run or RunRequest()
++    if file_guard is None:
++        from .file_revisions import FileRevisionGuard
++        file_guard = FileRevisionGuard(workspace, require_read=False, workspace_only=False)
+     owns_session = session is None and journal
+     if owns_session:
+         from .session import Session
+@@ -350,8 +353,11 @@
+                                     if ctx.file_guard is not None:
+                                         ctx.file_guard.record(request.name, request.arguments, value)
+                         except Exception as exc:
++                            from .file_revisions import FileRevisionConflict
+                             value = ToolResult(False, error=redact(str(exc)), meta={
+-                                'error_code': 'execution_unknown' if dispatched else 'preparation_failed',
++                                'error_code': ('execution_unknown' if dispatched else
++                                              'revision_conflict' if isinstance(exc, FileRevisionConflict)
++                                              else 'preparation_failed'),
+                                 'execution_state': 'unknown' if dispatched else 'not_started'})
+                 value.meta['request_digest'] = digest
+                 result = ActionResult.from_tool(ctx, request, value)
+--- a/forge/runtime_types.py
++++ b/forge/runtime_types.py
+@@ -1,7 +1,6 @@
+ """Shared runtime values, independent of Agent assembly and protocols."""
+ from dataclasses import dataclass, field
+ from typing import Any
+-from .execution import RunResult
+ 
+ 
+ @dataclass(frozen=True)
+@@ -51,6 +50,7 @@
+     parent_run_id: str = ''
+ 
+     def as_result(self):
++        from .execution import RunResult
+         return RunResult.from_report(self)
+ 
+     @property
+--- a/forge/tool_turn.py
++++ b/forge/tool_turn.py
+@@ -3,11 +3,13 @@
+ Like Loom's kernel/environment boundary, this layer consumes normalized calls.
+ It neither parses provider messages nor grants permissions or retries actions.
+ """
++from __future__ import annotations
+ from dataclasses import dataclass, field
+-from typing import Any, Callable
++from typing import Any, Callable, TYPE_CHECKING
+ 
+ from .runtime_types import Step
+-from .toolwire import ToolCall
++if TYPE_CHECKING:
++    from .toolwire import ToolCall
+ 
+ 
+ @dataclass
+--- a/forge/assembly.py
++++ b/forge/assembly.py
+@@ -65,9 +65,7 @@
+     memory = MemoryStore(home / "MEMORY.md").load()
+     checkpoints = CheckpointStore(home, workspace)
+     session_dir = home / "sessions"
+-    from .session import Session as _Session
+-
+-    session = _Session(session_path or (session_dir / (uuid.uuid4().hex + ".jsonl")), meta={
++    session = Session(session_path or (session_dir / (uuid.uuid4().hex + ".jsonl")), meta={
+         "cwd": str(workspace),
+         "model": str(config.get("model", "primary", "")),
+         "policy_mode": policy.mode.value,
+--- a/client/server.py
++++ b/client/server.py
+@@ -303,11 +303,16 @@
+             raise ValueError('invalid ' + key)
+     for key, maximum in [('max_steps', 1000), ('max_depth', 16), ('spawn_budget', 1000)]:
+         value = payload.get(key)
+-        if value is not None and (type(value) is not int or not 1 <= value <= maximum):
++        minimum = 1 if key == 'max_steps' else 0
++        if value is not None and (type(value) is not int or not minimum <= value <= maximum):
+             raise ValueError('invalid ' + key)
+     if payload.get('workspace') is not None and not isinstance(payload['workspace'], str):
+         raise ValueError('invalid workspace')
+-    return {**payload, 'task': task.strip()}
++    validated = {**payload, 'task': task.strip()}
++    if payload.get('acceptance') is not None:
++        from forge.acceptance import AcceptanceContract
++        validated['acceptance'] = AcceptanceContract.from_raw(payload['acceptance']).to_raw()
++    return validated
+ 
+ 
+ def compose_run_config(workspace, model_label=None, strategy=None, thinking=None,
+@@ -348,7 +353,7 @@
+               bundle: str | None, policy_mode: str | None,
+               max_steps: int | None, max_depth: int | None,
+               spawn_budget: int | None,
+-              workspace: Path, *, store=None) -> None:
++              workspace: Path, acceptance=None, *, store=None) -> None:
+     from forge.loop import LoopLimits, build_agent
+     from forge.model import ModelRouter
+     from forge.routing import SmartRouter
+@@ -361,9 +366,11 @@
+     t0 = time.time()
+     agent = None
+     try:
+-        validate_run_payload({'task': task, 'model': model_label, 'strategy': strategy,
++        validated = validate_run_payload({'task': task, 'model': model_label, 'strategy': strategy,
+             'thinking': thinking, 'bundle': bundle, 'policy_mode': policy_mode,
+-            'max_steps': max_steps, 'max_depth': max_depth, 'spawn_budget': spawn_budget})
++            'max_steps': max_steps, 'max_depth': max_depth, 'spawn_budget': spawn_budget,
++            'acceptance': acceptance})
++        acceptance = validated.get('acceptance')
+         if cancel.is_set():
+             store.transition(run_id, state='cancelled', outcome='cancelled',
+                 execution_state='not_started', error_code='cancelled', cancelled=True, finished=time.time())
+@@ -382,9 +389,9 @@
+             router = phase_router(router, cfg.get('model', 'primary'), router)
+ 
+         limits = LoopLimits(
+-            max_steps=max_steps or int(cfg.get("loop", "maxSteps", 12)),
+-            max_depth=max_depth or int(cfg.get("loop", "maxDepth", 2)),
+-            spawn_budget=spawn_budget or int(cfg.get("loop", "spawnBudget", 8)))
++            max_steps=max_steps if max_steps is not None else int(cfg.get("loop", "maxSteps", 12)),
++            max_depth=max_depth if max_depth is not None else int(cfg.get("loop", "maxDepth", 2)),
++            spawn_budget=spawn_budget if spawn_budget is not None else int(cfg.get("loop", "spawnBudget", 8)))
+ 
+         def observe(event):
+             store.push_event(run_id, event)
+@@ -406,16 +413,19 @@
+         request = RunRequest(run_id=run_id, task_id=rec['task_id'], entry='client')
+ 
+         with agent.session:
+-            report = agent.run(task, run_request=request)
++            report = agent.run(task, run_request=request, **({'acceptance': acceptance} if acceptance is not None else {}))
+ 
+         result = report.as_result().as_dict()
+         state = {'succeeded': 'done', 'cancelled': 'cancelled'}.get(result['outcome'], 'error')
+         delivery = scan_delivery(workspace, t0, report.text)
++        from forge.protocol import acceptance_payload
++        acceptance_result = acceptance_payload(report)
+         store.transition(run_id, **result, state=state, finished=time.time(),
+             usage=report.usage, delivery=delivery, stopped=report.stopped,
+             cancelled=result['outcome'] == 'cancelled',
+             requires_inspection=result['outcome'] == 'unknown',
+-            error='' if state == 'done' else result['error_code'])
++            error='' if state == 'done' else result['error_code'],
++            **({'acceptance': acceptance_result} if acceptance_result is not None else {}))
+     except BaseException as exc:
+         tb = traceback.format_exc()[-2000:]
+         # A thrown handler or process interruption can leave side effects.
+@@ -638,7 +648,7 @@
+                   payload.get("strategy"), payload.get("thinking"),
+                   payload.get("bundle"), payload.get("policy_mode"),
+                   payload.get("max_steps"), payload.get("max_depth"),
+-                   payload.get("spawn_budget"), workspace))
++                   payload.get("spawn_budget"), workspace, payload.get('acceptance')))
+         except RuntimeError:
+             self.server.store.transition(rec['id'], state='error', outcome='failed',
+                 execution_state='not_started', error_code='worker_unavailable')
+--- a/forge/vscode_bridge.py
++++ b/forge/vscode_bridge.py
+@@ -312,6 +312,10 @@
+     def run(self, params):
+         if self.agent is None:
+             raise ValueError('Initialize Forge first')
++        from .acceptance import AcceptanceContract
++        acceptance = params.get('acceptance')
++        if acceptance is not None:
++            acceptance = AcceptanceContract.from_raw(acceptance)
+         from .planning import planning_level
+         self.agent.planning_level = planning_level(params.get('planning', self.agent.planning_level))
+         self.agent.planning_model = self._phase_model(params.get('planningModel', ''))
+@@ -332,7 +336,8 @@
+         self.agent.budget = [self.agent.limits.spawn_budget]
+         with self.agent.session:
+             report = self.agent.run(task, history=self.history,
+-                context_paths=[item['path'] for item in params.get('contexts', []) if item.get('path')])
++                context_paths=[item['path'] for item in params.get('contexts', []) if item.get('path')],
++                **({'acceptance': acceptance} if acceptance is not None else {}))
+         self.history = _history([*self.history, {'role': 'user', 'content': task},
+                                 {'role': 'assistant', 'content': report.text}])
+         if report.as_result().outcome == 'succeeded':
+--- a/forge-budgets.json
++++ b/forge-budgets.json
+@@ -4,7 +4,7 @@
+     "forge/__init__.py": 38,
+     "forge/acceptance.py": 147,
+     "forge/adapters.py": 712,
+-    "forge/assembly.py": 127,
++    "forge/assembly.py": 125,
+     "forge/batch_execution.py": 144,
+     "forge/cache_metrics.py": 79,
+     "forge/cache_state.py": 400,
+@@ -47,15 +47,15 @@
+     "forge/development/guard.py": 4,
+     "forge/development/models.py": 112,
+     "forge/development/review.py": 76,
+-    "forge/development/runtime.py": 558,
++    "forge/development/runtime.py": 563,
+     "forge/development/state.py": 173,
+     "forge/development/testing.py": 97,
+     "forge/evolution.py": 602,
+-    "forge/execution.py": 371,
++    "forge/execution.py": 377,
+     "forge/execution_guard.py": 55,
+     "forge/extensions.py": 167,
+     "forge/federation.py": 400,
+-    "forge/file_revisions.py": 135,
++    "forge/file_revisions.py": 139,
+     "forge/gateway.py": 871,
+     "forge/graph/__init__.py": 63,
+     "forge/graph/algo.py": 242,
+@@ -80,7 +80,7 @@
+     "forge/pricing.py": 312,
+     "forge/project_rules.py": 123,
+     "forge/projector.py": 88,
+-    "forge/protocol.py": 97,
++    "forge/protocol.py": 103,
+     "forge/registry.py": 883,
+     "forge/request_execution.py": 133,
+     "forge/route_capabilities.py": 104,
+@@ -129,14 +129,14 @@
+     "forge/test_web_tools.py": 205,
+     "forge/thinking.py": 172,
+     "forge/tool_adapter.py": 801,
+-    "forge/tool_turn.py": 60,
++    "forge/tool_turn.py": 62,
+     "forge/tools.py": 1432,
+     "forge/toolwire.py": 322,
+     "forge/types.py": 104,
+     "forge/vendors.py": 1128,
+     "forge/verify_execution.py": 178,
+     "forge/verify_secrets.py": 92,
+-    "forge/vscode_bridge.py": 408,
++    "forge/vscode_bridge.py": 413,
+     "forge/web_backends.py": 352,
+     "forge/wire.py": 341
+   }
+--- a/forge/protocol.py
++++ b/forge/protocol.py
+@@ -54,6 +54,13 @@
+             "coverage": coverage}
+ 
+ 
++def acceptance_payload(report: Any) -> dict[str, Any] | None:
++    for event in reversed(getattr(report, 'events', ())):
++        if event.get('type') == 'acceptance_checked':
++            return {key: event[key] for key in ('attempt', 'passed', 'unknown_outcome', 'results')}
++    return None
++
++
+ def run_payload(report: Any, *, session_path: str = "", include_steps: bool = False) -> dict[str, Any]:
+     """Project a ``RunReport`` into the stable client-facing result envelope."""
+     result = report.as_result()
+@@ -77,10 +84,9 @@
+     }
+     if session_path:
+         payload["sessionPath"] = str(session_path)
+-    checked = [e for e in getattr(report, 'events', ()) if e.get('type') == 'acceptance_checked']
+-    if checked:
+-        payload['acceptance'] = {key: checked[-1][key] for key in
+-                                 ('attempt', 'passed', 'unknown_outcome', 'results')}
++    acceptance = acceptance_payload(report)
++    if acceptance is not None:
++        payload['acceptance'] = acceptance
+     if include_steps:
+         payload["steps"] = [{
+             "index": step.index,
+@@ -94,4 +100,4 @@
+     return payload
+ 
+ 
+-__all__ = ["MAX_FRAME_BYTES", "PROTOCOL_VERSION", "run_payload", "validate_protocol_version"]
++__all__ = ["MAX_FRAME_BYTES", "PROTOCOL_VERSION", "acceptance_payload", "run_payload", "validate_protocol_version"]
+--- a/forge/file_revisions.py
++++ b/forge/file_revisions.py
+@@ -17,6 +17,10 @@
+ _locks_lock = RLock()
+ WRITES = {'write_file', 'edit_file', 'apply_patch', 'delete_file', 'edit_config'}
+ READS = {'read_file', 'read_range', 'file_outline', 'edit_config'}
++
++
++class FileRevisionConflict(ValueError):
++    """An explicit preview no longer matches this lane's file observations."""
+ 
+ 
+ class FileRevisionGuard:
+@@ -79,7 +83,7 @@
+                     revisions[target] = self.revisions.get(target, current)
+                 supplied = args.get('_expected_revisions')
+                 if supplied is not None and supplied != revisions:
+-                    raise ValueError('Explicit preview does not match this Agent observation')
++                    raise FileRevisionConflict('Explicit preview does not match this Agent observation')
+                 guarded['_expected_revisions'] = revisions
+             yield guarded
+ 
+--- a/forge/development/runtime.py
++++ b/forge/development/runtime.py
+@@ -163,7 +163,10 @@
+ 
+     def run(self, prompt, *, explicit_model=None, agent_model=None, role='default',
+             permission='read-only', planning='low', contexts=(), snapshot=None,
+-            delegate=False, child_model=None, cancellation=None):
++            delegate=False, child_model=None, cancellation=None, acceptance=None):
++        if acceptance is not None:
++            from forge.acceptance import AcceptanceContract
++            acceptance = AcceptanceContract.from_raw(acceptance).to_raw()
+         if not self.ready:
+             raise RuntimeError('Open a project first')
+         if not self._lane.acquire(False):
+@@ -194,6 +197,8 @@
+             params = {'prompt': prompt, 'model': selected, 'mode': snap.permission,
+                       'planning': planning if snap.mode == WorkMode.DEVELOPMENT else 'none',
+                       'contexts': list(contexts)}
++            if acceptance is not None:
++                params['acceptance'] = acceptance
+             for source in tuple(self.context_sources) if snap.mode == WorkMode.DEVELOPMENT else ():
+                 # Trusted adapters contribute documents, all validated/virtualized by EditorBridge.
+                 params['contexts'].extend(source(snap))
+--- /dev/null
++++ b/tests/test_chain_integration.py
+@@ -0,0 +1,134 @@
++"""Entry-point integration over real local HTTP, journals, Agents and editor bridge."""
++from pathlib import Path
++import subprocess
++import sys
++import unittest
++from unittest.mock import patch
++
++import test_client_runtime as client_fixtures
++import test_runtime_convergence as gateway_fixtures
++import test_development_execution as editor_fixtures
++from client import server as client
++from forge.client_runs import RunStore
++from forge.test_task_planning import Router
++
++
++def acceptance(path='result.txt'):
++    return {'max_attempts': 1, 'criteria': [
++        {'id': 'deliverable', 'kind': 'file', 'path': path, 'contains': 'ready'}]}
++
++
++class ClientChainTests(unittest.TestCase):
++    # Reuse local HTTP/transport fixtures without inheriting their test methods.
++    setUp = client_fixtures.ClientRuntimeTests.setUp
++    transport = client_fixtures.ClientRuntimeTests.transport
++    use_transport = client_fixtures.ClientRuntimeTests.use_transport
++    server = client_fixtures.ClientRuntimeTests.server
++    http = client_fixtures.ClientRuntimeTests.http
++    wait_terminal = client_fixtures.ClientRuntimeTests.wait_terminal
++
++    def test_invalid_acceptance_rejected_before_record_or_worker(self):
++        base = self.server()
++        for spec in [{}, {'criteria': []}, acceptance('../outside')]:
++            code, _ = self.http(base, '/api/run', {'task': 'finish', 'acceptance': spec})
++            self.assertEqual(code, 400)
++        self.assertFalse(self.store.list_recent())
++        self.assertFalse(self.calls)
++
++    def test_http_acceptance_failure_is_durable_and_not_success(self):
++        self.use_transport(self.transport(['done']))
++        code, started = self.http(self.server(), '/api/run', {'task': 'finish', 'acceptance': acceptance()})
++        self.assertEqual(code, 202)
++        rec = self.wait_terminal(started['run_id'])
++        self.assertEqual(rec['state'], 'error')
++        self.assertEqual(rec['error_code'], 'acceptance_failed')
++        self.assertFalse(rec['acceptance']['passed'])
++        restored = RunStore(self.store.directory)
++        self.addCleanup(restored.close)
++        self.assertEqual(restored.get(rec['id'])['acceptance'], rec['acceptance'])
++
++    def test_http_acceptance_success_and_zero_spawn_limits_reach_agent(self):
++        (self.ws / 'result.txt').write_text('ready', encoding='utf-8')
++        self.use_transport(self.transport(['done']))
++        import forge.loop as loop
++        build = loop.build_agent
++        captured = []
++        def capture(**kwargs):
++            captured.append(kwargs['limits'])
++            return build(**kwargs)
++        with patch.object(loop, 'build_agent', side_effect=capture):
++            code, started = self.http(self.server(), '/api/run', {'task': 'finish',
++                'acceptance': acceptance(), 'max_depth': 0, 'spawn_budget': 0})
++            self.assertEqual(code, 202)
++            rec = self.wait_terminal(started['run_id'])
++        self.assertEqual(rec['state'], 'done')
++        self.assertTrue(rec['acceptance']['passed'])
++        self.assertEqual((captured[0].max_depth, captured[0].spawn_budget), (0, 0))
++
++
++class GatewayChainTests(unittest.TestCase):
++    setUp = gateway_fixtures.RuntimeConvergenceTests.setUp
++    gateway = gateway_fixtures.RuntimeConvergenceTests.gateway
++    http = gateway_fixtures.RuntimeConvergenceTests.http
++
++    def test_gateway_reuses_observations_and_refuses_stale_write(self):
++        cfg, base = self.gateway()
++        body = {'run_id': 'revision_lane', 'name': 'read_file', 'arguments': {'path': 'value.txt'}}
++        self.assertTrue(self.http(base, '/v1/tools/call', body)[1]['ok'])
++        self.path.write_text('human edit', encoding='utf-8')
++        body.update(name='write_file', arguments={'path': 'value.txt', 'content': 'lost'})
++        _, denied = self.http(base, '/v1/tools/call', body)
++        self.assertFalse(denied['ok'])
++        self.assertEqual(denied['meta']['error_code'], 'revision_conflict')
++        self.assertEqual(self.path.read_text(), 'human edit')
++        # Another run does not inherit the old observation or silently bypass this lane.
++        body['run_id'] = 'new_revision_lane'
++        self.assertTrue(self.http(base, '/v1/tools/call', body)[1]['ok'])
++        self.assertIsNot(cfg.execution_context('revision_lane').file_guard,
++                         cfg.execution_context('new_revision_lane').file_guard)
++
++    def test_reread_refreshes_gateway_observation(self):
++        _, base = self.gateway()
++        read = {'run_id': 'refresh_lane', 'name': 'read_file', 'arguments': {'path': 'value.txt'}}
++        self.assertTrue(self.http(base, '/v1/tools/call', read)[1]['ok'])
++        self.path.write_text('human', encoding='utf-8')
++        self.assertTrue(self.http(base, '/v1/tools/call', read)[1]['ok'])
++        _, written = self.http(base, '/v1/tools/call', {'run_id': 'refresh_lane', 'name': 'write_file',
++            'arguments': {'path': 'value.txt', 'content': 'reviewed'}})
++        self.assertTrue(written['ok'])
++
++
++class EditorChainTests(unittest.TestCase):
++    setUp = editor_fixtures.ExecutionTests.setUp
++    runtime = editor_fixtures.ExecutionTests.runtime
++
++    def test_development_to_editor_to_agent_enforces_acceptance(self):
++        runtime = self.runtime(router=Router(['done']))
++        result = runtime.run('finish', permission='workspace-write', planning='none',
++                             acceptance=acceptance('missing.txt'))
++        self.assertFalse(result['ok'])
++        self.assertEqual(result['stopped'], 'acceptance_failed')
++        self.assertFalse(result['acceptance']['passed'])
++
++    def test_bad_editor_contract_fails_before_emitting_user_or_changing_history(self):
++        runtime = self.runtime(router=Router(['must not run']))
++        bridge = runtime.bridge
++        history = list(bridge.history)
++        with self.assertRaises(ValueError):
++            bridge.run({'prompt': 'task', 'acceptance': {}})
++        self.assertEqual(bridge.history, history)
++        self.assertFalse(bridge.router.calls)
++
++
++class ImportBoundaryTests(unittest.TestCase):
++    def test_values_and_turn_import_without_execution_or_vendor_protocols(self):
++        result = subprocess.run([sys.executable, '-c',
++            'import sys; import forge.runtime_types; import forge.tool_turn; '
++            'assert "forge.execution" not in sys.modules; '
++            'assert "forge.tools" not in sys.modules; assert "forge.toolwire" not in sys.modules'],
++            cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True)
++        self.assertEqual(result.returncode, 0, result.stderr)
++
++
++if __name__ == '__main__':
++    unittest.main()
+--- /dev/null
++++ b/docs/LOOM-CALL-CHAIN-AUDIT.md
+@@ -0,0 +1,65 @@
++# 重构后实际调用链复核
++
++本轮在前两轮现有工作区上继续检查；快照见 `reports/loom-chain-backup.txt`。
++
++## 发现并修复的问题
++
++| 问题 | 触发条件与影响 | 修复 |
++| --- | --- | --- |
++| 网关缺少默认版本保护 | Agent 构造时已接入 guard，但网关直接调用 `create_execution_context()`，默认 `file_guard=None`；同一 run 读完文件后，外部编辑仍可能被后续写入覆盖 | 将默认观察型 guard 补到执行上下文工厂；网关缓存的上下文持有同一观察表，不同 run 分离；宿主传入的严格 guard 原样保留 |
++| HTTP 验收契约被忽略 | `/api/run` 载荷允许附加字段，但 worker 没有把 acceptance 传给 Agent；可能在用户以为有验收时直接成功 | HTTP 入站先校验，再传给 worker 和 Agent；结果回写客户端持久化记录，重载仍可看到失败证据 |
++| 编辑器和开发模式遗漏契约入口 | `EditorBridge.run()`、`DevelopmentRuntime.run()` 未转发验收参数 | 补充可选 `acceptance`，编辑器在改策略、发用户事件、改历史之前校验；开发模式也先校验再启动任务 |
++| 无法显式关闭子代理 | 客户端范围校验拒绝 0；worker 使用 `value or default` 会把 0 替换成默认值 | 深度和数量允许 0，步数仍至少 1；只用 `None` 表示缺省 |
++| 并发版本冲突丢失错误分类 | 两个请求带相同旧版本并发写入时，默认 guard 正确拒绝后者，但异常被统一映射为 `preparation_failed` | 增加宿主侧 `FileRevisionConflict`，在派发前保留 `revision_conflict` 与 `not_started`；不改变已派发异常的 unknown 语义 |
++| 公共类型仍耦合执行系统 | 导入 `runtime_types` 立即导入 `execution`，进而拉入工具系统；`tool_turn` 仅为类型注解导入厂商协议模块 | 结果转换按需导入；工具协议类型只在 `TYPE_CHECKING` 下导入。新进程验证导入这两个模块不会加载 execution/tools/toolwire |
++| 重复投影和重复导入 | 客户端如复用整个 `run_payload()` 提取验收，会重复转换 RunResult、计算缓存指标；装配层重复导入 Session | 提出 `acceptance_payload()` 供完整协议和 HTTP 客户端共用；Session 保持一个导入和创建位置 |
++
++## 现在实际走的路径
++
++```mermaid
++flowchart TD
++    HTTP[HTTP /api/run] --> Validate[验收与参数校验]
++    Validate --> Worker[run_forge worker]
++    Dev[DevelopmentRuntime.run] --> Editor[EditorBridge.run]
++    Editor --> Agent[Agent.run acceptance]
++    Worker --> Agent
++    Agent --> Verify[独立验收]
++    Verify --> Projection[acceptance_payload]
++    Projection --> Persist[客户端持久化结果]
++    Gateway[网关 /v1/tools/call] --> Context[执行上下文工厂]
++    Context --> Guard[每个 run 的版本观察表]
++    Guard --> Action[ActionExecutor]
++    Agent --> Action
++```
++
++普通 Agent 仍拥有跨工具调用的观察表并传入上下文工厂，不能每次调用都重新创建空表；网关持有缓存上下文，观察表随该 run 保持。新 run 不继承旧表。重新读取会刷新观察，之后才允许按新版本修改。执行器仍进行原有授权、取消和审计。
++
++验收契约是当前 run 的显式输入。新增的是 HTTP/RPC/Python API 接入，没有新增 GUI 契约编辑控件；默认 shell 隔离和拒绝规则仍适用于命令验收。
++
++## 验证
++
++新增 `tests/test_chain_integration.py` 的 8 项测试，不调用真实模型：
++
++- 真正的 HTTP 请求：非法契约在创建任务前返回 400；契约不满足时任务进入 error 而非 done，失败证据重载后仍存在。
++- 真正的 HTTP worker 与 Agent：契约满足时成功，显式零子代理限制进入 Agent。
++- 真正的网关 HTTP 动作：读取→外部修改→写入被拒绝；不同 run 观察表分离；重新读取后可以按新状态写入。
++- 真正的开发模式→编辑器→Agent：验收失败阻止成功；非法契约不改变编辑器历史或请求模型。
++- 独立 Python 进程：公共类型和工具轮次模块导入不加载执行器、工具注册表或厂商协议模块。
++
++完整回归额外覆盖原有“同一版本并发写入只能一方成功”用例；该用例发现上述错误分类问题，已修复并重新运行相关回归。日志：`reports/loom-chain-targeted.log`、`reports/loom-chain-concurrency.log`、`reports/loom-chain-core.log`、`reports/loom-chain-runtime.log`、`reports/loom-chain-selftest.log`。
++
++修复后的最终结果：
++
++| 验证 | 结果 |
++| --- | --- |
++| 新增入口链路测试 | 8/8 通过 |
++| 并发及运行时一致性专项 | 62/62 通过 |
++| 内核完整回归 | 355 项，353 通过、2 跳过 |
++| 运行时/客户端/开发模式 10 组回归 | 196 项，195 通过、1 跳过 |
++| 框架自检 | 595/595 通过 |
++| 代码行数预算清单 | 138 个文件通过 |
++| Git 空白检查 | 接受 Windows CRLF 的配置下通过 |
++
++内核与运行时合计 **548 项通过、3 项跳过、0 失败**；专项数字是上述回归的子集，不重复计入总数。验证使用离线模型和本地 HTTP/文件系统，没有进行真实云模型评测或 GUI 视觉验收。
++
++本轮独立补丁：`reports/loom-chain.patch`。保留工作区已有改动，未提交 Git，未调用付费模型或更改凭据。

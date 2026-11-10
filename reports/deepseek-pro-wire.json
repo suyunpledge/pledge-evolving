@@ -1,0 +1,769 @@
+{
+  "model": "deepseek-v4-pro",
+  "planner_model": null,
+  "scenario": "wire",
+  "reasoning_mode": "auto",
+  "cases": [
+    {
+      "thinking": "off",
+      "checks": [
+        true,
+        true,
+        true
+      ],
+      "ok": true
+    },
+    {
+      "thinking": "on",
+      "checks": [
+        true,
+        true,
+        true
+      ],
+      "ok": true
+    }
+  ],
+  "requests": [
+    {
+      "stage": "wire-off",
+      "model": "deepseek-v4-pro",
+      "url": "https://api.deepseek.com/chat/completions",
+      "parameters": {
+        "thinking": {
+          "type": "disabled"
+        },
+        "tool_choice": "auto",
+        "max_tokens": 1024
+      },
+      "message_count": 2,
+      "common_prefix_messages": 0,
+      "messages_digest": "d9dc7ae88dc8d6e5b5f7ce11c4173abd24e43f68c97f4dae837e2a48f6151476",
+      "tools_digest": "93d455e4f8b376587b2a5ad6378ff1967301d771d16958726c426caf929601e1",
+      "toolset_digest": "93d455e4f8b376587b2a5ad6378ff1967301d771d16958726c426caf929601e1",
+      "payload_digest": "b295ee1c9d131ca25f1efa4a9d12ea4f19c3c7dcbfb57cceba9b54f77bbcfda8",
+      "message_chars": 167,
+      "assistant_reasoning_fields": 0,
+      "tools": [
+        "add"
+      ],
+      "status": 200,
+      "raw_usage": {
+        "prompt_tokens": 312,
+        "completion_tokens": 58,
+        "total_tokens": 370,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 312
+      },
+      "finish_reason": "tool_calls",
+      "response_id": "41043a1f-8d50-4209-ae2b-a2469cd92e5f",
+      "response_model": "deepseek-v4-pro",
+      "reasoning_chars": 0,
+      "tool_calls": [
+        {
+          "index": 0,
+          "id": "call_00_klYm4EVotmMCDHTpOXTb2776",
+          "type": "function",
+          "function": {
+            "name": "add",
+            "arguments": "{\"a\": 17, \"b\": 25}"
+          }
+        }
+      ],
+      "text": "",
+      "seconds": 3.031,
+      "usage": {
+        "prompt_tokens": 312,
+        "completion_tokens": 58,
+        "model": "deepseek-v4-pro",
+        "provider": "deepseek-live",
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 0,
+        "cache_observed": true
+      },
+      "adaptation": {
+        "vendor": "deepseek",
+        "vendor_label": "DeepSeek",
+        "actions": [
+          "依赖厂商自动缓存（命中 0.02×），无需标记",
+          "DeepSeek 已发送关闭思考请求（thinking.type=disabled）"
+        ],
+        "notes": [
+          "思考 token 按输出价计费；4096 仅为预算建议，以 execution 的执行状态为准"
+        ],
+        "cache_control": false,
+        "breakpoints": 1,
+        "ttl": "disk",
+        "est_tokens": 137,
+        "est_cost": 0.000771,
+        "baseline_cost": 0.001301,
+        "saving": 0.000531,
+        "saving_pct": 40.8,
+        "cliff_action": "pass",
+        "reasoning_budget": 4096,
+        "defer": false,
+        "cache_engages": true,
+        "route_capabilities": {},
+        "request_budget": {},
+        "adapter_id": "deepseek.v4.pro",
+        "model_kind_id": "deepseek.v4.pro",
+        "model_family_id": "deepseek.v4",
+        "manufacturer_id": "deepseek",
+        "behavior_fingerprint": "b935a061ff86ac66",
+        "model_match_source": "model_id",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type_and_effort",
+          "native_tool_replay"
+        ],
+        "reasoning_shaped": true,
+        "fingerprint": "6b98362bb10b3a66",
+        "execution": {
+          "reasoning": {
+            "status": "suggestion",
+            "requested": 4096
+          }
+        },
+        "estimate_scope": "reuse_window",
+        "includes_output_cost": false,
+        "price_known": true,
+        "model": "deepseek-v4-pro"
+      }
+    },
+    {
+      "stage": "wire-off",
+      "model": "deepseek-v4-pro",
+      "url": "https://api.deepseek.com/chat/completions",
+      "parameters": {
+        "thinking": {
+          "type": "disabled"
+        },
+        "tool_choice": "auto",
+        "max_tokens": 1024
+      },
+      "message_count": 2,
+      "common_prefix_messages": 2,
+      "messages_digest": "d9dc7ae88dc8d6e5b5f7ce11c4173abd24e43f68c97f4dae837e2a48f6151476",
+      "tools_digest": "93d455e4f8b376587b2a5ad6378ff1967301d771d16958726c426caf929601e1",
+      "toolset_digest": "93d455e4f8b376587b2a5ad6378ff1967301d771d16958726c426caf929601e1",
+      "payload_digest": "b295ee1c9d131ca25f1efa4a9d12ea4f19c3c7dcbfb57cceba9b54f77bbcfda8",
+      "message_chars": 167,
+      "assistant_reasoning_fields": 0,
+      "tools": [
+        "add"
+      ],
+      "status": 200,
+      "raw_usage": {
+        "prompt_tokens": 312,
+        "completion_tokens": 58,
+        "total_tokens": 370,
+        "prompt_tokens_details": {
+          "cached_tokens": 256
+        },
+        "prompt_cache_hit_tokens": 256,
+        "prompt_cache_miss_tokens": 56
+      },
+      "finish_reason": "tool_calls",
+      "response_id": "db51c83c-af52-46b5-98be-96fd112a5521",
+      "response_model": "deepseek-v4-pro",
+      "reasoning_chars": 0,
+      "tool_calls": [
+        {
+          "index": 0,
+          "id": "call_00_OMZNRwcgWnmKRPeNvBvQ3835",
+          "type": "function",
+          "function": {
+            "name": "add",
+            "arguments": "{\"a\": 17, \"b\": 25}"
+          }
+        }
+      ],
+      "text": "",
+      "seconds": 6.297,
+      "usage": {
+        "prompt_tokens": 312,
+        "completion_tokens": 58,
+        "model": "deepseek-v4-pro",
+        "provider": "deepseek-live",
+        "cached_tokens": 256,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 0,
+        "cache_observed": true
+      },
+      "adaptation": {
+        "vendor": "deepseek",
+        "vendor_label": "DeepSeek",
+        "actions": [
+          "依赖厂商自动缓存（命中 0.02×），无需标记",
+          "DeepSeek 已发送关闭思考请求（thinking.type=disabled）"
+        ],
+        "notes": [
+          "思考 token 按输出价计费；4096 仅为预算建议，以 execution 的执行状态为准"
+        ],
+        "cache_control": false,
+        "breakpoints": 1,
+        "ttl": "disk",
+        "est_tokens": 137,
+        "est_cost": 0.000771,
+        "baseline_cost": 0.001301,
+        "saving": 0.000531,
+        "saving_pct": 40.8,
+        "cliff_action": "pass",
+        "reasoning_budget": 4096,
+        "defer": false,
+        "cache_engages": true,
+        "route_capabilities": {},
+        "request_budget": {},
+        "adapter_id": "deepseek.v4.pro",
+        "model_kind_id": "deepseek.v4.pro",
+        "model_family_id": "deepseek.v4",
+        "manufacturer_id": "deepseek",
+        "behavior_fingerprint": "b935a061ff86ac66",
+        "model_match_source": "model_id",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type_and_effort",
+          "native_tool_replay"
+        ],
+        "reasoning_shaped": true,
+        "fingerprint": "6b98362bb10b3a66",
+        "execution": {
+          "reasoning": {
+            "status": "suggestion",
+            "requested": 4096
+          }
+        },
+        "estimate_scope": "reuse_window",
+        "includes_output_cost": false,
+        "price_known": true,
+        "model": "deepseek-v4-pro"
+      }
+    },
+    {
+      "stage": "wire-off",
+      "model": "deepseek-v4-pro",
+      "url": "https://api.deepseek.com/chat/completions",
+      "parameters": {
+        "thinking": {
+          "type": "disabled"
+        },
+        "tool_choice": "auto",
+        "max_tokens": 1024
+      },
+      "message_count": 4,
+      "common_prefix_messages": 2,
+      "messages_digest": "d322ce28e66fdf5387c86432098270013b86b561b5c3f97f0d4085affd27c51c",
+      "tools_digest": "93d455e4f8b376587b2a5ad6378ff1967301d771d16958726c426caf929601e1",
+      "toolset_digest": "93d455e4f8b376587b2a5ad6378ff1967301d771d16958726c426caf929601e1",
+      "payload_digest": "e6da046e5b65c03c95a9d03c45e2e15ea2fd6780839f854ead9c0c9d40ecb371",
+      "message_chars": 450,
+      "assistant_reasoning_fields": 0,
+      "tools": [
+        "add"
+      ],
+      "status": 200,
+      "raw_usage": {
+        "prompt_tokens": 383,
+        "completion_tokens": 12,
+        "total_tokens": 395,
+        "prompt_tokens_details": {
+          "cached_tokens": 256
+        },
+        "prompt_cache_hit_tokens": 256,
+        "prompt_cache_miss_tokens": 127
+      },
+      "finish_reason": "stop",
+      "response_id": "bec37358-a774-488b-ae3f-0d91b347b9ae",
+      "response_model": "deepseek-v4-pro",
+      "reasoning_chars": 0,
+      "tool_calls": null,
+      "text": "The sum of 17 and 25 is **42**.",
+      "seconds": 4.547,
+      "usage": {
+        "prompt_tokens": 383,
+        "completion_tokens": 12,
+        "model": "deepseek-v4-pro",
+        "provider": "deepseek-live",
+        "cached_tokens": 256,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 0,
+        "cache_observed": true
+      },
+      "adaptation": {
+        "vendor": "deepseek",
+        "vendor_label": "DeepSeek",
+        "actions": [
+          "依赖厂商自动缓存（命中 0.02×），无需标记",
+          "DeepSeek 已发送关闭思考请求（thinking.type=disabled）"
+        ],
+        "notes": [
+          "思考 token 按输出价计费；4096 仅为预算建议，以 execution 的执行状态为准"
+        ],
+        "cache_control": false,
+        "breakpoints": 1,
+        "ttl": "disk",
+        "est_tokens": 140,
+        "est_cost": 0.000269,
+        "baseline_cost": 0.00133,
+        "saving": 0.001061,
+        "saving_pct": 79.8,
+        "cliff_action": "pass",
+        "reasoning_budget": 4096,
+        "defer": false,
+        "cache_engages": true,
+        "route_capabilities": {},
+        "request_budget": {},
+        "adapter_id": "deepseek.v4.pro",
+        "model_kind_id": "deepseek.v4.pro",
+        "model_family_id": "deepseek.v4",
+        "manufacturer_id": "deepseek",
+        "behavior_fingerprint": "b935a061ff86ac66",
+        "model_match_source": "model_id",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type_and_effort",
+          "native_tool_replay"
+        ],
+        "reasoning_shaped": true,
+        "fingerprint": "6b98362bb10b3a66",
+        "execution": {
+          "reasoning": {
+            "status": "suggestion",
+            "requested": 4096
+          }
+        },
+        "estimate_scope": "reuse_window",
+        "includes_output_cost": false,
+        "price_known": true,
+        "model": "deepseek-v4-pro"
+      }
+    },
+    {
+      "stage": "wire-on",
+      "model": "deepseek-v4-pro",
+      "url": "https://api.deepseek.com/chat/completions",
+      "parameters": {
+        "thinking": {
+          "type": "enabled"
+        },
+        "reasoning_effort": "high",
+        "tool_choice": "auto",
+        "max_tokens": 1024
+      },
+      "message_count": 2,
+      "common_prefix_messages": 2,
+      "messages_digest": "d9dc7ae88dc8d6e5b5f7ce11c4173abd24e43f68c97f4dae837e2a48f6151476",
+      "tools_digest": "93d455e4f8b376587b2a5ad6378ff1967301d771d16958726c426caf929601e1",
+      "toolset_digest": "93d455e4f8b376587b2a5ad6378ff1967301d771d16958726c426caf929601e1",
+      "payload_digest": "e61692baf2fec4669b76f59b6aef30ad25b6f5998daf514c6b4755123f94879c",
+      "message_chars": 167,
+      "assistant_reasoning_fields": 0,
+      "tools": [
+        "add"
+      ],
+      "error_type": "URLError",
+      "status": null,
+      "seconds": 5.047
+    },
+    {
+      "stage": "wire-on",
+      "model": "deepseek-v4-pro",
+      "url": "https://api.deepseek.com/chat/completions",
+      "parameters": {
+        "thinking": {
+          "type": "enabled"
+        },
+        "reasoning_effort": "high",
+        "tool_choice": "auto",
+        "max_tokens": 1024
+      },
+      "message_count": 2,
+      "common_prefix_messages": 2,
+      "messages_digest": "d9dc7ae88dc8d6e5b5f7ce11c4173abd24e43f68c97f4dae837e2a48f6151476",
+      "tools_digest": "93d455e4f8b376587b2a5ad6378ff1967301d771d16958726c426caf929601e1",
+      "toolset_digest": "93d455e4f8b376587b2a5ad6378ff1967301d771d16958726c426caf929601e1",
+      "payload_digest": "e61692baf2fec4669b76f59b6aef30ad25b6f5998daf514c6b4755123f94879c",
+      "message_chars": 167,
+      "assistant_reasoning_fields": 0,
+      "tools": [
+        "add"
+      ],
+      "status": 200,
+      "raw_usage": {
+        "prompt_tokens": 391,
+        "completion_tokens": 75,
+        "total_tokens": 466,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 16
+        },
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 391
+      },
+      "finish_reason": "tool_calls",
+      "response_id": "6e594801-0622-48d3-a954-bdc3f5e2e6b5",
+      "response_model": "deepseek-v4-pro",
+      "reasoning_chars": 49,
+      "tool_calls": [
+        {
+          "index": 0,
+          "id": "call_00_MfylsofrnPgUpNiyuAsB3601",
+          "type": "function",
+          "function": {
+            "name": "add",
+            "arguments": "{\"a\": 17, \"b\": 25}"
+          }
+        }
+      ],
+      "text": "",
+      "seconds": 7.687,
+      "usage": {
+        "prompt_tokens": 391,
+        "completion_tokens": 75,
+        "model": "deepseek-v4-pro",
+        "provider": "deepseek-live",
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 16,
+        "cache_observed": true
+      },
+      "adaptation": {
+        "vendor": "deepseek",
+        "vendor_label": "DeepSeek",
+        "actions": [
+          "依赖厂商自动缓存（命中 0.02×），无需标记",
+          "DeepSeek enable_thinking=true 译作 thinking.type=enabled"
+        ],
+        "notes": [
+          "思考 token 按输出价计费；4096 仅为预算建议，以 execution 的执行状态为准"
+        ],
+        "cache_control": false,
+        "breakpoints": 1,
+        "ttl": "disk",
+        "est_tokens": 137,
+        "est_cost": 0.000771,
+        "baseline_cost": 0.001301,
+        "saving": 0.000531,
+        "saving_pct": 40.8,
+        "cliff_action": "pass",
+        "reasoning_budget": 4096,
+        "defer": false,
+        "cache_engages": true,
+        "route_capabilities": {},
+        "request_budget": {},
+        "adapter_id": "deepseek.v4.pro",
+        "model_kind_id": "deepseek.v4.pro",
+        "model_family_id": "deepseek.v4",
+        "manufacturer_id": "deepseek",
+        "behavior_fingerprint": "b935a061ff86ac66",
+        "model_match_source": "model_id",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type_and_effort",
+          "native_tool_replay"
+        ],
+        "reasoning_shaped": true,
+        "fingerprint": "b3e374fc5548742e",
+        "execution": {
+          "reasoning": {
+            "status": "suggestion",
+            "requested": 4096
+          }
+        },
+        "estimate_scope": "reuse_window",
+        "includes_output_cost": false,
+        "price_known": true,
+        "model": "deepseek-v4-pro"
+      }
+    },
+    {
+      "stage": "wire-on",
+      "model": "deepseek-v4-pro",
+      "url": "https://api.deepseek.com/chat/completions",
+      "parameters": {
+        "thinking": {
+          "type": "enabled"
+        },
+        "reasoning_effort": "high",
+        "tool_choice": "auto",
+        "max_tokens": 1024
+      },
+      "message_count": 2,
+      "common_prefix_messages": 2,
+      "messages_digest": "d9dc7ae88dc8d6e5b5f7ce11c4173abd24e43f68c97f4dae837e2a48f6151476",
+      "tools_digest": "93d455e4f8b376587b2a5ad6378ff1967301d771d16958726c426caf929601e1",
+      "toolset_digest": "93d455e4f8b376587b2a5ad6378ff1967301d771d16958726c426caf929601e1",
+      "payload_digest": "e61692baf2fec4669b76f59b6aef30ad25b6f5998daf514c6b4755123f94879c",
+      "message_chars": 167,
+      "assistant_reasoning_fields": 0,
+      "tools": [
+        "add"
+      ],
+      "status": 200,
+      "raw_usage": {
+        "prompt_tokens": 391,
+        "completion_tokens": 72,
+        "total_tokens": 463,
+        "prompt_tokens_details": {
+          "cached_tokens": 384
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 13
+        },
+        "prompt_cache_hit_tokens": 384,
+        "prompt_cache_miss_tokens": 7
+      },
+      "finish_reason": "tool_calls",
+      "response_id": "54f7febd-ff68-4533-a7a5-c9fa2925ba13",
+      "response_model": "deepseek-v4-pro",
+      "reasoning_chars": 37,
+      "tool_calls": [
+        {
+          "index": 0,
+          "id": "call_00_eSLSRrdnZQGOaxq8QqC08571",
+          "type": "function",
+          "function": {
+            "name": "add",
+            "arguments": "{\"a\": 17, \"b\": 25}"
+          }
+        }
+      ],
+      "text": "",
+      "seconds": 8.078,
+      "usage": {
+        "prompt_tokens": 391,
+        "completion_tokens": 72,
+        "model": "deepseek-v4-pro",
+        "provider": "deepseek-live",
+        "cached_tokens": 384,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 13,
+        "cache_observed": true
+      },
+      "adaptation": {
+        "vendor": "deepseek",
+        "vendor_label": "DeepSeek",
+        "actions": [
+          "依赖厂商自动缓存（命中 0.02×），无需标记",
+          "DeepSeek enable_thinking=true 译作 thinking.type=enabled"
+        ],
+        "notes": [
+          "思考 token 按输出价计费；4096 仅为预算建议，以 execution 的执行状态为准"
+        ],
+        "cache_control": false,
+        "breakpoints": 1,
+        "ttl": "disk",
+        "est_tokens": 137,
+        "est_cost": 0.000771,
+        "baseline_cost": 0.001301,
+        "saving": 0.000531,
+        "saving_pct": 40.8,
+        "cliff_action": "pass",
+        "reasoning_budget": 4096,
+        "defer": false,
+        "cache_engages": true,
+        "route_capabilities": {},
+        "request_budget": {},
+        "adapter_id": "deepseek.v4.pro",
+        "model_kind_id": "deepseek.v4.pro",
+        "model_family_id": "deepseek.v4",
+        "manufacturer_id": "deepseek",
+        "behavior_fingerprint": "b935a061ff86ac66",
+        "model_match_source": "model_id",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type_and_effort",
+          "native_tool_replay"
+        ],
+        "reasoning_shaped": true,
+        "fingerprint": "b3e374fc5548742e",
+        "execution": {
+          "reasoning": {
+            "status": "suggestion",
+            "requested": 4096
+          }
+        },
+        "estimate_scope": "reuse_window",
+        "includes_output_cost": false,
+        "price_known": true,
+        "model": "deepseek-v4-pro"
+      }
+    },
+    {
+      "stage": "wire-on",
+      "model": "deepseek-v4-pro",
+      "url": "https://api.deepseek.com/chat/completions",
+      "parameters": {
+        "thinking": {
+          "type": "enabled"
+        },
+        "reasoning_effort": "high",
+        "tool_choice": "auto",
+        "max_tokens": 1024
+      },
+      "message_count": 4,
+      "common_prefix_messages": 2,
+      "messages_digest": "74fcd51c98c1d7539f5fb12cbe88f0c2ca33f04fd07876f71bc43fdcb67497ea",
+      "tools_digest": "93d455e4f8b376587b2a5ad6378ff1967301d771d16958726c426caf929601e1",
+      "toolset_digest": "93d455e4f8b376587b2a5ad6378ff1967301d771d16958726c426caf929601e1",
+      "payload_digest": "7236639fea5fedde469b3f98d91d467184a4a9a0ddf2e521ec9f1b9c4bf01423",
+      "message_chars": 512,
+      "assistant_reasoning_fields": 1,
+      "tools": [
+        "add"
+      ],
+      "error_type": "URLError",
+      "status": null,
+      "seconds": 5.016
+    },
+    {
+      "stage": "wire-on",
+      "model": "deepseek-v4-pro",
+      "url": "https://api.deepseek.com/chat/completions",
+      "parameters": {
+        "thinking": {
+          "type": "enabled"
+        },
+        "reasoning_effort": "high",
+        "tool_choice": "auto",
+        "max_tokens": 1024
+      },
+      "message_count": 4,
+      "common_prefix_messages": 4,
+      "messages_digest": "74fcd51c98c1d7539f5fb12cbe88f0c2ca33f04fd07876f71bc43fdcb67497ea",
+      "tools_digest": "93d455e4f8b376587b2a5ad6378ff1967301d771d16958726c426caf929601e1",
+      "toolset_digest": "93d455e4f8b376587b2a5ad6378ff1967301d771d16958726c426caf929601e1",
+      "payload_digest": "7236639fea5fedde469b3f98d91d467184a4a9a0ddf2e521ec9f1b9c4bf01423",
+      "message_chars": 512,
+      "assistant_reasoning_fields": 1,
+      "tools": [
+        "add"
+      ],
+      "status": 200,
+      "raw_usage": {
+        "prompt_tokens": 476,
+        "completion_tokens": 17,
+        "total_tokens": 493,
+        "prompt_tokens_details": {
+          "cached_tokens": 384
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 9
+        },
+        "prompt_cache_hit_tokens": 384,
+        "prompt_cache_miss_tokens": 92
+      },
+      "finish_reason": "stop",
+      "response_id": "45a3bec1-0f48-47cd-9ff9-1044ef4678eb",
+      "response_model": "deepseek-v4-pro",
+      "reasoning_chars": 39,
+      "tool_calls": null,
+      "text": "17 + 25 = 42",
+      "seconds": 6.984,
+      "usage": {
+        "prompt_tokens": 476,
+        "completion_tokens": 17,
+        "model": "deepseek-v4-pro",
+        "provider": "deepseek-live",
+        "cached_tokens": 384,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 9,
+        "cache_observed": true
+      },
+      "adaptation": {
+        "vendor": "deepseek",
+        "vendor_label": "DeepSeek",
+        "actions": [
+          "依赖厂商自动缓存（命中 0.02×），无需标记",
+          "DeepSeek enable_thinking=true 译作 thinking.type=enabled"
+        ],
+        "notes": [
+          "思考 token 按输出价计费；4096 仅为预算建议，以 execution 的执行状态为准"
+        ],
+        "cache_control": false,
+        "breakpoints": 1,
+        "ttl": "disk",
+        "est_tokens": 140,
+        "est_cost": 0.000269,
+        "baseline_cost": 0.00133,
+        "saving": 0.001061,
+        "saving_pct": 79.8,
+        "cliff_action": "pass",
+        "reasoning_budget": 4096,
+        "defer": false,
+        "cache_engages": true,
+        "route_capabilities": {},
+        "request_budget": {},
+        "adapter_id": "deepseek.v4.pro",
+        "model_kind_id": "deepseek.v4.pro",
+        "model_family_id": "deepseek.v4",
+        "manufacturer_id": "deepseek",
+        "behavior_fingerprint": "b935a061ff86ac66",
+        "model_match_source": "model_id",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type_and_effort",
+          "native_tool_replay"
+        ],
+        "reasoning_shaped": true,
+        "fingerprint": "b3e374fc5548742e",
+        "execution": {
+          "reasoning": {
+            "status": "suggestion",
+            "requested": 4096
+          }
+        },
+        "estimate_scope": "reuse_window",
+        "includes_output_cost": false,
+        "price_known": true,
+        "model": "deepseek-v4-pro"
+      }
+    }
+  ],
+  "totals": {
+    "attempts": 8,
+    "successful_requests": 6,
+    "prompt_tokens": 2265,
+    "completion_tokens": 292,
+    "cached_tokens": 1280,
+    "reasoning_tokens": 38,
+    "seconds": 46.687,
+    "coverage": {
+      "all_observed": {
+        "requests": 6,
+        "input_tokens": 2265,
+        "cached_tokens": 1280,
+        "hit_rate": 0.5651
+      },
+      "rebuild": {
+        "requests": 0,
+        "input_tokens": 0,
+        "cached_tokens": 0,
+        "hit_rate": null
+      },
+      "non_rebuild": {
+        "requests": 6,
+        "input_tokens": 2265,
+        "cached_tokens": 1280,
+        "hit_rate": 0.5651
+      },
+      "eligible_prefix": {
+        "requests": 0,
+        "input_tokens": 0,
+        "cached_tokens": 0,
+        "excluded_tail_tokens": 0,
+        "hit_rate": null
+      },
+      "unknown_requests": 2,
+      "invalid_requests": 0,
+      "duplicate_observations": 0,
+      "denominator": "observed input tokens; eligible_prefix excludes declared structural tail"
+    }
+  },
+  "ok": true
+}

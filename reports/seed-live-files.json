@@ -1,0 +1,17 @@
+[
+  {
+    "path": "scripts/verify_seed_execution.py",
+    "before": null,
+    "sha256_utf8_lf": "abe8c2e5af9203bd96a85c25baa963e0e3457f9568e791e2e540d421f3c1b2b9"
+  },
+  {
+    "path": "tests/test_seed_probe.py",
+    "before": null,
+    "sha256_utf8_lf": "53b9346655ed4ea4972723c8d7d3d16e7d8f14f816e9ab366be85be43d4688ba"
+  },
+  {
+    "path": "docs/SEED-LIVE-EXECUTION.md",
+    "before": null,
+    "sha256_utf8_lf": "e83c60530e9051e985d47661018e34992cfbb3d9c77b0a86fd3cafb415bb6f56"
+  }
+]

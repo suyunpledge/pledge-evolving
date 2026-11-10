@@ -1,0 +1,248 @@
+{
+  "evidence_consistent": true,
+  "errors": [],
+  "experiments": [
+    {
+      "report": "cache-diagnostics-mimo-agent-a.json",
+      "ok": true,
+      "attempts": 7,
+      "successful_requests": 7,
+      "prompt_tokens": 7068,
+      "completion_tokens": 198,
+      "cached_tokens": 4480
+    },
+    {
+      "report": "cache-diagnostics-mimo-controls.json",
+      "ok": true,
+      "attempts": 6,
+      "successful_requests": 6,
+      "prompt_tokens": 3340,
+      "completion_tokens": 1674,
+      "cached_tokens": 2304
+    },
+    {
+      "report": "cache-diagnostics-mimo-final-replay.json",
+      "ok": true,
+      "attempts": 7,
+      "successful_requests": 7,
+      "prompt_tokens": 7473,
+      "completion_tokens": 215,
+      "cached_tokens": 5760
+    },
+    {
+      "report": "cache-diagnostics-mimo-trim-ab.json",
+      "ok": false,
+      "attempts": 10,
+      "successful_requests": 10,
+      "prompt_tokens": 9902,
+      "completion_tokens": 400,
+      "cached_tokens": 6336
+    },
+    {
+      "report": "cache-diagnostics-mimo-trim-final-ab.json",
+      "ok": true,
+      "attempts": 12,
+      "successful_requests": 11,
+      "prompt_tokens": 10295,
+      "completion_tokens": 467,
+      "cached_tokens": 7616
+    },
+    {
+      "report": "cache-diagnostics-seed-affinity-final-ab.json",
+      "ok": false,
+      "attempts": 7,
+      "successful_requests": 5,
+      "prompt_tokens": 7385,
+      "completion_tokens": 118,
+      "cached_tokens": 0
+    },
+    {
+      "report": "cache-diagnostics-seed-affinity-smoke.json",
+      "ok": true,
+      "attempts": 1,
+      "successful_requests": 1,
+      "prompt_tokens": 49,
+      "completion_tokens": 1,
+      "cached_tokens": 0
+    },
+    {
+      "report": "cache-diagnostics-seed-agent-abba.json",
+      "ok": false,
+      "attempts": 26,
+      "successful_requests": 17,
+      "prompt_tokens": 23618,
+      "completion_tokens": 950,
+      "cached_tokens": 0
+    },
+    {
+      "report": "cache-diagnostics-seed-controls.json",
+      "ok": false,
+      "attempts": 10,
+      "successful_requests": 4,
+      "prompt_tokens": 2860,
+      "completion_tokens": 4495,
+      "cached_tokens": 0
+    },
+    {
+      "report": "cache-diagnostics-seed-exact-wire.json",
+      "ok": false,
+      "attempts": 4,
+      "successful_requests": 2,
+      "prompt_tokens": 3180,
+      "completion_tokens": 197,
+      "cached_tokens": 1590
+    },
+    {
+      "report": "cache-diagnostics-seed-extended-controls.json",
+      "ok": false,
+      "attempts": 10,
+      "successful_requests": 8,
+      "prompt_tokens": 11187,
+      "completion_tokens": 725,
+      "cached_tokens": 1590
+    },
+    {
+      "report": "cache-diagnostics-seed-final-replay.json",
+      "ok": false,
+      "attempts": 3,
+      "successful_requests": 1,
+      "prompt_tokens": 1812,
+      "completion_tokens": 83,
+      "cached_tokens": 0
+    },
+    {
+      "report": "cache-diagnostics-seed-trim-ab.json",
+      "ok": true,
+      "attempts": 13,
+      "successful_requests": 11,
+      "prompt_tokens": 14011,
+      "completion_tokens": 705,
+      "cached_tokens": 0
+    }
+  ],
+  "totals": {
+    "attempts": 116,
+    "successful_requests": 90,
+    "prompt_tokens": 102180,
+    "completion_tokens": 10228,
+    "cached_tokens": 29676,
+    "total_tokens": 112408
+  },
+  "replay_checks": [
+    {
+      "report": "cache-diagnostics-mimo-agent-a.json",
+      "reasoning_content": 21,
+      "encrypted_content": 0,
+      "response_call_bindings": 0,
+      "required_field_presence": 15
+    },
+    {
+      "report": "cache-diagnostics-mimo-controls.json",
+      "reasoning_content": 0,
+      "encrypted_content": 0,
+      "response_call_bindings": 0,
+      "required_field_presence": 0
+    },
+    {
+      "report": "cache-diagnostics-mimo-final-replay.json",
+      "reasoning_content": 21,
+      "encrypted_content": 0,
+      "response_call_bindings": 15,
+      "required_field_presence": 15
+    },
+    {
+      "report": "cache-diagnostics-mimo-trim-ab.json",
+      "reasoning_content": 14,
+      "encrypted_content": 0,
+      "response_call_bindings": 0,
+      "required_field_presence": 12
+    },
+    {
+      "report": "cache-diagnostics-mimo-trim-final-ab.json",
+      "reasoning_content": 18,
+      "encrypted_content": 0,
+      "response_call_bindings": 0,
+      "required_field_presence": 16
+    },
+    {
+      "report": "cache-diagnostics-seed-affinity-final-ab.json",
+      "reasoning_content": 0,
+      "encrypted_content": 0,
+      "response_call_bindings": 0,
+      "required_field_presence": 0
+    },
+    {
+      "report": "cache-diagnostics-seed-affinity-smoke.json",
+      "reasoning_content": 0,
+      "encrypted_content": 0,
+      "response_call_bindings": 0,
+      "required_field_presence": 0
+    },
+    {
+      "report": "cache-diagnostics-seed-agent-abba.json",
+      "reasoning_content": 60,
+      "encrypted_content": 60,
+      "response_call_bindings": 0,
+      "required_field_presence": 92
+    },
+    {
+      "report": "cache-diagnostics-seed-controls.json",
+      "reasoning_content": 0,
+      "encrypted_content": 0,
+      "response_call_bindings": 0,
+      "required_field_presence": 0
+    },
+    {
+      "report": "cache-diagnostics-seed-exact-wire.json",
+      "reasoning_content": 0,
+      "encrypted_content": 0,
+      "response_call_bindings": 0,
+      "required_field_presence": 0
+    },
+    {
+      "report": "cache-diagnostics-seed-extended-controls.json",
+      "reasoning_content": 0,
+      "encrypted_content": 0,
+      "response_call_bindings": 0,
+      "required_field_presence": 0
+    },
+    {
+      "report": "cache-diagnostics-seed-final-replay.json",
+      "reasoning_content": 2,
+      "encrypted_content": 2,
+      "response_call_bindings": 4,
+      "required_field_presence": 4
+    },
+    {
+      "report": "cache-diagnostics-seed-trim-ab.json",
+      "reasoning_content": 19,
+      "encrypted_content": 19,
+      "response_call_bindings": 0,
+      "required_field_presence": 32
+    }
+  ],
+  "identical_wire_mixed_cache_receipts": [
+    {
+      "report": "cache-diagnostics-seed-exact-wire.json",
+      "wire_body_sha256": "7c8572c296e8988c811f8fbddf06193936ce64f8c4d6e418555da3c5681ee167",
+      "cached_tokens": [
+        1590,
+        0
+      ],
+      "input_tokens": [
+        1590,
+        1590
+      ],
+      "stages": [
+        "exact-repository/1",
+        "exact-repository/3"
+      ],
+      "same_affinity_key": true,
+      "same_generation_parameters": true
+    }
+  ],
+  "observed_read_paths": [
+    "values.json"
+  ],
+  "scope": "Failed trials remain failed; consistent evidence is not a claim that every experiment passed."
+}

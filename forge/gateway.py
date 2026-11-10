@@ -259,10 +259,16 @@ class GatewayConfig:
         provider = Provider(
             "gateway", self.upstream, _credential=self._credential, wire=self.upstream_wire,
             default_model=model, vendor=str(conf.get("vendor") or ""),
+            model_kind_id=(str(conf.get("modelKindId") or "")
+                           if model == conf.get("model", conf.get("defaultModel", "")) else ""),
+            model_kind_ids=dict(conf.get("modelKinds") or {}),
+            route_capabilities=conf.get("routeCapabilities", {}),
+            model_capabilities=conf.get("modelCapabilities", {}),
             cache_control=str(conf.get("cacheControl", "auto")),
             expected_calls=int(conf.get("expectedCalls", 2)),
             call_gap_seconds=float(conf.get("callGapSeconds", 60)),
             adapt=bool(conf.get("adapt", True)), think_budget=conf.get("thinkBudget"),
+            reasoning_mode=conf.get("reasoningMode", "auto"),
             flex=bool(conf.get("flex", False)), defer=bool(conf.get("defer", False)),
             max_defer_seconds=float(conf.get("maxDeferSeconds", 0)))
         from . import sampling

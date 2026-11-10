@@ -1,0 +1,1060 @@
+diff --git a/forge-budgets.json b/forge-budgets.json
+--- a/forge-budgets.json
++++ b/forge-budgets.json
+@@ -20,7 +20,7 @@
+     "forge/client_runs.py": 213,
+     "forge/cmd_setup.py": 522,
+     "forge/code_review.py": 59,
+-    "forge/compaction.py": 156,
++    "forge/compaction.py": 175,
+     "forge/computer_capture.py": 136,
+     "forge/computer_coordinates.py": 210,
+     "forge/computer_use.py": 188,
+@@ -73,7 +73,7 @@
+     "forge/guard.py": 177,
+     "forge/knowledge.py": 118,
+     "forge/local_service.py": 293,
+-    "forge/loop.py": 1793,
++    "forge/loop.py": 1817,
+     "forge/memory.py": 354,
+     "forge/model.py": 935,
+     "forge/model_kinds.py": 152,
+@@ -82,13 +82,13 @@
+     "forge/policy.py": 443,
+     "forge/pricing.py": 312,
+     "forge/probes.py": 249,
+-    "forge/project_rules.py": 124,
+-    "forge/projector.py": 88,
++    "forge/project_rules.py": 135,
++    "forge/projector.py": 90,
+     "forge/protocol.py": 108,
+     "forge/registry.py": 883,
+     "forge/request_execution.py": 133,
+     "forge/route_capabilities.py": 104,
+-    "forge/routing.py": 433,
++    "forge/routing.py": 436,
+     "forge/runtime_lock.py": 111,
+     "forge/runtime_types.py": 60,
+     "forge/sampling.py": 127,
+@@ -103,7 +103,7 @@
+     "forge/session.py": 369,
+     "forge/smoke.py": 208,
+     "forge/subagent.py": 69,
+-    "forge/task_contract.py": 139,
++    "forge/task_contract.py": 141,
+     "forge/templates/contrib-shell.py": 76,
+     "forge/test_adapters.py": 342,
+     "forge/test_artifacts.py": 187,
+@@ -132,6 +132,7 @@
+     "forge/test_secret_architecture.py": 138,
+     "forge/test_secret_virtualization.py": 649,
+     "forge/test_task_planning.py": 287,
++    "forge/test_token_efficiency.py": 229,
+     "forge/test_tool_surface.py": 128,
+     "forge/test_vendor_reasoning.py": 329,
+     "forge/test_vendor_wire.py": 248,
+diff --git a/forge/compaction.py b/forge/compaction.py
+--- a/forge/compaction.py
++++ b/forge/compaction.py
+@@ -142,15 +142,34 @@
+ 
+     @staticmethod
+     def _excerpt(head):
+-        # Recent evidence matters more than the oldest messages. Preserve
+-        # requested file paths/tool names without claiming a call succeeded.
+-        requests = [json.dumps(m["tool_calls"], ensure_ascii=False)[:240]
+-                    for m in head if m.get("tool_calls")][-3:]
+-        flat = " ".join(str(m.get("role", "")) + ": " + str(m.get("content", ""))[:200]
+-                        for m in head[-4:])
++        # Summarise observations before request metadata. Long call IDs must
++        # not crowd out the cursor/status at the END of a retained result.
++        def excerpt(value, limit):
++            text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
++            return text if len(text) <= limit else text[:limit//3] + ' … ' + text[-(limit*2//3):]
++
++        results, requests = [], []
++        for message in head:
++            content = message.get('content', '')
++            blocks = content if isinstance(content, list) else []
++            if message.get('role') == 'tool':
++                results.append(content)
++            results.extend(b.get('content', '') for b in blocks
++                           if isinstance(b, dict) and b.get('type') == 'tool_result')
++            for call in message.get('tool_calls') or []:
++                function = call.get('function') or call
++                requests.append({'name': function.get('name'), 'arguments': function.get('arguments', '')})
++            requests.extend({'name': b.get('name'), 'arguments': b.get('input', {})} for b in blocks
++                            if isinstance(b, dict) and b.get('type') == 'tool_use')
++        if results:
++            flat = 'Observed tool output (unverified):\n' + '\n'.join(excerpt(v, 230) for v in results[-2:])
++        else:
++            flat = ' '.join(str(m.get('role', '')) + ': ' + excerpt(m.get('content', ''), 140)
++                            for m in head[-4:])
+         if requests:
+-            flat = "Earlier tool requests (outcomes not asserted): " + " ".join(requests) + "\n" + flat
+-        return f"[compacted {len(head)} earlier messages] {flat[:800]}"
++            flat += '\nEarlier tool requests (outcomes not asserted): ' + ' '.join(
++                excerpt(v, 110) for v in requests[-2:])
++        return f'[compacted {len(head)} earlier messages; unverified excerpts] {flat[:800]}'
+ 
+ 
+ __all__ = ["ContextBudget"]
+diff --git a/forge/loop.py b/forge/loop.py
+--- a/forge/loop.py
++++ b/forge/loop.py
+@@ -103,7 +103,8 @@
+    Do not write XML or prose tool calls when the native interface is available.
+    Only without a native interface, emit one fallback block:
+    <tool_call>{{"tool": "<name>", "args": {{...}}}}</tool_call>
+-3. When you are done, answer in plain prose with no tool block.
++3. A tool-call response is one step, not the end of the user's request. Finish all requested work and
++   verification before a final answer. Follow the user's requested output format; omit tool blocks in the final answer.
+ 4. Available tools: {tools}
+ """
+ 
+@@ -284,7 +285,7 @@
+         self._rule_targets: list[str] = []
+         self._rule_context = ''
+         self._rule_audit = None
+-        self._rule_superseded: list[str] = []
++        self._rule_fragments: list[str] = []
+         self._prefix_sent = 0    # 上一个请求发出的消息条数（前缀缓存：其后才可改动）
+         # 会话前缀纪律（DSH session prefix）：记忆切片一经发出即冻结，跨 run
+         # 字节不变；增量走尾部 [长期记忆更新] 一次性播报。头部指纹用于诊断事件。
+@@ -452,7 +453,7 @@
+ 
+     def _refresh_project_rules(self, messages):
+         # 扫描与事件留在代理，合并策略在 forge/projector.merge_rules（纯函数，
+-        # d44ad30 语义原样：纯新增只追加、旧内容过时才移除重插）。
++        # 纯新增只追加差量；旧内容过时时清除全部宿主片段，再投影当前快照）。
+         enabled = self.project_rules_enabled and 'read_file' in self.registry.names()
+         snapshot = ProjectRules(self.workspace, self.policy, self.secret_scope,
+                                 enabled=enabled).load(self._rule_targets)
+@@ -467,14 +468,22 @@
+             snapshot_context=snapshot.context,
+             previous_sources=previous_sources,
+             snapshot_sources=snapshot.sources,
++            previous_contexts=self._rule_fragments,
++            append_context=snapshot.additions(previous_sources),
+             prefix_sent=getattr(self, '_prefix_sent', 0),
+             rule_task_content=getattr(self, '_rule_task_content', None))
+         if outcome == 'unchanged':
+             return
+         if outcome == 'appended':
+-            self._rule_superseded.append(self._rule_context)
++            self._rule_fragments.append(merged[min(getattr(self, '_prefix_sent', 0), len(messages))]['content'])
+             self._emit(type='project_rules_appended', run_id=self._run_id,
+                        index=min(getattr(self, '_prefix_sent', 0), len(messages)))
++        else:
++            if self._rule_fragments and getattr(self, '_prefix_sent', 0):
++                self._recent_cache_rate = None
++                self._cache_evidence = None
++                self._emit(type='cache_observation_invalidated', reason='project_guidance_changed')
++            self._rule_fragments = [snapshot.context] if snapshot.context else []
+         self._rule_context = snapshot.context
+         messages[:] = merged
+ 
+@@ -868,6 +877,20 @@
+             count += 1
+         return messages[:count]
+ 
++    def _remember_conversation(self, messages, task, report, envelope):
++        return self._conversation_prefix.commit(
++            history=[*self._chat_history, {'role': 'user', 'content': task},
++                     {'role': 'assistant', 'content': report.text}],
++            messages=self.secret_scope.protect(messages),
++            guard=self._conversation_guard(self._conversation_head),
++            rule_context=self._rule_context, rule_sources=(self._rule_audit or ([], []))[0],
++            targets=self._rule_targets, run_envelope=envelope,
++            continuation={'prefix_count': len(self._matching_compaction_prefix(messages)),
++                'rule_fragments': list(self._rule_fragments),
++                'revision': self._context_revision, 'transaction_id': self._context_transaction_id,
++                'seen': [[p, m, revision] for (p, m), revision in self._cache_revisions.items()],
++                'cache': self._cache_evidence})
++
+     def _cache_namespace(self):
+         # 只给明确的单路由前台调用继承观测；自定义聚合路由保持保守。
+         if type(self.router) is not ModelRouter:
+@@ -1163,7 +1186,7 @@
+             self._rule_context = ''
+             self._rule_audit = None
+             self._rule_task_content = None
+-            self._rule_superseded = []
++            self._rule_fragments = []
+             self._prefix_sent = 0
+             self._cancel_steps = []
+             self._cancel_usage = {}
+@@ -1266,6 +1289,8 @@
+                 previous = []  # 已由可信宿主快照包含；客户端仍只能提交普通聊天文本。
+                 self._rule_context = saved['rule_context']
+                 self._rule_audit = (saved['rule_sources'], ())
++                self._rule_fragments = list(saved.get('continuation', {}).get(
++                    'rule_fragments', [saved['rule_context']] if saved['rule_context'] else []))
+                 self._rule_targets = targets
+                 self._prefix_sent = len(messages)
+                 self._refresh_project_rules(messages)
+@@ -1306,7 +1331,7 @@
+             self._compaction_prefix = initial_prefix + (tail if not previous else [])
+         messages = projector.append_turn(
+             messages, previous, tail,
+-            task + "\n\n" + self.task_contract.render_projection()
++            task + "\n\n" + self.task_contract.render_projection(include_objective=False)
+             + ("\n\n" + self.secret_scope.protect_text(self._acceptance.projection())
+                if self._acceptance is not None else ""))
+         # 启动沉思（phase=thinking）：三档门控——off 不起；on 直接起；smart 由
+@@ -1351,7 +1376,7 @@
+                     "Native process execution and secret resolution are unavailable.")
+                 plan_messages = [{"role": "system", "content": contract},
+                                  *[m for m in messages if m.get("role") != "system"
+-                                   and m.get('content') != self._rule_context]]
++                                   and m.get('content') not in self._rule_fragments]]
+                 # Premium's integration stage deliberately carries only the
+                 # latest task + draft. Keep the output contract in that task,
+                 # so it survives handoff without forwarding private history.
+@@ -1412,7 +1437,7 @@
+                     self._emit(type="compaction_deferred", **guard)
+                 else:
+                     messages = self._compact_history(messages,
+-                        (pinned_task, envelope, self._rule_context, self._plan.context() if self._plan else ''),
++                        (pinned_task, envelope, *self._rule_fragments, self._plan.context() if self._plan else ''),
+                         declarations, budget)
+                     budget = self._request_context_budget(messages, declarations)
+             self._check_cancel()
+@@ -1423,9 +1448,13 @@
+             self._last_messages = messages
+             self._prefix_sent = len(messages)
+             try:
++                from .routing import SmartRouter
++                request_options = ({'task_context': pinned_task}
++                                   if type(self.router) is SmartRouter else {})
+                 completion: Completion = self.router.complete(
+                     messages, small=False,
+                     tools=declarations,
++                    **request_options,
+                 )
+             except TransportError as exc:
+                 err_msg = str(exc)[:300]
+@@ -1536,19 +1565,8 @@
+                             self._emit(type="assistant_message", content=text)
+                         report = self._finish(RunReport(text=text.strip(), steps=steps, usage=usage_total,
+                             stopped="final", events=self.events))
+-                        self._conversation_prefix.commit(
+-                            history=[*self._chat_history, {'role': 'user', 'content': task},
+-                                     {'role': 'assistant', 'content': report.text}],
+-                            messages=self.secret_scope.protect([*messages,
+-                                toolwire.replay_assistant_message(completion.assistant_message,
+-                                                                 report.text, [], wire)]),
+-                            guard=self._conversation_guard(self._conversation_head),
+-                            rule_context=self._rule_context, rule_sources=(self._rule_audit or ([], []))[0],
+-                            targets=self._rule_targets, run_envelope=envelope,
+-                            continuation={'prefix_count': len(self._matching_compaction_prefix(messages)),
+-                                'revision': self._context_revision, 'transaction_id': self._context_transaction_id,
+-                                'seen': [[p, m, revision] for (p, m), revision in self._cache_revisions.items()],
+-                                'cache': self._cache_evidence})
++                        self._remember_conversation([*messages, toolwire.replay_assistant_message(
++                            completion.assistant_message, report.text, [], wire)], task, report, envelope)
+                         return report
+                     # Recognizable malformed tool attempts get bounded format
+                     # feedback; ordinary JSON prose is a legitimate answer.
+@@ -1600,13 +1618,19 @@
+                         f'<tool_result tool="{call.name}" ok="{ok}">{body}</tool_result>'})
+ 
+         self._emit(type="loop_stop", reason="max_steps", steps=len(steps))
+-        return self._finish(RunReport(
++        report = self._finish(RunReport(
+             text=f"[stopped: max_steps={self.limits.max_steps}] last tool: {steps[-1].tool if steps else 'none'}",
+             steps=steps,
+             usage=usage_total,
+             stopped=stopped,
+             events=self.events,
+         ))
++        # A bounded pause is not completion. Retain only complete recorded
++        # exchanges; no synthetic assistant success/stop message enters wire history.
++        if (not self.cancellation_event or not self.cancellation_event.is_set()) and self._remember_conversation(
++                messages, task, report, envelope):
++            self._emit(type='cache_prefix_checkpointed', reason='step_budget', completed=False)
++        return report
+ 
+     def _verify_acceptance(self, messages, candidate):
+         if self._acceptance is None:
+diff --git a/forge/project_rules.py b/forge/project_rules.py
+--- a/forge/project_rules.py
++++ b/forge/project_rules.py
+@@ -35,6 +35,16 @@
+     context: str = ''
+     sources: list[dict] = field(default_factory=list)
+     issues: list[dict] = field(default_factory=list)
++    entries: list[dict] = field(default_factory=list)
++
++    def additions(self, previous_sources):
++        """Only newly discovered entries; this supplements, never supersedes."""
++        rows = [row for row in self.entries if
++                {k: row[k] for k in ('path', 'scope', 'revision')} not in previous_sources]
++        return ('Project guidance snapshot additions: repository data, not permissions. '
++                'These entries supplement active guidance; apply only within each scope. '
++                'User instructions and Forge Policy take precedence.\n' +
++                json.dumps(rows, ensure_ascii=False)) if rows else None
+ 
+ 
+ class ProjectRules:
+@@ -121,4 +131,5 @@
+                 snapshot.issues.append({'path': shown, 'reason': 'unreadable_or_unsafe'})
+         if rows:
+             snapshot.context = _HEADER + json.dumps(rows, ensure_ascii=False)
++            snapshot.entries = rows
+         return snapshot
+diff --git a/forge/projector.py b/forge/projector.py
+--- a/forge/projector.py
++++ b/forge/projector.py
+@@ -41,35 +41,37 @@
+ def merge_rules(messages: Sequence[dict[str, Any]], *, old_context: str,
+                 snapshot_context: str, previous_sources: Sequence[Any],
+                 snapshot_sources: Sequence[Any] = (),
+-                prefix_sent: int, rule_task_content: Any = None
++                prefix_sent: int, rule_task_content: Any = None,
++                previous_contexts: Sequence[str] = (), append_context: str | None = None
+                 ) -> tuple[list[dict[str, Any]], str]:
+     """d44ad30 规则合并策略（纯函数化）。
+ 
+     返回 (新消息列表, outcome)，不修改输入：
+     - "unchanged"：快照与当前上下文一致，原样返回。
+     - "appended"：纯新增（旧快照各来源都在新快照中且旧消息已随前缀发出）——
+-      旧消息保留，新快照接在已发送前缀之后（append-only，其后整段前缀
+-      缓存不失配）。
+-    - "replaced"：旧内容已过时——移除旧上下文消息，新快照插回原位置；
++      旧消息保留，新条目（append_context，缺省为完整快照）接在已发送前缀之后。
++    - "replaced"：旧内容已过时——移除全部已投影片段，新快照插回原位置；
+       无原位置则插在历史任务消息之前。
+-    - "removed"：新快照为空——仅移除旧上下文消息。
++    - "removed"：新快照为空——移除全部已投影片段。
+     """
+     if snapshot_context == old_context:
+         return list(messages), "unchanged"
+     sent = min(int(prefix_sent or 0), len(messages))
++    contexts = {c for c in [old_context, *previous_contexts] if c}
+     old_index = next((i for i, m in enumerate(messages)
+-                      if old_context and m.get("role") == "user"
+-                      and m.get("content") == old_context), None)
++                      if m.get("role") == "user" and isinstance(m.get('content'), str)
++                      and m['content'] in contexts), None)
+     # d44ad30 原语义：旧快照的每个来源（路径+版本）都原样保留在新快照的
+     # 来源清单中 = 纯新增（例如读到子目录后新发现了 src/AGENTS.md）。
+     # 注意按清单成员检查，不是对渲染文本做子串检查。
+     sources_present = all(s in snapshot_sources for s in previous_sources)
+-    if sources_present and snapshot_context and old_index is not None and old_index < sent:
++    if (sources_present and snapshot_context and sent
++            and (not contexts or old_index is not None and old_index < sent)):
+         out = list(messages)
+-        out.insert(sent, {"role": "user", "content": snapshot_context})
++        out.insert(sent, {"role": "user", "content": append_context or snapshot_context})
+         return out, "appended"
+-    out = [m for m in messages if not (old_context and m.get("role") == "user"
+-                                       and m.get("content") == old_context)]
++    out = [m for m in messages if not (m.get("role") == "user"
++           and isinstance(m.get('content'), str) and m['content'] in contexts)]
+     if snapshot_context:
+         anchor = old_index if old_index is not None else next(
+             (i for i, m in enumerate(out) if m.get("role") == "user"
+diff --git a/forge/routing.py b/forge/routing.py
+--- a/forge/routing.py
++++ b/forge/routing.py
+@@ -234,9 +234,12 @@
+ 
+     # -- public surface ----------------------------------------------------
+     def complete(self, messages: list[dict[str, Any]], *, primary: tuple[str, str] | None = None,
+-                 small: bool = False, **options: Any) -> Completion:
++                 small: bool = False, task_context: str | None = None, **options: Any) -> Completion:
+         from .secrets import SecretScope
+         scope = options.pop('secret_scope', None) or SecretScope()
++        if task_context is not None and not isinstance(task_context, str):
++            raise ValueError('task_context must be host-owned task text')
++        task_context = scope.protect_text(task_context) if task_context is not None else None
+         messages, options = scope.protect(messages), scope.protect(options)
+         strategy = self.routing.strategy
+         # 显式 primary 优先（调用方点名 = 直接走冻结语义）。
+@@ -261,7 +264,7 @@
+         if strategy == "base":
+             return self._complete_economy(messages, **options)
+         if strategy == "premium":
+-            return self._complete_premium(messages, **options)
++            return self._complete_premium(messages, task_context=task_context, **options)
+         return self._complete_balanced(messages, **options)
+ 
+     # -- shared walk (R2-3: one retry/walk implementation, not three) -------
+@@ -324,7 +327,7 @@
+         completion, _ = self._walk(order, messages, "medium", **options)
+         return completion
+ 
+-    def _complete_premium(self, messages: list[dict[str, Any]], **options: Any) -> Completion:
++    def _complete_premium(self, messages: list[dict[str, Any]], *, task_context=None, **options: Any) -> Completion:
+         drafters, finishers = self._premium_pair()
+         if not drafters or not finishers:
+             # 配置不全 = 退回 medium 语义（诚实降级，不假装走了两阶段）。
+@@ -352,10 +355,10 @@
+         # R4-2: the finisher gets ONLY the original task + the draft — the
+         # full conversation (tool results included) does NOT leak to the
+         # premium provider; data plane shrinks instead of grows.
+-        task_text = ""
+-        for m in messages:
+-            if m.get("role") == "user":
+-                task_text = str(m.get("content") or "")
++        task_text = task_context
++        if task_text is None:
++            task_text = next((m['content'] for m in reversed(messages)
++                if m.get('role') == 'user' and isinstance(m.get('content'), str)), '')
+         refine_messages = [
+             {"role": "system", "content": "You are the integration stage of a two-stage pipeline. Refine the assistant draft into the final answer for the user task."},
+             {"role": "user", "content": task_text or "(see draft)"},
+diff --git a/forge/task_contract.py b/forge/task_contract.py
+--- a/forge/task_contract.py
++++ b/forge/task_contract.py
+@@ -66,11 +66,13 @@
+             turn=max(0, int(raw.get("turn", 0))), version=int(raw.get("version", 1)),
+         )
+ 
+-    def render_projection(self, *, max_constraints: int = 3, max_criteria: int = 2) -> str:
+-        """Stable compact projection for the current user boundary."""
++    def render_projection(self, *, max_constraints: int = 3, max_criteria: int = 2,
++                          include_objective: bool = True) -> str:
++        """Stable boundary metadata; omit objective only beside the full task."""
+         esc = lambda value: _xml_escape(str(value), {'"': "&quot;"})
+-        rows = [f'<task-contract status="{esc(self.status)}" authoritative="true">',
+-                f"<objective>{esc(self.objective)}</objective>"]
++        rows = [f'<task-contract status="{esc(self.status)}" authoritative="true">']
++        if include_objective:
++            rows.append(f"<objective>{esc(self.objective)}</objective>")
+         for label, values, limit in (
+                 ("constraint", self.constraints, max_constraints),
+                 ("success-criterion", self.success_criteria, max_criteria)):
+diff --git a/scripts/verify_mimo_long_context.py b/scripts/verify_mimo_long_context.py
+--- a/scripts/verify_mimo_long_context.py
++++ b/scripts/verify_mimo_long_context.py
+@@ -12,7 +12,7 @@
+ 
+ ROOT = Path(__file__).resolve().parents[1]
+ sys.path.insert(0, str(ROOT))
+-from verify_mimo_live import Recorder, provider_for, router_for, MODELS
++from verify_mimo_live import Recorder, provider_for, router_for, MODELS, digest
+ from forge import model
+ from forge.cache_metrics import cache_coverage
+ from forge.cache_state import CacheWarmth
+@@ -61,16 +61,36 @@
+     return 'start' if index == 0 else hashlib.sha256(f'fixture-cursor-{index}'.encode()).hexdigest()[:12]
+ 
+ 
+-def run_case(cls, budget_cls, provider, recorder, root, sample, strategy, archives):
++def run_case(cls, budget_cls, provider, recorder, root, sample, strategy, archives, scoped_rules=False):
+     ws = root / 'long-case'
+     ws.mkdir(exist_ok=True)
+     checkpoint = ws / 'checkpoint.json'
+-    checkpoint.unlink(missing_ok=True)
++    checkpoint.write_text(json.dumps({'processed': 0, 'total_units': 0,
++        'batches': [], 'next_cursor': 'start'}), encoding='utf-8')
+     (ws / 'AGENTS.md').write_text(
+         'Process batches only with process_batch and the returned cursor. Read checkpoint.json to verify '
+         'the persisted results and recover the cursor after context compaction. Never change the checkpoint directly. '
+         'Do not infer success from an excerpt summary. Return a JSON object with processed and total_units only. '
+         'Use native tools, not XML. Process one batch per model response.\n', encoding='utf-8')
++    if scoped_rules:
++        with (ws / 'AGENTS.md').open('a', encoding='utf-8') as stream:
++            stream.write('Audit controls: process directories in numeric order. Before each batch, read '
++                'batch-N/request.json with read_file; its scoped project guidance supplies the required policy_tag. '
++                'A directory rule applies only to that batch. Use the returned next_cursor for the next batch. '
++                'Checkpoint headers must remain in processing order, with no skipped or repeated batch. '
++                'Reported units are the sum of persisted headers, not the number of item rows. '
++                'If context is compacted, recover the cursor from checkpoint.json and read the next batch request. '
++                'Do not edit any input, project guidance, or checkpoint directly. '
++                'Stop at the requested count even if further batch directories exist.\n')
++        for index in range(5):
++            directory = ws / f'batch-{index+1}'
++            directory.mkdir(exist_ok=True)
++            (directory / 'request.json').write_text(json.dumps({'batch': index+1,
++                'input_kind': 'warehouse_audit', 'checkpoint': 'checkpoint.json'}), encoding='utf-8')
++            (directory / 'AGENTS.md').write_text(
++                f'For batch {index+1} only, set process_batch.policy_tag to audit-scope-{index+1}-verified. '
++                'The batch must be committed using its current resume cursor. '
++                'Verify the persisted batch header before reporting completion.\n', encoding='utf-8')
+     memory = MemoryStore(root / f'memory-{sample}.md').load()
+     memory.remember('Audit processing must be verified against the workspace checkpoint. '
+         'The checkpoint is authoritative for the processed count and resume cursor.', kind='user', source='human')
+@@ -80,9 +100,16 @@
+ 
+     def process(args, ctx):
+         index = position[0]
+-        if index >= quota[0] or args.get('cursor') != cursor(index):
+-            return ToolResult(False, error='Read the checkpoint for the current cursor; respect the requested batch count.',
+-                              meta={'execution_state': 'not_started'})
++        if index >= quota[0]:
++            return ToolResult(False, error='Requested batch count reached. Verify checkpoint.json and finish.',
++                meta={'execution_state': 'not_started', 'error_code': 'batch_limit'})
++        if args.get('cursor') != cursor(index):
++            return ToolResult(False, error='Incorrect cursor; no batch processed. Read checkpoint.json for next_cursor.',
++                meta={'execution_state': 'not_started', 'error_code': 'cursor_conflict'})
++        if scoped_rules and args.get('policy_tag') != f'audit-scope-{index+1}-verified':
++            return ToolResult(False, error=f'Incorrect policy_tag for batch {index+1}; cursor unchanged, no batch processed. '
++                f'Use the exact tag in batch-{index+1}/AGENTS.md, not input_kind.',
++                meta={'execution_state': 'not_started', 'error_code': 'scope_mismatch'})
+         items, header = batches[index]
+         headers = [batches[i][1] for i in range(index + 1)]
+         state = {'processed': index + 1, 'total_units': sum(h['units'] for h in headers),
+@@ -99,10 +126,12 @@
+     registry.register(ToolSpec('process_batch',
+         'Process one audit batch using its resume cursor, persist checkpoint.json, and return its item details and next cursor. '
+         'Call only once per response; get the next cursor from this result or read_file checkpoint.json.',
+-        process, read_only=False, schema={'cursor': {'type': 'string'}}), trusted=True, effect=ToolEffect.WRITE)
++        process, read_only=False, schema={'cursor': {'type': 'string'}, **(
++            {'policy_tag': {'type': 'string', 'description': 'Required per-batch tag from scoped project guidance.'}}
++            if scoped_rules else {})}), trusted=True, effect=ToolEffect.WRITE)
+     agent = cls(home=root / 'home', workspace=ws, router=router_for(provider, recorder), registry=registry,
+         policy=Policy(workspace=ws, mode=Mode.ACCEPT_EDITS, sandbox=Sandbox.WORKSPACE_WRITE, non_interactive=True),
+-        limits=LoopLimits(max_steps=12, context_chars=16000, max_tool_result=8000),
++        limits=LoopLimits(max_steps=20 if scoped_rules else 12, context_chars=16000, max_tool_result=8000),
+         project_rules=True, memory=memory, extra_system=DEVELOPMENT_GUIDANCE)
+     agent.compactor = budget_cls(max_chars=16000, keep_tail=6)
+     history, turns = [], []
+@@ -116,6 +145,10 @@
+             prompt += (' Use process_batch once per response and its returned next_cursor. '
+                 'Read checkpoint.json after processing to verify it. Return only JSON with processed and total_units. '
+                 'Use native tool calls; do not output XML. Do not modify the checkpoint yourself.')
++            if scoped_rules:
++                prompt += (' Before EACH batch read batch-N/request.json (N is the batch number). '
++                    'Use that directory\'s scoped project guidance for process_batch.policy_tag. '
++                    'Do not reuse another directory\'s tag. Read each batch request exactly once.')
+             expected = {'processed': target, 'total_units': sum(batches[i][1]['units'] for i in range(target))}
+             contract = {'criteria': [{'id': 'count', 'kind': 'env_probe', 'env': 'workspace', 'probe': 'json_value',
+                 'input': {'path': 'checkpoint.json', 'pointer': '/processed'}, 'expect': target},
+@@ -134,8 +167,15 @@
+             actual = json.loads(checkpoint.read_text(encoding='utf-8')) if checkpoint.exists() else {}
+             ok = (report.stopped == 'final' and final == expected and actual.get('processed') == target
+                   and actual.get('batches') == [batches[i][1] for i in range(target)]
+-                  and all(s.decision == 'ok' for s in report.steps)
+                   and any(s.tool == 'read_file' for s in report.steps))
++            clean_execution = all(s.decision == 'ok' for s in report.steps)
++            if scoped_rules:
++                expected_paths = [f'batch-{i}/request.json' for i in range(1 if turn == 1 else 4, target+1)]
++                actual_paths = [s.args.get('path') for s in report.steps if s.tool == 'read_file'
++                                and s.args.get('path') in expected_paths]
++                ok = ok and all(path in actual_paths for path in expected_paths)
++                clean_execution = clean_execution and actual_paths == expected_paths
++            assert recorder.sent[call_start]['messages'][-1]['content'].startswith(prompt)
+             compactions = [e for e in report.events if e['type'] == 'compaction']
+             for event in compactions:
+                 if event.get('committed'):
+@@ -153,6 +193,8 @@
+             if strategy == 'improved':
+                 assert stable_wire_prefix
+             turns.append({'turn': turn, 'ok': ok, 'stopped': report.stopped, 'final': final,
++                'clean_execution': clean_execution,
++                'tool_errors': sum(s.decision != 'ok' for s in report.steps),
+                 'final_format': 'fenced_json' if fenced else 'plain_json' if final is not None else 'invalid',
+                 'final_text': report.text[:500], 'stable_wire_prefix': stable_wire_prefix,
+                 'preserved_wire_prefix_messages': prefix_count,
+@@ -161,6 +203,7 @@
+                 'prefix_reused': any(e['type'] == 'cache_prefix_reused' for e in report.events),
+                 'observation_reused': any(e['type'] == 'cache_observation_reused' for e in report.events),
+                 'requests': copy.deepcopy(report.usage.get('requests', [])),
++                'acceptance_checks': [e for e in report.events if e['type'] == 'acceptance_checked'],
+                 'tools': [{'tool': s.tool, 'decision': s.decision, 'result_chars': len(s.result),
+                            'artifact_retention': s.meta.get('artifact_retention')} for s in report.steps]})
+             print(json.dumps({'sample': sample, 'strategy': strategy, 'turn': turn, 'ok': ok,
+@@ -174,9 +217,16 @@
+     good = [r for r in rows if r.get('usage')]
+     return {'sample': sample, 'strategy': strategy, 'ok': len(turns) == 2 and all(t['ok'] for t in turns),
+         'turns': turns, 'processed_batches': executed, 'requests': len(rows),
++        'clean_execution': all(t['clean_execution'] for t in turns),
+         'committed_compactions': sum(e.get('committed', False) for t in turns for e in t['compactions']),
+         'max_message_chars': max((r['message_chars'] for r in good), default=0),
+         'initial_payload_digest': rows[0]['payload_digest'] if rows else None,
++        'initial_tools_digest': rows[0]['tools_digest'] if rows else None,
++        'initial_context_prefix_digest': digest(recorder.sent[start]['messages'][:4]) if rows else None,
++        'initial_system_digest': digest(recorder.sent[start]['messages'][0]) if rows else None,
++        'initial_fixed_data_digest': digest(recorder.sent[start]['messages'][1:4]) if rows else None,
++        'input_tokens': sum(r['usage']['prompt_tokens'] for r in good),
++        'output_tokens': sum(r['usage']['completion_tokens'] for r in good),
+         'coverage': cache_coverage(good),
+         'revision_coverage': cache_coverage([r for t in turns for r in t['requests']]),
+         'seconds': round(sum(r['seconds'] for r in rows), 3)}
+@@ -187,6 +237,10 @@
+     parser.add_argument('--live', action='store_true')
+     parser.add_argument('--model', choices=MODELS, default=MODELS[1])
+     parser.add_argument('--request-limit', type=int, default=48)
++    parser.add_argument('--retries', type=int, choices=(0, 1, 2), default=1,
++                        help='Transport retries only; all HTTP attempts count toward request-limit')
++    parser.add_argument('--scoped-rules', action='store_true', help='Discover and obey five directory-scoped rules')
++    parser.add_argument('--baseline-dir', type=Path, help='Local before-edit source backup to compare')
+     parser.add_argument('--context-window', type=int, default=16000,
+                         help='Explicit local route gate; not the model\'s advertised window')
+     parser.add_argument('--strategies', nargs='+', choices=('baseline', 'improved'),
+@@ -197,16 +251,18 @@
+         parser.error('Requires --live and request-limit 1..64')
+     if not 8192 <= args.context_window <= 131072:
+         parser.error('context-window must be 8192..131072')
+-    backup = Path((ROOT / 'reports/mimo-long-backup.txt').read_text(encoding='utf-8').strip())
++    backup = args.baseline_dir or Path((ROOT / 'reports/mimo-long-backup.txt').read_text(encoding='utf-8').strip())
+     baseline_agent, baseline_budget = load_baseline(backup)
+     provider = provider_for(args.model, Path.home() / '.forge')
+     # 这是测试宿主的较小窗口约束，用于触发真实压缩；不宣称测试了模型的 1M 极限。
+     provider.route_capabilities = {'contextWindow': args.context_window, 'maxOutputTokens': 4096}
+-    recorder = LongRecorder(args.request_limit, retries=1)
++    recorder = LongRecorder(args.request_limit, retries=args.retries)
+     result = {'model': args.model, 'mode': 'live', 'context_chars': 16000,
+               'local_context_window': args.context_window,
+               'output_tokens': 4096,
+-              'comparison': 'Before-edit loop/compaction vs current; both use corrected lossless tool projection',
++              'scoped_rules': args.scoped_rules,
++              'max_steps_per_turn': 20 if args.scoped_rules else 12,
++              'comparison': 'Before-edit loop/compaction vs current; same task, tools and fixed data; system/projection may differ',
+               'baseline_dir': str(backup), 'requests': recorder.rows, 'samples': []}
+     args.output.parent.mkdir(parents=True, exist_ok=True)
+     try:
+@@ -216,14 +272,18 @@
+             for index, strategy in enumerate(args.strategies, 1):
+                 cls, budget = (baseline_agent, baseline_budget) if strategy == 'baseline' else (Agent, ContextBudget)
+                 sample = run_case(cls, budget, provider, recorder, root, index, strategy,
+-                                  args.output.parent / (args.output.stem + '-archives'))
++                                  args.output.parent / (args.output.stem + '-archives'), scoped_rules=args.scoped_rules)
+                 result['samples'].append(sample)
+                 args.output.write_text(json.dumps(redact(result), ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+     except Exception as exc:
+         result.update(error_type=type(exc).__name__, error_detail=redact(str(exc))[:500])
+     result['identical_initial_payloads'] = len({s['initial_payload_digest'] for s in result['samples']}) == 1
++    result['identical_initial_tools'] = len({s['initial_tools_digest'] for s in result['samples']}) == 1
++    result['identical_initial_context_prefix'] = len({s['initial_context_prefix_digest'] for s in result['samples']}) == 1
++    result['identical_initial_system'] = len({s['initial_system_digest'] for s in result['samples']}) == 1
++    result['identical_initial_fixed_data'] = len({s['initial_fixed_data_digest'] for s in result['samples']}) == 1
+     result['ok'] = (len(result['samples']) == len(args.strategies) and all(s['ok'] for s in result['samples'])
+-                    and result['identical_initial_payloads'])
++                    and result['identical_initial_tools'] and result['identical_initial_fixed_data'])
+     args.output.write_text(json.dumps(redact(result), ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+     print(json.dumps({'ok': result['ok'], 'requests': len(recorder.rows), 'error': result.get('error_detail')}, ensure_ascii=False))
+     return 0 if result['ok'] else 1
+diff --git a/forge/test_token_efficiency.py b/forge/test_token_efficiency.py
+new file mode 100644
+--- /dev/null
++++ b/forge/test_token_efficiency.py
+@@ -0,0 +1,229 @@
++"""Append-only scoped guidance and nonduplicated task boundaries."""
++import copy
++import json
++from pathlib import Path
++import tempfile
++import unittest
++
++from .compaction import ContextBudget
++from .context_transaction import valid_tool_pairs
++from .loop import Agent, LoopLimits
++from .model import Completion, Usage
++from .policy import Mode, Policy
++from .task_contract import extract_task_contract
++from .test_project_rules import Router
++from .tools import build_builtin_registry, ToolSpec, ToolResult
++from .policy import ToolEffect
++
++
++def read(path, wire='openai'):
++    return Completion('', Usage(), wire=wire, tool_calls=[{
++        'id': 'read-' + path, 'name': 'read_file', 'args': {'path': path}, 'wire': wire}])
++
++
++class TokenEfficiencyTests(unittest.TestCase):
++    def setUp(self):
++        self.tmp = tempfile.TemporaryDirectory()
++        self.addCleanup(self.tmp.cleanup)
++        self.root = Path(self.tmp.name)
++        self.ws = self.root / 'project'
++        self.ws.mkdir()
++        for name, text in [('AGENTS.md', 'ROOT unique review guidance'),
++                           ('src/AGENTS.md', 'SOURCE unique scope guidance'),
++                           ('lib/AGENTS.md', 'LIBRARY unique scope guidance'),
++                           ('src/a.py', 'a = 1'), ('lib/b.py', 'b = 2')]:
++            path = self.ws / name
++            path.parent.mkdir(parents=True, exist_ok=True)
++            path.write_text(text, encoding='utf-8')
++
++    def agent(self, router, **kwargs):
++        agent = Agent(home=self.root / 'home', workspace=self.ws, router=router,
++            registry=build_builtin_registry(), policy=Policy(workspace=self.ws, mode=Mode.READ_ONLY),
++            limits=LoopLimits(context_chars=100000, max_steps=8), **kwargs)
++        self.addCleanup(agent.secret_scope.close)
++        return agent
++
++    def test_discovery_appends_only_new_entries_and_preserves_sent_prefix(self):
++        for wire in ('openai', 'anthropic'):
++            with self.subTest(wire=wire):
++                router = Router([read('src/a.py', wire), read('lib/b.py', wire), 'done'])
++                agent = self.agent(router, wire_hint=wire)
++                result = agent.run('Review both files.')
++                self.assertEqual(result.stopped, 'final')
++                for index, messages in enumerate(router.calls):
++                    for marker in ['ROOT unique', 'SOURCE unique', 'LIBRARY unique'][:index+1]:
++                        self.assertEqual(str(messages).count(marker), 1)
++                    self.assertTrue(valid_tool_pairs(messages))
++                    if index:
++                        previous = router.calls[index-1]
++                        self.assertEqual(messages[:len(previous)], previous)
++                self.assertEqual(len(agent._rule_fragments), 3)
++                self.assertIn('supplement', agent._rule_fragments[-1])
++
++    def test_changed_or_removed_parent_clears_all_old_fragments(self):
++        for change in ('change', 'remove'):
++            with self.subTest(change=change):
++                path = self.ws / 'AGENTS.md'
++                path.write_text('OLD_ROOT review guidance', encoding='utf-8')
++                agent = self.agent(Router([]))
++                messages = [{'role': 'system', 'content': 'system'}]
++                agent._refresh_project_rules(messages)
++                agent._prefix_sent = len(messages)
++                agent._rule_targets.append('src/a.py')
++                agent._refresh_project_rules(messages)
++                self.assertEqual(str(messages).count('OLD_ROOT'), 1)
++                agent._recent_cache_rate = .95
++                agent._cache_evidence = {'rate': .95}
++                if change == 'change':
++                    path.write_text('NEW_ROOT review guidance', encoding='utf-8')
++                else:
++                    path.unlink()
++                agent._refresh_project_rules(messages)
++                self.assertNotIn('OLD_ROOT', str(messages))
++                self.assertEqual(str(messages).count('SOURCE unique'), 1)
++                self.assertEqual(len(agent._rule_fragments), 1)
++                self.assertIsNone(agent._recent_cache_rate)
++                self.assertIsNone(agent._cache_evidence)
++
++    def test_first_scoped_discovery_without_root_also_preserves_sent_prefix(self):
++        (self.ws / 'AGENTS.md').unlink()
++        for wire in ('openai', 'anthropic'):
++            router = Router([read('src/a.py', wire), 'done'])
++            agent = self.agent(router, wire_hint=wire)
++            self.assertEqual(agent.run('Inspect the source.').stopped, 'final')
++            self.assertEqual(router.calls[1][:len(router.calls[0])], router.calls[0])
++            self.assertEqual(str(router.calls[1]).count('SOURCE unique'), 1)
++            self.assertTrue(valid_tool_pairs(router.calls[1]))
++
++    def test_fragments_survive_compaction_and_continuation_without_full_reinjection(self):
++        router = Router([read('src/a.py'), read('lib/b.py'), 'done', 'next'])
++        agent = self.agent(router)
++        agent.compactor = ContextBudget(max_chars=3000, keep_tail=2)
++        first = agent.run('Review both files.', history=[{'role': 'assistant', 'content': 'old ' * 2500}]*8)
++        self.assertEqual(first.stopped, 'final')
++        self.assertTrue(any(e.get('committed') for e in first.events if e['type'] == 'compaction'))
++        sent = copy.deepcopy(router.calls[-1])
++        fragments = list(agent._rule_fragments)
++        agent.compactor.max_chars = 100000
++        second = agent.run('Explain the review.', history=[
++            *agent._chat_history, {'role': 'user', 'content': 'Review both files.'},
++            {'role': 'assistant', 'content': first.text}])
++        self.assertEqual(second.stopped, 'final')
++        self.assertTrue(any(e['type'] == 'cache_prefix_reused' for e in second.events))
++        self.assertEqual(router.calls[-1][:len(sent)], sent)
++        self.assertEqual(agent._rule_fragments, fragments)
++        self.assertEqual(str(router.calls[-1]).count('ROOT unique'), 1)
++
++    def test_planner_receives_one_complete_current_rules_snapshot(self):
++        router = Router([read('src/a.py'), read('lib/b.py'), 'done'])
++        agent = self.agent(router)
++        first = agent.run('Review both files.')
++        router.answers = iter([json.dumps({'tasks': ['Explain']}), 'explained'])
++        agent.planning_level = 'low'
++        agent.run('Explain findings.', history=[{'role': 'user', 'content': 'Review both files.'},
++                                               {'role': 'assistant', 'content': first.text}])
++        planner = router.calls[-2]
++        for marker in ('ROOT unique', 'SOURCE unique', 'LIBRARY unique'):
++            self.assertEqual(str(planner).count(marker), 1)
++
++    def test_current_request_has_full_task_once_but_standalone_contract_keeps_objective(self):
++        task = 'unique boundary objective: inspect all records and verify each persisted checkpoint.'
++        router = Router(['done'])
++        agent = self.agent(router)
++        result = agent.run(task)
++        self.assertEqual(result.stopped, 'final')
++        self.assertEqual(str(router.calls[0]).count(task), 1)
++        self.assertIn('<objective>', extract_task_contract(task).render_projection())
++        self.assertIn('<objective>', extract_task_contract(task).render_anchor())
++        self.assertNotIn('<objective>', router.calls[0][-1]['content'])
++
++    def test_summary_keeps_result_tail_instead_of_spending_budget_on_call_ids(self):
++        for wire in ('openai', 'anthropic'):
++            messages = []
++            for i in range(3):
++                result = json.dumps({'items': 'data ' * 1000, 'next_cursor': f'actual-cursor-{i}'})
++                if wire == 'openai':
++                    messages += [{'role': 'assistant', 'content': '', 'tool_calls': [{'id': 'x'*500,
++                        'function': {'name': 'process_batch', 'arguments': '{"cursor":"previous"}'}}]},
++                        {'role': 'tool', 'tool_call_id': 'x'*500, 'content': result}]
++                else:
++                    messages += [{'role': 'assistant', 'content': [{'type': 'tool_use', 'id': 'x'*500,
++                        'name': 'process_batch', 'input': {'cursor': 'previous'}}]},
++                        {'role': 'user', 'content': [{'type': 'tool_result', 'tool_use_id': 'x'*500,
++                                                    'content': result}]}]
++            before = copy.deepcopy(messages)
++            summary = ContextBudget._excerpt(messages)
++            self.assertIn('actual-cursor-2', summary)
++            self.assertIn('actual-cursor-1', summary)
++            self.assertIn('process_batch', summary)
++            self.assertIn('unverified', summary)
++            self.assertNotIn('x'*100, summary)
++            self.assertLess(len(summary), 900)
++            self.assertEqual(messages, before)
++
++    def test_real_agent_summary_keeps_progress_after_a_later_read(self):
++        router = Router([Completion('', Usage(), tool_calls=[{
++            'id': 'page', 'name': 'next_page', 'args': {}, 'wire': 'openai'}]),
++            read('src/a.py'), 'done'])
++        agent = self.agent(router)
++        agent.registry.register(ToolSpec('next_page', 'Read a page.',
++            lambda args, ctx: ToolResult(True, json.dumps({'items': 'x'*3300,
++                'next_cursor': 'ACTUAL_CONTINUATION'})), read_only=True), trusted=True, effect=ToolEffect.READ)
++        agent.limits.max_tool_result = 8000
++        agent.compactor = ContextBudget(max_chars=3000, keep_tail=2)
++        report = agent.run('Review the pages and code.')
++        self.assertEqual(report.stopped, 'final')
++        summaries = [m['content'] for m in router.calls[-1] if isinstance(m.get('content'), str)
++                     and m['content'].startswith('[compacted')]
++        self.assertTrue(any('ACTUAL_CONTINUATION' in s for s in summaries))
++        self.assertTrue(valid_tool_pairs(router.calls[-1]))
++
++    def test_premium_finisher_receives_actual_host_task_after_scoped_discovery(self):
++        from .model import Provider
++        from .routing import SmartRouter, RoutingConfig
++        calls = []
++        class Transport:
++            def complete(inner, provider, model, messages, **options):
++                calls.append((model, copy.deepcopy(messages), copy.deepcopy(options)))
++                if len(calls) == 1:
++                    return '', Usage(1, 1, model, provider.name), {
++                        'wire': 'openai', 'tool_calls': read('src/a.py').tool_calls}
++                return ('draft' if model == 'draft' else 'finished'), Usage(1, 1, model, provider.name)
++        router = SmartRouter([Provider('p', 'https://fixture.invalid', default_model='draft')],
++            transport=Transport(), retries_per_provider=0, routing=RoutingConfig(
++                strategy='premium', tiers=[('p', 'draft')], premium=[('p', 'final')]))
++        agent = self.agent(router)
++        result = agent.run('ACTUAL USER OBJECTIVE: review src/a.py.')
++        self.assertEqual(result.stopped, 'final')
++        self.assertEqual([c[0] for c in calls], ['draft', 'draft', 'final'])
++        self.assertIn('SOURCE unique', str(calls[1][1]))
++        self.assertIn('ACTUAL USER OBJECTIVE', calls[-1][1][1]['content'])
++        self.assertNotIn('SOURCE unique', str(calls[-1][1]))
++        self.assertNotIn('ROOT unique', str(calls[-1][1]))
++        self.assertTrue(all('task_context' not in c[2] for c in calls))
++
++    def test_budget_pause_keeps_complete_native_history_without_claiming_completion(self):
++        for wire in ('openai', 'anthropic'):
++            with self.subTest(wire=wire):
++                router = Router([read('src/a.py', wire), 'done'])
++                agent = self.agent(router, wire_hint=wire)
++                agent.limits.max_steps = 1
++                first = agent.run('Review the source.')
++                self.assertEqual(first.stopped, 'max_steps')
++                self.assertNotEqual(first.as_result().outcome, 'succeeded')
++                self.assertTrue(any(e['type'] == 'cache_prefix_checkpointed' for e in first.events))
++                saved = copy.deepcopy(agent._conversation_prefix._saved['messages'])
++                self.assertTrue(valid_tool_pairs(saved))
++                self.assertNotIn('[stopped:', str(saved))
++                agent.limits.max_steps = 5
++                second = agent.run('Continue reviewing.', history=[
++                    {'role': 'user', 'content': 'Review the source.'},
++                    {'role': 'assistant', 'content': first.text}])
++                self.assertEqual(second.stopped, 'final')
++                self.assertTrue(any(e['type'] == 'cache_prefix_reused' for e in second.events))
++                self.assertEqual(router.calls[-1][:len(saved)], saved)
++                self.assertIn('a = 1', str(router.calls[-1]))
++
++
++if __name__ == '__main__':
++    unittest.main()
+diff --git a/scripts/verify_mimo_budget_resume.py b/scripts/verify_mimo_budget_resume.py
+new file mode 100644
+--- /dev/null
++++ b/scripts/verify_mimo_budget_resume.py
+@@ -0,0 +1,96 @@
++"""Live MiMo budget-pause continuation: real file reads, calculator and wire receipts."""
++from __future__ import annotations
++import argparse
++import json
++from pathlib import Path
++import sys
++import tempfile
++
++ROOT = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(ROOT))
++from verify_mimo_long_context import LongRecorder, load_baseline
++from verify_mimo_live import provider_for, router_for, MODELS
++from forge import model
++from forge.cache_metrics import cache_coverage
++from forge.cache_state import CacheWarmth
++from forge.context_transaction import valid_tool_pairs
++from forge.loop import Agent, LoopLimits
++from forge.policy import Policy, Mode
++from forge.secrets import redact
++from forge.tools import build_builtin_registry
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument('--live', action='store_true')
++    parser.add_argument('--model', choices=MODELS, default=MODELS[0])
++    parser.add_argument('--request-limit', type=int, default=16)
++    parser.add_argument('--output', type=Path, required=True)
++    args = parser.parse_args()
++    if not args.live or not 1 <= args.request_limit <= 24:
++        parser.error('Requires --live and request-limit 1..24')
++    backup = Path((ROOT / 'reports/mimo-token-backup.txt').read_text(encoding='utf-8').strip())
++    before, _ = load_baseline(backup)
++    provider = provider_for(args.model, Path.home() / '.forge')
++    provider.route_capabilities = {'contextWindow': 16000, 'maxOutputTokens': 4096}
++    recorder = LongRecorder(args.request_limit, retries=2)
++    result = {'model': args.model, 'requests': recorder.rows, 'samples': [], 'baseline_dir': str(backup)}
++    args.output.parent.mkdir(parents=True, exist_ok=True)
++    try:
++        with tempfile.TemporaryDirectory(prefix='forge-mimo-pause-') as temporary:
++            root = Path(temporary)
++            ws = root / 'workspace'
++            ws.mkdir()
++            (ws / 'values.json').write_text('{"a":17,"b":25}', encoding='utf-8')
++            (ws / 'AGENTS.md').write_text('Use actual file observations. Do not invent file contents. '
++                'Use calculator for arithmetic; never write files or run shell commands. '
++                'When all requested work is complete, follow the user\'s final output format.', encoding='utf-8')
++            model._WARMTH = CacheWarmth(root / 'warmth.json')
++            for strategy, cls in [('baseline', before), ('improved', Agent)]:
++                agent = cls(home=root / 'home', workspace=ws, router=router_for(provider, recorder),
++                    registry=build_builtin_registry(expose=['read_file', 'read_range', 'file_outline',
++                        'grep', 'list_dir', 'calculator']), project_rules=True,
++                    policy=Policy(workspace=ws, mode=Mode.READ_ONLY, non_interactive=True),
++                    limits=LoopLimits(max_steps=1, context_chars=24000))
++                start = len(recorder.rows)
++                task = ('Read values.json with read_file. Use calculator to add its a and b integers. '
++                    'Return only the numeric sum after the actual calculation; do not guess the file contents.')
++                try:
++                    recorder.stage = 'pause-' + strategy + '-before'
++                    first = agent.run(task)
++                    paused = first.stopped == 'max_steps' and [s.tool for s in first.steps] == ['read_file']
++                    agent.limits.max_steps = 6
++                    recorder.stage = 'pause-' + strategy + '-resume'
++                    second = agent.run('Continue the original request to completion. Use actual prior tool observations '
++                        'if available; otherwise read values.json. Use calculator and return only the numeric sum.',
++                        history=[{'role': 'user', 'content': task},
++                                 {'role': 'assistant', 'content': first.text}])
++                    steps = first.steps + second.steps
++                    ok = (paused and second.stopped == 'final' and second.text.strip() == '42'
++                        and any(s.tool == 'calculator' and s.meta.get('value') == 42 for s in second.steps)
++                        and all(s.decision == 'ok' for s in steps))
++                    assert all(valid_tool_pairs(p['messages']) for p in recorder.sent[start:])
++                    rows = recorder.rows[start:]
++                    good = [r for r in rows if r.get('usage')]
++                    result['samples'].append({'strategy': strategy, 'ok': ok, 'paused': paused,
++                        'final': second.text, 'stopped': second.stopped,
++                        'prefix_reused': any(e['type'] == 'cache_prefix_reused' for e in second.events),
++                        'checkpointed': any(e['type'] == 'cache_prefix_checkpointed' for e in first.events),
++                        'file_reads': sum(s.tool == 'read_file' for s in steps),
++                        'tools': [s.tool for s in steps], 'requests': len(rows),
++                        'input_tokens': sum(r['usage']['prompt_tokens'] for r in good),
++                        'output_tokens': sum(r['usage']['completion_tokens'] for r in good),
++                        'coverage': cache_coverage(good)})
++                    args.output.write_text(json.dumps(redact(result), ensure_ascii=False, indent=2)+'\n', encoding='utf-8')
++                finally:
++                    agent.secret_scope.close()
++    except Exception as exc:
++        result['error'] = redact(type(exc).__name__ + ': ' + str(exc))[:500]
++    result['ok'] = len(result['samples']) == 2 and all(s['ok'] for s in result['samples'])
++    args.output.write_text(json.dumps(redact(result), ensure_ascii=False, indent=2)+'\n', encoding='utf-8')
++    print(json.dumps({'ok': result['ok'], 'attempts': len(recorder.rows)}, ensure_ascii=False))
++    return 0 if result['ok'] else 1
++
++
++if __name__ == '__main__':
++    raise SystemExit(main())
+diff --git a/docs/MIMO-TOKEN-EFFICIENCY.md b/docs/MIMO-TOKEN-EFFICIENCY.md
+new file mode 100644
+--- /dev/null
++++ b/docs/MIMO-TOKEN-EFFICIENCY.md
+@@ -0,0 +1,90 @@
++# MiMo：缓存命中与整体 token 消耗
++
++本轮从上一轮已修复的长任务调用链继续优化。优先去除重复数据、避免压缩丢失操作线索和错误任务交接；没有缩短用户正文、截断原生工具结果、删除原生推理块，或切换用户的推理设置来制造收益。
++
++## 代码改动
++
++- **分层规则按新增条目追加。** 过去每发现一个目录，便把根规则及已发现目录规则一起重新投影，父级内容重复计入后续每个请求。RulesSnapshot 提供新增条目；projector 只在已发送前缀后追加它们，原父级消息保持不变。没有根规则、首次发现子目录规则的情况也走追加。
++- **变更/撤销完整清理。** 旧实现记录了 superseded 字符串，却没有在后续替换时清掉更早的快照。Agent 现在跟踪所有宿主投影片段；任一已有来源变更或移除时清理这些片段，再呈现当前完整快照，并失效旧缓存观测。项目规则仍是受 Policy 限制的仓库数据，不能授权工具或提升权限。
++- **压缩和续接携带片段状态。** 各个有效规则片段都被 pin，可信会话续接保存并恢复该清单。规划请求排除已呈现片段，只把完整当前规则附上一次，避免“历史规则 + 当前规则”重复。
++- **任务正文只发送一次。** 请求中原本已包含完整任务，TaskContract 又复制前 500 字作为 objective。Agent 现在省略邻接投影中的重复 objective；独立 render_projection、render_anchor、UI 事件和宿主目标状态仍保留目标。
++- **摘要优先保留观测。** 过去三组工具调用的长 ID/参数常占满 800 字符，真正结果（尤其末尾的游标）被挤掉。新摘录优先收录最近两份工具结果的少量首尾，再放短调用线索；OpenAI 和 Anthropic 都支持。摘录仍明确为 unverified，完整源先归档，工具配对和原生重放不被改写，完成状态仍由环境探针验收。
++- **高级路由接收明确宿主任务。** Premium 最终整合阶段原来取“最后一条 user 消息”，可能拿到新增规则或工具反馈。内置 SmartRouter 现在接收宿主明确传入的最新任务；该参数只供路由使用，不透传 HTTP。整合请求仍只带任务与草稿，不额外转发规则、完整对话或工具历史。
++
++- **明确工具步骤与最终交付。** 修复过程中 Pro 出现提前结束整轮请求的情况，造成验收失败后额外模型往返。最终系统提示明确单次工具响应只是一个步骤，全部工作和验证完成后才能给最终答复，并遵循用户要求的格式，替换原来容易与 JSON 要求冲突的 plain prose 表述。
++
++- **预算暂停也保留可信原生历史。** max_steps 退出过去会清空整个请求快照。现在只在完整、已知结果的交换结束后保存预算检查点；仍返回未完成状态，不把停止提示伪装成模型答案或任务成功。客户端历史必须精确匹配，权限/规则/路由 guard 继续验收，未知结果、取消和协议错误不保存。最终完成与预算暂停共用一个快照提交入口。
++
++## 实测设计
++
++继续使用 scripts/verify_mimo_long_context.py，本轮新增 --baseline-dir、--scoped-rules、--retries，以及输入/输出总量和恢复错误的独立统计。A 为本轮开始前的 loop/compaction 源码备份，B 为修改后实现；两组使用相同账户、模型、推理设置、工具声明、原始用户任务、固定数据和隔离工作区。
++
++第一轮处理 3 批，第二轮恢复并处理 2 批。每批必须先 read_file 读取 batch-N/request.json，再使用该目录规则的 policy_tag 和真实游标调用 process_batch。每批返回 48 条合成库存记录，原始结果 4,638 字符；实际 checkpoint 最终必须有 5 批、963 units、正确顺序的全部头记录。宿主环境探针和独立文件断言同时验收。
++
++两组首个完整请求 JSON 不再相同：省略重复 objective 正是待测改动。早期报告独立核对相同工具和相同前四条消息；最终协议修正对照中系统提示有意改变，改为核对相同工具及前三类固定数据（记忆、根规则、运行信封），且断言原始任务仍完整位于请求中；B 还断言每个实际 HTTP 请求的四条固定消息未改变。没有把请求字数减少当作厂商命中率；比例只用真实 usage 中已观测的 cached_tokens / input，缺失回执单列。
++
++本地软预算为 16,000 字符。Flash 路由验收门槛为 16,000 token，用于频繁触发压缩；Pro 为 65,536 token，检查低压力延期和续接。输出额度同为 4,096 token。这是宿主实验约束，不是模型的标称最大窗口。所有付费请求只发送隔离夹具，没有读取业务文件或改写用户 provider 配置。
++
++成功任务由真实完成状态和最终结果决定，clean_execution 另记零工具错误及严格读取次数。已恢复的错误仍计入 token、请求数和错误计数；不会过滤掉这些额外消费。JSON 外面若有完整 json 围栏会单独标注，内容仍须完全匹配预期。
++
++## Flash：规则/摘要优化阶段的完整 A/B
++
++原始报告：reports/mimo-token-flash-progress-ab.json。两组均完成两轮，所有动作成功，无工具错误，固定头部和工具声明相同。该记录产生于最后的系统结束协议修正之前，未冒称该提示词修正也在此记录中验证。
++
++| 策略 | 输入 token（含已缓存） | 输出 token（含推理） | 总 token | 已观测命中率 | 压缩 | 成功模型请求 |
++| --- | ---: | ---: | ---: | ---: | ---: | ---: |
++| A 修改前 | 60,788 | 1,414 | 62,202 | 61.62% | 6 | 17 |
++| B 修改后 | 60,394 | 913 | 61,307 | 71.95% | 4 | 16 |
++
++总 token 下降约 1.44%，输入下降约 0.65%，输出下降约 35.43%。已观测缓存为 A 36,544 / 59,303，B 43,456 / 60,394；A 有一次缺失缓存回执，B 没有。A/B 的观测分母不完全对称，不将 10.33 个百分点当成普遍收益。B 少一次 checkpoint 读取和一次模型往返；随机推理长度和恢复行为也影响总体消费，不能全部归因于缓存。
++
++## 预算暂停续接：最终代码的 Flash A/B
++
++原始报告：reports/mimo-token-pause-flash-ab.json；脚本 scripts/verify_mimo_budget_resume.py。两组先以 1 步预算真实读取 values.json，明确以 max_steps 未完成退出，再增加后续预算并要求继续完成原任务。文件中的数值没有写进用户提示，必须来自实际工具观测；最终必须调用 calculator 并得到 42。
++
++| 策略 | 实际文件读取 | 成功模型请求 | 输入 token | 输出 token | 总 token | 可信快照续接 |
++| --- | ---: | ---: | ---: | ---: | ---: | --- |
++| A 修改前 | 2 | 4 | 5,644 | 158 | 5,802 | 否 |
++| B 最终代码 | 1 | 3 | 4,400 | 159 | 4,559 | 是 |
++
++两组最终均正确，B 总 token 下降 **21.42%**、输入下降 22.04%。B 首个续接请求保留了真实 native 调用、结果和推理字段，不把预算停止文案加入模型历史；两种协议的配对和字节前缀延续还有独立离线回归。
++
++首个续接请求的已观测命中率为 A 1,024 / 1,356（75.52%）、B 1,280 / 1,495（85.62%）。**不能据此宣称整段命中率提高**：整段续接 A 为 87.73%、B 为 83.50%；包含冷启动时 A 又有一次缺失回执。主要可验证收益是避免一次重新读文件和模型往返。HTTP 尝试数两组均为 5，分别包含 1 / 2 次 TLS 失败，失败消费未知。
++
++## Pro 的回退和未完成证据
++
++本轮没有获得稳定的 Pro 双指标收益，不能只展示有利请求。
++
++- reports/mimo-token-pro-final-retry-ab.json 是一次两组都完成两轮的有效对照，但 B 额外读取了规则、checkpoint，并发生一次提前交付后的验收修复。A/B 总 token 为 83,805 / 93,996，**增加 12.16%**；命中率为 73.72% / 70.05%。这份结果保留为真实回退，没有当作成功优化。
++- reports/mimo-token-pro-final-ab.json 中 B 完成两轮且无工具错误，命中率 82.37%；A 连续 TLS 失败，无法据此做有效配对比较。
++- reports/mimo-token-pro-progress-ab.json 中 B 选错 policy_tag 后，被测试工具混淆的错误文案引导去改正确的 cursor，最终超出步骤预算。测试工具后来拆分 cursor / scope / quota 错误，并给两组统一提供初始零状态 checkpoint；不是把这项夹具修正冒充生产优化。
++- reports/mimo-token-pro-protocol-ab.json 在明确完成协议后，A 遇到步骤上限，B 触及 4,096 输出上限。没有为了通过测试再提高生成额度。
++- reports/mimo-token-pro-bounded-ab.json 将复杂目录工作负载的测试步数统一调整为 20（非生产默认值），A 完成两轮，B 首轮真实文件及环境探针通过，但答案是“说明 + JSON 围栏”，未满足严格输出要求，因此没有继续第二轮，也没有把它混入完整任务的性能表。
++- reports/mimo-token-flash-abba.json 和 reports/mimo-token-pro-warm-ab.json 是早期阶段记录，包含恢复成功但被当时“零工具错误”口径标为失败的样本；保留原始标记。后续任务完成、严格格式与无错误执行口径分开记录，恢复动作的 token 不会被删除。
++
++因此当前确认的是 Flash 场景中的重复上下文和暂停续接收益，以及具体调用链缺陷修复。Pro 的随机推理、规则再读取和输出格式仍有明显波动，未证实总体 token 或缓存稳定改善。最终结束协议没有足够的 Pro 完整配对证据，不能承诺其能独立解决这些模型行为。
++
++## 验证和复跑
++
++核心回归 472 项（2 跳过），客户端/运行链 208 项（1 跳过），合计 **677 项通过、3 项跳过、0 失败**；框架自检 **595/595**。源码预算 151 个文件通过，Windows CRLF 规则下 Git 空白检查通过。
++
++测试覆盖：新增目录及无根规则场景的 append-only 原生前缀、变更/删除清除所有旧片段、压缩与续接后的完整有效规则、规划阶段只携带一份完整规则、单次任务正文与独立完整 anchor、两种协议的摘要结果尾部保留、Premium 宿主任务及参数不透传，以及预算暂停不冒充完成、完整原生交换续接、旧客户端历史拒绝和错误/取消清理。
++
++```powershell
++python -m unittest forge.test_token_efficiency forge.test_conversation_prefix forge.test_task_planning -q
++python -m unittest discover -s forge -t . -q
++python -m forge.cli selftest
++python scripts/budget_check.py
++git -c core.whitespace=cr-at-eol diff --check
++
++# 真实 API，使用已有 MiMo 配置；每个命令的 HTTP 尝试都有上限。
++python scripts/verify_mimo_budget_resume.py --live --model mimo-v2.6-flash --request-limit 16 --output reports/pause-repeat.json
++# 目录工作负载需 --baseline-dir 指向本轮备份（见 reports/mimo-token-backup.txt）。
++python scripts/verify_mimo_long_context.py --live --model mimo-v2.6-flash --scoped-rules --baseline-dir <backup> --strategies baseline improved --request-limit 40 --output reports/scoped-repeat.json
++```
++
++Flash 长任务记录在最后的协议提示和暂停检查点改动之前产生；最终代码的预算暂停场景另有真实 API 结果，路由及多种边界由离线实际调用链覆盖。没有把所有阶段的指标混成一次“最终版本完整对照”。
++
++本轮所有诊断和复测合计 267 次 HTTP 尝试、256 次成功响应和 11 次 TLS/URLError 失败；成功回执输入 1,071,386、输出 48,881 token。失败尝试的服务端消费未知，未当作已核对账单。导出的压缩源档案已经逐份校验配对及摘要，临时夹具清理后仍可复核。
++
++日志：reports/mimo-token-core-final.log、reports/mimo-token-runtime-final.log、reports/mimo-token-selftest-final.log。本轮独立补丁 reports/mimo-token.patch，文件清单 reports/mimo-token-files.json，备份位置 reports/mimo-token-backup.txt。它们只包含本轮改动，不包含此前工作区其他修改。

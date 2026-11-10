@@ -7680,7 +7680,8 @@ class ForgeGuiApp:
                     memory = self._work_memory_bridge() if work_memory else None
                     if memory is not None:
                         self._post_ui(self._set_request_status, "检索长期记忆…")
-                        memory_ctx = memory.context_for(text)
+                        # 第四轮：把本轮实际模型传给检索桥 → 预算/门槛/top_k 按画像自动适配。
+                        memory_ctx = memory.context_for(text, model=model)
                         notice = memory.consume_notice()
                         if notice:
                             self._post_ui(self._set_status, notice, "warn")

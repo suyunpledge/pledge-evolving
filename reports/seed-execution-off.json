@@ -1,0 +1,985 @@
+{
+  "model": "doubao-seed-evolving",
+  "scenario": "execution",
+  "thinking": "off",
+  "cases": [
+    {
+      "ok": false,
+      "stopped": "error",
+      "actual": {
+        "total": 51,
+        "version": 7,
+        "turn": 1
+      },
+      "steps": [
+        {
+          "tool": "read_file",
+          "decision": "ok",
+          "args": {
+            "path": "input.json"
+          }
+        },
+        {
+          "tool": "write_file",
+          "decision": "ok",
+          "args": {
+            "path": "result-0.json",
+            "content": "{\"total\":51,\"version\":7,\"turn\":1}"
+          }
+        }
+      ],
+      "plan": {
+        "level": "low",
+        "tasks": [
+          "先使用 read_file 检查 input.json 的实际内容，确认可求和的 items 及其数值，不预设总和。",
+          "基于实际输入计算 items 总和；仅处理 input.json 与 result-0.json，避免修改其他文件。",
+          "使用 write_file 写入 result-0.json，内容须为 JSON 对象，包含 total（实际总和）、version: 7、turn: 1。",
+          "再使用 read_file 读取 result-0.json，验证其为合法 JSON 且字段值满足可观察验收标准；若写入被拒绝则停止并说明，不绕过。"
+        ],
+        "requirements": [],
+        "acceptance": [],
+        "design": [],
+        "risks": []
+      },
+      "text": "[model error] all providers failed: [{'provider': 'seed-live', 'model': 'doubao-seed-evolving', 'status': 'retryable', 'error': \"seed-live: URLError(SSLEOFError(8, '[SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1010)'))\"}, {'provider': 'seed-live', 'model': 'doubao-seed-evolving', 'status': 'retryable', 'error': \"seed-live: URLError(SSLEOFError(8, '[SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1010)'))\"}]",
+      "compactions": 1,
+      "prefix_reused": false,
+      "acceptance": [],
+      "runtime_coverage": {
+        "all_observed": {
+          "requests": 3,
+          "input_tokens": 6656,
+          "cached_tokens": 0,
+          "hit_rate": 0.0
+        },
+        "rebuild": {
+          "requests": 1,
+          "input_tokens": 1583,
+          "cached_tokens": 0,
+          "hit_rate": 0.0
+        },
+        "non_rebuild": {
+          "requests": 2,
+          "input_tokens": 5073,
+          "cached_tokens": 0,
+          "hit_rate": 0.0
+        },
+        "eligible_prefix": {
+          "requests": 0,
+          "input_tokens": 0,
+          "cached_tokens": 0,
+          "excluded_tail_tokens": 0,
+          "hit_rate": null
+        },
+        "unknown_requests": 0,
+        "invalid_requests": 0,
+        "duplicate_observations": 0,
+        "denominator": "observed input tokens; eligible_prefix excludes declared structural tail"
+      },
+      "totals": {
+        "attempts": 5,
+        "successful_requests": 3,
+        "prompt_tokens": 6656,
+        "completion_tokens": 221,
+        "cached_tokens": 0,
+        "reasoning_tokens": 0,
+        "seconds": 32.779,
+        "coverage": {
+          "all_observed": {
+            "requests": 3,
+            "input_tokens": 6656,
+            "cached_tokens": 0,
+            "hit_rate": 0.0
+          },
+          "rebuild": {
+            "requests": 0,
+            "input_tokens": 0,
+            "cached_tokens": 0,
+            "hit_rate": null
+          },
+          "non_rebuild": {
+            "requests": 3,
+            "input_tokens": 6656,
+            "cached_tokens": 0,
+            "hit_rate": 0.0
+          },
+          "eligible_prefix": {
+            "requests": 0,
+            "input_tokens": 0,
+            "cached_tokens": 0,
+            "excluded_tail_tokens": 0,
+            "hit_rate": null
+          },
+          "unknown_requests": 2,
+          "invalid_requests": 0,
+          "duplicate_observations": 0,
+          "denominator": "observed input tokens; eligible_prefix excludes declared structural tail"
+        }
+      }
+    }
+  ],
+  "denied": [
+    {
+      "ok": true,
+      "stopped": "final",
+      "actual": null,
+      "steps": [
+        {
+          "tool": "read_file",
+          "decision": "ok",
+          "args": {
+            "path": "input.json"
+          }
+        },
+        {
+          "tool": "write_file",
+          "decision": "deny",
+          "args": {
+            "path": "result-0.json",
+            "content": "{\"total\":51,\"version\":7,\"turn\":1}"
+          }
+        }
+      ],
+      "plan": null,
+      "text": "写入被策略拒绝（write_file 被当前权限规则或工作区边界禁止），因此未创建或验证 result-0.json；input.json 中 items 之和为 51。",
+      "compactions": 0,
+      "prefix_reused": false,
+      "acceptance": [],
+      "runtime_coverage": {
+        "all_observed": {
+          "requests": 3,
+          "input_tokens": 3446,
+          "cached_tokens": 0,
+          "hit_rate": 0.0
+        },
+        "rebuild": {
+          "requests": 0,
+          "input_tokens": 0,
+          "cached_tokens": 0,
+          "hit_rate": null
+        },
+        "non_rebuild": {
+          "requests": 3,
+          "input_tokens": 3446,
+          "cached_tokens": 0,
+          "hit_rate": 0.0
+        },
+        "eligible_prefix": {
+          "requests": 0,
+          "input_tokens": 0,
+          "cached_tokens": 0,
+          "excluded_tail_tokens": 0,
+          "hit_rate": null
+        },
+        "unknown_requests": 0,
+        "invalid_requests": 0,
+        "duplicate_observations": 0,
+        "denominator": "observed input tokens; eligible_prefix excludes declared structural tail"
+      },
+      "totals": {
+        "attempts": 3,
+        "successful_requests": 3,
+        "prompt_tokens": 3446,
+        "completion_tokens": 134,
+        "cached_tokens": 0,
+        "reasoning_tokens": 0,
+        "seconds": 47.25,
+        "coverage": {
+          "all_observed": {
+            "requests": 3,
+            "input_tokens": 3446,
+            "cached_tokens": 0,
+            "hit_rate": 0.0
+          },
+          "rebuild": {
+            "requests": 0,
+            "input_tokens": 0,
+            "cached_tokens": 0,
+            "hit_rate": null
+          },
+          "non_rebuild": {
+            "requests": 3,
+            "input_tokens": 3446,
+            "cached_tokens": 0,
+            "hit_rate": 0.0
+          },
+          "eligible_prefix": {
+            "requests": 0,
+            "input_tokens": 0,
+            "cached_tokens": 0,
+            "excluded_tail_tokens": 0,
+            "hit_rate": null
+          },
+          "unknown_requests": 0,
+          "invalid_requests": 0,
+          "duplicate_observations": 0,
+          "denominator": "observed input tokens; eligible_prefix excludes declared structural tail"
+        }
+      }
+    }
+  ],
+  "requests": [
+    {
+      "stage": "planning-low/deny-False/compact-True/turn-1",
+      "model": "doubao-seed-evolving",
+      "url": "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+      "parameters": {
+        "thinking": {
+          "type": "disabled"
+        },
+        "temperature": 0.7,
+        "max_tokens": 2048
+      },
+      "message_count": 3,
+      "common_prefix_messages": 0,
+      "messages_digest": "94466a4cfdfc6a487711110bb5b499c4956947b1fb3cc9bad8b00c74c9f70e04",
+      "tools_digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "toolset_digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "payload_digest": "445ac3c0223ca77fa3f8e96257f8e63c32f2b279e748b15e7b6d5edaa978198b",
+      "message_chars": 15055,
+      "assistant_reasoning_fields": 0,
+      "tools": [],
+      "status": 200,
+      "raw_usage": {
+        "completion_tokens": 128,
+        "prompt_tokens": 3430,
+        "total_tokens": 3558,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0
+        }
+      },
+      "finish_reason": "stop",
+      "response_id": "02179412332017679d2e7c3cf49a9962db0730ac2d5dd136f0b97",
+      "response_model": "doubao-seed-evolving",
+      "reasoning_chars": 0,
+      "tool_calls": null,
+      "text": "{\"tasks\":[\"先使用 read_file 检查 input.json 的实际内容，确认可求和的 items 及其数值，不预设总和。\",\"基于实际输入计算 items 总和；仅处理 input.json 与 result-0.json，避免修改其他文件。\",\"使用 write_file 写入 result-0.json，内容须为 JSON 对象，包含 total（实际总和）、version: 7、turn: 1。\",\"再使用 read_file 读取 result-0.json，验证其为合法 JSON 且字段值满足可观察验收标准；若写入被拒绝则停止并说明，不绕过。\"]}",
+      "seconds": 11.125,
+      "response_message_fields": [
+        "content",
+        "role"
+      ],
+      "encrypted_content_chars": 0,
+      "encrypted_replay_matches": 0,
+      "usage": {
+        "prompt_tokens": 3430,
+        "completion_tokens": 128,
+        "model": "doubao-seed-evolving",
+        "provider": "seed-live",
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 0,
+        "cache_observed": true
+      },
+      "adaptation": {
+        "vendor": "volcengine",
+        "vendor_label": "火山方舟（豆包）",
+        "actions": [
+          "依赖厂商自动缓存（命中 1×），无需标记",
+          "火山方舟（豆包） 已发送关闭思考请求（thinking.type=disabled）"
+        ],
+        "notes": [
+          "缓存命中已实证但折扣未公布，金额按原价保守估算",
+          "回放可保留 encrypted_content（三变体回放探针全 200）",
+          "该模型无目录价，金额按单位价折算，仅用于比较比例，不代表真实账单"
+        ],
+        "cache_control": false,
+        "breakpoints": 1,
+        "ttl": "managed",
+        "est_tokens": 5865,
+        "est_cost": 0.01173,
+        "baseline_cost": 0.01173,
+        "saving": 0.0,
+        "saving_pct": 0.0,
+        "cliff_action": "pass",
+        "reasoning_budget": null,
+        "defer": false,
+        "cache_engages": true,
+        "route_capabilities": {},
+        "request_budget": {},
+        "adapter_id": "doubao.seed-evolving",
+        "model_kind_id": "doubao.seed-evolving",
+        "model_family_id": "doubao.seed",
+        "manufacturer_id": "volcengine",
+        "behavior_fingerprint": "9c7f8429976ba0d0",
+        "model_match_source": "model_id",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type",
+          "opaque_assistant_replay",
+          "native_tool_replay"
+        ],
+        "reasoning_shaped": true,
+        "fingerprint": "5c5135583152a149",
+        "execution": {},
+        "estimate_scope": "reuse_window",
+        "includes_output_cost": false,
+        "price_known": false,
+        "model": "doubao-seed-evolving"
+      }
+    },
+    {
+      "stage": "planning-low/deny-False/compact-True/turn-1",
+      "model": "doubao-seed-evolving",
+      "url": "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+      "parameters": {
+        "thinking": {
+          "type": "disabled"
+        },
+        "temperature": 0.7,
+        "max_tokens": 4096
+      },
+      "message_count": 4,
+      "common_prefix_messages": 0,
+      "messages_digest": "085ddec2ca2c6ab078fc2d8f5d5f852cdd53dcf543f0a165ccc823add43a6c3f",
+      "tools_digest": "85567c0021799cfb8e426577b06e3b609888283ae778022a553103cd3b754604",
+      "toolset_digest": "85567c0021799cfb8e426577b06e3b609888283ae778022a553103cd3b754604",
+      "payload_digest": "c3979cae5cc24b37400bdd044d3b2e7d13d489e79c14aa652f80a3786915b50a",
+      "message_chars": 3610,
+      "assistant_reasoning_fields": 0,
+      "tools": [
+        "read_file",
+        "write_file"
+      ],
+      "status": 200,
+      "raw_usage": {
+        "completion_tokens": 33,
+        "prompt_tokens": 1583,
+        "total_tokens": 1616,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0
+        }
+      },
+      "finish_reason": "tool_calls",
+      "response_id": "02179412332985796188f7c040816dd3fe5310871d7143ac3ea1c",
+      "response_model": "doubao-seed-evolving",
+      "reasoning_chars": 0,
+      "tool_calls": [
+        {
+          "function": {
+            "arguments": "{\"path\": \"input.json\"}",
+            "name": "read_file"
+          },
+          "id": "call_vkd2jw6476qxa77gx4hw43ox",
+          "type": "function"
+        }
+      ],
+      "text": "",
+      "seconds": 7.14,
+      "response_message_fields": [
+        "content",
+        "role",
+        "tool_calls"
+      ],
+      "encrypted_content_chars": 0,
+      "encrypted_replay_matches": 0,
+      "usage": {
+        "prompt_tokens": 1583,
+        "completion_tokens": 33,
+        "model": "doubao-seed-evolving",
+        "provider": "seed-live",
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 0,
+        "cache_observed": true
+      },
+      "adaptation": {
+        "vendor": "volcengine",
+        "vendor_label": "火山方舟（豆包）",
+        "actions": [
+          "依赖厂商自动缓存（命中 1×），无需标记",
+          "火山方舟（豆包） 已发送关闭思考请求（thinking.type=disabled）"
+        ],
+        "notes": [
+          "缓存命中已实证但折扣未公布，金额按原价保守估算",
+          "回放可保留 encrypted_content（三变体回放探针全 200）",
+          "该模型无目录价，金额按单位价折算，仅用于比较比例，不代表真实账单"
+        ],
+        "cache_control": false,
+        "breakpoints": 1,
+        "ttl": "managed",
+        "est_tokens": 1744,
+        "est_cost": 0.003488,
+        "baseline_cost": 0.003488,
+        "saving": 0.0,
+        "saving_pct": 0.0,
+        "cliff_action": "pass",
+        "reasoning_budget": null,
+        "defer": false,
+        "cache_engages": true,
+        "route_capabilities": {},
+        "request_budget": {},
+        "adapter_id": "doubao.seed-evolving",
+        "model_kind_id": "doubao.seed-evolving",
+        "model_family_id": "doubao.seed",
+        "manufacturer_id": "volcengine",
+        "behavior_fingerprint": "9c7f8429976ba0d0",
+        "model_match_source": "model_id",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type",
+          "opaque_assistant_replay",
+          "native_tool_replay"
+        ],
+        "reasoning_shaped": true,
+        "fingerprint": "7f0767ca157607fa",
+        "execution": {},
+        "estimate_scope": "reuse_window",
+        "includes_output_cost": false,
+        "price_known": false,
+        "model": "doubao-seed-evolving"
+      }
+    },
+    {
+      "stage": "planning-low/deny-False/compact-True/turn-1",
+      "model": "doubao-seed-evolving",
+      "url": "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+      "parameters": {
+        "thinking": {
+          "type": "disabled"
+        },
+        "temperature": 0.7,
+        "max_tokens": 4096
+      },
+      "message_count": 6,
+      "common_prefix_messages": 4,
+      "messages_digest": "9975c6487abca696fd790c6429f02a94fa275356ec945858869360e9fce678bd",
+      "tools_digest": "85567c0021799cfb8e426577b06e3b609888283ae778022a553103cd3b754604",
+      "toolset_digest": "85567c0021799cfb8e426577b06e3b609888283ae778022a553103cd3b754604",
+      "payload_digest": "0f9f8fffd861e3dd8bf4e36ed2096c5015d8db6ff2313905e873aab52b1328be",
+      "message_chars": 3918,
+      "assistant_reasoning_fields": 0,
+      "tools": [
+        "read_file",
+        "write_file"
+      ],
+      "status": 200,
+      "raw_usage": {
+        "completion_tokens": 60,
+        "prompt_tokens": 1643,
+        "total_tokens": 1703,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0
+        }
+      },
+      "finish_reason": "tool_calls",
+      "response_id": "021794123336399e9cca6f75bf938e3a6ba47ab928f3a20d3c568",
+      "response_model": "doubao-seed-evolving",
+      "reasoning_chars": 0,
+      "tool_calls": [
+        {
+          "function": {
+            "arguments": "{\"path\": \"result-0.json\", \"content\": \"{\\\"total\\\":51,\\\"version\\\":7,\\\"turn\\\":1}\"}",
+            "name": "write_file"
+          },
+          "id": "call_zmpo3taqaabqssmo73w0i0rs",
+          "type": "function"
+        }
+      ],
+      "text": "",
+      "seconds": 4.484,
+      "response_message_fields": [
+        "content",
+        "role",
+        "tool_calls"
+      ],
+      "encrypted_content_chars": 0,
+      "encrypted_replay_matches": 0,
+      "usage": {
+        "prompt_tokens": 1643,
+        "completion_tokens": 60,
+        "model": "doubao-seed-evolving",
+        "provider": "seed-live",
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 0,
+        "cache_observed": true
+      },
+      "adaptation": {
+        "vendor": "volcengine",
+        "vendor_label": "火山方舟（豆包）",
+        "actions": [
+          "依赖厂商自动缓存（命中 1×），无需标记",
+          "火山方舟（豆包） 已发送关闭思考请求（thinking.type=disabled）"
+        ],
+        "notes": [
+          "缓存命中已实证但折扣未公布，金额按原价保守估算",
+          "回放可保留 encrypted_content（三变体回放探针全 200）",
+          "该模型无目录价，金额按单位价折算，仅用于比较比例，不代表真实账单"
+        ],
+        "cache_control": false,
+        "breakpoints": 1,
+        "ttl": "managed",
+        "est_tokens": 1758,
+        "est_cost": 0.003516,
+        "baseline_cost": 0.003516,
+        "saving": 0.0,
+        "saving_pct": 0.0,
+        "cliff_action": "pass",
+        "reasoning_budget": null,
+        "defer": false,
+        "cache_engages": true,
+        "route_capabilities": {},
+        "request_budget": {},
+        "adapter_id": "doubao.seed-evolving",
+        "model_kind_id": "doubao.seed-evolving",
+        "model_family_id": "doubao.seed",
+        "manufacturer_id": "volcengine",
+        "behavior_fingerprint": "9c7f8429976ba0d0",
+        "model_match_source": "model_id",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type",
+          "opaque_assistant_replay",
+          "native_tool_replay"
+        ],
+        "reasoning_shaped": true,
+        "fingerprint": "7f0767ca157607fa",
+        "execution": {},
+        "estimate_scope": "reuse_window",
+        "includes_output_cost": false,
+        "price_known": false,
+        "model": "doubao-seed-evolving"
+      }
+    },
+    {
+      "stage": "planning-low/deny-False/compact-True/turn-1",
+      "model": "doubao-seed-evolving",
+      "url": "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+      "parameters": {
+        "thinking": {
+          "type": "disabled"
+        },
+        "temperature": 0.7,
+        "max_tokens": 4096
+      },
+      "message_count": 8,
+      "common_prefix_messages": 6,
+      "messages_digest": "70b144f7531e13d5d1dc257593376ed44566cf7db356ab2df29182d39790c755",
+      "tools_digest": "85567c0021799cfb8e426577b06e3b609888283ae778022a553103cd3b754604",
+      "toolset_digest": "85567c0021799cfb8e426577b06e3b609888283ae778022a553103cd3b754604",
+      "payload_digest": "708c19a6f84bdf1ba7807b10d725d25666fe0d3523f72ef730d38194de96f92f",
+      "message_chars": 4371,
+      "assistant_reasoning_fields": 0,
+      "tools": [
+        "read_file",
+        "write_file"
+      ],
+      "error_type": "URLError",
+      "status": null,
+      "seconds": 5.015
+    },
+    {
+      "stage": "planning-low/deny-False/compact-True/turn-1",
+      "model": "doubao-seed-evolving",
+      "url": "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+      "parameters": {
+        "thinking": {
+          "type": "disabled"
+        },
+        "temperature": 0.7,
+        "max_tokens": 4096
+      },
+      "message_count": 8,
+      "common_prefix_messages": 8,
+      "messages_digest": "70b144f7531e13d5d1dc257593376ed44566cf7db356ab2df29182d39790c755",
+      "tools_digest": "85567c0021799cfb8e426577b06e3b609888283ae778022a553103cd3b754604",
+      "toolset_digest": "85567c0021799cfb8e426577b06e3b609888283ae778022a553103cd3b754604",
+      "payload_digest": "708c19a6f84bdf1ba7807b10d725d25666fe0d3523f72ef730d38194de96f92f",
+      "message_chars": 4371,
+      "assistant_reasoning_fields": 0,
+      "tools": [
+        "read_file",
+        "write_file"
+      ],
+      "error_type": "URLError",
+      "status": null,
+      "seconds": 5.015
+    },
+    {
+      "stage": "planning-none/deny-True/compact-False/turn-1",
+      "model": "doubao-seed-evolving",
+      "url": "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+      "parameters": {
+        "thinking": {
+          "type": "disabled"
+        },
+        "temperature": 0.7,
+        "max_tokens": 4096
+      },
+      "message_count": 3,
+      "common_prefix_messages": 1,
+      "messages_digest": "67de7f1cde8bb13db6cf664280c8dd658fc1963e89ef4a5c6cee8353cbc8cb26",
+      "tools_digest": "85567c0021799cfb8e426577b06e3b609888283ae778022a553103cd3b754604",
+      "toolset_digest": "85567c0021799cfb8e426577b06e3b609888283ae778022a553103cd3b754604",
+      "payload_digest": "7b81c8a9fc24c5c61ea72872aa2faa58d3b0afe88cb04f15f9b7818cb671c6fa",
+      "message_chars": 1823,
+      "assistant_reasoning_fields": 0,
+      "tools": [
+        "read_file",
+        "write_file"
+      ],
+      "status": 200,
+      "raw_usage": {
+        "completion_tokens": 33,
+        "prompt_tokens": 1075,
+        "total_tokens": 1108,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0
+        }
+      },
+      "finish_reason": "tool_calls",
+      "response_id": "02179412335724068a4d5226e4976fceebdcfa7e5c0e722e47f60",
+      "response_model": "doubao-seed-evolving",
+      "reasoning_chars": 0,
+      "tool_calls": [
+        {
+          "function": {
+            "arguments": "{\"path\": \"input.json\"}",
+            "name": "read_file"
+          },
+          "id": "call_6uk8iwkziv26bw544ujmxuxa",
+          "type": "function"
+        }
+      ],
+      "text": "",
+      "seconds": 9.141,
+      "response_message_fields": [
+        "content",
+        "role",
+        "tool_calls"
+      ],
+      "encrypted_content_chars": 0,
+      "encrypted_replay_matches": 0,
+      "usage": {
+        "prompt_tokens": 1075,
+        "completion_tokens": 33,
+        "model": "doubao-seed-evolving",
+        "provider": "seed-live",
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 0,
+        "cache_observed": true
+      },
+      "adaptation": {
+        "vendor": "volcengine",
+        "vendor_label": "火山方舟（豆包）",
+        "actions": [
+          "依赖厂商自动缓存（命中 1×），无需标记",
+          "火山方舟（豆包） 已发送关闭思考请求（thinking.type=disabled）"
+        ],
+        "notes": [
+          "缓存命中已实证但折扣未公布，金额按原价保守估算",
+          "回放可保留 encrypted_content（三变体回放探针全 200）",
+          "该模型无目录价，金额按单位价折算，仅用于比较比例，不代表真实账单"
+        ],
+        "cache_control": false,
+        "breakpoints": 1,
+        "ttl": "managed",
+        "est_tokens": 1094,
+        "est_cost": 0.002188,
+        "baseline_cost": 0.002188,
+        "saving": 0.0,
+        "saving_pct": 0.0,
+        "cliff_action": "pass",
+        "reasoning_budget": null,
+        "defer": false,
+        "cache_engages": true,
+        "route_capabilities": {},
+        "request_budget": {},
+        "adapter_id": "doubao.seed-evolving",
+        "model_kind_id": "doubao.seed-evolving",
+        "model_family_id": "doubao.seed",
+        "manufacturer_id": "volcengine",
+        "behavior_fingerprint": "9c7f8429976ba0d0",
+        "model_match_source": "model_id",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type",
+          "opaque_assistant_replay",
+          "native_tool_replay"
+        ],
+        "reasoning_shaped": true,
+        "fingerprint": "7f0767ca157607fa",
+        "execution": {},
+        "estimate_scope": "reuse_window",
+        "includes_output_cost": false,
+        "price_known": false,
+        "model": "doubao-seed-evolving"
+      }
+    },
+    {
+      "stage": "planning-none/deny-True/compact-False/turn-1",
+      "model": "doubao-seed-evolving",
+      "url": "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+      "parameters": {
+        "thinking": {
+          "type": "disabled"
+        },
+        "temperature": 0.7,
+        "max_tokens": 4096
+      },
+      "message_count": 5,
+      "common_prefix_messages": 3,
+      "messages_digest": "d305cdb4d935f709fd06f3781290e498f91a30d4048ef5436fd6b4e40410c439",
+      "tools_digest": "85567c0021799cfb8e426577b06e3b609888283ae778022a553103cd3b754604",
+      "toolset_digest": "85567c0021799cfb8e426577b06e3b609888283ae778022a553103cd3b754604",
+      "payload_digest": "10873b2d9f840de7c7c33714fcbc559a921dc9eb5b3209d19bb7079e1c9fea42",
+      "message_chars": 2131,
+      "assistant_reasoning_fields": 0,
+      "tools": [
+        "read_file",
+        "write_file"
+      ],
+      "status": 200,
+      "raw_usage": {
+        "completion_tokens": 60,
+        "prompt_tokens": 1135,
+        "total_tokens": 1195,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0
+        }
+      },
+      "finish_reason": "tool_calls",
+      "response_id": "0217941233659387dd244b6caaa2409295dae72fd71f6798816a6",
+      "response_model": "doubao-seed-evolving",
+      "reasoning_chars": 0,
+      "tool_calls": [
+        {
+          "function": {
+            "arguments": "{\"path\": \"result-0.json\", \"content\": \"{\\\"total\\\":51,\\\"version\\\":7,\\\"turn\\\":1}\"}",
+            "name": "write_file"
+          },
+          "id": "call_ej8uqjms10vsgf5m1je9ac14",
+          "type": "function"
+        }
+      ],
+      "text": "",
+      "seconds": 31.297,
+      "response_message_fields": [
+        "content",
+        "role",
+        "tool_calls"
+      ],
+      "encrypted_content_chars": 0,
+      "encrypted_replay_matches": 0,
+      "usage": {
+        "prompt_tokens": 1135,
+        "completion_tokens": 60,
+        "model": "doubao-seed-evolving",
+        "provider": "seed-live",
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 0,
+        "cache_observed": true
+      },
+      "adaptation": {
+        "vendor": "volcengine",
+        "vendor_label": "火山方舟（豆包）",
+        "actions": [
+          "依赖厂商自动缓存（命中 1×），无需标记",
+          "火山方舟（豆包） 已发送关闭思考请求（thinking.type=disabled）"
+        ],
+        "notes": [
+          "缓存命中已实证但折扣未公布，金额按原价保守估算",
+          "回放可保留 encrypted_content（三变体回放探针全 200）",
+          "该模型无目录价，金额按单位价折算，仅用于比较比例，不代表真实账单"
+        ],
+        "cache_control": false,
+        "breakpoints": 1,
+        "ttl": "managed",
+        "est_tokens": 1108,
+        "est_cost": 0.002216,
+        "baseline_cost": 0.002216,
+        "saving": 0.0,
+        "saving_pct": 0.0,
+        "cliff_action": "pass",
+        "reasoning_budget": null,
+        "defer": false,
+        "cache_engages": true,
+        "route_capabilities": {},
+        "request_budget": {},
+        "adapter_id": "doubao.seed-evolving",
+        "model_kind_id": "doubao.seed-evolving",
+        "model_family_id": "doubao.seed",
+        "manufacturer_id": "volcengine",
+        "behavior_fingerprint": "9c7f8429976ba0d0",
+        "model_match_source": "model_id",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type",
+          "opaque_assistant_replay",
+          "native_tool_replay"
+        ],
+        "reasoning_shaped": true,
+        "fingerprint": "7f0767ca157607fa",
+        "execution": {},
+        "estimate_scope": "reuse_window",
+        "includes_output_cost": false,
+        "price_known": false,
+        "model": "doubao-seed-evolving"
+      }
+    },
+    {
+      "stage": "planning-none/deny-True/compact-False/turn-1",
+      "model": "doubao-seed-evolving",
+      "url": "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+      "parameters": {
+        "thinking": {
+          "type": "disabled"
+        },
+        "temperature": 0.7,
+        "max_tokens": 4096
+      },
+      "message_count": 7,
+      "common_prefix_messages": 5,
+      "messages_digest": "dac78112b58a7b3f591b711b2812cbeb57a4851746309968691d2ea4c79392f4",
+      "tools_digest": "85567c0021799cfb8e426577b06e3b609888283ae778022a553103cd3b754604",
+      "toolset_digest": "85567c0021799cfb8e426577b06e3b609888283ae778022a553103cd3b754604",
+      "payload_digest": "a71204ddaa493d897f58f3ed61dce16b672fa6d748c897536efa8629d538c087",
+      "message_chars": 2625,
+      "assistant_reasoning_fields": 0,
+      "tools": [
+        "read_file",
+        "write_file"
+      ],
+      "status": 200,
+      "raw_usage": {
+        "completion_tokens": 41,
+        "prompt_tokens": 1236,
+        "total_tokens": 1277,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0
+        }
+      },
+      "finish_reason": "stop",
+      "response_id": "0217941233951857e51cc0b12bcea53e8635276e1c9d87663c5ff",
+      "response_model": "doubao-seed-evolving",
+      "reasoning_chars": 0,
+      "tool_calls": null,
+      "text": "写入被策略拒绝（write_file 被当前权限规则或工作区边界禁止），因此未创建或验证 result-0.json；input.json 中 items 之和为 51。",
+      "seconds": 6.812,
+      "response_message_fields": [
+        "content",
+        "role"
+      ],
+      "encrypted_content_chars": 0,
+      "encrypted_replay_matches": 0,
+      "usage": {
+        "prompt_tokens": 1236,
+        "completion_tokens": 41,
+        "model": "doubao-seed-evolving",
+        "provider": "seed-live",
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 0,
+        "cache_observed": true
+      },
+      "adaptation": {
+        "vendor": "volcengine",
+        "vendor_label": "火山方舟（豆包）",
+        "actions": [
+          "依赖厂商自动缓存（命中 1×），无需标记",
+          "火山方舟（豆包） 已发送关闭思考请求（thinking.type=disabled）"
+        ],
+        "notes": [
+          "缓存命中已实证但折扣未公布，金额按原价保守估算",
+          "回放可保留 encrypted_content（三变体回放探针全 200）",
+          "该模型无目录价，金额按单位价折算，仅用于比较比例，不代表真实账单"
+        ],
+        "cache_control": false,
+        "breakpoints": 1,
+        "ttl": "managed",
+        "est_tokens": 1168,
+        "est_cost": 0.002336,
+        "baseline_cost": 0.002336,
+        "saving": 0.0,
+        "saving_pct": 0.0,
+        "cliff_action": "pass",
+        "reasoning_budget": null,
+        "defer": false,
+        "cache_engages": true,
+        "route_capabilities": {},
+        "request_budget": {},
+        "adapter_id": "doubao.seed-evolving",
+        "model_kind_id": "doubao.seed-evolving",
+        "model_family_id": "doubao.seed",
+        "manufacturer_id": "volcengine",
+        "behavior_fingerprint": "9c7f8429976ba0d0",
+        "model_match_source": "model_id",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type",
+          "opaque_assistant_replay",
+          "native_tool_replay"
+        ],
+        "reasoning_shaped": true,
+        "fingerprint": "7f0767ca157607fa",
+        "execution": {},
+        "estimate_scope": "reuse_window",
+        "includes_output_cost": false,
+        "price_known": false,
+        "model": "doubao-seed-evolving"
+      }
+    }
+  ],
+  "totals": {
+    "attempts": 8,
+    "successful_requests": 6,
+    "prompt_tokens": 10102,
+    "completion_tokens": 355,
+    "cached_tokens": 0,
+    "reasoning_tokens": 0,
+    "seconds": 80.029,
+    "coverage": {
+      "all_observed": {
+        "requests": 6,
+        "input_tokens": 10102,
+        "cached_tokens": 0,
+        "hit_rate": 0.0
+      },
+      "rebuild": {
+        "requests": 0,
+        "input_tokens": 0,
+        "cached_tokens": 0,
+        "hit_rate": null
+      },
+      "non_rebuild": {
+        "requests": 6,
+        "input_tokens": 10102,
+        "cached_tokens": 0,
+        "hit_rate": 0.0
+      },
+      "eligible_prefix": {
+        "requests": 0,
+        "input_tokens": 0,
+        "cached_tokens": 0,
+        "excluded_tail_tokens": 0,
+        "hit_rate": null
+      },
+      "unknown_requests": 2,
+      "invalid_requests": 0,
+      "duplicate_observations": 0,
+      "denominator": "observed input tokens; eligible_prefix excludes declared structural tail"
+    }
+  },
+  "ok": false
+}

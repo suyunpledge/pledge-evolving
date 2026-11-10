@@ -1,0 +1,721 @@
+--- a/forge/adapters.py
++++ b/forge/adapters.py
+@@ -216,7 +216,7 @@
+                            profile.model_kind_id or profile.id + ".default")
+ 
+     # -- overridable ------------------------------------------------------
+-    def shape_request(self, payload: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
++    def shape_request(self, payload: dict[str, Any], *, wire: str = '') -> tuple[dict[str, Any], list[str]]:
+         """厂商请求兼容约束；在缓存指纹计算前执行，不修改调用方对象。"""
+         return payload, []
+ 
+@@ -551,20 +551,26 @@
+ 
+     vendor_id = "mimo"
+ 
+-    def shape_request(self, payload: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
++    def shape_request(self, payload: dict[str, Any], *, wire: str = 'openai') -> tuple[dict[str, Any], list[str]]:
+         # 只约束已核实的 2.6 家族；模型别名通过画像绑定同样生效。
+         if self.profile.model_family_id != 'mimo.v2.6':
+             return payload, []
+         out = dict(payload)
+         actions = []
+         choice = out.get('tool_choice')
+-        if choice is not None and choice != 'auto':
++        auto_choice = {'type': 'auto'} if wire == 'anthropic' else 'auto'
++        if (wire == 'anthropic' and isinstance(choice, dict) and choice.get('type') == 'auto'
++                and not set(choice) - {'type', 'disable_parallel_tool_use'}
++                and ('disable_parallel_tool_use' not in choice or type(choice['disable_parallel_tool_use']) is bool)):
++            # MiMo 原生 Messages 允许 auto 同时限制并行，不能丢弃调用方的串行约束。
++            auto_choice = dict(choice)
++        if choice is not None and choice != auto_choice:
+             # 官方说明非 auto 被后端丢弃；不可默默把 none/required/指定工具降级。
+             raise ValueError('MiMo v2.6 only supports tool_choice=auto; '
+                              'none, required and forced functions cannot be guaranteed')
+         # 默认与显式 enabled/auto 统一到同一请求形状，避免本地缓存命名空间碎片。
+         if out.get('tools'):
+-            out['tool_choice'] = 'auto'
++            out['tool_choice'] = auto_choice
+         if 'thinking' not in out:
+             out['thinking'] = {'type': 'enabled'}
+         thinking = out.get('thinking')
+--- a/forge/model.py
++++ b/forge/model.py
+@@ -152,10 +152,14 @@
+     model_kind_ids: dict[str, str] = field(default_factory=dict)
+     route_capabilities: dict[str, Any] = field(default_factory=dict)
+     model_capabilities: dict[str, dict[str, Any]] = field(default_factory=dict)
++    # 显式厂商推理默认值；auto 沿用厂商默认，不能混同 Agent 的沉思扩展。
++    reasoning_mode: str = "auto"
+     _credential: Any = field(default=None, repr=False, compare=False)
+     _secret_scope: Any = field(default=None, init=False, repr=False, compare=False)
+ 
+     def __post_init__(self):
++        if self.reasoning_mode not in ('auto', 'on', 'off'):
++            raise BadRequest('reasoningMode must be auto, on or off')
+         from .route_capabilities import validate_capabilities
+         try:
+             self.route_capabilities = validate_capabilities(self.route_capabilities)
+@@ -349,6 +353,14 @@
+     capabilities = provider.capabilities_for_model(model)
+     payload = copy.deepcopy(payload)
+     sampling.strip_extra_params(payload, profile.canonical_model_id or model, provider.wire)
++    reasoning_default = None
++    if provider.reasoning_mode != 'auto':
++        if profile.model_family_id != 'mimo.v2.6':
++            raise ValueError('reasoningMode on/off is currently verified only for MiMo v2.6')
++        explicit = any(key in payload for key in ('thinking', 'enable_thinking', 'reasoning_effort', 'thinking_budget'))
++        if not explicit:
++            payload['thinking'] = {'type': 'enabled' if provider.reasoning_mode == 'on' else 'disabled'}
++        reasoning_default = {'mode': provider.reasoning_mode, 'source': 'request' if explicit else 'provider'}
+     if "reasoning_effort" in payload and "thinking_budget" in payload:
+         raise ValueError("reasoning_effort and thinking_budget cannot be combined")
+     if (provider.adapt and profile.min_output_tokens
+@@ -370,6 +382,8 @@
+         max_defer_seconds=options.get("max_defer_seconds", provider.max_defer_seconds),
+         batch=options.get("batch", False), batch_submission=options.get("batch_submission", False),
+         when=options.get("when"))
++    if reasoning_default is not None:
++        execution['reasoning_default'] = reasoning_default
+     if not provider.adapt:
+         from .route_capabilities import validate_request
+         try:
+@@ -393,7 +407,7 @@
+     # vendor dialect. Shape after execution budgets, before cache fingerprinting.
+     payload, reasoning_actions = shape_reasoning(payload, profile)
+     adapter = adapter_for(profile)
+-    payload, compatibility_actions = adapter.shape_request(payload)
++    payload, compatibility_actions = adapter.shape_request(payload, wire=provider.wire)
+     reasoning_actions.extend(compatibility_actions)
+     from .route_capabilities import validate_request
+     try:
+@@ -791,7 +805,8 @@
+                 expected_calls=int(conf.get("expectedCalls", 2) or 2),
+                 call_gap_seconds=float(conf.get("callGapSeconds", 60) or 60),
+                 adapt=bool(conf.get("adapt", True)),
+-                think_budget=conf.get("thinkBudget"), flex=bool(conf.get("flex", False)),
++                think_budget=conf.get("thinkBudget"), reasoning_mode=conf.get("reasoningMode", "auto"),
++                flex=bool(conf.get("flex", False)),
+                 defer=bool(conf.get("defer", False)),
+                 max_defer_seconds=float(conf.get("maxDeferSeconds", 0) or 0),
+             ))
+--- a/forge/gateway.py
++++ b/forge/gateway.py
+@@ -268,6 +268,7 @@
+             expected_calls=int(conf.get("expectedCalls", 2)),
+             call_gap_seconds=float(conf.get("callGapSeconds", 60)),
+             adapt=bool(conf.get("adapt", True)), think_budget=conf.get("thinkBudget"),
++            reasoning_mode=conf.get("reasoningMode", "auto"),
+             flex=bool(conf.get("flex", False)), defer=bool(conf.get("defer", False)),
+             max_defer_seconds=float(conf.get("maxDeferSeconds", 0)))
+         from . import sampling
+--- a/forge/config.py
++++ b/forge/config.py
+@@ -228,7 +228,7 @@
+         "primary", "fallback", "moa", "moaModels", "routing", "tiers",
+         "small", "premium", "strategy", "wire", "baseURL", "apiKey",
+         "model", "smallModel", "mode", "rpm", "models", "headers",
+-        "temperature", "vendor", "cacheControl", "service",
++        "temperature", "vendor", "cacheControl", "service", "reasoningMode",
+     })
+ 
+     def _upsert(self, row: Row, insert: bool) -> None:
+--- a/forge/loop.py
++++ b/forge/loop.py
+@@ -818,6 +818,7 @@
+                     route = {"provider": name, "model": model, "endpoint": provider.base_url,
+                              "wire": provider.wire, "capabilities": provider.capabilities_for_model(model),
+                              "identity": provider.profile_for_model(model).behavior_fingerprint,
++                             "reasoning_mode": provider.reasoning_mode,
+                              "account": provider._credential._account_fingerprint}
+             return {"budget": self._request_context_budget(messages, tools),
+                     "limit": self._effective_budget(), "run": self._run_id,
+@@ -1206,11 +1207,13 @@
+         self._last_head_digest = head_digest
+         self._refresh_project_rules(messages)
+         saved = self._conversation_prefix.candidate(previous, self._conversation_guard_start)
++        reused = None
+         if saved is not None:
+             targets = list(dict.fromkeys([*self._rule_targets, *saved['targets']]))[:MAX_TARGETS]
+             enabled = self.project_rules_enabled and 'read_file' in self.registry.names()
+             snapshot = ProjectRules(self.workspace, self.policy, self.secret_scope, enabled=enabled).load(targets)
+             if all(source in snapshot.sources for source in saved['rule_sources']):
++                reused = saved
+                 messages = saved['messages']
+                 previous = []  # 已由可信宿主快照包含；客户端仍只能提交普通聊天文本。
+                 self._rule_context = saved['rule_context']
+@@ -1220,8 +1223,14 @@
+                 self._refresh_project_rules(messages)
+                 self._emit(type='cache_prefix_reused', messages=len(saved['messages']),
+                            scope='same-agent continuation; not proof of vendor cache hit')
+-        tail: list[dict[str, Any]] = [
+-            {"role": "user", "content": self.run_envelope()}]
++        envelope = self.secret_scope.protect_text(self.run_envelope())
++        tail: list[dict[str, Any]] = []
++        if (reused is not None and reused.get('run_envelope') == envelope
++                and any(m.get('role') == 'user' and m.get('content') == envelope for m in messages)):
++            # 只省略仍在可信快照里的同一版本；变化、压缩移除或独立任务必须再发。
++            self._emit(type='run_envelope_reused', chars=len(envelope))
++        else:
++            tail.append({'role': 'user', 'content': envelope})
+         memory_delta = self._memory_delta_message()
+         if memory_delta is not None:
+             tail.append(memory_delta)
+@@ -1457,7 +1466,7 @@
+                                                                  report.text, [], wire)]),
+                             guard=self._conversation_guard(self._conversation_head),
+                             rule_context=self._rule_context, rule_sources=(self._rule_audit or ([], []))[0],
+-                            targets=self._rule_targets)
++                            targets=self._rule_targets, run_envelope=envelope)
+                         return report
+                     # Recognizable malformed tool attempts get bounded format
+                     # feedback; ordinary JSON prose is a legitimate answer.
+--- a/forge/conversation_prefix.py
++++ b/forge/conversation_prefix.py
+@@ -34,9 +34,10 @@
+             return None
+         return copy.deepcopy(saved)
+ 
+-    def commit(self, *, history, messages, guard, rule_context, rule_sources, targets):
++    def commit(self, *, history, messages, guard, rule_context, rule_sources, targets, run_envelope=''):
+         value = {'history_digest': digest(history), 'messages': messages, 'guard': guard,
+-                 'rule_context': rule_context, 'rule_sources': rule_sources, 'targets': targets}
++                 'rule_context': rule_context, 'rule_sources': rule_sources, 'targets': targets,
++                 'run_envelope': run_envelope}
+         try:
+             if not valid_tool_pairs(messages) or len(json.dumps(value, ensure_ascii=False,
+                     allow_nan=False).encode('utf-8')) > MAX_SNAPSHOT_BYTES:
+--- a/forge/toolwire.py
++++ b/forge/toolwire.py
+@@ -222,10 +222,19 @@
+             for block, call in zip(blocks, calls):
+                 block['id'] = call.id
+                 if wire == 'anthropic':
+-                    block['name'], block['input'] = call.name, call.args
++                    block['name'], block['input'] = call.name, deepcopy(call.args)
+                 else:
+-                    block['function'] = {**(block.get('function') or {}), 'name': call.name,
+-                                         'arguments': json.dumps(call.args, ensure_ascii=False)}
++                    function = block.get('function') or {}
++                    original_args = function.get('arguments')
++                    try:
++                        same = (isinstance(original_args, str) and json.dumps(
++                            json.loads(original_args), ensure_ascii=False, sort_keys=True, allow_nan=False)
++                            == json.dumps(call.args, ensure_ascii=False, sort_keys=True, allow_nan=False))
++                    except (TypeError, ValueError, RecursionError):
++                        same = False
++                    # 合法原始 JSON 的空白/转义也属于模型表面；只有参数确被修复才重编码。
++                    block['function'] = {**function, 'name': call.name,
++                        'arguments': original_args if same else json.dumps(call.args, ensure_ascii=False)}
+             return message
+     # 无工具的 OpenAI 最终回复也可能带 reasoning_content；跨轮续接必须保留。
+     if not calls and not rows and message.get('role') == 'assistant':
+--- a/forge/test_mimo_adapter.py
++++ b/forge/test_mimo_adapter.py
+@@ -12,7 +12,7 @@
+ from .loop import Agent, LoopLimits
+ from .policy import Mode, Policy
+ from .tools import build_builtin_registry
+-from .toolwire import replay_assistant_message
++from .toolwire import ToolCall, replay_assistant_message
+ 
+ 
+ BASE = 'https://token-plan-cn.xiaomimimo.com/v1'
+@@ -67,6 +67,99 @@
+         shaped, _ = self.shape(payload)
+         for key in ('messages', 'tools', 'tool_choice'):
+             self.assertEqual(shaped[key], payload[key])
++
++    def test_provider_configuration_reaches_real_agent_http_requests(self):
++        from .config import Config
++        cfg = Config()
++        cfg.apply_patch([{'id': 'fixture', 'name': 'provider:mimo', 'config': {
++            'baseURL': BASE, 'model': MODEL, 'reasoningMode': 'off'}}])
++        captured = []
++        def opener(request, **kwargs):
++            captured.append(json.loads(request.data))
++            if len(captured) == 1:
++                message = {'role': 'assistant', 'content': '', 'reasoning_content': '',
++                    'tool_calls': [{'id': 'read-original', 'type': 'function', 'function': {
++                        'name': 'read_file', 'arguments': '{"path":"a.txt"}'}}]}
++                finish = 'tool_calls'
++            else:
++                message, finish = {'role': 'assistant', 'content': 'answer'}, 'stop'
++            return io.BytesIO(json.dumps({'choices': [{'finish_reason': finish, 'message': message}]}).encode())
++        router = model.ModelRouter.from_config(cfg, transport=model.HttpTransport(response_opener=opener))
++        self.assertEqual(router.providers['fixture'].reasoning_mode, 'off')
++        with tempfile.TemporaryDirectory() as tmp:
++            root = Path(tmp)
++            (root / 'a.txt').write_text('fixture content', encoding='utf-8')
++            agent = Agent(home=root, workspace=root, router=router, registry=build_builtin_registry(),
++                policy=Policy(workspace=root, mode=Mode.READ_ONLY), limits=LoopLimits(max_steps=3))
++            self.addCleanup(agent.secret_scope.close)
++            first = agent.run('first')
++            self.assertEqual(captured[-1]['thinking'], {'type': 'disabled'})
++            receipt = first.usage['requests'][0]['plan']['execution']['reasoning_default']
++            self.assertEqual(receipt, {'mode': 'off', 'source': 'provider'})
++            router.providers['fixture'].reasoning_mode = 'on'
++            before = copy.deepcopy(captured[-1]['messages'])
++            second = agent.run('second', history=[{'role': 'user', 'content': 'first'},
++                {'role': 'assistant', 'content': first.text}])
++            self.assertEqual(captured[-1]['thinking'], {'type': 'enabled'})
++            self.assertTrue(any(e['type'] == 'cache_prefix_reused' for e in second.events))
++            self.assertEqual(captured[-1]['messages'][:len(before)], before)
++            self.assertIn('read-original', str(captured[-1]['messages']))
++
++    def test_explicit_request_overrides_provider_reasoning_default(self):
++        for requested, configured in [(True, 'off'), (False, 'on')]:
++            shaped, plan = self.shape({'messages': [], 'enable_thinking': requested}, reasoning_mode=configured)
++            self.assertEqual(shaped['thinking'], {'type': 'enabled' if requested else 'disabled'})
++            self.assertEqual(plan['execution']['reasoning_default']['source'], 'request')
++
++    def test_gateway_honours_same_reasoning_default(self):
++        original = {'model': MODEL, 'messages': [{'role': 'user', 'content': 'hello'}]}
++        direct, left = self.shape(original, reasoning_mode='off')
++        cfg = GatewayConfig(upstream=BASE, api_key='', models=[MODEL], wire='openai', upstream_wire='openai',
++                            provider_options={'reasoningMode': 'off'})
++        cfg.cache_warmth = CacheWarmth()
++        gateway, right, _ = cfg.prepare_request(original)
++        self.assertEqual(direct, gateway)
++        self.assertEqual(left['fingerprint'], right['fingerprint'])
++
++    def test_anthropic_mimo_uses_native_auto_shape_in_transport_and_gateway(self):
++        tools = [{'name': 'read_file', 'description': 'read', 'input_schema': {'type': 'object'}}]
++        provider = model.Provider('fixture', BASE, default_model=MODEL, wire='anthropic', reasoning_mode='off')
++        captured = []
++        def opener(request, **kwargs):
++            captured.append(json.loads(request.data))
++            return io.BytesIO(json.dumps({'content': [{'type': 'text', 'text': 'ok'}],
++                                         'stop_reason': 'end_turn'}).encode())
++        model.HttpTransport(response_opener=opener).complete(provider, MODEL, [], tools=tools)
++        self.assertEqual(captured[0]['tool_choice'], {'type': 'auto'})
++        self.assertEqual(captured[0]['thinking'], {'type': 'disabled'})
++        cfg = GatewayConfig(upstream=BASE, api_key='', models=[MODEL], wire='anthropic', upstream_wire='anthropic',
++                            provider_options={'reasoningMode': 'off'})
++        cfg.cache_warmth = CacheWarmth()
++        payload, _, _ = cfg.prepare_request({'model': MODEL, 'messages': [], 'tools': tools,
++                                            'tool_choice': {'type': 'auto'}})
++        self.assertEqual(payload, captured[0])
++        choice = {'type': 'auto', 'disable_parallel_tool_use': True}
++        serial, _, _ = cfg.prepare_request({'model': MODEL, 'messages': [], 'tools': tools, 'tool_choice': choice})
++        self.assertEqual(serial['tool_choice'], choice)
++        with self.assertRaisesRegex(ValueError, 'tool_choice=auto'):
++            cfg.prepare_request({'model': MODEL, 'messages': [], 'tool_choice': {'type': 'any'}})
++        with self.assertRaisesRegex(ValueError, 'tool_choice=auto'):
++            cfg.prepare_request({'model': MODEL, 'messages': [],
++                                 'tool_choice': {'type': 'auto', 'disable_parallel_tool_use': 'true'}})
++
++    def test_invalid_reasoning_default_and_unverified_models_fail_clearly(self):
++        for value in ('low', '', None, False):
++            with self.subTest(value=value), self.assertRaisesRegex(model.BadRequest, 'reasoningMode'):
++                model.Provider('fixture', BASE, reasoning_mode=value)
++        provider = model.Provider('fixture', 'https://api.deepseek.com', reasoning_mode='off')
++        with self.assertRaisesRegex(ValueError, 'verified only for MiMo'):
++            model._plan_and_shape({'messages': []}, [], provider, 'deepseek-flash')
++
++    def test_bound_alias_honours_explicit_reasoning_default(self):
++        provider = model.Provider('fixture', 'https://gateway.invalid', default_model='opaque',
++            model_kind_id='mimo.v2.6.pro', reasoning_mode='off')
++        shaped, _ = model._plan_and_shape({'messages': []}, [], provider, 'opaque')
++        self.assertEqual(shaped['thinking'], {'type': 'disabled'})
+ 
+     def test_equivalent_defaults_share_canonical_payload_and_fingerprint(self):
+         payload = {'messages': [{'role': 'user', 'content': 'hello'}],
+@@ -156,5 +249,40 @@
+                 self.assertTrue(any(e['type'] == 'model_output_rejected' for e in report.events))
+ 
+ 
++class NativeSurfaceTests(unittest.TestCase):
++    def message(self, arguments):
++        return {'role': 'assistant', 'reasoning_content': 'thought', 'tool_calls': [
++            {'id': 'call-original', 'type': 'function', 'function': {'name': 'read_file', 'arguments': arguments}}]}
++
++    def test_valid_native_json_lexical_surface_and_reasoning_are_preserved(self):
++        arguments = '{  "path" : "\\u4e2d.txt" }'
++        original = self.message(arguments)
++        call = ToolCall('call-local', 'read_file', {'path': '中.txt'}, 'openai')
++        projected = replay_assistant_message(original, '', [call], 'openai')
++        self.assertEqual(projected['tool_calls'][0]['function']['arguments'], arguments)
++        self.assertEqual(projected['tool_calls'][0]['id'], 'call-local')
++        self.assertEqual(projected['reasoning_content'], 'thought')
++        self.assertEqual(original['tool_calls'][0]['id'], 'call-original')
++
++    def test_repaired_or_changed_arguments_are_encoded_from_validated_values(self):
++        for arguments, value in [('{"path":"x",}', {'path': 'x'}),
++                                 ('{"path":"old"}', {'path': 'new'}),
++                                 ('{"value":true}', {'value': 1})]:
++            projected = replay_assistant_message(self.message(arguments), '',
++                [ToolCall('call-local', 'read_file', value, 'openai')], 'openai')
++            wire_args = projected['tool_calls'][0]['function']['arguments']
++            self.assertEqual(wire_args, json.dumps(value, ensure_ascii=False))
++
++    def test_anthropic_input_is_detached_from_mutable_tool_arguments(self):
++        args = {'path': 'x'}
++        original = {'role': 'assistant', 'content': [
++            {'type': 'thinking', 'thinking': 'thought', 'signature': 'signed'},
++            {'type': 'tool_use', 'id': 'original', 'name': 'read_file', 'input': {'path': 'x'}}]}
++        projected = replay_assistant_message(original, '', [ToolCall('local', 'read_file', args, 'anthropic')], 'anthropic')
++        args['path'] = 'mutated'
++        self.assertEqual(projected['content'][1]['input'], {'path': 'x'})
++        self.assertEqual(projected['content'][0], original['content'][0])
++
++
+ if __name__ == '__main__':
+     unittest.main()
+--- a/forge/test_conversation_prefix.py
++++ b/forge/test_conversation_prefix.py
+@@ -62,6 +62,44 @@
+                 self.assertEqual(previous, current[:len(previous)])
+             history.extend(self.history(task, report))
+             previous = copy.deepcopy(current)
++
++    def test_unchanged_development_guidance_is_not_repeated_in_followup(self):
++        from .development.runtime import DEVELOPMENT_GUIDANCE
++        self.agent.extra_system = DEVELOPMENT_GUIDANCE
++        first = self.chat(['answer'])
++        sent = copy.deepcopy(self.router.calls[-1])
++        envelope = self.agent.run_envelope()
++        report = self.chat(['next'], task='second', history=self.history('first', first))
++        messages = self.router.calls[-1]
++        self.assertEqual(messages[:len(sent)], sent)
++        self.assertEqual(sum(m.get('content') == envelope for m in messages), 1)
++        self.assertTrue(any(e['type'] == 'run_envelope_reused' for e in report.events))
++
++    def test_guidance_changes_append_even_when_an_older_version_matches(self):
++        history = []
++        for index, guidance in enumerate(('guidance A', 'guidance B', 'guidance A')):
++            self.agent.extra_system = guidance
++            task = f'turn {index}'
++            report = self.chat(['answer'], task=task, history=history)
++            history += self.history(task, report)
++            self.assertFalse(any(e['type'] == 'run_envelope_reused' for e in report.events))
++        self.assertEqual(sum(m.get('content') == self.agent.run_envelope()
++                             for m in self.router.calls[-1]), 2)
++
++    def test_compaction_removed_envelope_is_reinserted(self):
++        first = self.chat(['answer'])
++        envelope = self.agent.run_envelope()
++        saved = self.agent._conversation_prefix._saved
++        saved['messages'] = [m for m in saved['messages'] if m.get('content') != envelope]
++        report = self.chat(['next'], task='second', history=self.history('first', first))
++        self.assertTrue(any(m.get('content') == envelope for m in self.router.calls[-1]))
++        self.assertFalse(any(e['type'] == 'run_envelope_reused' for e in report.events))
++
++    def test_untrusted_chat_lookalike_cannot_suppress_host_envelope(self):
++        envelope = self.agent.run_envelope()
++        report = self.chat(['answer'], history=[{'role': 'user', 'content': envelope}])
++        self.assertEqual(sum(m.get('content') == envelope for m in self.router.calls[-1]), 2)
++        self.assertFalse(any(e['type'] == 'run_envelope_reused' for e in report.events))
+ 
+     def test_native_pairs_and_reasoning_survive_followup_for_both_wires(self):
+         for wire in ('openai', 'anthropic'):
+--- a/forge-budgets.json
++++ b/forge-budgets.json
+@@ -3,7 +3,7 @@
+   "files": {
+     "forge/__init__.py": 38,
+     "forge/acceptance.py": 172,
+-    "forge/adapters.py": 748,
++    "forge/adapters.py": 754,
+     "forge/artifact_tools.py": 36,
+     "forge/artifacts.py": 161,
+     "forge/assembly.py": 127,
+@@ -42,7 +42,7 @@
+     "forge/contrib/teams.py": 491,
+     "forge/contrib/thinking.py": 677,
+     "forge/contrib/toolhost.py": 585,
+-    "forge/conversation_prefix.py": 49,
++    "forge/conversation_prefix.py": 50,
+     "forge/desktop_services.py": 448,
+     "forge/development/__init__.py": 5,
+     "forge/development/editor.py": 197,
+@@ -59,7 +59,7 @@
+     "forge/extensions.py": 167,
+     "forge/federation.py": 400,
+     "forge/file_revisions.py": 139,
+-    "forge/gateway.py": 871,
++    "forge/gateway.py": 872,
+     "forge/graph/__init__.py": 63,
+     "forge/graph/algo.py": 242,
+     "forge/graph/channels.py": 229,
+@@ -73,9 +73,9 @@
+     "forge/guard.py": 177,
+     "forge/knowledge.py": 118,
+     "forge/local_service.py": 293,
+-    "forge/loop.py": 1702,
++    "forge/loop.py": 1711,
+     "forge/memory.py": 354,
+-    "forge/model.py": 920,
++    "forge/model.py": 935,
+     "forge/model_kinds.py": 152,
+     "forge/phase_models.py": 24,
+     "forge/planning.py": 125,
+@@ -109,14 +109,14 @@
+     "forge/test_artifacts.py": 187,
+     "forge/test_backend_context.py": 365,
+     "forge/test_coding_tools.py": 140,
+-    "forge/test_conversation_prefix.py": 214,
++    "forge/test_conversation_prefix.py": 252,
+     "forge/test_desktop_services.py": 201,
+     "forge/test_e2e_modes.py": 192,
+     "forge/test_env_probes.py": 190,
+     "forge/test_execution_review.py": 360,
+     "forge/test_isolated_default.py": 71,
+     "forge/test_loom_integration.py": 268,
+-    "forge/test_mimo_adapter.py": 160,
++    "forge/test_mimo_adapter.py": 288,
+     "forge/test_model_adaptation.py": 280,
+     "forge/test_model_kinds.py": 205,
+     "forge/test_modes_reference.py": 151,
+@@ -140,7 +140,7 @@
+     "forge/tool_adapter.py": 801,
+     "forge/tool_turn.py": 68,
+     "forge/tools.py": 1435,
+-    "forge/toolwire.py": 325,
++    "forge/toolwire.py": 334,
+     "forge/types.py": 104,
+     "forge/vendors.py": 1128,
+     "forge/verify_execution.py": 178,
+--- a/scripts/verify_mimo_live.py
++++ b/scripts/verify_mimo_live.py
+@@ -50,7 +50,8 @@
+             if not isinstance(key, str) or not key:
+                 raise ValueError('Configured MiMo credential is missing')
+             return model.Provider('mimo-live', config['baseURL'], key, default_model=chosen,
+-                                  temperature=config.get('temperature'))
++                                  temperature=config.get('temperature'),
++                                  reasoning_mode=config.get('reasoningMode', 'auto'))
+     raise ValueError('No enabled MiMo Token Plan provider matches this model')
+ 
+ 
+@@ -61,6 +62,7 @@
+         self.retries = retries
+         self.rows, self.sent = [], []
+         self.stage = ''
++        self.label = ''
+ 
+     def open(self, request, **kwargs):
+         if len(self.rows) >= self.limit:
+@@ -78,6 +80,8 @@
+                 'reasoning_effort', 'tool_choice', 'max_tokens') if k in payload},
+             'message_count': len(messages), 'common_prefix_messages': common,
+             'messages_digest': digest(messages), 'tools_digest': digest(payload.get('tools')),
++            'payload_digest': digest(payload),
++            'message_chars': sum(len(json.dumps(m, ensure_ascii=False)) for m in messages),
+             'assistant_reasoning_fields': sum('reasoning_content' in m for m in messages),
+             'tools': [t.get('function', {}).get('name') for t in payload.get('tools', [])]}
+         self.rows.append(row)
+@@ -143,9 +147,12 @@
+     return results
+ 
+ 
+-def agent_probe(provider, recorder, root):
++def agent_probe(provider, recorder, root, *, development=False, mode_schedule=None):
+     workspace = root / provider.default_model
+-    workspace.mkdir()
++    workspace.mkdir(exist_ok=True)
++    # 比较组使用相同工作区；只清理这个隔离夹具内已知的两个输出文件。
++    for filename in ('result.json', 'result-next.json'):
++        (workspace / filename).unlink(missing_ok=True)
+     (workspace / 'catalog.json').write_text(json.dumps({'items': [
+         {'id': 'alpha', 'quantity': 17}, {'id': 'beta', 'quantity': 25}]}), encoding='utf-8')
+     (workspace / 'next.json').write_text(json.dumps({'items': [
+@@ -158,15 +165,20 @@
+         encoding='utf-8')
+     registry = build_builtin_registry(expose=['read_file', 'write_file', 'list_dir',
+         'file_outline', 'read_range', 'grep_files', 'tool_search', 'skill_list'])
++    from forge.development.runtime import DEVELOPMENT_GUIDANCE
+     agent = Agent(home=root / 'home', workspace=workspace, router=router_for(provider, recorder),
+         registry=registry, policy=Policy(workspace=workspace, mode=Mode.ACCEPT_EDITS,
+             sandbox=Sandbox.WORKSPACE_WRITE, non_interactive=True),
+-        limits=LoopLimits(max_steps=7, context_chars=100000), project_rules=True)
++        limits=LoopLimits(max_steps=7, context_chars=100000), project_rules=True,
++        extra_system=DEVELOPMENT_GUIDANCE if development else '')
+     results, history = [], []
++    initial_mode = provider.reasoning_mode
+     try:
+         for index, (source, target, total) in enumerate([
+                 ('catalog.json', 'result.json', 42), ('next.json', 'result-next.json', 46)]):
+-            recorder.stage = f'agent-turn-{index + 1}'
++            if mode_schedule is not None:
++                provider.reasoning_mode = mode_schedule[index]
++            recorder.stage = recorder.label + f'agent-turn-{index + 1}'
+             prompt = (f'Read {source}, calculate the total quantity and ids in order, '
+                 f'write {target} using the project JSON schema, then read it back. '
+                 'Use real tools; do not merely describe the work.')
+@@ -182,29 +194,66 @@
+             results.append({'turn': index + 1, 'ok': ok, 'stopped': report.stopped,
+                 'output': verified, 'tools': [{'tool': s.tool, 'path': s.args.get('path'),
+                                              'decision': s.decision} for s in report.steps],
++                'failure_detail': report.text[:500] if not ok else '',
+                 'prefix_reused': any(e['type'] == 'cache_prefix_reused' for e in report.events),
++                'envelope_reused': any(e['type'] == 'run_envelope_reused' for e in report.events),
+                 'acceptance': [e for e in report.events if e['type'] == 'acceptance_checked'],
+                 'coverage': cache_coverage(report.usage.get('requests', []))})
+             history += [{'role': 'user', 'content': prompt}, {'role': 'assistant', 'content': report.text}]
+             if not ok:
+                 break
+     finally:
++        provider.reasoning_mode = initial_mode
+         agent.secret_scope.close()
+     return results
++
++
++def compare_reasoning(provider, recorder, root):
++    """同一工作区 ABBA；只改变 Provider 默认模式，不在 transport 偷塞开关。"""
++    samples = []
++    if recorder.thinking is not None:
++        raise ValueError('Comparison requires --thinking auto; uses real provider defaults')
++    initial = provider.reasoning_mode
++    try:
++        for index, mode in enumerate(('on', 'off', 'off', 'on')):
++            provider.reasoning_mode = mode
++            recorder.label = f'compare-{index + 1}-{mode}/'
++            start = len(recorder.rows)
++            cases = agent_probe(provider, recorder, root, development=True)
++            rows = recorder.rows[start:]
++            successful = [r for r in rows if r.get('usage')]
++            samples.append({'sample': index + 1, 'reasoning_mode': mode,
++                'ok': len(cases) == 2 and all(c['ok'] for c in cases), 'cases': cases,
++                'requests': len(rows), 'failed_attempts': len(rows) - len(successful),
++                'input_tokens': sum(r['usage']['prompt_tokens'] for r in successful),
++                'output_tokens': sum(r['usage']['completion_tokens'] for r in successful),
++                'reasoning_tokens': sum(r['usage']['reasoning_tokens'] for r in successful),
++                'seconds': round(sum(r['seconds'] for r in rows), 3),
++                'coverage': cache_coverage(successful)})
++            if not samples[-1]['ok']:
++                break
++    finally:
++        provider.reasoning_mode = initial
++        recorder.label = ''
++    return samples
+ 
+ 
+ def main():
+     parser = argparse.ArgumentParser(description=__doc__)
+     parser.add_argument('--live', action='store_true')
+     parser.add_argument('--model', choices=MODELS, action='append')
+-    parser.add_argument('--suite', choices=('wire', 'agent'), required=True)
++    parser.add_argument('--suite', choices=('wire', 'agent', 'compare', 'switch'), required=True)
+     parser.add_argument('--thinking', choices=('auto', 'on', 'off'), default='auto')
+     parser.add_argument('--request-limit', type=int, default=24)
+     parser.add_argument('--retries', type=int, choices=(0, 1), default=0)
+     parser.add_argument('--output', type=Path, required=True)
+     args = parser.parse_args()
+-    if not args.live or not 1 <= args.request_limit <= 32:
+-        parser.error('Requires --live and request-limit in 1..32')
++    if not args.live or not 1 <= args.request_limit <= 48:
++        parser.error('Requires --live and request-limit in 1..48')
++    if args.suite == 'compare' and (args.thinking != 'auto' or len(args.model or MODELS) != 1):
++        parser.error('Comparison requires one --model and --thinking auto')
++    if args.suite == 'switch' and args.thinking != 'auto':
++        parser.error('Mode switch uses provider settings; requires --thinking auto')
+     selected = list(dict.fromkeys(args.model or MODELS))
+     results = {'mode': 'live', 'suite': args.suite, 'thinking': args.thinking, 'selected_models': selected,
+         'started_utc': datetime.now(timezone.utc).isoformat(), 'models': []}
+@@ -219,8 +268,13 @@
+             results['models'].append(row)
+             try:
+                 provider = provider_for(chosen, Path.home() / '.forge')
+-                row['results'] = (wire_probe(provider, recorder) if args.suite == 'wire'
+-                                  else agent_probe(provider, recorder, root))
++                if args.suite == 'compare':
++                    row['results'] = compare_reasoning(provider, recorder, root)
++                elif args.suite == 'switch':
++                    row['results'] = agent_probe(provider, recorder, root, development=True, mode_schedule=('off', 'on'))
++                else:
++                    row['results'] = (wire_probe(provider, recorder) if args.suite == 'wire'
++                                      else agent_probe(provider, recorder, root))
+                 row['ok'] = bool(row['results']) and all(r['ok'] for r in row['results'])
+             except Exception as exc:
+                 row.update(ok=False, error_type=type(exc).__name__, error_detail=redact(str(exc))[:500])
+--- /dev/null
++++ b/docs/MIMO-CACHE-ROUND2.md
+@@ -0,0 +1,87 @@
++# MiMo 第二轮：去重上下文与可选择的工具推理开销
++
++本轮继续上一次真实 API 验证。目标是减少能够确认的请求浪费，并用同工作区的交叉试验判断思考开关的代价。没有修改本机凭据、默认模型或用户 provider 配置。
++
++## 已接入的优化
++
++### 不再重复注入不变的运行指引
++
++`ConversationPrefix` 现在记录宿主最后应用的运行信封版本。连续对话只有在历史/权限/工具/路由等已有校验通过、指引版本相同、而且它仍实际存在于可信上下文时，才省略新一轮的重复消息。上一轮已经发送的前缀保持原样。
++
++本轮使用正式 `DevelopmentRuntime.DEVELOPMENT_GUIDANCE` 的夹具，信封长度为 **649 字符**；第二轮不再追加这 649 字符。它是确定的上下文削减，不等于 649 token 或厂商命中率提升。
++
++指引变化、A→B→A 切换、独立任务、没有宿主快照、旧快照缺少版本信息或压缩已经移除指引时，仍正常注入。客户端自己提交一条相同文字，不能冒充宿主去重依据。
++
++### 正式 provider 配置支持推理默认值
++
++新增 provider 配置字段 `reasoningMode`：
++
++| 值 | 行为 |
++| --- | --- |
++| `auto`（默认） | 沿用原有行为；已识别 MiMo 2.6 的默认请求仍归一为 enabled |
++| `on` | 未被当前请求覆盖时，发送 `thinking.type=enabled` |
++| `off` | 未被当前请求覆盖时，发送 `thinking.type=disabled` |
++
++当前只对已核实的 MiMo 2.6 家族及其显式模型别名绑定启用 on/off；其他模型明确报不支持。`thinking` / `enable_thinking` 等显式请求参数优先。报告里的 `execution.reasoning_default` 区分 provider 默认与请求覆盖。
++
++链路为 `Config → ModelRouter.from_config → Provider → _plan_and_shape → HttpTransport`；Gateway 的 `provider_options` 使用同一规则。它与 Forge 的沉思扩展开关是不同概念。切换推理默认值保留可信工具历史；不同推理参数的本地温暖度仍分开记录，压缩事务也检测模式变化。
++
++如需使用，在已有 provider 行的 `config` 中增加 `"reasoningMode": "off"`，保留该行其他字段；Forge 的配置层是整行替换。本轮没有据少量夹具结果自动改掉用户默认值。
++
++### 冻结模型原始工具表面，补齐协议边界
++
++- OpenAI 原生工具参数在与宿主验证值严格等价时保留原始 JSON 空白和转义；需要修复或实际值变化时仍重新编码。保留 reasoning_content，工具 id 仍按宿主配对要求修正。
++- Anthropic 的工具 input 复制后回放，后续修改可变参数不会改写已投影消息。
++- 厂商兼容钩子接收实际 wire，MiMo 的 OpenAI 使用字符串 `auto`，Anthropic 使用 `{"type":"auto"}`。此前不能根据厂商画像表中默认的 OpenAI wire 推断实际协议。两种协议均有直连/Gateway 离线请求体验证；本轮付费测试使用本机配置的 OpenAI Token Plan 端点。
++- Anthropic 原生 auto 中明确请求的 `disable_parallel_tool_use` 布尔值保留；不会丢掉调用方的串行约束，也不把字符串 `"true"` 当作布尔值。
++
++参数和推理字段约束参考 [MiMo 官方 Chat Completions 文档](https://mimo.mi.com/docs/api/text-generation/openai-api)、[Messages 协议说明](https://mimo.mi.com/docs/en-US/api/chat/anthropic-api) 与 [官方工具回放说明](https://mimo.mi.com/docs/en-US/quick-start/faq/api-integration)。本轮不通过丢弃推理历史或提高 token 填充量来追求命中数字。
++
++## 同工作区 on/off/off/on 实测
++
++新增 `verify_mimo_live.py --suite compare`。使用同一模型、端点、账户、工作区路径、工具面与输入文件，四个样本按 **on → off → off → on** 运行。每个样本完成两轮读文件、写 JSON、读回及宿主环境探针验收，推理开关经正式 Provider 配置生效，没有通过测试 transport 偷塞开关。
++
++原始结果为 `reports/mimo-round2-pro-abba-retry.json`。四组初始消息摘要完全相同，工具摘要完全相同；除推理设置及其支持的采样设置外，初始输入相同。每个样本第一轮生成总量 42/alpha/beta，第二轮为 46/gamma/delta；**8/8 文件任务通过，24 次文件工具成功执行**。四组第二轮都确认复用前缀及不变指引。
++
++| 样本 | 思考模式 | 任务 | 输入 token | 输出 token | 思考 token | 缓存 token / 输入 | HTTP 耗时 |
++| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
++| 1 | on | 2/2 | 15,910 | 588 | 332 | 11,520 / 15,910 | 47.468 秒 |
++| 2 | off | 2/2 | 14,482 | 195 | 0 | 10,368 / 14,482 | 47.424 秒 |
++| 3 | off | 2/2 | 14,598 | 232 | 0 | 10,112 / 14,598 | 32.798 秒 |
++| 4 | on | 2/2 | 15,179 | 464 | 204 | 13,824 / 15,179 | 48.609 秒 |
++
++| 汇总，每种模式 4 个任务 | on | off |
++| --- | ---: | ---: |
++| 输入 token | 31,089 | 29,080 |
++| 缓存命中 token | 25,344 | 20,480 |
++| 未缓存输入 token | 5,745 | 8,600 |
++| 输出 token | 1,052 | 427 |
++| 加权缓存命中率 | 81.52% | 70.43% |
++| HTTP 耗时合计 | 96.077 秒 | 80.222 秒 |
++
++关闭思考使这组任务输出 token 减少 **59.41%**，输入也较少，但其缓存命中较低、未缓存输入更多，不能仅凭输出下降认定总费用下降。两个 on 样本的命中率本身从 72.41% 到 91.07% 波动。本轮不把跨组差异等同于确定的模式因果，也不把当前结果与上一轮不同工作区/指引条件的 59.15% 直接相减宣称收益。
++
++耗时包含网络失败尝试，第 4 组有一次 TLS EOF 后同模型重试，故不能将耗时比例当作稳定的端到端速度提升。只有两份简单 JSON 夹具，不代表复杂编码或推理的质量评测；保持原默认是基于本次混合结果的决定。
++
++本轮先前一次无重试试验中途遇到 TLS EOF，完整保存为 `reports/mimo-round2-pro-abba.json`。随后允许每次模型请求最多重试一次，总上限 40 次，完成 32 次成功响应、1 次 TLS 失败。上述两次比较合计 **35 次尝试、33 次成功响应、2 次 TLS 失败**。成功回执合计输入 61,652、输出 1,506 token；失败请求实际服务端消费未知。未重放任何已经执行的工具动作。
++
++另追加同一 Agent 的 **off→on 跨轮续接实测**，结果为 `reports/mimo-round2-mode-switch.json`：8/8 请求成功，两轮文件任务均通过，第二轮保留前一轮工具历史并省略重复指引，没有触发缺失推理字段的协议错误。本组命中 10,368 / 14,701 输入 token（70.53%）；它用于验证切换兼容性，不并入上表的模式性能比较。
++
++## 验证与复现
++
++专项覆盖配置穿透到 Agent 的最终 HTTP、请求覆盖默认值、模式切换保留原生工具历史、Gateway 一致性、模型别名、协议原生 auto、指引增量与修复参数回放。日志为 `reports/mimo-round2-targeted.log`、`reports/mimo-round2-core.log`、`reports/mimo-round2-runtime.log`、`reports/mimo-round2-selftest.log`。
++
++专项 65 项通过（包含既有协议用例，不重复计数）。核心回归 441 项（2 跳过），客户端与运行链 206 项（1 跳过），合计 **644 项通过、3 项跳过、0 失败**；框架自检 **595/595**。代码预算 147 个文件、Git 空白检查通过。
++
++```powershell
++python -m unittest forge.test_mimo_adapter forge.test_conversation_prefix forge.test_vendor_wire -q
++python -m unittest discover -s forge -t . -q
++python -m forge.cli selftest
++python scripts/budget_check.py
++
++# 真实 API；最多 40 次尝试，消耗现有 Token Plan 额度。
++python scripts/verify_mimo_live.py --live --suite compare --model mimo-v2.6-pro --retries 1 --request-limit 40 --output reports/mimo-abba-repeat.json
++python scripts/verify_mimo_live.py --live --suite switch --model mimo-v2.6-pro --retries 1 --request-limit 10 --output reports/mimo-switch-repeat.json
++```
++
++本轮独立补丁：`reports/mimo-round2.patch`；文件与验证清单：`reports/mimo-round2-files.json`；开始时工作区快照：`reports/mimo-round2-backup.txt`。不包含上一轮已经存在的改动。

@@ -1,0 +1,466 @@
+--- a/forge/artifact_tools.py
++++ b/forge/artifact_tools.py
+@@ -10,14 +10,17 @@
+               trusted=True, requires=('artifact_store',),
+               schema={'id': 'string', 'offset': {'type': 'integer', 'minimum': 0},
+                       'limit': {'type': 'integer', 'minimum': 1, 'maximum': 3000,
+-                                'description': 'Characters per page, 1..3000; default 2000. Use next_offset to continue.'}})
++                                'description': 'Characters per page, 1..3000; default 2000. Oversized requests are capped. Use next_offset to continue.'}})
+     def artifact_read(args, ctx):
+         limit = args.get('limit', 2000)
+-        if type(limit) is not int or not 1 <= limit <= 3000:
+-            raise ValueError('limit must be an integer in 1..3000')
++        if type(limit) is not int or limit < 1:
++            raise ValueError('limit must be a positive integer; pages contain at most 3000 characters')
+         budget = ctx.extras.get('artifact_inline_limit', 4000)
++        effective = min(limit, 3000, max(1, budget-400))
+         page = ctx.extras['artifact_store'].read(args.get('id'), offset=args.get('offset', 0),
+-                                               limit=min(limit, max(1, budget-250)))
++                                               limit=effective)
++        if effective < limit:
++            page.update(requested_limit=limit, effective_limit=effective, limit_capped=True)
+         text = page.pop('text')
+         return ToolResult(True, json.dumps(page, ensure_ascii=False) + '\n' + text, meta=page)
+ 
+--- a/forge/artifacts.py
++++ b/forge/artifacts.py
+@@ -136,7 +136,8 @@
+ def summary(meta, text, *, preview=500):
+     return (f"[Tool output retained as untrusted artifact {meta['id']}; "
+             f"{meta['characters']} characters. Use artifact_read(id, offset, limit) "
+-            "or artifact_grep(id, pattern) to retrieve it.]\n" + text[:preview])
++            "or artifact_grep(id, pattern) to retrieve it. For targeted details prefer artifact_grep; "
++            "read pages with limit=2000 and continue using next_offset.]\n" + text[:preview])
+ 
+ 
+ def retain_result(result, *, store, scope, source, action_id, inline_limit=4000, result_fields=()):
+@@ -149,7 +150,7 @@
+         return
+     selected = None
+     protected = scope.protect_text(text)
+-    if (result_fields and result.ok and not result.error
++    if (result_fields and (result.ok or view_source is not None) and not result.error
+             and result.meta.get('execution_state', 'completed') == 'completed'):
+         try:
+             from .result_view import select_fields, render_view
+--- a/forge/builtin_views.py
++++ b/forge/builtin_views.py
+@@ -1,9 +1,29 @@
+-"""Bounded search previews; the original plain-text tool contract stays intact."""
++"""Bounded search and command previews with exact original output retention."""
+ import json
++import re
+ 
+ 
+ FIELDS = ('summary', 'preview', 'notes')
+ HELP = ' Large replies may show a preview; use _retained with artifact_read/artifact_grep for all rows.'
++
++
++def command_metadata(output, exit_code):
++    """Keep command outcome visible while retaining the exact complete output."""
++    meta = {'exit': exit_code, 'execution_state': 'completed'}
++    if len(output) < 1400:
++        return meta
++    rows = output.splitlines()
++    errors = [row for row in rows if re.match(r'^(?:FAIL:|ERROR:|\w*(?:Error|Exception):|FAILED\b)', row)]
++    candidates = errors or rows
++    chosen = candidates if len(candidates) <= 8 else [*candidates[:4], '[... omitted rows ...]', *candidates[-4:]]
++    preview = '\n'.join(chosen)
++    meta['_result_view_source'] = json.dumps({
++        'summary': {'exit_code': exit_code, 'output_characters': len(output),
++                    'nonzero_exit': exit_code != 0},
++        'preview': preview[:1000],
++        'notes': ['Preview only. Retrieve exact details with artifact_grep or artifact_read only if needed; '
++                  'continue pages using next_offset. Nonzero exit means command failure.']}, ensure_ascii=False)
++    return meta
+ 
+ 
+ def search_result(body, *, summary, rows, notes=()):
+--- a/forge/tools.py
++++ b/forge/tools.py
+@@ -1150,6 +1150,7 @@
+         "shell_exec",
+         "Run a shell command. Denied outright for OS-escape programs.",
+         read_only=False,
++        result_fields=FIELDS if result_views else (),
+         schema={"command": "string"},
+     )
+     def shell_exec(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+@@ -1164,7 +1165,8 @@
+             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+         )
+         out = (proc.stdout or "") + (proc.stderr or "")
+-        return ToolResult(ok=proc.returncode == 0, content=out[-4000:], meta={"exit": proc.returncode, "execution_state": "completed"})
++        from .builtin_views import command_metadata
++        return ToolResult(ok=proc.returncode == 0, content=out, meta=command_metadata(out, proc.returncode))
+ 
+     @host_tool(
+         "tool_search",
+--- a/forge-budgets.json
++++ b/forge-budgets.json
+@@ -4,11 +4,11 @@
+     "forge/__init__.py": 38,
+     "forge/acceptance.py": 172,
+     "forge/adapters.py": 781,
+-    "forge/artifact_tools.py": 43,
+-    "forge/artifacts.py": 187,
++    "forge/artifact_tools.py": 46,
++    "forge/artifacts.py": 188,
+     "forge/assembly.py": 127,
+     "forge/batch_execution.py": 144,
+-    "forge/builtin_views.py": 24,
++    "forge/builtin_views.py": 44,
+     "forge/cache_metrics.py": 90,
+     "forge/cache_state.py": 400,
+     "forge/canonical.py": 36,
+@@ -148,7 +148,7 @@
+     "forge/tool_adapter.py": 802,
+     "forge/tool_surface.py": 23,
+     "forge/tool_turn.py": 68,
+-    "forge/tools.py": 1471,
++    "forge/tools.py": 1473,
+     "forge/toolwire.py": 318,
+     "forge/types.py": 104,
+     "forge/vendors.py": 1128,
+--- /dev/null
++++ b/scripts/verify_tool_challenge.py
+@@ -0,0 +1,207 @@
++"""Paid, isolated Seed/MiMo coding challenge with immutable host checks."""
++import argparse
++import hashlib
++import json
++import os
++from pathlib import Path
++import subprocess
++import sys
++import tempfile
++
++from verify_seed_execution import SeedRecorder, provider_for as seed_provider
++from verify_mimo_live import provider_for as mimo_provider, router_for
++from verify_deepseek_execution import DeepSeekRecorder, totals
++from forge.loop import Agent, LoopLimits
++from forge.compaction import ContextBudget
++from forge.file_revisions import FileRevisionGuard
++from forge.policy import Policy, Mode, Sandbox, ToolEffect
++from forge.tools import build_builtin_registry, ToolSpec, ToolResult
++from forge.probes import ProbeRegistry
++from forge.builtin_views import command_metadata, FIELDS
++
++SOURCE = {
++ 'pricing.py': '''def line_total(unit_price, quantity, discount="0"):
++    return round(float(unit_price) * quantity * (1 - float(discount) / 100), 2)
++''',
++ 'reporting.py': '''from pricing import line_total
++
++def build_report(orders):
++    totals = {}
++    for order in orders:
++        currency = order["currency"]
++        totals[currency] = totals.get(currency, 0) + line_total(order["price"], order["quantity"], order.get("discount", "0"))
++    return {k: str(v) for k, v in totals.items()}
++''',
++ 'SPEC.md': '''Fix this small billing library without third party packages.
++line_total(unit_price, quantity, discount="0") returns Decimal rounded to 0.01 with ROUND_HALF_UP.
++Convert numeric input via Decimal(str(value)); reject nonfinite or negative price, discount outside 0..100,
++and quantity that is bool, non-int or <=0, with ValueError. Preserve default discount and caller inputs.
++build_report(orders) returns currency->two-decimal-string sorted by currency. Skip cancelled orders.
++Each paid order adds its rounded line total; each refunded order subtracts it. Never change input dictionaries.
++Only edit pricing.py and reporting.py. Tests and SPEC are host fixtures, never edit them.
++run_checks executes the immutable regression suite; a tool success means execution, inspect passed and exit_code.
++Before editing, reproduce failures with run_checks. Inspect relevant sources using tools.
++Then fix both modules and run_checks again until passed=true. Do not claim success without actual checks.
++'''
++}
++TESTS = '''import unittest
++from decimal import Decimal
++from pricing import line_total
++from reporting import build_report
++
++def row(price="1.005", quantity=1, status="paid", currency="USD", **kw):
++    return dict(price=price, quantity=quantity, status=status, currency=currency, **kw)
++
++class BillingTests(unittest.TestCase):
++    def test_half_up(self): self.assertEqual(line_total("1.005",1),Decimal("1.01"))
++    def test_type(self): self.assertIsInstance(line_total("2.50",2),Decimal)
++    def test_discount(self): self.assertEqual(line_total("12.35",3,"12.5"),Decimal("32.42"))
++    def test_no_float_drift(self): self.assertEqual(line_total("0.1",3),Decimal("0.30"))
++    def test_invalid_quantity(self):
++        for value in [True,0,-1,1.5,"2"]:
++            with self.subTest(value=value), self.assertRaises(ValueError): line_total("1",value)
++    def test_invalid_money(self):
++        for price,discount in [("NaN","0"),("Infinity","0"),("-1","0"),("1","-1"),("1","101"),("1","NaN")]:
++            with self.subTest(price=price,discount=discount), self.assertRaises(ValueError): line_total(price,1,discount)
++    def test_paid_refund_cancel(self):
++        self.assertEqual(build_report([row(),row(status="refunded"),row(status="cancelled")]),{"USD":"0.00"})
++    def test_per_line_rounding(self): self.assertEqual(build_report([row(),row()]),{"USD":"2.02"})
++    def test_sorted_currencies(self):
++        result=build_report([row(currency="USD"),row(currency="EUR")])
++        self.assertEqual(list(result),["EUR","USD"])
++    def test_inputs_unchanged(self):
++        orders=[row(),row(status="refunded")];before=[dict(r) for r in orders]
++        build_report(orders);self.assertEqual(orders,before)
++    def test_empty(self): self.assertEqual(build_report([]),{})
++'''
++EXTRA = '''
++    def test_currency_filter(self):
++        self.assertEqual(build_report([row(currency="USD"),row(currency="EUR")],only_currency="USD"),{"USD":"1.01"})
++    def test_missing_filter(self): self.assertEqual(build_report([row()],only_currency="JPY"),{})
++    def test_none_compatible(self): self.assertEqual(build_report([row()],only_currency=None),{"USD":"1.01"})
++'''
++
++
++def sha(path): return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def snapshot(workspace):
++    return {p.relative_to(workspace).as_posix():sha(p) for p in workspace.rglob('*')
++            if p.is_file() and '__pycache__' not in p.parts}
++
++
++def run_case(provider,recorder,root,output,*,feedback_views=False):
++    workspace=root/'workspace';workspace.mkdir()
++    for name,body in SOURCE.items(): (workspace/name).write_text(body,encoding='utf-8')
++    (workspace/'tests').mkdir()
++    test=workspace/'tests/test_billing.py';test.write_text(TESTS,encoding='utf-8')
++    history=[];cases=[];checks=[]
++    for turn in (1,2):
++        if turn==2: test.write_text(TESTS+EXTRA,encoding='utf-8')
++        immutable={p:sha(p) for p in [test,workspace/'SPEC.md']}
++        before=snapshot(workspace)
++        def check():
++            if any(sha(p)!=digest for p,digest in immutable.items()):
++                return {'passed':False,'exit_code':-1,'output':'Host fixture changed; restore it.'}
++            env={k:v for k,v in os.environ.items() if k.upper() in {'PATH','SYSTEMROOT','WINDIR','TEMP','TMP'}}
++            env['PYTHONIOENCODING']='utf-8'
++            proc=subprocess.run([sys.executable,'-B','-m','unittest','discover','-s','tests','-v'],
++                cwd=workspace,env=env,capture_output=True,text=True,encoding='utf-8',timeout=20)
++            row={'passed':proc.returncode==0,'exit_code':proc.returncode,'output':(proc.stdout+proc.stderr)[-10000:]}
++            checks.append(row)
++            return row
++        baseline=check()
++        registry=build_builtin_registry(expose=['read_file','list_dir','find_files','grep','file_outline',
++            'read_range','edit_file','apply_patch','write_file','review_changes','artifact_read','artifact_grep','run_checks'])
++        def run_checks(args,ctx):
++            observed=check()
++            return ToolResult(True,json.dumps(observed,ensure_ascii=False),meta=(
++                command_metadata(observed['output'],observed['exit_code']) if feedback_views else {}))
++        registry.register(ToolSpec('run_checks','Execute the fixed local regression suite. Inspect passed and exit_code; fix code on failure.',
++            run_checks,read_only=False,result_fields=FIELDS if feedback_views else (),
++            schema={'type':'object','properties':{},'additionalProperties':False}),trusted=True,effect=ToolEffect.NATIVE)
++        probes=ProbeRegistry.defaults().with_probe('fixture','regression',lambda ctx,args:check()['passed'])
++        recorder.stage=f'challenge-turn-{turn}'
++        start=len(recorder.rows);check_start=len(checks)
++        agent=Agent(home=root/'home',workspace=workspace,router=router_for(provider,recorder),registry=registry,
++            policy=Policy(workspace=workspace,mode=Mode.ACCEPT_EDITS,sandbox=Sandbox.WORKSPACE_WRITE,
++                          allow=('run_checks',),non_interactive=True),project_rules=False,planning='low',probes=probes,
++            file_guard=FileRevisionGuard(workspace,require_read=True),
++            limits=LoopLimits(max_steps=18,context_chars=12000))
++        agent.compactor=ContextBudget(max_chars=12000,keep_tail=6)
++        task=('Read SPEC.md and inspect the relevant sources. First reproduce the failing suite with run_checks. '
++              'Fix the two billing modules according to SPEC.md using actual tools, then run checks to verify. '
++              'Only pricing.py and reporting.py may change. Keep public signatures compatible. Do not edit tests. '
++              'Final reply briefly describe changes and actual tests.' if turn==1 else
++              'Extend build_report with optional only_currency=None. None preserves existing behavior; a string '
++              'includes only that exact currency. Host tests now include this feature. Reproduce the new failure '
++              'with run_checks, inspect current files, modify only reporting.py, then run_checks until passed. '
++              'Keep all original behavior and do not edit tests or SPEC.md. Use actual tools.')
++        try:
++            report=agent.run(task,history=history,acceptance={'max_attempts':2,'criteria':[
++                {'id':'regression','kind':'env_probe','env':'fixture','probe':'regression','input':{},'expect':True,'timeout':30}]})
++            final=check()
++            integrity=all(sha(p)==digest for p,digest in immutable.items())
++            tools=[{'tool':s.tool,'args':s.args,'decision':s.decision,'result':s.result} for s in report.steps]
++            executed=any(s.tool=='run_checks' for s in report.steps)
++            after=snapshot(workspace)
++            changed=sorted(p for p in before.keys()|after.keys() if before.get(p)!=after.get(p))
++            allowed={'pricing.py','reporting.py'} if turn==1 else {'reporting.py'}
++            first_check=next((i for i,s in enumerate(report.steps) if s.tool=='run_checks'),None)
++            first_write=next((i for i,s in enumerate(report.steps) if s.tool in {
++                'write_file','edit_file','apply_patch','edit_config','delete_file','notebook_edit'}),len(report.steps))
++            reproduced=(first_check is not None and first_check<first_write
++                        and bool(checks[check_start:]) and not checks[check_start]['passed'])
++            ok=(report.stopped=='final' and final['passed'] and integrity and executed
++                and reproduced and set(changed)<=allowed)
++            directory=output.parent/(output.stem+'-sources');directory.mkdir(exist_ok=True)
++            for name in ('pricing.py','reporting.py'):
++                (directory/f'turn-{turn}-{name}').write_bytes((workspace/name).read_bytes())
++            cases.append({'turn':turn,'ok':ok,'stopped':report.stopped,'text':report.text,'baseline':baseline,
++                'final':final,'integrity':integrity,'steps':tools,'planning':report.planning,
++                'changed_files':changed,'failure_reproduced_before_edit':reproduced,
++                'events':[e for e in report.events if e['type'] in {'compaction','acceptance_checked','cache_prefix_reused'}],
++                'checks':checks[check_start:],'totals':totals(recorder.rows[start:])})
++            history.extend([{'role':'user','content':task},{'role':'assistant','content':report.text}])
++        finally: agent.secret_scope.close()
++        if not cases[-1]['ok']: break
++    return cases
++
++
++def main():
++    parser=argparse.ArgumentParser(description=__doc__)
++    parser.add_argument('--live',action='store_true');parser.add_argument('--vendor',choices=['seed','mimo'],required=True)
++    parser.add_argument('--model');parser.add_argument('--request-limit',type=int,default=48)
++    parser.add_argument('--feedback-views',action='store_true')
++    parser.add_argument('--thinking',choices=['auto','on','off'],default='auto')
++    parser.add_argument('--output',type=Path,required=True)
++    args=parser.parse_args()
++    if not args.live or args.output.exists(): parser.error('Requires --live and a new output path')
++    chosen=args.model or ('doubao-seed-evolving' if args.vendor=='seed' else 'mimo-v2.6-flash')
++    provider=(seed_provider if args.vendor=='seed' else mimo_provider)(chosen,Path.home()/'.forge')
++    recorder=SeedRecorder(args.request_limit) if args.vendor=='seed' else DeepSeekRecorder(args.request_limit,retries=1)
++    if args.thinking!='auto':
++        if args.vendor=='mimo': provider.reasoning_mode=args.thinking
++        else: recorder.thinking=args.thinking=='on'
++    recorder.timeout=45
++    result={'vendor':args.vendor,'model':chosen,'thinking':args.thinking,'feedback_views':args.feedback_views,'cases':[]}
++    project=Path(__file__).resolve().parents[1]
++    result['runtime_sha256']={name:sha(project/name) for name in [
++        'scripts/verify_tool_challenge.py','forge/artifact_tools.py','forge/artifacts.py',
++        'forge/builtin_views.py','forge/tools.py','forge/compaction.py']}
++    try:
++        with tempfile.TemporaryDirectory(prefix='forge-tool-challenge-') as tmp:
++            result['cases']=run_case(provider,recorder,Path(tmp),args.output,feedback_views=args.feedback_views)
++    except Exception as exc:
++        result['error_type']=type(exc).__name__
++        result['error']=str(exc)[:300]
++    finally:
++        result['requests']=recorder.rows;result['totals']=totals(recorder.rows)
++        result['ok']=not result.get('error_type') and len(result['cases'])==2 and all(c['ok'] for c in result['cases'])
++        args.output.parent.mkdir(exist_ok=True,parents=True)
++        args.output.write_text(json.dumps(result,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
++        print(json.dumps({'ok':result['ok'],'error_type':result.get('error_type'),'totals':result['totals']},ensure_ascii=False))
++    return 0 if result['ok'] else 1
++
++
++if __name__=='__main__': raise SystemExit(main())
+--- /dev/null
++++ b/tests/test_command_feedback.py
+@@ -0,0 +1,66 @@
++"""Real execution outcomes, exact retained output and safe read pagination."""
++import json
++from pathlib import Path
++import sys
++import tempfile
++import unittest
++
++from forge.execution import ActionExecutor,ActionRequest,create_execution_context
++from forge.policy import Policy,Mode,Sandbox,ToolEffect
++from forge.tools import build_builtin_registry,ToolSpec
++
++
++class CommandFeedbackTests(unittest.TestCase):
++    def setUp(self):
++        self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
++        self.root=Path(self.tmp.name)
++
++    def context(self,command='',**policy):
++        registry=build_builtin_registry()
++        shell=next(s for s in registry.all_specs() if s.name=='shell_exec')
++        # The protected executor forbids arbitrary shell commands. This trusted
++        # fixture runner binds a fixed host command, as the live challenge does.
++        registry.register(ToolSpec('run_fixture_checks','Fixed fixture command',
++            lambda args,ctx:shell.handler({'command':command},ctx),read_only=False,
++            result_fields=shell.result_fields),trusted=True,effect=ToolEffect.NATIVE)
++        ctx=create_execution_context(home=self.root/'home',workspace=self.root,
++            registry=registry,policy=Policy(workspace=self.root,mode=Mode.ACCEPT_EDITS,
++                sandbox=Sandbox.WORKSPACE_WRITE,allow=('run_fixture_checks',),non_interactive=True,**policy))
++        self.addCleanup(ctx.secret_scope.close)
++        return ctx
++
++    def test_failed_command_keeps_status_and_exact_output_retrievable(self):
++        command=f'"{sys.executable}" -c "import sys; print(\'FAIL: billing_case\'); print(\'z\'*7000); sys.exit(1)"'
++        ctx=self.context(command);executor=ActionExecutor()
++        result=executor.execute(ctx,ActionRequest('run_fixture_checks',{}))
++        self.assertEqual(result.outcome,'failed')
++        self.assertEqual(result.execution_state,'completed')
++        self.assertEqual(result.meta['exit'],1)
++        view=json.loads(result.content)
++        self.assertEqual(view['summary']['exit_code'],1)
++        self.assertTrue(view['summary']['nonzero_exit'])
++        self.assertIn('FAIL: billing_case',view['preview'])
++        identifier=view['_retained']['id'];parts=[];offset=0
++        while offset is not None:
++            page=executor.execute(ctx,ActionRequest('artifact_read',{'id':identifier,'offset':offset,'limit':4000}))
++            self.assertEqual(page.outcome,'succeeded')
++            self.assertTrue(page.meta['limit_capped'])
++            self.assertLessEqual(page.meta['effective_limit'],3000)
++            header,text=page.content.split('\n',1);parts.append(text)
++            offset=json.loads(header)['next_offset']
++        self.assertEqual(''.join(parts),'FAIL: billing_case\n'+'z'*7000+'\n')
++
++    def test_invalid_pages_and_denied_reads_are_not_repaired(self):
++        ctx=self.context(f'"{sys.executable}" -c "print(\'v\'*5000)"');executor=ActionExecutor()
++        # Use a real output to obtain an authentic handle.
++        result=executor.execute(ctx,ActionRequest('run_fixture_checks',{}))
++        identifier=json.loads(result.content)['_retained']['id']
++        for limit in (True,0,-1,2.5,'4000'):
++            page=executor.execute(ctx,ActionRequest('artifact_read',{'id':identifier,'limit':limit}))
++            self.assertEqual(page.outcome,'failed')
++        denied=self.context(deny=('artifact_read',))
++        page=executor.execute(denied,ActionRequest('artifact_read',{'id':identifier,'limit':4000}))
++        self.assertEqual(page.error_code,'policy_denied')
++
++
++if __name__=='__main__':unittest.main()
+--- /dev/null
++++ b/docs/SEED-MIMO-TOOL-SPECIALIZATION.md
+@@ -0,0 +1,60 @@
++# Seed / MiMo 工具调用专项实测
++
++2026-11-08，使用本机已有配置的 `doubao-seed-evolving` 和 `mimo-v2.6-flash` API。发送的是临时账单项目，不发送真实项目代码或本机密钥。没有更改用户的全局模型、思考模式或权限配置。
++
++## 任务与实际调用链
++
++第一轮修复两个有缺陷的账单模块：Decimal 金额、ROUND_HALF_UP、非法金额及数量校验、退款、取消订单、逐行舍入、币种排序和输入不可变性，共 11 项测试。第二轮追加可选币种过滤参数，保持原行为兼容，共 14 项测试。要求先用工具复现失败，再修改源码，最后通过测试。
++
++每轮重新创建 Agent，复用同一 home 和工作区；执行经过路由器、原生工具消息、ActionExecutor、策略、文件版本防护、工具结果留存、会话存储及环境探针。规划设为 low，压缩预算故意收紧到 12,000 字符、保留尾部 6 条消息，最多 18 步。这个预算用于暴露压缩问题，不代表生产默认值。模型实际调用读文件、搜索、写入、编辑、变更检查和结果分页工具。
++
++`run_checks` 是宿主绑定的固定 Python unittest 命令，不接受模型命令参数。它在临时工作区运行，环境不继承 Forge 密钥。策略只为这个固定执行器显式放行；受保护执行器对任意 `shell_exec` 的禁止保持有效。固定执行器的工具成功表示命令已执行，测试结果由 passed/exit_code 表示；独立环境探针读取实际测试退出状态，不能把“执行成功”误当作“测试通过”。
++
++测试和 SPEC 在每轮执行前固定哈希，检查时若发生修改就验收失败。导出的模型源码保存在各报告对应的 `-sources` 目录。验收脚本还会核对工作区变化范围、写入前是否实际复现失败，并保存脚本及主要运行时文件哈希；这部分增强在本次已启动的 API 批次之后加入，早期报告不含这些新字段，另以离线审计核对可观察证据。
++
++## 根据反馈实现的修改
++
++- Seed 基线两次请求 `artifact_read(limit=4000)`，被 3000 上限拒绝。现在对正整数超限请求返回有界页面，同时标明 requested_limit、effective_limit、limit_capped 和真实 next_offset；负数、布尔、非整数及策略拒绝仍返回失败。权限判断先于分页处理。
++- 长命令失败输出现在提供退出码、非零状态及失败要点，并保留完整原文句柄。已执行的失败动作可以使用宿主提供的结构化视图，动作仍保持 failed/completed，不能被展示层改成成功。
++- 内置命令处理器不再提前丢掉输出头部，仅保留最后 4000 字符。完整输出交给统一留存层处理；独立子进程回归测试验证首行失败名称和 7000 多字符原文能逐页完整恢复。
++- 结果提示改为“需要准确细节时才检索”，避免把分页检索变成固定必做步骤。没有根据几次模型失误增加猜测路径、模糊工具名匹配或截断 JSON 补全规则；本次没有观察到需要这类修复的原生协议错误。
++
++失败摘要是启发式的有界提示，不是完整错误解析器；原文仍可搜索、分页回读。报错中重复读取、误用根目录相对路径以及网络中断也保存在报告中，没有转换成工具成功或模型通过。
++
++## 实测结果
++
++以下 token 是服务端成功返回 usage 的观测值；输出已包含推理，不再重复相加。缓存率仅使用实际返回缓存统计的请求，未知不按零命中计算。
++
++| 报告 `reports/tool-challenge-*.json` | 验收 | 输入 | 输出 | 合计 | 已观测缓存率 |
++|---|---|---:|---:|---:|---:|
++| seed-baseline | 首轮耗尽 18 步，失败 | 80,334 | 3,701 | 84,035 | 60.78% |
++| seed-adapted | 首轮 11 项通过；第二轮握手超时失败 | 87,754 | 6,227 | 93,981 | 57.74% |
++| seed-final | 首轮 TLS 中断，失败 | 14,993 | 491 | 15,484 | 69.79% |
++| mimo-baseline | 两轮通过 | 52,467 | 4,892 | 57,359 | 67.69% |
++| mimo-adapted | 首轮通过；第二轮 TLS EOF 失败 | 85,221 | 9,863 | 95,084 | 65.39% |
++| mimo-bounded | 关闭思考，两轮通过 | 86,886 | 1,708 | 88,594 | 81.13% |
++| mimo-final | 默认思考配置，两轮通过 | 69,904 | 3,140 | 73,044 | 78.83% |
++
++Seed 摘要版首轮输入 33,471、输出 2,867，11 个工具动作，通过测试及宿主环境探针；基线首轮 30 个工具动作、两次分页参数错误、7 次压缩，仍未修复。改动缓解了这个具体失败模式。首个失败日志原始 JSON 为 10,419 字符，摘要版给 Seed 904 字符、最终版给 MiMo 912 字符，并留存原始 JSON。不是删除模型可能需要的细节。
++
++MiMo 最终版两轮均实际先运行失败测试、写入源码、再运行成功测试，19 个工具动作、3 次压缩；第二轮记录磁盘会话前缀复用事件。缓存统计为 55,104 / 69,904，所有 18 条响应均有缓存数据。基线只有 12 条响应有缓存数据，为 33,152 / 48,975；另两条成功响应有输入 usage 但没有缓存统计，三次传输失败没有 usage。
++
++**没有得到整体 token 节省结论。** MiMo 最终版输出低于基线，但输入增长，总 token 高出 27.35%。关闭思考也通过，却出现测试成功后的重复读取/检查，输入更高；因此不自动关闭思考。摘要版初稿的提示要求先检索原文，MiMo 首轮花了更多步骤阅读，已改成按需检索；最终版通过且开销低于初稿，但这是顺序单样本，服务端前缀已变热、网络情况不同，不能据此宣称普遍提升或严格的因果节省率。Seed 第二轮尚未验证通过，也不把第一轮通过写成整组成功。
++
++7 组共 140 次 HTTP 尝试、119 条有效 usage：观测输入 477,559、输出 30,022，合计 507,581 token。21 次失败没有 usage，账单未知；另外 5 条成功响应缺少缓存统计。没有继续提高重试次数、全局关闭思考或更换端点来掩盖失败。
++
++`reports/tool-specialization-audit.py` 将 12 个阶段导出的模型源码复制到新目录，重新写入原始宿主测试并实际执行；通过/失败均与各自报告一致。审计还核对通过阶段在编辑前确实运行了失败测试、观察到的编辑路径符合要求、第二轮 pricing.py 不变。早期批次没有完整工作区快照，不能据此证明不存在所有其他文件变化；已在后续验收脚本补齐快照核对。
++
++## 本地验证与复跑
++
++核心测试 497 项通过（2 项跳过）；工具结果、留存及编码工具定向测试 47 项通过；执行反馈、网关、客户端和运行时回归 97 项通过。这些测试集合有重叠，不相加宣称覆盖数量。预算检查通过：156 文件、48,541 行。
++
++```powershell
++python scripts/verify_tool_challenge.py --live --vendor seed --feedback-views --output reports/seed-tool-new.json
++python scripts/verify_tool_challenge.py --live --vendor mimo --feedback-views --output reports/mimo-tool-new.json
++python scripts/verify_tool_challenge.py --live --vendor mimo --feedback-views --thinking off --output reports/mimo-tool-off-new.json
++```
++
++输出路径必须不存在，`--live` 必填；默认总请求上限 48，每次请求最多重试一次。省略 `--feedback-views` 可以保留基线固定执行器的原始 JSON 结果格式，但仍使用当前运行时，不能重建修改前的分页拒绝行为。`--thinking off` 只影响本次脚本提供者实例。
++
++本轮增量补丁和文件哈希清单为 `reports/tool-specialization.patch`、`reports/tool-specialization-files.json`，只收录本轮改动，不替换工作区已有修改。

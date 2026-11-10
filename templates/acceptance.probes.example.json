@@ -1,0 +1,14 @@
+{
+  "max_attempts": 3,
+  "criteria": [
+    {
+      "id": "ready-state",
+      "kind": "env_probe",
+      "env": "workspace",
+      "probe": "json_value",
+      "input": {"path": "result.json", "pointer": "/ready"},
+      "expect": true,
+      "timeout": 5
+    }
+  ]
+}

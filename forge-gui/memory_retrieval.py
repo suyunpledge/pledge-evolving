@@ -32,6 +32,42 @@ SECRET_NAME = "connector.hierarchical-retrieval"
 DEFAULT_PORT = 8000
 DEFAULT_TIMEOUT = 2.0
 CONTEXT_CHAR_BUDGET = 1500
+
+# ---- 第四轮（2026-11-04）：命中优化 + 模型适配 ----
+# 查询增富：短句/指代问句的嵌入质量差（"继续"/"那个预算超了怎么办"检索出噪声
+# 或空手而归），拼上上一轮话题锚（话题名+用户发言头部）给嵌入一个语义立足点。
+# 纯函数：同输入恒同字节输出，不破坏前缀缓存确定性。
+_ANAPHORA_MARKERS = ("继续", "刚才", "上面", "那个", "这个方案", "它怎么", "再说",
+                    "接着说", "详细说说", "为什么这样", "然后呢")
+_SHORT_QUERY_CHARS = 40
+_ANCHOR_HEAD_CHARS = 48
+
+
+def retrieval_profile(model: str):
+    """按模型解析厂商画像（forge.vendors 单表识别；空模型=generic 默认档）。"""
+    from forge.vendors import profile_for
+    return profile_for(model=str(model or ""))
+
+
+def build_query(user_text: str, *, topic_anchor: str = "",
+                last_user_head: str = "") -> str:
+    """确定性查询增富：需要时把话题锚拼进查询（命中效果主抓手）。
+
+    触发条件（二者其一）：查询短于 40 字符；含指代/延续标记词。
+    锚 = 上一轮检出话题名 ｜ 上一轮用户发言头 48 字符，总长封顶 80。
+    """
+    text = " ".join(str(user_text or "").split())
+    if not text:
+        return text
+    anchor = "｜".join(p for p in (" ".join(str(topic_anchor or "").split()),
+                                   " ".join(str(last_user_head or "").split())) if p)
+    if not anchor:
+        return text
+    needs = (len(text) < _SHORT_QUERY_CHARS
+             or any(marker in text for marker in _ANAPHORA_MARKERS))
+    if not needs:
+        return text
+    return f"{text}（相关话题：{anchor[:80]}）"
 INGEST_CHAR_LIMIT = 8000
 MEMORY_HEADER = ("[长期记忆·分级检索] 以下内容由本机分级检索服务按话题自动召回，"
                  "来自过往对话，仅供参考；若与当前问题无关请忽略：")
@@ -111,7 +147,8 @@ class RetrievalClient:
         return self._request("POST", "/ingest", payload) or {}
 
 
-def format_memory_block(result: dict, char_budget: int = CONTEXT_CHAR_BUDGET) -> str:
+def format_memory_block(result: dict, char_budget: int = CONTEXT_CHAR_BUDGET,
+                        min_score: float = 0.0) -> str:
     """把 /retrieve 结果装配成有界、标注来源的记忆块；无内容返回 ''。
 
     优先级与服务端 assemble_context 一致：话题名 > 关键句 > 原文片段，
@@ -124,9 +161,13 @@ def format_memory_block(result: dict, char_budget: int = CONTEXT_CHAR_BUDGET) ->
         entries.append((0, 1.0, f"当前话题：{domain['name']}"))
     for ks in result.get("key_sentences") or []:
         if isinstance(ks, dict) and str(ks.get("text") or "").strip():
+            if _score(ks) < min_score:
+                continue
             entries.append((1, _score(ks), f"- {str(ks['text']).strip()}"))
     for ctx in result.get("full_contexts") or []:
         if not isinstance(ctx, dict):
+            continue
+        if _score(ctx) < min_score:
             continue
         body = str(ctx.get("chunk_text") or (ctx.get("full_text") or "")[:512]).strip()
         if body:
@@ -155,8 +196,13 @@ def _score(item: dict) -> float:
 class MemoryBridge:
     """对话路径用的门面：检索 → 记忆块、后台入库、一次性降级提示。"""
 
-    def __init__(self, client: RetrievalClient):
+    def __init__(self, client: RetrievalClient, model: str = ""):
         self.client = client
+        self.model = str(model or "")
+        # 话题锚（上一轮检出话题/用户头）：下一轮短句/指代查询的增富素材。
+        # 顺序确定性：同一对话序列恒产生同一锚 → 同一字节查询。
+        self._last_topic = ""
+        self._last_user_head = ""
         self._lock = threading.Lock()
         self._notified = False
         self._pending_notice = ""
@@ -177,19 +223,38 @@ class MemoryBridge:
             notice, self._pending_notice = self._pending_notice, ""
             return notice
 
-    def context_for(self, query: str) -> str:
-        """发送前调用（必须在工作线程）：健康 → 检索 → 记忆块；任何失败返回 ''。"""
+    def context_for(self, query: str, model: str | None = None) -> str:
+        """发送前调用（必须在工作线程）：健康 → 增富查询 → 画像化检索 → 记忆块。
+
+        第四轮起按模型适配：预算/门槛/检索宽度取自厂商画像
+        （forge.vendors.VendorProfile.memory_*，选模型即生效）；
+        model=None 时沿用桥构造时的模型。任何失败返回 ''。
+        """
         try:
             self.available = self.client.health()
             if not self.available:
                 self._mark(False)
                 return ""
-            result = self.client.retrieve(query)
+            model_name = self.model if model is None else str(model or "")
+            profile = retrieval_profile(model_name)
+            budget = int(getattr(profile, "memory_char_budget", 0) or CONTEXT_CHAR_BUDGET)
+            min_score = float(getattr(profile, "memory_min_score", 0.0) or 0.0)
+            top_k = int(getattr(profile, "memory_top_k", 0) or 0)
+            enriched = build_query(query, topic_anchor=self._last_topic,
+                                   last_user_head=self._last_user_head)
+            result = self.client.retrieve(enriched, top_k_sentences=top_k or None,
+                                           top_k_context=top_k or None)
             if not result and self.client.last_error:
                 self._mark(False)
                 return ""
             self._mark(True)
-            return format_memory_block(result)
+            domain = result.get("detected_domain") if isinstance(result, dict) else None
+            if isinstance(domain, dict) and domain.get("name"):
+                self._last_topic = str(domain["name"])
+            head = " ".join(str(query or "").split())[:_ANCHOR_HEAD_CHARS]
+            if head:
+                self._last_user_head = head
+            return format_memory_block(result, char_budget=budget, min_score=min_score)
         except Exception:
             self.available = False
             self._mark(False)

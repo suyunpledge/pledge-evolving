@@ -1,0 +1,53 @@
+{
+  "backup": "C:\\Users\\匡溯昀\\forge-modes-backup-20261106-222424",
+  "files": [
+    {
+      "path": "forge/execution_guard.py",
+      "new": false,
+      "before_sha256": "c3ff7eab532ebbd65d6eb84aa10c5f5e69020372170c309acc06a6b6210a0585",
+      "after_sha256": "9aadcfc246ce47256267d7bde674fe9ac2a085f30671abca5f828abb95d2c53a"
+    },
+    {
+      "path": "forge/tool_turn.py",
+      "new": false,
+      "before_sha256": "4543db999b9e6fa80fbe2409c937d3862890ac2bfad8a5c1d03150322f871c6e",
+      "after_sha256": "9d6177ccfeef4739b81b9c20518d7becc5f2fa4b9282134cb777b21c0d3ed805"
+    },
+    {
+      "path": "forge/loop.py",
+      "new": false,
+      "before_sha256": "e98c6ebcad1c6a92c3620725b3ca5c2477807c57ebdfebb9490c6e34282ef635",
+      "after_sha256": "16e2224c1730745cb0ef46c4a31dfc219bac5abf73226ade1a74f67cb52652bc"
+    },
+    {
+      "path": "forge/project_rules.py",
+      "new": false,
+      "before_sha256": "704c204bb802d1a54d4bd530abeaf09111ba191a1bb4c8737288412a8cd9d074",
+      "after_sha256": "cdd2be03fedd9094ade0d75a57e6fd78b19756e570698f80f882bbf7118556b3"
+    },
+    {
+      "path": "forge-budgets.json",
+      "new": false,
+      "before_sha256": "7c970a8b33a80944fa766af788a6e5c21d175ef2d8c523a73dd2c123546fae80",
+      "after_sha256": "8f90060e1060e30a5f97b939bf9ac9c7fdc53d3b94bb925942b7608be28585e7"
+    },
+    {
+      "path": "forge/test_modes_reference.py",
+      "new": true,
+      "before_sha256": null,
+      "after_sha256": "a920d0950d728e07aeb079ef4ec594a8c065ddfc47642a7e13f394ff1e0d1087"
+    },
+    {
+      "path": "tests/test_mode_reference_entries.py",
+      "new": true,
+      "before_sha256": null,
+      "after_sha256": "41a8f5a01f6fd97d5f1eeb6ca33f2c535a6817890e9698e95be9ed469de55aca"
+    },
+    {
+      "path": "docs/OPENCLAW-CLAUDE-MODE-COMPARISON.md",
+      "new": true,
+      "before_sha256": null,
+      "after_sha256": "099e527e6ce680f76c0e48dba861e425cd5a1302e0e2e3337e83170663c73237"
+    }
+  ]
+}

@@ -1,0 +1,183 @@
+{
+  "mode": "live",
+  "records": [
+    {
+      "vendor": "minimax",
+      "model": "minimax-m3",
+      "endpoint": "https://api.minimaxi.com/v1",
+      "requests": [
+        {
+          "url": "https://api.minimaxi.com/v1/chat/completions",
+          "parameters": {
+            "model": "minimax-m3",
+            "reasoning_effort": "low",
+            "max_tokens": 256
+          },
+          "message_roles": [
+            "user"
+          ],
+          "seconds": 1.09,
+          "usage": {
+            "prompt_tokens": 218,
+            "completion_tokens": 53,
+            "model": "minimax-m3",
+            "provider": "minimax",
+            "cached_tokens": 0,
+            "cache_write_tokens": 0,
+            "reasoning_tokens": 47
+          },
+          "finish_reason": "stop",
+          "tool_names": [],
+          "text": "9.9",
+          "adaptation": [
+            "稳定前缀 0 token 低于该厂商最小可缓存 512，本次不缓存（补齐稳定内容反而更划算）"
+          ]
+        },
+        {
+          "url": "https://api.minimaxi.com/v1/chat/completions",
+          "parameters": {
+            "model": "minimax-m3",
+            "reasoning_effort": "medium",
+            "max_tokens": 256
+          },
+          "message_roles": [
+            "user"
+          ],
+          "seconds": 1.16,
+          "usage": {
+            "prompt_tokens": 218,
+            "completion_tokens": 5,
+            "model": "minimax-m3",
+            "provider": "minimax",
+            "cached_tokens": 0,
+            "cache_write_tokens": 0,
+            "reasoning_tokens": 0
+          },
+          "finish_reason": "stop",
+          "tool_names": [],
+          "text": "9.11",
+          "adaptation": [
+            "稳定前缀 0 token 低于该厂商最小可缓存 512，本次不缓存（补齐稳定内容反而更划算）"
+          ]
+        },
+        {
+          "url": "https://api.minimaxi.com/v1/chat/completions",
+          "parameters": {
+            "model": "minimax-m3",
+            "reasoning_effort": "high",
+            "max_tokens": 256
+          },
+          "message_roles": [
+            "user"
+          ],
+          "seconds": 1.28,
+          "usage": {
+            "prompt_tokens": 218,
+            "completion_tokens": 5,
+            "model": "minimax-m3",
+            "provider": "minimax",
+            "cached_tokens": 0,
+            "cache_write_tokens": 0,
+            "reasoning_tokens": 0
+          },
+          "finish_reason": "stop",
+          "tool_names": [],
+          "text": "9.9",
+          "adaptation": [
+            "稳定前缀 0 token 低于该厂商最小可缓存 512，本次不缓存（补齐稳定内容反而更划算）"
+          ]
+        }
+      ],
+      "ok": false
+    },
+    {
+      "vendor": "minimax",
+      "model": "minimax-m2.7-highspeed",
+      "endpoint": "https://api.minimaxi.com/v1",
+      "requests": [
+        {
+          "url": "https://api.minimaxi.com/v1/chat/completions",
+          "parameters": {
+            "model": "minimax-m2.7-highspeed",
+            "reasoning_effort": "low",
+            "max_tokens": 256
+          },
+          "message_roles": [
+            "user"
+          ],
+          "seconds": 1.25,
+          "usage": {
+            "prompt_tokens": 222,
+            "completion_tokens": 44,
+            "model": "minimax-m2.7-highspeed",
+            "provider": "minimax",
+            "cached_tokens": 197,
+            "cache_write_tokens": 0,
+            "reasoning_tokens": 38
+          },
+          "finish_reason": "stop",
+          "tool_names": [],
+          "text": "9.9",
+          "adaptation": [
+            "稳定前缀 0 token 低于该厂商最小可缓存 512，本次不缓存（补齐稳定内容反而更划算）"
+          ]
+        },
+        {
+          "url": "https://api.minimaxi.com/v1/chat/completions",
+          "parameters": {
+            "model": "minimax-m2.7-highspeed",
+            "reasoning_effort": "medium",
+            "max_tokens": 256
+          },
+          "message_roles": [
+            "user"
+          ],
+          "seconds": 9.33,
+          "usage": {
+            "prompt_tokens": 222,
+            "completion_tokens": 39,
+            "model": "minimax-m2.7-highspeed",
+            "provider": "minimax",
+            "cached_tokens": 221,
+            "cache_write_tokens": 0,
+            "reasoning_tokens": 33
+          },
+          "finish_reason": "stop",
+          "tool_names": [],
+          "text": "9.9",
+          "adaptation": [
+            "稳定前缀 0 token 低于该厂商最小可缓存 512，本次不缓存（补齐稳定内容反而更划算）"
+          ]
+        },
+        {
+          "url": "https://api.minimaxi.com/v1/chat/completions",
+          "parameters": {
+            "model": "minimax-m2.7-highspeed",
+            "reasoning_effort": "high",
+            "max_tokens": 256
+          },
+          "message_roles": [
+            "user"
+          ],
+          "seconds": 1.17,
+          "usage": {
+            "prompt_tokens": 222,
+            "completion_tokens": 38,
+            "model": "minimax-m2.7-highspeed",
+            "provider": "minimax",
+            "cached_tokens": 221,
+            "cache_write_tokens": 0,
+            "reasoning_tokens": 32
+          },
+          "finish_reason": "stop",
+          "tool_names": [],
+          "text": "9.9",
+          "adaptation": [
+            "稳定前缀 0 token 低于该厂商最小可缓存 512，本次不缓存（补齐稳定内容反而更划算）"
+          ]
+        }
+      ],
+      "ok": true
+    }
+  ]
+}

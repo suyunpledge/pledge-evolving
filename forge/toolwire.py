@@ -39,6 +39,30 @@ from .tool_adapter import (
 WIRES = ("openai", "anthropic")
 
 
+_THINK_BLOCK = re.compile(r"^\s*<think>.*?</think>\s*", re.DOTALL)
+_UNTERMINATED_THINK = re.compile(r"^\s*<think>.*", re.DOTALL)
+
+
+def strip_think_blocks(text: str) -> str:
+    """去掉**开头**的 <think>…</think> 思考泄漏块（MiniMax M3 / Qwen3 实测行为）。
+
+    2026-11-04 forge 真实任务实证：M3 在 content 里输出 <think> 块（思考不走
+    独立字段的部署形态），且 max_tokens 不够时整段 completion 全是思考——
+    </think> 恰好出现在截断点，正文为空。
+
+    规则：
+    * 只处理开头位置——正文中间的 <think> 是内容本身，不动；
+    * 未闭合（截断）时从 <think> 起全部丢弃：那种情况下答案本就不存在；
+    * 只清洗对外文本。原始 assistant 消息保持不动（回放要字节稳定）。
+    """
+    if not text or "<think>" not in text:
+        return text
+    out = _THINK_BLOCK.sub("", text, count=1)
+    if out == text:
+        out = _UNTERMINATED_THINK.sub("", text, count=1)
+    return out
+
+
 def looks_like_tool_attempt(text: str) -> bool:
     """Ordinary JSON/code in an answer is not a malformed tool request."""
     return bool(re.search(r'<tool_call\b', text, re.I)
@@ -79,7 +103,7 @@ def _spec_schema(spec) -> dict[str, Any]:
     return schema
 
 
-def tool_declarations(specs: Iterable, wire: str = "openai") -> list[dict[str, Any]]:
+def tool_declarations(specs: Iterable, wire: str = "openai", *, sort: bool = True) -> list[dict[str, Any]]:
     """Turn registry specs into a wire-shaped tool declaration list."""
     if wire not in WIRES:
         raise ValueError(f"unknown wire {wire!r}; expected one of {WIRES}")
@@ -100,11 +124,10 @@ def tool_declarations(specs: Iterable, wire: str = "openai") -> list[dict[str, A
                 "description": getattr(spec, "description", "") or "",
                 "input_schema": _spec_schema(spec),
             })
-    # Cache-alignment invariant: tool declarations must be sorted by name
-    # so the same visible set always produces the same token sequence.
-    # DSH achieves this with a configurable toolOrder; we sort alphabetically
-    # and verify below.
-    out.sort(key=lambda d: d.get("function", d).get("name", d.get("name", "")))
+    # 无会话的调用方仍按字母确定排序；ToolSurface 提供会话内既定顺序，
+    # 让工具发现只追加新声明，不把新名称插入已经发送的工具前缀。
+    if sort:
+        out.sort(key=lambda d: d.get("function", d).get("name", d.get("name", "")))
 
     # 发送前最后检查：空 enum / 缺 description / additionalProperties
     return sanitize_request_tools(out)
@@ -198,11 +221,23 @@ def replay_assistant_message(original, text, calls, wire):
             for block, call in zip(blocks, calls):
                 block['id'] = call.id
                 if wire == 'anthropic':
-                    block['name'], block['input'] = call.name, call.args
+                    block['name'], block['input'] = call.name, deepcopy(call.args)
                 else:
-                    block['function'] = {**(block.get('function') or {}), 'name': call.name,
-                                         'arguments': json.dumps(call.args, ensure_ascii=False)}
+                    function = block.get('function') or {}
+                    original_args = function.get('arguments')
+                    try:
+                        same = (isinstance(original_args, str) and json.dumps(
+                            json.loads(original_args), ensure_ascii=False, sort_keys=True, allow_nan=False)
+                            == json.dumps(call.args, ensure_ascii=False, sort_keys=True, allow_nan=False))
+                    except (TypeError, ValueError, RecursionError):
+                        same = False
+                    # 合法原始 JSON 的空白/转义也属于模型表面；只有参数确被修复才重编码。
+                    block['function'] = {**function, 'name': call.name,
+                        'arguments': original_args if same else json.dumps(call.args, ensure_ascii=False)}
             return message
+    # 无工具的 OpenAI 最终回复也可能带 reasoning_content；跨轮续接必须保留。
+    if not calls and not rows and message.get('role') == 'assistant':
+        return message
     return assistant_message(text, calls, wire)
 
 
@@ -236,7 +271,9 @@ def assistant_message(text: str, calls: list[ToolCall], wire: str) -> dict[str, 
 def tool_result_messages(results: list[tuple[ToolCall, str, bool]], wire: str) -> list[dict[str, Any]]:
     """Format tool results in the shape the wire expects, ids preserved.
 
-    ``results`` is ``[(call, content, ok), ...]``.
+    ``results`` is ``[(call, content, ok), ...]``. The action boundary and
+    tool turn already retain/offload and bound this text. Formatting must
+    preserve it: another preview here loses data without an artifact handle.
     """
     out: list[dict[str, Any]] = []
     if wire == "anthropic":
@@ -245,7 +282,7 @@ def tool_result_messages(results: list[tuple[ToolCall, str, bool]], wire: str) -
             blocks.append({
                 "type": "tool_result",
                 "tool_use_id": call.id,
-                "content": _preview(content),
+                "content": content,
                 "is_error": not ok,
             })
         return [{"role": "user", "content": blocks}]
@@ -254,26 +291,9 @@ def tool_result_messages(results: list[tuple[ToolCall, str, bool]], wire: str) -
         out.append({
             "role": "tool",
             "tool_call_id": call.id,
-            "content": (_preview(content) if ok else f"[error] {_preview(content)}"),
+            "content": (content if ok else f"[error] {content}"),
         })
     return out
-
-
-def _preview(text: str, limit: int = 1200) -> str:
-    """Head + tail preview for long tool results in provider messages.
-
-    T2（3.5）：超长工具结果不再全文进 messages（provider 计费项），
-    改为保留首尾各一半 + 中间截断标记。短文本原样返回，零开销。
-    3.6 nit（DS 回执）：1201–limit+标记长度 区间截断无收益（输出
-    ≥ 原长），短路原样返回；标记长度用运行时实测，不硬编码。
-    """
-    if not text or len(text) <= limit:
-        return text
-    half = limit // 2
-    marked = f"{text[:half]}\n…[truncated: {len(text)} chars total]\n{text[-half:]}"
-    if len(marked) >= len(text):
-        return text
-    return marked
 
 
 def summarize_calls(calls: list[ToolCall]) -> str:
@@ -291,6 +311,7 @@ __all__ = [
     "openai_assistant_message",
     "parse_tool_calls",
     "parse_text_protocol_calls",
+    "strip_think_blocks",
     "summarize_calls",
     "tool_declarations",
     "tool_result_messages",

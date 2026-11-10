@@ -20,6 +20,34 @@ from .thinking import (
 )
 
 
+def test_compaction_empty_pinned_never_hoists_tool_results() -> None:
+    """2026-11-04 实测回归：空串 pinned 不许把空结果 tool 消息提到前面孤儿化。"""
+    budget = ContextBudget(max_chars=3000, keep_tail=6)
+    call_id = "call_01a1a4669ed67424bf937e29"
+    messages = [
+        {"role": "system", "content": "s" * 100},
+        {"role": "user", "content": "task"},
+        {"role": "assistant", "content": "并行调用。",
+         "tool_calls": [{"id": call_id, "type": "function",
+                         "function": {"name": "grep", "arguments": "{}"}}]},
+        {"role": "tool", "tool_call_id": call_id, "content": ""},   # grep 零命中
+        {"role": "assistant", "content": "y" * 4000},               # 撑爆预算
+        {"role": "user", "content": "tail"},
+    ]
+    out = budget.compact(messages, max_chars=1000, pinned_contents=("task", ""))
+    # 空串 pinned 不得把 tool 消息提到前面
+    seen_calls = set()
+    for m in out:
+        if m.get("role") == "assistant":
+            for c in m.get("tool_calls") or []:
+                if c.get("id"):
+                    seen_calls.add(c["id"])
+        assert not (m.get("role") == "tool" and m.get("tool_call_id") not in seen_calls), \
+            "compaction produced an orphan tool result"
+    assert any(m.get("tool_call_id") == call_id for m in out), \
+        "empty-content tool result must stay paired, not be hoisted/dropped"
+
+
 def test_compaction_module() -> None:
     """ContextBudget works identically whether imported from memory or compaction."""
     budget = ContextBudget(max_chars=50, keep_tail=1)
@@ -130,6 +158,7 @@ def test_thinking_module() -> None:
 def run_all() -> None:
     """Run all tests in this module; raises on failure."""
     test_compaction_module()
+    test_compaction_empty_pinned_never_hoists_tool_results()
     test_subagent_module()
     test_thinking_module()
 

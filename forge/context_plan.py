@@ -209,11 +209,17 @@ class ContextPlan:
         if resolved == "lossless":
             return max(base_budget, 10_000_000)
 
+        # 2026-11-04 第三轮：按厂家上下文地板抬默认压缩天花板。地板只作用于
+        # slope 厂商（无阶梯线）；cliff 厂商仍以阶梯封顶优先（min 保持不变）。
+        budget = base_budget
+        floor = int(getattr(profile, "context_floor_chars", 0) or 0)
+        if floor > budget:
+            budget = floor
         threshold = profile.long_context_threshold
         if threshold:
             cliff_chars = int(threshold * _CLIFF_HEADROOM * _CHARS_PER_TOKEN)
-            return max(2_000, min(base_budget, cliff_chars))
-        return base_budget
+            return max(2_000, min(budget, cliff_chars))
+        return budget
 
 
 def prompt_context_choice(profile: VendorProfile, est_tokens: int) -> str:

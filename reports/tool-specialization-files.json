@@ -1,0 +1,222 @@
+{
+  "files": [
+    {
+      "path": "forge/artifact_tools.py",
+      "before_sha256_utf8_lf": "0bb0c81d32b9687486aa951002ae79b2924ad11395991b618c9f94ecdf227945",
+      "sha256_utf8_lf": "5d28186a5147986ae598f9b153c6150fe057c148dba05b6a149f2da45d3224e0"
+    },
+    {
+      "path": "forge/artifacts.py",
+      "before_sha256_utf8_lf": "a741481fe5e1e0c3eb34caa155665f29cf99834920db70fda9f49437b898fc8e",
+      "sha256_utf8_lf": "9fbc676f731f24d93b50faf491e92520e9df76ecfacb8e8936edba06d1916b11"
+    },
+    {
+      "path": "forge/builtin_views.py",
+      "before_sha256_utf8_lf": "4e1fb2b42ca1f183b92cd6bc7d2c9072a080944e8ca4d65b4009f98866154dc4",
+      "sha256_utf8_lf": "fc517eaa911b2df1750e0f4e7620303f91dd37dc2268aeb9dd00e97692275ab0"
+    },
+    {
+      "path": "forge/tools.py",
+      "before_sha256_utf8_lf": "c6ad0af70b9175149e9e11278c030f755c6bab930280da87649cda2a2a097a65",
+      "sha256_utf8_lf": "d243a16a7b94b860e5d212112bb221f493357ec39daf8bd0b9869a3504d4d147"
+    },
+    {
+      "path": "forge-budgets.json",
+      "before_sha256_utf8_lf": "6c7496c49f2a3d83a7e8f54f83c16414c4414a86fe0a759b2419b7bef15554f2",
+      "sha256_utf8_lf": "8970c523c0e7a1681e89a2740cfd783424390fac1138748a8c632feb22633e83"
+    },
+    {
+      "path": "scripts/verify_tool_challenge.py",
+      "before_sha256_utf8_lf": null,
+      "sha256_utf8_lf": "952399459e9f58c4bf1b594edfcb936a123cbc109810f7d42694d59395edd854"
+    },
+    {
+      "path": "tests/test_command_feedback.py",
+      "before_sha256_utf8_lf": null,
+      "sha256_utf8_lf": "46d807008739859a837651a1fdbf7f352195a100b1b253b845a245497ea07d48"
+    },
+    {
+      "path": "docs/SEED-MIMO-TOOL-SPECIALIZATION.md",
+      "before_sha256_utf8_lf": null,
+      "sha256_utf8_lf": "208e374193cf400391c27cae06b3d669478320aaa35b6cbb5492e1f0eae9e63a"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "reports/tool-challenge-mimo-adapted-sources/turn-1-pricing.py",
+      "sha256": "6e5315dcd9e9f62175e6f5418c0371b3106ed1d42ad6bb5b871e015bf668e7c0"
+    },
+    {
+      "path": "reports/tool-challenge-mimo-adapted-sources/turn-1-reporting.py",
+      "sha256": "50947a44d515696aed12171523c3d8db39c6d51e725734d8ee3139bb475e51e2"
+    },
+    {
+      "path": "reports/tool-challenge-mimo-adapted-sources/turn-2-pricing.py",
+      "sha256": "6e5315dcd9e9f62175e6f5418c0371b3106ed1d42ad6bb5b871e015bf668e7c0"
+    },
+    {
+      "path": "reports/tool-challenge-mimo-adapted-sources/turn-2-reporting.py",
+      "sha256": "50947a44d515696aed12171523c3d8db39c6d51e725734d8ee3139bb475e51e2"
+    },
+    {
+      "path": "reports/tool-challenge-mimo-adapted.json",
+      "sha256": "018d0f664f0b1f1988f450a90cce9de6ede655a3d0554291e5058f48b09a8e9a"
+    },
+    {
+      "path": "reports/tool-challenge-mimo-adapted.log",
+      "sha256": "5bc574a4b8d76ac9f4ea679406e4b59e24b30ecc12af4fd9c41313c9548c1580"
+    },
+    {
+      "path": "reports/tool-challenge-mimo-baseline-sources/turn-1-pricing.py",
+      "sha256": "6e8361780d9b087be7cbc8e39a0512e84ba445df8756ffa50d4dd28969e84ae2"
+    },
+    {
+      "path": "reports/tool-challenge-mimo-baseline-sources/turn-1-reporting.py",
+      "sha256": "d2aa5111911a810c65d608f70d598c96c87b9440769640617b5592e84feadbeb"
+    },
+    {
+      "path": "reports/tool-challenge-mimo-baseline-sources/turn-2-pricing.py",
+      "sha256": "6e8361780d9b087be7cbc8e39a0512e84ba445df8756ffa50d4dd28969e84ae2"
+    },
+    {
+      "path": "reports/tool-challenge-mimo-baseline-sources/turn-2-reporting.py",
+      "sha256": "c7928baf250a5d3a1c396bd32a697d0e770f1ded4509ffea8af635e78f9c7a08"
+    },
+    {
+      "path": "reports/tool-challenge-mimo-baseline.json",
+      "sha256": "13e1930174746c147e22d20b5a81e30eab88fbcbb0a2ab2a8e77b6929befe83c"
+    },
+    {
+      "path": "reports/tool-challenge-mimo-baseline.log",
+      "sha256": "c025ea13313872405485ed55ecd2f214a7ad7bb67a638ce7cdbc8dd382918e9e"
+    },
+    {
+      "path": "reports/tool-challenge-mimo-bounded-sources/turn-1-pricing.py",
+      "sha256": "fab4b8d7576dcf2b7e759750d97db70edb93d897bd6de39adab8e34e857f9cc4"
+    },
+    {
+      "path": "reports/tool-challenge-mimo-bounded-sources/turn-1-reporting.py",
+      "sha256": "78d74b54c8249446fb97eddc5eb5776de95f66995713ef01e3e2871d3ba8e90a"
+    },
+    {
+      "path": "reports/tool-challenge-mimo-bounded-sources/turn-2-pricing.py",
+      "sha256": "fab4b8d7576dcf2b7e759750d97db70edb93d897bd6de39adab8e34e857f9cc4"
+    },
+    {
+      "path": "reports/tool-challenge-mimo-bounded-sources/turn-2-reporting.py",
+      "sha256": "35da6630b0bf6a13292dd736d5c76fdd3b41038879c23fc0bd9d0beecdd4c40b"
+    },
+    {
+      "path": "reports/tool-challenge-mimo-bounded.json",
+      "sha256": "533076f5fe58be1a48dddb121cc872d94f79d4125685c12285ff59b3e105ea2a"
+    },
+    {
+      "path": "reports/tool-challenge-mimo-bounded.log",
+      "sha256": "65b37dec5ab1141a92a04ffbb4890f57bd1b14ee9fd4440179004b3db7f97256"
+    },
+    {
+      "path": "reports/tool-challenge-mimo-final-sources/turn-1-pricing.py",
+      "sha256": "2911fa719f431e79cf8aea36d6c8f3bae87f212e0c3b02a9ceefcdc74304b798"
+    },
+    {
+      "path": "reports/tool-challenge-mimo-final-sources/turn-1-reporting.py",
+      "sha256": "edef8764eaf533549dbde67eff5094a084bbf1b0a7b1a7c09cad967363e56f5b"
+    },
+    {
+      "path": "reports/tool-challenge-mimo-final-sources/turn-2-pricing.py",
+      "sha256": "2911fa719f431e79cf8aea36d6c8f3bae87f212e0c3b02a9ceefcdc74304b798"
+    },
+    {
+      "path": "reports/tool-challenge-mimo-final-sources/turn-2-reporting.py",
+      "sha256": "601d4d7f64d7d8e575e41fac50869923a5d59543b12184a2bc52e969a8b296dc"
+    },
+    {
+      "path": "reports/tool-challenge-mimo-final.json",
+      "sha256": "d12ba465c2baee081714b36704c8976c44f7e86056c01310adf4aa08c2099190"
+    },
+    {
+      "path": "reports/tool-challenge-mimo-final.log",
+      "sha256": "79014357c3e156b49a5e9549e876b7d473917a4e8b455b1340e2fa847c2e3067"
+    },
+    {
+      "path": "reports/tool-challenge-seed-adapted-sources/turn-1-pricing.py",
+      "sha256": "824dea1dbb1af12ccc6dd3464c6e4cf4fe4904dcd3a98f1468da8e6d358b2bb0"
+    },
+    {
+      "path": "reports/tool-challenge-seed-adapted-sources/turn-1-reporting.py",
+      "sha256": "57325efb0e48bf5561fefc973c765818009c840fb0df26354818ef0b253ca883"
+    },
+    {
+      "path": "reports/tool-challenge-seed-adapted-sources/turn-2-pricing.py",
+      "sha256": "824dea1dbb1af12ccc6dd3464c6e4cf4fe4904dcd3a98f1468da8e6d358b2bb0"
+    },
+    {
+      "path": "reports/tool-challenge-seed-adapted-sources/turn-2-reporting.py",
+      "sha256": "57325efb0e48bf5561fefc973c765818009c840fb0df26354818ef0b253ca883"
+    },
+    {
+      "path": "reports/tool-challenge-seed-adapted.json",
+      "sha256": "670c40f360d5a9715fa05d8a4c37a0c3569229ab17ec741647e0af68a14d1c1b"
+    },
+    {
+      "path": "reports/tool-challenge-seed-adapted.log",
+      "sha256": "a13152c640c7db8aa5115e7eddf8ebb3c94d18f0abf99de236aa113ba0d97fbb"
+    },
+    {
+      "path": "reports/tool-challenge-seed-baseline-sources/turn-1-pricing.py",
+      "sha256": "f980fab2ba6037f45c2620c4332df729d7252e8323679b7aa6d9b42a22052107"
+    },
+    {
+      "path": "reports/tool-challenge-seed-baseline-sources/turn-1-reporting.py",
+      "sha256": "eeeda039f9d2e945edf50cd3bc5e758313c0c5d3a0372cb3aa02ea1c42234414"
+    },
+    {
+      "path": "reports/tool-challenge-seed-baseline.json",
+      "sha256": "7138fbb1e02ddddb9b2beaa962abb5806d5f057cc5f39c8d620860a2bfc740bb"
+    },
+    {
+      "path": "reports/tool-challenge-seed-baseline.log",
+      "sha256": "2b85502eac66b3fe175e20d6d79a3ec6259c877811ff8a57811210f7abe91e22"
+    },
+    {
+      "path": "reports/tool-challenge-seed-final-sources/turn-1-pricing.py",
+      "sha256": "f980fab2ba6037f45c2620c4332df729d7252e8323679b7aa6d9b42a22052107"
+    },
+    {
+      "path": "reports/tool-challenge-seed-final-sources/turn-1-reporting.py",
+      "sha256": "eeeda039f9d2e945edf50cd3bc5e758313c0c5d3a0372cb3aa02ea1c42234414"
+    },
+    {
+      "path": "reports/tool-challenge-seed-final.json",
+      "sha256": "89fca433db5d9acbe720ab9c75fe70fdd9c7749863090e93c63009479e2c14b9"
+    },
+    {
+      "path": "reports/tool-challenge-seed-final.log",
+      "sha256": "bd2159b5d74a3f10c5eb5775fdeceaeffa11ab29cbf8048ed6fc78ccea356bf9"
+    },
+    {
+      "path": "reports/tool-specialization-audit.json",
+      "sha256": "8299c87044fe8c44b9496c66f91c6c60c7d0dcabeda87a6076a06e865d8f743f"
+    },
+    {
+      "path": "reports/tool-specialization-audit.py",
+      "sha256": "dec0d3f44b217ee3de43722f231ee7d33fa5d015f3d5b235360a9222c5fe10a7"
+    },
+    {
+      "path": "reports/tool-specialization-core.log",
+      "sha256": "871b1b2ec49f3d0939505f53375b1a4bc7c22884a537958c2de0b122cf4c9205"
+    },
+    {
+      "path": "reports/tool-specialization-gateway.log",
+      "sha256": "c21fad3f5366f9128836d0670c9fd74394fc88c63df9d0c78b39427ce01c9977"
+    },
+    {
+      "path": "reports/tool-specialization-targeted.log",
+      "sha256": "024759e9d86c6184316fcd7dcd9e613fe12f895a2f49c810f0ae2a7d74cde55c"
+    },
+    {
+      "path": "reports/tool-specialization.patch",
+      "sha256": "f9e8e6d2eeda9eb5dea9488bab02a19b9d997843c07c1e44a69e67649c957bbc"
+    }
+  ]
+}

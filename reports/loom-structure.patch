@@ -1,0 +1,1157 @@
+--- a/forge/loop.py
++++ b/forge/loop.py
+@@ -21,9 +21,7 @@
+ from __future__ import annotations
+ 
+ import json
+-import os
+ import re
+-from dataclasses import dataclass, field
+ from pathlib import Path
+ from typing import Any, Callable, Iterable
+ 
+@@ -67,7 +65,8 @@
+ # 一模块（半组装套件一律不挂）；converged / RoundSpec 是模块契约公开的库/类型
+ # 面（spec：供调用方直接使用，不登记 hooks），由挂载层直接取属性。计数写在
+ # "thinking.<hook>" 名下，"挂载"与"真被调用"因此可分。
+-THINKING_HOOKS = ("should_think", "build_thinking_task", "split_thinking", "estimate_budget")
++from .extensions import THINKING_HOOKS, mount_contrib_extensions
++from .runtime_types import ThinkingSuite, LoopLimits, Step, RunReport
+ 
+ # 三档沉思模式（用户可选开关；smart 的判据 = 模块库函数 looks_complex）。
+ THINKING_MODES = ("off", "smart", "on")
+@@ -80,19 +79,6 @@
+     mode = str(value or "off").strip().lower()
+     return mode if mode in THINKING_MODES else "off"
+ 
+-
+-@dataclass(frozen=True)
+-class ThinkingSuite:
+-    """Runtime handle to a mounted thinking engine (capability thinking.mode)."""
+-
+-    module: str
+-    should_think: Any
+-    build_thinking_task: Any
+-    split_thinking: Any
+-    estimate_budget: Any
+-    converged: Any = None
+-    round_spec: Any = None
+-    looks_complex: Any = None
+ 
+ TOOL_CALL_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.S)
+ 
+@@ -158,47 +144,6 @@
+         recent_cost = sum(e.cost for e in recent)
+         scale *= max(0.5, 1.0 - recent_cost / 50.0)
+     return scale
+-
+-
+-@dataclass
+-class LoopLimits:
+-    max_steps: int = 12
+-    max_depth: int = 2
+-    spawn_budget: int = 8
+-    max_tool_result: int = 4000
+-    context_chars: int = 24000
+-
+-
+-@dataclass
+-class Step:
+-    index: int
+-    tool: str = ""
+-    args: dict[str, Any] = field(default_factory=dict)
+-    result: str = ""
+-    decision: str = ""
+-    note: str = ""
+-    action_id: str = ''
+-    meta: dict[str, Any] = field(default_factory=dict)
+-
+-
+-@dataclass
+-class RunReport:
+-    text: str
+-    steps: list[Step]
+-    usage: dict[str, Any]
+-    stopped: str = "final"          # final | max_steps | error | planning_error | format_error | stalled | converged | unknown_outcome | cancelled
+-    events: list[dict[str, Any]] = field(default_factory=list)
+-    planning: dict[str, Any] | None = None
+-    run_id: str = ''
+-    task_id: str = ''
+-    parent_run_id: str = ''
+-
+-    def as_result(self):
+-        return RunResult.from_report(self)
+-
+-    @property
+-    def tool_calls(self) -> int:
+-        return sum(1 for s in self.steps if s.tool)
+ 
+ 
+ class Agent:
+@@ -1427,117 +1372,40 @@
+                                      "{\"tool\": <name>, \"args\": {...}} with a registered tool name; "
+                                      "to answer in prose, reply without braces."})
+                     continue
+-                # 文本协议调用：brace-depth 提取，多块全执行——模型会把并行调用
+-                # 串在一条回复里（2026-09-23 MiMo V2.6 T7 实测三块串联，旧
+-                # 非贪婪正则只抓第一块且嵌套 args 必截断）
+-                answered_text: list[tuple[str, str, bool]] = []
+-                supervisor_rows: list[dict[str, Any]] = []
+-                for one in text_calls:
+-                    tool_name = str(one.get("name") or "")
+-                    args = dict(one.get("arguments") or {})
+-                    step = Step(index=len(steps) + 1, tool=tool_name, args=args)
+-                    result = self._invoke_recorded(tool_name, args)
+-                    step.action_id, step.meta = result.meta['action_id'], dict(result.meta)
+-                    step.meta["usage_delta"] = dict(turn_usage_delta)
+-                    if result.meta.get('checkpoint'):
+-                        step.note = 'checkpoint ' + result.meta['checkpoint'][:8]
+-                    full_text = result.content or result.error
+-                    if self.offloader.policy.should_offload(tool_name, full_text):
+-                        full_text = self.offloader.wrap_result_text(tool_name, result.meta.get('action_id', ''), full_text)
+-                        self._emit(type="tool_result_offloaded", tool=tool_name,
+-                                   path=self.offloader.last_path, chars=len(result.content or result.error))
+-                    step.result = full_text[: self.limits.max_tool_result]
+-                    if len(full_text) > self.limits.max_tool_result:
+-                        step.meta["result_full"] = full_text
+-                    step.decision = ("deny" if not result.ok and result.meta.get("authorization") == "deny"
+-                                     else ("ok" if result.ok else "error"))
+-                    steps.append(step)
+-                    answered_text.append((tool_name, step.result, result.ok))
+-                    supervisor_rows.append(self._supervisor_tool_row(tool_name, args, result))
+-                    authz = (result.meta or {}).get("authorization") if isinstance(result.meta, dict) else None
+-                    self._emit(type="tool_call", tool=tool_name, args=args,
+-                               action_id=result.meta.get('action_id'), meta=result.meta,
+-                               result=step.result[:1500], ok=result.ok, decision=step.decision,
+-                               step=step.index, native=False, authorization=authz)
+-                    if result.meta.get('execution_state') == 'unknown':
+-                        return self._stop_unknown(steps, usage_total)
+-                    if self._guard.observe(tool_name, args, result.ok, result.content or result.error):
+-                        self._emit(type="loop_stop", reason="stalled", steps=len(steps))
+-                        return self._finish(RunReport(text="[stopped: repeated action/result; inspect the failure or change approach]",
+-                            steps=steps, usage=usage_total, stopped="stalled", events=self.events))
+-                verdict = self._supervisor_consult(index, supervisor_rows, text)
+-                if isinstance(verdict, dict) and verdict.get("should_abort"):
+-                    self._emit(type="stop_reason", source="convergence:" + str(verdict.get("reason") or "score"),
+-                               turn=index, voluntary=False, score=verdict.get("score"),
+-                               level=verdict.get("level"),
+-                               no_tool_turns=verdict.get("no_tool_turns"))
+-                    self._emit(type="loop_stop", reason="converged", steps=len(steps),
+-                               score=verdict.get("score"))
+-                    return self._finish(RunReport(
+-                        text="[stopped: convergence supervisor requested a bounded stop]",
+-                        steps=steps, usage=usage_total, stopped="converged", events=self.events))
+-                messages.append({"role": "assistant", "content": text})
+-                for tool_name, body, ok in answered_text:
+-                    messages.append({
+-                        "role": "user",
+-                        "content": f"<tool_result tool=\"{tool_name}\" ok=\"{ok}\">{body}</tool_result>",
+-                    })
+-                continue
+-
++                calls = [toolwire.ToolCall('', str(one.get('name') or ''),
++                         dict(one.get('arguments') or {}), wire=wire) for one in text_calls]
++
++            calls = native_calls if native_calls else calls
++            from .tool_turn import execute_turn
++            turn = execute_turn(calls, native=bool(native_calls), wire=wire, steps=steps,
++                usage_delta=turn_usage_delta, max_result=self.limits.max_tool_result,
++                invoke=self._invoke_recorded, emit=self._emit, offloader=self.offloader,
++                guard=self._guard, supervisor_row=self._supervisor_tool_row)
++            if turn.stopped == 'unknown_outcome':
++                return self._stop_unknown(steps, usage_total)
++            if turn.stopped == 'stalled':
++                self._emit(type='loop_stop', reason='stalled', steps=len(steps))
++                return self._finish(RunReport(
++                    text='[stopped: repeated action/result; inspect the failure or change approach]',
++                    steps=steps, usage=usage_total, stopped='stalled', events=self.events))
++            verdict = self._supervisor_consult(index, turn.supervisor_rows, text)
++            if isinstance(verdict, dict) and verdict.get('should_abort'):
++                self._emit(type='stop_reason', source='convergence:' + str(verdict.get('reason') or 'score'),
++                    turn=index, voluntary=False, score=verdict.get('score'),
++                    level=verdict.get('level'), no_tool_turns=verdict.get('no_tool_turns'))
++                self._emit(type='loop_stop', reason='converged', steps=len(steps), score=verdict.get('score'))
++                return self._finish(RunReport(
++                    text='[stopped: convergence supervisor requested a bounded stop]',
++                    steps=steps, usage=usage_total, stopped='converged', events=self.events))
+             if native_calls:
+-                answered: list[tuple[toolwire.ToolCall, str, bool]] = []
+-                supervisor_rows: list[dict[str, Any]] = []
+-                for call in native_calls:
+-                    step = Step(index=len(steps) + 1, tool=call.name, args=call.args,
+-                                note=f"native/{wire} id={call.id or '-'}")
+-                    result = self._invoke_recorded(call.name, call.args, tool_call_id=call.id or '')
+-                    step.action_id, step.meta = result.meta['action_id'], dict(result.meta)
+-                    step.meta["native_call"] = True
+-                    step.meta["usage_delta"] = dict(turn_usage_delta)
+-                    if result.meta.get('checkpoint'):
+-                        step.note = 'checkpoint ' + result.meta['checkpoint'][:8]
+-                    full_text = result.content or result.error
+-                    if self.offloader.policy.should_offload(call.name, full_text):
+-                        full_text = self.offloader.wrap_result_text(call.name, result.meta.get('action_id', ''), full_text)
+-                        self._emit(type="tool_result_offloaded", tool=call.name,
+-                                   path=self.offloader.last_path, chars=len(result.content or result.error))
+-                    step.result = full_text[: self.limits.max_tool_result]
+-                    if len(full_text) > self.limits.max_tool_result:
+-                        step.meta["result_full"] = full_text
+-                    step.decision = ("deny" if not result.ok and result.meta.get("authorization") == "deny"
+-                                     else ("ok" if result.ok else "error"))
+-                    steps.append(step)
+-                    answered.append((call, step.result, result.ok))
+-                    supervisor_rows.append(self._supervisor_tool_row(call.name, call.args, result))
+-                    authz = (result.meta or {}).get("authorization") if isinstance(result.meta, dict) else None
+-                    self._emit(type="tool_call", tool=call.name, args=call.args,
+-                               action_id=result.meta.get('action_id'), meta=result.meta,
+-                               result=step.result[:1500], ok=result.ok,
+-                               decision=step.decision, step=step.index,
+-                               call_id=call.id, wire=wire, authorization=authz)
+-                    if result.meta.get('execution_state') == 'unknown':
+-                        return self._stop_unknown(steps, usage_total)
+-                    if self._guard.observe(call.name, call.args, result.ok, result.content or result.error):
+-                        self._emit(type="loop_stop", reason="stalled", steps=len(steps))
+-                        return self._finish(RunReport(text="[stopped: repeated action/result; inspect the failure or change approach]",
+-                            steps=steps, usage=usage_total, stopped="stalled", events=self.events))
+-                verdict = self._supervisor_consult(index, supervisor_rows, text)
+-                if isinstance(verdict, dict) and verdict.get("should_abort"):
+-                    self._emit(type="stop_reason", source="convergence:" + str(verdict.get("reason") or "score"),
+-                               turn=index, voluntary=False, score=verdict.get("score"),
+-                               level=verdict.get("level"),
+-                               no_tool_turns=verdict.get("no_tool_turns"))
+-                    self._emit(type="loop_stop", reason="converged", steps=len(steps),
+-                               score=verdict.get("score"))
+-                    return self._finish(RunReport(
+-                        text="[stopped: convergence supervisor requested a bounded stop]",
+-                        steps=steps, usage=usage_total, stopped="converged", events=self.events))
+                 messages.append(toolwire.replay_assistant_message(
+                     completion.assistant_message, prose, native_calls, wire))
+-                messages.extend(toolwire.tool_result_messages(answered, wire))
+-                continue
+-
+-
++                messages.extend(toolwire.tool_result_messages(turn.answered, wire))
++            else:
++                messages.append({'role': 'assistant', 'content': text})
++                for call, body, ok in turn.answered:
++                    messages.append({'role': 'user', 'content':
++                        f'<tool_result tool="{call.name}" ok="{ok}">{body}</tool_result>'})
+ 
+         self._emit(type="loop_stop", reason="max_steps", steps=len(steps))
+         return self._finish(RunReport(
+@@ -1712,269 +1580,16 @@
+     return cleaned.strip()
+ 
+ 
+-def build_agent(
+-    *,
+-    home: Path,
+-    workspace: Path,
+-    config,
+-    router: ModelRouter,
+-    policy: Policy | None = None,
+-    limits: LoopLimits | None = None,
+-    non_interactive: bool = True,
+-    expose: Iterable[str] | None = None,
+-    mount_contrib: bool = True,
+-    session_path: Path | None = None,
+-    observer: "Callable[[dict[str, Any]], None] | None" = None,
+-) -> Agent:
+-    """Wire a full agent from a composed config tree.
+-
+-    ``mount_contrib`` decides whether verified contribution modules actually
+-    *serve* the runtime (not just sit validated in the index): their hooks are
+-    resolved through the registry's alias table and handed to the Agent as an
+-    extension surface. A quarantined or missing module simply leaves its slot
+-    empty — mounting never fails the boot.
+-
+-    ``session_path`` overrides where this agent's event log lands. The default
+-    uses a fresh identity to isolate concurrent CLI tasks; a chat
+-    channel serving several peers passes a per-peer path so conversations do
+-    not share one log.
+-    """
+-    from .tools import build_builtin_registry
+-
+-    home = Path(home)
+-    workspace = Path(workspace)
+-    policy = policy or Policy.from_config(config, workspace=workspace, non_interactive=non_interactive)
+-    limits = limits or LoopLimits(
+-        max_steps=int(config.get("loop", "maxSteps", 12)),
+-        max_depth=int(config.get("loop", "maxDepth", 2)),
+-        spawn_budget=int(config.get("loop", "spawnBudget", 8)),
+-    )
+-
+-    capabilities = CapabilityLibrary(
+-        [home / "capabilities", workspace / ".forge" / "capabilities"],
+-        state_path=home / "capabilities.state.json",
+-    )
+-    capabilities.scan()
+-
+-    memory = MemoryStore(home / "MEMORY.md").load()
+-    checkpoints = CheckpointStore(home, workspace)
+-    session_dir = home / "sessions"
+-    from .session import Session as _Session
+-
+-    session = _Session(session_path or (session_dir / (uuid.uuid4().hex + ".jsonl")), meta={
+-        "cwd": str(workspace),
+-        "model": str(config.get("model", "primary", "")),
+-        "policy_mode": policy.mode.value,
+-        "framework": "forge",
+-    })
+-
+-    registry = build_builtin_registry(expose=expose)
+-    # H14 (rev.H14-3.7): the cost ledger is REAL here, not optional — priced
+-    # compaction (T4) needs spend data, and cost accounting that only exists
+-    # when a host remembers to inject it never records anything. Path matches
+-    # `forge cost` (cli.cmd_cost) so the two views stay one ledger.
+-    from .pricing import CostLedger
+-    ledger = CostLedger(home / "cost" / "spend.jsonl")
+-    # service 门控：解析本次运行实际会用到的 provider 是哪个引擎。未知/云端 → ""，
+-    # 所有门控行为退化为不生效，保证既有 provider 行行为不变。
+-    service = service_from_config(config)
+-    # F2-2：传真实工作区，贡献模块经 api.workspace 看到沙箱边界。
+-    # H11：接管/保底警告转 mount_warning 事件，不再静默。
+-    extensions: dict[str, Any] = {}
+-    mount_warnings: list[str] = []
+-    if mount_contrib:
+-        extensions, mount_warnings = mount_contrib_extensions(
+-            home=home, workspace=workspace, return_warnings=True)
+-    from .context_plan import ContextPlan
+-    context_plan = ContextPlan.from_config(config)
+-    return Agent(
+-        home=home,
+-        workspace=workspace,
+-        router=router,
+-        registry=registry,
+-        policy=policy,
+-        memory=memory,
+-        capabilities=capabilities,
+-        checkpoints=checkpoints,
+-        session=session,
+-        limits=limits,
+-        context_mode=context_plan.default_mode if context_plan.mode == 'ask' else context_plan.mode,
+-        extensions=extensions,
+-        mount_warnings=mount_warnings,
+-        cost_ledger=ledger,
+-        # 三档模式来自配置树（bundle 行 thinking.mode；off/smart/on，默认 off），
+-        # 再经 service 门控：本地引擎（ollama / llamacpp / mnn）上 smart→off，
+-        # 云端 provider 的配置原样透传。
+-        thinking=resolve_thinking_mode(
+-            config.get("thinking", "mode", "off"), service),
+-        planning=config.get("planning", "level", "none"),
+-        planning_model=config.get("planning", "model", None),
+-        review_enabled=config.get("review", "enabled", False),
+-        review_model=config.get("review", "model", None),
+-        project_rules=(False if config.row('project_rules') and config.row('project_rules').disabled
+-                       else config.get('project_rules', 'enabled', True)),
+-        service=service,
+-        thinking_token_cap=config.get("thinking", "tokenCap", None),
+-        observer=observer,
+-    )
+-
+-
+-def mount_contrib_extensions(
+-        *, home: Path, workspace: Path | None = None, return_warnings: bool = False,
+-) -> "dict[str, Any] | tuple[dict[str, Any], list[str]]":
+-    """Resolve verified contribution hooks into named extension slots.
+-
+-    This is the seam that turns "modules that passed the gate" into "modules
+-    the runtime calls": scheduler drives due-work checks, router shapes task
+-    dispatch, teams carries subagent messaging, compactor is consulted at the
+-    loop's compaction threshold, curator runs knowledge metabolism after a
+-    run, replay renders the run into a timeline at run end, and the thinking
+-    suite runs contemplation rounds at a run's start/end (capability
+-    thinking.mode; four hooks from one module, counted per hook). Every
+-    consultation is counted on ``Agent.extension_calls``, so "mounted" and
+-    "actually serving" can never be conflated again. Everything is
+-    optional-by-name — an absent or quarantined module leaves an empty slot,
+-    and the Agent degrades to its builtin behaviour exactly as before.
+-
+-    H11（3.0 复验轮）：发现用两个独立注册表——包内 contrib 是保底席位，
+-    ``home/contrib`` 同名模块只有自己过闸才接管席位；被拒/钩子不可解析
+-    的本地文件不再静默吞掉内置席位。每次接管/保底都记警告，
+-    ``return_warnings=True`` 拿列表（缺省裸 dict 返回，兼容旧调用）。
+-    """
+-    from .registry import ContribAPI, ModuleRegistry
+-
+-    # F2-2：workspace 缺省回落 home（兼容旧调用），但真实运行时应传入实际
+-    # 工作区——贡献模块经 api.workspace 看到的是沙箱边界。
+-    ws = Path(workspace) if workspace is not None else Path(home)
+-    contrib_home = home / "contrib"
+-    contrib_pkg = Path(__file__).resolve().parent / "contrib"
+-    api = ContribAPI(home=home, workspace=ws)
+-    warnings: list[str] = []
+-
+-    # H11：两个注册表各自独立发现——绝不能共用一个 dict，否则 home 侧
+-    # 加载失败（如被静态线拒）会在席位循环前就把包内模块整体顶掉。
+-    pkg_registry = ModuleRegistry(api, contrib_pkg)
+-    home_registry = ModuleRegistry(api, contrib_home)
+-    try:
+-        pkg_registry.discover()
+-    except Exception as exc:
+-        warnings.append(f"package contrib discovery failed: {exc}")
+-    try:
+-        home_registry.discover()
+-    except Exception as exc:
+-        warnings.append(f"home contrib discovery failed: {exc}")
+-
+-    slots: dict[str, Any] = {}
+-    disabled_seats = {item.strip() for item in os.environ.get("FORGE_DISABLE_SEATS", "").split(",")
+-                      if item.strip()}
+-    for module_name, canonical in (("scheduler", "due_jobs"),
+-                                   ("router", "match"),
+-                                   ("teams", "deliver"),
+-                                   ("supervisor", "supervise"),
+-                                   ("curator", "curate"),
+-                                   ("compactor", "should_compact"),
+-                                   ("replay", "replay")):
+-        if module_name in disabled_seats:
+-            warnings.append(f"contrib seat '{module_name}' disabled by FORGE_DISABLE_SEATS")
+-            continue
+-        # 包内保底席位
+-        base = pkg_registry.contributions.get(module_name)
+-        base_hook = None
+-        if base is not None and base.ok:
+-            candidate = base.implementation(canonical)
+-            if callable(candidate):
+-                base_hook = candidate
+-            else:
+-                warnings.append(
+-                    f"package contrib '{module_name}' passed the gate but exposes "
+-                    f"no usable '{canonical}' hook — seat left empty")
+-        # home 模块只有自己过闸才接管席位
+-        home_mod = home_registry.contributions.get(module_name)
+-        if home_mod is not None and home_mod.ok:
+-            home_hook = home_mod.implementation(canonical)
+-            if callable(home_hook):
+-                slots[module_name] = home_hook
+-                warnings.append(
+-                    f"contrib seat '{module_name}' taken over by home module "
+-                    f"{home_mod.path}")
+-                continue
+-            warnings.append(
+-                f"home contrib '{module_name}' passed the gate but exposes no "
+-                f"usable '{canonical}' hook — package module keeps serving the seat")
+-        elif home_mod is not None:
+-            warnings.append(
+-                f"home contrib '{module_name}' rejected by the conformance gate "
+-                f"({'; '.join(home_mod.problems[:2]) or 'unknown reason'}) — "
+-                f"package module keeps serving the seat")
+-        if base_hook is not None:
+-            slots[module_name] = base_hook
+-
+-    # thinking.mode（多钩子套件席位）：四钩齐备才挂载；home 模块优先接管。
+-    # converged / RoundSpec 直接取模块属性（库/类型面，spec 允许调用方直用）。
+-    def _resolve_thinking(registry: ModuleRegistry):
+-        module = registry.contributions.get("thinking")
+-        if module is None:
+-            return None, "not found"
+-        if not module.ok:
+-            return None, "rejected by the conformance gate"
+-        hooks: dict[str, Any] = {}
+-        for name in THINKING_HOOKS:
+-            fn = module.implementation(name)
+-            if callable(fn):
+-                hooks[name] = fn
+-        if len(hooks) != len(THINKING_HOOKS):
+-            missing = ", ".join(n for n in THINKING_HOOKS if n not in hooks)
+-            return None, f"missing hooks: {missing}"
+-        surface = getattr(module, "module", None)
+-        converged_fn = getattr(surface, "converged", None)
+-        looks_fn = getattr(surface, "looks_complex", None)
+-        suite = ThinkingSuite(
+-            module=module.name,
+-            should_think=hooks["should_think"],
+-            build_thinking_task=hooks["build_thinking_task"],
+-            split_thinking=hooks["split_thinking"],
+-            estimate_budget=hooks["estimate_budget"],
+-            converged=converged_fn if callable(converged_fn) else None,
+-            round_spec=getattr(surface, "RoundSpec", None),
+-            looks_complex=looks_fn if callable(looks_fn) else None,
+-        )
+-        return suite, "ok"
+-
+-    think_suite, think_why = _resolve_thinking(home_registry)
+-    if think_suite is not None:
+-        slots["thinking"] = think_suite
+-        warnings.append(
+-            f"contrib seat 'thinking' taken over by home module "
+-            f"{home_registry.contributions['thinking'].path}")
+-    else:
+-        if home_registry.contributions.get("thinking") is not None:
+-            warnings.append(
+-                f"home contrib 'thinking' cannot serve the suite ({think_why}) — "
+-                f"package module keeps serving")
+-        pkg_suite, pkg_why = _resolve_thinking(pkg_registry)
+-        if pkg_suite is not None:
+-            slots["thinking"] = pkg_suite
+-        elif pkg_registry.contributions.get("thinking") is not None:
+-            warnings.append(
+-                f"package contrib 'thinking' passed the gate but exposes no usable "
+-                f"suite ({pkg_why}) — seat left empty")
+-
+-    # BS-2 收口（warning 级）：capability 被广告、但没有任何运行席位在消费的
+-    # 模块 → 点名（"只挂在索引里"）。判据从 BS-1 的"解析不了"改为"没人消费"：
+-    # 席位名 = 消费人。隔离级升级留给全栈维护师 round-3 裁定（现命中若干存量
+-    # 模块，先以警告暴露而非直接拒载）。
+-    for label, registry in (("package", pkg_registry), ("home", home_registry)):
+-        for name, module in sorted(registry.contributions.items()):
+-            if not module.ok or not module.capabilities or name in slots:
+-                continue
+-            warnings.append(
+-                f"{label} contrib '{name}' advertises "
+-                f"{', '.join(module.capabilities)} but holds no runtime seat "
+-                f"— index-only until wired")
+-
+-    if return_warnings:
+-        return slots, warnings
+-    return slots
++def build_agent(*, home: Path, workspace: Path, config, router: ModelRouter,
++                policy: Policy | None = None, limits: LoopLimits | None = None,
++                non_interactive: bool = True, expose: Iterable[str] | None = None,
++                mount_contrib: bool = True, session_path: Path | None = None,
++                observer: Callable[[dict[str, Any]], None] | None = None) -> Agent:
++    """Compatibility entry point; service assembly lives in forge.assembly."""
++    from .assembly import build_agent as assemble
++    return assemble(home=home, workspace=workspace, config=config, router=router,
++        policy=policy, limits=limits, non_interactive=non_interactive, expose=expose,
++        mount_contrib=mount_contrib, session_path=session_path, observer=observer)
+ 
+ 
+ __all__ = ["Agent", "LoopLimits", "RunReport", "Step", "THINKING_HOOKS", "THINKING_MODES",
+--- a/forge-budgets.json
++++ b/forge-budgets.json
+@@ -4,6 +4,7 @@
+     "forge/__init__.py": 38,
+     "forge/acceptance.py": 147,
+     "forge/adapters.py": 712,
++    "forge/assembly.py": 127,
+     "forge/batch_execution.py": 144,
+     "forge/cache_metrics.py": 79,
+     "forge/cache_state.py": 400,
+@@ -52,6 +53,7 @@
+     "forge/evolution.py": 602,
+     "forge/execution.py": 371,
+     "forge/execution_guard.py": 55,
++    "forge/extensions.py": 167,
+     "forge/federation.py": 400,
+     "forge/file_revisions.py": 135,
+     "forge/gateway.py": 871,
+@@ -68,7 +70,7 @@
+     "forge/guard.py": 177,
+     "forge/knowledge.py": 118,
+     "forge/local_service.py": 293,
+-    "forge/loop.py": 1981,
++    "forge/loop.py": 1596,
+     "forge/memory.py": 354,
+     "forge/model.py": 918,
+     "forge/model_kinds.py": 150,
+@@ -84,6 +86,7 @@
+     "forge/route_capabilities.py": 104,
+     "forge/routing.py": 433,
+     "forge/runtime_lock.py": 111,
++    "forge/runtime_types.py": 60,
+     "forge/sampling.py": 127,
+     "forge/scienceclaw/__init__.py": 33,
+     "forge/scienceclaw/offload.py": 187,
+@@ -114,6 +117,7 @@
+     "forge/test_project_rules.py": 252,
+     "forge/test_projector.py": 98,
+     "forge/test_read_scope.py": 172,
++    "forge/test_runtime_structure.py": 80,
+     "forge/test_secret_adversarial.py": 279,
+     "forge/test_secret_architecture.py": 138,
+     "forge/test_secret_virtualization.py": 649,
+@@ -125,6 +129,7 @@
+     "forge/test_web_tools.py": 205,
+     "forge/thinking.py": 172,
+     "forge/tool_adapter.py": 801,
++    "forge/tool_turn.py": 60,
+     "forge/tools.py": 1432,
+     "forge/toolwire.py": 322,
+     "forge/types.py": 104,
+--- a/docs/LOOM-INTEGRATION.md
++++ b/docs/LOOM-INTEGRATION.md
+@@ -1,4 +1,6 @@
+ # Loom → Forge：结构对照与内核集成
++
++后续代码分层和统一执行路径重构见 [结构集成说明](LOOM-STRUCTURE-INTEGRATION.md)。下方验证数字属于首轮功能集成，后续结果以结构说明为准。
+ 
+ 日期：2026-11-06。基于本机当前源码，而非 README 中的历史测试数字。
+ 
+--- /dev/null
++++ b/forge/assembly.py
+@@ -0,0 +1,127 @@
++"""Composition root, inspired by Loom profiles: mounting is outside execution."""
++from __future__ import annotations
++from pathlib import Path
++from typing import Any, Callable, Iterable, TYPE_CHECKING
++import uuid
++from .capability import CapabilityLibrary
++from .checkpoint import CheckpointStore
++from .memory import MemoryStore
++from .model import ModelRouter
++from .policy import Policy
++from .session import Session
++from .runtime_types import LoopLimits
++from .local_service import service_from_config, resolve_thinking_mode
++from .extensions import mount_contrib_extensions
++
++if TYPE_CHECKING:
++    from .loop import Agent
++
++
++def build_agent(
++    *,
++    home: Path,
++    workspace: Path,
++    config,
++    router: ModelRouter,
++    policy: Policy | None = None,
++    limits: LoopLimits | None = None,
++    non_interactive: bool = True,
++    expose: Iterable[str] | None = None,
++    mount_contrib: bool = True,
++    session_path: Path | None = None,
++    observer: "Callable[[dict[str, Any]], None] | None" = None,
++) -> Agent:
++    """Wire a full agent from a composed config tree.
++
++    ``mount_contrib`` decides whether verified contribution modules actually
++    *serve* the runtime (not just sit validated in the index): their hooks are
++    resolved through the registry's alias table and handed to the Agent as an
++    extension surface. A quarantined or missing module simply leaves its slot
++    empty — mounting never fails the boot.
++
++    ``session_path`` overrides where this agent's event log lands. The default
++    uses a fresh identity to isolate concurrent CLI tasks; a chat
++    channel serving several peers passes a per-peer path so conversations do
++    not share one log.
++    """
++    from .loop import Agent
++    from .tools import build_builtin_registry
++
++    home = Path(home)
++    workspace = Path(workspace)
++    policy = policy or Policy.from_config(config, workspace=workspace, non_interactive=non_interactive)
++    limits = limits or LoopLimits(
++        max_steps=int(config.get("loop", "maxSteps", 12)),
++        max_depth=int(config.get("loop", "maxDepth", 2)),
++        spawn_budget=int(config.get("loop", "spawnBudget", 8)),
++    )
++
++    capabilities = CapabilityLibrary(
++        [home / "capabilities", workspace / ".forge" / "capabilities"],
++        state_path=home / "capabilities.state.json",
++    )
++    capabilities.scan()
++
++    memory = MemoryStore(home / "MEMORY.md").load()
++    checkpoints = CheckpointStore(home, workspace)
++    session_dir = home / "sessions"
++    from .session import Session as _Session
++
++    session = _Session(session_path or (session_dir / (uuid.uuid4().hex + ".jsonl")), meta={
++        "cwd": str(workspace),
++        "model": str(config.get("model", "primary", "")),
++        "policy_mode": policy.mode.value,
++        "framework": "forge",
++    })
++
++    registry = build_builtin_registry(expose=expose)
++    # H14 (rev.H14-3.7): the cost ledger is REAL here, not optional — priced
++    # compaction (T4) needs spend data, and cost accounting that only exists
++    # when a host remembers to inject it never records anything. Path matches
++    # `forge cost` (cli.cmd_cost) so the two views stay one ledger.
++    from .pricing import CostLedger
++    ledger = CostLedger(home / "cost" / "spend.jsonl")
++    # service 门控：解析本次运行实际会用到的 provider 是哪个引擎。未知/云端 → ""，
++    # 所有门控行为退化为不生效，保证既有 provider 行行为不变。
++    service = service_from_config(config)
++    # F2-2：传真实工作区，贡献模块经 api.workspace 看到沙箱边界。
++    # H11：接管/保底警告转 mount_warning 事件，不再静默。
++    extensions: dict[str, Any] = {}
++    mount_warnings: list[str] = []
++    if mount_contrib:
++        extensions, mount_warnings = mount_contrib_extensions(
++            home=home, workspace=workspace, return_warnings=True)
++    from .context_plan import ContextPlan
++    context_plan = ContextPlan.from_config(config)
++    return Agent(
++        home=home,
++        workspace=workspace,
++        router=router,
++        registry=registry,
++        policy=policy,
++        memory=memory,
++        capabilities=capabilities,
++        checkpoints=checkpoints,
++        session=session,
++        limits=limits,
++        context_mode=context_plan.default_mode if context_plan.mode == 'ask' else context_plan.mode,
++        extensions=extensions,
++        mount_warnings=mount_warnings,
++        cost_ledger=ledger,
++        # 三档模式来自配置树（bundle 行 thinking.mode；off/smart/on，默认 off），
++        # 再经 service 门控：本地引擎（ollama / llamacpp / mnn）上 smart→off，
++        # 云端 provider 的配置原样透传。
++        thinking=resolve_thinking_mode(
++            config.get("thinking", "mode", "off"), service),
++        planning=config.get("planning", "level", "none"),
++        planning_model=config.get("planning", "model", None),
++        review_enabled=config.get("review", "enabled", False),
++        review_model=config.get("review", "model", None),
++        project_rules=(False if config.row('project_rules') and config.row('project_rules').disabled
++                       else config.get('project_rules', 'enabled', True)),
++        service=service,
++        thinking_token_cap=config.get("thinking", "tokenCap", None),
++        observer=observer,
++    )
++
++
+--- /dev/null
++++ b/forge/extensions.py
+@@ -0,0 +1,167 @@
++"""Verified extension mounting, separate from execution."""
++from pathlib import Path
++from typing import Any
++import os
++from .runtime_types import ThinkingSuite
++
++THINKING_HOOKS = ("should_think", "build_thinking_task", "split_thinking", "estimate_budget")
++
++
++def mount_contrib_extensions(
++        *, home: Path, workspace: Path | None = None, return_warnings: bool = False,
++) -> "dict[str, Any] | tuple[dict[str, Any], list[str]]":
++    """Resolve verified contribution hooks into named extension slots.
++
++    This is the seam that turns "modules that passed the gate" into "modules
++    the runtime calls": scheduler drives due-work checks, router shapes task
++    dispatch, teams carries subagent messaging, compactor is consulted at the
++    loop's compaction threshold, curator runs knowledge metabolism after a
++    run, replay renders the run into a timeline at run end, and the thinking
++    suite runs contemplation rounds at a run's start/end (capability
++    thinking.mode; four hooks from one module, counted per hook). Every
++    consultation is counted on ``Agent.extension_calls``, so "mounted" and
++    "actually serving" can never be conflated again. Everything is
++    optional-by-name — an absent or quarantined module leaves an empty slot,
++    and the Agent degrades to its builtin behaviour exactly as before.
++
++    H11（3.0 复验轮）：发现用两个独立注册表——包内 contrib 是保底席位，
++    ``home/contrib`` 同名模块只有自己过闸才接管席位；被拒/钩子不可解析
++    的本地文件不再静默吞掉内置席位。每次接管/保底都记警告，
++    ``return_warnings=True`` 拿列表（缺省裸 dict 返回，兼容旧调用）。
++    """
++    from .registry import ContribAPI, ModuleRegistry
++
++    # F2-2：workspace 缺省回落 home（兼容旧调用），但真实运行时应传入实际
++    # 工作区——贡献模块经 api.workspace 看到的是沙箱边界。
++    ws = Path(workspace) if workspace is not None else Path(home)
++    contrib_home = home / "contrib"
++    contrib_pkg = Path(__file__).resolve().parent / "contrib"
++    api = ContribAPI(home=home, workspace=ws)
++    warnings: list[str] = []
++
++    # H11：两个注册表各自独立发现——绝不能共用一个 dict，否则 home 侧
++    # 加载失败（如被静态线拒）会在席位循环前就把包内模块整体顶掉。
++    pkg_registry = ModuleRegistry(api, contrib_pkg)
++    home_registry = ModuleRegistry(api, contrib_home)
++    try:
++        pkg_registry.discover()
++    except Exception as exc:
++        warnings.append(f"package contrib discovery failed: {exc}")
++    try:
++        home_registry.discover()
++    except Exception as exc:
++        warnings.append(f"home contrib discovery failed: {exc}")
++
++    slots: dict[str, Any] = {}
++    disabled_seats = {item.strip() for item in os.environ.get("FORGE_DISABLE_SEATS", "").split(",")
++                      if item.strip()}
++    for module_name, canonical in (("scheduler", "due_jobs"),
++                                   ("router", "match"),
++                                   ("teams", "deliver"),
++                                   ("supervisor", "supervise"),
++                                   ("curator", "curate"),
++                                   ("compactor", "should_compact"),
++                                   ("replay", "replay")):
++        if module_name in disabled_seats:
++            warnings.append(f"contrib seat '{module_name}' disabled by FORGE_DISABLE_SEATS")
++            continue
++        # 包内保底席位
++        base = pkg_registry.contributions.get(module_name)
++        base_hook = None
++        if base is not None and base.ok:
++            candidate = base.implementation(canonical)
++            if callable(candidate):
++                base_hook = candidate
++            else:
++                warnings.append(
++                    f"package contrib '{module_name}' passed the gate but exposes "
++                    f"no usable '{canonical}' hook — seat left empty")
++        # home 模块只有自己过闸才接管席位
++        home_mod = home_registry.contributions.get(module_name)
++        if home_mod is not None and home_mod.ok:
++            home_hook = home_mod.implementation(canonical)
++            if callable(home_hook):
++                slots[module_name] = home_hook
++                warnings.append(
++                    f"contrib seat '{module_name}' taken over by home module "
++                    f"{home_mod.path}")
++                continue
++            warnings.append(
++                f"home contrib '{module_name}' passed the gate but exposes no "
++                f"usable '{canonical}' hook — package module keeps serving the seat")
++        elif home_mod is not None:
++            warnings.append(
++                f"home contrib '{module_name}' rejected by the conformance gate "
++                f"({'; '.join(home_mod.problems[:2]) or 'unknown reason'}) — "
++                f"package module keeps serving the seat")
++        if base_hook is not None:
++            slots[module_name] = base_hook
++
++    # thinking.mode（多钩子套件席位）：四钩齐备才挂载；home 模块优先接管。
++    # converged / RoundSpec 直接取模块属性（库/类型面，spec 允许调用方直用）。
++    def _resolve_thinking(registry: ModuleRegistry):
++        module = registry.contributions.get("thinking")
++        if module is None:
++            return None, "not found"
++        if not module.ok:
++            return None, "rejected by the conformance gate"
++        hooks: dict[str, Any] = {}
++        for name in THINKING_HOOKS:
++            fn = module.implementation(name)
++            if callable(fn):
++                hooks[name] = fn
++        if len(hooks) != len(THINKING_HOOKS):
++            missing = ", ".join(n for n in THINKING_HOOKS if n not in hooks)
++            return None, f"missing hooks: {missing}"
++        surface = getattr(module, "module", None)
++        converged_fn = getattr(surface, "converged", None)
++        looks_fn = getattr(surface, "looks_complex", None)
++        suite = ThinkingSuite(
++            module=module.name,
++            should_think=hooks["should_think"],
++            build_thinking_task=hooks["build_thinking_task"],
++            split_thinking=hooks["split_thinking"],
++            estimate_budget=hooks["estimate_budget"],
++            converged=converged_fn if callable(converged_fn) else None,
++            round_spec=getattr(surface, "RoundSpec", None),
++            looks_complex=looks_fn if callable(looks_fn) else None,
++        )
++        return suite, "ok"
++
++    think_suite, think_why = _resolve_thinking(home_registry)
++    if think_suite is not None:
++        slots["thinking"] = think_suite
++        warnings.append(
++            f"contrib seat 'thinking' taken over by home module "
++            f"{home_registry.contributions['thinking'].path}")
++    else:
++        if home_registry.contributions.get("thinking") is not None:
++            warnings.append(
++                f"home contrib 'thinking' cannot serve the suite ({think_why}) — "
++                f"package module keeps serving")
++        pkg_suite, pkg_why = _resolve_thinking(pkg_registry)
++        if pkg_suite is not None:
++            slots["thinking"] = pkg_suite
++        elif pkg_registry.contributions.get("thinking") is not None:
++            warnings.append(
++                f"package contrib 'thinking' passed the gate but exposes no usable "
++                f"suite ({pkg_why}) — seat left empty")
++
++    # BS-2 收口（warning 级）：capability 被广告、但没有任何运行席位在消费的
++    # 模块 → 点名（"只挂在索引里"）。判据从 BS-1 的"解析不了"改为"没人消费"：
++    # 席位名 = 消费人。隔离级升级留给全栈维护师 round-3 裁定（现命中若干存量
++    # 模块，先以警告暴露而非直接拒载）。
++    for label, registry in (("package", pkg_registry), ("home", home_registry)):
++        for name, module in sorted(registry.contributions.items()):
++            if not module.ok or not module.capabilities or name in slots:
++                continue
++            warnings.append(
++                f"{label} contrib '{name}' advertises "
++                f"{', '.join(module.capabilities)} but holds no runtime seat "
++                f"— index-only until wired")
++
++    if return_warnings:
++        return slots, warnings
++    return slots
++
++
+--- /dev/null
++++ b/forge/runtime_types.py
+@@ -0,0 +1,60 @@
++"""Shared runtime values, independent of Agent assembly and protocols."""
++from dataclasses import dataclass, field
++from typing import Any
++from .execution import RunResult
++
++
++@dataclass(frozen=True)
++class ThinkingSuite:
++    """Runtime handle to a mounted thinking engine (capability thinking.mode)."""
++
++    module: str
++    should_think: Any
++    build_thinking_task: Any
++    split_thinking: Any
++    estimate_budget: Any
++    converged: Any = None
++    round_spec: Any = None
++    looks_complex: Any = None
++
++@dataclass
++class LoopLimits:
++    max_steps: int = 12
++    max_depth: int = 2
++    spawn_budget: int = 8
++    max_tool_result: int = 4000
++    context_chars: int = 24000
++
++
++@dataclass
++class Step:
++    index: int
++    tool: str = ""
++    args: dict[str, Any] = field(default_factory=dict)
++    result: str = ""
++    decision: str = ""
++    note: str = ""
++    action_id: str = ''
++    meta: dict[str, Any] = field(default_factory=dict)
++
++
++@dataclass
++class RunReport:
++    text: str
++    steps: list[Step]
++    usage: dict[str, Any]
++    stopped: str = "final"          # final | max_steps | error | planning_error | format_error | stalled | converged | unknown_outcome | cancelled
++    events: list[dict[str, Any]] = field(default_factory=list)
++    planning: dict[str, Any] | None = None
++    run_id: str = ''
++    task_id: str = ''
++    parent_run_id: str = ''
++
++    def as_result(self):
++        return RunResult.from_report(self)
++
++    @property
++    def tool_calls(self) -> int:
++        return sum(1 for s in self.steps if s.tool)
++
++
+--- /dev/null
++++ b/forge/tool_turn.py
+@@ -0,0 +1,60 @@
++"""Protocol-independent tool turns over the host's recorded action boundary.
++
++Like Loom's kernel/environment boundary, this layer consumes normalized calls.
++It neither parses provider messages nor grants permissions or retries actions.
++"""
++from dataclasses import dataclass, field
++from typing import Any, Callable
++
++from .runtime_types import Step
++from .toolwire import ToolCall
++
++
++@dataclass
++class TurnResult:
++    answered: list[tuple[ToolCall, str, bool]] = field(default_factory=list)
++    supervisor_rows: list[dict[str, Any]] = field(default_factory=list)
++    stopped: str = ''
++
++
++def execute_turn(calls, *, native: bool, wire: str, steps: list[Step],
++                 usage_delta: dict, max_result: int, invoke: Callable,
++                 emit: Callable, offloader, guard, supervisor_row: Callable) -> TurnResult:
++    """Execute sequentially; stop before the next call on unknown/stalled output."""
++    turn = TurnResult()
++    for call in calls:
++        step = Step(index=len(steps) + 1, tool=call.name, args=call.args,
++                    note=f"native/{wire} id={call.id or '-'}" if native else '')
++        result = (invoke(call.name, call.args, tool_call_id=call.id or '') if native
++                  else invoke(call.name, call.args))
++        step.action_id, step.meta = result.meta['action_id'], dict(result.meta)
++        if native:
++            step.meta['native_call'] = True
++        step.meta['usage_delta'] = dict(usage_delta)
++        if result.meta.get('checkpoint'):
++            step.note = 'checkpoint ' + result.meta['checkpoint'][:8]
++        full_text = result.content or result.error
++        if offloader.policy.should_offload(call.name, full_text):
++            full_text = offloader.wrap_result_text(call.name, step.action_id, full_text)
++            emit(type='tool_result_offloaded', tool=call.name,
++                 path=offloader.last_path, chars=len(result.content or result.error))
++        step.result = full_text[:max_result]
++        if len(full_text) > max_result:
++            step.meta['result_full'] = full_text
++        step.decision = ('deny' if not result.ok and result.meta.get('authorization') == 'deny'
++                         else 'ok' if result.ok else 'error')
++        steps.append(step)
++        turn.answered.append((call, step.result, result.ok))
++        turn.supervisor_rows.append(supervisor_row(call.name, call.args, result))
++        protocol = {'call_id': call.id, 'wire': wire} if native else {'native': False}
++        emit(type='tool_call', tool=call.name, args=call.args, action_id=step.action_id,
++             meta=result.meta, result=step.result[:1500], ok=result.ok,
++             decision=step.decision, step=step.index,
++             authorization=result.meta.get('authorization'), **protocol)
++        if result.meta.get('execution_state') == 'unknown':
++            turn.stopped = 'unknown_outcome'
++            break
++        if guard.observe(call.name, call.args, result.ok, result.content or result.error):
++            turn.stopped = 'stalled'
++            break
++    return turn
+--- /dev/null
++++ b/forge/test_runtime_structure.py
+@@ -0,0 +1,80 @@
++"""Behavioral checks for the common text/native tool execution boundary."""
++from types import SimpleNamespace
++import unittest
++
++from .execution_guard import ExecutionGuard
++from .tool_turn import execute_turn
++from .tools import ToolResult
++from .toolwire import ToolCall
++
++
++class ToolTurnTests(unittest.TestCase):
++    def turn(self, results, *, native=False, max_result=4000, offload=False, calls=None):
++        self.invoked, self.events, self.steps = [], [], []
++        pending = iter(results)
++        def invoke(name, args, **kwargs):
++            self.invoked.append((name, args, kwargs))
++            result = next(pending)
++            result.meta.setdefault('action_id', 'action-' + str(len(self.invoked)))
++            return result
++        offloader = SimpleNamespace(policy=SimpleNamespace(should_offload=lambda n, t: offload),
++                                    wrap_result_text=lambda n, i, t: 'artifact:' + i,
++                                    last_path='local/artifact.txt')
++        return execute_turn(calls or [ToolCall(str(i), 'read_file', {'path': 'a'})
++                                     for i in range(len(results))], native=native, wire='openai',
++            steps=self.steps, usage_delta={'prompt_tokens': 12}, max_result=max_result,
++            invoke=invoke, emit=lambda **e: self.events.append(e), offloader=offloader,
++            guard=ExecutionGuard(), supervisor_row=lambda n, a, r: {'tool': n, 'ok': r.ok})
++
++    def test_text_and_native_share_results_and_usage(self):
++        for native in (False, True):
++            turn = self.turn([ToolResult(True, 'file text')], native=native)
++            self.assertEqual(turn.answered[0][1:], ('file text', True))
++            self.assertEqual(self.steps[0].meta['usage_delta'], {'prompt_tokens': 12})
++            self.assertEqual(self.steps[0].meta.get('native_call', False), native)
++            self.assertEqual(self.invoked[0][2], {'tool_call_id': '0'} if native else {})
++
++    def test_unknown_outcome_stops_both_protocols_before_next_action(self):
++        for native in (False, True):
++            turn = self.turn([ToolResult(False, error='interrupted', meta={'execution_state': 'unknown'}),
++                              ToolResult(True, 'must not execute')], native=native)
++            self.assertEqual(turn.stopped, 'unknown_outcome')
++            self.assertEqual(len(self.invoked), 1)
++
++    def test_repeated_success_stops_remaining_calls(self):
++        turn = self.turn([ToolResult(True, 'same') for _ in range(6)])
++        self.assertEqual(turn.stopped, 'stalled')
++        self.assertEqual(len(self.invoked), 5)
++
++    def test_repeated_errors_stop_earlier(self):
++        turn = self.turn([ToolResult(False, error='same') for _ in range(4)], native=True)
++        self.assertEqual(turn.stopped, 'stalled')
++        self.assertEqual(len(self.invoked), 3)
++
++    def test_denial_keeps_audit_and_supervisor_evidence(self):
++        turn = self.turn([ToolResult(False, error='denied', meta={'authorization': 'deny'})])
++        self.assertEqual(self.steps[0].decision, 'deny')
++        self.assertEqual(self.events[0]['authorization'], 'deny')
++        self.assertEqual(turn.supervisor_rows, [{'tool': 'read_file', 'ok': False}])
++
++    def test_long_output_keeps_full_evidence_outside_prompt_slice(self):
++        self.turn([ToolResult(True, 'abcdefgh')], max_result=3)
++        self.assertEqual(self.steps[0].result, 'abc')
++        self.assertEqual(self.steps[0].meta['result_full'], 'abcdefgh')
++
++    def test_offload_preserves_handle_and_checkpoint_for_native(self):
++        self.turn([ToolResult(True, 'large output', meta={'checkpoint': '0123456789'})],
++                  native=True, offload=True)
++        self.assertEqual(self.steps[0].result, 'artifact:action-1')
++        self.assertEqual(self.steps[0].note, 'checkpoint 01234567')
++        self.assertEqual([e['type'] for e in self.events], ['tool_result_offloaded', 'tool_call'])
++        self.assertEqual(self.events[-1]['call_id'], '0')
++
++    def test_exception_does_not_dispatch_next_call(self):
++        with self.assertRaises(StopIteration):
++            self.turn([], calls=[ToolCall('1', 'read_file'), ToolCall('2', 'read_file')])
++        self.assertEqual(len(self.invoked), 1)
++
++
++if __name__ == '__main__':
++    unittest.main()
+--- /dev/null
++++ b/docs/LOOM-STRUCTURE-INTEGRATION.md
+@@ -0,0 +1,66 @@
++# 从代码结构吸收 Loom：Forge 分层与统一工具执行
++
++本轮接续 `LOOM-INTEGRATION.md`，针对模块职责和真实调用链重构。
++
++## 源码对照
++
++Loom 的 `packages/profiles/src/index.ts` 创建环境组合，`packages/kernel/src/kernel.ts` 消费环境提供的工具；`types.ts` 描述共享协议，`verifier.ts` 负责验收。值得移植的是装配、执行、协议边界，而不是 TypeScript 包目录的名称。
++
++Forge 原 `forge/loop.py` 同时包含配置装配、服务创建、贡献模块发现、运行数据类型、模型循环，以及两段文本/原生工具执行代码。修改工具日志、结果截断、取消或未知结果处理时，需要同步修改两个分支；装配和模块发现变更也会修改核心循环文件。
++
++## 已落地结构
++
++| 文件 | 现在负责什么 | 实际接入点 |
++| --- | --- | --- |
++| `forge/assembly.py` | 从配置创建工具注册表、记忆、能力库、检查点、会话、成本账本和 Agent | 原 `forge.loop.build_agent()` 转发到这里，现有 CLI/桌面端/客户端继续生效 |
++| `forge/extensions.py` | 贡献模块发现、闸门后的扩展挂载、home 覆盖与内置回退、思考引擎整组装配 | `assembly.build_agent()` 调用；旧 `forge.loop` 导出继续可用 |
++| `forge/runtime_types.py` | `ThinkingSuite`、`LoopLimits`、`Step`、`RunReport` 的唯一类型定义 | 循环、装配、工具执行共享同一类对象，旧导入路径重导出 |
++| `forge/tool_turn.py` | 已规范化工具调用的一轮执行：动作调用、结果外置/截断、Step、日志、重复检测、未知结果停止 | 文本工具协议和 OpenAI/Anthropic 原生工具协议都调用 `execute_turn()` |
++| `forge/loop.py` | 组织模型轮次、上下文、子代理、验收、停止和结果生命周期 | 继续作为 Agent 的入口与兼容门面 |
++| `forge/toolwire.py` | 厂商/文本协议解析，以及对应格式的工具结果回填 | 留在执行器两侧；协议细节不进入 `tool_turn` |
++| `forge/execution.py` | 单次动作的授权、检查点、版本保护、执行、持久化与未知结果语义 | `tool_turn` 通过注入的 `_invoke_recorded()` 进入已有动作执行边界 |
++
++```mermaid
++flowchart TD
++    Client[CLI / 桌面端 / 客户端] --> Entry[loop.build_agent 兼容入口]
++    Entry --> Assembly[assembly 配置与服务装配]
++    Assembly --> Extensions[extensions 验证后挂载]
++    Assembly --> Agent[loop.Agent 模型循环]
++    Agent --> Parse[toolwire 协议解析]
++    Parse --> Turn[tool_turn 统一工具轮次]
++    Turn --> Action[execution.ActionExecutor]
++    Action --> Tools[ToolRegistry / Policy / 工具环境]
++    Turn --> Replay[toolwire 协议回填]
++    Replay --> Agent
++    Types[runtime_types 共享运行类型] -.-> Assembly
++    Types -.-> Agent
++    Types -.-> Turn
++```
++
++## 统一执行路径的实质变化
++
++之前文本工具分支与原生工具分支分别处理 `Step`、`action_id`、checkpoint、usage、offload、截断、审计、supervisor、unknown 和 stalled。
++
++现在协议层先把两者转成 `ToolCall`。公共执行器不持有整个 Agent，只接收调用函数、事件发布函数、结果外置器、循环检测器和结果上限，返回已回答调用、supervisor 观察和停止原因。这使执行规则可直接测试，也让后续环境扩展只需接入现有工具和动作边界。
++
++- 原生调用 ID 继续传给动作执行器和回填消息；文本调用保留原来的文本回填格式。
++- `unknown_outcome` 或 `stalled` 会停止当前批次，后续工具不执行。
++- 执行器不新增重试或并行；模型批量调用仍按原顺序执行。
++- 原有授权、SecretScope、文件版本防护、检查点和动作日志仍由 `ActionExecutor` / `ToolRegistry` 执行。
++- 装配层继续使用原配置含义、贡献模块闸门和回退规则；未新增“环境声明即可获得权限”的机制。
++
++这是职责拆分和重复行为收敛。`loop.py` 从本轮开始时的 **1981 行降至 1596 行**，减少 385 行，约 19.4%；其中大量实现移入对应模块，行数下降本身不代表性能提升。
++
++## 验证
++
++新增 `forge/test_runtime_structure.py` 的 8 项行为测试：两协议结果/用量一致、未知结果阻止后续调用、重复成功/失败停止、权限拒绝审计、长结果证据、外置结果与检查点、异常后不继续派发。
++
++验证日志：
++
++- `reports/loom-structure-core.log`：内核全量回归。
++- `reports/loom-structure-runtime.log`：Agent、客户端、开发模式和执行链的 9 组回归。
++- `reports/loom-structure-selftest.log`：框架自检。
++
++最终结果：内核 355 项（353 通过、2 跳过），运行时与客户端 188 项（187 通过、1 跳过），合计 **540 通过、3 跳过、0 失败**；框架自检 **595/595**。代码预算清单 138 个文件通过；接受 Windows CRLF 的 Git 空白检查通过。测试使用离线模型和本地 fixture，没有进行真实云模型评测或 GUI 视觉验收。
++
++本轮前快照路径见 `reports/loom-structure-backup.txt`，本轮独立补丁见 `reports/loom-structure.patch`。原有未提交工作和上一轮验收/版本保护集成均保留；Loom 源码只读。本轮没有更换会话存储、迁移工作区或调用真实云端模型。

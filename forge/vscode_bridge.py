@@ -129,7 +129,7 @@ def _load_credentials(home, scope):
 
 
 class EditorBridge:
-    def __init__(self, emit, *, model_router_factory=None):
+    def __init__(self, emit, *, model_router_factory=None, probes=None):
         self.emit = emit
         self.agent = None
         self.history = []
@@ -141,6 +141,7 @@ class EditorBridge:
         # It substitutes models only, never config/Policy/tools/session storage.
         self.model_router_factory = model_router_factory
         self.model_revision = None
+        self.probes = probes
 
     def _load_model_router(self, config):
         if self.model_router_factory is not None:
@@ -202,7 +203,8 @@ class EditorBridge:
         self.agent = build_agent(home=self.home, workspace=self.workspace, config=config,
             router=self.router, policy=self.policy('read-only'), limits=limits,
             expose=config.get('tools', 'expose', None), observer=self.observe,
-            session_path=self.home / 'sessions' / 'vscode' / (uuid.uuid4().hex + '.jsonl'))
+            session_path=self.home / 'sessions' / 'vscode' / (uuid.uuid4().hex + '.jsonl'),
+            probes=self.probes)
         self.history = self.agent.secret_scope.protect(_history(params.get('history', [])))
         self.model_revision = revision
         return {'protocol': PROTOCOL, 'models': catalog, 'workspace': str(self.workspace),
@@ -312,6 +314,10 @@ class EditorBridge:
     def run(self, params):
         if self.agent is None:
             raise ValueError('Initialize Forge first')
+        from .acceptance import AcceptanceContract
+        acceptance = params.get('acceptance')
+        if acceptance is not None:
+            acceptance = AcceptanceContract.from_raw(acceptance)
         from .planning import planning_level
         self.agent.planning_level = planning_level(params.get('planning', self.agent.planning_level))
         self.agent.planning_model = self._phase_model(params.get('planningModel', ''))
@@ -332,9 +338,14 @@ class EditorBridge:
         self.agent.budget = [self.agent.limits.spawn_budget]
         with self.agent.session:
             report = self.agent.run(task, history=self.history,
-                context_paths=[item['path'] for item in params.get('contexts', []) if item.get('path')])
-        self.history = _history([*self.history, {'role': 'user', 'content': task},
-                                {'role': 'assistant', 'content': report.text}])
+                context_paths=[item['path'] for item in params.get('contexts', []) if item.get('path')],
+                **({'acceptance': acceptance} if acceptance is not None else {}))
+        full_history = [*self.history, {'role': 'user', 'content': task},
+                        {'role': 'assistant', 'content': report.text}]
+        self.history = _history(full_history[-200:])
+        if len(self.history) < len(full_history):
+            self.agent._conversation_prefix.trim_history(
+                self.agent.secret_scope.protect(full_history), self.history)
         if report.as_result().outcome == 'succeeded':
             self.last_result = (report.run_id, report.text)
         return run_payload(report, session_path=str(self.agent.session.path))

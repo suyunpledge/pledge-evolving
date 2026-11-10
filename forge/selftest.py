@@ -1591,6 +1591,12 @@ def test_smoke_harness_offline() -> None:
         check("smoke:dry-run-all-checks-pass", outcome.ok, f"missing={names}")
         for name, passed, detail in outcome.checks:
             check(f"smoke:{name}", passed, detail)
+        result_path = Path(outcome.detail.get("result_path", ""))
+        result_raw = json.loads(result_path.read_text(encoding="utf-8")) if result_path.is_file() else {}
+        check("smoke:evidence-artifact-recorded",
+              result_raw.get("detail", {}).get("evidence_mode") == "scripted"
+              and bool(result_raw.get("detail", {}).get("session_path")),
+              str(result_raw.get("detail", {})))
 
         # negative control: a model that just says "done" without doing anything.
         # If the judge still passes it, the judge is worthless.
@@ -3480,6 +3486,23 @@ def test_coding_mode() -> None:
 
         ok = registry.invoke("edit_file", {"path": "mod.py", "old": "return 1", "new": "return 2"}, ctx)
         check("coding:edit-file-replaces", ok.ok and "return 2" in target.read_text(encoding="utf-8"), ok.error)
+        target.write_text("def a():\n    if ready:\n        return 1\n", encoding="utf-8")
+        tolerant = registry.invoke("edit_file", {
+            "path": "mod.py", "old": "if ready:\n    return 1", "new": "if ready:\n    return 2"}, ctx)
+        check("coding:edit-file-indentation-tolerant",
+              tolerant.ok and (tolerant.meta or {}).get("match_mode") == "indentation"
+              and "        return 2" in target.read_text(encoding="utf-8"),
+              f"ok={tolerant.ok} meta={tolerant.meta} err={tolerant.error}")
+        hint = registry.invoke("edit_file", {"path": "mod.py", "old": "retun 2", "new": "return 3"}, ctx)
+        check("coding:edit-file-failure-has-nearby-hint",
+              not hint.ok and "nearby lines" in hint.error, hint.error)
+        tolerant_patch = registry.invoke("apply_patch", {"patches": [{
+            "path": "mod.py", "old": "if ready:\n    return 2", "new": "if ready:\n    return 3"}]}, ctx)
+        check("coding:apply-patch-indentation-tolerant",
+              tolerant_patch.ok and (tolerant_patch.meta or {}).get("match_modes") == ["indentation"]
+              and "        return 3" in target.read_text(encoding="utf-8"),
+              f"ok={tolerant_patch.ok} meta={tolerant_patch.meta} err={tolerant_patch.error}")
+        target.write_text("def a():\n    return 2\n", encoding="utf-8")
         miss = registry.invoke("edit_file", {"path": "mod.py", "old": "nope", "new": "x"}, ctx)
         check("coding:edit-file-missing-anchor-refused", not miss.ok and "not found" in miss.error, miss.error)
 

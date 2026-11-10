@@ -24,14 +24,17 @@ DEVELOPMENT_GUIDANCE = (
 
 
 class DevelopmentRuntime:
-    def __init__(self, state, *, bridge=None, emit=None, runtime_home=None, model_router_factory=None):
+    def __init__(self, state, *, bridge=None, emit=None, runtime_home=None, model_router_factory=None, probes=None):
         install_logging_redaction()
         self.state = state
         self.home = Path(runtime_home or state.home).expanduser().resolve()
         self.emit = emit or (lambda event: None)
         self._owns_bridge = bridge is None
         self._model_router_factory = model_router_factory
-        self.bridge = bridge or EditorBridge(self._emit, model_router_factory=model_router_factory)
+        if bridge is not None and probes is not None:
+            raise ValueError('Configure probes on the borrowed bridge before attaching it')
+        self._probes = probes
+        self.bridge = bridge or EditorBridge(self._emit, model_router_factory=model_router_factory, probes=probes)
         self._previous_bridge_emit = getattr(bridge, 'emit', None) if bridge is not None else None
         if self._previous_bridge_emit is not None:
             self.bridge.emit = self._emit
@@ -155,7 +158,7 @@ class DevelopmentRuntime:
             self.initialization_error = redact(str(exc))
             if self._owns_bridge:
                 self.bridge.close()
-                self.bridge = EditorBridge(self._emit, model_router_factory=self._model_router_factory)
+                self.bridge = EditorBridge(self._emit, model_router_factory=self._model_router_factory, probes=self._probes)
                 self.bridge._development_lane = self._lane
             raise
         finally:
@@ -163,7 +166,10 @@ class DevelopmentRuntime:
 
     def run(self, prompt, *, explicit_model=None, agent_model=None, role='default',
             permission='read-only', planning='low', contexts=(), snapshot=None,
-            delegate=False, child_model=None, cancellation=None):
+            delegate=False, child_model=None, cancellation=None, acceptance=None):
+        if acceptance is not None:
+            from forge.acceptance import AcceptanceContract
+            acceptance = AcceptanceContract.from_raw(acceptance).to_raw()
         if not self.ready:
             raise RuntimeError('Open a project first')
         if not self._lane.acquire(False):
@@ -194,6 +200,8 @@ class DevelopmentRuntime:
             params = {'prompt': prompt, 'model': selected, 'mode': snap.permission,
                       'planning': planning if snap.mode == WorkMode.DEVELOPMENT else 'none',
                       'contexts': list(contexts)}
+            if acceptance is not None:
+                params['acceptance'] = acceptance
             for source in tuple(self.context_sources) if snap.mode == WorkMode.DEVELOPMENT else ():
                 # Trusted adapters contribute documents, all validated/virtualized by EditorBridge.
                 params['contexts'].extend(source(snap))

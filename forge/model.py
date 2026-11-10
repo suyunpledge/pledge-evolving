@@ -28,8 +28,10 @@ from .vendors import (
     VendorProfile,
     normalize_usage,
     profile_for,
+    shape_reasoning,
 )
 from . import sampling
+from .model_kinds import resolve_model_kind
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -144,10 +146,46 @@ class Provider:
     flex: bool = False
     defer: bool = False
     max_defer_seconds: float = 0
+    # Optional bindings for opaque gateway deployment names. A default binding
+    # applies only to the default model; alternate models use their own IDs.
+    model_kind_id: str = ""
+    model_kind_ids: dict[str, str] = field(default_factory=dict)
+    route_capabilities: dict[str, Any] = field(default_factory=dict)
+    model_capabilities: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # 显式厂商推理默认值；auto 沿用厂商默认，不能混同 Agent 的沉思扩展。
+    reasoning_mode: str = "auto"
+    cache_affinity: str = "auto"
+    # 单请求超时（秒）；0 = 用传输默认（120s）。慢端点（如 ark coding 单请求
+    # 可超 200s）按行调大，否则超时被当 TransportError 重试同样超时——
+    # "all providers fail" 整轮报废（dual_bench 2026-11-09 实测）。
+    request_timeout: int = 0
     _credential: Any = field(default=None, repr=False, compare=False)
     _secret_scope: Any = field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self):
+        if self.cache_affinity not in ('auto', 'off'):
+            raise BadRequest('cacheAffinity must be auto or off')
+        if self.reasoning_mode not in ('auto', 'on', 'off'):
+            raise BadRequest('reasoningMode must be auto, on or off')
+        from .route_capabilities import validate_capabilities
+        try:
+            self.route_capabilities = validate_capabilities(self.route_capabilities)
+            if not isinstance(self.model_capabilities, dict):
+                raise ValueError("modelCapabilities must map wire model IDs to capabilities")
+            if any(not isinstance(key, str) or not key for key in self.model_capabilities):
+                raise ValueError("modelCapabilities keys must be nonempty wire model IDs")
+            self.model_capabilities = {key: validate_capabilities(value)
+                for key, value in self.model_capabilities.items()}
+        except ValueError as exc:
+            raise BadRequest(str(exc)) from None
+        if not isinstance(self.model_kind_ids, dict):
+            raise BadRequest("modelKinds must map wire model IDs to model kind IDs")
+        for alias, kind_id in self.model_kind_ids.items():
+            if not isinstance(alias, str) or not isinstance(kind_id, str) or not alias or not kind_id:
+                raise BadRequest("modelKinds keys and values must be nonempty strings")
+            resolve_model_kind(model_kind_id=kind_id)
+        if self.model_kind_id:
+            resolve_model_kind(model_kind_id=self.model_kind_id)
         from .secrets import SecretScope, VendorCredential
         self._secret_scope = SecretScope()
         from urllib.parse import urlsplit, parse_qsl
@@ -167,13 +205,11 @@ class Provider:
 
     def profile(self) -> VendorProfile:
         """该 provider 的厂商计费画像（按声明的默认模型识别）。"""
-        return profile_for(
-            base_url=self.base_url,
-            model=self.default_model or (self.models[0] if self.models else ""),
-            service=self.service,
-            vendor=self.vendor,
-            wire=self.wire,
-        )
+        return self.profile_for_model(self.default_model or (self.models[0] if self.models else ""))
+
+    def capabilities_for_model(self, model: str) -> dict[str, Any]:
+        from .route_capabilities import effective_capabilities
+        return effective_capabilities(self.route_capabilities, self.model_capabilities.get(model, {}))
 
     def profile_for_model(self, model: str) -> VendorProfile:
         """按**本次实际调用的模型**识别厂商。
@@ -181,12 +217,16 @@ class Provider:
         聚合器行（一个 baseURL 后面挂多家厂商）必须用实际模型判定，
         否则整条链路上的请求都会被算成默认字段里那一家。
         """
+        actual = model or self.default_model
+        default = self.default_model or (self.models[0] if self.models else "")
+        kind_id = self.model_kind_ids.get(actual) or (self.model_kind_id if actual == default else "")
         return profile_for(
             base_url=self.base_url,
-            model=model or self.default_model,
+            model=actual,
             service=self.service,
             vendor=self.vendor,
             wire=self.wire,
+            model_kind_id=kind_id,
         )
 
     def url(self, path: str) -> str:
@@ -225,6 +265,7 @@ class Usage:
     cached_tokens: int = 0          # 命中缓存读到的输入 token
     cache_write_tokens: int = 0     # 写入缓存的输入 token
     reasoning_tokens: int = 0       # 思考 token（多数厂商按输出价计费）
+    cache_observed: bool | None = None  # False = upstream omitted cache telemetry
 
     @property
     def total(self) -> int:
@@ -257,11 +298,13 @@ class Completion:
     # 于是运行报告能解释"这条请求为什么这么发"。
     plan: dict[str, Any] = field(default_factory=dict)
     requests: list[dict[str, Any]] = field(default_factory=list)
+    finish_reason: str = ""
 
     def __post_init__(self):
         if not self.requests:
             self.requests = [{"provider": self.usage.provider, "model": self.usage.model,
                               "usage": dict(vars(self.usage)), "plan": copy.deepcopy(self.plan),
+                              "finish_reason": self.finish_reason,
                               "estimate_scope": "reuse_window", "invoice_verified": False}]
 
 
@@ -314,6 +357,29 @@ def _plan_and_shape(payload: dict[str, Any], messages: list[dict[str, Any]],
       会拿到一份已经被改过一次的请求体，标记会叠加。
     """
     profile = provider.profile_for_model(model)
+    capabilities = provider.capabilities_for_model(model)
+    payload = copy.deepcopy(payload)
+    sampling.strip_extra_params(payload, profile.canonical_model_id or model, provider.wire)
+    reasoning_default = None
+    if provider.reasoning_mode != 'auto':
+        if not (profile.model_family_id == 'mimo.v2.6' or
+                (profile.id == 'deepseek' and provider.wire == 'openai' and
+                 profile.canonical_model_id in {'deepseek-flash', 'deepseek-v4-pro'})):
+            raise ValueError('reasoningMode on/off is verified only for MiMo v2.6 and DeepSeek Flash/V4 Pro Chat Completions')
+        explicit = any(key in payload for key in ('thinking', 'enable_thinking', 'reasoning_effort', 'thinking_budget'))
+        if not explicit:
+            payload['thinking'] = {'type': 'enabled' if provider.reasoning_mode == 'on' else 'disabled'}
+        reasoning_default = {'mode': provider.reasoning_mode, 'source': 'request' if explicit else 'provider'}
+    if "reasoning_effort" in payload and "thinking_budget" in payload:
+        raise ValueError("reasoning_effort and thinking_budget cannot be combined")
+    if (provider.adapt and profile.min_output_tokens
+            and "max_tokens" not in payload and "max_completion_tokens" not in payload):
+        from .route_capabilities import default_output
+        payload["max_tokens"] = default_output(profile, capabilities)
+    if (("contextWindow" in capabilities or "maxOutputTokens" in capabilities)
+            and "max_tokens" not in payload and "max_completion_tokens" not in payload):
+        from .route_capabilities import default_output
+        payload["max_tokens"] = default_output(profile, capabilities, adapt=provider.adapt)
     if options.get("flex", provider.flex) and provider.wire != "openai":
         raise ValueError("Flex requires an OpenAI-compatible wire")
     from .request_execution import prepare_execution
@@ -325,10 +391,42 @@ def _plan_and_shape(payload: dict[str, Any], messages: list[dict[str, Any]],
         max_defer_seconds=options.get("max_defer_seconds", provider.max_defer_seconds),
         batch=options.get("batch", False), batch_submission=options.get("batch_submission", False),
         when=options.get("when"))
+    if reasoning_default is not None:
+        execution['reasoning_default'] = reasoning_default
     if not provider.adapt:
+        from .route_capabilities import validate_request
+        try:
+            budget = validate_request(payload, capabilities) if capabilities else {}
+        except ValueError as exc:
+            raise BadRequest(str(exc)) from None
         return payload, {"vendor": profile.id, "actions": ["适配器已关闭"],
+                         "route_capabilities": capabilities, "request_budget": budget,
+                         "adapter_id": adapter_for(profile).adapter_id,
+                         "model_kind_id": profile.model_kind_id,
+                         "model_family_id": profile.model_family_id,
+                         "manufacturer_id": profile.manufacturer_id,
+                         "behavior_fingerprint": profile.behavior_fingerprint,
+                         "model_match_source": profile.model_match_source,
+                         "model_evidence": profile.model_evidence,
+                         "model_traits": list(profile.model_traits),
                          "cache_engages": False, "execution": execution, "model": model,
                          "estimate_scope": "reuse_window", "includes_output_cost": False}
+
+    # Every entry point (direct, gateway and batch) must hash and send the same
+    # vendor dialect. Shape after execution budgets, before cache fingerprinting.
+    payload, reasoning_actions = shape_reasoning(payload, profile)
+    adapter = adapter_for(profile)
+    payload, compatibility_actions = adapter.shape_request(payload, wire=provider.wire)
+    reasoning_actions.extend(compatibility_actions)
+    from .cache_affinity import apply_affinity
+    affinity = apply_affinity(payload, provider, model, options.get('cache_scope'))
+    if affinity is not None:
+        execution['cache_affinity'] = affinity
+    from .route_capabilities import validate_request
+    try:
+        budget = validate_request(payload, capabilities) if capabilities else {}
+    except ValueError as exc:
+        raise BadRequest(str(exc)) from None
 
     from .pricing import index_price
 
@@ -359,7 +457,7 @@ def _plan_and_shape(payload: dict[str, Any], messages: list[dict[str, Any]],
         flex=bool(execution.get("flex")), batch=bool(execution.get("batch")),
         when=options.get("when"),
     )
-    plan = adapter_for(profile).plan(payload, messages, ctx)
+    plan = adapter.plan(payload, messages, ctx)
 
     # 把计划落到实际请求体：只有需要显式标记的厂商才注入，其余保持原样。
     if plan.cache_control:
@@ -372,12 +470,27 @@ def _plan_and_shape(payload: dict[str, Any], messages: list[dict[str, Any]],
             shaped = shape_bailian(shaped, profile)
         payload = shaped
 
+    if capabilities:
+        try:
+            budget = validate_request(payload, capabilities)
+        except ValueError as exc:
+            raise BadRequest(str(exc)) from None
     raw = plan.to_raw()
+    # Host-only diagnostics. Never injected into messages or cache namespaces.
+    raw.update(route_capabilities=capabilities, request_budget=budget)
+    raw.update(adapter_id=adapter.adapter_id, model_kind_id=profile.model_kind_id,
+               model_family_id=profile.model_family_id, manufacturer_id=profile.manufacturer_id or profile.id,
+               behavior_fingerprint=profile.behavior_fingerprint,
+               model_match_source=profile.model_match_source, model_evidence=profile.model_evidence,
+               model_traits=list(profile.model_traits))
+    if reasoning_actions:
+        raw.setdefault("actions", []).extend(reasoning_actions)
+        raw["reasoning_shaped"] = True
     if reasoning_hop:
         raw.setdefault("notes", []).append(
             f"reasoning 参数变化（{reasoning_hop['from']}→{reasoning_hop['to']}）："
-            "该维度参与前缀缓存命名空间（DSH 实证 effort 切换可使命中率 99.9%→12.7%），"
-            "本段前缀在同厂商需按全价重读一次后重新变热")
+            "本地温暖度按推理参数分开记录；是否发生服务端失配需看本次 usage，"
+            "不预断零命中或全价重读")
         raw["reasoning_hop"] = reasoning_hop
     raw["fingerprint"] = fingerprint
     raw["execution"] = execution
@@ -478,15 +591,18 @@ class HttpTransport:
         # 发送前最后防线：按 wire 协议清洗消息序列（配对 tool_use/tool_result、
         # 剔除孤儿 tool 消息、空 content 补占位），避免各家 API 的 400。
         messages = sanitize_messages(messages, provider.wire)
+        profile = provider.profile_for_model(model)
+        from .route_capabilities import default_output as route_default_output
+        default_output = route_default_output(profile, provider.capabilities_for_model(model), adapt=provider.adapt)
         # Gemini 兼容网关要求每条 tool 消息带 name（hermes-agent #16478）
-        if "gemini" in model.lower():
+        if profile.manufacturer_id == "gemini":
             messages = fill_gemini_name_fields(messages)
         if provider.wire == "anthropic":
             system = "\n".join(str(m["content"]) for m in messages if m.get("role") == "system")
             chat = [m for m in messages if m.get("role") != "system"]
             payload: dict[str, Any] = {
                 "model": model,
-                "max_tokens": int(options.get("max_tokens", 2048)),
+                "max_tokens": int(options.get("max_tokens", default_output)),
                 "messages": chat,
             }
             if system:
@@ -501,12 +617,12 @@ class HttpTransport:
             payload = {
                 "model": model,
                 "messages": messages,
-                "max_tokens": int(options.get("max_tokens", 2048)),
+                "max_tokens": int(options.get("max_tokens", default_output)),
             }
             requested = options.get("temperature")
             if requested is None:
                 requested = provider.temperature
-            effective = sampling.resolve(model, provider.wire, requested)
+            effective = sampling.resolve(profile.canonical_model_id or model, provider.wire, requested)
             if effective is not None:
                 payload["temperature"] = effective
             if options.get("tools"):
@@ -526,7 +642,6 @@ class HttpTransport:
         # 而是枚举该厂商所有合法方案（缓存/不缓存、5m/1h TTL、单/双断点），
         # 用预期复用次数算出每个方案的成本，选最便宜的那个。
         # 返回的 plan 含成本、节省额与人类可读的动作，供运行报告审计。
-        profile = provider.profile_for_model(model)
         try:
             options.setdefault("interactive", False)
             payload, plan_raw = _plan_and_shape(payload, messages, provider, model, **options)
@@ -544,7 +659,10 @@ class HttpTransport:
         request = urllib.request.Request(url, data=body, headers=headers, method="POST")
         try:
             from .secret_http import open_authenticated
-            with (self._response_opener or open_authenticated)(request, timeout=self.timeout) as response:
+            # 慢端点按提供方放宽超时（0=传输默认）；实测 ark coding 单请求
+            # 可超 120s，默认超时会让重试同样超时、整轮 "all providers fail"。
+            effective_timeout = int(getattr(provider, "request_timeout", 0) or 0) or self.timeout
+            with (self._response_opener or open_authenticated)(request, timeout=effective_timeout) as response:
                 from .secrets import redact
                 data = response.read(2 * 1024 * 1024 + 1)
                 if len(data) > 2 * 1024 * 1024:
@@ -584,6 +702,7 @@ class HttpTransport:
         norm = normalize_usage(profile, usage_raw)
 
         if provider.wire == "anthropic":
+            finish_reason = str(raw.get("stop_reason") or "")
             text = "".join(part.get("text", "") for part in raw.get("content", []))
             input_tokens = _safe_count(norm.get("input_tokens", usage_raw.get("input_tokens", 0)))
             # Anthropic 的 input_tokens 不含缓存读与缓存写，总输入量要把两者补回去
@@ -595,20 +714,24 @@ class HttpTransport:
                 model=model,
                 provider=provider.name,
                 cached_tokens=_safe_count(norm.get("cached_tokens", 0)),
+                cache_observed="cached_tokens" in norm,
                 cache_write_tokens=_safe_count(norm.get("cache_write_tokens", 0)),
                 reasoning_tokens=_safe_count(norm.get("reasoning_tokens", 0)),
             )
             message = {"role": "assistant", "content": raw.get("content", [])}
         else:
             choices = raw.get("choices") or [{}]
+            finish_reason = str(choices[0].get("finish_reason") or "")
             message = choices[0].get("message") or {}
-            text = message.get("content") or ""
+            from .toolwire import strip_think_blocks
+            text = strip_think_blocks(message.get("content") or "")
             usage = Usage(
                 prompt_tokens=_safe_count(norm.get("input_tokens", usage_raw.get("prompt_tokens", 0))),
                 completion_tokens=_safe_count(norm.get("output_tokens", usage_raw.get("completion_tokens", 0))),
                 model=model,
                 provider=provider.name,
                 cached_tokens=_safe_count(norm.get("cached_tokens", 0)),
+                cache_observed="cached_tokens" in norm,
                 cache_write_tokens=_safe_count(norm.get("cache_write_tokens", 0)),
                 reasoning_tokens=_safe_count(norm.get("reasoning_tokens", 0)),
             )
@@ -625,12 +748,16 @@ class HttpTransport:
 
         # model 必须透传：repair_arguments 的 MODEL_QUIRKS 按模型名开关，
         # 丢掉它等于怪癖表永不生效（旧 _model 属性全树无写入点）。
-        calls = parse_tool_calls(message, provider.wire, model=model)
+        # A truncated function argument is not a complete action, even if a
+        # repair heuristic could close its JSON braces.
+        calls = ([] if finish_reason in {"length", "max_tokens", "repetition_truncation", "content_filter"} else
+                 parse_tool_calls(message, provider.wire, model=model))
         return text, usage, {
             "tool_calls": [call.to_raw() for call in calls],
             "wire": provider.wire,
             "assistant_message": message,
             "plan": plan_raw,
+            "finish_reason": finish_reason,
         }
 
 
@@ -686,11 +813,18 @@ class ModelRouter:
                 service=str(conf.get("service", "")),
                 temperature=_as_temperature(conf.get("temperature")),
                 vendor=str(conf.get("vendor", "")),
+                model_kind_id=str(conf.get("modelKindId") or ""),
+                model_kind_ids=dict(conf.get("modelKinds") or {}),
+                route_capabilities=conf.get("routeCapabilities", {}),
+                model_capabilities=conf.get("modelCapabilities", {}),
                 cache_control=str(conf.get("cacheControl", "auto")),
                 expected_calls=int(conf.get("expectedCalls", 2) or 2),
                 call_gap_seconds=float(conf.get("callGapSeconds", 60) or 60),
                 adapt=bool(conf.get("adapt", True)),
-                think_budget=conf.get("thinkBudget"), flex=bool(conf.get("flex", False)),
+                think_budget=conf.get("thinkBudget"), reasoning_mode=conf.get("reasoningMode", "auto"),
+                cache_affinity=str(conf.get("cacheAffinity", "auto")),
+                request_timeout=int(conf.get("requestTimeout", 0) or 0),
+                flex=bool(conf.get("flex", False)),
                 defer=bool(conf.get("defer", False)),
                 max_defer_seconds=float(conf.get("maxDeferSeconds", 0) or 0),
             ))
@@ -751,7 +885,8 @@ class ModelRouter:
                                       tool_calls=list((extra or {}).get("tool_calls") or []),
                                       wire=str((extra or {}).get("wire") or provider.wire),
                                       assistant_message=(extra or {}).get("assistant_message"),
-                                      plan=dict((extra or {}).get("plan") or {}))
+                                      plan=dict((extra or {}).get("plan") or {}),
+                                      finish_reason=str((extra or {}).get("finish_reason") or ""))
                 except TransportError as exc:
                     attempts.append({
                         "provider": provider_name,

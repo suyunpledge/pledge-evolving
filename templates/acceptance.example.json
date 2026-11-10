@@ -1,0 +1,11 @@
+{
+  "max_attempts": 3,
+  "criteria": [
+    {
+      "id": "deliverable",
+      "kind": "file",
+      "path": "output.txt",
+      "contains": "ready"
+    }
+  ]
+}

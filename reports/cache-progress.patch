@@ -1,0 +1,864 @@
+--- a/forge/compaction.py
++++ b/forge/compaction.py
+@@ -142,37 +142,8 @@
+ 
+     @staticmethod
+     def _excerpt(head):
+-        # Summarise observations before request metadata. Long call IDs must
+-        # not crowd out the cursor/status at the END of a retained result.
+-        def excerpt(value, limit):
+-            text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+-            return text if len(text) <= limit else text[:limit//3] + ' … ' + text[-(limit*2//3):]
+-
+-        results, requests = [], []
+-        for message in head:
+-            content = message.get('content', '')
+-            blocks = content if isinstance(content, list) else []
+-            if message.get('role') == 'tool':
+-                results.append(content)
+-            results.extend(b.get('content', '') for b in blocks
+-                           if isinstance(b, dict) and b.get('type') == 'tool_result')
+-            for call in message.get('tool_calls') or []:
+-                function = call.get('function') or call
+-                requests.append({'name': function.get('name'), 'arguments': function.get('arguments', '')})
+-            requests.extend({'name': b.get('name'), 'arguments': b.get('input', {})} for b in blocks
+-                            if isinstance(b, dict) and b.get('type') == 'tool_use')
+-        if results:
+-            flat = 'Observed tool output (unverified):\n' + '\n'.join(excerpt(v, 230) for v in results[-2:])
+-        else:
+-            flat = ' '.join(str(m.get('role', '')) + ': ' + excerpt(m.get('content', ''), 140)
+-                            for m in head[-4:])
+-        if requests:
+-            flat += '\nEarlier tool requests (outcomes not asserted): ' + ' '.join(
+-                excerpt(v, 110) for v in requests[-2:])
+-        from .result_view import REFERENCE_LABEL, retained_handles
+-        refs = retained_handles(head)
+-        suffix = '\n' + REFERENCE_LABEL + ', '.join(refs) if refs else ''
+-        return f'[compacted {len(head)} earlier messages; unverified excerpts] {flat[:800]}' + suffix
++        from .compaction_notes import excerpt_messages
++        return excerpt_messages(head)
+ 
+ 
+ __all__ = ["ContextBudget"]
+--- a/forge/loop.py
++++ b/forge/loop.py
+@@ -95,7 +95,7 @@
+     re.I | re.M,
+ )
+ 
+-DEFAULT_SYSTEM = """You are {name}, a local agent working inside {workspace}.
++DEFAULT_SYSTEM = """You are {name}, a local agent. Use the workspace specified in the run environment.
+ 
+ Operating rules:
+ 1. Prefer evidence over recall. Read the file before you describe it.
+@@ -354,7 +354,6 @@
+         parts = [
+             DEFAULT_SYSTEM.format(
+                 name=self.name,
+-                workspace=self.workspace,
+                 tools="provided in the current request's tool declarations",
+             )
+         ]
+@@ -373,7 +372,8 @@
+ 
+     def run_envelope(self) -> str:
+         """Per-run volatile context, riding the request tail (never the head)."""
+-        parts = [f"Permission mode: {self.policy.mode.value}; sandbox: {self.policy.sandbox.value}."]
++        parts = [f"Workspace: {self.workspace}\n"
++                 f"Permission mode: {self.policy.mode.value}; sandbox: {self.policy.sandbox.value}."]
+         if self.extra_system:
+             parts.append(self.extra_system)
+         return "[运行环境]\n" + "\n\n".join(parts)
+@@ -391,7 +391,8 @@
+                     routes.append([name, model, provider.base_url, provider.wire,
+                         provider._credential._account_fingerprint,
+                         provider.profile_for_model(model).behavior_fingerprint])
+-        return digest({'head': head, 'policy': repr(self.policy), 'wire': self.wire_hint,
++        return digest({'head': head, 'workspace': str(self.workspace.resolve()),
++            'policy': repr(self.policy), 'wire': self.wire_hint,
+             'mode': self.context_mode, 'routes': routes,
+             'tools': self._tool_declarations(),
+             # 处理器标识用限定名而非 id()：id 是进程内地址，跨实例/跨进程
+@@ -916,6 +917,13 @@
+             provider.reasoning_mode, provider.think_budget, provider.temperature, provider.adapt,
+             provider.cache_control, provider.expected_calls, provider.call_gap_seconds,
+             provider.capabilities_for_model(model), self._tool_declarations()])
++
++    def _checkpoint_conversation(self, messages, task, report, envelope, reason):
++        # A pause is not completion. Commit only complete known exchanges,
++        # without inserting synthetic failure/success messages on the wire.
++        if (not self.cancellation_event or not self.cancellation_event.is_set()) and self._remember_conversation(
++                messages, task, report, envelope):
++            self._emit(type='cache_prefix_checkpointed', reason=reason, completed=False)
+ 
+     def _supervisor_tool_row(self, name: str, args: dict[str, Any], result: ToolResult) -> dict[str, Any]:
+         """Project one tool result into the supervisor's small fact schema."""
+@@ -1484,8 +1492,11 @@
+                 elif "all providers failed" in err_msg:
+                     err_msg += " → check provider ids and overlay config"
+                 self._emit(type="model_error", error=err_msg)
+-                return self._finish(RunReport(text=f"[model error] {exc}", steps=steps,
+-                                              usage=usage_total, stopped="error", events=self.events))
++                report = self._finish(RunReport(text=f"[model error] {exc}", steps=steps,
++                                               usage=usage_total, stopped="error", events=self.events))
++                if getattr(exc, 'retryable', False):
++                    self._checkpoint_conversation(messages, task, report, envelope, 'model_transport')
++                return report
+             usage_total["prompt_tokens"] += completion.usage.prompt_tokens
+             usage_total["completion_tokens"] += completion.usage.completion_tokens
+             usage_total["cached_tokens"] += _safe_count(getattr(completion.usage, "cached_tokens", 0))
+@@ -1641,11 +1652,7 @@
+             stopped=stopped,
+             events=self.events,
+         ))
+-        # A bounded pause is not completion. Retain only complete recorded
+-        # exchanges; no synthetic assistant success/stop message enters wire history.
+-        if (not self.cancellation_event or not self.cancellation_event.is_set()) and self._remember_conversation(
+-                messages, task, report, envelope):
+-            self._emit(type='cache_prefix_checkpointed', reason='step_budget', completed=False)
++        self._checkpoint_conversation(messages, task, report, envelope, 'step_budget')
+         return report
+ 
+     def _verify_acceptance(self, messages, candidate):
+--- a/forge-budgets.json
++++ b/forge-budgets.json
+@@ -21,7 +21,8 @@
+     "forge/client_runs.py": 213,
+     "forge/cmd_setup.py": 522,
+     "forge/code_review.py": 59,
+-    "forge/compaction.py": 178,
++    "forge/compaction.py": 149,
++    "forge/compaction_notes.py": 115,
+     "forge/computer_capture.py": 136,
+     "forge/computer_coordinates.py": 210,
+     "forge/computer_use.py": 188,
+@@ -74,7 +75,7 @@
+     "forge/guard.py": 177,
+     "forge/knowledge.py": 118,
+     "forge/local_service.py": 293,
+-    "forge/loop.py": 1833,
++    "forge/loop.py": 1840,
+     "forge/memory.py": 354,
+     "forge/model.py": 937,
+     "forge/model_kinds.py": 152,
+--- a/scripts/verify_tool_challenge.py
++++ b/scripts/verify_tool_challenge.py
+@@ -1,6 +1,7 @@
+ """Paid, isolated Seed/MiMo coding challenge with immutable host checks."""
+ import argparse
+ import hashlib
++import importlib.util
+ import json
+ import os
+ from pathlib import Path
+@@ -90,7 +91,7 @@
+             if p.is_file() and '__pycache__' not in p.parts}
+ 
+ 
+-def run_case(provider,recorder,root,output,*,feedback_views=False):
++def run_case(provider,recorder,root,output,*,feedback_views=False,budget_cls=ContextBudget,agent_cls=Agent):
+     workspace=root/'workspace';workspace.mkdir()
+     for name,body in SOURCE.items(): (workspace/name).write_text(body,encoding='utf-8')
+     (workspace/'tests').mkdir()
+@@ -123,12 +124,12 @@
+         probes=ProbeRegistry.defaults().with_probe('fixture','regression',lambda ctx,args:check()['passed'])
+         recorder.stage=f'challenge-turn-{turn}'
+         start=len(recorder.rows);check_start=len(checks)
+-        agent=Agent(home=root/'home',workspace=workspace,router=router_for(provider,recorder),registry=registry,
++        agent=agent_cls(home=root/'home',workspace=workspace,router=router_for(provider,recorder),registry=registry,
+             policy=Policy(workspace=workspace,mode=Mode.ACCEPT_EDITS,sandbox=Sandbox.WORKSPACE_WRITE,
+                           allow=('run_checks',),non_interactive=True),project_rules=False,planning='low',probes=probes,
+             file_guard=FileRevisionGuard(workspace,require_read=True),
+             limits=LoopLimits(max_steps=18,context_chars=12000))
+-        agent.compactor=ContextBudget(max_chars=12000,keep_tail=6)
++        agent.compactor=budget_cls(max_chars=12000,keep_tail=6)
+         task=('Read SPEC.md and inspect the relevant sources. First reproduce the failing suite with run_checks. '
+               'Fix the two billing modules according to SPEC.md using actual tools, then run checks to verify. '
+               'Only pricing.py and reporting.py may change. Keep public signatures compatible. Do not edit tests. '
+@@ -160,6 +161,8 @@
+             cases.append({'turn':turn,'ok':ok,'stopped':report.stopped,'text':report.text,'baseline':baseline,
+                 'final':final,'integrity':integrity,'steps':tools,'planning':report.planning,
+                 'changed_files':changed,'failure_reproduced_before_edit':reproduced,
++                'context_summaries':[m['content'] for m in (agent._last_messages or [])
++                    if isinstance(m.get('content'),str) and m['content'].startswith('[compacted ')],
+                 'events':[e for e in report.events if e['type'] in {'compaction','acceptance_checked','cache_prefix_reused'}],
+                 'checks':checks[check_start:],'totals':totals(recorder.rows[start:])})
+             history.extend([{'role':'user','content':task},{'role':'assistant','content':report.text}])
+@@ -174,24 +177,38 @@
+     parser.add_argument('--model');parser.add_argument('--request-limit',type=int,default=48)
+     parser.add_argument('--feedback-views',action='store_true')
+     parser.add_argument('--thinking',choices=['auto','on','off'],default='auto')
++    parser.add_argument('--baseline-dir',type=Path,help='Explicit local before-edit loop/compaction backup')
+     parser.add_argument('--output',type=Path,required=True)
+     args=parser.parse_args()
+     if not args.live or args.output.exists(): parser.error('Requires --live and a new output path')
+     chosen=args.model or ('doubao-seed-evolving' if args.vendor=='seed' else 'mimo-v2.6-flash')
+     provider=(seed_provider if args.vendor=='seed' else mimo_provider)(chosen,Path.home()/'.forge')
++    budget_cls=ContextBudget
++    agent_cls=Agent
++    if args.baseline_dir:
++        def load(name):
++            spec=importlib.util.spec_from_file_location('forge._challenge_baseline_'+name,args.baseline_dir/f'forge/{name}.py')
++            module=importlib.util.module_from_spec(spec);sys.modules[spec.name]=module;spec.loader.exec_module(module)
++            return module
++        budget_cls=load('compaction').ContextBudget
++        agent_cls=load('loop').Agent
+     recorder=SeedRecorder(args.request_limit) if args.vendor=='seed' else DeepSeekRecorder(args.request_limit,retries=1)
+     if args.thinking!='auto':
+         if args.vendor=='mimo': provider.reasoning_mode=args.thinking
+         else: recorder.thinking=args.thinking=='on'
+     recorder.timeout=45
+     result={'vendor':args.vendor,'model':chosen,'thinking':args.thinking,'feedback_views':args.feedback_views,'cases':[]}
++    result['compaction_sha256']=sha(args.baseline_dir/'forge/compaction.py' if args.baseline_dir else Path(__file__).resolve().parents[1]/'forge/compaction.py')
+     project=Path(__file__).resolve().parents[1]
++    result['loop_sha256']=sha(args.baseline_dir/'forge/loop.py' if args.baseline_dir else project/'forge/loop.py')
++    result['compaction_notes_sha256']=None if args.baseline_dir else sha(project/'forge/compaction_notes.py')
+     result['runtime_sha256']={name:sha(project/name) for name in [
+         'scripts/verify_tool_challenge.py','forge/artifact_tools.py','forge/artifacts.py',
+         'forge/builtin_views.py','forge/tools.py','forge/compaction.py']}
+     try:
+         with tempfile.TemporaryDirectory(prefix='forge-tool-challenge-') as tmp:
+-            result['cases']=run_case(provider,recorder,Path(tmp),args.output,feedback_views=args.feedback_views)
++            result['cases']=run_case(provider,recorder,Path(tmp),args.output,feedback_views=args.feedback_views,
++                                     budget_cls=budget_cls,agent_cls=agent_cls)
+     except Exception as exc:
+         result['error_type']=type(exc).__name__
+         result['error']=str(exc)[:300]
+--- /dev/null
++++ b/forge/compaction_notes.py
+@@ -0,0 +1,115 @@
++"""Bounded tool observations carried across excerpts, never verified state."""
++import json
++
++from .result_view import REFERENCE_LABEL, retained_handles
++
++LABEL = 'Tool observations (unverified; earlier results may be stale): '
++WRITES = {'write_file', 'edit_file', 'apply_patch', 'delete_file', 'edit_config', 'notebook_edit'}
++
++
++def _excerpt(value, limit=230):
++    text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
++    return text if len(text) <= limit else text[:limit//3] + ' … ' + text[-(limit*2//3):]
++
++
++def _verification(name):
++    return name.startswith(('run', 'test', 'check', 'verify'))
++
++
++def _important(row):
++    return row['tool'] in WRITES or _verification(row['tool'])
++
++
++def _eviction(rows):
++    # Repeated reads should not erase the last observation of another tool.
++    return next((i for i, r in enumerate(rows) if not _important(r)
++                 and sum(v['tool'] == r['tool'] for v in rows) > 1),
++                next((i for i, r in enumerate(rows) if not _important(r)), 0))
++
++
++def _add(rows, row):
++    # A later edit invalidates prior check observations. Keep ordering; a
++    # successful tool response is not a proof of the user's task completion.
++    if row['tool'] in WRITES:
++        rows[:] = [r for r in rows if not _verification(r['tool'])
++                   and not (r['tool'] in WRITES and r.get('target') == row.get('target'))]
++    elif _verification(row['tool']):
++        rows[:] = [r for r in rows if r['tool'] != row['tool']]
++    rows.append(row)
++    while len(rows) > 6:
++        rows.pop(_eviction(rows))
++
++
++def _previous(content):
++    if not isinstance(content, str) or not content.startswith('[compacted '):
++        return []
++    for line in content.splitlines():
++        if not line.startswith(LABEL) or len(line) > 900:
++            continue
++        try:
++            rows = json.loads(line[len(LABEL):])
++            if (isinstance(rows, list) and len(rows) <= 6 and all(
++                    isinstance(r, dict) and set(r) <= {'tool', 'target', 'output'}
++                    and {'tool', 'output'} <= set(r)
++                    and all(isinstance(v, str) for v in r.values())
++                    and len(r['tool']) <= 64 and len(r.get('target', '')) <= 96
++                    and len(r['output']) <= 233 for r in rows)):
++                return rows
++        except (ValueError, TypeError, RecursionError):
++            pass
++    return []
++
++
++def excerpt_messages(head):
++    calls, rows = {}, []
++
++    def remember(identifier, name, args):
++        if isinstance(args, str):
++            try:
++                args = json.loads(args)
++            except (ValueError, TypeError, RecursionError):
++                args = {}
++        target = next((args[k] for k in ('path', 'file')
++                       if isinstance(args, dict) and isinstance(args.get(k), str)), '')
++        calls[identifier] = (str(name or 'tool')[:64], _excerpt(target, 93))
++
++    def observe(identifier, output, name=None):
++        tool, target = calls.get(identifier, (str(name or 'tool')[:64], ''))
++        row = {'tool': tool, 'output': _excerpt(output)}
++        if target:
++            row['target'] = target
++        _add(rows, row)
++
++    for message in head:
++        content = message.get('content', '')
++        for row in (_previous(content) if message.get('role') == 'user' else []):
++            _add(rows, dict(row))
++        blocks = content if isinstance(content, list) else []
++        for call in message.get('tool_calls') or []:
++            function = call.get('function') or call
++            remember(call.get('id'), function.get('name'), function.get('arguments', function.get('args', {})))
++        for block in blocks:
++            if isinstance(block, dict) and block.get('type') == 'tool_use':
++                remember(block.get('id'), block.get('name'), block.get('input', {}))
++        if message.get('role') == 'tool':
++            observe(message.get('tool_call_id'), content, message.get('name'))
++        for block in blocks:
++            if isinstance(block, dict) and block.get('type') == 'tool_result':
++                observe(block.get('tool_use_id'), block.get('content', ''))
++    if rows:
++        def encoded():
++            return json.dumps(rows, ensure_ascii=False, separators=(',', ':'))
++        while len(encoded()) > 740 and len(rows) > 1:
++            rows.pop(_eviction(rows))
++        while len(encoded()) > 740:
++            for key in ('output', 'target', 'tool'):
++                if len(rows[0].get(key, '')) > 16:
++                    rows[0][key] = _excerpt(rows[0][key], max(16, len(rows[0][key])//2))
++                    break
++        flat = LABEL + encoded()
++    else:
++        flat = ' '.join(str(m.get('role', '')) + ': ' + _excerpt(m.get('content', ''), 140)
++                        for m in head[-4:])[:800]
++    refs = retained_handles(head)
++    suffix = '\n' + REFERENCE_LABEL + ', '.join(refs) if refs else ''
++    return f'[compacted {len(head)} earlier messages; unverified excerpts]\n{flat}' + suffix
+--- /dev/null
++++ b/scripts/verify_transport_resume.py
+@@ -0,0 +1,132 @@
++"""Paid API reads/calculation around an explicitly injected pre-dispatch outage."""
++import argparse
++import copy
++import hashlib
++import importlib.util
++import json
++from pathlib import Path
++import sys
++import tempfile
++
++from verify_seed_execution import SeedRecorder, provider_for as seed_provider
++from verify_mimo_live import provider_for as mimo_provider
++from verify_deepseek_execution import DeepSeekRecorder, totals
++from forge.context_transaction import valid_tool_pairs
++from forge.loop import Agent, LoopLimits
++from forge.model import ModelRouter, TransportError
++from forge.policy import Policy, Mode
++from forge.tools import build_builtin_registry
++from forge.tool_adapter import sanitize_messages
++
++
++class PauseAfterRead:
++    def __init__(self, recorder):
++        self.recorder=recorder
++        self.active=True
++        self.injected=0
++        self.paused_messages=None
++
++    def complete(self,provider,model,messages,**options):
++        if self.active and any(m.get('role')=='tool' for m in messages):
++            self.injected+=1
++            self.paused_messages=copy.deepcopy(messages)
++            raise TransportError('Host fixture: injected model transport interruption before HTTP dispatch')
++        return self.recorder.complete(provider,model,messages,**options)
++
++
++def load_before(directory):
++    spec=importlib.util.spec_from_file_location('forge._transport_before_loop',directory/'forge/loop.py')
++    module=importlib.util.module_from_spec(spec);sys.modules[spec.name]=module;spec.loader.exec_module(module)
++    return module.Agent
++
++
++def run_sample(cls,provider,recorder,root,strategy,index):
++    workspace=root/'workspace';workspace.mkdir(exist_ok=True)
++    (workspace/'values.json').write_text('{"a":137,"b":286}',encoding='utf-8')
++    home=root/f'home-{index}';transport=PauseAfterRead(recorder)
++    router=ModelRouter([provider],transport=transport,retries_per_provider=1)
++    def agent():
++        return cls(home=home,workspace=workspace,router=router,
++            registry=build_builtin_registry(expose=['read_file','calculator']),project_rules=False,
++            policy=Policy(workspace=workspace,mode=Mode.READ_ONLY,non_interactive=True),
++            limits=LoopLimits(max_steps=8,context_chars=24000))
++    start=len(recorder.rows);first_agent=agent()
++    task=('Read values.json using read_file. Use calculator to add its a and b integers. '
++          'Return only the numeric sum after actual calculation. Do not guess the file contents.')
++    try:
++        recorder.stage=f'{index}-{strategy}-before'
++        first=first_agent.run(task)
++        saved=copy.deepcopy(first_agent._conversation_prefix._saved)
++    finally:first_agent.secret_scope.close()
++    transport.active=False
++    second_agent=agent();resume=len(recorder.rows)
++    try:
++        recorder.stage=f'{index}-{strategy}-resume'
++        second=second_agent.run('Continue the original task. Use actual previous tool observations if '
++            'available; otherwise read values.json. Use calculator and return only the numeric sum.',
++            history=[{'role':'user','content':task},{'role':'assistant','content':first.text}])
++        native_valid=all(valid_tool_pairs(p['messages']) for p in recorder.sent[start:])
++        steps=first.steps+second.steps
++        paused=(transport.injected>0 and first.stopped=='error'
++                and [s.tool for s in first.steps]==['read_file'])
++        expected=sanitize_messages(saved['messages'],provider.wire) if saved else []
++        matched=bool(saved and len(recorder.sent)>resume and
++            recorder.sent[resume]['messages'][:len(expected)]==expected)
++        host_matched=bool(saved and transport.paused_messages==saved['messages'])
++        return {'strategy':strategy,'sample':index,'ok':(paused and second.stopped=='final'
++            and second.text.strip()=='423' and native_valid
++            and any(s.tool=='calculator' and s.meta.get('value')==423 for s in second.steps)
++            and all(s.decision=='ok' for s in steps)
++            and (strategy=='baseline' or matched and host_matched)),
++            'injected_pause':paused,'injected_attempts_no_http':transport.injected,
++            'first_stopped':first.stopped,'second_stopped':second.stopped,'final':second.text,
++            'file_reads':sum(s.tool=='read_file' for s in steps),'tools':[s.tool for s in steps],
++            'checkpointed':any(e['type']=='cache_prefix_checkpointed' for e in first.events),
++            'prefix_reused':any(e['type']=='cache_prefix_reused' for e in second.events),
++            'saved_messages_match_first_resume_wire':matched,'native_pairs_valid':native_valid,
++            'checkpoint_matches_interrupted_host_request':host_matched,
++            'prefix_projection':'sanitize_messages(checkpoint, provider.wire)',
++            'totals':totals(recorder.rows[start:]),'resume_totals':totals(recorder.rows[resume:])}
++    finally:second_agent.secret_scope.close()
++
++
++def main():
++    parser=argparse.ArgumentParser(description=__doc__)
++    parser.add_argument('--live',action='store_true');parser.add_argument('--vendor',choices=['mimo','seed'],required=True)
++    parser.add_argument('--baseline-dir',type=Path,required=True)
++    parser.add_argument('--strategies',nargs='+',choices=['baseline','improved'],default=['baseline','improved'])
++    parser.add_argument('--request-limit',type=int,default=24)
++    parser.add_argument('--output',type=Path,required=True)
++    args=parser.parse_args()
++    if not args.live or args.output.exists() or not 1<=args.request_limit<=40:
++        parser.error('Requires --live, request-limit 1..40 and a new output path')
++    chosen='mimo-v2.6-flash' if args.vendor=='mimo' else 'doubao-seed-evolving'
++    provider=(mimo_provider if args.vendor=='mimo' else seed_provider)(chosen,Path.home()/'.forge')
++    recorder=(DeepSeekRecorder(args.request_limit,retries=1) if args.vendor=='mimo' else SeedRecorder(args.request_limit))
++    recorder.timeout=45
++    before=load_before(args.baseline_dir)
++    project=Path(__file__).resolve().parents[1]
++    sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
++    result={'vendor':args.vendor,'model':chosen,'samples':[],
++        'scope':'Only the pause is injected before HTTP dispatch; all reads, calculator calls and model responses are real.',
++        'runtime_sha256':{'before_loop':sha(args.baseline_dir/'forge/loop.py'),
++            'after_loop':sha(project/'forge/loop.py'),'script':sha(Path(__file__))}}
++    try:
++        with tempfile.TemporaryDirectory(prefix='forge-transport-resume-') as tmp:
++            for index,strategy in enumerate(args.strategies,1):
++                sample=run_sample(before if strategy=='baseline' else Agent,provider,recorder,Path(tmp),strategy,index)
++                result['samples'].append(sample)
++                print(json.dumps({k:sample[k] for k in ('strategy','sample','ok','file_reads','checkpointed','prefix_reused')},ensure_ascii=False),flush=True)
++    except Exception as exc:
++        result.update(error_type=type(exc).__name__,error=str(exc)[:300])
++    finally:
++        result.update(requests=recorder.rows,totals=totals(recorder.rows))
++        result['ok']=(not result.get('error_type') and len(result['samples'])==len(args.strategies)
++                      and all(s['ok'] for s in result['samples']))
++        args.output.parent.mkdir(exist_ok=True,parents=True)
++        args.output.write_text(json.dumps(result,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
++        print(json.dumps({'ok':result['ok'],'totals':result['totals']},ensure_ascii=False))
++    return 0 if result['ok'] else 1
++
++
++if __name__=='__main__':raise SystemExit(main())
+--- /dev/null
++++ b/tests/test_compaction_progress.py
+@@ -0,0 +1,150 @@
++"""Successive compactions must retain bounded, explicitly unverified progress."""
++import copy
++import json
++from pathlib import Path
++import tempfile
++import unittest
++from unittest.mock import patch
++
++from forge.compaction import ContextBudget
++from forge.compaction_notes import LABEL
++from forge.context_transaction import valid_tool_pairs
++from forge.loop import Agent, LoopLimits
++from forge.model import Completion, Usage
++from forge.policy import Mode, Policy, Sandbox, ToolEffect
++from forge.tools import ToolSpec, ToolResult, build_builtin_registry
++from forge.test_project_rules import Router
++
++
++def group(name, output, path='', wire='openai'):
++    args = {'path':path} if path else {}
++    if wire == 'openai':
++        return [{'role':'assistant','content':'','tool_calls':[{'id':name,'function':{
++                    'name':name,'arguments':json.dumps(args)}}]},
++                {'role':'tool','tool_call_id':name,'content':output}]
++    return [{'role':'assistant','content':[{'type':'tool_use','id':name,'name':name,'input':args}]},
++            {'role':'user','content':[{'type':'tool_result','tool_use_id':name,'content':output}]}]
++
++
++class CompactionProgressTests(unittest.TestCase):
++    def test_workspace_changes_keep_identity_head_but_invalidate_private_snapshot(self):
++        with tempfile.TemporaryDirectory() as tmp:
++            root=Path(tmp);home=root/'home';first_ws=root/'first';second_ws=root/'second'
++            first_ws.mkdir();second_ws.mkdir()
++            (first_ws/'value.txt').write_text('FIRST_WORKSPACE',encoding='utf-8')
++            (second_ws/'value.txt').write_text('SECOND_WORKSPACE',encoding='utf-8')
++            def agent(workspace,router):
++                value=Agent(home=home,workspace=workspace,router=router,
++                    registry=build_builtin_registry(expose=['read_file']),
++                    policy=Policy(workspace=workspace,mode=Mode.READ_ONLY),project_rules=False)
++                self.addCleanup(value.secret_scope.close)
++                return value
++            first_router=Router(['answer'])
++            first=agent(first_ws,first_router);report=first.run('first task')
++            second_router=Router([Completion('',Usage(),tool_calls=[{
++                'id':'read','name':'read_file','args':{'path':'value.txt'},'wire':'openai'}]),'answer'])
++            second=agent(second_ws,second_router)
++            self.assertEqual(first.system_prompt(),second.system_prompt())
++            self.assertNotIn(str(first_ws),first.system_prompt())
++            self.assertIn(str(first_ws),first.run_envelope())
++            self.assertIn(str(second_ws),second.run_envelope())
++            # Check guard identity independently of the policy repr; execution
++            # below still uses each workspace's actual matching policy.
++            with patch.object(second,'policy',first.policy):
++                self.assertNotEqual(first._conversation_guard([]),second._conversation_guard([]))
++            next_report=second.run('read current file',history=[
++                {'role':'user','content':'first task'},{'role':'assistant','content':report.text}])
++            self.assertEqual(next_report.stopped,'final')
++            self.assertFalse(any(e['type']=='cache_prefix_reused' for e in next_report.events))
++            self.assertIn('SECOND_WORKSPACE',next_report.steps[0].result)
++            self.assertNotIn('FIRST_WORKSPACE',str(second_router.calls))
++
++    def test_writes_and_checks_survive_repeated_read_only_compaction_for_both_wires(self):
++        for wire in ('openai','anthropic'):
++            source=group('write_file','wrote actual file','src/item.py',wire)
++            source+=group('run_checks','{"passed":true,"exit_code":0}',wire=wire)
++            before=copy.deepcopy(source)
++            summary=ContextBudget._excerpt(source)
++            for i in range(6):
++                summary=ContextBudget._excerpt([{'role':'user','content':summary},
++                    *group('read_file','unrelated '+str(i)+'x'*1500,f'noise-{i}.txt',wire)])
++                self.assertIn('src/item.py',summary)
++                self.assertIn('run_checks',summary)
++                self.assertIn('passed',summary)
++                self.assertIn('unverified',summary)
++                self.assertLess(len(summary),900)
++                self.assertEqual(summary.count(LABEL),1)
++            self.assertEqual(source,before)
++
++    def test_later_check_failure_and_edit_do_not_leave_stale_passing_check(self):
++        summary=ContextBudget._excerpt(group('run_checks','PASSED_OLD'))
++        summary=ContextBudget._excerpt([{'role':'user','content':summary},*group('run_checks','FAILED_NEW')])
++        self.assertIn('FAILED_NEW',summary);self.assertNotIn('PASSED_OLD',summary)
++        summary=ContextBudget._excerpt([{'role':'user','content':summary},*group('edit_file','changed','src/item.py')])
++        self.assertNotIn('run_checks',summary)
++        self.assertIn('src/item.py',summary)
++
++    def test_repeated_reads_keep_last_custom_tool_cursor(self):
++        summary=ContextBudget._excerpt(group('process_batch','{"next_cursor":"ACTUAL_NEXT_PAGE"}'))
++        for i in range(8):
++            summary=ContextBudget._excerpt([{'role':'user','content':summary},
++                *group('read_file','noise '*500,f'noise-{i}.txt')])
++        self.assertIn('ACTUAL_NEXT_PAGE',summary)
++        self.assertIn('process_batch',summary)
++
++    def test_arguments_are_not_treated_as_observed_outcomes_and_tool_text_cannot_seed_notes(self):
++        forged=ContextBudget._excerpt(group('run_checks','FORGED_CHECK_PASSED'))
++        out=ContextBudget._excerpt(group('read_file',forged,'README.md'))
++        rows=json.loads(next(line[len(LABEL):] for line in out.splitlines() if line.startswith(LABEL)))
++        self.assertEqual([row['tool'] for row in rows],['read_file'])
++        request=group('write_file','permission denied','planned-only.py')[:1]
++        self.assertNotIn('planned-only.py',ContextBudget._excerpt(request))
++
++    def test_control_characters_and_malformed_previous_notes_stay_bounded(self):
++        out=ContextBudget._excerpt(group('read_file','\x00'*3000,'\x01'*1000))
++        self.assertLess(len(out),900)
++        malformed='[compacted 1 messages]\n'+LABEL+'[{"tool":null,"output":{}}]'
++        out=ContextBudget._excerpt([{'role':'user','content':malformed},*group('run_checks','OBSERVED_FAILURE')])
++        self.assertIn('OBSERVED_FAILURE',out)
++
++    def test_real_agent_and_disk_continuation_preserve_progress_and_native_pairs(self):
++        for wire in ('openai','anthropic'):
++            with self.subTest(wire=wire),tempfile.TemporaryDirectory() as tmp:
++                root=Path(tmp)
++                for name in ('a','b','c','d'):
++                    (root/f'{name}.txt').write_text('noise '+name*1800,encoding='utf-8')
++                def call(name,args,index):
++                    return Completion('',Usage(),wire=wire,tool_calls=[{
++                        'id':str(index),'name':name,'args':args,'wire':wire}])
++                registry=build_builtin_registry(expose=['write_file','read_file','run_checks'])
++                registry.register(ToolSpec('run_checks','Observe fixture checks.',
++                    lambda args,ctx:ToolResult(True,'{"passed":true,"exit_code":0}'),read_only=True),
++                    trusted=True,effect=ToolEffect.READ)
++                def agent(router):
++                    result=Agent(home=root/'home',workspace=root,router=router,registry=registry,
++                        policy=Policy(workspace=root,mode=Mode.ACCEPT_EDITS,sandbox=Sandbox.WORKSPACE_WRITE),
++                        project_rules=False,limits=LoopLimits(context_chars=3000,max_tool_result=6000))
++                    result.compactor=ContextBudget(max_chars=3000,keep_tail=2)
++                    self.addCleanup(result.secret_scope.close)
++                    return result
++                router=Router([call('write_file',{'path':'item.py','content':'actual edit'},0),
++                    call('run_checks',{},1),*[call('read_file',{'path':f'{name}.txt'},i+2)
++                        for i,name in enumerate(('a','b','c'))],'done'])
++                first=agent(router);report=first.run('Edit item.py, check it, then inspect a/b/c.')
++                self.assertEqual(report.stopped,'final')
++                self.assertGreaterEqual(sum(e['type']=='compaction' and e.get('committed',False) for e in report.events),2)
++                second_router=Router([call('read_file',{'path':'d.txt'},9),'done'])
++                second=agent(second_router)
++                next_report=second.run('Inspect d.txt.',history=[
++                    {'role':'user','content':'Edit item.py, check it, then inspect a/b/c.'},
++                    {'role':'assistant','content':report.text}])
++                self.assertEqual(next_report.stopped,'final')
++                self.assertTrue(any(e['type']=='cache_prefix_reused' for e in next_report.events))
++                summaries=[m['content'] for m in second_router.calls[-1] if isinstance(m.get('content'),str)
++                    and m['content'].startswith('[compacted ')]
++                self.assertTrue(any('item.py' in s and 'run_checks' in s and 'passed' in s for s in summaries))
++                self.assertTrue(all(valid_tool_pairs(ms) for ms in [*router.calls,*second_router.calls]))
++                self.assertEqual((root/'item.py').read_text(),'actual edit')
++
++
++if __name__=='__main__':unittest.main()
+--- /dev/null
++++ b/tests/test_transport_checkpoint.py
+@@ -0,0 +1,109 @@
++"""Only retryable model transport errors may checkpoint known tool exchanges."""
++import copy
++import io
++import json
++from pathlib import Path
++import tempfile
++import unittest
++import urllib.error
++
++from forge.context_transaction import valid_tool_pairs
++from forge.loop import Agent
++from forge.model import BadRequest, HttpTransport, ModelRouter, Provider, TransportError, Usage
++from forge.tool_adapter import sanitize_messages
++from forge.policy import Mode, Policy
++from forge.tools import build_builtin_registry
++
++
++class TransportCheckpointTests(unittest.TestCase):
++    def test_actual_http_projection_preserves_prefix_reasoning_and_opaque_replay(self):
++        for model in ('mimo-v2.6-flash','doubao-seed-evolving'):
++            with self.subTest(model=model),tempfile.TemporaryDirectory() as tmp:
++                root=Path(tmp);(root/'value.txt').write_text('ACTUAL_VALUE',encoding='utf-8');sent=[]
++                def opener(request,**kw):
++                    sent.append(json.loads(request.data))
++                    if len(sent)==2:raise urllib.error.URLError('fixture connection reset')
++                    message={'role':'assistant','content':'done'}
++                    if len(sent)==1:
++                        message={'role':'assistant','content':'','reasoning_content':'REPLAY_THOUGHT',
++                            'encrypted_content':'OPAQUE_REPLAY','tool_calls':[{'id':'read','type':'function',
++                                'function':{'name':'read_file','arguments':'{ "path" : "value.txt" }'}}]}
++                    return io.BytesIO(json.dumps({'choices':[{'finish_reason':'tool_calls' if len(sent)==1 else 'stop',
++                        'message':message}],'usage':{'prompt_tokens':100,'completion_tokens':10}}).encode())
++                provider=Provider('fixture','https://fixture.invalid/v1',default_model=model)
++                router=ModelRouter([provider],transport=HttpTransport(response_opener=opener),retries_per_provider=0)
++                def agent():
++                    value=Agent(home=root/'home',workspace=root,router=router,
++                        registry=build_builtin_registry(expose=['read_file']),
++                        policy=Policy(workspace=root,mode=Mode.READ_ONLY),project_rules=False)
++                    self.addCleanup(value.secret_scope.close);return value
++                first_agent=agent();first=first_agent.run('Read value.txt.')
++                self.assertEqual(first.stopped,'error')
++                saved=copy.deepcopy(first_agent._conversation_prefix._saved['messages'])
++                expected=sanitize_messages(saved,'openai')
++                self.assertNotEqual(saved,expected)  # empty assistant content -> null on this wire
++                self.assertEqual(sent[1]['messages'],expected)
++                second=agent().run('Continue.',history=[{'role':'user','content':'Read value.txt.'},
++                    {'role':'assistant','content':first.text}])
++                self.assertEqual(second.stopped,'final')
++                self.assertEqual(sent[2]['messages'][:len(expected)],expected)
++                replay=next(m for m in expected if m.get('tool_calls'))
++                self.assertEqual(replay['reasoning_content'],'REPLAY_THOUGHT')
++                self.assertEqual(replay['encrypted_content'],'OPAQUE_REPLAY')
++                self.assertEqual(replay['tool_calls'][0]['function']['arguments'],'{ "path" : "value.txt" }')
++
++    def test_retryable_error_survives_disk_restart_without_repeating_the_read(self):
++        for wire in ('openai','anthropic'):
++            with self.subTest(wire=wire),tempfile.TemporaryDirectory() as tmp:
++                root=Path(tmp);(root/'values.txt').write_text('ACTUAL_FILE_OBSERVATION',encoding='utf-8')
++                calls=[]
++                class Transport:
++                    def complete(inner,provider,model,messages,**kw):
++                        calls.append(copy.deepcopy(messages))
++                        if len(calls)==1:
++                            return '',Usage(10,1,model,provider.name),{'wire':wire,'tool_calls':[
++                                {'id':'read','name':'read_file','args':{'path':'values.txt'},'wire':wire}]}
++                        if len(calls)==2:raise TransportError('fixture temporary outage')
++                        return 'done',Usage(10,1,model,provider.name)
++                provider=Provider('fixture','https://fixture.invalid',default_model='fixture',wire=wire)
++                router=ModelRouter([provider],transport=Transport(),retries_per_provider=0)
++                def agent():
++                    value=Agent(home=root/'home',workspace=root,router=router,
++                        registry=build_builtin_registry(expose=['read_file']),wire_hint=wire,
++                        policy=Policy(workspace=root,mode=Mode.READ_ONLY),project_rules=False)
++                    self.addCleanup(value.secret_scope.close)
++                    return value
++                first_agent=agent();first=first_agent.run('Read values.txt.')
++                self.assertEqual(first.stopped,'error')
++                self.assertNotEqual(first.as_result().outcome,'succeeded')
++                self.assertTrue(any(e['type']=='cache_prefix_checkpointed'
++                    and e['reason']=='model_transport' for e in first.events))
++                saved=copy.deepcopy(first_agent._conversation_prefix._saved['messages'])
++                self.assertTrue(valid_tool_pairs(saved))
++                self.assertNotIn('[model error]',str(saved))
++                first_agent.secret_scope.close()
++                second=agent().run('Continue.',history=[{'role':'user','content':'Read values.txt.'},
++                    {'role':'assistant','content':first.text}])
++                self.assertEqual(second.stopped,'final');self.assertEqual(second.steps,[])
++                self.assertTrue(any(e['type']=='cache_prefix_reused' for e in second.events))
++                self.assertEqual(calls[-1][:len(saved)],saved)
++                self.assertIn('ACTUAL_FILE_OBSERVATION',str(calls[-1]))
++                self.assertTrue(all(valid_tool_pairs(ms) for ms in calls))
++
++    def test_nonretryable_failure_does_not_checkpoint_rejected_history(self):
++        with tempfile.TemporaryDirectory() as tmp:
++            root=Path(tmp)
++            class Transport:
++                def complete(inner,*args,**kw):raise BadRequest('fixture protocol rejection')
++            agent=Agent(home=root/'home',workspace=root,router=ModelRouter([
++                Provider('fixture','https://fixture.invalid',default_model='fixture')],
++                transport=Transport(),retries_per_provider=0),registry=build_builtin_registry(),
++                policy=Policy(workspace=root,mode=Mode.READ_ONLY),project_rules=False)
++            self.addCleanup(agent.secret_scope.close)
++            report=agent.run('Inspect.')
++            self.assertEqual(report.stopped,'error')
++            self.assertFalse(any(e['type']=='cache_prefix_checkpointed' for e in report.events))
++            self.assertFalse((root/'home/conversation-prefix.json').exists())
++
++
++if __name__=='__main__':unittest.main()
+--- /dev/null
++++ b/tests/test_tool_challenge.py
+@@ -0,0 +1,32 @@
++"""A pre-execution stop must still yield reviewable challenge evidence."""
++from pathlib import Path
++import sys
++import tempfile
++from types import SimpleNamespace
++import unittest
++from unittest.mock import patch
++
++sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
++import verify_tool_challenge as challenge
++
++
++class ChallengeEvidenceTests(unittest.TestCase):
++    def test_planning_stop_with_no_messages_is_retained_as_failed_case(self):
++        with tempfile.TemporaryDirectory() as tmp:
++            root=Path(tmp)
++            agent=SimpleNamespace(_last_messages=None,secret_scope=SimpleNamespace(close=lambda:None),
++                run=lambda *args,**kw:SimpleNamespace(stopped='planning_error',text='planner rejected',
++                    steps=[],planning=None,events=[]))
++            with patch.object(challenge,'router_for'):
++                cases=challenge.run_case(None,SimpleNamespace(rows=[]),root,root/'evidence.json',
++                    agent_cls=lambda **kw:agent)
++            self.assertEqual(len(cases),1)
++            self.assertFalse(cases[0]['ok'])
++            self.assertEqual(cases[0]['stopped'],'planning_error')
++            self.assertEqual(cases[0]['context_summaries'],[])
++            self.assertEqual(cases[0]['changed_files'],[])
++            self.assertFalse(cases[0]['failure_reproduced_before_edit'])
++            self.assertFalse(cases[0]['final']['passed'])
++
++
++if __name__=='__main__':unittest.main()
+--- /dev/null
++++ b/docs/CACHE-PROGRESS-AND-RESUME.md
+@@ -0,0 +1,82 @@
++# 缓存优化：压缩进展、固定头部及传输中断续接
++
++2026-11-08，接续 Seed / MiMo 工具专项。目标是减少丢失进展后的重复调用，并保留可复用的实际请求前缀。使用现有密钥、模型和思考配置，未改用户全局配置；所有 API 只处理隔离夹具。
++
++## 实现
++
++### 有界观测跨压缩保留
++
++旧摘要只取最近两份工具结果，再次压缩会忽略旧摘要里的进展。写入/检查之后的若干次读文件可能覆盖这些线索，模型随后重新读取或重复检查。
++
++`compaction_notes` 从实际原生调用 ID 配对出工具名称、目标和首尾摘录，跨后续压缩保留至多 6 条观测。优先淘汰重复读取，保留近期写入、检查及其他工具最后的游标。观测数组上限 740 字符，控制字符较多的单条也会缩减；此外沿用至多 4 个真实留存句柄。没有把工具参数或调用意图当成已执行结果。
++
++新的写入尝试会移除旧检查记录；后来的检查会替换同名旧记录。摘要始终标记 unverified、earlier results may be stale，不作为完成验收或权限授予依据。原始上下文仍先归档，保留的原生工具组及加密/推理重放字段不截断。OpenAI 和 Anthropic 两种工具格式均有反复压缩和磁盘续接回归。
++
++### 工作区路径移出 system 固定头部
++
++旧 system 第一句含工作区绝对路径，切换 worktree 或临时项目会很早打断共同前缀。路径现在位于运行环境消息，system 提示保持相同；会话 guard 独立绑定解析后的绝对工作区，仍不能跨目录复用私有工具历史。
++
++`reports/cache-progress-prefix-proof.json` 用真实 Agent 投影两套工作区：序列化消息的共同前缀由 128 增至 1178 字符，完整共同前缀消息由 0 增至 1，工具声明不变；两个工作区 guard 不同。这里只证明请求结构，不把字符数当成服务端命中 token。
++
++### 可重试模型传输错误保留快照
++
++旧调用链在模型传输错误后清除已完成的工具历史，下一轮恢复只能从普通聊天重新开始。现在复用步数暂停的检查点机制：可重试的模型请求失败时，仅提交配对完整、结果已知的交换，并保持 error / 未完成状态。错误文案不伪装成模型答案写入原生历史；新 Agent 续接仍核对用户历史、工作区、权限、规则和提供者 guard。
++
++不可重试请求拒绝不保存；工具结果未知、取消和协议错误继续使用原来的停止路径。没有重放宿主动作、增加生产重试次数或把一次工具成功当作任务完成。
++
++## API 对照
++
++原始报告保留全部失败；缺失 usage 的请求不按零 token 计费，缺失缓存字段不按零命中计算。所有输出 token 都已包含推理，不额外相加。
++
++### 两轮账单任务
++
++复用 `scripts/verify_tool_challenge.py`：11 项金额/订单测试，追加兼容币种过滤后共 14 项；12,000 字符压缩预算、18 步上限、low 规划均相同。A 为本轮修改前的 loop/compaction；B 为固定头部与跨压缩观测版本。B 启动后才实现传输错误检查点，因此此组不宣称覆盖该后续分支。
++
++| MiMo | 实际验收 | 工具动作 | 压缩 | 输入 | 输出含推理 | 总 token | 已观测缓存率 |
++|---|---|---:|---:|---:|---:|---:|---:|
++| A `cache-progress-mimo-a2.json` | 两轮通过 | 23 | 5 | 71,295 | 4,984 | 76,279 | 77.45% |
++| B `cache-progress-mimo-final-b.json` | 两轮通过 | 19 | 4 | 66,225 | 5,993 | 72,218 | 71.27% |
++
++这个样本总 token 下降 5.32%、输入下降 7.11%，输出反而增加；缓存率下降，不能宣称整组命中率提高。A 已观测缓存分母为 65,198，缓存 50,496；B 为 62,409，缓存 44,480。两组均有两条成功响应缺少缓存统计，另各有 2 / 1 次无 usage 的传输失败。两组都通过独立测试、先复现失败及只改允许文件的检查，并在第二轮重建 Agent 后恢复私有前缀。
++
++`cache-progress-mimo-b.json` 是观测摘要初稿，TLS 中断而未完成；不用于成功收益比较。第一次 A 探针 `cache-progress-mimo-a.json` 在采集早停诊断时遇到 None 消息列表，已修复脚本并增加规划停止回归，原记录保留。
++
++Seed 的 `cache-progress-seed-a.json`、`cache-progress-seed-final-b.json` 都在首轮检查后遇到真实读取超时，尚未改文件。均未完成，不能用它们证明账单任务的改进或缓存节省；后续另以短任务验证中断续接链路。
++
++### 注入断线与磁盘续接
++
++`scripts/verify_transport_resume.py` 让模型实际读取未提供在提示中的两个数值，宿主在读取之后、下一次 HTTP 发送之前注入传输错误，再销毁并重建 Agent，要求实际调用 calculator 得到 423。只有这次暂停是注入的；前后的 API 回执和工具执行均真实。注入尝试不发送 HTTP，不算作付费请求；实际网络失败单列。
++
++两组保持相同文件、工具、权限、模型和思考设置。MiMo 按 ABBA 顺序，Seed 按 AB 顺序；原始记录包含各轮实际读取次数、恢复前缀与首次续接 wire 的逐字段一致性、原生配对及完整 usage。
++
++| 模型 / 组 | 成功任务数 | 每次实际读取 | 有效 usage 响应 | 输入 | 输出 | 总 token | 已观测缓存率 |
++|---|---:|---:|---:|---:|---:|---:|---:|
++| MiMo A | 2 | 2 | 8 | 5,266 | 442 | 5,708 | 59.64% |
++| MiMo B | 2 | 1 | 6 | 4,032 | 277 | 4,309 | 80.99% |
++| Seed A | 1 | 2 | 4 | 4,300 | 186 | 4,486 | 0% |
++| Seed B | 1 | 1 | 3 | 3,145 | 132 | 3,277 | 0% |
++
++MiMo ABBA 的任务均正确，B 总 token 少 24.51%、输入少 23.43%，主要可验证收益是少一次重新读取和模型往返。缓存为 A 2,432 / 4,078、B 2,816 / 3,477；A/B 各有 2 / 1 条成功响应缺少缓存统计。末尾 A 单次已观测命中率为 90.23%，高于两个 B 单次的 78.05% / 83.16%，不能把聚合提升解释为每次都提高。
++
++Seed 两次任务也正确，B 总 token 少 26.95%，但所有已观测缓存均为零，不宣称 Seed 服务端缓存率改善。两组各有一次实际网络失败未返回 usage，消费未知。原始记录为 `cache-progress-mimo-resume-abba.json` 和 `cache-progress-seed-resume-ab.json`。
++
++最初的前缀诊断直接把宿主快照与 HTTP 消息比较，全部误报不相等：OpenAI wire 会把空 assistant content 从空串规范化成 null。已修正诊断，对保存快照使用同一 `sanitize_messages` 投影再比较，并把改进组的严格前缀匹配加入验收。新增离线测试通过真实 HttpTransport 和两种模型配置，验证失败请求与续接请求逐字段保留相同前缀、JSON 参数空白、reasoning_content 和 opaque 加密字段。
++
++修正后两家各新增一组 `cache-progress-*-resume-wire-check.json`，均通过：宿主检查点与中断前请求一致、规范化后的完整前缀与首次续接 HTTP 请求一致、原生配对有效、只读取一次并实际得到 423。Seed 还记录了 3 个已返回加密字段的精确回放匹配（可跨请求重复计数）。这两组的服务端缓存回执仍全部为零，因此**不能从私有前缀复用或一次 ABBA 推断稳定的服务端命中收益**；本轮没有把零命中复核排除掉。
++
++本轮 10 组付费实验共 98 次 HTTP 尝试、83 条有效 usage：观测输入 223,139、输出 17,532，合计 240,671 token。15 次传输失败没有 usage，费用未知；另有 8 条成功响应缺少缓存统计。8 个注入断线场景共 16 次宿主故障注入，没有发送 HTTP，不计入这 98 次尝试。
++
++`reports/cache-progress-audit.py` 将 7 个账单阶段导出的模型源码放入全新目录，重新写入原始宿主测试后独立执行，全部与各自报告的通过/失败一致，并核对允许修改范围和写入前失败复现；结果见 `reports/cache-progress-evidence.json`。
++
++## 本地回归与复跑
++
++最终定向和入口回归 128 项通过，包含压缩观测、两种协议续接、跨工作区隔离、不可重试拒绝、真实 HTTP 规范化、客户端和网关；核心回归 497 项通过（2 项跳过）。测试集合有交集，不相加宣称覆盖数量。预算检查通过：157 文件、48,634 行。日志见 `reports/cache-progress-final-validation.log`、`reports/cache-progress-complete-core.log`。
++
++```powershell
++$baseline = Get-Content reports/cache-progress-backup.txt
++python scripts/verify_tool_challenge.py --live --vendor mimo --feedback-views --baseline-dir $baseline --output reports/cache-a-new.json
++python scripts/verify_tool_challenge.py --live --vendor mimo --feedback-views --output reports/cache-b-new.json
++python scripts/verify_transport_resume.py --live --vendor mimo --baseline-dir $baseline --strategies baseline improved improved baseline --output reports/resume-new.json
++```
++
++输出路径必须不存在，`--live` 必填；默认每个请求最多重试一次，受整组请求上限限制。本轮增量补丁为 `reports/cache-progress.patch`，文件及证据哈希为 `reports/cache-progress-files.json`，基线目录记录在 `reports/cache-progress-backup.txt`。

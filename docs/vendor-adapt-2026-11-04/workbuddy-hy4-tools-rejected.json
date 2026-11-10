@@ -1,0 +1,23 @@
+{
+  "mode": "workbuddy-broker-live",
+  "ok": false,
+  "requests": [
+    {
+      "status": 400,
+      "content_type": "application/json; charset=utf-8",
+      "frame_count": 0,
+      "requested_model": "hy4free",
+      "reasoning_effort": "high",
+      "max_tokens": 512,
+      "model": [],
+      "finish_reason": [],
+      "usage": {},
+      "text": "",
+      "tool_names": [],
+      "error": {
+        "code": 11101,
+        "message": "Unmarshal chat params failed with error: json: cannot unmarshal object into Go struct field Request.tool_choice of type string"
+      }
+    }
+  ]
+}

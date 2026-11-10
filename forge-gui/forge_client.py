@@ -232,6 +232,8 @@ class ForgeGatewayClient:
         result = self.chat(inputs, model=model, max_tokens=token_cap(level), cancel_event=cancel_event)
         raw = result.raw or {}
         choices = raw.get('choices') or []
+        if choices and choices[0].get('finish_reason') in {'length', 'max_tokens'}:
+            raise PlanningError('Planner exhausted its output budget; no execution started')
         if result.tool_calls or (choices and (choices[0].get('message') or {}).get('tool_calls')):
             raise PlanningError('Planner attempted to call tools')
         return TaskPlan.parse(self.secret_scope.protect_text(result.text), level), result.usage

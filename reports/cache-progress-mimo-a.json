@@ -1,0 +1,157 @@
+{
+  "vendor": "mimo",
+  "model": "mimo-v2.6-flash",
+  "thinking": "auto",
+  "feedback_views": true,
+  "cases": [],
+  "compaction_sha256": "a54a0c2e51e8dd63212703b1625c143a1740700ff0c31017498b90aef49f689d",
+  "runtime_sha256": {
+    "scripts/verify_tool_challenge.py": "639ad1c1d1914cd8f70cc96e1e54c4c39ab8a7c310fdf483e99f5f90799f859c",
+    "forge/artifact_tools.py": "5d28186a5147986ae598f9b153c6150fe057c148dba05b6a149f2da45d3224e0",
+    "forge/artifacts.py": "9fbc676f731f24d93b50faf491e92520e9df76ecfacb8e8936edba06d1916b11",
+    "forge/builtin_views.py": "fc517eaa911b2df1750e0f4e7620303f91dd37dc2268aeb9dd00e97692275ab0",
+    "forge/tools.py": "aafab167a0ebbae0777aa27f6c8eb0c271a73caed334d98d45be8119e0650faa",
+    "forge/compaction.py": "a54a0c2e51e8dd63212703b1625c143a1740700ff0c31017498b90aef49f689d"
+  },
+  "error_type": "TypeError",
+  "error": "'NoneType' object is not iterable",
+  "requests": [
+    {
+      "stage": "challenge-turn-1",
+      "model": "mimo-v2.6-flash",
+      "url": "https://token-plan-cn.xiaomimimo.com/v1/chat/completions",
+      "parameters": {
+        "thinking": {
+          "type": "enabled"
+        },
+        "max_tokens": 2048
+      },
+      "message_count": 3,
+      "common_prefix_messages": 0,
+      "messages_digest": "1ad56040b6b8261f691c34b9ad077592331ba7f30887e1145ae418a7a51e2856",
+      "tools_digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "toolset_digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "payload_digest": "32aaa7f6b12a50dc54adb1520a47908f1405f4a4797746fa7903dbbcd6ba6005",
+      "message_chars": 3483,
+      "assistant_reasoning_fields": 0,
+      "tools": [],
+      "status": 200,
+      "raw_usage": {
+        "completion_tokens": 93,
+        "prompt_tokens": 711,
+        "total_tokens": 804,
+        "completion_tokens_details": {
+          "reasoning_tokens": 7
+        },
+        "prompt_tokens_details": null
+      },
+      "finish_reason": "stop",
+      "response_id": "2342f606-f31a-48c4-9be8-f2cfd4e66271_86ff248362bd47a392223b11debe5223",
+      "response_model": "mimo-v2.6-flash",
+      "reasoning_chars": 29,
+      "tool_calls": null,
+      "text": "{\"tasks\":[\"Read SPEC.md and inspect pricing.py, reporting.py, and relevant tests to derive required behavior without inventing file contents\",\"Run run_checks to reproduce and record the currently failing suite as observed baseline\",\"Implement minimal fixes only in pricing.py and reporting.py per SPEC.md, preserving public signatures and not editing tests\",\"Run run_checks again to verify all checks",
+      "seconds": 5.547,
+      "usage": {
+        "prompt_tokens": 711,
+        "completion_tokens": 93,
+        "model": "mimo-v2.6-flash",
+        "provider": "mimo-live",
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 7,
+        "cache_observed": false
+      },
+      "adaptation": {
+        "vendor": "mimo",
+        "vendor_label": "小米 MiMo",
+        "actions": [
+          "依赖厂商自动缓存（命中 0.00833333×），无需标记",
+          "MiMo 思考模式使用厂商固定采样，已摘除 temperature"
+        ],
+        "notes": [
+          "Token Plan 订阅池：倍率仅供比例参考，命中已实证且被 usage 如实计入",
+          "thinking 仅 on/off 两态，默认 enabled；没有已验证的 effort 强度分档",
+          "2.6 家族 tool_choice 仅 auto；工具调用需回放 reasoning_content，不能假定强制选工具生效",
+          "该模型无目录价，金额按单位价折算，仅用于比较比例，不代表真实账单"
+        ],
+        "cache_control": false,
+        "breakpoints": 1,
+        "ttl": "managed",
+        "est_tokens": 1334,
+        "est_cost": 0.000166,
+        "baseline_cost": 0.000201,
+        "saving": 3.5e-05,
+        "saving_pct": 17.3,
+        "cliff_action": "pass",
+        "reasoning_budget": null,
+        "defer": false,
+        "cache_engages": true,
+        "route_capabilities": {},
+        "request_budget": {},
+        "adapter_id": "mimo.v2.6.flash",
+        "model_kind_id": "mimo.v2.6.flash",
+        "model_family_id": "mimo.v2.6",
+        "manufacturer_id": "mimo",
+        "behavior_fingerprint": "6bc1ad5e8223d2e9",
+        "model_match_source": "model_id",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type",
+          "nullable_cache_details",
+          "native_tool_replay",
+          "auto_tool_choice_only",
+          "fixed_sampling_when_thinking"
+        ],
+        "reasoning_shaped": true,
+        "fingerprint": "8ceb44f3dbf1aec9",
+        "execution": {},
+        "estimate_scope": "reuse_window",
+        "includes_output_cost": false,
+        "price_known": false,
+        "model": "mimo-v2.6-flash"
+      }
+    }
+  ],
+  "totals": {
+    "attempts": 1,
+    "successful_requests": 1,
+    "prompt_tokens": 711,
+    "completion_tokens": 93,
+    "cached_tokens": 0,
+    "reasoning_tokens": 7,
+    "seconds": 5.547,
+    "coverage": {
+      "all_observed": {
+        "requests": 0,
+        "input_tokens": 0,
+        "cached_tokens": 0,
+        "hit_rate": null
+      },
+      "rebuild": {
+        "requests": 0,
+        "input_tokens": 0,
+        "cached_tokens": 0,
+        "hit_rate": null
+      },
+      "non_rebuild": {
+        "requests": 0,
+        "input_tokens": 0,
+        "cached_tokens": 0,
+        "hit_rate": null
+      },
+      "eligible_prefix": {
+        "requests": 0,
+        "input_tokens": 0,
+        "cached_tokens": 0,
+        "excluded_tail_tokens": 0,
+        "hit_rate": null
+      },
+      "unknown_requests": 1,
+      "invalid_requests": 0,
+      "duplicate_observations": 0,
+      "denominator": "observed input tokens; eligible_prefix excludes declared structural tail"
+    }
+  },
+  "ok": false
+}

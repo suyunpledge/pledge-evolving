@@ -123,6 +123,27 @@ class PrefixCacheTests(unittest.TestCase):
             [m for m in turn3 if str(m.get("content", "")).startswith("[长期记忆更新]")],
             [], "无增长时不得重复播报")
 
+    def test_cache_defer_guard_formula_boundaries(self):
+        # Tianshu protection 公式四边界 + 无数据不延迟
+        b = {"fits": True, "input_budget": 100000, "estimated_input_tokens": 30000}
+        self.agent._recent_cache_rate = 0.8
+        guard = self.agent._cache_defer_guard(b)  # 0.8×0.7=0.56 ≥0.45 → 延迟
+        self.assertIsNotNone(guard)
+        self.assertAlmostEqual(guard["protection"], 0.56, places=2)
+        # 压力升高：0.8×0.3=0.24 → 不延迟
+        self.assertIsNone(self.agent._cache_defer_guard(
+            {"fits": True, "input_budget": 100000, "estimated_input_tokens": 70000}))
+        # 命中率低：0.2×0.9=0.18 → 不延迟
+        self.agent._recent_cache_rate = 0.2
+        self.assertIsNone(self.agent._cache_defer_guard(b))
+        # 无命中率数据 → 不延迟（照旧压缩）
+        self.agent._recent_cache_rate = None
+        self.assertIsNone(self.agent._cache_defer_guard(b))
+        # 无预算数字 → 不延迟
+        self.agent._recent_cache_rate = 0.9
+        self.assertIsNone(self.agent._cache_defer_guard({"fits": True}))
+        self.assertIsNone(self.agent._cache_defer_guard({}))
+
     def test_rules_sit_before_history_so_next_turn_keeps_the_prefix(self):
         self.rec.script = ["第一轮完成"]
         first = self.agent.run("第一个问题")
@@ -132,7 +153,7 @@ class PrefixCacheTests(unittest.TestCase):
                                               {"role": "assistant", "content": first.text}])
         turn2 = self.rec.calls[-1]["messages"]
         index = self._rules_index(turn2)
-        history_at = next(i for i, m in enumerate(turn2) if m.get("content") == "第一个问题")
+        history_at = next(i for i, m in enumerate(turn2) if str(m.get("content", "")).startswith("第一个问题"))
         self.assertLess(index, history_at, "规则必须在历史之前")
         self.assertEqual(turn2[:index + 1], turn1[:index + 1], "system → 记忆 → 规则 跨轮逐字节不变")
         # 只要求本轮提问在末尾；任务消息尾部可能另有运行时投影（如任务契约）。

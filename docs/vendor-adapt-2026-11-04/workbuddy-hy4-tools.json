@@ -1,0 +1,94 @@
+{
+  "mode": "workbuddy-broker-live",
+  "ok": true,
+  "requests": [
+    {
+      "status": 200,
+      "content_type": "text/event-stream",
+      "frame_count": 58,
+      "requested_model": "hy4free",
+      "reasoning_effort": "high",
+      "max_tokens": 512,
+      "model": [
+        "hy4-free"
+      ],
+      "finish_reason": [
+        "tool_calls"
+      ],
+      "usage": {
+        "prompt_tokens": 252,
+        "completion_tokens": 217,
+        "total_tokens": 469,
+        "completion_tokens_details": {
+          "accepted_prediction_tokens": 0,
+          "audio_tokens": 0,
+          "reasoning_tokens": 198,
+          "rejected_prediction_tokens": 0,
+          "cached_tokens": 0
+        },
+        "prompt_tokens_details": {
+          "accepted_prediction_tokens": 0,
+          "audio_tokens": 0,
+          "reasoning_tokens": 0,
+          "rejected_prediction_tokens": 0,
+          "cached_tokens": 0
+        },
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 252,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "prompt_cache_write_tokens": 0,
+        "completion_thinking_tokens": 198,
+        "credit": 0,
+        "cached_tokens": 0
+      },
+      "text": "",
+      "tool_names": [
+        "add"
+      ]
+    },
+    {
+      "status": 200,
+      "content_type": "text/event-stream",
+      "frame_count": 98,
+      "requested_model": "hy4free",
+      "reasoning_effort": "high",
+      "max_tokens": 512,
+      "model": [
+        "hy4-free"
+      ],
+      "finish_reason": [
+        "stop"
+      ],
+      "usage": {
+        "prompt_tokens": 283,
+        "completion_tokens": 362,
+        "total_tokens": 645,
+        "completion_tokens_details": {
+          "accepted_prediction_tokens": 0,
+          "audio_tokens": 0,
+          "reasoning_tokens": 359,
+          "rejected_prediction_tokens": 0,
+          "cached_tokens": 0
+        },
+        "prompt_tokens_details": {
+          "accepted_prediction_tokens": 0,
+          "audio_tokens": 0,
+          "reasoning_tokens": 0,
+          "rejected_prediction_tokens": 0,
+          "cached_tokens": 0
+        },
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 283,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "prompt_cache_write_tokens": 0,
+        "completion_thinking_tokens": 359,
+        "credit": 0,
+        "cached_tokens": 0
+      },
+      "text": "42",
+      "tool_names": []
+    }
+  ]
+}

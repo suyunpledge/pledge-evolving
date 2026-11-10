@@ -1,0 +1,115 @@
+{
+  "baseline": "C:\\Users\\匡溯昀\\forge-mimo-cache3-backup-20261107-032939",
+  "files": [
+    {
+      "path": "forge/loop.py",
+      "status": "modified",
+      "before_sha256": "11ff45ef31f679675f7d332ef44f0e8106bea18e321f67da685d7357428a6a52",
+      "after_sha256": "d9d8a671b63f61101c5cb778920bef6e412f15b31b67d304782ac4260a3da509"
+    },
+    {
+      "path": "forge/toolwire.py",
+      "status": "modified",
+      "before_sha256": "f9bf338f5769be0d1f0ca710aa5e4f47e1155ab45aa6c25d5b5af74bbf0fc6ff",
+      "after_sha256": "d163df839e638219ba32eb20f1df1df4c6064cfc7317da52073739fcc2743576"
+    },
+    {
+      "path": "forge/tool_adapter.py",
+      "status": "modified",
+      "before_sha256": "4783c18158717b529e2c348d573290bf9a2678667b5dc9dc2029b4695b14e923",
+      "after_sha256": "670f508b981150fc6ae6ff3bb976b8e10930ba55b840936b00eb1dbf4644425f"
+    },
+    {
+      "path": "forge-budgets.json",
+      "status": "modified",
+      "before_sha256": "e6a39fbd61403878465475ababf960bf89f0070cbb0b342ffb55331dc7d767a0",
+      "after_sha256": "65d1a6ac6d6eeb29ca4ec89b62037fb95a4c9ac577d4232e2cedfca0a43044e4"
+    },
+    {
+      "path": "scripts/verify_mimo_live.py",
+      "status": "modified",
+      "before_sha256": "7d97d8cacd2349519056d3178c184e8029b5b0c65e526cf3dc1608764b46b15f",
+      "after_sha256": "cb4392b9cf08ab18d4f64903bf87ac9936de7a63396968197103c4d0da49c21f"
+    },
+    {
+      "path": "forge/tool_surface.py",
+      "status": "added",
+      "before_sha256": null,
+      "after_sha256": "541e736539c0f07dd060a5dcb662a3c8181e476c6a775a0f7d29c5da7f1e75ba"
+    },
+    {
+      "path": "forge/test_tool_surface.py",
+      "status": "added",
+      "before_sha256": null,
+      "after_sha256": "ca1fdae03d46b2ecf3a3992e0340ced6db81db0a26a643d1d0abbe408f9fbb47"
+    },
+    {
+      "path": "docs/MIMO-CACHE-TOOL-SURFACE.md",
+      "status": "added",
+      "before_sha256": null,
+      "after_sha256": "eae57403b962049471cabe0398397373309074eb265c39914ba2337b6e96c1ac"
+    }
+  ],
+  "verification": {
+    "core": {
+      "run": 449,
+      "skipped": 2
+    },
+    "runtime": {
+      "run": 206,
+      "skipped": 1
+    },
+    "passed": 652,
+    "skipped": 3,
+    "selftest_passed": 595,
+    "selftest_total": 595,
+    "budget_files": 149
+  },
+  "measurements": [
+    {
+      "model": "mimo-v2.6-pro",
+      "initial_payloads_identical": true,
+      "completed_tasks": 4,
+      "groups": {
+        "sorted": {
+          "requests": 6,
+          "input_tokens": 8763,
+          "cached_tokens": 2816,
+          "unknown_requests": 0,
+          "hit_rate": 0.3213511354558941
+        },
+        "append": {
+          "requests": 6,
+          "input_tokens": 8881,
+          "cached_tokens": 6784,
+          "unknown_requests": 0,
+          "hit_rate": 0.763877941673235
+        }
+      },
+      "report": "reports/mimo-cache3-order-pro-native.json"
+    },
+    {
+      "model": "mimo-v2.6-flash",
+      "initial_payloads_identical": true,
+      "completed_tasks": 4,
+      "groups": {
+        "sorted": {
+          "requests": 5,
+          "input_tokens": 7644,
+          "cached_tokens": 4416,
+          "unknown_requests": 1,
+          "hit_rate": 0.5777080062794349
+        },
+        "append": {
+          "requests": 5,
+          "input_tokens": 7676,
+          "cached_tokens": 5952,
+          "unknown_requests": 1,
+          "hit_rate": 0.7754038561750912
+        }
+      },
+      "report": "reports/mimo-cache3-order-flash.json"
+    }
+  ],
+  "scope": "small-sample optional-tool discovery; vendor cache variability and unknown telemetry retained"
+}

@@ -1,0 +1,11 @@
+{
+  "model": "mimo-v2.6-flash",
+  "samples": [],
+  "requests": [],
+  "local_context_window": 16000,
+  "context_chars": 9000,
+  "comparison": "Same current builtin handlers and schemas; result_views disabled/enabled; fresh Agent each user turn",
+  "error": "ValueError: Acceptance contract requires criteria and optional max_attempts",
+  "identical_initial_payloads": false,
+  "ok": false
+}
