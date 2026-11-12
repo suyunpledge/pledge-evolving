@@ -49,7 +49,7 @@ from gui_theme import (
     C, FONT_CAPTION, FONT_MICRO, FONT_MONO, FONT_MONO_SM, FONT_MONO_XS, FONT_SECTION,
     FONT_SMALL, FONT_TITLE, FONT_UI, FONT_UI_BOLD, R_BUBBLE, R_CARD, R_MD, R_PILL, R_PANEL,
     RoundedCard, attach_tooltip, avatar, badge, bind_keyboard_action, circle_button, circle_button_state,
-    dot, emoji_font, glyph_button, highlight_python, round_rect, rounded_label,
+    dot, emoji_font, glyph_button, highlight_python, mix, round_rect, rounded_label,
     setup_code_tags, style_scrollbar, ui_px, text_width, bind_wrap, bind_scoped_wheel, flow_controls,
     _bg_of,
 )
@@ -261,8 +261,11 @@ class InlineText(tk.Text):
         super().__init__(parent, wrap=wrap, bg=base, fg=fg or C["body"],
                          font=font or FONT_UI, relief=tk.FLAT, bd=0,
                          highlightthickness=0, padx=0, pady=0, height=1,
-                         cursor="arrow", insertwidth=0, spacing1=2, spacing3=3,
+                         cursor="arrow", insertwidth=0, spacing1=0, spacing3=0,
                          selectbackground=C["accent_soft"])
+        # 2026-11-08：spacing1/3 归零。高度按「行」计（height=n×linespace），
+        # 段前段后的像素间距会让单行段落被算成 2 行，正文下多出半行空白；
+        # 段间距改由各块 pack 的 pady 负责。
         self._measure_font = tkfont.Font(root=self, font=self.cget("font"))
         # Font descent supplies the optical inset at every DPI. Width and
         # wrapping still come from the allocated parent, never a fixed gutter.
@@ -611,19 +614,30 @@ def _render_single_block(host, block, *, base, wrap):
         t.pack(fill=tk.X, pady=2)
     elif kind == "li":
         row = tk.Frame(host, bg=base)
-        row.pack(fill=tk.X, pady=1)
-        i18n.Label(row, text="•", bg=base, fg=C["accent2"], font=FONT_UI_BOLD,
-                 width=2, anchor="nw").pack(side=tk.LEFT)
+        row.pack(fill=tk.X, pady=2)
+        # 圆点与首行文字垂直居中（Label 居中对齐会在多行条目里漂到中间）。
+        line = tkfont.Font(root=row, font=FONT_UI).metrics("linespace")
+        size = max(5, ui_px(row, 5))
+        gutter = ui_px(row, 18)
+        bullet = tk.Canvas(row, width=gutter, height=line, bg=base, highlightthickness=0, bd=0)
+        top = (line - size) / 2
+        left = ui_px(row, 5)
+        bullet.create_oval(left, top, left + size, top + size, fill=C["accent2"], outline="")
+        bullet.pack(side=tk.LEFT, anchor="n")
         t = InlineText(row, bg=base)
         t.set_segments(inline_segments(block["text"]))
         t.pack(side=tk.LEFT, fill=tk.X, expand=True)
     elif kind == "oli":
         row = tk.Frame(host, bg=base)
         row.pack(fill=tk.X, pady=2)
-        num = tk.Canvas(row, width=18, height=18, bg=base,
+        line = tkfont.Font(root=row, font=FONT_UI).metrics("linespace")
+        size = min(line, ui_px(row, 18))
+        num = tk.Canvas(row, width=size, height=line, bg=base,
                         highlightthickness=0, bd=0)
-        num.create_oval(0, 0, 17, 17, fill=C["sel"], outline=C["sel_border"])
-        num.create_text(9, 9, text=block["num"], fill=C["subtext"],
+        top = (line - size) / 2
+        num.create_oval(0.5, top + .5, size - 1, top + size - 1, fill=C["accent_soft"],
+                        outline=mix(C["accent_soft"], C["accent2"], .45))
+        num.create_text(size / 2, line / 2, text=block["num"], fill=C["accent_text"],
                         font=FONT_MICRO)
         num.pack(side=tk.LEFT, anchor="n", padx=(0, 8))
         t = InlineText(row, bg=base)
@@ -801,8 +815,11 @@ class ToolCard(tk.Frame):
         bind_keyboard_action(self._summary, self.toggle)
         self._arrow = IconCanvas(self._summary, "chevron_down" if expanded else "chevron_right",
                                  size=16, bg=base, fg=C["ter"])
-        self._arrow.pack(side=tk.LEFT, padx=(0, 6))
+        self._arrow.pack(side=tk.LEFT, padx=(0, 4))
         self._arrow.bind("<Button-1>", lambda _e: self.toggle())
+        timeline = IconCanvas(self._summary, "timeline", size=ui_px(self, 14), bg=base, fg=C["ember"])
+        timeline.pack(side=tk.LEFT, padx=(0, 6))
+        timeline.bind("<Button-1>", lambda _e: self.toggle())
         self._summary_label = i18n.Label(self._summary, text="", bg=base,
                                        fg=C["muted"], font=FONT_CAPTION,
                                        cursor="hand2", anchor="w", justify=tk.LEFT,
@@ -812,11 +829,13 @@ class ToolCard(tk.Frame):
         self._summary_label.bind("<Button-1>", lambda _e: self.toggle())
 
         # 明细容器（按需显示）
-        card = RoundedCard(self, radius=R_CARD, fill=C["surface2"],
-                           outline=C["border_hi"], padx=10, pady=8, bg=base)
+        self._card_fill = C["sidebar"]
+        self._rail_lines = []
+        card = RoundedCard(self, radius=R_CARD, fill=self._card_fill,
+                           outline=C["line"], padx=12, pady=8, bg=base)
         self._card = card
         self._card_host = card  # alias
-        self.rows_frame = tk.Frame(card.content, bg=C["surface2"])
+        self.rows_frame = tk.Frame(card.content, bg=self._card_fill)
         self.rows_frame.pack(fill=tk.X)
         self._row_specs: list[tuple[str, float]] = []
         rows = rows or []
@@ -883,27 +902,44 @@ class ToolCard(tk.Frame):
             self._card.pack_forget()
 
     def add_row(self, row: dict):
-        bgc = C["surface2"]
+        """运行轨迹（Ember 设计稿 02）：每步一个状态节点，节点之间竖线相连。"""
+        bgc = self._card_fill
         wrap = tk.Frame(self.rows_frame, bg=bgc)
-        wrap.pack(fill=tk.X, pady=1)
+        wrap.pack(fill=tk.X)
         ok = row.get("ok", True)
-        mark = "✅" if ok else "⚠️"
-        IconCanvas(wrap, "check_circle" if ok else "warning", size=18, bg=bgc,
-                   fg=C["ok"] if ok else C["warn"]).pack(side=tk.LEFT, padx=(0, 6))
+        rail = tk.Frame(wrap, bg=bgc, width=ui_px(self, 22))
+        rail.pack(side=tk.LEFT, fill=tk.Y, padx=(0, ui_px(self, 10)))
+        rail.pack_propagate(False)
+        node_size = ui_px(self, 20)
+        node = tk.Canvas(rail, width=node_size, height=node_size, bg=bgc,
+                         highlightthickness=0, bd=0)
+        tone = C["ok"] if ok else C["warn"]
+        node.create_oval(0, 0, node_size - 1, node_size - 1, fill=mix(bgc, tone, .16),
+                         outline=mix(bgc, tone, .45))
+        glyph = ui_px(self, 12)
+        draw_icon(node, "check" if ok else "warning", x=(node_size - glyph) / 2,
+                  y=(node_size - glyph) / 2, size=glyph, fg=tone)
+        node.pack(side=tk.TOP, pady=(ui_px(self, 4), 0))
+        line = tk.Frame(rail, bg=C["border_hi"], width=max(1, ui_px(self, 1.5)))
+        # 上一步的连线此时才有下一步可连；最后一步不画尾巴。
+        if self._rail_lines:
+            self._rail_lines[-1].pack(side=tk.TOP, fill=tk.Y, expand=True, pady=(2, 0))
+        self._rail_lines.append(line)
         # Reserve timing before giving the remaining width to the text column.
         if row.get("elapsed"):
-            i18n.Label(wrap, text=str(row["elapsed"]), bg=bgc, fg=C["muted"],
-                       font=FONT_MONO_SM).pack(side=tk.RIGHT, anchor="n", padx=(8, 0))
+            i18n.Label(wrap, text=str(row["elapsed"]), bg=bgc, fg=C["faint"],
+                       font=FONT_MONO_SM).pack(side=tk.RIGHT, anchor="n", padx=(8, 0),
+                                               pady=(ui_px(self, 5), 0))
         text_box = tk.Frame(wrap, bg=bgc)
-        text_box.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        name = i18n.Label(text_box, text=row.get("name", ""), bg=bgc, fg=C["accent2"],
+        text_box.pack(side=tk.LEFT, fill=tk.X, expand=True, pady=(ui_px(self, 4), ui_px(self, 8)))
+        name = i18n.Label(text_box, text=row.get("name", ""), bg=bgc, fg=C["text"] if ok else C["warn"],
                          font=FONT_MONO_SM, anchor="w", justify=tk.LEFT,
                          wraplength=ui_px(self, MAX_BUBBLE_WIDTH))
         name.pack(fill=tk.X)
         bind_wrap(name)
         desc = row.get("desc")
         if desc:
-            description = i18n.Label(text_box, text=desc, bg=bgc, fg=C["ter"], font=FONT_SMALL,
+            description = i18n.Label(text_box, text=desc, bg=bgc, fg=C["subtext"], font=FONT_SMALL,
                                      anchor="w", justify=tk.LEFT, wraplength=ui_px(self, MAX_BUBBLE_WIDTH))
             description.pack(fill=tk.X)
             bind_wrap(description)
@@ -1012,10 +1048,10 @@ class ActionRow(tk.Frame):
             btn = IconButton(self, text=label,
                             command=action.get("command"),
                             bg=C["accent"] if kind == "primary" else C["surface2"],
-                            fg="#FFFFFF" if kind == "primary" else C["body"],
+                            fg=C["on_accent"] if kind == "primary" else C["body"],
                             activebackground=(C["accent_hover"] if kind == "primary"
                                               else C["hover"]),
-                            activeforeground=("#FFFFFF" if kind == "primary"
+                            activeforeground=(C["on_accent"] if kind == "primary"
                                               else C["text"]),
                             font=FONT_SMALL, relief=tk.FLAT, bd=0, padx=12, pady=4,
                             cursor="hand2", highlightthickness=0,
@@ -1622,17 +1658,27 @@ class MessageArea(tk.Frame):
         box.pack(fill=tk.X, pady=(ui_px(self, 56), 12))
         # 设计稿（2026-10-30）：主视觉收成一枚 52px 圆角图标块，标题加大，
         # 工作区信息做成一枚胶囊；说明句由下方「试试」建议胶囊替代。
-        size = ui_px(self, 52)
-        banner = tk.Canvas(box, width=size, height=size, bg=self._bg,
-                           highlightthickness=0, bd=0)
-        round_rect(banner, 1, 1, size - 2, size - 2, ui_px(self, 14),
-                   fill=C["accent_soft"], outline=C["accent_border"], tags=("decor",))
-        glyph = ui_px(self, 26)
-        draw_icon(banner, "model", x=(size - glyph) / 2, y=(size - glyph) / 2,
-                  size=glyph, fg=C["accent2"], tag="decor")
-        banner.pack(pady=(0, ui_px(self, 16)))
+        # 2026-11-07：图标块外加一圈渐隐光晕 + 几颗品牌色星芒，主视觉不再单薄。
+        # Ember 设计稿：主视觉 = 构建期烘焙的铁砧品牌块 + 暖色光晕（PNG），
+        # Tk 无法实时模糊；缺资源时回退到原来的画布星芒图标块。
+        from ui_icons import asset_image
+        hero = asset_image(self, "brand-hero", ui_px(self, 64))
+        if hero is not None:
+            banner = tk.Canvas(box, width=hero.width(), height=hero.height(), bg=self._bg,
+                               highlightthickness=0, bd=0)
+            banner.create_image(hero.width() / 2, hero.height() / 2, image=hero, tags=("decor",))
+            banner.image = hero
+        else:
+            banner = self._fallback_banner(box)
+        banner.pack(pady=(0, ui_px(self, 2)))
+        import datetime as _dt
+        hour = _dt.datetime.now().hour
+        greeting = (tr("夜深了") if hour < 5 else tr("早上好") if hour < 11 else
+                    tr("中午好") if hour < 13 else tr("下午好") if hour < 18 else tr("晚上好"))
+        eyebrow = i18n.Label(box, text=greeting, bg=self._bg, fg=C["ember"], font=FONT_SMALL)
+        eyebrow.pack(pady=(0, ui_px(self, 2)))
         title_label = i18n.Label(box, text=title, bg=self._bg, fg=C["text"],
-                                 font=(FONT_TITLE[0], 16, "bold"))
+                                 font=(FONT_TITLE[0], 17, "bold"))
         title_label.pack()
         context = rounded_label(box, self._context_var.get() or " ", fill=C["surface"],
                                 outline=C["line"], fg=C["subtext"], font=FONT_SMALL,
@@ -1653,45 +1699,57 @@ class MessageArea(tk.Frame):
             choices = tk.Frame(box, bg=self._bg)
             choices.pack(fill=tk.X, padx=24, pady=(ui_px(self, 30), 0))
             action_rows = []
-            # 设计稿：surface 底 + 1px line 描边 + 顶部强调色图标块；悬停描边转蓝。
+            # 2026-11-07：建议卡改为圆角 RoundedCard——柔和投影 + 顶边高光，
+            # 悬停时描边转蓝、顶边亮起强调色细线，右上角出现 → 提示可点击。
             # 可选第 4 项指定图标名。
-            card_bg, card_hover = C["surface"], C["hover"]
+            card_bg, card_hover = C["surface"], mix(C["surface"], C["ember"], 0.07)
             default_icons = ("chat", "task", "workspace")
-            tile = ui_px(self, 30)
+            tones = (C["ember"], C["agent_accent"], C["info"])
+            tile = ui_px(self, 34)
             for index, action in enumerate(actions):
                 title, detail, callback = action[:3]
                 icon_name = action[3] if len(action) > 3 else default_icons[index % 3]
-                row = tk.Frame(choices, bg=card_bg, padx=ui_px(self, 16), pady=ui_px(self, 14),
-                               cursor="hand2", highlightthickness=1,
-                               highlightbackground=C["line"])
-                icon = tk.Canvas(row, width=tile, height=tile, bg=card_bg,
+                card = RoundedCard(choices, radius=R_CARD, fill=card_bg, outline=C["line"],
+                                   padx=ui_px(self, 16), pady=ui_px(self, 14), bg=self._bg,
+                                   shadow=ui_px(self, 4), sheen=True)
+                row = card.content
+                row.configure(cursor="hand2")
+                head = tk.Frame(row, bg=card_bg, cursor="hand2")
+                head.pack(fill=tk.X, pady=(0, ui_px(self, 12)))
+                icon = tk.Canvas(head, width=tile, height=tile, bg=card_bg,
                                  highlightthickness=0, bd=0, cursor="hand2")
-                round_rect(icon, 0, 0, tile - 1, tile - 1, ui_px(self, 8),
-                           fill=C["accent_soft"], outline="")
+                tone = tones[index % len(tones)]
+                round_rect(icon, 0, 0, tile - 1, tile - 1, ui_px(self, 9),
+                           fill=mix(card_bg, tone, 0.13), outline=mix(card_bg, tone, 0.38))
                 glyph = ui_px(self, 18)
                 draw_icon(icon, icon_name, x=(tile - glyph) / 2, y=(tile - glyph) / 2,
-                          size=glyph, fg=C["accent2"])
-                icon.pack(anchor="w", pady=(0, ui_px(self, 10)))
+                          size=glyph, fg=tone)
+                icon.pack(side=tk.LEFT)
+                arrow = tk.Label(head, text="→", bg=card_bg, fg=card_bg,
+                                 font=FONT_UI_BOLD, cursor="hand2")
+                arrow.pack(side=tk.RIGHT, anchor="n")
                 label = i18n.Label(row, text=title, bg=card_bg, fg=C["text"],
                                  font=FONT_UI_BOLD, anchor="w", cursor="hand2")
                 label.pack(fill=tk.X)
                 hint = i18n.Label(row, text=detail, bg=card_bg, fg=C["subtext"],
                                 font=FONT_SMALL, anchor="w", justify=tk.LEFT,
                                 cursor="hand2")
-                hint.pack(fill=tk.X, pady=(ui_px(self, 3), 0))
+                hint.pack(fill=tk.X, pady=(ui_px(self, 4), 0))
                 bind_keyboard_action(row, callback)
-                row.configure(highlightbackground=C["line"])
-                action_rows.append((row, label, hint))
-                parts = (row, icon, label, hint)
+                action_rows.append((card, label, hint))
+                parts = (row, head, icon, label, hint)
 
-                def paint(fill, edge, parts=parts):
-                    parts[0].configure(highlightbackground=edge)
+                def paint(hover, card=card, parts=parts, arrow=arrow):
+                    fill = card_hover if hover else card_bg
+                    card.set_fill(fill, C["accent_border"] if hover else C["line"],
+                                  accent_top=C["ember"] if hover else None)
                     for w in parts:
                         w.configure(bg=fill)
-                for widget in parts:
+                    arrow.configure(bg=fill, fg=C["accent2"] if hover else fill)
+                for widget in parts + (arrow, card.canvas):
                     widget.bind("<Button-1>", lambda _e, fn=callback: fn())
-                    widget.bind("<Enter>", lambda _e, fn=paint: fn(card_hover, C["accent_border"]))
-                    widget.bind("<Leave>", lambda _e, fn=paint: fn(card_bg, C["line"]))
+                    widget.bind("<Enter>", lambda _e, fn=paint: fn(True))
+                    widget.bind("<Leave>", lambda _e, fn=paint: fn(False))
 
             def fit_choices(event):
                 columns = len(action_rows) if event.width >= 720 else 1
@@ -1720,7 +1778,7 @@ class MessageArea(tk.Frame):
             if event.height < 450 or event.width < 520:
                 banner.pack_forget()
             elif not banner.winfo_manager():
-                banner.pack(pady=(0, ui_px(self, 16)), before=title_label)
+                banner.pack(pady=(0, ui_px(self, 2)), before=eyebrow)
 
         binding = self.scroll.canvas.bind("<Configure>", fit_banner, add="+")
         # The callback belongs to this empty state, not to later conversation views.
@@ -1729,6 +1787,25 @@ class MessageArea(tk.Frame):
                 self.scroll.canvas.unbind("<Configure>", binding)
         box.bind("<Destroy>", forget_banner, add="+")
         self._empty = box
+
+    def _fallback_banner(self, box):
+        size = ui_px(self, 52)
+        halo = ui_px(self, 26)
+        span = size + halo * 2
+        banner = tk.Canvas(box, width=span, height=span, bg=self._bg,
+                           highlightthickness=0, bd=0)
+        for i in range(7, 0, -1):
+            grow = halo * i / 7
+            tone = mix(self._bg, C["ember"], 0.26 * (1 - (i - 1) / 7) ** 1.8)
+            round_rect(banner, halo - grow, halo - grow, halo + size + grow,
+                       halo + size + grow, ui_px(self, 14) + grow, fill=tone,
+                       outline="", tags=("decor",))
+        round_rect(banner, halo + 1, halo + 1, halo + size - 2, halo + size - 2,
+                   ui_px(self, 14), fill=C["accent"], outline=C["accent_border"], tags=("decor",))
+        glyph = ui_px(self, 28)
+        draw_icon(banner, "anvil", x=halo + (size - glyph) / 2, y=halo + (size - glyph) / 2,
+                  size=glyph, fg=C["on_accent"], tag="decor")
+        return banner
 
     def clear(self):
         self.scroll._cancel_scroll()
@@ -2160,7 +2237,8 @@ class InputCard(tk.Frame):
         self.send_var = tk.StringVar()
 
         card = RoundedCard(self, radius=R_PANEL, fill=C["input_bg"],
-                           outline=C["border_hi"], padx=14, pady=12, bg=base)
+                           outline=C["border_hi"], padx=14, pady=12, bg=base,
+                           shadow=ui_px(self, 5), sheen=True)
         card.pack(fill=tk.X)
         self._card = card
         inner = card.content

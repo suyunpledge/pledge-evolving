@@ -46,7 +46,7 @@ class IconRenderingTests(unittest.TestCase):
         shapes = button.find_withtag("glyph")
         self.assertTrue(shapes)
         self.assertNotIn("text", [button.type(item) for item in shapes])
-        self.assertEqual(button.itemcget(shapes[0], "fill"), "#FFFFFF")
+        self.assertEqual(button.itemcget(shapes[0], "fill"), theme.C["on_accent"])
 
     def test_colored_emoji_is_a_bitmap_and_copy_preserves_unicode(self):
         image = emoji_image(self.root, "😀")

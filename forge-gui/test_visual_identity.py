@@ -16,8 +16,9 @@ class VisualIdentityTests(unittest.TestCase):
         ):
             self.assertGreaterEqual(contrast(theme.C[foreground], theme.C[background]), 4.5,
                                     (foreground, background))
-        for background in ("accent", "accent_hover"):
-            self.assertGreaterEqual(contrast("#FFFFFF", theme.C[background]), 4.5)
+        # Ember 设计：橙色按钮上用深色 on_accent 字（白字在亮橙上不到 4.5:1）。
+        for background in ("accent", "accent_hover", "accent_pressed"):
+            self.assertGreaterEqual(contrast(theme.C["on_accent"], theme.C[background]), 4.5)
         self.assertGreaterEqual(contrast(theme.C["accent2"], theme.C["input_bg"]), 3)
 
     def test_circle_feedback_does_not_change_click_or_disabled_contract(self):

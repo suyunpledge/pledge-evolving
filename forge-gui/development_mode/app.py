@@ -1080,8 +1080,8 @@ class DevelopmentWorkbench(ttk.Frame):
         footer.pack(side='bottom', fill='x', padx=(pad, ui_px(self, 6)), pady=(0, ui_px(self, 6)))
         self._input_footer = footer
         self.send_button = IconButton(footer, text='发送', icon='send', icon_size=ui_px(self, 14),
-            command=self.send, bg=C['accent'], fg='#FFFFFF', activebackground=C['accent_hover'],
-            activeforeground='#FFFFFF', font=FONT_SMALL, bd=0, padx=ui_px(self, 10),
+            command=self.send, bg=C['accent'], fg=C['on_accent'], activebackground=C['accent_hover'],
+            activeforeground=C['on_accent'], font=FONT_SMALL, bd=0, padx=ui_px(self, 10),
             pady=ui_px(self, 3), highlightthickness=1, highlightbackground=C['accent'],
             cursor='hand2')
         button_feedback(self.send_button, kind='primary')

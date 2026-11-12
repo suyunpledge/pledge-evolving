@@ -636,7 +636,7 @@ class ModelPicker(tk.Frame):
             bg = C["accent"] if selected else C["surface2"]
             host.configure(bg=bg, highlightthickness=0)
             text.configure(bg=bg,
-                           fg="#FFFFFF" if selected else C["subtext"],
+                           fg=C["on_accent"] if selected else C["subtext"],
                            font=FONT_UI_BOLD if selected else FONT_MICRO)
 
     def _pick_router(self, value: str) -> None:
@@ -809,7 +809,7 @@ class ModelPicker(tk.Frame):
             check = tk.Canvas(title_row, width=14, height=14, bg=base,
                               highlightthickness=0, bd=0, cursor="hand2")
             check.create_oval(1, 1, 13, 13, fill=C["accent"], outline="")
-            check.create_line(4, 7, 6, 9, 10, 5, fill="#FFFFFF", width=1.5)
+            check.create_line(4, 7, 6, 9, 10, 5, fill=C["on_accent"], width=1.5)
             check.pack(side=tk.LEFT, padx=(7, 0), before=title)
         desc = i18n.Label(text, text=self._description(value, provider), bg=base,
                         fg=C["subtext"], font=FONT_CAPTION, anchor="w", cursor="hand2")

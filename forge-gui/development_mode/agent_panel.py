@@ -724,7 +724,7 @@ class AgentPanel(ttk.Frame):
         tk.Label(self._perm_hint, text='Agent 现在只能看、不能改文件', font=FONT_CAPTION,
                  bg=C['accent_soft'], fg=C['accent_text']).pack(side='left')
         allow = tk.Label(self._perm_hint, text='允许修改这个项目', font=FONT_CAPTION,
-                         bg=C['accent'], fg='#FFFFFF', padx=ui_px(self, 8), pady=ui_px(self, 2),
+                         bg=C['accent'], fg=C['on_accent'], padx=ui_px(self, 8), pady=ui_px(self, 2),
                          cursor='hand2')
         allow.pack(side='right')
         allow.bind('<Button-1>', lambda _e: self._request_permission('workspace-write'))
