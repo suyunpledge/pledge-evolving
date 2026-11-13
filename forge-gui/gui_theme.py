@@ -1508,6 +1508,7 @@ def highlight_python(text: tk.Text, *, start="1.0", end="end-1c"):
     纯 tag 打点，不做语法分析；足够让代码面板像那么回事，且零依赖。
     """
     import re
+    base = text.index(start)
     content = text.get(start, end)
     text.tag_remove("kw", start, end)
     text.tag_remove("cls", start, end)
@@ -1532,7 +1533,7 @@ def highlight_python(text: tk.Text, *, start="1.0", end="end-1c"):
                 s, e = m.span(1)
             else:
                 s, e = m.span()
-            text.tag_add(tag, f"1.0+{s}c", f"1.0+{e}c")
+            text.tag_add(tag, f"{base}+{s}c", f"{base}+{e}c")
 
 
 def gutter_lines(text: tk.Text, gutter_width: int = 4) -> str:

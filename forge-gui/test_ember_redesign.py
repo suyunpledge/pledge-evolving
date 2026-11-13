@@ -85,6 +85,37 @@ class EmberTokenTests(unittest.TestCase):
         self.assertEqual(PALETTE["ink"], C["on_accent"])
 
 
+class WorkIdentityTests(unittest.TestCase):
+    def test_system_prompt_is_a_stable_prefix_outside_history(self):
+        import threading
+        from http.server import HTTPServer
+        import test_forge_client as tfc
+        from forge_client import ChatMessage, ForgeGatewayClient
+        seen = []
+
+        class Capture(tfc.MockHandler):
+            def _do_stream(self, body):
+                seen.append(body)
+                return super()._do_stream(body)
+
+        server = HTTPServer(("127.0.0.1", 0), Capture)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            client = ForgeGatewayClient(f"http://127.0.0.1:{server.server_address[1]}")
+            history = [ChatMessage("user", "你可以做些什么")]
+            client.stream_chat(history, model="y", system=gui.WORK_SYSTEM_PROMPT)
+            client.stream_chat(history, model="y")
+        finally:
+            server.shutdown()
+            server.server_close()
+        with_system, plain = seen
+        self.assertEqual(with_system["messages"][0],
+                         {"role": "system", "content": gui.WORK_SYSTEM_PROMPT})
+        self.assertEqual(with_system["messages"][1:], plain["messages"])
+        self.assertEqual(len(history), 1)
+        self.assertIn("Forge", gui.WORK_SYSTEM_PROMPT)
+
+
 class GreetingFoldTests(unittest.TestCase):
     def test_only_short_greeting_sessions_fold(self):
         greet = gui.ForgeGuiApp._is_greeting_session

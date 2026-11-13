@@ -239,6 +239,19 @@ class ActivityGlyph(tk.Canvas):
 
 # 沉思模式（forge thinking.mode 三档；GUI 里对齐参考稿输入卡的工具条）
 THINKING_LABELS = {"off": tr("关闭"), "smart": tr("智能"), "on": tr("开启")}
+# Work Mode 身份说明（作为 system 前缀随每轮请求发送，逐轮不变以命中前缀缓存）。
+# 以前 Work Mode 不发任何 system，模型只看到读写文件/搜索等工具定义，
+# 便自称「AI 编程助手」；这里明确它是通用桌面工作助手，编程只是其中一类。
+WORK_SYSTEM_PROMPT = (
+    "你是 Forge，运行在用户电脑上的桌面 AI 工作助手（Work Mode）。"
+    "你帮助用户完成各类工作：回答问题、讨论与梳理方案、写作与整理资料；"
+    "在用户授权的工作区里读写文件、搜索与运行命令；联网搜索与阅读网页；"
+    "在用户绑定目标窗口后操作电脑（点击、输入、按键、滚动）；调用已安装的插件与连接器。"
+    "编程只是其中一类任务——介绍自己时说你是 Forge 工作助手，不要自称编程助手。"
+    "你的实际能力以本轮提供的工具为准，不要声称拥有未提供的工具；工具结果不确定时如实说明。"
+    "使用用户所用的语言回答。"
+)
+
 PLANNING_LABELS = {"high": tr("事前规划：高"), "medium": tr("事前规划：中"),
                    "low": tr("事前规划：低"), "none": tr("事前规划：无")}
 THINKING_CHOICES = [
@@ -939,6 +952,11 @@ class ForgeGuiApp:
         self.root.bind("<Destroy>", self._cancel_responsive_callback, add="+")
         self.root.bind("<Control-n>", lambda _e: self._conversation_shortcut("new"))
         self.root.bind("<Control-k>", lambda _e: self._open_command_palette())
+        # Tk 的 Text / Entry 类绑定把 Ctrl+K 当 Emacs「删到行尾」，而且先于上面的
+        # 窗口级绑定执行：在输入框里按 Ctrl+K 打开命令面板的同时，光标后的草稿
+        # 会被吞掉。Ctrl+K 在本应用里只有「命令面板」一个含义，类绑定换成空操作。
+        for widget_class in ("Text", "Entry"):
+            self.root.bind_class(widget_class, "<Control-k>", lambda _e: None)
         self.root.bind("<Control-l>", lambda _e: self._conversation_shortcut("input"))
         self.root.bind("<Alt-Left>", self._navigate_back, add="+")
         self.root.bind("<Escape>", self._navigation_escape, add="+")
@@ -4155,12 +4173,13 @@ class ForgeGuiApp:
         history_bg = box.cget("bg")
         for child in box.winfo_children():
             child.destroy()
+        self._history_active = None
         query = (self.session_search_var.get() if hasattr(self, "session_search_var")
                  else "").strip().lower()
         if query:
             sessions = [s for s in sessions if query in str(s.get("title", "")).lower()]
         if not sessions:
-            i18n.Label(box, text="还没有历史对话" if not query else "没有匹配的对话",
+            i18n.Label(box, text=tr("还没有历史对话") if not query else tr("没有匹配的对话"),
                      bg=history_bg, fg=C["muted"], font=FONT_MICRO,
                      anchor=tk.W, padx=10, pady=8).pack(fill=tk.X)
             return
@@ -4206,7 +4225,7 @@ class ForgeGuiApp:
             elif not query:
                 head = tk.Frame(box, bg=history_bg)
                 head.pack(fill=tk.X, padx=(12, 10), pady=(9, 3))
-                i18n.Label(head, text=group, bg=history_bg, fg=C["faint"],
+                i18n.Label(head, text=tr(group), bg=history_bg, fg=C["faint"],
                            font=FONT_CAPTION).pack(side=tk.LEFT)
                 i18n.Label(head, text=str(len(entries)), bg=history_bg, fg=C["faint"],
                            font=FONT_MONO_XS).pack(side=tk.RIGHT)
@@ -4227,11 +4246,7 @@ class ForgeGuiApp:
         body.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 8), pady=(6, 6))
         top = tk.Frame(body, bg=row["bg"])
         top.pack(fill=tk.X)
-        if active and getattr(self, "_sending", False):
-            dot = tk.Canvas(top, width=8, height=8, bg=row["bg"], highlightthickness=0, bd=0)
-            dot.create_oval(0, 0, 7, 7, fill=C["ember"], outline="")
-            dot.pack(side=tk.LEFT, padx=(0, 6))
-        title = str(session.get("title", "未命名对话"))
+        title = str(session.get("title") or i18n.resolve(tr("未命名对话"), box))
         if when:
             i18n.Label(top, text=when, bg=row["bg"], fg=C["faint"],
                        font=FONT_MONO_XS).pack(side=tk.RIGHT, padx=(6, 0))
@@ -4240,6 +4255,9 @@ class ForgeGuiApp:
                                  fg=C["text"] if active else C["body"], font=FONT_SMALL, anchor=tk.W)
         title_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
         attach_tooltip(title_label, title)
+        if active:
+            self._history_active = (row, top, title_label)
+            self._sync_history_running()
         snippet = self._session_snippet(session)
         if snippet and snippet != title:
             i18n.Label(body, text=theme.elide(box, snippet, theme.ui_px(box, SIDEBAR_WIDTH - 40),
@@ -4256,6 +4274,34 @@ class ForgeGuiApp:
             widget.bind("<Enter>", lambda _e, r=row, a=active: self._paint_history(r, a, True))
             widget.bind("<Leave>", lambda _e, r=row, a=active: self._paint_history(r, a, False))
         return row
+
+    def _sync_history_running(self):
+        """当前会话行的「生成中」圆点：跟随发送状态原地出现 / 消失。
+
+        发送开始与结束（成功、失败、取消都经过 _send_finished）各调一次，不重建
+        列表——原先只在列表恰好于发送途中重绘时才画得出来，画出来后失败或
+        取消也不会清掉。
+        """
+        active = getattr(self, "_history_active", None)
+        if not active:
+            return
+        row, top, title_label = active
+        try:
+            if not row.winfo_exists():
+                self._history_active = None
+                return
+            dot = getattr(row, "_running_dot", None)
+            if getattr(self, "_sending", False):
+                if dot is None:
+                    dot = tk.Canvas(top, width=8, height=8, bg=row["bg"], highlightthickness=0, bd=0)
+                    dot.create_oval(0, 0, 7, 7, fill=C["ember"], outline="")
+                    dot.pack(side=tk.LEFT, padx=(0, 6), before=title_label)
+                    row._running_dot = dot
+            elif dot is not None:
+                dot.destroy()
+                row._running_dot = None
+        except tk.TclError:
+            self._history_active = None
 
     def _history_fold_row(self, box, history_bg, count):
         opened = getattr(self, "_greetings_open", False)
@@ -6427,6 +6473,7 @@ class ForgeGuiApp:
                 rows.append(row)
                 by_id[safe_id] = row
             conf = dict(row.get("config") or {})
+            previous_model, previous_label = conf.get("model"), conf.get("modelLabel")
             conf["wire"] = "openai"
             conf["baseURL"] = bk
             conf["apiKey"] = {"$expr": f"get('env.{env_name}', '')"}
@@ -6436,7 +6483,12 @@ class ForgeGuiApp:
                 conf["modelLabel"] = friendly
             else:
                 conf.pop("modelLabel", None)
-            conf.setdefault("smallModel", mid)
+            # 小模型（规划等后台调用用）跟随主模型：重新导入改了模型 id 时，
+            # 旧的 smallModel 若等于旧 model 或是显示名，就不能原样保留——
+            # 否则会出现 smallModel=「GLM5.3」（显示名）被厂商 400 拒绝。
+            small = conf.get("smallModel")
+            if not small or small in (previous_model, previous_label, friendly):
+                conf["smallModel"] = mid
             row["config"] = conf
             env_pairs.append((safe_id, ak, env_name))
         try:
@@ -6707,8 +6759,13 @@ class ForgeGuiApp:
         updated = next(r for r in rows if r["id"] == rid)
         old_model = updated["config"].get("model")
         updated["config"]["model"] = new_model
-        if not updated["config"].get("smallModel") or updated["config"]["smallModel"] == old_model:
+        small = updated["config"].get("smallModel")
+        if not small or small in (old_model, updated["config"].get("modelLabel")):
             updated["config"]["smallModel"] = new_model
+        if new_model != old_model:
+            # 显示名描述的是旧模型：模型换了还留着，列表和模型选择器会继续
+            # 显示旧名字，品牌图标也按旧名字识别。
+            updated["config"].pop("modelLabel", None)
         try:
             save_user_layer(self.home, rows, expected_rows=self.user_rows)
         except (OSError, ValueError) as exc:
@@ -7884,6 +7941,7 @@ class ForgeGuiApp:
             self.gateway_url = f"http://127.0.0.1:{port}"
             self.client.base_url = self.gateway_url
         self._sending = True
+        self._sync_history_running()
         try:
             self._abort_requested = False
             self._cancel_event = threading.Event()
@@ -8097,7 +8155,7 @@ class ForgeGuiApp:
                             temperature=temp,
                             reasoning_effort=reasoning_effort,
                             on_chunk=on_chunk, cancel_event=cancel_event,
-                            tools=tools,
+                            tools=tools, system=WORK_SYSTEM_PROMPT,
                         )
                         if result is not None and isinstance(getattr(result, "usage", None), dict) and result.usage:
                             self._post_ui(self._record_cache_usage, dict(result.usage))
@@ -8274,6 +8332,7 @@ class ForgeGuiApp:
         message_id = getattr(msg, '_forge_message_id', identifier)
         msg._forge_review_id = identifier
         self._sending = True
+        self._sync_history_running()
         self._abort_requested = False
         self._cancel_event = cancel = threading.Event()
         self.input_card.set_busy(True)
@@ -8361,6 +8420,7 @@ class ForgeGuiApp:
     def _send_finished(self):
         self._sending = False
         self._abort_requested = False
+        self._sync_history_running()
         try:
             self.input_card.set_busy(False)
         except Exception:
@@ -8432,10 +8492,17 @@ class ForgeGuiApp:
         acts = tk.Frame(body, bg=C["surface"])
         acts.pack(fill=tk.X)
         primary = None
+        safe = None
         for index, (label, value, kind) in enumerate(reversed(list(actions))):
             button = pill_button(acts, label, lambda v=value: choose(v), kind=kind, padx=px(14))
             button.pack(side=tk.RIGHT, padx=(px(8) if index else 0, 0))
             primary = button
+            if kind != "danger":
+                safe = button
+        # 默认焦点决定「按一下空格」会发生什么：主操作是破坏性的（放弃修改、
+        # 删除）时把焦点放在不破坏的那个按钮上，误触只会取消。
+        if actions and list(actions)[0][2] == "danger":
+            primary = safe
         dialog.protocol("WM_DELETE_WINDOW", lambda: choose(None))
         dialog.bind("<Escape>", lambda _e: choose(None))
         dialog.update_idletasks()

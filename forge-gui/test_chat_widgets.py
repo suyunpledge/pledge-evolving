@@ -334,6 +334,53 @@ class FileLinkHandler(unittest.TestCase):
         finally:
             root.destroy()
 
+    def test_url_stays_whole_and_is_not_a_file_link(self):
+        spans = cw.link_spans("更多背景见 https://platform.openai.com/docs。另见 (https://a.b/c?x=1).")
+        links = [(shown, kind, target) for shown, kind, target in spans if kind]
+        self.assertEqual(links, [
+            ("https://platform.openai.com/docs", "url", "https://platform.openai.com/docs"),
+            ("https://a.b/c?x=1", "url", "https://a.b/c?x=1")])
+        # 原文一个字都不能丢：网址前后的中文标点与括号落在普通文字里。
+        self.assertEqual("".join(shown for shown, _kind, _target in spans),
+                         "更多背景见 https://platform.openai.com/docs。另见 (https://a.b/c?x=1).")
+        self.assertEqual(cw.link_spans("delta.tool_calls 不是文件"), [("delta.tool_calls 不是文件", None, None)])
+
+    def test_click_delivers_the_whole_target_not_one_word(self):
+        root = _area()
+        seen, opened = [], []
+        original = cw.open_url
+        cw.open_url = lambda url: opened.append(url) or True
+        try:
+            text = cw.InlineText(root, on_link=seen.append)
+            text.pack(fill=tk.X)
+            text.set_segments(cw.inline_segments(
+                "看 forge-gui/forge_client.py:330 和 [说明](docs/guide.md) 以及 https://example.com/a-b/c"))
+            _flush(root)
+            _flush(root)
+            # Markdown 链接只显示文字，不把 [..](..) 源码露给用户。
+            shown = text.get("1.0", "end-1c")
+            self.assertIn("和 说明 以及", shown)
+            self.assertNotIn("](", shown)
+
+            def click(tag, nth, offset):
+                ranges = text.tag_ranges(tag)
+                x, y, _w, _h = text.bbox(f"{ranges[nth * 2]}+{offset}c")
+                return text._click(type("Event", (), {"x": x + 1, "y": y + 1})())
+            # 点在路径中间（连字符之后）：旧实现按 Tk 的 wordstart 只拿到 "gui"。
+            self.assertEqual(click("file_link", 0, 8), "break")
+            self.assertEqual(click("file_link", 1, 1), "break")
+            self.assertEqual(seen, ["forge-gui/forge_client.py:330", "docs/guide.md"])
+            self.assertEqual(click("url_link", 0, 12), "break")
+            self.assertEqual(opened, ["https://example.com/a-b/c"])
+            self.assertEqual(len(seen), 2, "网址不走文件处理器")
+        finally:
+            cw.open_url = original
+            root.destroy()
+
+    def test_open_url_only_accepts_http_schemes(self):
+        self.assertFalse(cw.open_url("file:///C:/Windows/system32/calc.exe"))
+        self.assertFalse(cw.open_url("javascript:alert(1)"))
+
 
 def _walk_first(root_widget, predicate):
     if predicate(root_widget):

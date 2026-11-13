@@ -95,6 +95,51 @@ def _looks_like_markdown_or_path(token: str) -> bool:
     return bool(_FILE_LINK_RE.fullmatch(token)) or _FILE_LINK_RE.search(token)
 
 
+# 网址必须先于文件路径识别：否则 https://host.com/docs 里的 "//host.com"
+# 会被路径规则截成一个假的文件链接，前后的 "https:" 与 "/docs" 落成普通文字。
+# 中文标点与汉字不算网址的一部分（模型常把网址直接接在句子里）。
+URL_PATTERN = r"https?://[^\s<>\"'`\u3000-\u303F\u4E00-\u9FFF\uFF00-\uFFEF]+"
+URL_TRAILING = ".,;:!?)]}'\""   # sentence punctuation is not part of a URL
+_LINK_RE = re.compile("(?P<url>" + URL_PATTERN + ")|" + _FILE_LINK_RE.pattern)
+
+
+def link_spans(text: str):
+    """把一行文字切成 ``(显示文字, 种类, 目标)``：种类为 None（普通文字）、
+    ``"file"`` 或 ``"url"``。Markdown 链接只显示方括号里的文字，目标另存。"""
+    spans, cursor = [], 0
+    for match in _LINK_RE.finditer(text):
+        start, end = match.span()
+        url = match.group("url")
+        if url:
+            target = url.rstrip(URL_TRAILING)
+            end = start + len(target)
+            shown, kind = target, "url"
+        elif match.group("md_path"):
+            target, shown = match.group("md_path"), match.group("md_text")
+            kind = "url" if re.match(r"https?://", target) else "file"
+        else:
+            shown = target = match.group("path")
+            kind = "file"
+        if start > cursor:
+            spans.append((text[cursor:start], None, None))
+        spans.append((shown, kind, target))
+        cursor = end
+    if cursor < len(text):
+        spans.append((text[cursor:], None, None))
+    return spans or [(text, None, None)]
+
+
+def open_url(url: str) -> bool:
+    """用系统浏览器打开网址；只放行 http/https，其余一律不动。"""
+    if not re.match(r"https?://", str(url)):
+        return False
+    try:
+        import webbrowser
+        return bool(webbrowser.open(str(url)))
+    except Exception:
+        return False
+
+
 # ─── 可滚动区域 ────────────────────────────────────────────
 
 
@@ -278,6 +323,11 @@ class InlineText(tk.Text):
                            underline=True, font=font or FONT_UI)
         self._base_bg = base
         self._on_link = on_link
+        # 每个链接一枚独立 tag（link-N）→ (种类, 目标)。点击时按 tag 取完整目标，
+        # 不再靠 Tk 的 wordstart/wordend 猜——那只会拿到光标下的一个单词。
+        self._link_targets = {}
+        self.tag_configure("url_link", foreground=C["link"], underline=True,
+                           font=self.tag_cget("file_link", "font"))
         self._emoji_names = {}
         self._emoji_references = []
         self._recompute_job = None
@@ -292,10 +342,11 @@ class InlineText(tk.Text):
         self.bind("<Button-1>", self._click)
         self.configure(state=tk.DISABLED)
         self._last_h = 1
-        self.tag_bind("file_link", "<Enter>",
-                      lambda _e: self.configure(cursor="hand2"))
-        self.tag_bind("file_link", "<Leave>",
-                      lambda _e: self.configure(cursor="arrow"))
+        for link_tag in ("file_link", "url_link"):
+            self.tag_bind(link_tag, "<Enter>",
+                          lambda _e: self.configure(cursor="hand2"))
+            self.tag_bind(link_tag, "<Leave>",
+                          lambda _e: self.configure(cursor="arrow"))
 
     # -- 高度自适应 --
     def _fit_height(self, _event=None):
@@ -330,25 +381,16 @@ class InlineText(tk.Text):
             pass
 
     def set_segments(self, segs):
-        """segs 是 (text, tag|None|iterable) 列表，自动识别文件链接。"""
+        """segs 是 (text, tag|None|iterable) 列表，自动识别文件链接与网址。"""
         self.configure(state=tk.NORMAL)
         self.delete("1.0", tk.END)
         self._emoji_names.clear()
         self._emoji_references.clear()
+        for name in self._link_targets:
+            self.tag_delete(name)
+        self._link_targets.clear()
         for text, tag in segs:
-            if not text:
-                continue
-            extra_tag = ("file_link",) if tag is None else (
-                tag + ("file_link",) if isinstance(tag, tuple)
-                else (tag, "file_link")
-            )
-            ordered = _split_text_into_plain_and_links(text)
-            for piece, is_link in ordered:
-                chosen_tag = extra_tag if is_link else (
-                    tuple(t for t in (extra_tag if isinstance(extra_tag, tuple) else (extra_tag,))
-                          if t != "file_link")
-                )
-                self._insert_display(piece, chosen_tag)
+            self._insert_linked(text, tag)
         self.configure(state=tk.DISABLED)
         self._last_h = -1
         self._schedule_recompute()
@@ -358,28 +400,27 @@ class InlineText(tk.Text):
 
     def append_text(self, text, tag=None):
         self.configure(state=tk.NORMAL)
-        if not text:
-            pass
-        else:
-            extra_tag = ("file_link",) if tag is None else (
-                tag + ("file_link",) if isinstance(tag, tuple)
-                else (tag, "file_link")
-            )
-            ordered = _split_text_into_plain_and_links(text)
-            for piece, is_link in ordered:
-                chosen_tag = extra_tag if is_link else (
-                    tuple(t for t in (extra_tag if isinstance(extra_tag, tuple) else (extra_tag,))
-                          if t != "file_link")
-                )
-                self._insert_display(piece, chosen_tag)
+        self._insert_linked(text, tag)
         self.configure(state=tk.DISABLED)
         self._last_h = -1
         self._schedule_recompute()
 
+    def _insert_linked(self, text, tag):
+        if not text:
+            return
+        base = () if tag is None else tag if isinstance(tag, tuple) else (tag,)
+        for shown, kind, target in link_spans(text):
+            if kind is None:
+                self._insert_display(shown, base)
+                continue
+            name = f"link-{len(self._link_targets)}"
+            self._link_targets[name] = (kind, target)
+            self._insert_display(shown, base + ("url_link" if kind == "url" else "file_link", name))
+
     def _insert_display(self, text, tags):
         # Keep file links and inline code as literal text; their indices/meaning
         # must not be changed by an image renderer.
-        if "code" in tags or "file_link" in tags:
+        if "code" in tags or "file_link" in tags or "url_link" in tags:
             self.insert(tk.END, text, tags)
             return
         self.tag_configure("emoji_text", font=emoji_font("😀", 11))
@@ -409,53 +450,33 @@ class InlineText(tk.Text):
         return "break"
 
     # -- 链接交互 --
-    def _motion(self, event):
+    def _link_at(self, event):
         try:
-            idx = self.index(f"@{event.x},{event.y}")
-            for tag in self.tag_names(idx):
-                if tag == "file_link":
-                    self.configure(cursor="hand2")
-                    return
+            names = self.tag_names(self.index(f"@{event.x},{event.y}"))
         except tk.TclError:
-            pass
-        self.configure(cursor="arrow")
+            return None
+        return next((self._link_targets[name] for name in names if name in self._link_targets), None)
+
+    def _motion(self, event):
+        self.configure(cursor="hand2" if self._link_at(event) else "arrow")
 
     def _click(self, event):
-        try:
-            idx = self.index(f"@{event.x},{event.y}")
-        except tk.TclError:
-            return
-        for tag in self.tag_names(idx):
-            if tag == "file_link":
-                # 走到 file_link 区间起点以拿到完整 token
-                start = self.index(f"{idx} wordstart")
-                end = self.index(f"{idx} wordend")
-                token = self.get(start, end).strip()
-                if self._on_link:
-                    self._on_link(token)
-                else:
-                    _dispatch_file_link(token)
-                return "break"
-        return None
+        link = self._link_at(event)
+        if link is None:
+            return None
+        kind, target = link
+        if kind == "url":
+            open_url(target)
+        elif self._on_link:
+            self._on_link(target)
+        else:
+            _dispatch_file_link(target)
+        return "break"
 
 
 def _split_text_into_plain_and_links(text: str):
-    """把文本切成 (片段, 是否链接) 段。在 markdown 链接场合只用 md_path。"""
-    segs = []
-    i = 0
-    for m in _FILE_LINK_RE.finditer(text):
-        s, e = m.span()
-        if s > i:
-            segs.append((text[i:s], False))
-        if m.group("md_path"):
-            # [text](path)：用 path 作为可点击区域；显示原文可保留 md 文本
-            segs.append((m.group("md"), True))
-        else:
-            segs.append((m.group("path"), True))
-        i = e
-    if i < len(text):
-        segs.append((text[i:], False))
-    return segs or [(text, False)]
+    """把文本切成 (显示片段, 是否链接) 段；细节见 link_spans。"""
+    return [(shown, kind is not None) for shown, kind, _target in link_spans(text)]
 
 
 def _dispatch_file_link(token: str):
@@ -646,10 +667,16 @@ def _render_single_block(host, block, *, base, wrap):
     elif kind == "todo":
         row = tk.Frame(host, bg=base)
         row.pack(fill=tk.X, pady=1)
-        mark = "✅" if block["done"] else "⬜"
-        color = C["ok"] if block["done"] else C["muted"]
-        IconCanvas(row, "check_circle" if block["done"] else "stop", size=18,
-                   bg=base, fg=color).pack(side=tk.LEFT, padx=(0, 8))
+        size = ui_px(row, 18)
+        if block["done"]:
+            mark = IconCanvas(row, "check_circle", size=size, bg=base, fg=C["ok"])
+        else:
+            # 未完成：与「已完成」同圆心同半径的空心圆（图标网格 24，半径 9）。
+            mark = tk.Canvas(row, width=size, height=size, bg=base, highlightthickness=0, bd=0)
+            inset = size * 3 / 24
+            mark.create_oval(inset, inset, size - inset, size - inset, outline=C["faint"],
+                             width=max(1, size * 1.75 / 24))
+        mark.pack(side=tk.LEFT, anchor="n", padx=(0, 8))
         t = InlineText(row, bg=base)
         t.set_segments(inline_segments(block["text"]))
         t.pack(side=tk.LEFT, fill=tk.X, expand=True)
@@ -668,8 +695,8 @@ def _render_single_block(host, block, *, base, wrap):
         toolbar = tk.Frame(card.content, bg=C['code_bg'])
         toolbar.pack(fill=tk.X, pady=(0,6))
         lang = block.get('lang') or ('Markdown' if kind == 'table' else 'Code')
-        i18n.Label(toolbar, text=lang, bg=C['code_bg'], fg=C['muted'],
-                   font=FONT_CAPTION).pack(side=tk.LEFT)
+        i18n.Label(toolbar, text=tr('表格') if kind == 'table' else lang, bg=C['code_bg'],
+                   fg=C['muted'], font=FONT_CAPTION).pack(side=tk.LEFT)
         def copy_source():
             card.clipboard_clear()
             card.clipboard_append(block['text'])
@@ -707,18 +734,21 @@ def _render_single_block(host, block, *, base, wrap):
         line_count = max(1, len(tx.get('1.0','end-1c').split('\n')))
         tx.configure(height=min(line_count, 24), state=tk.DISABLED)
         # 设计稿：原生 tk.Scrollbar 在深色界面里是一条白轨道；改用主题 ttk 滚动条。
+        tall = line_count > 24
         sx = ttk.Scrollbar(card.content, orient=tk.HORIZONTAL, command=tx.xview)
-        tx.configure(xscrollcommand=sx.set)
-        tx.pack(fill=tk.X)
-        sx.pack(fill=tk.X)
-        if line_count > 24:
+        def sync_x(first, last):
+            sx.set(first, last)
+            if float(first) > 0 or float(last) < 1:
+                if not sx.winfo_manager():
+                    sx.pack(side=tk.BOTTOM, fill=tk.X, before=tx)
+            elif sx.winfo_manager():
+                sx.pack_forget()
+        tx.configure(xscrollcommand=sync_x)
+        if tall:
             sy = ttk.Scrollbar(card.content, orient=tk.VERTICAL, command=tx.yview)
             tx.configure(yscrollcommand=sy.set)
-            tx.pack_forget()
-            sx.pack_forget()
-            sx.pack(side=tk.BOTTOM, fill=tk.X)
             sy.pack(side=tk.RIGHT, fill=tk.Y)
-            tx.pack(fill=tk.BOTH, expand=True)
+        tx.pack(fill=tk.BOTH, expand=True)
     elif kind == "hr":
         tk.Frame(host, bg=C["border"], height=1).pack(fill=tk.X, pady=6)
 

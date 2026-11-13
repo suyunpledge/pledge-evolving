@@ -5,11 +5,14 @@ from collections import defaultdict, deque
 from datetime import datetime
 from pathlib import Path
 import tkinter as tk
+from tkinter import font as tkfont
 from tkinter import ttk
 
-from chat_widgets import parse_blocks, inline_segments
+from chat_widgets import parse_blocks, inline_segments, open_url, URL_PATTERN, URL_TRAILING
 from .buttons import dev_button
-from gui_theme import C, FONT_UI, FONT_UI_BOLD, FONT_SECTION, FONT_CAPTION, FONT_SMALL, FONT_MONO_SM, style_editor, button_feedback, attach_tooltip, ui_px
+from gui_theme import (C, FONT_UI, FONT_UI_BOLD, FONT_SECTION, FONT_CAPTION, FONT_SMALL, FONT_MONO_SM,
+                       MONO_FAMILY, UI_FAMILY, style_editor, button_feedback, attach_tooltip, ui_px,
+                       highlight_python)
 from ui_icons import IconButton
 from forge.secrets import redact
 
@@ -31,6 +34,54 @@ CHAT_EMPTY_HINT = (
     '在下方输入任务描述，按 Enter 发送。\n'
     'Agent 的执行过程、工具步骤与产物会实时汇报在这里。'
 )
+
+
+# 对话里的引用：网址、Markdown 链接、文件路径。网址排在最前，否则
+# https://host.com/docs 会被路径规则截出一个假的 "//host.com" 文件链接。
+_REF_RE = re.compile(
+    '(?P<url>' + URL_PATTERN + ')'
+    r'|\[(?P<label>[^\]]+)\]\((?P<target>[^\s)]+)\)'
+    r'|(?P<path>(?:[A-Za-z]:)?(?:[A-Za-z0-9_.-]*[/\\])*[A-Za-z0-9_.-]+\.(?P<ext>[A-Za-z0-9]+)'
+    r'(?::\d+(?:-\d+)?)?)')
+_SEPARATOR = re.compile(r'[/\\]')
+# 不带目录的裸文件名只有扩展名在这张表里才算文件；否则 delta.tool_calls、
+# item.get、v0.3 这类带点的词都会被渲染成点不开的链接。
+FILE_EXTENSIONS = frozenset(
+    'py pyi js jsx ts tsx mjs cjs json jsonl md txt toml yaml yml ini cfg conf env html htm css scss '
+    'vue svelte go rs java kt kts swift c h cc cpp hpp cs rb php sh bash zsh ps1 bat cmd sql xml csv '
+    'tsv lock gradle properties log diff patch ipynb'.split())
+ROLE_NAMES = {'user': '你', 'assistant': 'Coding Agent'}
+ERROR_ROLES = frozenset({'执行失败', '无法发送'})
+NOTE_ROLES = frozenset({'任务结果', '发送状态'})
+
+
+def reference_spans(text):
+    """切成 ``(显示文字, 种类, 目标)``；种类为 None / 'file' / 'url'。"""
+    spans, cursor = [], 0
+    for match in _REF_RE.finditer(text):
+        start, end = match.span()
+        if match.group('url'):
+            target = match.group('url').rstrip(URL_TRAILING)
+            end = start + len(target)
+            shown, kind = target, 'url'
+        elif match.group('target'):
+            shown, target = match.group('label'), match.group('target')
+            kind = 'url' if re.match(r'https?://', target) else None if '://' in target else 'file'
+            if kind is None:
+                continue
+        else:
+            shown = target = match.group('path')
+            extension = match.group('ext').lower()
+            if extension.isdigit() or not (_SEPARATOR.search(target) or extension in FILE_EXTENSIONS):
+                continue
+            kind = 'file'
+        if start > cursor:
+            spans.append((text[cursor:start], None, None))
+        spans.append((shown, kind, target))
+        cursor = end
+    if cursor < len(text):
+        spans.append((text[cursor:], None, None))
+    return spans
 
 
 def readonly(parent, **options):
@@ -60,19 +111,16 @@ class Conversation(tk.Text):
     def __init__(self, parent, open_file, history_source=None):
         super().__init__(parent, height=6, wrap='word', font=FONT_UI)
         style_editor(self)
+        pad = ui_px(self, 12)
         self.configure(state='disabled', background=C['chat'], highlightthickness=0,
-                       padx=10, pady=8, spacing1=3, spacing3=5)
+                       padx=pad, pady=ui_px(self, 8), spacing1=2, spacing2=2, spacing3=3)
         self.open_file = open_file
+        self.open_url = open_url
         self.history_source = history_source
         self._history_path = None
         self._history_times = defaultdict(deque)
-        self.tag_configure('timestamp', foreground=C['comment'], spacing1=6)
-        self.tag_configure('heading', font=FONT_SECTION, foreground=C['text'])
-        self.tag_configure('user_heading', font=FONT_UI_BOLD, foreground=C['accent2'], spacing1=8)
-        self.tag_configure('agent_heading', font=FONT_UI_BOLD, foreground=C['agent_accent'], spacing1=8)
-        self.tag_configure('b', font=FONT_UI_BOLD)
-        self.tag_configure('code', font=FONT_MONO_SM, background=C['code_bg'])
-        self.tag_configure('quote', foreground=C['subtext'], lmargin1=12, lmargin2=12)
+        self._pad = pad
+        self._configure_tags()
         # 空态引导：居中空态卡（图标 + 标题 + 说明，与 bottom_panel 的
         # _empty_state_card 同一视觉语言），place 悬浮在 Text 之上；
         # message() 首次写入真实内容时撤下，clear() 时重建——一次性，
@@ -86,6 +134,10 @@ class Conversation(tk.Text):
         self._links = 0
         self._windows = []
         self._last_width = 0
+        self._follow = True
+        for sequence in ('<MouseWheel>', '<Button-4>', '<Button-5>', '<Prior>', '<Next>',
+                         '<Up>', '<Down>', '<Control-Home>', '<Control-End>'):
+            self.bind(sequence, self._note_scroll, add='+')
         self._insert_empty_hint()
         self.bind('<Configure>', self._fit_cards)
 
@@ -180,6 +232,7 @@ class Conversation(tk.Text):
         if event.width == self._last_width:
             return
         self._last_width = event.width
+        self._fit_caption(event.width)
         for widget in self._windows:
             if widget.winfo_exists() and hasattr(widget, 'fit'):
                 widget.fit(max(100, event.width - 24))
@@ -189,6 +242,7 @@ class Conversation(tk.Text):
         self.delete('1.0', 'end')
         self._clear_cards()
         self.configure(state='disabled')
+        self._follow = True
         self._insert_empty_hint()
 
     def delete(self, index1, index2=None):
@@ -201,6 +255,10 @@ class Conversation(tk.Text):
             if widget.winfo_exists():
                 widget.destroy()
         self._windows.clear()
+        # 链接 / 复制 / 表格各有独立 tag，清空对话时一并回收。
+        for name in self.tag_names():
+            if name.startswith(('file', 'url', 'copy', 'table')) and name[-1].isdigit():
+                self.tag_delete(name)
         self._history_path = None
         self._history_times.clear()
 
@@ -253,7 +311,92 @@ class Conversation(tk.Text):
         times = self._history_times.get((role, body))
         return times.popleft() if times else None
 
+    def _configure_tags(self):
+        """对话区的全部版式都靠 Text tag：正文可整段选中复制，也不为每条消息建控件。"""
+        pad, px = self._pad, lambda value: ui_px(self, value)
+        mono = tkfont.Font(root=self, font=FONT_MONO_SM)
+        self._mono = mono
+        self._mono_bold = tkfont.Font(root=self, font=(MONO_FAMILY, FONT_MONO_SM[1], 'bold'))
+        band = dict(lmargin1=px(10), lmargin2=px(10), rmargin=px(10))
+        # 消息头：角色名 + 时间同一行；消息之间的间距由这一行的 spacing1 负责。
+        self.tag_configure('msg_head', spacing1=px(16), spacing3=px(4))
+        self.tag_configure('timestamp', foreground=C['faint'], font=FONT_CAPTION)
+        self.tag_configure('user_heading', font=FONT_UI_BOLD, foreground=C['accent2'])
+        self.tag_configure('agent_heading', font=FONT_UI_BOLD, foreground=C['agent_accent'])
+        self.tag_configure('error_heading', font=FONT_UI_BOLD, foreground=C['error'])
+        self.tag_configure('note_heading', font=FONT_UI_BOLD, foreground=C['subtext'])
+        # 用户消息：一条浅色底带，和 Agent 的文档式正文一眼可分。
+        self.tag_configure('user_body', background=C['msg_user_bg'], foreground=C['text'], **band)
+        self.tag_configure('note_body', foreground=C['subtext'])
+        self.tag_configure('error_body', foreground=C['error'])
+        self.tag_configure('para', spacing3=px(6))
+        self.tag_configure('heading', font=FONT_UI_BOLD, foreground=C['text'], spacing1=px(8), spacing3=px(4))
+        self.tag_configure('heading_major', font=FONT_SECTION)
+        indent = px(22)
+        self.tag_configure('item', lmargin1=px(4), lmargin2=px(4) + indent, tabs=(px(4) + indent,))
+        self.tag_configure('bullet', foreground=C['accent2'])
+        self.tag_configure('number', foreground=C['subtext'])
+        self.tag_configure('todo_done', foreground=C['ok'])
+        self.tag_configure('todo_open', foreground=C['faint'])
+        self.tag_configure('quote', foreground=C['subtext'], lmargin1=px(2), lmargin2=px(16), tabs=(px(16),))
+        self.tag_configure('quote_bar', foreground=C['accent_border'])
+        self.tag_configure('b', font=FONT_UI_BOLD, foreground=C['text'])
+        self.tag_configure('code', font=FONT_MONO_SM, background=C['surface2'], foreground=C['code_str'])
+        # 代码块 / 表格：整行底带 + 等宽字；长行按字符折行并缩进，避免被裁掉。
+        self.tag_configure('codeblock', font=mono, background=C['surface'], foreground=C['code_plain'],
+                           lmargin1=px(10), lmargin2=px(26), rmargin=px(10), wrap='char',
+                           spacing1=1, spacing2=1, spacing3=1)
+        self.tag_configure('code_caption', font=FONT_CAPTION, background=C['surface'], foreground=C['faint'],
+                           spacing1=px(6), spacing3=px(4), **band)
+        self.tag_configure('table_head', font=self._mono_bold, foreground=C['text'])
+        self.tag_configure('table_row', wrap='none')
+        for name in ('user_body', 'codeblock', 'code_caption'):
+            try:  # Tk 8.6.6+：让底带铺满左右内边距，而不是只垫在文字下面。
+                colour = self.tag_cget(name, 'background')
+                self.tag_configure(name, lmargincolor=colour, rmargincolor=colour)
+            except tk.TclError:
+                pass
+        self.tag_configure('band_top', spacing1=px(7))
+        self.tag_configure('band_bottom', spacing3=px(7))
+        self.tag_configure('gap', font=(UI_FAMILY, 3))
+        self.tag_configure('rule', font=(UI_FAMILY, 1), background=C['line'])
+        for name, token in (('kw', 'code_kw'), ('cls', 'code_cls'), ('fn', 'code_fn'),
+                            ('st', 'code_str'), ('cm', 'code_comment'), ('num', 'code_num')):
+            self.tag_configure(name, foreground=C[token])
+        self.tag_configure('link', foreground=C['link'], underline=True)
+        self.tag_configure('copy', foreground=C['subtext'])
+        for name in ('link', 'copy'):
+            self.tag_bind(name, '<Enter>', lambda _e: self.configure(cursor='hand2'))
+            self.tag_bind(name, '<Leave>', lambda _e: self.configure(cursor='xterm'))
+        self._fit_caption(self.winfo_width())
+
+    def _fit_caption(self, width):
+        # 代码块标题行右侧的「复制」靠右对齐制表位贴边。
+        right = max(ui_px(self, 160), width - self._pad * 2 - ui_px(self, 14))
+        self.tag_configure('code_caption', tabs=(right, 'right'))
+
+    def _put(self, text, *tags):
+        tk.Text.insert(self, 'end', text, tuple(tag for tag in tags if tag))
+
+    def _note_scroll(self, _event=None):
+        # 是否跟随新内容只在用户亲手滚动之后重新判定：连续写入时 Text 的
+        # 行高还没算完，当场读 yview 会把「刚滚到底」误判成「不在底部」。
+        self.after_idle(self._update_follow)
+
+    def _update_follow(self):
+        try:
+            self._follow = self.yview()[1] >= 0.995
+        except tk.TclError:
+            pass
+
+    def yview(self, *args):
+        result = super().yview(*args)
+        if args and args[0] in ('moveto', 'scroll'):   # 滚动条拖动
+            self._note_scroll()
+        return result
+
     def message(self, role, body, *, timestamp=None, historical=False):
+        follow = self._follow
         self.configure(state='normal')
         self._drop_empty_hint()
         if timestamp is None and not historical:
@@ -262,38 +405,139 @@ class Conversation(tk.Text):
             stamp = datetime.fromtimestamp(float(timestamp)).strftime('%H:%M')
         except (TypeError, ValueError, OverflowError, OSError):
             stamp = '时间未记录'
-        self.insert('end', '\n' + stamp + '\n', 'timestamp')
-        self.insert('end', '\n' + str(redact(role)) + '\n',
-                    'user_heading' if role in {'你', 'user'} else 'agent_heading')
-        for block in parse_blocks(str(redact(body))):
+        role = str(redact(role))
+        mine = role in {'你', 'user'}
+        heading = ('user_heading' if mine else 'error_heading' if role in ERROR_ROLES
+                   else 'note_heading' if role in NOTE_ROLES else 'agent_heading')
+        self._put(ROLE_NAMES.get(role, role), heading, 'msg_head')
+        self._put('   ' + stamp, 'timestamp', 'msg_head')
+        self._put('\n', 'msg_head')
+        text = str(redact(body))
+        if mine:
+            self._user_lines(text)
+        else:
+            self._markdown(text, 'error_body' if role in ERROR_ROLES else
+                           'note_body' if role in NOTE_ROLES else '')
+        self.configure(state='disabled')
+        # 自己刚发的消息一定露出来；别人的消息只在本来就停在底部时才跟随，
+        # 否则正在往上翻看的内容会被每一条新消息拽走。
+        if mine or follow:
+            self._follow = True
+            self.see('end')
+
+    def _user_lines(self, text):
+        # 用户原文逐行保留（粘贴的日志 / 代码不被 Markdown 规则合并成一段）。
+        lines = text.strip('\n').split('\n')
+        for index, line in enumerate(lines):
+            tags = ('user_body', 'band_top' if index == 0 else '',
+                    'band_bottom' if index == len(lines) - 1 else '')
+            self._inline([(line, None)], *tags)
+            self._put('\n', *tags)
+
+    def _markdown(self, text, tone):
+        for block in parse_blocks(text):
             kind, value = block['type'], block.get('text', '')
             if kind == 'hr':
-                self.insert('end', '────────\n')
-            elif kind in {'code', 'table'}:
-                self.insert('end', value + '\n', 'code')
+                self._put('\n', 'gap')
+                self._put('\n', 'rule')
+                self._put('\n', 'gap')
+            elif kind == 'code':
+                self._code_block(value, block.get('lang') or '')
+            elif kind == 'table':
+                self._table(value)
+            elif kind == 'h':
+                tags = ('heading', 'heading_major' if block.get('level', 3) <= 2 else '')
+                self._inline(inline_segments(value), *tags)
+                self._put('\n', *tags)
+            elif kind in {'li', 'oli', 'todo'}:
+                if kind == 'li':
+                    self._put('•\t', 'item', 'bullet')
+                elif kind == 'oli':
+                    self._put(block.get('num', '') + '.\t', 'item', 'number')
+                else:
+                    done = bool(block.get('done'))
+                    self._put(('✓' if done else '○') + '\t', 'item', 'todo_done' if done else 'todo_open')
+                self._inline(inline_segments(value), 'item', tone)
+                self._put('\n', 'item')
+            elif kind == 'quote':
+                self._put('▎\t', 'quote', 'quote_bar')
+                self._inline(inline_segments(value), 'quote')
+                self._put('\n', 'quote')
             else:
-                prefix = {'li': '• ', 'oli': block.get('num', '') + '. ',
-                          'todo': '✓ ' if block.get('done') else '○ ', 'quote': '› '}.get(kind, '')
-                self.insert('end', prefix)
-                for segment, tag in inline_segments(value):
-                    for part in re.split(r'(\[[^\]]+\]\([^\s)]+\)|[\w./\\-]+\.[\w]+(?::\d+)?)', segment):
-                        if not part:
-                            continue
-                        match = re.fullmatch(r'\[([^\]]+)\]\(([^)]+)\)', part)
-                        path = match[2] if match else part
-                        if (match or re.fullmatch(r'[\w./\\-]+\.[\w]+(?::\d+)?', part)) and '://' not in path:
-                            self._links += 1
-                            link = 'file' + str(self._links)
-                            self.tag_configure(link, foreground=C['link'], underline=True)
-                            self.tag_bind(link, '<Button-1>', lambda e, p=path: self.open_file(p))
-                            self.tag_bind(link, '<Enter>', lambda e: self.configure(cursor='hand2'))
-                            self.tag_bind(link, '<Leave>', lambda e: self.configure(cursor='xterm'))
-                            self.insert('end', match[1] if match else part, (tag or '', link))
-                        else:
-                            self.insert('end', part, 'heading' if kind == 'h' else 'quote' if kind == 'quote' else tag or '')
-                self.insert('end', '\n')
-        self.configure(state='disabled')
-        self.see('end')
+                self._inline(inline_segments(value), 'para', tone)
+                self._put('\n', 'para')
+
+    def _inline(self, segments, *tags):
+        for segment, style in segments:
+            for shown, kind, target in reference_spans(segment):
+                if kind is None:
+                    self._put(shown, style, *tags)
+                    continue
+                self._links += 1
+                # 文件链接沿用 fileN 命名；网址单独一组，点击走系统浏览器。
+                name = ('file' if kind == 'file' else 'url') + str(self._links)
+                callback = self.open_file if kind == 'file' else self.open_url
+                self.tag_bind(name, '<Button-1>', lambda _e, value=target, run=callback: run(value))
+                self._put(shown, style, 'link', name, *tags)
+
+    def _code_block(self, code, language):
+        self._links += 1
+        copy = 'copy' + str(self._links)
+        self.tag_bind(copy, '<Button-1>', lambda _e, name=copy, value=code: self._copy_code(name, value))
+        self._put(language or 'code', 'code_caption')
+        self._put('\t', 'code_caption')
+        self._put('复制', 'code_caption', 'copy', copy)
+        self._put('\n', 'code_caption')
+        start = self.index('end-1c')
+        lines = code.split('\n')
+        for index, line in enumerate(lines):
+            self._put(line + '\n', 'codeblock', 'band_bottom' if index == len(lines) - 1 else '')
+        if not language or language.lower().startswith('py'):
+            try:
+                highlight_python(self, start=start, end='end-1c')
+            except (tk.TclError, re.error):
+                pass
+        self._put('\n', 'gap')
+
+    def _copy_code(self, name, code):
+        self.clipboard_clear()
+        self.clipboard_append(code)
+        self._relabel(name, '已复制')
+        self.after(1400, lambda: self._relabel(name, '复制'))
+
+    def _relabel(self, name, text):
+        try:
+            ranges = self.tag_ranges(name)
+            if not ranges:
+                return
+            first = str(ranges[0])
+            self.configure(state='normal')
+            tk.Text.delete(self, first, ranges[1])
+            tk.Text.insert(self, first, text, ('code_caption', 'copy', name))
+            self.configure(state='disabled')
+        except tk.TclError:
+            pass
+
+    def _table(self, source):
+        rows = [[cell.strip() for cell in line.strip().strip('|').split('|')]
+                for index, line in enumerate(source.splitlines()) if index != 1]
+        if not rows:
+            return
+        columns = max(len(row) for row in rows)
+        gutter, stops, position = ui_px(self, 24), [], ui_px(self, 10)
+        for column in range(columns - 1):
+            position += gutter + max(self._mono_bold.measure(row[column]) if column < len(row) else 0
+                                     for row in rows)
+            stops.append(position)
+        self._links += 1
+        name = 'table' + str(self._links)
+        if stops:
+            self.tag_configure(name, tabs=tuple(stops))
+        for index, row in enumerate(rows):
+            self._put('\t'.join(row) + '\n', 'codeblock', 'table_row', name,
+                      'table_head' if index == 0 else '', 'band_top' if index == 0 else '',
+                      'band_bottom' if index == len(rows) - 1 else '')
+        self._put('\n', 'gap')
 
     def card(self, widget):
         # 计划 / 步骤 / 改动卡也算真实内容：撤下空态覆盖层，否则它会盖在卡片上。
@@ -306,6 +550,9 @@ class Conversation(tk.Text):
         if hasattr(widget, 'fit'):
             widget.fit(max(100, self.winfo_width() - 24))
         self.configure(state='disabled')
+        # 计划 / 步骤 / 改动卡是执行过程的实时汇报：停在底部时跟着露出来。
+        if self._follow:
+            self.see('end')
 
 
 # 时间线每行的状态：图标 + 颜色 token（与权限徽标同一套语义色）。

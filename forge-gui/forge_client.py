@@ -255,16 +255,20 @@ class ForgeGatewayClient:
                     reasoning_effort: str | None = None,
                     on_chunk: Callable[[str], None] | None = None,
                     cancel_event: threading.Event | None = None,
-                    tools: list[dict] | None = None
+                    tools: list[dict] | None = None,
+                    system: str | None = None,
                     ) -> CompletionResult:
         def check_cancelled():
             if cancel_event is not None and cancel_event.is_set():
                 raise GenerationCancelled("已停止生成")
 
         check_cancelled()
+        # ``system`` 是调用方固定的身份/行为说明：放在最前、逐轮不变，
+        # 既让模型知道自己是谁，也作为稳定前缀命中缓存。对话本身不含它。
+        prefix = [{"role": "system", "content": system}] if system else []
         body = {
             "model": model,
-            "messages": [m.to_dict(self.secret_scope) for m in messages],
+            "messages": prefix + [m.to_dict(self.secret_scope) for m in messages],
             "temperature": temperature,
             "stream": True,
         }
