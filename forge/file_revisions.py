@@ -32,13 +32,16 @@ class FileRevisionGuard:
         self.require_read = require_read
         self.workspace_only = workspace_only
         self.revisions = {}
+        self.change_store = None
         key = str(self.boundary.root).casefold()
         with _locks_lock:
             self.lock = _locks.setdefault(key, RLock())
 
     def fork(self):
-        return FileRevisionGuard(self.root, require_read=self.require_read,
-                                 workspace_only=self.workspace_only)
+        child = FileRevisionGuard(self.root, require_read=self.require_read,
+                                  workspace_only=self.workspace_only)
+        child.change_store = self.change_store
+        return child
 
     def path(self, value):
         path = Path(value)
@@ -71,9 +74,15 @@ class FileRevisionGuard:
             guarded = dict(args)
             self._before = {target: self.digest(self.boundary.path(target)) for target in paths}
             self._before_text = {}
+            self._undo_before = {}
             if write:
                 for target in paths:
                     self._before_text[target] = self._public_text(target)
+                    if self.change_store is not None:
+                        try:
+                            self._undo_before[target] = self.change_store.capture(target)
+                        except (ValueError, PermissionError, OSError):
+                            pass  # Outside workspace / oversized: preview only.
             if write:
                 revisions = {}
                 for target in paths:
@@ -88,6 +97,21 @@ class FileRevisionGuard:
             yield guarded
 
     def record(self, name, args, result):
+        # Failed multi-file writes may still have committed a subset. Capture
+        # their actual bytes too, under the executor's existing write lock.
+        if name in WRITES and (name != 'edit_config' or args.get('patch') is not None) and self.change_store is not None:
+            receipts = []
+            if len(getattr(self, '_undo_before', {})) < len(self.targets(args)):
+                result.meta['change_review_incomplete'] = True
+            for target, before in getattr(self, '_undo_before', {}).items():
+                try:
+                    receipt = self.change_store.record(target, before)
+                    if receipt:
+                        receipts.append(receipt)
+                except (ValueError, PermissionError, OSError):
+                    result.meta['change_review_incomplete'] = True
+            if receipts:
+                result.meta['change_ids'] = receipts
         if result.ok and name in READS | WRITES:
             observed = {}
             for target in self.targets(args):

@@ -238,6 +238,9 @@ def create_execution_context(*, home, workspace, registry, policy=None, config=N
     if file_guard is None:
         from .file_revisions import FileRevisionGuard
         file_guard = FileRevisionGuard(workspace, require_read=False, workspace_only=False)
+    from .change_review import ChangeReviewStore
+    if getattr(file_guard, 'change_store', None) is None:
+        file_guard.change_store = ChangeReviewStore(home, workspace)
     owns_session = session is None and journal
     if owns_session:
         from .session import Session

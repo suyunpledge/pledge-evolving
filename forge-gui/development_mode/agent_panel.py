@@ -64,6 +64,7 @@ class Conversation(tk.Text):
                        padx=10, pady=8, spacing1=3, spacing3=5)
         self.open_file = open_file
         self.history_source = history_source
+        self.transcript_changed = None
         self._history_path = None
         self._history_times = defaultdict(deque)
         self.tag_configure('timestamp', foreground=C['comment'], spacing1=6)
@@ -216,6 +217,8 @@ class Conversation(tk.Text):
     def delete(self, index1, index2=None):
         if index1 == '1.0' and index2 == 'end':
             self._clear_cards()
+            if self.transcript_changed is not None:
+                self.transcript_changed(None)
         return super().delete(index1, index2)
 
     def _clear_cards(self):
@@ -316,6 +319,8 @@ class Conversation(tk.Text):
                 self.insert('end', '\n')
         self.configure(state='disabled')
         self.see('end')
+        if self.transcript_changed is not None:
+            self.transcript_changed({'role': role, 'body': body, 'stamp': stamp})
 
     def card(self, widget):
         # 计划 / 步骤 / 改动卡也算真实内容：撤下空态覆盖层，否则它会盖在卡片上。
@@ -556,7 +561,7 @@ class ChangesSummary(ttk.Frame):
 
     ROWS = 6
 
-    def __init__(self, parent, *, view, review_all=None):
+    def __init__(self, parent, *, view, review_all=None, revert_all=None):
         super().__init__(parent, padding=8, style='Card.TFrame')
         head = tk.Frame(self, bg=C['surface'])
         head.pack(fill='x')
@@ -569,6 +574,10 @@ class ChangesSummary(ttk.Frame):
             self.review_button.pack(side='right')
         self.rows = tk.Frame(self, bg=C['surface'])
         self.rows.pack(fill='x', pady=(ui_px(self, 6), 0))
+        self.revert_button = None
+        if revert_all is not None:
+            self.revert_button = dev_button(self, '回退本次修改', revert_all, kind='ghost')
+            self.revert_button.pack(anchor='e', pady=(4, 0))
         self._view = view
         self._signature = None
 
@@ -642,12 +651,17 @@ class AgentEvents(ttk.Frame):
 
 class TaskInput(tk.Text):
     """An overlay placeholder, never inserted into the task sent to Runtime."""
-    def __init__(self, parent, **options):
+    def __init__(self, parent, *, embedded=False, **options):
         super().__init__(parent, **options)
         style_editor(self)
         self.placeholder = tk.Label(self, text='输入任务描述 …',
             bg=self.cget('background'), fg=C['placeholder'], font=FONT_UI, justify='left')
-        self.placeholder.bind('<Button-1>', lambda event: self.focus_set())
+        # The containing Qt window is active on click. A hosted Tk widget
+        # must claim native focus explicitly instead of waiting for Tk activation.
+        focus_input = self.focus_force if embedded else self.focus_set
+        self.placeholder.bind('<Button-1>', lambda _event: focus_input())
+        if embedded:
+            self.bind('<Button-1>', lambda _event: focus_input(), add='+')
         self.bind('<<Modified>>', self._placeholder_changed, add='+')
         self._placeholder_changed()
 
@@ -718,7 +732,7 @@ class PlanningCard(ttk.Frame):
 class AgentPanel(ttk.Frame):
     def __init__(self, parent, *, open_file, view_diff, revert, pending, configure_model, refresh,
                  new_conversation=None, history=None, settings=None, view_changes=None, history_source=None,
-                 on_show_approvals=None):
+                 on_show_approvals=None, revert_changes=None):
         super().__init__(parent)
         titlebar = ttk.Frame(self, padding=(ui_px(self, 12), ui_px(self, 6), ui_px(self, 6), 0))
         titlebar.pack(fill='x')
@@ -830,6 +844,7 @@ class AgentPanel(ttk.Frame):
         self.task_context = {}
         self._planning_card = None
         self._view_changes = view_changes
+        self._revert_changes = revert_changes
 
     def mount_runtime_context(self, **kwargs):
         """app 注入 RuntimeContext 组件（权限矩阵 + 模型路由）。"""
@@ -1084,10 +1099,18 @@ class AgentPanel(ttk.Frame):
         if evidence.changes:
             if self._changes_summary is None or not self._changes_summary.winfo_exists():
                 review_all = (lambda e=evidence: self._view_changes(e)) if self._view_changes else None
+                revert_all = (lambda e=evidence: self._revert_changes(e)) if self._revert_changes else None
                 self._changes_summary = ChangesSummary(self.chat, view=self._callbacks['view'],
-                                                       review_all=review_all)
+                                                       review_all=review_all, revert_all=revert_all)
                 self.chat.card(self._changes_summary)
             self._changes_summary.update_changes(list(evidence.changes.values()))
+            button = self._changes_summary.revert_button
+            if button is not None:
+                ids = {i for a in evidence.actions.values() for i in (a.get('meta') or {}).get('change_ids', [])}
+                restored = bool(ids) and ids.issubset(evidence.reverted_change_ids)
+                complete = not any((a.get('meta') or {}).get('change_review_incomplete') for a in evidence.actions.values())
+                enabled = bool(ids) and complete and not restored and evidence.phase not in {'executing', 'running', 'planning', 'not_started'}
+                button.configure(text='已回退' if restored else '回退本次修改', state='normal' if enabled else 'disabled')
         for key, change in evidence.changes.items():
             card = self._cards.get(key)
             if card is None or not card.winfo_exists():

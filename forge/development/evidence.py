@@ -17,6 +17,7 @@ class TaskEvidence:
         self.phase = 'not_started'
         self.task_id = ''
         self.changes = {}
+        self.reverted_change_ids = set()
         self.configurations = {}
         self._seen = set()
 
@@ -35,6 +36,8 @@ class TaskEvidence:
             self.task_id = task_id
         if identifier:
             self._seen.add(identifier)
+        if kind == 'development_changes_reverted':
+            self.reverted_change_ids.update(event.get('change_ids', []))
         agent = event.get('agent', 'forge')
         run = event.get('run_id', '')
         if kind in {'development_task_started', 'development_task_finished', 'development_recovery'}:

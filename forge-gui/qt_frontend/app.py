@@ -60,8 +60,22 @@ def main(argv=None):
     from .permissions import authorize
     def tool_authorizer():
         profile, workspace = workbench.permission, workbench.workspace
-        return lambda name, arguments, cancel: authorize(profile, workspace, name, arguments, workbench.approve, cancel)
+        return lambda name, arguments, cancel: authorize(
+            profile, workspace, name, arguments, workbench.approve, cancel)
     controller.tool_authorizer = tool_authorizer
+
+    def mcp_tools():
+        tools = {} if workbench.permission == 'sandbox' else workbench.mcp.chat_tools(workbench.workspace)
+        tools['forge_public_search'] = workbench.search.work_tool()
+
+        def dispatch(target, arguments, cancel):
+            if isinstance(target, str):
+                return workbench.search.call_work_tool(target, arguments, cancel)
+            return workbench.mcp.call_chat_tool(target, arguments, cancel)
+
+        return tools, dispatch
+
+    controller.mcp_tools = mcp_tools
     controller.navigateRequested.connect(workbench.navigate)
     controller.browseRequested.connect(workbench.openBrowser)
     workbench.gatewayChanged.connect(controller.setGateway)
@@ -103,7 +117,10 @@ def main(argv=None):
                     "workbench": {"page": workbench.page, "ready": workbench.nativeWindow is not None,
                                   "error": workbench.error, "status": workbench.status}}
             args.smoke.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-            ready = args.page == 'chat' or workbench.nativeWindow is not None
+            if args.page == 'connectors':
+                ready = workbench.page == 'connectors' and workbench.mcp.loaded
+            else:
+                ready = args.page == 'chat' or workbench.nativeWindow is not None
             app.exit(0 if not image.isNull() and not warnings and ready and not workbench.error else 2)
         QTimer.singleShot(20000 if not args.demo else 7000 if args.page != 'chat' or args.browser else 1800, capture)
     result = app.exec()

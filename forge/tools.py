@@ -1463,7 +1463,9 @@ def build_builtin_registry(
     @host_tool(
         "web_search",
         "Search the web and return titles, links and snippets. region: auto (Chinese query -> Chinese web, "
-        "otherwise US/international web), cn, global, or both. Then read promising pages with fetch_url.",
+        "otherwise US/international web), cn, global, or both. Set engine to select a specific public search source "
+        "without credentials. For GitHub use github_kind to choose repositories, issues or pull requests. "
+        "Then read promising pages with fetch_url.",
         no_defer=True,
         tags=("web", "search", "network"),
         schema={
@@ -1473,23 +1475,34 @@ def build_builtin_registry(
                                                       "github, reddit, stackoverflow, wikipedia, or any domain."},
             "region": {"type": "string", "enum": ["auto", "cn", "global", "both"],
                        "description": "Which web to search. Default auto."},
+            "engine": {"type": "string", "enum": ["auto", "google", "duckduckgo", "yahoo", "bing", "baidu",
+                                                  "quark", "sogou", "github"],
+                       "description": "Specific public source or auto (default)."},
+            "github_kind": {"type": "string", "enum": ["repositories", "issues", "pullrequests"],
+                            "description": "GitHub search type. Default repositories."},
         },
     )
     def web_search(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         query = str(args.get("query", "")).strip()
         if not query:
             return ToolResult(ok=False, error="web_search needs a non-empty 'query'")
+        from .secrets import redact
+        if redact(query) != query or "SECRET_REF" in query:
+            return ToolResult(ok=False, error="Search queries cannot contain Forge credentials.")
         try:
             num = min(int(args.get("num", 5) or 5), 10)
         except (TypeError, ValueError):
             return ToolResult(ok=False, error="num must be an integer from 1 to 10")
         site = str(args.get("site", "all") or "all")
         region = str(args.get("region", "auto") or "auto")
+        engine = str(args.get("engine") or "auto")
+        github_kind = str(args.get("github_kind") or "repositories")
         base = ctx.extras.get("web_search")
         try:
-            if base is None:
+            if base is None or engine != "auto":
                 from . import web_backends
-                results = web_backends.search(query=query, num=num, site=site, region=region)
+                results = web_backends.search(query=query, num=num, site=site, region=region,
+                                              engine=engine, github_kind=github_kind)
             else:
                 results = base(query=query, num=num, site=site, region=region)
         except Exception as exc:

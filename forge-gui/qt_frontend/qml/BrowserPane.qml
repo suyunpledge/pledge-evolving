@@ -15,7 +15,16 @@ Item {
     }
     Glyph { x: 16; y: 23; name: "globe"; width: 17; height: 17 }
     Text { x: 42; y: 22; text: "Work 浏览器"; color: "#ecf0f4"; font.pixelSize: 14; font.weight: Font.Medium }
-    GlassButton { material: pane.material; x: parent.width - width - 12; y: 14; glyph: "x"; tip: "收起浏览器，保留页面"; onClicked: workbench.toggleBrowser() }
+    Row {
+        anchors.right: parent.right; anchors.rightMargin: 12; y: 14; spacing: 6
+        GlassButton {
+            objectName: "browserExpand"; material: pane.material
+            glyph: workbench.browserExpanded ? "panel-left" : "panels-top-left"
+            tip: workbench.browserExpanded ? "恢复侧栏宽度" : "展开浏览器"
+            onClicked: workbench.toggleBrowserWidth()
+        }
+        GlassButton { objectName: "browserCollapse"; material: pane.material; glyph: "chevron-right"; tip: "收起浏览器"; onClicked: workbench.toggleBrowser() }
+    }
     Row {
         id: actions; x: 14; y: 62; spacing: 5
         GlassButton { material: pane.material; glyph: "chevron-left"; enabled: web.canGoBack; tip: "后退"; onClicked: web.goBack() }
@@ -26,10 +35,10 @@ Item {
         id: address; objectName: "browserAddress"
         x: actions.x + actions.width + 7; y: actions.y; width: Math.max(80, parent.width - x - 14); height: 36
         text: web.url.toString() === "about:blank" ? "" : web.url.toString()
-        placeholderText: "输入网址"; color: "#e5ebf1"; placeholderTextColor: "#8b97a7"
+        placeholderText: "网址或搜索词"; color: "#e5ebf1"; placeholderTextColor: "#8b97a7"
         selectByMouse: true; leftPadding: 10
         background: GlassSurface { material: pane.material; radius: 10 }
-        onAccepted: { workbench.openBrowser(text); web.forceActiveFocus() }
+        onAccepted: { workbench.openBrowserAddress(text); web.forceActiveFocus() }
     }
     ProgressBar { x: 14; y: 103; width: parent.width - 28; height: 2; from: 0; to: 100; value: web.loadProgress; visible: web.loading }
     Text { id: errorLabel; x: 14; y: 112; width: parent.width - 28; visible: pane.loadError !== ""; text: pane.loadError; color: "#e1b586"; wrapMode: Text.Wrap; font.pixelSize: 12 }
@@ -66,7 +75,7 @@ Item {
             anchors.centerIn: parent; width: parent.width - 36; spacing: 14
             visible: web.url.toString() === "about:blank"
             Text { width: parent.width; text: "网页就在工作台旁边"; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.Wrap; color: "#e8edf3"; font.pixelSize: 18 }
-            Text { width: parent.width; text: "输入网址开始浏览。收起面板后，当前页面仍会保留。"; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.Wrap; color: "#8e9cac"; font.pixelSize: 13 }
+            Text { width: parent.width; text: "输入网址或搜索词。收起面板后，当前页面仍会保留。"; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.Wrap; color: "#8e9cac"; font.pixelSize: 13 }
         }
     }
     Text { x: 14; y: parent.height - 24; width: parent.width - 28; text: web.title; elide: Text.ElideRight; color: "#8996a6"; font.pixelSize: 11 }

@@ -78,9 +78,8 @@ class SetupChecklist(tk.Frame):
         grid.pack(fill='x', pady=(ui_px(self, 10), 0))
         for index, vendor in enumerate(mo.VENDORS):
             tile = self._vendor_tile(grid, vendor)
-            tile.grid(row=index // 3, column=index % 3, sticky='nsew',
-                      padx=(0, ui_px(self, 8)), pady=(0, ui_px(self, 8)))
-            grid.columnconfigure(index % 3, weight=1, uniform='vendor')
+            tile.grid(row=index, column=0, sticky='ew', pady=(0, ui_px(self, 5)))
+        grid.columnconfigure(0, weight=1)
         self._key_label = tk.Label(body, text='', font=FONT_CAPTION, bg=C['surface'],
                                    fg=C['subtext'], anchor='w')
         self._key_label.pack(fill='x', pady=(ui_px(self, 2), ui_px(self, 4)))
@@ -182,27 +181,18 @@ class SetupChecklist(tk.Frame):
 
     def _vendor_tile(self, parent, vendor):
         tile = tk.Frame(parent, bg=C['chat'], highlightthickness=1, highlightbackground=C['line'],
-                        cursor='hand2', padx=ui_px(self, 10), pady=ui_px(self, 8))
-        size = ui_px(self, 26)
+                        cursor='hand2', padx=ui_px(self, 8), pady=ui_px(self, 4))
+        size = ui_px(self, 20)
         logo = tk.Canvas(tile, width=size, height=size, bg=C['chat'], highlightthickness=0, bd=0)
         round_rect(logo, 0, 0, size - 1, size - 1, ui_px(self, 7), fill=vendor.color, outline='')
         logo.create_text(size / 2, size / 2, text=vendor.letter, fill='#FFFFFF', font=FONT_UI_BOLD)
         logo.pack(side='left', padx=(0, ui_px(self, 10)))
-        text = tk.Frame(tile, bg=C['chat'])
-        text.pack(side='left', fill='x', expand=True)
-        name = tk.Label(text, text=vendor.name, font=FONT_UI_BOLD, bg=C['chat'], fg=C['text'], anchor='w')
-        name.pack(fill='x')
-        # 「推荐」放在说明行里（绿色），不和名字抢同一行的宽度。
-        line = tk.Frame(text, bg=C['chat'])
-        line.pack(fill='x')
-        parts = [tile, logo, text, name, line]
-        if vendor.badge:
-            badge = tk.Label(line, text=vendor.badge, font=FONT_CAPTION, bg=C['chat'], fg=C['ok'])
-            badge.pack(side='left', padx=(0, ui_px(self, 4)))
-            parts.append(badge)
-        blurb = tk.Label(line, text=vendor.blurb, font=FONT_CAPTION, bg=C['chat'], fg=C['faint'], anchor='w')
-        blurb.pack(side='left')
-        parts.append(blurb)
+        name = tk.Label(tile, text=vendor.name, font=FONT_UI_BOLD, bg=C['chat'], fg=C['text'], anchor='w')
+        name.pack(side='left', fill='x', expand=True)
+        detail = tk.Label(tile, text=vendor.badge or vendor.blurb, font=FONT_CAPTION,
+                          bg=C['chat'], fg=C['ok'] if vendor.badge else C['faint'])
+        detail.pack(side='right', padx=(ui_px(self, 7), 0))
+        parts = [tile, logo, name, detail]
         for widget in parts:
             widget.bind('<Button-1>', lambda _e, v=vendor.id: self._select_vendor(v))
         tile.parts = parts

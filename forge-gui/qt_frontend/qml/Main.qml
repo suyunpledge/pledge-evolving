@@ -18,10 +18,23 @@ ApplicationWindow {
     readonly property bool chatVisible: workbench.page === "chat"
     readonly property real columnWidth: Math.min(800, mainRight - sideWidth - 48)
     readonly property real columnX: sideWidth + (mainRight - sideWidth - columnWidth) / 2
+    readonly property var editor: editorScroll.editor
+    readonly property bool codingVisible: workbench.page === "development"
+    readonly property real codingWidth: Math.min(540, Math.max(306,
+        Math.min((mainRight - sideWidth) * 0.42, mainRight - sideWidth - 280)))
+    onChatVisibleChanged: {
+        if (chatVisible) Qt.callLater(focusWorkComposer)
+    }
+    function focusWorkComposer() {
+        if (chatVisible) {
+            editor.forceActiveFocus()
+            editorScroll.refreshInputMethod()
+        }
+    }
     property bool followTail: true
     property bool exitConfirmed: false
     onClosing: event => {
-        if (!exitConfirmed && (workbench.hasUnsaved || workbench.busy || controller.busy)) {
+        if (!exitConfirmed && (workbench.hasUnsaved || workbench.busy || controller.busy || workbench.mcp.saving)) {
             event.accepted = false
             exitPopup.open()
         }
@@ -38,10 +51,10 @@ ApplicationWindow {
         property real epoch: window.width + window.height + history.contentY + composer.y + composer.height + options.height + modelMenu.height + modelList.contentY + modelButton.width
     }
 
-    // This is the ONLY background capture. Glass and its foreground controls
-    // are siblings, so a surface can never recursively sample itself.
+    readonly property var wallpaper: workbench.wallpaper
+    // Keep the static ambient capture separate from changing page content.
     Item {
-        id: scene
+        id: ambient
         anchors.fill: parent
         ShaderEffect {
             anchors.fill: parent
@@ -50,8 +63,41 @@ ApplicationWindow {
             fragmentShader: "../shaders/ambient.frag.qsb"
         }
         Rectangle { anchors.fill: parent; visible: !gpuEnabled; color: "#151b24" }
-        Rectangle { width: window.sideWidth; height: parent.height; color: "#70101318" }
-        Rectangle { x: window.sideWidth; width: 1; height: parent.height; color: "#13ffffff" }
+        Image {
+            id: stillWallpaper; objectName: "stillWallpaper"
+            readonly property bool loaded: status === Image.Ready
+            anchors.fill: parent
+            source: window.wallpaper.kind === "image" ? window.wallpaper.source : ""
+            asynchronous: true; cache: false; autoTransform: true
+            fillMode: Image.PreserveAspectCrop; clip: true
+            onStatusChanged: Qt.callLater(window.refreshBackdrop)
+        }
+        Rectangle {
+            anchors.fill: parent; color: "#080c12"
+            visible: stillWallpaper.loaded
+            opacity: window.wallpaper.dim
+            onOpacityChanged: Qt.callLater(window.refreshBackdrop)
+        }
+    }
+    Loader {
+        id: motionWallpaper
+        anchors.fill: parent
+        active: window.wallpaper.kind === "gif" || window.wallpaper.kind === "video"
+        sourceComponent: MotionWallpaper {
+            wallpaper: window.wallpaper
+            running: window.active && window.visibility !== Window.Minimized && !controller.reduceMotion
+        }
+    }
+    Rectangle { width: window.sideWidth; height: parent.height; color: "#70101318" }
+    Rectangle { x: window.sideWidth; width: 1; height: parent.height; color: "#13ffffff" }
+    Connections {
+        target: window.wallpaper
+        function onChanged() { Qt.callLater(window.refreshBackdrop) }
+    }
+    Item {
+        id: workBackdrop
+        anchors.fill: parent
+        visible: window.chatVisible
         ListView {
             id: messages
             visible: window.chatVisible
@@ -61,7 +107,8 @@ ApplicationWindow {
             clip: true
             spacing: 26
             topMargin: 18
-            bottomMargin: composer.height + 76
+            // positionViewAtEnd includes the footer, but not the flickable's bottomMargin.
+            footer: Item { width: messages.width; height: composer.height + 76 }
             model: controller.messages
             boundsBehavior: Flickable.StopAtBounds
             ScrollBar.vertical: ScrollBar { width: 5; policy: ScrollBar.AsNeeded }
@@ -73,8 +120,12 @@ ApplicationWindow {
                 required property string roleName
                 required property string textContent
                 required property string state
+                required property string changeKey
+                required property var changeInfo
+                required property int historyIndex
                 width: messages.width
                 height: messageBody.height + (roleName === "user" ? 24 : 0)
+                    + (messageActions.visible ? messageActions.height + 4 : 0)
                 Rectangle {
                     visible: message.roleName === "user"
                     anchors.right: parent.right
@@ -113,10 +164,20 @@ ApplicationWindow {
                         selectedTextColor: "white"
                         onLinkActivated: link => controller.openLink(link)
                         function polishTypography() {
-                            if (message.roleName !== "user") controller.formatMessage(textDocument)
+                            if (typeof controller !== "undefined" && message.roleName !== "user") controller.formatMessage(textDocument)
                         }
                         onTextChanged: Qt.callLater(polishTypography)
                         Component.onCompleted: Qt.callLater(polishTypography)
+                    }
+                    ChangeCard {
+                        objectName: "replyChangeCard"
+                        width: parent.width
+                        visible: message.changeKey !== "" && message.changeInfo.count > 0 && message.state !== "streaming"
+                        height: visible ? implicitHeight : 0
+                        material: window.material
+                        info: message.changeInfo || ({files: [], count: 0, added: 0, removed: 0})
+                        onReviewRequested: controller.changeReview.open(message.changeKey)
+                        onRevertRequested: { controller.changeReview.open(message.changeKey); changeReview.confirmUndo = true }
                     }
                     Row {
                         visible: message.roleName !== "user" && message.state !== "streaming"
@@ -135,6 +196,26 @@ ApplicationWindow {
                         }
                     }
                 }
+                Row {
+                    id: messageActions
+                    visible: message.roleName === "user" && message.historyIndex >= 0
+                    enabled: !controller.busy
+                    anchors.right: parent.right
+                    y: messageBody.height + 28
+                    spacing: 3
+                    GlassButton {
+                        objectName: "editSentMessage"
+                        material: window.material; quiet: true; text: "编辑"; glyph: "square-pen"
+                        implicitHeight: 30
+                        onClicked: reviseMessage.begin(message.historyIndex, message.textContent, false)
+                    }
+                    GlassButton {
+                        objectName: "withdrawSentMessage"
+                        material: window.material; quiet: true; text: "撤回"; glyph: "undo-2"
+                        implicitHeight: 30
+                        onClicked: reviseMessage.begin(message.historyIndex, message.textContent, true)
+                    }
+                }
             }
         }
         Column {
@@ -150,9 +231,9 @@ ApplicationWindow {
     }
     ShaderEffectSource {
         id: sceneTexture
-        sourceItem: scene
+        sourceItem: ambient
         textureSize: Qt.size(Math.ceil(window.width / 2), Math.ceil(window.height / 2))
-        live: true; hideSource: false; visible: false
+        live: false; hideSource: false; visible: false
         smooth: true
     }
     ShaderEffect {
@@ -163,7 +244,7 @@ ApplicationWindow {
         property vector2d direction: Qt.vector2d(3 / window.width, 0)
         fragmentShader: "../shaders/blur.frag.qsb"
     }
-    ShaderEffectSource { id: horizontalTexture; sourceItem: horizontalBlur; live: true; visible: false; hideSource: true }
+    ShaderEffectSource { id: horizontalTexture; sourceItem: horizontalBlur; live: false; visible: false; hideSource: true }
     ShaderEffect {
         id: verticalBlur
         width: horizontalBlur.width; height: horizontalBlur.height
@@ -172,7 +253,22 @@ ApplicationWindow {
         property vector2d direction: Qt.vector2d(0, 3 / window.height)
         fragmentShader: "../shaders/blur.frag.qsb"
     }
-    ShaderEffectSource { id: blurTexture; sourceItem: verticalBlur; live: true; visible: false; hideSource: true }
+    ShaderEffectSource { id: blurTexture; sourceItem: verticalBlur; live: false; visible: false; hideSource: true }
+    function refreshBackdrop() {
+        if (!gpuEnabled || controller.solid) return
+        sceneTexture.scheduleUpdate()
+        horizontalTexture.scheduleUpdate()
+        blurTexture.scheduleUpdate()
+    }
+    onWidthChanged: Qt.callLater(refreshBackdrop)
+    onHeightChanged: Qt.callLater(refreshBackdrop)
+    Connections { target: controller; function onChanged() {
+        if (window.material.solid !== window.lastSolid) {
+            window.lastSolid = window.material.solid
+            Qt.callLater(window.refreshBackdrop)
+        }
+    } }
+    property bool lastSolid: false
 
     Row {
         x: 22; y: 23; spacing: 10
@@ -245,8 +341,15 @@ ApplicationWindow {
     }
     Row {
         x: window.mainRight - width - 20; y: 20; spacing: 8
+        GlassButton { visible: workbench.page === "config"; material: window.material; glyph: "box"; text: "模型厂商"; onClicked: workbench.showProviderCatalog("") }
+        GlassButton { visible: workbench.page === "connector_accounts"; material: window.material; glyph: "chevron-left"; text: "MCP 接口"; onClicked: workbench.navigate("connectors") }
         GlassButton { visible: window.chatVisible; material: window.material; glyph: "pencil"; quiet: true; tip: "重命名对话"; onClicked: { renameField.text = controller.title; renamePopup.open() } }
-        GlassButton { material: window.material; glyph: "panel-right"; text: "工作区"; quiet: true; onClicked: controller.openWorkbench("files") }
+        GlassButton {
+            objectName: "filesToggle"; material: window.material
+            glyph: workbench.page === "files" ? "chevron-left" : "folder-open"
+            text: workbench.page === "files" ? "收起文件" : "展开文件"
+            quiet: workbench.page !== "files"; onClicked: workbench.toggleFiles()
+        }
     }
     GlassButton {
         material: window.material; text: "回到最新"; glyph: "arrow-down"
@@ -282,39 +385,15 @@ ApplicationWindow {
                     GlassButton { required property string modelData; required property int index; material: window.material; text: modelData; glyph: "x"; height: 29; onClicked: controller.removeAttachment(index) }
                 }
             }
-            Flickable {
+            ComposerText {
                 id: editorScroll
                 width: parent.width
                 height: Math.min(Math.max(60, editor.contentHeight + 10), Math.max(60, window.height * 0.19))
-                contentWidth: width; contentHeight: editor.height
-                clip: true; boundsBehavior: Flickable.StopAtBounds
-                TextArea {
-                    id: editor
-                    objectName: "messageEditor"
-                    width: editorScroll.width; height: Math.max(editorScroll.height, implicitHeight)
-                    color: "#edf0f4"; placeholderTextColor: "#97a2b0"
-                    placeholderText: "向 Forge 描述你的想法…"
-                    font.pixelSize: 15
-                    wrapMode: TextEdit.Wrap; selectByMouse: true
-                    leftPadding: 0; rightPadding: 0; topPadding: 4; bottomPadding: 4
-                    background: null
-                    selectionColor: "#526477"; selectedTextColor: "white"
-                    text: controller.draft
-                    onTextChanged: if (controller.draft !== text) controller.draft = text
-                    onCursorRectangleChanged: {
-                        if (cursorRectangle.y < editorScroll.contentY) editorScroll.contentY = cursorRectangle.y
-                        else if (cursorRectangle.y + cursorRectangle.height > editorScroll.contentY + editorScroll.height)
-                            editorScroll.contentY = cursorRectangle.y + cursorRectangle.height - editorScroll.height
-                    }
-                    Keys.onReturnPressed: event => {
-                        if (inputMethodComposing || (event.modifiers & Qt.ShiftModifier)) event.accepted = false
-                        else { controller.send(); event.accepted = true }
-                    }
-                    Keys.onEnterPressed: event => {
-                        if (inputMethodComposing || (event.modifiers & Qt.ShiftModifier)) event.accepted = false
-                        else { controller.send(); event.accepted = true }
-                    }
-                }
+                editorName: "messageEditor"
+                placeholder: "向 Forge 描述你的想法…"
+                text: controller.draft
+                onTextChanged: if (controller.draft !== text) controller.draft = text
+                onSubmit: controller.send()
             }
             RowLayout {
                 width: parent.width; spacing: 8
@@ -328,6 +407,12 @@ ApplicationWindow {
                     id: optionsButton
                     material: window.material; glyph: "sliders-horizontal"; text: window.columnWidth > 600 ? "选项" : ""
                     selected: options.opened; tip: "推理强度与玻璃外观"; onClicked: options.open()
+                }
+                GlassButton {
+                    objectName: "publicSearchButton"
+                    material: window.material; glyph: "search"
+                    text: window.columnWidth > 620 ? "搜索" : ""
+                    tip: "联网搜索"; onClicked: searchPanel.open()
                 }
                 Item { Layout.fillWidth: true }
                 GlassButton {
@@ -361,7 +446,7 @@ ApplicationWindow {
         height: Math.min(400, controller.models.length * 41 + 60)
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         background: GlassSurface { material: window.material; radius: 20; emphasis: 0.3 }
-        onClosed: editor.forceActiveFocus()
+        onClosed: if (window.chatVisible) window.focusWorkComposer()
         contentItem: Column {
             spacing: 5
             Text { text: "模型"; color: "#9aa7b5"; font.pixelSize: 12; padding: 6 }
@@ -384,7 +469,7 @@ ApplicationWindow {
         width: 348; padding: 20
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         background: GlassSurface { objectName: "optionsGlass"; material: window.material; radius: 22; emphasis: 0.4 }
-        onClosed: editor.forceActiveFocus()
+        onClosed: if (window.chatVisible) window.focusWorkComposer()
         contentItem: Column {
             spacing: 16
             Text { text: "对话选项"; color: "#eef1f4"; font.pixelSize: 16; font.weight: Font.DemiBold }
@@ -417,7 +502,7 @@ ApplicationWindow {
         Overlay.modal: Rectangle { color: "#6605080d" }
         background: GlassSurface { material: window.material; radius: 24; emphasis: 0.6 }
         onOpened: endpoint.text = controller.gateway
-        onClosed: editor.forceActiveFocus()
+        onClosed: if (window.chatVisible) window.focusWorkComposer()
         contentItem: Column {
             spacing: 16
             Text { text: "连接与外观"; color: "#f0f2f4"; font.pixelSize: 20; font.weight: Font.DemiBold }
@@ -425,16 +510,123 @@ ApplicationWindow {
             TextField { id: endpoint; width: parent.width; height: 42; color: "#e2e7ec"; selectByMouse: true; leftPadding: 12; background: GlassSurface { material: window.material; radius: 12; emphasis: endpoint.activeFocus ? 0.8 : 0 } }
             Text { width: parent.width; text: "沿用现有 Forge 网关。Coding、工具和连接器均在当前工作台内打开。"; color: "#939eac"; wrapMode: Text.Wrap; font.pixelSize: 12 }
             GlassButton { material: window.material; width: parent.width; text: "应用并连接"; glyph: "plug"; enabled: !controller.busy; onClicked: {controller.setGateway(endpoint.text); settings.close()} }
+            GlassButton { material: window.material; width: parent.width; text: "壁纸"; glyph: "image"; onClicked: { settings.close(); wallpaperSettings.open() } }
             GlassButton { material: window.material; width: parent.width; text: "调整玻璃外观"; glyph: "sliders-horizontal"; onClicked: {settings.close(); options.open()} }
             GlassButton { material: window.material; width: parent.width; text: "打开完整工作台"; quiet: true; onClicked: controller.openWorkbench("config") }
             Text { width: parent.width; text: gpuEnabled ? "GPU 渲染 · 原生文本输入" : "兼容渲染 · 玻璃光学效果不可用"; color: "#798797"; font.pixelSize: 11 }
+        }
+    }
+    PublicSearch {
+        id: searchPanel
+        parent: Overlay.overlay; material: window.material
+        onRestoreComposer: window.focusWorkComposer()
+        width: Math.min(710, window.width - 36); height: Math.min(610, window.height - 36)
+    }
+    WallpaperSettings {
+        id: wallpaperSettings
+        parent: Overlay.overlay; anchors.centerIn: parent
+        width: Math.min(460, window.width - 48)
+        material: window.material; wallpaper: window.wallpaper
+        reduced: controller.reduceMotion
+        playbackError: motionWallpaper.item?.failure || (stillWallpaper.status === Image.Error ? "无法显示已导入的图片。" : "")
+        onClosed: if (window.chatVisible) window.focusWorkComposer()
+    }
+    ChangeReview {
+        id: changeReview
+        parent: Overlay.overlay; anchors.centerIn: parent
+        width: Math.min(1040, window.width - 64); height: Math.min(760, window.height - 64)
+        material: window.material; service: controller.changeReview
+        onClosed: editor.forceActiveFocus()
+    }
+    ProviderCatalog {
+        id: providerCatalog
+        parent: Overlay.overlay; anchors.centerIn: parent
+        width: Math.min(860, window.width - 48); height: Math.min(660, window.height - 48)
+        material: window.material
+        onClosed: if (window.chatVisible) window.focusWorkComposer()
+    }
+    Popup {
+        id: reviseMessage; objectName: "reviseMessagePopup"
+        parent: Overlay.overlay; anchors.centerIn: parent
+        width: Math.min(600, window.width - 48); padding: 22; modal: true; focus: true
+        property string sessionId: ""
+        property int historyIndex: -1
+        property bool withdrawing: false
+        property string failure: ""
+        function begin(index, text, withdraw) {
+            sessionId = controller.sessionId
+            historyIndex = index
+            withdrawing = withdraw
+            revisionText.text = withdraw ? "" : text
+            failure = ""
+            open()
+        }
+        onOpened: {
+            if (withdrawing) cancelRevision.forceActiveFocus()
+            else revisionText.forceActiveFocus()
+        }
+        onClosed: editor.forceActiveFocus()
+        background: GlassSurface { material: window.material; radius: 20; tint: "#ed18212b" }
+        contentItem: ColumnLayout {
+            spacing: 14
+            Text {
+                text: reviseMessage.withdrawing ? "撤回消息" : "编辑消息"
+                color: "#edf0f3"; font.pixelSize: 19; font.weight: Font.DemiBold
+            }
+            Text {
+                Layout.fillWidth: true; wrapMode: Text.Wrap
+                text: reviseMessage.withdrawing
+                    ? "这条消息及之后的对话将从会话中移除。"
+                    : "重新发送会替换这条消息，并从这里重新生成回复。之后的对话将被移除。"
+                color: "#a7b3c0"; font.pixelSize: 13
+            }
+            ScrollView {
+                visible: !reviseMessage.withdrawing
+                Layout.fillWidth: true; Layout.preferredHeight: 160
+                clip: true
+                background: Rectangle { color: "#111820"; radius: 9; border.color: "#415064" }
+                TextArea {
+                    id: revisionText; objectName: "revisionText"
+                    Accessible.name: "已发送消息的内容"
+                    color: "#e4eaf0"; font.pixelSize: 15; padding: 12
+                    selectByMouse: true; wrapMode: TextEdit.Wrap
+                    background: null
+                }
+            }
+            Text {
+                Layout.fillWidth: true; wrapMode: Text.Wrap
+                text: "已执行的文件修改可通过修改卡片单独回退。"
+                color: "#a7b3c0"; font.pixelSize: 12
+            }
+            Text {
+                Layout.fillWidth: true; wrapMode: Text.Wrap; visible: !!text
+                text: reviseMessage.failure; color: "#e0af9b"; font.pixelSize: 12
+            }
+            RowLayout {
+                Layout.alignment: Qt.AlignRight
+                GlassButton { id: cancelRevision; material: window.material; text: "取消"; quiet: true; onClicked: reviseMessage.close() }
+                GlassButton {
+                    objectName: "applyMessageRevision"
+                    material: window.material; selected: true
+                    text: reviseMessage.withdrawing ? "确认撤回" : "重新发送"
+                    enabled: !controller.busy && (reviseMessage.withdrawing
+                        || (revisionText.text.trim().length > 0 && !revisionText.inputMethodComposing))
+                    onClicked: {
+                        const success = reviseMessage.withdrawing
+                            ? controller.withdrawMessage(reviseMessage.sessionId, reviseMessage.historyIndex)
+                            : controller.editMessage(reviseMessage.sessionId, reviseMessage.historyIndex, revisionText.text)
+                        if (success) reviseMessage.close()
+                        else reviseMessage.failure = controller.error || "该消息目前无法修改。"
+                    }
+                }
+            }
         }
     }
     Popup {
         id: renamePopup
         parent: Overlay.overlay; anchors.centerIn: parent; width: 380; padding: 22; modal: true; focus: true
         background: GlassSurface { material: window.material; radius: 20 }
-        onClosed: editor.forceActiveFocus()
+        onClosed: if (window.chatVisible) window.focusWorkComposer()
         contentItem: Column { spacing: 16
             Text { text: "重命名对话"; color: "#edf0f3"; font.pixelSize: 17 }
             TextField { id: renameField; width: parent.width; color: "#edf0f3"; background: GlassSurface { material: window.material; radius: 10 } onAccepted: {controller.renameSession(text); renamePopup.close()} }
@@ -452,7 +644,12 @@ ApplicationWindow {
         Row {
             spacing: 8
             GlassButton { material: window.material; width: (parent.parent.width - 8) / 2; text: "功能"; glyph: "grid-2x2"; selected: workbench.navigationOpen; onClicked: workbench.toggleNavigation() }
-            GlassButton { material: window.material; width: (parent.parent.width - 8) / 2; text: "浏览器"; glyph: "globe"; selected: workbench.browserVisible; onClicked: workbench.toggleBrowser() }
+            GlassButton {
+                material: window.material; width: (parent.parent.width - 8) / 2
+                text: workbench.browserVisible ? "收起浏览器" : "浏览器"
+                glyph: workbench.browserVisible ? "chevron-right" : "globe"
+                selected: workbench.browserVisible; onClicked: workbench.toggleBrowser()
+            }
         }
     }
     Flickable {
@@ -466,6 +663,7 @@ ApplicationWindow {
                 model: [
                     {key:"task", label:"任务", icon:"list-checks"},
                     {key:"files", label:"文件与项目", icon:"folder"},
+                    {key:"search", label:"联网搜索", icon:"search"},
                     {key:"tools", label:"工具与插件", icon:"blocks"},
                     {key:"config", label:"模型与配置", icon:"settings-2"},
                     {key:"agents", label:"Agents", icon:"users"},
@@ -476,42 +674,79 @@ ApplicationWindow {
                     {key:"computer", label:"电脑操作", icon:"monitor"},
                     {key:"preview", label:"代码预览", icon:"file-code"}
                 ]
-                GlassButton { required property var modelData; material: window.material; width: navigation.width; text: modelData.label; glyph: modelData.icon; quiet: true; selected: workbench.page === modelData.key; onClicked: workbench.navigate(modelData.key) }
+                GlassButton {
+                    required property var modelData
+                    material: window.material; width: navigation.width
+                    text: modelData.label; glyph: modelData.icon; quiet: true
+                    selected: workbench.page === modelData.key
+                    onClicked: {
+                        if (modelData.key === "search") searchPanel.open()
+                        else if (modelData.key === "files") workbench.toggleFiles()
+                        else workbench.navigate(modelData.key)
+                    }
+                }
             }
         }
     }
     Item {
         id: nativePage; objectName: "nativePage"
-        x: window.sideWidth + 12; y: 76; width: window.mainRight - x - 12; height: window.height - y - 12
-        visible: !window.chatVisible
+        x: window.sideWidth + 12; y: 76; width: window.mainRight - x - 12 - (window.codingVisible ? window.codingWidth + 12 : 0); height: window.height - y - 12
+        visible: !window.chatVisible && workbench.page !== "connectors"
         Rectangle { anchors.fill: parent; color: "#11151c"; radius: 16 }
         Rectangle {
             id: hostError; width: parent.width; height: hostErrorText.height + 24
-            visible: workbench.nativeWindow !== null && workbench.error !== ""
+            visible: workbench.nativePageReady && workbench.error !== ""
             color: "#302d29"; radius: 10
             Text { id: hostErrorText; x: 12; y: 12; width: parent.width - 70; text: workbench.error; color: "#e4c49b"; wrapMode: Text.Wrap; font.pixelSize: 12 }
             GlassButton { material: window.material; glyph: "x"; x: parent.width - width - 8; y: 8; tip: "关闭提示"; onClicked: workbench.clearError() }
         }
         Column {
-            visible: !workbench.nativeWindow; anchors.centerIn: parent; width: parent.width - 64; spacing: 16
+            visible: !workbench.nativePageReady; anchors.centerIn: parent; width: parent.width - 64; spacing: 16
             Text { width: parent.width; text: workbench.error || "正在载入 " + workbench.pageTitle + "…"; color: "#b9c4d0"; wrapMode: Text.Wrap; horizontalAlignment: Text.AlignHCenter }
-            GlassButton { material: window.material; text: "重新载入"; visible: workbench.error !== ""; anchors.horizontalCenter: parent.horizontalCenter; onClicked: workbench.start_host() }
+            GlassButton { material: window.material; text: "重新载入"; visible: workbench.error !== ""; anchors.horizontalCenter: parent.horizontalCenter; onClicked: workbench.navigate(workbench.page) }
         }
         WindowContainer {
             id: nativeContainer; objectName: "nativeContainer"
             anchors.fill: parent
             anchors.topMargin: hostError.visible ? hostError.height + 8 : 0
-            visible: !window.chatVisible && workbench.nativeWindow !== null && workbench.approvals.length === 0 && !settings.opened && !renamePopup.opened && !exitPopup.opened
+            visible: parent.visible && workbench.nativePageReady && workbench.nativeWindow !== null && workbench.approvals.length === 0 && !(workbench.browserVisible && workbench.browserExpanded) && !settings.opened && !wallpaperSettings.opened && !searchPanel.opened && !renamePopup.opened && !exitPopup.opened && !changeReview.opened && !providerCatalog.opened
             window: workbench.nativeWindow
             onVisibleChanged: if (workbench.nativeWindow) workbench.nativeWindow.visible = visible
         }
     }
+    Loader {
+        id: codingPanel
+        property bool visited: false
+        onVisibleChanged: if (visible) visited = true
+        active: visited; asynchronous: true
+        visible: window.codingVisible && workbench.nativePageReady
+        x: window.mainRight - width - 12; y: nativePage.y
+        width: window.codingWidth; height: nativePage.height
+        sourceComponent: CodingPanel {
+            material: window.material
+            onPermissionRequested: permissionPopup.open()
+            Component.onCompleted: if (visible) Qt.callLater(focusComposer)
+        }
+    }
+    Loader {
+        id: connectorPage
+        property bool visited: false
+        onVisibleChanged: if (visible) visited = true
+        active: visited; asynchronous: true
+        visible: workbench.page === "connectors"
+        x: window.sideWidth + 24; y: 78
+        width: window.mainRight - x - 24; height: window.height - y - 18
+        sourceComponent: ConnectorsPage { material: window.material }
+    }
     Item {
         id: browserPanel; objectName: "browserPanel"
-        x: window.mainRight; width: window.browserPanelWidth; height: parent.height
+        x: workbench.browserExpanded ? window.sideWidth : window.mainRight
+        width: workbench.browserExpanded ? window.width - window.sideWidth : window.browserPanelWidth
+        height: parent.height; z: workbench.browserExpanded ? 5 : 0
         visible: workbench.browserVisible
-        Loader { anchors.fill: parent; active: workbench.browserLoaded; sourceComponent: Component { BrowserPane { material: window.material } } }
+        Loader { anchors.fill: parent; active: workbench.browserLoaded; asynchronous: true; sourceComponent: Component { BrowserPane { material: window.material } } }
         MouseArea {
+            enabled: !workbench.browserExpanded
             x: -4; width: 8; height: parent.height; cursorShape: Qt.SplitHCursor
             property real startX
             property real startWidth
@@ -573,14 +808,14 @@ ApplicationWindow {
             }
         }
     }
-    Shortcut { sequence: "Ctrl+N"; enabled: window.chatVisible; onActivated: controller.newSession() }
-    Shortcut { sequence: "Ctrl+K"; enabled: window.chatVisible; onActivated: {search.forceActiveFocus(); search.selectAll()} }
-    Shortcut { sequence: "Escape"; enabled: controller.busy && !options.opened && !settings.opened && !modelMenu.opened; onActivated: controller.stop() }
+    Shortcut { sequence: "Ctrl+N"; enabled: window.chatVisible && !reviseMessage.opened; onActivated: controller.newSession() }
+    Shortcut { sequence: "Ctrl+K"; enabled: window.chatVisible && !reviseMessage.opened; onActivated: {search.forceActiveFocus(); search.selectAll()} }
+    Shortcut { sequence: "Escape"; enabled: controller.busy && !options.opened && !settings.opened && !wallpaperSettings.opened && !searchPanel.opened && !modelMenu.opened; onActivated: controller.stop() }
     Connections {
         target: controller
         function onDraftChanged() { if (editor.text !== controller.draft) editor.text = controller.draft }
-        function onFocusComposer() { editor.forceActiveFocus(); window.followTail = true; messages.positionViewAtEnd() }
+        function onFocusComposer() { window.focusWorkComposer(); window.followTail = true; messages.positionViewAtEnd() }
         function onStreamAdvanced() { if (window.followTail) Qt.callLater(messages.positionViewAtEnd) }
     }
-    Component.onCompleted: { editor.forceActiveFocus(); Qt.callLater(controller.refreshConnection) }
+    Component.onCompleted: { focusWorkComposer(); Qt.callLater(refreshBackdrop); Qt.callLater(controller.refreshConnection) }
 }

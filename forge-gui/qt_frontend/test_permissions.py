@@ -17,10 +17,15 @@ class DesktopBoundaryTests(unittest.TestCase):
                 approved.append(name)
                 return True
             authorize('sandbox', root, 'write_file', {'path': 'in.txt'}, approve)
+            authorize('sandbox', root, 'forge_write_file', {'path': 'in.txt'}, approve)
+            authorize('sandbox', root, 'forge_read_file', {'path': 'in.txt'}, approve)
             authorize('sandbox', root, 'tool_search', {}, approve)
             for name, args in [('write_file', {'path': '../out.txt'}), ('read_file', {'path': '../out.txt'}),
                                ('apply_patch', {'patches': [{'path': '../out.txt'}]}),
-                               ('shell_exec', {'command': 'echo hi'}), ('connector_post', {})]:
+                               ('shell_exec', {'command': 'echo hi'}), ('connector_post', {}),
+                               ('forge_shell_exec', {'command': 'echo hi'}),
+                               ('forge_write_file', {'path': '../out.txt'}),
+                               ('forge_forge_write_file', {'path': 'in.txt'})]:
                 with self.assertRaises(PermissionError, msg=name):
                     authorize('sandbox', root, name, args, approve)
             self.assertFalse(approved)
@@ -31,6 +36,15 @@ class DesktopBoundaryTests(unittest.TestCase):
             self.assertEqual(len(approved), 1)
             with self.assertRaises(PermissionError):
                 authorize('manual', root, 'write_file', {'path': 'a'}, lambda *_: False)
+
+    def test_public_search_follows_desktop_permissions(self):
+        calls = []
+        approved = lambda *args: calls.append(args) or True
+        args = {'query': 'Forge public search', 'engine': 'github'}
+        authorize('sandbox', Path.cwd(), 'forge_public_search', args, approved)
+        self.assertFalse(calls)
+        authorize('manual', Path.cwd(), 'forge_public_search', args, approved)
+        self.assertEqual(calls[0][0], 'public_search')
 
     def test_cancelling_a_batch_completes_protocol_without_more_dispatch(self):
         cancel, checkpoints, executions = threading.Event(), [], []

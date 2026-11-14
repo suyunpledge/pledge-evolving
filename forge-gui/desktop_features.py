@@ -198,7 +198,6 @@ class DesktopFeatures:
         if tab == 0:
             self._mount_jobs(page, 'workspace')
         else:
-            self.window = page
             canvas = tk.Canvas(page, bg=C['surface'], highlightthickness=0)
             bar = ttk.Scrollbar(page, command=canvas.yview)
             bar.pack(side='right', fill='y')
@@ -209,7 +208,11 @@ class DesktopFeatures:
             content.bind('<Configure>', lambda _: canvas.configure(scrollregion=canvas.bbox('all')))
             bind_canvas_column(canvas, item, max_width=FORM_WIDTH, gutter=0)
             bind_scoped_wheel(canvas, content)
-            (self._connectors_ui if tab == 1 else self._preview_ui)(content)
+            if tab == 1:
+                self._connector_parent = page
+                self._connectors_ui(content)
+            else:
+                self._preview_ui(content)
         return page
 
     def _close_window(self):
@@ -335,7 +338,8 @@ class DesktopFeatures:
 
     def _show_account(self,data):
         name,conf,connected=data
-        if self.window is None or not self.window.winfo_exists() or self.account.get()!=name: return
+        parent = getattr(self, '_connector_parent', None) or self.window
+        if parent is None or not parent.winfo_exists() or self.account.get()!=name: return
         for key,var in self.grants.items(): var.set(conf.get(key) is True)
         self.client_id.set(conf.get('client_id','')); self.tenant.set(conf.get('tenant','common'))
         self.scope_list.selection_clear(0,'end')
@@ -354,6 +358,8 @@ class DesktopFeatures:
             previous=self.store.account(name)
             changed=name=='microsoft' and any(previous.get(k)!=conf.get(k) for k in ('tenant','client_id','scopes'))
             ready_conf=dict(conf,authenticated=(True if name=='github' and token else False if changed else previous.get('authenticated',False)))
+            if name == 'microsoft' and 'paired_services' in previous:
+                ready_conf['paired_services'] = previous['paired_services']
             self.store.set_account(name,dict(ready_conf,updating=True))
             expected=self.store.account(name)
             def save_token():
@@ -365,12 +371,20 @@ class DesktopFeatures:
 
     def _login(self):
         conf=self._account_config()
+        if self.account.get() != 'microsoft':
+            return
         self.auth_cancel.set(); cancel=self.auth_cancel=threading.Event()
         notify=lambda code,url:self.app._post_ui(self._device_notice,code,url)
-        self.work(lambda:self.connectors.device_login(conf,notify,cancel),lambda _:self._load_account())
+        def login():
+            previous = self.store.account('microsoft')
+            if 'paired_services' in previous:
+                conf['paired_services'] = previous['paired_services']
+            self.connectors.device_login(conf, notify, cancel, expected=previous)
+        self.work(login,lambda _:self._load_account())
 
     def _device_notice(self,code,url):
-        if self.window is not None and self.window.winfo_exists():
+        parent = getattr(self, '_connector_parent', None) or self.window
+        if parent is not None and parent.winfo_exists():
             self.connection_status.configure(text=url+'  '+code)
 
     def _disconnect(self):
@@ -405,7 +419,8 @@ class DesktopFeatures:
         name=self.operation_names[self.operation.get()]; args={k:get() for k,get in self.fields.items() if get()}
         self.current_workspace=self.workspace()
         self.work(lambda:self._invoke_registry(name,args,agent=False),
-                  lambda result:dialogs.showinfo(tr('连接器结果'),json.dumps(result,ensure_ascii=False,indent=2)[:8000],parent=self.window))
+                  lambda result:dialogs.showinfo(tr('连接器结果'),json.dumps(result,ensure_ascii=False,indent=2)[:8000],
+                                                 parent=getattr(self, '_connector_parent', None) or self.window))
 
     def policy(self):
         from forge.config import Config

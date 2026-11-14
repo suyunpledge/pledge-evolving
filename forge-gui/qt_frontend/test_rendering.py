@@ -157,6 +157,90 @@ class RenderingTests(unittest.TestCase):
             probe_engine.deleteLater()
             APP.processEvents()
 
+    def test_change_card_diff_popup_and_confirmed_revert(self):
+        from forge.change_review import ChangeReviewStore
+        project = Path(self.temp.name) / 'project'
+        project.mkdir()
+        store = ChangeReviewStore(Path(self.temp.name) / 'host', project)
+        file = project / 'composer.qml'
+        original = b'Item {\n    width: 640\n    height: 100\n}\n'
+        file.write_bytes(original)
+        before = store.capture(file)
+        file.write_bytes(b'Item {\n    width: Math.min(800, parent.width - 48)\n    height: content.height + 32\n    clip: true\n}\n')
+        ids = [store.record(file, before)]
+        added = project / 'typography.py'
+        before = store.capture(added)
+        added.write_bytes(b'BODY_SIZE = 15\nLINE_HEIGHT = 1.4\n')
+        ids.append(store.record(added, before))
+        class LocalClient:
+            def review_changes(self, identifiers, revert=False):
+                return store.revert(identifiers, lambda *_: None) if revert else store.review(identifiers)
+        self.controller.factory = lambda *_: LocalClient()
+        self.controller.tool_authorizer = lambda: lambda *_: None
+        service = self.controller.changeReview
+        service.entries['fixture'] = {'ids': ids, 'endpoint': 'isolated-fixture', 'anchor': 0, **store.review(ids)}
+        self.controller.messages.reset([{'roleName': 'assistant', 'textContent': '已调整输入区域的宽度与留白，并统一正文排版。\n\n' * 24,
+            'state': 'complete', 'changeKey': 'fixture', 'changeInfo': service.card('fixture')}])
+        QTest.qWait(200)
+        def find_card(item):
+            if item.objectName() == 'replyChangeCard':
+                return item
+            for child in item.childItems():
+                found = find_card(child)
+                if found is not None:
+                    return found
+        card = find_card(self.window.contentItem())
+        self.assertIsNotNone(card)
+        composer = self.window.findChild(QObject, 'composer')
+        self.assertLessEqual(card.mapToScene(QPointF(0, card.height())).y(), composer.y())
+        capture = os.environ.get('FORGE_TEST_CAPTURE_DIR')
+        if capture:
+            target = Path(capture); target.mkdir(parents=True, exist_ok=True)
+            self.window.grabWindow().save(str(target / 'reply-change-card.png'))
+        service.open('fixture')
+        for _ in range(200):
+            QTest.qWait(10)
+            if not service.busy:
+                break
+        popup = self.window.findChild(QObject, 'changeReviewPopup')
+        self.assertTrue(popup.property('opened'))
+        self.assertTrue(service.data['canRevert'])
+        selector = self.window.findChild(QObject, 'changeFileSelector')
+        point = selector.mapToScene(QPointF(selector.width() / 2, selector.height() / 2)).toPoint()
+        QTest.mouseClick(self.window, Qt.MouseButton.LeftButton, pos=point)
+        QTest.keyClick(self.window, Qt.Key.Key_Down)
+        QTest.keyClick(self.window, Qt.Key.Key_Return)
+        QTest.qWait(50)
+        self.assertEqual(popup.property('fileIndex'), 1)
+        self.assertEqual(selector.property('currentText'), 'typography.py')
+        button = self.window.findChild(QObject, 'confirmRevertButton')
+        self.assertTrue(button.property('enabled'))
+        if capture:
+            self.window.grabWindow().save(str(target / 'reply-change-diff.png'))
+        self.window.resize(820, 620)
+        QTest.qWait(150)
+        self.assertLessEqual(popup.property('width'), 820 - 60)
+        self.assertLessEqual(popup.property('height'), 620 - 60)
+        self.assertGreater(self.window.findChild(QObject, 'changeDiffLines').height(), 100)
+        if capture:
+            self.window.grabWindow().save(str(target / 'reply-change-compact.png'))
+        QMetaObject.invokeMethod(button, 'clicked')
+        self.assertTrue(popup.property('confirmUndo'))
+        self.assertNotEqual(file.read_bytes(), original)
+        QMetaObject.invokeMethod(button, 'clicked')
+        for _ in range(200):
+            QTest.qWait(10)
+            if not service.busy:
+                break
+        self.assertTrue(service.data['restored'], service.error)
+        self.assertEqual(file.read_bytes(), original)
+        self.assertFalse(added.exists())
+        # Refreshing the model after revert must not leave the selector and diff on different files.
+        self.assertEqual(popup.property('fileIndex'), selector.property('currentIndex'))
+        current_file = popup.property('currentFile')
+        self.assertEqual(current_file['name'], selector.property('currentText'))
+        QMetaObject.invokeMethod(popup, 'close')
+
 
 if __name__ == "__main__":
     unittest.main()

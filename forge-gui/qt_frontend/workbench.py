@@ -1,6 +1,7 @@
 """One Qt shell, one private child host, and a retained browser side panel."""
 import json
 from pathlib import Path
+import re
 import sys
 import threading
 import uuid
@@ -10,11 +11,17 @@ from PySide6.QtCore import QObject, Property, QProcess, QProcessEnvironment, QTi
 from PySide6.QtGui import QWindow
 from forge.desktop_permissions import LABELS, PROFILES
 from forge.secrets import redact
+from .controller import RowsModel
+import provider_catalog
+from .mcp_catalog import McpCatalog
+from .search_service import SearchService
+from .wallpaper import Wallpaper
 
 PAGES = {'chat': 'Work 对话', 'development': 'Coding', 'task': '任务', 'files': '文件与项目',
          'tools': '工具与插件', 'config': '模型与配置', 'agents': 'Agents', 'knowledge': '知识库',
          'evolution': '演化', 'schedules': '定时任务', 'connectors': '连接器',
          'preview': '代码预览', 'computer': '电脑操作', 'work': 'Work 完整功能'}
+PAGES['connector_accounts'] = '连接器账户'
 
 
 class WorkbenchController(QObject):
@@ -22,21 +29,49 @@ class WorkbenchController(QObject):
     browserChanged = Signal()
     permissionRequested = Signal()
     gatewayChanged = Signal(str)
+    codingChanged = Signal()
+    codingDraftChanged = Signal()
+    codingFocusRequested = Signal()
+    pageReadyChanged = Signal()
+    catalogRequested = Signal(str)
     _approvalRequested = Signal(str, str, str)
     _approvalFinished = Signal(str)
 
     def __init__(self, home, *, demo=False, parent=None):
         super().__init__(parent)
         self.home, self.demo = Path(home), demo
+        self._mcp = McpCatalog(self.home, self, demo=demo)
+        self._search = SearchService(self.home, self, demo=demo)
+        self._wallpaper = Wallpaper(self.home, self)
         self._page, self._profile = 'chat', 'sandbox'
         self._navigation = False
         self._browser_visible, self._browser_loaded = False, False
+        self._browser_expanded = False
+        self._before_files = 'chat'
         self._browser_url, self._browser_width = 'about:blank', 420.0
         self._window = None
+        self._coding = {}
+        self._coding_messages = RowsModel(parent=self)
+        self._coding_draft = ''
+        self._draft_version = 0
         self._error, self._status = '', ''
         self._busy = False
         self._unsaved = False
         self._page_serial = 0
+        self._navigation_ticket = 0
+        self._native_ready = False
+        self._pending_plan = None
+        self._pending_account = ''
+        brands = Path(__file__).resolve().parents[1] / 'assets' / 'brands-src'
+        self._providers = [
+            {'key': preset.key, 'name': preset.name, 'source': preset.source_label,
+             'search': ' '.join((preset.key, preset.name, *preset.aliases,
+                                 *(plan.base_url for plan in preset.plans))).lower(),
+             'icon': (brands / (preset.brand + '.png')).as_uri() if (brands / (preset.brand + '.png')).is_file() else '',
+             'plans': [{'label': plan.label, 'url': plan.base_url, 'wire': plan.wire,
+                        'usable': plan.usable, 'note': plan.note} for plan in preset.plans]}
+            for preset in provider_catalog.PRESETS
+        ]
         self._workspace = str(Path(__file__).resolve().parents[2])
         self._pending = []
         self._waiters = {}
@@ -59,6 +94,11 @@ class WorkbenchController(QObject):
     pageTitle = Property(str, lambda s: PAGES[s._page], notify=changed)
     navigationOpen = Property(bool, lambda s: s._navigation, notify=changed)
     nativeWindow = Property(QObject, lambda s: s._window, notify=changed)
+    nativePageReady = Property(bool, lambda s: s._native_ready, notify=pageReadyChanged)
+    providers = Property('QVariantList', lambda s: s._providers, constant=True)
+    mcp = Property(QObject, lambda s: s._mcp, constant=True)
+    search = Property(QObject, lambda s: s._search, constant=True)
+    wallpaper = Property(QObject, lambda s: s._wallpaper, constant=True)
     busy = Property(bool, lambda s: s._busy, notify=changed)
     hasUnsaved = Property(bool, lambda s: s._unsaved, notify=changed)
     error = Property(str, lambda s: s._error, notify=changed)
@@ -68,9 +108,34 @@ class WorkbenchController(QObject):
     permissionLabel = Property(str, lambda s: LABELS[s._profile], notify=changed)
     approvals = Property('QVariantList', lambda s: s._pending, notify=changed)
     browserVisible = Property(bool, lambda s: s._browser_visible, notify=browserChanged)
+    browserExpanded = Property(bool, lambda s: s._browser_expanded, notify=browserChanged)
     browserLoaded = Property(bool, lambda s: s._browser_loaded, notify=browserChanged)
     browserUrl = Property(str, lambda s: s._browser_url, notify=browserChanged)
     browserWidth = Property(float, lambda s: s._browser_width, notify=browserChanged)
+    coding = Property('QVariantMap', lambda s: s._coding, notify=codingChanged)
+    codingMessages = Property(QObject, lambda s: s._coding_messages, constant=True)
+    codingDraft = Property(str, lambda s: s._coding_draft, notify=codingDraftChanged)
+
+    @Slot(str)
+    def setCodingDraft(self, text):
+        if text == self._coding_draft:
+            return
+        self._coding_draft = text
+        self._draft_version += 1
+        if self._coding.get('ready'):
+            self._send_coding_draft()
+        self.codingDraftChanged.emit()
+
+    @Slot(str, str)
+    def codingAction(self, action, value):
+        if self._page != 'development' or not self._coding.get('ready'):
+            return
+        self._send_coding_draft()
+        self._send({'command': 'coding', 'action': action, 'value': value})
+
+    def _send_coding_draft(self):
+        self._send({'command': 'coding', 'action': 'draft', 'value': self._coding_draft,
+                    'version': self._draft_version})
 
     @Slot()
     def toggleNavigation(self):
@@ -86,16 +151,63 @@ class WorkbenchController(QObject):
     def navigate(self, page):
         if page not in PAGES:
             return
+        if page == self._page and (self._native_ready or page in {'chat', 'connectors'}):
+            return
+        if page == 'files' and self._page != 'files':
+            self._before_files = self._page
+        self._navigation_ticket += 1
+        self._set_native_ready(False)
+        self._error = ''
         self._page = page
-        if page == 'chat':
-            self._navigation = False
-            self._send({'command': 'navigate', 'page': page})
-        else:
-            self._navigation = True
-            if self._process.state() == QProcess.ProcessState.NotRunning:
-                self.start_host()
-            self._send({'command': 'navigate', 'page': page})
+        if page == 'connectors':
+            self._mcp.load()
+        if page != 'config':
+            self._pending_plan = None
+        if page != 'connector_accounts':
+            self._pending_account = ''
+        self._navigation = page != 'chat'
+        if page not in {'chat', 'connectors'} and self._process.state() == QProcess.ProcessState.NotRunning:
+            self.start_host()
+        self._send_navigation()
         self.changed.emit()
+
+    def _set_native_ready(self, ready):
+        if ready != self._native_ready:
+            self._native_ready = ready
+            self.pageReadyChanged.emit()
+
+    def _send_navigation(self):
+        if self._window is not None:
+            self._send({'command': 'navigate', 'page': self._page, 'ticket': self._navigation_ticket})
+        elif self._page in {'chat', 'connectors'}:
+            self._page_serial += 1
+
+    @Slot(str)
+    def showProviderCatalog(self, query):
+        self.catalogRequested.emit(query)
+
+    @Slot(str, str)
+    def useProviderPlan(self, provider, plan):
+        self._pending_plan = (provider, plan)
+        self.navigate('config')
+        self._fill_provider_plan()
+
+    def _fill_provider_plan(self):
+        if self._page == 'config' and self._native_ready and self._pending_plan:
+            provider, plan = self._pending_plan
+            self._pending_plan = None
+            self._send({'command': 'provider_plan', 'provider': provider, 'plan': plan})
+
+    @Slot(str)
+    def showConnectorAccounts(self, account):
+        self._pending_account = account if account in {'github', 'microsoft'} else ''
+        self.navigate('connector_accounts')
+        self._select_connector_account()
+
+    def _select_connector_account(self):
+        if self._page == 'connector_accounts' and self._native_ready and self._pending_account:
+            self._send({'command': 'connector_account', 'account': self._pending_account})
+            self._pending_account = ''
 
     @Slot()
     def start_host(self):
@@ -142,13 +254,32 @@ class WorkbenchController(QObject):
             self._window = QWindow.fromWinId(int(row['handle']))
             if self._window is None:
                 raise ValueError('无法挂载功能页面')
+            # The Tk host starts mapped off-screen so it can accept focus.
+            # Keep it hidden until WindowContainer has attached it to a page.
+            self._window.hide()
             self._status = ''
             self.changed.emit()
             self._send({'command': 'permission', 'profile': self._profile})
-            self._send({'command': 'navigate', 'page': self._page})
-            self._send({'command': 'mounted', 'visible': self._page != 'chat'})
-        elif kind == 'mounted':
-            self._window.setVisible(self._page != 'chat')
+            self._send_navigation()
+        elif kind == 'coding_state':
+            first = not self._coding.get('ready')
+            self._coding = {**self._coding, **row['state']}
+            if first and self._coding_draft:
+                self._send_coding_draft()
+            self.codingChanged.emit()
+        elif kind == 'coding_message':
+            message = row['message']
+            if message is None:
+                self._coding_messages.reset([])
+            else:
+                self._coding_messages.append({'roleName': message['role'], 'textContent': message['body'],
+                                              'stamp': message['stamp']})
+        elif kind == 'coding_draft':
+            if row['version'] == self._draft_version and row['text'] != self._coding_draft:
+                self._coding_draft = row['text']
+                self.codingDraftChanged.emit()
+        elif kind == 'coding_focus':
+            self.codingFocusRequested.emit()
         elif kind == 'status':
             self._busy = bool(row.get('busy'))
             self._unsaved = bool(row.get('unsaved'))
@@ -156,13 +287,26 @@ class WorkbenchController(QObject):
             self._status = row.get('status', '')
             self.changed.emit()
         elif kind == 'navigate':
+            if row.get('ticket') is not None and row['ticket'] != self._navigation_ticket:
+                return
             if row.get('page') in PAGES:
                 self._page = row['page']
                 self._page_serial += 1
                 self._navigation = self._page != 'chat'
+                self._set_native_ready(self._page not in {'chat', 'connectors'})
+                self._fill_provider_plan()
+                self._select_connector_account()
+                self.changed.emit()
+        elif kind == 'provider_catalog':
+            self.catalogRequested.emit(str(row.get('query', '')))
+        elif kind == 'navigation_error':
+            if row.get('ticket') is None or row['ticket'] == self._navigation_ticket:
+                self._error = str(row.get('message', '页面载入失败'))
                 self.changed.emit()
         elif kind == 'browser':
             self.openBrowser(str(row.get('url', '')))
+        elif kind == 'collapse_files' and self._page == 'files':
+            self.toggleFiles()
         elif kind == 'permissions':
             self.permissionRequested.emit()
         elif kind == 'approval':
@@ -205,11 +349,15 @@ class WorkbenchController(QObject):
 
     def _finished(self, exit_code, exit_status):
         self._timeout.stop()
+        self._set_native_ready(False)
         if self._window is not None:
             self._window.setParent(None)
             self._window.deleteLater()
             self._window = None
         self._busy = False
+        self._coding = {}
+        self._coding_messages.reset([])
+        self.codingChanged.emit()
         self._pending = [r for r in self._pending if r['source'] != 'host']
         if not self._closing:
             self._error = self._error or f'功能工作台已关闭（退出码 {exit_code}），可点击重新载入。'
@@ -265,15 +413,44 @@ class WorkbenchController(QObject):
         self.changed.emit()
 
     @Slot()
+    def toggleFiles(self):
+        self.navigate(self._before_files if self._page == 'files' else 'files')
+
+    @Slot()
     def toggleBrowser(self):
         self._browser_visible = not self._browser_visible
         self._browser_loaded = self._browser_loaded or self._browser_visible
+        self.browserChanged.emit()
+
+    @Slot()
+    def toggleBrowserWidth(self):
+        self._browser_expanded = not self._browser_expanded
         self.browserChanged.emit()
 
     @Slot(float)
     def resizeBrowser(self, width):
         self._browser_width = max(300, min(720, width))
         self.browserChanged.emit()
+
+    @Slot(str)
+    def openBrowserAddress(self, value):
+        value = value.strip()
+        if not value:
+            return
+        # Treat domain-like values as addresses and send ordinary text to the selected search source.
+        host = re.match(r'^(?:localhost|[a-z0-9-]+(?:\.[a-z0-9-]+)+|\[[a-fA-F0-9:]+\])'
+                        r'(?::[0-9]{1,5})?(?:[/?#]|$)', value, re.I)
+        explicit_scheme = re.match(r'^[a-z][a-z0-9+.-]*://', value, re.I)
+        if explicit_scheme or value.startswith(('about:', 'javascript:', 'file:', 'data:')) or (
+                host and not any(c.isspace() for c in value)):
+            self.openBrowser(value)
+            return
+        target = self._search.address(value, self._search.engine, 'repositories')
+        if target:
+            self.openBrowser(target)
+        else:
+            self._error = '请输入有效的公开搜索词。'
+            self.changed.emit()
 
     @Slot(str)
     def openBrowser(self, value):
@@ -296,6 +473,9 @@ class WorkbenchController(QObject):
 
     def shutdown(self):
         self._closing = True
+        self._mcp.shutdown()
+        self._search.cancel()
+        self._wallpaper.shutdown()
         for waiter in self._waiters.values():
             waiter['done'].set()
         self._send({'command': 'close'})

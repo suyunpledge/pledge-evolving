@@ -34,7 +34,9 @@ class HostedApp(legacy.ForgeGuiApp):
         self._host_demo = demo
         self._host_waiters = {}
         self._host_closed = False
-        self._host_page = 'work'
+        self._mounted_page = 'work'
+        self._navigating = False
+        self._navigation_epoch = 0
         legacy.DEFAULT_FORGE_HOME = home
         super().__init__(root)
         self._inline_pages = {}
@@ -60,20 +62,48 @@ class HostedApp(legacy.ForgeGuiApp):
 
     def _show_view(self, key, **kwargs):
         super()._show_view(key, **kwargs)
-        if hasattr(self, '_inline_pages'):
-            emit('navigate', page='work' if key == 'chat' else key)
+        if hasattr(self, '_inline_pages') and not self._navigating:
+            self._mounted_page = 'work' if key == 'chat' else key
+            self._page_laid_out(self._mounted_page)
+
+    def _page_laid_out(self, page, ticket=None):
+        self._navigation_epoch += 1
+        epoch = self._navigation_epoch
+
+        def ready():
+            if epoch == self._navigation_epoch and not self._host_closed:
+                emit('navigate', page=page, ticket=ticket)
+
+        # Let pack/grid and then any geometry-triggered callbacks settle
+        # while the parent keeps the foreign window hidden.
+        self.root.after_idle(lambda: self.root.after_idle(ready))
+
+    def _open_provider_catalog(self, query=''):
+        emit('provider_catalog', query=query)
+
+    def use_provider_plan(self, key, label):
+        preset = legacy.catalog.BY_KEY.get(key)
+        plan = next((p for p in preset.plans if p.label == label and p.usable), None) if preset else None
+        if plan is None:
+            return
+        self._clear_placeholder()
+        self.input_text.delete('1.0', 'end')
+        self.input_text.insert('1.0', legacy.catalog.config_snippet(preset, plan))
+        self._set_status(f'已填入 {preset.name} · {plan.label} 的模板，请补充模型和 API Key。', 'ok')
 
     def _build_coding_surface(self, parent):
         from development_mode.app import DevelopmentWorkbench
         from forge.development.state import ModeState
+        from qt_frontend.coding_host import CodingHost
         dev_home = self.home / 'qt-development' if self._host_demo else Path.home() / '.forge-development'
         state = ModeState(dev_home)
         state.switch('development')
         bench = DevelopmentWorkbench(parent, state, hosted=True,
             workspace_request=lambda mode: self.host_navigate('development' if mode == 'development' else 'work'),
-            model_settings_home=self.home, models_changed=self._reload_configuration)
+            model_settings_home=self.home, models_changed=self._reload_configuration, qt_agent=True)
         bench.pack(fill='both', expand=True)
         self._coding_bench = bench
+        self._coding_view = CodingHost(bench, emit, demo=self._host_demo)
         # The Qt permission control owns this host grant. Old controls redirect to it.
         bench._request_permission = lambda *_: emit('permissions')
         bench.permission_changed = lambda *_: emit('permissions')
@@ -151,23 +181,35 @@ class HostedApp(legacy.ForgeGuiApp):
     def _open_computer_panel(self):
         self.host_navigate('computer')
 
-    def host_navigate(self, page):
-        if page == 'chat':
-            self._host_page = page
-            emit('navigate', page=page)
+    def host_navigate(self, page, ticket=None):
+        self._navigating = True
+        try:
+            self._mount_host_page(page)
+        except Exception as exc:
+            emit('navigation_error', ticket=ticket, message=str(redact(str(exc))))
             return
-        self._host_page = page
+        finally:
+            self._navigating = False
+        self._page_laid_out(page, ticket)
+
+    def _mount_host_page(self, page):
+        if page in {'chat', 'connectors'} or self._mounted_page == page:
+            return
         if page == 'development':
             self._request_workspace(self._workspace_kind.CODING)
+            if self._workspace_mode != self._workspace_kind.CODING:
+                raise RuntimeError(self.status_var.get())
         else:
             self._request_workspace(self._workspace_kind.WORK)
+            if self._workspace_mode != self._workspace_kind.WORK:
+                raise RuntimeError(self.status_var.get())
             panes = tuple(map(str, self.split.panes()))
             if str(self.center) not in panes:
                 options = {'before': self.ws_holder} if str(self.ws_holder) in panes else {}
                 self.split.add(self.center, minsize=300, stretch='always', **options)
             if page != 'files' and self._ws_packed:
                 self._close_workspace()
-            if page in {'connectors', 'preview', 'computer'}:
+            if page in {'preview', 'computer', 'connector_accounts'}:
                 if page not in self._views:
                     frame = tk.Frame(self.center, bg=legacy.C['bg'])
                     self._views[page] = frame
@@ -175,17 +217,34 @@ class HostedApp(legacy.ForgeGuiApp):
                         from computer_panel import ComputerPanel
                         self.computer_panel = ComputerPanel(self, parent=frame)
                     else:
-                        self.desktop_features.mount_page(frame, 1 if page == 'connectors' else 2)
+                        self.desktop_features.mount_page(frame, 1 if page == 'connector_accounts' else 2)
                 self._show_view(page)
             elif page == 'files':
                 self._show_view('files')
+                previous_tab = getattr(self.workspace, '_current_tab', None)
                 self._open_workspace('file_tree')
-                self.split.forget(self.center)
+                if self.workspace is not None:
+                    self.workspace._on_close = self._request_files_collapse
+                    if previous_tab is not None and previous_tab != legacy.tr('文件树'):
+                        self.workspace._focus_band_for_tab(previous_tab)
+                if self._ws_packed:
+                    self.split.paneconfigure(self.ws_holder, stretch='always')
+                    self.split.forget(self.center)
             else:
                 self._show_view('chat' if page == 'work' else page)
         self._hide_chrome()
         self._sync_host_permission()
-        emit('navigate', page=page)
+        self._mounted_page = page
+
+    def _request_files_collapse(self):
+        if self._mounted_page == 'files':
+            emit('collapse_files')
+        else:
+            self._close_workspace()
+
+    def _restore_workspace_width(self):
+        if self._mounted_page != 'files':
+            super()._restore_workspace_width()
 
     def _run_task(self):
         """Use the same core executor so manual approvals stay in the main window."""
@@ -259,8 +318,7 @@ def main():
     root.overrideredirect(True)
     app = HostedApp(root, args.home, args.demo)
     root.minsize(300, 260)
-    root.geometry('900x700+0+0')
-    root.update_idletasks()
+    root.geometry('900x700-20000-20000')
     webbrowser.open = lambda url, *_, **__: emit('browser', url=str(url)) or True
     webbrowser.open_new = webbrowser.open_new_tab = webbrowser.open
     commands = queue.Queue()
@@ -286,11 +344,13 @@ def main():
                 break
             try:
                 command = row.get('command')
-                if command == 'navigate': app.host_navigate(row.get('page'))
-                elif command == 'mounted':
-                    # Qt owns native visibility. Tk deiconify schedules later
-                    # remaps after layout/gateway updates and can cover chat.
-                    emit('mounted')
+                if command == 'navigate': app.host_navigate(row.get('page'), row.get('ticket'))
+                elif command == 'provider_plan': app.use_provider_plan(row.get('provider'), row.get('plan'))
+                elif command == 'connector_account' and row.get('account') in {'github', 'microsoft'}:
+                    if app._mounted_page == 'connector_accounts':
+                        app.desktop_features.account.set(row['account'])
+                elif command == 'coding' and hasattr(app, '_coding_view'):
+                    app._coding_view.command(row)
                 elif command == 'permission': app.apply_permission(row.get('profile'))
                 elif command == 'approval':
                     waiter = app._host_waiters.get(row.get('id'))
@@ -303,13 +363,24 @@ def main():
             except Exception as exc:
                 emit('error', message=str(redact(str(exc))))
         app._sync_host_permission()
+        if hasattr(app, '_coding_view'):
+            app._coding_view.publish()
         status = {'busy': app.host_busy(), 'workspace': str(app._active_workspace()),
                   'status': str(app.status_var.get()), 'unsaved': app.host_unsaved()}
         if status != last_status:
             emit('status', **status)
             last_status = status
         root.after(100, poll)
-    emit('ready', handle=int(root.wm_frame(), 0))
+    # Map Tk before embedding it. Showing a withdrawn HWND from Qt does not
+    # update Tk's mapped state, so Tk rejects keyboard focus for its children.
+    root.deiconify()
+    root.update_idletasks()
+    handle = int(root.wm_frame(), 0)
+    if sys.platform == 'win32':
+        # Hide the native frame until Qt mounts it, without withdrawing Tk.
+        import ctypes
+        ctypes.windll.user32.ShowWindow(ctypes.c_void_p(handle), 0)  # SW_HIDE
+    emit('ready', handle=handle)
     root.after(30, poll)
     root.mainloop()
     emit('host_stopped', closed=app._host_closed)

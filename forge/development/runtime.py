@@ -438,6 +438,48 @@ class DevelopmentRuntime:
         finally:
             self._lane.release()
 
+    def review_recorded_changes(self, identifiers, *, revert=False, permission='read-only'):
+        """Use exact action receipts for the Coding reply's review/undo footer."""
+        if not self._lane.acquire(False):
+            raise RuntimeError('Wait for task completion')
+        try:
+            from dataclasses import replace
+            from forge.change_review import ChangeReviewStore
+            from forge.desktop_permissions import approve_action
+            agent = self.bridge.agent
+            store = ChangeReviewStore(agent.home, self.bridge.workspace)
+            preview = store.review(identifiers)
+            if not revert:
+                return preview
+            tc = replace(agent.execution_context().tool_context(), policy=self.bridge.policy(permission))
+            granted = {}
+            for file in preview['files']:
+                if file['restored']:
+                    continue
+                name, args = file['undoTool'], {'path': file['path']}
+                active = tc
+                denial = agent.registry.authorize(name, args, active)
+                if denial is not None and denial.meta.get('requires_approval') and agent.action_executor.approver:
+                    # Human approval happens before acquiring filesystem locks.
+                    if agent.action_executor.approver(name, args, None):
+                        active = replace(tc, policy=approve_action(tc.policy, name, args))
+                        denial = agent.registry.authorize(name, args, active)
+                if denial is not None:
+                    raise PermissionError(denial.error or '当前权限禁止回退')
+                granted[(name, file['path'])] = active
+            def authorize(name, args):
+                denial = agent.registry.authorize(name, args, granted[(name, args['path'])])
+                if denial is not None:
+                    raise PermissionError(denial.error or '当前权限禁止回退')
+            result = store.revert(identifiers, authorize)
+            for file in result['files']:
+                agent.file_guard.revisions.pop(file['path'], None)
+            self._publish('development_changes_reverted', change_ids=identifiers,
+                          files=[f['name'] for f in result['files']])
+            return result
+        finally:
+            self._lane.release()
+
     def checkpoint_preview(self, commit, path):
         if not self._lane.acquire(False):
             raise RuntimeError('Wait for task completion')

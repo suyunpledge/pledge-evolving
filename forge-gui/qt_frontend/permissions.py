@@ -3,10 +3,15 @@ from pathlib import Path
 from forge.policy import Decision, Policy, ToolEffect, READ_PATH_TOOLS, WRITE_TOOLS
 from forge.desktop_permissions import profile_policy
 
-MEDIATED = READ_PATH_TOOLS | {'write_file', 'edit_file', 'apply_patch', 'delete_file', 'tool_search'}
-
+MEDIATED = READ_PATH_TOOLS | {'write_file', 'edit_file', 'apply_patch', 'delete_file', 'tool_search',
+                             'public_search'}
 
 def authorize(profile, workspace, name, args, approve, cancel=None):
+    # /v1/tools advertises forge_* names; the gateway resolves one prefix
+    # before policy evaluation. Match that same canonical identity locally.
+    if not isinstance(name, str):
+        raise ValueError('工具名称必须是字符串')
+    name = name.removeprefix('forge_')
     if cancel is not None and cancel.is_set():
         raise PermissionError('操作已取消')
     if not isinstance(args, dict):

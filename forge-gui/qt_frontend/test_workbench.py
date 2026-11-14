@@ -1,6 +1,8 @@
 """Exercise the real child host, retained WebEngine view and approval handshake."""
 import json
 import os
+import shutil
+import subprocess
 from pathlib import Path
 import tempfile
 import threading
@@ -9,8 +11,8 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 os.environ.setdefault('QT_QUICK_CONTROLS_STYLE', 'Basic')
-from PySide6.QtCore import QObject, QProcess, Qt, QUrl
-from PySide6.QtGui import QFont, QGuiApplication
+from PySide6.QtCore import QObject, QMetaObject, QProcess, Q_ARG, Qt, QUrl
+from PySide6.QtGui import QColor, QFont, QGuiApplication, QImage
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuick import QQuickWindow, QSGRendererInterface
 from PySide6.QtTest import QTest
@@ -79,6 +81,121 @@ class WorkbenchTests(unittest.TestCase):
         self.temp.cleanup()
         self.assertFalse(self.warnings, self.warnings)
 
+    def test_public_search_panel_and_browser_use_selected_engine(self):
+        from urllib.parse import parse_qs, urlsplit
+
+        panel = self.window.findChild(QObject, 'publicSearchPanel')
+        self.assertIsNotNone(panel)
+        button = self.window.findChild(QObject, 'publicSearchButton')
+        button.clicked.emit()
+        until(lambda: panel.property('opened'))
+        self.assertEqual(len(self.workbench.search.sources), 8)
+        self.workbench.search.setEngine('github')
+        self.workbench.openBrowserAddress('PySide6 language:python')
+        parsed = urlsplit(self.workbench.browserUrl)
+        self.assertEqual(parsed.hostname, 'github.com')
+        self.assertEqual(parse_qs(parsed.query), {'q': ['PySide6 language:python'], 'type': ['repositories']})
+        self.workbench.openBrowserAddress('example.com/docs')
+        self.assertEqual(self.workbench.browserUrl, 'https://example.com/docs')
+        QMetaObject.invokeMethod(panel, 'close')
+        until(lambda: not panel.property('visible'))
+
+    def test_china_catalog_filters_and_opens_provider_setup(self):
+        self.workbench.navigate('connectors')
+        until(lambda: self.workbench.mcp.loaded and self.window.findChild(QObject, 'connectorsPage') is not None)
+        page = self.window.findChild(QObject, 'connectorsPage')
+        self.assertIsNotNone(page)
+        page.setProperty('region', 'china')
+        page.findChild(QObject, 'mcpSearch').setProperty('text', '高德')
+        def rows(item):
+            matches = [item.objectName()] if item.objectName().startswith('mcpRow_') else []
+            for child in item.childItems():
+                matches.extend(rows(child))
+            return matches
+        until(lambda: rows(page) == ['mcpRow_preset.amap'], timeout=2)
+        page.setProperty('selectedId', 'setup.baidu-search')
+        self.assertEqual(page.property('selectedSetup'), 'endpoint')
+
+    def test_chinese_connectors_open_the_matching_login_form(self):
+        self.workbench.navigate('connectors')
+        until(lambda: self.workbench.mcp.loaded and self.window.findChild(QObject, 'connectorsPage') is not None)
+        page = self.window.findChild(QObject, 'connectorsPage')
+        form = page.findChild(QObject, 'mcpBrowserForm')
+        self.assertIsNotNone(form)
+        for key, mode in (('feishu', 'app-oauth'), ('baidu-netdisk', 'manual-token'),
+                          ('zhihu', 'manual-token'), ('tencent-meeting', 'manual-token'),
+                          ('google-cloud-run', 'google-cloud')):
+            page.setProperty('selectedId', 'preset.' + key)
+            self.assertTrue(QMetaObject.invokeMethod(page, 'connectSelected'))
+            until(lambda: form.property('opened'))
+            self.assertEqual(form.property('mode'), mode)
+            QMetaObject.invokeMethod(form, 'close')
+            until(lambda: not form.property('visible'))
+        wecom = next(row for row in self.workbench.mcp.presets if row['id'] == 'preset.wecom')
+        self.assertEqual(wecom['loginMode'], 'scan')
+        self.assertTrue(wecom['local'])
+
+    def test_wallpaper_import_persistence_and_bad_image_preserves_current_background(self):
+        from .wallpaper import Wallpaper
+
+        asset = Path(self.temp.name) / '背景.png'
+        picture = QImage(64, 48, QImage.Format.Format_RGB32)
+        picture.fill(QColor('#f05533'))
+        self.assertTrue(picture.save(str(asset)))
+        wallpaper = self.workbench.wallpaper
+        wallpaper.importFile(QUrl.fromLocalFile(str(asset)), False)
+        until(lambda: not wallpaper.busy)
+        self.assertEqual(wallpaper.kind, 'image', wallpaper.error)
+        self.assertNotEqual(wallpaper.source.toLocalFile(), str(asset))
+        asset.unlink()
+        background = self.window.findChild(QObject, 'stillWallpaper')
+        until(lambda: background.property('loaded'))
+        wallpaper.setDim(0.35)
+        reopened = Wallpaper(self.temp.name)
+        self.assertEqual(reopened.source, wallpaper.source)
+        self.assertEqual(reopened.dim, 0.35)
+        asset.write_bytes(b'invalid')
+        wallpaper.importFile(QUrl.fromLocalFile(str(asset)), False)
+        until(lambda: not wallpaper.busy)
+        self.assertTrue(wallpaper.error)
+        self.assertEqual(wallpaper.source, reopened.source)
+        wallpaper.reset()
+        self.assertFalse(wallpaper.kind)
+        self.assertFalse(Wallpaper(self.temp.name).kind)
+
+    @unittest.skipUnless(shutil.which('ffmpeg'), 'requires ffmpeg to generate dynamic wallpaper fixtures')
+    def test_wallpaper_animated_gif_and_video_accept_real_media(self):
+        wallpaper = self.workbench.wallpaper
+        for suffix, kind, object_name in (('gif', 'gif', 'gifWallpaper'), ('mp4', 'video', 'wallpaperPlayer')):
+            with self.subTest(kind=kind):
+                asset = Path(self.temp.name) / ('motion.' + suffix)
+                subprocess.run(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i',
+                                'testsrc2=size=96x64:rate=8', '-t', '1', str(asset)],
+                               capture_output=True, check=True, timeout=15)
+                wallpaper.importFile(QUrl.fromLocalFile(str(asset)), True)
+                until(lambda: not wallpaper.busy, timeout=18)
+                self.assertEqual(wallpaper.kind, kind, wallpaper.error)
+                element = self.window.findChild(QObject, object_name)
+                self.assertIsNotNone(element)
+                if kind == 'gif':
+                    until(lambda: element.property('frameCount') > 1)
+                    self.assertTrue(element.property('paused'))
+                    first_frame = element.property('currentFrame')
+                    element.parent().setProperty('running', True)
+                    until(lambda: element.property('currentFrame') != first_frame)
+                    element.parent().setProperty('running', False)
+                    self.assertTrue(element.property('paused'))
+                else:
+                    until(lambda: element.property('hasVideo'))
+                    element.parent().setProperty('running', True)
+                    until(lambda: element.property('position') > 0)
+                    element.parent().setProperty('running', False)
+                    QTest.qWait(100)
+                    position = element.property('position')
+                    QTest.qWait(170)
+                    self.assertEqual(element.property('position'), position)
+        wallpaper.reset()
+
     def test_all_features_share_one_host_and_chat_releases_surface(self):
         self.workbench.start_host()
         until(lambda: self.workbench.nativeWindow is not None)
@@ -94,13 +211,72 @@ class WorkbenchTests(unittest.TestCase):
             QTest.qWait(180)
             self.assertEqual(self.workbench._process.processId(), pid, page)
             self.assertFalse(self.workbench.error, (page, self.workbench.error))
-            if page != 'chat':
+            if page not in {'chat', 'connectors'}:
                 self.assertIsNotNone(self.workbench.nativeWindow.parent(), page)
                 self.assertGreater(self.workbench.nativeWindow.width(), 250)
         self.assertFalse(self.workbench.nativeWindow.isVisible())
         for profile in ('manual', 'full', 'sandbox'):
             self.workbench.setPermission(profile)
             until(lambda: self.workbench.permission == profile)
+
+    def test_coding_panel_keeps_draft_and_routes_options_to_host(self):
+        self.workbench.navigate('development')
+        until(lambda: self.workbench.coding.get('ready'))
+        until(lambda: self.window.findChild(QObject, 'codingMessageEditor') is not None)
+        editor = self.window.findChild(QObject, 'codingMessageEditor')
+        self.assertTrue(editor.isVisible())
+        self.workbench.setCodingDraft('中文 draft 123')
+        self.workbench.codingAction('planning', 'medium')
+        until(lambda: self.workbench.coding.get('planning') == 'medium')
+        self.workbench.navigate('chat')
+        until(lambda: not self.workbench.nativeWindow.isVisible())
+        self.workbench.navigate('development')
+        until(lambda: editor.isVisible() and self.workbench.nativeWindow.isVisible())
+        self.assertEqual(editor.property('text'), '中文 draft 123')
+        self.assertFalse(self.workbench.error, self.workbench.error)
+
+    def test_connector_view_is_retained_and_old_native_ack_cannot_cover_it(self):
+        self.workbench.navigate('config')
+        old_ticket = self.workbench._navigation_ticket
+        self.workbench.navigate('connectors')
+        until(lambda: self.workbench.mcp.loaded and self.window.findChild(QObject, 'connectorsPage') is not None)
+        page = self.window.findChild(QObject, 'connectorsPage')
+        self.workbench._receive({'event': 'navigate', 'page': 'config', 'ticket': old_ticket})
+        self.assertEqual(self.workbench.page, 'connectors')
+        self.assertFalse(self.workbench.nativePageReady)
+        self.workbench.navigate('chat')
+        self.assertFalse(page.isVisible())
+        self.workbench.navigate('connectors')
+        until(page.isVisible)
+        self.assertIs(self.window.findChild(QObject, 'connectorsPage'), page)
+
+    def test_workspace_pairing_can_select_every_service_or_a_subset(self):
+        self.workbench.navigate('connectors')
+        until(lambda: self.workbench.mcp.loaded and self.window.findChild(QObject, 'connectorPairing_google') is not None)
+        popup = self.window.findChild(QObject, 'connectorPairing_google')
+        microsoft = self.window.findChild(QObject, 'connectorPairing_microsoft')
+        QMetaObject.invokeMethod(popup, 'show', Q_ARG('QVariant', ''))
+        until(lambda: popup.property('opened'))
+        select_all = popup.findChild(QObject, 'pairSelectAll')
+        submit = popup.findChild(QObject, 'pairSubmit')
+        self.assertFalse(submit.property('enabled'))
+        select_all.clicked.emit()
+        self.assertEqual(submit.property('text'), '配对全部')
+        self.assertEqual(popup.findChild(QObject, 'pairOptions').property('count'), 10)
+        self.assertTrue(any(row['id'] == 'google.universal-search' for row in self.workbench.mcp.families))
+        self.assertTrue(submit.property('enabled'))
+        QMetaObject.invokeMethod(popup, 'toggle', Q_ARG('QVariant', 'google.gmail'))
+        self.assertEqual(submit.property('text'), '配对所选')
+        submit.clicked.emit()
+        self.assertIn('google', self.workbench.mcp.pairErrors)
+        self.assertNotIn('microsoft', self.workbench.mcp.pairErrors)
+        QMetaObject.invokeMethod(popup, 'close')
+        QMetaObject.invokeMethod(microsoft, 'show', Q_ARG('QVariant', ''))
+        until(lambda: microsoft.property('opened'))
+        self.assertEqual(microsoft.findChild(QObject, 'pairOptions').property('count'), 6)
+        microsoft.findChild(QObject, 'pairSelectAll').clicked.emit()
+        microsoft.findChild(QObject, 'pairSubmit').clicked.emit()
+        self.assertEqual(set(self.workbench.mcp.pairErrors), {'microsoft'})
 
     def test_browser_retains_webengine_instance_and_rejects_local_navigation(self):
         server = ThreadingHTTPServer(('127.0.0.1', 0), Page)
@@ -112,6 +288,11 @@ class WorkbenchTests(unittest.TestCase):
             until(lambda: self.window.findChild(QObject, 'workBrowser') is not None)
             web = self.window.findChild(QObject, 'workBrowser')
             until(lambda: web.property('title') == 'Forge retained browser test')
+            self.workbench.toggleBrowserWidth()
+            self.assertTrue(self.workbench.browserExpanded)
+            self.assertIs(self.window.findChild(QObject, 'workBrowser'), web)
+            self.workbench.toggleBrowserWidth()
+            self.assertFalse(self.workbench.browserExpanded)
             self.workbench.toggleBrowser()
             QTest.qWait(50)
             self.assertFalse(self.workbench.browserVisible)
@@ -126,6 +307,19 @@ class WorkbenchTests(unittest.TestCase):
             server.shutdown()
             server.server_close()
             thread.join(2)
+
+    def test_files_can_collapse_to_the_previous_page_and_reuse_host(self):
+        self.workbench.navigate('connectors')
+        self.workbench.toggleFiles()
+        until(lambda: self.workbench.nativePageReady)
+        self.assertEqual(self.workbench.page, 'files')
+        host = self.workbench.nativeWindow
+        self.workbench.toggleFiles()
+        until(lambda: self.workbench.page == 'connectors')
+        self.assertFalse(host.isVisible())
+        self.workbench.toggleFiles()
+        until(lambda: self.workbench.nativePageReady)
+        self.assertIs(self.workbench.nativeWindow, host)
 
     def test_approval_is_single_request_and_cancellation_cleans_panel(self):
         cancel, result = threading.Event(), []

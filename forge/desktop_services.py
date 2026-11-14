@@ -75,7 +75,7 @@ class DesktopStore:
 
     @staticmethod
     def _account_data(data):
-        return {k:data[k] for k in ('agent','read','write','client_id','tenant','scopes','updating','authenticated') if k in data}
+        return {k:data[k] for k in ('agent','read','write','client_id','tenant','scopes','updating','authenticated','paired_services') if k in data}
 
     def finish_account(self,name,expected,data,save_credential):
         """Commit credentials under the same lock as their account generation.
@@ -218,6 +218,29 @@ _op('channel_update', 'microsoft', 'PATCH', '/teams/{team}/channels/{channel}/me
 _op('excel_range', 'microsoft', 'GET', "/me/drive/items/{id}/workbook/worksheets/{sheet}/range(address='{address}')", ('id','sheet','address'), ('id','sheet','address'), 'Files.ReadWrite')
 _op('excel_range_update', 'microsoft', 'PATCH', "/me/drive/items/{id}/workbook/worksheets/{sheet}/range(address='{address}')", ('id','sheet','address','values'), ('id','sheet','address','values'), 'Files.ReadWrite')
 
+# Match operations to the service the user selected, including Excel and
+# OneDrive, whose delegated scopes can overlap.
+MICROSOFT_GROUPS = {
+    'outlook': ('mail',),
+    'calendar': ('event',),
+    'onedrive': ('file',),
+    'sharepoint': ('site',),
+    'teams': ('team', 'channel'),
+    'excel': ('excel_',),
+}
+
+
+def microsoft_operations(group):
+    return {name: op for name, op in OPERATIONS.items()
+            if op.account == 'microsoft'
+            and name.removeprefix('connector_microsoft_').startswith(MICROSOFT_GROUPS[group])}
+
+
+def microsoft_operation_allowed(name, grant):
+    groups = grant.get('paired_services')
+    suffix = name.removeprefix('connector_microsoft_')
+    return groups is None or any(suffix.startswith(MICROSOFT_GROUPS[group]) for group in groups if group in MICROSOFT_GROUPS)
+
 
 class _NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs): return None
@@ -268,7 +291,8 @@ class ConnectorService:
         for name, op in OPERATIONS.items():
             grant = self.store.account(op.account)
             if grant.get('updating') or grant.get('authenticated') is False or grant.get('agent') is not True or grant.get('write' if op.write else 'read') is not True: continue
-            if op.account == 'microsoft' and not self._scope_allowed(op.scope,grant): continue
+            if op.account == 'microsoft' and not (microsoft_operation_allowed(name, grant)
+                                                   and self._scope_allowed(op.scope,grant)): continue
             result.append({'type':'function', 'function':{'name':name,
                 'description': ('Create/modify external content; requires user confirmation. ' if op.write else 'Read external content. ')+op.route,
                 'parameters': {'type':'object','properties': {f:{'type':'string'} for f in op.fields},
@@ -311,7 +335,8 @@ class ConnectorService:
         grant = self.store.account(op.account)
         if grant.get('updating') or grant.get('authenticated') is False or (agent and grant.get('agent') is not True) or grant.get('write' if op.write else 'read') is not True:
             raise PermissionError('Connector capability has not been granted')
-        if op.account == 'microsoft' and not self._scope_allowed(op.scope,grant):
+        if op.account == 'microsoft' and not (microsoft_operation_allowed(name, grant)
+                                               and self._scope_allowed(op.scope,grant)):
             raise PermissionError('Sign in again with the required Microsoft scope')
         decision = policy.evaluate(name, args=args)
         if decision is Decision.DENY or op.write and (policy.mode in {Mode.READ_ONLY,Mode.PLAN,Mode.DONT_ASK} or policy.sandbox is Sandbox.READ_ONLY):
@@ -390,7 +415,7 @@ class ConnectorService:
             elif name.endswith('_file_write'):
                 body = args['content'].encode('utf-8')
         # Small trusted boundary: credentials enter HTTP headers only here.
-        token = self._token(op.account,cancel_event=cancel_event)
+        token = self._token(op.account,grant,cancel_event=cancel_event)
         if cancel_event is not None and cancel_event.is_set(): raise PermissionError('Request cancelled')
         if self.store.account(op.account)!=grant: raise PermissionError('Connector grant changed; retry')
         scope = SecretScope()
@@ -413,9 +438,10 @@ class ConnectorService:
             raise RuntimeError('Connector request failed; check account permissions and network') from None
         finally: scope.close()
 
-    def _token(self, account, *, cancel_event=None):
+    def _token(self, account, conf, *, cancel_event=None):
         value = self.credential(account)
         if not value: raise PermissionError('Connector is not signed in')
+        if self.store.account(account) != conf: raise PermissionError('Connector grant changed; retry')
         if account == 'github': return value
         tokens = json.loads(value)
         registration=SecretScope()
@@ -423,7 +449,7 @@ class ConnectorService:
             if tokens.get(field): registration.reference(tokens[field])
         registration.close()
         if tokens.get('expires_at',0) <= time.time()+60:
-            conf = self.store.account(account)
+            if not tokens.get('refresh_token'): raise PermissionError('Microsoft sign-in expired')
             fresh = self._request(self._oauth_url(conf,'token'), 'POST',
                 {'Content-Type':'application/x-www-form-urlencoded'},
                 {'client_id':conf['client_id'],'grant_type':'refresh_token','refresh_token':tokens['refresh_token']}, form=True,cancel_event=cancel_event)
@@ -440,13 +466,13 @@ class ConnectorService:
         if not re.fullmatch(r'[A-Za-z0-9-]{1,100}',conf.get('client_id','')): raise ValueError('Set your Entra application Client ID')
         return f'https://login.microsoftonline.com/{tenant}/oauth2/v2.0/{endpoint}'
 
-    def device_login(self, conf, notify, cancel_event):
+    def device_login(self, conf, notify, cancel_event, *, expected=None):
         scopes = sorted({'offline_access','User.Read', *conf.get('scopes',[])})
-        allowed = {op.scope for op in OPERATIONS.values() if op.scope}
+        allowed = {op.scope for op in OPERATIONS.values() if op.account == 'microsoft' and op.scope}
         if set(scopes)-allowed-{'offline_access','User.Read'}: raise ValueError('Unknown Microsoft scope')
         self._oauth_url(conf,'devicecode')  # validate before changing existing account
-        self.store.set_account('microsoft',dict(conf,updating=True,authenticated=False))
-        expected=self.store.account('microsoft')
+        if expected is None:
+            expected = self.store.account('microsoft')
         code = self._request(self._oauth_url(conf,'devicecode'), 'POST',
                               {'Content-Type':'application/x-www-form-urlencoded'},
                               {'client_id':conf['client_id'],'scope':' '.join(scopes)}, form=True,cancel_event=cancel_event)
@@ -467,7 +493,7 @@ class ConnectorService:
                 if tokens.get(key): scope.reference(tokens[key])
             scope.close()
             tokens['expires_at'] = time.time()+float(tokens['expires_in'])
-            granted={s.rsplit('/',1)[-1] for s in tokens.get('scope','').split()}
+            granted={s.rsplit('/',1)[-1] for s in tokens.get('scope','').split()} & set(scopes)
             conf = dict(conf, scopes=sorted(granted & allowed),authenticated=True)
             def save_tokens():
                 if cancel_event.is_set(): raise PermissionError('Sign-in cancelled')

@@ -183,6 +183,17 @@ class ForgeGatewayClient:
             error.run_id, error.action_id = run_id, action_id
             raise error from None  # Query these IDs; never resend on transport failure.
 
+    def review_changes(self, identifiers, *, revert=False):
+        """Review or explicitly undo recorded host changes; never retry writes."""
+        req = self._request('POST', '/v1/changes/' + ('revert' if revert else 'review'),
+                            {'change_ids': identifiers})
+        try:
+            with open_response(req, timeout=90, cancel_event=None) as resp:
+                return redact(json.loads(resp.read().decode('utf-8')))
+        except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException) as exc:
+            detail = f'HTTP {exc.code}: {http_error_detail(exc)}' if isinstance(exc, urllib.error.HTTPError) else str(exc)
+            raise GatewayError(detail) from None
+
     # ── 健康检查 ──
     def health(self, *, cancel_event=None) -> tuple[bool, str]:
         try:

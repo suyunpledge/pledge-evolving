@@ -7,19 +7,24 @@ from forge_client import ChatMessage, GatewayError, GenerationCancelled
 from work_tools import prepare_calls, invoke
 
 
-def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint, status, next_round):
+def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint, status, next_round, receipt=None, system_context='', mcp=None):
     tools = None
+    mcp_tools, call_mcp = mcp or ({}, None)
     if authorize is not None:
         try:
             tools = [row for row in client.list_tools(timeout=5)
                      if isinstance(row, dict) and isinstance(row.get('function'), dict)]
         except GatewayError:
             status('网关未开放工具，正在生成对话…')
+        if mcp_tools:
+            tools = [*(row for row in tools or [] if row['function'].get('name') not in mcp_tools),
+                     *(entry[0] for entry in mcp_tools.values())]
     guard = ExecutionGuard()
     for turn in range(8):
         if cancel.is_set():
             raise GenerationCancelled('已停止生成')
-        result = client.stream_chat(messages, model=model, reasoning_effort=effort,
+        current = [ChatMessage('system', system_context), *messages] if system_context else messages
+        result = client.stream_chat(current, model=model, reasoning_effort=effort,
                                     on_chunk=chunk, cancel_event=cancel, tools=tools)
         if not result.tool_calls:
             return result
@@ -48,9 +53,15 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
                     response['error'] = str(exc)
                 else:
                     status('正在执行：' + name)
-                    response = invoke(arguments, lambda: client.call_tool(name, arguments))
+                    if name in mcp_tools:
+                        target = mcp_tools[name][1]
+                        response = invoke(arguments, lambda: call_mcp(target, arguments, cancel))
+                    else:
+                        response = invoke(arguments, lambda: client.call_tool(name, arguments))
             body = json.dumps(response, ensure_ascii=False)
             messages.append(ChatMessage('tool', body, tool_call_id=call['id']))
+            if receipt is not None:
+                receipt(name, response)
             if response.get('meta', {}).get('execution_state') == 'unknown':
                 stopped = GatewayError('工具执行结果未知，已停止。请先检查目标状态；不会自动重试此操作。')
             elif guard.observe(name, arguments, response['ok'], body):

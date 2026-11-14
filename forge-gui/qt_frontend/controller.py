@@ -10,18 +10,19 @@ import time
 import uuid
 from urllib.parse import urlsplit
 
-from PySide6.QtCore import QAbstractListModel, QModelIndex, QObject, Property, Qt, QTimer, QUrl, Signal, Slot
-from PySide6.QtGui import QGuiApplication, QDesktopServices, QTextBlockFormat, QTextCursor
+from PySide6.QtCore import QAbstractListModel, QModelIndex, QObject, QPointF, Property, QRectF, Qt, QTimer, QUrl, Signal, Slot
+from PySide6.QtGui import QGuiApplication, QDesktopServices, QTextBlockFormat, QTextCursor, QTransform
 
 from forge_client import ChatMessage, ForgeGatewayClient, GenerationCancelled
 from http_transport import open_response
-from interaction_model import compose_prompt, read_attachment
+from interaction_model import ATTACHMENT_HEADER, MAX_CONTEXT_CHARS, compose_prompt, read_attachment
 from forge.secrets import redact
 from .store import SessionStore
 
 
 class RowsModel(QAbstractListModel):
-    NAMES = ("sessionId", "title", "subtitle", "roleName", "textContent", "state", "stamp")
+    NAMES = ("sessionId", "title", "subtitle", "roleName", "textContent", "state", "stamp", "changeKey", "changeInfo",
+             "historyIndex")
 
     def __init__(self, rows=(), parent=None):
         super().__init__(parent)
@@ -37,7 +38,8 @@ class RowsModel(QAbstractListModel):
         if index.isValid() and 0 <= index.row() < len(self.rows):
             i = int(role) - int(Qt.ItemDataRole.UserRole)
             if 0 <= i < len(self.NAMES):
-                return self.rows[index.row()].get(self.NAMES[i], "")
+                name = self.NAMES[i]
+                return self.rows[index.row()].get(name, -1 if name == "historyIndex" else "")
         return None
 
     def reset(self, rows):
@@ -98,6 +100,9 @@ class ChatController(QObject):
         self._connection_epoch = 0
         self._closed = False
         self.tool_authorizer = None
+        self.mcp_tools = None
+        from .changes import ReplyChanges
+        self._changes = ReplyChanges(self)
         self._client = None
         self._workerEvent.connect(self._on_worker, Qt.ConnectionType.QueuedConnection)
         self._draft_timer = QTimer(self)
@@ -112,7 +117,8 @@ class ChatController(QObject):
     messages = Property(QObject, lambda self: self._messages, constant=True)
     sessionId = Property(str, lambda self: self._sid, notify=changed)
     title = Property(str, lambda self: self._title, notify=changed)
-    busy = Property(bool, lambda self: self._busy, notify=changed)
+    busy = Property(bool, lambda self: self._busy or self._changes.busy, notify=changed)
+    changeReview = Property(QObject, lambda self: self._changes, constant=True)
     connected = Property(bool, lambda self: self._connected, notify=changed)
     status = Property(str, lambda self: self._status, notify=changed)
     error = Property(str, lambda self: self._error, notify=changed)
@@ -164,24 +170,29 @@ class ChatController(QObject):
             "subtitle": time.strftime("%m月%d日", time.localtime(float(s.get("updated", 0))))} for s in rows])
 
     def _persist(self):
-        if self.demo or not self._history:
+        if self.demo or not (self._history or self._changes.entries):
             return
         try:
-            self.store.save_session({"id": self._sid, "title": self._title, "updated": time.time(),
-                                     "messages": [m.to_session_dict() for m in self._history]})
+            self._write_session(self._history, self._title, self._changes.entries)
             self._refresh_sessions()
         except OSError:
             self._error = "对话暂时无法保存，请保留窗口。"
 
+    def _write_session(self, history, title, changes):
+        self.store.save_session({"id": self._sid, "title": title, "updated": time.time(),
+                                 "changes": self._changes.saved(changes),
+                                 "messages": [m.to_session_dict() for m in history]})
+
     @Slot()
     def newSession(self):
-        if self._busy:
+        if self.busy:
             return
         self._save_draft()
         self._persist()
         self._sid = "s" + uuid.uuid4().hex
         self._title, self._draft, self._error = "新对话", "", ""
         self._history, self._attachments = [], []
+        self._changes.entries = {}
         self._client = None
         self._messages.reset([])
         self.changed.emit()
@@ -190,7 +201,7 @@ class ChatController(QObject):
 
     @Slot(str)
     def selectSession(self, sid):
-        if self._busy or sid == self._sid:
+        if self.busy or sid == self._sid:
             return
         if self.demo:
             row = next((r for r in self._sessions.rows if r["sessionId"] == sid), None)
@@ -204,6 +215,7 @@ class ChatController(QObject):
         self._save_draft()
         self._persist()
         self._sid, self._title = sid, str(row.get("title", "对话"))
+        self._changes.entries = row.get('changes', {}) if isinstance(row.get('changes'), dict) else {}
         self._history = [ChatMessage(m['role'], m['content'], tool_calls=m.get('tool_calls'), tool_call_id=m.get('tool_call_id', ''))
             if m.get('role') == 'tool' or m.get('tool_calls') else ChatMessage.from_session_dict(m)
             for m in row["messages"] if isinstance(m, dict) and m.get("role") in ("user", "assistant", "tool")
@@ -317,7 +329,7 @@ class ChatController(QObject):
     @Slot()
     def send(self):
         text = self._draft.strip()
-        if self._busy or not text:
+        if self.busy or not text:
             return
         if self.demo:
             self._error = "当前是材质预览。请用不带 --demo 的启动入口连接真实网关。"
@@ -338,7 +350,8 @@ class ChatController(QObject):
             self._title = text.splitlines()[0][:36]
         self._history.append(ChatMessage("user", prompt, user_text=text,
                             attachment_names=tuple(Path(a["path"]).name for a in self._attachments)))
-        self._messages.append({"roleName": "user", "textContent": text, "state": "complete"})
+        self._messages.append({"roleName": "user", "textContent": text, "state": "complete",
+                               "historyIndex": len(self._history) - 1})
         self._draft, self._attachments = "", []
         self.draftChanged.emit()
         self._save_draft()
@@ -346,14 +359,82 @@ class ChatController(QObject):
 
     @Slot()
     def retry(self):
-        if self._busy or not self._connected or not self._history or self._history[-1].role != "user":
+        if self.busy or not self._connected or not self._history or self._history[-1].role != "user":
             return
         self._messages.reset(self._transcript_rows())
         self._start_generation()
 
+    @Slot(str, int, result=bool)
+    def withdrawMessage(self, sid, index):
+        return self._revise_message(sid, index, None)
+
+    @Slot(str, int, str, result=bool)
+    def editMessage(self, sid, index, text):
+        return self._revise_message(sid, index, text.strip())
+
+    def _revise_message(self, sid, index, text):
+        if (self.demo or self.busy or sid != self._sid or not 0 <= index < len(self._history)
+                or self._history[index].role != 'user'):
+            return False
+        history = self._history[:index]
+        if text is not None:
+            if not text:
+                return False
+            if not self._connected:
+                self._error = '网关尚未连接，无法重新发送。'
+                self.changed.emit()
+                return False
+            self._client = self._client or self.factory(self._gateway)
+            try:
+                old = self._history[index]
+                prompt = compose_prompt(text, [], secret_scope=self._client.secret_scope)
+                if old.attachment_names:
+                    # Keep the exact snapshot from this message, not the draft's
+                    # attachments or a fresh read of files that may have changed.
+                    prefix = old.user_text or ''
+                    start = len(prefix) if old.content.startswith(prefix + ATTACHMENT_HEADER) else 0
+                    split = old.content.find(ATTACHMENT_HEADER, start)
+                    if split < 0:
+                        raise ValueError('找不到原消息的附件快照，无法重新发送。')
+                    prompt += old.content[split:]
+                    if len(prompt) > MAX_CONTEXT_CHARS:
+                        raise ValueError('修改后的消息和原附件合计过长。')
+                history.append(ChatMessage('user', prompt, user_text=text,
+                                           attachment_names=old.attachment_names))
+            except ValueError as exc:
+                self._error = str(redact(str(exc)))
+                self.changed.emit()
+                return False
+        # File changes already happened. Retain their receipts without sending
+        # the withdrawn turns or their tool results in subsequent model requests.
+        changes = {}
+        for key, entry in self._changes.entries.items():
+            anchor = entry.get('anchor')
+            changes[key] = {**entry, 'anchor': None} if isinstance(anchor, int) and anchor >= index else entry
+        title = self._title
+        old_first = self._history[0].user_text or self._history[0].content
+        if index == 0 and old_first.split('\n', 1)[0][:36] == title:
+            title = text.splitlines()[0][:36] if text else '已撤回的对话'
+        try:
+            # Persist empty histories too, including overrides of imported chats.
+            self._write_session(history, title, changes)
+        except OSError:
+            self._error = '对话暂时无法保存，请重试。'
+            self.changed.emit()
+            return False
+        self._history, self._title, self._changes.entries = history, title, changes
+        self._status, self._error = ('消息已撤回', '') if text is None else ('就绪', '')
+        self._messages.reset(self._transcript_rows())
+        self._refresh_sessions()
+        self.changed.emit()
+        self.focusComposer.emit()
+        if text is not None:
+            self._start_generation()
+        return True
+
     def _transcript_rows(self):
         rows = []
-        for message in self._history:
+        for index, message in enumerate(self._history):
             if message.role == 'tool':
                 try:
                     result = json.loads(message.content)
@@ -362,10 +443,21 @@ class ChatController(QObject):
                     text = '工具记录已保存'
                 rows.append({'roleName': 'tool', 'textContent': text, 'state': 'complete'})
             elif message.content:
-                rows.append({'roleName': message.role, 'textContent': message.user_text or message.content, 'state': 'complete'})
+                rows.append({'roleName': message.role, 'textContent': message.user_text or message.content,
+                             'state': 'complete', 'historyIndex': index})
+            for key, entry in self._changes.entries.items():
+                if entry.get('anchor') == index:
+                    if message.role != 'assistant' or not message.content:
+                        rows.append({'roleName': 'assistant', 'textContent': '', 'state': 'complete'})
+                    rows[-1].update(changeKey=key, changeInfo=self._changes.card(key))
+        for key, entry in self._changes.entries.items():
+            if entry.get('anchor') is None:
+                rows.append({'roleName': 'assistant', 'textContent': '已移除对话的文件修改', 'state': 'complete',
+                             'changeKey': key, 'changeInfo': self._changes.card(key)})
         return rows
 
     def _start_generation(self):
+        self._changes.begin()
         self._generation += 1
         generation = self._generation
         self._cancel = threading.Event()
@@ -381,13 +473,17 @@ class ChatController(QObject):
         client = self._client or self.factory(self._gateway)
         self._client = client
         authorize = self.tool_authorizer() if self.tool_authorizer is not None else None
+        connection = self.mcp_tools() if self.mcp_tools is not None else None
+        change_notice = self._changes.notice()
         def worker():
             try:
                 from .conversation import run
                 result = run(client, messages, model=model, effort=None if effort == 'off' else effort,
                     cancel=cancel, authorize=authorize,
+                    system_context=change_notice, mcp=connection,
                     chunk=lambda chunk: self._workerEvent.emit('chunk', (generation, chunk)),
                     checkpoint=lambda history: self._workerEvent.emit('checkpoint', (generation, history)),
+                    receipt=lambda name, response: self._workerEvent.emit('receipt', (generation, (name, response))),
                     status=lambda status: self._workerEvent.emit('status', (generation, status)),
                     next_round=lambda: self._workerEvent.emit('next_round', (generation, '')))
                 self._workerEvent.emit("done", (generation, result.text))
@@ -426,7 +522,11 @@ class ChatController(QObject):
             return
         if kind == 'checkpoint':
             self._history = value
+            self._changes.anchor()
             self._persist()
+            return
+        if kind == 'receipt':
+            self._changes.record(*value)
             return
         if kind == 'status':
             self._status = value
@@ -447,16 +547,29 @@ class ChatController(QObject):
             self._history.append(ChatMessage("assistant", self._reply))
         state = "complete" if kind == "done" else "stopped" if kind == "cancelled" else "error"
         self._messages.update(self._reply_index, textContent=self._reply, state=state)
+        if self._changes.active in self._changes.entries:
+            key = self._changes.active
+            self._changes.anchor()
+            self._messages.update(self._reply_index, changeKey=key, changeInfo=self._changes.card(key))
         self._busy = False
         self._status = "已停止" if kind == "cancelled" else "发送失败" if kind == "failed" else "就绪"
         self._error = value if kind == "failed" else ""
         self._persist()
+        self._changes.finish()
         self.changed.emit()
         self.streamAdvanced.emit()
 
     @Slot(str)
     def copyText(self, text):
         QGuiApplication.clipboard().setText(text)
+
+    @Slot(QPointF, float, float)
+    def syncInputMethod(self, origin, width, height):
+        ime = QGuiApplication.inputMethod()
+        ime.setInputItemTransform(QTransform.fromTranslate(origin.x(), origin.y()))
+        ime.setInputItemRectangle(QRectF(0, 0, width, height))
+        ime.update(Qt.InputMethodQuery.ImCursorRectangle | Qt.InputMethodQuery.ImAnchorRectangle
+                   | Qt.InputMethodQuery.ImInputItemClipRectangle)
 
     @Slot(QObject)
     def formatMessage(self, quick_document):

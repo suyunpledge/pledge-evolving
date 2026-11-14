@@ -45,7 +45,8 @@ _LANGUAGE_BY_SUFFIX = {
 
 class DevelopmentWorkbench(ttk.Frame):
     def __init__(self, parent, state, *, runtime=None, hosted=False,
-                 workspace_request=None, model_settings_home=None, models_changed=None):
+                 workspace_request=None, model_settings_home=None, models_changed=None,
+                 qt_agent=False):
         super().__init__(parent)
         self.state = state
         # hosted（2026-10-16 双导航栏去重，10-17 修正）：被 forge_gui_v2
@@ -54,6 +55,7 @@ class DevelopmentWorkbench(ttk.Frame):
         # 点击经 workspace_request 回调转发宿主顶层工作空间切换。独立运行
         # （run_development.py / 测试）保持完整形态与既有语义。
         self._hosted = bool(hosted)
+        self._qt_agent = qt_agent
         self._workspace_request = workspace_request
         from forge.development.models import ModelSettingsSource
         self._model_router_factory = ModelSettingsSource(model_settings_home) if model_settings_home else None
@@ -961,6 +963,7 @@ class DevelopmentWorkbench(ttk.Frame):
             pending=self.resolve_agent_approval, configure_model=self.agent_model_settings,
             refresh=self.refresh_agent_versions, new_conversation=self._new_agent_conversation,
             history=self.restore_session, settings=self.model_settings, view_changes=self._view_agent_changes,
+            revert_changes=self._revert_agent_changes,
             on_show_approvals=self._show_approvals_tab,
             history_source=lambda: (self.runtime._resume_evidence or {}).get('path'))
         self.log_tabs = self.agent_panel.notebook
@@ -997,7 +1000,8 @@ class DevelopmentWorkbench(ttk.Frame):
                                    highlightthickness=1,
                                    highlightbackground=C['border'],
                                    highlightcolor=C['accent_border'])
-        self.input = TaskInput(self._input_row, height=3, wrap='word', undo=True, font=FONT_UI)
+        self.input = TaskInput(self._input_row, embedded=self._hosted, height=3,
+                               wrap='word', undo=True, font=FONT_UI)
         style_editor(self.input)
         # 焦点环由外层输入卡承担，输入框自身不再画第二圈。
         self.input.configure(highlightthickness=0)
@@ -1209,6 +1213,13 @@ class DevelopmentWorkbench(ttk.Frame):
 
     def _view_agent_changes(self, evidence=None):
         evidence = evidence or self.task_evidence
+        identifiers = self._recorded_change_ids(evidence)
+        if identifiers and not self.runtime.busy:
+            def reviewed(value, error):
+                if not error:
+                    self._show_recorded_changes(value)
+            self.work(lambda: self.runtime.review_recorded_changes(identifiers), reviewed)
+            return
         changes = list(evidence.changes.values())
         if changes:
             preview = '\n\n'.join('文件：' + str(c['path']) + '\n' +
@@ -1216,6 +1227,52 @@ class DevelopmentWorkbench(ttk.Frame):
             self.view_agent_diff({'diff': preview, 'diff_truncated': any(c.get('diff_truncated') for c in changes)})
         elif evidence.diffs:
             self.view_agent_diff(evidence.diffs[-1])
+
+    @staticmethod
+    def _recorded_change_ids(evidence):
+        return list(dict.fromkeys(identifier for action in evidence.actions.values()
+            for identifier in (action.get('meta') or {}).get('change_ids', []) if isinstance(identifier, str)))
+
+    def _show_recorded_changes(self, value):
+        text = '\n\n'.join('文件：' + file['name'] + '\n' +
+            (file['diff'] or '无文本预览') for file in value['files'])
+        self.view_agent_diff({'diff': text, 'diff_truncated': any(f['truncated'] for f in value['files'])})
+
+    def _revert_agent_changes(self, evidence=None):
+        evidence = evidence or self.task_evidence
+        if self.runtime.busy or self._loading or self._submission_active:
+            self.status.set('请等待当前操作结束，再回退修改')
+            return
+        identifiers = self._recorded_change_ids(evidence)
+        if not identifiers or any((a.get('meta') or {}).get('change_review_incomplete') for a in evidence.actions.values()):
+            self.status.set('此记录没有完整回退快照，请逐个审查文件')
+            return
+        def previewed(value, error):
+            if error:
+                return
+            self._show_recorded_changes(value)
+            if not value['canRevert']:
+                self.status.set('已回退，或文件有后续修改；未执行覆盖')
+                return
+            for file in value['files']:
+                row = self.documents.get(file['path'])
+                if row:
+                    self.document_changed(row)
+                    if row['document'].dirty or row.get('saving'):
+                        self.status.set('目标文件有未保存草稿，请先保存或关闭；回退未执行')
+                        return
+            if not messagebox.askyesno('回退本次修改', f"已在 Diff 面板展示 {len(value['files'])} 个文件的修改。\n"
+                    '恢复到本次修改前的内容？新增文件将移除，后续编辑会阻止回退。', parent=self):
+                return
+            permission = self.permission.get()
+            def restored(result, failure):
+                if not failure:
+                    self.status.set('已回退本次修改')
+                    self.refresh_project()
+                    self.refresh_documents()
+                    self.refresh_agent_versions()
+            self.work(lambda: self.runtime.review_recorded_changes(identifiers, revert=True, permission=permission), restored)
+        self.work(lambda: self.runtime.review_recorded_changes(identifiers), previewed)
 
 
     def _editor_status_fields(self):
@@ -3223,6 +3280,9 @@ class DevelopmentWorkbench(ttk.Frame):
         else:
             panels = [self.project_frame, self.editor_frame, self.agent_frame]
         wanted = list(panels)
+        if self._qt_agent:
+            # The Qt host renders the Agent column beside this native editor surface.
+            wanted = [panel for panel in wanted if panel is not self.agent_frame]
         # panes.panes() 返回的是窗口路径名**字符串**，与控件对象比较恒为
         # False。那会让下面两处判断同时失效：「已在集合则 continue」永不
         # 命中、「不在集合才 forget」对每个在装面板都成立——结果是每次
