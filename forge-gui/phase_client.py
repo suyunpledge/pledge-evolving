@@ -36,7 +36,7 @@ class PhaseClient:
         conf = resolve(row.get('config') or {}, {'env': environment})
         config.apply_patch([{'id': pair[0], 'name': 'provider:phase', 'config': conf}])
         opener = lambda request, **kw: open_response(request, cancel_event=cancel_event, **kw)
-        router = ModelRouter.from_config(config, transport=HttpTransport(timeout=60, response_opener=opener))
+        router = ModelRouter.from_config(config, transport=HttpTransport(response_opener=opener))
         self.router = phase_router(router, pair, router)
         self.router.retries_per_provider = 0  # one explicit manual request; don't wait in retry sleeps
         self.scope, self.cancel_event = scope, cancel_event

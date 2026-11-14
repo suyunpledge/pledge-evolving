@@ -1030,7 +1030,7 @@ class DevelopmentWorkbench(ttk.Frame):
         # 通过 self._runtime_ctx 暴露（self._runtime_ctx.get_task() /
         # .get_routing() / .get_policy()）。
         self.model_choice = None
-        self.planning = tk.StringVar(value='low')
+        self.planning = tk.StringVar(value=self.state.value('planning'))
         self.permission = tk.StringVar(value='read-only')
         # R-fix：三个旧 chrome 哨兵改为轻量兼容对象——v0.3 起 UI 由
         # RuntimeContext 接管，但旧测试契约（.cget('text')）与既有
@@ -1058,6 +1058,11 @@ class DevelopmentWorkbench(ttk.Frame):
                 except Exception:
                     pass
         self.permission.trace_add('write', permission_display)
+        def planning_display(*args):
+            bench = owner()
+            if bench is not None and not bench._closed:
+                bench._sync_planning_choices()
+        self.planning.trace_add('write', planning_display)
 
         # ── 预存消息队列（上限 3，任务完成后自动发送）────────────
         self._pending_prompts: list[dict] = []
@@ -1076,6 +1081,13 @@ class DevelopmentWorkbench(ttk.Frame):
         # 一行占位色说明文字（三个键位仍是真实绑定）。
         input_row = self._input_row
         pad = ui_px(self, 10)
+        reply_row = ttk.Frame(input_row)
+        reply_row.pack(side='top', fill='x', padx=pad, pady=(ui_px(self, 6), 0))
+        ttk.Label(reply_row, text='回复方式', font=FONT_CAPTION).pack(side='left', padx=(0, 6))
+        from .policy_widgets import PlanningChoice
+        self.reply_choice = PlanningChoice(reply_row, planning=self.planning.get(),
+                                           on_change=self._on_planning_change)
+        self.reply_choice.pack(side='left')
         footer = tk.Frame(input_row, bg=C['input_bg'])
         footer.pack(side='bottom', fill='x', padx=(pad, ui_px(self, 6)), pady=(0, ui_px(self, 6)))
         self._input_footer = footer
@@ -1588,7 +1600,7 @@ class DevelopmentWorkbench(ttk.Frame):
                     self._submission_notice('项目已变化，待发送任务已取消；草稿已保留。', error=True)
                     return
                 if self.input.get('1.0', 'end-1c') == pending['draft']:
-                    self.send(delegate=pending['delegate'])
+                    self.send(delegate=pending['delegate'], planning=pending['planning'])
                 else:
                     self._submission_notice('项目已载入；草稿已有更改，请确认后再次发送。')
             self.later(0, resume)
@@ -1610,7 +1622,7 @@ class DevelopmentWorkbench(ttk.Frame):
             except Exception:
                 pass
 
-    def _prepare_initial_send(self, delegate):
+    def _prepare_initial_send(self, delegate, planning=None):
         path = self._last_project_attempt or (str(self.source.root) if self.source else '') or self.state.value('project')
         draft = self.input.get('1.0', 'end-1c')
         if not path or not Path(path).is_dir():
@@ -1618,7 +1630,9 @@ class DevelopmentWorkbench(ttk.Frame):
         if not path:
             self._submission_notice('发送需要项目目录；未选择项目，草稿已保留。', error=True)
             return
-        self._pending_initial_send = {'draft': draft, 'delegate': delegate, 'generation': self._generation + 1}
+        self._pending_initial_send = {'draft': draft, 'delegate': delegate,
+                                      'planning': self.planning.get() if planning is None else planning,
+                                      'generation': self._generation + 1}
         self._submission_notice('正在准备项目与 Agent；原始草稿将在就绪后发送。')
         if not self.open_project(path):
             self._pending_initial_send = None
@@ -1702,7 +1716,7 @@ class DevelopmentWorkbench(ttk.Frame):
         """
         return dict(
             planning=(getattr(self, 'planning', None).get()
-                      if getattr(self, 'planning', None) is not None else 'low'),
+                      if getattr(self, 'planning', None) is not None else 'none'),
             role=(getattr(self, 'agent_role', None).get()
                   if getattr(self, 'agent_role', None) is not None else 'agent'),
             on_planning_change=self._on_planning_change,
@@ -1716,11 +1730,22 @@ class DevelopmentWorkbench(ttk.Frame):
         )
 
     def _on_planning_change(self, value):
-        if getattr(self, 'planning', None) is not None:
-            try:
-                self.planning.set(value)
-            except Exception:
-                pass
+        try:
+            self.state.configure_planning(value)
+        except Exception as exc:
+            self._sync_planning_choices()
+            self.status.set('回复方式未保存：' + redact(str(exc)))
+            return
+        self.planning.set(value)
+
+    def _sync_planning_choices(self):
+        value = self.planning.get()
+        choice = getattr(self, 'reply_choice', None)
+        if choice is not None:
+            choice.set(value)
+        context = getattr(self, '_runtime_ctx', None)
+        if context is not None:
+            context.get_task_controls().set_planning(value)
 
     def _on_role_change(self, value):
         # 角色变更同步到 agent_role（兼容旧 self.agent_role 读取路径）。
@@ -2529,7 +2554,7 @@ class DevelopmentWorkbench(ttk.Frame):
             self._dispatch(request['prompt'], request['delegate'], request=request, clear_input=False)
         self._queued_send_id = self.later(300, advance)
 
-    def send(self, *, delegate=False):
+    def send(self, *, delegate=False, planning=None):
         prompt = self.input.get('1.0', 'end-1c').strip()
         if not prompt:
             return
@@ -2538,7 +2563,7 @@ class DevelopmentWorkbench(ttk.Frame):
             return
         if not self.runtime.ready:
             try:
-                self._prepare_initial_send(delegate)
+                self._prepare_initial_send(delegate, planning)
             except Exception as exc:
                 self._pending_initial_send = None
                 self._submission_notice('无法准备任务，草稿已保留：' + str(exc), error=True)
@@ -2550,7 +2575,7 @@ class DevelopmentWorkbench(ttk.Frame):
                 refreshed = self.runtime.refresh_models()
                 if refreshed is not None:
                     self._model_catalog_loaded(refreshed, preserve_selection=True)
-            request = self._capture_submission(prompt, delegate)
+            request = self._capture_submission(prompt, delegate, planning=planning)
         except Exception as exc:
             self._submission_notice('任务未创建：' + str(exc), error=True)
             return
@@ -2569,7 +2594,7 @@ class DevelopmentWorkbench(ttk.Frame):
             return
         self._dispatch(prompt, delegate, request=request)
 
-    def _capture_submission(self, prompt, delegate):
+    def _capture_submission(self, prompt, delegate, *, planning=None):
         """Freeze validated next-task choices on the Tk thread before consuming a draft."""
         if len(prompt.encode('utf-8')) > 16384:
             raise ValueError('任务描述不能超过 16 KiB；请缩短描述或附加文件。')
@@ -2586,7 +2611,8 @@ class DevelopmentWorkbench(ttk.Frame):
         if model is None and getattr(self, 'model_choice', None) is not None:
             index = self.model_choice.current()
             model = self.runtime.catalog.get(self.model_ids[index]) if index > 0 else None
-        permission, planning = self.permission.get(), self.planning.get()
+        permission = self.permission.get()
+        planning = self.planning.get() if planning is None else planning
         from forge.planning import planning_level
         planning_level(planning)
         contexts = []
@@ -2645,7 +2671,11 @@ class DevelopmentWorkbench(ttk.Frame):
             self.context_label.configure(text='未附加编辑器内容')
         self._retry_request = {'prompt': prompt, 'delegate': delegate}
         self.task_label.configure(text='Agent · 请求执行')
-        self._submission_notice('已提交，正在创建 Agent 任务…')
+        if planning == 'none':
+            self.status.set('正在回答…')
+            self.log_tabs.select(self.chat.master)
+        else:
+            self._submission_notice('已提交，正在创建 Agent 任务…')
         def done(value, error):
             self._submission_active = False
             self._active_submission = None
@@ -2678,7 +2708,8 @@ class DevelopmentWorkbench(ttk.Frame):
                 self.chat.message('Coding Agent', value['text'])
             if error:
                 self.chat.message('执行失败', error)
-            else:
+            elif (planning != 'none' or self.task_evidence.actions or
+                  value.get('outcome') != 'succeeded'):
                 self.chat.message('任务结果', '状态：' + str(value.get('outcome', value.get('stopped', '未知'))))
             self.refresh_agent_versions()
             self.refresh_project()

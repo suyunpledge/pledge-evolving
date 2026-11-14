@@ -5,8 +5,11 @@ The application logo remains in brand_marks/assets/forge-logo-*.png.
 from __future__ import annotations
 
 import json
+import base64
+import struct
 import sys
 import tkinter as tk
+import zlib
 from pathlib import Path
 import i18n
 
@@ -87,16 +90,20 @@ ICONS = {
 
 ICONS['clock'] = [('circle',(3,3,21,21)),('line',(12,6,12,12,16,14))]
 ICONS['connector'] = [('rect',(7,8,17,17)),('line',(9,3,9,8)),('line',(15,3,15,8)),('line',(12,17,12,22))]
+# Compatibility fallback only; the shipped masks use distinct Lucide geometry.
+ICONS['plugin'] = ICONS['tools']
+ICONS['context'] = ICONS['copy']
+ICONS['computer'] = ICONS['workspace']
 
 ALIASES = {
-    '◷':'clock', '🔌':'connector',
+    '◷':'clock', '⏰':'clock', '🔌':'connector', '🛠':'code',
     "💬": "chat", "✅": "check_circle", "☑": "task", "🤖": "agents", "🧰": "tools",
     "📚": "knowledge", "🧬": "evolution", "📁": "files", "📂": "folder_open", "📄": "file",
     "🐍": "code", "⚙": "config", "⚙️": "config", "🔍": "search", "⌗": "search",
     "＋": "plus", "+": "plus", "−": "minus", "✕": "close", "×": "close", "✖": "close",
     "⋯": "more", "…": "more", "▸": "chevron_right", "▾": "chevron_down", "▴": "chevron_up", "⌃": "chevron_up",
     "⌄": "chevron_down", "◀": "chevron_left", "▶": "play", "↑": "send", "■": "stop",
-    "⟳": "refresh", "↗": "external", "☷": "sidebar", "☰": "sidebar", "▤": "workspace",
+    "⟳": "refresh", "↗": "external", "☰": "sidebar", "≪": "chevron_left", "≫": "chevron_right", "▤": "workspace",
     "⑂": "diff", "✓": "check", "✔": "check", "⚠": "warning", "⚠️": "warning",
     "❌": "error", "✗": "error", "ℹ": "info", "⧉": "copy", "👍": "thumb_up", "👎": "thumb_down",
     "📎": "paperclip", "🔑": "key", "▣": "model", "⬡": "model", "☷": "hexagram", "✎": "edit", "🖼": "image",
@@ -118,6 +125,11 @@ def split_icon_text(text):
 # 不能反向 import gui_theme（循环依赖），故此处保持字面值同步。
 def draw_icon(canvas, name, *, x=0, y=0, size=24, fg="#A2ADC5", tag="icon"):
     name = icon_key(name) or "file"
+    bitmap = _lucide_image(canvas, name, size=size, fg=fg)
+    if bitmap is not None:
+        canvas.create_image(x, y, image=bitmap, anchor=tk.NW, tags=tag)
+        # Owning-interpreter cache retains the image across widget repaints.
+        return
     factor = size / 24
     width = max(1.2, factor * 1.7)
     for kind, points in ICONS[name]:
@@ -137,11 +149,13 @@ def draw_icon(canvas, name, *, x=0, y=0, size=24, fg="#A2ADC5", tag="icon"):
 
 
 class IconCanvas(tk.Canvas):
-    def __init__(self, parent, name, *, size=20, bg="#0D141F", fg="#A2ADC5", command=None):
-        super().__init__(parent, width=size, height=size, bg=bg, bd=0, highlightthickness=0,
+    def __init__(self, parent, name, *, size=20, hit_size=None, bg="#0D141F", fg="#A2ADC5", command=None):
+        hit_size = max(size, hit_size or size)
+        super().__init__(parent, width=hit_size, height=hit_size, bg=bg, bd=0, highlightthickness=0,
                          takefocus=bool(command), cursor="hand2" if command else "arrow")
         self.name, self._fg, self._size = (icon_key(name) or "file") if name else None, fg, size
         self._text = name
+        self._hit_size = hit_size
         self._command = command
         self._base_bg = bg
         self._state = tk.NORMAL
@@ -181,7 +195,9 @@ class IconCanvas(tk.Canvas):
         return self._base_bg
 
     def _visual_fg(self):
-        return self._blend(self._fg, (128, 128, 128), .52) if self._state == tk.DISABLED else self._fg
+        if self._state == tk.DISABLED:
+            return self._blend(self._fg, (128, 128, 128), .52)
+        return self._blend(self._fg, (255, 255, 255), .25) if self._hovered else self._fg
 
     def _redraw_visual(self):
         if not hasattr(self, "name"):
@@ -227,10 +243,11 @@ class IconCanvas(tk.Canvas):
         self.delete("icon")
         self.delete("focus")
         if self.name:
-            draw_icon(self, self.name, size=self._size, fg=self._visual_fg())
+            offset = (self._hit_size - self._size) / 2
+            draw_icon(self, self.name, x=offset, y=offset, size=self._size, fg=self._visual_fg())
         if self._focused and self._state == tk.NORMAL:
             inset = max(1, round(self._size / 16))
-            self.create_rectangle(inset, inset, self._size - inset, self._size - inset,
+            self.create_rectangle(inset, inset, self._hit_size - inset, self._hit_size - inset,
                                   outline="#78B5FF", width=1, tags="focus")  # v0.5: 与 gui_theme.focus_ring 同源
 
     def configure(self, cnf=None, **kwargs):
@@ -267,6 +284,40 @@ class IconCanvas(tk.Canvas):
 
 _ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent)) / "assets" / "ui"
 _manifest = None
+_lucide_masks = None
+
+
+def _lucide_image(master, name, *, size, fg):
+    """Antialiased library geometry, exact size/color, tkinter-only runtime."""
+    global _lucide_masks
+    if _lucide_masks is None:
+        try:
+            _lucide_masks = json.loads((_ROOT / 'lucide-masks.json').read_text(encoding='utf-8'))['masks']
+        except (OSError, ValueError, KeyError):
+            _lucide_masks = {}
+    size = max(1, round(size))
+    encoded = _lucide_masks.get(name, {}).get(str(size))
+    if encoded is None:
+        return None
+    owner = master._root()
+    cache = getattr(owner, '_forge_ui_images', None)
+    if cache is None:
+        cache = owner._forge_ui_images = {}
+    rgb = tuple(value // 257 for value in master.winfo_rgb(fg))
+    key = ('lucide', name, size, rgb)
+    if key not in cache:
+        alpha = zlib.decompress(base64.b64decode(encoded))
+        pixel = bytes(rgb)
+        rows = b''.join(b'\0' + b''.join(pixel + bytes((a,)) for a in alpha[y * size:(y + 1) * size])
+                        for y in range(size))
+
+        def chunk(kind, data):
+            return struct.pack('!I', len(data)) + kind + data + struct.pack('!I', zlib.crc32(kind + data))
+
+        png = (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('!2I5B', size, size, 8, 6, 0, 0, 0))
+               + chunk(b'IDAT', zlib.compress(rows)) + chunk(b'IEND', b''))
+        cache[key] = tk.PhotoImage(master=master, data=base64.b64encode(png), format='png')
+    return cache[key]
 
 
 def _metadata():
@@ -317,6 +368,9 @@ PALETTE = {"muted": "#A2ADC5", "text": "#EDF1F7", "accent": "#7B9CFF",
 
 def icon_image(master, name, *, size=20, fg="#9A9AA8"):
     name = icon_key(name)
+    bitmap = _lucide_image(master, name, size=size, fg=fg)
+    if bitmap is not None:
+        return bitmap
     index = _metadata()["icons"].get(name)
     if index is None:
         return None

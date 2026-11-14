@@ -256,6 +256,8 @@ class GatewayConfig:
         model = self.model_map.get(model, model)
         payload["model"] = model
         conf = self.provider_options
+        from .request_timing import request_timeout
+        request_timeout(conf.get('requestTimeout', 0))
         provider = Provider(
             "gateway", self.upstream, _credential=self._credential, wire=self.upstream_wire,
             default_model=model, vendor=str(conf.get("vendor") or ""),
@@ -264,6 +266,7 @@ class GatewayConfig:
             model_kind_ids=dict(conf.get("modelKinds") or {}),
             route_capabilities=conf.get("routeCapabilities", {}),
             model_capabilities=conf.get("modelCapabilities", {}),
+            request_timeout=conf.get("requestTimeout", 0),
             cache_control=str(conf.get("cacheControl", "auto")),
             expected_calls=int(conf.get("expectedCalls", 2)),
             call_gap_seconds=float(conf.get("callGapSeconds", 60)),
@@ -632,6 +635,7 @@ def build_handler(cfg: GatewayConfig):
 
         def _proxy(self, body: bytes) -> None:
             self._upstream_started = False
+            payload = {}
             scope = cfg.secret_scope(self.headers.get('X-Forge-Secret-Scope', ''))
             if scope.protect_text(self.path) != self.path:
                 self._json(400, {'error': {'message': 'Secrets must not be placed in request URLs'}})
@@ -684,7 +688,8 @@ def build_handler(cfg: GatewayConfig):
             cfg.log.write(f"{self.command} {self.path} -> {url} (bytes={len(body)})")
             request = urllib.request.Request(url, data=body or None, headers=headers, method=self.command)
             try:
-                with open_upstream(request, timeout=600, proxy=cfg.proxy) as response:
+                from .request_timing import request_timeout
+                with open_upstream(request, timeout=request_timeout(cfg.provider_options.get('requestTimeout', 0)), proxy=cfg.proxy) as response:
                     from .request_execution import UsageObserver
                     observer = UsageObserver()
                     ctype = response.headers.get("content-type", "")
@@ -697,11 +702,9 @@ def build_handler(cfg: GatewayConfig):
                         self.close_connection = True
                         self.end_headers()
                         self._upstream_started = True
-                        from .secret_http import SecretSSEFilter
+                        from .secret_http import SecretSSEFilter, iter_model_sse
                         fence = SecretSSEFilter()
-                        while True:
-                            chunk = response.readline(1024 * 1024 + 1)
-                            if not chunk: break
+                        for chunk in iter_model_sse(response, expected_choices=(payload or {}).get('n', 1)):
                             observer.feed(chunk)
                             self.wfile.write(fence.feed(chunk))
                             self.wfile.flush()
@@ -805,7 +808,8 @@ def build_handler(cfg: GatewayConfig):
                 url, data=json.dumps(upstream_payload, ensure_ascii=False).encode(),
                 headers=headers, method="POST")
             try:
-                with open_upstream(request, timeout=600, proxy=cfg.proxy) as response:
+                from .request_timing import request_timeout
+                with open_upstream(request, timeout=request_timeout(provider.request_timeout), proxy=cfg.proxy) as response:
                     if not upstream_payload.get("stream"):
                         from .secrets import redact
                         raw = redact(json.loads(response.read().decode("utf-8", "replace")))
@@ -826,9 +830,9 @@ def build_handler(cfg: GatewayConfig):
                     translator = OpenAIStreamTranslator(requested)
                     from .request_execution import UsageObserver
                     observer = UsageObserver()
-                    from .secret_http import SecretSSEFilter
+                    from .secret_http import SecretSSEFilter, iter_model_sse
                     fence = SecretSSEFilter()
-                    for raw_line in response:
+                    for raw_line in iter_model_sse(response, expected_choices=upstream_payload.get('n', 1)):
                         observer.feed(raw_line)
                         safe_lines = fence.feed(raw_line).decode('utf-8', 'replace').splitlines()
                         for safe_line in safe_lines:

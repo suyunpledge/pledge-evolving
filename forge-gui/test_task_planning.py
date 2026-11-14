@@ -96,6 +96,7 @@ class PlanningUiTests(unittest.TestCase):
     def test_levels_persist_preserve_layout_and_are_visible_at_five_scales(self):
         for scale in (1, 1.25, 1.5, 1.75, 2):
             with isolated_app(size=(900, 660), scale=scale) as (root, app, errors):
+                app.input_card.set_options_expanded(True)
                 before = (app.split.panes(), app.sidebar.master, app.sidebar.winfo_manager())
                 for level in ('high', 'medium', 'low', 'none'):
                     self.assertTrue(app._set_planning_level(level))

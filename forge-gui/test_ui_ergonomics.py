@@ -76,8 +76,24 @@ class ErgonomicsTests(unittest.TestCase):
 
     def test_essential_text_has_readable_contrast(self):
         for fg, bg in (("msg_user_fg", "msg_user_bg"), ("msg_agent_fg", "msg_agent_bg"),
-                       ("placeholder", "input_bg"), ("muted", "surface")):
+                       ("placeholder", "input_bg"), ("muted", "surface"),
+                       ("body", "chat"), ("subtext", "welcome_action"),
+                       ("subtext", "sidebar"), ("muted", "chrome")):
             self.assertGreaterEqual(contrast(theme.C[fg], theme.C[bg]), 4.5, (fg, bg))
+
+    def test_chat_search_shortcut_preserves_text_after_caret(self):
+        app = self.app_ui()
+        draft = "保留光标前后所有文字"
+        app.send_var.set(draft)
+        entry = app.input_card.entry
+        entry.mark_set("insert", "1.3")
+        entry.focus_force()
+        self.pump()
+        entry.event_generate("<Control-k>")
+        self.pump()
+        self.assertTrue(app.session_search.winfo_ismapped())
+        self.assertEqual(entry.get("1.0", "end-1c"), draft)
+        self.assertEqual(app.send_var.get(), draft)
 
     def test_composer_keyboard_send_and_single_stop_preserve_draft(self):
         calls = []
@@ -144,7 +160,7 @@ class ErgonomicsTests(unittest.TestCase):
     def test_compact_navigation_keeps_history_and_fixed_actions_visible(self):
         app = self.app_ui()
         self.assertEqual(tuple(app.sidebar_navigation),
-                         ('connectors', 'knowledge', 'evolution', 'config'))
+                         ('agents', 'connectors', 'knowledge', 'evolution', 'config'))
         app.input_card.team_settings_btn.invoke()
         self.assertEqual(app._active_view, 'agents')
         app._return_to_chat()
@@ -211,11 +227,12 @@ class ErgonomicsTests(unittest.TestCase):
                     labels.append(child)
                 walk(child)
         walk(empty)
-        for text in ("开始对话", "交给 Forge 一个任务", "查看项目工作区"):
+        for text in ("交给 Forge 一个任务", "查看项目工作区"):
             label = next(w for w in labels if w.cget("text") == text)
             self.assertTrue(label.winfo_ismapped())
             self.assertLess(label.winfo_rooty()+label.winfo_height(), app.input_card.winfo_rooty())
         self.assertEqual(app._chat_history, [])
+        self.assertTrue(app.input_card.entry.winfo_ismapped())
 
 
 if __name__ == "__main__":

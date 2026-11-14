@@ -125,17 +125,22 @@ class DpiLayoutTests(unittest.TestCase):
                 with self.subTest(scale=scale, size=size), isolated_app(scale, size) as (root, app, errors):
                     card = app.input_card
                     metrics[scale] = tkfont.Font(root=root, font=theme.FONT_UI).metrics("linespace")
-                    for widget in (card.entry, card.plus, card.model_widget, card.mode_pill, card.provider_label, card.send_circle):
-                        if widget.winfo_ismapped():  # provider_label 在有模型选择器时隐藏（选择器自带厂商标志）
-                            self.assert_inside(widget, card._card._cv)
+                    for widget in (card.entry, *card._rail_tools, card.model_widget, card.mode_pill, card.send_circle):
+                        self.assertTrue(widget.winfo_ismapped())
+                        self.assert_inside(widget, card._card.canvas)
                     self.assertFalse(card.provider_label.winfo_ismapped())
                     self.assertLess(card.entry.winfo_rooty(), card._tools_row.winfo_rooty())
-                    self.assertLess(card._tools_row.winfo_rooty(), card._toolbar.winfo_rooty())
+                    if scale == 1 and size == SIZES[0]:
+                        self.assertEqual(card._tools_row.grid_info()['row'], card._primary_controls.grid_info()['row'])
+                    if scale == 2 and size == gui.MIN_SIZE:
+                        self.assertLess(card._tools_row.grid_info()['row'], card._primary_controls.grid_info()['row'])
                     self.assertEqual(card.model_widget.get(), app.model_var.get())
                     self.assertIn("long-model-name", card.model_widget._shown_text)
+                    send_position = (card.send_circle.winfo_rootx(), card.send_circle.winfo_rooty())
                     card.set_busy(True)
                     pump(root, .03)
                     self.assert_inside(card.stop_circle, card._card._cv)
+                    self.assertEqual((card.stop_circle.winfo_rootx(), card.stop_circle.winfo_rooty()), send_position)
                     card.set_busy(False)
                     self.assertFalse(errors, errors)
         self.assertGreater(metrics[2], metrics[1]*1.7, "the test must actually change font metrics")
@@ -177,12 +182,21 @@ class DpiLayoutTests(unittest.TestCase):
             code = next(widget for widget in descendants(reply) if isinstance(widget, tk.Text) and not isinstance(widget, cw.InlineText))
             self.assertTrue(code.cget("xscrollcommand"))
             self.assertTrue(code.cget("yscrollcommand"))
+            horizontal = next(w for w in code.master.winfo_children()
+                              if w.winfo_class() == "TScrollbar" and str(w.cget("orient")) == "horizontal")
+            self.assertTrue(horizontal.winfo_ismapped())
             code.xview_moveto(1)
             pump(root)
             self.assertGreater(code.xview()[0], 0)
             code.yview_moveto(1)
             pump(root)
             self.assertGreater(code.yview()[0], 0)
+            reply.render_markdown("```python\nreturn 1\n```")
+            pump(root)
+            code = next(w for w in descendants(reply) if isinstance(w, tk.Text) and not isinstance(w, cw.InlineText))
+            horizontal = next(w for w in code.master.winfo_children()
+                              if w.winfo_class() == "TScrollbar" and str(w.cget("orient")) == "horizontal")
+            self.assertFalse(horizontal.winfo_ismapped())
             self.assertFalse(errors, errors)
 
     def test_workspace_toggle_recalculates_content_width_and_heading_wrap(self):

@@ -47,6 +47,37 @@ class UiPolishTests(unittest.TestCase):
         return SimpleNamespace(market_list=area.inner, viewport=area, _session_id="ui-test", _repo_root=lambda: Path.cwd(), _active_workspace=lambda: Path.cwd(),
                                _market_action=lambda *_: None, _inspect_plugin=lambda *_: None)
 
+    def test_welcome_actions_fit_narrow_panel_without_message_scroll_control(self):
+        self.root.geometry('500x520')
+        area = cw.MessageArea(self.root)
+        area.pack(fill='both', expand=True)
+        called = []
+        area.show_empty('今天想完成什么？', (), actions=(
+            ('开始对话', '提问、讨论方案或梳理需求', lambda: called.append('chat')),
+            ('交给 Forge 一个任务', '运行工具并跟踪进度', lambda: called.append('task')),
+            ('查看项目工作区', '浏览文件、变更与预览', lambda: called.append('workspace')),
+        ))
+        area.set_work_context('pledge-evolving')
+        pump(self.root)
+        for title in ('开始对话', '交给 Forge 一个任务', '查看项目工作区'):
+            label = next(w for w in descendants(area) if isinstance(w, tk.Label) and w.cget('text') == title)
+            self.assertLessEqual(label.winfo_rooty() + label.winfo_height(),
+                                 area.winfo_rooty() + area.winfo_height())
+            label.event_generate('<Button-1>')
+        self.assertEqual(called, ['chat', 'task', 'workspace'])
+        area._update_jump_latest()
+        self.assertFalse(area.jump_latest.winfo_ismapped())
+
+    def test_replaced_welcome_uses_existing_short_viewport_immediately(self):
+        self.root.geometry('800x350')
+        area = cw.MessageArea(self.root)
+        area.pack(fill='both', expand=True)
+        pump(self.root)
+        area.show_empty('今天想完成什么？', (), actions=())
+        pump(self.root)
+        banner = next(w for w in area._empty.winfo_children() if isinstance(w, tk.Canvas))
+        self.assertFalse(banner.winfo_ismapped())
+
     def test_plugin_long_metadata_and_translated_actions_fit_at_five_scales(self):
         plugin = pm.parse_manifest({"id": "ui-fixture", "name": "Long plugin name " * 8,
             "summary": "Long multilingual summary 中文説明 " * 12,

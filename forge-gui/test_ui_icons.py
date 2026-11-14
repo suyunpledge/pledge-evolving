@@ -40,13 +40,31 @@ class IconRenderingTests(unittest.TestCase):
         self.assertEqual(button.cget("text"), "等待中")
         self.assertFalse(button.cget("image"))
 
-    def test_send_stop_icons_keep_vector_color_after_state_change(self):
+    def test_send_stop_icons_keep_exact_color_after_state_change(self):
         button = theme.circle_button(self.root, "↑", lambda: None)
         theme.circle_button_state(button, "primary")
         shapes = button.find_withtag("glyph")
         self.assertTrue(shapes)
         self.assertNotIn("text", [button.type(item) for item in shapes])
-        self.assertEqual(button.itemcget(shapes[0], "fill"), "#FFFFFF")
+        self.assertEqual(button.type(shapes[0]), "image")
+        bitmap = icon_image(self.root, "send", size=button._icon_size, fg="#FFFFFF")
+        self.assertEqual(button.itemcget(shapes[0], "image"), str(bitmap))
+        visible = [bitmap.get(x, y) for y in range(bitmap.height()) for x in range(bitmap.width())
+                   if not bitmap.transparency_get(x, y)]
+        self.assertTrue(visible)
+        self.assertEqual(set(visible), {(255, 255, 255)})
+
+    def test_all_library_icons_preserve_dpi_size_and_semantic_color(self):
+        for name in ICONS:
+            for size in (14, 16, 20, 24, 28, 32, 48, 64):
+                with self.subTest(name=name, size=size):
+                    bitmap = icon_image(self.root, name, size=size, fg="#53B7A1")
+                    self.assertEqual((bitmap.width(), bitmap.height()), (size, size))
+                    self.assertIs(bitmap, icon_image(self.root, name, size=size, fg="#53B7A1"))
+                    ink = [(x, y) for y in range(size) for x in range(size)
+                           if not bitmap.transparency_get(x, y)]
+                    self.assertTrue(ink)
+                    self.assertEqual(bitmap.get(*ink[len(ink) // 2]), (83, 183, 161))
 
     def test_colored_emoji_is_a_bitmap_and_copy_preserves_unicode(self):
         image = emoji_image(self.root, "😀")
@@ -104,10 +122,11 @@ class IconRenderingTests(unittest.TestCase):
     def test_message_copy_action_preserves_rendered_emoji(self):
         message = cw.AgentMessage(self.root)
         message.pack(fill=tk.X)
-        message.render_markdown("真实文本 😀 🎉")
-        actions = message._ensure_action_row()
-        actions.winfo_children()[0]._command()
-        self.assertIn("真实文本 😀 🎉", self.root.clipboard_get())
+        original = "**真实文本** 😀 🎉\n\n```python\nprint('hello')\n```"
+        message.render_markdown(original)
+        message.add_note("Not part of the answer")
+        message._action_row.winfo_children()[0].invoke()
+        self.assertEqual(original, self.root.clipboard_get())
 
 
 class InterpreterLifecycleTests(unittest.TestCase):

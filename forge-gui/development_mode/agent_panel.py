@@ -661,11 +661,12 @@ class TaskInput(tk.Text):
 
 
 class PlanningCard(ttk.Frame):
-    LEVELS = {'none': '无 (None)', 'low': '低 (Low)', 'medium': '中等 (Medium)', 'high': '高 (High)'}
+    LEVELS = {'none': '直接回答', 'low': '低 (Low)', 'medium': '中等 (Medium)', 'high': '高 (High)'}
 
     def __init__(self, parent, view_changes):
         super().__init__(parent, padding=8, style='Card.TFrame')
-        ttk.Label(self, text='任务规划', font=FONT_UI_BOLD, style='Card.TLabel').pack(anchor='w')
+        self.title = ttk.Label(self, text='任务规划', font=FONT_UI_BOLD, style='Card.TLabel')
+        self.title.pack(anchor='w')
         self.level = ttk.Label(self, style='Muted.Card.TLabel')
         self.level.pack(anchor='w')
         self.authorization = ttk.Label(self, wraplength=280, style='Card.TLabel')
@@ -696,6 +697,7 @@ class PlanningCard(ttk.Frame):
         if display == self._display:
             return
         self._display = display
+        self.title.configure(text='执行信息' if context.get('planning') == 'none' else '任务规划')
         self.level.configure(text=level)
         self.permission.configure(text='权限 · ' + label)
         self.authorization.configure(text='授权 · ' + auth)
@@ -854,6 +856,9 @@ class AgentPanel(ttk.Frame):
         'read-only': ('只看不改', 'surface2', 'subtext'),
         'workspace-write': ('可改项目文件', 'ok_soft', 'ok'),
         'danger-full-access': ('完全访问', 'warn_soft', 'warn'),
+        'desktop-sandbox': ('沙箱运行', 'ok_soft', 'ok'),
+        'manual-approval': ('手动批准', 'surface2', 'subtext'),
+        'full-access': ('完全访问', 'warn_soft', 'warn'),
     }
 
     def _request_permission(self, value):
@@ -1055,7 +1060,9 @@ class AgentPanel(ttk.Frame):
             self._changes_summary = None
             self._last_task = evidence.task_id
             self._planning_card = None
-        if evidence.task_id or evidence.plan:
+        # Ordinary direct replies need no empty plan/authorization card.
+        if evidence.plan or (evidence.task_id and (
+                self.task_context.get('planning') != 'none' or evidence.actions)):
             if self._planning_card is None or not self._planning_card.winfo_exists():
                 callback = (lambda e=evidence: self._view_changes(e)) if self._view_changes else None
                 self._planning_card = PlanningCard(self.chat, callback)

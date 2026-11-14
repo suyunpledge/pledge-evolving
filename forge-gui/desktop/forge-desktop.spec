@@ -68,6 +68,8 @@ a = Analysis(
         (str(GUI_DIR / "assets" / "brands" / "*.png"), "assets/brands"),
         (str(GUI_DIR / "assets" / "ui" / "*.png"), "assets/ui"),
         (str(GUI_DIR / "assets" / "ui" / "manifest.json"), "assets/ui"),
+        (str(GUI_DIR / "assets" / "ui" / "lucide-masks.json"), "assets/ui"),
+        (str(GUI_DIR / "assets" / "ui" / "lucide" / "LICENSE"), "assets/ui/lucide"),
         # 插件市场的内置离线目录（打包后 plugin_market 从 _MEIPASS 读）
         (str(GUI_DIR / "catalog.builtin.json"), "."),
     ],

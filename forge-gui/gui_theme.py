@@ -5,7 +5,7 @@
 避免三处各写一套 token。Work Mode 与 Coding Mode 共用这些基础
 原语，但导航、面板布局和密度由各工作空间独立决定。
 
-深墨色层级搭配低饱和蓝色操作反馈；轻量用户气泡与文档式助手正文。
+中性石墨灰层级搭配低饱和蓝色操作反馈；轻量用户气泡与文档式助手正文。
 正文与必要说明优先保证对比度。自绘控件提供键盘激活和可见焦点，
 常用操作保持足够热区，工具提示延迟出现并随控件销毁而清理。
 
@@ -29,25 +29,37 @@ IS_WINDOWS = platform.system() == "Windows"
 
 C: dict[str, str] = {
     # 背景层级
-    "bg": "#0F1116",            # Shared near-black blue chrome
-    "activity": "#0C0E13",
-    "sidebar": "#12151B",
-    "sidebar_history": "#12151B",
-    "chat": "#14171D",
-    "surface": "#1A1E26",
-    "surface2": "#171A21",
-    "surface_subtle": "#15181F",
-    "hover": "#222733",
-    "sel": "#1E2C45",
+    "bg": "#15171B",            # Neutral graphite chrome; blue signals actions.
+    "chrome": "#1B1E24",
+    "activity": "#131416",
+    "sidebar": "#181B20",
+    "sidebar_history": "#181B20",
+    "chat": "#202329",
+    "welcome_action": "#282C34",
+    "welcome_edge": "#3A414D",
+    "surface": "#242529",
+    "surface2": "#222327",
+    "surface_subtle": "#202125",
+    "hover": "#2D2F34",
+    "sel": "#2C3038",
     "code_bg": "#111318",
-    "input_bg": "#171A21",
+    "glass": "#292D36",
+    "glass_hover": "#343A46",
+    "glass_folder": "#232730",
+    "glass_chip": "#292D36",
+    "glass_chip_hover": "#343A46",
+    "input_bg": "#282C34",
+    "glass_rim": "#515766",
+    "glass_inner": "#333742",
+    "glass_sheen": "#656F82",
+    "glass_shadow": "#18191C",
     "editor_line": "#1A1E26",
     "agent_accent": "#B79AF9",
     "black": "#000000",
 
     # 线条
-    "border": "#252A34",
-    "border_hi": "#343B48",
+    "border": "#303237",
+    "border_hi": "#41444C",
     "sel_border": "#3A6FD8",
     "scroll": "#2E3440",
 
@@ -91,21 +103,21 @@ C: dict[str, str] = {
     "placeholder": "#8F98A6",
     # Work Mode 设计稿（2026-10-30）新增：最弱一级文字（分组标题、时间戳、
     # 快捷键提示），对 surface 仍 ≥4.5:1；卡内二级控件底；1px 分隔线。
-    "faint": "#808898",
-    "raised": "#20242E",
-    "line": "#232833",
+    "faint": "#9399A4",
+    "raised": "#2A2C31",
+    "line": "#303237",
     "comment": "#7E8796",
 
     # 消息气泡：两侧要能看出「谁在说」，又不能让深色界面变花。
     # user 带一点主色倾向（“我说的话”），agent 用中性面；两者都配一道 hairline 描边。
     "msg_user_bg": "#1F2633",         # 轻量、低饱和的用户气泡
     "msg_user_fg": "#FFFFFF",          # 用户气泡文字（白）
-    "msg_agent_bg": "#14171D",         # 助手正文融入文档背景
+    "msg_agent_bg": "#202329",         # 助手正文融入文档背景
     "msg_agent_fg": "#E6E9EE",         # AI 气泡文字（浅灰）
     "msg_user_bg_old": "#232134",
     "msg_agent_bg_old": "#1A1A22",
     "msg_user_border": "#2C3545",
-    "msg_agent_border": "#14171D",
+    "msg_agent_border": "#1D1E21",
 
     # 代码高亮（One Dark 近似）
     "code_kw": "#74B4EA",
@@ -152,16 +164,12 @@ MOTION_MS = 0
 SHADOW = None
 
 # ─── 字体 ──────────────────────────────────────────────────
-# 界面以中文为主：Windows 上统一用 Microsoft YaHei UI 承担拉丁+中文
-# （其拉丁字形与 Segoe UI 同源），避免 Segoe UI 回落 CJK 时中英文基线与
-# 行高不一致；Cascadia Code 承担等宽。
-#
-# 字号阶梯（pt，随 tk scaling 缩放）：标题 14 / 分区 11 / 正文 10 /
-# 次要 9 / 说明 9（靠颜色区分层级）/ 微标 8；代码 10。
-
-UI_FAMILY = "Microsoft YaHei UI" if IS_WINDOWS else "Helvetica"
-CJK_FAMILY = UI_FAMILY
-MONO_FAMILY = "Cascadia Code" if IS_WINDOWS else "Menlo"
+# Codex desktop on Windows uses Segoe UI and Consolas in its default
+# system-font stacks. Tk performs CJK fallback; keep the explicit family for
+# Chinese-only labels and avoid synthetic bold for secondary UI labels.
+UI_FAMILY = "Segoe UI" if IS_WINDOWS else "Helvetica"
+CJK_FAMILY = "Microsoft YaHei UI" if IS_WINDOWS else "PingFang SC"
+MONO_FAMILY = "Consolas" if IS_WINDOWS else "Menlo"
 
 FONT_UI = (UI_FAMILY, 10)
 FONT_UI_BOLD = (UI_FAMILY, 10, "bold")
@@ -173,6 +181,14 @@ FONT_CAPTION = (UI_FAMILY, 9)
 FONT_CAPTION_BOLD = (UI_FAMILY, 9, "bold")
 FONT_MICRO = (UI_FAMILY, 8)
 FONT_BRAND = (UI_FAMILY, 14, "bold")
+FONT_HERO = (UI_FAMILY, 24, "bold")
+FONT_LEAD = (UI_FAMILY, 11)
+FONT_CHAT = (UI_FAMILY, 11)
+FONT_CHAT_BOLD = (UI_FAMILY, 11, "bold")
+FONT_CHAT_TITLE = (UI_FAMILY, 13, "bold")
+FONT_MARKDOWN_HEADING = (UI_FAMILY, 15, "bold")
+FONT_MARKDOWN_SUBHEAD = (UI_FAMILY, 12, "bold")
+FONT_NAV_GROUP = (UI_FAMILY, 9, "bold")
 FONT_MONO = (MONO_FAMILY, 10)
 FONT_MONO_SM = (MONO_FAMILY, 9)
 FONT_MONO_XS = (MONO_FAMILY, 9)
@@ -399,6 +415,15 @@ def round_rect(canvas: tk.Canvas, x1, y1, x2, y2, r, **kw):
     return canvas.create_polygon(rounded_points(x1, y1, x2, y2, r), **kw)
 
 
+def mix(a: str, b: str, t: float) -> str:
+    """两色线性混合：t=0 → a，t=1 → b。用来在深色底上做半透明效果
+    （Tk 不支持 alpha，投影、光晕、高光线都靠预混色模拟）。"""
+    t = max(0.0, min(1.0, t))
+    ra, ga, ba = (int(a[i:i + 2], 16) for i in (1, 3, 5))
+    rb, gb, bb = (int(b[i:i + 2], 16) for i in (1, 3, 5))
+    return "#%02X%02X%02X" % (round(ra + (rb - ra) * t), round(ga + (gb - ga) * t),
+                              round(ba + (bb - ba) * t))
+
 class RoundedCard(tk.Frame):
     """圆角卡片：Canvas 负责画底与描边，`content` 是真正的容器。
 
@@ -512,6 +537,44 @@ class RoundedCard(tk.Frame):
         return self._cv
 
 
+class GlassControlCard(RoundedCard):
+    """Painted rim for the composer; the editor keeps its opaque native surface."""
+
+    def __init__(self, parent, *, bg):
+        super().__init__(parent, radius=ui_px(parent, 21), fill=C["input_bg"],
+                         outline=C["glass_rim"], padx=ui_px(parent, 14),
+                         pady=ui_px(parent, 10), bg=bg)
+
+    def set_focused(self, focused):
+        outline = C["focus_ring"] if focused else C["glass_rim"]
+        if self._outline != outline:
+            self.set_fill(self._fill, outline)
+
+    def _draw(self, w, h):
+        if min(w, h) < 12:
+            super()._draw(w, h)
+            return
+        cv = self.canvas
+        cv.delete("glass-rim")
+        if self._shape is not None:
+            cv.delete(self._shape)
+        inset = ui_px(self, 2)
+        r = min(self._radius, (w - 1) / 2, (h - inset - 1) / 2)
+        tag = "glass-rim"
+        round_rect(cv, .5, inset + .5, w - .5, h - .5, r,
+                   fill=C["glass_shadow"], tags=tag)
+        self._shape = round_rect(cv, .5, .5, w - .5, h - inset - .5, r,
+                                 fill=self._fill, outline=self._outline, tags=tag)
+        round_rect(cv, inset + .5, inset + .5, w - inset - .5, h - 2 * inset - .5,
+                   max(0, r - inset), fill="", outline=C["glass_inner"], tags=tag)
+        # A restrained light catch across the top; no live backdrop capture.
+        left, right = max(r, w * .14), min(w - r, w * .70)
+        if right > left:
+            cv.create_line(left, inset + .5, right, inset + .5,
+                           fill=C["glass_sheen"], tags=tag)
+        cv.tag_lower(tag)
+
+
 def _bg_of(widget) -> str:
     try:
         return widget.cget("bg")
@@ -623,7 +686,7 @@ def divider(parent, *, color=None, horizontal=True, bg=None):
                     width=0 if horizontal else 1)
 
 
-def flow_controls(parent, *, gap=6):
+def flow_controls(parent, *, gap=6, wrap_text=False):
     """Wrap existing sibling controls by rendered width, without reparenting."""
     controls = list(parent.winfo_children())
     pending = None
@@ -637,6 +700,12 @@ def flow_controls(parent, *, gap=6):
         available = parent.winfo_width() - padding * 2
         used, top, row_height = 0, 2, 0
         for control in controls:
+            if wrap_text and isinstance(control, (tk.Button, tk.Label)):
+                inset = sum(int(control.cget(key)) for key in
+                            ('padx', 'borderwidth', 'highlightthickness')) * 2
+                limit = max(1, available - inset - 4)
+                if int(control.cget('wraplength')) != limit:
+                    control.configure(wraplength=limit)
             width = control.winfo_reqwidth() + gap
             if used and used + width > available:
                 top, used, row_height = top + row_height + 4, 0, 0
@@ -772,6 +841,7 @@ def show_popover_menu(anchor, items, *, title=None, width=300, prefer_above=Fals
     列表。它替代 Composer 主路径上的原生 ``tk.Menu``，并统一 hover、选中态、
     留白与弱化说明文字。返回 Toplevel，方便测试和调用方主动关闭。
     """
+    import liquid_glass as glass
     previous = getattr(anchor, "_forge_popover", None)
     if previous is not None:
         try:
@@ -781,13 +851,17 @@ def show_popover_menu(anchor, items, *, title=None, width=300, prefer_above=Fals
     pop = i18n.Toplevel(anchor)
     pop.withdraw()
     pop.overrideredirect(True)
-    pop.configure(bg=C["border_hi"])
     anchor._forge_popover = pop
-    shell = tk.Frame(pop, bg=C["surface"], padx=8, pady=8)
-    shell.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
+    # 液态玻璃浮层（2026-11-13）：大圆角玻璃 + 镜面亮边；行悬停 / 选中是
+    # 玻璃胶囊而不是整行色块，选中项用熔铁色调的胶囊 + 对勾。
+    fill = C["glass"]
+    host = glass.glass_window(pop, fill=fill, radius=ui_px(anchor, 18), matte=C["bg"],
+                              inset=ui_px(anchor, 9))
+    shell = tk.Frame(host, bg=fill, padx=2, pady=2)
+    shell.pack(fill=tk.BOTH, expand=True)
     if title:
-        i18n.Label(shell, text=title, bg=C["surface"], fg=C["subtext"],
-                 font=FONT_CAPTION, anchor="w").pack(fill=tk.X, padx=8, pady=(4, 7))
+        i18n.Label(shell, text=title, bg=fill, fg=C["subtext"],
+                 font=FONT_CAPTION, anchor="w").pack(fill=tk.X, padx=10, pady=(3, 6))
 
     def close():
         if getattr(anchor, "_forge_popover", None) is pop:
@@ -801,22 +875,35 @@ def show_popover_menu(anchor, items, *, title=None, width=300, prefer_above=Fals
         except tk.TclError:
             pass
 
+    hover_fill = C["glass_hover"]
+    selected_fill = mix(fill, C["accent"], .16)
+    row_radius = ui_px(anchor, 11)
     rows = []
     for item in items:
         if item.get("separator"):
-            tk.Frame(shell, bg=C["border"], height=1).pack(fill=tk.X, pady=5)
+            tk.Frame(shell, bg=mix(fill, "#FFFFFF", .07), height=1).pack(fill=tk.X, padx=10, pady=5)
             continue
         selected = bool(item.get("selected"))
-        base = C["sel"] if selected else C["surface"]
-        row = tk.Frame(shell, bg=base, cursor="hand2", padx=9, pady=6)
+        base = selected_fill if selected else fill
+        row = tk.Frame(shell, bg=fill, cursor="hand2", padx=12, pady=7)
         row.pack(fill=tk.X, pady=1)
         rows.append(row)
-        marker = tk.Frame(row, bg=C["accent"] if selected else base, width=2)
-        marker.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 8))
+        backdrop = glass.GlassBackdrop(row)
+        resting = (glass.chip_spec(selected_fill, radius=row_radius, rim=.55)
+                   if selected else None)
+        hovered = glass.chip_spec(mix(base, "#FFFFFF", .05) if selected else hover_fill,
+                                  radius=row_radius, rim=.8)
+        if resting is not None:
+            backdrop.show(resting)
+        check = None
+        if selected:
+            check = IconCanvas(row, "check", size=ui_px(row, 14), bg=base, fg=C["accent"])
+            check.pack(side=tk.RIGHT, padx=(8, 0))
         text = tk.Frame(row, bg=base, cursor="hand2")
         text.pack(side=tk.LEFT, fill=tk.X, expand=True)
         label = i18n.Label(text, text=item.get("label", ""), bg=base,
-                         fg=C["error"] if item.get("danger") else C["text"],
+                         fg=C["error"] if item.get("danger") else
+                         C["accent_text"] if selected else C["text"],
                          font=FONT_SMALL, anchor="w", cursor="hand2")
         label.pack(fill=tk.X)
         detail = None
@@ -826,11 +913,21 @@ def show_popover_menu(anchor, items, *, title=None, width=300, prefer_above=Fals
                               cursor="hand2")
             detail.pack(fill=tk.X, pady=(2, 0))
 
-        def paint(bg, widgets=(row, marker, text, label, detail), is_selected=selected):
+        # 行本身始终保持玻璃底色：胶囊位图的透明圆角露出的是它。
+        def paint(active, widgets=(text, label, detail, check), backdrop=backdrop,
+                  resting=resting, hovered=hovered, rest_bg=base):
+            if active:
+                backdrop.show(hovered)
+                colour = hovered.fill
+            elif resting is not None:
+                backdrop.show(resting)
+                colour = rest_bg
+            else:
+                backdrop.hide()
+                colour = rest_bg
             for widget in widgets:
-                if widget is None:
-                    continue
-                widget.configure(bg=C["accent"] if widget is marker and is_selected else bg)
+                if widget is not None:
+                    widget.configure(bg=colour)
 
         def invoke(_event=None, command=item.get("command")):
             close()
@@ -839,12 +936,14 @@ def show_popover_menu(anchor, items, *, title=None, width=300, prefer_above=Fals
             return "break"
 
         bind_keyboard_action(row, invoke)
-
-        for widget in (row, marker, text, label, detail):
+        row.configure(highlightthickness=0)
+        row.bind("<FocusIn>", lambda _e, fn=paint: fn(True), add="+")
+        row.bind("<FocusOut>", lambda _e, fn=paint: fn(False), add="+")
+        for widget in (row, text, label, detail, check):
             if widget is None:
                 continue
-            widget.bind("<Enter>", lambda _e, fn=paint: fn(C["hover"]))
-            widget.bind("<Leave>", lambda _e, fn=paint, b=base: fn(b))
+            widget.bind("<Enter>", lambda _e, fn=paint: fn(True))
+            widget.bind("<Leave>", lambda _e, fn=paint, r=row: fn(r.focus_get() is r))
             widget.bind("<Button-1>", invoke)
 
     def dismiss(_event=None):
@@ -875,7 +974,7 @@ def show_popover_menu(anchor, items, *, title=None, width=300, prefer_above=Fals
         if not inside:
             close()
     pop.bind("<Button-1>", maybe_close, add="+")
-    pop.update_idletasks()
+    glass.fit_glass_window(host)
     position_popover(pop, anchor, width, pop.winfo_reqheight(), prefer_above=prefer_above)
     pop.deiconify()
     try:
@@ -1389,6 +1488,7 @@ def highlight_python(text: tk.Text, *, start="1.0", end="end-1c"):
     纯 tag 打点，不做语法分析；足够让代码面板像那么回事，且零依赖。
     """
     import re
+    base = text.index(start)
     content = text.get(start, end)
     text.tag_remove("kw", start, end)
     text.tag_remove("cls", start, end)
@@ -1413,7 +1513,7 @@ def highlight_python(text: tk.Text, *, start="1.0", end="end-1c"):
                 s, e = m.span(1)
             else:
                 s, e = m.span()
-            text.tag_add(tag, f"1.0+{s}c", f"1.0+{e}c")
+            text.tag_add(tag, f"{base}+{s}c", f"{base}+{e}c")
 
 
 def gutter_lines(text: tk.Text, gutter_width: int = 4) -> str:

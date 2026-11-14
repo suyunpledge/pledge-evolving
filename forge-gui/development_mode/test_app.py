@@ -255,6 +255,8 @@ class WorkbenchTests(unittest.TestCase):
         self.assertEqual(self.app.source.root, other.resolve())
 
     def test_scrollbar_and_focus_presets_in_five_tk_scales(self):
+        original_scale = self.root.tk.call('tk', 'scaling')
+        self.addCleanup(self.root.tk.call, 'tk', 'scaling', original_scale)
         for scale in (1, 1.25, 1.5, 1.75, 2):
             self.root.tk.call('tk', 'scaling', scale * 96 / 72)
             self.state.set_layout(focus='editor')
@@ -432,7 +434,7 @@ class WorkbenchTests(unittest.TestCase):
                              'RuntimeContext 应在 _build_agent 阶段挂载')
         # 任务组与模型组的下拉变量随行布局存在
         for var in (self.app.planning, self.app.permission, self.app.task_role):
-            self.assertEqual(var.get() in {'low', 'read-only', 'default'}, True)
+            self.assertEqual(var.get() in {'none', 'read-only', 'default'}, True)
         # v0.3：任务角色 / 独立模型 / 模型回显已迁到 RuntimeContext——
         # agent_frame 不再承载这一行。验证 RuntimeContext 的任务控件
         # 包含「创建子 Agent」「重试」「复审」「恢复」按钮。

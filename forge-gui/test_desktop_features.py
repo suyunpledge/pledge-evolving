@@ -2,6 +2,7 @@ import copy
 import json
 import tempfile
 import threading
+import time
 import tkinter as tk
 import unittest
 from pathlib import Path
@@ -111,6 +112,88 @@ class FeatureBoundaryTests(unittest.TestCase):
 
 
 class DesktopUiTests(unittest.TestCase):
+    def test_schedule_created_in_form_records_cancellation(self):
+        from datetime import datetime, timedelta
+        from desktop_features import DesktopFeatures
+        from test_layout_dpi import isolated_app, pump
+
+        def simulate_run(job, rows, scope, cancel):
+            if not cancel.wait(8): raise RuntimeError('test run was not cancelled')
+            return 'done', 'simulated output'
+
+        with patch.object(DesktopFeatures, '_run_scheduled_job', side_effect=simulate_run), \
+             isolated_app() as (root, app, errors):
+            app._show_view('schedules')
+            features = app.desktop_features
+            view = features.jobs_views['workspace']
+            view._open_form()
+            view.name.set('Review job')
+            view.due.set((datetime.now()-timedelta(minutes=1)).strftime('%Y-%m-%d %H:%M'))
+            view.prompt.insert('1.0', 'Review README')
+            view.save_button.invoke()
+
+            def wait_for_status(status):
+                deadline = time.monotonic() + 6
+                while time.monotonic() < deadline and not errors:
+                    if [row['status'] for row in view.runs.values()] == [status]: return
+                    pump(root, .02)
+                self.fail(f'Expected {status!r}, got {view.runs!r} and Tk errors {errors!r}')
+
+            wait_for_status('running')
+            features.cancel_job()
+            wait_for_status('cancelled')
+            self.assertIsNone(view.form)
+            self.assertEqual(view.result.get('1.0', 'end-1c'), 'simulated output')
+
+    def test_schedule_history_keeps_selection_when_refreshing_both_surfaces(self):
+        from test_layout_dpi import isolated_app, pump
+        with isolated_app() as (root, app, errors):
+            features = app.desktop_features
+            self.assertTrue(features.ready.wait(3))
+            features.stop.set()  # Use local fixture runs; no model requests.
+            store = features.store
+            key = store.add_job('Review', 'review README', app.home, ['p', 'm'], 100, 60)
+            empty = store.add_job('Future', 'review later', app.home, ['p', 'm'], 600, 60)
+            for now, output in ((100, 'first result'), (160, 'second result')):
+                run = store.claim_due(now=now)[0]
+                store.finish_job(key, 'done', output, run_id=run['run_id'])
+
+            def wait_for(predicate):
+                deadline = time.monotonic() + 3
+                while not predicate() and not errors and time.monotonic() < deadline:
+                    pump(root, .02)
+                self.assertFalse(errors, errors)
+                self.assertTrue(predicate())
+
+            def output(view):
+                return view.result.get('1.0', 'end-1c')
+
+            app._show_view('schedules')
+            main = features.jobs_views['workspace']
+            wait_for(lambda: output(main) == 'second result')
+            first = main.run_list.get_children()[-1]
+            main.run_list.selection_set(first)
+            wait_for(lambda: output(main) == 'first result')
+            features.open(0)
+            popup = features.jobs_views['popup']
+            wait_for(lambda: output(popup) == 'second result')
+            popup.job_list.selection_set(empty)
+            wait_for(lambda: output(popup) == '' and not popup.run_list.get_children())
+            self.assertEqual(main.job_list.selection(), (key,))
+            self.assertEqual(main.run_list.selection(), (first,))
+            features._close_window()
+
+            run = store.claim_due(now=220)[0]
+            store.finish_job(key, 'failed', 'third result', run_id=run['run_id'])
+            features._refresh_jobs()
+            wait_for(lambda: len(main.run_list.get_children()) == 3)
+            self.assertEqual(output(main), 'first result')
+            main.run_list.selection_set(main.run_list.get_children()[0])
+            wait_for(lambda: output(main) == 'third result')
+            app._change_language('en')
+            self.assertEqual(main.run_list.heading('started', 'text'), 'Started at')
+            self.assertEqual(output(main), 'third result')
+
     def test_chat_routes_connector_write_and_never_sends_credential_to_model(self):
         from test_layout_dpi import isolated_app,pump
         from forge_client import CompletionResult

@@ -4,7 +4,7 @@ Only trusted hosts construct contexts/register effects. Request IDs correlate
 work; they are not grants. An interrupted intent is UNKNOWN, never replayable.
 """
 from contextlib import nullcontext
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 import hashlib
 import json
 from pathlib import Path
@@ -258,9 +258,12 @@ def create_execution_context(*, home, workspace, registry, policy=None, config=N
 
 class ActionExecutor:
     """One lifecycle shared by Agent and Gateway; no automatic retry/replay."""
-    def __init__(self):
+    def __init__(self, *, approver=None, trusted_native=False):
         self._memory = {}
         self._active = set()
+        # Only a desktop host may attach these callbacks; they never enter tools/extras.
+        self.approver = approver
+        self.trusted_native = trusted_native
 
     def query(self, ctx, action_id):
         validate_id(action_id)
@@ -320,7 +323,16 @@ class ActionExecutor:
             self._active.add(key)
             try:
                 tc = ctx.tool_context()
+                from .policy import Sandbox
+                if self.trusted_native and tc.policy.sandbox is Sandbox.FULL_ACCESS:
+                    tc = replace(tc, isolated=False)
                 denial = preflight or ctx.registry.authorize(request.name, request.arguments, tc)
+                if (denial is not None and denial.meta.get('requires_approval')
+                        and self.approver is not None and not ctx.recovered):
+                    if self.approver(request.name, request.arguments, ctx.cancellation) is True:
+                        from .desktop_permissions import approve_action
+                        tc = replace(tc, policy=approve_action(tc.policy, request.name, request.arguments))
+                        denial = ctx.registry.authorize(request.name, request.arguments, tc)
                 if ctx.recovered:
                     denial = ToolResult(False, error='Recovered run is evidence only; create a new run with current grants',
                         meta={'authorization': 'deny', 'error_code': 'recovery_requires_new_run', 'execution_state': 'not_started'})

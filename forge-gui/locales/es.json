@@ -1,4 +1,18 @@
 {
+  "正在载入历史消息，请稍候再发送。": "Espera a que se cargue el historial antes de enviar.",
+  "查看附件（{count}）": "Ver archivos adjuntos ({count})",
+  "发送内容与附件快照": "Mensaje enviado y copias de los adjuntos",
+  "已停止。未完成回复未加入后续上下文。": "Se detuvo. La respuesta incompleta no se usará en turnos posteriores.",
+  "正在连接…": "Conectando…",
+  "正在生成…": "Generando respuesta…",
+  "正在停止…": "Deteniendo…",
+  "开始时间": "Hora de inicio",
+  "运行记录": "Historial de ejecuciones",
+  "请选择定时任务": "Selecciona una tarea programada",
+  "暂无运行记录": "Todavía no hay ejecuciones",
+  "执行结果": "Resultado de la ejecución",
+  "本次运行没有输出": "Esta ejecución no tiene salida",
+  "任务指令": "Instrucciones de la tarea",
   "历史消息已作为文字快照放入输入框，请检查后发送。": "El mensaje anterior se ha cargado como una instantánea de texto. Revíselo antes de enviarlo.",
   "回到最新": "Ir a lo más reciente",
   "编辑后重试": "Editar y reintentar",
@@ -515,5 +529,12 @@
   "新建会替换当前编辑内容。要放弃未保存的编辑吗？": "Crear una entrada nueva reemplazará el contenido actual del editor. ¿Descartar los cambios sin guardar?",
   "切换条目会替换当前编辑内容。要放弃未保存的编辑吗？": "Cambiar de entrada reemplazará el contenido actual del editor. ¿Descartar los cambios sin guardar?",
   "放弃并新建": "Descartar y crear",
-  "放弃并切换": "Descartar y cambiar"
+  "放弃并切换": "Descartar y cambiar",
+  "能力": "Funciones",
+  "更多功能": "Más funciones",
+  "选项": "Opciones",
+  "收起选项": "Ocultar opciones",
+  "选项 · 已启用": "Opciones · activas",
+  "智能体、规划与项目文件": "Agentes, planificación y archivos del proyecto",
+  "描述目标，添加上下文，剩下的交给 Forge。": "Describe tu objetivo, añade contexto y deja el resto a Forge."
 }

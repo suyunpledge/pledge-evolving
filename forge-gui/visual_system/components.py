@@ -10,13 +10,13 @@ from .tokens import color, font, px
 class ModeSwitcher(tk.Frame):
     """One top-level entry. Host acknowledges a request through set_selected()."""
     def __init__(self, parent, on_request, *, selected=WorkspaceKind.WORK):
-        super().__init__(parent, bg=color('surface.root'))
+        super().__init__(parent, bg=theme.C['surface2'], padx=px(parent, 2), pady=px(parent, 2))
         self.on_request = on_request
         self.buttons = {}
         for kind in WorkspaceKind:
             button = theme.control_button(self, text=LABELS[kind], icon='chat' if kind == WorkspaceKind.WORK else 'code',
                 font=font('label'), command=lambda k=kind: self.request(k),
-                padx=px(self, 10), pady=px(self, 7), takefocus=True,
+                padx=px(self, 10), pady=px(self, 6), takefocus=True, bd=0,
                 icon_size=px(self, 16), highlightthickness=px(self, 1))
             button.pack(side=tk.LEFT, padx=px(self, 2))
             button.bind('<Left>', lambda e, k=kind: self._arrow(k, -1))
@@ -43,9 +43,10 @@ class ModeSwitcher(tk.Frame):
         for item, button in self.buttons.items():
             selected = item == self.selected
             # Shared feedback owns hover/pressed/disabled/focus behavior.
-            button.configure(bg=color('state.selected') if selected else color('surface.root'),
-                             fg=theme.C['accent_text'] if selected else color('text.secondary'))
-            theme.button_feedback(button, kind='accent_soft' if selected else 'quiet')
+            fill = theme.C['raised'] if selected else theme.C['surface2']
+            button.configure(bg=fill, highlightbackground=fill,
+                             fg=theme.C['text'] if selected else color('text.secondary'))
+            theme.button_feedback(button, kind='quiet')
 
 
 class WorkspaceDeck(tk.Frame):

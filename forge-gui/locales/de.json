@@ -1,4 +1,18 @@
 {
+  "正在载入历史消息，请稍候再发送。": "Warte vor dem Senden, bis der Verlauf geladen ist.",
+  "查看附件（{count}）": "Anhänge ansehen ({count})",
+  "发送内容与附件快照": "Gesendete Nachricht und Anhangskopien",
+  "已停止。未完成回复未加入后续上下文。": "Gestoppt. Die unvollständige Antwort wird nicht weiterverwendet.",
+  "正在连接…": "Verbindung wird aufgebaut…",
+  "正在生成…": "Antwort wird erstellt…",
+  "正在停止…": "Wird gestoppt…",
+  "开始时间": "Startzeit",
+  "运行记录": "Ausführungsverlauf",
+  "请选择定时任务": "Geplante Aufgabe auswählen",
+  "暂无运行记录": "Noch keine Ausführungen",
+  "执行结果": "Ausgabe",
+  "本次运行没有输出": "Diese Ausführung hat keine Ausgabe",
+  "任务指令": "Aufgabenanweisungen",
   "历史消息已作为文字快照放入输入框，请检查后发送。": "Die frühere Nachricht wurde als Textaufnahme geladen. Bitte vor dem Senden prüfen.",
   "回到最新": "Zur neuesten Nachricht",
   "编辑后重试": "Bearbeiten und erneut versuchen",
@@ -515,5 +529,12 @@
   "新建会替换当前编辑内容。要放弃未保存的编辑吗？": "Ein neuer Eintrag ersetzt den aktuellen Editor-Inhalt. Ungespeicherte Änderungen verwerfen?",
   "切换条目会替换当前编辑内容。要放弃未保存的编辑吗？": "Eintragswechsel ersetzt den aktuellen Editor-Inhalt. Ungespeicherte Änderungen verwerfen?",
   "放弃并新建": "Verwerfen und neu erstellen",
-  "放弃并切换": "Verwerfen und wechseln"
+  "放弃并切换": "Verwerfen und wechseln",
+  "能力": "Funktionen",
+  "更多功能": "Weitere Funktionen",
+  "选项": "Optionen",
+  "收起选项": "Weniger Optionen",
+  "选项 · 已启用": "Optionen · aktiv",
+  "智能体、规划与项目文件": "Agenten, Planung und Projektdateien",
+  "描述目标，添加上下文，剩下的交给 Forge。": "Beschreibe dein Ziel, füge Kontext hinzu und überlasse Forge den Rest."
 }

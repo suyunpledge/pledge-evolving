@@ -163,18 +163,22 @@ class ComputerLane:
 
 
 class ComputerPanel:
-    def __init__(self, app):
+    def __init__(self, app, parent=None):
         self.app, self.session, self.frame = app, None, None
         self.authorized_provider = None
         self.stop, self.cancel = threading.Event(), threading.Event()
         self.busy = False
         self.poll_after = None
-        self.window = tk.Toplevel(app.root)
-        self.window.title('电脑操作 · 窗口与视觉')
-        self.window.geometry('880x720')
-        self.window.minsize(620, 480)
+        self.window = tk.Frame(parent) if parent is not None else tk.Toplevel(app.root)
+        if parent is not None:
+            self.window.pack(fill='both', expand=True)
+        else:
+            self.window.title('电脑操作 · 窗口与视觉')
+            self.window.geometry('880x720')
+            self.window.minsize(620, 480)
         self.window.configure(bg=C['bg'])
-        self.window.protocol('WM_DELETE_WINDOW', self.close)
+        if parent is None:
+            self.window.protocol('WM_DELETE_WINDOW', self.close)
         self.approvals = ClickApprovals()
         self.approval_view = ApprovalView(self.window,self.approvals)
         self.status = tk.StringVar(value='选择一个窗口并绑定；截图仅保存在内存中。')

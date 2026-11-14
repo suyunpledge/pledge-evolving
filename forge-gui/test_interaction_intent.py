@@ -1,5 +1,6 @@
 """Interaction intent: message-bound retry and explicit scroll follow."""
 import tkinter as tk
+import threading
 import time
 from types import SimpleNamespace
 import unittest
@@ -7,7 +8,7 @@ from unittest.mock import Mock, patch
 
 import chat_widgets as cw
 import forge_gui_v2 as gui
-from forge_client import ChatMessage
+from forge_client import ChatMessage, CompletionResult, GenerationCancelled
 from test_layout_dpi import isolated_app, pump
 
 
@@ -101,6 +102,113 @@ class RetryIntentTests(unittest.TestCase):
             self.assertEqual(app._attachments, [attachment])
             app._attachments[0]["content"] = "edited draft snapshot"
             self.assertEqual(msg._retry_attachments[0]["content"], "original file snapshot")
+            self.assertEqual(errors, [])
+
+
+class TranscriptTests(unittest.TestCase):
+    def wait_for(self, root, predicate):
+        deadline = time.monotonic() + 4
+        while not predicate() and time.monotonic() < deadline:
+            pump(root, .02)
+        self.assertTrue(predicate())
+
+    def test_file_snapshot_stays_out_of_bubble_and_display_metadata_stays_off_wire(self):
+        with isolated_app() as (root, app, errors):
+            payloads, saved = [], []
+
+            class Client:
+                def health(self, **kwargs): return True, "ok"
+                def stream_chat(self, messages, **kwargs):
+                    payloads.extend(message.to_dict() for message in messages)
+                    return CompletionResult("Answer without deltas")
+
+            app.client = Client()
+            app.send_var.set("Review this file")
+            app._attachments = [{"path": "notes.txt", "content": "original snapshot text"}]
+            with patch.object(app, "_write_sessions", side_effect=saved.extend):
+                app._do_send()
+                self.wait_for(root, lambda: not app._sending)
+            self.assertEqual(app._agent_msg._text_source, "Answer without deltas")
+            self.assertIn("original snapshot text", payloads[-1]["content"])
+            self.assertNotIn("display", payloads[-1])
+            self.assertEqual(saved[0]["messages"][0]["display"], {
+                "text": "Review this file", "attachments": ["notes.txt"]})
+
+            def inspect_bubble():
+                bubble = next(widget for widget in app.chat_area.scroll.inner.winfo_children()
+                              if isinstance(widget, cw.UserMessage))
+                self.assertEqual(bubble.label.cget("text"), "Review this file")
+                bubble.attachment_button.invoke()
+                dialog = next(widget for widget in root.winfo_children() if isinstance(widget, tk.Toplevel))
+                preview = next(widget for widget in dialog.winfo_children() if isinstance(widget, tk.Frame)
+                               and any(isinstance(child, tk.Text) for child in widget.winfo_children()))
+                editor = next(widget for widget in preview.winfo_children() if isinstance(widget, tk.Text))
+                self.assertIn("original snapshot text", editor.get("1.0", "end-1c"))
+                self.assertEqual(editor.cget("state"), "disabled")
+                dialog.destroy()
+
+            inspect_bubble()
+            with patch.object(app, "_load_sessions", return_value=saved), \
+                 patch.object(app, "_archive_current_session"):
+                app._session_id = "another-session"
+                app._load_session(saved[0]["id"])
+                self.wait_for(root, lambda: any(isinstance(widget, cw.UserMessage)
+                                              for widget in app.chat_area.scroll.inner.winfo_children()))
+                inspect_bubble()
+            self.assertEqual(errors, [])
+
+    def test_stopping_after_partial_output_keeps_next_draft_and_original_attachment(self):
+        with isolated_app() as (root, app, errors):
+            class Client:
+                def health(self, **kwargs): return True, "ok"
+                def stream_chat(self, messages, *, on_chunk, cancel_event, **kwargs):
+                    on_chunk("**Partial reply** 😀")
+                    if cancel_event.wait(5): raise GenerationCancelled("stopped")
+                    raise AssertionError("test generation was not cancelled")
+
+            app.client = Client()
+            attachment = {"path": "notes.txt", "content": "original snapshot"}
+            app._attachments = [attachment]
+            app.send_var.set("original question")
+            app._do_send()
+            self.wait_for(root, lambda: app._agent_msg._text_source == "**Partial reply** 😀")
+            self.assertEqual(app._attachments, [])
+            app.send_var.set("next draft")
+            app._stop_send()
+            self.wait_for(root, lambda: not app._sending)
+            self.assertEqual(app.send_var.get(), "next draft")
+            self.assertEqual(app._chat_history, [])
+            copy, retry = app._agent_msg._action_row.winfo_children()
+            copy.invoke()
+            self.assertEqual(root.clipboard_get(), "**Partial reply** 😀")
+            retry.invoke()
+            self.assertEqual(app.send_var.get(), "next draft")
+            app.send_var.set("")
+            retry.invoke()
+            self.assertEqual(app.send_var.get(), "original question")
+            self.assertEqual(app._attachments, [attachment])
+            self.assertEqual(errors, [])
+
+    def test_failed_turn_restores_draft_and_retry_button_respects_new_edits(self):
+        with isolated_app() as (root, app, errors):
+            class OfflineClient:
+                def health(self, **kwargs): return False, "test gateway offline"
+
+            app.client = OfflineClient()
+            attachment = {"path": "original.txt", "content": "original snapshot"}
+            app._attachments = [attachment]
+            app.send_var.set("original question")
+            app._do_send()
+            self.wait_for(root, lambda: not app._sending)
+            self.assertEqual(app.send_var.get(), "original question")
+            self.assertEqual(app._attachments, [attachment])
+            notice = next(widget for widget in app.chat_area.scroll.inner.winfo_children()
+                          if isinstance(widget, cw.NoticeMessage))
+            retry = notice.actions._buttons[-1]
+            app.send_var.set("new draft")
+            retry.invoke()
+            self.assertEqual(app.send_var.get(), "new draft")
+            self.assertFalse(app._sending)
             self.assertEqual(errors, [])
 
 

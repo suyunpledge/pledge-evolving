@@ -49,6 +49,61 @@ class DevelopmentTests(unittest.TestCase):
         s.switch('general')
         self.assertEqual(s.task_snapshot(global_model=('g', 'x')).model, ('g', 'x'))
 
+    def test_planning_preference_defaults_migrates_and_persists(self):
+        state = ModeState(self.home)
+        self.assertEqual(state.value('planning'), 'none')
+        state.switch('development')
+        old = json.loads(state.path.read_text(encoding='utf-8'))
+        old.pop('planning')
+        state.path.write_text(json.dumps(old), encoding='utf-8')
+        state = ModeState(self.home)
+        self.assertEqual(state.value('planning'), 'none')
+        for level in ('high', 'medium', 'low', 'none'):
+            state.configure_planning(level)
+            self.assertEqual(ModeState(self.home).value('planning'), level)
+        with self.assertRaises(ValueError):
+            state.configure_planning('automatic')
+        self.assertEqual(ModeState(self.home).value('planning'), 'none')
+
+    def test_direct_reply_skips_extra_phases_and_keeps_history(self):
+        from unittest.mock import patch
+        from forge.test_task_planning import Router
+        state = ModeState(self.home)
+        state.switch('development')
+        runtime = DevelopmentRuntime(state)
+        self.addCleanup(runtime.close)
+        runtime.initialize(self.project)
+        router = runtime.bridge.router = Router(['普通回答', '继续回答'])
+        agent = runtime.bridge.agent
+        agent.thinking, agent.thinking_mode = True, 'on'
+        with patch.object(agent, '_contemplate', side_effect=AssertionError('No extra phase')):
+            self.assertEqual(runtime.run('你好')['text'], '普通回答')
+            self.assertEqual(runtime.run('接着解释')['text'], '继续回答')
+        self.assertEqual(len(router.calls), 2)
+        self.assertIn('普通回答', str(router.calls[-1][0]))
+        self.assertFalse(any(e.get('type') == 'task_plan' for e in agent.events))
+        self.assertEqual((agent.thinking, agent.thinking_mode), (True, 'on'))
+
+    def test_selected_planning_reaches_runtime_and_explicit_none_overrides(self):
+        from forge.test_task_planning import Router, plan_json
+        state = ModeState(self.home)
+        state.switch('development')
+        state.configure_planning('low')
+        runtime = DevelopmentRuntime(state)
+        self.addCleanup(runtime.close)
+        runtime.initialize(self.project)
+        agent = runtime.bridge.agent
+        agent.thinking, agent.thinking_mode = False, 'off'
+        router = runtime.bridge.router = Router([plan_json(), 'planned reply', 'direct reply'])
+        result = runtime.run('解释这个程序')
+        self.assertEqual(result['planning']['level'], 'low')
+        self.assertEqual(len(router.calls), 2)
+        self.assertEqual(runtime.run('现在直接回答', planning='none')['text'], 'direct reply')
+        self.assertEqual(len(router.calls), 3)
+        self.assertEqual(router.calls[1][0][0]['role'], 'system')
+        self.assertEqual(router.calls[1][0][0], router.calls[2][0][0])
+        self.assertEqual(state.value('planning'), 'low')
+
     def test_all_role_models_are_part_of_task_snapshot(self):
         s = ModeState(self.home)
         s.configure_role('review', ('reviewer', 'old'))

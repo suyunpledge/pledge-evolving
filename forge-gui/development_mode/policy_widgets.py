@@ -239,6 +239,32 @@ class RoutingChain(ttk.Frame):
         self._primary.set(value)
 
 
+class PlanningChoice(ttk.Frame):
+    """Human-readable choices shared by the composer and task settings."""
+    LABELS = {'none': '直接回答', 'low': '先规划 · 简要',
+              'medium': '先规划 · 标准', 'high': '先规划 · 深入'}
+
+    def __init__(self, master, *, planning='none', on_change=None):
+        super().__init__(master)
+        self._on_change = on_change
+        self._value = tk.StringVar(self, value=self.LABELS[planning])
+        self.combo = ttk.Combobox(self, textvariable=self._value,
+                                  values=tuple(self.LABELS.values()), state='readonly', width=15)
+        self.combo.pack(fill='x')
+        self.combo.bind('<<ComboboxSelected>>', self._selected)
+        attach_tooltip(self.combo, '直接回答：正常对话，不额外生成计划。先规划：先拆解任务，再回答或执行。选择仅用于后续发送的消息。')
+
+    def _selected(self, _event=None):
+        if callable(self._on_change):
+            self._on_change(self.get())
+
+    def get(self):
+        return next(key for key, label in self.LABELS.items() if label == self._value.get())
+
+    def set(self, value):
+        self._value.set(self.LABELS[value])
+
+
 class TaskControls(ttk.Frame):
     """规划 + 角色 + 任务操作行：整合到 RuntimeContext 的第三条横排。
 
@@ -247,7 +273,7 @@ class TaskControls(ttk.Frame):
     "继承配置"区块可以彻底删除。
     """
 
-    def __init__(self, master, *, planning='low', role='agent',
+    def __init__(self, master, *, planning='none', role='agent',
                  on_planning_change=None, on_role_change=None,
                  on_review=None, on_restore=None, on_delegate=None,
                  on_retry=None, on_cancel=None, on_run_tests=None,
@@ -265,14 +291,11 @@ class TaskControls(ttk.Frame):
         # 第一行：规划 + 角色
         row1 = ttk.Frame(self)
         row1.pack(fill='x', pady=(0, 4))
-        tk.Label(row1, text='规划', font=FONT_CAPTION, bg=C['bg'],
+        tk.Label(row1, text='回复方式', font=FONT_CAPTION, bg=C['bg'],
                  fg=C['ter']).pack(side='left')
-        self._planning = tk.StringVar(value=planning)
-        plan = ttk.Combobox(row1, textvariable=self._planning,
-                            values=('none', 'low', 'medium', 'high'),
-                            state='readonly', width=8)
-        plan.pack(side='left', padx=(4, 12))
-        plan.bind('<<ComboboxSelected>>', self._emit_planning)
+        self._planning = PlanningChoice(row1, planning=planning,
+                                        on_change=lambda _value: self._emit_planning())
+        self._planning.pack(side='left', padx=(4, 12))
         tk.Label(row1, text='角色', font=FONT_CAPTION, bg=C['bg'],
                  fg=C['ter']).pack(side='left')
         self._role = tk.StringVar(value=role)
@@ -320,6 +343,9 @@ class TaskControls(ttk.Frame):
 
     def get_planning(self):
         return self._planning.get()
+
+    def set_planning(self, value):
+        self._planning.set(value)
 
     def get_role(self):
         return self._role.get()

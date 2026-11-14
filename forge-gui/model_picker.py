@@ -18,7 +18,7 @@ from urllib.parse import urlsplit
 import brand_marks
 from gui_theme import (C, FONT_CAPTION, FONT_EMOJI_SM, FONT_EMOJI_XS, FONT_MICRO,
                        FONT_SMALL, FONT_UI_BOLD, OVERLAY_WIDTH, position_popover,
-                       bind_keyboard_action, elide)
+                       bind_keyboard_action, elide, ui_px)
 from reasoning_slider import MiniReasoningTrack, ReasoningSlider
 
 PICKER_WIDTH = OVERLAY_WIDTH
@@ -341,7 +341,6 @@ class ModelPicker(tk.Frame):
         pop = i18n.Toplevel(self)
         pop.withdraw()
         pop.overrideredirect(True)
-        pop.configure(bg=C["border_hi"])
         try:
             # 这是 Forge 内部的浮层，不是系统级悬浮窗。绑定 owner 后它只会压在
             # Forge 上方；切到其它应用或最小化 Forge 时不会继续挡在桌面前面。
@@ -353,8 +352,12 @@ class ModelPicker(tk.Frame):
         self._popup_owner = owner
         self._keep = [k for k in self._keep if k is not None]
 
-        shell = tk.Frame(pop, bg=C["surface"], padx=12, pady=12)
-        shell.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
+        # 液态玻璃浮层：玻璃内部色沿用 surface，内容控件底色无需改动。
+        import liquid_glass as glass
+        glass_host = glass.glass_window(pop, fill=C["surface"], radius=ui_px(self, 18),
+                                        matte=C["bg"], inset=ui_px(self, 8))
+        shell = tk.Frame(glass_host, bg=C["surface"], padx=8, pady=8)
+        shell.pack(fill=tk.BOTH, expand=True)
         title = tk.Frame(shell, bg=C["surface"])
         title.pack(fill=tk.X)
         i18n.Label(title, text=tr("选择模型"), bg=C["surface"], fg=C["text"],
@@ -438,7 +441,7 @@ class ModelPicker(tk.Frame):
         self._bind_popup_lifecycle(pop, owner)
         self._rebuild_list()
 
-        pop.update_idletasks()
+        glass.fit_glass_window(glass_host)
         position_popover(pop, self, PICKER_WIDTH,
                          min(PICKER_MAX_HEIGHT, pop.winfo_reqheight()), align_right=True)
         pop.deiconify()

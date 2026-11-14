@@ -4,7 +4,6 @@ Tk only owns widgets and snapshots. SQL, OAuth, HTTP and agent runs execute in
 workers. Scheduled agents are read-only, independent of the foreground chat.
 """
 import copy
-import datetime as dt
 import json
 import os
 import threading
@@ -17,7 +16,8 @@ import i18n
 from i18n import tr, dialogs
 import secret_store
 from gui_theme import C, FONT_SMALL, FONT_MONO_SM, pill_button, flow_controls
-from phase_client import PhaseClient, model_catalog
+from phase_client import PhaseClient
+from scheduled_jobs_view import ScheduledJobsView
 from forge.desktop_services import DesktopStore, ConnectorService, OPERATIONS
 from forge.secrets import SecretScope, redact
 from forge.policy import Policy, Mode, Sandbox
@@ -30,7 +30,8 @@ class DesktopFeatures:
         self.app = app
         self.stop = threading.Event()
         self.auth_cancel = threading.Event()
-        self.job_cancel = threading.Event()
+        self.active_job = None
+        self.jobs_views = {}
         self.ready = threading.Event()
         self.window = None
         self.pending = None
@@ -51,7 +52,7 @@ class DesktopFeatures:
         self._snapshot_after = self.app.root.after(2000,self._snapshot)
 
     def close(self):
-        self.stop.set(); self.auth_cancel.set(); self.job_cancel.set()
+        self.stop.set(); self.auth_cancel.set(); self.cancel_job()
         try: self.app.root.after_cancel(self._snapshot_after)
         except tk.TclError: pass
         if self.pending: self.pending['done'].set()
@@ -83,44 +84,73 @@ class DesktopFeatures:
                 jobs = self.store.claim_due()
                 if not jobs: continue
                 job = jobs[0]
-                self.active_job=job['id']
-                self.job_cancel = threading.Event()
-                timer = threading.Timer(180,self.job_cancel.set); timer.daemon = True; timer.start()
-                scope = SecretScope()
-                agent = None
-                try:
-                    with self.lock: rows = copy.deepcopy(self.rows)
-                    if str(Path(job['workspace']).resolve())!=job['workspace'] or not Path(job['workspace']).is_dir():
-                        raise PermissionError('Scheduled workspace changed or was removed')
-                    environment = {**os.environ,**secret_store.env_for()}
-                    client = PhaseClient(rows, job['model'],environment,scope,self.job_cancel)
-                    from forge.config import Config
-                    from forge.loop import build_agent, LoopLimits
-                    config = Config()
-                    policy = Policy(mode=Mode.READ_ONLY,sandbox=Sandbox.READ_ONLY,workspace=Path(job['workspace']),non_interactive=True)
-                    agent = build_agent(home=self.app.home, workspace=Path(job['workspace']),config=config,
-                        router=client.router, policy=policy,limits=LoopLimits(max_steps=6,spawn_budget=0),
-                        mount_contrib=False,expose=('read_file','list_dir','grep','edit_config'),
-                        session_path=self.app.home/'sessions'/('scheduled-'+job['id']+'-'+str(time.time_ns())+'.jsonl'))
-                    complete = client.router.complete
-                    def bounded(messages, **options):
-                        if self.stop.is_set() or self.job_cancel.is_set(): raise RuntimeError('Scheduled task cancelled')
-                        options['max_tokens'] = min(int(options.get('max_tokens') or 2048),2048)
-                        return complete(messages,**options)
-                    client.router.complete = bounded
-                    report = agent.run(job['prompt'])
-                    status = 'cancelled' if self.job_cancel.is_set() or self.stop.is_set() else ('done' if report.stopped=='final' else 'failed')
-                    self.store.finish_job(job['id'],status,report.text,started=job['started'])
-                except Exception as exc:
-                    self.store.finish_job(job['id'],'cancelled' if self.job_cancel.is_set() else 'failed',str(redact(str(exc))),started=job['started'])
-                finally:
-                    if agent is not None: agent.secret_scope.close()
-                    scope.close(); timer.cancel(); self.active_job=None
+                cancel = threading.Event()
+                with self.lock:
+                    self.active_job = (job['id'], cancel)
+                    if self.stop.is_set(): cancel.set()
+                    rows = copy.deepcopy(self.rows)
                 self.app._post_ui(self._refresh_jobs)
+                timer = threading.Timer(180,cancel.set); timer.daemon = True; timer.start()
+                scope = SecretScope()
+                try:
+                    try:
+                        status, result = self._run_scheduled_job(job, rows, scope, cancel)
+                    except Exception as exc:
+                        status, result = 'failed', str(exc)
+                    if cancel.is_set() or self.stop.is_set(): status = 'cancelled'
+                    self.store.finish_job(job['id'], status, result, run_id=job['run_id'])
+                finally:
+                    scope.close(); timer.cancel()
+                    with self.lock: self.active_job = None
+                    self.app._post_ui(self._refresh_jobs)
             except Exception as exc:
                 self.app._post_ui(self.app._set_status,str(redact(str(exc))),'warn')
 
-    def work(self, fn, done=None):
+    def _run_scheduled_job(self, job, rows, scope, cancel):
+        from forge.config import Config
+        from forge.loop import build_agent, LoopLimits
+
+        def check_cancelled():
+            if self.stop.is_set() or cancel.is_set(): raise RuntimeError('Scheduled task cancelled')
+
+        check_cancelled()
+        workspace = Path(job['workspace'])
+        if str(workspace.resolve()) != job['workspace'] or not workspace.is_dir():
+            raise PermissionError('Scheduled workspace changed or was removed')
+        environment = {**os.environ, **secret_store.env_for()}
+        client = PhaseClient(rows, job['model'], environment, scope, cancel)
+        policy = Policy(mode=Mode.READ_ONLY, sandbox=Sandbox.READ_ONLY, workspace=workspace, non_interactive=True)
+        agent = build_agent(home=self.app.home, workspace=workspace, config=Config(),
+            router=client.router, policy=policy, limits=LoopLimits(max_steps=6, spawn_budget=0),
+            mount_contrib=False, expose=('read_file', 'list_dir', 'grep', 'edit_config'),
+            session_path=self.app.home/'sessions'/('scheduled-'+job['id']+'-'+str(time.time_ns())+'.jsonl'))
+        complete = client.router.complete
+
+        def bounded(messages, **options):
+            check_cancelled()
+            options['max_tokens'] = min(int(options.get('max_tokens') or 2048), 2048)
+            return complete(messages, **options)
+
+        client.router.complete = bounded
+        try:
+            report = agent.run(job['prompt'])
+            return ('done' if report.stopped == 'final' else 'failed'), redact(report.text)
+        except Exception as exc:
+            raise RuntimeError(redact(str(exc))) from None
+        finally:
+            agent.secret_scope.close()
+
+    def cancel_job(self, key=None):
+        with self.lock:
+            if self.active_job is not None:
+                active_key, cancel = self.active_job
+                if key is None or key == active_key: cancel.set()
+
+    def set_job_enabled(self, key, enabled):
+        self.store.enable_job(key, enabled)
+        if not enabled: self.cancel_job(key)
+
+    def work(self, fn, done=None, *, failed=None):
         def worker():
             try:
                 if not self.ready.wait(3): raise RuntimeError('Desktop service is still starting')
@@ -128,17 +158,19 @@ class DesktopFeatures:
                 value = fn()
                 if done: self.app._post_ui(done,value)
             except Exception as exc:
+                if failed: self.app._post_ui(failed)
                 self.app._post_ui(self.app._set_status,str(redact(str(exc))),'error')
         threading.Thread(target=worker,name='Forge-Desktop-Action',daemon=True).start()
 
-    def _jobs_hosted(self):
-        """定时任务 UI 是否仍被托管（弹窗或主工作区页面任一存活）。"""
-        if self.window is not None and self.window.winfo_exists():
-            return True
-        host = getattr(self, 'jobs_host_page', None)
-        return host is not None and host.winfo_exists()
+    def _mount_jobs(self, parent, slot):
+        view = self.jobs_views[slot] = ScheduledJobsView(parent, self, slot)
+        view.pack(fill='both', expand=True)
+        self._refresh_jobs()
 
     def open(self, tab=0):
+        if getattr(self.app, '_embedded_workbench', False):
+            self.app._open_inline_feature(tab)
+            return
         if self.window is not None and self.window.winfo_exists():
             self.notebook.select(tab); self.window.lift(); return
         window = self.window = tk.Toplevel(self.app.root)
@@ -156,24 +188,28 @@ class DesktopFeatures:
         jobs = self._page(tr('定时任务'))
         connectors = self._page(tr('连接器'))
         preview = self._page(tr('代码预览'))
-        self._jobs_ui(jobs); self._connectors_ui(connectors); self._preview_ui(preview)
+        self._mount_jobs(jobs, 'popup'); self._connectors_ui(connectors); self._preview_ui(preview)
         self.notebook.select(tab)
 
     def mount_page(self, parent, tab=0):
-        """主工作区模式（Phase 2A 补充）：把指定页面构建进 Forge 主区容器。
-
-        定时任务不再开独立 Toplevel（任务书：管理页面不进弹窗）。
-        连接器/代码预览仍走 open()（保留弹窗形态）。
-        """
+        """Mount a complete feature page in its owning workspace."""
         page = tk.Frame(parent, bg=C['surface'])
         page.pack(fill='both', expand=True)
         if tab == 0:
-            self.jobs_host_page = page
-            self._jobs_ui(page)
-        elif tab == 1:
-            self._connectors_ui(page)
+            self._mount_jobs(page, 'workspace')
         else:
-            self._preview_ui(page)
+            self.window = page
+            canvas = tk.Canvas(page, bg=C['surface'], highlightthickness=0)
+            bar = ttk.Scrollbar(page, command=canvas.yview)
+            bar.pack(side='right', fill='y')
+            canvas.configure(yscrollcommand=bar.set)
+            canvas.pack(fill='both', expand=True)
+            content = tk.Frame(canvas, bg=C['surface'], padx=14, pady=12)
+            item = canvas.create_window((0, 0), window=content, anchor='nw')
+            content.bind('<Configure>', lambda _: canvas.configure(scrollregion=canvas.bbox('all')))
+            bind_canvas_column(canvas, item, max_width=FORM_WIDTH, gutter=0)
+            bind_scoped_wheel(canvas, content)
+            (self._connectors_ui if tab == 1 else self._preview_ui)(content)
         return page
 
     def _close_window(self):
@@ -197,12 +233,14 @@ class DesktopFeatures:
         return page
 
     def _l10n_refresh(self):
+        for view in self.jobs_views.values():
+            if view.winfo_exists(): view._l10n_refresh()
         if self.window is None or not self.window.winfo_exists(): return
-        self.window.title(i18n.resolve(tr('自动化与连接器'),self.app.root))
-        for i,title in enumerate((tr('定时任务'),tr('连接器'),tr('代码预览'))):
-            self.notebook.tab(i,text=i18n.resolve(title,self.app.root))
-        for field,title in (('name',tr('任务名称')),('status',tr('状态')),('due',tr('下次执行'))):
-            self.job_list.heading(field,text=i18n.resolve(title,self.app.root))
+        if not getattr(self.app, '_embedded_workbench', False):
+            self.window.title(i18n.resolve(tr('自动化与连接器'),self.app.root))
+            for i,title in enumerate((tr('定时任务'),tr('连接器'),tr('代码预览'))):
+                self.notebook.tab(i,text=i18n.resolve(title,self.app.root))
+        if not hasattr(self, 'operation') or not self.operation.winfo_exists(): return
         selected=self.operation_names.get(self.operation.get())
         self.operation_names={self._operation_title(name):name for name,op in OPERATIONS.items() if op.account==self.account.get()}
         self.operation.configure(values=list(self.operation_names))
@@ -235,71 +273,16 @@ class DesktopFeatures:
         panel = getattr(self.app,'workspace',None)
         return Path(panel._repo_root if panel is not None else self.app._repo_root()).resolve()
 
-    def _jobs_ui(self, page):
-        self.label(page,tr('仅在 Forge 打开时执行。使用独立只读 Agent；不会发送到当前对话。每次最多六步、三分钟。'))
-        self.job_name = self.entry(page,tr('任务名称'))
-        self.job_workspace = self.entry(page,tr('工作区路径'),str(self.workspace()))
-        self.job_when = self.entry(page,tr('首次执行时间（本地时间 YYYY-MM-DD HH:MM）'),(dt.datetime.now()+dt.timedelta(minutes=5)).strftime('%Y-%m-%d %H:%M'))
-        self.job_interval = self.entry(page,tr('重复间隔（分钟；0 表示仅一次）'),'0')
-        self.label(page,tr('独立任务模型'))
-        self.job_models = {label:pair for pair,label in model_catalog(self.app.user_rows)}
-        self.job_model = ttk.Combobox(page,values=list(self.job_models),state='readonly')
-        self.job_model.pack(fill='x')
-        if self.job_models: self.job_model.current(0)
-        self.job_prompt = self.text(page,3)
-        actions = tk.Frame(page,bg=C['surface']); actions.pack(fill='x')
-        pill_button(actions,tr('添加定时任务'),self._add_job,kind='primary',icon='＋').pack(side='left',padx=(0,6))
-        pill_button(actions,tr('暂停 / 恢复'),self._toggle_job,icon='⟳').pack(side='left',padx=(0,6))
-        pill_button(actions,tr('停止当前任务'),lambda:self.job_cancel.set(),icon='■').pack(side='left')
-        pill_button(actions,tr('刷新'),self._refresh_jobs,icon='⟳').pack(side='left',padx=6)
-        flow_controls(actions)
-        self.job_list = ttk.Treeview(page,columns=('name','status','due'),show='headings',height=4)
-        for field,title,width in [('name',tr('任务名称'),240),('status',tr('状态'),100),('due',tr('下次执行'),160)]:
-            self.job_list.heading(field,text=i18n.resolve(title,self.app.root)); self.job_list.column(field,width=width,minwidth=60)
-        self.job_list.pack(fill='both',expand=True,pady=8)
-        self.job_list.bind('<<TreeviewSelect>>',self._job_result)
-        self.job_result = self.text(page,3); self.job_result.configure(state='disabled')
-        self._refresh_jobs()
-
-    def _add_job(self):
-        try:
-            model = self.job_models[self.job_model.get()]
-            due = dt.datetime.strptime(self.job_when.get(),'%Y-%m-%d %H:%M').timestamp()
-            interval = float(self.job_interval.get())*60
-            name,prompt,workspace = self.job_name.get(),self.job_prompt.get('1.0','end-1c'),self.job_workspace.get()
-            self.work(lambda:self.store.add_job(name,prompt,workspace,model,due,interval),lambda _:self._refresh_jobs())
-        except Exception as exc: self.app._set_status(str(exc),'error')
-
     def _refresh_jobs(self):
-        if not self._jobs_hosted(): return
+        if not any(view.winfo_exists() for view in self.jobs_views.values()): return
         def read():
             if not self.ready.wait(3) or not hasattr(self,'store'): raise RuntimeError('Desktop service unavailable')
             return self.store.jobs()
         self.app._submit_background('desktop-jobs',read,self._show_jobs)
 
     def _show_jobs(self, rows):
-        if not self._jobs_hosted(): return
-        self.job_rows = {r['id']:r for r in rows}
-        self.job_list.delete(*self.job_list.get_children())
-        for row in rows:
-            status={'waiting':tr('等待执行'),'running':tr('运行中…'),'done':tr('已完成'),
-                    'failed':tr('执行失败'),'cancelled':tr('已停止'),'interrupted':tr('运行中断')}.get(row['status'],row['status'])
-            if not row['enabled'] and row['status']=='waiting': status=tr('已暂停')
-            self.job_list.insert('', 'end',iid=row['id'],values=(row['name'],i18n.resolve(status,self.app.root),
-                dt.datetime.fromtimestamp(row['due']).strftime('%m-%d %H:%M')))
-
-    def _toggle_job(self):
-        selected = self.job_list.selection()
-        if not selected: return
-        key=selected[0]; enabled=not self.job_rows[key]['enabled']
-        if not enabled and getattr(self,'active_job',None)==key: self.job_cancel.set()
-        self.work(lambda:self.store.enable_job(key,enabled),lambda _:self._refresh_jobs())
-
-    def _job_result(self,_event=None):
-        selected = self.job_list.selection()
-        if selected:
-            self.job_result.configure(state='normal'); self.job_result.delete('1.0','end')
-            self.job_result.insert('1.0',self.job_rows[selected[0]]['result']); self.job_result.configure(state='disabled')
+        for view in self.jobs_views.values():
+            if view.winfo_exists(): view.show_jobs(rows)
 
     def _connectors_ui(self,page):
         self.label(page,tr('读取、写入和 Agent 使用分别授权；写入逐次确认。Microsoft 使用你自己的 Entra 公共客户端应用。'))
@@ -521,7 +504,7 @@ class DesktopFeatures:
             self.app._restart_gateway()
 
     def _show_preview(self):
-        if self.window is None or not self.window.winfo_exists(): return
+        if not hasattr(self, 'preview_text') or not self.preview_text.winfo_exists(): return
         self.preview_text.configure(state='normal'); self.preview_text.delete('1.0','end')
         self.preview_text.insert('1.0',self.pending['change']['preview'] if self.pending else str(tr('暂无待确认的文件修改')))
         self.preview_text.configure(state='disabled')

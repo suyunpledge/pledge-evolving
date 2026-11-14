@@ -12,8 +12,11 @@ from forge.vscode_bridge import EditorBridge
 from .state import WorkMode
 
 DEVELOPMENT_GUIDANCE = (
-    'Development Mode: inspect the actual project and relevant code before editing. '
-    'For nontrivial work plan dependencies and changes, make scoped edits, run relevant tests '
+    'Development Mode: answer questions and ordinary conversation directly. '
+    'Use project tools only when needed for the user request. '
+    'Structured pre-planning is selected by the user; do not require a plan before answering. '
+    'For code changes inspect the actual project and relevant code before editing, '
+    'make scoped edits, run relevant tests '
     'through authorized tools, inspect the actual diff, and summarize evidence and limitations. '
     'Simplify this workflow for small tasks. Report only real tool/test events; '
     'Before editing an existing file, read it through a file tool in this Agent run; '
@@ -165,8 +168,10 @@ class DevelopmentRuntime:
             self._lane.release()
 
     def run(self, prompt, *, explicit_model=None, agent_model=None, role='default',
-            permission='read-only', planning='low', contexts=(), snapshot=None,
+            permission='read-only', planning=None, contexts=(), snapshot=None,
             delegate=False, child_model=None, cancellation=None, acceptance=None):
+        from forge.planning import planning_level
+        planning = planning_level(self.state.value('planning') if planning is None else planning)
         if acceptance is not None:
             from forge.acceptance import AcceptanceContract
             acceptance = AcceptanceContract.from_raw(acceptance).to_raw()
@@ -177,7 +182,7 @@ class DevelopmentRuntime:
         agent = getattr(self.bridge, 'agent', None)
         attributes = ('router', 'policy', 'planning_level', 'planning_model', 'review_model',
                       'review_enabled', 'extra_system', 'child_router_factory', 'child_observer',
-                      'cancellation_event', 'file_guard', 'task_id')
+                      'cancellation_event', 'file_guard', 'task_id', 'thinking', 'thinking_mode')
         previous = {key: getattr(agent, key) for key in attributes if agent is not None and hasattr(agent, key)}
         with self._control:
             self._cancel_event = cancellation if cancellation is not None else threading.Event()
@@ -213,6 +218,11 @@ class DevelopmentRuntime:
                 if snap.mode == WorkMode.DEVELOPMENT:
                     from .guard import FileRevisionGuard
                     agent.file_guard = FileRevisionGuard(self.bridge.workspace)
+                    if planning == 'none':
+                        # Direct replies skip the host's separate contemplation request.
+                        # Provider-native reasoning remains governed by model adaptation.
+                        agent.thinking = False
+                        agent.thinking_mode = 'off'
                 roles = dict(snap.roles) if snap.mode == WorkMode.DEVELOPMENT else {}
                 from forge.phase_models import phase_router
                 review = roles.get('review') if snap.mode == WorkMode.DEVELOPMENT else previous.get('review_model')

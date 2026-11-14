@@ -13,6 +13,7 @@ in our prompt, not a reason to burn three more providers.
 from __future__ import annotations
 
 import copy
+import http.client
 import json
 import math
 import os
@@ -82,6 +83,18 @@ class TransportError(RuntimeError):
         from .secrets import redact
         super().__init__(redact(str(message)), *args)
     retryable = True
+
+
+class ModelCancelled(TransportError):
+    retryable = False
+
+
+def _model_wait(seconds, cancel_event=None):
+    if cancel_event is not None:
+        if cancel_event.wait(max(0, seconds)):
+            raise ModelCancelled('已停止模型请求')
+    elif seconds > 0:
+        time.sleep(seconds)
 
 
 class RateLimited(TransportError):
@@ -155,14 +168,19 @@ class Provider:
     # 显式厂商推理默认值；auto 沿用厂商默认，不能混同 Agent 的沉思扩展。
     reasoning_mode: str = "auto"
     cache_affinity: str = "auto"
-    # 单请求超时（秒）；0 = 用传输默认（120s）。慢端点（如 ark coding 单请求
+    # 单请求无活动超时（秒）；0 = 用传输默认（600s）。慢端点（如 ark coding 单请求
     # 可超 200s）按行调大，否则超时被当 TransportError 重试同样超时——
     # "all providers fail" 整轮报废（dual_bench 2026-11-09 实测）。
-    request_timeout: int = 0
+    request_timeout: float = 0
     _credential: Any = field(default=None, repr=False, compare=False)
     _secret_scope: Any = field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self):
+        from .request_timing import request_timeout
+        try:
+            request_timeout(self.request_timeout)
+        except ValueError as exc:
+            raise BadRequest(str(exc)) from None
         if self.cache_affinity not in ('auto', 'off'):
             raise BadRequest('cacheAffinity must be auto or off')
         if self.reasoning_mode not in ('auto', 'on', 'off'):
@@ -571,8 +589,9 @@ class _ProviderRateLimiter:
 class HttpTransport:
     """Minimal stdlib transport for OpenAI- and Anthropic-shaped endpoints."""
 
-    def __init__(self, timeout: int = 120, *, response_opener=None) -> None:
-        self.timeout = timeout
+    def __init__(self, timeout: float | None = None, *, response_opener=None) -> None:
+        from .request_timing import request_timeout
+        self.timeout = request_timeout(timeout)
         self._response_opener = response_opener  # trusted host injection, never a model option
         self._limiter = _ProviderRateLimiter()
 
@@ -582,12 +601,14 @@ class HttpTransport:
         scope = options.pop('secret_scope', None) or SecretScope()
         messages = scope.protect(messages)
         options = scope.protect(options)
+        cancel_event = options.get('cancel_event')
+        _model_wait(0, cancel_event)
         # Proactive throttle BEFORE the wire: providers with rpm>0 (e.g.
         # StepFun free tier at 10 RPM) get slot-reserved so bursts die at
         # the 429 stage far less often. No-op for rpm<=0 providers.
         wait = self._limiter.reserve(provider)
         if wait > 0:
-            time.sleep(wait)
+            _model_wait(wait, cancel_event)
         # 发送前最后防线：按 wire 协议清洗消息序列（配对 tool_use/tool_result、
         # 剔除孤儿 tool 消息、空 content 补占位），避免各家 API 的 400。
         messages = sanitize_messages(messages, provider.wire)
@@ -651,18 +672,23 @@ class HttpTransport:
                 payload, plan_raw = _plan_and_shape(payload, messages, provider, model, **options)
                 plan_raw["execution"]["defer"]["status"] = "executed"
         except ValueError as exc:
+            _model_wait(0, cancel_event)
             raise BadRequest(str(exc)) from exc
 
         payload = scope.protect(payload)
         body = json.dumps(payload, ensure_ascii=False).encode()
         headers = {"content-type": "application/json", **provider._execution_headers(url)}
         request = urllib.request.Request(url, data=body, headers=headers, method="POST")
+        from .http_transport import RequestCancelled, open_response
         try:
             from .secret_http import open_authenticated
             # 慢端点按提供方放宽超时（0=传输默认）；实测 ark coding 单请求
             # 可超 120s，默认超时会让重试同样超时、整轮 "all providers fail"。
-            effective_timeout = int(getattr(provider, "request_timeout", 0) or 0) or self.timeout
-            with (self._response_opener or open_authenticated)(request, timeout=effective_timeout) as response:
+            from .request_timing import request_timeout
+            effective_timeout = request_timeout(provider.request_timeout, default=self.timeout)
+            opener = self._response_opener or (open_response if cancel_event is not None else open_authenticated)
+            cancel_options = {'cancel_event': cancel_event} if self._response_opener is None and cancel_event is not None else {}
+            with opener(request, timeout=effective_timeout, **cancel_options) as response:
                 from .secrets import redact
                 data = response.read(2 * 1024 * 1024 + 1)
                 if len(data) > 2 * 1024 * 1024:
@@ -670,7 +696,12 @@ class HttpTransport:
                 raw = redact(json.loads(data.decode("utf-8", "replace")))
         except urllib.error.HTTPError as exc:
             from .secrets import redact
-            detail = redact(getattr(exc, '_forge_detail', '') or exc.read(500).decode("utf-8", "replace"))[:300]
+            try:
+                detail = redact(getattr(exc, '_forge_detail', '') or exc.read(500).decode("utf-8", "replace"))[:300]
+            except (OSError, http.client.HTTPException):
+                detail = redact(str(exc.reason))[:300]
+            finally:
+                exc.close()
             if exc.code == 429:
                 # Retry-After from HTTPError.headers (case-insensitive Mapping)
                 retry_after = None
@@ -686,9 +717,11 @@ class HttpTransport:
                     f"{provider.name}: 429 {detail}",
                     retry_after=retry_after,
                 ) from None
-            if exc.code in (500, 502, 503, 504, 529):
+            if exc.code in (408, 500, 502, 503, 504, 524, 529):
                 raise Overloaded(f"{provider.name}: {exc.code} {detail}") from None
             raise BadRequest(f"{provider.name}: {exc.code} {detail}") from None
+        except RequestCancelled:
+            raise ModelCancelled('已停止模型请求') from None
         except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
             raise TransportError(f"{provider.name}: {exc!r}") from None
         except Exception as exc:
@@ -823,7 +856,7 @@ class ModelRouter:
                 adapt=bool(conf.get("adapt", True)),
                 think_budget=conf.get("thinkBudget"), reasoning_mode=conf.get("reasoningMode", "auto"),
                 cache_affinity=str(conf.get("cacheAffinity", "auto")),
-                request_timeout=int(conf.get("requestTimeout", 0) or 0),
+                request_timeout=conf.get("requestTimeout", 0),
                 flex=bool(conf.get("flex", False)),
                 defer=bool(conf.get("defer", False)),
                 max_defer_seconds=float(conf.get("maxDeferSeconds", 0) or 0),
@@ -903,7 +936,7 @@ class ModelRouter:
                         # longer backoff than the old 0.5s/4s-cap schedule.
                         wait = min(2.0 * (2 ** attempt), 30.0)
                     if attempt < self.retries_per_provider:
-                        time.sleep(wait)  # no backoff when this provider has no next attempt
+                        _model_wait(wait, options.get('cancel_event'))
         raise TransportError(f"all providers failed: {attempts}")
 
     def complete_moa(self, messages: list[dict[str, Any]], *, models: Iterable[tuple[str, str]],
@@ -919,6 +952,8 @@ class ModelRouter:
                 paid.append(("candidate", result))
                 attempts.extend(result.attempts)
             except TransportError as exc:
+                if isinstance(exc, ModelCancelled):
+                    raise
                 attempts.append({"provider": provider_name, "status": "failed", "error": str(exc)[:160]})
         if not candidates:
             raise TransportError("MoA produced no candidates")
@@ -933,7 +968,8 @@ class ModelRouter:
             {"role": "system", "content": "Merge the candidate answers into one best answer. Drop errors."},
             {"role": "user", "content": panel},
         ]
-        result = self.complete(prompt, primary=judge, small=judge is None)
+        result = self.complete(prompt, primary=judge, small=judge is None,
+                               **({'cancel_event': options['cancel_event']} if options.get('cancel_event') is not None else {}))
         result.attempts = attempts + result.attempts
         result.aggregated = True
         result.candidates = [name for name, _ in candidates]
@@ -942,6 +978,7 @@ class ModelRouter:
 
 __all__ = [
     "BadRequest",
+    "ModelCancelled",
     "Completion",
     "HttpTransport",
     "ModelRouter",

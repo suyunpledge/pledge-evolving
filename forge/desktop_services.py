@@ -25,6 +25,8 @@ from .secrets import SecretScope, redact
 
 
 class DesktopStore:
+    JOB_RUN_LIMIT = 20
+
     def __init__(self, path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -39,6 +41,17 @@ class DesktopStore:
             db.execute('BEGIN IMMEDIATE')
             if 'started' not in {row[1] for row in db.execute('PRAGMA table_info(jobs)')}:
                 db.execute('ALTER TABLE jobs ADD COLUMN started REAL NOT NULL DEFAULT 0')
+            db.execute('''CREATE TABLE IF NOT EXISTS job_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL,
+                started REAL NOT NULL, finished REAL, status TEXT NOT NULL,
+                result TEXT NOT NULL DEFAULT '')''')
+            db.execute('CREATE INDEX IF NOT EXISTS job_runs_job ON job_runs(job_id, id DESC)')
+            # The old schema kept only the latest outcome, without a finish time.
+            db.execute('''INSERT INTO job_runs(job_id, started, status, result)
+                SELECT id, started, status,
+                       CASE WHEN status IN ('running', 'interrupted') THEN '' ELSE result END FROM jobs
+                WHERE status IN ('running', 'done', 'failed', 'cancelled', 'interrupted')
+                  AND NOT EXISTS (SELECT 1 FROM job_runs WHERE job_id=jobs.id)''')
 
     @contextmanager
     def connect(self):
@@ -117,28 +130,44 @@ class DesktopStore:
         with self.connect() as db:
             db.execute('UPDATE jobs SET enabled=? WHERE id=?', (int(bool(enabled)), key))
 
+    def job_runs(self, key):
+        with self.connect() as db:
+            rows = db.execute('''SELECT id, started, finished, status, result FROM job_runs
+                WHERE job_id=? ORDER BY id DESC LIMIT ?''', (key, self.JOB_RUN_LIMIT)).fetchall()
+        return [dict(row) for row in rows]
+
     def claim_due(self, now=None):
         now = time.time() if now is None else now
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
-            db.execute("UPDATE jobs SET status='interrupted',enabled=0 WHERE status='running' AND started<?",(now-300,))
+            db.execute('''UPDATE job_runs SET status='interrupted', finished=?
+                WHERE status='running' AND job_id IN (
+                    SELECT id FROM jobs WHERE status='running' AND started<?)''', (now, now-300))
+            db.execute("UPDATE jobs SET status='interrupted',enabled=0 WHERE status='running' AND started<?", (now-300,))
             row = db.execute("SELECT * FROM jobs WHERE enabled=1 AND due<=? AND status!='running' ORDER BY due LIMIT 1", (now,)).fetchone()
             if not row: return []
             # Persist BEFORE sending a paid request; crashes leave a visible
             # running occurrence, never silently replay it after restart.
-            db.execute("UPDATE jobs SET status='running', due=?, enabled=?, started=? WHERE id=?",
+            db.execute("UPDATE jobs SET status='running', result='', due=?, enabled=?, started=? WHERE id=?",
                        (now+row['interval'] if row['interval'] else row['due'],
                         1 if row['interval'] else 0,now,row['id']))
-        return [{**dict(row), **json.loads(row['data']), 'started':now}]
+            run_id = db.execute('INSERT INTO job_runs(job_id, started, status) VALUES (?, ?, ?)',
+                                (row['id'], now, 'running')).lastrowid
+            db.execute('''DELETE FROM job_runs WHERE job_id=? AND id < (
+                SELECT id FROM job_runs WHERE job_id=? ORDER BY id DESC LIMIT 1 OFFSET ?)''',
+                (row['id'], row['id'], self.JOB_RUN_LIMIT-1))
+        return [{**dict(row), **json.loads(row['data']), 'started':now, 'run_id':run_id}]
 
-    def finish_job(self, key, status, result, *, started=None):
+    def finish_job(self, key, status, result, *, run_id):
+        if status not in ('done', 'failed', 'cancelled'):
+            raise ValueError('Invalid terminal job status')
+        result = str(redact(result))[:16000]
         with self.connect() as db:
-            query='UPDATE jobs SET status=?,result=? WHERE id=?'
-            params=(status, str(redact(result))[:16000], key)
-            if started is not None:
-                query+=' AND started=?'; params+= (started,)
-            updated=db.execute(query,params).rowcount
-        if not updated: return
+            updated = db.execute('''UPDATE job_runs SET status=?, result=?, finished=?
+                WHERE id=? AND job_id=? AND status=?''',
+                (status, result, time.time(), run_id, key, 'running')).rowcount
+            if not updated: return
+            db.execute('UPDATE jobs SET status=?, result=? WHERE id=?', (status, result, key))
         self.audit('schedule.'+status, {'job': key})
 
 

@@ -40,6 +40,7 @@ class LanguageUiTests(unittest.TestCase):
     def test_all_languages_at_five_scales_keep_main_controls_visible(self):
         for scale in layout.SCALES:
             with market_ui.market_app(scale, gui.MIN_SIZE) as (root, app, errors):
+                app.input_card.set_options_expanded(True)
                 with patch.object(app, "_gateway_tool_names", return_value=([], "offline")):
                     app.market_entry_btn.invoke()
                     layout.pump(root, .2)

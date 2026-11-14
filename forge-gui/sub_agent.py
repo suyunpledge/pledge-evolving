@@ -6,7 +6,7 @@
 移植时保持的 AI Platform 契约（sub-agent.ts / route.ts）：
   - 每个 worker 温度固定 0.3（分工输出要确定、简短，不跟随主对话温度）
   - 默认并行执行（ThreadPoolExecutor），结果顺序与传入顺序一致
-  - 单路超时（默认 30s）与失败不阻塞其他（error 记进 result）
+  - 单路无活动超时（默认 600s）与失败不阻塞其他（error 记进 result）
   - 汇总注入：每路最多 1500 字符、总块最多 6000 字符（集群放宽 2000/8000）
   - 集群与分工互斥（同开会双份子调用 + 双份注入，token 翻倍且互相干扰）
   - 降级模型：每路可指定自己的 provider/模型，不传回落主对话的
@@ -26,6 +26,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 
 from http_transport import open_response, RequestCancelled
+from forge.request_timing import MODEL_RESPONSE_TIMEOUT
 
 # 集群的同构编程 agent 系统提示词（照抄 AI Platform CLUSTER_AGENT_PROMPT 的语义）
 CLUSTER_AGENT_PROMPT = (
@@ -35,7 +36,7 @@ CLUSTER_AGENT_PROMPT = (
 )
 
 DEFAULT_MAX_TOKENS = 800
-DEFAULT_TIMEOUT_S = 30.0
+DEFAULT_TIMEOUT_S = MODEL_RESPONSE_TIMEOUT
 DEFAULT_TEMPERATURE = 0.3          # 分工输出固定温度（AI Platform 契约）
 MAX_SUB_AGENTS = 6                 # 分工上限（AI Platform slice(0,6)）
 MAX_CLUSTER_LANES = 4              # 集群 1-4 路

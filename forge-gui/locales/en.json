@@ -1,4 +1,18 @@
 {
+  "正在载入历史消息，请稍候再发送。": "Wait for the conversation to load before sending.",
+  "查看附件（{count}）": "View attachments ({count})",
+  "发送内容与附件快照": "Sent message and attachment snapshots",
+  "已停止。未完成回复未加入后续上下文。": "Stopped. The partial reply won’t be used in later turns.",
+  "正在连接…": "Connecting…",
+  "正在生成…": "Generating…",
+  "正在停止…": "Stopping…",
+  "开始时间": "Started at",
+  "运行记录": "Run history",
+  "请选择定时任务": "Select a scheduled task",
+  "暂无运行记录": "No runs yet",
+  "执行结果": "Run output",
+  "本次运行没有输出": "This run has no output",
+  "任务指令": "Task instructions",
   "历史消息已作为文字快照放入输入框，请检查后发送。": "Historical message loaded as a text snapshot, including any saved file content. Review before sending.",
   "回到最新": "Jump to latest",
   "编辑后重试": "Edit and retry",
@@ -515,5 +529,12 @@
   "新建会替换当前编辑内容。要放弃未保存的编辑吗？": "Creating a new entry will replace the current editor content. Discard unsaved edits?",
   "切换条目会替换当前编辑内容。要放弃未保存的编辑吗？": "Switching entries will replace the current editor content. Discard unsaved edits?",
   "放弃并新建": "Discard and create",
-  "放弃并切换": "Discard and switch"
+  "放弃并切换": "Discard and switch",
+  "能力": "Capabilities",
+  "更多功能": "More features",
+  "选项": "Options",
+  "收起选项": "Hide options",
+  "选项 · 已启用": "Options · active",
+  "智能体、规划与项目文件": "Agents, planning and project files",
+  "描述目标，添加上下文，剩下的交给 Forge。": "Describe your goal, add context, and let Forge take it from there."
 }

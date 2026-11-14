@@ -262,6 +262,11 @@ class EditorBridge:
             return {}
 
     def policy(self, mode):
+        if mode in {'desktop-sandbox', 'manual-approval', 'full-access'}:
+            from .desktop_permissions import profile_policy
+            # This is an explicit host API choice, never inferred from a prompt.
+            return profile_policy(replace(self.base_policy, workspace=self.workspace),
+                                  {'desktop-sandbox': 'sandbox', 'manual-approval': 'manual', 'full-access': 'full'}[mode])
         if mode not in {'read-only', 'workspace-write'}:
             raise ValueError('Unsupported editor permission mode')
         return replace(self.base_policy, workspace=self.workspace, non_interactive=True,

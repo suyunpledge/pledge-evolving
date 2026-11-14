@@ -52,6 +52,8 @@ from .model import (
     Provider,
     TransportError,
     Usage,
+    ModelCancelled,
+    _model_wait,
 )
 from .pricing import rate_for
 
@@ -309,7 +311,8 @@ class SmartRouter(ModelRouter):
                     attempts.append(fail_event)
                     if not exc.retryable:
                         raise
-                    time.sleep(min(0.5 * (2 ** attempt), 4.0))
+                    if attempt < self.retries_per_provider:
+                        _model_wait(min(0.5 * (2 ** attempt), 4.0), options.get('cancel_event'))
         raise TransportError(f"{label}: all tiers failed: {attempts}")
 
     # -- strategies ---------------------------------------------------------
@@ -401,8 +404,11 @@ class SmartRouter(ModelRouter):
                         # THIS request, not about the draft's worth; the
                         # draft is already paid for and returned honestly
                         # (aggregated=False, degraded event recorded).
+                        if isinstance(exc, ModelCancelled):
+                            raise
                         break
-                    time.sleep(min(0.5 * (2 ** attempt), 4.0))
+                    if attempt < self.retries_per_provider:
+                        _model_wait(min(0.5 * (2 ** attempt), 4.0), options.get('cancel_event'))
         # 所有 finisher 失败（可重试穷尽或 fatal）→ 优雅降级：草稿就是答案。
         # draft 持有的是快照；这里取 attempts 的完整活链（草稿+集成事件，各一次）。
         draft.attempts = list(attempts)

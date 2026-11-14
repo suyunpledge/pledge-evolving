@@ -145,7 +145,7 @@ APP_VERSION = "0.7.0"
 WINDOW_SIZE = "1440x900"
 MIN_SIZE = (940, 700)
 ACTIVITY_WIDTH = 152
-SIDEBAR_WIDTH = 220
+SIDEBAR_WIDTH = 240
 SIDEBAR_COLLAPSE_AT = 1240
 WORKSPACE_COLLAPSE_AT = 1080
 WORKSPACE_RESTORE_AT = 1320
@@ -929,6 +929,10 @@ class ForgeGuiApp:
         self.root.bind("<Destroy>", self._cancel_responsive_callback, add="+")
         self.root.bind("<Control-n>", lambda _e: self._conversation_shortcut("new"))
         self.root.bind("<Control-k>", lambda _e: self._conversation_shortcut("search"))
+        # Tk's Text class handles Ctrl+K as delete-to-end before the window
+        # binding. Claim the shortcut on the chat fields before that handler.
+        for field in (self.input_card.entry, self.session_search):
+            field.bind("<Control-k>", lambda _e: self._conversation_shortcut("search") or "break")
         self.root.bind("<Control-l>", lambda _e: self._conversation_shortcut("input"))
         self.root.bind("<Alt-Left>", self._navigate_back, add="+")
         self.root.bind("<Escape>", self._navigation_escape, add="+")
@@ -1091,31 +1095,33 @@ class ForgeGuiApp:
                 cw.set_brand_avatar(av_img, av_keep)
         except Exception:
             pass
-        chrome = tk.Frame(self.root, bg=C["bg"])
+        chrome = tk.Frame(self.root, bg=C["chrome"])
         chrome.pack(fill=tk.X)
         self._chrome = chrome
-        bar = tk.Frame(chrome, bg=C["bg"], height=theme.ui_px(self.root, 50))
+        bar = tk.Frame(chrome, bg=C["chrome"], height=theme.ui_px(self.root, 52))
         bar.pack(fill=tk.X)
         bar.pack_propagate(False)
 
-        self.sidebar_reveal_btn = glyph_button(
-            bar, "☰", self._toggle_sidebar, bg=C["bg"], size=11,
-            tooltip=tr("展开 / 收起侧边栏"))
+        self.sidebar_reveal_btn = theme.control_button(
+            bar, text="", icon="sidebar", command=self._toggle_sidebar,
+            bg=C["chrome"], icon_size=theme.ui_px(bar, 16),
+            padx=theme.ui_px(bar, 8), pady=theme.ui_px(bar, 8), bd=0)
+        attach_tooltip(self.sidebar_reveal_btn, tr("展开 / 收起侧边栏"))
         self.sidebar_reveal_btn.pack(side=tk.LEFT, padx=(10, 0))
 
         # 品牌区
-        brand = tk.Frame(bar, bg=C["bg"])
+        brand = tk.Frame(bar, bg=C["chrome"])
         brand.pack(side=tk.LEFT, padx=(14, 12))
         brand_img, brand_keep = load_brand_logo(24, master=self.root)
         if brand_img is not None:
-            holder = tk.Frame(brand, bg=C["bg"])
+            holder = tk.Frame(brand, bg=C["chrome"])
             holder.pack(side=tk.LEFT, padx=(0, 8))
-            shown = i18n.Label(holder, image=brand_img, bg=C["bg"], bd=0,
+            shown = i18n.Label(holder, image=brand_img, bg=C["chrome"], bd=0,
                              highlightthickness=0)
             shown.pack()
             self._brand_logo_refs = (brand_img, brand_keep, holder, shown)
         else:
-            logo = tk.Canvas(brand, width=24, height=24, bg=C["bg"],
+            logo = tk.Canvas(brand, width=24, height=24, bg=C["chrome"],
                              highlightthickness=0, bd=0)
             round_rect(logo, 0, 0, 23, 23, 7, fill=C["accent"], outline="")
             logo.create_polygon(2, 2, 18, 2, 2, 18, smooth=True, splinesteps=10,
@@ -1123,8 +1129,8 @@ class ForgeGuiApp:
             logo.create_text(12, 12, text="F", fill="#FFFFFF",
                              font=(theme.UI_FAMILY, 11, "bold"))
             logo.pack(side=tk.LEFT, padx=(0, 8))
-        i18n.Label(brand, text="FORGE", bg=C["bg"], fg=C["text"],
-                 font=(theme.UI_FAMILY, 12, "bold")).pack(side=tk.LEFT)
+        i18n.Label(brand, text="Forge", bg=C["chrome"], fg=C["text"],
+                 font=theme.FONT_BRAND).pack(side=tk.LEFT)
 
         # 双工作空间切换（visual-system-2 §4：宿主确认制，始终可见、可达）
         from visual_system.components import ModeSwitcher
@@ -1133,13 +1139,13 @@ class ForgeGuiApp:
         self._mode_switcher.pack(side=tk.LEFT, padx=(8, 0))
 
         # 设计稿：项目标签不再是色块，和顶栏同底，只靠图标 + 文字。
-        self._project_chip = tk.Frame(bar, bg=C["bg"], padx=8, pady=4)
+        self._project_chip = tk.Frame(bar, bg=C["chrome"], padx=8, pady=4)
         self._project_chip.pack(side=tk.LEFT, padx=(8, 0))
-        IconCanvas(self._project_chip, "folder_open", size=theme.ui_px(bar, 16), bg=C["bg"],
+        IconCanvas(self._project_chip, "folder_open", size=theme.ui_px(bar, 16), bg=C["chrome"],
                    fg=C["subtext"]).pack(side=tk.LEFT, padx=(0, 6))
         self._project_name_var = tk.StringVar(value=self._active_workspace().name)
         i18n.Label(self._project_chip, textvariable=self._project_name_var,
-                 bg=C["bg"], fg=C["body"], font=FONT_SMALL).pack(side=tk.LEFT)
+                 bg=C["chrome"], fg=C["subtext"], font=FONT_SMALL).pack(side=tk.LEFT)
 
         # 保留「更多」能力合约，可见入口移到 Activity Bar 底部。
         self._more_menu = i18n.Menu(self.root, tearoff=0, bg=C["surface"],
@@ -1160,20 +1166,20 @@ class ForgeGuiApp:
             self._more_menu.add_command(
                 label=f"{NAV_LABEL[key]}（预览）", command=lambda k=key: self._show_view(k))
         # 右侧只保留 Workspace 与必要运行状态。
-        right = tk.Frame(bar, bg=C["bg"])
+        right = tk.Frame(bar, bg=C["chrome"])
         right.pack(side=tk.RIGHT, padx=(0, 14))
         self.ws_toggle_btn = pill_button(right, "▤ 工作区", self._toggle_workspace,
-                                         kind="quiet", bg=C["bg"], font=FONT_SMALL,
+                                         kind="quiet", bg=C["chrome"], font=FONT_SMALL,
                                          padx=10)
         self.ws_toggle_btn.pack(side=tk.LEFT, padx=(0, 10))
         self.desktop_features_btn = pill_button(right,tr('连接与任务'),lambda:self.desktop_features.open(),
                                                 kind='ghost',icon='◷',bg=C['bg'],font=FONT_SMALL,padx=8)
         self.gw_status_var = i18n.StringVar(self.root, value=tr("● 离线"))
         self.gw_status_lbl = i18n.Label(right, textvariable=self.gw_status_var,
-                                      bg=C["bg"], fg=C["muted"], font=FONT_CAPTION)
+                                      bg=C["chrome"], fg=C["muted"], font=FONT_CAPTION)
         self.gw_status_lbl.pack(side=tk.LEFT, padx=(0, 6))
         self._telemetry_btn = pill_button(right, "▾ 状态", self._toggle_telemetry,
-                                          kind="quiet", bg=C["bg"],
+                                          kind="quiet", bg=C["chrome"],
                                           font=FONT_CAPTION, padx=7)
         self._telemetry_btn.pack(side=tk.LEFT)
 
@@ -1191,7 +1197,7 @@ class ForgeGuiApp:
                 self._project_chip.pack_forget()
             elif (not self._project_chip.winfo_manager()
                   and getattr(self, "_workspace_mode", None) != self._workspace_kind.CODING):
-                self._project_chip.pack(side=tk.LEFT, padx=(8, 0), after=brand)
+                self._project_chip.pack(side=tk.LEFT, padx=(8, 0), after=self._mode_switcher)
         bar.bind("<Configure>", fit_topbar)
 
         self._topbar_divider = tk.Frame(chrome, bg=C["border"], height=1)
@@ -1358,34 +1364,55 @@ class ForgeGuiApp:
         chat_panel = tk.Frame(side, bg=C["sidebar"])
         self._sidebar_panels["chat"] = chat_panel
 
+        # A stable, labelled primary action above navigation and session history.
+        quick = tk.Frame(chat_panel, bg=C["sidebar"])
+        quick.pack(fill=tk.X, padx=12, pady=(14, 10))
+        new_chat = theme.control_button(
+            quick, text=tr("新建对话"), icon="edit", command=self._new_session,
+            bg=C["raised"], fg=C["text"], font=FONT_UI,
+            icon_size=theme.ui_px(side, 16), padx=theme.ui_px(side, 12),
+            pady=theme.ui_px(side, 8), anchor="w")
+        new_chat.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        attach_tooltip(new_chat, tr("新建对话 · Ctrl+N"))
+        search = IconCanvas(quick, "search", size=theme.ui_px(side, 16),
+                            hit_size=theme.ui_px(side, 32), bg=C["sidebar"], fg=C["subtext"],
+                            command=self._toggle_session_search)
+        search.pack(side=tk.RIGHT, padx=(6, 0))
+        attach_tooltip(search, tr("搜索对话 · Ctrl+K"))
+
         # Stable primary navigation remains accessible from task and settings views.
-        # 重设计：三个入口做成一条分段控件（同一底槽、无描边），
-        # 选中段浮起一层；原先是三块各自带框的色块。
-        shortcuts = tk.Frame(chat_panel, bg=C["sidebar"], padx=2, pady=2,
-                             highlightthickness=1, highlightbackground=C["line"])
-        shortcuts.pack(fill=tk.X, padx=12, pady=(12, 8))
+        # Four frequent destinations share a two-column icon-and-label grid.
+        shortcuts = tk.Frame(chat_panel, bg=C["sidebar"], padx=2, pady=2)
+        shortcuts.pack(fill=tk.X, padx=10, pady=(0, 12))
         self.sidebar_shortcuts = {}
-        for column, (key, label, action) in enumerate((
-                ("chat", tr("对话"), self._return_to_chat),
-                ("tools", tr("插件"), self._open_plugin_market),
-                ("schedules", tr("定时任务"), lambda: self.desktop_features.open(0)))):
+        for index, (key, label, icon, action) in enumerate((
+                ("chat", tr("对话"), "chat", self._return_to_chat),
+                ("task", tr("任务"), "task", lambda: self._show_view("task")),
+                ("tools", tr("插件"), "plugin", self._open_plugin_market),
+                ("schedules", tr("定时任务"), "clock", lambda: self.desktop_features.open(0)))):
+            column = index % 2
             shortcuts.grid_columnconfigure(column, weight=1, uniform="shortcuts")
-            button = pill_button(shortcuts, label, action, kind="ghost",
-                                 bg=C["sidebar"], font=FONT_SMALL, padx=2, width=1)
-            button.grid(row=0, column=column, sticky="nsew")
+            button = theme.control_button(shortcuts, text=label, icon=icon, command=action,
+                bg=C["sidebar"], fg=C["subtext"], font=FONT_SMALL,
+                icon_size=theme.ui_px(side, 16), padx=theme.ui_px(side, 7),
+                pady=theme.ui_px(side, 7), anchor="w", bd=0)
+            button.grid(row=index // 2, column=column, sticky="nsew", padx=2, pady=2)
             self.sidebar_shortcuts[key] = button
         def fit_shortcuts(event):
             # Use the fixed container width. Deriving each button's request from
             # its own grid allocation can oscillate at fractional DPI scaling.
-            width = max(20, event.width // 3 - 10)
+            width = max(20, event.width // 2 - theme.ui_px(side, 40))
             for button in self.sidebar_shortcuts.values():
                 if int(button.cget("wraplength")) != width:
                     button.configure(wraplength=width)
         shortcuts.bind("<Configure>", fit_shortcuts)
 
         # ── 2) 功能导航 ──
+        i18n.Label(chat_panel, text=tr("能力"), bg=C["sidebar"], fg=C["faint"],
+                   font=theme.FONT_NAV_GROUP, anchor="w").pack(fill=tk.X, padx=20, pady=(0, 4))
         nav_host = tk.Frame(chat_panel, bg=C["sidebar"])
         nav_host.pack(fill=tk.X, padx=8, pady=(2, 0))
+        utility_host = tk.Frame(chat_panel, bg=C["sidebar"])
         self.sidebar_navigation = {}
         # 2026-10-19：智能体（Agents）恢复为直达导航行——独立记忆 /
         # 每路独立模型 / 子 Agent 分工的配置页不该藏在「更多」里。
@@ -1394,30 +1421,23 @@ class ForgeGuiApp:
                                   ("knowledge", NAV_LABEL["knowledge"], "knowledge"),
                                   ("evolution", NAV_LABEL["evolution"], "evolution"),
                                   ("config", tr("配置API"), "config")):
-            holder = self._make_side_nav(nav_host, key, label, glyph)
-            holder.pack(fill=tk.X, pady=1)
+            nav_parent = utility_host if key in {"evolution", "config"} else nav_host
+            holder = self._make_side_nav(nav_parent, key, label, glyph)
+            if nav_parent is utility_host:
+                holder.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            else:
+                holder.pack(fill=tk.X, pady=1)
             self.sidebar_navigation[key] = holder
         # 2026-10-19：恢复侧栏智能体分组（10-10 eaee1ce 导航重排时被摘除；
         # 扫描 ~/.openclaw-autoclaw/agents/ 列目录 + 添加入口，配置仍在 Agents 页）。
         self._build_agents_group(chat_panel)
 
-        # 更多入口：知识库 / 演化 / 文件与项目 / 配置等低频页
-        more_holder = self._make_side_nav_more(chat_panel)
-        more_holder.pack(fill=tk.X, padx=8, pady=(0, 4))
-
-        # 导航与历史之间：全宽分隔线 + 上下留白（视觉分层，别混成一块）
-
-
         # ── 4) 最近对话（时间分组）──
         head = tk.Frame(chat_panel, bg=C["sidebar"])
-        head.pack(fill=tk.X, padx=(18, 12), pady=(10, 2))
-        # 设计稿分组标题：11px 加粗 faint，右侧操作图标
+        head.pack(fill=tk.X, padx=(18, 12), pady=(16, 4))
+        # 历史分组标题；全局更多菜单固定在侧栏底部。
         i18n.Label(head, text=tr("历史记录"), bg=C["sidebar"], fg=C["faint"],
-                 font=FONT_CAPTION_BOLD).pack(side=tk.LEFT)
-        search_icon = IconCanvas(head, "search", size=theme.ui_px(head, 14), bg=C["sidebar"],
-                                 fg=C["faint"], command=self._toggle_session_search)
-        search_icon.pack(side=tk.RIGHT)
-        attach_tooltip(search_icon, tr("搜索对话 · Ctrl+K"))
+                 font=theme.FONT_NAV_GROUP).pack(side=tk.LEFT)
         self._search_visible = False
         self.session_search_var = tk.StringVar()
         self.session_search = tk.Entry(
@@ -1431,11 +1451,12 @@ class ForgeGuiApp:
         self.history_area.pack(fill=tk.BOTH, expand=True, padx=6)
         self.history_box = self.history_area.inner
 
-        # ── 5) 底部固定：模型选择 + 设置 + 关于 + 收起 ──
+        # ── 5) 底部固定：演化 / 设置、关于 / 更多 / 收起 ──
         foot_divider = divider(chat_panel, bg=C["border"])
         bottom = tk.Frame(chat_panel, bg=C["sidebar"])
         # Fixed actions reserve their space before the expanding history canvas.
         bottom.pack(fill=tk.X, padx=10, pady=(6, 8), side=tk.BOTTOM, before=self.history_area)
+        utility_host.pack(fill=tk.X, padx=8, pady=(4, 6), side=tk.BOTTOM, before=self.history_area)
         foot_divider.pack(fill=tk.X, padx=12, side=tk.BOTTOM, before=self.history_area)
 
         model_row = tk.Frame(bottom, bg=C["sidebar"])
@@ -1462,6 +1483,11 @@ class ForgeGuiApp:
             tools_row, "≪", self._toggle_sidebar, bg=C["sidebar"],
             fg=C["muted"], size=11, tooltip=tr("收起 / 展开侧边栏"))
         self.sidebar_toggle_btn.pack(side=tk.RIGHT)
+        overflow = IconCanvas(tools_row, "more", size=theme.ui_px(side, 16),
+                              hit_size=theme.ui_px(side, 32), bg=C["sidebar"],
+                              fg=C["subtext"], command=self._popup_more_menu)
+        overflow.pack(side=tk.RIGHT, padx=(2, 4))
+        attach_tooltip(overflow, tr("更多功能"))
 
         # Retain legacy context panel accessors; global navigation stays shared.
         for key, label, glyph in NAV_ITEMS:
@@ -1472,14 +1498,14 @@ class ForgeGuiApp:
         chat_panel.pack(fill=tk.BOTH, expand=True)
 
         # _more_btn 保留引用（_popup_more_menu 读它的坐标）
-        self._more_btn = more_holder
+        self._more_btn = overflow
 
     def _make_side_nav(self, parent, key: str, label: str, glyph: str):
         """单栏导航行：图标 + 名称（概念图样式，选中态底色块）。"""
         holder = tk.Frame(parent, bg=C["sidebar"], cursor="hand2")
         bind_keyboard_action(holder, lambda: self._nav_click(key))
         inner = tk.Frame(holder, bg=C["sidebar"])
-        inner.pack(fill=tk.X, padx=10, pady=theme.ui_px(parent, 6))
+        inner.pack(fill=tk.X, padx=8, pady=theme.ui_px(parent, 5))
         icon = IconCanvas(inner, glyph, size=theme.ui_px(parent, 16), bg=C["sidebar"],
                           fg=C["subtext"])
         icon.pack(side=tk.LEFT)
@@ -2493,7 +2519,7 @@ class ForgeGuiApp:
             return rt
         try:
             rt = CapabilityRuntime(market, ws, sid,
-                dispatch or (lambda name, args, **context: client.call_tool(name, args, timeout=3.0, **context)))
+                dispatch or (lambda name, args, **context: client.call_tool(name, args, **context)))
         except Exception as exc:  # e.g. host forge package unavailable (frozen build)
             self._plugin_runtime_singleton = None
             self._plugin_runtime_scope = None
@@ -2557,7 +2583,7 @@ class ForgeGuiApp:
                     kind="ghost", bg=C["bg"]).pack(side=tk.LEFT)
         pill_button(market_actions, tr("查看审计"), self._show_plugin_audit,
                     kind="quiet", bg=C["bg"]).pack(side=tk.LEFT, padx=(8, 0))
-        theme.flow_controls(market_actions)
+        theme.flow_controls(market_actions, wrap_text=True)
         lifecycle = i18n.Label(parent, text=tr("安装 → 文件检查 → 知悉 → 启用 → 逐项授权 → Policy 判定 → 执行 → 审计 → 撤销"),
                  bg=C["bg"], fg=C["muted"], font=FONT_MICRO, anchor="w",
                  justify=tk.LEFT, wraplength=1)
@@ -2859,17 +2885,20 @@ class ForgeGuiApp:
             return
         row = tk.Frame(self.market_list, bg=C["bg"])
         row.pack(fill=tk.X, pady=(4, 8))
+        row.columnconfigure(1, weight=1)
         def select(offset):
             setattr(self, "_market_tool_page" if tools else "_market_page", page + offset)
             self._render_market(self._market_snapshot)
             self.market_canvas.yview_moveto(0)
         pill_button(row, "‹", lambda: select(-1), state=tk.NORMAL if page else tk.DISABLED,
-                    bg=C["bg"]).pack(side=tk.LEFT)
-        i18n.Label(row, text=tr("{label} {page}/{pages} · {count}",
+                    bg=C["bg"]).grid(row=0, column=0)
+        summary = i18n.Label(row, text=tr("{label} {page}/{pages} · {count}",
                    label=tr("工具" if tools else "插件"), page=page+1, pages=pages, count=count),
-                   bg=C["bg"], fg=C["subtext"], font=FONT_SMALL).pack(side=tk.LEFT, padx=8)
+                   bg=C["bg"], fg=C["subtext"], font=FONT_SMALL, wraplength=1)
+        summary.grid(row=0, column=1, sticky='ew', padx=8)
+        theme.bind_wrap(summary)
         pill_button(row, "›", lambda: select(1), state=tk.NORMAL if page + 1 < pages else tk.DISABLED,
-                    bg=C["bg"]).pack(side=tk.LEFT)
+                    bg=C["bg"]).grid(row=0, column=2)
 
     def _market_plugin_card(self, plugin):
         card = RoundedCard(self.market_list, radius=R_PANEL, fill=C["surface"],
@@ -3849,7 +3878,7 @@ class ForgeGuiApp:
             return self._session_custom_title
         for msg in self._chat_history:
             if msg.role == "user" and msg.content.strip():
-                first = msg.content.strip().splitlines()[0]
+                first = (msg.user_text or msg.content).strip().splitlines()[0]
                 return first if len(first) <= 26 else first[:26] + "…"
         return tr("新对话")
 
@@ -3863,7 +3892,7 @@ class ForgeGuiApp:
             "id": sid,
             "title": self._session_title(),
             "updated": time.time(),
-            "messages": [m.to_dict() for m in history],
+            "messages": [m.to_session_dict() for m in history],
         }
         sessions = [s for s in sessions if s.get("id") != sid]
         sessions.insert(0, entry)
@@ -3905,7 +3934,7 @@ class ForgeGuiApp:
             try:
                 if msg.role == "user":
                     state["prompt"] = msg.content
-                    self.chat_area.add_user(msg.content)
+                    self._render_user_message(msg)
                 elif msg.content.strip():
                     agent = self.chat_area.add_agent(app=self)
                     agent._retry_session = session
@@ -4029,9 +4058,7 @@ class ForgeGuiApp:
         if session is None:
             return
         self._archive_current_session()
-        self._chat_history = [ChatMessage(str(m.get("role", "user")),
-                                          str(m.get("content", "")),
-                                          reasoning_content=str(m.get("reasoning_content") or ""))
+        self._chat_history = [ChatMessage.from_session_dict(m)
                               for m in session.get("messages", []) if isinstance(m, dict)
                               and m.get("role") in ("user", "assistant")
                               and isinstance(m.get("content"), str)]
@@ -4063,18 +4090,17 @@ class ForgeGuiApp:
         """
         self._cancel_history_render()
         # 设计稿：说明句由「试试」建议胶囊替代（_context_suggestions）。
-        lines = []
+        lines = [tr("描述目标，添加上下文，剩下的交给 Forge。")]
         self.chat_area.show_empty(
             tr("今天想完成什么？"),
             tuple(lines),
             actions=(
-                (tr("开始对话"), tr("提问、讨论方案或梳理需求"),
-                 self.input_card.focus_entry),
                 (tr("交给 Forge 一个任务"), tr("运行工具并在时间线里跟踪进度"),
-                 lambda: self._show_view("task")),
+                 lambda: self._show_view("task"), "task"),
                 (tr("查看项目工作区"), tr("浏览文件、变更、Diff 与预览"),
-                 lambda: self._open_workspace("file_tree")),
+                 lambda: self._open_workspace("file_tree"), "workspace"),
             ),
+            compact_actions=True,
         )
         self._refresh_work_context()
 
@@ -5130,7 +5156,7 @@ class ForgeGuiApp:
         title_row.pack(anchor=tk.W, fill=tk.X)
         self.chat_title_var = i18n.StringVar(self.root, value=tr("新对话"))
         i18n.Label(title_row, textvariable=self.chat_title_var, bg=C["chat"],
-                 fg=C["text"], font=FONT_TITLE).pack(side=tk.LEFT)
+                 fg=C["text"], font=theme.FONT_CHAT_TITLE, anchor="w", padx=0).pack(fill=tk.X)
         self.chat_sub_var = tk.StringVar(value="")
         subtitle = i18n.Label(parent, textvariable=self.chat_sub_var, bg=C["chat"], fg=C["muted"],
                  font=FONT_MICRO, anchor=tk.W, justify=tk.LEFT,
@@ -5152,11 +5178,12 @@ class ForgeGuiApp:
                      fg=C["ter"], size=12,
                      tooltip=tr("对话操作与设置"))
         self.session_menu_btn.pack(side=tk.RIGHT)
-        self.clear_chat_btn = pill_button(right, tr("新建对话"), self._new_session,
-                                         icon="＋", kind="ghost", bg=C["chat"], padx=8)
+        self.clear_chat_btn = theme.control_button(right, text="", icon="edit", command=self._new_session,
+            bg=C["chat"], icon_size=theme.ui_px(right, 16), padx=8, pady=8, bd=0)
+        attach_tooltip(self.clear_chat_btn, tr("新建对话 · Ctrl+N"))
         self.clear_chat_btn.pack(side=tk.RIGHT, padx=(0, 6))
         self.computer_entry_btn = pill_button(right, '电脑操作', self._open_computer_panel,
-                                             kind='ghost', bg=C['chat'], padx=8)
+                                             kind='quiet', icon='computer', bg=C['chat'], padx=8)
         self.computer_entry_btn.pack(side=tk.RIGHT, padx=(0, 6))
         self.market_entry_btn = pill_button(right, tr("插件市场"), self._open_plugin_market,
                                             kind="quiet", bg=C["chat"])
@@ -6846,12 +6873,12 @@ class ForgeGuiApp:
         provider_conf = upstream.get("config") or upstream
         adaptation = {key: provider_conf[key] for key in
                       ("vendor", "cacheControl", "expectedCalls", "callGapSeconds", "adapt", "thinkBudget",
-                       "flex", "defer", "maxDeferSeconds")
+                       "flex", "defer", "maxDeferSeconds", "requestTimeout")
                       if key in provider_conf}
         if adaptation:
             cmd.extend(["--provider-options", json.dumps(adaptation, ensure_ascii=False)])
 
-        kwargs = dict(stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        kwargs = dict(stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                       text=True, encoding="utf-8", errors="replace", cwd=str(self.run_py.parent))
         if IS_WINDOWS:
             kwargs["creationflags"] = (
@@ -7272,6 +7299,13 @@ class ForgeGuiApp:
         except Exception:
             pass
 
+    def _set_chat_progress(self, text, request_text=None):
+        if self._abort_requested:
+            return
+        self._set_request_status(request_text or text)
+        if self._agent_msg is not None:
+            self._agent_msg.set_status(text)
+
     def _show_chat_empty_state(self):
         self._chat_empty = True
         self._agent_msg = None
@@ -7301,6 +7335,29 @@ class ForgeGuiApp:
         if text:
             msg.stream_text(text)
         return msg
+
+    def _render_user_message(self, message):
+        return self.chat_area.add_user(
+            message.user_text if message.user_text is not None else message.content,
+            attachment_names=message.attachment_names,
+            view_attachments=lambda: self._show_sent_attachments(message))
+
+    def _show_sent_attachments(self, message):
+        dialog = i18n.Toplevel(self.root)
+        dialog.title(tr("发送内容与附件快照"))
+        dialog.transient(self.root)
+        dialog.configure(bg=C["chat"])
+        dialog.geometry("720x500")
+        dialog.bind("<Escape>", lambda _event: dialog.destroy() or "break")
+        footer = tk.Frame(dialog, bg=C["chat"])
+        footer.pack(side=tk.BOTTOM, fill=tk.X, padx=12, pady=10)
+        pill_button(footer, tr("关闭"), dialog.destroy, kind="quiet").pack(side=tk.RIGHT)
+        preview = scrolledtext.ScrolledText(dialog, wrap="word", bg=C["input_bg"],
+                                            fg=C["text"], font=FONT_MONO_SM)
+        preview.insert("1.0", redact(message.content))
+        preview.configure(state=tk.DISABLED)
+        preview.pack(fill=tk.BOTH, expand=True, padx=12, pady=(12, 0))
+        preview.focus_set()
 
     def _append_stream_delta(self, piece: str):
         msg = getattr(self, "_agent_msg", None)
@@ -7507,11 +7564,13 @@ class ForgeGuiApp:
                 or not msg.winfo_exists()):
             self._set_status("没有可重试的消息", "warn")
             return
-        if self.send_var.get().strip() or self._attachments:
+        attachments = list(getattr(msg, "_retry_attachments", ()))
+        draft = self.send_var.get()
+        if (draft or self._attachments) and (draft != prompt or self._attachments != attachments):
             self.input_card.focus_entry()
             self._set_status(tr("已有草稿或附件，已保留；清空后可编辑重试原消息。"), "info")
             return
-        self._attachments = copy.deepcopy(list(getattr(msg, "_retry_attachments", ())))
+        self._attachments = copy.deepcopy(attachments)
         self.send_var.set(prompt)
         self._update_context_summary()
         self.input_card.focus_entry()
@@ -7551,11 +7610,17 @@ class ForgeGuiApp:
             return
         if self._run_local_command(text):
             return
+        if getattr(self, "_history_render_job", None) is not None:
+            self._set_status(tr("正在载入历史消息，请稍候再发送。"), "info")
+            return
         if self._gateway_starting or self._restart_pending or getattr(self, '_project_switch_pending', False):
             self._set_status(tr('正在切换或启动工作区，请等待 Gateway 就绪后发送'),'warn')
             return
         try:
-            prompt = compose_prompt(text, self._attachments, secret_scope=self._input_secret_scope())
+            scope = self._input_secret_scope()
+            protected_text = scope.protect_text(text)
+            attachments = copy.deepcopy(self._attachments)
+            prompt = compose_prompt(protected_text, attachments, secret_scope=scope)
         except ValueError as exc:
             self._set_status(str(exc), "warn")
             return
@@ -7582,30 +7647,26 @@ class ForgeGuiApp:
             self._abort_requested = False
             self._cancel_event = threading.Event()
             cancel_event = self._cancel_event
-            # 重构后 send_var 不再绑 entry.textvariable，要分别清空。
-            try:
-                if self.input_card is not None and self.input_card.entry is not None:
-                    self.input_card.entry.delete("1.0", tk.END)
-            except (tk.TclError, AttributeError):
-                pass
-            self.send_var.set("")
             self._chat_empty = False
             self._last_sidecar_prompt = prompt   # compose 后的完整 prompt（含附件）
-            self.chat_area.add_user(prompt)
+            question = ChatMessage("user", prompt, user_text=protected_text,
+                                   attachment_names=tuple(Path(item["path"]).name for item in attachments))
+            self._render_user_message(question)
             previous_review = getattr(getattr(self, '_agent_msg', None), '_review_action', None)
             if previous_review is not None and previous_review.winfo_exists():
                 previous_review.master.destroy()
             self._agent_msg = self.chat_area.add_agent(app=self)
             self._agent_msg._retry_session = self._session_id
-            self._agent_msg._retry_prompt = self._input_secret_scope().protect_text(text)
-            self._agent_msg._retry_attachments = copy.deepcopy(self._attachments)
-            self._agent_msg.set_status("生成中…")
-            self._agent_msg.stream_text("")
+            self._agent_msg._retry_prompt = protected_text
+            self._agent_msg._retry_attachments = attachments
+            self.send_var.set("")
+            self._attachments = []
+            self._update_context_summary()
             # Explicit Send reveals the new turn; incoming deltas alone never
             # take scroll ownership back from someone reading earlier messages.
             self.chat_area.scroll.scroll_to_end()
-            messages = (list(self._chat_history) if self._include_history else []) + [ChatMessage("user", prompt)]
-            retained_history = list(self._chat_history) + [ChatMessage("user", prompt)]
+            messages = (list(self._chat_history) if self._include_history else []) + [question]
+            retained_history = list(self._chat_history) + [question]
             # 知识库检索注入：相关踩坑/经验作为背景上下文（不改用户消息本体）。
             # 前缀缓存：它按本轮问题检索、每轮可能不同，必须紧贴本轮提问之前；
             # 放在历史最前会让每一轮的整段历史都失配、全价重算。
@@ -7622,7 +7683,7 @@ class ForgeGuiApp:
             self.clear_chat_btn.configure(state=tk.DISABLED)
             self.gw_btn.configure(state=tk.DISABLED)
             self.port_spin.configure(state=tk.DISABLED)
-            self._set_request_status("正在连接…")
+            self._set_chat_progress(tr("正在连接…"))
             self._set_status(f"请求 → {self.model_var.get()} …", "info")
 
             model = self.model_var.get()
@@ -7645,6 +7706,11 @@ class ForgeGuiApp:
                 model = str(provider["model"])
             client = self.client
             plugin_workspace, plugin_session = self._active_workspace(), self._session_id
+            if isinstance(client, ForgeGatewayClient):
+                timeout_config = (getattr(self, '_gateway_provider', None)
+                                  or select_provider(self.user_rows, model) or {})
+                timeout_config = timeout_config.get('config') or timeout_config
+                client.set_upstream_timeout(timeout_config.get('requestTimeout', 0))
             reasoning_effort = ("high" if self._reasoning_effort == "contemplate"
                                 else None if self._reasoning_effort == "off" else self._reasoning_effort)
             # 分级检索长期记忆：只接 Work Mode（Coding 需要精确上下文，有意不接）。
@@ -7732,7 +7798,7 @@ class ForgeGuiApp:
                     def mediated_dispatch(name,args,**context):
                         if desktop is not None:
                             args=desktop.review_change(name,args,selected_workspace,phase_scope,cancel_event)
-                        response=client.call_tool(name,args,timeout=3.0,**context)
+                        response=client.call_tool(name,args,**context)
                         if desktop is not None and isinstance(response,dict) and response.get('ok') and '_expected_revisions' in args:
                             self._post_ui(desktop.refresh_workspace)
                         return response
@@ -7765,11 +7831,8 @@ class ForgeGuiApp:
                         parts.append(tr('连接器')+' '+str(len(connector_schemas)))
                     if computer_schemas:
                         parts.append('窗口视觉 '+str(len(computer_schemas)))
-                    if parts:
-                        self._post_ui(self._set_request_status,
-                                      f"已加载 {' + '.join(parts)} 工具，正在生成…")
-                    else:
-                        self._post_ui(self._set_request_status, "正在生成…")
+                    self._post_ui(self._set_chat_progress, tr("正在生成…"),
+                                  f"已加载 {' + '.join(parts)} 工具，正在生成…" if parts else None)
                     acc: list[str] = []
 
                     def on_chunk(piece: str):
@@ -7796,8 +7859,9 @@ class ForgeGuiApp:
                         )
                         # 防御：stream_chat 理论必返回 CompletionResult，
                         # 但测试 stub/异常实现可能返回 None —— 不能因此炸掉整轮
-                        turn_text = "".join(acc[round_start:]) or (
-                            result.text if result is not None else "")
+                        if len(acc) == round_start and result is not None and result.text:
+                            on_chunk(result.text)
+                        turn_text = "".join(acc[round_start:])
                         calls = (prepare_calls(getattr(result, "tool_calls", None) or [])
                                  if result is not None else [])
                         if not calls:
@@ -7825,6 +7889,9 @@ class ForgeGuiApp:
                                     nonlocal args
                                     if cancel_event.is_set():
                                         raise GenerationCancelled('已停止工具调用')
+                                    permission_gate = getattr(self, '_desktop_authorize_tool', None)
+                                    if permission_gate is not None:
+                                        permission_gate(name, args, cancel_event)
                                     if name in bridge_names:
                                         if desktop is not None:
                                             args = desktop.review_change(name,args,selected_workspace,phase_scope,cancel_event)
@@ -7895,8 +7962,8 @@ class ForgeGuiApp:
                     self._post_ui(self._send_finished)
 
         except Exception as exc:
+            self._chat_failed(str(exc), text)
             self._send_finished()
-            self._set_status(f"发送失败：{exc}", "error")
             return
 
         threading.Thread(target=worker, daemon=True).start()
@@ -7923,17 +7990,15 @@ class ForgeGuiApp:
             self._chat_cancelled(original_prompt if original_prompt is not None else messages[-1].content)
             return
         self._chat_history = messages + [ChatMessage("assistant", full, reasoning_content=reasoning_content)]
-        self._attachments.clear()
         self._update_context_summary()
         self.chat_title_var.set(self._session_title())
         msg = getattr(self, "_agent_msg", None)
         if msg is not None:
             msg.set_status("")
             msg.render_markdown(full or "（空回复）")
-            actions = [{"label": tr("打开工作区"),
-                        "command": lambda: self._open_workspace("file_tree")}]
-            actions.extend(self._file_actions(full))
-            msg.add_actions(actions)
+            actions = self._file_actions(full)
+            if actions:
+                msg.add_actions(actions)
             self._attach_review_action(msg, full)
         self._archive_current_session()
         self._refresh_history()
@@ -8009,12 +8074,24 @@ class ForgeGuiApp:
         threading.Thread(target=worker, daemon=True, name='Forge-code-review').start()
 
     def _chat_cancelled(self, prompt):
-        if self._agent_msg is not None:
-            self._agent_msg.set_status("")
-            self._agent_msg.add_note("已停止。未完成回复未加入后续上下文。", tone="warn")
-        if not self.send_var.get():
-            self.send_var.set(prompt)
+        msg = self._agent_msg
+        if msg is not None:
+            msg.set_status("")
+            if msg._text_source.strip():
+                msg.render_markdown(msg._text_source)
+            msg.add_note(tr("已停止。未完成回复未加入后续上下文。"), tone="warn")
+            if not msg._text_source.strip():
+                msg._ensure_action_row()
+        self._restore_interrupted_draft(msg, prompt)
         self._set_status("已停止生成，原消息已保留", "warn")
+
+    def _restore_interrupted_draft(self, msg, prompt):
+        if self.send_var.get() or self._attachments:
+            return
+        text = getattr(msg, "_retry_prompt", None) or self._input_secret_scope().protect_text(prompt)
+        self._attachments = copy.deepcopy(list(getattr(msg, "_retry_attachments", ())))
+        self.send_var.set(text)
+        self._update_context_summary()
 
     def _chat_failed(self, message, prompt):
         if self._abort_requested:
@@ -8024,19 +8101,20 @@ class ForgeGuiApp:
         if msg is not None:
             msg.set_status("")
             msg._teardown_placeholder()
-            if not msg._text_source and not msg._has_details:
+            if msg._text_source.strip():
+                msg.render_markdown(msg._text_source, retry=False)
+            elif not msg._has_details:
                 msg.pack_forget()  # No empty assistant shell beside the error.
         area = getattr(self, "chat_area", None)
         uncertain = '工具执行结果未知' in message
         if area is not None:
             actions = [{"label": tr("打开工作区"), "command": self._open_workspace}] if uncertain else [
-                {"label": tr("切换模型"), "command": self._open_model_menu},
-                {"label": tr("编辑后重试"), "command": lambda: (self.send_var.set(prompt), self.input_card.focus_entry())},
-            ]
+                {"label": tr("切换模型"), "command": self._open_model_menu}]
+            if not uncertain and getattr(msg, "_retry_prompt", None):
+                actions.append({"label": tr("编辑后重试"), "command": lambda: self._retry_last_agent(msg)})
             area.add_notice(message, tone="error", title=tr("工具结果待确认") if uncertain else tr("模型请求失败"), actions=actions)
         self._push_terminal(str(redact(f'[chat] {message}')))
-        if not self.send_var.get():
-            self.send_var.set(prompt)
+        self._restore_interrupted_draft(msg, prompt)
         self._set_status("操作结果待确认，请先检查目标状态与工具记录" if uncertain else
                          "请求失败，消息已保留；检查 gateway 后可重试", "error")
 
@@ -8047,7 +8125,7 @@ class ForgeGuiApp:
         self._abort_requested = True
         self._cancel_event.set()
         self.input_card.set_stopping()
-        self._set_request_status("正在停止…")
+        self._set_request_status(tr("正在停止…"))
         self._set_status("已请求停止，正在结束本轮连接；输入的草稿会保留", "warn")
         self._refresh_send_circle()
 
@@ -8065,87 +8143,173 @@ class ForgeGuiApp:
         self._set_request_status(tr("就绪"))
         self._refresh_send_circle()
     # ── 关闭 ──
-    def _confirm_dialog(self, title: str, message: str,
-                         confirm_text: str, *, danger: bool = True) -> bool:
-        """规范确认模态（2026-10-12 统一弹窗机制）：transient+grab、
-        居中主窗、Esc/关闭=取消。替代配置编辑器里的 messagebox.askyesno。"""
-        dialog = tk.Toplevel(self.root)
+    def _modal_dialog(self, title: str, message: str, actions, *, tone: str = "warn",
+                      icon: str | None = None, detail_rows=()) -> object:
+        """规范模态（2026-10-12 统一弹窗机制；2026-11-13 液态玻璃重做）。
+
+        transient+grab、居中主窗、Esc = 取消（返回 None）。版式参照 iOS 26
+        alert：主窗压暗，中间浮一张大圆角玻璃卡；语义色玻璃图标、居中标题与
+        说明、可选键值行放在内嵌玻璃井里；底部胶囊按钮等宽并排（超过两个
+        时竖排），取消在左、主操作在右。``actions`` 为 ``[(text, value, kind)]``，
+        首个为主操作。
+        """
+        return_focus = self.root.focus_get()
+        actions = tuple(actions)
+        import liquid_glass as glass
+        tones = {"warn": (C["warn_soft"], C["warn"], "warning"),
+                 "danger": (C["error_soft"], C["error"], "warning"),
+                 "info": (C["accent_soft"], C["accent2"], "info")}
+        soft, strong, default_icon = tones.get(tone, tones["warn"])
+        px = lambda value: theme.ui_px(self.root, value)
+        scrim_alpha = 0.46
+        scrim = None
+        try:
+            if self.root.winfo_viewable():
+                scrim = glass.modal_scrim(self.root, alpha=scrim_alpha)
+        except tk.TclError:
+            scrim = None
+        dialog = i18n.Toplevel(self.root)
         dialog.withdraw()
         dialog.title(title)
-        dialog.configure(bg=C["surface"])
+        dialog.overrideredirect(True)
         dialog.transient(self.root)
         dialog.resizable(False, False)
-        body = tk.Frame(dialog, bg=C["surface"], padx=22, pady=18)
+        fill = C["glass"]
+        matte = theme.mix(C["bg"], "#000000", scrim_alpha if scrim is not None else 0)
+        shell = glass.glass_window(dialog, fill=fill, radius=px(26), matte=matte,
+                                   inset=px(22), shadow=px(18), shadow_dy=px(6))
+        width = px(332)
+        body = tk.Frame(shell, bg=fill, width=width)
         body.pack(fill=tk.BOTH, expand=True)
-        i18n.Label(body, text=title, bg=C["surface"], fg=C["text"],
-                   font=FONT_UI_BOLD).pack(anchor="w", pady=(0, 6))
-        i18n.Label(body, text=message, bg=C["surface"], fg=C["subtext"],
-                   font=FONT_SMALL, justify=tk.LEFT,
-                   wraplength=340).pack(anchor="w", pady=(0, 14))
-        result = {"ok": False}
+        tile = px(46)
+        badge_cv = tk.Canvas(body, width=tile, height=tile, bg=fill, highlightthickness=0, bd=0)
+        badge_cv._glass = glass.glass_photo(badge_cv, tile, tile, glass.GlassSpec(
+            radius=tile / 2, fill=theme.mix(fill, strong, .20), rim=.9, rim_colour=strong,
+            glow=1.1, band=5, sheen=1.0, sheen_h=tile * .45, inner_line=.05))
+        badge_cv.create_image(0, 0, image=badge_cv._glass, anchor="nw")
+        glyph = px(22)
+        theme.draw_icon(badge_cv, icon or default_icon, x=(tile - glyph) / 2,
+                        y=(tile - glyph) / 2, size=glyph, fg=strong)
+        badge_cv.pack(pady=(px(4), px(12)))
+        i18n.Label(body, text=title, bg=fill, fg=C["text"], font=theme.FONT_SECTION,
+                   justify=tk.CENTER, wraplength=width).pack(fill=tk.X, pady=(0, px(6)))
+        i18n.Label(body, text=message, bg=fill, fg=C["subtext"], font=FONT_SMALL,
+                   justify=tk.CENTER, wraplength=width).pack(fill=tk.X)
+        if detail_rows:
+            well_fill = theme.mix(fill, "#000000", .22)
+            well = glass.GlassPanel(body, spec=glass.GlassSpec(
+                radius=px(14), fill=well_fill, rim=.45, glow=.5, band=4, sheen=0,
+                inner_line=0), padx=px(12), pady=px(9), bg=fill)
+            well.pack(fill=tk.X, pady=(px(14), 0))
+            grid = well.content
+            grid.columnconfigure(1, weight=1)
+            for row, (key, value) in enumerate(detail_rows):
+                i18n.Label(grid, text=key, bg=well_fill, fg=C["faint"],
+                           font=FONT_CAPTION, anchor="nw").grid(row=row, column=0, sticky="nw",
+                                                                padx=(0, px(12)), pady=1)
+                i18n.Label(grid, text=value, bg=well_fill, fg=C["body"],
+                           font=FONT_CAPTION, anchor="w", justify=tk.LEFT,
+                           wraplength=px(220)).grid(row=row, column=1, sticky="w", pady=1)
+        result = {"value": None}
 
-        def choose(ok: bool):
-            result["ok"] = ok
+        def choose(value):
+            result["value"] = value
+            focused = dialog.focus_displayof()
+            owned_focus = focused is not None and focused.winfo_toplevel() is dialog
+            result["restore_focus"] = owned_focus
+            close_scrim()
+            dialog.grab_release()
+            if return_focus is not None and return_focus.winfo_exists():
+                if owned_focus:
+                    return_focus.focus_force()
+                else:
+                    return_focus.focus_set()
             dialog.destroy()
 
-        acts = tk.Frame(body, bg=C["surface"])
-        acts.pack(fill=tk.X)
-        pill_button(acts, tr("取消"), lambda: choose(False)).pack(
-            side=tk.RIGHT, padx=(8, 0))
-        pill_button(acts, confirm_text, lambda: choose(True),
-                    kind="danger" if danger else "primary").pack(side=tk.RIGHT)
-        dialog.protocol("WM_DELETE_WINDOW", lambda: choose(False))
-        dialog.bind("<Escape>", lambda _e: choose(False))
-        dialog.update_idletasks()
+        acts = tk.Frame(body, bg=fill)
+        acts.pack(fill=tk.X, pady=(px(20), 0))
+        ordered = list(reversed(list(actions)))          # 取消在左、主操作在右
+        stacked = len(ordered) > 2
+        gap = px(10)
+        button_w = width if stacked else (width - gap * (len(ordered) - 1)) // max(1, len(ordered))
+        primary = None
+        safe = None
+        buttons = []
+        for index, (label, value, kind) in enumerate(ordered):
+            button = glass.glass_button(acts, label, lambda v=value: choose(v), kind=kind,
+                                        bg=fill, width=button_w, height=px(38))
+            if stacked:
+                button.pack(side=tk.BOTTOM, fill=tk.X, pady=(0, px(8) if index else 0))
+            else:
+                button.pack(side=tk.LEFT, padx=(gap if index else 0, 0))
+            buttons.append(button)
+            primary = button
+            if kind != "danger":
+                safe = button
+        # 默认焦点决定「按一下空格」会发生什么：主操作是破坏性的（放弃修改、
+        # 删除）时把焦点放在不破坏的那个按钮上，误触只会取消。
+        if actions and list(actions)[0][2] == "danger":
+            primary = safe
+        for widget in buttons:
+            widget.bind("<Left>", lambda _e: (_e.widget.tk_focusPrev().focus_set(), "break")[1])
+            widget.bind("<Right>", lambda _e: (_e.widget.tk_focusNext().focus_set(), "break")[1])
+
+        def close_scrim(event=None):
+            if event is not None and event.widget is not dialog:
+                return
+            if scrim is not None:
+                try:
+                    scrim.destroy()
+                except tk.TclError:
+                    pass
+
+        dialog.bind("<Destroy>", close_scrim, add="+")
+        dialog.protocol("WM_DELETE_WINDOW", lambda: choose(None))
+        dialog.bind("<Escape>", lambda _e: choose(None))
+        glass.fit_glass_window(shell)
         w, h = dialog.winfo_reqwidth(), dialog.winfo_reqheight()
         x = self.root.winfo_rootx() + (self.root.winfo_width() - w) // 2
         y = self.root.winfo_rooty() + (self.root.winfo_height() - h) // 2
         dialog.geometry(f"{w}x{h}+{max(x, 0)}+{max(y, 0)}")
         dialog.deiconify()
-        dialog.grab_set()
-        dialog.focus_set()
+        dialog.lift()
+        try:
+            dialog.grab_set()
+        except tk.TclError:
+            dialog.update()
+            dialog.grab_set()
+        try:
+            dialog.focus_force()
+        except tk.TclError:
+            pass
+        (primary or dialog).focus_set()
         dialog.wait_window()
-        return result["ok"]
+        close_scrim()
+        # Tk may process a final FocusOut while destroying a transient and
+        # its scrim. Restore native activation after that lifecycle finishes.
+        if result.get("restore_focus") and return_focus is not None:
+            try:
+                if return_focus.winfo_exists() and return_focus.winfo_ismapped():
+                    return_focus.focus_force()
+            except tk.TclError:
+                pass
+        return result["value"]
+
+    def _confirm_dialog(self, title: str, message: str,
+                         confirm_text: str, *, danger: bool = True) -> bool:
+        """规范确认模态：替代配置编辑器里的 messagebox.askyesno。"""
+        return self._modal_dialog(
+            title, message,
+            [(confirm_text, True, "danger" if danger else "primary"), (tr("取消"), False, "ghost")],
+            tone="danger" if danger else "info") is True
 
     def _confirm_discard_dialog(self) -> bool:
         """退出前的规范模态确认：transient+grab，居中于主窗，无闪烁。"""
-        dialog = tk.Toplevel(self.root)
-        dialog.withdraw()
-        dialog.title(tr("有未保存的修改"))
-        dialog.configure(bg=C["surface"])
-        dialog.transient(self.root)
-        dialog.resizable(False, False)
-        body = tk.Frame(dialog, bg=C["surface"], padx=22, pady=18)
-        body.pack(fill=tk.BOTH, expand=True)
-        i18n.Label(body, text=tr("有未保存的修改"), bg=C["surface"],
-                   fg=C["text"], font=FONT_UI_BOLD).pack(anchor="w", pady=(0, 6))
-        i18n.Label(body, text=tr("功能开关、分工预设或编辑内容尚未保存。要放弃这些修改并退出吗？"),
-                   bg=C["surface"], fg=C["subtext"], font=FONT_SMALL,
-                   justify=tk.LEFT, wraplength=340).pack(anchor="w", pady=(0, 14))
-        result = {"ok": False}
-
-        def choose(ok: bool):
-            result["ok"] = ok
-            dialog.destroy()
-
-        acts = tk.Frame(body, bg=C["surface"])
-        acts.pack(fill=tk.X)
-        pill_button(acts, tr("取消"), lambda: choose(False)).pack(side=tk.RIGHT, padx=(8, 0))
-        pill_button(acts, tr("放弃并退出"), lambda: choose(True),
-                    kind="danger").pack(side=tk.RIGHT)
-        dialog.protocol("WM_DELETE_WINDOW", lambda: choose(False))
-        dialog.bind("<Escape>", lambda _e: choose(False))
-
-        dialog.update_idletasks()
-        w, h = dialog.winfo_reqwidth(), dialog.winfo_reqheight()
-        x = self.root.winfo_rootx() + (self.root.winfo_width() - w) // 2
-        y = self.root.winfo_rooty() + (self.root.winfo_height() - h) // 2
-        dialog.geometry(f"{w}x{h}+{max(x, 0)}+{max(y, 0)}")
-        dialog.deiconify()
-        dialog.grab_set()
-        dialog.focus_set()
-        dialog.wait_window()
-        return result["ok"]
+        return self._modal_dialog(
+            tr("有未保存的修改"),
+            tr("功能开关、分工预设或编辑内容尚未保存。要放弃这些修改并退出吗？"),
+            [(tr("放弃并退出"), True, "danger"), (tr("取消"), False, "ghost")],
+            tone="warn") is True
 
     def _on_close(self):
         # P0-01：Coding Workbench 关闭保护——主窗持有 bench 引用，退出前
@@ -8321,6 +8485,10 @@ def _diagnose() -> int:
 
 
 def main():
+    if "--qt" in sys.argv:
+        sys.argv.remove("--qt")
+        from forge_qt import main as qt_main
+        raise SystemExit(qt_main())
     if "--forge-plugin-worker" in sys.argv:
         from plugin_worker import worker_main
         index = sys.argv.index("--forge-plugin-worker")
@@ -8330,6 +8498,9 @@ def main():
     _setup_dpi()
     root = tk.Tk()
     app = ForgeGuiApp(root)
+    initial_view = os.environ.get("FORGE_INITIAL_VIEW", "chat")
+    if initial_view in {"tools", "task", "agents", "config", "knowledge", "evolution", "files", "development"}:
+        root.after_idle(lambda: app._show_view(initial_view))
     root.mainloop()
 
 

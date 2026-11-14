@@ -54,6 +54,9 @@ class GatewayStartupLifecycleTests(unittest.TestCase):
                 pump(root, .15)
                 started.assert_called_once()
                 args = spawn.call_args.args[0]
+                # The embedded host's stdin is its private Qt command pipe.
+                # Gateway children must never inherit or consume that channel.
+                self.assertEqual(spawn.call_args.kwargs['stdin'], gui.subprocess.DEVNULL)
                 self.assertEqual(args[args.index("--port") + 1], "18899")
                 self.assertEqual(app.port_var.get(), "18899")
                 self.assertEqual(app.gateway_url, "http://127.0.0.1:18899")

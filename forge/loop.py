@@ -644,6 +644,10 @@ class Agent:
             context_mode=self.context_mode,
         )
         child._tool_surface = self._tool_surface.fork()
+        # Host approval transport follows delegation; the child's clamped
+        # policy and explicit denials still decide which actions can be asked.
+        child.action_executor.approver = self.action_executor.approver
+        child.action_executor.trusted_native = self.action_executor.trusted_native
         child.task_id = self.task_id or self._run_id
         self._emit(type="subagent_spawn", task=task[:300], mode=child_policy.mode.value,
                    depth=child.depth, budget_left=self.budget[0])
@@ -1080,11 +1084,14 @@ class Agent:
                 round_cap = thinking_token_cap(
                     self.service, engaged=True, configured=self._thinking_cap_configured)
                 self._check_cancel()
+                cancel_options = ({'cancel_event': self.cancellation_event}
+                                  if self.cancellation_event is not None and isinstance(self.router, ModelRouter) else {})
                 if round_cap is not None:
-                    completion = self.router.complete(msgs, small=True, max_tokens=round_cap)
+                    completion = self.router.complete(msgs, small=True, max_tokens=round_cap, **cancel_options)
                 else:
-                    completion = self.router.complete(msgs, small=True)
+                    completion = self.router.complete(msgs, small=True, **cancel_options)
             except TransportError as exc:
+                self._check_cancel()
                 self._emit(type="thinking_transport_error", phase=phase, error=str(exc)[:200])
                 break
             usage = getattr(completion, "usage", None)
@@ -1467,7 +1474,9 @@ class Agent:
                 planner = phase_router(self.phase_catalog, self.planning_model, self.router)
                 plan_completion = planner.complete(self.secret_scope.protect(plan_messages),
                     small=False,
-                    max_tokens=token_cap(self.planning_level))
+                    max_tokens=token_cap(self.planning_level),
+                    **({'cancel_event': self.cancellation_event}
+                       if self.cancellation_event is not None and isinstance(planner, ModelRouter) else {}))
                 usage_total["prompt_tokens"] += plan_completion.usage.prompt_tokens
                 usage_total["completion_tokens"] += plan_completion.usage.completion_tokens
                 usage_total["cached_tokens"] += _safe_count(getattr(plan_completion.usage, "cached_tokens", 0))
@@ -1481,6 +1490,7 @@ class Agent:
                 self._plan = TaskPlan.parse(self.secret_scope.protect_text(plan_completion.text or ""),
                                             self.planning_level)
             except (PlanningError, TransportError) as exc:
+                self._check_cancel()
                 self._emit(type="planning_error", run_id=self._run_id, error=str(exc)[:300])
                 return self._finish(RunReport(text=f"[planning stopped] {exc}", steps=steps,
                     usage=usage_total, stopped="planning_error", events=self.events))
@@ -1543,6 +1553,8 @@ class Agent:
                                    if type(self.router) is SmartRouter else {})
                 if isinstance(self.router, ModelRouter):
                     request_options['cache_scope'] = self._conversation_guard_start
+                    if self.cancellation_event is not None:
+                        request_options['cancel_event'] = self.cancellation_event
                 # 步级重试：可重试错误且本 run 未用过 → 等 5s 再试一次
                 for _model_attempt in (0, 1):
                     try:
@@ -1553,16 +1565,22 @@ class Agent:
                         )
                         break
                     except TransportError as _retry_exc:
+                        self._check_cancel()
                         if (_model_attempt == 0
                                 and getattr(_retry_exc, "retryable", False)
                                 and not self._model_retry_used):
                             self._model_retry_used = True
                             self._emit(type="model_retry", wait_seconds=5,
                                        error=str(_retry_exc)[:200])
-                            time.sleep(5)
+                            if self.cancellation_event is not None:
+                                self.cancellation_event.wait(5)
+                                self._check_cancel()
+                            else:
+                                time.sleep(5)
                             continue
                         raise
             except TransportError as exc:
+                self._check_cancel()
                 err_msg = str(exc)[:300]
                 # Actionable hints keyed off error type
                 ra = getattr(exc, "retry_after", None)
