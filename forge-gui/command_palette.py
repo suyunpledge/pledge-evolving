@@ -93,7 +93,7 @@ def balance(results, scope, rows=MAX_ROWS):
 
 class CommandPalette(tk.Toplevel):
     def __init__(self, master, items, *, on_close=None):
-        super().__init__(master, bg=C["border_hi"])
+        super().__init__(master)
         self.withdraw()
         self.overrideredirect(True)
         try:
@@ -110,8 +110,12 @@ class CommandPalette(tk.Toplevel):
         self._closed = False
         px = lambda value: theme.ui_px(master, value)  # noqa: E731
         self._px = px
-        shell = tk.Frame(self, bg=C["surface"], padx=0, pady=0)
-        shell.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
+        # 液态玻璃面板：大圆角 + 镜面亮边；内部沿用 surface，内容控件不变。
+        import liquid_glass as glass
+        self._glass_host = glass.glass_window(self, fill=C["surface"], radius=px(22),
+                                              matte=C["bg"], inset=px(9), bracket=.6)
+        shell = tk.Frame(self._glass_host, bg=C["surface"], padx=0, pady=0)
+        shell.pack(fill=tk.BOTH, expand=True)
         head = tk.Frame(shell, bg=C["surface"], padx=px(16), pady=px(12))
         head.pack(fill=tk.X)
         IconCanvas(head, "command", size=px(18), bg=C["surface"], fg=C["ember"]).pack(side=tk.LEFT)
@@ -157,14 +161,16 @@ class CommandPalette(tk.Toplevel):
         self._place()
         self.deiconify()
         self.lift()
-        self.entry.focus_force()
+        import liquid_glass as glass
+        glass.focus_when_mapped(self.entry, force=True)
 
     # ── 布局 ──
     def _place(self):
         root = self.master.winfo_toplevel()
         root.update_idletasks()
         width = min(self._px(640), max(self._px(360), root.winfo_width() - self._px(80)))
-        self.update_idletasks()
+        import liquid_glass as glass
+        glass.fit_glass_window(self._glass_host)
         height = self.winfo_reqheight()
         x = root.winfo_rootx() + (root.winfo_width() - width) // 2
         y = root.winfo_rooty() + self._px(72)

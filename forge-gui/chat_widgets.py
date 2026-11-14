@@ -304,23 +304,23 @@ class InlineText(tk.Text):
                  wrap=tk.WORD, on_link=None):
         base = bg or C["chat"]
         super().__init__(parent, wrap=wrap, bg=base, fg=fg or C["body"],
-                         font=font or FONT_UI, relief=tk.FLAT, bd=0,
+                         font=font or theme.FONT_CHAT, relief=tk.FLAT, bd=0,
                          highlightthickness=0, padx=0, pady=0, height=1,
-                         cursor="arrow", insertwidth=0, spacing1=0, spacing3=0,
+                         cursor="arrow", insertwidth=0, spacing1=ui_px(parent, 2),
+                         spacing2=ui_px(parent, 2), spacing3=ui_px(parent, 3),
                          selectbackground=C["accent_soft"])
-        # 2026-11-08：spacing1/3 归零。高度按「行」计（height=n×linespace），
-        # 段前段后的像素间距会让单行段落被算成 2 行，正文下多出半行空白；
-        # 段间距改由各块 pack 的 pady 负责。
+        # Keep mixed Chinese/Latin rows open; pixel measurement below includes
+        # line spacing when calculating the Text widget height.
         self._measure_font = tkfont.Font(root=self, font=self.cget("font"))
         # Font descent supplies the optical inset at every DPI. Width and
         # wrapping still come from the allocated parent, never a fixed gutter.
         self.configure(padx=max(1, self._measure_font.metrics("descent")), pady=0)
-        self.tag_configure("b", font=FONT_UI_BOLD, foreground=C["text"])
+        self.tag_configure("b", font=theme.FONT_CHAT_BOLD, foreground=C["text"])
         self.tag_configure("code", font=FONT_MONO_SM, background=C["code_bg"],
                            foreground=C["code_str"])
         self.tag_configure("muted", foreground=C["subtext"])
         self.tag_configure("file_link", foreground=C["accent2"],
-                           underline=True, font=font or FONT_UI)
+                           underline=True, font=font or theme.FONT_CHAT)
         self._base_bg = base
         self._on_link = on_link
         # 每个链接一枚独立 tag（link-N）→ (种类, 目标)。点击时按 tag 取完整目标，
@@ -372,11 +372,15 @@ class InlineText(tk.Text):
             if not self.winfo_exists():
                 return
             pixels = int(self.tk.call(self._w, "count", "-update", "-ypixels", "1.0", "end"))
-            line_height = self._measure_font.metrics("linespace")
-            n = max(1, math.ceil(pixels / max(1, line_height)))
-            if n != self._last_h:
-                self._last_h = n
-                self.configure(height=n)
+            line_height = max(1, self._measure_font.metrics("linespace"))
+            # Text 的 height 只能按「字体行高」整行给，而内容像素里还含行距
+            # （spacing1/2/3）。整行向上取整会让单行段落多出一整行空白；改为
+            # 整行取下界，余数由上下 pady 补齐，总高与内容像素至多差 1px。
+            n = max(1, pixels // line_height)
+            pad = max(0, math.ceil((pixels - n * line_height) / 2))
+            if (n, pad) != self._last_h:
+                self._last_h = (n, pad)
+                self.configure(height=n, pady=pad)
         except tk.TclError:
             pass
 
@@ -619,16 +623,35 @@ def _render_single_block(host, block, *, base, wrap):
     """渲染单个 markdown 块（由 render_blocks 循环体抽取，行为一致）。"""
     kind = block["type"]
     if kind == "h":
-        f = FONT_TITLE if block["level"] <= 2 else FONT_SECTION
+        f = theme.FONT_MARKDOWN_HEADING if block["level"] <= 2 else theme.FONT_MARKDOWN_SUBHEAD
+        # 标题行：左侧熔铁色刻度游标（科幻感）+ 标题；一、二级标题下方再拉一条
+        # 由左向右淡出的细线，把一节内容框起来。
+        from glass_ornaments import heading_marker
+        head_row = tk.Frame(host, bg=base)
+        head_row.pack(fill=tk.X, pady=(12 if block["level"] <= 2 else 8, 4))
+        line = tkfont.Font(root=head_row, font=f).metrics("linespace")
+        heading_marker(head_row, height=line, bg=base, level=block["level"]).pack(
+            side=tk.LEFT, anchor="n", padx=(0, ui_px(head_row, 6)))
         if any(is_emoji for _part, is_emoji in emoji_parts(block["text"])):
-            heading = InlineText(host, bg=base, fg=C["text"], font=f)
+            heading = InlineText(head_row, bg=base, fg=C["text"], font=f)
             heading.set_text(block["text"])
         else:
-            heading = i18n.Label(host, text=block["text"], bg=base, fg=C["text"], font=f,
+            heading = i18n.Label(head_row, text=block["text"], bg=base, fg=C["text"], font=f,
                                anchor="w", justify=tk.LEFT, wraplength=wrap)
-        heading.pack(fill=tk.X, pady=(8, 3))
+        heading.pack(side=tk.LEFT, fill=tk.X, expand=True)
         if isinstance(heading, i18n.Label):
             bind_wrap(heading)
+        if block["level"] <= 2:
+            rule = tk.Canvas(host, height=1, bg=base, highlightthickness=0, bd=0)
+            rule.pack(fill=tk.X, pady=(0, 4))
+
+            def draw_rule(event, cv=rule):
+                cv.delete("all")
+                steps = 16
+                for i in range(steps):
+                    cv.create_line(event.width * i / steps, 0, event.width * (i + 1) / steps, 0,
+                                   fill=theme.mix(C["border_hi"], base, i / steps))
+            rule.bind("<Configure>", draw_rule)
     elif kind == "p":
         t = InlineText(host, bg=base)
         t.set_segments(inline_segments(block["text"]))
@@ -637,7 +660,7 @@ def _render_single_block(host, block, *, base, wrap):
         row = tk.Frame(host, bg=base)
         row.pack(fill=tk.X, pady=2)
         # 圆点与首行文字垂直居中（Label 居中对齐会在多行条目里漂到中间）。
-        line = tkfont.Font(root=row, font=FONT_UI).metrics("linespace")
+        line = tkfont.Font(root=row, font=theme.FONT_CHAT).metrics("linespace")
         size = max(5, ui_px(row, 5))
         gutter = ui_px(row, 18)
         bullet = tk.Canvas(row, width=gutter, height=line, bg=base, highlightthickness=0, bd=0)
@@ -647,23 +670,23 @@ def _render_single_block(host, block, *, base, wrap):
         bullet.pack(side=tk.LEFT, anchor="n")
         t = InlineText(row, bg=base)
         t.set_segments(inline_segments(block["text"]))
-        t.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        t.pack(side=tk.LEFT, anchor="n", fill=tk.X, expand=True)
     elif kind == "oli":
         row = tk.Frame(host, bg=base)
         row.pack(fill=tk.X, pady=2)
-        line = tkfont.Font(root=row, font=FONT_UI).metrics("linespace")
+        line = tkfont.Font(root=row, font=theme.FONT_CHAT).metrics("linespace")
         size = min(line, ui_px(row, 18))
         num = tk.Canvas(row, width=size, height=line, bg=base,
                         highlightthickness=0, bd=0)
         top = (line - size) / 2
         num.create_oval(0.5, top + .5, size - 1, top + size - 1, fill=C["accent_soft"],
-                        outline=mix(C["accent_soft"], C["accent2"], .45))
+                        outline=theme.mix(C["accent_soft"], C["accent2"], .45))
         num.create_text(size / 2, line / 2, text=block["num"], fill=C["accent_text"],
                         font=FONT_MICRO)
         num.pack(side=tk.LEFT, anchor="n", padx=(0, 8))
         t = InlineText(row, bg=base)
         t.set_segments(inline_segments(block["text"]))
-        t.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        t.pack(side=tk.LEFT, anchor="n", fill=tk.X, expand=True)
     elif kind == "todo":
         row = tk.Frame(host, bg=base)
         row.pack(fill=tk.X, pady=1)
@@ -681,22 +704,42 @@ def _render_single_block(host, block, *, base, wrap):
         t.set_segments(inline_segments(block["text"]))
         t.pack(side=tk.LEFT, fill=tk.X, expand=True)
     elif kind == "quote":
-        row = tk.Frame(host, bg=base)
-        row.pack(fill=tk.X, pady=2)
-        tk.Frame(row, bg=C["accent_border"], width=3).pack(side=tk.LEFT, fill=tk.Y)
-        t = InlineText(row, bg=base)
+        # 引用：淡熔铁色底的信号条，左缘一道亮轨，文字用次级色。
+        tint = theme.mix(base, C["ember"], .06)
+        row = tk.Frame(host, bg=tint)
+        row.pack(fill=tk.X, pady=4)
+        tk.Frame(row, bg=C["ember"], width=max(2, ui_px(row, 2))).pack(side=tk.LEFT, fill=tk.Y)
+        t = InlineText(row, bg=tint, fg=C["subtext"])
         t.set_segments(inline_segments(block["text"]))
-        t.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 0))
+        t.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(ui_px(row, 10), ui_px(row, 8)),
+               pady=ui_px(row, 6))
     elif kind in ("code", "table"):
         # 代码块不识别文件链接：用不签名 InlineText 的 _on_link 的 Text 直接渲染。
-        card = RoundedCard(host, radius=R_MD, fill=C["code_bg"],
-                           outline=C["border"], padx=10, pady=8, bg=base)
+        from glass_ornaments import HudCard
+        card = HudCard(host, radius=R_MD, fill=C["code_bg"],
+                       outline=C["border"], padx=10, pady=8, bg=base)
         card.pack(fill=tk.X, pady=6)
         toolbar = tk.Frame(card.content, bg=C['code_bg'])
         toolbar.pack(fill=tk.X, pady=(0,6))
         lang = block.get('lang') or ('Markdown' if kind == 'table' else 'Code')
-        i18n.Label(toolbar, text=tr('表格') if kind == 'table' else lang, bg=C['code_bg'],
-                   fg=C['muted'], font=FONT_CAPTION).pack(side=tk.LEFT)
+        # 标题栏像终端读数：熔铁色状态点 + 等宽大写语言名 + 行数 / 行列数。
+        source_lines = block['text'].split('\n')
+        if kind == 'table':
+            data_rows = [line for index, line in enumerate(source_lines) if index != 1 and line.strip()]
+            columns_seen = max((len(re.split(r'(?<!\\)\|', line.strip().strip('|')))
+                                for line in data_rows), default=0)
+            meta = tr('{rows} 行 × {cols} 列', rows=max(0, len(data_rows) - 1), cols=columns_seen)
+        else:
+            meta = tr('{count} 行', count=len(source_lines))
+        dot_size = ui_px(toolbar, 7)
+        dot = tk.Canvas(toolbar, width=dot_size, height=dot_size, bg=C['code_bg'],
+                        highlightthickness=0, bd=0)
+        dot.create_oval(0, 0, dot_size - 1, dot_size - 1, fill=C['ember'], outline='')
+        dot.pack(side=tk.LEFT, padx=(0, ui_px(toolbar, 7)))
+        i18n.Label(toolbar, text=tr('表格') if kind == 'table' else lang.upper(), bg=C['code_bg'],
+                   fg=C['subtext'], font=FONT_MONO_XS).pack(side=tk.LEFT)
+        i18n.Label(toolbar, text=tr(' · {meta}', meta=meta), bg=C['code_bg'],
+                   fg=C['faint'], font=FONT_MONO_XS).pack(side=tk.LEFT)
         def copy_source():
             card.clipboard_clear()
             card.clipboard_append(block['text'])
@@ -724,6 +767,10 @@ def _render_single_block(host, block, *, base, wrap):
             tx.tag_configure('table_heading', font=heading_font,
                              foreground=C['text'], background=C['surface'])
             tx.tag_add('table_heading','1.0','1.end')
+            # 斑马纹：偶数数据行轻微提亮，长表格横向阅读不串行。
+            tx.tag_configure('table_zebra', background=theme.mix(C['code_bg'], '#FFFFFF', .035))
+            for index in range(3, len(rows) + 1, 2):
+                tx.tag_add('table_zebra', f'{index}.0', f'{index}.end+1c')
         else:
             tx.insert("1.0", block["text"])
         if kind == 'code' and (lang in ("Code", "py", "python") or lang.startswith("py")):
@@ -733,6 +780,16 @@ def _render_single_block(host, block, *, base, wrap):
                 pass
         line_count = max(1, len(tx.get('1.0','end-1c').split('\n')))
         tx.configure(height=min(line_count, 24), state=tk.DISABLED)
+        gutter = None
+        if kind == 'code' and line_count >= 4:
+            # 行号槽：等宽暗色数字，右侧一道细分隔；随代码纵向滚动。
+            digits = len(str(line_count))
+            gutter = tk.Text(card.content, bg=C["code_bg"], fg=C["faint"], font=FONT_MONO_SM,
+                             relief=tk.FLAT, bd=0, highlightthickness=0, wrap=tk.NONE,
+                             width=digits + 1, height=min(line_count, 24), cursor='arrow',
+                             takefocus=0)
+            gutter.insert('1.0', '\n'.join(str(n).rjust(digits) for n in range(1, line_count + 1)))
+            gutter.configure(state=tk.DISABLED)
         # 设计稿：原生 tk.Scrollbar 在深色界面里是一条白轨道；改用主题 ttk 滚动条。
         tall = line_count > 24
         sx = ttk.Scrollbar(card.content, orient=tk.HORIZONTAL, command=tx.xview)
@@ -745,12 +802,26 @@ def _render_single_block(host, block, *, base, wrap):
                 sx.pack_forget()
         tx.configure(xscrollcommand=sync_x)
         if tall:
-            sy = ttk.Scrollbar(card.content, orient=tk.VERTICAL, command=tx.yview)
-            tx.configure(yscrollcommand=sy.set)
+            def scroll_both(*args):
+                tx.yview(*args)
+                if gutter is not None:
+                    gutter.yview_moveto(tx.yview()[0])
+            sy = ttk.Scrollbar(card.content, orient=tk.VERTICAL, command=scroll_both)
+
+            def sync_y(first, last):
+                sy.set(first, last)
+                if gutter is not None:
+                    gutter.yview_moveto(first)
+            tx.configure(yscrollcommand=sync_y)
             sy.pack(side=tk.RIGHT, fill=tk.Y)
+        if gutter is not None:
+            gutter.pack(side=tk.LEFT, fill=tk.Y)
+            tk.Frame(card.content, bg=C['border'], width=1).pack(
+                side=tk.LEFT, fill=tk.Y, padx=(ui_px(card, 4), ui_px(card, 8)))
         tx.pack(fill=tk.BOTH, expand=True)
     elif kind == "hr":
-        tk.Frame(host, bg=C["border"], height=1).pack(fill=tk.X, pady=6)
+        from glass_ornaments import HudDivider
+        HudDivider(host, bg=base).pack(fill=tk.X, pady=6)
 
 
 def render_blocks_chunked(parent, text, *, bg=None, max_width=None,
@@ -828,8 +899,95 @@ def _guess_seconds_from_row(row: dict) -> float:
     return 0.0
 
 
-class ToolCard(tk.Frame):
-    """「调用工具 (n)」折叠卡片：默认折叠，点摘要展开明细。"""
+class _GlassFolder:
+    """折叠块的液态玻璃外观（ToolCard / StepList 共用）。
+
+    收起时：一枚玻璃胶囊「文件夹标签」（箭头 + 图标 + 摘要），悬停 / 聚焦
+    变亮。展开时：标签下方弹出一块浮起的玻璃面板，像 iOS 文件夹那样带
+    弹簧过冲地长开，内容在玻璃基本到位后出现；收起立即完成。
+    """
+
+    def _build_tab(self, base, *, icon=None):
+        import liquid_glass as glass
+        px = lambda value: ui_px(self, value)
+        self._tab_fill = C["glass_chip"]
+        self._tab_hover = C["glass_chip_hover"]
+        self._summary = tk.Frame(self, bg=base, cursor="hand2", padx=px(11), pady=px(5))
+        self._summary.pack(anchor="w", pady=(8, 2))
+        self._tab_glass = glass.GlassBackdrop(self._summary)
+        self._tab_specs = {
+            False: glass.chip_spec(self._tab_fill, radius=px(15), rim=.7),
+            True: glass.chip_spec(self._tab_hover, radius=px(15), rim=1.0),
+        }
+        self._tab_glass.show(self._tab_specs[False])
+        bind_keyboard_action(self._summary, self.toggle)
+        self._summary.configure(highlightthickness=0)
+        fill = self._tab_fill
+        self._arrow = IconCanvas(self._summary, "chevron_down" if self._expanded else "chevron_right",
+                                 size=px(14), bg=fill, fg=C["subtext"])
+        self._arrow.pack(side=tk.LEFT, padx=(0, px(4)))
+        self._tab_widgets = [self._arrow]
+        if icon:
+            mark = IconCanvas(self._summary, icon, size=px(14), bg=fill, fg=C["ember"])
+            mark.pack(side=tk.LEFT, padx=(0, px(6)))
+            self._tab_widgets.append(mark)
+        self._summary_label = i18n.Label(self._summary, text="", bg=fill,
+                                       fg=C["body"], font=FONT_CAPTION,
+                                       cursor="hand2", anchor="w", justify=tk.LEFT,
+                                       wraplength=ui_px(self, MAX_BUBBLE_WIDTH))
+        self._summary_label.pack(side=tk.LEFT)
+        self._tab_widgets.append(self._summary_label)
+        # 状态珠串：收起时也能一眼看出里面有几步、哪步没过。
+        from glass_ornaments import BeadStrip
+        self._beads = BeadStrip(self._summary, bg=fill)
+        self._beads.pack(side=tk.LEFT, padx=(px(8), 0))
+        self._tab_widgets.append(self._beads)
+        for widget in (self._summary, *self._tab_widgets):
+            widget.bind("<Button-1>", lambda _e: self.toggle())
+            widget.bind("<Enter>", lambda _e: self._paint_tab(True), add="+")
+            widget.bind("<Leave>", lambda _e: self._paint_tab(self._summary.focus_get() is self._summary),
+                        add="+")
+        self._summary.bind("<FocusIn>", lambda _e: self._paint_tab(True), add="+")
+        self._summary.bind("<FocusOut>", lambda _e: self._paint_tab(False), add="+")
+        self.bind("<Configure>", self._fit_tab, add="+")
+
+    def _fit_tab(self, _event=None):
+        chrome = sum(w.winfo_reqwidth() for w in self._tab_widgets
+                     if w is not self._summary_label) + ui_px(self, 38)
+        width = max(ui_px(self, 40), self.winfo_width() - chrome)
+        if int(self._summary_label.cget("wraplength")) != width:
+            self._summary_label.configure(wraplength=width)
+
+
+    def _paint_tab(self, active):
+        spec = self._tab_specs[bool(active)]
+        try:
+            self._tab_glass.show(spec)
+            for widget in self._tab_widgets:
+                widget.configure(bg=spec.fill)
+        except tk.TclError:
+            pass
+
+    def _build_folder(self, base, *, padx=12, pady=10):
+        import liquid_glass as glass
+        spec = glass.folder_spec(base, radius=ui_px(self, 16), shadow=ui_px(self, 8))
+        panel = glass.GlassPanel(self, spec=spec, padx=ui_px(self, padx),
+                                 pady=ui_px(self, pady), bg=base)
+        return panel, spec.fill
+
+    def _set_folder(self, panel, expanded, *, animate=True, pady=(0, 6)):
+        self._arrow.configure(text="▾" if expanded else "▸")
+        if expanded:
+            panel.pack(fill=tk.X, pady=pady)
+            if animate:
+                panel.unfold()
+        else:
+            panel.fold()
+            panel.pack_forget()
+
+
+class ToolCard(_GlassFolder, tk.Frame):
+    """「调用工具 (n)」玻璃文件夹：默认收起成一枚胶囊标签，点开弹出明细面板。"""
 
     def __init__(self, parent, *, title="调用工具", rows=None, bg=None,
                  expanded=False):
@@ -838,31 +996,12 @@ class ToolCard(tk.Frame):
         self._expanded = bool(expanded)
         self._title_text = title
 
-        # 摘要行（永远可见，最弱视觉）
-        self._summary = tk.Frame(self, bg=base, cursor="hand2")
-        self._summary.pack(fill=tk.X, pady=(8, 2))
-        self._summary.bind("<Button-1>", lambda _e: self.toggle())
-        bind_keyboard_action(self._summary, self.toggle)
-        self._arrow = IconCanvas(self._summary, "chevron_down" if expanded else "chevron_right",
-                                 size=16, bg=base, fg=C["ter"])
-        self._arrow.pack(side=tk.LEFT, padx=(0, 4))
-        self._arrow.bind("<Button-1>", lambda _e: self.toggle())
-        timeline = IconCanvas(self._summary, "timeline", size=ui_px(self, 14), bg=base, fg=C["ember"])
-        timeline.pack(side=tk.LEFT, padx=(0, 6))
-        timeline.bind("<Button-1>", lambda _e: self.toggle())
-        self._summary_label = i18n.Label(self._summary, text="", bg=base,
-                                       fg=C["muted"], font=FONT_CAPTION,
-                                       cursor="hand2", anchor="w", justify=tk.LEFT,
-                                       wraplength=ui_px(self, MAX_BUBBLE_WIDTH))
-        self._summary_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        bind_wrap(self._summary_label)
-        self._summary_label.bind("<Button-1>", lambda _e: self.toggle())
+        # 摘要：玻璃胶囊标签（永远可见）
+        self._build_tab(base, icon="timeline")
 
-        # 明细容器（按需显示）
-        self._card_fill = C["sidebar"]
+        # 明细：浮起的玻璃面板（按需显示）
         self._rail_lines = []
-        card = RoundedCard(self, radius=R_CARD, fill=self._card_fill,
-                           outline=C["line"], padx=12, pady=8, bg=base)
+        card, self._card_fill = self._build_folder(base, padx=12, pady=10)
         self._card = card
         self._card_host = card  # alias
         self.rows_frame = tk.Frame(card.content, bg=self._card_fill)
@@ -876,9 +1015,10 @@ class ToolCard(tk.Frame):
         self._kick_row_batch()
 
         if self._expanded:
-            card.pack(fill=tk.X, pady=(2, 4))
+            self._set_folder(card, True, animate=False)
         # 计算摘要文字（用全量行数，不等分批完成）
         self._all_row_count = len(rows)
+        self._beads.set_states("ok" if row.get("ok", True) else "fail" for row in rows)
         self._refresh_summary()
 
     def _kick_row_batch(self):
@@ -925,11 +1065,7 @@ class ToolCard(tk.Frame):
     # -- 折叠 --
     def toggle(self):
         self._expanded = not self._expanded
-        self._arrow.configure(text="▾" if self._expanded else "▸")
-        if self._expanded:
-            self._card.pack(fill=tk.X, pady=(2, 4))
-        else:
-            self._card.pack_forget()
+        self._set_folder(self._card, self._expanded)
 
     def add_row(self, row: dict):
         """运行轨迹（Ember 设计稿 02）：每步一个状态节点，节点之间竖线相连。"""
@@ -981,8 +1117,8 @@ class ToolCard(tk.Frame):
         self._row_specs.append((row.get("name", ""), _guess_seconds_from_row(row)))
 
 
-class StepList(tk.Frame):
-    """执行步骤列表（默认折叠，摘要行显示总数）。"""
+class StepList(_GlassFolder, tk.Frame):
+    """执行步骤玻璃文件夹（默认收起，标签显示总数）。"""
 
     def __init__(self, parent, items, *, bg=None, expanded=False):
         base = bg or C["chat"]
@@ -990,35 +1126,21 @@ class StepList(tk.Frame):
         self._expanded = bool(expanded)
         self._items = items or []
 
-        # 摘要行
-        self._summary = tk.Frame(self, bg=base, cursor="hand2")
-        self._summary.pack(fill=tk.X, pady=(6, 2))
-        self._summary.bind("<Button-1>", lambda _e: self.toggle())
-        bind_keyboard_action(self._summary, self.toggle)
-        self._arrow = IconCanvas(self._summary, "chevron_down" if expanded else "chevron_right",
-                                 size=16, bg=base, fg=C["ter"])
-        self._arrow.pack(side=tk.LEFT, padx=(0, 6))
-        self._arrow.bind("<Button-1>", lambda _e: self.toggle())
+        self._build_tab(base, icon="task")
         n = len(self._items)
-        self._summary_label = i18n.Label(self._summary,
-                                       text=tr("执行步骤 {count} 步", count=n),
-                                       bg=base, fg=C["muted"], font=FONT_CAPTION,
-                                       cursor="hand2", anchor="w", justify=tk.LEFT,
-                                       wraplength=ui_px(self, MAX_BUBBLE_WIDTH))
-        self._summary_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        bind_wrap(self._summary_label)
-        self._summary_label.bind("<Button-1>", lambda _e: self.toggle())
+        self._summary_label.configure(text=tr("执行步骤 {count} 步", count=n))
+        self._beads.set_states("ok" if item.get("done", True) else "todo" for item in self._items)
 
-        # 明细容器
-        self._detail = tk.Frame(self, bg=base)
+        # 明细：玻璃面板
+        self._detail, self._detail_fill = self._build_folder(base, padx=12, pady=8)
         if self._expanded:
-            self._detail.pack(fill=tk.X, pady=(2, 0))
+            self._set_folder(self._detail, True, animate=False)
         for item in self._items:
             self._add_detail_row(item)
 
     def _add_detail_row(self, item: dict):
-        base = self["bg"]
-        row = tk.Frame(self._detail, bg=base)
+        base = self._detail_fill
+        row = tk.Frame(self._detail.content, bg=base)
         row.pack(fill=tk.X, pady=3)
         idx = tk.Canvas(row, width=18, height=18, bg=base, highlightthickness=0, bd=0)
         idx.create_oval(0, 0, 17, 17, fill=C["sel"], outline=C["sel_border"])
@@ -1052,11 +1174,7 @@ class StepList(tk.Frame):
 
     def toggle(self):
         self._expanded = not self._expanded
-        self._arrow.configure(text="▾" if self._expanded else "▸")
-        if self._expanded:
-            self._detail.pack(fill=tk.X, pady=(2, 0))
-        else:
-            self._detail.pack_forget()
+        self._set_folder(self._detail, self._expanded)
 
 
 class ActionRow(tk.Frame):
@@ -1238,7 +1356,7 @@ class UserMessage(tk.Frame):
                                     fg=C["msg_user_fg"], wraplength=max_text)
         else:
             self.label = i18n.Label(card.content, text=text, bg=C["msg_user_bg"],
-                                  fg=C["msg_user_fg"], font=FONT_UI, justify=tk.LEFT,
+                                  fg=C["msg_user_fg"], font=theme.FONT_CHAT, justify=tk.LEFT,
                                   anchor="w", wraplength=max_text, bd=0,
                                   highlightthickness=0, padx=0, pady=0)
         self.label.pack(anchor="w")
@@ -1621,7 +1739,19 @@ class NoticeMessage(tk.Frame):
                                   fg=C["body"], font=FONT_SMALL, anchor="w", justify=tk.LEFT)
         self.summary.pack(fill=tk.X, pady=(2, 0))
         bind_wrap(self.summary)
-        self.details = InlineText(card.content, bg=soft, font=FONT_MONO_SM)
+        # 详情收在一块嵌入的玻璃井里（液态玻璃，2026-11-13）：比卡片底深一档，
+        # 亮边与透镜光效落在内边距里。
+        import liquid_glass as glass
+        well_fill = mix(soft, "#000000", .28)
+        # 普通 Frame + 垫底玻璃位图（不用画布内嵌窗口）：展开后正文立刻映射，
+        # 不必等画布多轮重绘。
+        self._details_well = tk.Frame(card.content, bg=soft, padx=ui_px(self, 10),
+                                      pady=ui_px(self, 8))
+        glass.GlassBackdrop(self._details_well, glass.GlassSpec(
+            radius=ui_px(self, 12), fill=well_fill, rim=.55, glow=.7, band=5, sheen=.6,
+            sheen_h=8, inner_line=.06))
+        # 详情正文只在展开时 pack。
+        self.details = InlineText(self._details_well, bg=well_fill, font=FONT_MONO_SM)
         self.details.set_text(text)
         self.details_button = theme.pill_button(card.content, tr('查看详情'), self.toggle_details,
                                                 kind='quiet', bg=soft)
@@ -1631,11 +1761,14 @@ class NoticeMessage(tk.Frame):
             self.actions.pack(fill=tk.X, pady=(6, 0))
 
     def toggle_details(self):
-        if self.details.winfo_manager():
+        well = self._details_well
+        if well.winfo_manager():
+            well.pack_forget()
             self.details.pack_forget()
             self.details_button.configure(text=tr('查看详情'))
         else:
-            self.details.pack(fill=tk.X, pady=(6, 0), before=self.details_button)
+            self.details.pack(fill=tk.X)
+            well.pack(fill=tk.X, pady=(6, 0), before=self.details_button)
             self.details_button.configure(text=tr('收起详情'))
 
 
@@ -2050,98 +2183,99 @@ class TeamTogglePill(tk.Frame):
 
 
 class _IMECaretAnchor:
-    """把 Windows IME 候选框主动锚到 Tk Text 的 caret 屏幕位置。
+    """Refresh the native Tk caret and IME after ancestor layout changes.
 
-    Tk 用 Canvas + create_window 渲染输入卡（虚拟布局），Windows IME 在收到
-    SetCompositionWindow 时按「hwnd + caret rect」反推位置；Tk 没有自动把
-    create_window 那层的坐标转换出去，所以候选框在窗口中段定住。我们捕获
-    focus/click/key 事件，主动算出 caret 的屏幕绝对位置 + 字高，喂给
-    ImmSetCompositionWindow，让 Windows 立即刷新候选框位置。
-
-    非 Windows 平台 → no-op。
+    Tk 8.6 caches Text-local caret coordinates. Moving a Canvas window or
+    maximizing the root can leave those unchanged, so Tk skips the native
+    update. IMM and the system caret use the focused *toplevel's client*
+    coordinates, not Text-local or screen coordinates.
     """
-
-    _IME_LEVEL = None  # 兼容老 API（找不到 ImmGetContext 时退回 IME_LEVEL）
 
     def __init__(self, text_widget):
         self._w = text_widget
         self._anchor_job = None
-        self._supported = sys.platform.startswith("win32")
+        self._bindings = []
+        self._supported = sys.platform == "win32"
         self._anchor_func = None
         if self._supported:
             try:
                 self._init_imm()
-            except Exception:
+            except (OSError, AttributeError):
                 self._supported = False
-        if self._supported:
-            text_widget.bind("<FocusIn>", self._reanchor, add="+")
-            text_widget.bind("<Button-1>", self._reanchor, add="+")
-            text_widget.bind("<KeyRelease>", self._reanchor, add="+")
-            text_widget.bind("<Configure>", self._on_canvas_or_text_configure, add="+")
-            text_widget.bind("<Destroy>", self._cancel_anchor, add="+")
+        if not self._supported:
+            return
+        self._owner = text_widget.winfo_toplevel()
+        self._ancestors = set()
+        parent = text_widget
+        while parent is not None:
+            self._ancestors.add(parent)
+            parent = parent.master
+        for sequence in ("<FocusIn>", "<ButtonRelease-1>", "<KeyRelease>",
+                         "<Map>", "<<Modified>>", "<MouseWheel>"):
+            self._bind(text_widget, sequence, self._reanchor)
+        # Toplevel bindtags also receive descendant Configure events. This
+        # catches Canvas placement even when Text width/height stay identical.
+        self._bind(self._owner, "<Configure>", self._on_canvas_or_text_configure)
+        self._bind(text_widget, "<Destroy>", self._cancel_anchor)
 
-    # ── 平台初始化 ──────────────────────────────────────────────
+    def _bind(self, widget, sequence, callback):
+        token = widget.bind(sequence, callback, add="+")
+        self._bindings.append((widget, sequence, token))
 
     def _init_imm(self):
         import ctypes
         from ctypes import wintypes
-        user32 = ctypes.WinDLL("user32", use_last_error=True)
-        imm32 = ctypes.WinDLL("imm32", use_last_error=True)
-        self._user32 = user32
-        self._imm32 = imm32
-        # CreateCaret / SetCaretPos / DestroyCaret：让 Windows 知道 caret 屏幕位置
-        self._user32.CreateCaret.argtypes = [wintypes.HANDLE, wintypes.HANDLE,
-                                             wintypes.INT, wintypes.INT]
-        self._user32.CreateCaret.restype = wintypes.BOOL
-        self._user32.DestroyCaret.argtypes = []
-        self._user32.DestroyCaret.restype = wintypes.BOOL
-        self._user32.GetForegroundWindow.argtypes = []
-        self._user32.GetForegroundWindow.restype = wintypes.HANDLE
-        # ImmGetContext / ImmReleaseContext
-        self._imm32.ImmGetContext.argtypes = [wintypes.HANDLE]
-        self._imm32.ImmGetContext.restype = wintypes.HANDLE
-        self._imm32.ImmReleaseContext.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
-        self._imm32.ImmReleaseContext.restype = wintypes.BOOL
-        # ImmSetCompositionWindow：要的就是这个。COMPOSITIONFORM 含 ptCurrentPos
-        class POINT(ctypes.Structure):
-            _fields_ = [("x", wintypes.LONG), ("y", wintypes.LONG)]
-        class RECT(ctypes.Structure):
-            _fields_ = [("left", wintypes.LONG), ("top", wintypes.LONG),
-                        ("right", wintypes.LONG), ("bottom", wintypes.LONG)]
+        self._user32 = ctypes.WinDLL("user32", use_last_error=True)
+        self._imm32 = ctypes.WinDLL("imm32", use_last_error=True)
+
         class COMPOSITIONFORM(ctypes.Structure):
-            _fields_ = [("dwStyle", ctypes.c_uint32), ("ptCurrentPos", POINT),
-                        ("rcArea", RECT)]
+            _fields_ = [("dwStyle", wintypes.DWORD), ("ptCurrentPos", wintypes.POINT),
+                        ("rcArea", wintypes.RECT)]
+
+        class CANDIDATEFORM(ctypes.Structure):
+            _fields_ = [("dwIndex", wintypes.DWORD), ("dwStyle", wintypes.DWORD),
+                        ("ptCurrentPos", wintypes.POINT), ("rcArea", wintypes.RECT)]
+
+        class GUITHREADINFO(ctypes.Structure):
+            _fields_ = [("cbSize", wintypes.DWORD), ("flags", wintypes.DWORD),
+                        ("hwndActive", wintypes.HWND), ("hwndFocus", wintypes.HWND),
+                        ("hwndCapture", wintypes.HWND), ("hwndMenuOwner", wintypes.HWND),
+                        ("hwndMoveSize", wintypes.HWND), ("hwndCaret", wintypes.HWND),
+                        ("rcCaret", wintypes.RECT)]
+
         self._COMPOSITIONFORM = COMPOSITIONFORM
+        self._CANDIDATEFORM = CANDIDATEFORM
+        self._GUITHREADINFO = GUITHREADINFO
+        self._user32.GetFocus.argtypes = []
+        self._user32.GetFocus.restype = wintypes.HWND
+        self._user32.ScreenToClient.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.POINT)]
+        self._user32.ScreenToClient.restype = wintypes.BOOL
+        self._user32.GetGUIThreadInfo.argtypes = [wintypes.DWORD, ctypes.POINTER(GUITHREADINFO)]
+        self._user32.GetGUIThreadInfo.restype = wintypes.BOOL
+        self._user32.SetCaretPos.argtypes = [ctypes.c_int, ctypes.c_int]
+        self._user32.SetCaretPos.restype = wintypes.BOOL
+        self._imm32.ImmGetContext.argtypes = [wintypes.HWND]
+        self._imm32.ImmGetContext.restype = wintypes.HANDLE
+        self._imm32.ImmReleaseContext.argtypes = [wintypes.HWND, wintypes.HANDLE]
+        self._imm32.ImmReleaseContext.restype = wintypes.BOOL
         self._imm32.ImmSetCompositionWindow.argtypes = [wintypes.HANDLE,
                                                         ctypes.POINTER(COMPOSITIONFORM)]
         self._imm32.ImmSetCompositionWindow.restype = wintypes.BOOL
-        # CFS_POINT = 0x2 : 用 ptCurrentPos（屏幕绝对坐标）
-        self._CFS_POINT = 0x2
-        # caret 交给 Tk 自管；这里只准备 composition 锚定函数
+        self._imm32.ImmSetCandidateWindow.argtypes = [wintypes.HANDLE,
+                                                     ctypes.POINTER(CANDIDATEFORM)]
+        self._imm32.ImmSetCandidateWindow.restype = wintypes.BOOL
         self._anchor_func = self._imm_set
 
-    # ── 触发 ──────────────────────────────────────────────────────
-
-    _NAV_KEYS = frozenset({
-        "Left", "Right", "Up", "Down", "Home", "End", "Prior", "Next",
-        "BackSpace", "Delete", "Return", "space", "Tab"})
-
-    def _reanchor(self, event=None):
-        if not self._supported:
-            return
-        # KeyRelease 时只在「光标真的可能移动」的键后重锚；普通字符键不再
-        # 每次强拆 caret + 重设 composition——那会打断 IME 合成会话（微信
-        # 输入法语音上屏走 IME 投递链路，被拆后整段丢字且后续键入不上屏）。
-        if event is not None and hasattr(event, "keysym"):
-            if str(event.keysym) not in self._NAV_KEYS:
-                return
+    def _reanchor(self, _event=None):
+        # No caret recreation or WndProc hook: ordinary letters may safely
+        # refresh geometry too. Focus/click events have keysym="??" in Tk.
         self._schedule_anchor()
 
-    def _on_canvas_or_text_configure(self, _event=None):
-        self._schedule_anchor()
+    def _on_canvas_or_text_configure(self, event=None):
+        if event is None or event.widget in self._ancestors:
+            self._schedule_anchor()
 
     def _schedule_anchor(self):
-        # Flushing Tk events inside Configure recursively enters sibling layout.
         if not self._supported or self._anchor_job is not None:
             return
         self._anchor_job = self._w.after_idle(self._flush_anchor)
@@ -2149,79 +2283,68 @@ class _IMECaretAnchor:
     def _flush_anchor(self):
         self._anchor_job = None
         try:
-            if self._w.winfo_exists():
-                self._update()
+            if self._update():
                 self._anchor_caret()
-        except Exception:
+        except (tk.TclError, OSError, KeyError):
+            # A window can disappear or lose focus while layout is pending.
             pass
 
     def _cancel_anchor(self, event):
-        if event.widget is self._w and self._anchor_job is not None:
+        if event.widget is not self._w:
+            return
+        if self._anchor_job is not None:
             self._w.after_cancel(self._anchor_job)
             self._anchor_job = None
-
-    # ── 计算 + 调用 IMM ───────────────────────────────────────────
-
-    def _caret_root_xy(self, win):
-        """沿 widget 父链一路问 winfo_rootx/_rooty，累加到顶级窗口，
-        处理 Canvas→create_window 这层虚拟布局（顶级窗口不在屏外）。"""
-        try:
-            x = win.winfo_rootx()
-            y = win.winfo_rooty()
-            parent = win.master
-            while parent is not None:
-                try:
-                    x += parent.winfo_rootx() - parent.winfo_x()
-                    y += parent.winfo_rooty() - parent.winfo_y()
-                except (AttributeError, tk.TclError):
-                    break
-                if str(parent) == str(win.winfo_toplevel()):
-                    break
-                parent = parent.master
-            return x, y
-        except (AttributeError, tk.TclError):
-            return None
+        for widget, sequence, token in self._bindings:
+            widget.unbind(sequence, token)
+        self._bindings.clear()
 
     def _update(self):
-        """计算 caret 屏幕坐标（不再拆/建系统 caret）。
-
-        旧实现每键 DestroyCaret→CreateCaret→SetCaretPos(屏幕坐标)：
-        1) SetCaretPos 要的是**客户区坐标**，喂屏幕坐标会把 caret 甩到
-           客户区外，IME 语音合成串没有可用的插入锚点（微信输入法语音
-           上屏即失败，后续键入也不上屏）。
-        2) 每键重置会打断 IME 合成会话。
-        现在 caret 位置只用来喂 ImmSetCompositionWindow（CFS_POINT 用
-        屏幕坐标），系统 caret 完全交还 Tk 自管。
-        """
-        try:
-            dline = self._w.dlineinfo(self._w.index("insert"))
-            if not dline:
-                return
-            ix, iy, iw, ih, base = dline
-            tx = self._w.winfo_rootx()
-            ty = self._w.winfo_rooty()
-            self._caret_x = tx + ix
-            self._caret_y = ty + iy + ih   # caret 在文本下沿
-            self._caret_h = ih
-        except Exception:
-            pass
+        import ctypes
+        from ctypes import wintypes
+        self._caret = None
+        if not self._w.winfo_ismapped() or self._w.focus_get() is not self._w:
+            return False
+        hwnd = int(self._w.winfo_toplevel().winfo_id())
+        if self._user32.GetFocus() != hwnd:
+            return False
+        box = self._w.bbox("insert")
+        if box is None:
+            return False
+        x, y, _width, height = box
+        point = wintypes.POINT(self._w.winfo_rootx() + x, self._w.winfo_rooty() + y)
+        if not self._user32.ScreenToClient(hwnd, ctypes.byref(point)):
+            return False
+        self._caret = (hwnd, point.x, point.y, height)
+        return True
 
     def _imm_set(self):
-        # CFS_POINT 按 ptCurrentPos（屏幕坐标）放候选框；不再带 rcArea 硬框
-        # （200×24 的小框会挡住部分 IME 面板的自动避让/展开，包括语音条）。
+        import ctypes
+        hwnd, x, y, height = self._caret
+        # Only move the existing caret owned by Tk; never destroy/create it
+        # during composition. This also updates the TSF compatibility path.
+        info = self._GUITHREADINFO()
+        info.cbSize = ctypes.sizeof(info)
+        if self._user32.GetGUIThreadInfo(0, ctypes.byref(info)) and info.hwndCaret == hwnd:
+            self._user32.SetCaretPos(x, y)
+        context = self._imm32.ImmGetContext(hwnd)
+        if not context:
+            return
         try:
-            hwnd = int(self._w.winfo_id())
-            hIMC = self._imm32.ImmGetContext(hwnd)
-            if not hIMC:
-                return
-            cf = self._COMPOSITIONFORM()
-            cf.dwStyle = self._CFS_POINT
-            cf.ptCurrentPos.x = getattr(self, "_caret_x", 0)
-            cf.ptCurrentPos.y = getattr(self, "_caret_y", 0) + 1
-            self._imm32.ImmSetCompositionWindow(hIMC, ctypes.byref(cf))
-            self._imm32.ImmReleaseContext(hwnd, hIMC)
-        except Exception:
-            pass
+            composition = self._COMPOSITIONFORM()
+            composition.dwStyle = 0x2  # CFS_POINT; IME may adjust to fit the screen.
+            composition.ptCurrentPos.x = x
+            composition.ptCurrentPos.y = y
+            self._imm32.ImmSetCompositionWindow(context, ctypes.byref(composition))
+            candidate = self._CANDIDATEFORM()
+            candidate.dwStyle = 0x80  # CFS_EXCLUDE: keep the current text line clear.
+            candidate.ptCurrentPos.x = x
+            candidate.ptCurrentPos.y = y + height
+            candidate.rcArea.left, candidate.rcArea.top = x, y
+            candidate.rcArea.right, candidate.rcArea.bottom = x + 2, y + height
+            self._imm32.ImmSetCandidateWindow(context, ctypes.byref(candidate))
+        finally:
+            self._imm32.ImmReleaseContext(hwnd, context)
 
     def _anchor_caret(self):
         if self._anchor_func is not None:
@@ -2285,7 +2408,7 @@ class InputCard(tk.Frame):
         # 主输入区
         entry_host = tk.Frame(top_row, bg=C["input_bg"])
         entry_host.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self.entry = tk.Text(entry_host, height=2, wrap="word", font=FONT_UI,
+        self.entry = tk.Text(entry_host, height=2, wrap="word", font=theme.FONT_CHAT,
                               bg=C["input_bg"], fg=C["text"],
                               insertbackground=C["accent"], relief=tk.FLAT, bd=0,
                               highlightthickness=0)
@@ -2314,14 +2437,15 @@ class InputCard(tk.Frame):
                             lambda _e: self._inline_ime.cancel_if_composing(),
                             add="+")
         self._hint = i18n.Label(entry_host, text=placeholder, bg=C["input_bg"],
-                              fg=C["placeholder"], font=FONT_UI, anchor="w",
+                              fg=C["placeholder"], font=theme.FONT_CHAT, anchor="w",
                               cursor="xterm")
         self._hint.place(x=1, y=2)
-        self._hint.bind("<Button-1>", lambda _e: self.entry.focus_set())
+        for surface in (card, card.canvas, inner, top_row, entry_host, self._hint):
+            surface.bind("<Button-1>", lambda _e: self.focus_entry(), add="+")
         self.entry.bind("<Return>", self._enter)
         self.entry.bind("<Shift-Return>", lambda _e: None)
         self._syncing = False
-        self.entry.bind("<<Modified>>", self._text_changed)
+        self.entry.bind("<<Modified>>", self._text_changed, add="+")
         self.entry.bind("<Configure>", lambda _e: self._resize_entry())
         self.send_var.trace_add("write", self._sync_from_var)
         self.entry.bind("<FocusIn>", lambda _e: self._set_focus(True), add="+")
@@ -2510,10 +2634,21 @@ class InputCard(tk.Frame):
                                for child in self.master.winfo_children()
                                if child not in (self, timeline) and child.winfo_manager() == "pack")
                 chrome = sum(widget.winfo_reqheight() + padding(widget, "pady")
-                             for widget in (self._tools_row, self._toolbar, self.footer_left.master))
+                             for widget in (getattr(self, "_options_controls", None), self._tools_row,
+                                            self._toolbar, self.footer_left.master)
+                             if widget is not None and widget.winfo_manager() == "pack")
                 chrome += self._card._pady * 2 + padding(self, "pady") + padding(self.entry, "ipady")
                 chrome += int(self.entry.cget("pady")) * 2 + int(self.entry.cget("borderwidth")) * 2
+                # Reclaim decorative spacing before a single input row can
+                # crowd out the conversation at high DPI / minimum height.
+                normal_gap = ui_px(self, 8)
+                current_gap = padding(self._toolbar, "pady")
+                chrome += normal_gap - current_gap
                 budget = parent_height - reserve - siblings - chrome
+                gap = max(ui_px(self, 2), normal_gap - max(0, line_height - budget))
+                if current_gap != gap:
+                    self._toolbar.pack_configure(pady=(gap, 0))
+                budget += normal_gap - gap
                 max_rows = max(1, min(7, budget // max(1, line_height)))
                 minimum = min(2, max_rows)
             rows = max(minimum, min(max_rows, int(count[0]) if count else 2))
@@ -2538,29 +2673,32 @@ class InputCard(tk.Frame):
             self._close_reasoning_popup()
             return
         from reasoning_slider import ReasoningSlider
+        import liquid_glass as glass
         pop = tk.Toplevel(self)
         pop.withdraw()
         pop.overrideredirect(True)
-        pop.configure(bg=C["surface"])
         owner = self.winfo_toplevel()
         try:
             pop.transient(owner)
             pop.attributes("-topmost", False)
         except tk.TclError:
             pass
+        inset = ui_px(self, 8)
+        glass_host = glass.glass_window(pop, fill=C["surface"], radius=ui_px(self, 18),
+                                        matte=C["bg"], inset=inset)
         slider = ReasoningSlider(
-            pop, self._reasoning_var, self._reasoning_choices,
+            glass_host, self._reasoning_var, self._reasoning_choices,
             on_select=self._on_reasoning_select, bg=C["surface"],
             default_value=self._reasoning_var.get() or "medium")
-        slider.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        slider.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
         # overrideredirect 的 Toplevel 必须在映射前定 geometry——一旦 wm
         # 以 +0+0 映射过，再 set 坐标在部分 Windows/Tk 组合上不生效。
-        pop.update_idletasks()
-        w = max(360, slider.winfo_reqwidth() + 20)
-        h = slider.winfo_reqheight() + 24
+        glass.fit_glass_window(glass_host)
+        w = max(360, slider.winfo_reqwidth() + 2 * (inset + 4))
+        h = slider.winfo_reqheight() + 2 * (inset + 4) + 4
         position_popover(pop, self.mode_pill, w, h, align_right=True)
         pop.deiconify()
-        slider.canvas.focus_set()
+        glass.focus_when_mapped(slider.canvas)
         self._reasoning_popup = pop
         self._reasoning_popup_slider = slider
 
@@ -2617,6 +2755,9 @@ class InputCard(tk.Frame):
         pop = getattr(self, "_reasoning_popup", None)
         if pop is None:
             return
+        focused = self.focus_get()
+        restore_focus = (focused is not None and
+                         (focused is pop or str(focused).startswith(str(pop) + ".")))
         for widget, sequence, funcid in getattr(self, "_reasoning_popup_bindings", ()):
             try:
                 widget.unbind(sequence, funcid)
@@ -2624,14 +2765,20 @@ class InputCard(tk.Frame):
                 pass
         self._reasoning_popup_bindings = []
         owner = self.winfo_toplevel()
-        for attr in ("_reasoning_owner_cfg_id", "_reasoning_owner_unmap_id"):
+        for attr, sequence in (("_reasoning_owner_cfg_id", "<Configure>"),
+                               ("_reasoning_owner_unmap_id", "<Unmap>")):
             try:
-                owner.unbind("<Configure>", getattr(self, attr, None))
-                owner.unbind("<Unmap>", getattr(self, attr, None))
+                token = getattr(self, attr, None)
+                if token:
+                    owner.unbind(sequence, token)
             except (tk.TclError, TypeError):
                 pass
         self._reasoning_popup = None
         try:
+            # Return focus while the popup still owns the native activation;
+            # after destroying it, focus_set may only record a future target.
+            if restore_focus and owner.winfo_ismapped():
+                self.focus_entry()
             pop.destroy()
         except tk.TclError:
             pass
@@ -2712,9 +2859,11 @@ class InputCard(tk.Frame):
         if self.entry.edit_modified():
             if not self._syncing:
                 self._syncing = True
-                self.send_var.set(self.entry.get("1.0", "end-1c"))
-                self.entry.edit_modified(False)
-                self._syncing = False
+                try:
+                    self.send_var.set(self.entry.get("1.0", "end-1c"))
+                    self.entry.edit_modified(False)
+                finally:
+                    self._syncing = False
 
     def _sync_from_var(self, *_args):
         # Restored messages and local commands must also update the visible draft.

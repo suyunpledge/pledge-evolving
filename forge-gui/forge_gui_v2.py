@@ -4573,7 +4573,8 @@ class ForgeGuiApp:
             {"label": label, "selected": value == current,
              "command": lambda v=value: self._set_planning_level(v)}
             for value, label in PLANNING_LABELS.items()] + [
-            {"separator": True}, {"label": tr("规划模型与复审"), "command": self._open_phase_settings}],
+            {"separator": True}, {"label": tr("规划模型与复审"), "icon": "model",
+                                   "command": self._open_phase_settings}],
             title=tr("事前规划"), width=280)
 
     def _phase_setting(self, row_id, key, default=None):
@@ -6256,17 +6257,17 @@ class ForgeGuiApp:
 
     def _open_commands(self):
         items = (
-            {"label": tr("新建对话"), "detail": "/new", "command": self._new_session},
-            {"label": "任务执行", "detail": "/task · 使用 Forge Router",
+            {"label": tr("新建对话"), "detail": "/new", "icon": "plus", "command": self._new_session},
+            {"label": "任务执行", "detail": "/task · 使用 Forge Router", "icon": "play",
              "command": lambda: self._show_view("task")},
             {"separator": True},
-            {"label": "展开 / 收起工作区", "detail": "/workspace",
+            {"label": "展开 / 收起工作区", "detail": "/workspace", "icon": "workspace",
              "command": self._toggle_workspace},
-            {"label": "查看仓库变更", "detail": "/changes",
+            {"label": "查看仓库变更", "detail": "/changes", "icon": "diff",
              "command": lambda: self._open_workspace("changes")},
-            {"label": "检查发送上下文", "detail": "/context",
+            {"label": "检查发送上下文", "detail": "/context", "icon": "inspector",
              "command": self._open_context},
-            {"label": tr("功能开关"), "detail": "/tools",
+            {"label": tr("功能开关"), "detail": "/tools", "icon": "tools",
              "command": lambda: self._show_view("tools")},
         )
         return show_popover_menu(self.input_card, items, title=tr("工具与命令"),
@@ -6324,6 +6325,7 @@ class ForgeGuiApp:
     def _open_thinking_menu(self, anchor=None):
         items = [
             {"label": label, "detail": hint,
+             "icon": {"off": "minus", "smart": "sparkles", "on": "bolt"}.get(mode, "spark"),
              "selected": self._thinking_mode == mode,
              "command": lambda m=mode: self._set_thinking_mode(m)}
             for mode, label, hint in THINKING_CHOICES
@@ -7415,13 +7417,13 @@ class ForgeGuiApp:
     def _popup_session_menu(self, event=None):
         """将低频操作归到统一浮层，保留完整的原有配置入口。"""
         show_popover_menu(self.session_menu_btn, [
-            {"label": "重命名对话", "command": self._rename_session},
-            {"label": tr("新建对话"), "detail": "Ctrl+N", "command": self._new_session},
+            {"label": "重命名对话", "icon": "edit", "command": self._rename_session},
+            {"label": tr("新建对话"), "detail": "Ctrl+N", "icon": "plus", "command": self._new_session},
             {"separator": True},
-            {"label": "上下文与附件", "command": self._open_context},
-            {"label": f"回复温度 · {self.temp_var.get()}",
+            {"label": "上下文与附件", "icon": "paperclip", "command": self._open_context},
+            {"label": f"回复温度 · {self.temp_var.get()}", "icon": "flame",
              "command": self._open_temperature_menu},
-            {"label": "打开配置", "command": lambda: self._show_view("config")},
+            {"label": "打开配置", "icon": "config", "command": lambda: self._show_view("config")},
         ], title=tr("对话操作"), width=320)
 
     def _open_temperature_menu(self):
@@ -8434,68 +8436,99 @@ class ForgeGuiApp:
     # ── 关闭 ──
     def _modal_dialog(self, title: str, message: str, actions, *, tone: str = "warn",
                       icon: str | None = None, detail_rows=()) -> object:
-        """规范模态（2026-10-12 统一弹窗机制；2026-11-08 视觉重做）。
+        """规范模态（2026-10-12 统一弹窗机制；2026-11-13 液态玻璃重做）。
 
-        transient+grab、居中主窗、Esc/关闭=取消（返回 None）。版式：左侧
-        语义色圆角图标块，右侧标题 + 说明 + 可选键值行，底部右对齐按钮
-        （首个 action 为主操作）。``actions`` 为 ``[(text, value, kind)]``。
+        transient+grab、居中主窗、Esc = 取消（返回 None）。版式参照 iOS 26
+        alert：主窗压暗，中间浮一张大圆角玻璃卡；语义色玻璃图标、居中标题与
+        说明、可选键值行放在内嵌玻璃井里；底部胶囊按钮等宽并排（超过两个
+        时竖排），取消在左、主操作在右。``actions`` 为 ``[(text, value, kind)]``，
+        首个为主操作。
         """
+        return_focus = self.root.focus_get()
+        actions = tuple(actions)
+        import liquid_glass as glass
         tones = {"warn": (C["warn_soft"], C["warn"], "warning"),
                  "danger": (C["error_soft"], C["error"], "warning"),
                  "info": (C["accent_soft"], C["accent2"], "info")}
         soft, strong, default_icon = tones.get(tone, tones["warn"])
-        dialog = tk.Toplevel(self.root)
+        px = lambda value: theme.ui_px(self.root, value)
+        scrim_alpha = 0.46
+        scrim = None
+        try:
+            if self.root.winfo_viewable():
+                scrim = glass.modal_scrim(self.root, alpha=scrim_alpha)
+        except tk.TclError:
+            scrim = None
+        dialog = i18n.Toplevel(self.root)
         dialog.withdraw()
         dialog.title(title)
-        dialog.configure(bg=C["surface"])
+        dialog.overrideredirect(True)
         dialog.transient(self.root)
         dialog.resizable(False, False)
-        px = lambda value: theme.ui_px(dialog, value)
-        body = tk.Frame(dialog, bg=C["surface"], padx=px(24), pady=px(22))
+        fill = C["glass"]
+        matte = theme.mix(C["bg"], "#000000", scrim_alpha if scrim is not None else 0)
+        shell = glass.glass_window(dialog, fill=fill, radius=px(26), matte=matte,
+                                   inset=px(22), shadow=px(18), shadow_dy=px(6), bracket=.7)
+        width = px(332)
+        body = tk.Frame(shell, bg=fill, width=width)
         body.pack(fill=tk.BOTH, expand=True)
-        top = tk.Frame(body, bg=C["surface"])
-        top.pack(fill=tk.X)
-        tile = px(40)
-        badge_cv = tk.Canvas(top, width=tile, height=tile, bg=C["surface"],
-                             highlightthickness=0, bd=0)
-        theme.round_rect(badge_cv, 0, 0, tile - 1, tile - 1, px(10), fill=soft,
-                         outline=theme.mix(soft, strong, .35))
-        glyph = px(20)
-        theme.draw_icon(badge_cv, icon or default_icon, x=(tile - glyph) / 2,
-                        y=(tile - glyph) / 2, size=glyph, fg=strong)
-        badge_cv.pack(side=tk.LEFT, anchor="n", padx=(0, px(14)))
-        text = tk.Frame(top, bg=C["surface"])
-        text.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        i18n.Label(text, text=title, bg=C["surface"], fg=C["text"],
-                   font=FONT_SECTION, anchor="w").pack(fill=tk.X, pady=(px(1), px(6)))
-        i18n.Label(text, text=message, bg=C["surface"], fg=C["subtext"],
-                   font=FONT_SMALL, justify=tk.LEFT, anchor="w",
-                   wraplength=px(340)).pack(fill=tk.X)
+        # 图标：语义色光晕 + 两道同心细环 + 玻璃圆片（图案元素，2026-11-13）。
+        from glass_ornaments import halo_badge
+        badge_cv = halo_badge(body, icon or default_icon, tone=strong, fill=fill,
+                              tile=px(46), size=px(96))
+        badge_cv.pack(pady=(0, px(6)))
+        i18n.Label(body, text=title, bg=fill, fg=C["text"], font=FONT_SECTION,
+                   justify=tk.CENTER, wraplength=width).pack(fill=tk.X, pady=(0, px(6)))
+        i18n.Label(body, text=message, bg=fill, fg=C["subtext"], font=FONT_SMALL,
+                   justify=tk.CENTER, wraplength=width).pack(fill=tk.X)
         if detail_rows:
-            grid = tk.Frame(text, bg=C["surface_subtle"], padx=px(10), pady=px(8),
-                            highlightthickness=1, highlightbackground=C["line"])
-            grid.pack(fill=tk.X, pady=(px(12), 0))
+            well_fill = theme.mix(fill, "#000000", .22)
+            well = glass.GlassPanel(body, spec=glass.GlassSpec(
+                radius=px(14), fill=well_fill, rim=.45, glow=.5, band=4, sheen=0,
+                inner_line=0), padx=px(12), pady=px(9), bg=fill)
+            well.pack(fill=tk.X, pady=(px(14), 0))
+            grid = well.content
+            grid.columnconfigure(1, weight=1)
             for row, (key, value) in enumerate(detail_rows):
-                i18n.Label(grid, text=key, bg=C["surface_subtle"], fg=C["faint"],
+                i18n.Label(grid, text=key, bg=well_fill, fg=C["faint"],
                            font=FONT_CAPTION, anchor="nw").grid(row=row, column=0, sticky="nw",
                                                                 padx=(0, px(12)), pady=1)
-                i18n.Label(grid, text=value, bg=C["surface_subtle"], fg=C["body"],
+                i18n.Label(grid, text=value, bg=well_fill, fg=C["body"],
                            font=FONT_CAPTION, anchor="w", justify=tk.LEFT,
-                           wraplength=px(260)).grid(row=row, column=1, sticky="w", pady=1)
+                           wraplength=px(220)).grid(row=row, column=1, sticky="w", pady=1)
         result = {"value": None}
 
         def choose(value):
             result["value"] = value
+            focused = dialog.focus_displayof()
+            owned_focus = focused is not None and focused.winfo_toplevel() is dialog
+            result["restore_focus"] = owned_focus
+            close_scrim()
+            dialog.grab_release()
+            if return_focus is not None and return_focus.winfo_exists():
+                if owned_focus:
+                    return_focus.focus_force()
+                else:
+                    return_focus.focus_set()
             dialog.destroy()
 
-        divider(body, color=C["line"]).pack(fill=tk.X, pady=(px(18), px(14)))
-        acts = tk.Frame(body, bg=C["surface"])
-        acts.pack(fill=tk.X)
+        acts = tk.Frame(body, bg=fill)
+        acts.pack(fill=tk.X, pady=(px(20), 0))
+        ordered = list(reversed(list(actions)))          # 取消在左、主操作在右
+        stacked = len(ordered) > 2
+        gap = px(10)
+        button_w = width if stacked else (width - gap * (len(ordered) - 1)) // max(1, len(ordered))
         primary = None
         safe = None
-        for index, (label, value, kind) in enumerate(reversed(list(actions))):
-            button = pill_button(acts, label, lambda v=value: choose(v), kind=kind, padx=px(14))
-            button.pack(side=tk.RIGHT, padx=(px(8) if index else 0, 0))
+        buttons = []
+        for index, (label, value, kind) in enumerate(ordered):
+            button = glass.glass_button(acts, label, lambda v=value: choose(v), kind=kind,
+                                        bg=fill, width=button_w, height=px(38))
+            if stacked:
+                button.pack(side=tk.BOTTOM, fill=tk.X, pady=(0, px(8) if index else 0))
+            else:
+                button.pack(side=tk.LEFT, padx=(gap if index else 0, 0))
+            buttons.append(button)
             primary = button
             if kind != "danger":
                 safe = button
@@ -8503,17 +8536,65 @@ class ForgeGuiApp:
         # 删除）时把焦点放在不破坏的那个按钮上，误触只会取消。
         if actions and list(actions)[0][2] == "danger":
             primary = safe
+        for widget in buttons:
+            widget.bind("<Left>", lambda _e: (_e.widget.tk_focusPrev().focus_set(), "break")[1])
+            widget.bind("<Right>", lambda _e: (_e.widget.tk_focusNext().focus_set(), "break")[1])
+
+        def close_scrim(event=None):
+            if event is not None and event.widget is not dialog:
+                return
+            if scrim is not None:
+                try:
+                    scrim.destroy()
+                except tk.TclError:
+                    pass
+
+        dialog.bind("<Destroy>", close_scrim, add="+")
         dialog.protocol("WM_DELETE_WINDOW", lambda: choose(None))
         dialog.bind("<Escape>", lambda _e: choose(None))
-        dialog.update_idletasks()
+        glass.fit_glass_window(shell)
         w, h = dialog.winfo_reqwidth(), dialog.winfo_reqheight()
         x = self.root.winfo_rootx() + (self.root.winfo_width() - w) // 2
         y = self.root.winfo_rooty() + (self.root.winfo_height() - h) // 2
         dialog.geometry(f"{w}x{h}+{max(x, 0)}+{max(y, 0)}")
         dialog.deiconify()
-        dialog.grab_set()
+        dialog.lift()
+        try:
+            dialog.grab_set()
+        except tk.TclError:
+            dialog.update()
+            dialog.grab_set()
+        try:
+            dialog.focus_force()
+        except tk.TclError:
+            pass
         (primary or dialog).focus_set()
+        default_focus = primary
+        if primary is not None:
+            # 模态已持有 grab；Windows 未必激活无边框窗口，用 force。
+            glass.focus_when_mapped(primary, force=True)
+
+        def keep_button_focus(event):
+            # Windows 激活无边框窗口晚于 focus_set，激活时 Tk 会把焦点记到窗口
+            # 本身；再切回来（Alt+Tab）也一样。窗口自己拿到焦点就转给默认按钮。
+            if event.widget is dialog and default_focus is not None:
+                try:
+                    if default_focus.winfo_exists():
+                        default_focus.focus_set()
+                except tk.TclError:
+                    pass
+
+        dialog.bind("<FocusIn>", keep_button_focus, add="+")
         dialog.wait_window()
+        close_scrim()
+        # Tk may process a final FocusOut while destroying a transient and
+        # its scrim. Restore native activation after that lifecycle finishes.
+        if result.get("restore_focus") and return_focus is not None:
+            try:
+                if return_focus.winfo_exists() and return_focus.winfo_ismapped():
+                    return_focus.focus_force()
+            except tk.TclError:
+                pass
         return result["value"]
 
     def _confirm_dialog(self, title: str, message: str,

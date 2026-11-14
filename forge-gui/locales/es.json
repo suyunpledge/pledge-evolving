@@ -557,5 +557,8 @@
   "今天": "Hoy",
   "表格": "Tabla",
   "还没有历史对话": "Aún no hay chats",
-  "没有匹配的对话": "Ningún chat coincide"
+  "没有匹配的对话": "Ningún chat coincide",
+  "{rows} 行 × {cols} 列": "{rows} filas × {cols} col.",
+  "{count} 行": "{count} líneas",
+  " · {meta}": " · {meta}"
 }

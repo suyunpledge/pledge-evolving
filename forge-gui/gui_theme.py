@@ -45,6 +45,13 @@ C: dict[str, str] = {
     "input_bg": "#14181E",
     "editor_line": "#14181E",
     "agent_accent": "#B79AF9",
+    # 液态玻璃（2026-11-13）：弹窗 / 菜单浮层内部、对话流里展开的「文件夹」面板、
+    # 胶囊标签。都是比所在底色亮一档的冷灰，亮边与透镜光效由 liquid_glass 绘制。
+    "glass": "#1B2029",
+    "glass_hover": "#262C37",
+    "glass_folder": "#151920",
+    "glass_chip": "#161A21",
+    "glass_chip_hover": "#1E232C",
     "black": "#000000",
 
     # 线条
@@ -160,16 +167,12 @@ MOTION_MS = 0
 SHADOW = None
 
 # ─── 字体 ──────────────────────────────────────────────────
-# 界面以中文为主：Windows 上统一用 Microsoft YaHei UI 承担拉丁+中文
-# （其拉丁字形与 Segoe UI 同源），避免 Segoe UI 回落 CJK 时中英文基线与
-# 行高不一致；Cascadia Code 承担等宽。
-#
-# 字号阶梯（pt，随 tk scaling 缩放）：标题 14 / 分区 11 / 正文 10 /
-# 次要 9 / 说明 9（靠颜色区分层级）/ 微标 8；代码 10。
-
-UI_FAMILY = "Microsoft YaHei UI" if IS_WINDOWS else "Helvetica"
-CJK_FAMILY = UI_FAMILY
-MONO_FAMILY = "Cascadia Code" if IS_WINDOWS else "Menlo"
+# Codex desktop on Windows uses Segoe UI and Consolas in its default
+# system-font stacks. Tk performs CJK fallback; keep the explicit family for
+# Chinese-only labels and avoid synthetic bold for secondary UI labels.
+UI_FAMILY = "Segoe UI" if IS_WINDOWS else "Helvetica"
+CJK_FAMILY = "Microsoft YaHei UI" if IS_WINDOWS else "PingFang SC"
+MONO_FAMILY = "Consolas" if IS_WINDOWS else "Menlo"
 
 FONT_UI = (UI_FAMILY, 10)
 FONT_UI_BOLD = (UI_FAMILY, 10, "bold")
@@ -181,6 +184,13 @@ FONT_CAPTION = (UI_FAMILY, 9)
 FONT_CAPTION_BOLD = (UI_FAMILY, 9, "bold")
 FONT_MICRO = (UI_FAMILY, 8)
 FONT_BRAND = (UI_FAMILY, 14, "bold")
+FONT_HERO = (UI_FAMILY, 24, "bold")
+FONT_LEAD = (UI_FAMILY, 11)
+FONT_CHAT = (UI_FAMILY, 11)
+FONT_CHAT_BOLD = (UI_FAMILY, 11, "bold")
+FONT_CHAT_TITLE = (UI_FAMILY, 13, "bold")
+FONT_MARKDOWN_HEADING = (UI_FAMILY, 15, "bold")
+FONT_MARKDOWN_SUBHEAD = (UI_FAMILY, 12, "bold")
 FONT_MONO = (MONO_FAMILY, 10)
 FONT_MONO_SM = (MONO_FAMILY, 9)
 FONT_MONO_XS = (MONO_FAMILY, 9)
@@ -824,6 +834,7 @@ def show_popover_menu(anchor, items, *, title=None, width=300, prefer_above=Fals
     列表。它替代 Composer 主路径上的原生 ``tk.Menu``，并统一 hover、选中态、
     留白与弱化说明文字。返回 Toplevel，方便测试和调用方主动关闭。
     """
+    import liquid_glass as glass
     previous = getattr(anchor, "_forge_popover", None)
     if previous is not None:
         try:
@@ -833,13 +844,17 @@ def show_popover_menu(anchor, items, *, title=None, width=300, prefer_above=Fals
     pop = i18n.Toplevel(anchor)
     pop.withdraw()
     pop.overrideredirect(True)
-    pop.configure(bg=C["border_hi"])
     anchor._forge_popover = pop
-    shell = tk.Frame(pop, bg=C["surface"], padx=8, pady=8)
-    shell.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
+    # 液态玻璃浮层（2026-11-13）：大圆角玻璃 + 镜面亮边；行悬停 / 选中是
+    # 玻璃胶囊而不是整行色块，选中项用熔铁色调的胶囊 + 对勾。
+    fill = C["glass"]
+    host = glass.glass_window(pop, fill=fill, radius=ui_px(anchor, 18), matte=C["bg"],
+                              inset=ui_px(anchor, 9))
+    shell = tk.Frame(host, bg=fill, padx=2, pady=2)
+    shell.pack(fill=tk.BOTH, expand=True)
     if title:
-        i18n.Label(shell, text=title, bg=C["surface"], fg=C["subtext"],
-                 font=FONT_CAPTION, anchor="w").pack(fill=tk.X, padx=8, pady=(4, 7))
+        i18n.Label(shell, text=title, bg=fill, fg=C["subtext"],
+                 font=FONT_CAPTION, anchor="w").pack(fill=tk.X, padx=10, pady=(3, 6))
 
     def close():
         if getattr(anchor, "_forge_popover", None) is pop:
@@ -853,26 +868,43 @@ def show_popover_menu(anchor, items, *, title=None, width=300, prefer_above=Fals
         except tk.TclError:
             pass
 
+    hover_fill = C["glass_hover"]
+    selected_fill = mix(fill, C["accent"], .16)
+    row_radius = ui_px(anchor, 11)
     rows = []
     for item in items:
         if item.get("separator"):
-            tk.Frame(shell, bg=C["border"], height=1).pack(fill=tk.X, pady=5)
+            tk.Frame(shell, bg=mix(fill, "#FFFFFF", .07), height=1).pack(fill=tk.X, padx=10, pady=5)
             continue
         selected = bool(item.get("selected"))
-        base = C["sel"] if selected else C["surface"]
-        row = tk.Frame(shell, bg=base, cursor="hand2", padx=9, pady=6)
+        base = selected_fill if selected else fill
+        row = tk.Frame(shell, bg=fill, cursor="hand2", padx=12, pady=7)
         row.pack(fill=tk.X, pady=1)
         rows.append(row)
-        marker = tk.Frame(row, bg=C["accent"] if selected else base, width=2)
-        marker.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 8))
+        backdrop = glass.GlassBackdrop(row)
+        resting = (glass.chip_spec(selected_fill, radius=row_radius, rim=.55)
+                   if selected else None)
+        hovered = glass.chip_spec(mix(base, "#FFFFFF", .05) if selected else hover_fill,
+                                  radius=row_radius, rim=.8)
+        if resting is not None:
+            backdrop.show(resting)
         check = None
         if selected:
-            check = IconCanvas(row, "check", size=ui_px(row, 14), bg=base, fg=C["accent2"])
-            check.pack(side=tk.RIGHT, padx=(8, 2))
+            check = IconCanvas(row, "check", size=ui_px(row, 14), bg=base, fg=C["ember"])
+            check.pack(side=tk.RIGHT, padx=(8, 0))
+        chip = None
+        if item.get("icon"):
+            # 行首玻璃图标圆片（图案元素，2026-11-13）：危险项用错误色，其余中性。
+            from glass_ornaments import icon_chip
+            chip = icon_chip(row, item["icon"], size=ui_px(row, 24), bg=base,
+                             tone=C["error"] if item.get("danger") else
+                             C["ember"] if selected else C["subtext"])
+            chip.pack(side=tk.LEFT, padx=(0, 10))
         text = tk.Frame(row, bg=base, cursor="hand2")
         text.pack(side=tk.LEFT, fill=tk.X, expand=True)
         label = i18n.Label(text, text=item.get("label", ""), bg=base,
-                         fg=C["error"] if item.get("danger") else C["text"],
+                         fg=C["error"] if item.get("danger") else
+                         C["accent_text"] if selected else C["text"],
                          font=FONT_SMALL, anchor="w", cursor="hand2")
         label.pack(fill=tk.X)
         detail = None
@@ -882,11 +914,24 @@ def show_popover_menu(anchor, items, *, title=None, width=300, prefer_above=Fals
                               cursor="hand2")
             detail.pack(fill=tk.X, pady=(2, 0))
 
-        def paint(bg, widgets=(row, marker, text, label, detail, check), is_selected=selected):
+        # 行本身始终保持玻璃底色：胶囊位图的透明圆角露出的是它。
+        def paint(active, widgets=(text, label, detail, check), backdrop=backdrop,
+                  resting=resting, hovered=hovered, rest_bg=base, chip=chip):
+            if active:
+                backdrop.show(hovered)
+                colour = hovered.fill
+            elif resting is not None:
+                backdrop.show(resting)
+                colour = rest_bg
+            else:
+                backdrop.hide()
+                colour = rest_bg
             for widget in widgets:
-                if widget is None:
-                    continue
-                widget.configure(bg=C["accent"] if widget is marker and is_selected else bg)
+                if widget is not None:
+                    widget.configure(bg=colour)
+            if chip is not None:
+                from glass_ornaments import set_chip_bg
+                set_chip_bg(chip, colour)
 
         def invoke(_event=None, command=item.get("command")):
             close()
@@ -895,12 +940,14 @@ def show_popover_menu(anchor, items, *, title=None, width=300, prefer_above=Fals
             return "break"
 
         bind_keyboard_action(row, invoke)
-
-        for widget in (row, marker, text, label, detail, check):
+        row.configure(highlightthickness=0)
+        row.bind("<FocusIn>", lambda _e, fn=paint: fn(True), add="+")
+        row.bind("<FocusOut>", lambda _e, fn=paint: fn(False), add="+")
+        for widget in (row, chip, text, label, detail, check):
             if widget is None:
                 continue
-            widget.bind("<Enter>", lambda _e, fn=paint: fn(C["hover"]))
-            widget.bind("<Leave>", lambda _e, fn=paint, b=base: fn(b))
+            widget.bind("<Enter>", lambda _e, fn=paint: fn(True))
+            widget.bind("<Leave>", lambda _e, fn=paint, r=row: fn(r.focus_get() is r))
             widget.bind("<Button-1>", invoke)
 
     def dismiss(_event=None):
@@ -931,12 +978,12 @@ def show_popover_menu(anchor, items, *, title=None, width=300, prefer_above=Fals
         if not inside:
             close()
     pop.bind("<Button-1>", maybe_close, add="+")
-    pop.update_idletasks()
+    glass.fit_glass_window(host)
     position_popover(pop, anchor, width, pop.winfo_reqheight(), prefer_above=prefer_above)
     pop.deiconify()
     try:
         pop.grab_set()
-        (rows[0] if rows else pop).focus_set()
+        glass.focus_when_mapped(rows[0] if rows else pop)
     except tk.TclError:
         pass
     return pop
@@ -1237,6 +1284,15 @@ def apply_window_chrome(win, *, popup=None):
         return
     try:
         import ctypes
+        if getattr(win, "_forge_glass", False):
+            # 液态玻璃浮窗自己画圆角与亮边；DWM 的圆角与 1px 描边会在
+            # 挖空的四角外再框出一个矩形，这里关掉。
+            hwnd = int(win.wm_frame(), 16)
+            for attribute, value in ((33, 1), (34, 0xFFFFFFFE)):   # DONOTROUND / COLOR_NONE
+                data = ctypes.c_uint(value)
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                    hwnd, attribute, ctypes.byref(data), ctypes.sizeof(data))
+            return
         if not win.winfo_ismapped():
             win.update_idletasks()
         hwnd = int(win.wm_frame(), 16)

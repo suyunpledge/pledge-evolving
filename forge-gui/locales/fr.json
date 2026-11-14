@@ -557,5 +557,8 @@
   "今天": "Aujourd'hui",
   "表格": "Tableau",
   "还没有历史对话": "Aucune discussion pour l'instant",
-  "没有匹配的对话": "Aucune discussion correspondante"
+  "没有匹配的对话": "Aucune discussion correspondante",
+  "{rows} 行 × {cols} 列": "{rows} lignes × {cols} col.",
+  "{count} 行": "{count} lignes",
+  " · {meta}": " · {meta}"
 }

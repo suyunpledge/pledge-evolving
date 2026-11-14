@@ -143,12 +143,23 @@ class ModalFocusTests(unittest.TestCase):
     def ask(self, call, *, press_space=True):
         seen = {}
 
+        deadline = [40]
+
         def inspect():
             dialog = self.root.grab_current()
-            focus = dialog.focus_lastfor()
-            seen["text"] = focus.cget("text") if focus.winfo_class() == "Button" else None
-            if press_space and focus.winfo_class() == "Button":
-                focus.invoke()                # 空格在聚焦按钮上的效果
+            focus = dialog.focus_lastfor() if dialog is not None else None
+            # 进程里第一次显示中文要加载字体（约 0.2s），弹窗不一定在固定
+            # 时刻已映射：等它把焦点交给按钮，最多 2s，超时再按当下状态判定。
+            if (focus is None or focus is dialog) and deadline[0] > 0:
+                deadline[0] -= 1
+                self.root.after(50, inspect)
+                return
+            # 弹窗按钮是玻璃胶囊（GlassButton：可聚焦的 Label + invoke），
+            # 认「能被激活的控件」而不是原生 Button 类名。
+            actionable = callable(getattr(focus, "invoke", None)) and focus.winfo_class() in ("Button", "Label")
+            seen["text"] = focus.cget("text") if actionable else None
+            if press_space and actionable:
+                focus.event_generate("<space>")   # 空格在聚焦按钮上的效果
             if dialog.winfo_exists():
                 dialog.destroy()
         self.root.after(300, inspect)
