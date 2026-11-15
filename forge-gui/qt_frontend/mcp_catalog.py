@@ -756,8 +756,8 @@ class McpCatalog(QObject):
         self._tool_schema = ''
         self._start('schema', lambda: self._request(self._presets[identifier], lambda client: client.schema(name)))
 
-    def chat_tools(self, workspace):
-        """Snapshot discovered tools before the Work stream starts."""
+    def chat_tools(self, workspace, *, remote_only=False):
+        """Snapshot discovered tools for the current conversation."""
         output = {}
         if self.demo or self._busy:
             return output
@@ -766,6 +766,8 @@ class McpCatalog(QObject):
             if (not row or row.get('family') or row.get('setup')
                     or row.get('key') in {'google-maps', 'google-maps-code'}
                     or (row.get('key') and not self._preset_ready(row))):
+                continue
+            if remote_only and not self._remote_chat_endpoint(row):
                 continue
             for tool in tools:
                 if row.get('key') == 'tencent-meeting' and tool['name'] not in MEETING_READ_TOOLS:
@@ -783,6 +785,23 @@ class McpCatalog(QObject):
                 output[name] = ({'type': 'function', 'function': function},
                                 (row, tool['name'], workspace))
         return output
+
+    @staticmethod
+    def _remote_chat_endpoint(row):
+        from ipaddress import ip_address
+        if row.get('local') or row.get('key') == 'wecom':
+            return False
+        try:
+            endpoint = urlsplit(row.get('url', ''))
+            host = (endpoint.hostname or '').rstrip('.')
+        except ValueError:
+            return False
+        if endpoint.scheme != 'https' or not host:
+            return False
+        try:
+            return ip_address(host).is_global
+        except ValueError:
+            return '.' in host and not host.endswith(('.localhost', '.local', '.lan'))
 
     def call_chat_tool(self, target, arguments, cancel):
         row, name, workspace = target

@@ -1,4 +1,21 @@
-# 回复后的代码修改与回退
+# Qt 原生工作台
+
+`forge_qt.py` 的所有功能页由 QML 绘制，不再挂载 Tk 子窗口。
+`WorkbenchController` 启动 `service_host.py`，通过 JSON 行协议收发页面快照、操作、审批与执行事件。
+后台进程不导入 Tk 或创建窗口；网关、定时任务和模型请求不占用 Qt GUI 线程。
+
+- `WorkspacePage.qml` / `WorkbenchField.qml`：延迟创建并保留页面、玻璃表单、文件编辑与结果面板。
+- `workspace_service.py`：文件、配置、插件、Agent 设置、知识、演化、计划任务和账户管理，复用原存储。
+- `coding_service.py`：独立 `DevelopmentRuntime`，保留任务队列、模型角色、审批、历史和代码回退。
+- `gateway_service.py` / `scheduler_service.py`：管理本实例拥有的网关和只读定时任务。
+- `computer_service.py` / `computer_runtime.py`：选定窗口、截图、视觉分析、逐次输入审批及对话工具。
+- Work 对话整合 `team_service.py`，沿用原 Agent 协作开关与记忆设置，不再打开第二个聊天界面。
+
+文件支持 UTF-8/UTF-16、原换行格式、搜索、查找替换、另存为和原文参考。
+保存、合并、回退仍检查磁盘版本；未保存的编辑会阻止 Agent 写入。
+旧 `embedded_host.py` 与 Tk 前端只保留兼容代码，Qt 启动路径不再引用它们。
+
+## 回复后的代码修改与回退
 
 Qt 主对话在 AI 回复下方显示本次实际修改的文件、增删行数和「查看修改 / 回退」。
 差异在主窗口内打开，可切换文件、横向滚动、复制差异；回退需要确认。

@@ -8,15 +8,17 @@ import uuid
 from urllib.parse import urlsplit
 
 from PySide6.QtCore import QObject, Property, QProcess, QProcessEnvironment, QTimer, Signal, Slot
-from PySide6.QtGui import QWindow
 from forge.desktop_permissions import LABELS, PROFILES
 from forge.secrets import redact
 from .controller import RowsModel
+from brand_marks import mark_path
 import provider_catalog
 from .mcp_catalog import McpCatalog
 from .search_service import SearchService
 from .wallpaper import Wallpaper
 from .onboarding import Onboarding
+from .local_tools import LocalTools
+from .media_models import MediaModels
 
 PAGES = {'chat': 'Work 对话', 'development': 'Coding', 'task': '任务', 'files': '文件与项目',
          'tools': '工具与插件', 'config': '模型与配置', 'agents': 'Agents', 'knowledge': '知识库',
@@ -36,6 +38,12 @@ class WorkbenchController(QObject):
     codingFocusRequested = Signal()
     pageReadyChanged = Signal()
     catalogRequested = Signal(str)
+    modelSetupRequested = Signal()
+    pagesChanged = Signal()
+    formReset = Signal(str)
+    formValues = Signal(str, 'QVariantMap')
+    historyRequested = Signal('QVariantList')
+    _serviceCommand = Signal(object)
     _approvalRequested = Signal(str, str, str)
     _approvalFinished = Signal(str)
 
@@ -45,8 +53,10 @@ class WorkbenchController(QObject):
         self._mcp = McpCatalog(self.home, self, demo=demo)
         self._search = SearchService(self.home, self, demo=demo)
         self._wallpaper = Wallpaper(self.home, self)
+        self._local_tools = LocalTools(self.home, self, demo=demo)
+        self._media_models = MediaModels(self.home, self, demo=demo)
         self._onboarding = Onboarding(self.home, self, demo=demo)
-        self._onboarding.can_save = lambda: not (self._busy or self._unsaved or self._pending or self._input_busy())
+        self._onboarding.can_save = lambda: not (self._busy or self.hasUnsaved or self._pending or self._input_busy())
         self._onboarding.saved.connect(self._apply_model_setup)
         self._onboarding.preferencesChanged.connect(self._apply_onboarding_preferences)
         self._model_setup_pending = ''
@@ -57,6 +67,14 @@ class WorkbenchController(QObject):
         self._before_files = 'chat'
         self._browser_url, self._browser_width = 'about:blank', 420.0
         self._window = None
+        self._service_ready = False
+        self._pages = {}
+        self._form_dirty = set()
+        self._document_dirty = set()
+        self._document_versions = {}
+        self._service_tools = []
+        self._service_calls = {}
+        self._serviceCommand.connect(self._send)
         self._coding = {}
         self._coding_messages = RowsModel(parent=self)
         self._coding_draft = ''
@@ -69,12 +87,11 @@ class WorkbenchController(QObject):
         self._native_ready = False
         self._pending_plan = None
         self._pending_account = ''
-        brands = Path(__file__).resolve().parents[1] / 'assets' / 'brands-src'
         self._providers = [
             {'key': preset.key, 'name': preset.name, 'source': preset.source_label,
              'search': ' '.join((preset.key, preset.name, *preset.aliases,
                                  *(plan.base_url for plan in preset.plans))).lower(),
-             'icon': (brands / (preset.brand + '.png')).as_uri() if (brands / (preset.brand + '.png')).is_file() else '',
+             'icon': icon.as_uri() if (icon := mark_path(preset.brand, 32)) else '',
              'plans': [{'label': plan.label, 'url': plan.base_url, 'wire': plan.wire,
                         'usable': plan.usable, 'note': plan.note} for plan in preset.plans]}
             for preset in provider_catalog.PRESETS
@@ -106,9 +123,12 @@ class WorkbenchController(QObject):
     mcp = Property(QObject, lambda s: s._mcp, constant=True)
     search = Property(QObject, lambda s: s._search, constant=True)
     wallpaper = Property(QObject, lambda s: s._wallpaper, constant=True)
+    localTools = Property(QObject, lambda s: s._local_tools, constant=True)
+    mediaModels = Property(QObject, lambda s: s._media_models, constant=True)
     onboarding = Property(QObject, lambda s: s._onboarding, constant=True)
     busy = Property(bool, lambda s: s._busy, notify=changed)
-    hasUnsaved = Property(bool, lambda s: s._unsaved, notify=changed)
+    hasUnsaved = Property(bool, lambda s: s._unsaved or bool(s._form_dirty or s._document_dirty), notify=changed)
+    pageData = Property('QVariantMap', lambda s: s._pages, notify=pagesChanged)
     error = Property(str, lambda s: s._error, notify=changed)
     status = Property(str, lambda s: s._status, notify=changed)
     workspace = Property(str, lambda s: s._workspace, notify=changed)
@@ -123,6 +143,50 @@ class WorkbenchController(QObject):
     coding = Property('QVariantMap', lambda s: s._coding, notify=codingChanged)
     codingMessages = Property(QObject, lambda s: s._coding_messages, constant=True)
     codingDraft = Property(str, lambda s: s._coding_draft, notify=codingDraftChanged)
+
+    def service_tools(self):
+        return {r['function']['name']: (r, ('service', r['function']['name'])) for r in self._service_tools}
+
+    def call_service(self, name, arguments, cancel):
+        identifier = uuid.uuid4().hex
+        waiter = {'done': threading.Event(), 'result': None}
+        self._service_calls[identifier] = waiter
+        self._serviceCommand.emit({'command': 'call_tool', 'id': identifier, 'name': name, 'arguments': arguments})
+        try:
+            while not waiter['done'].wait(.1):
+                if self._closing or cancel.is_set():
+                    self._serviceCommand.emit({'command': 'cancel_call', 'id': identifier})
+                    return {'ok': False, 'error': '操作已取消', 'meta': {'execution_state': 'unknown'}}
+            return waiter['result'] or {'ok': False, 'error': '后台服务已停止'}
+        finally:
+            self._service_calls.pop(identifier, None)
+
+    @Slot(str, str, str)
+    def pageAction(self, page, action, payload):
+        if page == 'computer' and action == 'settings':
+            self._send({'command': 'computer_settings'})
+            return
+        try:
+            values = json.loads(payload)
+            if not isinstance(values, dict):
+                raise ValueError('页面参数必须是对象')
+        except (ValueError, TypeError) as exc:
+            self._error = str(exc)
+            self.changed.emit()
+            return
+        self._send({'command': 'page_action', 'page': page, 'action': action, 'values': values})
+
+    @Slot(str, bool)
+    def setFormDirty(self, page, dirty):
+        (self._form_dirty.add if dirty else self._form_dirty.discard)(page)
+        self.changed.emit()
+
+    @Slot(str, str, int)
+    def updateDocument(self, path, text, version):
+        self._document_dirty.add(path)
+        self._document_versions[path] = version
+        self._send({'command': 'document', 'path': path, 'text': text, 'version': version})
+        self.changed.emit()
 
     @Slot(str)
     def setCodingDraft(self, text):
@@ -157,6 +221,8 @@ class WorkbenchController(QObject):
 
     @Slot(str)
     def navigate(self, page):
+        if page == 'work':
+            page = 'chat'
         if page not in PAGES or (not self._onboarding.developer and page in {'development', 'evolution'}):
             return
         if page == self._page and (self._native_ready or page in {'chat', 'connectors'}):
@@ -185,7 +251,7 @@ class WorkbenchController(QObject):
             self.pageReadyChanged.emit()
 
     def _send_navigation(self):
-        if self._window is not None:
+        if self._service_ready:
             self._send({'command': 'navigate', 'page': self._page, 'ticket': self._navigation_ticket})
         elif self._page in {'chat', 'connectors'}:
             self._page_serial += 1
@@ -220,12 +286,12 @@ class WorkbenchController(QObject):
     def _apply_onboarding_preferences(self):
         if not self._onboarding.developer and self._page in {'development', 'evolution'}:
             self.navigate('chat')
-        if self._window is not None:
+        if self._service_ready:
             self._send({'command': 'onboarding_preferences', **self._onboarding.preferences()})
 
     def _apply_model_setup(self, row_id):
         self.gatewayChanging.emit()
-        if self._window is None:
+        if not self._service_ready:
             self._model_setup_pending = row_id
             self.start_host()
         else:
@@ -239,7 +305,7 @@ class WorkbenchController(QObject):
         gui = Path(__file__).resolve().parents[1]
         executable = Path(sys.executable).with_name('python.exe')
         self._process.setProgram(str(executable))
-        args = [str(gui / 'qt_frontend' / 'embedded_host.py'), '--home', str(self.home)]
+        args = [str(gui / 'qt_frontend' / 'service_host.py'), '--home', str(self.home)]
         if self.demo:
             args.append('--demo')
         self._process.setArguments(args)
@@ -273,12 +339,7 @@ class WorkbenchController(QObject):
         kind = row.get('event')
         if kind == 'ready':
             self._timeout.stop()
-            self._window = QWindow.fromWinId(int(row['handle']))
-            if self._window is None:
-                raise ValueError('无法挂载功能页面')
-            # The Tk host starts mapped off-screen so it can accept focus.
-            # Keep it hidden until WindowContainer has attached it to a page.
-            self._window.hide()
+            self._service_ready = True
             self._status = ''
             self.changed.emit()
             self._send({'command': 'permission', 'profile': self._profile})
@@ -287,6 +348,34 @@ class WorkbenchController(QObject):
                 self._apply_model_setup(self._model_setup_pending)
                 self._model_setup_pending = ''
             self._send_navigation()
+        elif kind == 'page':
+            self._pages[row['page']] = row['data']
+            document = row['data'].get('document') or {}
+            if row['page'] in {'files', 'development'}:
+                self._document_dirty.intersection_update(t['path'] for t in row['data'].get('tabs', []))
+            if document and not document.get('dirty') and document.get('version', 0) >= self._document_versions.get(document['path'], 0):
+                self._document_dirty.discard(document['path'])
+            self.pagesChanged.emit()
+            self.changed.emit()
+        elif kind == 'reset_form':
+            self._form_dirty.discard(row['page'])
+            self.formReset.emit(row['page'])
+        elif kind == 'form_values':
+            self.formValues.emit(row['page'], row['values'])
+        elif kind == 'saved':
+            self._form_dirty.discard(row['page'])
+            self.changed.emit()
+        elif kind == 'model_setup':
+            self.modelSetupRequested.emit()
+        elif kind == 'history':
+            self.historyRequested.emit(row['rows'])
+        elif kind == 'service_tools':
+            self._service_tools = row['schemas']
+        elif kind == 'call_result':
+            waiter = self._service_calls.get(row['id'])
+            if waiter:
+                waiter['result'] = row['result']
+                waiter['done'].set()
         elif kind == 'coding_state':
             first = not self._coding.get('ready')
             self._coding = {**self._coding, **row['state']}
@@ -369,17 +458,17 @@ class WorkbenchController(QObject):
             self.changed.emit()
 
     def _host_timeout(self):
-        if self._window is None:
+        if not self._service_ready:
             self._error = '工作台仍未就绪。可返回对话，或关闭后重新打开。'
             self.changed.emit()
 
     def _finished(self, exit_code, exit_status):
         self._timeout.stop()
         self._set_native_ready(False)
-        if self._window is not None:
-            self._window.setParent(None)
-            self._window.deleteLater()
-            self._window = None
+        self._service_ready = False
+        self._service_tools = []
+        for waiter in self._service_calls.values():
+            waiter['done'].set()
         self._busy = False
         self._coding = {}
         self._coding_messages.reset([])
@@ -500,9 +589,13 @@ class WorkbenchController(QObject):
     def shutdown(self):
         self._closing = True
         self._mcp.shutdown()
+        self._local_tools.shutdown()
+        self._media_models.shutdown()
         self._search.cancel()
         self._wallpaper.shutdown()
         for waiter in self._waiters.values():
+            waiter['done'].set()
+        for waiter in self._service_calls.values():
             waiter['done'].set()
         self._send({'command': 'close'})
         if not self._process.waitForFinished(10000):

@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import time
 
 from forge.secrets import redact
 
@@ -52,7 +53,14 @@ class SessionStore:
             row = self.read(path, {})
             if isinstance(row, dict) and row.get("id") and isinstance(row.get("messages"), list):
                 merged[str(row["id"])] = row
-        return sorted(merged.values(), key=lambda s: float(s.get("updated", 0)), reverse=True)
+        for sid, row in merged.items():
+            try:
+                updated = float(row.get("updated", 0))
+                time.localtime(updated)
+            except (TypeError, ValueError, OverflowError, OSError):
+                updated = 0
+            merged[sid] = {**row, "updated": updated}
+        return sorted(merged.values(), key=lambda s: s["updated"], reverse=True)
 
     @staticmethod
     def safe_id(sid):

@@ -23,6 +23,7 @@ AbstractButton {
     background: GlassSurface {
         material: control.material
         radius: control.cornerRadius
+        tint: control.selected ? "#78425a70" : "#24313b49"
         visible: !control.quiet || control.hovered || control.selected || control.visualFocus
         emphasis: control.selected ? 1 : control.visualFocus ? 0.65 : 0
         hoverAmount: control.hovered || control.down ? 1 : 0

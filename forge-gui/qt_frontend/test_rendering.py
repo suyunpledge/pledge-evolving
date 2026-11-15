@@ -13,15 +13,8 @@ from PySide6.QtQuick import QQuickWindow, QSGRendererInterface
 from PySide6.QtTest import QTest
 from .controller import ChatController
 from .workbench import WorkbenchController
-from PySide6.QtWebEngineQuick import QtWebEngineQuick
-
-if sys.platform == "win32":
-    QQuickWindow.setGraphicsApi(QSGRendererInterface.GraphicsApi.Direct3D11)
-QtWebEngineQuick.initialize()
-APP = QGuiApplication.instance() or QGuiApplication([])
+from ._test_app import APP, FONT
 ROOT = Path(__file__).parent
-FONT = QFont(["Segoe UI", "Microsoft YaHei UI", "Noto Sans SC"], 10)
-APP.setFont(FONT)
 
 
 def type_keys(window, text):
@@ -108,6 +101,68 @@ class RenderingTests(unittest.TestCase):
         self.assertTrue(editor.hasActiveFocus())
         type_keys(self.window, "123")
         self.assertEqual(self.controller.draft, "draft123")
+
+    def test_quick_setup_restores_provider_and_selected_region(self):
+        setup = self.workbench.onboarding
+        setup._preferred_vendor = 'openrouter'
+        panel = self.window.findChild(QObject, "onboardingPopup")
+        QMetaObject.invokeMethod(panel, "open")
+        QTest.qWait(100)
+        vendor = self.window.findChild(QObject, "setupVendor")
+        endpoint = self.window.findChild(QObject, "setupEndpoint")
+        self.assertEqual(vendor.property("currentValue"), "openrouter")
+        self.assertEqual(endpoint.property("text"), "https://openrouter.ai/api/v1")
+        QMetaObject.invokeMethod(panel, "close")
+        QTest.qWait(100)
+        catalog = self.window.findChild(QObject, "providerCatalog")
+        self.workbench.showProviderCatalog("阿里云")
+        QTest.qWait(100)
+        preset = next(row for row in self.workbench.providers if row['key'] == 'qwen')
+        def row_with_text(item, text):
+            if item.property('text') == text and item.property('detail') is not None:
+                return item
+            for child in item.childItems():
+                found = row_with_text(child, text)
+                if found is not None:
+                    return found
+        def click_row(text):
+            item = row_with_text(self.window.contentItem(), text)
+            self.assertIsNotNone(item, text)
+            point = item.mapToScene(item.boundingRect().center()).toPoint()
+            QTest.mouseClick(self.window, Qt.MouseButton.LeftButton, pos=point)
+            QTest.qWait(100)
+        click_row(preset['name'])
+        click_row("国际 · 新加坡")
+        QTest.qWait(100)
+        self.assertFalse(catalog.property("opened"))
+        self.assertTrue(panel.property("opened"))
+        plan = self.window.findChild(QObject, "setupPlan")
+        self.assertEqual(vendor.property("currentValue"), "qwen")
+        self.assertEqual(plan.property("currentIndex"), 1)
+        self.assertEqual(plan.property("currentValue"), endpoint.property("text"))
+        QMetaObject.invokeMethod(panel, "close")
+
+    def test_media_settings_keep_actions_visible_in_small_window(self):
+        self.window.resize(820, 620)
+        service = self.workbench.mediaModels
+        service._save('', 'openai-images', 'http://127.0.0.1:1/v1', 'fixture', '', True)
+        service._config = service._read()
+        service.changed.emit()
+        panel = self.window.findChild(QObject, "mediaModelsPopup")
+        QMetaObject.invokeMethod(panel, "showSettings")
+        QTest.qWait(100)
+        service._notice = "请检查接口配置，保存后可以继续生成。" * 10
+        service.changed.emit()
+        QTest.qWait(100)
+        self.assertGreaterEqual(panel.property("y"), 0)
+        self.assertLessEqual(panel.property("y") + panel.property("height"), self.window.height())
+        for name in ("mediaSave", "mediaSkip"):
+            button = self.window.findChild(QObject, name)
+            bottom = button.mapToScene(QPointF(0, button.height())).y()
+            self.assertLess(bottom, self.window.height())
+            self.assertTrue(button.isVisible())
+        self.window.grabWindow().save(str(Path(tempfile.gettempdir()) / "forge-audit-media-small.png"))
+        QMetaObject.invokeMethod(panel, "close")
 
     def test_long_draft_does_not_hide_send_at_minimum_window(self):
         self.window.resize(820, 620)

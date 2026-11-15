@@ -12,18 +12,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 os.environ.setdefault('QT_QUICK_CONTROLS_STYLE', 'Basic')
 from PySide6.QtCore import QObject, QMetaObject, QProcess, Q_ARG, Qt, QUrl
-from PySide6.QtGui import QColor, QFont, QGuiApplication, QImage
+from PySide6.QtGui import QColor, QFont, QGuiApplication, QImage, QInputMethodEvent
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuick import QQuickWindow, QSGRendererInterface
 from PySide6.QtTest import QTest
-from PySide6.QtWebEngineQuick import QtWebEngineQuick
 from .controller import ChatController
 from .workbench import WorkbenchController
 
-QQuickWindow.setGraphicsApi(QSGRendererInterface.GraphicsApi.Direct3D11)
-QtWebEngineQuick.initialize()
-APP = QGuiApplication.instance() or QGuiApplication([])
-APP.setQuitOnLastWindowClosed(False)
+from ._test_app import APP
 ROOT = Path(__file__).parent
 
 
@@ -35,6 +31,16 @@ def until(predicate, timeout=15):
             return
         QTest.qWait(20)
     raise AssertionError('condition timed out')
+
+
+def visual_item(root, name):
+    if root.objectName() == name:
+        return root
+    for child in root.childItems() if hasattr(root, 'childItems') else []:
+        item = visual_item(child, name)
+        if item is not None:
+            return item
+    return None
 
 
 class Page(BaseHTTPRequestHandler):
@@ -114,6 +120,42 @@ class WorkbenchTests(unittest.TestCase):
         assert_selected(english, chinese, 'Selected')
         item('setupContinue').clicked.emit()
         assert_selected(developer, simple, 'Selected')
+
+    def test_chat_and_work_switch_the_composer_without_destroying_the_draft(self):
+        chat = self.window.findChild(QObject, 'selectChatMode')
+        work = self.window.findChild(QObject, 'selectWorkMode')
+        mcp = self.window.findChild(QObject, 'chatMcpButton')
+        tools = self.window.findChild(QObject, 'workToolCatalogButton')
+        self.controller.draft = '保留这个草稿'
+        chat.clicked.emit()
+        self.assertEqual(self.controller.conversationMode, 'chat')
+        self.assertTrue(mcp.isVisible())
+        self.assertFalse(tools.isVisible())
+        work.clicked.emit()
+        self.assertEqual(self.controller.conversationMode, 'work')
+        self.assertFalse(mcp.isVisible())
+        self.assertTrue(tools.isVisible())
+        self.assertEqual(self.controller.draft, '保留这个草稿')
+
+    def test_work_tool_catalog_filters_and_toggles_advertised_tools(self):
+        from functools import partial
+        from .permissions import tool_available
+
+        self.controller.tool_filter = lambda: partial(tool_available, 'sandbox')
+        self.controller.mcp_tools = lambda: ({f'forge_{name}': (
+            {'type': 'function', 'function': {'name': f'forge_{name}'}}, ('local', name))
+            for name in ('unit_convert', 'text_transform', 'comfyui_run')}, None)
+        self.window.findChild(QObject, 'workToolCatalogButton').clicked.emit()
+        popup = self.window.findChild(QObject, 'workToolCatalog')
+        until(lambda: popup.property('opened'))
+        search = popup.findChild(QObject, 'workToolSearch')
+        search.setProperty('text', '换算')
+        until(lambda: len(popup.property('filtered').toVariant()) == 1)
+        self.controller.toolSettings.setTool('forge_unit_convert', False)
+        self.assertFalse(self.controller.toolSettings.snapshot()[1]('forge_unit_convert'))
+        search.setProperty('text', 'comfyui')
+        until(lambda: len(popup.property('filtered').toVariant()) == 1)
+        self.assertFalse(popup.property('filtered').toVariant()[0]['available'])
 
     def test_public_search_panel_and_browser_use_selected_engine(self):
         from urllib.parse import parse_qs, urlsplit
@@ -230,25 +272,28 @@ class WorkbenchTests(unittest.TestCase):
                     self.assertEqual(element.property('position'), position)
         wallpaper.reset()
 
-    def test_all_features_share_one_host_and_chat_releases_surface(self):
+    def test_all_features_use_retained_qml_pages_and_headless_service(self):
         self.workbench.start_host()
-        until(lambda: self.workbench.nativeWindow is not None)
+        until(lambda: self.workbench._service_ready)
         pid = self.workbench._process.processId()
-        until(lambda: self.workbench._page_serial > 0)
-        self.assertEqual(self.workbench.page, 'chat')
-        self.assertFalse(self.workbench.nativeWindow.isVisible())
-        for page in ('preview', 'config', 'tools', 'agents', 'knowledge', 'evolution', 'task',
-                     'schedules', 'connectors', 'computer', 'files', 'development', 'work', 'chat'):
-            serial = self.workbench._page_serial
-            self.workbench.navigate(page)
-            until(lambda: self.workbench._page_serial > serial and self.workbench.page == page)
-            QTest.qWait(180)
-            self.assertEqual(self.workbench._process.processId(), pid, page)
-            self.assertFalse(self.workbench.error, (page, self.workbench.error))
-            if page not in {'chat', 'connectors'}:
-                self.assertIsNotNone(self.workbench.nativeWindow.parent(), page)
-                self.assertGreater(self.workbench.nativeWindow.width(), 250)
-        self.assertFalse(self.workbench.nativeWindow.isVisible())
+        pages = {}
+        for key in ('preview', 'config', 'tools', 'agents', 'knowledge', 'evolution', 'task',
+                    'schedules', 'computer', 'files', 'development', 'connector_accounts'):
+            self.workbench.navigate(key)
+            until(lambda: self.workbench.nativePageReady and visual_item(self.window.contentItem(), 'page_' + key) is not None)
+            page = visual_item(self.window.contentItem(), 'page_' + key)
+            until(page.isVisible)
+            pages[key] = page
+            self.assertEqual(self.workbench._process.processId(), pid, key)
+            self.assertFalse(self.workbench.error, (key, self.workbench.error))
+            self.assertIsNone(self.workbench.nativeWindow)
+            self.assertIsNone(self.window.findChild(QObject, 'nativeContainer'))
+        self.workbench.navigate('chat')
+        for page in pages.values():
+            self.assertFalse(page.isVisible())
+        self.workbench.navigate('config')
+        until(pages['config'].isVisible)
+        self.assertIs(visual_item(self.window.contentItem(), 'page_config'), pages['config'])
         for profile in ('manual', 'full', 'sandbox'):
             self.workbench.setPermission(profile)
             until(lambda: self.workbench.permission == profile)
@@ -263,11 +308,35 @@ class WorkbenchTests(unittest.TestCase):
         self.workbench.codingAction('planning', 'medium')
         until(lambda: self.workbench.coding.get('planning') == 'medium')
         self.workbench.navigate('chat')
-        until(lambda: not self.workbench.nativeWindow.isVisible())
+        until(lambda: not editor.isVisible())
         self.workbench.navigate('development')
-        until(lambda: editor.isVisible() and self.workbench.nativeWindow.isVisible())
+        until(lambda: editor.isVisible() and self.workbench.nativePageReady)
         self.assertEqual(editor.property('text'), '中文 draft 123')
         self.assertFalse(self.workbench.error, self.workbench.error)
+
+    def test_native_multiline_forms_are_usable_and_preserve_drafts(self):
+        self.workbench.navigate('knowledge')
+        until(lambda: self.workbench.nativePageReady and visual_item(self.window.contentItem(), 'page_knowledge') is not None)
+        page = visual_item(self.window.contentItem(), 'page_knowledge')
+        until(lambda: visual_item(page, 'field_text') is not None)
+        editor = visual_item(page, 'field_text')
+        until(lambda: editor.height() >= 70)
+        QMetaObject.invokeMethod(editor, 'forceActiveFocus')
+        event = QInputMethodEvent()
+        event.setCommitString('保留这段多行草稿\n第二行')
+        APP.sendEvent(editor, event)
+        self.workbench.navigate('config')
+        until(lambda: self.workbench.nativePageReady and visual_item(self.window.contentItem(), 'page_config') is not None)
+        config_page = visual_item(self.window.contentItem(), 'page_config')
+        until(lambda: visual_item(config_page, 'workbenchField_json') is not None)
+        section = visual_item(config_page, 'workbenchField_json')
+        self.assertFalse(section.property('expanded'))
+        section.setProperty('expanded', True)
+        until(lambda: visual_item(config_page, 'field_json') is not None)
+        until(lambda: visual_item(config_page, 'field_json').height() >= 190)
+        self.workbench.navigate('knowledge')
+        until(lambda: page.isVisible() and self.workbench.nativePageReady)
+        self.assertEqual(editor.property('text'), '保留这段多行草稿\n第二行')
 
     def test_connector_view_is_retained_and_old_native_ack_cannot_cover_it(self):
         self.workbench.navigate('config')
@@ -283,6 +352,39 @@ class WorkbenchTests(unittest.TestCase):
         self.workbench.navigate('connectors')
         until(page.isVisible)
         self.assertIs(self.window.findChild(QObject, 'connectorsPage'), page)
+
+    def test_native_editor_accepts_keys_ime_and_keeps_draft_across_pages(self):
+        project = Path(self.temp.name).resolve() / 'project'
+        project.mkdir()
+        path = project / 'sample.py'
+        path.write_text('value = 1\n', encoding='utf-8')
+        self.workbench.navigate('files')
+        until(lambda: self.workbench.nativePageReady)
+        self.workbench.pageAction('files', 'project', json.dumps({'path': str(project)}))
+        until(lambda: self.workbench.workspace == str(project) and not self.workbench.busy)
+        self.workbench.pageAction('files', 'open', json.dumps({'path': str(path)}))
+        until(lambda: self.workbench.pageData.get('files', {}).get('document', {}).get('path') == str(path))
+        page = visual_item(self.window.contentItem(), 'page_files')
+        editor = visual_item(page, 'codeEditorInput')
+        until(lambda: editor.property('text') == 'value = 1\n')
+        QMetaObject.invokeMethod(editor, 'forceActiveFocus')
+        QTest.keyClick(self.window, Qt.Key.Key_End, Qt.KeyboardModifier.ControlModifier)
+        for char in '# abc123 ':
+            QTest.keyClick(self.window, Qt.Key(ord(char.upper())))
+        event = QInputMethodEvent()
+        event.setCommitString('中文')
+        APP.sendEvent(editor, event)
+        self.assertIn('# abc123 中文', editor.property('text'))
+        self.workbench.navigate('task')
+        until(lambda: self.workbench.nativePageReady)
+        self.workbench.navigate('files')
+        until(lambda: page.isVisible() and self.workbench.nativePageReady)
+        self.assertIn('# abc123 中文', editor.property('text'))
+        self.assertTrue(self.workbench.hasUnsaved)
+        self.workbench.pageAction('files', 'save', json.dumps({'path': str(path)}))
+        until(lambda: not self.workbench.hasUnsaved and not self.workbench.busy)
+        self.assertIn('# abc123 中文', path.read_text(encoding='utf-8'))
+        self.assertFalse(self.workbench.error, self.workbench.error)
 
     def test_workspace_pairing_can_select_every_service_or_a_subset(self):
         self.workbench.navigate('connectors')
@@ -347,13 +449,14 @@ class WorkbenchTests(unittest.TestCase):
         self.workbench.toggleFiles()
         until(lambda: self.workbench.nativePageReady)
         self.assertEqual(self.workbench.page, 'files')
-        host = self.workbench.nativeWindow
+        until(lambda: visual_item(self.window.contentItem(), 'page_files') is not None)
+        host = visual_item(self.window.contentItem(), 'page_files')
         self.workbench.toggleFiles()
         until(lambda: self.workbench.page == 'connectors')
         self.assertFalse(host.isVisible())
         self.workbench.toggleFiles()
         until(lambda: self.workbench.nativePageReady)
-        self.assertIs(self.workbench.nativeWindow, host)
+        self.assertIs(visual_item(self.window.contentItem(), 'page_files'), host)
 
     def test_approval_is_single_request_and_cancellation_cleans_panel(self):
         cancel, result = threading.Event(), []

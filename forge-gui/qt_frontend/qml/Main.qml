@@ -19,6 +19,7 @@ ApplicationWindow {
     readonly property bool english: setup.language === "en"
     function label(zh, en) { return english ? en : zh }
     readonly property bool chatVisible: workbench.page === "chat"
+    readonly property bool conversationOnly: controller.conversationMode === "chat"
     readonly property real columnWidth: Math.min(800, mainRight - sideWidth - 48)
     readonly property real columnX: sideWidth + (mainRight - sideWidth - columnWidth) / 2
     readonly property var editor: editorScroll.editor
@@ -29,7 +30,7 @@ ApplicationWindow {
         if (chatVisible) Qt.callLater(focusWorkComposer)
     }
     function focusWorkComposer() {
-        if (chatVisible && !onboarding.opened) {
+        if (chatVisible && !onboarding.opened && !localToolSetup.opened && !mediaModels.opened && !toolCatalog.opened) {
             editor.forceActiveFocus()
             editorScroll.refreshInputMethod()
         }
@@ -41,7 +42,7 @@ ApplicationWindow {
             event.accepted = false
             return
         }
-        if (!exitConfirmed && (workbench.hasUnsaved || workbench.busy || controller.busy || workbench.mcp.saving)) {
+        if (!exitConfirmed && (workbench.hasUnsaved || workbench.busy || controller.busy || workbench.mcp.saving || workbench.mediaModels.saving)) {
             event.accepted = false
             exitPopup.open()
         }
@@ -130,6 +131,7 @@ ApplicationWindow {
                 required property string changeKey
                 required property var changeInfo
                 required property int historyIndex
+                required property var toolReceipts
                 width: messages.width
                 height: messageBody.height + (roleName === "user" ? 24 : 0)
                     + (messageActions.visible ? messageActions.height + 4 : 0)
@@ -152,11 +154,12 @@ ApplicationWindow {
                         spacing: 9
                         Image { width: 22; height: 22; source: brandUrl; smooth: true }
                         Text { text: "Forge"; color: "#dfe4eb"; font.weight: Font.DemiBold; font.pixelSize: 13; anchors.verticalCenter: parent.verticalCenter }
-                        Text { visible: message.state === "streaming"; text: "正在思考"; color: "#939da9"; font.pixelSize: 12; anchors.verticalCenter: parent.verticalCenter }
+                        Text { visible: message.state === "streaming"; text: controller.status; color: "#939da9"; font.pixelSize: 12; anchors.verticalCenter: parent.verticalCenter }
                     }
                     TextEdit {
                         id: messageText
                         objectName: "messageBodyText"
+                        visible: text.length > 0
                         width: parent.width
                         height: Math.max(20, contentHeight)
                         text: message.textContent || (message.state === "streaming" ? "…" : "")
@@ -175,6 +178,12 @@ ApplicationWindow {
                         }
                         onTextChanged: Qt.callLater(polishTypography)
                         Component.onCompleted: Qt.callLater(polishTypography)
+                    }
+                    ToolReceipts {
+                        width: parent.width
+                        visible: receipts.length > 0
+                        material: window.material
+                        receipts: message.toolReceipts || []
                     }
                     ChangeCard {
                         objectName: "replyChangeCard"
@@ -196,7 +205,7 @@ ApplicationWindow {
                         }
                         Text { text: message.state === "stopped" ? "已停止" : message.state === "error" ? "回复未完成" : ""; color: "#b9a68a"; font.pixelSize: 12 }
                         Text {
-                            visible: message.state === "error" && !controller.busy
+                            visible: message.state === "error" && controller.canRetry
                             text: "重试"; color: "#c8d7e5"; font.pixelSize: 12
                             HoverHandler { cursorShape: Qt.PointingHandCursor }
                             TapHandler { onTapped: controller.retry() }
@@ -232,8 +241,8 @@ ApplicationWindow {
             width: window.columnWidth - 32
             spacing: 16
             Image { source: brandUrl; width: 42; height: 42; smooth: true }
-            Text { text: "今天想完成什么？"; color: "#f0f1f3"; font.pixelSize: 30; font.weight: Font.DemiBold }
-            Text { text: "描述目标，带上上下文，让想法成为下一步。"; color: "#9fa8b4"; font.pixelSize: 15 }
+            Text { text: window.conversationOnly ? "今天想聊些什么？" : "今天想完成什么？"; color: "#f0f1f3"; font.pixelSize: 30; font.weight: Font.DemiBold }
+            Text { text: window.conversationOnly ? "可以使用已连接且获准的 MCP。需要实际操作时，AI 可切换到 Work。" : "描述目标，带上上下文，让想法成为下一步。"; color: "#9fa8b4"; font.pixelSize: 15; wrapMode: Text.Wrap; width: parent.width }
         }
     }
     ShaderEffectSource {
@@ -339,7 +348,7 @@ ApplicationWindow {
     Column {
         x: 18; y: window.height - 148; width: window.sideWidth - 36; spacing: 8
         GlassButton { objectName: "permissionButton"; material: window.material; width: parent.width; glyph: "shield"; text: workbench.permissionLabel; selected: true; tip: "切换执行权限"; enabled: !controller.busy && !workbench.busy && workbench.approvals.length === 0; onClicked: permissionPopup.open() }
-        GlassButton { material: window.material; width: parent.width; glyph: "panels-top-left"; text: "Work 完整功能"; quiet: true; onClicked: controller.openWorkbench("chat") }
+        GlassButton { material: window.material; width: parent.width; glyph: "panels-top-left"; text: "Agent 协作设置"; quiet: true; onClicked: workbench.navigate("agents") }
         GlassButton { material: window.material; objectName: "connectionSettingsEntry"; width: parent.width; glyph: "settings-2"; text: window.label("连接与外观", "Connection & appearance"); quiet: true; onClicked: settings.open() }
     }
     Text {
@@ -349,8 +358,10 @@ ApplicationWindow {
     Row {
         x: window.mainRight - width - 20; y: 20; spacing: 8
         GlassButton { objectName: "quickSetupToolbar"; visible: workbench.page === "config"; material: window.material; glyph: "plug"; text: window.label("一键配置", "Quick setup"); onClicked: onboarding.showSetup() }
+        GlassButton { objectName: "mediaModelsToolbar"; visible: workbench.page === "config"; material: window.material; glyph: "image"; text: window.label("图片与视频", "Image and video"); onClicked: mediaModels.showSettings() }
         GlassButton { visible: workbench.page === "config" && setup.developer; material: window.material; glyph: "box"; text: "模型厂商"; onClicked: workbench.showProviderCatalog("") }
         GlassButton { visible: workbench.page === "connector_accounts"; material: window.material; glyph: "chevron-left"; text: "MCP 接口"; onClicked: workbench.navigate("connectors") }
+        GlassButton { visible: workbench.page === "tools"; material: window.material; glyph: "blocks"; text: "Work 工具"; onClicked: toolCatalog.open() }
         GlassButton { visible: window.chatVisible; material: window.material; glyph: "pencil"; quiet: true; tip: "重命名对话"; onClicked: { renameField.text = controller.title; renamePopup.open() } }
         GlassButton {
             objectName: "filesToggle"; material: window.material
@@ -418,9 +429,24 @@ ApplicationWindow {
                 }
                 GlassButton {
                     objectName: "publicSearchButton"
+                    visible: !window.conversationOnly
                     material: window.material; glyph: "search"
                     text: window.columnWidth > 620 ? "搜索" : ""
                     tip: "联网搜索"; onClicked: searchPanel.open()
+                }
+                GlassButton {
+                    objectName: "workToolCatalogButton"
+                    visible: !window.conversationOnly
+                    material: window.material; glyph: "blocks"
+                    text: window.columnWidth > 630 ? "工具" : ""
+                    tip: controller.toolSettings.enabled ? "管理 Work 工具" : "Work 工具调用已关闭"
+                    onClicked: toolCatalog.open()
+                }
+                GlassButton {
+                    objectName: "chatMcpButton"
+                    visible: window.conversationOnly
+                    material: window.material; glyph: "plug"; text: "MCP"
+                    tip: "管理 Chat 可用的远程 MCP"; onClicked: workbench.navigate("connectors")
                 }
                 Item { Layout.fillWidth: true }
                 GlassButton {
@@ -467,6 +493,15 @@ ApplicationWindow {
             }
         }
     }
+    WorkToolCatalog {
+        id: toolCatalog
+        parent: Overlay.overlay
+        material: window.material
+        service: controller.toolSettings
+        changesAllowed: !controller.busy
+        onClosed: window.focusWorkComposer()
+    }
+
     Popup {
         id: options
         focus: true
@@ -549,18 +584,48 @@ ApplicationWindow {
         material: window.material; service: controller.changeReview
         onClosed: editor.forceActiveFocus()
     }
+    Rectangle {
+        visible: workbench.localTools.message !== "" || workbench.mediaModels.status !== ""
+        x: window.mainRight - width - 24; y: 66; width: Math.min(410, window.mainRight - window.sideWidth - 48)
+        height: 64; radius: 12; color: "#ed202c39"; z: 3
+        Column {
+            anchors.fill: parent; anchors.margins: 12; spacing: 8
+            Text { width: parent.width; text: workbench.mediaModels.status || workbench.localTools.message; color: "#dce9f5"; elide: Text.ElideRight; font.pixelSize: 12 }
+            ProgressBar {
+                width: parent.width; from: 0; to: 100
+                value: Math.max(0, workbench.localTools.percent)
+                indeterminate: workbench.mediaModels.status !== "" || workbench.localTools.percent < 0
+            }
+        }
+    }
+    MediaModels {
+        id: mediaModels
+        parent: Overlay.overlay; anchors.centerIn: parent
+        width: Math.min(620, window.width - 48)
+        material: window.material; service: workbench.mediaModels; english: window.english
+        onClosed: window.focusWorkComposer()
+    }
+    LocalToolSetup {
+        id: localToolSetup
+        parent: Overlay.overlay; anchors.centerIn: parent
+        width: Math.min(560, window.width - 48)
+        material: window.material; service: workbench.localTools
+        onClosed: window.focusWorkComposer()
+    }
     Onboarding {
         id: onboarding
         parent: Overlay.overlay; anchors.centerIn: parent
         width: Math.min(610, window.width - 48)
         material: window.material; service: window.setup
+        onMediaModelsRequested: mediaModels.showSettings()
         onClosed: window.focusWorkComposer()
     }
     ProviderCatalog {
         id: providerCatalog
         parent: Overlay.overlay; anchors.centerIn: parent
         width: Math.min(860, window.width - 48); height: Math.min(660, window.height - 48)
-        material: window.material
+        material: window.material; setup: window.setup
+        onSetupRequested: (provider, url) => onboarding.showSetup(provider, url)
         onClosed: if (window.chatVisible) window.focusWorkComposer()
     }
     Popup {
@@ -655,9 +720,22 @@ ApplicationWindow {
     Column {
         x: 18; y: 82; width: window.sideWidth - 36; spacing: 9
         Row {
-            spacing: 8
-            GlassButton { material: window.material; width: setup.developer ? (parent.parent.width - 8) / 2 : parent.parent.width; text: "Work"; glyph: "message-square"; selected: window.chatVisible; onClicked: workbench.navigate("chat") }
-            GlassButton { material: window.material; width: (parent.parent.width - 8) / 2; text: "Coding"; visible: setup.developer; glyph: "code"; selected: workbench.page === "development"; onClicked: workbench.navigate("development") }
+            id: modeBar
+            width: parent.width; spacing: 6
+            readonly property real buttonWidth: setup.developer ? (width - 2 * spacing) / 3 : (width - spacing) / 2
+            GlassButton {
+                objectName: "selectChatMode"; material: window.material; width: modeBar.buttonWidth
+                text: "Chat"; selected: window.chatVisible && window.conversationOnly
+                tip: "普通对话及 MCP"; enabled: !controller.busy
+                onClicked: { controller.setConversationMode("chat"); workbench.navigate("chat"); window.focusWorkComposer() }
+            }
+            GlassButton {
+                objectName: "selectWorkMode"; material: window.material; width: modeBar.buttonWidth
+                text: "Work"; selected: window.chatVisible && !window.conversationOnly
+                tip: "执行任务与使用工具"; enabled: !controller.busy
+                onClicked: { controller.setConversationMode("work"); workbench.navigate("chat"); window.focusWorkComposer() }
+            }
+            GlassButton { material: window.material; width: modeBar.buttonWidth; text: "Coding"; visible: setup.developer; selected: window.codingVisible; onClicked: workbench.navigate("development") }
         }
         Row {
             spacing: 8
@@ -691,7 +769,7 @@ ApplicationWindow {
                     {key:"connectors", label:window.label("连接器", "Connectors"), icon:"plug"},
                     {key:"computer", label:window.label("电脑操作", "Computer use"), icon:"monitor"},
                     {key:"preview", label:window.label("代码预览", "Code preview"), icon:"file-code"}
-                ].filter(item => setup.developer || item.key !== "evolution")
+                ].filter(item => (setup.developer || item.key !== "evolution") && (!window.conversationOnly || item.key !== "computer"))
                 GlassButton {
                     required property var modelData
                     material: window.material; width: navigation.width
@@ -711,7 +789,7 @@ ApplicationWindow {
         id: nativePage; objectName: "nativePage"
         x: window.sideWidth + 12; y: 76; width: window.mainRight - x - 12 - (window.codingVisible ? window.codingWidth + 12 : 0); height: window.height - y - 12
         visible: !window.chatVisible && workbench.page !== "connectors"
-        Rectangle { anchors.fill: parent; color: "#11151c"; radius: 16 }
+
         Rectangle {
             id: hostError; width: parent.width; height: hostErrorText.height + 24
             visible: workbench.nativePageReady && workbench.error !== ""
@@ -724,15 +802,23 @@ ApplicationWindow {
             Text { width: parent.width; text: workbench.error || "正在载入 " + workbench.pageTitle + "…"; color: "#b9c4d0"; wrapMode: Text.Wrap; horizontalAlignment: Text.AlignHCenter }
             GlassButton { material: window.material; text: "重新载入"; visible: workbench.error !== ""; anchors.horizontalCenter: parent.horizontalCenter; onClicked: workbench.navigate(workbench.page) }
         }
-        WindowContainer {
-            id: nativeContainer; objectName: "nativeContainer"
-            anchors.fill: parent
-            anchors.topMargin: hostError.visible ? hostError.height + 8 : 0
-            visible: parent.visible && workbench.nativePageReady && workbench.nativeWindow !== null && workbench.approvals.length === 0 && !(workbench.browserVisible && workbench.browserExpanded) && !settings.opened && !wallpaperSettings.opened && !searchPanel.opened && !renamePopup.opened && !exitPopup.opened && !changeReview.opened && !providerCatalog.opened && !onboarding.opened
-            window: workbench.nativeWindow
-            onVisibleChanged: if (workbench.nativeWindow) workbench.nativeWindow.visible = visible
+        Repeater {
+            model: ["development", "task", "files", "tools", "config", "agents", "knowledge", "evolution", "schedules", "preview", "computer", "connector_accounts"]
+            Loader {
+                required property string modelData
+                property bool selected: workbench.page === modelData
+                property bool visited: false
+                onSelectedChanged: if (selected) visited = true
+                Component.onCompleted: if (selected) visited = true
+                anchors.fill: parent
+                anchors.topMargin: hostError.visible ? hostError.height + 8 : 0
+                active: visited; asynchronous: true
+                visible: selected && status === Loader.Ready && workbench.nativePageReady
+                sourceComponent: WorkspacePage { material: window.material; pageKey: modelData }
+            }
         }
     }
+
     Loader {
         id: codingPanel
         property bool visited: false
@@ -812,7 +898,26 @@ ApplicationWindow {
             }
         }
     }
-    Connections { target: workbench; function onPermissionRequested() { permissionPopup.open() } }
+    Connections {
+        target: workbench
+        function onPermissionRequested() { permissionPopup.open() }
+        function onModelSetupRequested() { onboarding.showSetup() }
+        function onHistoryRequested(rows) { codingHistory.rows = rows; codingHistory.open() }
+    }
+    Popup {
+        id: codingHistory; property var rows: []
+        parent: Overlay.overlay; anchors.centerIn: parent; width: Math.min(600, window.width - 60); height: Math.min(520, window.height - 80)
+        modal: true; focus: true; padding: 20
+        background: GlassSurface { material: window.material; radius: 20 }
+        contentItem: ColumnLayout {
+            Text { text: "Coding 对话历史"; color: "#edf1f5"; font.pixelSize: 18 }
+            ListView {
+                Layout.fillWidth: true; Layout.fillHeight: true; model: codingHistory.rows; clip: true; spacing: 7
+                delegate: GlassButton { required property var modelData; width: ListView.view.width; material: window.material; text: modelData.stamp + " · " + modelData.label; onClicked: {workbench.codingAction("restore", modelData.path); codingHistory.close()} }
+            }
+            GlassButton { material: window.material; text: "关闭"; onClicked: codingHistory.close() }
+        }
+    }
     Popup {
         id: exitPopup; objectName: "exitPopup"; parent: Overlay.overlay; anchors.centerIn: parent
         width: 420; padding: 24; modal: true; focus: true
@@ -829,7 +934,7 @@ ApplicationWindow {
     }
     Shortcut { sequence: "Ctrl+N"; enabled: window.chatVisible && !reviseMessage.opened && !onboarding.opened; onActivated: controller.newSession() }
     Shortcut { sequence: "Ctrl+K"; enabled: window.chatVisible && !reviseMessage.opened && !onboarding.opened; onActivated: {search.forceActiveFocus(); search.selectAll()} }
-    Shortcut { sequence: "Escape"; enabled: controller.busy && !options.opened && !settings.opened && !wallpaperSettings.opened && !searchPanel.opened && !modelMenu.opened && !onboarding.opened; onActivated: controller.stop() }
+    Shortcut { sequence: "Escape"; enabled: controller.busy && !options.opened && !settings.opened && !wallpaperSettings.opened && !searchPanel.opened && !modelMenu.opened && !onboarding.opened && !localToolSetup.opened && !mediaModels.opened && !toolCatalog.opened; onActivated: controller.stop() }
     Connections {
         target: controller
         function onDraftChanged() { if (editor.text !== controller.draft) editor.text = controller.draft }

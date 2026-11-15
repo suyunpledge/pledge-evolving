@@ -6,6 +6,7 @@ from PySide6.QtCore import QObject, Property, Signal, Slot
 
 from config_model import load_user_layer
 import model_onboarding as models
+from provider_catalog import BY_KEY
 import secret_store
 from .store import SessionStore
 
@@ -26,7 +27,12 @@ class Onboarding(QObject):
         prefs = SessionStore.read(self.path, {})
         self._prefs = prefs if isinstance(prefs, dict) else {}
         self._status = ""
-        self._has_models = bool(models.configured_models(self.home))
+        configured = models.configured_models(self.home)
+        self._has_models = bool(configured)
+        available = {v.id for v in models.VENDORS if v.wire == "openai"}
+        preferred = self._prefs.get("provider")
+        self._preferred_vendor = preferred if preferred in available else next(
+            (vendor for vendor in configured if vendor in available), models.DEFAULT_VENDOR)
         self._ok = False
         self._busy = False
         self.can_save = lambda: True
@@ -39,6 +45,7 @@ class Onboarding(QObject):
     busy = Property(bool, lambda self: self._busy, notify=changed)
     status = Property(str, lambda self: self._status, notify=changed)
     success = Property(bool, lambda self: self._ok, notify=changed)
+    preferredVendor = Property(str, lambda self: self._preferred_vendor, notify=changed)
     vendors = Property("QVariantList", lambda self: [
         {"id": v.id, "name": v.name, "keyless": v.keyless}
         for v in models.VENDORS if v.wire == "openai"
@@ -54,8 +61,12 @@ class Onboarding(QObject):
                            if row["id"] == vendor_id), {})
         except (OSError, ValueError, KeyError):
             config = {}
+        preset = BY_KEY.get(vendor_id)
+        plans = [{"label": plan.label, "url": plan.base_url, "note": plan.note}
+                 for plan in preset.plans if plan.usable and plan.wire == v.wire] if preset else []
         return {"url": config.get("baseURL") or v.base_url,
                 "model": config.get("model") or v.models[0],
+                "exampleModel": v.models[0], "plans": plans,
                 "temperature": str(config["temperature"] if config.get("temperature") is not None
                                    else models.DEFAULT_TEMPERATURE),
                 "keyless": v.keyless, "console": v.console}
@@ -131,6 +142,7 @@ class Onboarding(QObject):
         self._ok = bool(result["ok"])
         self._status = result.get("message", "模型已保存，正在更新工作台。") if self._ok else result["error"]
         if self._ok and operation == "save":
+            self._preferred_vendor = result["row_id"]
             prefs = {**self._prefs, "provider": result["row_id"]}
             try:
                 SessionStore.atomic(self.path, prefs)

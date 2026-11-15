@@ -318,8 +318,8 @@ DEFAULT_CONFIG = {
 }
 
 
-def load_config() -> dict:
-    path = config_path()
+def load_config(path=None) -> dict:
+    path = _Path(path) if path else config_path()
     if not path.is_file():
         return json.loads(json.dumps(DEFAULT_CONFIG))
     try:
@@ -359,8 +359,8 @@ def load_config() -> dict:
     return data
 
 
-def save_config(config: dict) -> None:
-    path = config_path()
+def save_config(config: dict, path=None) -> None:
+    path = _Path(path) if path else config_path()
     import tempfile
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".agent-cluster-", suffix=".tmp", delete=False) as stream:

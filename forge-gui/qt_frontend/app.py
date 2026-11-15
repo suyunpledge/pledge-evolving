@@ -1,5 +1,6 @@
 """Launch Qt Quick on the platform RHI; compile shaders during development only."""
 import argparse
+from functools import partial
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,7 @@ from PySide6.QtGui import QFont, QGuiApplication, QIcon
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuick import QQuickWindow, QSGRendererInterface
 from .controller import ChatController
+from .media_generation import tool_set as media_tool_set
 from .workbench import WorkbenchController
 
 
@@ -54,28 +56,55 @@ def main(argv=None):
     if icon.is_file():
         app.setWindowIcon(QIcon(str(icon)))
     controller = ChatController(args.home, demo=args.demo)
+    if not args.demo:
+        from .team_service import work_context
+        controller.work_context = lambda messages, model, cancel, status: work_context(args.home, messages, model, cancel, status)
     preview_home = tempfile.TemporaryDirectory(prefix='forge-workbench-preview-', ignore_cleanup_errors=True) if args.demo else None
     workbench = WorkbenchController(Path(preview_home.name) if preview_home else args.home, demo=args.demo)
     workbench._input_busy = lambda: controller.busy
-    from .permissions import authorize
+    from .permissions import authorize, tool_available
     def tool_authorizer():
         profile, workspace = workbench.permission, workbench.workspace
         return lambda name, arguments, cancel: authorize(
             profile, workspace, name, arguments, workbench.approve, cancel)
     controller.tool_authorizer = tool_authorizer
+    controller.tool_filter = lambda: partial(tool_available, workbench.permission)
 
     def mcp_tools():
-        tools = {} if workbench.permission == 'sandbox' else workbench.mcp.chat_tools(workbench.workspace)
+        workspace = workbench.workspace
+        tools = {} if workbench.permission == 'sandbox' else workbench.mcp.chat_tools(workspace)
+        if workbench.permission != 'sandbox':
+            tools.update(workbench.service_tools())
+        tools.update(workbench.localTools.tools())
+        tools.update(media_tool_set())
         tools['forge_public_search'] = workbench.search.work_tool()
+        skipped_media = {}
 
         def dispatch(target, arguments, cancel):
             if isinstance(target, str):
                 return workbench.search.call_work_tool(target, arguments, cancel)
+            if target[0] == 'media':
+                kind = target[1]
+                if kind in skipped_media:
+                    return skipped_media[kind]
+                response = workbench.mediaModels.call(kind, workspace, arguments, cancel)
+                if response['meta'].get('error_code') == 'media_setup_skipped':
+                    skipped_media[kind] = response
+                return response
+            if target[0] == 'local':
+                return workbench.localTools.call(target[1], workspace, arguments, cancel)
+            if target[0] == 'service':
+                return workbench.call_service(target[1], arguments, cancel)
             return workbench.mcp.call_chat_tool(target, arguments, cancel)
 
         return tools, dispatch
 
     controller.mcp_tools = mcp_tools
+    def chat_mcp_tools():
+        tools = {} if workbench.permission == 'sandbox' else workbench.mcp.chat_tools(workbench.workspace, remote_only=True)
+        return tools, workbench.mcp.call_chat_tool
+
+    controller.chat_mcp_tools = chat_mcp_tools
     controller.navigateRequested.connect(workbench.navigate)
     controller.browseRequested.connect(workbench.openBrowser)
     workbench.gatewayChanged.connect(controller.setManagedGateway)
@@ -115,13 +144,13 @@ def main(argv=None):
                     "source": str(root.parent), "title": window.title(),
                     "size": [window.width(), window.height()], "image": [image.width(), image.height()],
                     "qml_warnings": warnings, "render_messages": render_messages,
-                    "workbench": {"page": workbench.page, "ready": workbench.nativeWindow is not None,
+                    "workbench": {"page": workbench.page, "ready": workbench.nativePageReady,
                                   "error": workbench.error, "status": workbench.status}}
             args.smoke.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
             if args.page == 'connectors':
                 ready = workbench.page == 'connectors' and workbench.mcp.loaded
             else:
-                ready = args.page == 'chat' or workbench.nativeWindow is not None
+                ready = args.page in {'chat', 'connectors'} or workbench.nativePageReady
             app.exit(0 if not image.isNull() and not warnings and ready and not workbench.error else 2)
         QTimer.singleShot(20000 if not args.demo else 7000 if args.page != 'chat' or args.browser else 1800, capture)
     result = app.exec()

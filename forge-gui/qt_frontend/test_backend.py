@@ -7,13 +7,13 @@ import threading
 import time
 import unittest
 
-from PySide6.QtCore import QCoreApplication, QUrl
+from PySide6.QtCore import QUrl
 from forge_client import CompletionResult, GenerationCancelled
 from .controller import ChatController
 from .store import SessionStore
 
 
-APP = QCoreApplication.instance() or QCoreApplication([])
+from ._test_app import APP
 
 
 def until(predicate, timeout=5):
@@ -178,6 +178,42 @@ class BackendTests(unittest.TestCase):
         self.controller._on_worker("chunk", (self.controller._generation, "late"))
         self.assertEqual(self.controller.messages.rows[-1]["textContent"], "partial")
 
+    def test_burst_stream_is_rendered_in_batches_and_final_text_is_preserved(self):
+        from forge_client import ForgeGatewayClient
+        text = "stream 中文 " * 200
+        client = ForgeGatewayClient(self.controller.gateway)
+        def stream(messages, on_chunk, **_):
+            for character in text:
+                on_chunk(character)
+            return CompletionResult(text)
+        client.stream_chat = stream
+        self.controller._client = client
+        updates = []
+        self.controller.messages.dataChanged.connect(lambda *_: updates.append(1))
+        self.controller.draft = "burst"
+        self.controller.send()
+        until(lambda: not self.controller.busy)
+        self.assertEqual(self.controller.messages.rows[-1]["textContent"], text)
+        self.assertEqual(self.controller.store.sessions()[0]["messages"][-1]["content"], text)
+        self.assertLess(len(updates), 20)
+        self.controller.newSession()
+        until(lambda: not self.controller._stream_timer.isActive())
+        self.assertEqual(self.controller.messages.rows, [])
+
+    def test_invalid_legacy_timestamps_do_not_prevent_history_loading(self):
+        legacy = self.home / "gui" / "sessions.json"
+        rows = [{"id": str(i), "updated": value, "title": "legacy",
+                 "messages": [{"role": "user", "content": "retained"}]}
+                for i, value in enumerate((None, "invalid", "NaN", "Infinity", 1e100, 10))]
+        SessionStore.atomic(legacy, {"sessions": rows})
+        original = legacy.read_bytes()
+        self.controller._refresh_sessions()
+        self.assertEqual(self.controller.sessions.rowCount(), len(rows))
+        self.assertEqual(self.controller.sessions.rows[0]["sessionId"], "5")
+        self.controller.selectSession("0")
+        self.assertEqual(self.controller.messages.rows[0]["textContent"], "retained")
+        self.assertEqual(legacy.read_bytes(), original)
+
     def test_work_chat_dispatches_discovered_mcp_tool_after_approval(self):
         from forge_client import ForgeGatewayClient
         from .permissions import authorize
@@ -218,6 +254,144 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(approved, [(name, {'keyword': '北京'})])
         self.assertEqual(dispatched, [(target, {'keyword': '北京'})])
         self.assertEqual(self.controller._history[-1].content, '地图结果')
+        expected = [{'name': name, 'outcome': '已完成', 'detail': 'fixture'}]
+        self.assertEqual(self.controller.messages.rows[-1]['toolReceipts'], expected)
+        sid = self.controller.sessionId
+        self.controller.newSession()
+        self.controller.selectSession(sid)
+        self.assertEqual(self.controller.messages.rows[-1]['toolReceipts'], expected)
+
+    def test_chat_handoff_withholds_computer_tools_until_qt_switches_mode(self):
+        from forge_client import ForgeGatewayClient
+        from .conversation import ENTER_WORK
+        from .permissions import authorize
+
+        owner = self.controller
+        owner.setConversationMode('chat')
+        client = ForgeGatewayClient(owner.gateway)
+        approved, calls, stages, context_calls = [], [], [], []
+
+        def declaration(name):
+            return {'type': 'function', 'function': {'name': name}}
+
+        def tool_call(identifier, name, args):
+            return {'id': identifier, 'type': 'function',
+                    'function': {'name': name, 'arguments': json.dumps(args)}}
+
+        def work_mcp(target, args, cancel):
+            self.assertEqual(owner.conversationMode, 'work')
+            calls.append((target, args))
+            return {'ok': True, 'content': 'captured fixture'}
+
+        def list_tools(**_):
+            self.assertEqual(owner.conversationMode, 'work')
+            return [declaration('forge_read_file')]
+
+        def stream(messages, *, tools, **_):
+            mode = owner.conversationMode
+            stages.append(mode)
+            names = {schema['function']['name'] for schema in tools}
+            if stages == ['chat']:
+                self.assertEqual(names, {'mcp_notes', ENTER_WORK})
+                return CompletionResult('', tool_calls=[
+                    tool_call('t1', ENTER_WORK, {'reason': '需要检查项目文件'}),
+                    tool_call('t2', 'computer_screenshot', {}),
+                    tool_call('t3', 'forge_read_file', {'path': 'README.md'}),
+                    tool_call('t4', 'mcp_notes', {'topic': 'test'}),
+                ])
+            self.assertEqual(mode, 'work')
+            self.assertNotIn(ENTER_WORK, names)
+            self.assertIn('computer_screenshot', names)
+            if len(stages) == 2:
+                self.assertIn('先进入 Work', json.loads(messages[-3].content)['error'])
+                self.assertIn('先进入 Work', json.loads(messages[-2].content)['error'])
+                self.assertTrue(json.loads(messages[-1].content)['ok'])
+                return CompletionResult('', tool_calls=[tool_call('t5', 'computer_screenshot', {})])
+            return CompletionResult('完成')
+
+        client.stream_chat = stream
+        client.list_tools = list_tools
+        client.call_tool = lambda *_: self.fail('unexpected gateway dispatch')
+        owner._client = client
+        owner.chat_mcp_tools = lambda: ({'mcp_notes': (declaration('mcp_notes'), 'notes')},
+            lambda target, args, _: calls.append((target, args)) or {'ok': True, 'content': 'notes'})
+        owner.mcp_tools = lambda: ({'computer_screenshot': (declaration('computer_screenshot'), 'screen')}, work_mcp)
+        owner.tool_authorizer = lambda: lambda name, args, token: authorize('manual', self.home, name, args,
+            lambda tool, payload, _: approved.append(tool) or True, token)
+        owner.work_context = lambda *_: context_calls.append(owner.conversationMode) or ''
+        owner.draft = '请求测试'
+        owner.send()
+        until(lambda: not owner.busy)
+        self.assertFalse(owner.error, owner.error)
+        self.assertEqual(stages, ['chat', 'work', 'work'])
+        self.assertEqual(context_calls, ['work'])
+        self.assertEqual(approved, ['mcp_notes', 'computer_screenshot'])
+        self.assertEqual(calls, [('notes', {'topic': 'test'}), ('screen', {})])
+        outcomes = [row['outcome'] for row in owner.messages.rows[-1]['toolReceipts']]
+        self.assertEqual(outcomes, ['已完成', '未执行', '未执行', '已完成', '已完成'])
+
+    def test_plain_chat_stays_in_chat_and_never_lists_work_tools(self):
+        from forge_client import ForgeGatewayClient
+        owner = self.controller
+        owner.setConversationMode('chat')
+        client = ForgeGatewayClient(owner.gateway)
+        client.list_tools = lambda **_: self.fail('Chat fetched gateway tools')
+        client.stream_chat = lambda *_args, **_kwargs: CompletionResult('普通对话')
+        owner._client = client
+        owner.work_context = lambda *_: self.fail('Chat started Work preparation')
+        owner.draft = '你好'
+        owner.send()
+        until(lambda: not owner.busy)
+        self.assertFalse(owner.error, owner.error)
+        self.assertEqual(owner.conversationMode, 'chat')
+        self.assertEqual(owner.messages.rows[-1]['textContent'], '普通对话')
+
+    def test_disabled_work_tools_stay_disabled_after_reload_and_are_not_dispatched(self):
+        from forge_client import ForgeGatewayClient
+        from .tool_settings import WorkToolSettings
+
+        client = ForgeGatewayClient(self.controller.gateway)
+        schemas = [{'type': 'function', 'function': {'name': 'forge_' + name}}
+                   for name in ('calculator', 'unit_convert')]
+        settings = self.controller.toolSettings
+        settings._receive('', schemas, '')
+        settings.setAll(False)
+        settings.setTool('forge_unit_convert', True)
+        reloaded = WorkToolSettings(self.controller)
+        enabled, accepts = reloaded.snapshot()
+        self.assertTrue(enabled)
+        self.assertTrue(accepts('forge_unit_convert'))
+        self.assertFalse(accepts('calculator'))
+
+        client.list_tools = lambda **_: schemas
+        client.call_tool = lambda name, _: self.fail(f'{name} should not execute')
+        def stream(messages, *, tools, **_):
+            self.assertEqual(tools, schemas[1:])
+            if messages[-1].role == 'tool':
+                return CompletionResult('tool unavailable')
+            return CompletionResult('', tool_calls=[{'id': 'disabled-call', 'type': 'function',
+                'function': {'name': 'calculator', 'arguments': '{"expression":"1+2"}'}}])
+        client.stream_chat = stream
+        self.controller._client = client
+        self.controller.tool_authorizer = lambda: lambda *_: self.fail('Disabled call reached approval')
+        self.controller.draft = 'fixture'
+        self.controller.send()
+        until(lambda: not self.controller.busy)
+        self.assertFalse(self.controller.error, self.controller.error)
+        self.assertEqual(self.controller.messages.rows[-1]['toolReceipts'][0]['outcome'], '未执行')
+
+        settings.setEnabled(False)
+        self.assertFalse(WorkToolSettings(self.controller).snapshot()[0])
+        client.list_tools = lambda **_: self.fail('Master switch should not query tool metadata')
+        def text_only(_messages, *, tools, **_):
+            self.assertIsNone(tools)
+            return CompletionResult('text response')
+        client.stream_chat = text_only
+        self.controller.draft = 'fixture without tools'
+        self.controller.send()
+        until(lambda: not self.controller.busy)
+        self.assertFalse(self.controller.error, self.controller.error)
+        self.assertEqual(self.controller._history[-1].content, 'text response')
 
     def test_unknown_tool_result_is_saved_and_retry_never_reexecutes_it(self):
         from forge_client import ForgeGatewayClient, GatewayError
@@ -237,6 +411,8 @@ class BackendTests(unittest.TestCase):
         until(lambda: not self.controller.busy)
         self.assertEqual(len(calls), 1)
         self.assertIn('结果未知', self.controller.error)
+        self.assertEqual(self.controller.messages.rows[-1]['toolReceipts'][0]['outcome'], '结果未知')
+        self.assertFalse(self.controller.canRetry)
         self.assertEqual(self.controller._history[-1].role, 'tool')
         self.controller.retry()
         APP.processEvents()

@@ -14,6 +14,9 @@ Popup {
     readonly property bool english: language === "en"
     readonly property bool showForm: !guide || step === 2
     property bool finishAfterSave: false
+    property string initialProvider: ""
+    property string initialUrl: ""
+    signal mediaModelsRequested()
     modal: true; focus: true; padding: 24
     closePolicy: guide || service.busy ? Popup.NoAutoClose : Popup.CloseOnEscape
     Overlay.modal: Rectangle { color: "#9905080d" }
@@ -21,13 +24,17 @@ Popup {
 
     function showGuide() {
         guide = true
+        initialProvider = ""
+        initialUrl = ""
         step = 0
         language = service.language
         experience = service.initialDeveloper ? "developer" : "simple"
         Qt.callLater(open)
     }
-    function showSetup() {
+    function showSetup(providerId, url) {
         guide = false
+        initialProvider = providerId || ""
+        initialUrl = url || ""
         language = service.language
         experience = service.developer ? "developer" : "simple"
         Qt.callLater(open)
@@ -38,7 +45,7 @@ Popup {
             close()
         }
     }
-    onOpened: form.reset()
+    onOpened: form.reset(initialProvider, initialUrl)
     onClosed: { form.clearKey(); finishAfterSave = false }
     Connections {
         target: panel.service
@@ -155,6 +162,13 @@ Popup {
                 text: panel.english ? "Back" : "上一步"; glyph: "chevron-left"
                 enabled: !panel.service.busy
                 onClicked: { panel.service.clearStatus(); panel.step-- }
+            }
+            GlassButton {
+                visible: !panel.guide
+                material: panel.material; quiet: true; glyph: "image"
+                text: panel.english ? "Image and video" : "图片与视频模型"
+                enabled: !panel.service.busy
+                onClicked: { panel.close(); panel.mediaModelsRequested() }
             }
             Item { Layout.fillWidth: true }
             GlassButton {

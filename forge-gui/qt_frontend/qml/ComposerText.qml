@@ -7,10 +7,12 @@ Flickable {
     property alias text: input.text
     property alias placeholder: input.placeholderText
     property string editorName: ""
+    property bool submitOnEnter: true
+    property bool horizontalScroll: false
     signal submit()
     clip: true
     boundsBehavior: Flickable.StopAtBounds
-    contentWidth: width
+    contentWidth: horizontalScroll ? Math.max(width, input.contentWidth) : width
     contentHeight: input.height
 
     // Resize and scroll can move the cursor without changing its local rect.
@@ -41,7 +43,7 @@ Flickable {
         height: Math.max(field.height, implicitHeight)
         color: "#edf0f4"; placeholderTextColor: "#97a2b0"
         font.pixelSize: 15
-        wrapMode: TextEdit.Wrap; selectByMouse: true
+        wrapMode: field.horizontalScroll ? TextEdit.NoWrap : TextEdit.Wrap; selectByMouse: true
         leftPadding: 0; rightPadding: 0; topPadding: 4; bottomPadding: 4
         background: null
         selectionColor: "#526477"; selectedTextColor: "white"
@@ -54,7 +56,7 @@ Flickable {
             Qt.callLater(field.refreshInputMethod)
         }
         function enter(event) {
-            if (inputMethodComposing || (event.modifiers & Qt.ShiftModifier)) {
+            if (!field.submitOnEnter || inputMethodComposing || (event.modifiers & Qt.ShiftModifier)) {
                 event.accepted = false
             } else {
                 field.submit()

@@ -2,7 +2,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
-from .permissions import authorize
+from .permissions import authorize, tool_available
 from .conversation import run
 from forge_client import ChatMessage, CompletionResult, GenerationCancelled
 
@@ -45,6 +45,29 @@ class DesktopBoundaryTests(unittest.TestCase):
         self.assertFalse(calls)
         authorize('manual', Path.cwd(), 'forge_public_search', args, approved)
         self.assertEqual(calls[0][0], 'public_search')
+
+    def test_sandbox_advertises_calculator_but_hides_unavailable_tools(self):
+        available = ['forge_calculator', 'forge_list_dir', 'forge_7zip_extract']
+        unavailable = ['forge_shell_exec', 'forge_comfyui_run', 'forge_forge_write_file']
+        class Client:
+            def list_tools(self, **_):
+                return [{'type': 'function', 'function': {'name': name}} for name in available + unavailable]
+            def stream_chat(self, _messages, *, tools, **_):
+                observed.extend(row['function']['name'] for row in tools)
+                return CompletionResult('ok')
+        observed = []
+        cancelled = threading.Event()
+        def approve(*_):
+            self.fail('calculator should not ask for approval')
+        def sandbox(name, arguments, cancel):
+            authorize('sandbox', Path.cwd(), name, arguments, approve, cancel)
+        run(Client(), [ChatMessage('user', 'test')], model='test', effort=None, cancel=cancelled,
+            authorize=sandbox, tool_filter=lambda name: tool_available('sandbox', name),
+            chunk=lambda _: None, checkpoint=lambda _: None, status=lambda _: None, next_round=lambda: None)
+        self.assertEqual(observed, available)
+        sandbox('forge_calculator', {'expression': '1+2'}, cancelled)
+        with self.assertRaises(ValueError):
+            sandbox('forge_apply_patch', {'patches': 7}, cancelled)
 
     def test_cancelling_a_batch_completes_protocol_without_more_dispatch(self):
         cancel, checkpoints, executions = threading.Event(), [], []

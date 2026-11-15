@@ -89,10 +89,16 @@ PRESETS: tuple[ProviderPreset, ...] = (
     ),
     ProviderPreset(
         "qwen", "千问 AI 平台 / 阿里云百炼", "qwen",
-        aliases=("qwen", "dashscope", "bailian", "百炼", "千问"),
+        aliases=("qwen", "dashscope", "bailian", "alibaba", "aliyun", "阿里云", "百炼", "千问"),
         source=SOURCE_USER, docs="https://bailian.console.aliyun.com",
         plans=(
-            Plan("OpenAI 兼容", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+            Plan("中国内地", "https://dashscope.aliyuncs.com/compatible-mode/v1", source=SOURCE_DOCS),
+            Plan("国际 · 新加坡", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+                 note="使用新加坡地域的 API Key", source=SOURCE_DOCS),
+            Plan("中国香港", "https://cn-hongkong.dashscope.aliyuncs.com/compatible-mode/v1",
+                 note="使用中国香港地域的 API Key", source=SOURCE_DOCS),
+            Plan("美国", "https://dashscope-us.aliyuncs.com/compatible-mode/v1",
+                 note="使用美国地域的 API Key", source=SOURCE_DOCS),
         ),
     ),
     ProviderPreset(
@@ -127,35 +133,35 @@ PRESETS: tuple[ProviderPreset, ...] = (
     ),
     ProviderPreset(
         "siliconflow", "硅基流动 SiliconFlow", "siliconflow",
-        aliases=("siliconflow", "硅基流动"),
+        aliases=("siliconflow", "siliconcloud", "silicon", "硅基流动"),
         source=SOURCE_CONFIRMED, docs="https://cloud.siliconflow.cn",
         plans=(
-            Plan("OpenAI 兼容（海外）", "https://api.siliconflow.com/v1"),
-            Plan("OpenAI 兼容（国内备选）", "https://api.siliconflow.cn/v1"),
+            Plan("中国内地", "https://api.siliconflow.cn/v1", source=SOURCE_DOCS),
+            Plan("国际", "https://api.siliconflow.com/v1"),
         ),
     ),
     ProviderPreset(
         "qiniu", "七牛云 AI 推理", "qiniu",
-        aliases=("qiniu", "七牛", "七牛云"),
-        source=SOURCE_DOCS, docs="https://developer.qiniu.com",
+        aliases=("qiniu", "qnaigc", "七牛", "七牛云"),
+        source=SOURCE_DOCS, docs="https://developer.qiniu.com/aitokenapi/13379/real-time-ai-interface-api",
         plans=(
-            Plan("OpenAI 兼容", "https://openai.qiniu.com/v1",
+            Plan("标准 API", "https://api.qnaigc.com/v1"),
+            Plan("Dify 兼容入口", "https://openai.qiniu.com/v1",
                  note="七牛官方 dify-plugin 文档给出的默认 Endpoint"),
-            Plan("API 网关（qnaigc）", "https://api.qnaigc.com/v1",
-                 note="七牛 API Key 网关；本机配置里在用其中转"),
             Plan("中转 bypass", "https://api.qnaigc.com/bypass/openai/v1",
-                 note="本机配置里为此形态"),
+                 note="本机已有的中转接入方式", source=SOURCE_USER),
         ),
     ),
     ProviderPreset(
         "volces", "火山方舟 · 豆包", "doubao",
-        aliases=("volces", "ark", "doubao", "豆包", "方舟", "火山"),
+        aliases=("volces", "volcengine", "ark", "doubao", "豆包", "方舟", "火山", "字节"),
         source=SOURCE_USER, docs="https://console.volcengine.com/ark",
         plans=(
-            Plan("标准 API", "https://ark.cn-beijing.volces.com/api/v3"),
+            Plan("标准 API", "https://ark.cn-beijing.volces.com/api/v3",
+                 note="可填写已开通的模型 ID 或推理接入点 ID", source=SOURCE_DOCS),
             Plan("Coding Plan（OpenAI）", "https://ark.cn-beijing.volces.com/api/coding/v3", source=SOURCE_DOCS),
-            Plan("套餐 / Plan", "https://ark.cn-beijing.volces.com/api/plan/v3",
-                 note="本机配置里为此形态"),
+            Plan("Agent Plan", "https://ark.cn-beijing.volces.com/api/plan/v3",
+                 note="使用 Agent Plan 专用 API Key", source=SOURCE_DOCS),
         ),
     ),
     ProviderPreset(
@@ -185,6 +191,24 @@ PRESETS: tuple[ProviderPreset, ...] = (
         ),
     ),
     # ── 海外 ──────────────────────────────────────────────
+    ProviderPreset(
+        "openrouter", "OpenRouter", "openrouter",
+        aliases=("openrouter", "模型路由", "模型聚合"),
+        source=SOURCE_DOCS, docs="https://openrouter.ai/docs/quickstart",
+        plans=(Plan("OpenAI 兼容", "https://openrouter.ai/api/v1"),),
+    ),
+    ProviderPreset(
+        "mistral", "Mistral AI", "mistral",
+        aliases=("mistral", "codestral"),
+        source=SOURCE_DOCS, docs="https://docs.mistral.ai/api/endpoint/chat",
+        plans=(Plan("标准 API", "https://api.mistral.ai/v1"),),
+    ),
+    ProviderPreset(
+        "together", "Together AI", "together",
+        aliases=("together", "together.ai", "together.xyz"),
+        source=SOURCE_DOCS, docs="https://docs.together.ai/docs/quickstart",
+        plans=(Plan("标准 API", "https://api.together.ai/v1"),),
+    ),
     ProviderPreset(
         "anthropic", "Anthropic Claude", "claude",
         aliases=("anthropic", "claude"),

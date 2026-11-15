@@ -195,3 +195,40 @@ class Document:
     def reload(self):
         other = self.open(self.boundary, self.path, encoding=self.encoding)
         self.__dict__.update(other.__dict__)
+
+
+def save_document_as(boundary, document, target):
+    """另存为：把当前缓冲区写到 ``target`` 并把文档改绑到新路径。
+
+    原子写（临时文件 + ``os.replace``）、换行 / 编码规则与
+    ``Document._save`` 一致；经 ``boundary.path()`` 校验（项目外与
+    .git 内拒绝）。成功后 ``document`` 的 path / original / digest /
+    status 改绑到新文件——VS Code 语义：另存为后当前标签编辑的就
+    是新文件。与 ``Document.save`` 的差异：不检查外部冲突（目标是
+    用户显式选择的新路径，允许覆盖），但仍持 FileRevisionGuard 的
+    工作区锁，避免与其它标签的保存交错。
+    """
+    from forge.development.guard import FileRevisionGuard
+    p = boundary.path(target)
+    raw = document.text.replace('\n', document.newline).encode(
+        document.encoding, 'strict')
+    if len(raw) > MAX_DOCUMENT:
+        raise ValueError('Editor file limit is 2 MiB')
+    with FileRevisionGuard(boundary.root).lock:
+        fd, name = tempfile.mkstemp(prefix='.' + p.name + '-',
+                                    suffix='.tmp', dir=p.parent)
+        try:
+            with os.fdopen(fd, 'wb') as stream:
+                stream.write(raw)
+            os.replace(name, p)
+        except BaseException:
+            try:
+                os.unlink(name)
+            except OSError:
+                pass
+            raise
+    document.path = p
+    document.original = document.text
+    document.digest = fingerprint(raw)
+    document.status = 'clean'
+    return p

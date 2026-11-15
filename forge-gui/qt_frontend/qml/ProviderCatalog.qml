@@ -6,6 +6,8 @@ Popup {
     id: catalog
     objectName: "providerCatalog"
     required property var material
+    required property var setup
+    signal setupRequested(string provider, string url)
     property var selected: null
     property bool prepared: false
     function showCatalog(query) {
@@ -60,7 +62,14 @@ Popup {
                     text: modelData.label; glyph: "plug"; detail: modelData.url
                     status: modelData.usable ? modelData.wire : "暂不支持"
                     enabled: modelData.usable
-                    onClicked: { workbench.useProviderPlan(catalog.selected.key, modelData.label); catalog.close() }
+                    onClicked: {
+                        const provider = catalog.selected.key
+                        catalog.close()
+                        if (modelData.wire === "openai" && catalog.setup.vendors.some(v => v.id === provider))
+                            catalog.setupRequested(provider, modelData.url)
+                        else
+                            workbench.useProviderPlan(provider, modelData.label)
+                    }
                 }
             }
         }

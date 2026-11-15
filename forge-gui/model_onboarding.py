@@ -21,6 +21,7 @@ from urllib.parse import urlsplit
 from forge.secret_http import open_authenticated
 
 from config_model import load_user_layer, save_user_layer
+from provider_catalog import BY_KEY
 
 
 @dataclass(frozen=True)
@@ -39,7 +40,12 @@ class Vendor:
     aliases: tuple[str, ...] = field(default_factory=tuple)
 
 
-# 地址与 provider_catalog / Android 引导目录一致（2026-10 核对）；
+def _catalog_vendor(vendor_id, blurb, models, console, *, color, letter):
+    preset = BY_KEY[vendor_id]
+    return Vendor(vendor_id, preset.name, blurb, preset.plans[0].base_url, models, console,
+                  color=color, letter=letter, aliases=preset.aliases)
+
+
 # 第一项为推荐默认。
 VENDORS: tuple[Vendor, ...] = (
     Vendor("deepseek", "DeepSeek", "写代码强·便宜", "https://api.deepseek.com",
@@ -51,9 +57,20 @@ VENDORS: tuple[Vendor, ...] = (
     Vendor("zhipu", "智谱 GLM", "国内直连", "https://open.bigmodel.cn/api/paas/v4",
            ("GLM-5.3", "glm-4.7"), "https://open.bigmodel.cn/usercenter/apikeys",
            color="#3859FF", letter="智"),
-    Vendor("qwen", "通义千问", "阿里云百炼", "https://dashscope.aliyuncs.com/compatible-mode/v1",
-           ("qwen3-coder-plus", "qwen-plus"), "https://bailian.console.aliyun.com/?apiKey=1",
-           color="#615CED", letter="通"),
+    _catalog_vendor("qwen", "通义千问 · 多地域", ("qwen3-coder-plus", "qwen-plus"),
+                    "https://bailian.console.aliyun.com/?apiKey=1", color="#615CED", letter="通"),
+    _catalog_vendor("openrouter", "多厂商模型路由", ("openrouter/auto",),
+                    "https://openrouter.ai/keys", color="#695BE8", letter="O"),
+    _catalog_vendor("qiniu", "七牛云 AI Token API", ("deepseek-v3",),
+                    "https://portal.qiniu.com", color="#1664FF", letter="七"),
+    _catalog_vendor("volces", "豆包 · 标准 API 与套餐", ("doubao-seed-2-1-pro-260915",),
+                    "https://console.volcengine.com/ark", color="#587AFF", letter="火"),
+    _catalog_vendor("siliconflow", "中国内地与国际端点", ("Qwen/Qwen3-8B",),
+                    "https://cloud.siliconflow.cn", color="#6E29F6", letter="硅"),
+    _catalog_vendor("mistral", "Mistral 与 Codestral", ("mistral-small-latest",),
+                    "https://console.mistral.ai", color="#B95508", letter="M"),
+    _catalog_vendor("together", "Together AI 开源模型", ("MiniMaxAI/MiniMax-M3.1-Flash",),
+                    "https://api.together.ai", color="#4270A5", letter="T"),
     Vendor("anthropic", "Claude", "需海外网络", "https://api.anthropic.com",
            ("claude-sonnet-5", "claude-haiku-4-5"), "https://console.anthropic.com/settings/keys",
            wire="anthropic", color="#D97757", letter="A"),

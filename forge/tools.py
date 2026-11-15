@@ -1712,6 +1712,34 @@ def build_builtin_registry(
         except Exception as exc:
             return ToolResult(ok=False, error=f"calculator failed: {exc}")
 
+    from .utility_tools import TEXT_ACTIONS, UNITS, convert_unit, transform_text
+
+    @host_tool('text_transform', 'Transform supplied UTF-8 text in memory. Supports Base64 and URL encoding, '
+               'SHA-256 and MD5 checksums, JSON formatting and queries, case conversion, and counts.',
+               no_defer=True, tags=('text', 'utility'),
+               schema={'action': {'type': 'string', 'enum': list(TEXT_ACTIONS)},
+                       'text': 'string', 'path': {'type': 'string', 'description': 'JSON query only, e.g. items[0].name.'},
+                       'mode': {'type': 'string', 'description': 'Case: upper, lower, title. Count: all, chars, words, lines.'}})
+    def text_transform(args, ctx):
+        try:
+            result = transform_text(args.get('action'), args.get('text'), mode=args.get('mode'), path=args.get('path'))
+            return ToolResult(ok=True, content=result)
+        except (ValueError, TypeError, RecursionError) as exc:
+            return ToolResult(ok=False, error=str(exc))
+
+    @host_tool('unit_convert', 'Convert length, mass, temperature, data size, or time. '
+               'KB/MB/GB/TB use powers of 1000; KiB/MiB/GiB/TiB use powers of 1024.',
+               no_defer=True, tags=('math', 'utility'),
+               schema={'value': 'number', 'from': {'type': 'string', 'enum': list(UNITS)},
+                       'to': {'type': 'string', 'enum': list(UNITS)}})
+    def unit_convert(args, ctx):
+        try:
+            value, source, target = args.get('value'), args.get('from'), args.get('to')
+            result = convert_unit(value, source, target)
+            return ToolResult(ok=True, content=f'{value:g} {source} = {result:.12g} {target}', meta={'value': result})
+        except (ValueError, OverflowError) as exc:
+            return ToolResult(ok=False, error=str(exc))
+
     return reg
 
 

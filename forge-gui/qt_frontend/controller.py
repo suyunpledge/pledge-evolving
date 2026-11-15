@@ -17,12 +17,14 @@ from forge_client import ChatMessage, ForgeGatewayClient, GenerationCancelled
 from http_transport import open_response
 from interaction_model import ATTACHMENT_HEADER, MAX_CONTEXT_CHARS, compose_prompt, read_attachment
 from forge.secrets import redact
+from .conversation import preview_receipt
 from .store import SessionStore
+from .tool_settings import WorkToolSettings
 
 
 class RowsModel(QAbstractListModel):
     NAMES = ("sessionId", "title", "subtitle", "roleName", "textContent", "state", "stamp", "changeKey", "changeInfo",
-             "historyIndex")
+             "historyIndex", "toolReceipts")
 
     def __init__(self, rows=(), parent=None):
         super().__init__(parent)
@@ -39,6 +41,8 @@ class RowsModel(QAbstractListModel):
             i = int(role) - int(Qt.ItemDataRole.UserRole)
             if 0 <= i < len(self.NAMES):
                 name = self.NAMES[i]
+                if name == "toolReceipts":
+                    return self.rows[index.row()].get(name, [])
                 return self.rows[index.row()].get(name, -1 if name == "historyIndex" else "")
         return None
 
@@ -73,6 +77,8 @@ class ChatController(QObject):
         self.store = SessionStore(home)
         self.demo = demo
         self.factory = client_factory
+        self.work_context = None
+        self._code_highlighters = {}
         self._prefs = {} if demo else self.store.preferences()
         self._sessions = RowsModel(parent=self)
         self._messages = RowsModel(parent=self)
@@ -101,11 +107,20 @@ class ChatController(QObject):
         self._connection_epoch = 0
         self._closed = False
         self.tool_authorizer = None
+        self.tool_filter = None
         self.mcp_tools = None
+        self.chat_mcp_tools = None
+        self._conversation_mode = 'work'
+        self._tool_settings = WorkToolSettings(self)
         from .changes import ReplyChanges
         self._changes = ReplyChanges(self)
         self._client = None
         self._workerEvent.connect(self._on_worker, Qt.ConnectionType.QueuedConnection)
+        self._pending_chunks = []
+        self._stream_timer = QTimer(self)
+        self._stream_timer.setSingleShot(True)
+        self._stream_timer.setInterval(32)
+        self._stream_timer.timeout.connect(self._flush_stream)
         self._draft_timer = QTimer(self)
         self._draft_timer.setSingleShot(True)
         self._draft_timer.setInterval(650)
@@ -120,7 +135,11 @@ class ChatController(QObject):
     title = Property(str, lambda self: self._title, notify=changed)
     busy = Property(bool, lambda self: self._busy or self._changes.busy, notify=changed)
     changeReview = Property(QObject, lambda self: self._changes, constant=True)
+    toolSettings = Property(QObject, lambda self: self._tool_settings, constant=True)
+    conversationMode = Property(str, lambda self: self._conversation_mode, notify=changed)
     connected = Property(bool, lambda self: self._connected, notify=changed)
+    canRetry = Property(bool, lambda self: self.connected and not self.busy and bool(self._history)
+                        and self._history[-1].role == 'user', notify=changed)
     status = Property(str, lambda self: self._status, notify=changed)
     error = Property(str, lambda self: self._error, notify=changed)
     model = Property(str, lambda self: self._model, notify=changed)
@@ -373,7 +392,7 @@ class ChatController(QObject):
 
     @Slot()
     def retry(self):
-        if self.busy or not self._connected or not self._history or self._history[-1].role != "user":
+        if not self.canRetry:
             return
         self._messages.reset(self._transcript_rows())
         self._start_generation()
@@ -447,23 +466,45 @@ class ChatController(QObject):
         return True
 
     def _transcript_rows(self):
-        rows = []
+        rows, receipts, names = [], [], {}
+
+        def flush_receipts():
+            if receipts:
+                rows.append({'roleName': 'assistant', 'textContent': '', 'state': 'complete',
+                             'toolReceipts': receipts.copy()})
+                receipts.clear()
+                names.clear()
+
         for index, message in enumerate(self._history):
+            if message.role == 'user':
+                flush_receipts()
+            if isinstance(message.tool_calls, list):
+                for call in message.tool_calls:
+                    if isinstance(call, dict) and isinstance(call.get('id'), str):
+                        function = call.get('function')
+                        if isinstance(function, dict) and isinstance(function.get('name'), str):
+                            names[call['id']] = function['name']
             if message.role == 'tool':
                 try:
                     result = json.loads(message.content)
-                    text = '工具执行完成' if result.get('ok') else '工具未完成：' + str(result.get('error', ''))
-                except (ValueError, AttributeError):
-                    text = '工具记录已保存'
-                rows.append({'roleName': 'tool', 'textContent': text, 'state': 'complete'})
+                except ValueError:
+                    result = None
+                receipts.append(preview_receipt(names.get(message.tool_call_id, ''), result))
             elif message.content:
                 rows.append({'roleName': message.role, 'textContent': message.user_text or message.content,
                              'state': 'complete', 'historyIndex': index})
+                if message.role == 'assistant' and not message.tool_calls and receipts:
+                    rows[-1]['toolReceipts'] = receipts.copy()
+                    receipts.clear()
+                    names.clear()
             for key, entry in self._changes.entries.items():
                 if entry.get('anchor') == index:
                     if message.role != 'assistant' or not message.content:
-                        rows.append({'roleName': 'assistant', 'textContent': '', 'state': 'complete'})
+                        rows.append({'roleName': 'assistant', 'textContent': '', 'state': 'complete',
+                                     'toolReceipts': receipts.copy()})
+                        receipts.clear()
                     rows[-1].update(changeKey=key, changeInfo=self._changes.card(key))
+        flush_receipts()
         for key, entry in self._changes.entries.items():
             if entry.get('anchor') is None:
                 rows.append({'roleName': 'assistant', 'textContent': '已移除对话的文件修改', 'state': 'complete',
@@ -487,19 +528,45 @@ class ChatController(QObject):
         client = self._client or self.factory(self._gateway)
         self._client = client
         authorize = self.tool_authorizer() if self.tool_authorizer is not None else None
-        connection = self.mcp_tools() if self.mcp_tools is not None else None
+        tools_enabled, tool_filter = self._tool_settings.snapshot()
+        connection = self.mcp_tools() if tools_enabled and self.mcp_tools is not None else None
+        chat_mode = self._conversation_mode == 'chat'
+        chat_connection = None
+        if chat_mode:
+            chat_connection = self.chat_mcp_tools() if tools_enabled and self.chat_mcp_tools else ({}, None)
         change_notice = self._changes.notice()
         temperature = self._temperature
+
+        def update_status(value):
+            self._workerEvent.emit('status', (generation, value))
+
+        def work_context(history):
+            if self.work_context is None:
+                return change_notice
+            return change_notice + '\n' + self.work_context(history, model, cancel, update_status)
+
+        def enter_work(reason, history):
+            arrived = threading.Event()
+            self._workerEvent.emit('enter_work', (generation, (reason, arrived)))
+            while not arrived.wait(.05):
+                if cancel.is_set():
+                    raise GenerationCancelled('已停止生成')
+            if cancel.is_set():
+                raise GenerationCancelled('已停止生成')
+            return work_context(history)
+
         def worker():
             try:
                 from .conversation import run
+                context = change_notice if chat_mode else work_context(messages)
                 result = run(client, messages, model=model, effort=None if effort == 'off' else effort,
-                    cancel=cancel, authorize=authorize,
-                    system_context=change_notice, mcp=connection, temperature=temperature,
+                    cancel=cancel, authorize=authorize, tool_filter=tool_filter, tools_enabled=tools_enabled,
+                    system_context=context, mcp=connection, temperature=temperature,
+                    chat_mcp=chat_connection, enter_work=enter_work if chat_mode else None,
                     chunk=lambda chunk: self._workerEvent.emit('chunk', (generation, chunk)),
                     checkpoint=lambda history: self._workerEvent.emit('checkpoint', (generation, history)),
                     receipt=lambda name, response: self._workerEvent.emit('receipt', (generation, (name, response))),
-                    status=lambda status: self._workerEvent.emit('status', (generation, status)),
+                    status=update_status,
                     next_round=lambda: self._workerEvent.emit('next_round', (generation, '')))
                 self._workerEvent.emit("done", (generation, result.text))
             except GenerationCancelled:
@@ -508,12 +575,36 @@ class ChatController(QObject):
                 self._workerEvent.emit("failed", (generation, str(redact(str(exc)))))
         threading.Thread(target=worker, daemon=True, name="Forge-Qt-stream").start()
 
+    @Slot(str)
+    def setConversationMode(self, mode):
+        if self.busy or mode not in {'chat', 'work'} or mode == self._conversation_mode:
+            return
+        self._conversation_mode = mode
+        self.changed.emit()
+
     @Slot()
     def stop(self):
         if self._busy:
             self._cancel.set()
             self._status = "正在停止…"
             self.changed.emit()
+
+    @Slot(QObject)
+    def formatCode(self, quick_document):
+        from .code_highlighter import CodeHighlighter
+        document = quick_document.textDocument()
+        key = id(document)
+        if key not in self._code_highlighters:
+            self._code_highlighters[key] = CodeHighlighter(document)
+            document.destroyed.connect(lambda: self._code_highlighters.pop(key, None))
+
+    def _flush_stream(self):
+        self._stream_timer.stop()
+        if self._pending_chunks:
+            self._reply += ''.join(self._pending_chunks)
+            self._pending_chunks.clear()
+            self._messages.update(self._reply_index, textContent=self._reply)
+            self.streamAdvanced.emit()
 
     @Slot(str, object)
     def _on_worker(self, kind, payload):
@@ -535,6 +626,15 @@ class ChatController(QObject):
         generation, value = payload
         if generation != self._generation or not self._busy:
             return
+        if kind == 'enter_work':
+            reason, arrived = value
+            if not self._cancel.is_set():
+                self._conversation_mode = 'work'
+                self._status = '已切换至 Work · ' + reason
+                self.navigateRequested.emit('chat')
+                self.changed.emit()
+            arrived.set()
+            return
         if kind == 'checkpoint':
             self._history = value
             self._changes.anchor()
@@ -542,20 +642,25 @@ class ChatController(QObject):
             return
         if kind == 'receipt':
             self._changes.record(*value)
+            receipts = self._messages.rows[self._reply_index].get('toolReceipts', [])
+            self._messages.update(self._reply_index, toolReceipts=[*receipts, preview_receipt(*value)])
             return
         if kind == 'status':
             self._status = value
             self.changed.emit()
             return
         if kind == 'next_round':
+            self._stream_timer.stop()
+            self._pending_chunks.clear()
             self._reply = ''
             self._messages.update(self._reply_index, textContent='')
             return
         if kind == "chunk":
-            self._reply += value
-            self._messages.update(self._reply_index, textContent=self._reply)
-            self.streamAdvanced.emit()
+            self._pending_chunks.append(value)
+            if not self._stream_timer.isActive():
+                self._stream_timer.start()
             return
+        self._flush_stream()
         if kind == "done":
             self._reply = value or self._reply
         if self._reply and kind != "failed":
@@ -634,6 +739,7 @@ class ChatController(QObject):
         self.navigateRequested.emit('work' if view == 'chat' else view)
 
     def shutdown(self):
+        self._flush_stream()
         self._save_draft()
         self._persist()
         self._closed = True

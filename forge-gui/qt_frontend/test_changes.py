@@ -5,7 +5,6 @@ import tempfile
 import threading
 import time
 import unittest
-from PySide6.QtCore import QCoreApplication
 from forge.gateway import GatewayConfig, serve
 from forge.policy import Policy, Mode
 from forge.tools import build_builtin_registry
@@ -13,7 +12,7 @@ from forge_client import ForgeGatewayClient, CompletionResult, GatewayError, Gen
 from .controller import ChatController
 from .permissions import authorize
 
-APP = QCoreApplication.instance() or QCoreApplication([])
+from ._test_app import APP
 
 
 def until(predicate):

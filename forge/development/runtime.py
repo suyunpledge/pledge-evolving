@@ -349,7 +349,7 @@ class DevelopmentRuntime:
         try:
             snap = self.last_snapshot
             if (not trusted or not snap or snap.mode != WorkMode.DEVELOPMENT or
-                    self.state.mode != WorkMode.DEVELOPMENT or snap.permission != 'workspace-write'):
+                    self.state.mode != WorkMode.DEVELOPMENT or snap.permission not in {'workspace-write', 'manual-approval', 'full-access'}):
                 raise PermissionError('Explicit human approval and a Development workspace-write task are required')
             from .testing import execute
             from forge.policy import Decision

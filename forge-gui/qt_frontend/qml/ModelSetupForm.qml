@@ -14,15 +14,31 @@ ColumnLayout {
     spacing: 9
     enabled: !service.busy
 
-    function reset() {
-        vendors.currentIndex = 0
+    function reset(providerId, planUrl) {
+        vendors.currentIndex = Math.max(0, vendors.indexOfValue(providerId || service.preferredVendor))
         loadVendor()
+        if (planUrl) setPlan(planUrl)
+    }
+    function normalize(address) {
+        return address.trim().replace(/\/+$/, "")
+    }
+    function syncPlan() {
+        const address = normalize(urlField.text)
+        plans.currentIndex = plans.model.findIndex(plan => normalize(plan.url) === address)
+    }
+    function setPlan(url) {
+        urlField.text = url
+        modelField.text = normalize(url) === normalize(defaults.url) ? defaults.model : defaults.exampleModel
+        syncPlan()
+        keyField.clear()
+        service.clearStatus()
     }
     function loadVendor() {
         defaults = service.defaults(vendorId)
         modelField.text = defaults.model || ""
         urlField.text = defaults.url || ""
         temperatureField.text = defaults.temperature || "0.7"
+        syncPlan()
         keyField.clear()
         service.clearStatus()
     }
@@ -53,9 +69,29 @@ ColumnLayout {
         model: form.service.vendors; textRole: "name"; valueRole: "id"
         leftPadding: 12
         Accessible.name: form.english ? "Provider" : "模型厂商"
-        contentItem: Text { text: vendors.displayText; color: "#edf1f5"; verticalAlignment: Text.AlignVCenter }
+        contentItem: Text { text: vendors.displayText; color: "#edf1f5"; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
         background: GlassSurface { material: form.material; radius: 10; tint: "#56212d38" }
         onActivated: form.loadVendor()
+    }
+    FieldLabel { visible: plans.visible; text: form.english ? "Endpoint preset" : "地区或套餐" }
+    ComboBox {
+        id: plans; objectName: "setupPlan"
+        visible: model.length > 1
+        Layout.fillWidth: true; Layout.preferredHeight: 38
+        model: form.defaults.plans || []; textRole: "label"; valueRole: "url"
+        leftPadding: 12
+        displayText: currentIndex >= 0 ? currentText : (form.english ? "Custom endpoint" : "自定义地址")
+        Accessible.name: form.english ? "Endpoint preset" : "地区或套餐"
+        contentItem: Text { text: plans.displayText; color: "#edf1f5"; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
+        background: GlassSurface { material: form.material; radius: 10; tint: "#56212d38" }
+        onActivated: form.setPlan(currentValue)
+    }
+    FieldLabel {
+        readonly property string note: plans.currentIndex >= 0 ? plans.model[plans.currentIndex]?.note || "" : ""
+        Layout.fillWidth: true
+        visible: plans.visible && note.length > 0
+        wrapMode: Text.Wrap
+        text: note
     }
     FieldLabel { visible: !form.keyless; text: "API " + (form.english ? "key" : "密钥") }
     SetupField {
@@ -68,6 +104,7 @@ ColumnLayout {
     FieldLabel { text: form.english ? "API base URL" : "自定义接口地址" }
     SetupField {
         id: urlField; objectName: "setupEndpoint"
+        onTextEdited: form.syncPlan()
         Accessible.name: form.english ? "API base URL" : "自定义接口地址"
         placeholderText: "https://api.example.com/v1"
         inputMethodHints: Qt.ImhUrlCharactersOnly | Qt.ImhNoPredictiveText
