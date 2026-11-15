@@ -16,6 +16,7 @@ import provider_catalog
 from .mcp_catalog import McpCatalog
 from .search_service import SearchService
 from .wallpaper import Wallpaper
+from .onboarding import Onboarding
 
 PAGES = {'chat': 'Work 对话', 'development': 'Coding', 'task': '任务', 'files': '文件与项目',
          'tools': '工具与插件', 'config': '模型与配置', 'agents': 'Agents', 'knowledge': '知识库',
@@ -28,7 +29,8 @@ class WorkbenchController(QObject):
     changed = Signal()
     browserChanged = Signal()
     permissionRequested = Signal()
-    gatewayChanged = Signal(str)
+    gatewayChanged = Signal(str, object)
+    gatewayChanging = Signal()
     codingChanged = Signal()
     codingDraftChanged = Signal()
     codingFocusRequested = Signal()
@@ -43,6 +45,11 @@ class WorkbenchController(QObject):
         self._mcp = McpCatalog(self.home, self, demo=demo)
         self._search = SearchService(self.home, self, demo=demo)
         self._wallpaper = Wallpaper(self.home, self)
+        self._onboarding = Onboarding(self.home, self, demo=demo)
+        self._onboarding.can_save = lambda: not (self._busy or self._unsaved or self._pending or self._input_busy())
+        self._onboarding.saved.connect(self._apply_model_setup)
+        self._onboarding.preferencesChanged.connect(self._apply_onboarding_preferences)
+        self._model_setup_pending = ''
         self._page, self._profile = 'chat', 'sandbox'
         self._navigation = False
         self._browser_visible, self._browser_loaded = False, False
@@ -99,6 +106,7 @@ class WorkbenchController(QObject):
     mcp = Property(QObject, lambda s: s._mcp, constant=True)
     search = Property(QObject, lambda s: s._search, constant=True)
     wallpaper = Property(QObject, lambda s: s._wallpaper, constant=True)
+    onboarding = Property(QObject, lambda s: s._onboarding, constant=True)
     busy = Property(bool, lambda s: s._busy, notify=changed)
     hasUnsaved = Property(bool, lambda s: s._unsaved, notify=changed)
     error = Property(str, lambda s: s._error, notify=changed)
@@ -149,7 +157,7 @@ class WorkbenchController(QObject):
 
     @Slot(str)
     def navigate(self, page):
-        if page not in PAGES:
+        if page not in PAGES or (not self._onboarding.developer and page in {'development', 'evolution'}):
             return
         if page == self._page and (self._native_ready or page in {'chat', 'connectors'}):
             return
@@ -209,6 +217,20 @@ class WorkbenchController(QObject):
             self._send({'command': 'connector_account', 'account': self._pending_account})
             self._pending_account = ''
 
+    def _apply_onboarding_preferences(self):
+        if not self._onboarding.developer and self._page in {'development', 'evolution'}:
+            self.navigate('chat')
+        if self._window is not None:
+            self._send({'command': 'onboarding_preferences', **self._onboarding.preferences()})
+
+    def _apply_model_setup(self, row_id):
+        self.gatewayChanging.emit()
+        if self._window is None:
+            self._model_setup_pending = row_id
+            self.start_host()
+        else:
+            self._send({'command': 'apply_model_setup', 'provider': row_id})
+
     @Slot()
     def start_host(self):
         if self._process.state() != QProcess.ProcessState.NotRunning:
@@ -260,6 +282,10 @@ class WorkbenchController(QObject):
             self._status = ''
             self.changed.emit()
             self._send({'command': 'permission', 'profile': self._profile})
+            self._apply_onboarding_preferences()
+            if self._model_setup_pending:
+                self._apply_model_setup(self._model_setup_pending)
+                self._model_setup_pending = ''
             self._send_navigation()
         elif kind == 'coding_state':
             first = not self._coding.get('ready')
@@ -320,7 +346,7 @@ class WorkbenchController(QObject):
                 self._profile = row['profile']
             self.changed.emit()
         elif kind == 'gateway':
-            self.gatewayChanged.emit(row['url'])
+            self.gatewayChanged.emit(row['url'], row.get('temperature'))
         elif kind == 'error':
             self._error = str(row.get('message', '工作台载入失败'))
             self.changed.emit()

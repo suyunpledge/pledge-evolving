@@ -81,6 +81,40 @@ class WorkbenchTests(unittest.TestCase):
         self.temp.cleanup()
         self.assertFalse(self.warnings, self.warnings)
 
+    def test_onboarding_selection_is_visible_and_persists_when_going_back(self):
+        def item(name):
+            widget = self.window.findChild(QObject, name)
+            self.assertIsNotNone(widget, name)
+            return widget
+
+        def assert_selected(selected, other, label):
+            self.assertTrue(selected.property('checked'))
+            self.assertTrue(selected.findChild(QObject, 'guideSelectionOutline').property('visible'))
+            self.assertEqual(selected.property('status'), label)
+            self.assertEqual(selected.property('actionGlyph'), 'circle-check')
+            self.assertFalse(other.property('checked'))
+            self.assertEqual(other.property('status'), '')
+
+        popup = item('onboardingPopup')
+        self.assertTrue(QMetaObject.invokeMethod(popup, 'showGuide'))
+        until(lambda: popup.property('opened'))
+        chinese, english = item('guideChinese'), item('guideEnglish')
+        assert_selected(chinese, english, '已选中')
+        english.clicked.emit()
+        self.assertEqual(popup.property('step'), 0)
+        assert_selected(english, chinese, 'Selected')
+        item('setupContinue').clicked.emit()
+        simple, developer = item('guideSimple'), item('guideDeveloper')
+        simple.clicked.emit()
+        assert_selected(simple, developer, 'Selected')
+        developer.clicked.emit()
+        self.assertEqual(popup.property('step'), 1)
+        assert_selected(developer, simple, 'Selected')
+        item('guideBack').clicked.emit()
+        assert_selected(english, chinese, 'Selected')
+        item('setupContinue').clicked.emit()
+        assert_selected(developer, simple, 'Selected')
+
     def test_public_search_panel_and_browser_use_selected_engine(self):
         from urllib.parse import parse_qs, urlsplit
 

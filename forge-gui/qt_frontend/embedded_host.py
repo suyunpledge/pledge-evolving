@@ -15,8 +15,12 @@ sys.path[:0] = [str(GUI), str(GUI.parent)]
 
 import tkinter as tk
 import forge_gui_v2 as legacy
+import secret_store
+from interaction_model import model_label
+from qt_frontend.store import SessionStore
 from forge.desktop_permissions import PROFILES
 from forge.secrets import redact
+from forge import sampling
 from qt_frontend.permissions import authorize
 
 _output_lock = threading.Lock()
@@ -37,8 +41,16 @@ class HostedApp(legacy.ForgeGuiApp):
         self._mounted_page = 'work'
         self._navigating = False
         self._navigation_epoch = 0
+        self._pending_model_restart = False
         legacy.DEFAULT_FORGE_HOME = home
+        if home != Path.home() / '.forge':
+            legacy._desktop_config_path = lambda: home / 'forge-desktop.json'
+            secret_store.SECRETS_FILE = home / 'secrets.json'
         super().__init__(root)
+        prefs = SessionStore.read(home / 'gui' / 'qt' / 'onboarding.json', {})
+        if isinstance(prefs, dict):
+            self.apply_onboarding_preferences(prefs)
+            self.select_setup_provider(prefs.get('provider'))
         self._inline_pages = {}
         self._hide_chrome()
 
@@ -289,9 +301,52 @@ class HostedApp(legacy.ForgeGuiApp):
             return
         super()._do_send()
 
+    def apply_onboarding_preferences(self, prefs):
+        language = prefs.get('language')
+        locale = self.root._forge_locale
+        if language in {'en', 'zh-CN'} and locale.language != language:
+            self._change_language(language)
+
+    def select_setup_provider(self, row_id):
+        if not row_id:
+            return False
+        row = next((row for row in self.user_rows if row['id'] == row_id and not row.get('disabled')), None)
+        if row is None or row['config'].get('wire', 'openai') != 'openai':
+            return False
+        self._suppress_model_trace = True
+        try:
+            self.model_var.set(model_label(row['config']))
+        finally:
+            self._suppress_model_trace = False
+        return True
+
+    def apply_model_setup(self, row_id):
+        if self.host_busy() or self.host_unsaved():
+            emit('error', message='模型已保存，下一次启动工作台时生效。')
+            return
+        self._reload_configuration()
+        if self.select_setup_provider(row_id) and not self._host_demo:
+            if self._gateway_starting or (self.gateway_proc and self._gateway_ready_proc is None):
+                self._pending_model_restart = True
+            else:
+                self._restart_gateway()
+
+    def _gateway_started(self, proc, upstream):
+        super()._gateway_started(proc, upstream)
+        if self._pending_model_restart:
+            self._pending_model_restart = False
+            self._restart_gateway()
+
     def _gateway_up(self, proc):
         super()._gateway_up(proc)
-        emit('gateway', url=self.gateway_url)
+        if self._pending_model_restart:
+            self._pending_model_restart = False
+            self._restart_gateway()
+            return
+        provider = self._gateway_provider
+        temperature = sampling.resolve(provider.get('model'), provider.get('wire', 'openai'),
+                                       provider.get('temperature'))
+        emit('gateway', url=self.gateway_url, temperature=temperature)
 
     def _on_close(self):
         emit('navigate', page='chat')
@@ -346,6 +401,8 @@ def main():
                 command = row.get('command')
                 if command == 'navigate': app.host_navigate(row.get('page'), row.get('ticket'))
                 elif command == 'provider_plan': app.use_provider_plan(row.get('provider'), row.get('plan'))
+                elif command == 'onboarding_preferences': app.apply_onboarding_preferences(row)
+                elif command == 'apply_model_setup': app.apply_model_setup(row.get('provider'))
                 elif command == 'connector_account' and row.get('account') in {'github', 'microsoft'}:
                     if app._mounted_page == 'connector_accounts':
                         app.desktop_features.account.set(row['account'])

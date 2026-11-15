@@ -15,6 +15,9 @@ ApplicationWindow {
     readonly property real sideWidth: width < 1000 ? 220 : 252
     readonly property real browserPanelWidth: workbench.browserVisible ? Math.min(workbench.browserWidth, Math.max(300, width - sideWidth - 450)) : 0
     readonly property real mainRight: width - browserPanelWidth
+    readonly property var setup: workbench.onboarding
+    readonly property bool english: setup.language === "en"
+    function label(zh, en) { return english ? en : zh }
     readonly property bool chatVisible: workbench.page === "chat"
     readonly property real columnWidth: Math.min(800, mainRight - sideWidth - 48)
     readonly property real columnX: sideWidth + (mainRight - sideWidth - columnWidth) / 2
@@ -26,7 +29,7 @@ ApplicationWindow {
         if (chatVisible) Qt.callLater(focusWorkComposer)
     }
     function focusWorkComposer() {
-        if (chatVisible) {
+        if (chatVisible && !onboarding.opened) {
             editor.forceActiveFocus()
             editorScroll.refreshInputMethod()
         }
@@ -34,6 +37,10 @@ ApplicationWindow {
     property bool followTail: true
     property bool exitConfirmed: false
     onClosing: event => {
+        if (setup.busy) {
+            event.accepted = false
+            return
+        }
         if (!exitConfirmed && (workbench.hasUnsaved || workbench.busy || controller.busy || workbench.mcp.saving)) {
             event.accepted = false
             exitPopup.open()
@@ -278,19 +285,19 @@ ApplicationWindow {
     GlassButton {
         visible: !workbench.navigationOpen
         material: window.material; x: 18; y: 184; width: window.sideWidth - 36; height: 42
-        glyph: "square-pen"; text: "新建对话"; enabled: !controller.busy
+        glyph: "square-pen"; text: window.label("新建对话", "New chat"); enabled: !controller.busy
         onClicked: { workbench.navigate("chat"); controller.newSession() }
     }
     TextField {
         id: search
         visible: !workbench.navigationOpen
         x: 18; y: 238; width: window.sideWidth - 36; height: 36
-        placeholderText: "搜索对话"; placeholderTextColor: "#7f8a99"
+        placeholderText: window.label("搜索对话", "Search chats"); placeholderTextColor: "#7f8a99"
         color: "#dbe0e6"; leftPadding: 13; rightPadding: 10
         onTextChanged: window.sessionQuery = text.toLowerCase()
         background: GlassSurface { material: window.material; radius: 11; emphasis: search.activeFocus ? 0.6 : 0; tint: "#18263140" }
     }
-    Text { visible: !workbench.navigationOpen; x: 24; y: 298; text: "最近对话"; color: "#7f8998"; font.pixelSize: 11 }
+    Text { visible: !workbench.navigationOpen; x: 24; y: 298; text: window.label("最近对话", "Recent chats"); color: "#7f8998"; font.pixelSize: 11 }
     ListView {
         id: history
         visible: !workbench.navigationOpen
@@ -333,7 +340,7 @@ ApplicationWindow {
         x: 18; y: window.height - 148; width: window.sideWidth - 36; spacing: 8
         GlassButton { objectName: "permissionButton"; material: window.material; width: parent.width; glyph: "shield"; text: workbench.permissionLabel; selected: true; tip: "切换执行权限"; enabled: !controller.busy && !workbench.busy && workbench.approvals.length === 0; onClicked: permissionPopup.open() }
         GlassButton { material: window.material; width: parent.width; glyph: "panels-top-left"; text: "Work 完整功能"; quiet: true; onClicked: controller.openWorkbench("chat") }
-        GlassButton { material: window.material; width: parent.width; glyph: "settings-2"; text: "连接与外观"; quiet: true; onClicked: settings.open() }
+        GlassButton { material: window.material; objectName: "connectionSettingsEntry"; width: parent.width; glyph: "settings-2"; text: window.label("连接与外观", "Connection & appearance"); quiet: true; onClicked: settings.open() }
     }
     Text {
         x: window.sideWidth + 28; y: 29; width: window.mainRight - x - 190
@@ -341,7 +348,8 @@ ApplicationWindow {
     }
     Row {
         x: window.mainRight - width - 20; y: 20; spacing: 8
-        GlassButton { visible: workbench.page === "config"; material: window.material; glyph: "box"; text: "模型厂商"; onClicked: workbench.showProviderCatalog("") }
+        GlassButton { objectName: "quickSetupToolbar"; visible: workbench.page === "config"; material: window.material; glyph: "plug"; text: window.label("一键配置", "Quick setup"); onClicked: onboarding.showSetup() }
+        GlassButton { visible: workbench.page === "config" && setup.developer; material: window.material; glyph: "box"; text: "模型厂商"; onClicked: workbench.showProviderCatalog("") }
         GlassButton { visible: workbench.page === "connector_accounts"; material: window.material; glyph: "chevron-left"; text: "MCP 接口"; onClicked: workbench.navigate("connectors") }
         GlassButton { visible: window.chatVisible; material: window.material; glyph: "pencil"; quiet: true; tip: "重命名对话"; onClicked: { renameField.text = controller.title; renamePopup.open() } }
         GlassButton {
@@ -494,6 +502,7 @@ ApplicationWindow {
     }
     Popup {
         id: settings
+        objectName: "connectionSettings"
         parent: Overlay.overlay
         anchors.centerIn: parent
         width: Math.min(440, window.width - 48); padding: 24
@@ -510,6 +519,8 @@ ApplicationWindow {
             TextField { id: endpoint; width: parent.width; height: 42; color: "#e2e7ec"; selectByMouse: true; leftPadding: 12; background: GlassSurface { material: window.material; radius: 12; emphasis: endpoint.activeFocus ? 0.8 : 0 } }
             Text { width: parent.width; text: "沿用现有 Forge 网关。Coding、工具和连接器均在当前工作台内打开。"; color: "#939eac"; wrapMode: Text.Wrap; font.pixelSize: 12 }
             GlassButton { material: window.material; width: parent.width; text: "应用并连接"; glyph: "plug"; enabled: !controller.busy; onClicked: {controller.setGateway(endpoint.text); settings.close()} }
+            GlassButton { objectName: "quickSetupEntry"; material: window.material; width: parent.width; text: window.label("一键配置模型", "Quick model setup"); glyph: "plug"; onClicked: { settings.close(); onboarding.showSetup() } }
+            GlassButton { objectName: "welcomeGuideEntry"; material: window.material; width: parent.width; text: window.label("重新运行首次引导", "Run setup guide"); glyph: "sparkles"; onClicked: { settings.close(); onboarding.showGuide() } }
             GlassButton { material: window.material; width: parent.width; text: "壁纸"; glyph: "image"; onClicked: { settings.close(); wallpaperSettings.open() } }
             GlassButton { material: window.material; width: parent.width; text: "调整玻璃外观"; glyph: "sliders-horizontal"; onClicked: {settings.close(); options.open()} }
             GlassButton { material: window.material; width: parent.width; text: "打开完整工作台"; quiet: true; onClicked: controller.openWorkbench("config") }
@@ -537,6 +548,13 @@ ApplicationWindow {
         width: Math.min(1040, window.width - 64); height: Math.min(760, window.height - 64)
         material: window.material; service: controller.changeReview
         onClosed: editor.forceActiveFocus()
+    }
+    Onboarding {
+        id: onboarding
+        parent: Overlay.overlay; anchors.centerIn: parent
+        width: Math.min(610, window.width - 48)
+        material: window.material; service: window.setup
+        onClosed: window.focusWorkComposer()
     }
     ProviderCatalog {
         id: providerCatalog
@@ -638,12 +656,12 @@ ApplicationWindow {
         x: 18; y: 82; width: window.sideWidth - 36; spacing: 9
         Row {
             spacing: 8
-            GlassButton { material: window.material; width: (parent.parent.width - 8) / 2; text: "Work"; glyph: "message-square"; selected: window.chatVisible; onClicked: workbench.navigate("chat") }
-            GlassButton { material: window.material; width: (parent.parent.width - 8) / 2; text: "Coding"; glyph: "code"; selected: workbench.page === "development"; onClicked: workbench.navigate("development") }
+            GlassButton { material: window.material; width: setup.developer ? (parent.parent.width - 8) / 2 : parent.parent.width; text: "Work"; glyph: "message-square"; selected: window.chatVisible; onClicked: workbench.navigate("chat") }
+            GlassButton { material: window.material; width: (parent.parent.width - 8) / 2; text: "Coding"; visible: setup.developer; glyph: "code"; selected: workbench.page === "development"; onClicked: workbench.navigate("development") }
         }
         Row {
             spacing: 8
-            GlassButton { material: window.material; width: (parent.parent.width - 8) / 2; text: "功能"; glyph: "grid-2x2"; selected: workbench.navigationOpen; onClicked: workbench.toggleNavigation() }
+            GlassButton { material: window.material; width: (parent.parent.width - 8) / 2; text: window.label("功能", "Tools"); glyph: "grid-2x2"; selected: workbench.navigationOpen; onClicked: workbench.toggleNavigation() }
             GlassButton {
                 material: window.material; width: (parent.parent.width - 8) / 2
                 text: workbench.browserVisible ? "收起浏览器" : "浏览器"
@@ -661,19 +679,19 @@ ApplicationWindow {
             id: navigation; width: parent.width; spacing: 7
             Repeater {
                 model: [
-                    {key:"task", label:"任务", icon:"list-checks"},
-                    {key:"files", label:"文件与项目", icon:"folder"},
-                    {key:"search", label:"联网搜索", icon:"search"},
-                    {key:"tools", label:"工具与插件", icon:"blocks"},
-                    {key:"config", label:"模型与配置", icon:"settings-2"},
+                    {key:"task", label:window.label("任务", "Tasks"), icon:"list-checks"},
+                    {key:"files", label:window.label("文件与项目", "Files & projects"), icon:"folder"},
+                    {key:"search", label:window.label("联网搜索", "Web search"), icon:"search"},
+                    {key:"tools", label:window.label("工具与插件", "Tools & plugins"), icon:"blocks"},
+                    {key:"config", label:window.label("模型与配置", "Model settings"), icon:"settings-2"},
                     {key:"agents", label:"Agents", icon:"users"},
-                    {key:"knowledge", label:"知识库", icon:"book-open"},
-                    {key:"evolution", label:"演化", icon:"sparkles"},
-                    {key:"schedules", label:"定时任务", icon:"calendar-clock"},
-                    {key:"connectors", label:"连接器", icon:"plug"},
-                    {key:"computer", label:"电脑操作", icon:"monitor"},
-                    {key:"preview", label:"代码预览", icon:"file-code"}
-                ]
+                    {key:"knowledge", label:window.label("知识库", "Knowledge"), icon:"book-open"},
+                    {key:"evolution", label:window.label("演化", "Evolution"), icon:"sparkles"},
+                    {key:"schedules", label:window.label("定时任务", "Schedules"), icon:"calendar-clock"},
+                    {key:"connectors", label:window.label("连接器", "Connectors"), icon:"plug"},
+                    {key:"computer", label:window.label("电脑操作", "Computer use"), icon:"monitor"},
+                    {key:"preview", label:window.label("代码预览", "Code preview"), icon:"file-code"}
+                ].filter(item => setup.developer || item.key !== "evolution")
                 GlassButton {
                     required property var modelData
                     material: window.material; width: navigation.width
@@ -682,6 +700,7 @@ ApplicationWindow {
                     onClicked: {
                         if (modelData.key === "search") searchPanel.open()
                         else if (modelData.key === "files") workbench.toggleFiles()
+                        else if (modelData.key === "config" && !setup.developer) onboarding.showSetup()
                         else workbench.navigate(modelData.key)
                     }
                 }
@@ -709,7 +728,7 @@ ApplicationWindow {
             id: nativeContainer; objectName: "nativeContainer"
             anchors.fill: parent
             anchors.topMargin: hostError.visible ? hostError.height + 8 : 0
-            visible: parent.visible && workbench.nativePageReady && workbench.nativeWindow !== null && workbench.approvals.length === 0 && !(workbench.browserVisible && workbench.browserExpanded) && !settings.opened && !wallpaperSettings.opened && !searchPanel.opened && !renamePopup.opened && !exitPopup.opened && !changeReview.opened && !providerCatalog.opened
+            visible: parent.visible && workbench.nativePageReady && workbench.nativeWindow !== null && workbench.approvals.length === 0 && !(workbench.browserVisible && workbench.browserExpanded) && !settings.opened && !wallpaperSettings.opened && !searchPanel.opened && !renamePopup.opened && !exitPopup.opened && !changeReview.opened && !providerCatalog.opened && !onboarding.opened
             window: workbench.nativeWindow
             onVisibleChanged: if (workbench.nativeWindow) workbench.nativeWindow.visible = visible
         }
@@ -808,14 +827,19 @@ ApplicationWindow {
             }
         }
     }
-    Shortcut { sequence: "Ctrl+N"; enabled: window.chatVisible && !reviseMessage.opened; onActivated: controller.newSession() }
-    Shortcut { sequence: "Ctrl+K"; enabled: window.chatVisible && !reviseMessage.opened; onActivated: {search.forceActiveFocus(); search.selectAll()} }
-    Shortcut { sequence: "Escape"; enabled: controller.busy && !options.opened && !settings.opened && !wallpaperSettings.opened && !searchPanel.opened && !modelMenu.opened; onActivated: controller.stop() }
+    Shortcut { sequence: "Ctrl+N"; enabled: window.chatVisible && !reviseMessage.opened && !onboarding.opened; onActivated: controller.newSession() }
+    Shortcut { sequence: "Ctrl+K"; enabled: window.chatVisible && !reviseMessage.opened && !onboarding.opened; onActivated: {search.forceActiveFocus(); search.selectAll()} }
+    Shortcut { sequence: "Escape"; enabled: controller.busy && !options.opened && !settings.opened && !wallpaperSettings.opened && !searchPanel.opened && !modelMenu.opened && !onboarding.opened; onActivated: controller.stop() }
     Connections {
         target: controller
         function onDraftChanged() { if (editor.text !== controller.draft) editor.text = controller.draft }
         function onFocusComposer() { window.focusWorkComposer(); window.followTail = true; messages.positionViewAtEnd() }
         function onStreamAdvanced() { if (window.followTail) Qt.callLater(messages.positionViewAtEnd) }
     }
-    Component.onCompleted: { focusWorkComposer(); Qt.callLater(refreshBackdrop); Qt.callLater(controller.refreshConnection) }
+    Component.onCompleted: {
+        if (setup.needsGuide && (typeof smokeMode === "undefined" || !smokeMode)) onboarding.showGuide()
+        else focusWorkComposer()
+        Qt.callLater(refreshBackdrop)
+        Qt.callLater(controller.refreshConnection)
+    }
 }

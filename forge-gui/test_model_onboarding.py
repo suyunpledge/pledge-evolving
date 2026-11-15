@@ -87,6 +87,21 @@ class ConnectionTests(unittest.TestCase):
         self.assertIn("2", result["message"])
         self.assertEqual(seen, {"url": "https://api.deepseek.com/models", "auth": "Bearer sk-1"})
 
+    def test_custom_address_is_the_only_probe_target(self):
+        seen = []
+
+        def opener(request, timeout):
+            seen.append((request.full_url, request.get_header("Authorization")))
+            return _Response(b'{"data": [{"id": "custom-model"}]}')
+
+        result = mo.test_connection("deepseek", "sk-test", base_url="http://127.0.0.1:8765/custom/v1/",
+                                    opener=opener)
+        self.assertTrue(result["ok"])
+        self.assertEqual(seen, [("http://127.0.0.1:8765/custom/v1/models", "Bearer sk-test")])
+        self.assertFalse(mo.test_connection("deepseek", "sk-test", base_url="",
+                                            opener=opener)["ok"])
+        self.assertEqual(len(seen), 1)
+
     def test_anthropic_uses_its_own_header(self):
         seen = {}
 

@@ -7,7 +7,7 @@ from forge_client import ChatMessage, GatewayError, GenerationCancelled
 from work_tools import prepare_calls, invoke
 
 
-def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint, status, next_round, receipt=None, system_context='', mcp=None):
+def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint, status, next_round, receipt=None, system_context='', mcp=None, temperature=0.7):
     tools = None
     mcp_tools, call_mcp = mcp or ({}, None)
     if authorize is not None:
@@ -24,7 +24,7 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
         if cancel.is_set():
             raise GenerationCancelled('已停止生成')
         current = [ChatMessage('system', system_context), *messages] if system_context else messages
-        result = client.stream_chat(current, model=model, reasoning_effort=effort,
+        result = client.stream_chat(current, model=model, reasoning_effort=effort, temperature=temperature,
                                     on_chunk=chunk, cancel_event=cancel, tools=tools)
         if not result.tool_calls:
             return result

@@ -16,6 +16,9 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlsplit
+
+from forge.secret_http import open_authenticated
 
 from config_model import load_user_layer, save_user_layer
 
@@ -84,21 +87,56 @@ def configured_models(home: Path) -> list[str]:
     return [row["id"] for row in rows if _is_model_row(row)]
 
 
-def apply_key(home: Path, vendor_id: str, api_key: str, *, model: str | None = None) -> dict:
+DEFAULT_VENDOR = "deepseek"
+DEFAULT_TEMPERATURE = 0.7
+
+
+def _connection(vendor_id, api_key, base_url):
+    v = vendor(vendor_id)
+    if v is None:
+        raise ValueError("请选择模型厂商。")
+    key = api_key.strip()
+    if not v.keyless and not key:
+        raise ValueError("请先粘贴 API 密钥。")
+    if any(ch.isspace() or ord(ch) < 32 for ch in key):
+        raise ValueError("密钥里有空格或换行，请重新复制。")
+    address = (v.base_url if base_url is None else base_url.strip()).rstrip("/")
+    try:
+        parsed = urlsplit(address)
+        parsed.port
+        valid = (parsed.scheme in ("http", "https") and parsed.hostname
+                 and parsed.username is None and parsed.password is None
+                 and not any(ch.isspace() or ord(ch) < 32 for ch in address)
+                 and not any(ch in address for ch in ("?", "#", chr(92))))
+    except ValueError:
+        valid = False
+    if not valid:
+        raise ValueError("请输入有效的 HTTP / HTTPS 接口地址，不含账号、参数或片段。")
+    return v, "" if v.keyless else key, address
+
+
+def apply_key(home: Path, vendor_id: str, api_key: str, *, model: str | None = None,
+              base_url: str | None = None, temperature: float | str | None = None,
+              credential_path: Path | None = None) -> dict:
     """写入（或覆盖）一个厂商的模型行，并把密钥存进密钥库。
 
     返回 ``{"ok": True, "row_id", "model"}`` 或 ``{"ok": False, "error"}``；
     任何一步失败都不留半截配置：先存密钥，再原子写用户层。
     """
-    v = vendor(vendor_id)
-    if v is None:
-        return {"ok": False, "error": f"未知厂商：{vendor_id}"}
-    key = (api_key or "").strip()
-    if not v.keyless and not key:
-        return {"ok": False, "error": "请先粘贴 API 密钥"}
-    if any(ch.isspace() for ch in key):
-        return {"ok": False, "error": "密钥里有空格或换行，请重新复制"}
-    chosen = model or v.models[0]
+    try:
+        v, key, address = _connection(vendor_id, api_key, base_url)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    chosen = (model or v.models[0]).strip()
+    if not chosen or any(ch in chosen for ch in ("\r", "\n", ",")):
+        return {"ok": False, "error": "请输入有效的模型 ID。"}
+    if temperature is not None:
+        try:
+            temperature = float(temperature)
+            if not 0 <= temperature <= 2:
+                raise ValueError
+        except (ValueError, TypeError):
+            return {"ok": False, "error": "温度需是 0 到 2 之间的数字。"}
     home = Path(home)
     try:
         latest = load_user_layer(home)
@@ -110,7 +148,9 @@ def apply_key(home: Path, vendor_id: str, api_key: str, *, model: str | None = N
         row = {"id": v.id, "name": f"provider:{v.id}"}
         rows.append(row)
     config = dict(row.get("config") or {})
-    config.update(wire=v.wire, baseURL=v.base_url, model=chosen)
+    config.update(wire=v.wire, baseURL=address, model=chosen)
+    if temperature is not None:
+        config["temperature"] = temperature
     config.setdefault("smallModel", chosen)
     if v.keyless:
         config.pop("apiKey", None)
@@ -119,28 +159,27 @@ def apply_key(home: Path, vendor_id: str, api_key: str, *, model: str | None = N
     row["config"] = config
     row.pop("disabled", None)
     try:
-        if not v.keyless:
-            import secret_store
-            secret_store.set_provider(v.id, key)
-        save_user_layer(home, rows, expected_rows=latest)
-    except (OSError, ValueError) as exc:
-        return {"ok": False, "error": f"保存失败：{exc}"}
-    return {"ok": True, "row_id": v.id, "model": chosen}
+        import secret_store
+        if v.keyless:
+            save_user_layer(home, rows, expected_rows=latest)
+        else:
+            with secret_store.update_provider(v.id, key, path=credential_path):
+                save_user_layer(home, rows, expected_rows=latest)
+    except (OSError, ValueError):
+        return {"ok": False, "error": "保存失败，请检查配置文件并重试。"}
+    return {"ok": True, "row_id": v.id, "model": chosen, "wire": v.wire}
 
 
-def test_connection(vendor_id: str, api_key: str, *, timeout: float = 8.0,
-                    opener=urllib.request.urlopen) -> dict:
-    """列一次模型目录验证地址与密钥（不产生计费调用）。
-
-    在后台线程里调用；``opener`` 可注入以便离线测试。
-    """
-    v = vendor(vendor_id)
-    if v is None:
-        return {"ok": False, "error": f"未知厂商：{vendor_id}"}
-    key = (api_key or "").strip()
-    if not v.keyless and not key:
-        return {"ok": False, "error": "请先粘贴 API 密钥"}
-    url = v.base_url.rstrip("/") + ("/v1/models" if v.wire == "anthropic" else "/models")
+def test_connection(vendor_id: str, api_key: str, *, base_url: str | None = None,
+                    timeout: float = 8.0, opener=open_authenticated) -> dict:
+    """Probe the model list on the selected API base without following redirects."""
+    try:
+        v, key, address = _connection(vendor_id, api_key, base_url)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    if v.wire == "anthropic" and not urlsplit(address).path.endswith("/v1"):
+        address += "/v1"
+    url = address + "/models"
     headers = {"Accept": "application/json"}
     if v.wire == "anthropic":
         headers.update({"x-api-key": key, "anthropic-version": "2023-06-01"})
@@ -155,9 +194,8 @@ def test_connection(vendor_id: str, api_key: str, *, timeout: float = 8.0,
             return {"ok": False, "error": "密钥无效或没有权限，请检查是否复制完整"}
         return {"ok": False, "error": f"服务返回 {exc.code}，可以先保存，稍后再试"}
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        reason = getattr(exc, "reason", exc)
         hint = "本地 Ollama 没有运行" if v.keyless else "网络连不上该厂商（海外厂商可能需要代理）"
-        return {"ok": False, "error": f"{hint}：{reason}"}
+        return {"ok": False, "error": f"{hint}，请检查接口地址。"}
     try:
         data = json.loads(body.decode("utf-8", "replace"))
         count = len(data.get("data") or data.get("models") or [])

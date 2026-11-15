@@ -85,6 +85,7 @@ class ChatController(QObject):
         self._connected = False
         self._error = ""
         self._attachments = []
+        self._temperature = 0.7
         self._models = ["default"]
         self._model = str(self._prefs.get("model", "default"))
         self._reasoning = str(self._prefs.get("reasoning", "medium"))
@@ -270,6 +271,10 @@ class ChatController(QObject):
 
     @Slot(str)
     def setGateway(self, value):
+        self.setManagedGateway(value, None)
+
+    @Slot(str, object)
+    def setManagedGateway(self, value, temperature):
         parsed = urlsplit(value.strip())
         if self._busy:
             return
@@ -278,8 +283,17 @@ class ChatController(QObject):
             self.changed.emit()
             return
         self._gateway = value.strip().rstrip("/")
+        self._temperature = 0.7 if temperature is None else temperature
         self._save_preferences()
         self.refreshConnection()
+
+    @Slot()
+    def gatewayChanging(self):
+        self._connection_epoch += 1
+        self._connected = False
+        self._client = None
+        self._status = "正在重新启动网关…"
+        self.changed.emit()
 
     @Slot()
     def refreshConnection(self):
@@ -475,12 +489,13 @@ class ChatController(QObject):
         authorize = self.tool_authorizer() if self.tool_authorizer is not None else None
         connection = self.mcp_tools() if self.mcp_tools is not None else None
         change_notice = self._changes.notice()
+        temperature = self._temperature
         def worker():
             try:
                 from .conversation import run
                 result = run(client, messages, model=model, effort=None if effort == 'off' else effort,
                     cancel=cancel, authorize=authorize,
-                    system_context=change_notice, mcp=connection,
+                    system_context=change_notice, mcp=connection, temperature=temperature,
                     chunk=lambda chunk: self._workerEvent.emit('chunk', (generation, chunk)),
                     checkpoint=lambda history: self._workerEvent.emit('checkpoint', (generation, history)),
                     receipt=lambda name, response: self._workerEvent.emit('receipt', (generation, (name, response))),

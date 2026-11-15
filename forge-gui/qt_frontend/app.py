@@ -78,7 +78,8 @@ def main(argv=None):
     controller.mcp_tools = mcp_tools
     controller.navigateRequested.connect(workbench.navigate)
     controller.browseRequested.connect(workbench.openBrowser)
-    workbench.gatewayChanged.connect(controller.setGateway)
+    workbench.gatewayChanged.connect(controller.setManagedGateway)
+    workbench.gatewayChanging.connect(controller.gatewayChanging)
     engine = QQmlApplicationEngine()
     engine.rootContext().setContextProperty("controller", controller)
     engine.rootContext().setContextProperty("workbench", workbench)
