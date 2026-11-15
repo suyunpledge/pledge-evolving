@@ -31,40 +31,40 @@ IS_WINDOWS = platform.system() == "Windows"
 
 C: dict[str, str] = {
     # 背景层级
-    "bg": "#0A0C10",            # Shared near-black blue chrome
-    "activity": "#08090C",
-    "sidebar": "#0F1216",
-    "sidebar_history": "#0F1216",
-    "chat": "#0B0D11",
-    "surface": "#14181E",
-    "surface2": "#1A1F27",
-    "surface_subtle": "#121519",
-    "hover": "#1D232C",
+    "bg": "#0B0A14",            # 梦幻星云底（2026-11-14）：近黑偏靛紫
+    "activity": "#08070F",
+    "sidebar": "#100E1B",
+    "sidebar_history": "#100E1B",
+    "chat": "#0C0B17",
+    "surface": "#171527",
+    "surface2": "#1D1A2F",
+    "surface_subtle": "#131221",
+    "hover": "#221F35",
     "sel": "#2A1D16",
-    "code_bg": "#0D1014",
-    "input_bg": "#14181E",
-    "editor_line": "#14181E",
+    "code_bg": "#0E0D1A",
+    "input_bg": "#171527",
+    "editor_line": "#171527",
     "agent_accent": "#B79AF9",
     # 液态玻璃（2026-11-13）：弹窗 / 菜单浮层内部、对话流里展开的「文件夹」面板、
     # 胶囊标签。都是比所在底色亮一档的冷灰，亮边与透镜光效由 liquid_glass 绘制。
-    "glass": "#1B2029",
-    "glass_hover": "#262C37",
-    "glass_folder": "#151920",
-    "glass_chip": "#161A21",
-    "glass_chip_hover": "#1E232C",
+    "glass": "#1E1B30",
+    "glass_hover": "#29253F",
+    "glass_folder": "#161425",
+    "glass_chip": "#19172A",
+    "glass_chip_hover": "#211E35",
     "black": "#000000",
 
     # 线条
-    "border": "#20262F",
-    "border_hi": "#2E3644",
+    "border": "#241F35",
+    "border_hi": "#342E4A",
     "sel_border": "#A8532C",
-    "scroll": "#2A313D",
+    "scroll": "#2E2943",
 
     # 控件状态
-    "control_pressed": "#171B22",
-    "disabled_bg": "#14181E",
+    "control_pressed": "#19172A",
+    "disabled_bg": "#171527",
     "disabled_fg": "#8A92A0",
-    "disabled_border": "#262C36",
+    "disabled_border": "#2A263C",
     "focus_ring": "#FFF1E8",
 
     # 主色
@@ -107,20 +107,20 @@ C: dict[str, str] = {
     # Work Mode 设计稿（2026-10-30）新增：最弱一级文字（分组标题、时间戳、
     # 快捷键提示），对 surface 仍 ≥4.5:1；卡内二级控件底；1px 分隔线。
     "faint": "#7F8898",
-    "raised": "#212732",
-    "line": "#20262F",
+    "raised": "#231F37",
+    "line": "#241F35",
     "comment": "#7E8796",
 
     # 消息气泡：两侧要能看出「谁在说」，又不能让深色界面变花。
     # user 带一点主色倾向（“我说的话”），agent 用中性面；两者都配一道 hairline 描边。
-    "msg_user_bg": "#1B212B",         # 轻量、低饱和的用户气泡
+    "msg_user_bg": "#1F1B30",         # 轻量、低饱和的用户气泡
     "msg_user_fg": "#FFFFFF",          # 用户气泡文字（白）
-    "msg_agent_bg": "#0B0D11",         # 助手正文融入文档背景
+    "msg_agent_bg": "#0C0B17",         # 助手正文融入文档背景
     "msg_agent_fg": "#E6E9EE",         # AI 气泡文字（浅灰）
     "msg_user_bg_old": "#232134",
     "msg_agent_bg_old": "#1A1A22",
-    "msg_user_border": "#2A3240",
-    "msg_agent_border": "#0B0D11",
+    "msg_user_border": "#302A46",
+    "msg_agent_border": "#0C0B17",
 
     # 代码高亮（One Dark 近似）
     "code_kw": "#FF9F6B",
@@ -167,11 +167,11 @@ MOTION_MS = 0
 SHADOW = None
 
 # ─── 字体 ──────────────────────────────────────────────────
-# Codex desktop on Windows uses Segoe UI and Consolas in its default
-# system-font stacks. Tk performs CJK fallback; keep the explicit family for
-# Chinese-only labels and avoid synthetic bold for secondary UI labels.
-UI_FAMILY = "Segoe UI" if IS_WINDOWS else "Helvetica"
-CJK_FAMILY = "Microsoft YaHei UI" if IS_WINDOWS else "PingFang SC"
+# 界面以中文为主：Windows 上统一用 Microsoft YaHei UI 承担拉丁+中文
+# （其拉丁字形与 Segoe UI 同源，观感一致），避免 Segoe UI 逐字回落 CJK 时
+# 中英文基线与行高不一致；Consolas 承担等宽。
+UI_FAMILY = "Microsoft YaHei UI" if IS_WINDOWS else "Helvetica"
+CJK_FAMILY = UI_FAMILY
 MONO_FAMILY = "Consolas" if IS_WINDOWS else "Menlo"
 
 FONT_UI = (UI_FAMILY, 10)

@@ -255,24 +255,43 @@ def _lru_put(cache: OrderedDict, key, value, limit):
         cache.popitem(last=False)
 
 
+def _edge(spec: GlassSpec) -> int:
+    """每行两端需要逐像素计算的宽度（与 _Shape.row 的 edge 一致）。"""
+    reach = max(spec.band, spec.bracket_len if spec.bracket else 0)
+    return int(max(0, int(spec.shadow)) + spec.radius + reach + 3)
+
+
 def _glass_rows(w: int, h: int, spec: GlassSpec) -> list[bytes]:
     top, bottom = _zones(spec)
-    if h < top + bottom + 1:
+    edge = _edge(spec)
+    if h < top + bottom + 1 or w < 2 * edge + 2:
         shape = _Shape(w, h, spec)
         return [shape.row(y, w) for y in range(h)]
-    key = (w, spec)
-    cached = _ROW_CACHE.get(key)
+    # 行的左右两端只依赖到左 / 右边缘的距离，与总宽无关（中段是同一像素重复）；
+    # 所以按 spec 缓存「左段、中段像素、右段」，任意宽度都直接拼接。拖动窗口
+    # 改宽时不再为每个新宽度逐像素重算整圈边缘（展开的文件夹约 27ms / 宽度）。
+    cached = _ROW_CACHE.get(spec)
     if cached is None:
-        # 规范高度：上下边缘区之间留一行纯「中段」，且两区不越过中线。
-        canon = 2 * max(top, bottom) + 1
-        shape = _Shape(w, canon, spec)
-        cached = ([shape.row(y, w) for y in range(top)], shape.row(top, w),
-                  [shape.row(y, w) for y in range(canon - bottom, canon)])
-        _lru_put(_ROW_CACHE, key, cached, 48)
+        # 规范尺寸：宽度刚好放下两端 + 2px 中段；高度在上下边缘区之间留一行中段。
+        canon_w = 2 * edge + 2
+        canon_h = 2 * max(top, bottom) + 1
+        shape = _Shape(canon_w, canon_h, spec)
+
+        def parts(y):
+            return (b"".join(shape.pixel(x, y) for x in range(edge)), shape.pixel(edge, y),
+                    b"".join(shape.pixel(x, y) for x in range(canon_w - edge, canon_w)))
+        cached = ([parts(y) for y in range(top)], parts(top),
+                  [parts(y) for y in range(canon_h - bottom, canon_h)])
+        _lru_put(_ROW_CACHE, spec, cached, 48)
     else:
-        _ROW_CACHE.move_to_end(key)
+        _ROW_CACHE.move_to_end(spec)
     head, middle, tail = cached
-    return [*head, *([middle] * (h - top - bottom)), *tail]
+    span = w - 2 * edge
+
+    def join(part):
+        left, mid, right = part
+        return left + mid * span + right
+    return [*map(join, head), *([join(middle)] * (h - top - bottom)), *map(join, tail)]
 
 
 def glass_png(w: int, h: int, spec: GlassSpec) -> str:
@@ -837,6 +856,28 @@ class GlassButton(i18n.Label):
             self.bind(key, self._keyboard, add="+")
         self._paint()
 
+    def configure(self, cnf=None, **kwargs):
+        result = super().configure(cnf, **kwargs) if cnf is not None else super().configure(**kwargs)
+        if "text" in kwargs or (isinstance(cnf, dict) and "text" in cnf):
+            self._refit()
+        return result
+
+    config = configure
+
+    def _refit(self):
+        """文字变了（含切换界面语言）后按新宽度重做胶囊位图，文字不再溢出。"""
+        fit = getattr(self, "_fit_width", None)
+        if fit is None:
+            return
+        try:
+            width = fit(str(self.cget("text")))
+            if width == int(self.cget("width")):
+                return
+            self._glass_images = self._make_images(width)
+            tk.Label.configure(self, width=width, image=self._glass_images[self._glass_state])
+        except tk.TclError:
+            pass
+
     def _set(self, **changes):
         self._flags.update(changes)
         self._paint()
@@ -897,13 +938,20 @@ def glass_button(parent, text, command, *, kind="ghost", bg=None, width=None,
                  height=None, font=None, padx=18):
     """胶囊玻璃按钮（GlassButton）：常态、悬停、按下、聚焦四张位图。"""
     base = bg or _bg_of(parent)
+    if not (isinstance(base, str) and len(base) == 7 and base.startswith("#")):
+        base = C["bg"]                    # 系统色名（如 SystemButtonFace）没法混色
     font = font or FONT_UI
     fill, fg, rim_colour = _button_palette(kind, base)
     shown = str(i18n.resolve(text, parent))
-    measure = tkfont.Font(root=parent, font=font).measure(shown)
+    measurer = tkfont.Font(root=parent, font=font)
     h = int(height or ui_px(parent, 36))
-    w = int(width or measure + 2 * ui_px(parent, padx))
-    w = max(w, measure + ui_px(parent, 16), h)
+
+    def fit_width(label):
+        measure = measurer.measure(label)
+        w = int(width or measure + 2 * ui_px(parent, padx))
+        return max(w, measure + ui_px(parent, 16), h)
+
+    w = fit_width(shown)
     radius = h / 2
     lighter = mix(fill, "#FFFFFF", .10)
     darker = mix(fill, "#000000", .16)
@@ -918,6 +966,9 @@ def glass_button(parent, text, command, *, kind="ghost", bg=None, width=None,
     button = GlassButton(parent, text, command, images=images, base=base, fg=fg, font=font,
                          width=w, height=h)
     button._glass_kind = kind
+    button._make_images = lambda new_width: _LazyImages(parent, new_width, h, specs)
+    # 只有宽度跟随文字（未指定 width）时才在换文字后重算。
+    button._fit_width = None if width else fit_width
     return button
 
 

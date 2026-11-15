@@ -297,6 +297,12 @@ def _setup_dpi():
             pass
 
 
+def normalize_experience(value) -> str:
+    """使用模式：simple（普通）/ developer（开发者）。未设置或未知值按开发者处理，
+    以保留升级前的完整界面；首次引导会让用户明确选择。"""
+    return value if value in ("simple", "developer") else "developer"
+
+
 def _desktop_config_path() -> Path:
     """桌面应用的本地配置（记住 Forge 目录等）：优先 exe 同目录，否则 ~/.forge。"""
     try:
@@ -686,6 +692,9 @@ class ForgeGuiApp:
         self.root = root
         desktop_prefs = load_desktop_config()
         self.root._forge_locale = i18n.Translator(desktop_prefs.get("language", "zh-CN"))
+        # 使用模式（2026-11-14）：simple = 普通模式（一键配置、界面精简）；
+        # developer = 开发者模式（全部可自定义）。未设置时保持原有完整界面。
+        self._experience = normalize_experience(desktop_prefs.get("experience"))
         self._set_localized_title()
         self.root.geometry(WINDOW_SIZE)
         self.root.minsize(*MIN_SIZE)
@@ -766,6 +775,7 @@ class ForgeGuiApp:
         self._editor_baseline = copy.deepcopy(self.user_rows)
 
         self._build_ui()
+        self._apply_experience(self._experience, persist=False)
         self._team_dirty = False
         self._update_team_feedback()
         self._refresh_provider_list()
@@ -774,6 +784,238 @@ class ForgeGuiApp:
         self._event_poll = self.root.after(40, self._drain_ui_events)
         from desktop_features import DesktopFeatures
         self.desktop_features = DesktopFeatures(self)
+
+    # ── 使用模式（普通 / 开发者）──────────────────────────────
+
+    def _build_experience_row(self, parent):
+        row = tk.Frame(parent, bg=C["bg"])
+        row.pack(fill=tk.X, pady=(10, 0))
+        i18n.Label(row, text=tr("使用模式"), bg=C["bg"], fg=C["text"],
+                   font=FONT_SMALL).pack(side=tk.LEFT, padx=(0, 10))
+        self._experience_buttons = {}
+        for key, label in (("simple", tr("普通模式")), ("developer", tr("开发者模式"))):
+            button = pill_button(row, label, lambda k=key: self._set_experience(k),
+                                 kind="ghost", bg=C["bg"], padx=12)
+            button.pack(side=tk.LEFT, padx=(0, 6))
+            self._experience_buttons[key] = button
+        guide = pill_button(row, tr("重新运行首次引导"), self.open_welcome_guide, kind="quiet",
+                            bg=C["bg"], padx=10)
+        guide.pack(side=tk.RIGHT)
+        self._experience_hint = i18n.Label(row, text="", bg=C["bg"], fg=C["muted"],
+                                           font=FONT_CAPTION, anchor="w")
+        self._experience_hint.pack(side=tk.LEFT, padx=(8, 0), fill=tk.X, expand=True)
+
+    def _build_quick_setup_section(self, parent):
+        from quick_setup import QuickModelSetup
+        import liquid_glass as glass
+        section = glass.GlassPanel(parent, spec=glass.GlassSpec(
+            radius=theme.ui_px(parent, 16), fill=C["glass_folder"], rim=.8, glow=.9, band=6,
+            sheen=.8, sheen_h=12, bracket=.6, bracket_len=18, bracket_colour=C["ember"]),
+            padx=theme.ui_px(parent, 18), pady=theme.ui_px(parent, 14), bg=C["bg"])
+        section.pack(fill=tk.X, pady=(10, 0))
+        head = tk.Frame(section.content, bg=C["glass_folder"])
+        head.pack(fill=tk.X, pady=(0, 8))
+        i18n.Label(head, text=tr("一键配置模型"), bg=C["glass_folder"], fg=C["text"],
+                   font=FONT_SECTION).pack(side=tk.LEFT)
+        i18n.Label(head, text=tr("参数已按推荐值填好，粘贴 API 密钥即可"),
+                   bg=C["glass_folder"], fg=C["muted"], font=FONT_CAPTION).pack(
+            side=tk.LEFT, padx=(10, 0))
+        self.quick_setup = QuickModelSetup(section.content, self.home, bg=C["glass_folder"],
+                                           advanced=self._experience == "developer",
+                                           on_saved=self._quick_setup_saved)
+        self.quick_setup.pack(fill=tk.X)
+        self._quick_setup_section = section
+
+    def _quick_setup_saved(self, result):
+        """一键配置写盘后：刷新用户层、选中刚配好的模型（触发 gateway 切换）。"""
+        try:
+            self.user_rows = load_user_layer(self.home)
+        except (OSError, ValueError) as exc:
+            self._set_status(tr("读取失败：{error}", error=exc), "error")
+            return
+        self._editor_baseline = copy.deepcopy(self.user_rows)
+        self._refresh_provider_list()
+        model = result.get("model")
+        if model:
+            self.model_var.set(model)
+        self._set_status(tr("模型已配置：{model}", model=model or ""), "ok")
+
+    def _set_experience(self, mode):
+        mode = normalize_experience(mode)
+        if mode == self._experience:
+            self._paint_experience_controls()
+            return
+        self._apply_experience(mode)
+        self._set_status(tr("已切换到开发者模式：全部设置可自定义") if mode == "developer"
+                         else tr("已切换到普通模式：界面精简，模型一键配置"), "info")
+
+    def _toggle_experience(self):
+        self._set_experience("simple" if self._experience == "developer" else "developer")
+
+    def _apply_experience(self, mode, *, persist=True):
+        """把使用模式落到界面上（可反复调用，幂等）。
+
+        普通模式：隐藏 Work / Coding 切换器与「演化」入口，配置页只留一键配置；
+        开发者模式：全部显示，配置页同时有一键配置、Provider 列表与 JSON 编辑器。
+        """
+        mode = normalize_experience(mode)
+        self._experience = mode
+        developer = mode == "developer"
+        switcher = getattr(self, "_mode_switcher", None)
+        if switcher is not None:
+            try:
+                if developer and not switcher.winfo_manager():
+                    switcher.pack(side=tk.LEFT, padx=(8, 0))
+                elif not developer and switcher.winfo_manager():
+                    switcher.pack_forget()
+            except tk.TclError:
+                pass
+        if not developer and getattr(self, "_workspace_mode", None) == self._workspace_kind.CODING:
+            self._request_workspace(self._workspace_kind.WORK)
+        nav = getattr(self, "sidebar_navigation", {})
+        holder = nav.get("evolution")
+        if holder is not None:
+            try:
+                if developer and not holder.winfo_manager():
+                    order = list(nav)
+                    following = [nav[k] for k in order[order.index("evolution") + 1:]
+                                 if nav[k].winfo_manager()]
+                    holder.pack(fill=tk.X, pady=1, **({"before": following[0]} if following else {}))
+                elif not developer and holder.winfo_manager():
+                    holder.pack_forget()
+            except tk.TclError:
+                pass
+        split = getattr(self, "_manage_split", None)
+        if split is not None:
+            try:
+                if developer and not split.winfo_manager():
+                    split.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
+                elif not developer and split.winfo_manager():
+                    split.pack_forget()
+            except tk.TclError:
+                pass
+        setup = getattr(self, "quick_setup", None)
+        if setup is not None:
+            setup.set_advanced(developer)
+        self._paint_experience_controls()
+        if persist:
+            try:
+                save_desktop_config(experience=mode)
+            except Exception:
+                pass
+
+    def _paint_experience_controls(self):
+        buttons = getattr(self, "_experience_buttons", {})
+        for key, button in buttons.items():
+            selected = key == self._experience
+            try:
+                button.configure(bg=C["accent_soft"] if selected else C["surface2"],
+                                 fg=C["accent_text"] if selected else C["body"])
+                if getattr(button, "_feedback_base", None) is not None:
+                    button._feedback_base.update(bg=button.cget("bg"), fg=button.cget("fg"))
+                    button._feedback_visual = None
+                    button._paint_feedback()
+            except tk.TclError:
+                pass
+        hint = getattr(self, "_experience_hint", None)
+        if hint is not None:
+            hint.configure(text=tr("全部可自定义：模型配置文件、Provider JSON、采样参数")
+                           if self._experience == "developer" else
+                           tr("一键配置模型，界面保持简洁"))
+
+    # ── 首次启动导航 ──
+    def open_welcome_guide(self):
+        from welcome_guide import WelcomeGuide
+        current = getattr(self, "_welcome_guide", None)
+        if current is not None and current.winfo_exists():
+            current.lift()
+            return current
+        language = self.root._forge_locale.language
+        guide = WelcomeGuide(self.root, home=self.home,
+                             language="en" if language == "en" else "zh-CN",
+                             experience=self._experience if load_desktop_config().get("experience")
+                             else "simple",
+                             on_language=self._change_language,
+                             on_finish=self._welcome_finished)
+        self._welcome_guide = guide
+        guide.show()
+        return guide
+
+    def _welcome_finished(self, language, experience, saved):
+        self._welcome_guide = None
+        self._apply_experience(experience)
+        try:
+            save_desktop_config(onboarded=True, experience=experience)
+        except Exception:
+            pass
+        if saved and saved.get("ok"):
+            self._quick_setup_saved(saved)
+        self._show_view("chat")
+        try:
+            self.input_card.focus_entry()
+        except Exception:
+            pass
+
+    # ── 开发者：模型配置文件（forge.patch.json）编辑器 ──
+    def _open_config_file_editor(self):
+        path = Path(self.home) / "forge.patch.json"
+        try:
+            baseline = load_user_layer(self.home)
+        except (OSError, ValueError) as exc:
+            self._set_status(tr("读取失败：{error}", error=exc), "error")
+            return
+        dialog = i18n.Toplevel(self.root)
+        dialog.title(tr("模型配置文件 · {path}", path=path))
+        dialog.geometry("820x620")
+        dialog.minsize(560, 380)
+        dialog.transient(self.root)
+        dialog.configure(bg=C["bg"])
+        head = tk.Frame(dialog, bg=C["bg"], padx=18, pady=12)
+        head.pack(fill=tk.X)
+        i18n.Label(head, text=tr("模型配置文件"), bg=C["bg"], fg=C["text"],
+                   font=FONT_SECTION).pack(side=tk.LEFT)
+        i18n.Label(head, text=str(path), bg=C["bg"], fg=C["muted"],
+                   font=FONT_MONO_SM).pack(side=tk.LEFT, padx=(10, 0))
+        i18n.Label(dialog, text=tr("JSON 数组，每项一行配置（id / name / config）。密钥请用 "
+                                   "$expr 引用环境变量，不要写明文。保存前会校验，"
+                                   "磁盘上的文件在此期间被改动时拒绝覆盖。"),
+                   bg=C["bg"], fg=C["subtext"], font=FONT_CAPTION, justify=tk.LEFT,
+                   wraplength=760, anchor="w").pack(fill=tk.X, padx=18)
+        editor = scrolledtext.ScrolledText(dialog, bg=C["code_bg"], fg=C["code_plain"],
+                                           insertbackground=C["ember"], font=FONT_MONO,
+                                           relief=tk.FLAT, wrap=tk.NONE, undo=True,
+                                           padx=12, pady=10)
+        editor.pack(fill=tk.BOTH, expand=True, padx=18, pady=(10, 0))
+        editor.insert("1.0", json.dumps(baseline, ensure_ascii=False, indent=2))
+        editor.edit_modified(False)
+        foot = tk.Frame(dialog, bg=C["bg"], padx=18, pady=12)
+        foot.pack(fill=tk.X)
+        status = i18n.Label(foot, text="", bg=C["bg"], fg=C["muted"], font=FONT_CAPTION,
+                            anchor="w")
+        status.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        def save():
+            try:
+                rows = json.loads(editor.get("1.0", "end-1c") or "[]")
+                if not isinstance(rows, list):
+                    raise ValueError(tr("顶层必须是 JSON 数组"))
+                save_user_layer(self.home, rows, expected_rows=baseline)
+            except (ValueError, OSError) as exc:
+                status.configure(text=tr("未保存：{error}", error=exc), fg=C["error"])
+                return
+            baseline[:] = rows
+            self.user_rows = rows
+            self._editor_baseline = copy.deepcopy(rows)
+            self._refresh_provider_list()
+            status.configure(text=tr("已保存，下次请求生效"), fg=C["ok"])
+
+        pill_button(foot, tr("保存"), save, kind="primary", bg=C["bg"], padx=16).pack(side=tk.RIGHT)
+        pill_button(foot, tr("关闭"), dialog.destroy, kind="ghost", bg=C["bg"],
+                    padx=14).pack(side=tk.RIGHT, padx=(0, 8))
+        dialog.bind("<Control-s>", lambda _e: save())
+        dialog.bind("<Escape>", lambda _e: dialog.destroy() or "break")
+        editor.focus_set()
+        return dialog
 
     def _set_localized_title(self):
         self.root.title(i18n.resolve(tr("forge — v{version}（对话 · 任务 · 工作区）",
@@ -976,7 +1218,8 @@ class ForgeGuiApp:
     def _restore_workspace_preference(self):
         """启动时恢复上次所在的工作空间（desktop config；失败静默留在 Work）。"""
         try:
-            if load_desktop_config().get("workspace_mode") == "coding":
+            if (load_desktop_config().get("workspace_mode") == "coding"
+                    and getattr(self, "_experience", "developer") == "developer"):
                 self._request_workspace(self._workspace_kind.CODING)
         except Exception:
             pass
@@ -1737,7 +1980,8 @@ class ForgeGuiApp:
         self._agents_group_count = len(children)
         self._agents_group_header = section
         self._agents_toggle_btn = pill_button(
-            section, f"▸ 智能体 · {len(children)}", self._toggle_agents_group,
+            section, tr("{arrow} 智能体 · {count}", arrow="▸", count=len(children)),
+            self._toggle_agents_group,
             kind="quiet", bg=C["sidebar"], font=FONT_CAPTION_BOLD, padx=0)
         self._agents_toggle_btn.configure(anchor="w", fg=C["faint"])
         self._agents_toggle_btn.pack(side=tk.LEFT, fill=tk.X, expand=True)
@@ -1813,7 +2057,8 @@ class ForgeGuiApp:
         else:
             self._agents_list_frame.pack_forget()
         arrow = "▾" if self._agents_expanded else "▸"
-        self._agents_toggle_btn.configure(text=f"{arrow} 智能体 · {self._agents_group_count}")
+        self._agents_toggle_btn.configure(text=tr("{arrow} 智能体 · {count}", arrow=arrow,
+                                                  count=self._agents_group_count))
 
     def _prompt_create_agent(self):
         """Use the existing Forge subagent preset editor; save remains explicit."""
@@ -1996,6 +2241,8 @@ class ForgeGuiApp:
             (tr("知识库"), "knowledge", "", lambda: self._nav_click("knowledge"), "knowledge"),
             (tr("演化"), "evolution", "", lambda: self._nav_click("evolution"), "evolution"),
             (tr("配置 API 与模型"), "key", "", lambda: self._nav_click("config"), "api model provider key"),
+            (tr("重新运行首次引导"), "sparkles", "", self.open_welcome_guide, "welcome guide onboarding language"),
+            (tr("切换 普通 / 开发者 模式"), "code", "", self._toggle_experience, "developer simple mode"),
             (tr("插件"), "tools", "", self._open_plugin_market, "plugins market"),
             (tr("定时任务"), "clock", "", lambda: self.desktop_features.open(0), "schedule cron"),
             (tr("重启 gateway"), "refresh", "", self._toggle_gateway, "gateway restart"),
@@ -2322,7 +2569,7 @@ class ForgeGuiApp:
         for i in range(4):
             row = tk.Frame(lane_box, bg=C["surface"])
             row.pack(fill=tk.X, pady=1)
-            i18n.Label(row, text=f"方案 {i + 1}", bg=C["surface"], fg=C["ter"],
+            i18n.Label(row, text=tr("方案 {number}", number=i + 1), bg=C["surface"], fg=C["ter"],
                      font=FONT_SMALL, width=8, anchor="w").pack(side=tk.LEFT)
             var = tk.StringVar()
             lane = lanes_cfg[i] if i < len(lanes_cfg) else {}
@@ -3504,7 +3751,7 @@ class ForgeGuiApp:
         head = tk.Frame(wrap, bg=C["bg"]); head.pack(fill=tk.X)
         i18n.Label(head, text=tr("知识库"), bg=C["bg"], fg=C["text"],
                    font=FONT_TITLE).pack(side=tk.LEFT)
-        self._kb_stats_var = tk.StringVar(value="")
+        self._kb_stats_var = i18n.StringVar(self.root, value="")
         i18n.Label(head, textvariable=self._kb_stats_var, bg=C["bg"],
                    fg=C["ter"], font=FONT_SMALL).pack(side=tk.LEFT, padx=12)
         pill_button(head, tr("刷新"), self._refresh_knowledge, icon="⟳").pack(
@@ -4930,9 +5177,12 @@ class ForgeGuiApp:
                    bg=C["bg"], fg=C["muted"], font=FONT_CAPTION, justify=tk.LEFT)
         language_hint.pack(side=tk.LEFT, padx=12, fill=tk.X, expand=True)
         theme.bind_wrap(language_hint)
+        self._build_experience_row(parent)
+        self._build_quick_setup_section(parent)
         split = tk.PanedWindow(parent, orient=tk.HORIZONTAL, bg=C["border"],
                                sashwidth=7, sashrelief=tk.FLAT, bd=0)
         split.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
+        self._manage_split = split
         left = tk.Frame(split, bg=C["surface"], padx=14, pady=14)
         right_host = tk.Frame(split, bg=C["bg"])
         editor_canvas = tk.Canvas(right_host, bg=C["bg"], width=1, height=1, highlightthickness=0)
@@ -5015,6 +5265,8 @@ class ForgeGuiApp:
         pill_button(actions, "API 密钥", self._open_api_keys, kind="accent_soft",
                     bg=C["surface"], icon="\U0001F511").pack(
             fill=tk.X)
+        pill_button(actions, tr("编辑模型配置文件"), self._open_config_file_editor,
+                    kind="ghost", bg=C["surface"], icon="✎").pack(fill=tk.X, pady=(8, 0))
 
         # ── 模型快捷编辑面板 + 一键温度：迁到右侧主区顶部（清单 #2 左挤右空）──
         # 这两块是「编辑功能」，右侧才是查看/编辑/操作的地方；左栏只留选择与导航。
@@ -5074,7 +5326,7 @@ class ForgeGuiApp:
         oc_head.pack(fill=tk.X)
         self._temp_expanded = False
         self.temp_toggle_var = i18n.StringVar(self.root, value=tr("▸ 一键配置 · 采样温度"))
-        self.temp_summary_var = tk.StringVar(value="")
+        self.temp_summary_var = i18n.StringVar(self.root, value="")
         theme.control_button(oc_head, textvariable=self.temp_toggle_var,
                   bg=C["input_bg"], fg=C["text"], font=FONT_UI_BOLD,
                   relief=tk.FLAT, bd=0, padx=0, pady=2, anchor=tk.W,
@@ -5316,7 +5568,7 @@ class ForgeGuiApp:
             changes = sum(bool(e["var"].get()) != e["value"] for e in self._feature_entries)
             self.feature_summary_var.set(f"{changes} 项未保存 / 共 {count} 项")
         else:
-            self.feature_summary_var.set(f"{count} 项可在这里选择")
+            self.feature_summary_var.set(tr("{count} 项可在这里选择", count=count))
 
     @staticmethod
     def _iter_boolean_paths(value: object, prefix: tuple[str, ...] = ()):
@@ -5378,7 +5630,8 @@ class ForgeGuiApp:
                 self._add_feature_toggle({
                     "kind": "provider", "row_id": row_id, "path": (),
                     "value": not bool(row.get("disabled")),
-                    "label": f"{'启用 Provider' if 'baseURL' in conf else '启用配置条目'} · {row_id}",
+                    "label": (tr("启用 Provider · {row}", row=row_id) if "baseURL" in conf
+                              else tr("启用配置条目 · {row}", row=row_id)),
                     "description": "关闭后 Forge 不加载此条目；已运行的服务需重启",
                 })
             for path, value in self._iter_boolean_paths(conf):
@@ -5401,12 +5654,14 @@ class ForgeGuiApp:
             positive_switch = entry["kind"] == "provider" or entry["path"][-1] in ("enabled", "moa")
             state = ((tr("开启") if entry["var"].get() else tr("关闭")) if positive_switch
                      else ("是 / true" if entry["var"].get() else "否 / false"))
-            entry["state_var"].set(f"{state} · {'未保存' if changed else '已保存'}")
+            entry["state_var"].set(tr("{state} · {saved}", state=state,
+                                      saved=tr("未保存") if changed else tr("已保存")))
         self._feature_dirty = bool(changes)
         self.feature_save_btn.configure(state=tk.NORMAL if changes else tk.DISABLED,
                                        bg=C["accent"] if changes else C["surface2"],
                                        disabledforeground=C["muted"],
-                                       text=f"保存 {changes} 项修改" if changes else "保存功能开关")
+                                       text=tr("保存 {count} 项修改", count=changes) if changes
+                                       else tr("保存功能开关"))
         self.feature_reset_btn.configure(state=tk.NORMAL if changes else tk.DISABLED)
         self._update_feature_header()
 
@@ -5803,7 +6058,7 @@ class ForgeGuiApp:
     def _update_temp_summary(self):
         current = self.temperature_var.get()
         label = {"0.7": "0.7 均衡", "1.0": "1.0 保守"}.get(current, "不设置")
-        self.temp_summary_var.set(f"当前 {label}")
+        self.temp_summary_var.set(tr("当前 {value}", value=label))
 
     def _paint_temperature_buttons(self) -> None:
         current = self.temperature_var.get()
@@ -6399,17 +6654,13 @@ class ForgeGuiApp:
 
 
     def _status_label_text(self) -> str:
-        parts = []
-        if self.run_py:
-            parts.append("forge 目录已就绪")
-        else:
-            parts.append("未找到 run.py")
+        parts = [tr("forge 目录已就绪") if self.run_py else tr("未找到 run.py")]
         try:
             secrets = _load_secrets()
-            parts.append("密钥库 " + str(len(secrets)) + " 项" if secrets else "密钥库为空")
+            parts.append(tr("密钥库 {count} 项", count=len(secrets)) if secrets else tr("密钥库为空"))
         except Exception:
-            parts.append("密钥库 ?")
-        return "  ·  ".join(parts)
+            parts.append(tr("密钥库 ?"))
+        return i18n.join("  ·  ", parts)
 
     def _update_status_label(self):
         try:
@@ -6553,7 +6804,9 @@ class ForgeGuiApp:
 
     # ── 状态 ──
     def _set_status(self, msg: str, level: str = "info"):
-        msg = redact(msg)
+        # 先按当前语言渲染再脱敏：redact 会把 tr() 消息变回普通字符串，
+        # 参数随之丢失（状态栏曾显示「界面语言已切换为 {language}」原样占位符）。
+        msg = redact(i18n.resolve(msg, self.root))
         color = {
             "info": C["subtext"],
             "ok": C["ok"],
@@ -8459,133 +8712,150 @@ class ForgeGuiApp:
                 scrim = glass.modal_scrim(self.root, alpha=scrim_alpha)
         except tk.TclError:
             scrim = None
-        dialog = i18n.Toplevel(self.root)
-        dialog.withdraw()
-        dialog.title(title)
-        dialog.overrideredirect(True)
-        dialog.transient(self.root)
-        dialog.resizable(False, False)
-        fill = C["glass"]
-        matte = theme.mix(C["bg"], "#000000", scrim_alpha if scrim is not None else 0)
-        shell = glass.glass_window(dialog, fill=fill, radius=px(26), matte=matte,
-                                   inset=px(22), shadow=px(18), shadow_dy=px(6), bracket=.7)
-        width = px(332)
-        body = tk.Frame(shell, bg=fill, width=width)
-        body.pack(fill=tk.BOTH, expand=True)
-        # 图标：语义色光晕 + 两道同心细环 + 玻璃圆片（图案元素，2026-11-13）。
-        from glass_ornaments import halo_badge
-        badge_cv = halo_badge(body, icon or default_icon, tone=strong, fill=fill,
-                              tile=px(46), size=px(96))
-        badge_cv.pack(pady=(0, px(6)))
-        i18n.Label(body, text=title, bg=fill, fg=C["text"], font=FONT_SECTION,
-                   justify=tk.CENTER, wraplength=width).pack(fill=tk.X, pady=(0, px(6)))
-        i18n.Label(body, text=message, bg=fill, fg=C["subtext"], font=FONT_SMALL,
-                   justify=tk.CENTER, wraplength=width).pack(fill=tk.X)
-        if detail_rows:
-            well_fill = theme.mix(fill, "#000000", .22)
-            well = glass.GlassPanel(body, spec=glass.GlassSpec(
-                radius=px(14), fill=well_fill, rim=.45, glow=.5, band=4, sheen=0,
-                inner_line=0), padx=px(12), pady=px(9), bg=fill)
-            well.pack(fill=tk.X, pady=(px(14), 0))
-            grid = well.content
-            grid.columnconfigure(1, weight=1)
-            for row, (key, value) in enumerate(detail_rows):
-                i18n.Label(grid, text=key, bg=well_fill, fg=C["faint"],
-                           font=FONT_CAPTION, anchor="nw").grid(row=row, column=0, sticky="nw",
-                                                                padx=(0, px(12)), pady=1)
-                i18n.Label(grid, text=value, bg=well_fill, fg=C["body"],
-                           font=FONT_CAPTION, anchor="w", justify=tk.LEFT,
-                           wraplength=px(220)).grid(row=row, column=1, sticky="w", pady=1)
-        result = {"value": None}
+        dialog = None
+        # 压暗层一旦建出来就必须保证被拆掉：它是盖住整个主窗的无边框窗口，
+        # 漏掉一次主窗就再也点不动了。构建或等待中任何异常都先清理再抛出。
+        try:
+            dialog = i18n.Toplevel(self.root)
+            dialog.withdraw()
+            dialog.title(title)
+            dialog.overrideredirect(True)
+            dialog.transient(self.root)
+            dialog.resizable(False, False)
+            fill = C["glass"]
+            matte = theme.mix(C["bg"], "#000000", scrim_alpha if scrim is not None else 0)
+            shell = glass.glass_window(dialog, fill=fill, radius=px(26), matte=matte,
+                                       inset=px(22), shadow=px(18), shadow_dy=px(6), bracket=.7)
+            width = px(332)
+            body = tk.Frame(shell, bg=fill, width=width)
+            body.pack(fill=tk.BOTH, expand=True)
+            # 图标：语义色光晕 + 两道同心细环 + 玻璃圆片（图案元素，2026-11-13）。
+            from glass_ornaments import halo_badge
+            badge_cv = halo_badge(body, icon or default_icon, tone=strong, fill=fill,
+                                  tile=px(46), size=px(96))
+            badge_cv.pack(pady=(0, px(6)))
+            i18n.Label(body, text=title, bg=fill, fg=C["text"], font=FONT_SECTION,
+                       justify=tk.CENTER, wraplength=width).pack(fill=tk.X, pady=(0, px(6)))
+            i18n.Label(body, text=message, bg=fill, fg=C["subtext"], font=FONT_SMALL,
+                       justify=tk.CENTER, wraplength=width).pack(fill=tk.X)
+            if detail_rows:
+                well_fill = theme.mix(fill, "#000000", .22)
+                well = glass.GlassPanel(body, spec=glass.GlassSpec(
+                    radius=px(14), fill=well_fill, rim=.45, glow=.5, band=4, sheen=0,
+                    inner_line=0), padx=px(12), pady=px(9), bg=fill)
+                well.pack(fill=tk.X, pady=(px(14), 0))
+                grid = well.content
+                grid.columnconfigure(1, weight=1)
+                for row, (key, value) in enumerate(detail_rows):
+                    i18n.Label(grid, text=key, bg=well_fill, fg=C["faint"],
+                               font=FONT_CAPTION, anchor="nw").grid(row=row, column=0, sticky="nw",
+                                                                    padx=(0, px(12)), pady=1)
+                    i18n.Label(grid, text=value, bg=well_fill, fg=C["body"],
+                               font=FONT_CAPTION, anchor="w", justify=tk.LEFT,
+                               wraplength=px(220)).grid(row=row, column=1, sticky="w", pady=1)
+            result = {"value": None}
 
-        def choose(value):
-            result["value"] = value
-            focused = dialog.focus_displayof()
-            owned_focus = focused is not None and focused.winfo_toplevel() is dialog
-            result["restore_focus"] = owned_focus
-            close_scrim()
-            dialog.grab_release()
-            if return_focus is not None and return_focus.winfo_exists():
-                if owned_focus:
-                    return_focus.focus_force()
+            def choose(value):
+                result["value"] = value
+                focused = dialog.focus_displayof()
+                owned_focus = focused is not None and focused.winfo_toplevel() is dialog
+                result["restore_focus"] = owned_focus
+                close_scrim()
+                dialog.grab_release()
+                if return_focus is not None and return_focus.winfo_exists():
+                    if owned_focus:
+                        return_focus.focus_force()
+                    else:
+                        return_focus.focus_set()
+                dialog.destroy()
+
+            acts = tk.Frame(body, bg=fill)
+            acts.pack(fill=tk.X, pady=(px(20), 0))
+            ordered = list(reversed(list(actions)))          # 取消在左、主操作在右
+            stacked = len(ordered) > 2
+            gap = px(10)
+            button_w = width if stacked else (width - gap * (len(ordered) - 1)) // max(1, len(ordered))
+            primary = None
+            safe = None
+            buttons = []
+            for index, (label, value, kind) in enumerate(ordered):
+                button = glass.glass_button(acts, label, lambda v=value: choose(v), kind=kind,
+                                            bg=fill, width=button_w, height=px(38))
+                if stacked:
+                    button.pack(side=tk.BOTTOM, fill=tk.X, pady=(0, px(8) if index else 0))
                 else:
-                    return_focus.focus_set()
-            dialog.destroy()
+                    button.pack(side=tk.LEFT, padx=(gap if index else 0, 0))
+                buttons.append(button)
+                primary = button
+                if kind != "danger":
+                    safe = button
+            # 默认焦点决定「按一下空格」会发生什么：主操作是破坏性的（放弃修改、
+            # 删除）时把焦点放在不破坏的那个按钮上，误触只会取消。
+            if actions and list(actions)[0][2] == "danger":
+                primary = safe
+            for widget in buttons:
+                widget.bind("<Left>", lambda _e: (_e.widget.tk_focusPrev().focus_set(), "break")[1])
+                widget.bind("<Right>", lambda _e: (_e.widget.tk_focusNext().focus_set(), "break")[1])
 
-        acts = tk.Frame(body, bg=fill)
-        acts.pack(fill=tk.X, pady=(px(20), 0))
-        ordered = list(reversed(list(actions)))          # 取消在左、主操作在右
-        stacked = len(ordered) > 2
-        gap = px(10)
-        button_w = width if stacked else (width - gap * (len(ordered) - 1)) // max(1, len(ordered))
-        primary = None
-        safe = None
-        buttons = []
-        for index, (label, value, kind) in enumerate(ordered):
-            button = glass.glass_button(acts, label, lambda v=value: choose(v), kind=kind,
-                                        bg=fill, width=button_w, height=px(38))
-            if stacked:
-                button.pack(side=tk.BOTTOM, fill=tk.X, pady=(0, px(8) if index else 0))
-            else:
-                button.pack(side=tk.LEFT, padx=(gap if index else 0, 0))
-            buttons.append(button)
-            primary = button
-            if kind != "danger":
-                safe = button
-        # 默认焦点决定「按一下空格」会发生什么：主操作是破坏性的（放弃修改、
-        # 删除）时把焦点放在不破坏的那个按钮上，误触只会取消。
-        if actions and list(actions)[0][2] == "danger":
-            primary = safe
-        for widget in buttons:
-            widget.bind("<Left>", lambda _e: (_e.widget.tk_focusPrev().focus_set(), "break")[1])
-            widget.bind("<Right>", lambda _e: (_e.widget.tk_focusNext().focus_set(), "break")[1])
+            def close_scrim(event=None):
+                if event is not None and event.widget is not dialog:
+                    return
+                if scrim is not None:
+                    try:
+                        scrim.destroy()
+                    except tk.TclError:
+                        pass
 
-        def close_scrim(event=None):
-            if event is not None and event.widget is not dialog:
-                return
-            if scrim is not None:
+            dialog.bind("<Destroy>", close_scrim, add="+")
+            dialog.protocol("WM_DELETE_WINDOW", lambda: choose(None))
+            dialog.bind("<Escape>", lambda _e: choose(None))
+            glass.fit_glass_window(shell)
+            w, h = dialog.winfo_reqwidth(), dialog.winfo_reqheight()
+            x = self.root.winfo_rootx() + (self.root.winfo_width() - w) // 2
+            y = self.root.winfo_rooty() + (self.root.winfo_height() - h) // 2
+            dialog.geometry(f"{w}x{h}+{max(x, 0)}+{max(y, 0)}")
+            dialog.deiconify()
+            dialog.lift()
+            try:
+                dialog.grab_set()
+            except tk.TclError:
+                # 重试一次；仍拿不到（别的程序持有 grab）就不带 grab 继续——
+                # 压暗层盖住了主窗，弹窗依旧是事实上的模态，不能因此整个失败。
                 try:
-                    scrim.destroy()
+                    dialog.update()
+                    dialog.grab_set()
                 except tk.TclError:
                     pass
+            try:
+                dialog.focus_force()
+            except tk.TclError:
+                pass
+            (primary or dialog).focus_set()
+            default_focus = primary
+            if primary is not None:
+                # 模态已持有 grab；Windows 未必激活无边框窗口，用 force。
+                glass.focus_when_mapped(primary, force=True)
 
-        dialog.bind("<Destroy>", close_scrim, add="+")
-        dialog.protocol("WM_DELETE_WINDOW", lambda: choose(None))
-        dialog.bind("<Escape>", lambda _e: choose(None))
-        glass.fit_glass_window(shell)
-        w, h = dialog.winfo_reqwidth(), dialog.winfo_reqheight()
-        x = self.root.winfo_rootx() + (self.root.winfo_width() - w) // 2
-        y = self.root.winfo_rooty() + (self.root.winfo_height() - h) // 2
-        dialog.geometry(f"{w}x{h}+{max(x, 0)}+{max(y, 0)}")
-        dialog.deiconify()
-        dialog.lift()
-        try:
-            dialog.grab_set()
-        except tk.TclError:
-            dialog.update()
-            dialog.grab_set()
-        try:
-            dialog.focus_force()
-        except tk.TclError:
-            pass
-        (primary or dialog).focus_set()
-        default_focus = primary
-        if primary is not None:
-            # 模态已持有 grab；Windows 未必激活无边框窗口，用 force。
-            glass.focus_when_mapped(primary, force=True)
+            def keep_button_focus(event):
+                # Windows 激活无边框窗口晚于 focus_set，激活时 Tk 会把焦点记到窗口
+                # 本身；再切回来（Alt+Tab）也一样。窗口自己拿到焦点就转给默认按钮。
+                if event.widget is dialog and default_focus is not None:
+                    try:
+                        if default_focus.winfo_exists():
+                            default_focus.focus_set()
+                    except tk.TclError:
+                        pass
 
-        def keep_button_focus(event):
-            # Windows 激活无边框窗口晚于 focus_set，激活时 Tk 会把焦点记到窗口
-            # 本身；再切回来（Alt+Tab）也一样。窗口自己拿到焦点就转给默认按钮。
-            if event.widget is dialog and default_focus is not None:
-                try:
-                    if default_focus.winfo_exists():
-                        default_focus.focus_set()
-                except tk.TclError:
-                    pass
-
-        dialog.bind("<FocusIn>", keep_button_focus, add="+")
-        dialog.wait_window()
+            dialog.bind("<FocusIn>", keep_button_focus, add="+")
+            dialog.wait_window()
+        except BaseException:
+            for window in (scrim, dialog):
+                if window is not None:
+                    try:
+                        window.destroy()
+                    except tk.TclError:
+                        pass
+            raise
         close_scrim()
         # Tk may process a final FocusOut while destroying a transient and
         # its scrim. Restore native activation after that lifecycle finishes.
@@ -8796,6 +9066,8 @@ def main():
     _setup_dpi()
     root = tk.Tk()
     app = ForgeGuiApp(root)
+    if not load_desktop_config().get("onboarded"):
+        root.after(200, app.open_welcome_guide)
     root.mainloop()
 
 

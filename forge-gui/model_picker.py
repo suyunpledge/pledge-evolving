@@ -283,7 +283,7 @@ class ModelPicker(tk.Frame):
                         (provider or {}).get('model') or tr("未配置"))
         else:
             shown = value
-        self._shown_text = "Model：" + shown
+        self._shown_text = str(i18n.resolve(tr("Model：{name}", name=shown), self))
         self._fit_caption()
 
     def set_width_budget(self, pixels):

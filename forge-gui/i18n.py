@@ -91,7 +91,8 @@ class Translator:
                 translated = source
         except ValueError:
             translated = source
-        args = {k: self.render(v) for k, v in message.arguments.items()}
+        # 参数里恰好是已登记文案的普通字符串也翻译（如 pill_button 的 label）。
+        args = {k: self.render(as_message(v)) for k, v in message.arguments.items()}
         if not args:
             return translated
         try:
@@ -121,6 +122,31 @@ def owner(widget):
     return getattr(widget._root(), "_forge_locale", None)
 
 
+_KNOWN_SOURCES = None
+
+
+def known_source(value) -> bool:
+    """普通字符串是否恰好是一条已登记的界面文案（以英文目录的键为准）。"""
+    global _KNOWN_SOURCES
+    if _KNOWN_SOURCES is None:
+        _KNOWN_SOURCES = frozenset(k for k in _read(DIRECTORY, "en") if "{" not in k)
+    return isinstance(value, str) and value in _KNOWN_SOURCES
+
+
+def as_message(value):
+    """把恰好等于已登记文案的普通字符串当作 tr() 消息：旧代码里直接写中文
+    字面量的控件也能翻译，并随语言切换刷新。带占位符的文案不自动转换。"""
+    if not isinstance(value, str) or isinstance(value, Message):
+        return value
+    if known_source(value):
+        return Message(value)
+    # 「图标字形 + 空格 + 文案」（如 "▤ 工作区"）：只翻译文案部分。
+    head, sep, rest = value.partition(" ")
+    if sep and head and len(head) <= 2 and not re.search(r"[一-鿿A-Za-z0-9]", head)             and known_source(rest):
+        return Message("{icon} {label}", icon=head, label=Message(rest))
+    return value
+
+
 def resolve(value, context):
     if not isinstance(value, Message):
         return value
@@ -143,7 +169,9 @@ def remember(widget, value, *, method="configure"):
 
 class _TextMixin:
     def __init__(self, master=None, **kwargs):
-        value = kwargs.get("text")
+        value = as_message(kwargs.get("text"))
+        if value is not None:
+            kwargs["text"] = value
         self._l10n_message = value if isinstance(value, Message) else None
         if value is not None:
             kwargs["text"] = resolve(value, master) if master is not None else value
@@ -157,7 +185,7 @@ class _TextMixin:
             kwargs = {**cnf, **kwargs}
             cnf = None
         if "text" in kwargs:
-            value = kwargs["text"]
+            value = kwargs["text"] = as_message(kwargs["text"])
             self._l10n_message = value if isinstance(value, Message) else None
             kwargs["text"] = resolve(value, self)
         return super().configure(cnf, **kwargs) if cnf is not None else super().configure(**kwargs)
@@ -253,6 +281,7 @@ class StringVar(tk.StringVar):
             self.set(value)
 
     def set(self, value):
+        value = as_message(value)
         self._l10n_message = value if isinstance(value, Message) else None
         locale = getattr(self, "_locale", None)
         super().set(locale.render(value) if locale else str(value))

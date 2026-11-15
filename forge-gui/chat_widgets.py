@@ -206,12 +206,34 @@ class ScrollArea(tk.Frame):
             self.vbar.pack(side=tk.RIGHT, fill=tk.Y)
             self._bar_visible = True
         self.vbar.set(first, last)
+        backdrop = getattr(self, "backdrop", None)
+        if backdrop is not None:
+            backdrop.follow_view()
         callback = self.on_position_changed
         if callback is not None:
             callback()
 
+    def enable_aurora(self, **options):
+        """在可视区底层挂梦幻极光（消息列内压暗，两侧亮）。"""
+        from aurora import AuroraBackdrop
+
+        def column():
+            if self._max_width is None:
+                return None
+            try:
+                left = self.canvas.coords(self._win)[0]
+                width = float(self.canvas.itemcget(self._win, "width") or 0)
+            except (tk.TclError, IndexError, ValueError):
+                return None
+            return (int(left), int(left + width)) if width > 0 else None
+
+        self.backdrop = AuroraBackdrop(self.canvas, column_of=column, **options)
+        return self.backdrop
+
     def _sync_scrollregion(self, _event=None):
-        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        # 只按内容窗口算滚动区域：极光背景等装饰项跟随可视区移动，算进
+        # bbox("all") 会让滚动区域越滚越大。
+        self.canvas.configure(scrollregion=self.canvas.bbox(self._win) or self.canvas.bbox("all"))
         # Text/card geometry may finish after the first scroll callback. Keep
         # following those height changes until the user explicitly scrolls.
         if self._scroll_follow_end:
@@ -1782,6 +1804,7 @@ class MessageArea(tk.Frame):
         self.scroll = ScrollArea(self, bg=base, padx=0, pady=ui_px(self, 20),
                                  max_width=theme.CONTENT_WIDTH)
         self.scroll.pack(fill=tk.BOTH, expand=True)
+        self.scroll.enable_aurora(fade_top=ui_px(self, 70), fade_bottom=ui_px(self, 220))
         self.jump_latest = theme.control_button(
             self, text=tr("回到最新"), command=self.scroll.scroll_to_end,
             bg=C["surface2"], fg=C["text"], activebackground=C["hover"],

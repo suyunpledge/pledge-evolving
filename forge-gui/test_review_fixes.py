@@ -173,6 +173,27 @@ class ModalFocusTests(unittest.TestCase):
         self.assertEqual(str(focused), "取消")
         self.assertFalse(result)
 
+    def test_failed_dialog_build_never_leaves_the_scrim_over_the_window(self):
+        import liquid_glass as glass
+        scrims = []
+        real_scrim = glass.modal_scrim
+
+        def tracked(*args, **kwargs):
+            scrims.append(real_scrim(*args, **kwargs))
+            return scrims[-1]
+
+        def broken(*_args, **_kwargs):
+            raise tk.TclError("render failed")
+
+        with patch.object(glass, "modal_scrim", tracked), patch.object(glass, "glass_button", broken):
+            with self.assertRaises(tk.TclError):
+                gui.ForgeGuiApp._confirm_dialog(self.app, "删除", "确定删除？", "删除")
+        self.root.update()
+        self.assertEqual(len(scrims), 1)
+        self.assertFalse(scrims[0].winfo_exists(), "压暗层必须随失败的弹窗一起拆掉")
+        self.assertFalse([w for w in self.root.winfo_children()
+                          if isinstance(w, tk.Toplevel) and w.winfo_exists()])
+
     def test_non_destructive_dialog_still_focuses_its_primary_action(self):
         result, focused = self.ask(lambda: gui.ForgeGuiApp._confirm_dialog(
             self.app, "应用", "应用这些修改？", "应用", danger=False))

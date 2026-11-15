@@ -594,7 +594,7 @@ class IconButton(tk.Button):
         self._explicit_icon = icon_key(icon) if icon else None
         self._icon_size = icon_size
         self._icon_name = None
-        text = kwargs.get("text", "")
+        text = i18n.as_message(kwargs.get("text", ""))
         localized_text = text
         text = i18n.resolve(text, parent)
         kwargs["text"] = text
@@ -697,6 +697,7 @@ class IconButton(tk.Button):
                     self._feedback_outline_override = value
             self._feedback_visual = None
         if "text" in kwargs:
+            kwargs["text"] = i18n.as_message(kwargs["text"])
             i18n.remember(self, kwargs["text"], method="_set_localized_text")
             text = i18n.resolve(kwargs["text"], self)
             kwargs["text"] = text

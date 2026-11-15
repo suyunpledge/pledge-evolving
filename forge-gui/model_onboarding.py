@@ -84,7 +84,14 @@ def configured_models(home: Path) -> list[str]:
     return [row["id"] for row in rows if _is_model_row(row)]
 
 
-def apply_key(home: Path, vendor_id: str, api_key: str, *, model: str | None = None) -> dict:
+# 一键配置的默认参数（2026-11-14）：Agent 场景 0.7 最稳，与「配置」页「0.7 · 均衡」
+# 预设一致；只接受默认温度的模型与 Claude 协议由 forge.sampling 自动跳过。
+DEFAULT_VENDOR = "deepseek"
+DEFAULT_TEMPERATURE = 0.7
+
+
+def apply_key(home: Path, vendor_id: str, api_key: str, *, model: str | None = None,
+              base_url: str | None = None, temperature: float | None = None) -> dict:
     """写入（或覆盖）一个厂商的模型行，并把密钥存进密钥库。
 
     返回 ``{"ok": True, "row_id", "model"}`` 或 ``{"ok": False, "error"}``；
@@ -98,7 +105,10 @@ def apply_key(home: Path, vendor_id: str, api_key: str, *, model: str | None = N
         return {"ok": False, "error": "请先粘贴 API 密钥"}
     if any(ch.isspace() for ch in key):
         return {"ok": False, "error": "密钥里有空格或换行，请重新复制"}
-    chosen = model or v.models[0]
+    chosen = (model or "").strip() or v.models[0]
+    address = (base_url or "").strip() or v.base_url
+    if not address.startswith(("http://", "https://")):
+        return {"ok": False, "error": "接口地址需以 http:// 或 https:// 开头"}
     home = Path(home)
     try:
         latest = load_user_layer(home)
@@ -110,8 +120,10 @@ def apply_key(home: Path, vendor_id: str, api_key: str, *, model: str | None = N
         row = {"id": v.id, "name": f"provider:{v.id}"}
         rows.append(row)
     config = dict(row.get("config") or {})
-    config.update(wire=v.wire, baseURL=v.base_url, model=chosen)
+    config.update(wire=v.wire, baseURL=address, model=chosen)
     config.setdefault("smallModel", chosen)
+    if temperature is not None:
+        config["temperature"] = float(temperature)
     if v.keyless:
         config.pop("apiKey", None)
     else:
