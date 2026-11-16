@@ -1,0 +1,198 @@
+{
+  "evidence_verified": true,
+  "cases": [
+    {
+      "report": "tool-challenge-mimo-adapted.json",
+      "turn": 1,
+      "reported_ok": true,
+      "replay_passed": true,
+      "reported_result_matches": true,
+      "failure_reproduced_before_edit": true,
+      "observed_edit_paths_allowed": true,
+      "turn2_pricing_unchanged": true,
+      "evidence_verified": true,
+      "test_output": "----------------------------------------------------------------------\nRan 11 tests in 0.000s\n\nOK\n",
+      "sources_sha256": {
+        "turn-1-pricing.py": "6e5315dcd9e9f62175e6f5418c0371b3106ed1d42ad6bb5b871e015bf668e7c0",
+        "turn-1-reporting.py": "50947a44d515696aed12171523c3d8db39c6d51e725734d8ee3139bb475e51e2"
+      }
+    },
+    {
+      "report": "tool-challenge-mimo-adapted.json",
+      "turn": 2,
+      "reported_ok": false,
+      "replay_passed": false,
+      "reported_result_matches": true,
+      "failure_reproduced_before_edit": true,
+      "observed_edit_paths_allowed": true,
+      "turn2_pricing_unchanged": true,
+      "evidence_verified": true,
+      "test_output": "back (most recent call last):\n  File \"C:\\Users\\D442~1\\AppData\\Local\\Temp\\forge-tool-audit-nseprntp\\tests\\test_billing.py\", line 33, in test_missing_filter\n    def test_missing_filter(self): self.assertEqual(build_report([row()],only_currency=\"JPY\"),{})\n                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nTypeError: build_report() got an unexpected keyword argument 'only_currency'\n\n======================================================================\nERROR: test_none_compatible (test_billing.BillingTests.test_none_compatible)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"C:\\Users\\D442~1\\AppData\\Local\\Temp\\forge-tool-audit-nseprntp\\tests\\test_billing.py\", line 34, in test_none_compatible\n    def test_none_compatible(self): self.assertEqual(build_report([row()],only_currency=None),{\"USD\":\"1.01\"})\n                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nTypeError: build_report() got an unexpected keyword argument 'only_currency'\n\n----------------------------------------------------------------------\nRan 14 tests in 0.002s\n\nFAILED (errors=3)\n",
+      "sources_sha256": {
+        "turn-2-pricing.py": "6e5315dcd9e9f62175e6f5418c0371b3106ed1d42ad6bb5b871e015bf668e7c0",
+        "turn-2-reporting.py": "50947a44d515696aed12171523c3d8db39c6d51e725734d8ee3139bb475e51e2"
+      }
+    },
+    {
+      "report": "tool-challenge-mimo-baseline.json",
+      "turn": 1,
+      "reported_ok": true,
+      "replay_passed": true,
+      "reported_result_matches": true,
+      "failure_reproduced_before_edit": true,
+      "observed_edit_paths_allowed": true,
+      "turn2_pricing_unchanged": true,
+      "evidence_verified": true,
+      "test_output": "----------------------------------------------------------------------\nRan 11 tests in 0.000s\n\nOK\n",
+      "sources_sha256": {
+        "turn-1-pricing.py": "6e8361780d9b087be7cbc8e39a0512e84ba445df8756ffa50d4dd28969e84ae2",
+        "turn-1-reporting.py": "d2aa5111911a810c65d608f70d598c96c87b9440769640617b5592e84feadbeb"
+      }
+    },
+    {
+      "report": "tool-challenge-mimo-baseline.json",
+      "turn": 2,
+      "reported_ok": true,
+      "replay_passed": true,
+      "reported_result_matches": true,
+      "failure_reproduced_before_edit": true,
+      "observed_edit_paths_allowed": true,
+      "turn2_pricing_unchanged": true,
+      "evidence_verified": true,
+      "test_output": "----------------------------------------------------------------------\nRan 14 tests in 0.000s\n\nOK\n",
+      "sources_sha256": {
+        "turn-2-pricing.py": "6e8361780d9b087be7cbc8e39a0512e84ba445df8756ffa50d4dd28969e84ae2",
+        "turn-2-reporting.py": "c7928baf250a5d3a1c396bd32a697d0e770f1ded4509ffea8af635e78f9c7a08"
+      }
+    },
+    {
+      "report": "tool-challenge-mimo-bounded.json",
+      "turn": 1,
+      "reported_ok": true,
+      "replay_passed": true,
+      "reported_result_matches": true,
+      "failure_reproduced_before_edit": true,
+      "observed_edit_paths_allowed": true,
+      "turn2_pricing_unchanged": true,
+      "evidence_verified": true,
+      "test_output": "----------------------------------------------------------------------\nRan 11 tests in 0.000s\n\nOK\n",
+      "sources_sha256": {
+        "turn-1-pricing.py": "fab4b8d7576dcf2b7e759750d97db70edb93d897bd6de39adab8e34e857f9cc4",
+        "turn-1-reporting.py": "78d74b54c8249446fb97eddc5eb5776de95f66995713ef01e3e2871d3ba8e90a"
+      }
+    },
+    {
+      "report": "tool-challenge-mimo-bounded.json",
+      "turn": 2,
+      "reported_ok": true,
+      "replay_passed": true,
+      "reported_result_matches": true,
+      "failure_reproduced_before_edit": true,
+      "observed_edit_paths_allowed": true,
+      "turn2_pricing_unchanged": true,
+      "evidence_verified": true,
+      "test_output": "----------------------------------------------------------------------\nRan 14 tests in 0.000s\n\nOK\n",
+      "sources_sha256": {
+        "turn-2-pricing.py": "fab4b8d7576dcf2b7e759750d97db70edb93d897bd6de39adab8e34e857f9cc4",
+        "turn-2-reporting.py": "35da6630b0bf6a13292dd736d5c76fdd3b41038879c23fc0bd9d0beecdd4c40b"
+      }
+    },
+    {
+      "report": "tool-challenge-mimo-final.json",
+      "turn": 1,
+      "reported_ok": true,
+      "replay_passed": true,
+      "reported_result_matches": true,
+      "failure_reproduced_before_edit": true,
+      "observed_edit_paths_allowed": true,
+      "turn2_pricing_unchanged": true,
+      "evidence_verified": true,
+      "test_output": "----------------------------------------------------------------------\nRan 11 tests in 0.000s\n\nOK\n",
+      "sources_sha256": {
+        "turn-1-pricing.py": "2911fa719f431e79cf8aea36d6c8f3bae87f212e0c3b02a9ceefcdc74304b798",
+        "turn-1-reporting.py": "edef8764eaf533549dbde67eff5094a084bbf1b0a7b1a7c09cad967363e56f5b"
+      }
+    },
+    {
+      "report": "tool-challenge-mimo-final.json",
+      "turn": 2,
+      "reported_ok": true,
+      "replay_passed": true,
+      "reported_result_matches": true,
+      "failure_reproduced_before_edit": true,
+      "observed_edit_paths_allowed": true,
+      "turn2_pricing_unchanged": true,
+      "evidence_verified": true,
+      "test_output": "----------------------------------------------------------------------\nRan 14 tests in 0.000s\n\nOK\n",
+      "sources_sha256": {
+        "turn-2-pricing.py": "2911fa719f431e79cf8aea36d6c8f3bae87f212e0c3b02a9ceefcdc74304b798",
+        "turn-2-reporting.py": "601d4d7f64d7d8e575e41fac50869923a5d59543b12184a2bc52e969a8b296dc"
+      }
+    },
+    {
+      "report": "tool-challenge-seed-adapted.json",
+      "turn": 1,
+      "reported_ok": true,
+      "replay_passed": true,
+      "reported_result_matches": true,
+      "failure_reproduced_before_edit": true,
+      "observed_edit_paths_allowed": true,
+      "turn2_pricing_unchanged": true,
+      "evidence_verified": true,
+      "test_output": "----------------------------------------------------------------------\nRan 11 tests in 0.000s\n\nOK\n",
+      "sources_sha256": {
+        "turn-1-pricing.py": "824dea1dbb1af12ccc6dd3464c6e4cf4fe4904dcd3a98f1468da8e6d358b2bb0",
+        "turn-1-reporting.py": "57325efb0e48bf5561fefc973c765818009c840fb0df26354818ef0b253ca883"
+      }
+    },
+    {
+      "report": "tool-challenge-seed-adapted.json",
+      "turn": 2,
+      "reported_ok": false,
+      "replay_passed": false,
+      "reported_result_matches": true,
+      "failure_reproduced_before_edit": true,
+      "observed_edit_paths_allowed": true,
+      "turn2_pricing_unchanged": true,
+      "evidence_verified": true,
+      "test_output": "back (most recent call last):\n  File \"C:\\Users\\D442~1\\AppData\\Local\\Temp\\forge-tool-audit-ipyd858c\\tests\\test_billing.py\", line 33, in test_missing_filter\n    def test_missing_filter(self): self.assertEqual(build_report([row()],only_currency=\"JPY\"),{})\n                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nTypeError: build_report() got an unexpected keyword argument 'only_currency'\n\n======================================================================\nERROR: test_none_compatible (test_billing.BillingTests.test_none_compatible)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"C:\\Users\\D442~1\\AppData\\Local\\Temp\\forge-tool-audit-ipyd858c\\tests\\test_billing.py\", line 34, in test_none_compatible\n    def test_none_compatible(self): self.assertEqual(build_report([row()],only_currency=None),{\"USD\":\"1.01\"})\n                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nTypeError: build_report() got an unexpected keyword argument 'only_currency'\n\n----------------------------------------------------------------------\nRan 14 tests in 0.002s\n\nFAILED (errors=3)\n",
+      "sources_sha256": {
+        "turn-2-pricing.py": "824dea1dbb1af12ccc6dd3464c6e4cf4fe4904dcd3a98f1468da8e6d358b2bb0",
+        "turn-2-reporting.py": "57325efb0e48bf5561fefc973c765818009c840fb0df26354818ef0b253ca883"
+      }
+    },
+    {
+      "report": "tool-challenge-seed-baseline.json",
+      "turn": 1,
+      "reported_ok": false,
+      "replay_passed": false,
+      "reported_result_matches": true,
+      "failure_reproduced_before_edit": true,
+      "observed_edit_paths_allowed": true,
+      "turn2_pricing_unchanged": true,
+      "evidence_verified": true,
+      "test_output": "==\nFAIL: test_sorted_currencies (test_billing.BillingTests.test_sorted_currencies)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"C:\\Users\\D442~1\\AppData\\Local\\Temp\\forge-tool-audit-2g4dr1tm\\tests\\test_billing.py\", line 25, in test_sorted_currencies\n    self.assertEqual(list(result),[\"EUR\",\"USD\"])\nAssertionError: Lists differ: ['USD', 'EUR'] != ['EUR', 'USD']\n\nFirst differing element 0:\n'USD'\n'EUR'\n\n- ['USD', 'EUR']\n+ ['EUR', 'USD']\n\n======================================================================\nFAIL: test_type (test_billing.BillingTests.test_type)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"C:\\Users\\D442~1\\AppData\\Local\\Temp\\forge-tool-audit-2g4dr1tm\\tests\\test_billing.py\", line 11, in test_type\n    def test_type(self): self.assertIsInstance(line_total(\"2.50\",2),Decimal)\n                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 5.0 is not an instance of <class 'decimal.Decimal'>\n\n----------------------------------------------------------------------\nRan 11 tests in 0.008s\n\nFAILED (failures=17, errors=1)\n",
+      "sources_sha256": {
+        "turn-1-pricing.py": "f980fab2ba6037f45c2620c4332df729d7252e8323679b7aa6d9b42a22052107",
+        "turn-1-reporting.py": "eeeda039f9d2e945edf50cd3bc5e758313c0c5d3a0372cb3aa02ea1c42234414"
+      }
+    },
+    {
+      "report": "tool-challenge-seed-final.json",
+      "turn": 1,
+      "reported_ok": false,
+      "replay_passed": false,
+      "reported_result_matches": true,
+      "failure_reproduced_before_edit": true,
+      "observed_edit_paths_allowed": true,
+      "turn2_pricing_unchanged": true,
+      "evidence_verified": true,
+      "test_output": "==\nFAIL: test_sorted_currencies (test_billing.BillingTests.test_sorted_currencies)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"C:\\Users\\D442~1\\AppData\\Local\\Temp\\forge-tool-audit-zzpctv88\\tests\\test_billing.py\", line 25, in test_sorted_currencies\n    self.assertEqual(list(result),[\"EUR\",\"USD\"])\nAssertionError: Lists differ: ['USD', 'EUR'] != ['EUR', 'USD']\n\nFirst differing element 0:\n'USD'\n'EUR'\n\n- ['USD', 'EUR']\n+ ['EUR', 'USD']\n\n======================================================================\nFAIL: test_type (test_billing.BillingTests.test_type)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"C:\\Users\\D442~1\\AppData\\Local\\Temp\\forge-tool-audit-zzpctv88\\tests\\test_billing.py\", line 11, in test_type\n    def test_type(self): self.assertIsInstance(line_total(\"2.50\",2),Decimal)\n                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 5.0 is not an instance of <class 'decimal.Decimal'>\n\n----------------------------------------------------------------------\nRan 11 tests in 0.010s\n\nFAILED (failures=17, errors=1)\n",
+      "sources_sha256": {
+        "turn-1-pricing.py": "f980fab2ba6037f45c2620c4332df729d7252e8323679b7aa6d9b42a22052107",
+        "turn-1-reporting.py": "eeeda039f9d2e945edf50cd3bc5e758313c0c5d3a0372cb3aa02ea1c42234414"
+      }
+    }
+  ],
+  "scope": "Independent fixture replay and observed edit requests; pre-snapshot reports cannot prove absence of all other filesystem changes."
+}

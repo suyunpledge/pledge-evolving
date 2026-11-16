@@ -137,6 +137,18 @@ class FirstSendTests(unittest.TestCase):
         self.app.send_button.invoke()
         self.finished()
 
+    def test_reply_choice_is_frozen_during_first_project_initialization(self):
+        entered, release, blocking = self.block_loading()
+        with blocking:
+            self.send_first('normal reply while loading')
+            self.pump(entered.is_set)
+            self.app._on_planning_change('high')
+            release.set()
+            self.finished()
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(self.app.agent_panel.task_context['planning'], 'none')
+        self.assertEqual(self.app.planning.get(), 'high')
+
     def test_cancel_during_initialization_does_not_run_after_ready(self):
         entered,release,blocking = self.block_loading()
         with blocking:
@@ -177,7 +189,12 @@ class FirstSendTests(unittest.TestCase):
         self.assertIs(self.app.runtime.bridge.agent.session,session)
         self.assertEqual(len(self.app.runtime.tasks),3)
         self.assertEqual(len(self.calls),3)
-        self.assertTrue(any(m.get('content')=='first task' for m in self.calls[-1][2]))
+        self.assertTrue(any(m.get('content') == 'first task'
+                            for m in self.app.runtime.bridge.history))
+        # The cached wire prefix includes the task contract beside the user text.
+        first = next(m for m in self.calls[0][2]
+                     if m.get('role') == 'user' and m.get('content', '').startswith('first task\n\n'))
+        self.assertIn(first, self.calls[-1][2])
 
     def test_worker_start_failure_resets_loading_and_retry_runs(self):
         with patch.object(self.app,'work',side_effect=RuntimeError('worker unavailable')):

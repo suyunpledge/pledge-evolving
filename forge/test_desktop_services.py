@@ -1,3 +1,4 @@
+import sqlite3
 import tempfile
 import time
 import unittest
@@ -17,10 +18,59 @@ class DesktopServicesTests(unittest.TestCase):
         job = self.store.add_job('task', 'explain README', self.tmp.name,
                                  ['p', 'm'], time.time()-1, 60)
         other = DesktopStore(self.store.path)
-        self.assertEqual(self.store.claim_due()[0]['id'], job)
+        claim = self.store.claim_due()[0]
+        self.assertEqual(claim['id'], job)
         self.assertEqual(other.claim_due(), [])
-        self.store.finish_job(job, 'done', 'result')
+        self.assertEqual([r['status'] for r in other.job_runs(job)], ['running'])
+        self.store.finish_job(job, 'done', 'result', run_id=claim['run_id'])
         self.assertEqual(other.jobs()[0]['status'], 'done')
+
+    def test_run_history_keeps_distinct_redacted_results_across_restart(self):
+        key = self.store.add_job('task', 'explain README', self.tmp.name, ['p', 'm'], 100, 60)
+        first = self.store.claim_due(now=100)[0]
+        secret = 'sk-test-schedule-synthetic-0123456789'
+        self.store.finish_job(key, 'done', 'API_KEY=' + secret, run_id=first['run_id'])
+        second = self.store.claim_due(now=160)[0]
+        self.assertEqual(self.store.job_runs(key)[0]['result'], '')
+        self.store.finish_job(key, 'failed', 'provider unavailable', run_id=second['run_id'])
+        reopened = DesktopStore(self.store.path)
+        latest, previous = reopened.job_runs(key)
+        self.assertEqual((latest['started'], latest['status'], latest['result']),
+                         (160, 'failed', 'provider unavailable'))
+        self.assertIsNotNone(latest['finished'])
+        self.assertEqual((previous['started'], previous['status']), (100, 'done'))
+        self.assertIn('API_KEY', previous['result'])
+        self.assertNotIn(secret, previous['result'])
+
+    def test_run_history_discards_oldest_occurrences(self):
+        key = self.store.add_job('task', 'explain README', self.tmp.name, ['p', 'm'], 100, 60)
+        total = self.store.JOB_RUN_LIMIT + 2
+        for n in range(total):
+            run = self.store.claim_due(now=100 + 60*n)[0]
+            self.store.finish_job(key, 'done', str(n), run_id=run['run_id'])
+        self.assertEqual([row['result'] for row in self.store.job_runs(key)],
+                         [str(n) for n in range(total-1, 1, -1)])
+        with self.store.connect() as db:
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM job_runs').fetchone()[0], self.store.JOB_RUN_LIMIT)
+
+    def test_legacy_database_keeps_the_one_known_result(self):
+        path = Path(self.tmp.name) / 'legacy.sqlite3'
+        db = sqlite3.connect(path)
+        try:
+            db.executescript('''CREATE TABLE jobs (id TEXT PRIMARY KEY, data TEXT NOT NULL,
+                due REAL NOT NULL, interval REAL NOT NULL, enabled INTEGER NOT NULL,
+                status TEXT NOT NULL, result TEXT NOT NULL DEFAULT '');
+                INSERT INTO jobs VALUES ('old', '{}', 100, 0, 0, 'done', 'old result');
+                INSERT INTO jobs VALUES ('new', '{}', 200, 0, 1, 'waiting', '');''')
+        finally:
+            db.close()
+        DesktopStore(path)
+        reopened = DesktopStore(path)
+        runs = reopened.job_runs('old')
+        self.assertEqual(len(runs), 1)
+        self.assertEqual((runs[0]['status'], runs[0]['result']), ('done', 'old result'))
+        self.assertIsNone(runs[0]['finished'])
+        self.assertEqual(reopened.job_runs('new'), [])
 
     def test_write_needs_grant_policy_and_exact_confirmation(self):
         calls, prompts = [], []
@@ -117,10 +167,12 @@ class DesktopServicesTests(unittest.TestCase):
         self.assertFalse(self.store.jobs()[0]['enabled'])
         self.store.enable_job(key,True)
         next_run=self.store.claim_due(now=501)[0]
-        self.store.finish_job(key,'done','stale',started=claimed['started'])
+        self.store.finish_job(key,'done','stale',run_id=claimed['run_id'])
         self.assertEqual(self.store.jobs()[0]['status'],'running')
-        self.store.finish_job(key,'done','current',started=next_run['started'])
+        self.store.finish_job(key,'done','current',run_id=next_run['run_id'])
         self.assertEqual(self.store.jobs()[0]['result'],'current')
+        self.assertEqual([(r['status'], r['result']) for r in self.store.job_runs(key)],
+                         [('done', 'current'), ('interrupted', '')])
 
     def test_device_flow_handles_slow_down_and_only_commits_matching_generation(self):
         calls,saved,notices=[],[],[]

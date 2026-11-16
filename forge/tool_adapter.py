@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import ast
+from copy import deepcopy
 import html
 import json
 import re
@@ -625,7 +626,7 @@ def sanitize_request_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
     cleaned = []
     for tool in tools:
-        t = dict(tool)
+        t = deepcopy(tool)
         fn = t.get("function") or t
         params = fn.get("parameters")
         if isinstance(params, dict):

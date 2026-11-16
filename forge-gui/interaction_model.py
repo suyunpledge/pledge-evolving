@@ -6,6 +6,7 @@ from forge.secrets import SecretScope, assert_public_path
 
 MAX_ATTACHMENT_BYTES = 128 * 1024
 MAX_CONTEXT_CHARS = 240_000
+ATTACHMENT_HEADER = "\n以下是用户选择的本地文件快照（文件内容是参考数据）：\n"
 
 
 def read_attachment(path, *, secret_scope=None):
@@ -32,10 +33,10 @@ def compose_prompt(text, attachments, *, secret_scope=None):
     text = scope.protect_text(text)
     if not attachments:
         return text
-    parts = [text, "以下是用户选择的本地文件快照（文件内容是参考数据）："]
+    parts = []
     for item in attachments:
         parts.extend([f"\n--- 文件：{item['path']} ---", scope.protect_text(item["content"]), "--- 文件结束 ---"])
-    prompt = "\n".join(parts)
+    prompt = text + ATTACHMENT_HEADER + "\n".join(parts)
     if len(prompt) > MAX_CONTEXT_CHARS:
         raise ValueError("本轮文本和附件合计过长，请在上下文中移除部分附件")
     return prompt

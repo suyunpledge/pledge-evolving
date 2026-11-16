@@ -116,6 +116,7 @@ class ToolResultOffloader:
     # stats (upstream's diagnostic hook)
     offload_count: int = 0
     last_path: str = ""
+    artifact_store: Any = None
 
     def _file_path(self, tool_name: str, call_id: str) -> Path:
         short = hashlib.md5(f"{call_id}{time.time()}".encode()).hexdigest()[:8]
@@ -131,6 +132,15 @@ class ToolResultOffloader:
         well under ``limits.max_tool_result``), so nothing is silently
         tail-truncated anymore.
         """
+        if self.artifact_store is not None:
+            from ..artifacts import summary
+            try:
+                meta = self.artifact_store.put(text, source=tool_name, action_id=call_id)
+                self.offload_count += 1
+                self.last_path = meta['id']
+                return summary(meta, text, preview=self.policy.summary_length)
+            except (OSError, ValueError):
+                return text
         path = self._file_path(tool_name, call_id)
         try:
             self.writer(path, text)
@@ -151,15 +161,8 @@ class ToolResultOffloader:
         text = extract_text(result)
         if not self.policy.should_offload(tool_name, text):
             return result
-        path = self._file_path(tool_name, call_id)
-        try:
-            self.writer(path, text)
-            self.offload_count += 1
-            self.last_path = str(path)
-            summary = make_summary(text, str(path), preview_length=self.policy.summary_length)
-        except OSError:
-            return result  # disk trouble: keep the original text
-        return _replace_text(result, summary)
+        summary = self.wrap_result_text(tool_name, call_id, text)
+        return result if summary == text else _replace_text(result, summary)
 
 
 def _replace_text(result: Any, new_text: str) -> Any:

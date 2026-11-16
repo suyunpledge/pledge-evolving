@@ -1,0 +1,77 @@
+{
+  "mode": "live",
+  "records": [
+    {
+      "vendor": "deepseek",
+      "model": "deepseek-flash",
+      "endpoint": "https://api.deepseek.com",
+      "requests": [
+        {
+          "url": "https://api.deepseek.com/chat/completions",
+          "parameters": {
+            "model": "deepseek-flash",
+            "reasoning_effort": "high",
+            "max_tokens": 256
+          },
+          "message_roles": [
+            "user"
+          ],
+          "seconds": 0.94,
+          "usage": {
+            "prompt_tokens": 50,
+            "completion_tokens": 49,
+            "model": "deepseek-flash",
+            "provider": "deepseek",
+            "cached_tokens": 0,
+            "cache_write_tokens": 0,
+            "reasoning_tokens": 45
+          },
+          "finish_reason": "stop",
+          "tool_names": [],
+          "text": "9.9",
+          "adaptation": [
+            "依赖厂商自动缓存（命中 0.02×），无需标记",
+            "DeepSeek 保留显式 reasoning_effort（直连 high 档已有探针实证）"
+          ]
+        }
+      ],
+      "ok": true
+    },
+    {
+      "vendor": "deepseek",
+      "model": "deepseek-v4-pro",
+      "endpoint": "https://api.deepseek.com",
+      "requests": [
+        {
+          "url": "https://api.deepseek.com/chat/completions",
+          "parameters": {
+            "model": "deepseek-v4-pro",
+            "reasoning_effort": "high",
+            "max_tokens": 256
+          },
+          "message_roles": [
+            "user"
+          ],
+          "seconds": 2.58,
+          "usage": {
+            "prompt_tokens": 103,
+            "completion_tokens": 125,
+            "model": "deepseek-v4-pro",
+            "provider": "deepseek",
+            "cached_tokens": 0,
+            "cache_write_tokens": 0,
+            "reasoning_tokens": 121
+          },
+          "finish_reason": "stop",
+          "tool_names": [],
+          "text": "9.9",
+          "adaptation": [
+            "依赖厂商自动缓存（命中 0.02×），无需标记",
+            "DeepSeek 保留显式 reasoning_effort（直连 high 档已有探针实证）"
+          ]
+        }
+      ],
+      "ok": true
+    }
+  ]
+}

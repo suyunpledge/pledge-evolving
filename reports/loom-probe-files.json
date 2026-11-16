@@ -1,0 +1,83 @@
+{
+  "backup": "C:\\Users\\匡溯昀\\forge-probe-backup-20261106-215239",
+  "files": [
+    {
+      "path": "forge/acceptance.py",
+      "new": false,
+      "before_sha256": "aa3340dc65d127a1612c488850427141a7781ae9fa44ee26cdcd97d4d0c73b5b",
+      "after_sha256": "37e5feeff1d12ea083ecd01216e067b346c73ef227dff13b9dc5fa35fefe005d"
+    },
+    {
+      "path": "forge/loop.py",
+      "new": false,
+      "before_sha256": "2fcd797d4fdd9628bdb39f760939c702f89a6a53384f30fcedec1804cf9ce14f",
+      "after_sha256": "e98c6ebcad1c6a92c3620725b3ca5c2477807c57ebdfebb9490c6e34282ef635"
+    },
+    {
+      "path": "forge/assembly.py",
+      "new": false,
+      "before_sha256": "5253153b6a5d08cd10cda7a88149ba1f04023e917071bd932885c43b00ef3f26",
+      "after_sha256": "56ca550ec047c369cb8953929d512b6deb717d0ae6a0258d1698e81df056b835"
+    },
+    {
+      "path": "forge/vscode_bridge.py",
+      "new": false,
+      "before_sha256": "2a7a939b986a11c50a40e9450b6e03fa85f7d9e0722497f0dbd0987d15bb1903",
+      "after_sha256": "2e09b779d1f792b78c451f1ad52ddc313857600f721839580f07fb6f2564e514"
+    },
+    {
+      "path": "forge/development/runtime.py",
+      "new": false,
+      "before_sha256": "9a8c335b296051f3c394f9888e4845c7161a5864816c0930a5735ca0aada87a4",
+      "after_sha256": "cb791630522f1acd4d3e8a41b9473ec29018d071dc5ff39c913891459f9bb0ad"
+    },
+    {
+      "path": "client/server.py",
+      "new": false,
+      "before_sha256": "28f8cb2f694c2ebf62b714214de690dae637a49865c33a5261369e175a5b7b1d",
+      "after_sha256": "8824b18542d61077026e4543fd5e9cb76e530cf38afcb3826adfe68b52147134"
+    },
+    {
+      "path": "forge-budgets.json",
+      "new": false,
+      "before_sha256": "007556dc3cff0d389f897677c610af1423e2ea36d00cc7c020dbc5c811e46d93",
+      "after_sha256": "7c970a8b33a80944fa766af788a6e5c21d175ef2d8c523a73dd2c123546fae80"
+    },
+    {
+      "path": "forge/execution.py",
+      "new": false,
+      "before_sha256": "8c7c6872a560df700ee289f62d4745ed197608909cf430bb2e023e062d8a298c",
+      "after_sha256": "690d16b6c27e189bed844babfa60c91af9dfb7c1a4ae5cfa4065a8f36dc8d977"
+    },
+    {
+      "path": "forge/probes.py",
+      "new": true,
+      "before_sha256": null,
+      "after_sha256": "dd8ddbc78b98de2e282869f94bd59a90a814aa7d90030fc4db855632bc35866b"
+    },
+    {
+      "path": "forge/test_env_probes.py",
+      "new": true,
+      "before_sha256": null,
+      "after_sha256": "937873890d42d344c6350cbe98736e66691c0458078bee49fff5d206135ffe77"
+    },
+    {
+      "path": "tests/test_probe_entrypoints.py",
+      "new": true,
+      "before_sha256": null,
+      "after_sha256": "968b833efbd3243f404e3fa2979e5c58d893edd8085ba21646a971fc38972345"
+    },
+    {
+      "path": "templates/acceptance.probes.example.json",
+      "new": true,
+      "before_sha256": null,
+      "after_sha256": "2814ab1e3f11db0a2246e7957b79a957c1f6af8c774c01466ee76886bdbfe961"
+    },
+    {
+      "path": "docs/ENVIRONMENT-PROBE-ACCEPTANCE.md",
+      "new": true,
+      "before_sha256": null,
+      "after_sha256": "8a32a042014f34ca1f70480490293f4b78fddd86458bc20877dcb5b29209e09c"
+    }
+  ]
+}

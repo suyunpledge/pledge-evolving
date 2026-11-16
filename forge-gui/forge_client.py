@@ -22,6 +22,8 @@ from dataclasses import dataclass, field
 from typing import Callable
 from http_transport import open_response, RequestCancelled
 from forge.secrets import SecretScope, redact, VendorCredential
+from forge.request_timing import (gateway_client_timeout, request_timeout,
+                                 METADATA_RESPONSE_TIMEOUT, TOOL_RESPONSE_TIMEOUT)
 
 
 @dataclass
@@ -32,6 +34,9 @@ class ChatMessage:
     tool_calls: list | None = None
     tool_call_id: str = ""
     reasoning_content: str = ""
+    # Local transcript metadata; never included in the wire message.
+    user_text: str | None = None
+    attachment_names: tuple[str, ...] = ()
 
     def to_dict(self, secret_scope=None) -> dict:
         d: dict = {"role": self.role, "content": self.content}
@@ -42,6 +47,25 @@ class ChatMessage:
         if self.reasoning_content:
             d["reasoning_content"] = self.reasoning_content
         return secret_scope.protect(d) if secret_scope is not None else redact(d)
+
+    def to_session_dict(self) -> dict:
+        data = self.to_dict()
+        if self.role == "user" and self.attachment_names and self.user_text is not None:
+            data["display"] = redact({"text": self.user_text, "attachments": list(self.attachment_names)})
+        return data
+
+    @classmethod
+    def from_session_dict(cls, data: dict) -> ChatMessage:
+        display = data.get("display")
+        text, names = None, ()
+        if data["role"] == "user" and isinstance(display, dict):
+            saved_text, saved_names = display.get("text"), display.get("attachments")
+            if isinstance(saved_text, str) and isinstance(saved_names, list):
+                names = tuple(name for name in saved_names if isinstance(name, str) and name)
+                if names:
+                    text = saved_text
+        return cls(data["role"], data["content"], reasoning_content=str(data.get("reasoning_content") or ""),
+                   user_text=text, attachment_names=names)
 
 
 @dataclass
@@ -79,16 +103,21 @@ class ForgeGatewayClient:
     """与 forge gateway（默认 127.0.0.1:8799）通信。"""
 
     def __init__(self, base_url: str = "http://127.0.0.1:8799",
-                 api_key: str = "", timeout: float = 60.0):
+                 api_key: str = "", timeout: float | None = None):
         self.base_url = base_url.rstrip("/")
         self._credential = VendorCredential(api_key, self.base_url)
         self.api_key = self._credential.ref
         self.secret_scope = SecretScope()
         self.secret_session = __import__('uuid').uuid4().hex
-        self.timeout = timeout
+        self._explicit_timeout = timeout is not None
+        self.timeout = request_timeout(timeout, default=gateway_client_timeout())
         self.plugin_policy_version = 0
 
     # ── 工具方法 ──
+    def set_upstream_timeout(self, seconds=0):
+        if not self._explicit_timeout:
+            self.timeout = gateway_client_timeout(seconds)
+
     def reset_secret_session(self):
         self.secret_scope.close()
         self.secret_scope = SecretScope()
@@ -113,7 +142,7 @@ class ForgeGatewayClient:
         """GET /v1/tools → OpenAI function 工具定义列表。gateway 未开工具桥时抛 GatewayError。"""
         req = self._request("GET", "/v1/tools")
         try:
-            with open_response(req, timeout=self.timeout if timeout is None else timeout, cancel_event=None) as resp:
+            with open_response(req, timeout=METADATA_RESPONSE_TIMEOUT if timeout is None else timeout, cancel_event=None) as resp:
                 data = redact(json.loads(resp.read().decode("utf-8", "replace")))
         except urllib.error.HTTPError as e:
             raise GatewayError(f"HTTP {e.code}: {http_error_detail(e)}") from None
@@ -138,14 +167,32 @@ class ForgeGatewayClient:
                 raise GatewayError("网关不支持插件 Policy 上下文；请更新并重启网关，插件执行已阻止")
             body["plugin_context"] = plugin_context
         req = self._request("POST", "/v1/tools/call", body)
+        tool_timeout = TOOL_RESPONSE_TIMEOUT if timeout is None else timeout
+        if timeout is None and name == 'shell_exec' and isinstance(arguments, dict):
+            try:
+                execution_timeout = request_timeout(arguments.get('timeout', 0), default=0)
+            except ValueError:
+                execution_timeout = 0  # The tool host validates malformed arguments.
+            tool_timeout = max(tool_timeout, execution_timeout + 30)
         try:
-            with open_response(req, timeout=self.timeout if timeout is None else timeout, cancel_event=None) as resp:
+            with open_response(req, timeout=tool_timeout, cancel_event=None) as resp:
                 return redact(json.loads(resp.read().decode("utf-8", "replace")))
         except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException) as e:
             detail = f"HTTP {e.code}: {http_error_detail(e)}" if isinstance(e, urllib.error.HTTPError) else str(e)
             error = GatewayError(detail)
             error.run_id, error.action_id = run_id, action_id
             raise error from None  # Query these IDs; never resend on transport failure.
+
+    def review_changes(self, identifiers, *, revert=False):
+        """Review or explicitly undo recorded host changes; never retry writes."""
+        req = self._request('POST', '/v1/changes/' + ('revert' if revert else 'review'),
+                            {'change_ids': identifiers})
+        try:
+            with open_response(req, timeout=90, cancel_event=None) as resp:
+                return redact(json.loads(resp.read().decode('utf-8')))
+        except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException) as exc:
+            detail = f'HTTP {exc.code}: {http_error_detail(exc)}' if isinstance(exc, urllib.error.HTTPError) else str(exc)
+            raise GatewayError(detail) from None
 
     # ── 健康检查 ──
     def health(self, *, cancel_event=None) -> tuple[bool, str]:
@@ -232,6 +279,8 @@ class ForgeGatewayClient:
         result = self.chat(inputs, model=model, max_tokens=token_cap(level), cancel_event=cancel_event)
         raw = result.raw or {}
         choices = raw.get('choices') or []
+        if choices and choices[0].get('finish_reason') in {'length', 'max_tokens'}:
+            raise PlanningError('Planner exhausted its output budget; no execution started')
         if result.tool_calls or (choices and (choices[0].get('message') or {}).get('tool_calls')):
             raise PlanningError('Planner attempted to call tools')
         return TaskPlan.parse(self.secret_scope.protect_text(result.text), level), result.usage
@@ -283,12 +332,12 @@ class ForgeGatewayClient:
         model_name = ""
         completed = False
         tool_acc: dict[int, dict] = {}   # 按 index 累积 delta.tool_calls
-        from forge.secret_http import SecretSSEFilter
+        from forge.secret_http import SecretSSEFilter, iter_model_sse
         fence = SecretSSEFilter()
         try:
             with open_response(req, timeout=self.timeout, cancel_event=cancel_event) as resp:
                 def safe_lines():
-                    for upstream_line in resp:
+                    for upstream_line in iter_model_sse(resp):
                         yield from fence.feed(upstream_line).splitlines(keepends=True)
                     yield from fence.finish().splitlines(keepends=True)
                 for line in safe_lines():
@@ -318,6 +367,8 @@ class ForgeGatewayClient:
                     for choice in choices:
                         if not isinstance(choice, dict):
                             continue
+                        if choice.get("finish_reason") in {"length", "max_tokens"}:
+                            raise GatewayError("模型输出达到上限，回复尚未完成；本轮工具调用未执行。")
                         if choice.get("finish_reason") is not None:
                             completed = True
                         delta = choice.get("delta", {}) or {}

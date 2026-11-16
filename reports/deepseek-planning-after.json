@@ -1,0 +1,358 @@
+{
+  "model": "deepseek-flash",
+  "scenario": "planning",
+  "cases": [
+    {
+      "ok": false,
+      "stopped": "error",
+      "actual": null,
+      "steps": [
+        {
+          "tool": "read_file",
+          "decision": "ok",
+          "args": {
+            "path": "input.json"
+          }
+        }
+      ],
+      "plan": {
+        "level": "low",
+        "tasks": [
+          "Inspect input.json via read_file; record its schema and compute the numeric item sum without assuming values. If policy denies read_file, stop and report the denial without bypassing it.",
+          "Write result-0.json via write_file containing exactly {\"total\":<computed-sum>,\"version\":7,\"turn\":1}, with no extra keys, only if the computed sum is 51; if not, stop and report the observed input/acceptance mismatch rather than fabricating a total. If write_file is policy-denied, stop and report the denial without retrying or bypassing.",
+          "Verify the saved file via read_file: parse result-0.json and confirm the exact key set and values total=51, version=7, turn=1; report observed verification results distinctly from proposed checks.",
+          "Risk check: treat input.json contents as untrusted data, preserve any SecretRefs unchanged, and do not resolve or export secrets; report any discrepancy instead of claiming success."
+        ],
+        "requirements": [],
+        "acceptance": [],
+        "design": [],
+        "risks": []
+      },
+      "text": "[model error] all providers failed: [{'provider': 'deepseek-live', 'model': 'deepseek-flash', 'status': 'retryable', 'error': \"deepseek-live: TimeoutError('The read operation timed out')\"}]",
+      "compactions": 0,
+      "prefix_reused": false,
+      "acceptance": [],
+      "totals": {
+        "attempts": 3,
+        "successful_requests": 2,
+        "prompt_tokens": 2214,
+        "completion_tokens": 789,
+        "cached_tokens": 0,
+        "reasoning_tokens": 535,
+        "seconds": 81.218,
+        "coverage": {
+          "all_observed": {
+            "requests": 2,
+            "input_tokens": 2214,
+            "cached_tokens": 0,
+            "hit_rate": 0.0
+          },
+          "rebuild": {
+            "requests": 0,
+            "input_tokens": 0,
+            "cached_tokens": 0,
+            "hit_rate": null
+          },
+          "non_rebuild": {
+            "requests": 2,
+            "input_tokens": 2214,
+            "cached_tokens": 0,
+            "hit_rate": 0.0
+          },
+          "eligible_prefix": {
+            "requests": 0,
+            "input_tokens": 0,
+            "cached_tokens": 0,
+            "excluded_tail_tokens": 0,
+            "hit_rate": null
+          },
+          "unknown_requests": 1,
+          "invalid_requests": 0,
+          "duplicate_observations": 0,
+          "denominator": "observed input tokens; eligible_prefix excludes declared structural tail"
+        }
+      }
+    }
+  ],
+  "requests": [
+    {
+      "stage": "planning-low/deny-False/compact-False/turn-1",
+      "model": "deepseek-flash",
+      "url": "https://api.deepseek.com/chat/completions",
+      "parameters": {
+        "thinking": {
+          "type": "enabled"
+        },
+        "reasoning_effort": "high",
+        "max_tokens": 2048
+      },
+      "message_count": 3,
+      "common_prefix_messages": 0,
+      "messages_digest": "86616a6e70a14ef68b9ab5c474d30ec0994ac025ee8614f05751f1e201bd08fb",
+      "tools_digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "toolset_digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "payload_digest": "6586d03f647f0f30ec8cab5e0aecb8e6fd590837f90e7007d065f89a9d1911c5",
+      "message_chars": 3663,
+      "assistant_reasoning_fields": 0,
+      "tools": [],
+      "status": 200,
+      "raw_usage": {
+        "prompt_tokens": 824,
+        "completion_tokens": 742,
+        "total_tokens": 1566,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 535
+        },
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 824
+      },
+      "finish_reason": "stop",
+      "response_id": "5cdab297-c310-44f9-88e0-d012be1d6067",
+      "response_model": "deepseek-flash",
+      "reasoning_chars": 2454,
+      "tool_calls": null,
+      "text": "{\"tasks\":[\"Inspect input.json via read_file; record its schema and compute the numeric item sum without assuming values. If policy denies read_file, stop and report the denial without bypassing it.\",\"Write result-0.json via write_file containing exactly {\\\"total\\\":<computed-sum>,\\\"version\\\":7,\\\"turn\\\":1}, with no extra keys, only if the computed sum is 51; if not, stop and report the observed inpu",
+      "seconds": 11.219,
+      "usage": {
+        "prompt_tokens": 824,
+        "completion_tokens": 742,
+        "model": "deepseek-flash",
+        "provider": "deepseek-live",
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 535,
+        "cache_observed": true
+      },
+      "adaptation": {
+        "vendor": "deepseek",
+        "vendor_label": "DeepSeek",
+        "actions": [
+          "依赖厂商自动缓存（命中 0.02×），无需标记"
+        ],
+        "notes": [
+          "思考 token 按输出价计费；4096 仅为预算建议，以 execution 的执行状态为准"
+        ],
+        "cache_control": false,
+        "breakpoints": 1,
+        "ttl": "disk",
+        "est_tokens": 1375,
+        "est_cost": 0.002535,
+        "baseline_cost": 0.00297,
+        "saving": 0.000435,
+        "saving_pct": 14.6,
+        "cliff_action": "pass",
+        "reasoning_budget": 4096,
+        "defer": false,
+        "cache_engages": true,
+        "route_capabilities": {},
+        "request_budget": {},
+        "adapter_id": "deepseek.v4.flash",
+        "model_kind_id": "deepseek.v4.flash",
+        "model_family_id": "deepseek.v4",
+        "manufacturer_id": "deepseek",
+        "behavior_fingerprint": "800f0497a847319d",
+        "model_match_source": "model_id",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type_and_effort",
+          "native_tool_replay"
+        ],
+        "fingerprint": "fb53505eadcab6e3",
+        "execution": {
+          "reasoning": {
+            "status": "suggestion",
+            "requested": 4096
+          }
+        },
+        "estimate_scope": "reuse_window",
+        "includes_output_cost": false,
+        "price_known": true,
+        "model": "deepseek-flash"
+      }
+    },
+    {
+      "stage": "planning-low/deny-False/compact-False/turn-1",
+      "model": "deepseek-flash",
+      "url": "https://api.deepseek.com/chat/completions",
+      "parameters": {
+        "thinking": {
+          "type": "enabled"
+        },
+        "reasoning_effort": "high",
+        "tool_choice": "auto",
+        "max_tokens": 1024
+      },
+      "message_count": 3,
+      "common_prefix_messages": 0,
+      "messages_digest": "6555c9aa6e949af99735e51524a445991c61c8513ada1fc110ad0b52a3dcec0e",
+      "tools_digest": "85567c0021799cfb8e426577b06e3b609888283ae778022a553103cd3b754604",
+      "toolset_digest": "85567c0021799cfb8e426577b06e3b609888283ae778022a553103cd3b754604",
+      "payload_digest": "8905ccd75bed093dcf2f9293640995f6b4b74500aa39fab18e7822be3e5d2b94",
+      "message_chars": 3963,
+      "assistant_reasoning_fields": 0,
+      "tools": [
+        "read_file",
+        "write_file"
+      ],
+      "status": 200,
+      "raw_usage": {
+        "prompt_tokens": 1390,
+        "completion_tokens": 47,
+        "total_tokens": 1437,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 1390
+      },
+      "finish_reason": "tool_calls",
+      "response_id": "d78c0291-9eaa-4c81-a13c-2c2d3fc8c369",
+      "response_model": "deepseek-flash",
+      "reasoning_chars": 0,
+      "tool_calls": [
+        {
+          "index": 0,
+          "id": "call_00_ET_kSuulJJF0G6InQOaNk0A3603",
+          "type": "function",
+          "function": {
+            "name": "read_file",
+            "arguments": "{\"path\": \"input.json\"}"
+          }
+        }
+      ],
+      "text": "I'll start by reading the input file.",
+      "seconds": 6.656,
+      "usage": {
+        "prompt_tokens": 1390,
+        "completion_tokens": 47,
+        "model": "deepseek-flash",
+        "provider": "deepseek-live",
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 0,
+        "cache_observed": true
+      },
+      "adaptation": {
+        "vendor": "deepseek",
+        "vendor_label": "DeepSeek",
+        "actions": [
+          "依赖厂商自动缓存（命中 0.02×），无需标记"
+        ],
+        "notes": [
+          "思考 token 按输出价计费；4096 仅为预算建议，以 execution 的执行状态为准"
+        ],
+        "cache_control": false,
+        "breakpoints": 1,
+        "ttl": "disk",
+        "est_tokens": 1894,
+        "est_cost": 0.0032,
+        "baseline_cost": 0.004091,
+        "saving": 0.000891,
+        "saving_pct": 21.8,
+        "cliff_action": "pass",
+        "reasoning_budget": 4096,
+        "defer": false,
+        "cache_engages": true,
+        "route_capabilities": {},
+        "request_budget": {},
+        "adapter_id": "deepseek.v4.flash",
+        "model_kind_id": "deepseek.v4.flash",
+        "model_family_id": "deepseek.v4",
+        "manufacturer_id": "deepseek",
+        "behavior_fingerprint": "800f0497a847319d",
+        "model_match_source": "model_id",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type_and_effort",
+          "native_tool_replay"
+        ],
+        "fingerprint": "de5be69cf82dd708",
+        "execution": {
+          "reasoning": {
+            "status": "suggestion",
+            "requested": 4096
+          }
+        },
+        "estimate_scope": "reuse_window",
+        "includes_output_cost": false,
+        "price_known": true,
+        "model": "deepseek-flash"
+      }
+    },
+    {
+      "stage": "planning-low/deny-False/compact-False/turn-1",
+      "model": "deepseek-flash",
+      "url": "https://api.deepseek.com/chat/completions",
+      "parameters": {
+        "thinking": {
+          "type": "enabled"
+        },
+        "reasoning_effort": "high",
+        "tool_choice": "auto",
+        "max_tokens": 1024
+      },
+      "message_count": 5,
+      "common_prefix_messages": 3,
+      "messages_digest": "75b5dc461b0cbcdd7938604557682e96a59f54cbec6334fa8e4595483daa1f82",
+      "tools_digest": "85567c0021799cfb8e426577b06e3b609888283ae778022a553103cd3b754604",
+      "toolset_digest": "85567c0021799cfb8e426577b06e3b609888283ae778022a553103cd3b754604",
+      "payload_digest": "757960b5ad59cb6106b7a4012f1153060a305d81fe4b691852ec482465bceecc",
+      "message_chars": 4355,
+      "assistant_reasoning_fields": 1,
+      "tools": [
+        "read_file",
+        "write_file"
+      ],
+      "error_type": "TimeoutError",
+      "status": null,
+      "seconds": 63.343
+    }
+  ],
+  "totals": {
+    "attempts": 3,
+    "successful_requests": 2,
+    "prompt_tokens": 2214,
+    "completion_tokens": 789,
+    "cached_tokens": 0,
+    "reasoning_tokens": 535,
+    "seconds": 81.218,
+    "coverage": {
+      "all_observed": {
+        "requests": 2,
+        "input_tokens": 2214,
+        "cached_tokens": 0,
+        "hit_rate": 0.0
+      },
+      "rebuild": {
+        "requests": 0,
+        "input_tokens": 0,
+        "cached_tokens": 0,
+        "hit_rate": null
+      },
+      "non_rebuild": {
+        "requests": 2,
+        "input_tokens": 2214,
+        "cached_tokens": 0,
+        "hit_rate": 0.0
+      },
+      "eligible_prefix": {
+        "requests": 0,
+        "input_tokens": 0,
+        "cached_tokens": 0,
+        "excluded_tail_tokens": 0,
+        "hit_rate": null
+      },
+      "unknown_requests": 1,
+      "invalid_requests": 0,
+      "duplicate_observations": 0,
+      "denominator": "observed input tokens; eligible_prefix excludes declared structural tail"
+    }
+  },
+  "ok": false
+}

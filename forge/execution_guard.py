@@ -11,20 +11,27 @@ import json
 
 class ExecutionGuard:
     def __init__(self):
-        self.recent = deque(maxlen=12)
+        # OpenClaw keeps a bounded observation history and reports detector evidence.
+        # Keep exact result hashes: changing results remain progress, not a loop.
+        self.recent = deque(maxlen=30)
+        self.detection = None
 
     def observe(self, name, args, ok, result):
+        self.detection = None
         # Hash observations instead of retaining another copy of tool output.
         payload = json.dumps([name, args, bool(ok), result], sort_keys=True,
                              ensure_ascii=False, default=str)
         digest = hashlib.sha256(payload.encode('utf-8')).hexdigest()
         self.recent.append((digest, bool(ok)))
         history = list(self.recent)
-        for period in (1, 2):
+        for period in range(1, 7):
             repeats = 5 if all(row[1] for row in history[-period:]) else 3
             count = period * repeats
             if len(history) >= count and all(history[-count + i] == history[-period + i % period]
                                              for i in range(count)):
+                self.detection = {'detector': 'repeated_cycle', 'period': period,
+                                  'repetitions': repeats, 'observations': count,
+                                  'contains_error': not all(row[1] for row in history[-period:])}
                 return True
         return False
 

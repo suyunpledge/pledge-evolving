@@ -1,0 +1,122 @@
+{
+ "doubao": {
+  "_model": "doubao-seed-evolving",
+  "turn1_msg_keys": [
+   "content",
+   "encrypted_content",
+   "reasoning_content",
+   "role",
+   "tool_calls"
+  ],
+  "replay_raw": {
+   "ok": true,
+   "cached_tokens": 0,
+   "prompt_tokens": 580
+  },
+  "replay_strip_reasoning": {
+   "ok": true,
+   "cached_tokens": 0,
+   "prompt_tokens": 580
+  },
+  "replay_strip_all": {
+   "ok": true,
+   "cached_tokens": 0,
+   "prompt_tokens": 536
+  }
+ },
+ "glm": {
+  "_model": "glm-5.3",
+  "turn1_msg_keys": [
+   "content",
+   "reasoning_content",
+   "role",
+   "tool_calls"
+  ],
+  "replay_raw": {
+   "ok": true,
+   "cached_tokens": 128,
+   "prompt_tokens": 225
+  },
+  "replay_strip_reasoning": {
+   "ok": true,
+   "cached_tokens": 128,
+   "prompt_tokens": 191
+  },
+  "replay_strip_all": {
+   "ok": true,
+   "cached_tokens": 128,
+   "prompt_tokens": 191
+  }
+ },
+ "deepseek": {
+  "_model": "deepseek-flash",
+  "turn1_msg_keys": [
+   "content",
+   "reasoning_content",
+   "role",
+   "tool_calls"
+  ],
+  "replay_raw": {
+   "ok": true,
+   "cached_tokens": 128,
+   "prompt_tokens": 366
+  },
+  "replay_strip_reasoning": {
+   "ok": true,
+   "cached_tokens": 128,
+   "prompt_tokens": 366
+  },
+  "replay_strip_all": {
+   "ok": true,
+   "cached_tokens": 128,
+   "prompt_tokens": 366
+  }
+ },
+ "mimo": {
+  "_model": "mimo-v2.6-flash",
+  "turn1_msg_keys": [
+   "content",
+   "reasoning_content",
+   "role",
+   "tool_calls"
+  ],
+  "replay_raw": {
+   "ok": true,
+   "cached_tokens": null,
+   "prompt_tokens": 164
+  },
+  "replay_strip_reasoning": {
+   "ok": true,
+   "cached_tokens": null,
+   "prompt_tokens": 164
+  },
+  "replay_strip_all": {
+   "ok": true,
+   "cached_tokens": 128,
+   "prompt_tokens": 164
+  }
+ },
+ "minimax": {
+  "_model": "minimax-m3",
+  "turn1_msg_keys": [
+   "content",
+   "role",
+   "tool_calls"
+  ],
+  "replay_raw": {
+   "ok": true,
+   "cached_tokens": 434,
+   "prompt_tokens": 496
+  },
+  "replay_strip_reasoning": {
+   "ok": true,
+   "cached_tokens": 495,
+   "prompt_tokens": 496
+  },
+  "replay_strip_all": {
+   "ok": true,
+   "cached_tokens": 495,
+   "prompt_tokens": 496
+  }
+ }
+}

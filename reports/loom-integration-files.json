@@ -1,0 +1,89 @@
+{
+  "backup": "C:\\Users\\匡溯昀\\forge-loom-backup-20261106-202704",
+  "files": [
+    {
+      "path": "README.md",
+      "new": false,
+      "before_sha256": "b160c8d2bafa08abdbf83975b97f3eabca45579004cdd9bf9600c14b58af6846",
+      "after_sha256": "fcbde51b19ade238136f88b1ac24fcd398016ac59b63a8cfb7564012341180fd"
+    },
+    {
+      "path": "forge-budgets.json",
+      "new": false,
+      "before_sha256": "65c5d0c87ef13d3ab359945dc417199d012f445b9dba1efe3ee3d8e30ec1ea53",
+      "after_sha256": "c30b256fa7f11ba4e764bb3f7db3f4f6121ba398a5a1dbf395d0bed89a1a3b1c"
+    },
+    {
+      "path": "forge/cli.py",
+      "new": false,
+      "before_sha256": "d32f4540fe9367314e66a7c1ff8d6b58b76920a531077212354ba35d1ef75bbb",
+      "after_sha256": "a3ed7d9fd8f96e4a567f32d0fa78944a9f2518d73708272c5cde9a79402828d9"
+    },
+    {
+      "path": "forge/loop.py",
+      "new": false,
+      "before_sha256": "58848216d706e5583981fc1190d8c283035c60fcbb07a181eec88811aa70dfff",
+      "after_sha256": "4c80a67a8fd863578b1309ef1ffc438c499dd918f9c576a585a83982c5c14eeb"
+    },
+    {
+      "path": "forge/tools.py",
+      "new": false,
+      "before_sha256": "73456dfa1cd7a1962d042cd4616cf265671f307cb13f4187c3df4b08fda9811c",
+      "after_sha256": "39fea560d8342648f6b21388f6b95f5e0a8745e0ca6deb0d445a20ce3703e362"
+    },
+    {
+      "path": "forge/protocol.py",
+      "new": false,
+      "before_sha256": "047466c225b0dfe8a9d2b5db395a1cfba7497286943ca76772bd8d7c75b78824",
+      "after_sha256": "7720ec134fb686cebcd2fd74f2e62ab2757e4ac0f6f6e6d1a83d302825fd97f0"
+    },
+    {
+      "path": "forge/task_contract.py",
+      "new": false,
+      "before_sha256": "7abf1888212df7e4eb6539ba0f0b7709ec5381e1aa096174c9ef107174a3c47d",
+      "after_sha256": "1f78616cd791bb3cff391b5f28c1cc1b19e06e194c72b65c71cbacd2b941ea0e"
+    },
+    {
+      "path": "forge/development/guard.py",
+      "new": false,
+      "before_sha256": "fb910ecfbddb6638563373cc508897757df5889a7c292c1040d75b1bb4a4ea4a",
+      "after_sha256": "99ed8ac64e70fcdecf89ab16b00aaf3795a04960947a8969878c996a30d681a3"
+    },
+    {
+      "path": "tests/test_development_execution.py",
+      "new": false,
+      "before_sha256": "fae83c9fdd7fa6d566a5ffab6068bcc10d63ae175ecd26e1285b4c82a44fc3b5",
+      "after_sha256": "8a0c7341dac93e4deda6bc09adc59f91add39bdf4008ea7ce65b5b2fa4ec8695"
+    },
+    {
+      "path": "forge/acceptance.py",
+      "new": true,
+      "before_sha256": null,
+      "after_sha256": "aa3340dc65d127a1612c488850427141a7781ae9fa44ee26cdcd97d4d0c73b5b"
+    },
+    {
+      "path": "forge/file_revisions.py",
+      "new": true,
+      "before_sha256": null,
+      "after_sha256": "1fa32c0c362226bb3f1032937fc7fafdb27a6d325527935c4654822b4b314275"
+    },
+    {
+      "path": "forge/test_loom_integration.py",
+      "new": true,
+      "before_sha256": null,
+      "after_sha256": "a8810308a4aaca2f71467569ecbe151391ffed3d79542369f371a6419b5236ff"
+    },
+    {
+      "path": "docs/LOOM-INTEGRATION.md",
+      "new": true,
+      "before_sha256": null,
+      "after_sha256": "ea6f1bbf2186ed7303b6c46414bd4eb5443d753dd000a82d54127ca928a5188f"
+    },
+    {
+      "path": "templates/acceptance.example.json",
+      "new": true,
+      "before_sha256": null,
+      "after_sha256": "400638d3c0073bbd4ade250cb1e4ff6f421bf01d0cb1f7e5b650a25865529fdc"
+    }
+  ]
+}

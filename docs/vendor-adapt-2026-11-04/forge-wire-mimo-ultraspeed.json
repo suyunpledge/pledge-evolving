@@ -1,0 +1,35 @@
+{
+  "mode": "live",
+  "records": [
+    {
+      "vendor": "mimo",
+      "model": "mimo-v2.6-pro-ultraspeed",
+      "endpoint": "https://token-plan-cn.xiaomimimo.com/v1",
+      "requests": [
+        {
+          "url": "https://token-plan-cn.xiaomimimo.com/v1/chat/completions",
+          "parameters": {
+            "model": "mimo-v2.6-pro-ultraspeed",
+            "thinking": {
+              "type": "disabled"
+            },
+            "max_tokens": 256,
+            "tool_choice": {
+              "type": "function",
+              "function": {
+                "name": "add"
+              }
+            }
+          },
+          "message_roles": [
+            "system",
+            "user"
+          ]
+        }
+      ],
+      "ok": false,
+      "error_type": "BadRequest",
+      "error_detail": "mimo: 400 {\n    \"error\": {\n        \"code\": \"400\",\n        \"message\": \"Not supported model mimo-v2.6-pro-ultraspeed\"\n    }\n}\n"
+    }
+  ]
+}

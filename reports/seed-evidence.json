@@ -1,0 +1,219 @@
+{
+  "report": "reports\\seed-execution-auto.json",
+  "report_sha256": "fb49cdfb77e8a63fe4093aea11d82f6a0d32acf17c75d2a3591574e84514fe07",
+  "artifacts": [
+    {
+      "target": "result-0.json",
+      "sha256": "a3a5846b342398c3470643e31c478a2d2ffefdbd47e743b4c52b47f897bb9c8d",
+      "compactions": 1,
+      "prefix_reused": false
+    },
+    {
+      "target": "result-1.json",
+      "sha256": "796cffb0c3036c1f3398e7a6c2f86941951f936a69f66b1c163826bd41394d6c",
+      "compactions": 1,
+      "prefix_reused": true
+    },
+    {
+      "target": "result-2.json",
+      "sha256": "73ce94541b9b770a54655fcc9f9b02209e6dffc30441aed72d364bdae0e1b7df",
+      "compactions": 1,
+      "prefix_reused": true
+    }
+  ],
+  "denial_no_file": true,
+  "encrypted_responses": 18,
+  "encrypted_replay_matches": 29,
+  "reports": [
+    {
+      "path": "reports\\seed-wire.json",
+      "sha256": "26f3000f4664b05bea4c244f690aff62b690ce97441eb7d4510637c576a58c68",
+      "ok": false,
+      "totals": {
+        "attempts": 7,
+        "successful_requests": 4,
+        "prompt_tokens": 2109,
+        "completion_tokens": 172,
+        "cached_tokens": 0,
+        "reasoning_tokens": 27,
+        "seconds": 323.594,
+        "coverage": {
+          "all_observed": {
+            "requests": 4,
+            "input_tokens": 2109,
+            "cached_tokens": 0,
+            "hit_rate": 0.0
+          },
+          "rebuild": {
+            "requests": 0,
+            "input_tokens": 0,
+            "cached_tokens": 0,
+            "hit_rate": null
+          },
+          "non_rebuild": {
+            "requests": 4,
+            "input_tokens": 2109,
+            "cached_tokens": 0,
+            "hit_rate": 0.0
+          },
+          "eligible_prefix": {
+            "requests": 0,
+            "input_tokens": 0,
+            "cached_tokens": 0,
+            "excluded_tail_tokens": 0,
+            "hit_rate": null
+          },
+          "unknown_requests": 3,
+          "invalid_requests": 0,
+          "duplicate_observations": 0,
+          "denominator": "observed input tokens; eligible_prefix excludes declared structural tail"
+        }
+      }
+    },
+    {
+      "path": "reports\\seed-execution-auto.json",
+      "sha256": "fb49cdfb77e8a63fe4093aea11d82f6a0d32acf17c75d2a3591574e84514fe07",
+      "ok": true,
+      "totals": {
+        "attempts": 22,
+        "successful_requests": 18,
+        "prompt_tokens": 34457,
+        "completion_tokens": 1644,
+        "cached_tokens": 1848,
+        "reasoning_tokens": 515,
+        "seconds": 360.266,
+        "coverage": {
+          "all_observed": {
+            "requests": 18,
+            "input_tokens": 34457,
+            "cached_tokens": 1848,
+            "hit_rate": 0.0536
+          },
+          "rebuild": {
+            "requests": 0,
+            "input_tokens": 0,
+            "cached_tokens": 0,
+            "hit_rate": null
+          },
+          "non_rebuild": {
+            "requests": 18,
+            "input_tokens": 34457,
+            "cached_tokens": 1848,
+            "hit_rate": 0.0536
+          },
+          "eligible_prefix": {
+            "requests": 0,
+            "input_tokens": 0,
+            "cached_tokens": 0,
+            "excluded_tail_tokens": 0,
+            "hit_rate": null
+          },
+          "unknown_requests": 4,
+          "invalid_requests": 0,
+          "duplicate_observations": 0,
+          "denominator": "observed input tokens; eligible_prefix excludes declared structural tail"
+        }
+      }
+    },
+    {
+      "path": "reports\\seed-execution-off.json",
+      "sha256": "d5cccb0e28fb520c1208a3f232dcb56cdd12409f7ed8744c8380c762f55be37f",
+      "ok": false,
+      "totals": {
+        "attempts": 8,
+        "successful_requests": 6,
+        "prompt_tokens": 10102,
+        "completion_tokens": 355,
+        "cached_tokens": 0,
+        "reasoning_tokens": 0,
+        "seconds": 80.029,
+        "coverage": {
+          "all_observed": {
+            "requests": 6,
+            "input_tokens": 10102,
+            "cached_tokens": 0,
+            "hit_rate": 0.0
+          },
+          "rebuild": {
+            "requests": 0,
+            "input_tokens": 0,
+            "cached_tokens": 0,
+            "hit_rate": null
+          },
+          "non_rebuild": {
+            "requests": 6,
+            "input_tokens": 10102,
+            "cached_tokens": 0,
+            "hit_rate": 0.0
+          },
+          "eligible_prefix": {
+            "requests": 0,
+            "input_tokens": 0,
+            "cached_tokens": 0,
+            "excluded_tail_tokens": 0,
+            "hit_rate": null
+          },
+          "unknown_requests": 2,
+          "invalid_requests": 0,
+          "duplicate_observations": 0,
+          "denominator": "observed input tokens; eligible_prefix excludes declared structural tail"
+        }
+      }
+    },
+    {
+      "path": "reports\\seed-execution-off-retry.json",
+      "sha256": "bd2ee17e5bf417ff2eaf1f76bfee9eec0fe777b2f806ec1a938fe79756f1eb07",
+      "ok": false,
+      "totals": {
+        "attempts": 25,
+        "successful_requests": 16,
+        "prompt_tokens": 29481,
+        "completion_tokens": 974,
+        "cached_tokens": 7126,
+        "reasoning_tokens": 0,
+        "seconds": 625.391,
+        "coverage": {
+          "all_observed": {
+            "requests": 16,
+            "input_tokens": 29481,
+            "cached_tokens": 7126,
+            "hit_rate": 0.2417
+          },
+          "rebuild": {
+            "requests": 0,
+            "input_tokens": 0,
+            "cached_tokens": 0,
+            "hit_rate": null
+          },
+          "non_rebuild": {
+            "requests": 16,
+            "input_tokens": 29481,
+            "cached_tokens": 7126,
+            "hit_rate": 0.2417
+          },
+          "eligible_prefix": {
+            "requests": 0,
+            "input_tokens": 0,
+            "cached_tokens": 0,
+            "excluded_tail_tokens": 0,
+            "hit_rate": null
+          },
+          "unknown_requests": 9,
+          "invalid_requests": 0,
+          "duplicate_observations": 0,
+          "denominator": "observed input tokens; eligible_prefix excludes declared structural tail"
+        }
+      }
+    }
+  ],
+  "additional_verified_artifacts": [
+    {
+      "path": "result-0.json",
+      "sha256": "a3a5846b342398c3470643e31c478a2d2ffefdbd47e743b4c52b47f897bb9c8d"
+    },
+    {
+      "path": "result-1.json",
+      "sha256": "796cffb0c3036c1f3398e7a6c2f86941951f936a69f66b1c163826bd41394d6c"
+    }
+  ]
+}

@@ -1,0 +1,779 @@
+--- a/forge/execution.py
++++ b/forge/execution.py
+@@ -243,9 +243,13 @@
+         path = Path(home) / 'sessions' / 'runtime' / (hashlib.sha256(run.run_id.encode()).hexdigest() + '.jsonl')
+         session = Session(path, meta={'cwd': str(workspace), 'run_id': run.run_id,
+                           'task_id': run.task_id, 'parent_run_id': run.parent_run_id})
++    from .artifacts import ArtifactStore
++    host_capabilities = dict(capabilities or {})
++    host_capabilities.setdefault('artifact_store', ArtifactStore(home, workspace))
++    host_capabilities.setdefault('artifact_inline_limit', 4000)
+     context = ExecutionContext(run, workspace, Path(home).resolve(), policy,
+         registry.clone() if isolate_registry else registry, session, cancellation,
+-        MappingProxyType(dict(capabilities or {})), secret_scope or SecretScope(),
++        MappingProxyType(host_capabilities), secret_scope or SecretScope(),
+         checkpoints, file_guard, subscriber, tool_emit, agent, depth, owns_session, recovered)
+     context.validate()
+     return context
+@@ -359,6 +363,10 @@
+                                               'revision_conflict' if isinstance(exc, FileRevisionConflict)
+                                               else 'preparation_failed'),
+                                 'execution_state': 'unknown' if dispatched else 'not_started'})
++                from .artifacts import retain_result
++                retain_result(value, store=ctx.capabilities['artifact_store'], scope=ctx.secret_scope,
++                    source=request.name, action_id=request.action_id,
++                    inline_limit=ctx.capabilities['artifact_inline_limit'])
+                 value.meta['request_digest'] = digest
+                 result = ActionResult.from_tool(ctx, request, value)
+                 # If recording fails after a side effect, the durable start remains
+--- a/forge/loop.py
++++ b/forge/loop.py
+@@ -320,10 +320,9 @@
+         self._supervisor_bus: dict[str, Any] = {"last_render": {}}
+         self._supervisor_pending: list[str] = []
+         self._supervisor_pending_bus: list[str] = []
+-        # ScienceClaw offload seat: oversized tool results land in workspace
+-        # research_data/ with a summary + path handed to the model, instead of
+-        # the silent tail-truncation the raw slice below used to do.
+-        self.offloader = ToolResultOffloader(self.workspace)
++        from .artifacts import ArtifactStore
++        self.artifacts = ArtifactStore(self.home, self.workspace)
++        self.offloader = ToolResultOffloader(self.workspace, artifact_store=self.artifacts)
+ 
+     # -- context ---------------------------------------------------------
+     def system_prompt(self) -> str:
+@@ -508,7 +507,8 @@
+             session=self.session, cancellation=self.cancellation_event,
+             secret_scope=self.secret_scope, checkpoints=self.checkpoints, file_guard=self.file_guard,
+             subscriber=self._observe_event, tool_emit=self._emit, agent=self.name, depth=self.depth,
+-            capabilities={'memory': self.memory, 'capabilities': self.capabilities, 'spawn': self._spawn_handler})
++            capabilities={'memory': self.memory, 'capabilities': self.capabilities, 'spawn': self._spawn_handler,
++                          'artifact_store': self.artifacts, 'artifact_inline_limit': self.limits.max_tool_result})
+ 
+     def _tool_context(self) -> ToolContext:
+         return self.execution_context().tool_context()
+--- a/forge/tools.py
++++ b/forge/tools.py
+@@ -38,6 +38,7 @@
+     "tool_search", "skill_list", "spawn_subagent", "memory_recall",
+     "web_search", "fetch_url", "datetime", "calculator",
+     "find_files", "review_changes",
++    "artifact_read", "artifact_grep",
+ })
+ 
+ #: 代码搜索 / 查找时整棵跳过的目录：版本控制、依赖、虚拟环境、各类缓存。
+@@ -574,7 +575,7 @@
+                 if ctx.extras.get('trusted_control_root'):
+                     root = Path(ctx.extras['trusted_control_root']).resolve()
+                     execution_roots.update(root / name for name in ('modules', 'plugins', 'bundles', 'policies', 'hooks',
+-                                                                    'sessions', 'checkpoints', 'cost'))
++                                                                    'sessions', 'checkpoints', 'cost', 'artifacts'))
+                     if root != ctx.workspace.resolve() and root.is_relative_to(ctx.workspace.resolve()):
+                         control_roots.add(root)
+                     if canonical.parent == root and canonical.name in {'user.json', 'config.json', 'forge.patch.json', 'secrets.json'}:
+@@ -661,6 +662,8 @@
+     reg = ToolRegistry(expose=expose, hide=hide)
+     from functools import partial
+     host_tool = partial(reg.tool, trusted=True)
++    from .artifact_tools import register_artifact_tools
++    register_artifact_tools(reg)
+ 
+     @host_tool("edit_config", "Inspect a protected JSON/YAML/TOML/.env configuration, then apply a structured "
+               "patch with its revision. Credentials remain opaque and unchanged.",
+--- a/forge/tool_turn.py
++++ b/forge/tool_turn.py
+@@ -36,11 +36,15 @@
+         if result.meta.get('checkpoint'):
+             step.note = 'checkpoint ' + result.meta['checkpoint'][:8]
+         full_text = result.content or result.error
+-        if offloader.policy.should_offload(call.name, full_text):
++        if ('artifact' not in result.meta and 'artifact_retention' not in result.meta
++                and offloader.policy.should_offload(call.name, full_text)):
+             full_text = offloader.wrap_result_text(call.name, step.action_id, full_text)
+             emit(type='tool_result_offloaded', tool=call.name,
+                  path=offloader.last_path, chars=len(result.content or result.error))
+         step.result = full_text[:max_result]
++        if result.meta.get('artifact_retention', {}).get('status') == 'failed':
++            warning = '[Output retention failed; the following preview may be incomplete.]\n'
++            step.result = (warning + full_text)[:max_result]
+         if len(full_text) > max_result:
+             step.meta['result_full'] = full_text
+         step.decision = ('deny' if not result.ok and result.meta.get('authorization') == 'deny'
+--- a/forge/scienceclaw/offload.py
++++ b/forge/scienceclaw/offload.py
+@@ -116,6 +116,7 @@
+     # stats (upstream's diagnostic hook)
+     offload_count: int = 0
+     last_path: str = ""
++    artifact_store: Any = None
+ 
+     def _file_path(self, tool_name: str, call_id: str) -> Path:
+         short = hashlib.md5(f"{call_id}{time.time()}".encode()).hexdigest()[:8]
+@@ -131,6 +132,15 @@
+         well under ``limits.max_tool_result``), so nothing is silently
+         tail-truncated anymore.
+         """
++        if self.artifact_store is not None:
++            from ..artifacts import summary
++            try:
++                meta = self.artifact_store.put(text, source=tool_name, action_id=call_id)
++                self.offload_count += 1
++                self.last_path = meta['id']
++                return summary(meta, text, preview=self.policy.summary_length)
++            except (OSError, ValueError):
++                return text
+         path = self._file_path(tool_name, call_id)
+         try:
+             self.writer(path, text)
+@@ -151,15 +161,8 @@
+         text = extract_text(result)
+         if not self.policy.should_offload(tool_name, text):
+             return result
+-        path = self._file_path(tool_name, call_id)
+-        try:
+-            self.writer(path, text)
+-            self.offload_count += 1
+-            self.last_path = str(path)
+-            summary = make_summary(text, str(path), preview_length=self.policy.summary_length)
+-        except OSError:
+-            return result  # disk trouble: keep the original text
+-        return _replace_text(result, summary)
++        summary = self.wrap_result_text(tool_name, call_id, text)
++        return result if summary == text else _replace_text(result, summary)
+ 
+ 
+ def _replace_text(result: Any, new_text: str) -> Any:
+--- a/forge-budgets.json
++++ b/forge-budgets.json
+@@ -4,6 +4,8 @@
+     "forge/__init__.py": 38,
+     "forge/acceptance.py": 147,
+     "forge/adapters.py": 712,
++    "forge/artifact_tools.py": 36,
++    "forge/artifacts.py": 161,
+     "forge/assembly.py": 125,
+     "forge/batch_execution.py": 144,
+     "forge/cache_metrics.py": 79,
+@@ -51,7 +53,7 @@
+     "forge/development/state.py": 173,
+     "forge/development/testing.py": 97,
+     "forge/evolution.py": 602,
+-    "forge/execution.py": 377,
++    "forge/execution.py": 385,
+     "forge/execution_guard.py": 55,
+     "forge/extensions.py": 167,
+     "forge/federation.py": 400,
+@@ -89,7 +91,7 @@
+     "forge/runtime_types.py": 60,
+     "forge/sampling.py": 127,
+     "forge/scienceclaw/__init__.py": 33,
+-    "forge/scienceclaw/offload.py": 187,
++    "forge/scienceclaw/offload.py": 190,
+     "forge/scienceclaw/plan.py": 53,
+     "forge/scienceclaw/test_scienceclaw.py": 157,
+     "forge/scienceclaw/thinking.py": 90,
+@@ -102,6 +104,7 @@
+     "forge/task_contract.py": 139,
+     "forge/templates/contrib-shell.py": 76,
+     "forge/test_adapters.py": 342,
++    "forge/test_artifacts.py": 187,
+     "forge/test_backend_context.py": 365,
+     "forge/test_coding_tools.py": 140,
+     "forge/test_desktop_services.py": 201,
+@@ -129,8 +132,8 @@
+     "forge/test_web_tools.py": 205,
+     "forge/thinking.py": 172,
+     "forge/tool_adapter.py": 801,
+-    "forge/tool_turn.py": 62,
+-    "forge/tools.py": 1432,
++    "forge/tool_turn.py": 66,
++    "forge/tools.py": 1435,
+     "forge/toolwire.py": 322,
+     "forge/types.py": 104,
+     "forge/vendors.py": 1128,
+--- a/bundles/modes/coding.json
++++ b/bundles/modes/coding.json
+@@ -8,7 +8,7 @@
+       "allow": ["read_file", "list_dir", "grep", "tool_search", "skill_list",
+                 "memory_recall", "spawn_subagent",
+                 "write_file", "edit_file", "apply_patch", "edit_config",
+-                "read_range", "file_outline"],
++                "read_range", "file_outline", "artifact_read", "artifact_grep"],
+       "ask": ["shell_exec"],
+       "deny": [],
+       "notes": "编码模式：工作区内直写、越界仍拦；读工具 + 定点编辑 + 原子补丁。run_tests/code_search/git_* 在 Step 2 加入。"
+@@ -39,7 +39,7 @@
+       "expose": ["read_file", "list_dir", "grep", "tool_search", "skill_list",
+                  "memory_recall", "spawn_subagent", "shell_exec",
+                  "write_file", "edit_file", "apply_patch", "edit_config",
+-                 "read_range", "file_outline"]
++                 "read_range", "file_outline", "artifact_read", "artifact_grep"]
+     }
+   }
+ ]
+--- a/forge/bundles/modes/coding.json
++++ b/forge/bundles/modes/coding.json
+@@ -8,7 +8,7 @@
+       "allow": ["read_file", "list_dir", "grep", "tool_search", "skill_list",
+                 "memory_recall", "spawn_subagent",
+                 "write_file", "edit_file", "apply_patch", "edit_config",
+-                "read_range", "file_outline"],
++                "read_range", "file_outline", "artifact_read", "artifact_grep"],
+       "ask": ["shell_exec"],
+       "deny": [],
+       "notes": "编码模式：工作区内直写、越界仍拦；读工具 + 定点编辑 + 原子补丁。run_tests/code_search/git_* 在 Step 2 加入。"
+@@ -39,7 +39,7 @@
+       "expose": ["read_file", "list_dir", "grep", "tool_search", "skill_list",
+                  "memory_recall", "spawn_subagent", "shell_exec",
+                  "write_file", "edit_file", "apply_patch", "edit_config",
+-                 "read_range", "file_outline"]
++                 "read_range", "file_outline", "artifact_read", "artifact_grep"]
+     }
+   }
+ ]
+--- /dev/null
++++ b/forge/artifacts.py
+@@ -0,0 +1,161 @@
++"""Workspace-scoped content-addressed tool output, inspired by Loom artifacts.
++
++The host store is outside the workspace. Handles identify protected text, not
++arbitrary paths; paging/search never execute artifact content.
++"""
++from __future__ import annotations
++
++import hashlib
++import json
++import os
++from pathlib import Path
++import re
++import tempfile
++
++from .runtime_lock import resource_lock
++from .secrets import read_public_bytes
++
++MAX_BYTES = 8 * 1024 * 1024
++HANDLE = re.compile(r'a_[0-9a-f]{64}\Z')
++
++
++def _integer(value, name, minimum, maximum):
++    if type(value) is not int or not minimum <= value <= maximum:
++        raise ValueError(f'{name} must be an integer in {minimum}..{maximum}')
++    return value
++
++
++class ArtifactStore:
++    def __init__(self, home, workspace):
++        canonical = os.path.normcase(str(Path(workspace).resolve()))
++        scope = hashlib.sha256(canonical.encode('utf-8')).hexdigest()
++        self.root = Path(home).resolve() / 'artifacts' / scope
++
++    def _path(self, identifier, suffix=''):
++        if self.root.resolve() != self.root:
++            raise ValueError('Artifact store contains a redirected directory')
++        if not isinstance(identifier, str) or not HANDLE.fullmatch(identifier):
++            raise ValueError('Invalid artifact handle')
++        path = self.root / (identifier + suffix)
++        if path.is_symlink() or path.resolve().parent != self.root:
++            raise ValueError('Artifact path escaped host store')
++        return path
++
++    def _atomic(self, path, data):
++        self.root.mkdir(parents=True, exist_ok=True)
++        temporary = None
++        try:
++            with tempfile.NamedTemporaryFile(dir=self.root, prefix='.pending-', delete=False) as stream:
++                temporary = Path(stream.name)
++                stream.write(data)
++                stream.flush()
++                os.fsync(stream.fileno())
++            temporary.replace(path)
++        finally:
++            if temporary is not None:
++                temporary.unlink(missing_ok=True)
++
++    def put(self, text, *, source='tool', action_id=''):
++        if not isinstance(text, str):
++            raise ValueError('Artifacts must contain text')
++        if len(text) > MAX_BYTES:
++            raise ValueError('Artifact exceeds 8 MiB retention limit')
++        data = text.encode('utf-8')
++        if len(data) > MAX_BYTES:
++            raise ValueError('Artifact exceeds 8 MiB retention limit')
++        identifier = 'a_' + hashlib.sha256(data).hexdigest()
++        path = self._path(identifier)
++        meta_path = self._path(identifier, '.json')
++        with resource_lock('artifact', path):
++            # Metadata is the commit marker: a partially written object is not readable.
++            sources = []
++            if meta_path.exists():
++                old = json.loads(read_public_bytes(meta_path, limit=128 * 1024))
++                if not isinstance(old, dict) or not isinstance(old.get('sources'), list):
++                    raise ValueError('Invalid artifact metadata')
++                sources = old.get('sources', [])
++                if any(not isinstance(row, dict) for row in sources):
++                    raise ValueError('Invalid artifact provenance')
++            entry = {'tool': str(source)[:160], 'action_id': str(action_id)[:160]}
++            if entry not in sources:
++                sources = [*sources[-63:], entry]
++            meta = {'id': identifier, 'bytes': len(data), 'characters': len(text),
++                    'trust': 'untrusted', 'sources': sources}
++            if not path.exists():
++                self._atomic(path, data)
++            else:
++                existing = read_public_bytes(path, limit=MAX_BYTES)
++                if hashlib.sha256(existing).hexdigest() != identifier[2:]:
++                    raise ValueError('Artifact content digest mismatch')
++            self._atomic(meta_path, json.dumps(meta, ensure_ascii=False).encode('utf-8'))
++            return meta
++
++    def _load(self, identifier):
++        path, meta_path = self._path(identifier), self._path(identifier, '.json')
++        with resource_lock('artifact', path):
++            meta = json.loads(read_public_bytes(meta_path, limit=128 * 1024))
++            data = read_public_bytes(path, limit=MAX_BYTES)
++            if not isinstance(meta, dict) or meta.get('id') != identifier or hashlib.sha256(data).hexdigest() != identifier[2:]:
++                raise ValueError('Artifact content digest mismatch')
++            text = data.decode('utf-8')
++            if meta.get('characters') != len(text) or meta.get('bytes') != len(data):
++                raise ValueError('Artifact metadata mismatch')
++            return text, meta
++
++    def read(self, identifier, *, offset=0, limit=2000):
++        offset = _integer(offset, 'offset', 0, MAX_BYTES)
++        limit = _integer(limit, 'limit', 1, 4000)
++        text, meta = self._load(identifier)
++        if offset > len(text):
++            raise ValueError('offset exceeds artifact length')
++        end = min(len(text), offset + limit)
++        return {'id': identifier, 'text': text[offset:end], 'offset': offset,
++                'next_offset': end if end < len(text) else None,
++                'characters': len(text), 'trust': 'untrusted'}
++
++    def grep(self, identifier, pattern, *, offset=0, limit=20):
++        offset = _integer(offset, 'offset', 0, MAX_BYTES)
++        limit = _integer(limit, 'limit', 1, 20)
++        if not isinstance(pattern, str) or not 1 <= len(pattern) <= 256:
++            raise ValueError('pattern must be a literal string of 1..256 characters')
++        text, _ = self._load(identifier)
++        if offset > len(text):
++            raise ValueError('offset exceeds artifact length')
++        matches, cursor = [], offset
++        while len(matches) < limit:
++            found = text.find(pattern, cursor)
++            if found < 0:
++                break
++            matches.append({'offset': found, 'preview': text[max(0, found-30):found+90]})
++            cursor = found + len(pattern)
++        more = text.find(pattern, cursor) >= 0 if matches else False
++        return {'id': identifier, 'matches': matches, 'next_offset': cursor if more else None,
++                'trust': 'untrusted'}
++
++
++def summary(meta, text, *, preview=500):
++    return (f"[Tool output retained as untrusted artifact {meta['id']}; "
++            f"{meta['characters']} characters. Use artifact_read(id, offset, limit) "
++            "or artifact_grep(id, pattern) to retrieve it.]\n" + text[:preview])
++
++
++def retain_result(result, *, store, scope, source, action_id, inline_limit=4000):
++    """Retention failure must not change the outcome of an already executed action."""
++    if source in {'artifact_read', 'artifact_grep'}:
++        return
++    text = result.content or result.error
++    if len(text) <= inline_limit:
++        return
++    protected = scope.protect_text(text)
++    try:
++        meta = store.put(protected, source=source, action_id=action_id)
++    except Exception as exc:
++        result.meta['artifact_retention'] = {'status': 'failed',
++            'detail': scope.protect_text(f'{type(exc).__name__}: {exc}')[:200]}
++        return
++    result.meta['artifact'] = meta
++    body = summary(meta, protected, preview=max(0, min(500, inline_limit-240)))
++    if result.content:
++        result.content = body
++    else:
++        result.error = body
+--- /dev/null
++++ b/forge/artifact_tools.py
+@@ -0,0 +1,36 @@
++"""Mediated read/search tools for host-owned, workspace-scoped artifacts."""
++import json
++
++
++def register_artifact_tools(reg):
++    from .tools import ToolResult
++
++    @reg.tool('artifact_read', 'Read untrusted retained tool output by handle. '
++              'offset is a zero-based Unicode character offset; next_offset continues the page.',
++              trusted=True, requires=('artifact_store',),
++              schema={'id': 'string', 'offset': 'integer', 'limit': 'integer'})
++    def artifact_read(args, ctx):
++        limit = args.get('limit', 2000)
++        if type(limit) is not int or not 1 <= limit <= 3000:
++            raise ValueError('limit must be an integer in 1..3000')
++        budget = ctx.extras.get('artifact_inline_limit', 4000)
++        page = ctx.extras['artifact_store'].read(args.get('id'), offset=args.get('offset', 0),
++                                               limit=min(limit, max(1, budget-250)))
++        text = page.pop('text')
++        return ToolResult(True, json.dumps(page, ensure_ascii=False) + '\n' + text, meta=page)
++
++    @reg.tool('artifact_grep', 'Search a literal string in untrusted retained output. '
++              'Returns character offsets and bounded previews; next_offset continues search.',
++              trusted=True, requires=('artifact_store',),
++              schema={'id': 'string', 'pattern': 'string', 'offset': 'integer', 'limit': 'integer'})
++    def artifact_grep(args, ctx):
++        limit = args.get('limit', 10)
++        if type(limit) is not int or not 1 <= limit <= 10:
++            raise ValueError('limit must be an integer in 1..10')
++        budget = ctx.extras.get('artifact_inline_limit', 4000)
++        result = ctx.extras['artifact_store'].grep(args.get('id'), args.get('pattern'),
++            offset=args.get('offset', 0), limit=min(limit, max(1, (budget-250)//160)))
++        matches = result.pop('matches')
++        body = '\n'.join(f"{row['offset']}: {row['preview']}" for row in matches)
++        return ToolResult(True, json.dumps(result, ensure_ascii=False) + '\n' + body,
++                          meta={**result, 'matches': matches})
+--- /dev/null
++++ b/forge/test_artifacts.py
+@@ -0,0 +1,187 @@
++"""Real retained-output lifecycle; fixtures are local and require no model API."""
++import json
++from pathlib import Path
++import re
++import tempfile
++import unittest
++from unittest.mock import patch
++
++from .artifacts import ArtifactStore, MAX_BYTES
++from .execution import ActionExecutor, ActionRequest, create_execution_context
++from .loop import Agent, LoopLimits
++from .model import Completion, Usage
++from .policy import Policy, Mode, ToolEffect
++from .tools import ToolSpec, ToolResult, build_builtin_registry
++
++
++class ArtifactTests(unittest.TestCase):
++    def setUp(self):
++        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
++        self.addCleanup(self.temp.cleanup)
++        self.root = Path(self.temp.name)
++        self.ws = self.root / 'project'
++        self.ws.mkdir()
++        self.home = self.root / 'home'
++        self.store = ArtifactStore(self.home, self.ws)
++
++    def context(self, text='x'*6000, *, ok=True, deny=()):
++        reg = build_builtin_registry()
++        reg.register(ToolSpec('large_observation', '', lambda a, c: ToolResult(ok, text,
++            meta={'execution_state': 'completed'})), trusted=True, effect=ToolEffect.READ)
++        ctx = create_execution_context(home=self.home, workspace=self.ws, registry=reg,
++            policy=Policy(mode=Mode.READ_ONLY, workspace=self.ws, deny=deny, non_interactive=True))
++        self.addCleanup(ctx.secret_scope.close)
++        self.addCleanup(ctx.session.close)
++        return ctx
++
++    def test_content_identity_deduplicates_and_merges_provenance(self):
++        a = self.store.put('same', source='one', action_id='a')
++        b = self.store.put('same', source='two', action_id='b')
++        self.assertEqual(a['id'], b['id'])
++        self.assertEqual(len(list(self.store.root.glob('a_*'))), 2)
++        self.assertEqual(len(b['sources']), 2)
++
++    def test_unicode_paging_roundtrips_a_single_long_line(self):
++        text = '中文🙂x'*2300
++        meta = self.store.put(text)
++        parts, offset = [], 0
++        while offset is not None:
++            page = self.store.read(meta['id'], offset=offset, limit=777)
++            parts.append(page['text'])
++            offset = page['next_offset']
++        self.assertEqual(''.join(parts), text)
++
++    def test_grep_paginates_literal_matches_without_regex_execution(self):
++        meta = self.store.put('a.*b|a.*b|a.*b')
++        first = self.store.grep(meta['id'], '.*', limit=2)
++        last = self.store.grep(meta['id'], '.*', offset=first['next_offset'])
++        self.assertEqual([r['offset'] for r in first['matches']+last['matches']], [1, 6, 11])
++        self.assertIsNone(last['next_offset'])
++
++    def test_invalid_handles_and_ranges_fail_closed(self):
++        identifier = self.store.put('abc')['id']
++        for bad in ['../outside', 'a_'+64*'g', '', None]:
++            with self.subTest(bad=bad), self.assertRaises(ValueError):
++                self.store.read(bad)
++        for args in [{'offset': -1}, {'offset': True}, {'offset': 4}, {'limit': 0}, {'limit': 4001}]:
++            with self.subTest(args=args), self.assertRaises(ValueError):
++                self.store.read(identifier, **args)
++
++    def test_workspace_scope_and_digest_are_verified(self):
++        meta = self.store.put('private output')
++        other = ArtifactStore(self.home, self.root / 'another-project')
++        with self.assertRaises(FileNotFoundError):
++            other.read(meta['id'])
++        (self.store.root / meta['id']).write_text('tampered', encoding='utf-8')
++        with self.assertRaisesRegex(ValueError, 'digest'):
++            self.store.read(meta['id'])
++
++    def test_partial_commit_and_oversize_never_claim_retention(self):
++        with self.assertRaises(ValueError):
++            self.store.put('x'*(MAX_BYTES+1))
++        meta = self.store.put('complete')
++        (self.store.root / (meta['id']+'.json')).unlink()
++        with self.assertRaises(FileNotFoundError):
++            self.store.read(meta['id'])
++
++    def test_action_retains_protected_output_without_writing_workspace(self):
++        secret = 'fixture-secret-98483'
++        ctx = self.context('head ' + secret + 'x'*6000 + ' needle')
++        ctx.secret_scope.reference(secret)
++        result = ActionExecutor().execute(ctx, ActionRequest('large_observation', {})).as_tool_result()
++        self.assertTrue(result.ok)
++        meta = result.meta['artifact']
++        self.assertLess(len(result.content), 4000)
++        text = self.store._load(meta['id'])[0]
++        self.assertNotIn(secret, text)
++        self.assertIn('needle', text)
++        self.assertFalse(list(self.ws.iterdir()))
++
++    def test_retention_failure_preserves_action_and_deduplication(self):
++        ctx, executor = self.context(), ActionExecutor()
++        request = ActionRequest('large_observation', {})
++        with patch.object(ctx.capabilities['artifact_store'], 'put', side_effect=RuntimeError('disk fixture')):
++            first = executor.execute(ctx, request).as_tool_result()
++        second = executor.execute(ctx, request).as_tool_result()
++        self.assertTrue(first.ok)
++        self.assertTrue(second.meta['deduplicated'])
++        self.assertEqual(first.meta['artifact_retention']['status'], 'failed')
++
++    def test_large_known_failure_keeps_completed_failure_state(self):
++        ctx = self.context(ok=False)
++        result = ActionExecutor().execute(ctx, ActionRequest('large_observation', {}))
++        self.assertEqual(result.outcome, 'failed')
++        self.assertEqual(result.execution_state, 'completed')
++        self.assertIn('artifact', result.meta)
++
++    def test_artifact_tools_obey_deny_policy(self):
++        ctx = self.context(deny=('artifact_read',))
++        identifier = self.store.put('text')['id']
++        result = ActionExecutor().execute(ctx, ActionRequest('artifact_read', {'id': identifier}))
++        self.assertEqual(result.authorization, 'deny')
++
++    def test_artifact_tools_are_bounded_and_never_recursively_retained(self):
++        ctx = self.context()
++        identifier = self.store.put('prefix\n' + 'needle'*2000)['id']
++        executor = ActionExecutor()
++        read = executor.execute(ctx, ActionRequest('artifact_read', {'id': identifier, 'limit': 3000})).as_tool_result()
++        found = executor.execute(ctx, ActionRequest('artifact_grep', {'id': identifier, 'pattern': 'needle'})).as_tool_result()
++        self.assertTrue(read.ok)
++        self.assertTrue(found.ok)
++        self.assertLess(len(read.content), 4000)
++        self.assertLess(len(found.content), 4000)
++        self.assertNotIn('artifact', read.meta)
++        self.assertIsNotNone(found.meta['next_offset'])
++
++    def test_real_agent_can_find_and_read_beyond_initial_preview(self):
++        ctx = self.context('start ' + 'x'*7000 + 'needle AT THE END')
++        owner = self
++        class Router:
++            def __init__(self): self.count = 0
++            def complete(self, messages, **kwargs):
++                self.count += 1
++                if self.count == 1:
++                    call = {'tool': 'large_observation', 'args': {}}
++                elif self.count == 2:
++                    identifier = re.search(r'a_[0-9a-f]{64}', messages[-1]['content']).group()
++                    call = {'tool': 'artifact_grep', 'args': {'id': identifier, 'pattern': 'needle'}}
++                    self.identifier = identifier
++                elif self.count == 3:
++                    call = {'tool': 'artifact_read', 'args': {'id': self.identifier, 'offset': 7006}}
++                else:
++                    owner.assertIn('needle AT THE END', messages[-1]['content'])
++                    return Completion('verified', Usage(10, 2, 'fake', 'fixture'))
++                return Completion(json.dumps(call), Usage(10, 2, 'fake', 'fixture'))
++        agent = Agent(home=self.home, workspace=self.ws, registry=ctx.registry,
++                      policy=ctx.policy, router=Router(), limits=LoopLimits(max_steps=5), project_rules=False)
++        result = agent.run('inspect the end of the observation')
++        self.assertEqual(result.stopped, 'final')
++        self.assertEqual([s.tool for s in result.steps], ['large_observation', 'artifact_grep', 'artifact_read'])
++        self.assertFalse(list(self.ws.iterdir()))
++
++    def test_coding_profile_exposes_retrieval_in_both_bundle_locations(self):
++        root = Path(__file__).resolve().parents[1]
++        for relative in ['bundles/modes/coding.json', 'forge/bundles/modes/coding.json']:
++            rows = json.loads((root / relative).read_text(encoding='utf-8'))
++            config = next(row['config'] for row in rows if row['id'] == 'tools')
++            registry = build_builtin_registry(expose=config['expose'])
++            self.assertIn('artifact_read', registry.names())
++            self.assertIn('artifact_grep', registry.names())
++
++    def test_agent_reports_failed_retention_without_retry_or_workspace_fallback(self):
++        from .test_task_planning import Router
++        ctx = self.context()
++        agent = Agent(home=self.home, workspace=self.ws, registry=ctx.registry,
++            policy=ctx.policy, router=Router([
++                json.dumps({'tool': 'large_observation', 'args': {}}), 'done']), project_rules=False)
++        with patch.object(ArtifactStore, 'put', side_effect=OSError('disk fixture')) as put:
++            report = agent.run('inspect output')
++        self.assertEqual(put.call_count, 1)
++        self.assertEqual(report.stopped, 'final')
++        self.assertIn('Output retention failed', report.steps[0].result)
++        self.assertNotIn('artifact', report.steps[0].meta)
++        self.assertFalse(list(self.ws.iterdir()))
++
++
++if __name__ == '__main__':
++    unittest.main()
+--- /dev/null
++++ b/tests/test_artifact_gateway.py
+@@ -0,0 +1,57 @@
++"""Gateway actions and action-query receipts share the retained-output store."""
++import unittest
++
++import test_runtime_convergence as fixtures
++from forge.policy import Policy, Mode, ToolEffect
++from forge.tools import ToolSpec, ToolResult, build_builtin_registry
++
++
++class ArtifactGatewayTests(unittest.TestCase):
++    setUp = fixtures.RuntimeConvergenceTests.setUp
++    gateway = fixtures.RuntimeConvergenceTests.gateway
++    http = fixtures.RuntimeConvergenceTests.http
++
++    def test_read_only_http_retains_queries_and_pages_large_result(self):
++        reg = build_builtin_registry()
++        reg.register(ToolSpec('large_observation', '', lambda a, c: ToolResult(True,
++            'start' + 'x'*8000 + ' tail-needle')), trusted=True, effect=ToolEffect.READ)
++        _, base = self.gateway(registry=reg, policy=Policy(mode=Mode.READ_ONLY,
++            workspace=self.ws, non_interactive=True))
++        before = sorted(p.name for p in self.ws.iterdir())
++        body = {'run_id': 'artifact_run', 'action_id': 'long_action',
++                'name': 'large_observation', 'arguments': {}}
++        code, result = self.http(base, '/v1/tools/call', body)
++        self.assertEqual(code, 200)
++        self.assertTrue(result['ok'])
++        identifier = result['meta']['artifact']['id']
++        self.assertLess(len(result['content']), 4000)
++        _, receipt = self.http(base, '/v1/runs/artifact_run/actions/long_action')
++        self.assertEqual(receipt['meta']['artifact'], result['meta']['artifact'])
++        _, page = self.http(base, '/v1/tools/call', {'run_id': 'artifact_run',
++            'name': 'artifact_read', 'arguments': {'id': identifier, 'offset': 8000}})
++        self.assertTrue(page['ok'])
++        self.assertIn('tail-needle', page['content'])
++        _, found = self.http(base, '/v1/tools/call', {'run_id': 'artifact_run',
++            'name': 'artifact_grep', 'arguments': {'id': identifier, 'pattern': 'tail-needle'}})
++        self.assertTrue(found['ok'])
++        self.assertEqual(found['meta']['matches'][0]['offset'], 8006)
++        self.assertEqual(sorted(p.name for p in self.ws.iterdir()), before)
++
++    def test_raw_workspace_write_cannot_overwrite_host_artifacts(self):
++        from forge.artifacts import ArtifactStore
++        from forge.execution import ActionExecutor, ActionRequest, create_execution_context
++        store = ArtifactStore(self.home, self.ws)
++        identifier = store.put('original')['id']
++        context = create_execution_context(home=self.home, workspace=self.ws,
++            policy=Policy(mode=Mode.BYPASS, workspace=self.ws, non_interactive=True),
++            registry=build_builtin_registry())
++        self.addCleanup(context.secret_scope.close)
++        self.addCleanup(context.session.close)
++        result = ActionExecutor().execute(context, ActionRequest('write_file', {
++            'path': str(store.root / identifier), 'content': 'corrupt'}))
++        self.assertEqual(result.authorization, 'deny')
++        self.assertEqual(store.read(identifier)['text'], 'original')
++
++
++if __name__ == '__main__':
++    unittest.main()
+--- /dev/null
++++ b/docs/LOOM-ARTIFACT-INTEGRATION.md
+@@ -0,0 +1,90 @@
++# Loom / Codex 源码对照：补齐长结果留存与按需读取
++
++## 选题依据
++
++本轮继续读取本机 Loom（`Documents/ChatGPT/Codex/loom`，HEAD `2c8f755`）和 Codex（`Desktop/开发/codex`，HEAD `67f0994`）源码。它们只作为参考，未修改。没有把本机所有框架都视为已经完成审查。
++
++| 尚未集成的设计 | Forge 当前缺口 | 本轮选择 |
++| --- | --- | --- |
++| 内容寻址 artifact + 分页/搜索 | 旧 ScienceClaw 外置器自动写 `workspace/research_data`；随机文件名无法去重；摘要建议用 `read_file`，但该工具本身有预览上限；工具轮次还可能再次截断结果 | 优先实现：直接改善长任务可用性，并消除运行时对用户工作区的隐式写入 |
++| 事件 DAG 与分支工作区恢复 | 线性 fork 复制日志，不能等同于回滚文件 | 需同时处理分支所有权、未提交文件和多个入口，未在本轮改存储 |
++| 动态效果/资源调度 | 已统一工具执行，但仍按顺序执行；shell/MCP/电脑操作尚无统一资源集合 | 不能仅为并行增加调度函数，后续应先规范宿主效果与资源边界 |
++| 信息流来源标签与对外发送确认 | 检索内容与对外动作缺少贯通权限卡片的来源判定 | 本轮保留 artifact 的来源与 untrusted 标签，未宣称完成全局信息流防护 |
++| 环境探针验收 | 当前文件验收可运行，受保护 Agent 的原生命令验收仍受隔离约束 | 适合后续用宿主注册的只读环境探针补齐，不能借此开启任意 shell |
++
++具体参考：
++
++- Loom `packages/kernel/src/artifacts.ts`：SHA-256 内容句柄、来源合并、完整内容与预览分离、分页和字面量搜索。
++- Loom `packages/kernel/src/kernel.ts:619` / `:640` / `:734`：内置 artifact 读取/搜索工具，大输出转引用。
++- Codex `codex-rs/core/src/tools/context.rs:428`、`:570`：留存输出和模型可见截断分别处理，并为元数据/提示预留输出预算，避免二次截断。
++- Forge `forge/scienceclaw/offload.py`：原有阈值和独立嵌入 API 保留，运行时改接新的宿主存储；重复的 wrap / wrap_result_text 写入逻辑合并。
++
++语言与边界不同，因此按设计重新实现 Python 标准库版本，没有引入 Rust/Node 运行时或第三方依赖。
++
++## 实际实现
++
++`forge/artifacts.py` 提供宿主存储：
++
++- 句柄为 `a_<SHA-256>`；内容相同只保存一份，合并最多 64 条来源记录。
++- 路径为 `<Forge home>/artifacts/<workspace fingerprint>/`，不再自动写 `research_data`。通常 home 在工作区外；若宿主刻意把 home 放进工作区，物理位置仍由该宿主配置决定。
++- 内容先落临时文件、flush/fsync，再原子替换；元数据是完成标记。按对象锁串行化写入，读取校验摘要和字节/字符长度。
++- 以实际工作区分区，句柄不能作为任意路径；拒绝越界、非法句柄和重定向的存储路径。原始文件工具也不能覆盖受保护的 host artifacts。
++- 单项最多 8 MiB；不自动删除已有证据。超限、磁盘故障或损坏不会冒充保存成功。
++- 保存已经过现有 SecretScope 保护的工具返回文本，统一标记为 untrusted；来源记录包括工具名和 action_id。来源标签是数据描述，不是执行授权。
++
++`forge/artifact_tools.py` 注册两个现有权限链内的只读工具：
++
++```json
++{"tool":"artifact_read","args":{"id":"a_<64位摘要>","offset":0,"limit":2000}}
++```
++
++`offset` 是从 0 开始的 Unicode 字符偏移。模型根据 `next_offset` 继续读取，即使结果只有一条超长行也不会卡在相同行范围。
++
++```json
++{"tool":"artifact_grep","args":{"id":"a_<64位摘要>","pattern":"目标字符串","offset":0,"limit":10}}
++```
++
++搜索为字面量搜索，返回字符位置、短预览及下一页偏移，不执行正则或内容。两工具都限制返回大小，给页头预留预算，而且不会再次被外置成嵌套 artifact。
++
++## 接入与失败语义
++
++```mermaid
++flowchart TD
++    Agent[Agent 文本/原生工具调用] --> Exec[ActionExecutor]
++    Gateway[网关工具 HTTP] --> Exec
++    Exec --> Tool[现有授权/版本保护/工具调用]
++    Tool --> Protect[SecretScope 保护后的返回文本]
++    Protect --> Retain[大结果进入 ArtifactStore]
++    Retain --> Receipt[短预览 + 句柄 + meta.artifact]
++    Receipt --> Journal[现有动作日志与查询回执]
++    Receipt --> Model[模型上下文]
++    Model --> Retrieve[artifact_read / artifact_grep]
++    Retrieve --> Exec
++```
++
++- 保存在共同动作执行边界，Agent 与网关都生效；动作查询回执和客户端 Step 元数据携带相同句柄。
++- Agent 的现有 Offloader 接入同一存储；有完整 artifact 的结果不再重复外置。旧独立嵌入 API 未指定 artifact_store 时保留原行为。
++- 编码模式仓库版与打包版的工具 expose / allow 同步加入两个读取工具。用户明确的 expose、hide 或 deny 仍优先，未自动绕过自定义工具限制。
++- 存储失败保留原动作的成功/失败/未知状态，记录 `artifact_retention.status=failed`；给模型的预览明确提示保存失败、可能不完整，不自动重跑动作或回退到工作区写文件。
++- 留存对象是工具实际返回的受保护文本。若具体工具在返回前已截断上游数据，artifact 无法恢复那部分数据，也不会声称保存了未收到的内容。
++- 既有厂商请求、上下文压缩和计费逻辑不变；新增工具会改变初始工具面，轮次之间仍只追加结果。
++
++## 验证
++
++新增 `forge/test_artifacts.py` 的 14 项测试，覆盖去重/来源、Unicode 单行分页、字面量搜索续页、非法参数、跨工作区隔离、损坏和未完成写入、超限、脱敏、存储失败后的动作去重、已知失败语义、deny、有限读取、真实 Agent 搜索并读取预览之外的尾部、编码模式暴露和失败时不回退工作区。
++
++新增 `tests/test_artifact_gateway.py` 的 2 项测试，通过真正的本地 HTTP 验证只读网关的大结果保存、动作回执查询、分页/搜索，以及宿主 artifact 不可被原始写工具覆盖。
++
++最终验证：
++
++| 验证 | 结果 |
++| --- | --- |
++| 内核完整回归 | 369 项：367 通过、2 跳过 |
++| 运行时、客户端、开发模式与网关 11 组回归 | 198 项：197 通过、1 跳过 |
++| 框架自检 | 595/595 |
++| 旧 ScienceClaw 离线兼容自检 | 32/32 |
++| 代码行数预算 / Git 空白检查 | 141 个源码文件通过；接受 Windows CRLF 的空白检查通过 |
++
++内核与运行时合计 **564 项通过、3 项跳过、0 失败**。新增专项是回归总数的子集，不重复计数。日志前缀为 `reports/loom-artifact-*`。没有进行真实云模型性能评测或 GUI 视觉验收。
++
++本轮前快照路径见 `reports/loom-artifact-backup.txt`；独立补丁为 `reports/loom-artifact.patch`。保留既有未提交工作；未提交 Git、发布、调用真实云端模型或修改凭据。

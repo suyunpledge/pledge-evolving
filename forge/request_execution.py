@@ -67,7 +67,8 @@ def prepare_execution(payload, profile, model, *, interactive=True,
     if think_budget is not None:
         if isinstance(think_budget, bool) or not isinstance(think_budget, int) or not 1 <= think_budget <= 262144:
             raise ValueError("think_budget must be an integer between 1 and 262144")
-        if "reasoning_effort" in shaped or "thinking" in shaped:
+        if ("reasoning_effort" in shaped or "thinking" in shaped
+                or shaped.get("enable_thinking") is False):
             execution["reasoning"] = {"status": "explicit_override", "requested": think_budget}
         elif profile.id == "bailian" and model.lower().startswith("qwen3"):
             shaped["thinking_budget"] = think_budget

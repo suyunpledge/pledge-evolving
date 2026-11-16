@@ -9,7 +9,10 @@ import json
 import re
 
 PLANNING_LEVELS = ('none', 'low', 'medium', 'high')
-_CAPS = {'none': 0, 'low': 640, 'medium': 1400, 'high': 2400}
+# Total output includes provider reasoning. Keep room for the final JSON;
+# its desired size is constrained separately in planning_prompt.
+_CAPS = {'none': 0, 'low': 2048, 'medium': 4096, 'high': 6144}
+_VISIBLE_TOKENS = {'low': 256, 'medium': 640, 'high': 1200}
 _ITEMS = {'low': 4, 'medium': 8, 'high': 12}
 _FIELDS = ('tasks', 'requirements', 'acceptance', 'design', 'risks')
 
@@ -53,8 +56,9 @@ def planning_prompt(level):
     return (
         'Produce a concise actionable pre-execution task plan, not private reasoning. '
         'Return exactly one JSON object, with arrays of nonempty strings for: '
-        + ', '.join(required) + '. Only these fields are permitted: ' + ', '.join(_FIELDS)
-        + f'. Maximum {_ITEMS.get(level, 4)} entries per array, 400 characters per entry. '
+        + ', '.join(required) + '. Include only these required fields. '
+        + f'Target at most {_VISIBLE_TOKENS.get(level, 256)} tokens of final JSON. '
+        + f'Maximum {_ITEMS.get(level, 4)} entries per array, 400 characters per entry. '
         'Use the task language. Begin with inspection when repository facts are unknown. '
         'Do not invent file contents, completed tests or existing functionality. '
         'Distinguish proposed verification from observed results. '
@@ -114,7 +118,10 @@ class TaskPlan:
         return asdict(self)
 
     def context(self):
-        return ('Task plan (proposal, not evidence or permission; verify by tools):\n'
+        return ('Task plan — execution instructions:\n'
+                'Follow these steps to complete the user task and verify the acceptance criteria with tools. '
+                'The user request and current permissions take precedence. If new evidence invalidates a step, '
+                'adapt it and explain the change. This plan is not evidence of completed work or a permission grant.\n'
                 + json.dumps(self.to_dict(), ensure_ascii=False))
 
     def display(self):

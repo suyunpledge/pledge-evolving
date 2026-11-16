@@ -151,11 +151,17 @@ def test_adapters() -> None:
           f"{mm.est_cost} vs {mm.baseline_cost}")
     check("mimo: never marks the wire (automatic)", mm.cache_control is False)
 
-    # Still-unknown vendors must not engage
-    for vid in ("volcengine", "stepfun"):
+    # Still-unknown vendors must not engage（2026-11-04 起仅 stepfun 仍 unknown；
+    # volcengine 已被 ark coding 探针坐实 implicit：同题重发 2378/2378 命中）
+    for vid in ("stepfun",):
         pl = adapter_for(PROFILES[vid]).plan(p, p["messages"], _ctx(vid))
         check(f"{vid}: does not engage cache", pl.cache_engages is False,
               pl.actions[0] if pl.actions else "")
+    vb = adapter_for(PROFILES["volcengine"]).plan(p, p["messages"], _ctx("volcengine"))
+    check("volcengine: implicit cache now engages (probe-verified)",
+          vb.cache_engages is True,
+          vb.actions[0] if vb.actions else "")
+    check("volcengine: never marks the wire", vb.cache_control is False)
 
     # Local: no billing at all
     lc = adapter_for(PROFILES["local"]).plan(p, p["messages"], _ctx("local"))
@@ -240,11 +246,13 @@ def test_warmth() -> None:
     check("warm after remember", store.is_warm(PROFILES["anthropic"], fp))
     check("warmth is per-vendor", not store.is_warm(PROFILES["deepseek"], fp))
 
-    # unknown-cache vendors are never assumed warm
-    store.remember("volcengine", fp)
-    check("unknown vendor never warm", not store.is_warm(PROFILES["volcengine"], fp))
+    # unknown-cache vendors are never assumed warm（2026-11-04：volcengine
+    # 已升级 implicit/managed，参与温暖度；仍 unknown 的代表是 stepfun）
     store.remember("stepfun", fp)
-    check("stepfun never warm either", not store.is_warm(PROFILES["stepfun"], fp))
+    check("unknown vendor never warm", not store.is_warm(PROFILES["stepfun"], fp))
+    store.remember("volcengine", fp)
+    check("volcengine now warm-trackable (implicit, managed ttl)",
+          store.is_warm(PROFILES["volcengine"], fp))
 
     # MiMo 2026-10-07 已核实有缓存口径，所以它**应该**参与温暖度跟踪
     store.remember("mimo", fp)

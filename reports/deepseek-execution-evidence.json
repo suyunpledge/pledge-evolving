@@ -1,0 +1,34 @@
+{
+  "checks": [
+    {
+      "report": "reports\\deepseek-execution-flash-on.json",
+      "sha256": "545fb4b8d03f95ddb5f3d2b981b91b7172cca719f30ceb66f4b16ff2c54b8475",
+      "ok": true,
+      "successful_requests": 18,
+      "attempts": 22
+    },
+    {
+      "report": "reports\\deepseek-execution-flash-off.json",
+      "sha256": "899d8a50a51fdd2409e228bea2db7b08d2ff21fe54dced75f19aaa6d804252a1",
+      "ok": true,
+      "successful_requests": 18,
+      "attempts": 20
+    },
+    {
+      "report": "reports\\deepseek-independent-planner.json",
+      "sha256": "4b6c7b9caf051cd5f8c254675fe0e648dcd647adbdec381f504e8cebba18b3ea",
+      "ok": true,
+      "successful_requests": 5,
+      "attempts": 6
+    },
+    {
+      "report": "reports\\deepseek-pro-wire.json",
+      "sha256": "70f4f844502c9c5ac74a2465b1a86bf684596730434ef7c9283c24b115e69e8c",
+      "ok": true,
+      "successful_requests": 6,
+      "attempts": 8
+    }
+  ],
+  "independent_phase_selection": true,
+  "artifact_hashes_match_write_results": true
+}

@@ -172,7 +172,8 @@ def _normalize_provider_row(raw: dict[str, Any], warnings: list[str], seen_ids: 
     for k in ("wire", "baseURL", "baseUrl", "apiKey", "api_key", "token",
               "model", "smallModel", "notes", "vendor", "cacheControl",
               "expectedCalls", "callGapSeconds", "adapt", "service", "rpm",
-              "temperature", "headers", "models", "thinkBudget", "flex", "defer", "maxDeferSeconds"):
+              "temperature", "headers", "models", "thinkBudget", "flex", "defer", "maxDeferSeconds",
+              "requestTimeout"):
         if k in raw and k not in conf:
             conf[k] = raw[k]
     # 字段别名

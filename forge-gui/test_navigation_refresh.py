@@ -30,12 +30,13 @@ class NavigationRefreshTests(unittest.TestCase):
 
     def test_sidebar_shortcuts_and_composer_actions_are_reachable(self):
         with isolated_app() as (root, app, errors):
-            self.assertEqual(tuple(app.sidebar_shortcuts), ('chat', 'tools', 'schedules'))
+            self.assertEqual(tuple(app.sidebar_shortcuts), ('chat', 'task', 'tools', 'schedules'))
             # 2026-10-19：智能体恢复直达行（首位）
             self.assertEqual(tuple(app.sidebar_navigation), ('agents', 'connectors', 'knowledge', 'evolution', 'config'))
             buttons = list(app.sidebar_shortcuts.values())
-            self.assertEqual(len({b.winfo_y() for b in buttons}), 1)
-            self.assertEqual(sorted(b.winfo_x() for b in buttons), [b.winfo_x() for b in buttons])
+            self.assertEqual(len({b.winfo_y() for b in buttons}), 2)
+            self.assertEqual(buttons[0].winfo_x(), buttons[2].winfo_x())
+            self.assertEqual(buttons[1].winfo_x(), buttons[3].winfo_x())
             with patch.object(app.desktop_features, 'open') as opened:
                 app.sidebar_shortcuts['schedules'].invoke()
                 opened.assert_called_once_with(0)
@@ -118,6 +119,7 @@ class NavigationRefreshTests(unittest.TestCase):
     def test_localized_composer_actions_stay_inside_at_all_scales(self):
         for scale in SCALES:
             with self.subTest(scale=scale), isolated_app(scale, (1600, 950)) as (root, app, errors):
+                app.input_card.set_options_expanded(True)
                 for language in i18n.LANGUAGES:
                     with self.subTest(language=language):
                         app._change_language(language)

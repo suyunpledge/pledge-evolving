@@ -1,0 +1,702 @@
+--- a/forge/adapters.py
++++ b/forge/adapters.py
+@@ -216,6 +216,10 @@
+                            profile.model_kind_id or profile.id + ".default")
+ 
+     # -- overridable ------------------------------------------------------
++    def shape_request(self, payload: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
++        """厂商请求兼容约束；在缓存指纹计算前执行，不修改调用方对象。"""
++        return payload, []
++
+     def prefix_text(self, payload: dict[str, Any],
+                     messages: list[dict[str, Any]]) -> str:
+         """The cacheable prefix as text: top-level system + system-role
+@@ -542,15 +546,47 @@
+ class MiMoAdapter(VendorAdapter):
+     """Token Plan 端点实测（2026-11-04）：隐式前缀缓存真实存在（同题重发
+     1856/1862 命中、换尾题 1024 部分命中）；usage 为 OpenAI details 风格且
+-    无缓存时 prompt_tokens_details 为 null（归一层容错）。默认自动思考，
++    无缓存回执时 prompt_tokens_details 为 null（不能把未知记作零）。默认启用思考，
+     thinking.type=on/off 干净生效（关闭时 reasoning_tokens=0）。"""
+ 
+     vendor_id = "mimo"
++
++    def shape_request(self, payload: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
++        # 只约束已核实的 2.6 家族；模型别名通过画像绑定同样生效。
++        if self.profile.model_family_id != 'mimo.v2.6':
++            return payload, []
++        out = dict(payload)
++        actions = []
++        choice = out.get('tool_choice')
++        if choice is not None and choice != 'auto':
++            # 官方说明非 auto 被后端丢弃；不可默默把 none/required/指定工具降级。
++            raise ValueError('MiMo v2.6 only supports tool_choice=auto; '
++                             'none, required and forced functions cannot be guaranteed')
++        # 默认与显式 enabled/auto 统一到同一请求形状，避免本地缓存命名空间碎片。
++        if out.get('tools'):
++            out['tool_choice'] = 'auto'
++        if 'thinking' not in out:
++            out['thinking'] = {'type': 'enabled'}
++        thinking = out.get('thinking')
++        disabled = isinstance(thinking, dict) and thinking.get('type') == 'disabled'
++        if not disabled:
++            removed = [key for key in ('temperature', 'top_p') if key in out]
++            for key in removed:
++                out.pop(key)
++            if removed:
++                actions.append('MiMo 思考模式使用厂商固定采样，已摘除 ' + '/'.join(removed))
++        else:
++            temperature = out.get('temperature')
++            if temperature is not None and (isinstance(temperature, bool)
++                    or not isinstance(temperature, (int, float)) or not 0 <= temperature <= 1.5):
++                raise ValueError('MiMo temperature must be between 0 and 1.5')
++        return out, actions
+ 
+     def extra_actions(self, ctx: PlanContext, plan: RequestPlan,
+                       prefix_tokens: int) -> None:
+         plan.notes.append("Token Plan 订阅池：倍率仅供比例参考，命中已实证且被 usage 如实计入")
+-        plan.notes.append("thinking 仅 on/off 两态（无 effort 分档），关思考可把该轮 reasoning 降为 0")
++        plan.notes.append("thinking 仅 on/off 两态，默认 enabled；没有已验证的 effort 强度分档")
++        plan.notes.append("2.6 家族 tool_choice 仅 auto；工具调用需回放 reasoning_content，不能假定强制选工具生效")
+ 
+ 
+ class MiniMaxAdapter(VendorAdapter):
+--- a/forge/vendors.py
++++ b/forge/vendors.py
+@@ -384,11 +384,11 @@
+         min_output_tokens=4096,
+         memory_char_budget=2000, memory_top_k=8,
+         notes="命中倍率 0.83%（¥0.025 vs 未命中 ¥3），全车队最低，比 DeepSeek 的 2% 还深。"
+-              "官方未公布最小前缀与 TTL，这里按保守 3 小时估计。"
++              "官方未公布最小前缀与 TTL；本地温暖度估计不是服务端保留承诺。"
+               "另有低谷优惠：00:00–08:00（UTC+8）按 0.8× 计。"
+               "2026-11-04 token-plan 探针：隐式缓存实证（同题重发 1856/1862 命中、"
+               "换尾题 1024 部分命中）；usage 为 OpenAI details 风格，无缓存时"
+-              "prompt_tokens_details 为 null；thinking.type=on/off 干净生效"
++              "prompt_tokens_details 为 null（缺失回执保持未知）；thinking.type=on/off 干净生效"
+               "（关闭时 reasoning_tokens=0），enable_thinking 亦被接受。",
+     ),
+ 
+--- a/forge/model.py
++++ b/forge/model.py
+@@ -392,6 +392,9 @@
+     # Every entry point (direct, gateway and batch) must hash and send the same
+     # vendor dialect. Shape after execution budgets, before cache fingerprinting.
+     payload, reasoning_actions = shape_reasoning(payload, profile)
++    adapter = adapter_for(profile)
++    payload, compatibility_actions = adapter.shape_request(payload)
++    reasoning_actions.extend(compatibility_actions)
+     from .route_capabilities import validate_request
+     try:
+         budget = validate_request(payload, capabilities) if capabilities else {}
+@@ -427,7 +430,6 @@
+         flex=bool(execution.get("flex")), batch=bool(execution.get("batch")),
+         when=options.get("when"),
+     )
+-    adapter = adapter_for(profile)
+     plan = adapter.plan(payload, messages, ctx)
+ 
+     # 把计划落到实际请求体：只有需要显式标记的厂商才注入，其余保持原样。
+@@ -460,8 +462,8 @@
+     if reasoning_hop:
+         raw.setdefault("notes", []).append(
+             f"reasoning 参数变化（{reasoning_hop['from']}→{reasoning_hop['to']}）："
+-            "该维度参与前缀缓存命名空间（DSH 实证 effort 切换可使命中率 99.9%→12.7%），"
+-            "本段前缀在同厂商需按全价重读一次后重新变热")
++            "本地温暖度按推理参数分开记录；是否发生服务端失配需看本次 usage，"
++            "不预断零命中或全价重读")
+         raw["reasoning_hop"] = reasoning_hop
+     raw["fingerprint"] = fingerprint
+     raw["execution"] = execution
+@@ -718,7 +720,7 @@
+         # 丢掉它等于怪癖表永不生效（旧 _model 属性全树无写入点）。
+         # A truncated function argument is not a complete action, even if a
+         # repair heuristic could close its JSON braces.
+-        calls = ([] if finish_reason in {"length", "max_tokens"} else
++        calls = ([] if finish_reason in {"length", "max_tokens", "repetition_truncation", "content_filter"} else
+                  parse_tool_calls(message, provider.wire, model=model))
+         return text, usage, {
+             "tool_calls": [call.to_raw() for call in calls],
+--- a/forge/model_kinds.py
++++ b/forge/model_kinds.py
+@@ -39,9 +39,11 @@
+     _kind("deepseek.v4.1.flash", "deepseek", "deepseek.v4.1", "deepseek-v4.1-flash",
+           traits=("prompt_cache_details",), evidence="registry_trace"),
+     _kind("mimo.v2.6.flash", "mimo", "mimo.v2.6", "mimo-v2.6-flash",
+-          traits=("thinking_type", "nullable_cache_details", "native_tool_replay"), evidence="live"),
++          traits=("thinking_type", "nullable_cache_details", "native_tool_replay",
++                  "auto_tool_choice_only", "fixed_sampling_when_thinking"), evidence="live"),
+     _kind("mimo.v2.6.pro", "mimo", "mimo.v2.6", "mimo-v2.6-pro",
+-          traits=("thinking_type", "nullable_cache_details", "native_tool_replay"), evidence="live"),
++          traits=("thinking_type", "nullable_cache_details", "native_tool_replay",
++                  "auto_tool_choice_only", "fixed_sampling_when_thinking"), evidence="live"),
+     _kind("mimo.v2.6.pro-ultraspeed", "mimo", "mimo.v2.6", "mimo-v2.6-pro-ultraspeed",
+           traits=("token_plan_model_rejected",), evidence="live_rejection"),
+     _kind("minimax.m3", "minimax", "minimax.m3", "minimax-m3",
+--- a/forge/loop.py
++++ b/forge/loop.py
+@@ -1387,13 +1387,16 @@
+ 
+             text = completion.text or ""
+             self._check_cancel()
+-            if getattr(completion, "finish_reason", "") in {"length", "max_tokens"}:
+-                self._emit(type="model_output_limit", finish_reason=completion.finish_reason,
++            finish_reason = getattr(completion, "finish_reason", "")
++            if finish_reason in {"length", "max_tokens", "repetition_truncation", "content_filter"}:
++                limited = finish_reason in {"length", "max_tokens"}
++                self._emit(type="model_output_limit" if limited else "model_output_rejected", finish_reason=finish_reason,
+                            prompt_tokens=completion.usage.prompt_tokens,
+                            completion_tokens=completion.usage.completion_tokens)
+                 return self._finish(RunReport(
+-                    text="[stopped: model output reached its token limit]" + ("\n" + text if text else ""),
+-                    steps=steps, usage=usage_total, stopped="output_limit", events=self.events))
++                    text=("[stopped: model output reached its token limit]" if limited else
++                          f"[stopped: upstream model ended with {finish_reason}]") + ("\n" + text if text else ""),
++                    steps=steps, usage=usage_total, stopped="output_limit" if limited else finish_reason, events=self.events))
+             native_raw = getattr(completion, "tool_calls", None) or []
+             wire = str(getattr(completion, "wire", None) or self.wire_hint)
+             native_calls: list[toolwire.ToolCall] = []
+--- a/scripts/verify_vendor_wire.py
++++ b/scripts/verify_vendor_wire.py
+@@ -92,7 +92,8 @@
+             messages = [{"role": "system", "content": "Use add once when asked. Be concise."},
+                         {"role": "user", "content": "Call add with a=17,b=25. Do not calculate without the tool."}]
+             first = call(messages, enable_thinking=False, tools=[TOOL],
+-                         tool_choice={"type": "function", "function": {"name": "add"}})
++                         tool_choice=('auto' if vendor == 'mimo' else
++                                      {"type": "function", "function": {"name": "add"}}))
+             calls = first.tool_calls
+             if (first.finish_reason in {"length", "max_tokens"} or len(calls) != 1
+                     or calls[0]["name"] != "add" or calls[0]["args"] != {"a": 17, "b": 25}):
+--- a/forge-budgets.json
++++ b/forge-budgets.json
+@@ -3,7 +3,7 @@
+   "files": {
+     "forge/__init__.py": 38,
+     "forge/acceptance.py": 172,
+-    "forge/adapters.py": 712,
++    "forge/adapters.py": 748,
+     "forge/artifact_tools.py": 36,
+     "forge/artifacts.py": 161,
+     "forge/assembly.py": 127,
+@@ -73,10 +73,10 @@
+     "forge/guard.py": 177,
+     "forge/knowledge.py": 118,
+     "forge/local_service.py": 293,
+-    "forge/loop.py": 1657,
++    "forge/loop.py": 1702,
+     "forge/memory.py": 354,
+-    "forge/model.py": 918,
+-    "forge/model_kinds.py": 150,
++    "forge/model.py": 920,
++    "forge/model_kinds.py": 152,
+     "forge/phase_models.py": 24,
+     "forge/planning.py": 125,
+     "forge/policy.py": 443,
+@@ -116,12 +116,13 @@
+     "forge/test_execution_review.py": 360,
+     "forge/test_isolated_default.py": 71,
+     "forge/test_loom_integration.py": 268,
++    "forge/test_mimo_adapter.py": 160,
+     "forge/test_model_adaptation.py": 280,
+     "forge/test_model_kinds.py": 205,
+     "forge/test_modes_reference.py": 151,
+     "forge/test_new_modules.py": 168,
+     "forge/test_phase_models.py": 129,
+-    "forge/test_prefix_cache.py": 143,
++    "forge/test_prefix_cache.py": 164,
+     "forge/test_project_rules.py": 252,
+     "forge/test_projector.py": 98,
+     "forge/test_read_scope.py": 172,
+--- /dev/null
++++ b/forge/test_mimo_adapter.py
+@@ -0,0 +1,160 @@
++"""MiMo 实测回执驱动的请求约束，覆盖直连、网关和真实 Agent 执行边界。"""
++import copy
++import io
++import json
++from pathlib import Path
++import tempfile
++import unittest
++
++from . import model
++from .cache_state import CacheWarmth
++from .gateway import GatewayConfig
++from .loop import Agent, LoopLimits
++from .policy import Mode, Policy
++from .tools import build_builtin_registry
++from .toolwire import replay_assistant_message
++
++
++BASE = 'https://token-plan-cn.xiaomimimo.com/v1'
++MODEL = 'mimo-v2.6-flash'
++
++
++class MiMoAdapterTests(unittest.TestCase):
++    def shape(self, payload, **kwargs):
++        provider = model.Provider('mimo-fixture', BASE, default_model=MODEL, **kwargs)
++        return model._plan_and_shape(payload, payload.get('messages', []), provider, MODEL,
++                                     store=CacheWarmth())
++
++    def test_default_and_enabled_reasoning_remove_ignored_sampling(self):
++        for thinking in (None, {'type': 'enabled'}):
++            payload = {'model': MODEL, 'messages': [], 'temperature': .7, 'top_p': .8}
++            if thinking:
++                payload['thinking'] = thinking
++            before = copy.deepcopy(payload)
++            shaped, plan = self.shape(payload)
++            self.assertNotIn('temperature', shaped)
++            self.assertNotIn('top_p', shaped)
++            self.assertEqual(payload, before)
++            self.assertTrue(any('固定采样' in a for a in plan['actions']))
++
++    def test_disabled_reasoning_preserves_supported_sampling(self):
++        shaped, _ = self.shape({'messages': [], 'enable_thinking': False,
++                                'temperature': .7, 'top_p': .8})
++        self.assertEqual(shaped['thinking'], {'type': 'disabled'})
++        self.assertEqual(shaped['temperature'], .7)
++        self.assertEqual(shaped['top_p'], .8)
++
++    def test_disabled_reasoning_rejects_out_of_range_temperature(self):
++        for value in (1.6, -1, float('nan'), True):
++            with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'temperature'):
++                self.shape({'messages': [], 'thinking': {'type': 'disabled'}, 'temperature': value})
++
++    def test_unsupported_tool_choice_fails_before_http(self):
++        provider = model.Provider('fixture', BASE, default_model=MODEL)
++        calls = []
++        def forbidden(*args, **kwargs):
++            calls.append(True)
++            raise AssertionError('must not send a misleading tool constraint')
++        transport = model.HttpTransport(response_opener=forbidden)
++        for choice in ('none', 'required', {'type': 'function', 'function': {'name': 'add'}}):
++            with self.subTest(choice=choice), self.assertRaisesRegex(model.BadRequest, 'tool_choice=auto'):
++                transport.complete(provider, MODEL, [{'role': 'user', 'content': 'hi'}], tool_choice=choice)
++        self.assertEqual(calls, [])
++
++    def test_auto_tools_and_message_prefix_are_unchanged(self):
++        payload = {'messages': [{'role': 'user', 'content': 'hi'}], 'tool_choice': 'auto',
++                   'tools': [{'type': 'function', 'function': {'name': 'add'}}]}
++        shaped, _ = self.shape(payload)
++        for key in ('messages', 'tools', 'tool_choice'):
++            self.assertEqual(shaped[key], payload[key])
++
++    def test_equivalent_defaults_share_canonical_payload_and_fingerprint(self):
++        payload = {'messages': [{'role': 'user', 'content': 'hello'}],
++                   'tools': [{'type': 'function', 'function': {'name': 'add'}}]}
++        default, left = self.shape({**payload, 'temperature': .7})
++        explicit, right = self.shape({**payload, 'thinking': {'type': 'enabled'}, 'tool_choice': 'auto'})
++        self.assertEqual(default, explicit)
++        self.assertEqual(left['fingerprint'], right['fingerprint'])
++
++    def test_reasoning_hop_does_not_claim_a_guaranteed_cache_miss(self):
++        payload = {'messages': [{'role': 'system', 'content': 'stable hop diagnostic'}]}
++        self.shape({**payload, 'enable_thinking': False})
++        _, plan = self.shape({**payload, 'enable_thinking': True})
++        self.assertIn('reasoning_hop', plan)
++        self.assertTrue(any('不预断零命中' in note for note in plan['notes']))
++
++    def test_gateway_applies_same_mimo_constraints_and_fingerprint(self):
++        original = {'model': MODEL, 'messages': [{'role': 'user', 'content': 'hello'}],
++                    'enable_thinking': True, 'temperature': .7, 'top_p': .9}
++        direct, direct_plan = self.shape(original)
++        cfg = GatewayConfig(upstream=BASE, api_key='', models=[MODEL], wire='openai', upstream_wire='openai')
++        cfg.cache_warmth = CacheWarmth()
++        gateway, gateway_plan, _ = cfg.prepare_request(original)
++        self.assertEqual(direct, gateway)
++        self.assertEqual(direct_plan['fingerprint'], gateway_plan['fingerprint'])
++        with self.assertRaisesRegex(ValueError, 'tool_choice=auto'):
++            cfg.prepare_request({**original, 'tool_choice': 'none'})
++
++    def test_model_kind_binding_applies_to_opaque_alias(self):
++        provider = model.Provider('fixture', 'https://gateway.invalid/v1', default_model='deployment-7',
++                                  model_kind_id='mimo.v2.6.flash')
++        shaped, _ = model._plan_and_shape({'messages': [], 'temperature': .7}, [], provider, 'deployment-7')
++        self.assertNotIn('temperature', shaped)
++
++    def test_unverified_mimo_generation_is_not_restricted(self):
++        provider = model.Provider('fixture', BASE, default_model='mimo-future-model')
++        shaped, _ = model._plan_and_shape({'messages': [], 'temperature': .7, 'tool_choice': 'none'},
++                                         [], provider, 'mimo-future-model')
++        self.assertEqual(shaped['temperature'], .7)
++        self.assertEqual(shaped['tool_choice'], 'none')
++
++    def test_disabled_adapter_preserves_explicit_wire_parameters(self):
++        payload = {'messages': [], 'temperature': .7, 'tool_choice': 'none'}
++        shaped, _ = self.shape(payload, adapt=False)
++        self.assertEqual(shaped, payload)
++
++    def test_nullable_cache_receipts_remain_unknown_and_raw_usage_is_retained(self):
++        provider = model.Provider('fixture', BASE, default_model=MODEL)
++        for details, expected in [(None, False), ({'cached_tokens': 0}, True), ({'cached_tokens': 128}, True)]:
++            raw = {'prompt_tokens': 134, 'completion_tokens': 25, 'prompt_tokens_details': details}
++            response = {'choices': [{'finish_reason': 'stop', 'message': {'role': 'assistant', 'content': 'ok'}}],
++                        'usage': raw}
++            def opener(*args, **kwargs):
++                return io.BytesIO(json.dumps(response).encode())
++            _, usage, _ = model.HttpTransport(response_opener=opener).complete(provider, MODEL, [])
++            self.assertEqual(usage.cache_observed, expected)
++            self.assertEqual(usage.cached_tokens, (details or {}).get('cached_tokens', 0))
++
++    def test_final_reasoning_is_kept_without_native_tool_calls(self):
++        original = {'role': 'assistant', 'content': '42', 'reasoning_content': 'final thought', 'tool_calls': None}
++        self.assertEqual(replay_assistant_message(original, '42', [], 'openai'), original)
++
++    def test_repetition_and_filter_never_execute_or_report_success(self):
++        for reason in ('repetition_truncation', 'content_filter'):
++            provider = model.Provider('fixture', BASE, default_model=MODEL)
++            response = {'choices': [{'finish_reason': reason, 'message': {'role': 'assistant',
++                'content': 'Done', 'tool_calls': [{'id': 'bad', 'type': 'function', 'function': {
++                    'name': 'write_file', 'arguments': '{"path":"bad.txt","content":"bad"}'}}]}}],
++                'usage': {'prompt_tokens': 100, 'completion_tokens': 30}}
++            def opener(*args, **kwargs):
++                return io.BytesIO(json.dumps(response).encode())
++            transport = model.HttpTransport(response_opener=opener)
++            _, _, extra = transport.complete(provider, MODEL, [])
++            self.assertEqual(extra['tool_calls'], [])
++            with tempfile.TemporaryDirectory() as tmp:
++                root = Path(tmp)
++                router = model.ModelRouter([provider], transport=transport, retries_per_provider=0)
++                agent = Agent(home=root, workspace=root, router=router, registry=build_builtin_registry(),
++                    policy=Policy(workspace=root, mode=Mode.ACCEPT_EDITS, non_interactive=True),
++                    limits=LoopLimits(max_steps=2))
++                self.addCleanup(agent.secret_scope.close)
++                report = agent.run('write bad.txt')
++                self.assertEqual(report.stopped, reason)
++                self.assertEqual(report.as_result().outcome, 'failed')
++                self.assertEqual(report.usage['completion_tokens'], 30)
++                self.assertFalse((root / 'bad.txt').exists())
++                self.assertTrue(any(e['type'] == 'model_output_rejected' for e in report.events))
++
++
++if __name__ == '__main__':
++    unittest.main()
+--- /dev/null
++++ b/scripts/verify_mimo_live.py
+@@ -0,0 +1,242 @@
++"""MiMo 真实工具/缓存回归，显式 --live；只发送隔离夹具，不读取业务文件。
++
++凭据由用户现有 MiMo provider 行的 id 在 secrets.json 中匹配，不打印或复制。
++每次请求保存原始 usage、请求形状摘要与归一结果，写入上限内的 JSON 报告。
++"""
++from __future__ import annotations
++
++import argparse
++import copy
++from datetime import datetime, timezone
++import hashlib
++import io
++import json
++from pathlib import Path
++import sys
++import tempfile
++import time
++
++ROOT = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(ROOT))
++
++from forge import model, toolwire
++from forge.cache_metrics import cache_coverage
++from forge.cache_state import CacheWarmth
++from forge.loop import Agent, LoopLimits
++from forge.policy import Mode, Policy, Sandbox
++from forge.secret_http import open_authenticated
++from forge.secrets import redact
++from forge.tools import build_builtin_registry
++
++
++MODELS = ('mimo-v2.6-flash', 'mimo-v2.6-pro')
++ADD = {'type': 'function', 'function': {'name': 'add', 'description': 'Add two integers.',
++    'parameters': {'type': 'object', 'properties': {'a': {'type': 'integer'},
++        'b': {'type': 'integer'}}, 'required': ['a', 'b'], 'additionalProperties': False}}}
++
++
++def digest(value):
++    return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
++
++
++def provider_for(chosen, home):
++    rows = json.loads((home / 'forge.patch.json').read_text(encoding='utf-8-sig'))
++    secrets = json.loads((home / 'secrets.json').read_text(encoding='utf-8-sig'))
++    for row in rows:
++        config = row.get('config', {})
++        if (not row.get('disabled') and config.get('model') == chosen
++                and config.get('baseURL') == 'https://token-plan-cn.xiaomimimo.com/v1'):
++            key = secrets.get(row.get('id'))
++            if not isinstance(key, str) or not key:
++                raise ValueError('Configured MiMo credential is missing')
++            return model.Provider('mimo-live', config['baseURL'], key, default_model=chosen,
++                                  temperature=config.get('temperature'))
++    raise ValueError('No enabled MiMo Token Plan provider matches this model')
++
++
++class Recorder(model.HttpTransport):
++    def __init__(self, limit, thinking=None, retries=0):
++        super().__init__(timeout=60, response_opener=self.open)
++        self.limit, self.thinking = limit, thinking
++        self.retries = retries
++        self.rows, self.sent = [], []
++        self.stage = ''
++
++    def open(self, request, **kwargs):
++        if len(self.rows) >= self.limit:
++            raise ValueError('Live request limit reached')
++        payload = json.loads(request.data)
++        previous = self.sent[-1] if self.sent else None
++        messages = payload.get('messages', [])
++        common = 0
++        for left, right in zip(previous.get('messages', []) if previous else [], messages):
++            if left != right:
++                break
++            common += 1
++        row = {'stage': self.stage, 'model': payload['model'], 'url': request.full_url,
++            'parameters': {k: payload[k] for k in ('thinking', 'temperature', 'top_p',
++                'reasoning_effort', 'tool_choice', 'max_tokens') if k in payload},
++            'message_count': len(messages), 'common_prefix_messages': common,
++            'messages_digest': digest(messages), 'tools_digest': digest(payload.get('tools')),
++            'assistant_reasoning_fields': sum('reasoning_content' in m for m in messages),
++            'tools': [t.get('function', {}).get('name') for t in payload.get('tools', [])]}
++        self.rows.append(row)
++        self.sent.append(copy.deepcopy(payload))
++        started = time.monotonic()
++        try:
++            with open_authenticated(request, **kwargs) as response:
++                raw = response.read(2 * 1024 * 1024 + 1)
++                row['status'] = response.status
++            data = json.loads(raw)
++            choice = (data.get('choices') or [{}])[0]
++            message = choice.get('message') or {}
++            row.update(raw_usage=data.get('usage'), finish_reason=choice.get('finish_reason'),
++                response_id=data.get('id'), response_model=data.get('model'),
++                reasoning_chars=len(message.get('reasoning_content') or ''),
++                tool_calls=message.get('tool_calls'), text=(message.get('content') or '')[:400])
++            print(json.dumps({'stage': self.stage, 'status': row['status'],
++                'finish_reason': row['finish_reason'], 'usage': row['raw_usage']}, ensure_ascii=False), flush=True)
++            return io.BytesIO(raw)
++        except Exception as exc:
++            row.update(error_type=type(exc).__name__, status=getattr(exc, 'code', None))
++            raise
++        finally:
++            row['seconds'] = round(time.monotonic() - started, 3)
++
++    def complete(self, provider, chosen, messages, **options):
++        options.setdefault('max_tokens', 1024)
++        if self.thinking is not None:
++            options.setdefault('enable_thinking', self.thinking)
++        result = super().complete(provider, chosen, messages, **options)
++        self.rows[-1]['usage'] = vars(result[1])
++        self.rows[-1]['adaptation'] = result[2].get('plan', {})
++        return result
++
++
++def router_for(provider, recorder):
++    return model.ModelRouter([provider], transport=recorder, retries_per_provider=recorder.retries,
++                             chain=[(provider.name, provider.default_model)])
++
++
++def wire_probe(provider, recorder):
++    router = router_for(provider, recorder)
++    results = []
++    messages = [{'role': 'system', 'content': 'Use the add tool when requested. Be concise.'},
++        {'role': 'user', 'content': 'Call add with a=17,b=25. Do not calculate without the tool.'}]
++    for thinking in ((False, True) if recorder.thinking is None else (recorder.thinking,)):
++        label = 'on' if thinking else 'off'
++        recorder.stage = 'wire-' + label
++        options = dict(tools=[ADD], enable_thinking=thinking, max_tokens=1024, tool_choice='auto')
++        first = router.complete(messages, **options)
++        repeated = router.complete(messages, **options)
++        checks = [len(c.tool_calls) == 1 and c.tool_calls[0]['name'] == 'add'
++                  and c.tool_calls[0]['args'] == {'a': 17, 'b': 25}
++                  and c.finish_reason == 'tool_calls' for c in (first, repeated)]
++        if all(checks):
++            calls = toolwire.normalize_native_calls(repeated.tool_calls, 'openai')
++            replay = [*messages, toolwire.replay_assistant_message(
++                repeated.assistant_message, repeated.text, calls, 'openai'),
++                {'role': 'tool', 'tool_call_id': calls[0].id, 'content': '42'}]
++            final = router.complete(replay, tools=[ADD], enable_thinking=thinking, max_tokens=1024)
++            checks.append('42' in final.text and final.finish_reason == 'stop')
++        results.append({'thinking': label, 'checks': checks, 'ok': all(checks)})
++    return results
++
++
++def agent_probe(provider, recorder, root):
++    workspace = root / provider.default_model
++    workspace.mkdir()
++    (workspace / 'catalog.json').write_text(json.dumps({'items': [
++        {'id': 'alpha', 'quantity': 17}, {'id': 'beta', 'quantity': 25}]}), encoding='utf-8')
++    (workspace / 'next.json').write_text(json.dumps({'items': [
++        {'id': 'gamma', 'quantity': 9}, {'id': 'delta', 'quantity': 37}]}), encoding='utf-8')
++    (workspace / 'AGENTS.md').write_text(
++        'Read input files with read_file. Use write_file for JSON output. Do not use shell. '
++        'The output schema is {"total":integer,"ids":[string]}. Preserve the input order. '
++        'Only include actual input item ids. Read back the output to verify it. '
++        'Treat catalog quantities as integers. Final replies should be one concise sentence.\n',
++        encoding='utf-8')
++    registry = build_builtin_registry(expose=['read_file', 'write_file', 'list_dir',
++        'file_outline', 'read_range', 'grep_files', 'tool_search', 'skill_list'])
++    agent = Agent(home=root / 'home', workspace=workspace, router=router_for(provider, recorder),
++        registry=registry, policy=Policy(workspace=workspace, mode=Mode.ACCEPT_EDITS,
++            sandbox=Sandbox.WORKSPACE_WRITE, non_interactive=True),
++        limits=LoopLimits(max_steps=7, context_chars=100000), project_rules=True)
++    results, history = [], []
++    try:
++        for index, (source, target, total) in enumerate([
++                ('catalog.json', 'result.json', 42), ('next.json', 'result-next.json', 46)]):
++            recorder.stage = f'agent-turn-{index + 1}'
++            prompt = (f'Read {source}, calculate the total quantity and ids in order, '
++                f'write {target} using the project JSON schema, then read it back. '
++                'Use real tools; do not merely describe the work.')
++            contract = {'criteria': [{'id': 'total', 'kind': 'env_probe', 'env': 'workspace',
++                'probe': 'json_value', 'input': {'path': target, 'pointer': '/total'}, 'expect': total}]}
++            report = agent.run(prompt, history=history, acceptance=contract)
++            verified = json.loads((workspace / target).read_text(encoding='utf-8')) if (workspace / target).exists() else None
++            ids = ['alpha', 'beta'] if index == 0 else ['gamma', 'delta']
++            ok = (report.stopped == 'final' and verified == {'total': total, 'ids': ids}
++                  and all(any(s.tool == 'read_file' and s.args.get('path') == path
++                              for s in report.steps) for path in (source, target))
++                  and any(s.tool == 'write_file' and s.args.get('path') == target for s in report.steps))
++            results.append({'turn': index + 1, 'ok': ok, 'stopped': report.stopped,
++                'output': verified, 'tools': [{'tool': s.tool, 'path': s.args.get('path'),
++                                             'decision': s.decision} for s in report.steps],
++                'prefix_reused': any(e['type'] == 'cache_prefix_reused' for e in report.events),
++                'acceptance': [e for e in report.events if e['type'] == 'acceptance_checked'],
++                'coverage': cache_coverage(report.usage.get('requests', []))})
++            history += [{'role': 'user', 'content': prompt}, {'role': 'assistant', 'content': report.text}]
++            if not ok:
++                break
++    finally:
++        agent.secret_scope.close()
++    return results
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument('--live', action='store_true')
++    parser.add_argument('--model', choices=MODELS, action='append')
++    parser.add_argument('--suite', choices=('wire', 'agent'), required=True)
++    parser.add_argument('--thinking', choices=('auto', 'on', 'off'), default='auto')
++    parser.add_argument('--request-limit', type=int, default=24)
++    parser.add_argument('--retries', type=int, choices=(0, 1), default=0)
++    parser.add_argument('--output', type=Path, required=True)
++    args = parser.parse_args()
++    if not args.live or not 1 <= args.request_limit <= 32:
++        parser.error('Requires --live and request-limit in 1..32')
++    selected = list(dict.fromkeys(args.model or MODELS))
++    results = {'mode': 'live', 'suite': args.suite, 'thinking': args.thinking, 'selected_models': selected,
++        'started_utc': datetime.now(timezone.utc).isoformat(), 'models': []}
++    args.output.parent.mkdir(parents=True, exist_ok=True)
++    with tempfile.TemporaryDirectory(prefix='forge-mimo-live-') as tmp:
++        root = Path(tmp)
++        model._WARMTH = CacheWarmth(root / 'warmth.json')
++        remaining = args.request_limit
++        for chosen in selected:
++            recorder = Recorder(remaining, {'auto': None, 'on': True, 'off': False}[args.thinking], args.retries)
++            row = {'model': chosen, 'requests': recorder.rows}
++            results['models'].append(row)
++            try:
++                provider = provider_for(chosen, Path.home() / '.forge')
++                row['results'] = (wire_probe(provider, recorder) if args.suite == 'wire'
++                                  else agent_probe(provider, recorder, root))
++                row['ok'] = bool(row['results']) and all(r['ok'] for r in row['results'])
++            except Exception as exc:
++                row.update(ok=False, error_type=type(exc).__name__, error_detail=redact(str(exc))[:500])
++            remaining -= len(recorder.rows)
++            args.output.write_text(json.dumps(redact(results), ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
++            successful = [r for r in recorder.rows if r.get('usage')]
++            print(json.dumps({'model': chosen, 'ok': row['ok'], 'requests': len(recorder.rows),
++                'error': row.get('error_detail'), 'failed_attempts': len(recorder.rows) - len(successful),
++                'coverage': cache_coverage(successful)}, ensure_ascii=False), flush=True)
++            if remaining <= 0:
++                break
++    results['all_requested_models_attempted'] = len(results['models']) == len(selected)
++    results['ok'] = results['all_requested_models_attempted'] and all(row['ok'] for row in results['models'])
++    args.output.write_text(json.dumps(redact(results), ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
++    return 0 if results['ok'] else 1
++
++
++if __name__ == '__main__':
++    raise SystemExit(main())
+--- /dev/null
++++ b/docs/MIMO-LIVE-ADAPTATION.md
+@@ -0,0 +1,81 @@
++# MiMo API 工具调用与缓存实测
++
++日期：2026-11-07。使用本机已经配置的 Token Plan 端点 `https://token-plan-cn.xiaomimimo.com/v1`，限定 `mimo-v2.6-flash` / `mimo-v2.6-pro`，没有切换账户或回退厂商。凭据只在 HTTP 认证边界使用，未修改用户配置。
++
++## 测试范围
++
++新增 `scripts/verify_mimo_live.py`，必须显式传入 `--live`。使用 Python 标准库和 Forge 的 `HttpTransport` / `ModelRouter` / `Agent`，不是另一套模拟 SDK。
++
++- 协议探针：要求 `add(17,25)`，同题重发，然后把原生调用及工具结果回放给模型；分别测试关闭和开启思考。
++- Agent 探针：真实执行 `read_file → write_file → read_file`，输入为隔离目录中的 JSON。第一轮写出总量 42 及 alpha/beta，第二轮从新文件写出总量 46 及 gamma/delta。两轮均由宿主 `workspace.json_value` 环境探针验收，并独立比较最终 JSON 和全部 id。
++- 每个请求记录实际参数、消息/工具摘要、前缀消息数、推理字段数、原始 usage、归一 usage、停止原因和耗时。不会保存业务文件或凭据。
++
++临时 Agent 使用真实的内置工具、权限与文件版本保护；工作区和 home 在临时目录内。没有执行 shell、读取用户项目内容、发送消息或调用厂商联网搜索插件。
++
++## 实测记录
++
++最终结果见 `reports/mimo-live-agent-final.json`。两个模型都完成两轮任务，第二轮均触发宿主 `cache_prefix_reused`，每轮实际调用读、写、读三个工具，宿主验收通过。
++
++| 最终 Agent 复验 | flash | pro |
++| --- | ---: | ---: |
++| 成功 API 请求 / 失败尝试 | 8 / 0 | 8 / 0 |
++| 文件任务 / 实际工具调用 | 2 / 6 | 2 / 6 |
++| 全组命中 / 输入 token | 11,776 / 14,460 | 8,704 / 14,716 |
++| 全组加权命中率，包含明确冷启动零命中 | 81.44% | 59.15% |
++| 第二轮命中 / 输入 token | 7,424 / 8,328 | 5,760 / 8,726 |
++| 第二轮加权命中率 | 89.15% | 66.01% |
++| 有明确缓存回执 / 未知回执 | 8 / 0 | 8 / 0 |
++| 本组 HTTP 总耗时 | 48.672 秒 | 84.548 秒 |
++
++最终两组发送参数均为 `thinking.type=enabled`、`tool_choice=auto`、`max_tokens=1024`，不带自定义采样。工具声明摘要始终相同，连续请求的共同消息前缀为 `0,4,6,8,10,13,15,17`，其中第二轮第一请求保留前一轮已发送的全部 10 条消息。
++
++pro 最终第 4、7 个请求分别只报 256、128 缓存 token；对应请求保持了前一次全部 8、15 条消息及相同参数/工具声明。因此客户端前缀稳定不能当作服务端命中保证。现有证据不足以确定是缓存调度、模板处理还是其他端点行为，未擅自改认证端点、丢弃历史推理或关闭思考来追求一个更高数字。
++
++本轮各阶段累计 62 次 HTTP 尝试，60 次收到成功响应，2 次 TLS 失败；成功回执合计输入 75,625、输出 2,872 token，可能失败请求的实际服务端消费未知。这些是 usage 观测，不是 Token Plan 账单核对结果。没有因中间失败删除记录或挑选最高命中率作为最终结果。
++
++协议结果见 `reports/mimo-live-wire-before.json`、`reports/mimo-live-wire-after.json`、`reports/mimo-live-wire-pro-final.json`。flash 的开/关思考探针均通过；pro 也完成开思考的原生工具回放，关闭思考的调用及回放在此前请求中通过。
++
++`mimo-live-wire-after.json` 的 pro 探针，以及 `mimo-live-wire-pro-retry.json`，分别保留一次 TLS EOF 失败。它们没有收到 HTTP 响应，不能当作模型或工具协议拒绝。最终 pro 协议复验通过，失败记录保留。脚本缺省不重试；最后复验显式允许同模型最多一次重试，不回退其他模型，并受总请求上限约束。
++
++短协议请求不保证有缓存：pro 的最后三次短请求全部明确回报 cached_tokens=0。较长的实际 Agent 请求则观察到前缀命中。没有据此猜测固定最小长度、TTL 或人为填充上下文。
++
++## 根据实测与官方约束实施的修改
++
++1. 在 `VendorAdapter.shape_request()` 增加请求兼容边界，MiMo 的处理在 `_plan_and_shape()` 内、缓存指纹计算之前执行。直连与 Gateway 共用，不另建私有发送路径。
++2. 对已识别的 MiMo 2.6 家族，把默认与显式开启思考规范成 `thinking.type=enabled`，有工具时统一使用 `tool_choice=auto`。等价请求得到同一实际请求形状及本地缓存指纹；关闭思考仍独立分区。模型别名绑定同样生效，未核实的未来型号不套用这些约束。
++3. 思考开启时移除会被后端覆盖的 temperature/top_p；关闭思考保留受支持的自定义采样，并校验 temperature 的 0–1.5 范围。测试中的 0.7 不再被误解为思考模式下的有效采样设置。
++4. MiMo 官方只承诺 `tool_choice=auto`，非 auto 会被移除。Forge 现在对 none/required/指定函数在发请求前明确报不支持，避免把降级 auto 当作约束已生效。旧 MiMo wire 验证脚本改为 auto 加宿主结果检查。
++5. 保留原生工具及最终回复的 reasoning_content；这一能力由上一轮跨会话前缀实现提供，本轮用真实 MiMo API 验证。没有把 reasoning 文本中的伪工具片段提升为可执行动作。
++6. 补齐 `repetition_truncation` / `content_filter` 的停止处理：不解析为可执行工具，也不把模型文字当成功结束，保留 usage 和明确失败原因。这两个异常分支使用离线夹具验证，本次线上没有触发它们。
++7. 更新模型行为画像，去掉“推理参数一变就必然全价重读”的泛化诊断。实测开关思考后的短请求仍可能报告命中；本地保守分区不等于服务端实际零命中。
++
++约束依据：[MiMo Chat Completions 参数说明](https://mimo.mi.com/docs/api/text-generation/openai-api)、[多轮工具与推理回放说明](https://mimo.mi.com/docs/en-US/quick-start/faq/api-integration)。其中默认思考、固定采样和 tool_choice 支持范围来自官方文档；HTTP 成功、工具结果及命中 token 来自本次原始 API 回执。
++
++## 统计边界
++
++缓存命中率使用 `cached_tokens / 已明确观测缓存回执的输入 tokens`。`prompt_tokens_details=null` 保持未知；明确的 cached_tokens=0 正常计入分母。网络失败不计入成功回执的命中率。
++
++修正前 flash Agent 的 92.32% 是 7 次已观测请求、13,449 输入 token 的结果，另有 1 次缺失回执；不能直接与包含明确冷启动零命中的后续整组结果比较。工作区路径、输出推理和服务端缓存状态也会变化。本轮证明了真实工具闭环、缓存确实工作，以及等价参数规范化；没有声称得到受控 A/B 的命中率提升、延迟改善或账单节省。
++
++每次固定场景只有两轮文件任务，不代表复杂软件工程任务成功率。Token Plan 的目录价格估计不作为实际费用结论。
++
++## 复验
++
++新增专项 14 项通过，覆盖参数规范化、缓存指纹等价、Gateway 一致性、别名、模型作用域、未知缓存回执、推理回放、不支持参数的请求前拒绝，以及异常结束不执行工具。框架自检 595/595 通过，代码预算 147 个文件通过。
++
++核心回归 428 项（2 跳过），客户端/运行链回归 206 项（1 跳过），合计 631 项通过、3 项跳过、0 失败；专项不重复计数。Git 空白检查通过。
++
++核心与客户端回归日志为 `reports/mimo-adapter-core.log`、`reports/mimo-adapter-runtime.log`，专项日志为 `reports/mimo-adapter-new-tests.log`；自检及空白检查分别见 `reports/mimo-adapter-selftest.log`、`reports/mimo-adapter-whitespace.log`。
++
++```powershell
++python -m unittest forge.test_mimo_adapter forge.test_vendor_wire forge.test_model_kinds -q
++python -m unittest discover -s forge -t . -q
++python -m forge.cli selftest
++python scripts/budget_check.py
++
++# 下列命令会调用真实 API 并消耗 Token Plan 额度。
++python scripts/verify_mimo_live.py --live --suite agent --model mimo-v2.6-flash --request-limit 10 --output reports/mimo-live-repeat.json
++python scripts/verify_mimo_live.py --live --suite wire --model mimo-v2.6-pro --thinking on --request-limit 4 --output reports/mimo-wire-repeat.json
++```
++
++本轮独立补丁为 `reports/mimo-adapter.patch`，文件及验证清单为 `reports/mimo-adapter-files.json`，基线快照路径见 `reports/mimo-live-backup.txt`。补丁以本轮开始时的工作区为基线，不包含之前的集成改动。

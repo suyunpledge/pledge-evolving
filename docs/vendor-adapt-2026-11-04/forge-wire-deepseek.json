@@ -1,0 +1,229 @@
+{
+  "mode": "live",
+  "records": [
+    {
+      "vendor": "deepseek",
+      "model": "deepseek-flash",
+      "endpoint": "https://api.deepseek.com",
+      "requests": [
+        {
+          "url": "https://api.deepseek.com/chat/completions",
+          "parameters": {
+            "model": "deepseek-flash",
+            "thinking": {
+              "type": "disabled"
+            },
+            "max_tokens": 256,
+            "tool_choice": {
+              "type": "function",
+              "function": {
+                "name": "add"
+              }
+            }
+          },
+          "message_roles": [
+            "system",
+            "user"
+          ],
+          "seconds": 1.27,
+          "usage": {
+            "prompt_tokens": 302,
+            "completion_tokens": 47,
+            "model": "deepseek-flash",
+            "provider": "deepseek",
+            "cached_tokens": 0,
+            "cache_write_tokens": 0,
+            "reasoning_tokens": 0
+          },
+          "finish_reason": "tool_calls",
+          "tool_names": [
+            "add"
+          ],
+          "text": "",
+          "adaptation": [
+            "依赖厂商自动缓存（命中 0.02×），无需标记",
+            "DeepSeek 已发送关闭思考请求（thinking.type=disabled）"
+          ]
+        },
+        {
+          "url": "https://api.deepseek.com/chat/completions",
+          "parameters": {
+            "model": "deepseek-flash",
+            "thinking": {
+              "type": "disabled"
+            },
+            "max_tokens": 256
+          },
+          "message_roles": [
+            "system",
+            "user",
+            "assistant",
+            "tool"
+          ],
+          "seconds": 0.91,
+          "usage": {
+            "prompt_tokens": 362,
+            "completion_tokens": 6,
+            "model": "deepseek-flash",
+            "provider": "deepseek",
+            "cached_tokens": 128,
+            "cache_write_tokens": 0,
+            "reasoning_tokens": 0
+          },
+          "finish_reason": "stop",
+          "tool_names": [],
+          "text": "The result is 42.",
+          "adaptation": [
+            "依赖厂商自动缓存（命中 0.02×），无需标记",
+            "DeepSeek 已发送关闭思考请求（thinking.type=disabled）"
+          ]
+        },
+        {
+          "url": "https://api.deepseek.com/chat/completions",
+          "parameters": {
+            "model": "deepseek-flash",
+            "thinking": {
+              "type": "enabled"
+            },
+            "max_tokens": 256
+          },
+          "message_roles": [
+            "user"
+          ],
+          "seconds": 0.89,
+          "usage": {
+            "prompt_tokens": 43,
+            "completion_tokens": 20,
+            "model": "deepseek-flash",
+            "provider": "deepseek",
+            "cached_tokens": 0,
+            "cache_write_tokens": 0,
+            "reasoning_tokens": 18
+          },
+          "finish_reason": "stop",
+          "tool_names": [],
+          "text": "4",
+          "adaptation": [
+            "依赖厂商自动缓存（命中 0.02×），无需标记",
+            "DeepSeek enable_thinking=true 译作 thinking.type=enabled"
+          ]
+        }
+      ],
+      "replay_ok": true,
+      "on_probe_complete": true,
+      "ok": true
+    },
+    {
+      "vendor": "deepseek",
+      "model": "deepseek-v4-pro",
+      "endpoint": "https://api.deepseek.com",
+      "requests": [
+        {
+          "url": "https://api.deepseek.com/chat/completions",
+          "parameters": {
+            "model": "deepseek-v4-pro",
+            "thinking": {
+              "type": "disabled"
+            },
+            "max_tokens": 256,
+            "tool_choice": {
+              "type": "function",
+              "function": {
+                "name": "add"
+              }
+            }
+          },
+          "message_roles": [
+            "system",
+            "user"
+          ],
+          "seconds": 1.41,
+          "usage": {
+            "prompt_tokens": 313,
+            "completion_tokens": 51,
+            "model": "deepseek-v4-pro",
+            "provider": "deepseek",
+            "cached_tokens": 0,
+            "cache_write_tokens": 0,
+            "reasoning_tokens": 0
+          },
+          "finish_reason": "tool_calls",
+          "tool_names": [
+            "add"
+          ],
+          "text": "",
+          "adaptation": [
+            "依赖厂商自动缓存（命中 0.02×），无需标记",
+            "DeepSeek 已发送关闭思考请求（thinking.type=disabled）"
+          ]
+        },
+        {
+          "url": "https://api.deepseek.com/chat/completions",
+          "parameters": {
+            "model": "deepseek-v4-pro",
+            "thinking": {
+              "type": "disabled"
+            },
+            "max_tokens": 256
+          },
+          "message_roles": [
+            "system",
+            "user",
+            "assistant",
+            "tool"
+          ],
+          "seconds": 1.08,
+          "usage": {
+            "prompt_tokens": 377,
+            "completion_tokens": 7,
+            "model": "deepseek-v4-pro",
+            "provider": "deepseek",
+            "cached_tokens": 256,
+            "cache_write_tokens": 0,
+            "reasoning_tokens": 0
+          },
+          "finish_reason": "stop",
+          "tool_names": [],
+          "text": "17 + 25 = 42",
+          "adaptation": [
+            "依赖厂商自动缓存（命中 0.02×），无需标记",
+            "DeepSeek 已发送关闭思考请求（thinking.type=disabled）"
+          ]
+        },
+        {
+          "url": "https://api.deepseek.com/chat/completions",
+          "parameters": {
+            "model": "deepseek-v4-pro",
+            "thinking": {
+              "type": "enabled"
+            },
+            "max_tokens": 256
+          },
+          "message_roles": [
+            "user"
+          ],
+          "seconds": 1.56,
+          "usage": {
+            "prompt_tokens": 96,
+            "completion_tokens": 38,
+            "model": "deepseek-v4-pro",
+            "provider": "deepseek",
+            "cached_tokens": 0,
+            "cache_write_tokens": 0,
+            "reasoning_tokens": 36
+          },
+          "finish_reason": "stop",
+          "tool_names": [],
+          "text": "4",
+          "adaptation": [
+            "依赖厂商自动缓存（命中 0.02×），无需标记",
+            "DeepSeek enable_thinking=true 译作 thinking.type=enabled"
+          ]
+        }
+      ],
+      "replay_ok": true,
+      "on_probe_complete": true,
+      "ok": true
+    }
+  ]
+}

@@ -1,0 +1,72 @@
+{
+  "backup": "C:\\Users\\匡溯昀\\forge-mimo-token-backup-20261107-045911",
+  "normalization": "UTF-8 text with LF for diff/hash",
+  "files": [
+    {
+      "path": "forge-budgets.json",
+      "new": false,
+      "before_sha256": "51427b1094bc082d133ba83c05a1fa7035972dc9336d97213628f66c73fe4ed9",
+      "after_sha256": "df25bd3e602a6125dc4d15cbc4680a6badf6b3e599178ab170964f57e92e5a92"
+    },
+    {
+      "path": "forge/compaction.py",
+      "new": false,
+      "before_sha256": "7ca959da685c6dfb2ba4e0b3db0755fdb02d9559977a56976b466fe0720ef85a",
+      "after_sha256": "2e9c602e107a7d3b7fe72f27937cb498d0379177441a2d968645e0467cdbb49a"
+    },
+    {
+      "path": "forge/loop.py",
+      "new": false,
+      "before_sha256": "af53d4e3889e61102f83245f0b424a43ab346681330708a9519f2090edcab5f3",
+      "after_sha256": "f945293e10ae80f037b0d315ff7ae8ce609c24c9f7035b718ef41f0686d178d9"
+    },
+    {
+      "path": "forge/project_rules.py",
+      "new": false,
+      "before_sha256": "cdd2be03fedd9094ade0d75a57e6fd78b19756e570698f80f882bbf7118556b3",
+      "after_sha256": "dfd246706e8c5e124e3c76582588a16aacefe08cac8d78927617952bd1511fea"
+    },
+    {
+      "path": "forge/projector.py",
+      "new": false,
+      "before_sha256": "4f5874a483770ea227d51b0ec5ddd1eb27a87e0e84a8dfd43463192763a858b2",
+      "after_sha256": "de5944fa741146f4f38aff18ec6bf12fca87a29760a6671127637539b89cdb06"
+    },
+    {
+      "path": "forge/routing.py",
+      "new": false,
+      "before_sha256": "e5d15ea7ef8e101d75dc1ed2ca9f97c77339f557e2bf24649693654e05df243b",
+      "after_sha256": "4bb459f9e316af9539204e8fd919996a6bd249a10fe89a3eca4649472df13891"
+    },
+    {
+      "path": "forge/task_contract.py",
+      "new": false,
+      "before_sha256": "1f78616cd791bb3cff391b5f28c1cc1b19e06e194c72b65c71cbacd2b941ea0e",
+      "after_sha256": "07738b0d48a29e21f20866df67d5dc896f53795b6c535165da64dda9a0f0fd07"
+    },
+    {
+      "path": "scripts/verify_mimo_long_context.py",
+      "new": false,
+      "before_sha256": "2e7f66580143be521357dca68a2a5cf175d87613b9d13f6f870997a06a0f8067",
+      "after_sha256": "caa58bc3834d00ad69147a07e3a5bbf45d73ce9ce376a0962a39eaaa2f85f76e"
+    },
+    {
+      "path": "forge/test_token_efficiency.py",
+      "new": true,
+      "before_sha256": null,
+      "after_sha256": "e137e927f8678619e72e9338c8c15c7462b8f4c6b91e9cc75a120102636714e7"
+    },
+    {
+      "path": "scripts/verify_mimo_budget_resume.py",
+      "new": true,
+      "before_sha256": null,
+      "after_sha256": "c10fbf3d0c2f9c9fae39bab91da447740fddbc12e70a58ef4c01507178fa64f6"
+    },
+    {
+      "path": "docs/MIMO-TOKEN-EFFICIENCY.md",
+      "new": true,
+      "before_sha256": null,
+      "after_sha256": "d788836eedd18ddec1b985df72e0eae97a93459e2e5434953069abd19daa09c1"
+    }
+  ]
+}

@@ -1,6 +1,7 @@
 """Default backends for the web_search / fetch_url tools. Standard library only.
 
-Search has two regions. "cn" (Chinese web): Bocha with BOCHA_API_KEY, else Bing China.
+An explicit engine uses a single credential-free source. Automatic search has two regions.
+"cn" (Chinese web): Bocha with BOCHA_API_KEY, else Bing China.
 "global" (US/international web): Brave with BRAVE_API_KEY, else Bing US, else DuckDuckGo.
 "auto" picks cn for queries containing Chinese characters; "both" merges the two.
 
@@ -10,6 +11,7 @@ to global addresses, so a page cannot steer the agent into localhost or the LAN.
 from __future__ import annotations
 
 import html
+import http.client
 import ipaddress
 import itertools
 import json
@@ -23,6 +25,8 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
 from typing import Any, Callable
+
+from . import public_search
 
 TIMEOUT = 15
 MAX_BYTES = 3_000_000
@@ -65,6 +69,13 @@ def _default_open(request, timeout):
 
 # ---------------------------------------------------------------- search
 
+def _bounded_search_read(response):
+    raw = response.read(MAX_BYTES + 1)
+    if len(raw) > MAX_BYTES:
+        raise public_search.SearchUnavailable('搜索响应超过读取限制。')
+    return raw
+
+
 def _bocha(query, count, open_):
     key = os.environ.get("BOCHA_API_KEY", "")
     if not key:
@@ -100,18 +111,18 @@ def _bing(query, count, open_, *, china):
     req = urllib.request.Request(f"https://{host}/search?" + urllib.parse.urlencode(params),
         headers={"User-Agent": UA, "Accept": "application/rss+xml, application/xml"})
     with open_(req, TIMEOUT) as resp:
-        root = ET.fromstring(resp.read())
+        root = ET.fromstring(_bounded_search_read(resp))
     return [{"title": (item.findtext("title") or "").strip(), "url": (item.findtext("link") or "").strip(),
              "snippet": re.sub(r"<[^>]+>", "", item.findtext("description") or "").strip()}
             for item in root.iter("item")]
 
 
 def _duckduckgo(query, count, open_):
-    req = urllib.request.Request("https://html.duckduckgo.com/html/",
-        data=urllib.parse.urlencode({"q": query, "kl": "us-en"}).encode(),
-        headers={"User-Agent": UA, "Content-Type": "application/x-www-form-urlencoded"})
+    req = urllib.request.Request("https://html.duckduckgo.com/html/?"
+        + urllib.parse.urlencode({"q": query, "kl": "us-en"}),
+        headers={"User-Agent": UA, "Accept": "text/html"})
     with open_(req, TIMEOUT) as resp:
-        page = resp.read().decode("utf-8", "replace")
+        page = _bounded_search_read(resp).decode("utf-8", "replace")
     results = []
     links = re.findall(r'<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>(.*?)</a>', page, re.S)
     snippets = re.findall(r'class="result__snippet"[^>]*>(.*?)</a>', page, re.S)
@@ -161,9 +172,46 @@ def _one_region(query, count, region, open_, domain=None):
     raise RuntimeError("; ".join(errors) or "no search provider available")
 
 
+def _public_results(engine, query, count, region, kind, open_, domain):
+    try:
+        if engine == "bing":
+            rows = _bing(query, count, open_, china=region == "cn")
+        elif engine == "duckduckgo":
+            rows = _duckduckgo(query, count, open_)
+            if not rows:
+                raise public_search.SearchUnavailable("站点没有返回可读取的结果。")
+        elif engine == "github":
+            rows = public_search.github_provider(query, count, kind, open_, TIMEOUT)
+        else:
+            headers = {"User-Agent": UA, "Accept": "text/html,application/xhtml+xml",
+                       "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8" if engine in {"baidu", "quark", "sogou"}
+                       else "en-US,en;q=0.9"}
+            rows = public_search.html_provider(engine, query, open_, headers, TIMEOUT)
+    except urllib.error.HTTPError as exc:
+        raise public_search.SearchUnavailable(f"搜索源返回 HTTP {exc.code}。") from None
+    except (OSError, http.client.HTTPException, ET.ParseError, json.JSONDecodeError):
+        raise public_search.SearchUnavailable("搜索源暂不可用。") from None
+    result, seen = [], set()
+    for row in rows:
+        url = public_search.safe_target(row.get("url"))
+        if not url or url in seen or (domain and not _on_domain(url, domain)):
+            continue
+        seen.add(url)
+        result.append({**row, "snippet": row.get("snippet", "")[:300], "engine": engine})
+        if len(result) >= count:
+            break
+    return result
+
+
 def search(*, query: str, num: int = 5, site: str = "all", region: str = "auto",
+           engine: str = "auto", github_kind: str = "repositories",
            open_: Opener = _default_open) -> list[dict[str, str]]:
+    query = public_search.clean_query(query)
+    if engine != "auto" and engine not in public_search.SOURCES:
+        raise ValueError("未知搜索源。")
     num = max(1, min(int(num or 5), 10))
+    if engine == "github":
+        return _public_results(engine, query, num, region, github_kind, open_, None)
     site = (site or "all").strip().lower()
     domain = None
     if site not in ("all", "", "baidu", "bing"):
@@ -174,6 +222,8 @@ def search(*, query: str, num: int = 5, site: str = "all", region: str = "auto",
     if site == "baidu" and region == "auto":
         region = "cn"  # Kept for compatibility: means "Chinese web".
     regions = resolve_region(query, region)
+    if engine != "auto":
+        return _public_results(engine, query, num, regions[0], github_kind, open_, domain)
     batches, errors = [], []
     for name in regions:
         try:

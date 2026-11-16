@@ -12,8 +12,11 @@ from forge.vscode_bridge import EditorBridge
 from .state import WorkMode
 
 DEVELOPMENT_GUIDANCE = (
-    'Development Mode: inspect the actual project and relevant code before editing. '
-    'For nontrivial work plan dependencies and changes, make scoped edits, run relevant tests '
+    'Development Mode: answer questions and ordinary conversation directly. '
+    'Use project tools only when needed for the user request. '
+    'Structured pre-planning is selected by the user; do not require a plan before answering. '
+    'For code changes inspect the actual project and relevant code before editing, '
+    'make scoped edits, run relevant tests '
     'through authorized tools, inspect the actual diff, and summarize evidence and limitations. '
     'Simplify this workflow for small tasks. Report only real tool/test events; '
     'Before editing an existing file, read it through a file tool in this Agent run; '
@@ -24,14 +27,17 @@ DEVELOPMENT_GUIDANCE = (
 
 
 class DevelopmentRuntime:
-    def __init__(self, state, *, bridge=None, emit=None, runtime_home=None, model_router_factory=None):
+    def __init__(self, state, *, bridge=None, emit=None, runtime_home=None, model_router_factory=None, probes=None):
         install_logging_redaction()
         self.state = state
         self.home = Path(runtime_home or state.home).expanduser().resolve()
         self.emit = emit or (lambda event: None)
         self._owns_bridge = bridge is None
         self._model_router_factory = model_router_factory
-        self.bridge = bridge or EditorBridge(self._emit, model_router_factory=model_router_factory)
+        if bridge is not None and probes is not None:
+            raise ValueError('Configure probes on the borrowed bridge before attaching it')
+        self._probes = probes
+        self.bridge = bridge or EditorBridge(self._emit, model_router_factory=model_router_factory, probes=probes)
         self._previous_bridge_emit = getattr(bridge, 'emit', None) if bridge is not None else None
         if self._previous_bridge_emit is not None:
             self.bridge.emit = self._emit
@@ -155,15 +161,20 @@ class DevelopmentRuntime:
             self.initialization_error = redact(str(exc))
             if self._owns_bridge:
                 self.bridge.close()
-                self.bridge = EditorBridge(self._emit, model_router_factory=self._model_router_factory)
+                self.bridge = EditorBridge(self._emit, model_router_factory=self._model_router_factory, probes=self._probes)
                 self.bridge._development_lane = self._lane
             raise
         finally:
             self._lane.release()
 
     def run(self, prompt, *, explicit_model=None, agent_model=None, role='default',
-            permission='read-only', planning='low', contexts=(), snapshot=None,
-            delegate=False, child_model=None, cancellation=None):
+            permission='read-only', planning=None, contexts=(), snapshot=None,
+            delegate=False, child_model=None, cancellation=None, acceptance=None):
+        from forge.planning import planning_level
+        planning = planning_level(self.state.value('planning') if planning is None else planning)
+        if acceptance is not None:
+            from forge.acceptance import AcceptanceContract
+            acceptance = AcceptanceContract.from_raw(acceptance).to_raw()
         if not self.ready:
             raise RuntimeError('Open a project first')
         if not self._lane.acquire(False):
@@ -171,7 +182,7 @@ class DevelopmentRuntime:
         agent = getattr(self.bridge, 'agent', None)
         attributes = ('router', 'policy', 'planning_level', 'planning_model', 'review_model',
                       'review_enabled', 'extra_system', 'child_router_factory', 'child_observer',
-                      'cancellation_event', 'file_guard', 'task_id')
+                      'cancellation_event', 'file_guard', 'task_id', 'thinking', 'thinking_mode')
         previous = {key: getattr(agent, key) for key in attributes if agent is not None and hasattr(agent, key)}
         with self._control:
             self._cancel_event = cancellation if cancellation is not None else threading.Event()
@@ -194,6 +205,8 @@ class DevelopmentRuntime:
             params = {'prompt': prompt, 'model': selected, 'mode': snap.permission,
                       'planning': planning if snap.mode == WorkMode.DEVELOPMENT else 'none',
                       'contexts': list(contexts)}
+            if acceptance is not None:
+                params['acceptance'] = acceptance
             for source in tuple(self.context_sources) if snap.mode == WorkMode.DEVELOPMENT else ():
                 # Trusted adapters contribute documents, all validated/virtualized by EditorBridge.
                 params['contexts'].extend(source(snap))
@@ -205,6 +218,11 @@ class DevelopmentRuntime:
                 if snap.mode == WorkMode.DEVELOPMENT:
                     from .guard import FileRevisionGuard
                     agent.file_guard = FileRevisionGuard(self.bridge.workspace)
+                    if planning == 'none':
+                        # Direct replies skip the host's separate contemplation request.
+                        # Provider-native reasoning remains governed by model adaptation.
+                        agent.thinking = False
+                        agent.thinking_mode = 'off'
                 roles = dict(snap.roles) if snap.mode == WorkMode.DEVELOPMENT else {}
                 from forge.phase_models import phase_router
                 review = roles.get('review') if snap.mode == WorkMode.DEVELOPMENT else previous.get('review_model')
@@ -331,7 +349,7 @@ class DevelopmentRuntime:
         try:
             snap = self.last_snapshot
             if (not trusted or not snap or snap.mode != WorkMode.DEVELOPMENT or
-                    self.state.mode != WorkMode.DEVELOPMENT or snap.permission != 'workspace-write'):
+                    self.state.mode != WorkMode.DEVELOPMENT or snap.permission not in {'workspace-write', 'manual-approval', 'full-access'}):
                 raise PermissionError('Explicit human approval and a Development workspace-write task are required')
             from .testing import execute
             from forge.policy import Decision
@@ -417,6 +435,48 @@ class DevelopmentRuntime:
                     state='committed' if committed else 'written', commit=commit if committed else '',
                     revision_changed=current != change.get('revision'))
             return list(self.evidence.changes.values())
+        finally:
+            self._lane.release()
+
+    def review_recorded_changes(self, identifiers, *, revert=False, permission='read-only'):
+        """Use exact action receipts for the Coding reply's review/undo footer."""
+        if not self._lane.acquire(False):
+            raise RuntimeError('Wait for task completion')
+        try:
+            from dataclasses import replace
+            from forge.change_review import ChangeReviewStore
+            from forge.desktop_permissions import approve_action
+            agent = self.bridge.agent
+            store = ChangeReviewStore(agent.home, self.bridge.workspace)
+            preview = store.review(identifiers)
+            if not revert:
+                return preview
+            tc = replace(agent.execution_context().tool_context(), policy=self.bridge.policy(permission))
+            granted = {}
+            for file in preview['files']:
+                if file['restored']:
+                    continue
+                name, args = file['undoTool'], {'path': file['path']}
+                active = tc
+                denial = agent.registry.authorize(name, args, active)
+                if denial is not None and denial.meta.get('requires_approval') and agent.action_executor.approver:
+                    # Human approval happens before acquiring filesystem locks.
+                    if agent.action_executor.approver(name, args, None):
+                        active = replace(tc, policy=approve_action(tc.policy, name, args))
+                        denial = agent.registry.authorize(name, args, active)
+                if denial is not None:
+                    raise PermissionError(denial.error or '当前权限禁止回退')
+                granted[(name, file['path'])] = active
+            def authorize(name, args):
+                denial = agent.registry.authorize(name, args, granted[(name, args['path'])])
+                if denial is not None:
+                    raise PermissionError(denial.error or '当前权限禁止回退')
+            result = store.revert(identifiers, authorize)
+            for file in result['files']:
+                agent.file_guard.revisions.pop(file['path'], None)
+            self._publish('development_changes_reverted', change_ids=identifiers,
+                          files=[f['name'] for f in result['files']])
+            return result
         finally:
             self._lane.release()
 

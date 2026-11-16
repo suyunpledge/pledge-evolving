@@ -66,11 +66,13 @@ class TaskContract:
             turn=max(0, int(raw.get("turn", 0))), version=int(raw.get("version", 1)),
         )
 
-    def render_projection(self, *, max_constraints: int = 3, max_criteria: int = 2) -> str:
-        """Stable compact projection for the current user boundary."""
+    def render_projection(self, *, max_constraints: int = 3, max_criteria: int = 2,
+                          include_objective: bool = True) -> str:
+        """Stable boundary metadata; omit objective only beside the full task."""
         esc = lambda value: _xml_escape(str(value), {'"': "&quot;"})
-        rows = [f'<task-contract status="{esc(self.status)}" authoritative="true">',
-                f"<objective>{esc(self.objective)}</objective>"]
+        rows = [f'<task-contract status="{esc(self.status)}" authoritative="true">']
+        if include_objective:
+            rows.append(f"<objective>{esc(self.objective)}</objective>")
         for label, values, limit in (
                 ("constraint", self.constraints, max_constraints),
                 ("success-criterion", self.success_criteria, max_criteria)):
@@ -119,7 +121,8 @@ def advance_status(contract: TaskContract, next_status: str | ContractStatus) ->
                                "scope": tuple(contract.scope),
                                "mentioned_files": tuple(contract.mentioned_files),
                                "status": target})
-    if target == ContractStatus.EXECUTING.value and current == ContractStatus.READY_TO_DELIVER.value:
+    if target == ContractStatus.EXECUTING.value and current in {
+            ContractStatus.READY_TO_DELIVER.value, ContractStatus.VERIFYING.value}:
         return TaskContract(**{**contract.to_raw(), "constraints": tuple(contract.constraints),
                                "success_criteria": tuple(contract.success_criteria),
                                "scope": tuple(contract.scope),

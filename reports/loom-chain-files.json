@@ -1,0 +1,77 @@
+{
+  "backup": "C:\\Users\\匡溯昀\\forge-chain-backup-20261106-205713",
+  "files": [
+    {
+      "path": "forge/execution.py",
+      "new": false,
+      "before_sha256": "ed314287a3c0f15080401ad7d045fa99d327e4f35648f1abcff7468f4773b57e",
+      "after_sha256": "91e907af4fc011ddb3277997a9cdc62909e61c0429e1d462881eb894a544be01"
+    },
+    {
+      "path": "forge/runtime_types.py",
+      "new": false,
+      "before_sha256": "5402d39a641da1260c47ab40682a9807d44640664c791f8a860949eff7ee6a39",
+      "after_sha256": "a469a3fb8c765b0caf69637729d0a615728f1f0223622e62a79b24cd1dfc3771"
+    },
+    {
+      "path": "forge/tool_turn.py",
+      "new": false,
+      "before_sha256": "7acb7cbe6475cef6e46eaee193b9c14fb6e604ba2551eaf527103785381b1db5",
+      "after_sha256": "0eac9c1ed775f4cc22c2e2792a38902b2f3bd74deb259684f587a2311264785e"
+    },
+    {
+      "path": "forge/assembly.py",
+      "new": false,
+      "before_sha256": "97784e2b4aa97868e73ab243836bcafc54d02187cce994a72f410fed6f6439ee",
+      "after_sha256": "5253153b6a5d08cd10cda7a88149ba1f04023e917071bd932885c43b00ef3f26"
+    },
+    {
+      "path": "client/server.py",
+      "new": false,
+      "before_sha256": "1cce0ab23a63ce1385f74dd503320dc10099a2874bbe27029aeb5b9b115f5e9a",
+      "after_sha256": "28f8cb2f694c2ebf62b714214de690dae637a49865c33a5261369e175a5b7b1d"
+    },
+    {
+      "path": "forge/vscode_bridge.py",
+      "new": false,
+      "before_sha256": "38fa29ca281e6c4eafe8327ae687c8a2c223ac91c85d7f68fa90666ac218b168",
+      "after_sha256": "2a7a939b986a11c50a40e9450b6e03fa85f7d9e0722497f0dbd0987d15bb1903"
+    },
+    {
+      "path": "forge-budgets.json",
+      "new": false,
+      "before_sha256": "02a91a553d72f3cd2ebf1ffe83a2ee9c74cf1d15fcd826027d60bd573352f25f",
+      "after_sha256": "c11fa8026b9d2c074f9eae9dda0c8993df27e870954bf806c0daf1bf2e87ca7f"
+    },
+    {
+      "path": "forge/protocol.py",
+      "new": false,
+      "before_sha256": "7720ec134fb686cebcd2fd74f2e62ab2757e4ac0f6f6e6d1a83d302825fd97f0",
+      "after_sha256": "38f9aa8bcc2d5a7cff1a10e16f069d0e191466988473e1fbe38babe465e90940"
+    },
+    {
+      "path": "forge/file_revisions.py",
+      "new": false,
+      "before_sha256": "1fa32c0c362226bb3f1032937fc7fafdb27a6d325527935c4654822b4b314275",
+      "after_sha256": "c65d73790e55bcadb9dd43773f6f42ae21c956b0c22c387f904085ede962d154"
+    },
+    {
+      "path": "forge/development/runtime.py",
+      "new": false,
+      "before_sha256": "a0b3b16fe1f6b671e62522db958002ec74b9f254bd308bd2e63d145d184c2827",
+      "after_sha256": "9a8c335b296051f3c394f9888e4845c7161a5864816c0930a5735ca0aada87a4"
+    },
+    {
+      "path": "tests/test_chain_integration.py",
+      "new": true,
+      "before_sha256": null,
+      "after_sha256": "924d34f8a0833158f9873261e78303b5e8ca8fc408d79c619dcf6703014dd583"
+    },
+    {
+      "path": "docs/LOOM-CALL-CHAIN-AUDIT.md",
+      "new": true,
+      "before_sha256": null,
+      "after_sha256": "aa8346e3b9d93862f8001bb98e094eb918fb428057dfc827a203811b5bbed3d8"
+    }
+  ]
+}

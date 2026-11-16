@@ -1,0 +1,60 @@
+{
+  "backup": "C:\\Users\\匡溯昀\\forge-deepseek-execution-backup-20261108-021331",
+  "files": [
+    {
+      "path": "forge/adapters.py",
+      "before_sha256_utf8_lf": "68539ddae34e2e0d9931e5ebab5906d9adf15cd51520323a86e891023297ac79",
+      "after_sha256_utf8_lf": "397ea9343940c381121605edc8334529e08cd8bf9dca83750651b627e98d4de8"
+    },
+    {
+      "path": "forge/model.py",
+      "before_sha256_utf8_lf": "371b58dbf89af0e19c9f9291f4d7f2f1f6ba0f81bfb975ce42a04c2636181941",
+      "after_sha256_utf8_lf": "9bbd1f91ae67a7a2f0d36b25f2c221ca6063fcb8452f8c591787915aa81f5e34"
+    },
+    {
+      "path": "forge/planning.py",
+      "before_sha256_utf8_lf": "d575b515e1774d0a744f88bf2a90a958372f40224699df8b989d649ccef1692e",
+      "after_sha256_utf8_lf": "e898089a841cf59f5cf3cb41e439cd0d7810f26fde661675d7f4c2673989b6c2"
+    },
+    {
+      "path": "forge/loop.py",
+      "before_sha256_utf8_lf": "f447232033dd1fd7acb089ab7a284fc8cd9293039f6a6a0a07d02d6c8739406b",
+      "after_sha256_utf8_lf": "02572a633a8ef4f7a0a410f5287b11d1ea826563c55e9baf5c6e6f42afe5ae30"
+    },
+    {
+      "path": "forge-gui/phase_client.py",
+      "before_sha256_utf8_lf": "9ecb76899b3b8d9f567a281a9e859db5bdbc89ecb49998428c9be6db37f71e6c",
+      "after_sha256_utf8_lf": "e9024865837b83a6e30335cdd7a25889766fcc9df6068917ab6f945ab65c9726"
+    },
+    {
+      "path": "forge-gui/forge_client.py",
+      "before_sha256_utf8_lf": "a17f08dbb210451ba62edd7d4aa0f1cae1121805e6dbf41384261fb7590a2cd2",
+      "after_sha256_utf8_lf": "8a1d3a530079d1843d0c224b3455faec4ff276a6c20d143da54c03ce9ad1998f"
+    },
+    {
+      "path": "forge/test_mimo_adapter.py",
+      "before_sha256_utf8_lf": "081844a34a8f93343d3bca21bd7cad4d7c6134baec5758b4b9914991e022013e",
+      "after_sha256_utf8_lf": "992dba8e22c6642538f98b70543eec016e41e6e8ed8ea0c46aecc19111ae14cc"
+    },
+    {
+      "path": "forge-budgets.json",
+      "before_sha256_utf8_lf": "04408c50eda239bf0d31248629338064457e0a951891f3b580111d4ce535526a",
+      "after_sha256_utf8_lf": "6c7496c49f2a3d83a7e8f54f83c16414c4414a86fe0a759b2419b7bef15554f2"
+    },
+    {
+      "path": "scripts/verify_deepseek_execution.py",
+      "before_sha256_utf8_lf": null,
+      "after_sha256_utf8_lf": "b2c561cb4b963e6e04a5c30dde10d007b71490b62ebabe5b9d3a794401255999"
+    },
+    {
+      "path": "tests/test_deepseek_execution.py",
+      "before_sha256_utf8_lf": null,
+      "after_sha256_utf8_lf": "e850422fd5bb991a748d03e0f5f2e93ffbc9af048f9baed9903ef0818589d872"
+    },
+    {
+      "path": "docs/DEEPSEEK-EXECUTION-OPTIMIZATION.md",
+      "before_sha256_utf8_lf": null,
+      "after_sha256_utf8_lf": "51505c8087caa0edbf2447dc68e44d1a58ebc4eb36231e74bb2232bbceffcff3"
+    }
+  ]
+}

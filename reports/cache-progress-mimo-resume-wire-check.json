@@ -1,0 +1,480 @@
+{
+  "vendor": "mimo",
+  "model": "mimo-v2.6-flash",
+  "samples": [
+    {
+      "strategy": "improved",
+      "sample": 1,
+      "ok": true,
+      "injected_pause": true,
+      "injected_attempts_no_http": 2,
+      "first_stopped": "error",
+      "second_stopped": "final",
+      "final": "423",
+      "file_reads": 1,
+      "tools": [
+        "read_file",
+        "calculator"
+      ],
+      "checkpointed": true,
+      "prefix_reused": true,
+      "saved_messages_match_first_resume_wire": true,
+      "native_pairs_valid": true,
+      "checkpoint_matches_interrupted_host_request": true,
+      "prefix_projection": "sanitize_messages(checkpoint, provider.wire)",
+      "totals": {
+        "attempts": 3,
+        "successful_requests": 3,
+        "prompt_tokens": 2004,
+        "completion_tokens": 179,
+        "cached_tokens": 0,
+        "reasoning_tokens": 129,
+        "seconds": 17.954,
+        "coverage": {
+          "all_observed": {
+            "requests": 3,
+            "input_tokens": 2004,
+            "cached_tokens": 0,
+            "hit_rate": 0.0
+          },
+          "rebuild": {
+            "requests": 0,
+            "input_tokens": 0,
+            "cached_tokens": 0,
+            "hit_rate": null
+          },
+          "non_rebuild": {
+            "requests": 3,
+            "input_tokens": 2004,
+            "cached_tokens": 0,
+            "hit_rate": 0.0
+          },
+          "eligible_prefix": {
+            "requests": 0,
+            "input_tokens": 0,
+            "cached_tokens": 0,
+            "excluded_tail_tokens": 0,
+            "hit_rate": null
+          },
+          "unknown_requests": 0,
+          "invalid_requests": 0,
+          "duplicate_observations": 0,
+          "denominator": "observed input tokens; eligible_prefix excludes declared structural tail"
+        }
+      },
+      "resume_totals": {
+        "attempts": 2,
+        "successful_requests": 2,
+        "prompt_tokens": 1449,
+        "completion_tokens": 111,
+        "cached_tokens": 0,
+        "reasoning_tokens": 80,
+        "seconds": 10.829,
+        "coverage": {
+          "all_observed": {
+            "requests": 2,
+            "input_tokens": 1449,
+            "cached_tokens": 0,
+            "hit_rate": 0.0
+          },
+          "rebuild": {
+            "requests": 0,
+            "input_tokens": 0,
+            "cached_tokens": 0,
+            "hit_rate": null
+          },
+          "non_rebuild": {
+            "requests": 2,
+            "input_tokens": 1449,
+            "cached_tokens": 0,
+            "hit_rate": 0.0
+          },
+          "eligible_prefix": {
+            "requests": 0,
+            "input_tokens": 0,
+            "cached_tokens": 0,
+            "excluded_tail_tokens": 0,
+            "hit_rate": null
+          },
+          "unknown_requests": 0,
+          "invalid_requests": 0,
+          "duplicate_observations": 0,
+          "denominator": "observed input tokens; eligible_prefix excludes declared structural tail"
+        }
+      }
+    }
+  ],
+  "scope": "Only the pause is injected before HTTP dispatch; all reads, calculator calls and model responses are real.",
+  "runtime_sha256": {
+    "before_loop": "83d7994c6a6bac37fe8bb6006920b0854766a45a46df5bebb05853de98b43a23",
+    "after_loop": "727e4166e84794aa95eb6bbe1a7a36ee4122f774fc56992d858e2b375ab92e5b",
+    "script": "4d46e35185ced66615c87ba2e3ec85da928f01d61108cc021596f8c08cbcba3d"
+  },
+  "requests": [
+    {
+      "stage": "1-improved-before",
+      "model": "mimo-v2.6-flash",
+      "url": "https://token-plan-cn.xiaomimimo.com/v1/chat/completions",
+      "parameters": {
+        "thinking": {
+          "type": "enabled"
+        },
+        "tool_choice": "auto",
+        "max_tokens": 4096
+      },
+      "message_count": 3,
+      "common_prefix_messages": 0,
+      "messages_digest": "87024ef7ccb87581e2c8f8a6b218d3c5507dced2ecdbe310f56f3ced82fe572f",
+      "tools_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "toolset_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "payload_digest": "b53deccf720a8fcd7d4fe8adf83cfaaa3536e98e55b25af4243d49fb65e12da8",
+      "message_chars": 1664,
+      "assistant_reasoning_fields": 0,
+      "tools": [
+        "calculator",
+        "read_file"
+      ],
+      "status": 200,
+      "raw_usage": {
+        "completion_tokens": 68,
+        "prompt_tokens": 555,
+        "total_tokens": 623,
+        "completion_tokens_details": {
+          "reasoning_tokens": 49
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "finish_reason": "tool_calls",
+      "response_id": "199cb9c1-773b-4a46-9cc0-23c33a67cfb7_90cd9ea0fb9f47f0abff353fc5f72b57",
+      "response_model": "mimo-v2.6-flash",
+      "reasoning_chars": 242,
+      "tool_calls": [
+        {
+          "id": "call_468ea7c848d34597ab6498b4",
+          "function": {
+            "arguments": "{\"path\": \"values.json\"}",
+            "name": "read_file"
+          },
+          "type": "function"
+        }
+      ],
+      "text": "",
+      "seconds": 7.125,
+      "usage": {
+        "prompt_tokens": 555,
+        "completion_tokens": 68,
+        "model": "mimo-v2.6-flash",
+        "provider": "mimo-live",
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 49,
+        "cache_observed": true
+      },
+      "adaptation": {
+        "vendor": "mimo",
+        "vendor_label": "小米 MiMo",
+        "actions": [
+          "依赖厂商自动缓存（命中 0.00833333×），无需标记",
+          "MiMo 思考模式使用厂商固定采样，已摘除 temperature"
+        ],
+        "notes": [
+          "Token Plan 订阅池：倍率仅供比例参考，命中已实证且被 usage 如实计入",
+          "thinking 仅 on/off 两态，默认 enabled；没有已验证的 effort 强度分档",
+          "2.6 家族 tool_choice 仅 auto；工具调用需回放 reasoning_content，不能假定强制选工具生效",
+          "该模型无目录价，金额按单位价折算，仅用于比较比例，不代表真实账单"
+        ],
+        "cache_control": false,
+        "breakpoints": 1,
+        "ttl": "managed",
+        "est_tokens": 909,
+        "est_cost": 3.2e-05,
+        "baseline_cost": 0.000137,
+        "saving": 0.000105,
+        "saving_pct": 76.8,
+        "cliff_action": "pass",
+        "reasoning_budget": null,
+        "defer": false,
+        "cache_engages": true,
+        "route_capabilities": {},
+        "request_budget": {},
+        "adapter_id": "mimo.v2.6.flash",
+        "model_kind_id": "mimo.v2.6.flash",
+        "model_family_id": "mimo.v2.6",
+        "manufacturer_id": "mimo",
+        "behavior_fingerprint": "6bc1ad5e8223d2e9",
+        "model_match_source": "model_id",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type",
+          "nullable_cache_details",
+          "native_tool_replay",
+          "auto_tool_choice_only",
+          "fixed_sampling_when_thinking"
+        ],
+        "reasoning_shaped": true,
+        "fingerprint": "e636b1a5d7f5d15d",
+        "execution": {},
+        "estimate_scope": "reuse_window",
+        "includes_output_cost": false,
+        "price_known": false,
+        "model": "mimo-v2.6-flash"
+      }
+    },
+    {
+      "stage": "1-improved-resume",
+      "model": "mimo-v2.6-flash",
+      "url": "https://token-plan-cn.xiaomimimo.com/v1/chat/completions",
+      "parameters": {
+        "thinking": {
+          "type": "enabled"
+        },
+        "tool_choice": "auto",
+        "max_tokens": 4096
+      },
+      "message_count": 6,
+      "common_prefix_messages": 3,
+      "messages_digest": "fbcdafa152809017760ac64fa7403258c54357e28b95932ac1766c922df10921",
+      "tools_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "toolset_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "payload_digest": "594be27ecf8f064c83e0665c04668a37a19b39352fa567ed2c8a3e93f63c8760",
+      "message_chars": 2493,
+      "assistant_reasoning_fields": 1,
+      "tools": [
+        "calculator",
+        "read_file"
+      ],
+      "status": 200,
+      "raw_usage": {
+        "completion_tokens": 47,
+        "prompt_tokens": 691,
+        "total_tokens": 738,
+        "completion_tokens_details": {
+          "reasoning_tokens": 21
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "finish_reason": "tool_calls",
+      "response_id": "40b69c85-0c5b-4ef2-a5b0-55c66c1b6da7_44418c71614b442e84e84862fcdcec36",
+      "response_model": "mimo-v2.6-flash",
+      "reasoning_chars": 47,
+      "tool_calls": [
+        {
+          "id": "call_b6280d88a1e54ef18c35b015",
+          "function": {
+            "arguments": "{\"expression\": \"137 + 286\"}",
+            "name": "calculator"
+          },
+          "type": "function"
+        }
+      ],
+      "text": "",
+      "seconds": 4.094,
+      "usage": {
+        "prompt_tokens": 691,
+        "completion_tokens": 47,
+        "model": "mimo-v2.6-flash",
+        "provider": "mimo-live",
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 21,
+        "cache_observed": true
+      },
+      "adaptation": {
+        "vendor": "mimo",
+        "vendor_label": "小米 MiMo",
+        "actions": [
+          "依赖厂商自动缓存（命中 0.00833333×），无需标记",
+          "MiMo 思考模式使用厂商固定采样，已摘除 temperature"
+        ],
+        "notes": [
+          "Token Plan 订阅池：倍率仅供比例参考，命中已实证且被 usage 如实计入",
+          "thinking 仅 on/off 两态，默认 enabled；没有已验证的 effort 强度分档",
+          "2.6 家族 tool_choice 仅 auto；工具调用需回放 reasoning_content，不能假定强制选工具生效",
+          "该模型无目录价，金额按单位价折算，仅用于比较比例，不代表真实账单"
+        ],
+        "cache_control": false,
+        "breakpoints": 1,
+        "ttl": "managed",
+        "est_tokens": 1009,
+        "est_cost": 4.7e-05,
+        "baseline_cost": 0.000152,
+        "saving": 0.000105,
+        "saving_pct": 69.2,
+        "cliff_action": "pass",
+        "reasoning_budget": null,
+        "defer": false,
+        "cache_engages": true,
+        "route_capabilities": {},
+        "request_budget": {},
+        "adapter_id": "mimo.v2.6.flash",
+        "model_kind_id": "mimo.v2.6.flash",
+        "model_family_id": "mimo.v2.6",
+        "manufacturer_id": "mimo",
+        "behavior_fingerprint": "6bc1ad5e8223d2e9",
+        "model_match_source": "model_id",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type",
+          "nullable_cache_details",
+          "native_tool_replay",
+          "auto_tool_choice_only",
+          "fixed_sampling_when_thinking"
+        ],
+        "reasoning_shaped": true,
+        "fingerprint": "e636b1a5d7f5d15d",
+        "execution": {},
+        "estimate_scope": "reuse_window",
+        "includes_output_cost": false,
+        "price_known": false,
+        "model": "mimo-v2.6-flash"
+      }
+    },
+    {
+      "stage": "1-improved-resume",
+      "model": "mimo-v2.6-flash",
+      "url": "https://token-plan-cn.xiaomimimo.com/v1/chat/completions",
+      "parameters": {
+        "thinking": {
+          "type": "enabled"
+        },
+        "tool_choice": "auto",
+        "max_tokens": 4096
+      },
+      "message_count": 8,
+      "common_prefix_messages": 6,
+      "messages_digest": "68d75797f7ed810260fa83fc7298ae4143bb0ef8db35717567ece67963891e64",
+      "tools_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "toolset_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "payload_digest": "7f205e2bb87ace12fe5ddb3abeb1a66fee8bbd13f8da79df152055f030b032aa",
+      "message_chars": 2859,
+      "assistant_reasoning_fields": 2,
+      "tools": [
+        "calculator",
+        "read_file"
+      ],
+      "status": 200,
+      "raw_usage": {
+        "completion_tokens": 64,
+        "prompt_tokens": 758,
+        "total_tokens": 822,
+        "completion_tokens_details": {
+          "reasoning_tokens": 59
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "finish_reason": "stop",
+      "response_id": "afdb37dd-2659-462a-9ea6-15261f2550eb_84d6e99ce7fd42b09d74ef8f8431dd40",
+      "response_model": "mimo-v2.6-flash",
+      "reasoning_chars": 79,
+      "tool_calls": null,
+      "text": "423",
+      "seconds": 6.735,
+      "usage": {
+        "prompt_tokens": 758,
+        "completion_tokens": 64,
+        "model": "mimo-v2.6-flash",
+        "provider": "mimo-live",
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 59,
+        "cache_observed": true
+      },
+      "adaptation": {
+        "vendor": "mimo",
+        "vendor_label": "小米 MiMo",
+        "actions": [
+          "依赖厂商自动缓存（命中 0.00833333×），无需标记",
+          "MiMo 思考模式使用厂商固定采样，已摘除 temperature"
+        ],
+        "notes": [
+          "Token Plan 订阅池：倍率仅供比例参考，命中已实证且被 usage 如实计入",
+          "thinking 仅 on/off 两态，默认 enabled；没有已验证的 effort 强度分档",
+          "2.6 家族 tool_choice 仅 auto；工具调用需回放 reasoning_content，不能假定强制选工具生效",
+          "该模型无目录价，金额按单位价折算，仅用于比较比例，不代表真实账单"
+        ],
+        "cache_control": false,
+        "breakpoints": 1,
+        "ttl": "managed",
+        "est_tokens": 1016,
+        "est_cost": 4.8e-05,
+        "baseline_cost": 0.000153,
+        "saving": 0.000105,
+        "saving_pct": 68.7,
+        "cliff_action": "pass",
+        "reasoning_budget": null,
+        "defer": false,
+        "cache_engages": true,
+        "route_capabilities": {},
+        "request_budget": {},
+        "adapter_id": "mimo.v2.6.flash",
+        "model_kind_id": "mimo.v2.6.flash",
+        "model_family_id": "mimo.v2.6",
+        "manufacturer_id": "mimo",
+        "behavior_fingerprint": "6bc1ad5e8223d2e9",
+        "model_match_source": "model_id",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type",
+          "nullable_cache_details",
+          "native_tool_replay",
+          "auto_tool_choice_only",
+          "fixed_sampling_when_thinking"
+        ],
+        "reasoning_shaped": true,
+        "fingerprint": "e636b1a5d7f5d15d",
+        "execution": {},
+        "estimate_scope": "reuse_window",
+        "includes_output_cost": false,
+        "price_known": false,
+        "model": "mimo-v2.6-flash"
+      }
+    }
+  ],
+  "totals": {
+    "attempts": 3,
+    "successful_requests": 3,
+    "prompt_tokens": 2004,
+    "completion_tokens": 179,
+    "cached_tokens": 0,
+    "reasoning_tokens": 129,
+    "seconds": 17.954,
+    "coverage": {
+      "all_observed": {
+        "requests": 3,
+        "input_tokens": 2004,
+        "cached_tokens": 0,
+        "hit_rate": 0.0
+      },
+      "rebuild": {
+        "requests": 0,
+        "input_tokens": 0,
+        "cached_tokens": 0,
+        "hit_rate": null
+      },
+      "non_rebuild": {
+        "requests": 3,
+        "input_tokens": 2004,
+        "cached_tokens": 0,
+        "hit_rate": 0.0
+      },
+      "eligible_prefix": {
+        "requests": 0,
+        "input_tokens": 0,
+        "cached_tokens": 0,
+        "excluded_tail_tokens": 0,
+        "hit_rate": null
+      },
+      "unknown_requests": 0,
+      "invalid_requests": 0,
+      "duplicate_observations": 0,
+      "denominator": "observed input tokens; eligible_prefix excludes declared structural tail"
+    }
+  },
+  "ok": true
+}

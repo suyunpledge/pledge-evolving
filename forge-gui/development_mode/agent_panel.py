@@ -117,6 +117,7 @@ class Conversation(tk.Text):
         self.open_file = open_file
         self.open_url = open_url
         self.history_source = history_source
+        self.transcript_changed = None
         self._history_path = None
         self._history_times = defaultdict(deque)
         self._pad = pad
@@ -236,6 +237,28 @@ class Conversation(tk.Text):
         for widget in self._windows:
             if widget.winfo_exists() and hasattr(widget, 'fit'):
                 widget.fit(max(100, event.width - 24))
+                self._stretch(widget, max(100, event.width - 24))
+
+    @staticmethod
+    def _stretch(widget, width):
+        """卡片铺满对话列：底部一条 1px、与卡同色的撑宽条。
+
+        嵌在 Text 里的窗口按内容自然宽度显示，fit() 只改折行宽度，卡片会窄成一截。
+        卡内部用 grid 时不能混 pack，此时保持原样。
+        """
+        try:
+            pad = sum(int(float(v)) for v in str(widget.cget('padding') or '0').split()[:1]) * 2
+        except (tk.TclError, ValueError):
+            pad = 0
+        try:
+            strut = getattr(widget, '_forge_strut', None)
+            if strut is None or not strut.winfo_exists():
+                strut = tk.Frame(widget, height=1, bg=C['surface'], bd=0, highlightthickness=0)
+                strut.pack(side='bottom', fill='x')
+                widget._forge_strut = strut
+            strut.configure(width=max(1, width - pad))
+        except tk.TclError:
+            pass
 
     def clear(self):
         self.configure(state='normal')
@@ -248,6 +271,8 @@ class Conversation(tk.Text):
     def delete(self, index1, index2=None):
         if index1 == '1.0' and index2 == 'end':
             self._clear_cards()
+            if self.transcript_changed is not None:
+                self.transcript_changed(None)
         return super().delete(index1, index2)
 
     def _clear_cards(self):
@@ -424,6 +449,8 @@ class Conversation(tk.Text):
         if mine or follow:
             self._follow = True
             self.see('end')
+        if self.transcript_changed is not None:
+            self.transcript_changed({'role': role, 'body': body, 'stamp': stamp})
 
     def _user_lines(self, text):
         # 用户原文逐行保留（粘贴的日志 / 代码不被 Markdown 规则合并成一段）。
@@ -549,6 +576,7 @@ class Conversation(tk.Text):
         self._windows.append(widget)
         if hasattr(widget, 'fit'):
             widget.fit(max(100, self.winfo_width() - 24))
+            self._stretch(widget, max(100, self.winfo_width() - 24))
         self.configure(state='disabled')
         # 计划 / 步骤 / 改动卡是执行过程的实时汇报：停在底部时跟着露出来。
         if self._follow:
@@ -618,6 +646,11 @@ def format_tokens(tokens):
     return f'{tokens / 1000:.1f}k tokens' if tokens >= 1000 else f'{tokens} tokens'
 
 
+# 时间线标题里的状态计数用中文；未知状态原样显示，不吞信息。
+STATUS_WORDS = {'completed': '完成', 'running': '进行中', 'failed': '失败', 'awaiting_approval': '待审批',
+                'denied': '已拒绝', 'cancelled': '已取消', 'unknown': '结果未知'}
+
+
 class ToolSummary(ttk.Frame):
     """执行时间线卡：标题（步数 / 状态计数 / token）+ 最近步骤 + 可展开原始结果。
 
@@ -660,7 +693,8 @@ class ToolSummary(ttk.Frame):
         counts = {}
         for row in actions:
             counts[row['status']] = counts.get(row['status'], 0) + 1
-        parts = [f'执行步骤 · {len(actions)} 步', ' / '.join(f'{k}: {v}' for k, v in counts.items())]
+        parts = [f'执行步骤 · {len(actions)} 步', ' · '.join(
+            f'{STATUS_WORDS.get(k, k)} {v}' for k, v in counts.items())]
         if tokens:
             parts.append(format_tokens(tokens))
         if cost:
@@ -774,7 +808,7 @@ class ChangesSummary(ttk.Frame):
 
     ROWS = 6
 
-    def __init__(self, parent, *, view, review_all=None):
+    def __init__(self, parent, *, view, review_all=None, revert_all=None):
         super().__init__(parent, padding=8, style='Card.TFrame')
         head = tk.Frame(self, bg=C['surface'])
         head.pack(fill='x')
@@ -787,6 +821,10 @@ class ChangesSummary(ttk.Frame):
             self.review_button.pack(side='right')
         self.rows = tk.Frame(self, bg=C['surface'])
         self.rows.pack(fill='x', pady=(ui_px(self, 6), 0))
+        self.revert_button = None
+        if revert_all is not None:
+            self.revert_button = dev_button(self, '回退本次修改', revert_all, kind='ghost')
+            self.revert_button.pack(anchor='e', pady=(4, 0))
         self._view = view
         self._signature = None
 
@@ -860,12 +898,17 @@ class AgentEvents(ttk.Frame):
 
 class TaskInput(tk.Text):
     """An overlay placeholder, never inserted into the task sent to Runtime."""
-    def __init__(self, parent, **options):
+    def __init__(self, parent, *, embedded=False, **options):
         super().__init__(parent, **options)
         style_editor(self)
         self.placeholder = tk.Label(self, text='输入任务描述 …',
             bg=self.cget('background'), fg=C['placeholder'], font=FONT_UI, justify='left')
-        self.placeholder.bind('<Button-1>', lambda event: self.focus_set())
+        # The containing Qt window is active on click. A hosted Tk widget
+        # must claim native focus explicitly instead of waiting for Tk activation.
+        focus_input = self.focus_force if embedded else self.focus_set
+        self.placeholder.bind('<Button-1>', lambda _event: focus_input())
+        if embedded:
+            self.bind('<Button-1>', lambda _event: focus_input(), add='+')
         self.bind('<<Modified>>', self._placeholder_changed, add='+')
         self._placeholder_changed()
 
@@ -879,11 +922,12 @@ class TaskInput(tk.Text):
 
 
 class PlanningCard(ttk.Frame):
-    LEVELS = {'none': '无 (None)', 'low': '低 (Low)', 'medium': '中等 (Medium)', 'high': '高 (High)'}
+    LEVELS = {'none': '直接回答', 'low': '低 (Low)', 'medium': '中等 (Medium)', 'high': '高 (High)'}
 
     def __init__(self, parent, view_changes):
         super().__init__(parent, padding=8, style='Card.TFrame')
-        ttk.Label(self, text='任务规划', font=FONT_UI_BOLD, style='Card.TLabel').pack(anchor='w')
+        self.title = ttk.Label(self, text='任务规划', font=FONT_UI_BOLD, style='Card.TLabel')
+        self.title.pack(anchor='w')
         self.level = ttk.Label(self, style='Muted.Card.TLabel')
         self.level.pack(anchor='w')
         self.authorization = ttk.Label(self, wraplength=280, style='Card.TLabel')
@@ -914,16 +958,28 @@ class PlanningCard(ttk.Frame):
         if display == self._display:
             return
         self._display = display
+        self.title.configure(text='执行信息' if context.get('planning') == 'none' else '任务规划')
         self.level.configure(text=level)
         self.permission.configure(text='权限 · ' + label)
         self.authorization.configure(text='授权 · ' + auth)
         self.view.configure(state='normal' if enabled else 'disabled')
+        # 运行时还没上报的项不显示「未记录」占位：全空时只留一句等待说明。
+        unknown = {self.level: level == '级别未记录', self.permission: label == '权限未记录',
+                   self.authorization: auth == '未提交授权'}
+        if all(unknown.values()):
+            unknown[self.authorization] = False
+            self.authorization.configure(text='等待运行时上报规划与授权')
+        for widget in (self.level, self.authorization, self.permission):
+            widget.pack_forget()
+        for widget in (self.level, self.authorization, self.permission):
+            if not unknown[widget]:
+                widget.pack(anchor='w', before=self.view)
 
 
 class AgentPanel(ttk.Frame):
     def __init__(self, parent, *, open_file, view_diff, revert, pending, configure_model, refresh,
                  new_conversation=None, history=None, settings=None, view_changes=None, history_source=None,
-                 on_show_approvals=None):
+                 on_show_approvals=None, revert_changes=None):
         super().__init__(parent)
         titlebar = ttk.Frame(self, padding=(ui_px(self, 12), ui_px(self, 6), ui_px(self, 6), 0))
         titlebar.pack(fill='x')
@@ -1035,6 +1091,7 @@ class AgentPanel(ttk.Frame):
         self.task_context = {}
         self._planning_card = None
         self._view_changes = view_changes
+        self._revert_changes = revert_changes
 
     def mount_runtime_context(self, **kwargs):
         """app 注入 RuntimeContext 组件（权限矩阵 + 模型路由）。"""
@@ -1061,6 +1118,9 @@ class AgentPanel(ttk.Frame):
         'read-only': ('只看不改', 'surface2', 'subtext'),
         'workspace-write': ('可改项目文件', 'ok_soft', 'ok'),
         'danger-full-access': ('完全访问', 'warn_soft', 'warn'),
+        'desktop-sandbox': ('沙箱运行', 'ok_soft', 'ok'),
+        'manual-approval': ('手动批准', 'surface2', 'subtext'),
+        'full-access': ('完全访问', 'warn_soft', 'warn'),
     }
 
     def _request_permission(self, value):
@@ -1262,7 +1322,9 @@ class AgentPanel(ttk.Frame):
             self._changes_summary = None
             self._last_task = evidence.task_id
             self._planning_card = None
-        if evidence.task_id or evidence.plan:
+        # Ordinary direct replies need no empty plan/authorization card.
+        if evidence.plan or (evidence.task_id and (
+                self.task_context.get('planning') != 'none' or evidence.actions)):
             if self._planning_card is None or not self._planning_card.winfo_exists():
                 callback = (lambda e=evidence: self._view_changes(e)) if self._view_changes else None
                 self._planning_card = PlanningCard(self.chat, callback)
@@ -1284,10 +1346,18 @@ class AgentPanel(ttk.Frame):
         if evidence.changes:
             if self._changes_summary is None or not self._changes_summary.winfo_exists():
                 review_all = (lambda e=evidence: self._view_changes(e)) if self._view_changes else None
+                revert_all = (lambda e=evidence: self._revert_changes(e)) if self._revert_changes else None
                 self._changes_summary = ChangesSummary(self.chat, view=self._callbacks['view'],
-                                                       review_all=review_all)
+                                                       review_all=review_all, revert_all=revert_all)
                 self.chat.card(self._changes_summary)
             self._changes_summary.update_changes(list(evidence.changes.values()))
+            button = self._changes_summary.revert_button
+            if button is not None:
+                ids = {i for a in evidence.actions.values() for i in (a.get('meta') or {}).get('change_ids', [])}
+                restored = bool(ids) and ids.issubset(evidence.reverted_change_ids)
+                complete = not any((a.get('meta') or {}).get('change_review_incomplete') for a in evidence.actions.values())
+                enabled = bool(ids) and complete and not restored and evidence.phase not in {'executing', 'running', 'planning', 'not_started'}
+                button.configure(text='已回退' if restored else '回退本次修改', state='normal' if enabled else 'disabled')
         for key, change in evidence.changes.items():
             card = self._cards.get(key)
             if card is None or not card.winfo_exists():

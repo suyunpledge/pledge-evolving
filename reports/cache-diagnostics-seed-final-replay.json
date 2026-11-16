@@ -1,0 +1,648 @@
+{
+  "vendor": "seed",
+  "scenario": "agent",
+  "experimental_affinity": false,
+  "thinking": "auto",
+  "cache_affinity": "auto",
+  "extended_repository": false,
+  "scope": "Hash-only wire evidence; repository input is the existing synthetic billing fixture, never production padding.",
+  "runtime_sha256": {
+    "scripts/verify_cache_diagnostics.py": "9f2d549503d84a3d0f06029f7b60061b87995de67215ef809f58a12ff3b175ad",
+    "forge/model.py": "415cd84c1e198a5be53cb017b637f95d5c9257d2bc095fcaef0a10bfec25eb01",
+    "forge/loop.py": "2f6f2df1abe3e28e9ee3303c481b5a66518b23d26b4530451f81405272587f37",
+    "forge/cache_affinity.py": "f1cac53d71c1d61a65e7297e0977eb0a97d454d366b1a827570c2dc88a1f6e25",
+    "forge/cache_state.py": "a37413aba21dc24acee061a76d69fdcca436282ed055008325b67bd218f9258e",
+    "forge/conversation_prefix.py": "305fcaf781fd887555f9502e9337e0a52fc908b611ae55467b36e5575e935898",
+    "forge/compaction.py": "2ef74a994bf9478397f4bd0723ec040b100f227afee7cabc3e563b6a76777ec9",
+    "forge/compaction_notes.py": "2a0310f83e1986d2a8b0d8e895eb28c024b5c9b0310cca3708bb9ca7b98e0f12"
+  },
+  "cases": [
+    {
+      "turn": 1,
+      "ok": false,
+      "stopped": "error",
+      "text": "[model error] all providers failed: [{'provider': 'seed-live', 'model': 'doubao-seed-evolving', 'status': 'retryable', 'error': \"seed-live: URLError(TimeoutError('_ssl.c:993: The handshake operation timed out'))\"}, {'provider': 'seed-live', 'model': 'doubao-seed-evolving', 'status': 'retryable', 'er",
+      "tools": [
+        "read_file"
+      ],
+      "events": [
+        {
+          "type": "compaction",
+          "transaction_id": "5650372b41ab400fbeaf92b521a004eb",
+          "before": 5362,
+          "after": 2392,
+          "source_digest": "1a1ceb97c148c844529730989432c5e8e0408a728351c9774786c474b98195b0",
+          "shrunk": true,
+          "committed": true,
+          "archive": {
+            "archive_id": "ctx-5650372b41ab400fbeaf92b521a004eb",
+            "path": "C:\\Users\\D442~1\\AppData\\Local\\Temp\\forge-cache-diagnostics-mv7h0k4m\\home\\context-archives\\ctx-5650372b41ab400fbeaf92b521a004eb.json",
+            "archive_digest": "1a1ceb97c148c844529730989432c5e8e0408a728351c9774786c474b98195b0",
+            "message_count": 7
+          },
+          "candidate_digest": "c9ce0bf35cf6ebe8572a07ac14623c01376cc6762ad96a9f5cbc56d623a270be",
+          "reason": "committed",
+          "checkpoint": {
+            "version": 1,
+            "archive_id": "ctx-5650372b41ab400fbeaf92b521a004eb",
+            "coverage": {
+              "start": 0,
+              "end_exclusive": 7
+            },
+            "summary_status": "unverified_excerpt"
+          },
+          "target_chars": 3250,
+          "preserved_prefix_messages": 1,
+          "agent": "forge",
+          "depth": 0,
+          "run_id": "6061e06ddc7d4ee4b0920724fc0f1ea8",
+          "task_id": "6061e06ddc7d4ee4b0920724fc0f1ea8",
+          "parent_run_id": "",
+          "event_id": "a518f3a11a1e437b9621ef0561dc8958",
+          "protocol_version": 1
+        },
+        {
+          "type": "cache_prefix_checkpointed",
+          "reason": "model_transport",
+          "completed": false,
+          "agent": "forge",
+          "depth": 0,
+          "run_id": "6061e06ddc7d4ee4b0920724fc0f1ea8",
+          "task_id": "6061e06ddc7d4ee4b0920724fc0f1ea8",
+          "parent_run_id": "",
+          "event_id": "39cc12cac6354e0cace841fa8b754f13",
+          "protocol_version": 1
+        }
+      ],
+      "native_pairs_valid": true,
+      "totals": {
+        "attempts": 3,
+        "successful_requests": 1,
+        "prompt_tokens": 1812,
+        "completion_tokens": 83,
+        "cached_tokens": 0,
+        "reasoning_tokens": 50,
+        "seconds": 94.328,
+        "coverage": {
+          "all_observed": {
+            "requests": 1,
+            "input_tokens": 1812,
+            "cached_tokens": 0,
+            "hit_rate": 0.0
+          },
+          "rebuild": {
+            "requests": 0,
+            "input_tokens": 0,
+            "cached_tokens": 0,
+            "hit_rate": null
+          },
+          "non_rebuild": {
+            "requests": 1,
+            "input_tokens": 1812,
+            "cached_tokens": 0,
+            "hit_rate": 0.0
+          },
+          "eligible_prefix": {
+            "requests": 0,
+            "input_tokens": 0,
+            "cached_tokens": 0,
+            "excluded_tail_tokens": 0,
+            "hit_rate": null
+          },
+          "unknown_requests": 2,
+          "invalid_requests": 0,
+          "duplicate_observations": 0,
+          "denominator": "observed input tokens; eligible_prefix excludes declared structural tail"
+        }
+      }
+    }
+  ],
+  "requests": [
+    {
+      "stage": "agent-turn-1",
+      "model": "doubao-seed-evolving",
+      "url": "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+      "parameters": {
+        "temperature": 0.7,
+        "max_tokens": 4096
+      },
+      "message_count": 5,
+      "common_prefix_messages": 0,
+      "messages_digest": "223b2efa16a7e9a6af04e382f68db80bb533ddd889631334024ee48e0d5b4e5a",
+      "tools_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "toolset_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "payload_digest": "ad5aa62208c7598a8cd09508a36ed6d89a7e3a08134ca33b83a6042e4dfbf9b8",
+      "message_chars": 5026,
+      "assistant_reasoning_fields": 0,
+      "tools": [
+        "calculator",
+        "read_file"
+      ],
+      "status": 200,
+      "upstream_request_id": "021794187711222c5962d2ff0c11c118c6b5d934e5fbaa1ab9f9d",
+      "system_fingerprint": null,
+      "raw_usage": {
+        "completion_tokens": 83,
+        "prompt_tokens": 1812,
+        "total_tokens": 1895,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 50
+        }
+      },
+      "finish_reason": "tool_calls",
+      "response_id": "021794187711222c5962d2ff0c11c118c6b5d934e5fbaa1ab9f9d",
+      "response_model": "doubao-seed-evolving",
+      "reasoning_chars": 154,
+      "tool_calls": [
+        {
+          "function": {
+            "arguments": "{\"path\": \"values.json\"}",
+            "name": "read_file"
+          },
+          "id": "call_ojfzjf0lfs9343qqthhkst96",
+          "type": "function"
+        }
+      ],
+      "text": "",
+      "seconds": 4.265,
+      "response_message_fields": [
+        "content",
+        "encrypted_content",
+        "reasoning_content",
+        "role",
+        "tool_calls"
+      ],
+      "encrypted_content_chars": 356,
+      "encrypted_replay_matches": 0,
+      "message_components": [
+        {
+          "role": "system",
+          "digest": "a92f8e6c3821afe8723b7f2fd181fa8b1d591f6914828899630956c851904cd6",
+          "fields": {
+            "role": {
+              "digest": "0dc8cd0a92280156c12ba5073f5049586727ba0bef2ff72099577bd332db18f5",
+              "characters": 8
+            },
+            "content": {
+              "digest": "5d9ea34a8f4e9f179c97f6ba36b4d95b4c53b8c4f069c74ea1c6804d4e15af86",
+              "characters": 1042
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "b1ae98148be2f315799203272facc56f1946313fe7649d83ce3ba4f7b54daa54",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "f0b9807cbb919f4c3994ea2a81507c1ffa967d41b15abb160e2bca9e3c0ff702",
+              "characters": 66
+            }
+          }
+        },
+        {
+          "role": "assistant",
+          "digest": "6fc18c8fab792276d84ffe9ade1a3281f2337d186bd722381d0aba121564a217",
+          "fields": {
+            "role": {
+              "digest": "43f3a43f5a7fef31effcd812e256c8f245da366db65c225fcde611385a4df753",
+              "characters": 11
+            },
+            "content": {
+              "digest": "1d3085c30c184dd67e324aec53d3e4135214662db279f9c47683de1af8a1f2d6",
+              "characters": 3324
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "61fa4e18895cfe4d5532e25161df51759ac1fafec6d003ff50902ff3e2c2df41",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "07bc02036e5884ea4962cdf53fd253015088eaa20d5dd891e8ffdb92ec8b9e28",
+              "characters": 160
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "8ceb1e8ecd046e1039c5767e7b72f11cac22fb33dc11e4ac49abd87a9703c1cf",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "4b468a82b10815bb975cb512eb7c6bca4cd83f53d6607de28dedd7d4a2bb72ce",
+              "characters": 282
+            }
+          }
+        }
+      ],
+      "common_serialized_message_prefix_chars": 1,
+      "wire_body_sha256": "31c80d513b54c0ef47d8d78d91355cdc051b733fb0bbcb993678ff7c9e9aade7",
+      "prefix_relation": "first",
+      "first_changed_message": null,
+      "changed_message_fields": [],
+      "exact_payload_repeat": false,
+      "generation_parameters_digest": "bc0a9abd8f7379b4399d99c3857e0cbedb8a73037119db385a4f7763b5424da4",
+      "affinity_present": true,
+      "affinity_key_digest": "985477a2ab87d4538e93db6f79f33c1694bfb60ada8b1a6e5be6ba02111861a1",
+      "affinity_digest": "6d92c7fee88a02b77531becc386cedab6b0e239f27fa53f95cf9553a0b6ea63d",
+      "usage": {
+        "prompt_tokens": 1812,
+        "completion_tokens": 83,
+        "model": "doubao-seed-evolving",
+        "provider": "seed-live",
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 50,
+        "cache_observed": true
+      },
+      "adaptation": {
+        "vendor": "volcengine",
+        "vendor_label": "火山方舟（豆包）",
+        "actions": [
+          "依赖厂商自动缓存（命中 1×），无需标记"
+        ],
+        "notes": [
+          "缓存命中已实证但折扣未公布，金额按原价保守估算",
+          "回放可保留 encrypted_content（三变体回放探针全 200）",
+          "该模型无目录价，金额按单位价折算，仅用于比较比例，不代表真实账单"
+        ],
+        "cache_control": false,
+        "breakpoints": 1,
+        "ttl": "managed",
+        "est_tokens": 2171,
+        "est_cost": 0.004342,
+        "baseline_cost": 0.004342,
+        "saving": 0.0,
+        "saving_pct": 0.0,
+        "cliff_action": "pass",
+        "reasoning_budget": null,
+        "defer": false,
+        "cache_engages": true,
+        "route_capabilities": {},
+        "request_budget": {},
+        "adapter_id": "doubao.seed-evolving",
+        "model_kind_id": "doubao.seed-evolving",
+        "model_family_id": "doubao.seed",
+        "manufacturer_id": "volcengine",
+        "behavior_fingerprint": "9c7f8429976ba0d0",
+        "model_match_source": "model_id",
+        "model_evidence": "live",
+        "model_traits": [
+          "thinking_type",
+          "opaque_assistant_replay",
+          "native_tool_replay"
+        ],
+        "fingerprint": "015155f84fcf1c24",
+        "execution": {
+          "cache_affinity": {
+            "status": "routing_hint",
+            "source": "host_scope",
+            "key_digest": "985477a2ab87d4538e93db6f79f33c1694bfb60ada8b1a6e5be6ba02111861a1",
+            "guaranteed_hit": false
+          }
+        },
+        "estimate_scope": "reuse_window",
+        "includes_output_cost": false,
+        "price_known": false,
+        "model": "doubao-seed-evolving"
+      }
+    },
+    {
+      "stage": "agent-turn-1",
+      "model": "doubao-seed-evolving",
+      "url": "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+      "parameters": {
+        "temperature": 0.7,
+        "max_tokens": 4096
+      },
+      "message_count": 6,
+      "common_prefix_messages": 1,
+      "messages_digest": "7af9f9f90ddb7415bcb9f7b7f1ad2b0e431f2c71e874df9db9b5bae4a5a79d40",
+      "tools_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "toolset_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "payload_digest": "80f7ee91e8e43f54409ef8dc8d221b2f2f6ab3b0a9951a65370dd63efec4525d",
+      "message_chars": 2739,
+      "assistant_reasoning_fields": 1,
+      "tools": [
+        "calculator",
+        "read_file"
+      ],
+      "error_type": "URLError",
+      "status": null,
+      "seconds": 45.016,
+      "message_components": [
+        {
+          "role": "system",
+          "digest": "a92f8e6c3821afe8723b7f2fd181fa8b1d591f6914828899630956c851904cd6",
+          "fields": {
+            "role": {
+              "digest": "0dc8cd0a92280156c12ba5073f5049586727ba0bef2ff72099577bd332db18f5",
+              "characters": 8
+            },
+            "content": {
+              "digest": "5d9ea34a8f4e9f179c97f6ba36b4d95b4c53b8c4f069c74ea1c6804d4e15af86",
+              "characters": 1042
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "977bedb97a72eefb5c31a877857bb2ea456f3c0b2f14498503bc7372433748d9",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "9c4eb71368107cecb0896be868d3e840579cabdfdca0b194b835d23de236a126",
+              "characters": 281
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "61fa4e18895cfe4d5532e25161df51759ac1fafec6d003ff50902ff3e2c2df41",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "07bc02036e5884ea4962cdf53fd253015088eaa20d5dd891e8ffdb92ec8b9e28",
+              "characters": 160
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "8ceb1e8ecd046e1039c5767e7b72f11cac22fb33dc11e4ac49abd87a9703c1cf",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "4b468a82b10815bb975cb512eb7c6bca4cd83f53d6607de28dedd7d4a2bb72ce",
+              "characters": 282
+            }
+          }
+        },
+        {
+          "role": "assistant",
+          "digest": "26368e607bafd23fb14c1ea2e8d0f38dbdf19d86b38897d38ed064157e34c8f2",
+          "fields": {
+            "content": {
+              "digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "characters": 4
+            },
+            "reasoning_content": {
+              "digest": "b101f3655601db870e69b2b10fb876a43c4ccbd07d1cf666f2b42fe552e4cb47",
+              "characters": 157,
+              "matches_prior_response": true,
+              "matches_response_call": true
+            },
+            "encrypted_content": {
+              "digest": "1b199cc21b5eb8a76f0a8e8a158b84a117268ea9c1bf967b2e3d75b3724a3b7c",
+              "characters": 358,
+              "matches_prior_response": true,
+              "matches_response_call": true
+            },
+            "role": {
+              "digest": "43f3a43f5a7fef31effcd812e256c8f245da366db65c225fcde611385a4df753",
+              "characters": 11
+            },
+            "tool_calls": {
+              "digest": "af3fca9117b66e9ed56d07a72ff1a67b6b19c384ff0871167ea895b8d0c4a0fd",
+              "characters": 140
+            }
+          }
+        },
+        {
+          "role": "tool",
+          "digest": "3f6bff8c92adcc48a9b4a8eb4851f6108f877f241ef475efea07275eb1197def",
+          "fields": {
+            "role": {
+              "digest": "dd04afac1bebb050783a245ed0d88633759f352c85d4ab3bea3d416bf2019c75",
+              "characters": 6
+            },
+            "tool_call_id": {
+              "digest": "d92756196134498e746298c464bdb0e4918fa7e4a43ea57a61a0c273456fcc88",
+              "characters": 31
+            },
+            "content": {
+              "digest": "756dbab6b2c0da7ed4da05193a4388866a3312846cc8e2153ebd36f0cfb1e452",
+              "characters": 23
+            }
+          }
+        }
+      ],
+      "common_serialized_message_prefix_chars": 1098,
+      "wire_body_sha256": "b897d14b2a341d296438a47257c7b69aa711d959a8702797b510ffa264880f15",
+      "prefix_relation": "rewritten",
+      "first_changed_message": 1,
+      "changed_message_fields": [
+        "content"
+      ],
+      "exact_payload_repeat": false,
+      "generation_parameters_digest": "bc0a9abd8f7379b4399d99c3857e0cbedb8a73037119db385a4f7763b5424da4",
+      "affinity_present": true,
+      "affinity_key_digest": "985477a2ab87d4538e93db6f79f33c1694bfb60ada8b1a6e5be6ba02111861a1",
+      "affinity_digest": "6d92c7fee88a02b77531becc386cedab6b0e239f27fa53f95cf9553a0b6ea63d"
+    },
+    {
+      "stage": "agent-turn-1",
+      "model": "doubao-seed-evolving",
+      "url": "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+      "parameters": {
+        "temperature": 0.7,
+        "max_tokens": 4096
+      },
+      "message_count": 6,
+      "common_prefix_messages": 6,
+      "messages_digest": "7af9f9f90ddb7415bcb9f7b7f1ad2b0e431f2c71e874df9db9b5bae4a5a79d40",
+      "tools_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "toolset_digest": "38725c110c6ab9e2ce665d34d12ea2b6987f5ba12fafab5624a9551a81b96db8",
+      "payload_digest": "80f7ee91e8e43f54409ef8dc8d221b2f2f6ab3b0a9951a65370dd63efec4525d",
+      "message_chars": 2739,
+      "assistant_reasoning_fields": 1,
+      "tools": [
+        "calculator",
+        "read_file"
+      ],
+      "error_type": "URLError",
+      "status": null,
+      "seconds": 45.047,
+      "message_components": [
+        {
+          "role": "system",
+          "digest": "a92f8e6c3821afe8723b7f2fd181fa8b1d591f6914828899630956c851904cd6",
+          "fields": {
+            "role": {
+              "digest": "0dc8cd0a92280156c12ba5073f5049586727ba0bef2ff72099577bd332db18f5",
+              "characters": 8
+            },
+            "content": {
+              "digest": "5d9ea34a8f4e9f179c97f6ba36b4d95b4c53b8c4f069c74ea1c6804d4e15af86",
+              "characters": 1042
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "977bedb97a72eefb5c31a877857bb2ea456f3c0b2f14498503bc7372433748d9",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "9c4eb71368107cecb0896be868d3e840579cabdfdca0b194b835d23de236a126",
+              "characters": 281
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "61fa4e18895cfe4d5532e25161df51759ac1fafec6d003ff50902ff3e2c2df41",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "07bc02036e5884ea4962cdf53fd253015088eaa20d5dd891e8ffdb92ec8b9e28",
+              "characters": 160
+            }
+          }
+        },
+        {
+          "role": "user",
+          "digest": "8ceb1e8ecd046e1039c5767e7b72f11cac22fb33dc11e4ac49abd87a9703c1cf",
+          "fields": {
+            "role": {
+              "digest": "3190d261d186aeead3a8deec202737c7775af5c8d455a9e5ba958c48b5fd3f59",
+              "characters": 6
+            },
+            "content": {
+              "digest": "4b468a82b10815bb975cb512eb7c6bca4cd83f53d6607de28dedd7d4a2bb72ce",
+              "characters": 282
+            }
+          }
+        },
+        {
+          "role": "assistant",
+          "digest": "26368e607bafd23fb14c1ea2e8d0f38dbdf19d86b38897d38ed064157e34c8f2",
+          "fields": {
+            "content": {
+              "digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "characters": 4
+            },
+            "reasoning_content": {
+              "digest": "b101f3655601db870e69b2b10fb876a43c4ccbd07d1cf666f2b42fe552e4cb47",
+              "characters": 157,
+              "matches_prior_response": true,
+              "matches_response_call": true
+            },
+            "encrypted_content": {
+              "digest": "1b199cc21b5eb8a76f0a8e8a158b84a117268ea9c1bf967b2e3d75b3724a3b7c",
+              "characters": 358,
+              "matches_prior_response": true,
+              "matches_response_call": true
+            },
+            "role": {
+              "digest": "43f3a43f5a7fef31effcd812e256c8f245da366db65c225fcde611385a4df753",
+              "characters": 11
+            },
+            "tool_calls": {
+              "digest": "af3fca9117b66e9ed56d07a72ff1a67b6b19c384ff0871167ea895b8d0c4a0fd",
+              "characters": 140
+            }
+          }
+        },
+        {
+          "role": "tool",
+          "digest": "3f6bff8c92adcc48a9b4a8eb4851f6108f877f241ef475efea07275eb1197def",
+          "fields": {
+            "role": {
+              "digest": "dd04afac1bebb050783a245ed0d88633759f352c85d4ab3bea3d416bf2019c75",
+              "characters": 6
+            },
+            "tool_call_id": {
+              "digest": "d92756196134498e746298c464bdb0e4918fa7e4a43ea57a61a0c273456fcc88",
+              "characters": 31
+            },
+            "content": {
+              "digest": "756dbab6b2c0da7ed4da05193a4388866a3312846cc8e2153ebd36f0cfb1e452",
+              "characters": 23
+            }
+          }
+        }
+      ],
+      "common_serialized_message_prefix_chars": 2712,
+      "wire_body_sha256": "b897d14b2a341d296438a47257c7b69aa711d959a8702797b510ffa264880f15",
+      "prefix_relation": "unchanged",
+      "first_changed_message": null,
+      "changed_message_fields": [],
+      "exact_payload_repeat": true,
+      "generation_parameters_digest": "bc0a9abd8f7379b4399d99c3857e0cbedb8a73037119db385a4f7763b5424da4",
+      "affinity_present": true,
+      "affinity_key_digest": "985477a2ab87d4538e93db6f79f33c1694bfb60ada8b1a6e5be6ba02111861a1",
+      "affinity_digest": "6d92c7fee88a02b77531becc386cedab6b0e239f27fa53f95cf9553a0b6ea63d"
+    }
+  ],
+  "totals": {
+    "attempts": 3,
+    "successful_requests": 1,
+    "prompt_tokens": 1812,
+    "completion_tokens": 83,
+    "cached_tokens": 0,
+    "reasoning_tokens": 50,
+    "seconds": 94.328,
+    "coverage": {
+      "all_observed": {
+        "requests": 1,
+        "input_tokens": 1812,
+        "cached_tokens": 0,
+        "hit_rate": 0.0
+      },
+      "rebuild": {
+        "requests": 0,
+        "input_tokens": 0,
+        "cached_tokens": 0,
+        "hit_rate": null
+      },
+      "non_rebuild": {
+        "requests": 1,
+        "input_tokens": 1812,
+        "cached_tokens": 0,
+        "hit_rate": 0.0
+      },
+      "eligible_prefix": {
+        "requests": 0,
+        "input_tokens": 0,
+        "cached_tokens": 0,
+        "excluded_tail_tokens": 0,
+        "hit_rate": null
+      },
+      "unknown_requests": 2,
+      "invalid_requests": 0,
+      "duplicate_observations": 0,
+      "denominator": "observed input tokens; eligible_prefix excludes declared structural tail"
+    }
+  },
+  "ok": false
+}

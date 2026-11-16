@@ -1,0 +1,40 @@
+{
+  "model": "hy4free",
+  "reasoning_effort": "high",
+  "max_tokens": 512,
+  "messages": [
+    {
+      "role": "system",
+      "content": "Use add when asked. After its result reply with exactly 42."
+    },
+    {
+      "role": "user",
+      "content": "Call add once with a=17 and b=25. Use the tool, then return its result."
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "add",
+        "description": "Add two integers.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "a": {
+              "type": "integer"
+            },
+            "b": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "a",
+            "b"
+          ]
+        }
+      }
+    }
+  ],
+  "tool_choice": "auto"
+}

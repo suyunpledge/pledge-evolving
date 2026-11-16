@@ -256,13 +256,22 @@ class GatewayConfig:
         model = self.model_map.get(model, model)
         payload["model"] = model
         conf = self.provider_options
+        from .request_timing import request_timeout
+        request_timeout(conf.get('requestTimeout', 0))
         provider = Provider(
             "gateway", self.upstream, _credential=self._credential, wire=self.upstream_wire,
             default_model=model, vendor=str(conf.get("vendor") or ""),
+            model_kind_id=(str(conf.get("modelKindId") or "")
+                           if model == conf.get("model", conf.get("defaultModel", "")) else ""),
+            model_kind_ids=dict(conf.get("modelKinds") or {}),
+            route_capabilities=conf.get("routeCapabilities", {}),
+            model_capabilities=conf.get("modelCapabilities", {}),
+            request_timeout=conf.get("requestTimeout", 0),
             cache_control=str(conf.get("cacheControl", "auto")),
             expected_calls=int(conf.get("expectedCalls", 2)),
             call_gap_seconds=float(conf.get("callGapSeconds", 60)),
             adapt=bool(conf.get("adapt", True)), think_budget=conf.get("thinkBudget"),
+            reasoning_mode=conf.get("reasoningMode", "auto"),
             flex=bool(conf.get("flex", False)), defer=bool(conf.get("defer", False)),
             max_defer_seconds=float(conf.get("maxDeferSeconds", 0)))
         from . import sampling
@@ -476,7 +485,38 @@ def build_handler(cfg: GatewayConfig):
             if route == "/v1/tools/call":
                 self._tool_call(body)
                 return
+            if route in {"/v1/changes/review", "/v1/changes/revert"}:
+                self._changes(body, restore=route.endswith('/revert'))
+                return
             self._proxy(body)
+
+        def _changes(self, body, *, restore=False):
+            """Host-only UI control; never a model-callable tool or Git reset."""
+            from .change_review import ChangeReviewStore
+            from .secrets import redact
+            if cfg.registry is None or cfg.policy is None:
+                self._json(503, {'error': {'message': '工具桥未启用，无法审查或回退修改'}})
+                return
+            context = None
+            try:
+                payload = json.loads(body)
+                if not isinstance(payload, dict):
+                    raise ValueError('body must be an object')
+                context = cfg.execution_context(discovery=True)
+                tc = context.tool_context()
+                def authorize(name, args):
+                    denial = context.registry.authorize(name, args, tc)
+                    if denial is not None:
+                        raise PermissionError(denial.error or '当前网关权限禁止此操作')
+                store = ChangeReviewStore(cfg.home, cfg.workspace)
+                ids = payload.get('change_ids')
+                result = store.revert(ids, authorize) if restore else store.review(ids, authorize)
+                self._json(200, {'ok': True, **result})
+            except (ValueError, TypeError, KeyError, OSError) as exc:
+                self._json(409 if restore else 400, {'error': {'message': str(redact(str(exc)))}})
+            finally:
+                if context is not None:
+                    context.secret_scope.close()
 
         def _tool_call(self, body: bytes) -> None:
             """Execute one forge tool through the full policy gate.
@@ -626,6 +666,7 @@ def build_handler(cfg: GatewayConfig):
 
         def _proxy(self, body: bytes) -> None:
             self._upstream_started = False
+            payload = {}
             scope = cfg.secret_scope(self.headers.get('X-Forge-Secret-Scope', ''))
             if scope.protect_text(self.path) != self.path:
                 self._json(400, {'error': {'message': 'Secrets must not be placed in request URLs'}})
@@ -678,7 +719,8 @@ def build_handler(cfg: GatewayConfig):
             cfg.log.write(f"{self.command} {self.path} -> {url} (bytes={len(body)})")
             request = urllib.request.Request(url, data=body or None, headers=headers, method=self.command)
             try:
-                with open_upstream(request, timeout=600, proxy=cfg.proxy) as response:
+                from .request_timing import request_timeout
+                with open_upstream(request, timeout=request_timeout(cfg.provider_options.get('requestTimeout', 0)), proxy=cfg.proxy) as response:
                     from .request_execution import UsageObserver
                     observer = UsageObserver()
                     ctype = response.headers.get("content-type", "")
@@ -691,11 +733,9 @@ def build_handler(cfg: GatewayConfig):
                         self.close_connection = True
                         self.end_headers()
                         self._upstream_started = True
-                        from .secret_http import SecretSSEFilter
+                        from .secret_http import SecretSSEFilter, iter_model_sse
                         fence = SecretSSEFilter()
-                        while True:
-                            chunk = response.readline(1024 * 1024 + 1)
-                            if not chunk: break
+                        for chunk in iter_model_sse(response, expected_choices=(payload or {}).get('n', 1)):
                             observer.feed(chunk)
                             self.wfile.write(fence.feed(chunk))
                             self.wfile.flush()
@@ -799,7 +839,8 @@ def build_handler(cfg: GatewayConfig):
                 url, data=json.dumps(upstream_payload, ensure_ascii=False).encode(),
                 headers=headers, method="POST")
             try:
-                with open_upstream(request, timeout=600, proxy=cfg.proxy) as response:
+                from .request_timing import request_timeout
+                with open_upstream(request, timeout=request_timeout(provider.request_timeout), proxy=cfg.proxy) as response:
                     if not upstream_payload.get("stream"):
                         from .secrets import redact
                         raw = redact(json.loads(response.read().decode("utf-8", "replace")))
@@ -820,9 +861,9 @@ def build_handler(cfg: GatewayConfig):
                     translator = OpenAIStreamTranslator(requested)
                     from .request_execution import UsageObserver
                     observer = UsageObserver()
-                    from .secret_http import SecretSSEFilter
+                    from .secret_http import SecretSSEFilter, iter_model_sse
                     fence = SecretSSEFilter()
-                    for raw_line in response:
+                    for raw_line in iter_model_sse(response, expected_choices=upstream_payload.get('n', 1)):
                         observer.feed(raw_line)
                         safe_lines = fence.feed(raw_line).decode('utf-8', 'replace').splitlines()
                         for safe_line in safe_lines:

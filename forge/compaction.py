@@ -31,7 +31,9 @@ class ContextBudget:
 
     def size(self, messages: list[dict[str, Any]]) -> int:
         return sum(len(str(m.get("content", ""))) +
-                   (len(json.dumps(m["tool_calls"], ensure_ascii=False)) if m.get("tool_calls") else 0)
+                   (len(json.dumps(m["tool_calls"], ensure_ascii=False)) if m.get("tool_calls") else 0) +
+                   sum(len(json.dumps(v, ensure_ascii=False)) for k, v in m.items()
+                       if k not in {'role', 'content', 'tool_calls', 'tool_call_id', 'name'})
                    for m in messages)
 
     def should_compact(self, messages: list[dict[str, Any]]) -> bool:
@@ -39,7 +41,7 @@ class ContextBudget:
 
     def compact(self, messages: list[dict[str, Any]], summariser=None,
                 *, max_chars: int | None = None,
-                pinned_contents: tuple[str, ...] = ()) -> list[dict[str, Any]]:
+                pinned_contents: tuple[str, ...] = (), prefix_messages=()) -> list[dict[str, Any]]:
         """Keep system/task/plan and recent complete tool exchanges.
 
         Compaction changes the earlier prefix and can invalidate provider
@@ -51,18 +53,18 @@ class ContextBudget:
         if not gate(messages):
             return messages
 
-        if len(messages) <= self.keep_tail:
+        if len(messages) <= self.keep_tail and not prefix_messages:
             squeezed: list[dict[str, Any]] = []
             changed = False
             for m in messages:
-                if (str(m.get("role", "")) in {"system", "user"}
+                if (str(m.get("role", "")) in {"system", "developer", "user"}
                         or m.get("content") in pinned_contents
                         or m.get("tool_calls") or m.get("role") == "tool"
                         or isinstance(m.get("content"), list)):
                     squeezed.append(m)
                     continue
                 content = str(m.get("content", ""))
-                cap = max(self.max_chars // 20, 200)
+                cap = max((self.max_chars if max_chars is None else max_chars) // 20, 200)
                 if len(content) > cap:
                     changed = True
                     squeezed.append({**m, "content": content[:cap]})
@@ -70,10 +72,27 @@ class ContextBudget:
                     squeezed.append(m)
             return squeezed if changed else messages
 
-        system = [m for m in messages if str(m.get("role", "")) == "system"]
-        pinned = [m for m in messages if m.get("role") != "system" and
-                  isinstance(m.get("content"), str) and m["content"] in pinned_contents]
-        rest = [m for m in messages if m.get("role") != "system" and m not in pinned]
+        # 2026-11-04 forge 真实任务实测修复（MiniMax 400 "tool id not found (2013)"）：
+        # pinned_contents 可能含空串（无 plan 时 plan.context() 返回 ''），空结果的
+        # tool 消息（grep 零命中 content=''）会精确匹配 '' 被当作钉住材料提升到
+        # system 之后——既孤儿化（严格校验的厂商直接 400）又乱序（其余厂商静默吞
+        # 下损坏历史）。两道防御：
+        #   ① 空串不进 pinned 集合；
+        #   ② tool 消息与带 tool_calls 的 assistant 永不可被钉住提升（钉住语义
+        #      只对普通 system/user 课文有意义）。
+        pin_set = {c for c in pinned_contents if c}
+        prefix = list(prefix_messages)
+        if messages[:len(prefix)] != prefix:
+            raise ValueError('Compaction prefix no longer matches the source')
+        body = messages[len(prefix):]
+        system = [m for m in body if str(m.get("role", "")) in {"system", "developer"}]
+        pinned = [m for m in body
+                  if m.get("role") not in ("system", "developer", "tool")
+                  and not m.get("tool_call_id") and not m.get("tool_calls")
+                  and isinstance(m.get("content"), str) and m["content"] in pin_set]
+        rest = [m for m in body if m.get("role") not in ("system", "developer") and m not in pinned]
+        if not rest:
+            return messages
         cut = max(0, len(rest) - max(1, self.keep_tail))
         # pi-style valid cut points: never retain an orphan native tool result.
         # Keep the entire assistant call + result group, including batched calls.
@@ -85,26 +104,46 @@ class ContextBudget:
             if message.get("role") != "tool" and not result_block:
                 break
             cut -= 1
-        head, tail = rest[:cut], rest[cut:]
+        def build(at):
+            head, tail = rest[:at], rest[at:]
+            if not head:
+                return messages
+            summary = summariser(head) if summariser is not None else self._excerpt(head)
+            if prefix_messages:
+                # 保留源消息的相对顺序，尤其不把本轮任务提升到历史前方。
+                # 摘要位于任务之前，避免路由器把摘要误认成最新用户任务。
+                protected = {id(m) for m in [*system, *pinned]}
+                retained, cursor = [], 0
+                for message in body:
+                    if id(message) in protected:
+                        retained.append(message)
+                    else:
+                        if cursor >= at:
+                            retained.append(message)
+                        cursor += 1
+                return [*prefix, {'role': 'user', 'content': summary}, *retained]
+            return [*prefix, *system, *pinned, {"role": "user", "content": summary}, *tail]
 
-        if not head:
-            return messages
+        candidate = build(cut)
+        if prefix_messages:
+            from .context_transaction import valid_tool_pairs
+            # Agent 的目标是回收出余量；至少保留最后一个完整交换，不截断推理/工具块。
+            protected_last = any(messages[-1] is m for m in [*system, *pinned])
+            last = len(rest) if protected_last else len(rest) - 1
+            while last > 0 and not valid_tool_pairs(rest[last:]):
+                last -= 1
+            target = self.max_chars if max_chars is None else max_chars
+            while self.size(candidate) > target and cut < last:
+                cut += 1
+                while cut < last and not valid_tool_pairs(rest[cut:]):
+                    cut += 1
+                candidate = build(cut)
+        return candidate
 
-        if summariser is None:
-            # Recent evidence matters more than the oldest messages. Preserve
-            # requested file paths/tool names without claiming a call succeeded.
-            requests = [json.dumps(m["tool_calls"], ensure_ascii=False)[:240]
-                        for m in head if m.get("tool_calls")][-3:]
-            flat = " ".join(str(m.get("role", "")) + ": " + str(m.get("content", ""))[:200]
-                            for m in head[-4:])
-            if requests:
-                flat = "Earlier tool requests (outcomes not asserted): " + " ".join(requests) + "\n" + flat
-            summary = f"[compacted {len(head)} earlier messages] {flat[:800]}"
-        else:
-            summary = summariser(head)
-
-        # A changed prefix is expected; native call/result pairs remain valid.
-        return [*system, *pinned, {"role": "user", "content": summary}, *tail]
+    @staticmethod
+    def _excerpt(head):
+        from .compaction_notes import excerpt_messages
+        return excerpt_messages(head)
 
 
 __all__ = ["ContextBudget"]

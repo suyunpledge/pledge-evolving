@@ -2,6 +2,7 @@
 from __future__ import annotations
 import copy
 import json
+import time
 import urllib.request
 from .secrets import StreamingRedactor, redact
 
@@ -18,6 +19,65 @@ def open_authenticated(request, *, timeout, proxy=None):
     if proxy is not None:
         handlers.append(urllib.request.ProxyHandler({'http': proxy, 'https': proxy} if proxy else {}))
     return urllib.request.build_opener(*handlers).open(request, timeout=timeout)
+
+
+def iter_model_sse(response, *, expected_choices=1):
+    """Drain trailing usage, but do not turn a completed answer into a timeout.
+
+An unfinished text/reasoning/tool stream still raises. The same POST is never
+replayed and partial tool arguments are never promoted to a complete response.
+"""
+    from .request_timing import is_timeout, STREAM_FINISH_GRACE
+    finished = set()
+    expected = expected_choices if type(expected_choices) is int and expected_choices > 0 else 1
+    completed = False
+    finish_deadline = None
+    while True:
+        if finish_deadline is not None:
+            remaining = finish_deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            # stdlib HTTPResponse exposes its buffered SocketIO here. Only
+            # shorten this completed response's read; no global socket setting.
+            sock = getattr(getattr(getattr(response, 'fp', None), 'raw', None), '_sock', None)
+            if sock is not None:
+                previous = sock.gettimeout()
+                sock.settimeout(min(previous, remaining) if previous is not None else remaining)
+        try:
+            line = response.readline(1024 * 1024 + 1)
+        except (OSError, urllib.error.URLError) as exc:
+            if completed and is_timeout(exc):
+                return
+            raise
+        if not line:
+            return
+        if len(line) > 1024 * 1024:
+            raise ValueError('Upstream SSE line exceeds 1 MiB')
+        terminal = False
+        if line.startswith(b'data:'):
+            raw = line[5:].strip()
+            terminal = raw == b'[DONE]'
+            if not terminal:
+                try:
+                    event = json.loads(raw)
+                except (ValueError, UnicodeDecodeError):
+                    event = None
+                if isinstance(event, dict):
+                    terminal = event.get('type') == 'message_stop'
+                    choices = event.get('choices')
+                    for choice in choices if isinstance(choices, list) else []:
+                        if not isinstance(choice, dict):
+                            continue
+                        index = choice.get('index', 0)
+                        if (type(index) is int and 0 <= index < expected
+                                and isinstance(choice.get('finish_reason'), str) and choice['finish_reason']):
+                            finished.add(index)
+                    completed = completed or len(finished) == expected
+                    if completed and finish_deadline is None:
+                        finish_deadline = time.monotonic() + STREAM_FINISH_GRACE
+        yield line
+        if terminal:
+            return
 
 
 def redact_response(data):
@@ -70,9 +130,12 @@ class SecretSSEFilter:
         target[path[-1]] = ''
         self._channels[key] = (stream, template, path)
 
-    def finish(self):
+    def finish(self, channels=None):
         out = []
-        for stream, template, path in self._channels.values():
+        for key in list(self._channels):
+            if channels is not None and key not in channels:
+                continue
+            stream, template, path = self._channels.pop(key)
             tail = stream.feed('', final=True)
             if not tail:
                 continue
@@ -84,7 +147,6 @@ class SecretSSEFilter:
             for choice in event.get('choices', []): choice['finish_reason'] = None
             event.pop('usage', None)
             out.append('data: ' + json.dumps(redact(event), ensure_ascii=False) + '\n\n')
-        self._channels.clear()
         return ''.join(out).encode('utf-8')
 
     def feed(self, line: bytes) -> bytes:
@@ -105,7 +167,8 @@ class SecretSSEFilter:
         if not isinstance(event.get('choices', []), list): return b''
         if any(not isinstance(c, dict) for c in event.get('choices', [])): return b''
         terminal = event.get('type') in {'message_stop', 'content_block_stop', 'error'}
-        terminal = terminal or any(c.get('finish_reason') for c in event.get('choices', []))
+        finished_choices = {c.get('index', i) for i, c in enumerate(event.get('choices', []))
+                            if c.get('finish_reason')}
         for index, choice in enumerate(event.get('choices', [])):
             delta = choice.get('delta') or {}
             for field in ('content', 'reasoning_content'):
@@ -118,5 +181,21 @@ class SecretSSEFilter:
         delta = event.get('delta') or {}
         for field in ('text', 'thinking', 'partial_json'):
             if isinstance(delta.get(field), str): self._text(event, ('delta', field), ('block', event.get('index', 0), field))
+        if finished_choices:
+            # Current delta precedes its buffered suffix; the finish marker
+            # must follow both. Usage stays on the terminal event exactly once.
+            ending = copy.deepcopy(event)
+            for choice in ending.get('choices', []):
+                choice['delta'] = {}
+            current = copy.deepcopy(event)
+            for choice in current.get('choices', []):
+                choice['finish_reason'] = None
+            current.pop('usage', None)
+            channels = {key for key in self._channels
+                        if key[0] in {'choice', 'tool'} and key[1] in finished_choices}
+            prefix = ('data: ' + json.dumps(redact(current), ensure_ascii=False) + '\n\n').encode('utf-8')
+            suffix = self.finish(channels)
+            end = ('data: ' + json.dumps(redact(ending), ensure_ascii=False) + '\n\n').encode('utf-8')
+            return prefix + suffix + end
         flushed = self.finish() if terminal else b''
         return flushed + ('data: ' + json.dumps(redact(event), ensure_ascii=False) + '\n\n').encode('utf-8')

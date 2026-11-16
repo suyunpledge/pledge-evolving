@@ -1,0 +1,78 @@
+{
+  "backup": "C:\\Users\\匡溯昀\\forge-mimo-long-backup-20261107-041119",
+  "normalization": "UTF-8 text with LF for diff/hash",
+  "files": [
+    {
+      "path": "forge-budgets.json",
+      "new": false,
+      "before_sha256": "78f510157aa2487330877038c3d16631cc59cf435eadef9adff871ba06c6eaa6",
+      "after_sha256": "51427b1094bc082d133ba83c05a1fa7035972dc9336d97213628f66c73fe4ed9"
+    },
+    {
+      "path": "forge/cache_metrics.py",
+      "new": false,
+      "before_sha256": "8b5aa757472b4be3a5d041d18b7236d939538e9111131eda15b0a61069138988",
+      "after_sha256": "12ceb731f6989614c77b7e59411905a13414234929989b40e914f9b27e8b8726"
+    },
+    {
+      "path": "forge/compaction.py",
+      "new": false,
+      "before_sha256": "3f2b7fe7d4c4a2ae37a17aa56c45fa268dbca7929aa6838b35abf030cabbf526",
+      "after_sha256": "7ca959da685c6dfb2ba4e0b3db0755fdb02d9559977a56976b466fe0720ef85a"
+    },
+    {
+      "path": "forge/context_transaction.py",
+      "new": false,
+      "before_sha256": "ec5d427813415d6520e1d1cd20e0c0f440a522e7736a5515675e58dd6e1da844",
+      "after_sha256": "6c7d0bb44099db0bd5acccdce88c13b666c056103243d137cea1777eea144735"
+    },
+    {
+      "path": "forge/conversation_prefix.py",
+      "new": false,
+      "before_sha256": "773aef2455e06228f916c571bc31ec1dec0d7c57cf352f1170fb18015db8b5a9",
+      "after_sha256": "ad3353d5bfa67fdb8dedb7ba067177dec6541100b6ddb7e82f74eac2574d3cc0"
+    },
+    {
+      "path": "forge/loop.py",
+      "new": false,
+      "before_sha256": "1bd77a92221616baadb8d4878fbe8c2e01cfb89132c3d91ee4a0725360845916",
+      "after_sha256": "af53d4e3889e61102f83245f0b424a43ab346681330708a9519f2090edcab5f3"
+    },
+    {
+      "path": "forge/toolwire.py",
+      "new": false,
+      "before_sha256": "597dfc665a311d8d6fea404a80e794ad9f1bcea582221e378d28658426f9e2ba",
+      "after_sha256": "110779401f3694e075f39b444778405ab1d4179029fa3866154b890effb0c59b"
+    },
+    {
+      "path": "forge/vscode_bridge.py",
+      "new": false,
+      "before_sha256": "2e09b779d1f792b78c451f1ad52ddc313857600f721839580f07fb6f2564e514",
+      "after_sha256": "8b0fae81d639da34fbc12f5799f04226de339555765ec894befbae5c950a9bd7"
+    },
+    {
+      "path": "tests/test_cache_continuation_entries.py",
+      "new": false,
+      "before_sha256": "e7b2ae7b2edc93479c2abb8f9d562ba2fe63809cf33ebfad982e6a8e76d2029f",
+      "after_sha256": "914c704265655e9424e961ef309b3003c085230c0b0977f29d24bc0975fe5d0e"
+    },
+    {
+      "path": "forge/test_long_context_cache.py",
+      "new": true,
+      "before_sha256": null,
+      "after_sha256": "1085a968fcbeb02f91c8d9dbce8ee3df77a3e5997eefd66a0d2c89a1c99ca231"
+    },
+    {
+      "path": "scripts/verify_mimo_long_context.py",
+      "new": true,
+      "before_sha256": null,
+      "after_sha256": "2e7f66580143be521357dca68a2a5cf175d87613b9d13f6f870997a06a0f8067"
+    },
+    {
+      "path": "docs/MIMO-LONG-CONTEXT-CACHE.md",
+      "new": true,
+      "before_sha256": null,
+      "after_sha256": "8dc4353d5fa57899b74d3c9ea241917d99c346bfba25282c24e052ecb606ffec"
+    }
+  ]
+}

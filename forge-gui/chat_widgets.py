@@ -1271,15 +1271,14 @@ class AgentStatusIndicator(tk.Frame):
             self._after_id = None
 
     def set(self, text: str):
-        text = str(text or "")
-        self.label.configure(text=text)
+        self.label.configure(text=text or "")
         if not text:
             self.pack_forget()
             self._on_destroy()
             return
         if not self.winfo_manager():
             self.pack(side=tk.RIGHT)
-        lowered = text.lower()
+        lowered = str(text).lower()
         if any(word in lowered for word in self.ACTIVE_WORDS):
             self._tick()
         else:
@@ -1348,7 +1347,8 @@ class UserMessage(tk.Frame):
     整行容器 fill=tk.X；气泡用 anchor="e" 靠右；头像+名+时间是同一行。
     """
 
-    def __init__(self, parent, text, *, bg=None, ts=None, name="你"):
+    def __init__(self, parent, text, *, bg=None, ts=None, name="你",
+                 attachment_names=(), view_attachments=None):
         base = bg or C["chat"]
         super().__init__(parent, bg=base)
 
@@ -1382,6 +1382,13 @@ class UserMessage(tk.Frame):
                                   anchor="w", wraplength=max_text, bd=0,
                                   highlightthickness=0, padx=0, pady=0)
         self.label.pack(anchor="w")
+        self.attachment_button = None
+        if attachment_names and view_attachments is not None:
+            self.attachment_button = theme.pill_button(
+                self, tr("查看附件（{count}）", count=len(attachment_names)), view_attachments,
+                kind="quiet", icon="📄")
+            self.attachment_button.pack(anchor="e", pady=(ui_px(self, 4), 0))
+            attach_tooltip(self.attachment_button, "\n".join(attachment_names[:8]))
         self.bind("<Configure>", self._fit_bubble)
 
     def _fit_bubble(self, event):
@@ -1390,6 +1397,21 @@ class UserMessage(tk.Frame):
         wrap = min(ui_px(self, MAX_BUBBLE_WIDTH) - self._card._padx * 2, available)
         self._card.set_content_width(limit=wrap)
         self.label.configure(wraplength=wrap)
+
+
+def copy_to_clipboard(widget, source_getter):
+    """通用复制：从 source_getter() 取文本，写入系统剪贴板，按钮短暂变 ✓。"""
+    try:
+        text_val = str(source_getter() or "")
+        if not text_val.strip():
+            return
+        widget.clipboard_clear()
+        widget.clipboard_append(text_val)
+        orig = widget.cget("text")
+        widget.configure(text="✓")
+        widget.after(1200, lambda: widget.configure(text=orig))
+    except Exception:
+        pass
 
 
 class AgentMessage(tk.Frame):
@@ -1425,13 +1447,13 @@ class AgentMessage(tk.Frame):
             self._role_badge.pack(side=tk.LEFT, padx=(8, 0))
         self._status_indicator = AgentStatusIndicator(head, bg=base)
         self._status = self._status_indicator.label  # 保留旧测试/调用方可见属性
-
         self.subtitle = None
         if subtitle:
             self.subtitle = i18n.Label(self, text=subtitle, bg=base, fg=C["ter"],
                                      font=FONT_SMALL, anchor="w", justify=tk.LEFT,
                                      wraplength=MAX_BUBBLE_WIDTH)
-            self.subtitle.pack(fill=tk.X, pady=(4, 0))
+            # 与名字、正文同一条左对齐线（头像 28 + 间距 8）。
+            self.subtitle.pack(fill=tk.X, padx=(ui_px(self, 36), 0), pady=(2, 0))
 
         # 正文气孔：圆角卡 + hairline 描边，跟用户侧对称。整体宽度跟随对话列，
         # 这样代码块/工具卡/表格都能拿到完整宽度（不为了「抱得紧」把内容压窄）。
@@ -1480,7 +1502,7 @@ class AgentMessage(tk.Frame):
         self._status_indicator.set(text)
         # 气孔内占位：仅在还没有正文时跟随状态文案（生成中/连接中/停止中…），
         # 有正文后 head 指示器单独负责，避免重复。
-        if self._stream is None and not (self._text_source or "").strip():
+        if self._stream is None and not self._has_details and not self._text_source.strip():
             if str(text or "").strip():
                 self.set_stream_placeholder(text)
             else:
@@ -1541,9 +1563,9 @@ class AgentMessage(tk.Frame):
         if self._stream is not None or (self._text_source or "").strip():
             return
         self._ensure_placeholder()
-        self._placeholder_label.configure(text=str(text or ""))
+        self._placeholder_label.configure(text=text or "")
 
-    def render_markdown(self, text: str):
+    def render_markdown(self, text: str, *, retry=True):
         from forge.secrets import redact
         text = redact(text)
         self._teardown_placeholder()
@@ -1566,6 +1588,7 @@ class AgentMessage(tk.Frame):
         self._fit_content()
         # 已有 trace？保持顺序：Body 段在最上 → 分割线 → 现有 trace 块
         self._reorder_body_with_trace()
+        self._ensure_action_row(retry=retry)
 
     def _after_markdown_done(self, _host):
         # 分批渲染完成：恢复 trace 排序（正文块 → 分割线 → trace）并终校高度
@@ -1617,7 +1640,7 @@ class AgentMessage(tk.Frame):
         return card
 
     def _ensure_trace_host(self):
-        """第一次 add_steps/add_tool_card 时创建 trace 容器，并附 ghost 操作条。"""
+        """第一次 add_steps/add_tool_card 时创建 trace 容器。"""
         self._teardown_placeholder()   # 有真实内容（工具卡/步骤）了，占位让位
         self._has_details = True
         self._fit_content()
@@ -1626,86 +1649,33 @@ class AgentMessage(tk.Frame):
             host = tk.Frame(self.body, bg=self._bg)
             host.pack(fill=tk.X)
             self._trace_host = host
-        self._ensure_action_row()
         return host
 
-    def _ensure_action_row(self):
-        """消息下方 ghost 操作条：复制 / 重生成 / 赞 / 踩。
-
-        仅 UI：赞/踩暂不落库；编辑后重试将对应输入恢复为草稿，不自动发送。
-        整行靠左；常规态 fg=muted，hover 才变 text，不抢正文视觉优先级。
-        """
-        if getattr(self, "_action_row", None) is not None:
-            return self._action_row
-        host = tk.Frame(self, bg=self._base)
-        host.pack(fill=tk.X, anchor="w", pady=(2, 0))
-
-        def _copy():
-            try:
-                parts = []
-                for child in self.body.winfo_children():
-                    def walk(w):
-                        try:
-                            for sub in w.winfo_children():
-                                walk(sub)
-                        except tk.TclError:
-                            pass
-                        try:
-                            cls = w.winfo_class()
-                        except tk.TclError:
-                            cls = ""
-                        if cls == "Text":
-                            try:
-                                v = (w.display_text() if isinstance(w, InlineText)
-                                     else w.get("1.0", "end-1c")).rstrip()
-                                if v:
-                                    parts.append(v)
-                            except tk.TclError:
-                                pass
-                        elif cls == "Label":
-                            try:
-                                t = w.cget("text")
-                                if t and isinstance(t, str) and t.strip():
-                                    parts.append(t)
-                            except tk.TclError:
-                                pass
-                    walk(child)
-                content = "\n".join(parts).strip() or "(消息没有可复制文本)"
-                self.clipboard_clear()
-                self.clipboard_append(content)
-            except tk.TclError:
-                pass
-
-        def _retry():
-            app = getattr(self, "_app", None)
-            if app is not None and callable(getattr(app, "_retry_last_agent", None)):
-                try:
-                    app._retry_last_agent(self)
-                except Exception:
-                    pass
-
-        def _vote(value: str):
-            app = getattr(self, "_app", None)
-            if app is not None and callable(getattr(app, "_set_status", None)):
-                try:
-                    app._set_status(f"反馈：{value}（UI only，未落库）", "info")
-                except Exception:
-                    pass
-
-        actions = [
-            ("⧉", tr("复制"), _copy),
-            ("⟳", tr("编辑后重试"), _retry),
-            ("👍", "赞", lambda: _vote("赞")),
-            ("👎", "踩", lambda: _vote("踩")),
-        ]
-        for glyph, tip, cmd in actions:
-            btn = IconCanvas(host, glyph, size=20, bg=self._base, fg=C["subtext"], command=cmd)
-            btn.pack(side=tk.LEFT, padx=1)
-            btn.bind("<Enter>", lambda _e, b=btn: b.configure(fg=C["text"]))
-            btn.bind("<Leave>", lambda _e, b=btn: b.configure(fg=C["muted"]))
-            attach_tooltip(btn, tip)
-        self._action_row = host
+    def _ensure_action_row(self, *, retry=True):
+        edit = getattr(self._app, "_retry_last_agent", None)
+        actions = []
+        if self._text_source.strip():
+            actions.append(("⧉", tr("复制"), self._copy_reply))
+        if retry and getattr(self, "_retry_prompt", None) and callable(edit):
+            actions.append(("⟳", tr("编辑后重试"), lambda: edit(self)))
+        if self._action_row is not None:
+            self._action_row.destroy()
+            self._action_row = None
+        if not actions:
+            return None
+        host = self._action_row = tk.Frame(self, bg=self._base)
+        host.pack(fill=tk.X, anchor="w", padx=(ui_px(self, 36), 0), pady=(ui_px(self, 4), 0))
+        for icon, label, command in actions:
+            theme.pill_button(host, label, command, kind="quiet", icon=icon).pack(side=tk.LEFT)
+        flow_controls(host)
         return host
+
+    def _copy_reply(self):
+        from forge.secrets import redact
+        self.clipboard_clear()
+        self.clipboard_append(redact(self._text_source))
+        if callable(getattr(self._app, "_set_status", None)):
+            self._app._set_status(tr("已复制"), "ok")
 
     def add_note(self, text: str, *, tone="muted"):
         # add_note 不属于正文/trace，更接近「提示」：降权 + 小字 + 紧贴 trace 之后
@@ -1740,7 +1710,7 @@ class NoticeMessage(tk.Frame):
 
     def __init__(self, parent, text, *, bg=None, tone="error", title=None, actions=()):
         from forge.secrets import redact
-        text = str(redact(str(text)))
+        self._notice_source = text = str(redact(str(text)))
         base = bg or C["chat"]
         super().__init__(parent, bg=base)
         tones = {"error": (C["error"], C["error_soft"]),
@@ -1775,9 +1745,18 @@ class NoticeMessage(tk.Frame):
         # 详情正文只在展开时 pack。
         self.details = InlineText(self._details_well, bg=well_fill, font=FONT_MONO_SM)
         self.details.set_text(text)
-        self.details_button = theme.pill_button(card.content, tr('查看详情'), self.toggle_details,
+        btn_row = tk.Frame(card.content, bg=soft)
+        btn_row.pack(anchor='w', pady=(6, 0))
+        self.details_button = theme.pill_button(btn_row, tr('查看详情'), self.toggle_details,
                                                 kind='quiet', bg=soft)
-        self.details_button.pack(anchor='w', pady=(6, 0))
+        self.details_button.pack(side=tk.LEFT)
+        # 一键复制报错原文（含未截断的完整错误信息）
+        self._copy_error_btn = theme.pill_button(
+            btn_row, tr('复制原文'),
+            lambda: copy_to_clipboard(self._copy_error_btn,
+                                      lambda: self._notice_source),
+            kind='quiet', bg=soft, icon='⧉')
+        self._copy_error_btn.pack(side=tk.LEFT, padx=(8, 0))
         if actions:
             self.actions = ActionRow(card.content, actions, bg=soft)
             self.actions.pack(fill=tk.X, pady=(6, 0))
@@ -1827,7 +1806,7 @@ class MessageArea(tk.Frame):
         # 每次都触发再布局→再 _on_scroll 的级联，长对话下 UI 直接卡死
         # （点击排队延迟，第二次点击被解析成双击/三击→「输入一行变蓝」）。
         # 只在显隐状态真正变化时碰布局。
-        at_bottom = self.scroll.at_bottom()
+        at_bottom = self._count == 0 or self.scroll.at_bottom()
         shown = bool(self.jump_latest.winfo_manager())
         if at_bottom and shown:
             self.jump_latest.place_forget()
@@ -1922,7 +1901,7 @@ class MessageArea(tk.Frame):
                                 cursor="hand2")
                 hint.pack(fill=tk.X, pady=(ui_px(self, 4), 0))
                 bind_keyboard_action(row, callback)
-                action_rows.append((card, label, hint))
+                action_rows.append((card, label, hint, head))
                 parts = (row, head, icon, label, hint)
 
                 def paint(hover, card=card, parts=parts, arrow=arrow):
@@ -1943,30 +1922,43 @@ class MessageArea(tk.Frame):
                     choices.grid_columnconfigure(col, weight=1 if col < columns else 0,
                                                  uniform="actions" if col < columns else "")
                 width = max(120, event.width // columns - ui_px(self, 48))
-                for index, (row, label, hint) in enumerate(action_rows):
+                for index, (row, label, hint, head) in enumerate(action_rows):
                     row.grid(row=index // columns, column=index % columns,
-                             sticky="nsew", padx=ui_px(self, 6), pady=ui_px(self, 6))
+                             sticky="nsew", padx=ui_px(self, 6), pady=ui_px(self, 4 if columns == 1 else 6))
+                    # 单列（侧栏 / 窄窗）时收起装饰图标行，卡片只留标题与说明，
+                    # 保证所有动作都在输入框上方可见（合并 main 的紧凑排布要求）。
+                    if columns == 1 and head.winfo_manager():
+                        head.pack_forget()
+                    elif columns > 1 and not head.winfo_manager():
+                        head.pack(fill=tk.X, pady=(0, ui_px(self, 12)), before=label)
                     label.configure(wraplength=width)
                     hint.configure(wraplength=width)
 
             choices.bind("<Configure>", fit_choices)
             # Pack/grid needs an initial size before the first Configure event.
-            for index, (row, label, hint) in enumerate(action_rows):
+            for index, (row, label, hint, head) in enumerate(action_rows):
                 row.grid(row=index, column=0, sticky="ew", pady=4)
 
         self._suggest_row = tk.Frame(box, bg=self._bg)
         self._suggest_row.pack(pady=(ui_px(self, 18), 0))
         self._fill_suggestions()
 
-        def fit_banner(event):
+        def fit_banner(_event=None):
             if banner is None:
                 return
-            if event.height < 450 or event.width < 520:
+            viewport = self.scroll.canvas
+            compact = viewport.winfo_height() < ui_px(self, 450) or viewport.winfo_width() < ui_px(self, 680)
+            box.pack_configure(pady=(ui_px(self, 14 if compact else 56), 12))
+            title_label.configure(font=FONT_TITLE if compact else (FONT_TITLE[0], 17, "bold"))
+            if compact:
                 banner.pack_forget()
             elif not banner.winfo_manager():
                 banner.pack(pady=(0, ui_px(self, 2)), before=eyebrow)
 
         binding = self.scroll.canvas.bind("<Configure>", fit_banner, add="+")
+        # A new conversation can replace an existing view without resizing its
+        # canvas, so apply the current dimensions as well as future changes.
+        fit_banner()
         # The callback belongs to this empty state, not to later conversation views.
         def forget_banner(event):
             if event.widget is box:
@@ -2078,12 +2070,13 @@ class MessageArea(tk.Frame):
         if following:
             self.scroll.scroll_to_end()
 
-    def add_user(self, text, *, ts=None):
+    def add_user(self, text, *, ts=None, attachment_names=(), view_attachments=None):
         from forge.secrets import redact
         text = redact(text)
         following = self.scroll.at_bottom()
         self._prepare()
-        msg = UserMessage(self.scroll.inner, text, bg=self._bg, ts=ts)
+        msg = UserMessage(self.scroll.inner, text, bg=self._bg, ts=ts,
+                          attachment_names=attachment_names, view_attachments=view_attachments)
         msg.pack(fill=tk.X, pady=(10, 0))
         self._finish(following)
         return msg
@@ -2380,18 +2373,14 @@ def _composer_tool(parent, text, icon, command, tooltip):
                        tooltip=tooltip)
     # 显式图标：IconButton.configure(text=…) 会保留它（i18n / 紧凑切换不丢图标）。
     btn._explicit_icon = btn._icon_name = icon_key(icon)
-    btn._icon_size = 16
+    btn._icon_size = ui_px(parent, 16)
     # Tk 的图片按钮忽略 pady；纯图标按钮带一个细空格，占出与带字按钮相同的行高。
     btn.configure(text=text or "\u2009", padx=ui_px(parent, 6 if text else 3))
     return btn
 
 
-def _composer_divider(parent):
-    return tk.Frame(parent, bg=C["border_hi"], width=1, height=ui_px(parent, 16))
-
-
 class InputCard(tk.Frame):
-    """底部 Composer：输入是主体，低频控制统一收进水平工具栏。"""
+    """One control surface with a responsive command rail below the editor."""
 
     def __init__(self, parent, *, bg=None, placeholder="输入消息，或输入 / 使用命令...",
                  on_send=None, on_stop=None, on_paste=None, on_model=None,
@@ -2419,7 +2408,6 @@ class InputCard(tk.Frame):
         self._card = card
         inner = card.content
 
-        # ─── 顶行：＋ 加号 + 次级小按钮（左） + 主输入区（中） ─────────────
         top_row = tk.Frame(inner, bg=C["input_bg"])
         top_row.pack(fill=tk.X)
 
@@ -2437,11 +2425,7 @@ class InputCard(tk.Frame):
                               highlightthickness=0)
         self.entry.pack(fill=tk.X, ipady=3)
 
-        # IME 候选框锚定（Windows）：输入卡走 Canvas + create_window 的虚拟布局，
-        # 系统 Caret 位置没自动跟上，导致候选框卡在窗口中段。
-        # 主动捕获 focus/click/keypress：把 caret 的屏幕坐标 + 字高喂给 ImmSetCompositionWindow，
-        # 让 Windows 立刻把候选框重新摆到 caret 旁（与 WebView 的 caret bounding rect
-        # 锚定是同一原理）。DPI awareness 同时升到 Per-Monitor V2，让候选框走 DPI 缩放路径。
+        # Keep the native caret and IME aligned after moves/maximize/relayout.
         self._ime_anchor = _IMECaretAnchor(self.entry)
         # IME 行内组合（inline composition）：preedit 直接画进输入框光标处，
         # 抑制系统默认的组合浮层；候选词窗口仍由系统 IME 显示。
@@ -2469,71 +2453,67 @@ class InputCard(tk.Frame):
         self.entry.bind("<Shift-Return>", lambda _e: None)
         self._syncing = False
         self.entry.bind("<<Modified>>", self._text_changed, add="+")
-        self.entry.bind("<Configure>", lambda _e: self._resize_entry())
+        self.entry.bind("<Configure>", lambda _e: self._resize_entry(), add="+")
         self.send_var.trace_add("write", self._sync_from_var)
         self.entry.bind("<FocusIn>", lambda _e: self._set_focus(True), add="+")
         self.entry.bind("<FocusOut>", lambda _e: self._set_focus(False), add="+")
 
-        # Second layer: attachments, context and commands.
-        bar = tk.Frame(inner, bg=C["input_bg"])
-        bar.pack(fill=tk.X, pady=(10, 0))
+        # Editing options expand before the rail, so send/stop stay anchored.
+        self._options_controls = tk.Frame(inner, bg=C["input_bg"])
+        state_row = tk.Frame(inner, bg=C["input_bg"])
+        state_row.pack(fill=tk.X, pady=(ui_px(self, 8), 0))
+        self._toolbar = state_row
+        state_row.grid_columnconfigure(1, weight=1)
+        bar = tk.Frame(state_row, bg=C["input_bg"])
         self._tools_row = bar
-        self._low_controls = None
+        bar.grid(row=0, column=0, sticky="w", padx=(0, ui_px(self, 10)))
 
-        attachments = tk.Frame(bar, bg=C["input_bg"])
-        attachments.pack(side=tk.LEFT)
-        self._low_controls = attachments
-        self.plus = circle_button(attachments, "＋", plus_cb, size=ui_px(self, 28),
+        self.plus = circle_button(bar, "paperclip", plus_cb, size=ui_px(self, 30),
                                   kind="muted", bg=C["input_bg"], glyph_size=11,
                                   tooltip=tr("添加附件"))
-        self.plus.pack(side=tk.LEFT, padx=(0, 5))
+        self._rail_tools = [self.plus]
 
-        # 低频操作收进水平工具栏，让输入框成为清晰的视觉主体。
         if attach_button:
-            low = attachments
-            self._low_controls = low
-            # 设计稿：工具栏统一「图标 + 文字」安静按钮，同一种灰，悬停才浮起。
             for text, icon, tip, callback in (
-                    (tr("上下文"), "copy", "查看历史与附件，检查本轮实际发送内容", on_context),
+                    (tr("上下文"), "context", "查看历史与附件，检查本轮实际发送内容", on_context),
                     (tr("命令"), "terminal", "工具与命令（也可在输入框里输入 /）", on_commands)):
-                pill = _composer_tool(low, text, icon, callback or (lambda: None), tip)
-                pill.pack(side=tk.LEFT, padx=(0, 2))
-            _composer_divider(low).pack(side=tk.LEFT, padx=ui_px(self, 6))
+                if callback is not None:
+                    self._rail_tools.append(_composer_tool(bar, text, icon, callback, tr(tip)))
 
-        # ── Agent 集群/分工三态开关（关 / AI 决断 / 开）──
-        self.team_pill = TeamTogglePill(low if attach_button else bar,
-                                        mode=team_mode, on_change=on_team_change,
+        # Secondary settings live in one disclosure, leaving the everyday row
+        # for context, commands and the current project. Widgets stay mounted.
+        self._options_open = False
+        self._planning_active = False
+        self._team_callback = on_team_change
+        self.team_pill = TeamTogglePill(self._options_controls,
+                                        mode=team_mode, on_change=self._team_changed,
                                         bg=C["input_bg"])
         self.team_pill.pack(side=tk.LEFT, padx=(4, 0))
         self.project_btn = self.project_files_btn = self.team_settings_btn = None
         if on_project is not None:
             self.project_btn = _composer_tool(bar, tr("项目"), "folder_open", on_project,
                                               tr("选择项目工作区"))
-            self.project_btn.pack(side=tk.LEFT)
+            self._rail_tools.append(self.project_btn)
         if on_project_files is not None:
-            self.project_files_btn = _composer_tool(bar, "", "file", on_project_files,
+            self.project_files_btn = _composer_tool(self._options_controls, tr("项目文件"), "file", on_project_files,
                                                     tr("项目文件"))
             self.project_files_btn.pack(side=tk.LEFT)
         if on_team_settings is not None:
             # 设计稿：Agent 集群设置只留图标；开关状态在左侧「智能体」胶囊上。
-            self.team_settings_btn = _composer_tool(bar, "", "agents", on_team_settings,
+            self.team_settings_btn = _composer_tool(self._options_controls, tr("Agent 集群"), "agents", on_team_settings,
                                                     tr("Agent 集群"))
             self.team_settings_btn.pack(side=tk.LEFT)
 
-        # Third layer: real provider/model/mode. Sending has its own column,
-        # so metadata can wrap without overlapping or hiding the send button.
-        state_row = tk.Frame(inner, bg=C["input_bg"])
-        state_row.pack(fill=tk.X, pady=(8, 0))
-        self._toolbar = state_row
-        state_row.grid_columnconfigure(0, weight=1)
+        # Sending always has a dedicated right-hand column.
         metadata = self._metadata = tk.Frame(state_row, bg=C["input_bg"])
-        metadata.grid(row=0, column=0, sticky="ew", padx=(0, 8))
+        metadata.grid(row=0, column=1, sticky="ew", padx=(0, ui_px(self, 8)))
         self.provider_var = i18n.StringVar(self, value=tr("Provider：未配置"))
         self.provider_label = i18n.Label(metadata, textvariable=self.provider_var,
                                        font=FONT_CAPTION, bg=C["input_bg"], fg=C["faint"], anchor="w")
         self.provider_label.grid(row=0, column=0, sticky="w", padx=(0, 8))
         model_host = self._model_host = tk.Frame(metadata, bg=C["input_bg"])
-        model_host.grid(row=0, column=1, sticky="ew", padx=(0, 8))
+        # 模型胶囊按内容宽度，不拉满整行：这一行读起来是「模型 · 模式」，不是表单。
+        model_host.grid(row=0, column=1, sticky="w", padx=(0, 8))
         metadata.grid_columnconfigure(3, weight=1)
         self.mode_var = i18n.StringVar(self, value=tr("模式：标准"))
         # 思考强度入口：点模式按钮弹出 Codex 式分级滑杆卡。
@@ -2548,7 +2528,7 @@ class InputCard(tk.Frame):
         self.mode_pill.grid(row=0, column=2, sticky="w")
         self.planning_pill = None
         if on_planning is not None:
-            self.planning_pill = glyph_button(self._tools_row, planning_text, on_planning,
+            self.planning_pill = glyph_button(self._options_controls, planning_text, on_planning,
                 bg=C["input_bg"], fg=C["subtext"], size=9,
                 tooltip=tr("事前规划"))
             self.planning_pill.pack(side=tk.RIGHT,padx=(6,0))
@@ -2556,15 +2536,18 @@ class InputCard(tk.Frame):
             self.planning_pill.configure(highlightbackground=C["warn"],
                                          highlightcolor=C["warn"], fg=C["subtext"])
         right = tk.Frame(state_row, bg=C["input_bg"])
-        right.grid(row=0, column=1, sticky="ne")
+        right.grid(row=0, column=2, sticky="e")
         self._primary_controls = right
         self._toolbar_compact = None
         state_row.bind("<Configure>", self._fit_toolbar)
         self.model_var = model_var or tk.StringVar(value="default")
+        self._show_provider = model_widget is None
         if model_widget is not None:
             self.model_pill = None
             self.model_widget = model_widget(model_host)
             self.model_widget.pack_configure(padx=0)
+            # 选择器自带厂商标志，再写一遍「Provider：…」只是重复；值仍随 set_metadata 更新。
+            self.provider_label.grid_remove()
         else:
             self.model_widget = None
             self.model_pill = rounded_label(model_host, f"▣ {self.model_var.get()}",
@@ -2585,14 +2568,16 @@ class InputCard(tk.Frame):
             self.settings_btn = glyph_button(bar, "⚙", on_settings, bg=C["input_bg"],
                                              fg=C["subtext"], size=11,
                                              hover=C["hover"], tooltip=tr("设置"))
-            self.settings_btn.pack(side=tk.RIGHT)
+            self._rail_tools.append(self.settings_btn)
         else:
             self.settings_btn = None
-        self._actions_compact = None
-        bar.bind("<Configure>", self._fit_actions, add="+")
-        # Keep every action reachable when the workspace or Windows DPI reduces
-        # the available width. The same widgets wrap; no state is recreated.
-        flow_controls(bar, gap=6)
+        self.options_btn = _composer_tool(bar, tr("选项"), "tools", self._toggle_options,
+                                          tr("智能体、规划与项目文件"))
+        self._rail_tools.append(self.options_btn)
+        for i, tool in enumerate(self._rail_tools):
+            tool.grid(row=0, column=i, padx=(0, ui_px(self, 2)))
+        bar.bind("<Configure>", self._fit_toolbar, add="+")
+        flow_controls(self._options_controls, gap=8)
 
         # 发送 / 停止（同一物理位置，set_busy 切换）
         self.send_circle = circle_button(right, "↑", self._fire_send, size=ui_px(self, 36),
@@ -2621,20 +2606,48 @@ class InputCard(tk.Frame):
 
         self._sync_hint()
         self._sync_send_state()
+        self._sync_options_hint()
+        locale = i18n.owner(self)
+        if locale:
+            locale.register(self)
         parent.bind("<Configure>", lambda _event: self._resize_entry(), add="+")
         self.bind("<Configure>", lambda _event: self._resize_entry(), add="+")
 
     # -- 交互 --
-    def _fit_actions(self, event):
-        # Compact controls keep their tooltips and callbacks. Use logical width
-        # at the current DPI, so large fonts do not force an unnecessary row.
-        compact = event.width < ui_px(self, 500)
-        if compact == self._actions_compact:
+    def _team_changed(self, mode):
+        self._sync_options_hint()
+        if self._team_callback is not None:
+            self._team_callback(mode)
+
+    def _sync_options_hint(self):
+        button = getattr(self, "options_btn", None)
+        if button is None:
             return
-        self._actions_compact = compact
-        if self.project_btn is not None:
-            self.project_btn.configure(text="\u2009" if compact else tr("项目"),
-                                       padx=ui_px(self, 3 if compact else 6))
+        active = self._planning_active or self.team_pill.mode() != "off"
+        caption = tr("收起选项") if self._options_open else tr("选项 · 已启用") if active else tr("选项")
+        button.configure(text=caption, fg=C["accent_text"] if active or self._options_open else C["subtext"])
+        self._fit_toolbar()
+
+    def _l10n_refresh(self):
+        self._fit_toolbar()
+
+    def _toggle_options(self):
+        self.set_options_expanded(not self._options_open)
+
+    def set_options_expanded(self, expanded):
+        expanded = bool(expanded)
+        if expanded == self._options_open:
+            return
+        self._options_open = expanded
+        if expanded:
+            self._options_controls.pack(fill=tk.X, pady=(8, 0), before=self._toolbar)
+        else:
+            focused = self.focus_get()
+            if focused is not None and str(focused).startswith(str(self._options_controls)):
+                self.options_btn.focus_set()
+            self._options_controls.pack_forget()
+        self._sync_options_hint()
+        self._resize_entry()
 
     def _resize_entry(self):
         """按显示行增长，长输入保留内部滚动，不把时间线挤出屏幕。"""
@@ -2815,22 +2828,44 @@ class InputCard(tk.Frame):
             except tk.TclError:
                 pass
 
-    def _fit_toolbar(self, event):
-        """Reflow metadata using measured widths, preserving every control."""
+    def _fit_toolbar(self, _event=None):
+        """Reflow the same controls, leaving send/stop in the lower-right corner."""
         canvas_width = self._card._cv.winfo_width()
         if canvas_width <= 1:
             return
         content_width = max(1, canvas_width - self._card._padx * 2)
-        signature = (content_width, self.provider_var.get(), self.mode_var.get(),
-                     self.provider_label.winfo_reqwidth(), self.mode_pill.winfo_reqwidth(),
-                     self._primary_controls.winfo_reqwidth())
+        gap = ui_px(self, 2)
+        tool_widths = [tool.winfo_reqwidth() + gap for tool in self._rail_tools]
+        provider_width = self.provider_label.winfo_reqwidth() + ui_px(self, 8) if self._show_provider else 0
+        fixed = provider_width + self.mode_pill.winfo_reqwidth() + ui_px(self, 16)
+        send_width = max(self.send_circle.winfo_reqwidth(), self.stop_circle.winfo_reqwidth())
+        signature = (content_width, tuple(tool_widths), fixed, send_width)
         if signature == getattr(self, "_toolbar_signature", None):
             return
         self._toolbar_signature = signature
-        available = max(1, content_width - self._primary_controls.winfo_reqwidth() - 8)
-        fixed = self.provider_label.winfo_reqwidth() + self.mode_pill.winfo_reqwidth() + 16
-        # 模型选择器至少留 140（96-DPI 单位）再折行：它会按预算省略显示；
-        # 雅黑的拉丁字形比 Segoe UI 略宽，150 会让最窄窗口的工具栏多折一行。
+        tools_width = sum(tool_widths)
+        rail_margin = ui_px(self, 10)
+        metadata_margin = ui_px(self, 8)
+        available = max(1, content_width - send_width - metadata_margin)
+        wrapped = available < tools_width + rail_margin + fixed + ui_px(self, 156)
+        bar = self._tools_row
+        if wrapped:
+            bar.grid_configure(row=0, column=0, columnspan=3, sticky="w", padx=0, pady=(0, ui_px(self, 4)))
+            self._metadata.grid_configure(row=1, column=0, columnspan=2)
+            self._primary_controls.grid_configure(row=1)
+        else:
+            bar.grid_configure(row=0, column=0, columnspan=1, sticky="w", padx=(0, rail_margin), pady=0)
+            self._metadata.grid_configure(row=0, column=1, columnspan=1)
+            self._primary_controls.grid_configure(row=0)
+            available -= tools_width + rail_margin
+        row, column, used = 0, 0, 0
+        for tool, width in zip(self._rail_tools, tool_widths):
+            if used and used + width > content_width:
+                row, column, used = row + 1, 0, 0
+            tool.grid_configure(row=row, column=column, sticky="w")
+            column += 1
+            used += width
+
         compact = available < fixed + ui_px(self, 140)
         if compact != self._toolbar_compact:
             self._toolbar_compact = compact
@@ -2840,27 +2875,32 @@ class InputCard(tk.Frame):
             self._metadata.grid_columnconfigure(0, weight=1 if compact else 0)
             if compact:
                 self._model_host.grid(row=0, column=0, columnspan=3, sticky="ew", padx=0, pady=(0, 4))
-                self.provider_label.grid(row=1, column=0, columnspan=2, sticky="w")
-                self.mode_pill.grid(row=1, column=2, columnspan=2, sticky="e")
+                if self._show_provider:
+                    self.provider_label.grid(row=1, column=0, columnspan=2, sticky="w")
+                self.mode_pill.grid(row=1, column=2, columnspan=2, sticky="w")
             else:
-                self.provider_label.grid(row=0, column=0, columnspan=1, sticky="w")
-                self._model_host.grid(row=0, column=1, columnspan=1, sticky="ew", padx=(0, 8), pady=0)
+                if self._show_provider:
+                    self.provider_label.grid(row=0, column=0, columnspan=1, sticky="w")
+                self._model_host.grid(row=0, column=1, columnspan=1, sticky="w", padx=(0, 8), pady=0)
                 self.mode_pill.grid(row=0, column=2, sticky="w")
-        budget = available if compact else min(max(1, available - fixed), ui_px(self, 380))
+        # 宽屏下模型胶囊封顶 280：长模型名省略显示，不再把这一行撑成表单。
+        budget = available if compact else min(max(1, available - fixed), ui_px(self, 280))
         if self.model_widget is not None and hasattr(self.model_widget, "set_width_budget"):
             self.model_widget.set_width_budget(budget)
         elif self.model_pill is not None:
             self.model_pill.configure(width=budget)
 
     def set_planning_active(self, active: bool):
+        self._planning_active = bool(active)
         if self.planning_pill is not None:
             self.planning_pill.configure(fg=C["warn"] if active else C["subtext"])
+        self._sync_options_hint()
 
     def set_metadata(self, *, provider, mode):
         self.provider_var.set(tr("Provider：{provider}", provider=provider))
         self.mode_var.set(tr("模式：{mode}", mode=tr(mode)))
         self.mode_pill.configure(text=tr("模式：{mode}", mode=tr(mode)))
-        self._fit_toolbar(type("Size", (), {"width": self._toolbar.winfo_width()})())
+        self._fit_toolbar()
 
     def _enter(self, event):
         if event.state & 1:                # Shift

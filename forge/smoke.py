@@ -28,6 +28,7 @@ from typing import Any
 from .model import HttpTransport, ModelRouter, Provider, Usage
 from .policy import Mode, Policy, Sandbox
 from .session import Session
+from .secrets import redact
 from .tools import build_builtin_registry
 from .loop import Agent, LoopLimits
 
@@ -68,7 +69,7 @@ class SmokeOutcome:
 
     @property
     def ok(self) -> bool:
-        return all(passed for _, passed, _ in self.checks)
+        return bool(self.checks) and all(passed for _, passed, _ in self.checks)
 
     def to_raw(self) -> dict[str, Any]:
         return {"ok": self.ok,
@@ -93,7 +94,7 @@ def build_router(token: str = "", base: str = "",
                         (model,), model, model)
     # one retry per provider: smoke runs unattended every 30 minutes and a
     # transient TLS reset must not be reported as a framework failure
-    return ModelRouter([provider], transport=transport or HttpTransport(timeout=120),
+    return ModelRouter([provider], transport=transport if transport is not None else HttpTransport(timeout=120),
                        chain=[("smoke", model)], retries_per_provider=1)
 
 
@@ -129,6 +130,10 @@ class ScriptedSmokeModel:
 def run_smoke(home: Path, *, dry_run: bool = False, token: str = "",
               base: str = "", model: str = "deepseek-flash",
               max_steps: int = 8, transport=None) -> SmokeOutcome:
+    if dry_run and transport is not None:
+        raise ValueError("Dry-run uses the built-in scripted model; omit transport")
+    # This describes the execution path, not proof of a vendor or paid invoice.
+    evidence_mode = "scripted" if dry_run else ("injected" if transport is not None else "http")
     root = home / "smoke" / f"run-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
     seed_workspace(root)
     session_path = home / "smoke" / "sessions" / f"{root.name}.jsonl"
@@ -152,6 +157,9 @@ def run_smoke(home: Path, *, dry_run: bool = False, token: str = "",
 
     out = SmokeOutcome()
     out.detail = {"workspace": str(root), "seconds": round(time.time() - started, 1),
+                  "evidence_mode": evidence_mode, "model": model,
+                  "run_id": report.run_id, "session_path": str(session_path),
+                  "result_path": str(root / "result.json"),
                   "steps": [{"tool": s.tool, "decision": s.decision} for s in report.steps],
                   "usage": report.usage, "dry_run": dry_run,
                   # a failing smoke must say *why*: a bare "stopped=error" is
@@ -169,7 +177,8 @@ def run_smoke(home: Path, *, dry_run: bool = False, token: str = "",
     shape_ok = bool(body) and len(body) >= 30 and summary_is_in_shape(body)
     out.checks.append(("S2-output-on-disk", shape_ok, f"chars={len(body)}"))
     # S3 real native tool calls happened (read AND write)
-    tools_used = {s.tool for s in report.steps}
+    tools_used = {s.tool for s in report.steps
+                  if s.decision == "ok" and s.meta.get("native_call") is True}
     out.checks.append(("S3-native-tools", {"read_file", "write_file"} <= tools_used,
                        str(sorted(tools_used))))
     # S4 the session log was written and replays
@@ -190,6 +199,9 @@ def run_smoke(home: Path, *, dry_run: bool = False, token: str = "",
     out.checks.append(("S5-no-sandbox-escape", notes_untouched and inside and not strays,
                        f"inputs_changed={not notes_untouched} strays={strays}"))
 
+    (root / "result.json").write_text(
+        json.dumps(redact(out.to_raw()), ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8")
     return out
 
 

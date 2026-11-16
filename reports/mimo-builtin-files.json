@@ -1,0 +1,78 @@
+{
+  "backup": "C:\\Users\\匡溯昀\\forge-mimo-builtin-backup-20261107-100217",
+  "normalization": "UTF-8 text with LF for diff/hash",
+  "files": [
+    {
+      "path": "docs/MIMO-BUILTIN-RESULT-VIEWS.md",
+      "new": true,
+      "before_sha256": null,
+      "after_sha256": "57c817dd89f01c765875b6d421d648db116ee65b80aa1c82230951eb33d7e1d5"
+    },
+    {
+      "path": "forge-budgets.json",
+      "new": false,
+      "before_sha256": "0ab1bbe50bc7f9d4425b9b9bb1df8451b8a5432ecaf7c8892617731a50c7f152",
+      "after_sha256": "9f4f8143c411a63518dc3f197028b99129912d5fc447740b082b96f8d4394142"
+    },
+    {
+      "path": "forge/artifact_tools.py",
+      "new": false,
+      "before_sha256": "6b3d422612f1492a8ca6acd83c7d6e600e85fb6350fc55d0810b621a1b00bee3",
+      "after_sha256": "0bb0c81d32b9687486aa951002ae79b2924ad11395991b618c9f94ecdf227945"
+    },
+    {
+      "path": "forge/artifacts.py",
+      "new": false,
+      "before_sha256": "a2a190bf6fdf5dcb9f0a995a1454c53fecbdb920335db1ae0013a5c4d3c087e1",
+      "after_sha256": "a741481fe5e1e0c3eb34caa155665f29cf99834920db70fda9f49437b898fc8e"
+    },
+    {
+      "path": "forge/builtin_views.py",
+      "new": true,
+      "before_sha256": null,
+      "after_sha256": "4e1fb2b42ca1f183b92cd6bc7d2c9072a080944e8ca4d65b4009f98866154dc4"
+    },
+    {
+      "path": "forge/compaction.py",
+      "new": false,
+      "before_sha256": "2e9c602e107a7d3b7fe72f27937cb498d0379177441a2d968645e0467cdbb49a",
+      "after_sha256": "a54a0c2e51e8dd63212703b1625c143a1740700ff0c31017498b90aef49f689d"
+    },
+    {
+      "path": "forge/loop.py",
+      "new": false,
+      "before_sha256": "05535d38cbb235eaf0d3caa2d7f1849f5a5dd30b8e4033ea258e88eebe3b4f58",
+      "after_sha256": "77dabfbb73b31f227a1b18cb294b35a622b5a367aa753b6ced0084323fa935b2"
+    },
+    {
+      "path": "forge/result_view.py",
+      "new": false,
+      "before_sha256": "2d38fc14e7b7696afb6f5a39133ca54decd369fbeb07f063cd2cea7753dc6a95",
+      "after_sha256": "9a59f76f400ed8eb1ed646f241b8f0523fed77ff7eb529f80826cd8a633c1643"
+    },
+    {
+      "path": "forge/test_builtin_views.py",
+      "new": true,
+      "before_sha256": null,
+      "after_sha256": "016464a994a17c2c6f4327156edbb4bead8a3514b89b996f8e5a70b2ddb32b66"
+    },
+    {
+      "path": "forge/tools.py",
+      "new": false,
+      "before_sha256": "6c8d736f3519fd6e9e5097fb5ade1e68374f55bd573a1e56f10c21fa78a51daf",
+      "after_sha256": "38f49b6d755fe0ec65ff0bb911e583af6cda9264ca3d833a84dd48b95f6c2f82"
+    },
+    {
+      "path": "scripts/verify_mimo_builtin_views.py",
+      "new": true,
+      "before_sha256": null,
+      "after_sha256": "5e4f12de5390fd165caf19fd9f04c1c01984903b5a4a3859637151f0c99263a1"
+    },
+    {
+      "path": "tests/test_artifact_gateway.py",
+      "new": false,
+      "before_sha256": "6fba392dc150d4b63a9b2e74c0c0f4b8a5ce1a0f412396392fc653a0efb5c55c",
+      "after_sha256": "fcf074f2e9bd9ae50133989a75e341e0887035bd0fbdf5445d2b608e043c0601"
+    }
+  ]
+}

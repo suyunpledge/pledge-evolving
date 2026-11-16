@@ -64,8 +64,8 @@ class ExecutionReviewTests(unittest.TestCase):
         self.assertNotIn("thinking_budget", payload)
 
     def test_explicit_effort_is_preserved_without_conflicting_budget(self):
-        p = model.Provider("qwen", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-        payload = {"model": "qwen3.8-flash", "messages": [], "reasoning_effort": "low"}
+        p = model.Provider("minimax", "https://api.minimaxi.com/v1")
+        payload = {"model": "minimax-m3", "messages": [], "reasoning_effort": "low"}
         shaped, plan = model._plan_and_shape(payload, [], p, payload["model"], think_budget=1024)
         self.assertNotIn("thinking_budget", shaped)
         self.assertEqual(shaped["reasoning_effort"], "low")

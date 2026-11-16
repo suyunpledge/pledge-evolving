@@ -327,8 +327,10 @@ def test_context() -> None:
     d3 = compact.decide([{"role": "user", "content": "short"}], PROFILES["gemini"])
     check("compact: short context passes", d3.action == "pass")
 
-    check("compact: no cliff -> base budget unchanged",
-          compact.adjust_budget(24_000, PROFILES["deepseek"]) == 24_000)
+    # 2026-11-04 第三轮：slope 大窗口厂商按画像地板抬默认预算（deepseek 96000，
+    # e2e 实证 24k 压缩=前缀打回全价；cliff 厂商仍不抬——见上一条 gemini 断言）
+    check("compact: no cliff -> vendor floor applies",
+          compact.adjust_budget(24_000, PROFILES["deepseek"]) == 96_000)
 
     ask = ContextPlan(mode="ask", default_mode="compact")
     d4 = ask.decide(deep, PROFILES["gemini"], interactive=False)

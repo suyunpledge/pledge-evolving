@@ -9,6 +9,7 @@ import tempfile
 import threading
 
 from forge.phase_models import model_pair
+from forge.planning import planning_level
 from forge.secrets import redact
 
 
@@ -37,7 +38,7 @@ class ModeState:
         self._lock = threading.RLock()
         self._listeners = []
         self._data = {'version': 1, 'mode': 'general', 'project': '', 'recent': [],
-                      'roles': {}, 'agent_models': {}, 'tabs': [], 'session': '',
+                      'roles': {}, 'agent_models': {}, 'tabs': [], 'session': '', 'planning': 'none',
                       'layout': {'visible': True, 'preset': 'agent', 'fractions': [.2, .6],
                                  'output': .72, 'focus': 'editor'}}
         if self.path.exists():
@@ -45,6 +46,7 @@ class ModeState:
             if not isinstance(raw, dict) or raw.get('version') != 1:
                 raise ValueError('Unsupported Development Mode state; preserve the file for repair')
             WorkMode(raw.get('mode', 'general'))
+            planning_level(raw.get('planning', 'none'))
             self._validate_layout(raw.get('layout', self._data['layout']))
             for role, pair in raw.get('roles', {}).items():
                 self._validate_role(role, pair)
@@ -131,6 +133,17 @@ class ModeState:
             self._data['roles'][role] = list(pair) if pair else None
             self._save()
 
+    def configure_planning(self, level):
+        level = planning_level(level)
+        with self._lock:
+            previous = self._data['planning']
+            self._data['planning'] = level
+            try:
+                self._save()
+            except Exception:
+                self._data['planning'] = previous
+                raise
+
     def _validate_agent(self, name, pair):
         if not isinstance(name, str) or not name.strip() or len(name) > 128 or redact(name) != name:
             raise ValueError('Invalid concrete Agent name')
@@ -162,7 +175,7 @@ class ModeState:
 
     def task_snapshot(self, *, explicit_model=None, agent_model=None, global_model=None,
                       model=None, role='default', permission='read-only'):
-        if role not in self.ROLES or permission not in {'read-only', 'workspace-write'}:
+        if role not in self.ROLES or permission not in {'read-only', 'workspace-write', 'desktop-sandbox', 'manual-approval', 'full-access'}:
             raise ValueError('Invalid task role or permission')
         with self._lock:
             selected = explicit_model or model or agent_model

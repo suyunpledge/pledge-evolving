@@ -13,12 +13,17 @@ param(
     [string]$PythonExe = "",
     [switch]$SkipIcon,
     [switch]$SkipBrandMarks,
-    [switch]$Clean
+    [switch]$Clean,
+    [switch]$Legacy
 )
 
 $ErrorActionPreference = "Stop"
 $DesktopDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $GuiDir = Split-Path -Parent $DesktopDir
+if (-not $Legacy) {
+    & (Join-Path $DesktopDir 'build-source-launcher.ps1') -PythonExe $PythonExe
+    return
+}
 
 function Find-BuildPython {
     param([string]$Explicit)

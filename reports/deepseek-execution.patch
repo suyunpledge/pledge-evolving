@@ -1,0 +1,533 @@
+diff --git a/forge/adapters.py b/forge/adapters.py
+--- a/forge/adapters.py
++++ b/forge/adapters.py
+@@ -425,6 +425,33 @@
+     how much thinking is spent — both of which are outside the payload."""
+ 
+     vendor_id = "deepseek"
++
++    def shape_request(self, payload: dict[str, Any], *, wire: str = 'openai') -> tuple[dict[str, Any], list[str]]:
++        # Verified Chat Completions models only; unknown models/wires pass through.
++        if wire != 'openai' or self.profile.canonical_model_id not in {'deepseek-flash', 'deepseek-v4-pro'}:
++            return payload, []
++        out, actions = dict(payload), []
++        out.setdefault('thinking', {'type': 'enabled'})
++        thinking = out.get('thinking')
++        disabled = isinstance(thinking, dict) and thinking.get('type') == 'disabled'
++        if not disabled:
++            out.setdefault('reasoning_effort', 'high')
++            ignored = ['temperature', 'presence_penalty', 'frequency_penalty']
++            if self.profile.canonical_model_id == 'deepseek-v4-pro':
++                ignored.append('top_p')
++        else:
++            ignored = ['reasoning_effort']
++            if self.profile.canonical_model_id == 'deepseek-flash':
++                ignored.append('top_p')
++        removed = [key for key in ignored if key in out]
++        for key in removed:
++            out.pop(key)
++        if removed:
++            actions.append('DeepSeek 已摘除当前模式忽略的参数: ' + '/'.join(removed))
++        # Preserve caller constraints (none/required/forced functions) exactly.
++        if out.get('tools'):
++            out.setdefault('tool_choice', 'auto')
++        return out, actions
+ 
+     def extra_actions(self, ctx: PlanContext, plan: RequestPlan, prefix_tokens: int) -> None:
+         if ctx.profile.peak_valley:
+diff --git a/forge/model.py b/forge/model.py
+--- a/forge/model.py
++++ b/forge/model.py
+@@ -355,8 +355,10 @@
+     sampling.strip_extra_params(payload, profile.canonical_model_id or model, provider.wire)
+     reasoning_default = None
+     if provider.reasoning_mode != 'auto':
+-        if profile.model_family_id != 'mimo.v2.6':
+-            raise ValueError('reasoningMode on/off is currently verified only for MiMo v2.6')
++        if not (profile.model_family_id == 'mimo.v2.6' or
++                (profile.id == 'deepseek' and provider.wire == 'openai' and
++                 profile.canonical_model_id in {'deepseek-flash', 'deepseek-v4-pro'})):
++            raise ValueError('reasoningMode on/off is verified only for MiMo v2.6 and DeepSeek Flash/V4 Pro Chat Completions')
+         explicit = any(key in payload for key in ('thinking', 'enable_thinking', 'reasoning_effort', 'thinking_budget'))
+         if not explicit:
+             payload['thinking'] = {'type': 'enabled' if provider.reasoning_mode == 'on' else 'disabled'}
+diff --git a/forge/planning.py b/forge/planning.py
+--- a/forge/planning.py
++++ b/forge/planning.py
+@@ -9,7 +9,10 @@
+ import re
+ 
+ PLANNING_LEVELS = ('none', 'low', 'medium', 'high')
+-_CAPS = {'none': 0, 'low': 640, 'medium': 1400, 'high': 2400}
++# Total output includes provider reasoning. Keep room for the final JSON;
++# its desired size is constrained separately in planning_prompt.
++_CAPS = {'none': 0, 'low': 2048, 'medium': 4096, 'high': 6144}
++_VISIBLE_TOKENS = {'low': 256, 'medium': 640, 'high': 1200}
+ _ITEMS = {'low': 4, 'medium': 8, 'high': 12}
+ _FIELDS = ('tasks', 'requirements', 'acceptance', 'design', 'risks')
+ 
+@@ -53,8 +56,9 @@
+     return (
+         'Produce a concise actionable pre-execution task plan, not private reasoning. '
+         'Return exactly one JSON object, with arrays of nonempty strings for: '
+-        + ', '.join(required) + '. Only these fields are permitted: ' + ', '.join(_FIELDS)
+-        + f'. Maximum {_ITEMS.get(level, 4)} entries per array, 400 characters per entry. '
++        + ', '.join(required) + '. Include only these required fields. '
++        + f'Target at most {_VISIBLE_TOKENS.get(level, 256)} tokens of final JSON. '
++        + f'Maximum {_ITEMS.get(level, 4)} entries per array, 400 characters per entry. '
+         'Use the task language. Begin with inspection when repository facts are unknown. '
+         'Do not invent file contents, completed tests or existing functionality. '
+         'Distinguish proposed verification from observed results. '
+diff --git a/forge/loop.py b/forge/loop.py
+--- a/forge/loop.py
++++ b/forge/loop.py
+@@ -1408,6 +1408,8 @@
+                 usage_total.setdefault("requests", []).extend(getattr(plan_completion, "requests", []))
+                 if getattr(plan_completion, "tool_calls", None):
+                     raise PlanningError("Planner attempted to call tools")
++                if getattr(plan_completion, "finish_reason", None) in {'length', 'max_tokens'}:
++                    raise PlanningError("Planner exhausted its output budget; no execution started")
+                 self._plan = TaskPlan.parse(self.secret_scope.protect_text(plan_completion.text or ""),
+                                             self.planning_level)
+             except (PlanningError, TransportError) as exc:
+diff --git a/forge-gui/phase_client.py b/forge-gui/phase_client.py
+--- a/forge-gui/phase_client.py
++++ b/forge-gui/phase_client.py
+@@ -61,6 +61,8 @@
+             inputs = [{'role': 'system', 'content': contract},
+                       *[m.to_dict(self.scope) for m in messages if m.role in {'user', 'assistant'}]]
+             result = self.router.complete(self.scope.protect(inputs), small=False, max_tokens=token_cap(level))
++            if result.finish_reason in {'length', 'max_tokens'}:
++                raise PlanningError('Planner exhausted its output budget; no execution started')
+             if result.tool_calls: raise PlanningError('Planner attempted a tool call')
+             return TaskPlan.parse(self.scope.protect_text(result.text), level), {
+                 'prompt_tokens': result.usage.prompt_tokens, 'completion_tokens': result.usage.completion_tokens,
+diff --git a/forge-gui/forge_client.py b/forge-gui/forge_client.py
+--- a/forge-gui/forge_client.py
++++ b/forge-gui/forge_client.py
+@@ -232,6 +232,8 @@
+         result = self.chat(inputs, model=model, max_tokens=token_cap(level), cancel_event=cancel_event)
+         raw = result.raw or {}
+         choices = raw.get('choices') or []
++        if choices and choices[0].get('finish_reason') in {'length', 'max_tokens'}:
++            raise PlanningError('Planner exhausted its output budget; no execution started')
+         if result.tool_calls or (choices and (choices[0].get('message') or {}).get('tool_calls')):
+             raise PlanningError('Planner attempted to call tools')
+         return TaskPlan.parse(self.secret_scope.protect_text(result.text), level), result.usage
+diff --git a/forge/test_mimo_adapter.py b/forge/test_mimo_adapter.py
+--- a/forge/test_mimo_adapter.py
++++ b/forge/test_mimo_adapter.py
+@@ -153,7 +153,7 @@
+                 model.Provider('fixture', BASE, reasoning_mode=value)
+         provider = model.Provider('fixture', 'https://api.deepseek.com', reasoning_mode='off')
+         with self.assertRaisesRegex(ValueError, 'verified only for MiMo'):
+-            model._plan_and_shape({'messages': []}, [], provider, 'deepseek-flash')
++            model._plan_and_shape({'messages': []}, [], provider, 'deepseek-unverified')
+ 
+     def test_bound_alias_honours_explicit_reasoning_default(self):
+         provider = model.Provider('fixture', 'https://gateway.invalid', default_model='opaque',
+diff --git a/forge-budgets.json b/forge-budgets.json
+--- a/forge-budgets.json
++++ b/forge-budgets.json
+@@ -3,7 +3,7 @@
+   "files": {
+     "forge/__init__.py": 38,
+     "forge/acceptance.py": 172,
+-    "forge/adapters.py": 754,
++    "forge/adapters.py": 781,
+     "forge/artifact_tools.py": 43,
+     "forge/artifacts.py": 187,
+     "forge/assembly.py": 127,
+@@ -74,12 +74,12 @@
+     "forge/guard.py": 177,
+     "forge/knowledge.py": 118,
+     "forge/local_service.py": 293,
+-    "forge/loop.py": 1831,
++    "forge/loop.py": 1833,
+     "forge/memory.py": 354,
+-    "forge/model.py": 935,
++    "forge/model.py": 937,
+     "forge/model_kinds.py": 152,
+     "forge/phase_models.py": 24,
+-    "forge/planning.py": 128,
++    "forge/planning.py": 132,
+     "forge/policy.py": 443,
+     "forge/pricing.py": 312,
+     "forge/probes.py": 249,
+diff --git a/scripts/verify_deepseek_execution.py b/scripts/verify_deepseek_execution.py
+--- /dev/null
++++ b/scripts/verify_deepseek_execution.py
+@@ -0,0 +1,173 @@
++"""Opt-in DeepSeek live checks using configured credentials and isolated files."""
++from __future__ import annotations
++
++import argparse
++import json
++from pathlib import Path
++import sys
++import tempfile
++
++ROOT = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(ROOT))
++
++from verify_mimo_live import Recorder, router_for, wire_probe
++from forge.model import Provider, HttpTransport, ModelRouter
++from forge.loop import Agent, LoopLimits
++from forge.compaction import ContextBudget
++from forge.policy import Policy, Mode, Sandbox
++from forge.tools import build_builtin_registry
++from forge.cache_metrics import cache_coverage
++
++
++class DeepSeekRecorder(Recorder):
++    def complete(self, provider, chosen, messages, **options):
++        # Observe production defaults; the MiMo wire probe's 1024-token cap
++        # must not override Agent/DeepSeek's actual execution output budget.
++        result = HttpTransport.complete(self, provider, chosen, messages, **options)
++        self.rows[-1]['usage'] = vars(result[1])
++        self.rows[-1]['adaptation'] = result[2].get('plan', {})
++        return result
++
++
++def provider_for(chosen, home):
++    rows = json.loads((home / 'forge.patch.json').read_text(encoding='utf-8-sig'))
++    secrets = json.loads((home / 'secrets.json').read_text(encoding='utf-8-sig'))
++    for row in rows:
++        config = row.get('config', {})
++        if (not row.get('disabled') and config.get('model') == chosen
++                and config.get('baseURL', '').rstrip('/') in
++                {'https://api.deepseek.com', 'https://api.deepseek.com/v1'}):
++            key = secrets.get(row.get('id'))
++            if not isinstance(key, str) or not key:
++                raise ValueError('Configured DeepSeek credential missing')
++            return Provider('deepseek-live', config['baseURL'], key, default_model=chosen,
++                            reasoning_mode=config.get('reasoningMode', 'auto'))
++    raise ValueError('No enabled official DeepSeek provider matches the selected model')
++
++
++def totals(rows):
++    usage = [r['usage'] for r in rows if r.get('usage')]
++    return {'attempts': len(rows), 'successful_requests': len(usage),
++            **{k: sum(u.get(k, 0) for u in usage) for k in
++               ('prompt_tokens', 'completion_tokens', 'cached_tokens', 'reasoning_tokens')},
++            'seconds': round(sum(r['seconds'] for r in rows), 3),
++            'coverage': cache_coverage(rows)}
++
++
++def task_probe(provider, recorder, root, planning, *, deny=False, compact=False, turns=1, planner=None):
++    workspace = root / 'workspace'
++    workspace.mkdir(exist_ok=True)
++    (workspace / 'input.json').write_text('{"items":[17,25,9],"version":7}', encoding='utf-8')
++    history = []
++    results = []
++    for turn in range(turns):
++        target = f'result-{turn}.json'
++        (workspace / target).unlink(missing_ok=True)
++        recorder.stage = f'planning-{planning}/deny-{deny}/compact-{compact}/turn-{turn + 1}'
++        start = len(recorder.rows)
++        router = (ModelRouter([provider, planner], transport=recorder,
++            primary=(provider.name,provider.default_model), retries_per_provider=recorder.retries)
++            if planner else router_for(provider, recorder))
++        agent = Agent(home=root / 'home', workspace=workspace, router=router,
++            registry=build_builtin_registry(expose=['read_file', 'write_file']),
++            policy=Policy(workspace=workspace, mode=Mode.ACCEPT_EDITS,
++                          sandbox=Sandbox.WORKSPACE_WRITE, deny=('write_file',) if deny else (),
++                          non_interactive=True), planning=planning,
++            planning_model=(planner.name,planner.default_model) if planner else None, project_rules=False,
++            limits=LoopLimits(max_steps=7, context_chars=6000 if compact else 100000))
++        if compact:
++            agent.compactor = ContextBudget(max_chars=6000, keep_tail=4)
++        prompt = (f'Read input.json with read_file. Sum its items and write {target} containing exactly '
++                  f'{{"total":51,"version":7,"turn":{turn + 1}}}, using the actual input values. '
++                  'Use write_file then read_file to verify the saved JSON. Use actual tools. '
++                  'If policy denies writing, stop and explain the denial without bypassing or repeating it. '
++                  'Reply in one concise sentence.')
++        if compact and not history:
++            history = [{'role': 'user', 'content': 'Old unrelated audit records; current task supersedes them.'},
++                       {'role': 'assistant', 'content': '\n'.join(
++                           f'Closed historical record {i:03}: no current evidence; verify current files.'
++                           for i in range(150))}]
++        contract = None if deny else {'criteria': [
++            {'id': k, 'kind': 'env_probe', 'env': 'workspace', 'probe': 'json_value',
++             'input': {'path': target, 'pointer': '/' + k}, 'expect': v}
++            for k, v in {'total': 51, 'version': 7, 'turn': turn + 1}.items()]}
++        try:
++            report = agent.run(prompt, history=history, acceptance=contract)
++            actual = json.loads((workspace / target).read_text()) if (workspace / target).exists() else None
++            steps = [{'tool': s.tool, 'decision': s.decision, 'args': s.args} for s in report.steps]
++            denied_writes = [s for s in steps if s['tool'] == 'write_file']
++            ok = (actual is None and len(denied_writes) <= 1 and
++                  (any(s['decision'] != 'ok' for s in denied_writes) or
++                   any(word in report.text.lower() for word in ('denied','deny','policy','permission')))) if deny else (
++                actual == {'total': 51, 'version': 7, 'turn': turn + 1}
++                and all(any(s.tool == tool and s.args.get('path') == path and s.decision == 'ok'
++                            for s in report.steps) for tool,path in
++                        [('read_file','input.json'),('write_file',target),('read_file',target)]))
++            ok = ok and json.loads((workspace / 'input.json').read_text()) == {'items':[17,25,9],'version':7}
++            results.append({'ok': ok and report.stopped == 'final', 'stopped': report.stopped,
++                'actual': actual, 'steps': steps, 'plan': report.planning, 'text': report.text,
++                'compactions': sum(e['type'] == 'compaction' and bool(e.get('committed')) for e in report.events),
++                'prefix_reused': any(e['type'] == 'cache_prefix_reused' for e in report.events),
++                'acceptance': [e for e in report.events if e['type'] == 'acceptance_checked'],
++                'runtime_coverage': cache_coverage(report.usage.get('requests', [])),
++                'totals': totals(recorder.rows[start:])})
++            history += [{'role': 'user', 'content': prompt}, {'role': 'assistant', 'content': report.text}]
++        finally:
++            agent.secret_scope.close()
++        if not results[-1]['ok']:
++            break
++    return results
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument('--live', action='store_true')
++    parser.add_argument('--model', default='deepseek-flash')
++    parser.add_argument('--planner-model')
++    parser.add_argument('--scenario', choices=['planning', 'wire', 'execution'], default='planning')
++    parser.add_argument('--planning', choices=['none','low','medium','high'], default='low')
++    parser.add_argument('--request-limit', type=int, default=32)
++    parser.add_argument('--reasoning-mode', choices=['auto','on','off'], default='auto')
++    parser.add_argument('--retries', type=int, choices=[0,1], default=1)
++    parser.add_argument('--output', type=Path, required=True)
++    args = parser.parse_args()
++    if not args.live:
++        parser.error('--live is required for paid API calls')
++    if args.output.exists():
++        parser.error('Use a new report path to preserve earlier evidence')
++    provider = provider_for(args.model, Path.home() / '.forge')
++    provider.reasoning_mode = args.reasoning_mode
++    planner = provider_for(args.planner_model, Path.home() / '.forge') if args.planner_model else None
++    if planner:
++        planner.name = 'deepseek-planner'
++    recorder = DeepSeekRecorder(args.request_limit, retries=args.retries)
++    recorder.timeout = 90
++    result = {'model': args.model, 'planner_model': args.planner_model, 'scenario': args.scenario,
++              'reasoning_mode':args.reasoning_mode, 'cases': []}
++    try:
++        with tempfile.TemporaryDirectory(prefix='forge-deepseek-live-') as tmp:
++            root = Path(tmp)
++            if args.scenario == 'wire':
++                result['cases'] = wire_probe(provider, recorder)
++            else:
++                result['cases'] = task_probe(provider, recorder, root, args.planning,
++                    compact=args.scenario == 'execution', turns=3 if args.scenario == 'execution' else 1,
++                    planner=planner)
++                if args.scenario == 'execution':
++                    result['denied'] = task_probe(provider, recorder, root, 'none', deny=True)
++    except Exception as exc:
++        # Never serialize credential-bearing provider objects or request headers.
++        result['error_type'] = type(exc).__name__
++    finally:
++        result['requests'] = recorder.rows
++        result['totals'] = totals(recorder.rows)
++        result['ok'] = (not result.get('error_type') and bool(result['cases'])
++                        and all(c['ok'] for c in result['cases'] + result.get('denied', [])))
++        args.output.parent.mkdir(parents=True, exist_ok=True)
++        args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
++        print(json.dumps({'ok': result['ok'], 'totals': result['totals']}, ensure_ascii=False))
++    return 0 if result['ok'] else 1
++
++
++if __name__ == '__main__':
++    raise SystemExit(main())
+diff --git a/tests/test_deepseek_execution.py b/tests/test_deepseek_execution.py
+--- /dev/null
++++ b/tests/test_deepseek_execution.py
+@@ -0,0 +1,123 @@
++"""DeepSeek request semantics and planning budget regression tests (offline)."""
++import copy
++import io
++import json
++from pathlib import Path
++import tempfile
++import unittest
++
++from forge.model import Provider, HttpTransport, ModelRouter, _plan_and_shape
++from forge.cache_state import CacheWarmth
++from forge.loop import Agent
++from forge.policy import Policy, Mode
++from forge.tools import build_builtin_registry
++from forge.planning import token_cap
++
++
++class DeepSeekExecutionTests(unittest.TestCase):
++    def shape(self, payload, chosen='deepseek-flash', mode='auto', wire='openai'):
++        provider = Provider('fixture', 'https://api.deepseek.com', default_model=chosen,
++                            reasoning_mode=mode, wire=wire)
++        return _plan_and_shape(payload, payload.get('messages', []), provider, chosen, store=CacheWarmth())
++
++    def test_implicit_and_explicit_defaults_have_identical_payload_and_cache_namespace(self):
++        messages = [{'role':'user','content':'Task'}, {'role':'assistant','content':'Done',
++                    'reasoning_content':'native opaque reasoning'}]
++        tools = [{'type':'function','function':{'name':'read_file','parameters':{'type':'object'}}}]
++        base = {'messages':messages, 'tools':tools, 'temperature':.7}
++        before = copy.deepcopy(base)
++        a, pa = self.shape(base)
++        b, pb = self.shape({**base, 'thinking':{'type':'enabled'}, 'reasoning_effort':'high', 'tool_choice':'auto'})
++        self.assertEqual(a,b)
++        self.assertEqual(pa['fingerprint'],pb['fingerprint'])
++        self.assertEqual(base,before)
++        self.assertEqual(a['messages'],messages)
++        self.assertNotIn('temperature',a)
++
++    def test_model_specific_sampling_and_tool_constraints(self):
++        for chosen in ('deepseek-flash','deepseek-v4-pro'):
++            for mode in ('on','off'):
++                for choice in ('none','required',{'type':'function','function':{'name':'read_file'}}):
++                    with self.subTest(chosen=chosen,mode=mode,choice=choice):
++                        out,_ = self.shape({'messages':[], 'temperature':.4, 'top_p':.97,
++                                            'tool_choice':choice},chosen,mode)
++                        self.assertEqual(out['thinking']['type'], 'enabled' if mode == 'on' else 'disabled')
++                        self.assertEqual('temperature' in out, mode == 'off')
++                        self.assertEqual('top_p' in out, (chosen == 'deepseek-flash') == (mode == 'on'))
++                        self.assertEqual(out['tool_choice'],choice)
++
++    def test_explicit_request_overrides_provider_mode_and_unknown_models_are_not_guessed(self):
++        out,_ = self.shape({'messages':[], 'thinking':{'type':'disabled'}, 'reasoning_effort':'low'},mode='on')
++        self.assertEqual(out['thinking'],{'type':'disabled'})
++        self.assertNotIn('reasoning_effort',out)
++        with self.assertRaisesRegex(ValueError,'reasoningMode'):
++            self.shape({'messages':[]},chosen='deepseek-unknown',mode='off')
++        with self.assertRaisesRegex(ValueError,'reasoningMode'):
++            self.shape({'messages':[]},wire='anthropic',mode='off')
++
++    def test_gateway_and_direct_adapter_share_the_same_reasoning_policy(self):
++        from forge.gateway import GatewayConfig
++        for mode in ('auto','on','off'):
++            payload = {'model':'deepseek-flash','messages':[{'role':'user','content':'Inspect'}]}
++            direct, left = self.shape(payload,mode=mode)
++            cfg = GatewayConfig(upstream='https://api.deepseek.com',api_key='',models=['deepseek-flash'],
++                                wire='openai',upstream_wire='openai',provider_options={'reasoningMode':mode})
++            cfg.cache_warmth = CacheWarmth()
++            gateway, right, _ = cfg.prepare_request(payload)
++            self.assertEqual(direct,gateway)
++            self.assertEqual(left['fingerprint'],right['fingerprint'])
++
++    def test_provider_mode_reaches_actual_agent_tool_replay(self):
++        sent=[]
++        def opener(request, **kwargs):
++            sent.append(json.loads(request.data))
++            if len(sent)==1:
++                message={'role':'assistant','content':'','reasoning_content':'',
++                    'tool_calls':[{'id':'call-1','type':'function','function':{
++                        'name':'read_file','arguments':'{"path":"input.txt"}'}}]}
++                reason='tool_calls'
++            else:
++                message={'role':'assistant','content':'verified'};reason='stop'
++            return io.BytesIO(json.dumps({'choices':[{'message':message,'finish_reason':reason}],
++                 'usage':{'prompt_tokens':10,'completion_tokens':2,'prompt_cache_hit_tokens':0}}).encode())
++        with tempfile.TemporaryDirectory() as td:
++            root=Path(td);(root/'input.txt').write_text('observed fact')
++            provider=Provider('p','https://api.deepseek.com',default_model='deepseek-flash',reasoning_mode='off')
++            router=ModelRouter([provider],transport=HttpTransport(response_opener=opener),retries_per_provider=0)
++            agent=Agent(home=root/'home',workspace=root,router=router,project_rules=False,
++                        registry=build_builtin_registry(expose=['read_file']),policy=Policy(workspace=root,mode=Mode.READ_ONLY))
++            try:
++                report=agent.run('Read input.txt')
++            finally:
++                agent.secret_scope.close()
++            self.assertEqual(report.stopped,'final')
++            self.assertEqual(report.steps[0].decision,'ok')
++            self.assertTrue(all(p['thinking']=={'type':'disabled'} for p in sent))
++            self.assertTrue(any(m.get('tool_call_id')=='call-1' for m in sent[-1]['messages']))
++
++    def test_truncated_even_parseable_plan_never_starts_execution(self):
++        sent=[]
++        def opener(request, **kwargs):
++            sent.append(json.loads(request.data))
++            return io.BytesIO(json.dumps({'choices':[{'message':{'content':'{"tasks":["Write output"]}'},
++                            'finish_reason':'length'}], 'usage':{'prompt_tokens':20,'completion_tokens':2048}}).encode())
++        with tempfile.TemporaryDirectory() as td:
++            root=Path(td)
++            router=ModelRouter([Provider('p','https://api.deepseek.com',default_model='deepseek-flash')],
++                               transport=HttpTransport(response_opener=opener),retries_per_provider=0)
++            agent=Agent(home=root,workspace=root,router=router,planning='low',project_rules=False,
++                        registry=build_builtin_registry(),policy=Policy(workspace=root))
++            try:
++                report=agent.run('Write output')
++            finally:
++                agent.secret_scope.close()
++            self.assertEqual(report.stopped,'planning_error')
++            self.assertIn('output budget',report.text)
++            self.assertEqual(len(sent),1)
++            self.assertEqual(sent[0]['max_tokens'],token_cap('low'))
++            self.assertGreater(sent[0]['max_tokens'],640)
++            self.assertEqual(report.steps,[])
++
++
++if __name__=='__main__':
++    unittest.main()
+diff --git a/docs/DEEPSEEK-EXECUTION-OPTIMIZATION.md b/docs/DEEPSEEK-EXECUTION-OPTIMIZATION.md
+--- /dev/null
++++ b/docs/DEEPSEEK-EXECUTION-OPTIMIZATION.md
+@@ -0,0 +1,69 @@
++# DeepSeek 实测：规划预算、工具执行与适配
++
++本轮使用本机已配置的官方 DeepSeek Flash / V4 Pro 凭据，发送隔离测试数据。未改写用户密钥、全局模型选择或权限配置。日期按用户时区为 2026-11-08。
++
++## 复现与修复
++
++原先简要规划最多输出 640 token。实际 Agent 请求返回 `finish_reason=length`，640 token 全部用于 reasoning，正文为空，任务在执行前以 planning_error 停止。证据：`reports/deepseek-planning-baseline-final.json`。另一个直接规划请求也发生截断，见 `reports/deepseek-direct-planning.json`。前面的三个连接失败记录保留，未将其当成规划质量问题。
++
++修复采用共享规划模块：总输出上限调整为 low=2048、medium=4096、high=6144；提示词分别约束最终 JSON 目标长度为 256/640/1200 token，只要求当前级别需要的字段。总上限容纳推理，正文仍保持简短。这些是上限和提示目标，并非固定消耗或精确 token 校验。关闭规划仍不产生规划请求。
++
++Agent、桌面独立规划客户端和桌面网关客户端都会显式拒绝 length/max_tokens 截断结果，即使截断处恰好形成合法 JSON，也不能启动执行。解析、任务指令注入和权限边界保持原有契约。
++
++DeepSeek Chat Completions 适配新增：
++
++- 已核实的 Flash / V4 Pro 支持 provider 的 `reasoningMode: auto|on|off`；请求显式参数优先，未知模型和未经验证的协议不猜测支持。
++- 默认思考与显式 enabled/high 使用统一请求形状；有工具时补齐默认 auto，但保留 none、required 和指定函数约束。
++- 按模型和模式移除服务端忽略的采样参数，避免无效参数分裂本地缓存指纹。Flash 思考模式保留 top_p，Pro 非思考模式保留 top_p。
++- 原始 messages、工具声明和 reasoning_content 不修改；适配不授予执行权限。
++
++参数语义依据 [DeepSeek 思考模式文档](https://api-docs.deepseek.com/guides/thinking_mode/)，默认自动缓存和前缀匹配规则依据 [上下文缓存文档](https://api-docs.deepseek.com/guides/kv_cache/)。本轮没有把本地指纹一致当成服务端命中保证；命中率仅使用实际 usage。
++
++## 实际调用链结果
++
++每个 Flash 场景均运行三轮任务，每轮重建 Agent 并从磁盘恢复会话；每轮发生一次真实压缩。第 2、3 轮记录到 cache_prefix_reused。每轮都通过真实 read_file → write_file → read_file 和独立 json_value 环境探针，校验 total、version、turn。另运行一个禁止写入的任务。
++
++| 场景 | 成功回执 / HTTP 尝试 | 输入 token | 输出 token（含推理） | 总 token | 缓存命中 / 输入 |
++|---|---:|---:|---:|---:|---:|
++| Flash 默认思考，三轮任务 + 拒绝写入 | 18 / 22 | 31,449 | 2,400 | 33,849 | 17,536 / 31,449 = 55.76% |
++| Flash 关闭思考，同样任务类型 | 18 / 20 | 29,674 | 1,335 | 31,009 | 16,256 / 29,674 = 54.78% |
++| Pro 独立规划 → Flash 关闭思考执行 | 5 / 6 | 6,687 | 1,920 | 8,607 | 3,840 / 6,687 = 57.42% |
++| Pro 工具协议：思考开/关、重复请求及回放 | 6 / 8 | 2,265 | 292 | 2,557 | 1,280 / 2,265 = 56.51% |
++
++两种 Flash 模式均通过三轮验收和权限拒绝。关闭思考组在这个简单任务样本中总 token 少 8.39%，输出 token 少 44.38%，缓存率略低。两组使用独立临时目录并同时运行，规划与回复内容不完全相同，**不是严格同前缀 ABBA 对照，也不是代码修改前后的成本对照**；不能推广成复杂任务的固定节省比例，因此没有替用户切换默认模式。
++
++两个拒绝场景都只调用一次 write_file，返回 deny 后终止操作；目标文件不存在，也没有重复尝试或绕过授权。停止后的模型解释不被当成任务完成证明。
++
++独立规划场景第一条成功请求确为 deepseek-v4-pro，未携带工具；后续四条成功请求均为 deepseek-flash。Pro 规划实际输出 1691 token，其中 reasoning 1526，旧的 640 总预算无法容纳这个样本。Flash 三次简要规划在默认思考模式实际输出 584/248/537 token；关闭思考时为 161/181/191 token。
++
++Pro 协议探针使用固定 add 工具定义和宿主提供的 42 结果，验证参数、重复调用缓存、reasoning_content 回放和最终答案；它不冒充真实文件工具执行。真实文件工具验证来自前面七个成功任务。
++
++四组正式报告共 47 条成功 usage、56 次 HTTP 尝试。9 次传输失败没有 usage，不计入命中率分母，也不推断其实际账单。调试和基线请求另有报告：例如 `deepseek-planning-after.json` 的规划已成功，但随后一次网络超时使该任务失败，未计入通过结果。
++
++## 证据与复跑
++
++- `reports/deepseek-execution-flash-on.json`
++- `reports/deepseek-execution-flash-off.json`
++- `reports/deepseek-independent-planner.json`
++- `reports/deepseek-pro-wire.json`
++- `reports/deepseek-execution-evidence.json`：独立复核报告哈希、七个文件写入内容与环境探针文件 SHA-256 一致、完整读取/写入/回读步骤、两个拒绝结果、独立规划模型选择。
++
++使用已配置凭据复跑，输出路径必须不存在，每个请求最多重试一次，整体有请求次数上限：
++
++```powershell
++python scripts/verify_deepseek_execution.py --live --scenario execution --output reports/deepseek-new-on.json
++python scripts/verify_deepseek_execution.py --live --scenario execution --reasoning-mode off --output reports/deepseek-new-off.json
++python scripts/verify_deepseek_execution.py --live --scenario planning --planner-model deepseek-v4-pro --reasoning-mode off --output reports/deepseek-new-phases.json
++```
++
++脚本沿用既有记录器，DeepSeek 子类去掉 MiMo 探针额外注入的 1024 输出限制，实际 Agent 执行使用生产默认输出预算。报告只保存请求形状、fixture 结果、usage 和适配信息，不保存鉴权头或密钥。后续复跑额外包含运行时的压缩缓存统计；上表使用统一的全部可观测输入口径，不依赖该新增字段。
++
++## 本地验证
++
++- 核心：497 项，495 通过、2 跳过。
++- DeepSeek、规划入口和 Web runtime：38 项通过；覆盖原始请求不变、缓存指纹、显式参数优先、模型采样差异、网关与直连一致、真实 Agent 工具回放、截断规划不执行。
++- 桌面规划客户端：6 项通过。
++- 定向规划 / MiMo 兼容回归：69 项通过（与上述核心测试有重叠，不重复相加）。
++- 预算检查：156 个 Forge 文件，48,515 行，通过；工作区 diff 空白检查通过。
++
++本轮增量补丁 `reports/deepseek-execution.patch` 以开始时的工作区为基准，保留此前尚未提交的修改。文件清单和哈希见 `reports/deepseek-execution-files.json`，原文件备份路径见 `reports/deepseek-execution-backup.txt`。

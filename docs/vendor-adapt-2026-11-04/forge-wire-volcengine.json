@@ -1,0 +1,229 @@
+{
+  "mode": "live",
+  "records": [
+    {
+      "vendor": "volcengine",
+      "model": "doubao-seed-evolving",
+      "endpoint": "https://ark.cn-beijing.volces.com/api/coding/v3",
+      "requests": [
+        {
+          "url": "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+          "parameters": {
+            "model": "doubao-seed-evolving",
+            "thinking": {
+              "type": "disabled"
+            },
+            "max_tokens": 256,
+            "tool_choice": {
+              "type": "function",
+              "function": {
+                "name": "add"
+              }
+            }
+          },
+          "message_roles": [
+            "system",
+            "user"
+          ],
+          "seconds": 2.42,
+          "usage": {
+            "prompt_tokens": 506,
+            "completion_tokens": 46,
+            "model": "doubao-seed-evolving",
+            "provider": "volcengine",
+            "cached_tokens": 0,
+            "cache_write_tokens": 0,
+            "reasoning_tokens": 0
+          },
+          "finish_reason": "tool_calls",
+          "tool_names": [
+            "add"
+          ],
+          "text": "",
+          "adaptation": [
+            "依赖厂商自动缓存（命中 1×），无需标记",
+            "火山方舟（豆包） 已发送关闭思考请求（thinking.type=disabled）"
+          ]
+        },
+        {
+          "url": "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+          "parameters": {
+            "model": "doubao-seed-evolving",
+            "thinking": {
+              "type": "disabled"
+            },
+            "max_tokens": 256
+          },
+          "message_roles": [
+            "system",
+            "user",
+            "assistant",
+            "tool"
+          ],
+          "seconds": 2.16,
+          "usage": {
+            "prompt_tokens": 566,
+            "completion_tokens": 7,
+            "model": "doubao-seed-evolving",
+            "provider": "volcengine",
+            "cached_tokens": 0,
+            "cache_write_tokens": 0,
+            "reasoning_tokens": 0
+          },
+          "finish_reason": "stop",
+          "tool_names": [],
+          "text": "The result is **42**.",
+          "adaptation": [
+            "依赖厂商自动缓存（命中 1×），无需标记",
+            "火山方舟（豆包） 已发送关闭思考请求（thinking.type=disabled）"
+          ]
+        },
+        {
+          "url": "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+          "parameters": {
+            "model": "doubao-seed-evolving",
+            "thinking": {
+              "type": "enabled"
+            },
+            "max_tokens": 256
+          },
+          "message_roles": [
+            "user"
+          ],
+          "seconds": 11.84,
+          "usage": {
+            "prompt_tokens": 59,
+            "completion_tokens": 297,
+            "model": "doubao-seed-evolving",
+            "provider": "volcengine",
+            "cached_tokens": 0,
+            "cache_write_tokens": 0,
+            "reasoning_tokens": 296
+          },
+          "finish_reason": "stop",
+          "tool_names": [],
+          "text": "4",
+          "adaptation": [
+            "依赖厂商自动缓存（命中 1×），无需标记",
+            "火山方舟（豆包） enable_thinking=true 译作 thinking.type=enabled"
+          ]
+        }
+      ],
+      "replay_ok": true,
+      "on_probe_complete": true,
+      "ok": true
+    },
+    {
+      "vendor": "volcengine",
+      "model": "doubao-seed-2.1-turbo",
+      "endpoint": "https://ark.cn-beijing.volces.com/api/coding/v3",
+      "requests": [
+        {
+          "url": "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+          "parameters": {
+            "model": "doubao-seed-2.1-turbo",
+            "thinking": {
+              "type": "disabled"
+            },
+            "max_tokens": 256,
+            "tool_choice": {
+              "type": "function",
+              "function": {
+                "name": "add"
+              }
+            }
+          },
+          "message_roles": [
+            "system",
+            "user"
+          ],
+          "seconds": 1.62,
+          "usage": {
+            "prompt_tokens": 506,
+            "completion_tokens": 46,
+            "model": "doubao-seed-2.1-turbo",
+            "provider": "volcengine",
+            "cached_tokens": 0,
+            "cache_write_tokens": 0,
+            "reasoning_tokens": 0
+          },
+          "finish_reason": "tool_calls",
+          "tool_names": [
+            "add"
+          ],
+          "text": "",
+          "adaptation": [
+            "依赖厂商自动缓存（命中 1×），无需标记",
+            "火山方舟（豆包） 已发送关闭思考请求（thinking.type=disabled）"
+          ]
+        },
+        {
+          "url": "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+          "parameters": {
+            "model": "doubao-seed-2.1-turbo",
+            "thinking": {
+              "type": "disabled"
+            },
+            "max_tokens": 256
+          },
+          "message_roles": [
+            "system",
+            "user",
+            "assistant",
+            "tool"
+          ],
+          "seconds": 1.33,
+          "usage": {
+            "prompt_tokens": 566,
+            "completion_tokens": 7,
+            "model": "doubao-seed-2.1-turbo",
+            "provider": "volcengine",
+            "cached_tokens": 0,
+            "cache_write_tokens": 0,
+            "reasoning_tokens": 0
+          },
+          "finish_reason": "stop",
+          "tool_names": [],
+          "text": "The result is **42**.",
+          "adaptation": [
+            "依赖厂商自动缓存（命中 1×），无需标记",
+            "火山方舟（豆包） 已发送关闭思考请求（thinking.type=disabled）"
+          ]
+        },
+        {
+          "url": "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+          "parameters": {
+            "model": "doubao-seed-2.1-turbo",
+            "thinking": {
+              "type": "enabled"
+            },
+            "max_tokens": 256
+          },
+          "message_roles": [
+            "user"
+          ],
+          "seconds": 2.66,
+          "usage": {
+            "prompt_tokens": 59,
+            "completion_tokens": 49,
+            "model": "doubao-seed-2.1-turbo",
+            "provider": "volcengine",
+            "cached_tokens": 0,
+            "cache_write_tokens": 0,
+            "reasoning_tokens": 48
+          },
+          "finish_reason": "stop",
+          "tool_names": [],
+          "text": "4",
+          "adaptation": [
+            "依赖厂商自动缓存（命中 1×），无需标记",
+            "火山方舟（豆包） enable_thinking=true 译作 thinking.type=enabled"
+          ]
+        }
+      ],
+      "replay_ok": true,
+      "on_probe_complete": true,
+      "ok": true
+    }
+  ]
+}

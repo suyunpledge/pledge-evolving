@@ -52,6 +52,16 @@ C: dict[str, str] = {
     "glass_folder": "#161425",
     "glass_chip": "#19172A",
     "glass_chip_hover": "#211E35",
+    # 合并 main（Codex 11-13）带来的控件 token，按星云底重新取色：
+    # 顶栏 chrome 介于 bg 与 sidebar 之间；输入框玻璃描边 / 内线 / 高光 / 投影
+    # 沿用 glass 的靛紫系；欢迎页动作卡用 surface 底 + border_hi 边。
+    "chrome": "#0E0C19",
+    "glass_rim": "#3D3658",
+    "glass_inner": "#252138",
+    "glass_sheen": "#5E567E",
+    "glass_shadow": "#06050C",
+    "welcome_action": "#171527",
+    "welcome_edge": "#342E4A",
     "black": "#000000",
 
     # 线条
@@ -191,6 +201,7 @@ FONT_CHAT_BOLD = (UI_FAMILY, 11, "bold")
 FONT_CHAT_TITLE = (UI_FAMILY, 13, "bold")
 FONT_MARKDOWN_HEADING = (UI_FAMILY, 15, "bold")
 FONT_MARKDOWN_SUBHEAD = (UI_FAMILY, 12, "bold")
+FONT_NAV_GROUP = (UI_FAMILY, 9, "bold")
 FONT_MONO = (MONO_FAMILY, 10)
 FONT_MONO_SM = (MONO_FAMILY, 9)
 FONT_MONO_XS = (MONO_FAMILY, 9)
@@ -435,6 +446,7 @@ def round_rect(canvas: tk.Canvas, x1, y1, x2, y2, r, **kw):
     return canvas.create_polygon(rounded_points(x1, y1, x2, y2, r), **kw)
 
 
+
 class RoundedCard(tk.Frame):
     """圆角卡片：Canvas 负责画底与描边，`content` 是真正的容器。
 
@@ -572,6 +584,44 @@ class RoundedCard(tk.Frame):
         return self._cv
 
 
+class GlassControlCard(RoundedCard):
+    """Painted rim for the composer; the editor keeps its opaque native surface."""
+
+    def __init__(self, parent, *, bg):
+        super().__init__(parent, radius=ui_px(parent, 21), fill=C["input_bg"],
+                         outline=C["glass_rim"], padx=ui_px(parent, 14),
+                         pady=ui_px(parent, 10), bg=bg)
+
+    def set_focused(self, focused):
+        outline = C["focus_ring"] if focused else C["glass_rim"]
+        if self._outline != outline:
+            self.set_fill(self._fill, outline)
+
+    def _draw(self, w, h):
+        if min(w, h) < 12:
+            super()._draw(w, h)
+            return
+        cv = self.canvas
+        cv.delete("glass-rim")
+        if self._shape is not None:
+            cv.delete(self._shape)
+        inset = ui_px(self, 2)
+        r = min(self._radius, (w - 1) / 2, (h - inset - 1) / 2)
+        tag = "glass-rim"
+        round_rect(cv, .5, inset + .5, w - .5, h - .5, r,
+                   fill=C["glass_shadow"], tags=tag)
+        self._shape = round_rect(cv, .5, .5, w - .5, h - inset - .5, r,
+                                 fill=self._fill, outline=self._outline, tags=tag)
+        round_rect(cv, inset + .5, inset + .5, w - inset - .5, h - 2 * inset - .5,
+                   max(0, r - inset), fill="", outline=C["glass_inner"], tags=tag)
+        # A restrained light catch across the top; no live backdrop capture.
+        left, right = max(r, w * .14), min(w - r, w * .70)
+        if right > left:
+            cv.create_line(left, inset + .5, right, inset + .5,
+                           fill=C["glass_sheen"], tags=tag)
+        cv.tag_lower(tag)
+
+
 def _bg_of(widget) -> str:
     try:
         return widget.cget("bg")
@@ -685,7 +735,7 @@ def divider(parent, *, color=None, horizontal=True, bg=None):
                     width=0 if horizontal else 1)
 
 
-def flow_controls(parent, *, gap=6):
+def flow_controls(parent, *, gap=6, wrap_text=False):
     """Wrap existing sibling controls by rendered width, without reparenting."""
     controls = list(parent.winfo_children())
     pending = None
@@ -699,6 +749,12 @@ def flow_controls(parent, *, gap=6):
         available = parent.winfo_width() - padding * 2
         used, top, row_height = 0, 2, 0
         for control in controls:
+            if wrap_text and isinstance(control, (tk.Button, tk.Label)):
+                inset = sum(int(control.cget(key)) for key in
+                            ('padx', 'borderwidth', 'highlightthickness')) * 2
+                limit = max(1, available - inset - 4)
+                if int(control.cget('wraplength')) != limit:
+                    control.configure(wraplength=limit)
             width = control.winfo_reqwidth() + gap
             if used and used + width > available:
                 top, used, row_height = top + row_height + 4, 0, 0

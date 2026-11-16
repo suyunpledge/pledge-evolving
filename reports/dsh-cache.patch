@@ -1,0 +1,654 @@
+--- a/forge/loop.py
++++ b/forge/loop.py
+@@ -328,6 +328,8 @@
+         from .artifacts import ArtifactStore
+         self.artifacts = ArtifactStore(self.home, self.workspace)
+         self.offloader = ToolResultOffloader(self.workspace, artifact_store=self.artifacts)
++        from .conversation_prefix import ConversationPrefix
++        self._conversation_prefix = ConversationPrefix()
+ 
+     # -- context ---------------------------------------------------------
+     def system_prompt(self) -> str:
+@@ -368,6 +370,22 @@
+         if self.extra_system:
+             parts.append(self.extra_system)
+         return "[运行环境]\n" + "\n\n".join(parts)
++
++    def _conversation_guard(self, head):
++        from .conversation_prefix import digest
++        routes = []
++        if isinstance(self.router, ModelRouter):
++            for name, model in self.router._order(None):
++                provider = self.router.providers.get(name)
++                if provider is not None:
++                    routes.append([name, model, provider.base_url, provider.wire,
++                        provider._credential._account_fingerprint,
++                        provider.profile_for_model(model).behavior_fingerprint])
++        return digest({'head': head, 'policy': repr(self.policy), 'wire': self.wire_hint,
++            'mode': self.context_mode, 'routes': routes,
++            'tools': toolwire.tool_declarations(self.registry.visible(), self.wire_hint),
++            'handlers': [(s.name, id(s.handler), self.registry.effect(s.name).value)
++                         for s in self.registry.visible()]})
+ 
+     def _inject_memory(self) -> list[dict[str, Any]]:
+         """Inject the FROZEN memory snapshot as an early user message.
+@@ -1079,6 +1097,7 @@
+             return self._finish(RunReport(text='[cancelled: inspect files and diff before continuing]',
+                 steps=self._cancel_steps, usage=self._cancel_usage, stopped='cancelled', events=self.events))
+         except BaseException:
++            self._conversation_prefix.clear()
+             self._emit(type="workflow_state", run_id=self._run_id, phase="failed")
+             raise
+         finally:
+@@ -1113,6 +1132,7 @@
+                 raise ValueError('History must contain user/assistant text messages')
+             previous.append({'role': message['role'], 'content': message['content']})
+         previous = self.secret_scope.protect(previous)
++        self._chat_history = previous
+         task = self.secret_scope.protect_text(task)
+         self.task_contract = extract_task_contract(task, turn=0)
+         if self.session is not None:
+@@ -1144,6 +1164,8 @@
+         # 按投影层策略并入；尾部 = 历史 + 易变上下文 + 任务。
+         messages: list[dict[str, Any]] = projector.head(
+             self.system_prompt(), self._inject_memory())
++        self._conversation_guard_start = self._conversation_guard(messages)
++        self._conversation_head = list(messages)
+         # 头部指纹诊断（DSH request/context 思路）：头部或工具面真的变了就发
+         # 事件，命中率回退时能从会话记录里直接看到是哪一轮、变的是什么。
+         head_digest = projector.head_digest(
+@@ -1153,6 +1175,21 @@
+                        previous_head_digest=self._last_head_digest)
+         self._last_head_digest = head_digest
+         self._refresh_project_rules(messages)
++        saved = self._conversation_prefix.candidate(previous, self._conversation_guard_start)
++        if saved is not None:
++            targets = list(dict.fromkeys([*self._rule_targets, *saved['targets']]))[:MAX_TARGETS]
++            enabled = self.project_rules_enabled and 'read_file' in self.registry.names()
++            snapshot = ProjectRules(self.workspace, self.policy, self.secret_scope, enabled=enabled).load(targets)
++            if all(source in snapshot.sources for source in saved['rule_sources']):
++                messages = saved['messages']
++                previous = []  # 已由可信宿主快照包含；客户端仍只能提交普通聊天文本。
++                self._rule_context = saved['rule_context']
++                self._rule_audit = (saved['rule_sources'], ())
++                self._rule_targets = targets
++                self._prefix_sent = len(messages)
++                self._refresh_project_rules(messages)
++                self._emit(type='cache_prefix_reused', messages=len(saved['messages']),
++                           scope='same-agent continuation; not proof of vendor cache hit')
+         tail: list[dict[str, Any]] = [
+             {"role": "user", "content": self.run_envelope()}]
+         memory_delta = self._memory_delta_message()
+@@ -1365,8 +1402,18 @@
+                                 steps=steps, usage=usage_total, stopped=acceptance_state, events=self.events))
+                         if self.session is not None:
+                             self._emit(type="assistant_message", content=text)
+-                        return self._finish(RunReport(text=text.strip(), steps=steps, usage=usage_total,
+-                                                      stopped="final", events=self.events))
++                        report = self._finish(RunReport(text=text.strip(), steps=steps, usage=usage_total,
++                            stopped="final", events=self.events))
++                        self._conversation_prefix.commit(
++                            history=[*self._chat_history, {'role': 'user', 'content': task},
++                                     {'role': 'assistant', 'content': report.text}],
++                            messages=self.secret_scope.protect([*messages,
++                                toolwire.replay_assistant_message(completion.assistant_message,
++                                                                 report.text, [], wire)]),
++                            guard=self._conversation_guard(self._conversation_head),
++                            rule_context=self._rule_context, rule_sources=(self._rule_audit or ([], []))[0],
++                            targets=self._rule_targets)
++                        return report
+                     # Recognizable malformed tool attempts get bounded format
+                     # feedback; ordinary JSON prose is a legitimate answer.
+                     steps.append(Step(index=index, note="no valid tool call block"))
+@@ -1468,6 +1515,8 @@
+         report.run_id = getattr(self, '_run_id', '')
+         report.task_id = getattr(self, 'task_id', '') or report.run_id
+         report.parent_run_id = getattr(self, 'parent_run_id', '')
++        if report.stopped != 'final':
++            self._conversation_prefix.clear()
+         if getattr(self, '_acceptance', None) is not None and self.task_contract is not None and report.stopped != 'final':
+             self.task_contract = advance_status(self.task_contract, ContractStatus.BLOCKED)
+             self._emit(type='task_contract', contract=self.task_contract.to_raw())
+@@ -1517,16 +1566,18 @@
+         # honest sum of all its runs.
+         _p = int(report.usage.get("prompt_tokens", 0))
+         _c = int(report.usage.get("completion_tokens", 0))
+-        # 缓存命中可读化（2026-11-01）：命中读 / 全部输入即命中率，直接
+-        # 反映前缀稳定策略的收益；纯本地跑（prompt=0）不定义，避免 0/0。
++        # 命中率只用有缓存回执的输入作分母；未知回执保留 None。
++        from .cache_metrics import cache_coverage
++        coverage = cache_coverage(report.usage.get("requests", []))
+         _cached = _safe_count(report.usage.get("cached_tokens", 0))
+         _cw = _safe_count(report.usage.get("cache_write_tokens", 0))
+-        if _p > 0:
+-            report.usage["cache_hit_rate"] = round(_cached / _p, 4)
++        report.usage["cache_hit_rate"] = coverage["all_observed"]["hit_rate"]
+         self._emit(type="usage", prompt_tokens=_p, completion_tokens=_c,
+                    total_tokens=_p + _c, cached_tokens=_cached,
+                    cache_write_tokens=_cw,
+                    cache_hit_rate=report.usage.get("cache_hit_rate"),
++                   cache_observed_requests=coverage["all_observed"]["requests"],
++                   cache_unknown_requests=coverage["unknown_requests"],
+                    model=self._run_model)
+ 
+         if self.cost_ledger is not None and self._run_scope:
+--- a/forge/protocol.py
++++ b/forge/protocol.py
+@@ -30,27 +30,32 @@
+     """
+     reqs = usage.get("requests") or []
+     rows: list[float] = []
++    observed_indices: list[int] = []
+     busts: list[int] = []
+     prev: float | None = None
+     for i, req in enumerate(reqs):
+         if not isinstance(req, dict) or not isinstance(req.get("usage"), dict):
++            prev = None
+             continue
+         u = req["usage"]
+-        prompt = _count(u.get("prompt_tokens")) or 0
+-        cached = _count(u.get("cached_tokens")) or 0
+-        if prompt <= 0:
++        prompt = _count(u.get("prompt_tokens"))
++        cached = _count(u.get("cached_tokens"))
++        if u.get('cache_observed') is False or prompt is None or prompt <= 0 or cached is None or cached > prompt:
++            prev = None  # 未知观测不能伪造冷启动或跨缺口推断断点。
+             continue
+         ratio = min(cached, prompt) / prompt
+         if prev is not None and ratio < 0.4 and (prev - ratio) > 0.3:
+             busts.append(i)
+         rows.append(round(ratio, 4))
++        observed_indices.append(i)
+         prev = ratio
+     coverage = cache_coverage(reqs)
+     if not rows:
+         return {"coverage": coverage}
+     return {"requests": len(rows), "hit_rate_by_request": rows,
+             "avg_hit_rate": round(sum(rows) / len(rows), 4),
+-            "busts": busts, "cold_start": rows[0] < 0.4,
++            "busts": busts, "cold_start": rows[0] < 0.4 if observed_indices[0] == 0 else None,
++            "observed_request_indices": observed_indices,
+             "coverage": coverage}
+ 
+ 
+--- a/forge/toolwire.py
++++ b/forge/toolwire.py
+@@ -227,6 +227,9 @@
+                     block['function'] = {**(block.get('function') or {}), 'name': call.name,
+                                          'arguments': json.dumps(call.args, ensure_ascii=False)}
+             return message
++    # 无工具的 OpenAI 最终回复也可能带 reasoning_content；跨轮续接必须保留。
++    if not calls and not rows and message.get('role') == 'assistant':
++        return message
+     return assistant_message(text, calls, wire)
+ 
+ 
+--- a/forge/test_prefix_cache.py
++++ b/forge/test_prefix_cache.py
+@@ -132,7 +132,7 @@
+                                               {"role": "assistant", "content": first.text}])
+         turn2 = self.rec.calls[-1]["messages"]
+         index = self._rules_index(turn2)
+-        history_at = next(i for i, m in enumerate(turn2) if m.get("content") == "第一个问题")
++        history_at = next(i for i, m in enumerate(turn2) if str(m.get("content", "")).startswith("第一个问题"))
+         self.assertLess(index, history_at, "规则必须在历史之前")
+         self.assertEqual(turn2[:index + 1], turn1[:index + 1], "system → 记忆 → 规则 跨轮逐字节不变")
+         # 只要求本轮提问在末尾；任务消息尾部可能另有运行时投影（如任务契约）。
+--- a/forge/test_vscode_bridge.py
++++ b/forge/test_vscode_bridge.py
+@@ -134,7 +134,8 @@
+         self.bridge.run({'prompt': 'Remember the editor task alpha.'})
+         self.bridge.run({'prompt': 'Continue that task.'})
+         messages = router.messages[1]
+-        self.assertTrue(any(m['role'] == 'user' and m['content'] == 'Remember the editor task alpha.' for m in messages))
++        self.assertEqual(messages[:len(router.messages[0])], router.messages[0])
++        self.assertTrue(any(m['role'] == 'user' and m['content'].startswith('Remember the editor task alpha.') for m in messages))
+         self.assertTrue(any(m['role'] == 'assistant' and m['content'] == 'Offline reply 1' for m in messages))
+         self.assertTrue(messages[-1]['content'].startswith('Continue that task.'))
+         self.assertEqual(len([m for m in messages if m['role'] == 'system']), 1)
+--- a/forge-budgets.json
++++ b/forge-budgets.json
+@@ -42,6 +42,7 @@
+     "forge/contrib/teams.py": 491,
+     "forge/contrib/thinking.py": 677,
+     "forge/contrib/toolhost.py": 585,
++    "forge/conversation_prefix.py": 49,
+     "forge/desktop_services.py": 448,
+     "forge/development/__init__.py": 5,
+     "forge/development/editor.py": 197,
+@@ -72,7 +73,7 @@
+     "forge/guard.py": 177,
+     "forge/knowledge.py": 118,
+     "forge/local_service.py": 293,
+-    "forge/loop.py": 1606,
++    "forge/loop.py": 1657,
+     "forge/memory.py": 354,
+     "forge/model.py": 918,
+     "forge/model_kinds.py": 150,
+@@ -83,7 +84,7 @@
+     "forge/probes.py": 249,
+     "forge/project_rules.py": 124,
+     "forge/projector.py": 88,
+-    "forge/protocol.py": 103,
++    "forge/protocol.py": 108,
+     "forge/registry.py": 883,
+     "forge/request_execution.py": 133,
+     "forge/route_capabilities.py": 104,
+@@ -108,6 +109,7 @@
+     "forge/test_artifacts.py": 187,
+     "forge/test_backend_context.py": 365,
+     "forge/test_coding_tools.py": 140,
++    "forge/test_conversation_prefix.py": 214,
+     "forge/test_desktop_services.py": 201,
+     "forge/test_e2e_modes.py": 192,
+     "forge/test_env_probes.py": 190,
+@@ -131,13 +133,13 @@
+     "forge/test_vendor_reasoning.py": 329,
+     "forge/test_vendor_wire.py": 248,
+     "forge/test_vendors.py": 409,
+-    "forge/test_vscode_bridge.py": 383,
++    "forge/test_vscode_bridge.py": 384,
+     "forge/test_web_tools.py": 205,
+     "forge/thinking.py": 172,
+     "forge/tool_adapter.py": 801,
+     "forge/tool_turn.py": 68,
+     "forge/tools.py": 1435,
+-    "forge/toolwire.py": 322,
++    "forge/toolwire.py": 325,
+     "forge/types.py": 104,
+     "forge/vendors.py": 1128,
+     "forge/verify_execution.py": 178,
+--- /dev/null
++++ b/forge/conversation_prefix.py
+@@ -0,0 +1,49 @@
++"""宿主拥有的会话请求快照：连续对话保留已发送前缀，不信任客户端工具历史。
++
++参考 DSH Session.deriveMessages 的冻结投影与 replace-generation 失效原则。
++仅缓存同一 Agent 的一次已完成对话；不恢复权限、不重放动作，也不模拟厂商缓存。
++"""
++from __future__ import annotations
++
++import copy
++import hashlib
++import json
++
++from .context_transaction import valid_tool_pairs
++
++MAX_SNAPSHOT_BYTES = 2 * 1024 * 1024
++
++
++def digest(value):
++    return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True,
++        separators=(',', ':'), allow_nan=False).encode('utf-8')).hexdigest()
++
++
++class ConversationPrefix:
++    def __init__(self):
++        self.clear()
++
++    def clear(self):
++        self._saved = None
++
++    def candidate(self, history, guard):
++        saved = self._saved
++        if not saved or not history or digest(history) != saved['history_digest']:
++            return None
++        if guard != saved['guard']:
++            return None
++        return copy.deepcopy(saved)
++
++    def commit(self, *, history, messages, guard, rule_context, rule_sources, targets):
++        value = {'history_digest': digest(history), 'messages': messages, 'guard': guard,
++                 'rule_context': rule_context, 'rule_sources': rule_sources, 'targets': targets}
++        try:
++            if not valid_tool_pairs(messages) or len(json.dumps(value, ensure_ascii=False,
++                    allow_nan=False).encode('utf-8')) > MAX_SNAPSHOT_BYTES:
++                self.clear()
++                return False
++            self._saved = copy.deepcopy(value)
++        except (TypeError, ValueError, RecursionError):
++            self.clear()
++            return False
++        return True
+--- /dev/null
++++ b/forge/test_conversation_prefix.py
+@@ -0,0 +1,214 @@
++"""DSH 风格跨轮前缀延续：实际 Agent 请求录制，不伪造厂商命中率。"""
++import copy
++from dataclasses import replace
++import json
++from pathlib import Path
++import tempfile
++import unittest
++from unittest.mock import patch
++
++from .conversation_prefix import ConversationPrefix
++from .loop import Agent, LoopLimits
++from .model import Completion, Usage, ModelRouter, Provider
++from .policy import Mode, Policy
++from .protocol import _cache_trajectory
++from .test_project_rules import Router
++from .tools import build_builtin_registry, ToolSpec, ToolResult
++
++
++def call(name, **args):
++    return json.dumps({'tool': name, 'args': args})
++
++
++class ConversationPrefixTests(unittest.TestCase):
++    def setUp(self):
++        self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
++        self.addCleanup(self.tmp.cleanup)
++        self.root = Path(self.tmp.name)
++        self.ws = self.root / 'project'
++        self.ws.mkdir()
++        (self.ws / 'a.txt').write_text('file content', encoding='utf-8')
++        self.router = Router([])
++        self.agent = Agent(home=self.root / 'home', workspace=self.ws, router=self.router,
++            registry=build_builtin_registry(), policy=Policy(workspace=self.ws, mode=Mode.ACCEPT_EDITS),
++            limits=LoopLimits(max_steps=8, context_chars=100000), project_rules=True)
++        self.addCleanup(self.agent.secret_scope.close)
++
++    def chat(self, answers, task='first', history=None):
++        self.router.answers = iter(answers)
++        return self.agent.run(task, history=history)
++
++    def history(self, task, report):
++        return [{'role': 'user', 'content': task}, {'role': 'assistant', 'content': report.text}]
++
++    def test_continuation_keeps_entire_previous_request_including_tools(self):
++        first = self.chat([call('read_file', path='a.txt'), 'answer'])
++        sent = copy.deepcopy(self.router.calls[-1])
++        second = self.chat(['next answer'], task='second', history=self.history('first', first))
++        current = self.router.calls[-1]
++        self.assertEqual(current[:len(sent)], sent)
++        self.assertIn('file content', str(current))
++        self.assertTrue(any(e['type'] == 'cache_prefix_reused' for e in second.events))
++        self.assertTrue(current[-1]['content'].startswith('second'))
++
++    def test_three_consecutive_turns_keep_full_sent_prefix(self):
++        history = []
++        previous = None
++        for index in range(3):
++            task = f'turn {index}'
++            report = self.chat([f'answer {index}'], task=task, history=history)
++            current = self.router.calls[-1]
++            if previous is not None:
++                self.assertEqual(previous, current[:len(previous)])
++            history.extend(self.history(task, report))
++            previous = copy.deepcopy(current)
++
++    def test_native_pairs_and_reasoning_survive_followup_for_both_wires(self):
++        for wire in ('openai', 'anthropic'):
++            self.agent.wire_hint = wire
++            response = Completion('', Usage(1, 1, 'fake', 'fake'), wire=wire,
++                tool_calls=[{'id': 'read-1', 'name': 'read_file', 'args': {'path': 'a.txt'}, 'wire': wire}])
++            original = ({'role': 'assistant', 'content': 'answer', 'reasoning_content': 'final thought'}
++                if wire == 'openai' else {'role': 'assistant', 'content': [
++                    {'type': 'thinking', 'thinking': 'final thought', 'signature': 'fixture signature'},
++                    {'type': 'text', 'text': 'answer'}]})
++            final = Completion('answer', Usage(1, 1, 'fake', 'fake'), wire=wire, assistant_message=original)
++            first = self.chat([response, final])
++            sent = copy.deepcopy(self.router.calls[-1])
++            report = self.chat(['next'], task='second', history=self.history('first', first))
++            self.assertEqual(self.router.calls[-1][:len(sent)], sent)
++            self.assertIn('read-1', str(self.router.calls[-1]))
++            self.assertIn('final thought', str(self.router.calls[-1]))
++            self.assertTrue(any(e['type'] == 'cache_prefix_reused' for e in report.events))
++
++    def test_edited_truncated_and_unrelated_history_do_not_reuse(self):
++        first = self.chat([call('read_file', path='a.txt'), 'answer'])
++        for history in [[{'role': 'user', 'content': 'edited'}], self.history('first', first)[1:],
++                        [{'role': 'user', 'content': 'unrelated'}, {'role': 'assistant', 'content': 'answer'}]]:
++            report = self.chat(['next'], task='second', history=history)
++            self.assertFalse(any(e['type'] == 'cache_prefix_reused' for e in report.events))
++
++    def test_same_task_without_history_is_an_independent_run(self):
++        self.chat([call('read_file', path='a.txt'), 'answer'])
++        report = self.chat(['next'])
++        self.assertFalse(any(e['type'] == 'cache_prefix_reused' for e in report.events))
++        self.assertNotIn('file content', str(self.router.calls[-1]))
++
++    def test_policy_and_tool_changes_invalidate_reuse(self):
++        first = self.chat(['answer'])
++        self.agent.policy = replace(self.agent.policy, mode=Mode.READ_ONLY)
++        report = self.chat(['next'], task='second', history=self.history('first', first))
++        self.assertFalse(any(e['type'] == 'cache_prefix_reused' for e in report.events))
++        self.agent.registry.register(ToolSpec('new_read', '', lambda a, c: ToolResult(True)), trusted=True)
++        report = self.chat(['third'], task='third', history=[*self.history('first', first),
++            {'role': 'user', 'content': 'second'}, {'role': 'assistant', 'content': report.text}])
++        self.assertFalse(any(e['type'] == 'cache_prefix_reused' for e in report.events))
++
++    def test_changed_or_deleted_nested_guidance_rebuilds(self):
++        (self.ws / 'src').mkdir()
++        rules = self.ws / 'src' / 'CLAUDE.md'
++        rules.write_text('old nested guidance', encoding='utf-8')
++        (self.ws / 'src' / 'b.txt').write_text('b', encoding='utf-8')
++        first = self.chat([call('read_file', path='src/b.txt'), 'answer'])
++        rules.write_text('new nested guidance', encoding='utf-8')
++        report = self.chat(['next'], task='second', history=self.history('first', first))
++        self.assertFalse(any(e['type'] == 'cache_prefix_reused' for e in report.events))
++        self.assertNotIn('old nested guidance', str(self.router.calls[-1]))
++
++    def test_new_guidance_appends_without_rewriting_previous_prefix(self):
++        (self.ws / 'AGENTS.md').write_text('root guidance', encoding='utf-8')
++        first = self.chat(['answer'])
++        sent = copy.deepcopy(self.router.calls[-1])
++        (self.ws / 'CLAUDE.md').write_text('added guidance', encoding='utf-8')
++        report = self.chat(['next'], task='second', history=self.history('first', first))
++        self.assertEqual(self.router.calls[-1][:len(sent)], sent)
++        self.assertIn('added guidance', str(self.router.calls[-1]))
++        self.assertTrue(any(e['type'] == 'cache_prefix_reused' for e in report.events))
++
++    def test_failed_run_clears_previous_conversation_snapshot(self):
++        first = self.chat(['answer'])
++        self.agent.limits.max_steps = 1
++        stopped = self.chat([call('read_file', path='a.txt')], task='second', history=self.history('first', first))
++        self.assertEqual(stopped.stopped, 'max_steps')
++        report = self.chat(['next'], task='third', history=self.history('first', first))
++        self.assertFalse(any(e['type'] == 'cache_prefix_reused' for e in report.events))
++
++    def test_deleted_guidance_invalidates_old_rule_context(self):
++        rules = self.ws / 'AGENTS.md'
++        rules.write_text('deleted guidance', encoding='utf-8')
++        first = self.chat(['answer'])
++        rules.unlink()
++        report = self.chat(['next'], task='second', history=self.history('first', first))
++        self.assertFalse(any(e['type'] == 'cache_prefix_reused' for e in report.events))
++        self.assertNotIn('deleted guidance', str(self.router.calls[-1]))
++
++    def test_identity_head_change_invalidates_snapshot(self):
++        first = self.chat(['answer'])
++        self.agent.name = 'new identity'
++        report = self.chat(['next'], task='second', history=self.history('first', first))
++        self.assertFalse(any(e['type'] == 'cache_prefix_reused' for e in report.events))
++        self.assertIn('new identity', self.router.calls[-1][0]['content'])
++
++    def test_route_endpoint_change_invalidates_snapshot(self):
++        from .test_prefix_cache import _Recorder
++        transport = _Recorder()
++        provider = Provider('fixture', 'http://before.invalid', default_model='deepseek-flash')
++        self.agent.router = ModelRouter([provider], transport=transport, retries_per_provider=0)
++        first = self.agent.run('first')
++        provider.base_url = 'http://after.invalid'
++        report = self.agent.run('second', history=self.history('first', first))
++        self.assertFalse(any(e['type'] == 'cache_prefix_reused' for e in report.events))
++
++    def test_run_hit_rate_weights_only_observed_input_tokens(self):
++        rows = [{'usage': {'prompt_tokens': prompt, 'cached_tokens': cached, 'cache_observed': observed}}
++                for prompt, cached, observed in [(100, 90, True), (900, 90, True), (1000, 0, False)]]
++        response = Completion('answer', Usage(2000, 1, 'fake', 'fake', cached_tokens=180), requests=rows)
++        report = self.chat([response])
++        self.assertEqual(report.usage['cache_hit_rate'], .18)
++        event = next(e for e in report.events if e['type'] == 'usage')
++        self.assertEqual(event['cache_hit_rate'], .18)
++        self.assertEqual(event['cache_observed_requests'], 2)
++        self.assertEqual(event['cache_unknown_requests'], 1)
++
++    def test_snapshot_size_and_broken_tool_groups_fail_closed(self):
++        cache = ConversationPrefix()
++        kwargs = dict(history=[{'role': 'user', 'content': 'x'}], guard='guard',
++                      rule_context='', rule_sources=[], targets=[])
++        self.assertFalse(cache.commit(messages=[{'role': 'tool', 'tool_call_id': 'orphan'}], **kwargs))
++        with patch('forge.conversation_prefix.MAX_SNAPSHOT_BYTES', 20):
++            self.assertFalse(cache.commit(messages=[{'role': 'user', 'content': 'long'}], **kwargs))
++
++    def test_snapshot_detaches_external_mutations(self):
++        cache = ConversationPrefix()
++        history = [{'role': 'user', 'content': 'x'}]
++        messages = [{'role': 'user', 'content': 'x'}]
++        cache.commit(history=history, messages=messages, guard='g', rule_context='', rule_sources=[], targets=[])
++        messages[0]['content'] = 'mutated'
++        first = cache.candidate(history, 'g')
++        first['messages'][0]['content'] = 'also mutated'
++        self.assertEqual(cache.candidate(history, 'g')['messages'][0]['content'], 'x')
++
++
++class HonestCacheMetricsTests(unittest.TestCase):
++    def row(self, cached, observed=True):
++        return {'usage': {'prompt_tokens': 100, 'cached_tokens': cached, 'cache_observed': observed}}
++
++    def test_unknown_cache_usage_is_not_a_cold_miss(self):
++        result = _cache_trajectory({'requests': [self.row(0, False)]})
++        self.assertNotIn('hit_rate_by_request', result)
++        self.assertEqual(result['coverage']['unknown_requests'], 1)
++
++    def test_unknown_gap_does_not_invent_a_bust(self):
++        result = _cache_trajectory({'requests': [self.row(90), self.row(0, False), self.row(10)]})
++        self.assertEqual(result['hit_rate_by_request'], [.9, .1])
++        self.assertEqual(result['observed_request_indices'], [0, 2])
++        self.assertEqual(result['busts'], [])
++
++    def test_unknown_first_request_has_unknown_cold_start(self):
++        result = _cache_trajectory({'requests': [self.row(0, False), self.row(10)]})
++        self.assertIsNone(result['cold_start'])
++        self.assertEqual(result['coverage']['all_observed']['hit_rate'], .1)
++
++
++if __name__ == '__main__':
++    unittest.main()
+--- /dev/null
++++ b/tests/test_cache_continuation_entries.py
+@@ -0,0 +1,72 @@
++"""编辑器连续对话的最终 HTTP 请求体对照：只用本地响应替身。"""
++import io
++import copy
++import json
++import unittest
++
++import test_development_execution as fixtures
++from forge.model import HttpTransport, ModelRouter, Provider
++
++
++class EditorWirePrefixTests(unittest.TestCase):
++    def setUp(self):
++        self.transport_complete = HttpTransport.complete
++        fixtures.ExecutionTests.setUp(self)
++    runtime = fixtures.ExecutionTests.runtime
++
++    def test_editor_followup_preserves_actual_deepseek_wire_prefix(self):
++        calls = []
++        def opener(request, **kwargs):
++            calls.append(json.loads(request.data))
++            if len(calls) == 1:
++                message = {'role': 'assistant', 'content': '', 'reasoning_content': 'fixture reasoning',
++                    'tool_calls': [{'id': 'read-1', 'type': 'function', 'function': {
++                        'name': 'read_file', 'arguments': '{"path":"value.py"}'}}]}
++                finish = 'tool_calls'
++            else:
++                message = {'role': 'assistant', 'content': 'answer', 'reasoning_content': 'final reasoning'}
++                finish = 'stop'
++            return io.BytesIO(json.dumps({'choices': [{'message': message, 'finish_reason': finish}],
++                'usage': {'prompt_tokens': 3000, 'completion_tokens': 10}}).encode())
++        transport = HttpTransport(response_opener=opener)
++        transport.complete = self.transport_complete.__get__(transport, HttpTransport)
++        router = ModelRouter([Provider('fixture', 'http://127.0.0.1:1', default_model='deepseek-flash')],
++            transport=transport, retries_per_provider=0)
++        runtime = self.runtime(router=router)
++        first = runtime.run('read the code', permission='read-only', planning='none')
++        self.assertTrue(first['ok'])
++        self.assertEqual(len(calls), 2)
++        history = copy.deepcopy(runtime.bridge.history)
++        second = runtime.run('explain that code', permission='read-only', planning='none')
++        self.assertTrue(second['ok'])
++        self.assertEqual(len(calls), 3)
++        self.assertEqual(calls[1]['tools'], calls[2]['tools'])
++        self.assertEqual(calls[1]['messages'], calls[2]['messages'][:len(calls[1]['messages'])])
++        self.assertIn('fixture reasoning', str(calls[2]['messages']))
++        self.assertIn('final reasoning', str(calls[2]['messages']))
++        self.assertIsNone(second['usage']['cache_hit_rate'])
++        usage_event = next(e for e in runtime.bridge.agent.events if e['type'] == 'usage')
++        self.assertIsNone(usage_event['cache_hit_rate'])
++        self.assertTrue(any(e['type'] == 'cache_prefix_reused' for e in runtime.bridge.agent.events))
++        # Fixture 没有厂商缓存回执：不得报告任何“实测命中提升”。
++        self.assertEqual(second['usage']['cache_trajectory']['coverage']['all_observed']['requests'], 0)
++        # 同一宿主历史禁用快照，直接对照原先的“简化历史重建”路径。
++        runtime.bridge.history = history
++        runtime.bridge.agent._conversation_prefix.clear()
++        rebuilt = runtime.run('explain that code', permission='read-only', planning='none')
++        self.assertTrue(rebuilt['ok'])
++        def common(left, right):
++            count = 0
++            for a, b in zip(left, right):
++                if a != b:
++                    break
++                count += 1
++            return count
++        retained = common(calls[1]['messages'], calls[2]['messages'])
++        baseline = common(calls[1]['messages'], calls[3]['messages'])
++        self.assertGreater(retained, baseline)
++        print(json.dumps({'retained_prefix_messages': retained, 'baseline_prefix_messages': baseline}))
++
++
++if __name__ == '__main__':
++    unittest.main()
+--- /dev/null
++++ b/docs/DSH-CACHE-CONTINUITY.md
+@@ -0,0 +1,47 @@
++# Forge 连续对话缓存前缀优化
++
++本轮对照本机 DeepSeek Harness，补齐 Forge 在连续对话中丢失真实请求历史的问题。优化已进入 `EditorBridge → Agent.run → ModelRouter → HttpTransport`，只需保持原有会话并继续追问。
++
++## 对照来源与取舍
++
++实际参考文件位于 `C:/Users/匡溯昀/Desktop/本地工作流/dsh-desktop/node_modules/@deepseek-ai/`，包版本为 `0.1.5-rc.2`。另一个 `DeepSeek harness` 目录是工作区，并不包含实现。本轮阅读的是本机安装包内可读 JavaScript：
++
++| 本地 DSH 文件 | 采用的设计 |
++| --- | --- |
++| `dsh-session/lib/index.js`，`Session.deriveMessages()` | 按真实消息表面派生历史；保留既有投影；表面被替换时重建。DSH 使用冻结对象，Forge 用私有深拷贝隔离调用方修改 |
++| `dsh-agent-loop/lib/index.js`，`step()` | 提示变化可追加到历史；工具变化或表面替换会开启新的请求序列 |
++| 同文件中的请求上下文比较 | 缓存连续性应以实际请求上下文判断，不能仅比较用户可见聊天文本 |
++
++Forge 先前已拆分稳定系统头与易变运行信封，也有规则增量追加和缓存覆盖统计。本轮补齐跨 `run()` 的请求延续；没有引入 DSH 依赖，也没有复制其事件存储架构。
++
++## 原问题与实现
++
++旧流程把上一轮重建为普通 user/assistant 文本，丢掉任务契约投影、运行信封、原生工具调用及结果。即使系统头相同，下一轮也很快失配。
++
++新增 `forge/conversation_prefix.py`，在成功结束且通过现有验收之后保存一份宿主请求快照。追问时，只有客户端普通聊天历史的摘要完全匹配，才恢复真实消息并追加本轮上下文与任务。客户端仍不能提交 system/tool 消息。
++
++快照保存最终请求上下文及最终 assistant 回复，保留 OpenAI 推理字段和 Anthropic thinking/signature 块。`forge/toolwire.py` 同时修复无工具最终回复丢失 `reasoning_content` 的分支。工具历史只是上下文，恢复不会执行旧工具。
++
++连续性保护覆盖系统头、冻结记忆、权限、上下文模式、路由模型/端点/账户/行为画像、工具声明和处理器身份。旧规则的来源与版本必须仍有效；新增规则走既有追加路径。历史被编辑、截断或切换分支，旧规则被改动/删除，失败或取消，均放弃复用并走正常组装。
++
++每个 Agent 只保存一份不超过 2 MiB 的快照。它仅存在于当前 Agent 内存中，不能用于进程重启、磁盘会话恢复或每轮重建 Agent 的入口。压缩和容量检查继续生效，因此长对话压缩仍会有意改变前缀。没有通过填充提示、隐藏工具或固定旧规则来追求命中。
++
++## 统计语义
++
++`forge/protocol.py` 的轨迹跳过缺失、未知或不合法的缓存回执，记录原请求下标。未知间隔会切断断点比较，首请求未知时 `cold_start` 为 `null`。
++
++`Agent._finish()` 的 `cache_hit_rate` 统一使用 `cache_coverage().all_observed`，按已观测输入 token 加权；完全没有回执时为 `null`。usage 事件附带已观测及未知请求数。原始 token 总量和计费账本不变。兼容字段 `avg_hit_rate` 仍是已观测请求比例的算术均值，分析总体命中率应使用 coverage。
++
++`cache_prefix_reused` 是宿主恢复快照的诊断事件，不代表厂商已命中缓存。
++
++## 验证
++
++专项测试覆盖跨三轮追加、工具配对、两种协议的最终推理块、深拷贝、容量上限、失效条件和统计分母。编辑器集成测试使用实际 `HttpTransport.complete()` 生成最终 HTTP JSON，并在本地截获 I/O：同一追问中，相同消息前缀由旧流程的 **1 条增加至 5 条**，工具声明保持相同。此数字是该固定场景的消息前缀长度，不是 token 数或线上命中率。
++
++本轮回归结果：核心 413 项（2 跳过）、客户端及运行链 206 项（1 跳过），共 **616 项通过、3 项跳过、0 失败**；专项包含在总数内。框架自检 **595/595**，代码预算 146 个文件通过，Git 空白检查通过。
++
++复验核心与自检：`python -m unittest discover -s forge -t . -q`、`python -m forge.cli selftest`。单独复验最终请求体：`python -m unittest discover -s tests -p test_cache_continuation_entries.py -q`。
++
++验证日志：`reports/dsh-cache-core.log`、`reports/dsh-cache-runtime.log`、`reports/dsh-cache-selftest.log`、`reports/dsh-cache-entries.log`。本轮未调用付费云模型，因此没有声称实测成本下降或厂商缓存命中率提升。
++
++本轮独立补丁为 `reports/dsh-cache.patch`，文件清单为 `reports/dsh-cache-files.json`，修改前快照路径见 `reports/dsh-cache-backup.txt`。这些补丁以本轮开始时的工作区为基线，保留已有改动。

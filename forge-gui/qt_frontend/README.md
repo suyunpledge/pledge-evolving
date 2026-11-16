@@ -1,0 +1,62 @@
+# Qt 原生工作台
+
+`forge_qt.py` 的所有功能页由 QML 绘制，不再挂载 Tk 子窗口。
+`WorkbenchController` 启动 `service_host.py`，通过 JSON 行协议收发页面快照、操作、审批与执行事件。
+后台进程不导入 Tk 或创建窗口；网关、定时任务和模型请求不占用 Qt GUI 线程。
+
+- `WorkspacePage.qml` / `WorkbenchField.qml`：延迟创建并保留页面、玻璃表单、文件编辑与结果面板。
+- `workspace_service.py`：文件、配置、插件、Agent 设置、知识、演化、计划任务和账户管理，复用原存储。
+- `coding_service.py`：独立 `DevelopmentRuntime`，保留任务队列、模型角色、审批、历史和代码回退。
+- `gateway_service.py` / `scheduler_service.py`：管理本实例拥有的网关和只读定时任务。
+- `computer_service.py` / `computer_runtime.py`：选定窗口、截图、视觉分析、逐次输入审批及对话工具。
+- Work 对话整合 `team_service.py`，沿用原 Agent 协作开关与记忆设置，不再打开第二个聊天界面。
+
+文件支持 UTF-8/UTF-16、原换行格式、搜索、查找替换、另存为和原文参考。
+保存、合并、回退仍检查磁盘版本；未保存的编辑会阻止 Agent 写入。
+旧 `embedded_host.py` 与 Tk 前端只保留兼容代码，Qt 启动路径不再引用它们。
+
+## 回复后的代码修改与回退
+
+Qt 主对话在 AI 回复下方显示本次实际修改的文件、增删行数和「查看修改 / 回退」。
+差异在主窗口内打开，可切换文件、横向滚动、复制差异；回退需要确认。
+Coding 页的任务变更摘要也提供「回退本次修改」，复用相同的文件快照与版本校验。
+
+## 数据与回退范围
+
+- `FileRevisionGuard` 在实际文件工具执行前后记录字节快照，回执返回 `change_ids`。
+  快照在对应运行时 home 的 `changes/` 中，受工具路径保护；用户 Git 仓库和暂存区不参与回退。
+- Qt 的 `ReplyChanges` 汇总同一回复的回执，并把引用、脱敏差异、状态保存到会话。
+  Gateway 的 `/v1/changes/review` 和 `/v1/changes/revert` 校验当前主机策略。
+  UI 另行执行当前桌面权限检查；手动批准模式仍需批准。
+- 多次修改同一文件只展示操作前到操作后的最终差异。撤销恢复操作前的内容，
+  包括原有未提交代码和换行格式；本次新增文件被移除，删除文件被恢复。
+- 回退整批文件前检查所有目标的版本，并使用现有工作区 / 文件写入锁。
+  有后续编辑或写入链不连续时拒绝覆盖；Coding 编辑器的未保存草稿也会阻止回退。
+  非协作编辑器不受 Forge 的锁控制，故写入每个文件前还会重新核对内容。
+- 不自动重试回退请求。断连、磁盘故障或进程退出后应重新查看差异，确认完成与冲突状态。
+  已回退记录有持久标记，重复操作不会删除或覆盖回退后新增的编辑。
+
+## 支持与限制
+
+支持工作区内经 `write_file`、`edit_file`、`apply_patch`、`delete_file`、`edit_config`
+产生的文件修改。Shell、连接器、工作区外路径、链接路径及旧历史没有可靠快照时，
+不提供自动回退。单文件快照上限 2 MiB；超过 256 KiB 的文件不生成文本预览，
+单文件差异最多显示 64 KiB。一个回退请求最多 256 个回执、64 MiB 快照数据。
+
+源码启动器会加载新界面代码；已经运行的 Forge 和网关需要重启。
+旧网关产生的记录只能显示已有差异，不能补造修改前的快照。
+
+## 本地验证
+
+从仓库根目录运行，使用 Qt 专用解释器：
+
+```powershell
+.\.venv\qt\Scripts\python.exe -m unittest discover -s tests -p 'test_change*.py' -q
+$env:PYTHONPATH = (Get-Location).Path
+Set-Location forge-gui
+..\.venv\qt\Scripts\python.exe -m unittest qt_frontend.test_changes qt_frontend.test_backend qt_frontend.test_permissions -q
+..\.venv\qt\Scripts\python.exe -m unittest qt_frontend.test_rendering -q
+..\.venv\qt\Scripts\python.exe -m unittest development_mode.test_agent_panel -q
+```
+
+测试只修改临时目录。模型流使用本地替身，实际文件工具、HTTP 网关、版本检查和回退均执行真实代码。

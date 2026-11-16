@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 import json
 import os
 import stat
@@ -23,11 +24,12 @@ def _valid(secrets):
         for name, key in secrets.items())
 
 
-def load(*, strict=False) -> dict[str, str]:
+def load(*, strict=False, path=None) -> dict[str, str]:
     """读 secrets.json；不存在/不可读返回空 dict。"""
+    path = Path(path) if path is not None else SECRETS_FILE
     try:
-        protect_store_path(SECRETS_FILE)
-        data = json.loads(SECRETS_FILE.read_text(encoding="utf-8-sig"))
+        protect_store_path(path)
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
         if not _valid(data):
             raise ValueError("密钥文件须为名称和密钥均为文本的对象")
         scope = SecretScope()
@@ -43,19 +45,20 @@ def load(*, strict=False) -> dict[str, str]:
         return {}
 
 
-def save(secrets: dict[str, str]) -> None:
+def save(secrets: dict[str, str], *, path=None) -> None:
     """原子写：临时文件 → os.replace。权限 0600（仅 owner 读写）。"""
     if not _valid(secrets):
         raise OSError("密钥名称和内容必须为文本")
     scope = SecretScope()
     for key in secrets.values(): scope.reference(key)
     scope.close()
+    path = Path(path) if path is not None else SECRETS_FILE
     with _LOCK:
-        current = load(strict=True)
-        SECRETS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        current = load(strict=True, path=path)
+        path.parent.mkdir(parents=True, exist_ok=True)
         tmp = None
         try:
-            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=SECRETS_FILE.parent,
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
                                              prefix=".secrets-", suffix=".tmp", delete=False) as stream:
                 tmp = Path(stream.name)
                 protect_store_path(tmp)
@@ -66,10 +69,10 @@ def save(secrets: dict[str, str]) -> None:
                 json.dump(secrets, stream, ensure_ascii=False, indent=2)
                 stream.flush()
                 os.fsync(stream.fileno())
-            if load(strict=True) != current:
+            if load(strict=True, path=path) != current:
                 raise OSError("密钥文件已被其他程序修改，请刷新后重试")
-            os.replace(tmp, SECRETS_FILE)
-            protect_store_path(SECRETS_FILE)
+            os.replace(tmp, path)
+            protect_store_path(path)
             scope = SecretScope()
             for key in secrets.values(): scope.reference(key)
             scope.close()
@@ -84,6 +87,27 @@ def set_provider(name: str, api_key: str) -> None:
         if api_key:
             cur[name] = api_key
         save(cur)
+
+
+@contextmanager
+def update_provider(name, key, *, path=None):
+    """Restore the prior credential if saving its provider row fails."""
+    with _LOCK:
+        original = load(strict=True, path=path)
+        updated = {**original, name: key}
+        if updated != original:
+            save(updated, path=path)
+        try:
+            yield
+        except Exception:
+            if updated != original:
+                latest = load(strict=True, path=path)
+                if latest.get(name) == key:
+                    latest.pop(name)
+                    if name in original:
+                        latest[name] = original[name]
+                    save(latest, path=path)
+            raise
 
 
 def get_provider(name: str) -> str | None:

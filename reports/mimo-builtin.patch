@@ -1,0 +1,900 @@
+diff --git a/docs/MIMO-BUILTIN-RESULT-VIEWS.md b/docs/MIMO-BUILTIN-RESULT-VIEWS.md
+new file mode 100644
+--- /dev/null
++++ b/docs/MIMO-BUILTIN-RESULT-VIEWS.md
+@@ -0,0 +1,92 @@
++# 内置工具结果视图：调用链、MiMo 对照与验收
++
++## 实际接入
++
++`build_builtin_registry()` 现在默认给 **list_dir、find_files、grep、file_outline** 声明结果视图；宿主可用 `result_views=False` 关闭。自定义 ToolSpec 的默认行为仍不变。文件正文、read_range、shell_exec、review_changes、网络正文没有套用这一字段策略。
++
++四个工具的 handler 继续返回原来的纯文本，供直接 registry.invoke 的调用方使用；它们额外提供有限的结构化展示数据。共享 ActionExecutor 先完成原始文件修订记录，再将完整、经过 secret scope 保护的原始返回保存到 ArtifactStore，向模型返回 summary、preview、notes 和 `_retained` 引用。内部 `_result_view_source` 在执行边界移除，不在动作回执中重复保存；原文也不是由预览重建。Agent、Gateway 和动作查询使用相同的结果。
++
++预览策略：
++
++- 原始返回不足 1400 字符时保持纯文本，不增加留存与 JSON 开销。
++- 大结果选择前四、后四条完整行，中间明确标注省略；预览最多 800 字符，放不下的整行跳过。summary 分开记录 returned_rows、preview_rows 和工具原有的计数/截断标志。
++- 路径、行号和符号仍来自实际工具输出；截断、无法解析等 notes 不从预览中丢弃。原有最多 100 个 grep 匹配、200 个文件/条目/符号的上限仍有效，计数不是整个仓库的总量。
++- `_retained.characters` 给出保护后原文的字符长度，模型可据此选择读取范围。artifact_read 和 artifact_grep 的 schema 现在明确页大小上下界，并声明 grep 是字面子串搜索。
++- 视图没有更短、超出 inline_limit、解析/存储失败、工具失败或执行状态未知时，继续使用既有回退路径。当前 registry 必须暴露 READ 效果且直接 ALLOW 的 artifact_read 才启用字段视图，不会改变工具授权或打开隐藏工具。
++
++## 长任务和多轮链路修复
++
++会话 guard 现在包含注册时冻结的 result_fields：即使工具 schema 和 handler 名称相同，宿主更改视图策略也会使旧会话快照失效。正常使用相同策略的新 Agent 则继续复用已发送的请求历史。
++
++压缩原先只摘录最后两份工具输出，会丢失较早的留存引用。现在另保留最近四个结构化视图/原有留存结果的引用，显式标记为 unverified，重复压缩时继续携带。它们只是查找线索，不是事实或授权；不会把普通用户文本里的哈希或工具输出中的裸哈希升级为引用。四个引用之外的旧输出仍保存在 ArtifactStore，但摘要不承诺记住无限数量的历史引用。
++
++MiMo 实测还暴露了 `grep(path=...)` 的调用习惯：先前未知 path 被忽略，扩大了实际扫描范围；后来单文件路径又被拒绝。现在 grep/find_files 在 root 缺省时接受 path 位置别名，显式 root 优先；grep 支持单个文件，沿用同一套公开路径、读取权限、文件大小、secret 保护及匹配逻辑，没有增加另一条读取实现。find_files 继续以目录为搜索根。
++
++## 对照设置
++
++脚本 `scripts/verify_mimo_builtin_views.py` 使用真实 MiMo API 和真实内置工具，没有替换工具 handler。每个样本三轮：alpha 目录审计、beta 目录审计、取回 beta 的中间 AUDIT_CONTROL 记录。每轮重建 Agent，用相同 home 和普通聊天历史恢复宿主磁盘快照，覆盖桌面端常见路径。
++
++夹具每目录 71 个清单文件和一个 Python 模块，模块有 91 个符号、40 条审计记录。第一、二轮必须实际调用四种发现工具，再读取 release_marker 返回值、写 JSON、read_file 复核；第三轮写入记录 025 的审计代码。每轮都有独立 json_value 环境探针验收，另检查源文件完全未改变。优化组还要求在 artifact 工具的实际返回中观察到预览未包含的记录 025，不能只凭最终答案判成功。
++
++两臂运行同一版本的 Agent、ContextBudget、工具 handler/schema、路由、输出上限和源文件，只有 result_views 开关不同。每组都校验首个完整 HTTP payload 摘要相同。已有六组历史问答是隔离的合成审计记录，用于触发初始压缩；它们不是当前证据。context_chars=9000、本地 contextWindow=16000、maxOutputTokens=4096、工具 inline_limit 为生产默认 4000；没有宣称测试了厂商最大窗口。
++
++正式 A/B 的第二轮在两种模型、两种策略中都成功复用磁盘快照，实际首个请求逐字保留上一轮最后一个已发送请求。个别第三轮在复用快照后立即触发必要压缩，不能把 cache_prefix_reused 事件直接当作完整前缀仍未变化的证据。所有实际请求和导出归档都验证工具调用配对。
++
++## 实测结果
++
++第一次 Flash pilot 只保留头部行：缓存命中率从 70.10% 升到 80.02%，但总 token 从 70266 **增加到 77071（+9.68%）**。额外定位末尾符号和多次取回抵消了结果变短的收益，因此调整为首尾预览、加入原文长度和分页参数声明。原始报告保留，未以命中率替代总消耗验收。
++
++调整后的 A/B：
++
++| 模型 / 策略 | 输入 token | 输出 token | 总 token | 已知缓存 token / 已知输入 | 命中率 | 压缩次数 |
++| --- | ---: | ---: | ---: | --- | ---: | ---: |
++| Pro baseline | 56756 | 1595 | 58351 | 28928 / 56756 | 50.97% | 8 |
++| Pro improved | 50627 | 2638 | 53265 | 38784 / 50627 | 76.61% | 6 |
++| Flash baseline | 56639 | 1361 | 58000 | 34176 / 51068 | 66.92% | 7 |
++| Flash improved | 55995 | 1071 | 57066 | 42752 / 51746 | 82.62% | 3 |
++
++Pro 总 token 降低 **8.72%**，Flash 降低 **1.61%**。Pro 两臂无工具错误；Flash baseline 有一次 malformed read_file 参数被正常拒绝后纠正，improved 有一次单文件 grep 被拒绝后纠正。没有自动猜补损坏参数。Flash 两臂各有一份缓存回执未知，涉及输入分别 5571、4249 token，计入总消耗，但从已知命中率分母排除，没有视为零命中。
++
++上述 Pro/Flash A/B 完成后才补齐单文件 grep，随后用完整三轮 Flash **improved → baseline** 反向顺序对照验证最终实现。它与前一组不是同一版本的 ABBA，不能合并伪称严格 ABBA。反向对照数据在报告 `mimo-builtin-flash-reverse-ba.json` 中单独保留。
++
++| 最终 Flash 反向对照 | 输入 token | 输出 token | 总 token | 已知缓存 token / 已知输入 | 命中率 | 压缩次数 |
++| --- | ---: | ---: | ---: | --- | ---: | ---: |
++| baseline（后运行） | 58791 | 1722 | 60513 | 36416 / 58791 | 61.94% | 9 |
++| improved（先运行） | 52231 | 1173 | 53404 | 35264 / 52231 | 67.52% | 4 |
++
++最终这一组总 token 降低 **11.75%**，两臂均无工具错误、没有未知缓存回执，首个 HTTP payload 相同。优化组第三轮实际调用 artifact_grep 查到 025，再以 `grep(path="beta/module.py", ..., context=2)` 复核，完成写入与读取验收。15 次成功模型请求、20 次工具动作，对照组为 17 次请求、24 次动作。优化组第二、三轮请求均逐字续接上轮最后已发送请求；baseline 第二轮在复用磁盘快照后先压缩，实际 HTTP 前缀因此发生变化。
++
++这些是小样本实际消耗，含必要取回、模型额外验证和推理输出；工具调用数量没有强行对齐。命中率、总消耗和策略顺序都存在波动，不推广为任意任务的固定收益，也没有把 token 报表当作真实发票或速度证明。
++
++证据：
++
++- [首轮回退记录](../reports/mimo-builtin-flash-ab.json)
++- [Pro A/B](../reports/mimo-builtin-pro-final-ab.json)
++- [Flash A/B](../reports/mimo-builtin-flash-final-ab.json)
++- [最终 Flash 反向对照](../reports/mimo-builtin-flash-reverse-ba.json)
++- [证据复核汇总](../reports/mimo-builtin-evidence.json)
++
++连同 pilot，本轮共 **140 次 HTTP 尝试、140 次成功 usage 回执**；回执输入 **475009**、输出 **12927** token，没有传输错误。缓存详情未知不等于主 usage 未知，也不等于未计费。这些是本轮实际 API 消耗，未做发票核验。
++
++复核了 25 份不同导出路径的原始返回，全部匹配内容哈希和字符长度；其中正式三组的 27 次留存动作还与当前真实 handler 在相同夹具/调用参数下的原始文本逐字比较一致。35 次结果视图引用校验通过；49 份压缩归档的摘要和工具配对均有效。导出原文和归档分别位于对应报告旁的 `*-artifacts/`、`*-archives/`，没有只保留摘要作为证据。
++
++## 验证与复现
++
++新增九个核心测试方法和一个 Gateway HTTP 测试，覆盖四个工具的真实执行、纯文本兼容、原文精确取回、首尾预览、secret 保护、截断提示、隐藏/禁止/关闭视图、反复压缩、两种原生 wire、多轮续接、策略失效、位置别名和单文件搜索。原有 JSON 字段视图测试继续通过。
++
++核心 497 项（跳过 2），runtime 294 项（跳过 1），合计 **788 通过、3 跳过**；selftest **595/595**。runtime 第一次全量运行曾因本机前台窗口切换而在 NativeKeyboardTests 正确拒绝输入；后续全量运行通过，未修改计算机输入的安全门禁。最后的引用识别和单文件搜索修复又运行了核心全量、定向回归、Gateway 和自检；目录超过 200 项时的纯文本兼容修复另通过 41 项定向回归。预算 156 文件、48463 行。
++
++复现会消耗 API，建议另选报告文件名：
++
++```powershell
++python scripts/verify_mimo_builtin_views.py --live --model mimo-v2.6-pro --request-limit 48 --output reports/new-builtin-pro.json
++python scripts/verify_mimo_builtin_views.py --live --model mimo-v2.6-flash --strategies improved baseline --request-limit 40 --output reports/new-builtin-flash.json
++python -m unittest forge.test_builtin_views forge.test_result_view forge.test_coding_tools forge.test_token_efficiency -q
++python -m unittest discover -s forge -t . -q
++$env:PYTHONPATH='tests;.'
++python -m unittest discover -s tests -q
++python -m forge.cli selftest
++python scripts/budget_check.py
++```
++
++只读取本机既有 MiMo provider 凭据，不写配置、不导出密钥；发送的任务和源码均为隔离合成夹具。本轮增量补丁、哈希清单和原始备份记录分别为 `reports/mimo-builtin.patch`、`reports/mimo-builtin-files.json`、`reports/mimo-builtin-backup.txt`。它们以本轮开始时的工作区为基准，不合入其他既有修改。
+diff --git a/forge-budgets.json b/forge-budgets.json
+--- a/forge-budgets.json
++++ b/forge-budgets.json
+@@ -4,10 +4,11 @@
+     "forge/__init__.py": 38,
+     "forge/acceptance.py": 172,
+     "forge/adapters.py": 754,
+-    "forge/artifact_tools.py": 36,
+-    "forge/artifacts.py": 183,
++    "forge/artifact_tools.py": 43,
++    "forge/artifacts.py": 187,
+     "forge/assembly.py": 127,
+     "forge/batch_execution.py": 144,
++    "forge/builtin_views.py": 24,
+     "forge/cache_metrics.py": 90,
+     "forge/cache_state.py": 400,
+     "forge/canonical.py": 36,
+@@ -20,7 +21,7 @@
+     "forge/client_runs.py": 213,
+     "forge/cmd_setup.py": 522,
+     "forge/code_review.py": 59,
+-    "forge/compaction.py": 175,
++    "forge/compaction.py": 178,
+     "forge/computer_capture.py": 136,
+     "forge/computer_coordinates.py": 210,
+     "forge/computer_use.py": 188,
+@@ -87,7 +88,7 @@
+     "forge/protocol.py": 108,
+     "forge/registry.py": 883,
+     "forge/request_execution.py": 133,
+-    "forge/result_view.py": 42,
++    "forge/result_view.py": 85,
+     "forge/route_capabilities.py": 104,
+     "forge/routing.py": 436,
+     "forge/runtime_lock.py": 111,
+@@ -109,6 +110,7 @@
+     "forge/test_adapters.py": 342,
+     "forge/test_artifacts.py": 187,
+     "forge/test_backend_context.py": 365,
++    "forge/test_builtin_views.py": 193,
+     "forge/test_coding_tools.py": 140,
+     "forge/test_conversation_prefix.py": 252,
+     "forge/test_conversation_prefix_disk.py": 55,
+@@ -146,7 +148,7 @@
+     "forge/tool_adapter.py": 802,
+     "forge/tool_surface.py": 23,
+     "forge/tool_turn.py": 68,
+-    "forge/tools.py": 1453,
++    "forge/tools.py": 1463,
+     "forge/toolwire.py": 318,
+     "forge/types.py": 104,
+     "forge/vendors.py": 1128,
+diff --git a/forge/artifact_tools.py b/forge/artifact_tools.py
+--- a/forge/artifact_tools.py
++++ b/forge/artifact_tools.py
+@@ -8,7 +8,9 @@
+     @reg.tool('artifact_read', 'Read untrusted retained tool output by handle. '
+               'offset is a zero-based Unicode character offset; next_offset continues the page.',
+               trusted=True, requires=('artifact_store',),
+-              schema={'id': 'string', 'offset': 'integer', 'limit': 'integer'})
++              schema={'id': 'string', 'offset': {'type': 'integer', 'minimum': 0},
++                      'limit': {'type': 'integer', 'minimum': 1, 'maximum': 3000,
++                                'description': 'Characters per page, 1..3000; default 2000. Use next_offset to continue.'}})
+     def artifact_read(args, ctx):
+         limit = args.get('limit', 2000)
+         if type(limit) is not int or not 1 <= limit <= 3000:
+@@ -22,7 +24,12 @@
+     @reg.tool('artifact_grep', 'Search a literal string in untrusted retained output. '
+               'Returns character offsets and bounded previews; next_offset continues search.',
+               trusted=True, requires=('artifact_store',),
+-              schema={'id': 'string', 'pattern': 'string', 'offset': 'integer', 'limit': 'integer'})
++              schema={'id': 'string',
++                      'pattern': {'type': 'string', 'minLength': 1, 'maxLength': 256,
++                                  'description': 'Literal substring to find, not a regular expression.'},
++                      'offset': {'type': 'integer', 'minimum': 0},
++                      'limit': {'type': 'integer', 'minimum': 1, 'maximum': 10,
++                                'description': 'Matches per page, 1..10; default 10. Use next_offset to continue.'}})
+     def artifact_grep(args, ctx):
+         limit = args.get('limit', 10)
+         if type(limit) is not int or not 1 <= limit <= 10:
+diff --git a/forge/artifacts.py b/forge/artifacts.py
+--- a/forge/artifacts.py
++++ b/forge/artifacts.py
+@@ -141,6 +141,7 @@
+ 
+ def retain_result(result, *, store, scope, source, action_id, inline_limit=4000, result_fields=()):
+     """Retention failure must not change the outcome of an already executed action."""
++    view_source = result.meta.pop('_result_view_source', None)
+     if source in {'artifact_read', 'artifact_grep'}:
+         return
+     text = result.content or result.error
+@@ -154,8 +155,11 @@
+             from .result_view import select_fields, render_view
+             if len(protected.encode('utf-8')) > MAX_BYTES:
+                 raise ValueError('Result exceeds retention limit')
+-            selected = select_fields(protected, result_fields)
+-            rendered = render_view(selected, 'a_' + '0'*64)
++            # Trusted registrations may supply a structured view of plain-text output.
++            # The retained source remains the exact protected original, never this preview.
++            selected = select_fields(scope.protect_text(view_source) if view_source is not None
++                                     else protected, result_fields)
++            rendered = render_view(selected, 'a_' + '0'*64, characters=len(protected))
+             rendered.encode('utf-8')  # An escaped lone surrogate must remain escaped in the full source.
+             size = len(rendered)
+             if size >= len(protected) or size > inline_limit:
+@@ -172,7 +176,7 @@
+         return
+     result.meta['artifact'] = meta
+     if selected is not None:
+-        body = render_view(selected, meta['id'])
++        body = render_view(selected, meta['id'], characters=meta['characters'])
+         result.meta['model_view'] = {'fields': list(result_fields), 'source_characters': len(protected),
+                                      'view_characters': len(body)}
+     else:
+diff --git a/forge/builtin_views.py b/forge/builtin_views.py
+new file mode 100644
+--- /dev/null
++++ b/forge/builtin_views.py
+@@ -0,0 +1,24 @@
++"""Bounded search previews; the original plain-text tool contract stays intact."""
++import json
++
++
++FIELDS = ('summary', 'preview', 'notes')
++HELP = ' Large replies may show a preview; use _retained with artifact_read/artifact_grep for all rows.'
++
++
++def search_result(body, *, summary, rows, notes=()):
++    from .tools import ToolResult
++    meta = dict(summary)
++    if len(body) >= 1400:
++        preview, size = [], 0
++        candidates = rows if len(rows) <= 8 else [*rows[:4], '[... omitted rows ...]', *rows[-4:]]
++        for row in candidates:
++            if size + len(row) + 1 > 800:
++                continue
++            preview.append(row)
++            size += len(row) + 1
++        meta['_result_view_source'] = json.dumps({
++            'summary': {**summary, 'returned_rows': len(rows),
++                        'preview_rows': sum(row != '[... omitted rows ...]' for row in preview)},
++            'preview': '\n'.join(preview), 'notes': list(notes)}, ensure_ascii=False)
++    return ToolResult(True, body, meta=meta)
+diff --git a/forge/compaction.py b/forge/compaction.py
+--- a/forge/compaction.py
++++ b/forge/compaction.py
+@@ -169,7 +169,10 @@
+         if requests:
+             flat += '\nEarlier tool requests (outcomes not asserted): ' + ' '.join(
+                 excerpt(v, 110) for v in requests[-2:])
+-        return f'[compacted {len(head)} earlier messages; unverified excerpts] {flat[:800]}'
++        from .result_view import REFERENCE_LABEL, retained_handles
++        refs = retained_handles(head)
++        suffix = '\n' + REFERENCE_LABEL + ', '.join(refs) if refs else ''
++        return f'[compacted {len(head)} earlier messages; unverified excerpts] {flat[:800]}' + suffix
+ 
+ 
+ __all__ = ["ContextBudget"]
+diff --git a/forge/loop.py b/forge/loop.py
+--- a/forge/loop.py
++++ b/forge/loop.py
+@@ -400,7 +400,7 @@
+             'handlers': [(s.name,
+                           f"{getattr(s.handler, '__module__', '')}."
+                           f"{getattr(s.handler, '__qualname__', repr(s.handler))}",
+-                          self.registry.effect(s.name).value)
++                          self.registry.effect(s.name).value, self.registry.result_fields(s.name))
+                          for s in self.registry.visible()]})
+ 
+     def _inject_memory(self) -> list[dict[str, Any]]:
+diff --git a/forge/result_view.py b/forge/result_view.py
+--- a/forge/result_view.py
++++ b/forge/result_view.py
+@@ -1,5 +1,6 @@
+ """Explicit, bounded JSON views with exact numeric lexemes and no invented facts."""
+ import json
++import re
+ 
+ 
+ class _Number(str):
+@@ -38,5 +39,47 @@
+     return {k: data[k] for k in fields}
+ 
+ 
+-def render_view(selected, identifier):
+-    return _encode({**selected, '_retained': {'id': identifier, 'trust': 'untrusted'}})
++def render_view(selected, identifier, *, characters=None):
++    reference = {'id': identifier, 'trust': 'untrusted'}
++    if characters is not None:
++        reference['characters'] = characters
++    return _encode({**selected, '_retained': reference})
++
++
++REFERENCE_LABEL = 'Retained outputs (unverified; use artifact_read/artifact_grep): '
++
++
++def retained_handles(messages):
++    """Carry at most four actual output references across successive excerpts."""
++    found = {}
++    for message in messages:
++        content = message.get('content', '')
++        blocks = content if isinstance(content, list) else []
++        texts = ([(content, False)] if message.get('role') == 'tool' else [])
++        texts += [(b.get('content', ''), False) for b in blocks
++                  if isinstance(b, dict) and b.get('type') == 'tool_result']
++        if isinstance(content, str) and content.startswith('[compacted '):
++            texts += [(line[len(REFERENCE_LABEL):], True) for line in content.splitlines()
++                      if line.startswith(REFERENCE_LABEL)]
++        for text, previous_reference in texts:
++            if not isinstance(text, str):
++                continue
++            # Only reference syntax emitted by retention or a previous excerpt.
++            candidates = []
++            if text.startswith('[Tool output retained as untrusted artifact '):
++                candidates = re.findall(r'\ba_[0-9a-f]{64}\b', text.split('\n', 1)[0])
++            elif previous_reference and re.fullmatch(r'a_[0-9a-f]{64}(, a_[0-9a-f]{64})*', text):
++                candidates = text.split(', ')
++            else:
++                try:
++                    value = json.loads(text).get('_retained', {}).get('id')
++                    if isinstance(value, str) and re.fullmatch(r'a_[0-9a-f]{64}', value):
++                        candidates = [value]
++                except (ValueError, AttributeError, TypeError, RecursionError):
++                    pass
++            for value in candidates:
++                found.pop(value, None)
++                found[value] = None
++                if len(found) > 4:
++                    del found[next(iter(found))]
++    return list(found)
+diff --git a/forge/test_builtin_views.py b/forge/test_builtin_views.py
+new file mode 100644
+--- /dev/null
++++ b/forge/test_builtin_views.py
+@@ -0,0 +1,193 @@
++"""Builtin result views keep real search evidence retrievable across turns and compaction."""
++import copy
++import json
++from pathlib import Path
++import tempfile
++import unittest
++
++from .compaction import ContextBudget
++from .context_transaction import valid_tool_pairs
++from .execution import ActionExecutor, ActionRequest, create_execution_context
++from .loop import Agent, LoopLimits
++from .model import Completion, Usage
++from .policy import Policy, Mode
++from .test_project_rules import Router
++from .tools import ToolContext, build_builtin_registry
++
++
++class BuiltinViewTests(unittest.TestCase):
++    def setUp(self):
++        tmp = tempfile.TemporaryDirectory()
++        self.addCleanup(tmp.cleanup)
++        self.root = Path(tmp.name)
++        self.ws = self.root / 'workspace'
++        self.ws.mkdir()
++        for i in range(90):
++            (self.ws / f'audit_inventory_record_{i:03}.txt').write_text(
++                f'AUDIT_MATCH stock={i} evidence for warehouse inspection\n', encoding='utf-8')
++        (self.ws / 'module.py').write_text(''.join(
++            f'def audit_inventory_record_{i:03}():\n    return {i}\n\n' for i in range(90)), encoding='utf-8')
++        self.policy = Policy(workspace=self.ws, mode=Mode.READ_ONLY, non_interactive=True)
++        self.executor = ActionExecutor()
++
++    def context(self, **kwargs):
++        registry = kwargs.pop('registry', build_builtin_registry())
++        ctx = create_execution_context(home=self.root / 'home', workspace=self.ws,
++            registry=registry, policy=kwargs.pop('policy', self.policy), **kwargs)
++        self.addCleanup(ctx.secret_scope.close)
++        self.addCleanup(ctx.session.close)
++        return ctx
++
++    def test_all_four_builtins_preserve_plain_api_and_exact_retained_source(self):
++        ctx = self.context()
++        for name, args, key, count in [('list_dir', {}, 'entries', 91),
++                ('find_files', {'pattern': '*.txt'}, 'files', 90),
++                ('grep', {'pattern': 'AUDIT_MATCH'}, 'matches', 90),
++                ('file_outline', {'path': 'module.py'}, 'symbols', 90)]:
++            with self.subTest(tool=name):
++                raw = ctx.registry.invoke(name, args, ctx.tool_context())
++                value = self.executor.execute(ctx, ActionRequest(name, args))
++                view = json.loads(value.content)
++                self.assertEqual(view['summary'][key], count)
++                self.assertEqual(view['summary']['preview_rows'], 8)
++                self.assertIn('record_089', view['preview'])
++                self.assertNotIn('record_044', view['preview'])
++                self.assertLess(len(value.content), len(raw.content))
++                self.assertNotIn('_result_view_source', value.meta)
++                identifier = view['_retained']['id']
++                source = ctx.capabilities['artifact_store']._load(identifier)[0]
++                self.assertEqual(source, raw.content)
++                self.assertEqual(view['_retained']['characters'], len(source))
++                self.assertNotIn('_retained', raw.content)
++                page = self.executor.execute(ctx, ActionRequest('artifact_grep',
++                    {'id': identifier, 'pattern': 'record_044'}))
++                self.assertTrue(page.content, name)
++                self.assertIn('record_044', page.content)
++
++    def test_small_results_and_non_search_tools_stay_plain(self):
++        ctx = self.context()
++        for name, args in [('find_files', {'pattern': 'module.py'}),
++                ('grep', {'pattern': 'stock=89'}), ('read_file', {'path': 'audit_inventory_record_089.txt'}),
++                ('read_range', {'path': 'module.py', 'start': 268, 'end': 269})]:
++            result = self.executor.execute(ctx, ActionRequest(name, args))
++            self.assertTrue(result.content)
++            self.assertNotIn('model_view', result.meta)
++            self.assertNotIn('artifact', result.meta)
++
++    def test_hidden_denied_and_disabled_reader_keep_original_content(self):
++        for kind in ('hidden', 'denied', 'disabled'):
++            registry = build_builtin_registry(expose=['find_files'] if kind == 'hidden' else None,
++                                              result_views=kind != 'disabled')
++            policy = Policy(workspace=self.ws, mode=Mode.READ_ONLY, non_interactive=True,
++                            deny=('artifact_read',) if kind == 'denied' else ())
++            ctx = self.context(registry=registry, policy=policy)
++            raw = registry.invoke('find_files', {}, ctx.tool_context()).content
++            value = self.executor.execute(ctx, ActionRequest('find_files', {}))
++            self.assertEqual(value.content, raw)
++            self.assertNotIn('_result_view_source', value.meta)
++            self.assertNotIn('model_view', value.meta)
++
++    def test_truncation_and_secret_masking_survive_the_view(self):
++        for i in range(90, 205):
++            (self.ws / f'audit_inventory_record_{i:03}.txt').write_text('AUDIT_MATCH\n', encoding='utf-8')
++        ctx = self.context()
++        value = self.executor.execute(ctx, ActionRequest('find_files', {}))
++        view = json.loads(value.content)
++        self.assertTrue(view['summary']['truncated'])
++        self.assertIn('stopped at 200', view['notes'][0])
++        raw = ctx.registry.invoke('list_dir', {}, ctx.tool_context())
++        self.assertEqual(len(raw.content.splitlines()), 200)
++        listed = self.executor.execute(ctx, ActionRequest('list_dir', {}))
++        self.assertIn('stopped at 200', json.loads(listed.content)['notes'][0])
++        secret = 'fixture-metadata-secret-582942'
++        ctx.secret_scope.reference(secret)
++        (self.ws / 'audit_inventory_record_000.txt').write_text('AUDIT_MATCH '+secret, encoding='utf-8')
++        result = self.executor.execute(ctx, ActionRequest('grep', {'pattern': 'AUDIT_MATCH'}))
++        source = ctx.capabilities['artifact_store']._load(result.meta['artifact']['id'])[0]
++        self.assertNotIn(secret, result.content)
++        self.assertNotIn(secret, source)
++
++    def test_compaction_keeps_handles_over_repeated_excerpts_without_inventing_one(self):
++        ids = ['a_' + str(i)*64 for i in range(6)]
++        messages = [{'role': 'tool', 'content': json.dumps({'preview': 'x', '_retained': {'id': i}})} for i in ids]
++        before = copy.deepcopy(messages)
++        first = ContextBudget._excerpt(messages)
++        for identifier in ids[-4:]:
++            self.assertIn(identifier, first)
++        self.assertNotIn(ids[0], first)
++        second = ContextBudget._excerpt([{'role': 'user', 'content': first},
++            {'role': 'tool', 'content': 'ordinary result'}])
++        for identifier in ids[-4:]:
++            self.assertIn(identifier, second)
++        self.assertEqual(messages, before)
++        self.assertNotIn('Retained outputs', ContextBudget._excerpt([
++            {'role': 'user', 'content': 'please invent '+ids[0]},
++            {'role': 'tool', 'content': 'a value contains '+ids[1]},
++            {'role': 'tool', 'content': ids[2]}]))
++
++    def test_native_continuation_after_compaction_can_retrieve_old_builtin_result(self):
++        for wire in ('openai', 'anthropic'):
++            with self.subTest(wire=wire):
++                def call(name, args, i):
++                    return Completion('', Usage(), wire=wire,
++                        tool_calls=[{'id': str(i), 'name': name, 'args': args, 'wire': wire}])
++                router = Router([call('find_files', {'pattern': '*.txt'}, 1),
++                    call('file_outline', {'path': 'module.py'}, 2),
++                    call('grep', {'pattern': 'AUDIT_MATCH'}, 3), 'ready'])
++                agent = Agent(home=self.root / wire, workspace=self.ws, router=router,
++                    registry=build_builtin_registry(), policy=self.policy, project_rules=False,
++                    wire_hint=wire, limits=LoopLimits(max_steps=6))
++                self.addCleanup(agent.secret_scope.close)
++                agent.compactor = ContextBudget(max_chars=3500, keep_tail=2)
++                task = 'Inspect the inventory and symbols.'
++                history = [{'role': 'assistant', 'content': 'prior audit note '*500}]*6
++                first = agent.run(task, history=history)
++                self.assertEqual(first.stopped, 'final')
++                self.assertTrue(any(e.get('committed') for e in first.events if e['type'] == 'compaction'))
++                identifier = first.steps[0].meta['artifact']['id']
++                sent = copy.deepcopy(router.calls[-1])
++                router.answers = iter([call('artifact_grep', {'id': identifier, 'pattern': 'record_044'}, 4), 'verified'])
++                agent.compactor.max_chars = 100000
++                second = agent.run('Find the middle retained inventory record.', history=[*history,
++                    {'role': 'user', 'content': task}, {'role': 'assistant', 'content': first.text}])
++                self.assertEqual(second.stopped, 'final')
++                self.assertIn('record_044', second.steps[0].result)
++                self.assertTrue(any(e['type'] == 'cache_prefix_reused' for e in second.events))
++                self.assertEqual(router.calls[-2][:len(sent)], sent)
++                self.assertTrue(all(valid_tool_pairs(m) for m in router.calls))
++
++    def test_result_policy_changes_invalidate_conversation_guard(self):
++        agent = Agent(home=self.root / 'guard', workspace=self.ws, router=Router([]),
++            registry=build_builtin_registry(), policy=self.policy, project_rules=False)
++        self.addCleanup(agent.secret_scope.close)
++        before = agent._conversation_guard([])
++        agent.registry = build_builtin_registry(result_views=False)
++        self.assertNotEqual(before, agent._conversation_guard([]))
++
++    def test_search_path_alias_narrows_the_actual_scan_and_root_takes_precedence(self):
++        directory = self.ws / 'one'
++        directory.mkdir()
++        (directory / 'selected.txt').write_text('AUDIT_MATCH chosen', encoding='utf-8')
++        ctx = self.context()
++        for name, args in [('grep', {'pattern': 'AUDIT_MATCH'}), ('find_files', {'pattern': '*.txt'})]:
++            for path_args in ({'path': 'one'}, {'root': 'one', 'path': '.'}):
++                value = self.executor.execute(ctx, ActionRequest(name, {**args, **path_args}))
++                self.assertIn('selected.txt', value.content)
++                self.assertNotIn('record_', value.content)
++        for location in ({'root': 'one/selected.txt'}, {'path': 'one/selected.txt'}):
++            value = self.executor.execute(ctx, ActionRequest('grep', {'pattern': 'AUDIT_MATCH', **location}))
++            self.assertTrue(value.content)
++            self.assertIn('one/selected.txt:1:', value.content)
++            self.assertNotIn('record_', value.content)
++
++    def test_paging_constraints_reach_native_tool_schemas(self):
++        from .toolwire import tool_declarations
++        schemas = {row['function']['name']: row['function']['parameters']['properties']
++                   for row in tool_declarations(build_builtin_registry().visible(), 'openai')}
++        self.assertEqual(schemas['artifact_read']['limit']['maximum'], 3000)
++        self.assertEqual(schemas['artifact_grep']['limit']['maximum'], 10)
++        self.assertIn('not a regular expression', schemas['artifact_grep']['pattern']['description'])
++
++
++if __name__ == '__main__':
++    unittest.main()
+diff --git a/forge/tools.py b/forge/tools.py
+--- a/forge/tools.py
++++ b/forge/tools.py
+@@ -676,10 +676,13 @@
+     expose: Iterable[str] | None = None,
+     hide: Iterable[str] = (),
+     shell_timeout: int = 60,
++    result_views: bool = True,
+ ) -> ToolRegistry:
+     reg = ToolRegistry(expose=expose, hide=hide)
+     from functools import partial
+     host_tool = partial(reg.tool, trusted=True)
++    from .builtin_views import FIELDS, HELP, search_result
++    view_tool = partial(host_tool, result_fields=FIELDS if result_views else ())
+     from .artifact_tools import register_artifact_tools
+     register_artifact_tools(reg)
+ 
+@@ -713,24 +716,27 @@
+                                 "truncated": len(lines) > limit or char_truncated,
+                                 "char_truncated": char_truncated})
+ 
+-    @host_tool("list_dir", "List the entries of one directory (names; folders end with '/'), up to 200. "
+-               "To find files by name anywhere below a folder use find_files.",
++    @view_tool("list_dir", "List the entries of one directory (names; folders end with '/'), up to 200. "
++               "To find files by name anywhere below a folder use find_files." + HELP,
+                schema={"path": {"type": "string", "description": "Directory relative to the workspace root. Default '.'."}})
+     def list_dir(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+         path = _resolve(ctx.workspace, args.get("path", "."))
+         if not path.is_dir():
+             return ToolResult(ok=False, error=f"not a directory: {path}")
+         entries = sorted(p.name + ("/" if p.is_dir() else "") for p in path.iterdir())
+-        return ToolResult(ok=True, content="\n".join(entries[:200]))
+-
+-    @host_tool(
++        rows = entries[:200]
++        notes = ['[stopped at 200 entries]'] if len(entries) > 200 else []
++        return search_result("\n".join(rows), rows=rows, notes=notes,
++                             summary={'entries': len(rows), 'truncated': len(entries) > 200})
++
++    @view_tool(
+         "grep",
+-        "Search file contents with a Python regular expression under a directory (default: the workspace). "
++        "Search file contents with a Python regular expression in a file or directory (default: the workspace). "
+         "Returns up to 100 matches as 'path:line: text'. Skips version-control, dependency and cache folders "
+-        "(.git, node_modules, .venv, __pycache__, ...) and binary files. Narrow results with glob or root.",
++        "(.git, node_modules, .venv, __pycache__, ...) and binary files. Narrow results with glob or root." + HELP,
+         schema={
+             "pattern": {"type": "string", "description": "Python regex, e.g. 'def \\w+_cache' or 'TODO|FIXME'."},
+-            "root": {"type": "string", "description": "Directory to search, relative to the workspace. Default '.'."},
++            "root": {"type": "string", "description": "File or directory to search, relative to the workspace. Default '.'."},
+             "glob": {"type": "string", "description": "Only search files whose name matches, e.g. '*.py' or 'test_*.ts'."},
+             "ignore_case": {"type": "boolean", "description": "Case-insensitive match. Default false."},
+             "context": {"type": "integer", "description": "Lines of context around each match, 0-3. Default 0."},
+@@ -747,9 +753,9 @@
+             pattern = re.compile(str(args.get("pattern", "")), re.IGNORECASE if args.get("ignore_case") else 0)
+         except re.error as exc:
+             return ToolResult(ok=False, error=f"invalid regular expression: {exc}")
+-        root = _resolve(ctx.workspace, args.get("root", "."))
+-        if not root.is_dir():
+-            return ToolResult(ok=False, error=f"not a directory: {root}")
++        root = _resolve(ctx.workspace, args.get("root", args.get("path", ".")))
++        if not root.is_dir() and not root.is_file():
++            return ToolResult(ok=False, error=f"not a file or directory: {root}")
+         glob = str(args.get("glob") or "")
+         try:
+             context = max(0, min(3, int(args.get("context") or 0)))
+@@ -766,7 +772,7 @@
+         matches = 0
+         skipped: list[str] = []
+         limit_hit = False
+-        for path in _walk_files(root):
++        for path in _walk_files(root) if root.is_dir() else (root,):
+             if path.suffix in skip_suffixes or (glob and not fnmatch.fnmatch(path.name, glob)):
+                 continue
+             try:
+@@ -818,13 +824,14 @@
+             notes.append(f"[skipped {len(skipped)} file(s) that could not be parsed for secret masking "
+                          f"(e.g. JSON with comments): {', '.join(skipped[:5])}]")
+         body = "\n".join(hits + notes) if hits or notes else ""
+-        return ToolResult(ok=True, content=body,
+-                          meta={"matches": matches, "truncated": limit_hit, "skipped_unparseable": len(skipped)})
+-
+-    @host_tool(
++        return search_result(body, rows=hits, notes=notes,
++                             summary={'matches': matches, 'truncated': limit_hit,
++                                      'skipped_unparseable': len(skipped)})
++
++    @view_tool(
+         "find_files",
+         "Find files by name under a directory (default: the workspace) and list their paths relative to the "
+-        "workspace, up to 200. Skips version-control, dependency and cache folders. Use grep to search contents.",
++        "workspace, up to 200. Skips version-control, dependency and cache folders. Use grep to search contents." + HELP,
+         schema={
+             "pattern": {"type": "string", "description": "Glob on the file name, e.g. 'test_*.py' or '*.tsx'. "
+                                                          "Include '/' to match the relative path, e.g. 'src/**/*.py'."},
+@@ -835,7 +842,7 @@
+         import fnmatch
+ 
+         pattern = str(args.get("pattern") or "*")
+-        root = _resolve(ctx.workspace, args.get("root", "."))
++        root = _resolve(ctx.workspace, args.get("root", args.get("path", ".")))
+         if not root.is_dir():
+             return ToolResult(ok=False, error=f"not a directory: {root}")
+         on_path = "/" in pattern
+@@ -860,7 +867,9 @@
+         body = "\n".join(found) if found else "(no files matched)"
+         if more:
+             body += "\n[stopped at 200 files; narrow the pattern or root]"
+-        return ToolResult(ok=True, content=body, meta={"files": len(found), "truncated": more})
++        return search_result(body, rows=found,
++                             notes=['[stopped at 200 files; narrow the pattern or root]'] if more else [],
++                             summary={'files': len(found), 'truncated': more})
+ 
+     @host_tool(
+         "review_changes",
+@@ -1103,9 +1112,9 @@
+         body = "\n".join(f"{i}\t{lines[i - 1]}" for i in range(s, e + 1))
+         return ToolResult(ok=True, content=body, meta={"lines": len(lines), "start": s, "end": e})
+ 
+-    @host_tool(
++    @view_tool(
+         "file_outline",
+-        "List the symbols (class/def signatures with line numbers) of a source file without reading it whole.",
++        "List the symbols (class/def signatures with line numbers) of a source file without reading it whole." + HELP,
+         schema={"path": {'type': 'string', 'description': "File path relative to the workspace root, e.g. 'src/app.py'."}},
+     )
+     def file_outline(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+@@ -1125,8 +1134,9 @@
+                 if len(out) >= 200:
+                     truncated = True
+                     break
+-        return ToolResult(ok=True, content="\n".join(out) or "(no symbols found)",
+-                          meta={"symbols": len(out), "truncated": truncated})
++        return search_result("\n".join(out) or "(no symbols found)", rows=out,
++                             notes=['[stopped at 200 symbols]'] if truncated else [],
++                             summary={'symbols': len(out), 'truncated': truncated})
+ 
+     @host_tool(
+         "shell_exec",
+diff --git a/scripts/verify_mimo_builtin_views.py b/scripts/verify_mimo_builtin_views.py
+new file mode 100644
+--- /dev/null
++++ b/scripts/verify_mimo_builtin_views.py
+@@ -0,0 +1,201 @@
++"""Paid MiMo A/B: actual builtin searches, disk continuation, compaction and omitted-evidence lookup."""
++import argparse
++import copy
++import json
++from pathlib import Path
++import sys
++import tempfile
++
++ROOT = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(ROOT))
++from verify_mimo_live import MODELS, provider_for, router_for
++from verify_mimo_long_context import LongRecorder, final_value
++from forge import model
++from forge.cache_metrics import cache_coverage
++from forge.cache_state import CacheWarmth
++from forge.compaction import ContextBudget
++from forge.context_transaction import digest, valid_tool_pairs
++from forge.loop import Agent, LoopLimits
++from forge.policy import Mode, Policy, Sandbox
++from forge.secrets import redact
++from forge.tools import build_builtin_registry
++
++
++TOOLS = ['list_dir', 'find_files', 'file_outline', 'grep', 'read_range',
++         'read_file', 'write_file', 'artifact_read', 'artifact_grep']
++VALUES = {'alpha': 'RELEASE-ALPHA-781', 'beta': 'RELEASE-BETA-926'}
++
++
++def fixture(workspace):
++    workspace.mkdir(exist_ok=True)
++    for folder, value in VALUES.items():
++        directory = workspace / folder
++        directory.mkdir(exist_ok=True)
++        for i in range(71):
++            (directory / f'inventory_record_{i:03}.txt').write_text(f'inventory record {i}\n', encoding='utf-8')
++        lines = []
++        for i in range(90):
++            lines += [f'def component_inventory_rule_{i:03}():',
++                      f'    # AUDIT_CONTROL {folder.upper()}-CODE-{i:03}-VERIFIED' if i < 40 else '    # inventory rule',
++                      f'    return {i}', '']
++        lines += ['def release_marker():', f'    return "{value}"', '']
++        (directory / 'module.py').write_text('\n'.join(lines), encoding='utf-8')
++    for name in ('alpha-result.json', 'beta-result.json', 'lookup-result.json'):
++        (workspace / name).unlink(missing_ok=True)
++
++
++def history_fixture():
++    history = []
++    for i in range(6):
++        history += [{'role': 'user', 'content': f'Prior warehouse audit {i}: record closed checks.'},
++                    {'role': 'assistant', 'content': '\n'.join(
++                        f'Closed check {i}-{j:03}: historical inventory snapshot was reviewed; '
++                        'these records are context only, not current release evidence.' for j in range(16))}]
++    return history
++
++
++def run_case(provider, recorder, root, strategy, output):
++    workspace = root / 'workspace'
++    fixture(workspace)
++    source_digest = digest({str(p.relative_to(workspace)): p.read_text(encoding='utf-8')
++                            for p in workspace.rglob('*') if p.is_file()})
++    home = root / strategy
++    history = history_fixture()
++    start = len(recorder.rows)
++    turns, all_steps, previous_last = [], [], None
++    for turn, folder in enumerate(('alpha', 'beta', 'lookup'), 1):
++        recorder.stage = f'builtin-{strategy}-turn-{turn}'
++        registry = build_builtin_registry(expose=TOOLS, result_views=strategy == 'improved')
++        agent = Agent(home=home, workspace=workspace, router=router_for(provider, recorder), registry=registry,
++            policy=Policy(workspace=workspace, mode=Mode.ACCEPT_EDITS, sandbox=Sandbox.WORKSPACE_WRITE,
++                          non_interactive=True), project_rules=False,
++            limits=LoopLimits(max_steps=15, context_chars=9000))
++        agent.compactor = ContextBudget(max_chars=9000, keep_tail=4)
++        if folder != 'lookup':
++            expected = {'folder': folder, 'release': VALUES[folder]}
++            filename = folder + '-result.json'
++            prompt = (f'Continue the warehouse code audit for {folder} only. First inspect {folder} with list_dir, '
++                f'find_files(pattern="*.txt",root="{folder}"), file_outline(path="{folder}/module.py"), and '
++                f'grep(pattern="AUDIT_CONTROL",root="{folder}"). All four discovery tools are required. '
++                'Then locate release_marker and read its actual return value using a targeted search or line read. '
++                f'Write {filename} containing exactly {{"folder":"{folder}","release":<actual value>}}. '
++                'Read that saved file to verify it. Do not change source or inventory files. '
++                'Tools can be batched. Finish with only the saved JSON value.')
++        else:
++            expected = {'folder': 'beta', 'audit_code': 'BETA-CODE-025-VERIFIED'}
++            filename = 'lookup-result.json'
++            prompt = ('Recheck AUDIT_CONTROL record index 025 in beta from the earlier broad grep result. '
++                'When that output was retained, retrieve it with artifact_grep or artifact_read; use the retained '
++                'references in prior tool output or the compaction summary. Otherwise search beta/module.py. '
++                'Find its actual audit code, not a code from the short preview. '
++                'Write lookup-result.json containing exactly {"folder":"beta","audit_code":<actual code>}. '
++                'Read the saved file to verify it. Finish with only the saved JSON value.')
++        contract = {'criteria': [
++            {'id': key, 'kind': 'env_probe', 'env': 'workspace', 'probe': 'json_value',
++             'input': {'path': filename, 'pointer': '/' + key}, 'expect': value}
++            for key, value in expected.items()]}
++        sent_start = len(recorder.sent)
++        try:
++            report = agent.run(prompt, history=history, acceptance=contract)
++            value, fmt, strict = final_value(report.text)
++            actual = json.loads((workspace / filename).read_text(encoding='utf-8')) if (workspace / filename).exists() else None
++            discovery_ok = folder == 'lookup' or all(any(s.tool == name and all(
++                s.args.get(k, s.args.get('path') if k == 'root' else None) == v for k, v in args.items())
++                for s in report.steps) for name, args in [
++                    ('list_dir', {'path': folder}), ('find_files', {'root': folder, 'pattern': '*.txt'}),
++                    ('file_outline', {'path': folder+'/module.py'}), ('grep', {'root': folder, 'pattern': 'AUDIT_CONTROL'})])
++            verification = any(s.tool == 'read_file' and s.args.get('path') == filename for s in report.steps)
++            clean = all(s.decision == 'ok' for s in report.steps)
++            ok = report.stopped == 'final' and value == expected and actual == expected and discovery_ok and verification
++            compactions = [e for e in report.events if e['type'] == 'compaction' and e.get('committed')]
++            for event in compactions:
++                archive = json.loads(Path(event['archive']['path']).read_text(encoding='utf-8'))
++                assert valid_tool_pairs(archive['messages']) and digest(archive['messages']) == archive['archive_digest']
++                directory = output.parent / (output.stem + '-archives')
++                directory.mkdir(parents=True, exist_ok=True)
++                path = directory / (archive['archive_id'] + '.json')
++                path.write_text(json.dumps(archive, ensure_ascii=False, indent=2)+'\n', encoding='utf-8')
++                event['archive']['export_path'] = str(path.resolve())
++            steps = []
++            for step in report.steps:
++                row = {'tool': step.tool, 'args': step.args, 'decision': step.decision,
++                       'result': step.result, 'meta': step.meta}
++                if step.meta.get('artifact'):
++                    identifier = step.meta['artifact']['id']
++                    raw, _ = agent.artifacts._load(identifier)
++                    directory = output.parent / (output.stem + '-artifacts')
++                    directory.mkdir(parents=True, exist_ok=True)
++                    path = directory / (identifier + '.txt')
++                    path.write_bytes(raw.encode('utf-8'))
++                    row['artifact_export'] = str(path.resolve())
++                steps.append(row)
++            all_steps.extend(steps)
++            assert all(valid_tool_pairs(payload['messages']) for payload in recorder.sent[sent_start:])
++            first_messages = recorder.sent[sent_start]['messages'] if len(recorder.sent) > sent_start else []
++            continued = previous_last is not None and first_messages[:len(previous_last)] == previous_last
++            turns.append({'turn': turn, 'ok': ok, 'clean_execution': clean, 'strict_format': strict,
++                'format': fmt, 'final': value, 'stopped': report.stopped, 'tools': steps,
++                'compactions': compactions, 'cache_prefix_reused': any(e['type'] == 'cache_prefix_reused' for e in report.events),
++                'exact_continuation_of_last_request': continued,
++                'acceptance': [e for e in report.events if e['type'] == 'acceptance_checked']})
++            previous_last = copy.deepcopy(recorder.sent[-1]['messages'])
++            history += [{'role': 'user', 'content': prompt}, {'role': 'assistant', 'content': report.text}]
++            print(json.dumps({'strategy': strategy, 'turn': turn, 'ok': ok,
++                              'compactions': len(compactions), 'tools': len(steps)}, ensure_ascii=False), flush=True)
++            if not ok:
++                break
++        finally:
++            agent.secret_scope.close()
++    requests = recorder.rows[start:]
++    good = [r for r in requests if r.get('usage')]
++    native_reads = [s for s in all_steps if s['tool'] in {'artifact_read', 'artifact_grep'}]
++    source_unchanged = digest({str(p.relative_to(workspace)): p.read_text(encoding='utf-8')
++        for directory in VALUES for p in (workspace / directory).rglob('*') if p.is_file()}) == source_digest
++    observed = any('BETA-CODE-025-VERIFIED' in s['result'] for s in native_reads)
++    return {'strategy': strategy, 'ok': len(turns) == 3 and all(t['ok'] for t in turns)
++            and source_unchanged and (strategy != 'improved' or observed), 'turns': turns,
++        'clean_execution': all(t['clean_execution'] for t in turns),
++        'strict_format': all(t['strict_format'] for t in turns),
++        'input_tokens': sum(r['usage']['prompt_tokens'] for r in good),
++        'output_tokens': sum(r['usage']['completion_tokens'] for r in good),
++        'coverage': cache_coverage(good), 'successful_requests': len(good), 'attempts': len(requests),
++        'initial_payload_digest': requests[0]['payload_digest'] if requests else None,
++        'committed_compactions': sum(len(t['compactions']) for t in turns),
++        'source_unchanged': source_unchanged, 'omitted_record_observed': observed}
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument('--live', action='store_true')
++    parser.add_argument('--model', choices=MODELS, default=MODELS[0])
++    parser.add_argument('--strategies', choices=('baseline', 'improved'), nargs='+', default=['baseline', 'improved'])
++    parser.add_argument('--request-limit', type=int, default=48)
++    parser.add_argument('--output', type=Path, required=True)
++    args = parser.parse_args()
++    if not args.live or not 1 <= args.request_limit <= 64:
++        parser.error('Requires --live and request-limit 1..64')
++    provider = provider_for(args.model, Path.home() / '.forge')
++    provider.route_capabilities = {'contextWindow': 16000, 'maxOutputTokens': 4096}
++    recorder = LongRecorder(args.request_limit, retries=1)
++    result = {'model': args.model, 'samples': [], 'requests': recorder.rows,
++              'local_context_window': 16000, 'context_chars': 9000,
++              'comparison': 'Same current builtin handlers and schemas; result_views disabled/enabled; fresh Agent each user turn'}
++    args.output.parent.mkdir(parents=True, exist_ok=True)
++    try:
++        with tempfile.TemporaryDirectory(prefix='forge-builtin-live-') as temporary:
++            root = Path(temporary)
++            model._WARMTH = CacheWarmth(root / 'warmth.json')
++            for strategy in args.strategies:
++                result['samples'].append(run_case(provider, recorder, root, strategy, args.output))
++                args.output.write_text(json.dumps(redact(result), ensure_ascii=False, indent=2)+'\n', encoding='utf-8')
++    except Exception as exc:
++        result['error'] = redact(type(exc).__name__ + ': ' + str(exc))[:500]
++    result['identical_initial_payloads'] = len(result['samples']) > 1 and len({s['initial_payload_digest'] for s in result['samples']}) == 1
++    result['ok'] = len(result['samples']) == len(args.strategies) and all(s['ok'] for s in result['samples'])
++    args.output.write_text(json.dumps(redact(result), ensure_ascii=False, indent=2)+'\n', encoding='utf-8')
++    print(json.dumps({'ok': result['ok'], 'attempts': len(recorder.rows)}, ensure_ascii=False))
++    return 0 if result['ok'] else 1
++
++
++if __name__ == '__main__':
++    raise SystemExit(main())
+diff --git a/tests/test_artifact_gateway.py b/tests/test_artifact_gateway.py
+--- a/tests/test_artifact_gateway.py
++++ b/tests/test_artifact_gateway.py
+@@ -52,6 +52,26 @@
+         self.assertEqual(result.authorization, 'deny')
+         self.assertEqual(store.read(identifier)['text'], 'original')
+ 
++    def test_builtin_search_view_and_receipt_retain_plain_source(self):
++        for i in range(85):
++            (self.ws / f'inventory_inspection_{i:03}.txt').write_text('row', encoding='utf-8')
++        _, base = self.gateway(registry=build_builtin_registry(), policy=Policy(mode=Mode.READ_ONLY,
++            workspace=self.ws, non_interactive=True))
++        code, value = self.http(base, '/v1/tools/call', {'run_id': 'builtin_view',
++            'action_id': 'inventory', 'name': 'find_files', 'arguments': {'pattern': '*.txt'}})
++        import json
++        self.assertEqual(code, 200)
++        view = json.loads(value['content'])
++        self.assertEqual(view['summary']['files'], 86)  # fixture value.txt + inventory
++        self.assertNotIn('_result_view_source', value['meta'])
++        identifier = view['_retained']['id']
++        _, receipt = self.http(base, '/v1/runs/builtin_view/actions/inventory')
++        self.assertEqual(receipt['content'], value['content'])
++        _, page = self.http(base, '/v1/tools/call', {'run_id': 'builtin_view',
++            'name': 'artifact_grep', 'arguments': {'id': identifier, 'pattern': 'inspection_084'}})
++        self.assertTrue(page['ok'])
++        self.assertIn('inspection_084.txt', page['content'])
++
+ 
+ if __name__ == '__main__':
+     unittest.main()

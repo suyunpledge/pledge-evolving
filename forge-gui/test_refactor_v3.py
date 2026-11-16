@@ -437,7 +437,7 @@ class RefactorAcceptance(unittest.TestCase):
         # 顶部三个快捷入口，下面五个功能导航（2026-10-19 智能体恢复直达），沿用同一侧栏容器。
         self.assertEqual(set(self.app._activity_markers),
                          {"agents", "connectors", "knowledge", "evolution", "config"})
-        self.assertEqual(tuple(self.app.sidebar_shortcuts), ("chat", "tools", "schedules"))
+        self.assertEqual(tuple(self.app.sidebar_shortcuts), ("chat", "task", "tools", "schedules"))
         self.assertEqual(len(self.app._activity_markers), 5)
         # 智能体现在是主导航行；仍占「更多」菜单的只剩 files
         for holder, _inner in self.app._nav_widgets.get("agents", ()):
@@ -466,6 +466,8 @@ class RefactorAcceptance(unittest.TestCase):
         for need in ("对话", "插件", "定时任务", "连接器", "知识库", "演化", "配置API", "关于", "历史记录"):
             self.assertIn(need, blob, f"侧栏缺少 {need}")
         self.assertTrue(self.app.clear_chat_btn.winfo_ismapped(), "新建对话应位于对话头")
+        self.app.input_card.set_options_expanded(True)
+        self.pump(0.1)
         self.assertTrue(self.app.input_card.team_settings_btn.winfo_ismapped())
         self.assertTrue(self.app.model_combo.winfo_ismapped(), "模型选择位于聊天输入区")
         chat_panel = self.app._sidebar_panels["chat"]
@@ -473,7 +475,8 @@ class RefactorAcceptance(unittest.TestCase):
         self.assertTrue(chat_panel.winfo_ismapped())
         self.app._show_view("task")
         self.pump(0.2)
-        self.assertTrue(chat_panel.winfo_ismapped())
+        self.assertFalse(chat_panel.winfo_ismapped())
+        self.assertTrue(task_panel.winfo_ismapped())
         self.assertTrue(self.app._sidebar_visible,
                         "宽窗口的任务视图保留全局导航")
         self.app._toggle_sidebar()
@@ -481,8 +484,8 @@ class RefactorAcceptance(unittest.TestCase):
         self.assertFalse(chat_panel.winfo_ismapped())
         self.app._toggle_sidebar()
         self.pump(0.1)
-        self.assertTrue(chat_panel.winfo_ismapped(), "任务页按需展开相同的主导航")
-        self.assertFalse(task_panel.winfo_ismapped())
+        self.assertTrue(task_panel.winfo_ismapped(), "任务页按需展开上下文导航")
+        self.assertFalse(chat_panel.winfo_ismapped())
 
     def test_start_actions_lead_to_real_workflows(self):
         self.assertEqual(self.app._active_view, "chat")
@@ -609,12 +612,12 @@ class RefactorAcceptance(unittest.TestCase):
             icon = self.app._activity_labels[key][0][0]
             self.assertTrue(icon.find_all(), "功能入口应显示矢量图标")
         self.assertEqual([button.cget("text") for button in self.app.sidebar_shortcuts.values()],
-                         ["对话", "插件", "定时任务"])
-        # 图标必须是真 emoji（配 emoji 字体才出彩色），不是单色 dingbat
+                         ["对话", "任务", "插件", "定时任务"])
+        # Every navigation symbol must resolve to a library icon, independent of emoji fonts.
+        from ui_icons import icon_key
         for _key, label, glyph in gui.NAV_ITEMS:
             with self.subTest(glyph=glyph):
-                self.assertTrue(theme.is_emoji(glyph), f"{glyph} 不是 emoji 字形")
-                self.assertEqual(theme.emoji_font(glyph)[0], theme.EMOJI_FAMILY)
+                self.assertIsNotNone(icon_key(glyph), f"{glyph} has no semantic icon")
         self.assertTrue(theme.is_emoji("💬") and not theme.is_emoji("▣"))
         # 单栏：无窄轨道
         self.assertLessEqual(self.app.activity_bar.winfo_width(), 1)

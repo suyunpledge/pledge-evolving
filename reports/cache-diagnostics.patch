@@ -1,0 +1,763 @@
+--- a/forge/model.py
++++ b/forge/model.py
+@@ -154,10 +154,13 @@
+     model_capabilities: dict[str, dict[str, Any]] = field(default_factory=dict)
+     # 显式厂商推理默认值；auto 沿用厂商默认，不能混同 Agent 的沉思扩展。
+     reasoning_mode: str = "auto"
++    cache_affinity: str = "auto"
+     _credential: Any = field(default=None, repr=False, compare=False)
+     _secret_scope: Any = field(default=None, init=False, repr=False, compare=False)
+ 
+     def __post_init__(self):
++        if self.cache_affinity not in ('auto', 'off'):
++            raise BadRequest('cacheAffinity must be auto or off')
+         if self.reasoning_mode not in ('auto', 'on', 'off'):
+             raise BadRequest('reasoningMode must be auto, on or off')
+         from .route_capabilities import validate_capabilities
+@@ -411,6 +414,10 @@
+     adapter = adapter_for(profile)
+     payload, compatibility_actions = adapter.shape_request(payload, wire=provider.wire)
+     reasoning_actions.extend(compatibility_actions)
++    from .cache_affinity import apply_affinity
++    affinity = apply_affinity(payload, provider, model, options.get('cache_scope'))
++    if affinity is not None:
++        execution['cache_affinity'] = affinity
+     from .route_capabilities import validate_request
+     try:
+         budget = validate_request(payload, capabilities) if capabilities else {}
+@@ -808,6 +815,7 @@
+                 call_gap_seconds=float(conf.get("callGapSeconds", 60) or 60),
+                 adapt=bool(conf.get("adapt", True)),
+                 think_budget=conf.get("thinkBudget"), reasoning_mode=conf.get("reasoningMode", "auto"),
++                cache_affinity=str(conf.get("cacheAffinity", "auto")),
+                 flex=bool(conf.get("flex", False)),
+                 defer=bool(conf.get("defer", False)),
+                 max_defer_seconds=float(conf.get("maxDeferSeconds", 0) or 0),
+--- a/forge/loop.py
++++ b/forge/loop.py
+@@ -916,6 +916,7 @@
+             provider._credential._account_fingerprint, provider.profile_for_model(model).behavior_fingerprint,
+             provider.reasoning_mode, provider.think_budget, provider.temperature, provider.adapt,
+             provider.cache_control, provider.expected_calls, provider.call_gap_seconds,
++            provider.cache_affinity,
+             provider.capabilities_for_model(model), self._tool_declarations()])
+ 
+     def _checkpoint_conversation(self, messages, task, report, envelope, reason):
+@@ -1475,6 +1476,8 @@
+                 from .routing import SmartRouter
+                 request_options = ({'task_context': pinned_task}
+                                    if type(self.router) is SmartRouter else {})
++                if isinstance(self.router, ModelRouter):
++                    request_options['cache_scope'] = self._conversation_guard_start
+                 completion: Completion = self.router.complete(
+                     messages, small=False,
+                     tools=declarations,
+--- a/forge/config.py
++++ b/forge/config.py
+@@ -228,7 +228,7 @@
+         "primary", "fallback", "moa", "moaModels", "routing", "tiers",
+         "small", "premium", "strategy", "wire", "baseURL", "apiKey",
+         "model", "smallModel", "mode", "rpm", "models", "headers",
+-        "temperature", "vendor", "cacheControl", "service", "reasoningMode",
++        "temperature", "vendor", "cacheControl", "cacheAffinity", "service", "reasoningMode",
+     })
+ 
+     def _upsert(self, row: Row, insert: bool) -> None:
+--- a/forge/cache_state.py
++++ b/forge/cache_state.py
+@@ -115,6 +115,7 @@
+             "account": str(account or ""),
+             "wire": wire, "cache_mode": cache_mode,
+             "reasoning": reasoning_signature(payload) if include_reasoning else {},
++            **({'prompt_cache_key': payload['prompt_cache_key']} if 'prompt_cache_key' in payload else {}),
+         },
+     )
+     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
+--- a/forge/conversation_prefix.py
++++ b/forge/conversation_prefix.py
+@@ -82,6 +82,7 @@
+                 or history[-len(trimmed):] != trimmed or digest(history) != saved['history_digest']):
+             return False
+         saved['history_digest'] = digest(trimmed)
++        self._persist()
+         return True
+ 
+     def commit(self, *, history, messages, guard, rule_context, rule_sources, targets, run_envelope='', continuation=None):
+@@ -97,12 +98,15 @@
+         except (TypeError, ValueError, RecursionError):
+             self.clear()
+             return False
+-        if self._path is not None:
++        self._persist()
++        return True
++
++    def _persist(self):
++        if self._path is not None and self._saved is not None:
+             try:
+                 tmp = self._path.with_name(self._path.name + f'.tmp{os.getpid()}')
+                 tmp.parent.mkdir(parents=True, exist_ok=True)
+-                tmp.write_text(json.dumps(value, ensure_ascii=False), encoding='utf-8')
++                tmp.write_text(json.dumps(self._saved, ensure_ascii=False), encoding='utf-8')
+                 os.replace(tmp, self._path)
+             except OSError:
+                 pass  # 落盘失败只影响跨进程复用，不影响本实例行为
+-        return True
+--- a/forge-budgets.json
++++ b/forge-budgets.json
+@@ -9,8 +9,9 @@
+     "forge/assembly.py": 127,
+     "forge/batch_execution.py": 144,
+     "forge/builtin_views.py": 44,
++    "forge/cache_affinity.py": 27,
+     "forge/cache_metrics.py": 90,
+-    "forge/cache_state.py": 400,
++    "forge/cache_state.py": 401,
+     "forge/canonical.py": 36,
+     "forge/capability.py": 336,
+     "forge/channels/__init__.py": 289,
+@@ -44,7 +45,7 @@
+     "forge/contrib/teams.py": 491,
+     "forge/contrib/thinking.py": 677,
+     "forge/contrib/toolhost.py": 585,
+-    "forge/conversation_prefix.py": 108,
++    "forge/conversation_prefix.py": 112,
+     "forge/desktop_services.py": 448,
+     "forge/development/__init__.py": 5,
+     "forge/development/editor.py": 197,
+@@ -75,9 +76,9 @@
+     "forge/guard.py": 177,
+     "forge/knowledge.py": 118,
+     "forge/local_service.py": 293,
+-    "forge/loop.py": 1840,
++    "forge/loop.py": 1843,
+     "forge/memory.py": 354,
+-    "forge/model.py": 937,
++    "forge/model.py": 945,
+     "forge/model_kinds.py": 152,
+     "forge/phase_models.py": 24,
+     "forge/planning.py": 132,
+--- a/scripts/verify_mimo_live.py
++++ b/scripts/verify_mimo_live.py
+@@ -51,6 +51,7 @@
+                 raise ValueError('Configured MiMo credential is missing')
+             return model.Provider('mimo-live', config['baseURL'], key, default_model=chosen,
+                                   temperature=config.get('temperature'),
++                                  cache_affinity=config.get('cacheAffinity','auto'),
+                                   reasoning_mode=config.get('reasoningMode', 'auto'))
+     raise ValueError('No enabled MiMo Token Plan provider matches this model')
+ 
+@@ -93,9 +94,14 @@
+             with open_authenticated(request, **kwargs) as response:
+                 raw = response.read(2 * 1024 * 1024 + 1)
+                 row['status'] = response.status
++                headers=getattr(response,'headers',{})
++                row['upstream_request_id'] = next((redact(str(headers.get(k)))[:160]
++                    for k in ('x-request-id','x-tt-logid') if headers.get(k)),None)
+             data = json.loads(raw)
+             choice = (data.get('choices') or [{}])[0]
+             message = choice.get('message') or {}
++            row['system_fingerprint'] = (data['system_fingerprint'][:160]
++                if isinstance(data.get('system_fingerprint'),str) else None)
+             row.update(raw_usage=data.get('usage'), finish_reason=choice.get('finish_reason'),
+                 response_id=data.get('id'), response_model=data.get('model'),
+                 reasoning_chars=len(message.get('reasoning_content') or ''),
+--- a/scripts/verify_seed_execution.py
++++ b/scripts/verify_seed_execution.py
+@@ -20,6 +20,7 @@
+             if not isinstance(key,str) or not key:
+                 raise ValueError('Configured Seed credential missing')
+             return Provider('seed-live',c['baseURL'],key,default_model=chosen,
++                            cache_affinity=c.get('cacheAffinity','auto'),
+                             temperature=c.get('temperature'))
+     raise ValueError('No enabled Seed Coding Plan provider matches')
+ 
+--- /dev/null
++++ b/forge/cache_affinity.py
+@@ -0,0 +1,27 @@
++"""Verified Ark Coding Plan cache routing hints; no context or permission changes."""
++import hashlib
++import json
++from urllib.parse import urlsplit
++
++
++def apply_affinity(payload, provider, model, scope):
++    # This exact deployment accepted the field in the live schema probe.
++    # Other aliases and reseller deployments keep their existing wire.
++    endpoint=urlsplit(provider.base_url)
++    supported=(provider.wire=='openai' and model=='doubao-seed-evolving'
++        and endpoint.scheme=='https' and endpoint.hostname=='ark.cn-beijing.volces.com'
++        and endpoint.path.rstrip('/')=='/api/coding/v3' and not endpoint.query)
++    if not supported or not provider.adapt or provider.cache_affinity=='off' or scope is None:
++        return None
++    if 'prompt_cache_key' in payload:
++        return {'status':'caller_supplied','guaranteed_hit':False}
++    if not isinstance(scope,str) or not 1<=len(scope)<=512:
++        raise ValueError('cache_scope must be a bounded nonempty host string')
++    identity=[scope,provider._credential._account_fingerprint,provider.base_url.rstrip('/'),model,
++        {k:payload[k] for k in ('thinking','reasoning_effort','thinking_budget') if k in payload},
++        payload.get('tools')]
++    encoded=json.dumps(identity,ensure_ascii=False,sort_keys=True,separators=(',',':'),allow_nan=False).encode()
++    key='forge-'+hashlib.sha256(encoded).hexdigest()[:48]
++    payload['prompt_cache_key']=key
++    return {'status':'routing_hint','source':'host_scope','key_digest':hashlib.sha256(key.encode()).hexdigest(),
++            'guaranteed_hit':False}
+--- /dev/null
++++ b/scripts/verify_cache_diagnostics.py
+@@ -0,0 +1,232 @@
++"""Opt-in exact-wire cache probes; no raw reasoning, opaque data or credentials in reports."""
++import argparse
++import copy
++import hashlib
++import importlib.util
++import json
++from pathlib import Path
++import sys
++import tempfile
++import time
++
++from verify_deepseek_execution import totals
++from verify_mimo_live import provider_for as mimo_provider
++from verify_seed_execution import SeedRecorder, provider_for as seed_provider
++from verify_tool_challenge import SOURCE, TESTS, EXTRA
++from forge.compaction import ContextBudget
++from forge.context_transaction import valid_tool_pairs
++from forge.loop import Agent, LoopLimits
++from forge.model import ModelRouter
++from forge.policy import Policy, Mode
++from forge.tools import build_builtin_registry
++
++
++def digest(value):
++    return hashlib.sha256(json.dumps(value,ensure_ascii=False,sort_keys=True,separators=(',',':')).encode()).hexdigest()
++
++
++class DiagnosticRecorder(SeedRecorder):
++    def __init__(self,limit):
++        super().__init__(limit,retries=1)
++        self.timeout=45
++        self.affinity=None
++        self.responses={name:set() for name in ('reasoning_content','encrypted_content')}
++        self.response_calls={}
++
++    def open(self,request,**kwargs):
++        payload=json.loads(request.data)
++        if self.affinity:
++            payload['prompt_cache_key']=self.affinity
++            request.data=json.dumps(payload,ensure_ascii=False).encode()
++        previous=self.sent[-1] if self.sent else {}
++        messages=payload.get('messages',[])
++        old_messages=previous.get('messages',[])
++        first=next((i for i,(a,b) in enumerate(zip(old_messages,messages)) if a!=b),None)
++        changed=(sorted(k for k in old_messages[first].keys()|messages[first].keys()
++            if old_messages[first].get(k)!=messages[first].get(k)) if first is not None else [])
++        relation=('first' if not previous else 'rewritten' if first is not None else
++                  'trimmed' if len(messages)<len(old_messages) else 'appended' if len(messages)>len(old_messages) else 'unchanged')
++        components=[]
++        for message in messages:
++            item={'role':message.get('role'),'digest':digest(message),'fields':{}}
++            for field,value in message.items():
++                item['fields'][field]={'digest':digest(value),'characters':len(json.dumps(value,ensure_ascii=False))}
++                if field in self.responses and value:
++                    item['fields'][field]['matches_prior_response']=digest(value) in self.responses[field]
++                    ids=[c.get('id') for c in message.get('tool_calls') or []]
++                    if ids:
++                        item['fields'][field]['matches_response_call']=all(
++                            digest(value) in self.response_calls.get(i,{}).get(field,set()) for i in ids)
++            components.append(item)
++        old=json.dumps(previous.get('messages',[]),ensure_ascii=False,separators=(',',':'))
++        new=json.dumps(messages,ensure_ascii=False,separators=(',',':'))
++        common=next((i for i,(a,b) in enumerate(zip(old,new)) if a!=b),min(len(old),len(new)))
++        start=len(self.rows)
++        try:
++            response=super().open(request,**kwargs)
++            message=(json.loads(response.getvalue()).get('choices') or [{}])[0].get('message') or {}
++            for field in self.responses:
++                if message.get(field):self.responses[field].add(digest(message[field]))
++            for call in message.get('tool_calls') or []:
++                values=self.response_calls.setdefault(call.get('id'),{})
++                for field in self.responses:
++                    if message.get(field):values.setdefault(field,set()).add(digest(message[field]))
++            return response
++        finally:
++            if len(self.rows)>start:
++                self.rows[-1].update(message_components=components,common_serialized_message_prefix_chars=common,
++                    wire_body_sha256=hashlib.sha256(request.data).hexdigest(),
++                    prefix_relation=relation,first_changed_message=first,changed_message_fields=changed,
++                    exact_payload_repeat=bool(previous and payload==previous),
++                    generation_parameters_digest=digest({k:v for k,v in payload.items() if k not in {'messages','tools'}}),
++                    affinity_present='prompt_cache_key' in payload,
++                    affinity_key_digest=hashlib.sha256(payload['prompt_cache_key'].encode()).hexdigest() if isinstance(payload.get('prompt_cache_key'),str) else None,
++                    affinity_digest=digest(payload['prompt_cache_key']) if 'prompt_cache_key' in payload else None)
++
++
++def controls(provider,recorder,vendor,extended=False,exact=False,affinity=False):
++    short=[{'role':'system','content':'Answer concisely from supplied code.'},
++           {'role':'user','content':'Explain one bug in: def total(x): return round(float(x),2)'}]
++    repository=[{'role':'system','content':'Review this billing library and its fixed tests. Reply with two concrete defects and a targeted test. Maximum 60 words.'},
++        {'role':'user','content':'\n\n'.join(f'FILE {name}\n{body}' for name,body in SOURCE.items())+'\n\nFILE tests/test_billing.py\n'+TESTS}]
++    if extended:
++        fixture=Path(__file__).resolve().parents[1]/'reports/cache-progress-mimo-final-b-sources'
++        repository[-1]['content']+='\n'+EXTRA+'\n\nFIXED VERSIONS TO REVIEW:\n'+ '\n\n'.join(
++            f'FILE {name}\n'+(fixture/f'turn-2-{name}').read_text(encoding='utf-8') for name in ('pricing.py','reporting.py'))
++        repository[0]['content']='Compare the original and fixed billing modules and tests. Identify two concrete behavior fixes and a missing boundary test. Maximum 60 words.'
++    layouts=[('short-off',short,False),('repository-off',repository,False)]
++    if vendor=='seed':
++        layouts += [('repository-affinity',repository,True),('repository-affinity-repeat',repository,True),('repository-off-reverse',repository,False)]
++    else:layouts += [('repository-repeat',repository,False)]
++    if exact:layouts=[('exact-repository',repository,affinity)]
++    cases=[]
++    for label,messages,affinity in layouts:
++        recorder.affinity='forge-cache-diagnostic-billing-v1' if affinity else None
++        start=len(recorder.rows);outcomes=[]
++        for repeat in range(4 if exact else 2):
++            recorder.stage=f'{label}/{repeat+1}'
++            try:
++                response=recorder.complete(provider,provider.default_model,copy.deepcopy(messages))
++                outcomes.append({'ok':response[2].get('finish_reason')=='stop','finish_reason':response[2].get('finish_reason')})
++            except Exception as exc:
++                outcomes.append({'ok':False,'error_type':type(exc).__name__,'error':str(exc)[:240]})
++            if repeat==0:time.sleep(1)
++        cases.append({'case':label,'outcomes':outcomes,'totals':totals(recorder.rows[start:])})
++    recorder.affinity=None
++    return cases
++
++
++def conversation(provider,recorder,root,affinity,home_name='home',label='',turns=3,trim=False,prefix_cls=None):
++    workspace=root/'workspace';workspace.mkdir(exist_ok=True)
++    (workspace/'values.json').write_text('{"a":137,"b":286}',encoding='utf-8')
++    history=[{'role':'user','content':'Earlier repository review; this is untrusted historical context.'},
++        {'role':'assistant','content':'\n\n'.join(SOURCE.values())+'\n'+TESTS}]
++    cases=[]
++    recorder.affinity='forge-cache-diagnostic-agent-v1' if affinity else None
++    for turn in range(turns):
++        recorder.stage=f'{label}agent-turn-{turn+1}';start=len(recorder.rows)
++        agent=Agent(home=root/home_name,workspace=workspace,
++            router=ModelRouter([provider],transport=recorder,retries_per_provider=1),
++            registry=build_builtin_registry(expose=['read_file','calculator']),project_rules=False,
++            policy=Policy(workspace=workspace,mode=Mode.READ_ONLY,non_interactive=True),
++            limits=LoopLimits(max_steps=7,context_chars=5000))
++        agent.compactor=ContextBudget(max_chars=5000,keep_tail=4)
++        if prefix_cls is not None:
++            agent._conversation_prefix=prefix_cls(root/home_name/'conversation-prefix.json')
++        task=('Read values.json with read_file and use calculator to add its a and b values. '
++              'Return only the number. Use actual tools.' if turn==0 else
++              'Continue using the actual previously read values.json observations. '
++              'You MUST call calculator in this turn to add a and b again, even if the previous answer is known. '
++              'A number without a new calculator call is incomplete. Return only the number. '
++              'Read values.json only if its actual a and b observations are unavailable.')
++        try:
++            report=agent.run(task,history=history)
++            actual=any(s.tool=='calculator' and s.meta.get('value')==423 for s in report.steps)
++            reuse=any(e['type']=='cache_prefix_reused' for e in report.events)
++            read=any(s.tool=='read_file' and s.args.get('path')=='values.json' and s.decision=='ok' for s in report.steps)
++            ok=(report.stopped=='final' and report.text.strip()=='423' and actual
++                and all(s.decision=='ok' for s in report.steps) and (reuse or read))
++            cases.append({'turn':turn+1,'ok':ok,'stopped':report.stopped,'text':report.text[:300],
++                'tools':[s.tool for s in report.steps],'events':[e for e in report.events if e['type'] in {
++                    'compaction','cache_prefix_reused','cache_prefix_checkpointed'}],
++                'native_pairs_valid':all(valid_tool_pairs(p['messages']) for p in recorder.sent[start:]),
++                'totals':totals(recorder.rows[start:])})
++            history.extend([{'role':'user','content':task},{'role':'assistant','content':report.text}])
++            if trim:
++                accepted=agent._conversation_prefix.trim_history(history,history[-2:])
++                cases[-1]['host_trim_accepted']=accepted
++                history=history[-2:]
++        finally:agent.secret_scope.close()
++        if not cases[-1]['ok']:break
++    recorder.affinity=None
++    return cases
++
++
++def main():
++    parser=argparse.ArgumentParser(description=__doc__)
++    parser.add_argument('--live',action='store_true');parser.add_argument('--vendor',choices=['mimo','seed'],required=True)
++    parser.add_argument('--scenario',choices=['controls','exact-repeat','agent','agent-compare','trim-compare'],default='controls')
++    parser.add_argument('--affinity',action='store_true',help='Seed-only experimental HTTP field, explicitly reported')
++    parser.add_argument('--extended-repository',action='store_true')
++    parser.add_argument('--thinking',choices=['auto','on','off'],default='auto')
++    parser.add_argument('--cache-affinity',choices=['auto','off'])
++    parser.add_argument('--affinity-order',nargs='+',choices=['auto','off'],default=['off','auto','auto','off'])
++    parser.add_argument('--turns',type=int,choices=[2,3],default=3)
++    parser.add_argument('--baseline-dir',type=Path)
++    parser.add_argument('--request-limit',type=int,default=30);parser.add_argument('--output',type=Path,required=True)
++    args=parser.parse_args()
++    if not args.live or args.output.exists() or not 1<=args.request_limit<=40 or args.affinity and args.vendor!='seed':
++        parser.error('Requires --live, new output, request-limit 1..40; affinity is Seed-only')
++    provider=(mimo_provider('mimo-v2.6-flash',Path.home()/'.forge') if args.vendor=='mimo' else
++              seed_provider('doubao-seed-evolving',Path.home()/'.forge'))
++    recorder=DiagnosticRecorder(args.request_limit)
++    recorder.thinking={'auto':None,'on':True,'off':False}[args.thinking]
++    if args.cache_affinity is not None:provider.cache_affinity=args.cache_affinity
++    result={'vendor':args.vendor,'scenario':args.scenario,'experimental_affinity':args.affinity,
++        'thinking':args.thinking,'cache_affinity':provider.cache_affinity,'extended_repository':args.extended_repository,
++        'scope':'Hash-only wire evidence; repository input is the existing synthetic billing fixture, never production padding.'}
++    project=Path(__file__).resolve().parents[1]
++    result['runtime_sha256']={n:hashlib.sha256((project/n).read_bytes()).hexdigest() for n in (
++        'scripts/verify_cache_diagnostics.py','forge/model.py','forge/loop.py','forge/cache_affinity.py','forge/cache_state.py',
++        'forge/conversation_prefix.py','forge/compaction.py','forge/compaction_notes.py')}
++    try:
++        if args.scenario in ('controls','exact-repeat'):
++            result['cases']=controls(provider,recorder,args.vendor,args.extended_repository,
++                exact=args.scenario=='exact-repeat',affinity=args.affinity)
++        elif args.scenario=='agent':
++            with tempfile.TemporaryDirectory(prefix='forge-cache-diagnostics-') as tmp:
++                result['cases']=conversation(provider,recorder,Path(tmp),args.affinity)
++        elif args.scenario=='agent-compare':
++            result['cases']=[]
++            with tempfile.TemporaryDirectory(prefix='forge-cache-compare-') as tmp:
++                for i,mode in enumerate(args.affinity_order):
++                    provider.cache_affinity=mode
++                    cases=conversation(provider,recorder,Path(tmp),False,home_name=f'home-{i}',label=f'{i+1}-{mode}/',turns=args.turns)
++                    result['cases'].append({'sample':i+1,'mode':mode,'turns':cases,
++                        'ok':len(cases)==args.turns and all(c['ok'] for c in cases)})
++        else:
++            if args.baseline_dir is None:raise ValueError('trim-compare requires --baseline-dir')
++            source=args.baseline_dir/'forge/conversation_prefix.py'
++            result['baseline_prefix_sha256']=hashlib.sha256(source.read_bytes()).hexdigest()
++            spec=importlib.util.spec_from_file_location('forge._diagnostic_before_prefix',source)
++            module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
++            from forge.conversation_prefix import ConversationPrefix
++            result['cases']=[];provider.cache_affinity='off'
++            with tempfile.TemporaryDirectory(prefix='forge-trim-compare-') as tmp:
++                for i,prefix_cls in enumerate((module.ConversationPrefix,ConversationPrefix)):
++                    cases=conversation(provider,recorder,Path(tmp),False,home_name=f'home-{i}',label=f'trim-{i}/',
++                        turns=args.turns,trim=True,prefix_cls=prefix_cls)
++                    result['cases'].append({'sample':i+1,'mode':'baseline' if i==0 else 'improved','turns':cases,
++                        'ok':len(cases)==args.turns and all(c['ok'] for c in cases)})
++    except Exception as exc:result.update(error_type=type(exc).__name__,error=str(exc)[:240])
++    finally:
++        result.update(requests=recorder.rows,totals=totals(recorder.rows))
++        result['ok']=not result.get('error_type') and bool(result.get('cases')) and all(
++            c.get('ok',all(o['ok'] for o in c.get('outcomes',[]))) for c in result.get('cases',[]))
++        args.output.parent.mkdir(exist_ok=True,parents=True)
++        args.output.write_text(json.dumps(result,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
++        print(json.dumps({'ok':result['ok'],'totals':result['totals']},ensure_ascii=False))
++    return 0 if result['ok'] else 1
++
++
++if __name__=='__main__':raise SystemExit(main())
+--- /dev/null
++++ b/tests/test_cache_affinity.py
+@@ -0,0 +1,101 @@
++"""Routing hints stay scoped, optional, and stable through real HTTP continuation."""
++import copy
++import io
++import json
++from pathlib import Path
++import tempfile
++import unittest
++
++from forge.cache_state import CacheWarmth, prefix_fingerprint
++from forge.config import Config
++from forge.loop import Agent
++from forge.model import BadRequest, HttpTransport, ModelRouter, Provider, _plan_and_shape
++from forge.policy import Mode, Policy
++from forge.tools import build_builtin_registry
++
++BASE='https://ark.cn-beijing.volces.com/api/coding/v3'
++MODEL='doubao-seed-evolving'
++
++
++class CacheAffinityTests(unittest.TestCase):
++    def shape(self,scope='workspace-scope',**provider_options):
++        provider=Provider('fixture',BASE,default_model=MODEL,**provider_options)
++        payload={'model':MODEL,'messages':[{'role':'user','content':'hello'}]}
++        shaped,plan=_plan_and_shape(payload,payload['messages'],provider,MODEL,
++            cache_scope=scope,store=CacheWarmth())
++        self.assertNotIn('prompt_cache_key',payload)
++        return shaped,plan
++
++    def test_scope_account_reasoning_and_tools_partition_hint_and_warmth(self):
++        first,plan=self.shape();same,_=self.shape()
++        self.assertEqual(first['prompt_cache_key'],same['prompt_cache_key'])
++        self.assertFalse(plan['execution']['cache_affinity']['guaranteed_hit'])
++        for options in ({'scope':'other-workspace'},{'api_key':'fixture-key-other-account'}):
++            changed,_=self.shape(**options)
++            self.assertNotEqual(first['prompt_cache_key'],changed['prompt_cache_key'])
++        provider=Provider('fixture',BASE,default_model=MODEL)
++        variants=[]
++        for thinking,tools in [(False,[]),(True,[]),(True,[{'type':'function','function':{'name':'read'}}])]:
++            payload={'messages':[],'enable_thinking':thinking,'tools':tools}
++            variants.append(_plan_and_shape(payload,[],provider,MODEL,cache_scope='scope',store=CacheWarmth())[0])
++        self.assertEqual(len({v['prompt_cache_key'] for v in variants}),3)
++        self.assertNotEqual(prefix_fingerprint(first),prefix_fingerprint({**first,'prompt_cache_key':'other'}))
++
++    def test_off_unknown_routes_and_no_scope_keep_original_wire(self):
++        self.assertNotIn('prompt_cache_key',self.shape(cache_affinity='off')[0])
++        self.assertNotIn('prompt_cache_key',self.shape(scope=None)[0])
++        self.assertNotIn('prompt_cache_key',self.shape(adapt=False)[0])
++        for base,model,wire in [('https://reseller.invalid/api/coding/v3',MODEL,'openai'),
++                (BASE,'doubao-seed-code','openai'),(BASE,MODEL,'anthropic'),
++                ('https://token-plan-cn.xiaomimimo.com/v1','mimo-v2.6-flash','openai')]:
++            provider=Provider('fixture',base,default_model=model,wire=wire)
++            out,_=_plan_and_shape({'messages':[]},[],provider,model,cache_scope='scope',store=CacheWarmth())
++            self.assertNotIn('prompt_cache_key',out)
++        with self.assertRaises(BadRequest):Provider('fixture',BASE,cache_affinity='yes')
++        with self.assertRaises(ValueError):self.shape(scope='x'*513)
++
++    def test_existing_caller_key_is_preserved(self):
++        provider=Provider('fixture',BASE,default_model=MODEL)
++        payload={'messages':[],'prompt_cache_key':'caller-owned'}
++        shaped,plan=_plan_and_shape(payload,[],provider,MODEL,cache_scope='scope',store=CacheWarmth())
++        self.assertEqual(shaped['prompt_cache_key'],'caller-owned')
++        self.assertEqual(plan['execution']['cache_affinity']['status'],'caller_supplied')
++
++    def test_configured_real_agent_disk_continuation_keeps_hint_and_replay_fields(self):
++        with tempfile.TemporaryDirectory() as tmp:
++            root=Path(tmp);(root/'value.txt').write_text('ACTUAL_VALUE',encoding='utf-8');sent=[]
++            cfg=Config();cfg.apply_patch([{'id':'fixture','name':'provider:seed','config':{
++                'baseURL':BASE,'model':MODEL,'cacheAffinity':'auto'}}])
++            def opener(request,**kw):
++                sent.append(json.loads(request.data))
++                message={'role':'assistant','content':'done'}
++                if len(sent)==1:
++                    message={'role':'assistant','content':'','reasoning_content':'ACTUAL_REASONING',
++                        'encrypted_content':'OPAQUE_REPLAY','tool_calls':[{'id':'read','type':'function',
++                            'function':{'name':'read_file','arguments':'{ "path" : "value.txt" }'}}]}
++                return io.BytesIO(json.dumps({'choices':[{'finish_reason':'tool_calls' if len(sent)==1 else 'stop',
++                    'message':message}],'usage':{'prompt_tokens':100,'completion_tokens':10}}).encode())
++            router=ModelRouter.from_config(cfg,transport=HttpTransport(response_opener=opener))
++            def agent():
++                value=Agent(home=root/'home',workspace=root,router=router,
++                    registry=build_builtin_registry(expose=['read_file']),
++                    policy=Policy(workspace=root,mode=Mode.READ_ONLY),project_rules=False)
++                self.addCleanup(value.secret_scope.close);return value
++            first=agent().run('Read value.txt.')
++            old=copy.deepcopy(sent[-1]['messages'])
++            second=agent().run('Continue.',history=[{'role':'user','content':'Read value.txt.'},
++                {'role':'assistant','content':first.text}])
++            self.assertEqual(second.stopped,'final')
++            self.assertTrue(any(e['type']=='cache_prefix_reused' for e in second.events))
++            self.assertEqual(len({p['prompt_cache_key'] for p in sent}),1)
++            self.assertTrue(all('cache_scope' not in p for p in sent))
++            self.assertEqual(sent[-1]['messages'][:len(old)],old)
++            replay=next(m for m in sent[-1]['messages'] if m.get('tool_calls'))
++            self.assertEqual(replay['encrypted_content'],'OPAQUE_REPLAY')
++            self.assertEqual(replay['reasoning_content'],'ACTUAL_REASONING')
++            router.providers['fixture'].cache_affinity='off'
++            agent().run('New task.')
++            self.assertNotIn('prompt_cache_key',sent[-1])
++
++
++if __name__=='__main__':unittest.main()
+--- /dev/null
++++ b/tests/test_cache_diagnostics.py
+@@ -0,0 +1,61 @@
++"""Wire evidence separates unknown/zero/positive cache without leaking opaque data."""
++import contextlib
++import hashlib
++import io
++import json
++from pathlib import Path
++import sys
++import unittest
++from unittest.mock import patch
++
++sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
++from verify_cache_diagnostics import DiagnosticRecorder
++from forge.cache_metrics import cache_coverage
++from forge.model import Provider
++
++
++class WireDiagnosticTests(unittest.TestCase):
++    def test_identical_wire_can_have_different_cache_receipts_and_replay_is_hash_only(self):
++        sent=[]
++        class Response(io.BytesIO):
++            status=200
++            headers={'x-request-id':'fixture-id'}
++        def opener(request,**kw):
++            sent.append(request.data)
++            message={'role':'assistant','content':'OK'}
++            if len(sent)==1:
++                message={'role':'assistant','content':'','reasoning_content':'PRIVATE_THOUGHT_VALUE',
++                    'encrypted_content':'PRIVATE_OPAQUE_VALUE','tool_calls':[{'id':'read','type':'function',
++                        'function':{'name':'read_file','arguments':'{"path":"value.txt"}'}}]}
++            details=None if len(sent)==1 else {'cached_tokens':0 if len(sent)==2 else 256}
++            return Response(json.dumps({'choices':[{'message':message,'finish_reason':'tool_calls' if len(sent)==1 else 'stop'}],
++                'system_fingerprint':'fixture-backend','usage':{'prompt_tokens':1000,'completion_tokens':10,
++                'prompt_tokens_details':details}}).encode())
++        recorder=DiagnosticRecorder(3)
++        provider=Provider('fixture','https://ark.cn-beijing.volces.com/api/coding/v3',default_model='doubao-seed-evolving')
++        messages=[{'role':'user','content':'Read value.txt.'}]
++        with patch('verify_mimo_live.open_authenticated',side_effect=opener),contextlib.redirect_stdout(io.StringIO()):
++            first=recorder.complete(provider,provider.default_model,messages)
++            history=[*messages,first[2]['assistant_message'],{'role':'tool','tool_call_id':'read','content':'actual value'}]
++            recorder.complete(provider,provider.default_model,history)
++            recorder.complete(provider,provider.default_model,history)
++        self.assertEqual(sent[1],sent[2])
++        self.assertEqual(recorder.rows[1]['wire_body_sha256'],hashlib.sha256(sent[1]).hexdigest())
++        self.assertTrue(recorder.rows[2]['exact_payload_repeat'])
++        self.assertEqual(recorder.rows[2]['prefix_relation'],'unchanged')
++        self.assertEqual(recorder.rows[1]['prefix_relation'],'appended')
++        fields=recorder.rows[1]['message_components'][1]['fields']
++        self.assertTrue(fields['reasoning_content']['matches_prior_response'])
++        self.assertTrue(fields['encrypted_content']['matches_prior_response'])
++        self.assertTrue(fields['reasoning_content']['matches_response_call'])
++        self.assertTrue(fields['encrypted_content']['matches_response_call'])
++        self.assertNotIn('PRIVATE_THOUGHT_VALUE',json.dumps(recorder.rows))
++        self.assertNotIn('PRIVATE_OPAQUE_VALUE',json.dumps(recorder.rows))
++        self.assertEqual(recorder.rows[1]['system_fingerprint'],'fixture-backend')
++        coverage=cache_coverage(recorder.rows)
++        self.assertEqual(coverage['unknown_requests'],1)
++        self.assertEqual(coverage['all_observed']['input_tokens'],2000)
++        self.assertEqual(coverage['all_observed']['cached_tokens'],256)
++
++
++if __name__=='__main__':unittest.main()
+--- /dev/null
++++ b/tests/test_history_trim_disk.py
+@@ -0,0 +1,64 @@
++"""Host display-history trims must remain acknowledged after Agent restart."""
++import copy
++import io
++import json
++from pathlib import Path
++import tempfile
++import unittest
++
++from forge.conversation_prefix import ConversationPrefix
++from forge.loop import Agent
++from forge.model import HttpTransport, ModelRouter, Provider
++from forge.policy import Mode, Policy
++from forge.tools import build_builtin_registry
++
++
++class TrimPersistenceTests(unittest.TestCase):
++    def test_exact_host_suffix_is_persisted_but_edited_or_fabricated_trim_is_rejected(self):
++        with tempfile.TemporaryDirectory() as tmp:
++            path=Path(tmp)/'prefix.json';prefix=ConversationPrefix(path)
++            history=[{'role':'user','content':'earlier'},{'role':'assistant','content':'answer'}]
++            prefix.commit(history=history,messages=history,guard='guard',rule_context='',rule_sources=[],targets=[])
++            self.assertTrue(prefix.trim_history(history,history[-1:]))
++            fresh=ConversationPrefix(path)
++            self.assertIsNotNone(fresh.candidate(history[-1:],'guard'))
++            before=path.read_bytes()
++            self.assertFalse(fresh.trim_history(history[-1:],[{'role':'assistant','content':'edited'}]))
++            self.assertFalse(fresh.trim_history([{'role':'assistant','content':'fabricated'}],history[-1:]))
++            self.assertEqual(path.read_bytes(),before)
++            self.assertIsNone(ConversationPrefix(path).candidate(history[-1:],'wrong guard'))
++
++    def test_real_agent_wire_keeps_tool_and_reasoning_history_after_trim_and_restart(self):
++        with tempfile.TemporaryDirectory() as tmp:
++            root=Path(tmp);(root/'value.txt').write_text('ACTUAL_VALUE',encoding='utf-8');sent=[]
++            def opener(request,**kw):
++                sent.append(json.loads(request.data));message={'role':'assistant','content':'done'}
++                if len(sent)==1:
++                    message={'role':'assistant','content':'','reasoning_content':'REPLAY_THOUGHT',
++                        'encrypted_content':'OPAQUE_REPLAY','tool_calls':[{'id':'read','type':'function',
++                            'function':{'name':'read_file','arguments':'{"path":"value.txt"}'}}]}
++                return io.BytesIO(json.dumps({'choices':[{'finish_reason':'tool_calls' if len(sent)==1 else 'stop',
++                    'message':message}]}).encode())
++            router=ModelRouter([Provider('fixture','https://fixture.invalid',default_model='mimo-v2.6-flash')],
++                transport=HttpTransport(response_opener=opener),retries_per_provider=0)
++            def agent():
++                value=Agent(home=root/'home',workspace=root,router=router,
++                    registry=build_builtin_registry(expose=['read_file']),
++                    policy=Policy(workspace=root,mode=Mode.READ_ONLY),project_rules=False)
++                self.addCleanup(value.secret_scope.close);return value
++            old=[{'role':'user','content':'old task'},{'role':'assistant','content':'old answer'}]
++            first_agent=agent();first=first_agent.run('Read value.txt.',history=old)
++            full=[*old,{'role':'user','content':'Read value.txt.'},{'role':'assistant','content':first.text}]
++            before=copy.deepcopy(sent[-1]['messages'])
++            self.assertTrue(first_agent._conversation_prefix.trim_history(full,full[-2:]))
++            first_agent.secret_scope.close()
++            second=agent().run('Continue.',history=full[-2:])
++            self.assertEqual(second.stopped,'final')
++            self.assertTrue(any(e['type']=='cache_prefix_reused' for e in second.events))
++            self.assertEqual(sent[-1]['messages'][:len(before)],before)
++            self.assertIn('ACTUAL_VALUE',str(sent[-1]['messages']))
++            self.assertIn('REPLAY_THOUGHT',str(sent[-1]['messages']))
++            self.assertIn('OPAQUE_REPLAY',str(sent[-1]['messages']))
++
++
++if __name__=='__main__':unittest.main()
+--- /dev/null
++++ b/docs/CACHE-ZERO-HIT-DIAGNOSTICS.md
+@@ -0,0 +1,87 @@
++# MiMo / Seed 零命中排查与实际续接优化
++
++2026-11-08。修复了宿主裁剪显示历史后，重建 Agent 丢失私有原生上下文的实际缺口；接入已验证 Seed 端点的缓存路由提示；补齐真实 HTTP 前缀、推理与加密字段的审计。所有 API 使用现有账户和隔离合成夹具。
++
++## 零命中可以确认到哪一步
++
++### 同一字节请求确实能得到不同缓存回执
++
++`reports/cache-diagnostics-seed-exact-wire.json` 预设发送 4 次完全相同请求，其中 2 次成功、2 次传输失败。两次成功的输入均为 1,590 token：第一次 cached_tokens=1,590，另一次为 0。
++
++这两次的完整 HTTP 请求体 SHA-256、模型、工具设置、生成参数及 prompt_cache_key 全部相同；复核见 `reports/cache-diagnostics-evidence.json` 的 identical_wire_mixed_cache_receipts。请求不含历史 assistant 消息，所以这组差异也不能归因为推理字段回放。传输失败未返回 usage，未按零 token 或零缓存计入。
++
++这已排除这组请求的客户端输入变化。仅凭客户端回执仍无法进一步区分缓存未写入、淘汰、调度或其他后端状态；没有把“字节相同”冒称为“服务端必定命中”。方舟也说明隐式缓存受长度、可用缓存及路由等因素影响，路由标识是尽力而为的亲和提示。[方舟缓存文档](https://docs.volcengine.com/docs/ark/context-cache?lang=en)
++
++### 短请求和未知统计不能当作缓存损坏
++
++此前 Seed 短任务首个输入约 950 token，本轮更短的控制输入为 58 token，原始代码夹具为 934 token。方舟文档给出的默认缓存门槛为 1,024，部分模型不同；evolving 订阅别名的底层映射没有由本次回执公开，因此门槛只能作为解释线索，不能套用成这个别名的已验证常量。
++
++较长控制输入使用同一合成账单项目的修复前后源码及测试，为 1,590 token；已经观察到完整命中，因此该端点并非始终不能缓存。没有向生产提示加入填充文本来追求命中率。
++
++MiMo 的短控制输入仅 36 token，部分响应的 prompt_tokens_details 为 null，这表示缓存统计未知。没有查到其公开的同等最小门槛依据，不套用 Seed 的门槛。MiMo 817-token 完全相同输入的后续响应可命中 768 token。
++
++### 保留的推理/加密字段没有发现改写或缺失
++
++诊断记录真实请求体摘要、逐消息/逐字段摘要、首个变化位置、工具声明及生成参数摘要；opaque 与 reasoning 原文不写入报告。字段值与此前响应比对，并对最新探针按工具调用 ID 绑定检查。审计还根据已返回的调用组，核对应有的非空字段是否缺失。
++
++全部实验共核对 155 个出站 reasoning_content、81 个 encrypted_content 值，19 个按调用绑定的字段值，以及 186 个应有字段位置，未发现不匹配或缺失。计数包含重试及同一字段多次回放，不代表独立成功请求数量。末轮 Seed 请求在传输失败前完成出站检查，不能把它们算作成功送达；此前成功的两轮 Seed 工具任务另有回执。
++
++MiMo 官方建议保留历史 reasoning_content，与当前实现一致。[MiMo OpenAI 接口文档](https://mimo.mi.com/docs/zh-CN/api/chat/openai-api-post)
++
++压缩确实会改写固定头部之后的历史前缀，造成重建成本；这是预算回收的结果。保留的原生工具组、字段和配对继续完整，后续正常追加能复用新的前缀。不能把“压缩移走旧交换”和“保留交换的推理字段被损坏”混为一谈。
++
++## 实际修复
++
++### 显示历史裁剪后同步更新磁盘快照
++
++编辑器在显示历史超过 200 条时调用 trim_history。旧实现只改内存中的 history_digest，磁盘仍是裁剪前摘要；新建 Agent 从磁盘加载后无法匹配裁剪后的真实用户历史，退回普通聊天布局，失去原生调用和观测。
++
++现在裁剪和完整提交共用原子落盘路径。仍只承认宿主已保存历史的精确后缀；编辑、伪造或 guard 不匹配不会获得续接。工作区、规则、权限及凭据校验保留。
++
++API 对照把显示窗口缩到最近一轮，触发相同裁剪路径，再重建 Agent。生产的 200 条上限没有改变。两组都需要实际读取 values.json、调用 calculator 得到 423；每轮必须重新调用 calculator。压缩预算 5,000 字符，模型及思考设置相同。
++
++| 对照 | 任务结果 | 实际读文件 | 有效 usage 响应 | 输入 | 输出含推理 | 总 token | 已观测缓存率 |
++|---|---|---:|---:|---:|---:|---:|---:|
++| MiMo 旧实现 | 两轮通过 | 2 | 6 | 5,718 | 290 | 6,008 | 83.84% |
++| MiMo 修复 | 两轮通过 | 1 | 5 | 4,577 | 177 | 4,754 | 86.69% |
++| Seed 旧实现 | 两轮通过 | 2 | 6 | 7,292 | 390 | 7,682 | 0% |
++| Seed 修复 | 两轮通过 | 1 | 5 | 6,719 | 315 | 7,034 | 0% |
++
++MiMo 观测总 token 下降 20.87%，Seed 下降 8.44%。两家修复组都在第二轮实际恢复私有前缀，省去一次重读及一次模型往返。MiMo 缓存分母为旧组 4,351、修复组 4,577，缓存分别 3,648 / 3,968；旧组两条成功响应缺少缓存统计，修复组没有，因此不把这 2.85 个百分点当作一般收益。修复组另有 MiMo 1 次、Seed 2 次无 usage 的传输失败，其消费未知。
++
++报告为 `cache-diagnostics-mimo-trim-final-ab.json`、`cache-diagnostics-seed-trim-ab.json`。MiMo 首次裁剪探针的基线只读文件后直接回答，未按要求再次计算，被验收拒绝；原始失败报告 `cache-diagnostics-mimo-trim-ab.json` 保留。随后将每轮新调用要求明确给两组，再进行上述有效对照。
++
++### Seed 路由标识接入真实 Agent 请求
++
++在 Agent → ModelRouter → HttpTransport → 适配整形链路中增加宿主 cache_scope，消费后不把内部 scope 字段发给模型。仅对已实测的官方 Ark Coding Plan `/api/coding/v3`、OpenAI wire、`doubao-seed-evolving` 自动生成 prompt_cache_key。
++
++标识对宿主会话范围、账户、模型、实际推理参数及工具声明作哈希；不包含明文密钥或项目路径。新 Agent 和压缩续接保持稳定。它也参与本地缓存命名空间，避免不同提示标识共享错误的热度观测。已有调用方提供的标识保留。
++
++Provider 的 cacheAffinity 支持 auto / off，默认 auto。可在现有 provider 行 config 中增加 `cacheAffinity: off`，同时保留该行其他配置。off 只关闭自动路由提示，不关闭服务端隐式缓存。其他模型、MiMo、未验证端点和禁用适配的请求不自动注入。
++
++端点实际接受此字段；生产链路两轮探针的 5 个请求保持相同标识，HTTP 上的标识摘要与执行计划一致。但接受字段不证明后台必定采用，也不保证命中：auto/off 的三轮 ABBA 中两个 off 组完成，两个 auto 组因 TLS 中断未完成；关闭思考的补充 AB 中 off 组首请求失败、auto 组完成两轮，缓存均为零。没有据这些不完整对照宣称路由标识带来稳定收益。
++
++### 最终多轮与压缩续接
++
++`cache-diagnostics-mimo-final-replay.json` 三轮全部通过，只读文件一次，每轮实际调用 calculator；后两轮从磁盘恢复私有前缀，期间发生真实压缩，保留字段按调用 ID 匹配。7 次成功请求，输入 7,473、输出 215、合计 7,688；6 次有缓存统计，缓存 5,760 / 6,739 = 85.47%，另一次统计未知。这是最后一组实测值，不与不同任务提示的早期探针计算因果提升率。
++
++`cache-diagnostics-seed-final-replay.json` 在实际读取后发生连续传输失败，整组失败；出站保留字段与原调用绑定正确，但这组未完成三轮。没有为了通过继续提高生产重试次数或全局关闭思考。Seed 成功的两轮实际任务以裁剪对照及路由标识补充组为准。
++
++## 证据及验证
++
++13 组 API 实验共 116 次 HTTP 尝试、90 条有效 usage：观测输入 102,180、输出 10,228，合计 112,408 token。26 次失败没有 usage，费用未知；另有 8 条成功响应缺少缓存统计。全量报告含所有失败和零命中，没有筛掉不利样本。
++
++`reports/cache-diagnostics-audit.py` 独立核对原始缓存字段、归一化统计、请求总量、回放来源、应有字段及完全相同请求的不同缓存回执，结果为 `cache-diagnostics-evidence.json`。两家真实工具请求中观察到的读取目标均为合成 values.json。报告只保留字段摘要，实验临时目录会清理，不将归档摘要冒称为可回读的原始上下文。
++
++核心回归 497 项通过（2 项跳过），定向及客户端/网关入口回归 157 项通过；新增回放字段核对又以 7 项小范围回归确认。集合有交集，不累加覆盖数。预算检查通过：158 文件、48,677 行。
++
++```powershell
++$baseline = Get-Content reports/cache-diagnostics-backup.txt
++python scripts/verify_cache_diagnostics.py --live --vendor mimo --scenario trim-compare --turns 2 --baseline-dir $baseline --output reports/trim-new.json
++python scripts/verify_cache_diagnostics.py --live --vendor seed --scenario exact-repeat --affinity --thinking off --extended-repository --output reports/exact-new.json
++python scripts/verify_cache_diagnostics.py --live --vendor seed --scenario agent-compare --output reports/affinity-new.json
++```
++
++`--live` 必填，输出路径必须不存在。单组默认请求上限 30、硬上限 40；真实 Agent 每条请求最多重试一次，直接重复控制不自动重试。控制组关闭思考明确标记，不与保留现有思考设置的任务计算节省率。扩展源码来自已有合成账单修复导出，不读取业务项目。
++
++本轮增量补丁：`reports/cache-diagnostics.patch`；源文件与证据哈希：`reports/cache-diagnostics-files.json`。以本轮开始前快照为基线，保留此前所有修改。

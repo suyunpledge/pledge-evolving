@@ -45,7 +45,8 @@ _LANGUAGE_BY_SUFFIX = {
 
 class DevelopmentWorkbench(ttk.Frame):
     def __init__(self, parent, state, *, runtime=None, hosted=False,
-                 workspace_request=None, model_settings_home=None, models_changed=None):
+                 workspace_request=None, model_settings_home=None, models_changed=None,
+                 qt_agent=False):
         super().__init__(parent)
         self.state = state
         # hosted（2026-10-16 双导航栏去重，10-17 修正）：被 forge_gui_v2
@@ -54,6 +55,7 @@ class DevelopmentWorkbench(ttk.Frame):
         # 点击经 workspace_request 回调转发宿主顶层工作空间切换。独立运行
         # （run_development.py / 测试）保持完整形态与既有语义。
         self._hosted = bool(hosted)
+        self._qt_agent = qt_agent
         self._workspace_request = workspace_request
         from forge.development.models import ModelSettingsSource
         self._model_router_factory = ModelSettingsSource(model_settings_home) if model_settings_home else None
@@ -961,6 +963,7 @@ class DevelopmentWorkbench(ttk.Frame):
             pending=self.resolve_agent_approval, configure_model=self.agent_model_settings,
             refresh=self.refresh_agent_versions, new_conversation=self._new_agent_conversation,
             history=self.restore_session, settings=self.model_settings, view_changes=self._view_agent_changes,
+            revert_changes=self._revert_agent_changes,
             on_show_approvals=self._show_approvals_tab,
             history_source=lambda: (self.runtime._resume_evidence or {}).get('path'))
         self.log_tabs = self.agent_panel.notebook
@@ -997,7 +1000,8 @@ class DevelopmentWorkbench(ttk.Frame):
                                    highlightthickness=1,
                                    highlightbackground=C['border'],
                                    highlightcolor=C['accent_border'])
-        self.input = TaskInput(self._input_row, height=3, wrap='word', undo=True, font=FONT_UI)
+        self.input = TaskInput(self._input_row, embedded=self._hosted, height=3,
+                               wrap='word', undo=True, font=FONT_UI)
         style_editor(self.input)
         # 焦点环由外层输入卡承担，输入框自身不再画第二圈。
         self.input.configure(highlightthickness=0)
@@ -1030,7 +1034,7 @@ class DevelopmentWorkbench(ttk.Frame):
         # 通过 self._runtime_ctx 暴露（self._runtime_ctx.get_task() /
         # .get_routing() / .get_policy()）。
         self.model_choice = None
-        self.planning = tk.StringVar(value='low')
+        self.planning = tk.StringVar(value=self.state.value('planning'))
         self.permission = tk.StringVar(value='read-only')
         # R-fix：三个旧 chrome 哨兵改为轻量兼容对象——v0.3 起 UI 由
         # RuntimeContext 接管，但旧测试契约（.cget('text')）与既有
@@ -1058,6 +1062,11 @@ class DevelopmentWorkbench(ttk.Frame):
                 except Exception:
                     pass
         self.permission.trace_add('write', permission_display)
+        def planning_display(*args):
+            bench = owner()
+            if bench is not None and not bench._closed:
+                bench._sync_planning_choices()
+        self.planning.trace_add('write', planning_display)
 
         # ── 预存消息队列（上限 3，任务完成后自动发送）────────────
         self._pending_prompts: list[dict] = []
@@ -1076,6 +1085,13 @@ class DevelopmentWorkbench(ttk.Frame):
         # 一行占位色说明文字（三个键位仍是真实绑定）。
         input_row = self._input_row
         pad = ui_px(self, 10)
+        reply_row = ttk.Frame(input_row)
+        reply_row.pack(side='top', fill='x', padx=pad, pady=(ui_px(self, 6), 0))
+        ttk.Label(reply_row, text='回复方式', font=FONT_CAPTION).pack(side='left', padx=(0, 6))
+        from .policy_widgets import PlanningChoice
+        self.reply_choice = PlanningChoice(reply_row, planning=self.planning.get(),
+                                           on_change=self._on_planning_change)
+        self.reply_choice.pack(side='left')
         footer = tk.Frame(input_row, bg=C['input_bg'])
         footer.pack(side='bottom', fill='x', padx=(pad, ui_px(self, 6)), pady=(0, ui_px(self, 6)))
         self._input_footer = footer
@@ -1197,6 +1213,13 @@ class DevelopmentWorkbench(ttk.Frame):
 
     def _view_agent_changes(self, evidence=None):
         evidence = evidence or self.task_evidence
+        identifiers = self._recorded_change_ids(evidence)
+        if identifiers and not self.runtime.busy:
+            def reviewed(value, error):
+                if not error:
+                    self._show_recorded_changes(value)
+            self.work(lambda: self.runtime.review_recorded_changes(identifiers), reviewed)
+            return
         changes = list(evidence.changes.values())
         if changes:
             preview = '\n\n'.join('文件：' + str(c['path']) + '\n' +
@@ -1204,6 +1227,52 @@ class DevelopmentWorkbench(ttk.Frame):
             self.view_agent_diff({'diff': preview, 'diff_truncated': any(c.get('diff_truncated') for c in changes)})
         elif evidence.diffs:
             self.view_agent_diff(evidence.diffs[-1])
+
+    @staticmethod
+    def _recorded_change_ids(evidence):
+        return list(dict.fromkeys(identifier for action in evidence.actions.values()
+            for identifier in (action.get('meta') or {}).get('change_ids', []) if isinstance(identifier, str)))
+
+    def _show_recorded_changes(self, value):
+        text = '\n\n'.join('文件：' + file['name'] + '\n' +
+            (file['diff'] or '无文本预览') for file in value['files'])
+        self.view_agent_diff({'diff': text, 'diff_truncated': any(f['truncated'] for f in value['files'])})
+
+    def _revert_agent_changes(self, evidence=None):
+        evidence = evidence or self.task_evidence
+        if self.runtime.busy or self._loading or self._submission_active:
+            self.status.set('请等待当前操作结束，再回退修改')
+            return
+        identifiers = self._recorded_change_ids(evidence)
+        if not identifiers or any((a.get('meta') or {}).get('change_review_incomplete') for a in evidence.actions.values()):
+            self.status.set('此记录没有完整回退快照，请逐个审查文件')
+            return
+        def previewed(value, error):
+            if error:
+                return
+            self._show_recorded_changes(value)
+            if not value['canRevert']:
+                self.status.set('已回退，或文件有后续修改；未执行覆盖')
+                return
+            for file in value['files']:
+                row = self.documents.get(file['path'])
+                if row:
+                    self.document_changed(row)
+                    if row['document'].dirty or row.get('saving'):
+                        self.status.set('目标文件有未保存草稿，请先保存或关闭；回退未执行')
+                        return
+            if not messagebox.askyesno('回退本次修改', f"已在 Diff 面板展示 {len(value['files'])} 个文件的修改。\n"
+                    '恢复到本次修改前的内容？新增文件将移除，后续编辑会阻止回退。', parent=self):
+                return
+            permission = self.permission.get()
+            def restored(result, failure):
+                if not failure:
+                    self.status.set('已回退本次修改')
+                    self.refresh_project()
+                    self.refresh_documents()
+                    self.refresh_agent_versions()
+            self.work(lambda: self.runtime.review_recorded_changes(identifiers, revert=True, permission=permission), restored)
+        self.work(lambda: self.runtime.review_recorded_changes(identifiers), previewed)
 
 
     def _editor_status_fields(self):
@@ -1588,7 +1657,7 @@ class DevelopmentWorkbench(ttk.Frame):
                     self._submission_notice('项目已变化，待发送任务已取消；草稿已保留。', error=True)
                     return
                 if self.input.get('1.0', 'end-1c') == pending['draft']:
-                    self.send(delegate=pending['delegate'])
+                    self.send(delegate=pending['delegate'], planning=pending['planning'])
                 else:
                     self._submission_notice('项目已载入；草稿已有更改，请确认后再次发送。')
             self.later(0, resume)
@@ -1610,7 +1679,7 @@ class DevelopmentWorkbench(ttk.Frame):
             except Exception:
                 pass
 
-    def _prepare_initial_send(self, delegate):
+    def _prepare_initial_send(self, delegate, planning=None):
         path = self._last_project_attempt or (str(self.source.root) if self.source else '') or self.state.value('project')
         draft = self.input.get('1.0', 'end-1c')
         if not path or not Path(path).is_dir():
@@ -1618,7 +1687,9 @@ class DevelopmentWorkbench(ttk.Frame):
         if not path:
             self._submission_notice('发送需要项目目录；未选择项目，草稿已保留。', error=True)
             return
-        self._pending_initial_send = {'draft': draft, 'delegate': delegate, 'generation': self._generation + 1}
+        self._pending_initial_send = {'draft': draft, 'delegate': delegate,
+                                      'planning': self.planning.get() if planning is None else planning,
+                                      'generation': self._generation + 1}
         self._submission_notice('正在准备项目与 Agent；原始草稿将在就绪后发送。')
         if not self.open_project(path):
             self._pending_initial_send = None
@@ -1702,7 +1773,7 @@ class DevelopmentWorkbench(ttk.Frame):
         """
         return dict(
             planning=(getattr(self, 'planning', None).get()
-                      if getattr(self, 'planning', None) is not None else 'low'),
+                      if getattr(self, 'planning', None) is not None else 'none'),
             role=(getattr(self, 'agent_role', None).get()
                   if getattr(self, 'agent_role', None) is not None else 'agent'),
             on_planning_change=self._on_planning_change,
@@ -1716,11 +1787,22 @@ class DevelopmentWorkbench(ttk.Frame):
         )
 
     def _on_planning_change(self, value):
-        if getattr(self, 'planning', None) is not None:
-            try:
-                self.planning.set(value)
-            except Exception:
-                pass
+        try:
+            self.state.configure_planning(value)
+        except Exception as exc:
+            self._sync_planning_choices()
+            self.status.set('回复方式未保存：' + redact(str(exc)))
+            return
+        self.planning.set(value)
+
+    def _sync_planning_choices(self):
+        value = self.planning.get()
+        choice = getattr(self, 'reply_choice', None)
+        if choice is not None:
+            choice.set(value)
+        context = getattr(self, '_runtime_ctx', None)
+        if context is not None:
+            context.get_task_controls().set_planning(value)
 
     def _on_role_change(self, value):
         # 角色变更同步到 agent_role（兼容旧 self.agent_role 读取路径）。
@@ -2038,7 +2120,9 @@ class DevelopmentWorkbench(ttk.Frame):
             # 启动早期（catalog_rows 还没填，plugins 目录可能未建）——
             # 直接报"未就绪"而不是 "—"，避免状态栏出现无意义的占位
             return '未就绪'
-        return f'{builtin} (builtin) + {contrib} (contrib) + {plugin} (plugin)'
+        # 只列非零来源：「21 内置」比「21 (builtin) + 0 (contrib) + 0 (plugin)」好读。
+        parts = [f'{n} {name}' for n, name in ((builtin, '内置'), (contrib, '扩展'), (plugin, '插件')) if n]
+        return ' + '.join(parts)
 
     def _layout_name_text(self):
         try:
@@ -2527,7 +2611,7 @@ class DevelopmentWorkbench(ttk.Frame):
             self._dispatch(request['prompt'], request['delegate'], request=request, clear_input=False)
         self._queued_send_id = self.later(300, advance)
 
-    def send(self, *, delegate=False):
+    def send(self, *, delegate=False, planning=None):
         prompt = self.input.get('1.0', 'end-1c').strip()
         if not prompt:
             return
@@ -2536,7 +2620,7 @@ class DevelopmentWorkbench(ttk.Frame):
             return
         if not self.runtime.ready:
             try:
-                self._prepare_initial_send(delegate)
+                self._prepare_initial_send(delegate, planning)
             except Exception as exc:
                 self._pending_initial_send = None
                 self._submission_notice('无法准备任务，草稿已保留：' + str(exc), error=True)
@@ -2548,7 +2632,7 @@ class DevelopmentWorkbench(ttk.Frame):
                 refreshed = self.runtime.refresh_models()
                 if refreshed is not None:
                     self._model_catalog_loaded(refreshed, preserve_selection=True)
-            request = self._capture_submission(prompt, delegate)
+            request = self._capture_submission(prompt, delegate, planning=planning)
         except Exception as exc:
             self._submission_notice('任务未创建：' + str(exc), error=True)
             return
@@ -2567,7 +2651,7 @@ class DevelopmentWorkbench(ttk.Frame):
             return
         self._dispatch(prompt, delegate, request=request)
 
-    def _capture_submission(self, prompt, delegate):
+    def _capture_submission(self, prompt, delegate, *, planning=None):
         """Freeze validated next-task choices on the Tk thread before consuming a draft."""
         if len(prompt.encode('utf-8')) > 16384:
             raise ValueError('任务描述不能超过 16 KiB；请缩短描述或附加文件。')
@@ -2584,7 +2668,8 @@ class DevelopmentWorkbench(ttk.Frame):
         if model is None and getattr(self, 'model_choice', None) is not None:
             index = self.model_choice.current()
             model = self.runtime.catalog.get(self.model_ids[index]) if index > 0 else None
-        permission, planning = self.permission.get(), self.planning.get()
+        permission = self.permission.get()
+        planning = self.planning.get() if planning is None else planning
         from forge.planning import planning_level
         planning_level(planning)
         contexts = []
@@ -2643,7 +2728,11 @@ class DevelopmentWorkbench(ttk.Frame):
             self.context_label.configure(text='未附加编辑器内容')
         self._retry_request = {'prompt': prompt, 'delegate': delegate}
         self.task_label.configure(text='Agent · 请求执行')
-        self._submission_notice('已提交，正在创建 Agent 任务…')
+        if planning == 'none':
+            self.status.set('正在回答…')
+            self.log_tabs.select(self.chat.master)
+        else:
+            self._submission_notice('已提交，正在创建 Agent 任务…')
         def done(value, error):
             self._submission_active = False
             self._active_submission = None
@@ -2676,7 +2765,8 @@ class DevelopmentWorkbench(ttk.Frame):
                 self.chat.message('Coding Agent', value['text'])
             if error:
                 self.chat.message('执行失败', error)
-            else:
+            elif (planning != 'none' or self.task_evidence.actions or
+                  value.get('outcome') != 'succeeded'):
                 self.chat.message('任务结果', '状态：' + str(value.get('outcome', value.get('stopped', '未知'))))
             self.refresh_agent_versions()
             self.refresh_project()
@@ -3190,6 +3280,9 @@ class DevelopmentWorkbench(ttk.Frame):
         else:
             panels = [self.project_frame, self.editor_frame, self.agent_frame]
         wanted = list(panels)
+        if self._qt_agent:
+            # The Qt host renders the Agent column beside this native editor surface.
+            wanted = [panel for panel in wanted if panel is not self.agent_frame]
         # panes.panes() 返回的是窗口路径名**字符串**，与控件对象比较恒为
         # False。那会让下面两处判断同时失效：「已在集合则 continue」永不
         # 命中、「不在集合才 forget」对每个在装面板都成立——结果是每次

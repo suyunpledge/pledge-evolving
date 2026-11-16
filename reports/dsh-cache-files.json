@@ -1,0 +1,85 @@
+{
+  "baseline": "C:\\Users\\匡溯昀\\forge-cache-backup-20261106-223945",
+  "files": [
+    {
+      "path": "forge/loop.py",
+      "status": "modified",
+      "before_sha256": "64c6130b62c9ab3e3f2448d0466ad9fe7c9990e6b989cf32056fda3da31c2937",
+      "after_sha256": "526497f323d27b6c07f4a49754abbf41ef11e6fc2840629d768d156c19c9868d"
+    },
+    {
+      "path": "forge/protocol.py",
+      "status": "modified",
+      "before_sha256": "38f9aa8bcc2d5a7cff1a10e16f069d0e191466988473e1fbe38babe465e90940",
+      "after_sha256": "6dd708bae1f1ff47273bd6e4cf17c6cd7554973093e96b755cc7ac5b93f0358c"
+    },
+    {
+      "path": "forge/toolwire.py",
+      "status": "modified",
+      "before_sha256": "9e22ef65cb4c8b02bf033a07f33c08ea1c1a72132821cb2da9092c557c5b565c",
+      "after_sha256": "b32d103544a49696306ac3f879436591c6295b08877f08f53a745e2300c1da3b"
+    },
+    {
+      "path": "forge/test_prefix_cache.py",
+      "status": "modified",
+      "before_sha256": "857ac1432aeed40ca0aea09543d832ec2ef7f5db60dd6934af86cbf224ee5f0e",
+      "after_sha256": "8dbf042364b76d6633ea03f68e47b49a9bdb62d0e1fec53c25a8235f643b605a"
+    },
+    {
+      "path": "forge/test_vscode_bridge.py",
+      "status": "modified",
+      "before_sha256": "8b0f24df8d4ed3258e7e7f89ca11f28f8ff753f121f9deaa9b306aa14bae128f",
+      "after_sha256": "8877dc009ee104d13782985bec4d2a07eaac954e5142de3e75cc449bf1865fd2"
+    },
+    {
+      "path": "forge-budgets.json",
+      "status": "modified",
+      "before_sha256": "9562ac9ebc6df6583168ee02a4541888ad21278f1b24e1f4a9337ca090a5d304",
+      "after_sha256": "74f8272bbaa3e7bc79e8bc92d0085ab2f13497b691c08a3d8bf67e2d0c10986a"
+    },
+    {
+      "path": "forge/conversation_prefix.py",
+      "status": "added",
+      "before_sha256": null,
+      "after_sha256": "a07e0de6ada57e1b50b0add283403706c6262e2c38b79abcb7952b7d5b35048a"
+    },
+    {
+      "path": "forge/test_conversation_prefix.py",
+      "status": "added",
+      "before_sha256": null,
+      "after_sha256": "3ad0070aa97e6aa52910cb97f9f6b97d5eec4362021d070a3d49a0c37ca3cc9b"
+    },
+    {
+      "path": "tests/test_cache_continuation_entries.py",
+      "status": "added",
+      "before_sha256": null,
+      "after_sha256": "90c649651d43476d73813e5074664f2220849d6b5aa647d7611703e16e4c9f33"
+    },
+    {
+      "path": "docs/DSH-CACHE-CONTINUITY.md",
+      "status": "added",
+      "before_sha256": null,
+      "after_sha256": "e621a61bd15ecc5be575436f3de9d1ae6146dd13a1a391ba32fc47c3d0ea5743"
+    }
+  ],
+  "verification": {
+    "core": {
+      "run": 413,
+      "skipped": 2
+    },
+    "runtime": {
+      "run": 206,
+      "skipped": 1
+    },
+    "passed": 616,
+    "skipped": 3,
+    "selftest_passed": 595,
+    "selftest_total": 595,
+    "budget_files": 146,
+    "wire_fixture": {
+      "prefix_messages_before": 1,
+      "prefix_messages_after": 5,
+      "vendor_hit_rate_measured": false
+    }
+  }
+}

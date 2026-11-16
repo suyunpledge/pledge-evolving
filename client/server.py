@@ -280,6 +280,7 @@ def get_config_snapshot() -> dict:
             "loop": dict(loop_row.config) if loop_row else {},
             "model": dict(model_row.config) if model_row else {},
             "thinking": dict(think_row.config) if think_row else {},
+            "planning": dict(cfg.row('planning').config) if cfg.row('planning') else {'level': 'none'},
             "tools": dict(tools_row.config) if tools_row else {},
         }
     except Exception:
@@ -296,6 +297,8 @@ def validate_run_payload(payload):
     if not isinstance(task, str) or not task.strip():
         raise ValueError('task required')
     choices = {'model': tuple(m['label'] for m in CATALOG), 'strategy': STRATEGIES,
+               'planning': ('none', 'low', 'medium', 'high'),
+               'planning_model': ('', *tuple(m['label'] for m in CATALOG)),
                'thinking': THINKING_MODES, 'bundle': tuple(BUNDLES), 'policy_mode': POLICY_MODES}
     for key, values in choices.items():
         value = payload.get(key)
@@ -303,27 +306,60 @@ def validate_run_payload(payload):
             raise ValueError('invalid ' + key)
     for key, maximum in [('max_steps', 1000), ('max_depth', 16), ('spawn_budget', 1000)]:
         value = payload.get(key)
-        if value is not None and (type(value) is not int or not 1 <= value <= maximum):
+        minimum = 1 if key == 'max_steps' else 0
+        if value is not None and (type(value) is not int or not minimum <= value <= maximum):
             raise ValueError('invalid ' + key)
     if payload.get('workspace') is not None and not isinstance(payload['workspace'], str):
         raise ValueError('invalid workspace')
-    return {**payload, 'task': task.strip()}
+    validated = {**payload, 'task': task.strip()}
+    if payload.get('acceptance') is not None:
+        from forge.acceptance import AcceptanceContract
+        validated['acceptance'] = AcceptanceContract.from_raw(payload['acceptance']).to_raw()
+    return validated
 
 
 def compose_run_config(workspace, model_label=None, strategy=None, thinking=None,
-                       bundle=None, policy_mode=None):
+                       bundle=None, policy_mode=None, planning=None, planning_model=None):
     from forge.cli import _compose
     ns = argparse.Namespace(home=str(FORGE_HOME), workspace=str(workspace), bundle=None,
         overlay=[], no_user_layer=False, profile=None, i_know=True, coding=(bundle == 'coding'))
     # UI bundle names are selectors, not arbitrary paths supplied to _compose.
     cfg = _compose(ns)
     patches = []
+    if planning is not None or planning_model is not None:
+        old_plan = cfg.row('planning')
+        plan = dict(old_plan.config) if old_plan else {}
+        if planning is not None:
+            from forge.planning import planning_level
+            plan['level'] = planning_level(planning)
+        if planning_model is not None:
+            plan['model'] = None
+            if planning_model:
+                hit = next(m for m in CATALOG if m['label'] == planning_model)
+                row = _resolved_provider_row(hit)
+                configured = cfg.row(hit['id'])
+                if configured:
+                    merged = {**row['config'], **dict(configured.config)}
+                    if (isinstance(merged.get('apiKey'), dict) and '$expr' in merged['apiKey']
+                            and merged.get('baseURL') == row['config'].get('baseURL')):
+                        merged['apiKey'] = row['config'].get('apiKey')
+                    row['config'] = merged
+                row['config']['models'] = list(dict.fromkeys([*row['config'].get('models', []), hit['model']]))
+                # Register the planning model without replacing the execution primary.
+                if plan.get('level', 'none') != 'none' and (not model_label or next(m for m in CATALOG if m['label'] == model_label)['id'] != hit['id']):
+                    patches.append(row)
+                plan['model'] = [hit['id'], hit['model']]
+        patches.append({'id': 'planning', 'name': 'planning:settings', 'config': plan})
     old = cfg.row('model')
     model = dict(old.config) if old else {}
     if model_label:
         hit = next(m for m in CATALOG if m['label'] == model_label)
         row = _resolved_provider_row(hit)
         row['config']['model'] = hit['model']
+        if planning_model:
+            chosen = next(m for m in CATALOG if m['label'] == planning_model)
+            if chosen['id'] == hit['id']:
+                row['config']['models'] = list(dict.fromkeys([*row['config'].get('models', []), chosen['model']]))
         patches.append(row)
         model['primary'] = [hit['id'], hit['model']]
     if strategy:
@@ -348,7 +384,7 @@ def run_forge(run_id: str, task: str, model_label: str | None,
               bundle: str | None, policy_mode: str | None,
               max_steps: int | None, max_depth: int | None,
               spawn_budget: int | None,
-              workspace: Path, *, store=None) -> None:
+              workspace: Path, acceptance=None, planning=None, planning_model=None, *, store=None, probes=None) -> None:
     from forge.loop import LoopLimits, build_agent
     from forge.model import ModelRouter
     from forge.routing import SmartRouter
@@ -361,9 +397,11 @@ def run_forge(run_id: str, task: str, model_label: str | None,
     t0 = time.time()
     agent = None
     try:
-        validate_run_payload({'task': task, 'model': model_label, 'strategy': strategy,
+        validated = validate_run_payload({'task': task, 'model': model_label, 'strategy': strategy,
             'thinking': thinking, 'bundle': bundle, 'policy_mode': policy_mode,
-            'max_steps': max_steps, 'max_depth': max_depth, 'spawn_budget': spawn_budget})
+            'max_steps': max_steps, 'max_depth': max_depth, 'spawn_budget': spawn_budget,
+            'acceptance': acceptance, 'planning': planning, 'planning_model': planning_model})
+        acceptance = validated.get('acceptance')
         if cancel.is_set():
             store.transition(run_id, state='cancelled', outcome='cancelled',
                 execution_state='not_started', error_code='cancelled', cancelled=True, finished=time.time())
@@ -371,7 +409,8 @@ def run_forge(run_id: str, task: str, model_label: str | None,
         store.transition(run_id, state='running', started=t0, execution_state='running',
             strategy=strategy or '', thinking=thinking or '', bundle=bundle or 'base',
             policy_mode=policy_mode or '', workspace=str(workspace))
-        cfg = compose_run_config(workspace, model_label, strategy, thinking, bundle, policy_mode)
+        cfg = compose_run_config(workspace, model_label, strategy, thinking, bundle, policy_mode,
+                                 planning, planning_model)
 
         routing_block = cfg.get("model", "routing", None)
         router = (SmartRouter.from_config(cfg) if routing_block is not None
@@ -382,12 +421,14 @@ def run_forge(run_id: str, task: str, model_label: str | None,
             router = phase_router(router, cfg.get('model', 'primary'), router)
 
         limits = LoopLimits(
-            max_steps=max_steps or int(cfg.get("loop", "maxSteps", 12)),
-            max_depth=max_depth or int(cfg.get("loop", "maxDepth", 2)),
-            spawn_budget=spawn_budget or int(cfg.get("loop", "spawnBudget", 8)))
+            max_steps=max_steps if max_steps is not None else int(cfg.get("loop", "maxSteps", 12)),
+            max_depth=max_depth if max_depth is not None else int(cfg.get("loop", "maxDepth", 2)),
+            spawn_budget=spawn_budget if spawn_budget is not None else int(cfg.get("loop", "spawnBudget", 8)))
 
         def observe(event):
             store.push_event(run_id, event)
+            if event.get('type') == 'task_plan':
+                store.update(run_id, planning=event['plan'])
             if event.get('type') == 'tool_call':
                 store.push_step(run_id, {**event, 'event_id': event['event_id'] + '-step',
                     'index': event.get('step'), 'note': '', 'result': event.get('result', '')})
@@ -396,7 +437,7 @@ def run_forge(run_id: str, task: str, model_label: str | None,
         agent = build_agent(
             home=FORGE_HOME, workspace=workspace, config=cfg, router=router,
             expose=cfg.get("tools", "expose", None), limits=limits,
-            session_path=run_session, observer=observe)
+            session_path=run_session, observer=observe, **({'probes': probes} if probes is not None else {}))
         agent.cancellation_event = cancel
         agent.child_observer = observe
         actual_model = model_label or "(auto routing)"
@@ -406,16 +447,19 @@ def run_forge(run_id: str, task: str, model_label: str | None,
         request = RunRequest(run_id=run_id, task_id=rec['task_id'], entry='client')
 
         with agent.session:
-            report = agent.run(task, run_request=request)
+            report = agent.run(task, run_request=request, **({'acceptance': acceptance} if acceptance is not None else {}))
 
         result = report.as_result().as_dict()
         state = {'succeeded': 'done', 'cancelled': 'cancelled'}.get(result['outcome'], 'error')
         delivery = scan_delivery(workspace, t0, report.text)
+        from forge.protocol import acceptance_payload
+        acceptance_result = acceptance_payload(report)
         store.transition(run_id, **result, state=state, finished=time.time(),
-            usage=report.usage, delivery=delivery, stopped=report.stopped,
+            usage=report.usage, delivery=delivery, stopped=report.stopped, planning=report.planning,
             cancelled=result['outcome'] == 'cancelled',
             requires_inspection=result['outcome'] == 'unknown',
-            error='' if state == 'done' else result['error_code'])
+            error='' if state == 'done' else result['error_code'],
+            **({'acceptance': acceptance_result} if acceptance_result is not None else {}))
     except BaseException as exc:
         tb = traceback.format_exc()[-2000:]
         # A thrown handler or process interruption can leave side effects.
@@ -638,7 +682,8 @@ class Handler(BaseHTTPRequestHandler):
                   payload.get("strategy"), payload.get("thinking"),
                   payload.get("bundle"), payload.get("policy_mode"),
                   payload.get("max_steps"), payload.get("max_depth"),
-                   payload.get("spawn_budget"), workspace))
+                   payload.get("spawn_budget"), workspace, payload.get('acceptance'),
+                   payload.get('planning'), payload.get('planning_model')))
         except RuntimeError:
             self.server.store.transition(rec['id'], state='error', outcome='failed',
                 execution_state='not_started', error_code='worker_unavailable')
@@ -673,7 +718,8 @@ class ClientServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
-    def __init__(self, address, handler=Handler, *, workspace=None, store=None):
+    def __init__(self, address, handler=Handler, *, workspace=None, store=None, probes=None):
+        self.probes = probes
         self.workspace = Path(workspace or ROOT / 'workspace').resolve()
         self.store = store if store is not None else STORE
         self._workers = {}
@@ -684,7 +730,7 @@ class ClientServer(ThreadingHTTPServer):
     def submit(self, rid, args):
         def invoke():
             try:
-                run_forge(*args, store=self.store)
+                run_forge(*args, store=self.store, **({'probes': self.probes} if self.probes is not None else {}))
             finally:
                 with self._worker_lock:
                     self._workers.pop(threading.current_thread(), None)

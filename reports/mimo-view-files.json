@@ -1,0 +1,61 @@
+{
+  "backup": "C:\\Users\\匡溯昀\\forge-mimo-view-backup-20261107-085130",
+  "normalization": "UTF-8 text with LF for diff/hash",
+  "note": "Budget manifest also records preexisting ConversationPrefix persistence, loop changes, and test_conversation_prefix_disk.py; those source files are not part of this patch.",
+  "files": [
+    {
+      "path": "docs/MIMO-RESULT-VIEWS.md",
+      "new": true,
+      "before_sha256": null,
+      "after_sha256": "2541ec4021b11bdb79509132a0daa99f7c136463ab3c35d3e84a94246de5e8eb"
+    },
+    {
+      "path": "forge-budgets.json",
+      "new": false,
+      "before_sha256": "df25bd3e602a6125dc4d15cbc4680a6badf6b3e599178ab170964f57e92e5a92",
+      "after_sha256": "0ab1bbe50bc7f9d4425b9b9bb1df8451b8a5432ecaf7c8892617731a50c7f152"
+    },
+    {
+      "path": "forge/artifacts.py",
+      "new": false,
+      "before_sha256": "8c23be74c0b89f4973d064f20a94798baba120a1cab76ecdb339e490eff81bd0",
+      "after_sha256": "a2a190bf6fdf5dcb9f0a995a1454c53fecbdb920335db1ae0013a5c4d3c087e1"
+    },
+    {
+      "path": "forge/execution.py",
+      "new": false,
+      "before_sha256": "690d16b6c27e189bed844babfa60c91af9dfb7c1a4ae5cfa4065a8f36dc8d977",
+      "after_sha256": "d06460a200a680f281946711b31a44a594ab83bada3836fdf3d7119d2e01c7f6"
+    },
+    {
+      "path": "forge/result_view.py",
+      "new": true,
+      "before_sha256": null,
+      "after_sha256": "2d38fc14e7b7696afb6f5a39133ca54decd369fbeb07f063cd2cea7753dc6a95"
+    },
+    {
+      "path": "forge/test_result_view.py",
+      "new": true,
+      "before_sha256": null,
+      "after_sha256": "6197d73b52bc0423b243536ba6512b469606cf0357cd9031613cacd0858ac0a8"
+    },
+    {
+      "path": "forge/tools.py",
+      "new": false,
+      "before_sha256": "68d2ee39a731ae945b33efc3d7aaeb9901ac196afd46eeab74c2e2b6daac02aa",
+      "after_sha256": "6c8d736f3519fd6e9e5097fb5ade1e68374f55bd573a1e56f10c21fa78a51daf"
+    },
+    {
+      "path": "scripts/verify_mimo_long_context.py",
+      "new": false,
+      "before_sha256": "caa58bc3834d00ad69147a07e3a5bbf45d73ce9ce376a0962a39eaaa2f85f76e",
+      "after_sha256": "73050b03e6d1cc11cf343b6e826b83e3252d639f4bfa7349f0cbf0fdce40e9a8"
+    },
+    {
+      "path": "scripts/verify_mimo_retained_lookup.py",
+      "new": true,
+      "before_sha256": null,
+      "after_sha256": "8f768b8d0ce57ee67ec724b3c6302ada3b58d7833da58ebbb2289c500022c7cc"
+    }
+  ]
+}

@@ -2,6 +2,14 @@
 
 把 `forge` 命令行框架包成一个开箱即用的桌面应用。
 
+## 2026-11-12 编程模式回复方式
+
+编程模式输入框上方新增“回复方式”：默认 **直接回答**，正常输入即可对话；需要拆解任务时选择 **先规划 · 简要 / 标准 / 深入**。运行时设置里的同名选项同步更新，选择保存在编程模式的 `development.json`，重新打开仍保留。旧配置未设置该项时使用直接回答。
+
+直接回答跳过独立规划及额外沉思请求，普通问答不显示空规划卡片或成功任务状态消息；需要调用工具时仍按原有权限执行并显示真实工具记录。模型自身的推理能力、停止和错误提示保留。规划选择在发送时固定，排队或首次项目载入期间更改选项只影响之后发送的消息。
+
+两种方式共用稳定的编程指导与原有历史/缓存机制，不随选择改写系统提示词。更新源码后重新打开桌面窗口生效。
+
 ## 2026-09-26 交互修正
 
 - 直接运行本项目的 `forge-gui/forge_gui_v2.py`。工作区跟随包含 `run.py` 的项目根目录。
@@ -198,7 +206,7 @@ python -m unittest test_gui_review -v  # 需桌面：18 项（配置保护、视
 | 矫治规则（接受更多形态 / 更严） | `config_model.py` 的 `normalize()` + `_normalize_provider_row()` |
 | 沉思三档 | `THINKING_LABELS` / `THINKING_CHOICES` + `_set_thinking_mode()` |
 | Gateway 启动参数 | `_start_gateway()`（默认 `--upstream openai`，可以加 `--model-map` 等） |
-| 客户端超时 | `ForgeGatewayClient(timeout=60.0)` |
+| 客户端超时 | 模型默认无活动等待 600 秒；桌面再留 60 秒网关余量；显式 `timeout` / provider `requestTimeout` 可覆盖 |
 
 ## 本次改版的取舍（对照参考稿）
 
@@ -226,3 +234,57 @@ python -m unittest test_gui_review -v  # 需桌面：18 项（配置保护、视
 2. **密钥永远不落盘**：矫治器一旦见到明文，立即包成 `$expr`。
 3. **GUI 不假设 forge 是完美配置**：缺字段就标 disabled，警告里讲清。
 4. **每个环节可单测**：`config_model` / `forge_client` / 集成测试互相独立，无 GUI 依赖。
+# Qt Quick GPU 玻璃界面
+
+聊天主界面的新入口为 `forge_qt.py`，也可通过 `forge_gui_v2.py --qt` 启动。
+Windows 首次安装执行 `desktop/install-qt.ps1`，之后双击 `Forge Qt.cmd`，或运行 `desktop/start-qt.ps1`。
+Qt 依赖隔离在仓库 `.venv/qt`，不改系统 Python；版本固定在 `requirements-qt.txt`。
+`desktop/start-qt.ps1 -Demo` 是不读真实历史、不发模型请求、不保存内容的材质预览。
+
+输入框、会话选中态、按钮、模型菜单和选项浮层共用 `qt_frontend/qml/GlassSurface.qml`。
+背景只捕获一次，在半分辨率纹理上做两次可分离模糊；`glass.frag` 根据圆角 SDF 法线计算
+边缘折射、微量色散、Fresnel 高光、透射着色与阴影。正文和原生 TextArea 位于光学层上方，
+不会跟随玻璃模糊。无持续动画计时器；减少动态效果、降低透明度可在选项中切换。
+Windows 默认使用 Direct3D 11。`--software` 明确进入不含光学效果的兼容模式。
+
+Shader 源码通过 Qt `qsb --qt6` 编译成同时包含 SPIR-V、HLSL、GLSL、MSL 的 `.qsb`。
+修改 Shader 后运行 `.venv/qt/Scripts/python forge-gui/qt_frontend/build_shaders.py`；源码入口也会检测并重新编译。
+参见 [Qt ShaderEffect](https://doc.qt.io/qt-6/qml-qtquick-shadereffect.html) 与
+[ShaderEffectSource](https://doc.qt.io/qt-6/qml-qtquick-shadereffectsource.html)。
+
+Qt 主窗口包含聊天、流式工具调用、取消/重试、文本附件、历史/草稿、模型/推理选项及材质设置。
+「功能」打开 Coding、任务、文件、模型配置、工具/插件、连接器、代码预览、电脑操作等页面。
+成熟的 Tk 功能页通过一个私有子进程与 Qt WindowContainer 挂入同一主窗口，切换页面保留状态。
+这些功能页暂时保留原控件样式；系统文件选择、账号授权等必要对话框仍独立显示。
+「Work 完整功能」保留原 Work 的插件、连接器和电脑操作对话流程；Qt 聊天使用网关公开的工具。
+真实启动会载入原工作台的网关启动逻辑，并把实际网关地址同步给 Qt 对话。
+「浏览器」打开 Qt WebEngine 侧栏，支持地址、前进后退、刷新和宽度调整；收起后保留页面。
+工作台内打开的 HTTP/HTTPS 链接也进入此面板。浏览器使用独立 ForgeWork 配置，不导入其他浏览器登录。
+
+左下角「运行权限」控制后续任务，每次启动恢复「沙箱运行」，运行或等待审批期间不能切换：
+- 沙箱运行：Forge 工具/路径级限制，只允许工作区内受控文件读写，禁止任意系统命令；不是 Windows 进程隔离。
+- 手动批准：每次工具执行前在主窗口确认，批准仅绑定本次操作和参数，取消不会执行待批操作。
+- 完全访问：允许超出工作区的操作，保留明确拒绝规则、Secret 边界及连接器/远端网关自己的授权限制。
+
+关闭主窗口前会提示未保存编辑和运行中任务。工具结果未知时停止调用并保存记录，不自动重发动作。
+Qt 读取原 `~/.forge/gui/sessions.json`，并将更新原子保存到 `~/.forge/gui/qt/sessions/` 的独立文件。
+这样旧窗口退出时不会覆盖 Qt 会话。Qt 草稿和偏好也位于 `gui/qt/`；旧 Tk 窗口不会自动显示新 Qt 会话。
+`desktop/build-desktop.ps1` 默认构建源码启动器，`desktop/dist/forge-desktop.exe` 每次读取旁边
+`forge-source.json` 指定的本机源码树和 `.venv/qt`，无需因 UI 源码修改而重新打包。
+它不会自动拉取 Git 远端。源码目录移动后更新 `sourceRoot`，或设置 `FORGE_SOURCE_ROOT`。
+`--legacy` 可打开原 Tk 入口；构建脚本保留旧 exe 为 `forge-desktop.legacy.exe`。
+需要旧的完整冻结打包时使用 `desktop/build-desktop.ps1 -Legacy`。
+
+验证（从 `forge-gui` 目录运行；分别启动两个进程）：
+
+```powershell
+$env:PYTHONPATH = '..'
+../.venv/qt/Scripts/python -m unittest qt_frontend.test_backend -v
+../.venv/qt/Scripts/python -m unittest qt_frontend.test_permissions -v
+../.venv/qt/Scripts/python -m unittest qt_frontend.test_workbench -v
+../.venv/qt/Scripts/python -m unittest qt_frontend.test_rendering -v
+../.venv/qt/Scripts/python forge_qt.py --demo --smoke /path/to/renderer.json
+```
+
+后端检查使用临时目录与本机回环 SSE 服务。渲染检查验证实际 GPU 像素随折射参数及背景变化，
+以及英文输入、IME 预编辑/提交、最大化/还原的候选框锚点、弹窗焦点和最小窗口布局。

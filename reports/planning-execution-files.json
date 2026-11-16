@@ -1,0 +1,54 @@
+{
+  "backup": "C:\\Users\\匡溯昀\\forge-planning-execution-backup-20261107-110712",
+  "normalization": "UTF-8 LF",
+  "files": [
+    {
+      "path": "client/index.html",
+      "new": false,
+      "before_sha256": "55eeff78cf371ef26f5b2ff3563b8f86f1b79ad8584285a2a00894878e9ec1e9",
+      "after_sha256": "80e7399d29e2e4f39caf88537185d02cd3210c2a170e0ef0a516ea1096a6f431"
+    },
+    {
+      "path": "client/server.py",
+      "new": false,
+      "before_sha256": "8824b18542d61077026e4543fd5e9cb76e530cf38afcb3826adfe68b52147134",
+      "after_sha256": "23276bc5feeffccb19c50135be6a2b6f3730ec3672d5609a42749f5506f41fde"
+    },
+    {
+      "path": "docs/PLANNING-EXECUTION-CONTROLS.md",
+      "new": true,
+      "before_sha256": null,
+      "after_sha256": "a038d309b33a6974673718e396116dc3880918e881ee9ec2d03736677305fb53"
+    },
+    {
+      "path": "forge-budgets.json",
+      "new": false,
+      "before_sha256": "9f4f8143c411a63518dc3f197028b99129912d5fc447740b082b96f8d4394142",
+      "after_sha256": "04408c50eda239bf0d31248629338064457e0a951891f3b580111d4ce535526a"
+    },
+    {
+      "path": "forge/loop.py",
+      "new": false,
+      "before_sha256": "77dabfbb73b31f227a1b18cb294b35a622b5a367aa753b6ced0084323fa935b2",
+      "after_sha256": "f447232033dd1fd7acb089ab7a284fc8cd9293039f6a6a0a07d02d6c8739406b"
+    },
+    {
+      "path": "forge/planning.py",
+      "new": false,
+      "before_sha256": "b930e3988ba82dba97dfa7b4c554b7d5169b77b529193246a494d2dfcfa08fa1",
+      "after_sha256": "d575b515e1774d0a744f88bf2a90a958372f40224699df8b989d649ccef1692e"
+    },
+    {
+      "path": "forge/tools.py",
+      "new": false,
+      "before_sha256": "38f49b6d755fe0ec65ff0bb911e583af6cda9264ca3d833a84dd48b95f6c2f82",
+      "after_sha256": "c6ad0af70b9175149e9e11278c030f755c6bab930280da87649cda2a2a097a65"
+    },
+    {
+      "path": "tests/test_planning_execution_controls.py",
+      "new": true,
+      "before_sha256": null,
+      "after_sha256": "8bdd62395660044f510cf680a999a57fa0372e965b65328f4f807e3166a848a8"
+    }
+  ]
+}

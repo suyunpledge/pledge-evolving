@@ -1,0 +1,391 @@
+{
+ "_base": "https://token-plan-cn.xiaomimimo.com/v1",
+ "basic": {
+  "ok": true,
+  "sec": 1.9,
+  "usage": {
+   "completion_tokens": 22,
+   "prompt_tokens": 18,
+   "total_tokens": 40,
+   "completion_tokens_details": {
+    "reasoning_tokens": 19
+   },
+   "prompt_tokens_details": null
+  },
+  "model_echo": "mimo-v2.6-flash",
+  "top_keys": [
+   "choices",
+   "created",
+   "id",
+   "model",
+   "object",
+   "usage"
+  ],
+  "msg_keys": [
+   "content",
+   "reasoning_content",
+   "role",
+   "tool_calls"
+  ],
+  "finish": "stop",
+  "content_head": "2",
+  "reasoning_head": "The user asks 1+1 equals what, and wants only the Arabic numeral answer.",
+  "tool_calls": []
+ },
+ "temperature_0.7": {
+  "ok": true,
+  "sec": 1.4,
+  "usage": {
+   "completion_tokens": 19,
+   "prompt_tokens": 18,
+   "total_tokens": 37,
+   "completion_tokens_details": {
+    "reasoning_tokens": 16
+   },
+   "prompt_tokens_details": null
+  },
+  "model_echo": "mimo-v2.6-flash",
+  "top_keys": [
+   "choices",
+   "created",
+   "id",
+   "model",
+   "object",
+   "usage"
+  ],
+  "msg_keys": [
+   "content",
+   "reasoning_content",
+   "role",
+   "tool_calls"
+  ],
+  "finish": "stop",
+  "content_head": "2",
+  "reasoning_head": "The user asks 1+1, answer with only the Arabic numeral.",
+  "tool_calls": []
+ },
+ "thinking_0": {
+  "param": "{\"thinking\": {\"type\": \"enabled\"}}",
+  "result": {
+   "ok": true,
+   "sec": 5.8,
+   "usage": {
+    "completion_tokens": 194,
+    "prompt_tokens": 28,
+    "total_tokens": 222,
+    "completion_tokens_details": {
+     "reasoning_tokens": 114
+    },
+    "prompt_tokens_details": null
+   },
+   "model_echo": "mimo-v2.6-flash",
+   "top_keys": [
+    "choices",
+    "created",
+    "id",
+    "model",
+    "object",
+    "usage"
+   ],
+   "msg_keys": [
+    "content",
+    "reasoning_content",
+    "role",
+    "tool_calls"
+   ],
+   "finish": "stop",
+   "content_head": "**9.9 更大。**\n\n比较过程：\n\n- 9.9 = **9.90**\n- 9.11 = **9.11**\n\n整数部分都是 9，比较小数部分：\n\n$$0.90",
+   "reasoning_head": "The user is asking which is bigger, 9.11 or 9.9.\n\nLet me think carefully.\n\n9.11 ",
+   "tool_calls": []
+  }
+ },
+ "thinking_1": {
+  "param": "{\"enable_thinking\": true}",
+  "result": {
+   "ok": true,
+   "sec": 8.6,
+   "usage": {
+    "completion_tokens": 297,
+    "prompt_tokens": 28,
+    "total_tokens": 325,
+    "completion_tokens_details": {
+     "reasoning_tokens": 103
+    },
+    "prompt_tokens_details": null
+   },
+   "model_echo": "mimo-v2.6-flash",
+   "top_keys": [
+    "choices",
+    "created",
+    "id",
+    "model",
+    "object",
+    "usage"
+   ],
+   "msg_keys": [
+    "content",
+    "reasoning_content",
+    "role",
+    "tool_calls"
+   ],
+   "finish": "stop",
+   "content_head": "## 9.9 更大\n\n比较小数大小，先对齐小数位数：\n\n| 数值 | 整数部分 | 小数部分 |\n|------|---------|---------|\n| ",
+   "reasoning_head": "The user is asking which is larger: 9.11 or 9.9.\n\n9.9 is larger than 9.11.\n\n9.9 ",
+   "tool_calls": []
+  }
+ },
+ "thinking_2": {
+  "param": "{\"thinking\": {\"type\": \"disabled\"}}",
+  "result": {
+   "ok": true,
+   "sec": 6.0,
+   "usage": {
+    "completion_tokens": 157,
+    "prompt_tokens": 30,
+    "total_tokens": 187,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    },
+    "prompt_tokens_details": null
+   },
+   "model_echo": "mimo-v2.6-flash",
+   "top_keys": [
+    "choices",
+    "created",
+    "id",
+    "model",
+    "object",
+    "usage"
+   ],
+   "msg_keys": [
+    "content",
+    "role",
+    "tool_calls"
+   ],
+   "finish": "stop",
+   "content_head": "9.9 更大。\n\n比较过程如下：\n\n1.  **看整数部分**：两个数的整数部分都是 **9**，所以需要比较小数部分。\n2.  **看十分位**：\n    *",
+   "reasoning_head": null,
+   "tool_calls": []
+  }
+ },
+ "tool_single": {
+  "ok": true,
+  "sec": 3.2,
+  "usage": {
+   "completion_tokens": 31,
+   "prompt_tokens": 97,
+   "total_tokens": 128,
+   "completion_tokens_details": {
+    "reasoning_tokens": 12
+   },
+   "prompt_tokens_details": null
+  },
+  "model_echo": "mimo-v2.6-flash",
+  "top_keys": [
+   "choices",
+   "created",
+   "id",
+   "model",
+   "object",
+   "usage"
+  ],
+  "msg_keys": [
+   "content",
+   "reasoning_content",
+   "role",
+   "tool_calls"
+  ],
+  "finish": "tool_calls",
+  "content_head": "",
+  "reasoning_head": "The user asks to check Beijing weather using the tool.",
+  "tool_calls": [
+   {
+    "id": "call_30cd82485fb34b8eba3e6c97",
+    "name": "get_weather",
+    "args": "{\"city\": \"北京\"}"
+   }
+  ]
+ },
+ "tool_parallel": {
+  "ok": true,
+  "sec": 3.5,
+  "usage": {
+   "completion_tokens": 61,
+   "prompt_tokens": 100,
+   "total_tokens": 161,
+   "completion_tokens_details": {
+    "reasoning_tokens": 25
+   },
+   "prompt_tokens_details": null
+  },
+  "model_echo": "mimo-v2.6-flash",
+  "top_keys": [
+   "choices",
+   "created",
+   "id",
+   "model",
+   "object",
+   "usage"
+  ],
+  "msg_keys": [
+   "content",
+   "reasoning_content",
+   "role",
+   "tool_calls"
+  ],
+  "finish": "tool_calls",
+  "content_head": "",
+  "reasoning_head": "用户要求同时查询北京和上海的天气，必须用工具。我可以并行调用 get_weather 两次。",
+  "tool_calls": [
+   {
+    "id": "call_62db1d53a6cc46f2a382de7d",
+    "name": "get_weather",
+    "args": "{\"city\": \"北京\"}"
+   },
+   {
+    "id": "call_cf9d1a45a62d4a099fa87f44",
+    "name": "get_weather",
+    "args": "{\"city\": \"上海\"}"
+   }
+  ]
+ },
+ "cache_A1": {
+  "ok": true,
+  "sec": 2.1,
+  "usage": {
+   "completion_tokens": 36,
+   "prompt_tokens": 1862,
+   "total_tokens": 1898,
+   "completion_tokens_details": {
+    "reasoning_tokens": 28
+   },
+   "prompt_tokens_details": null
+  },
+  "model_echo": "mimo-v2.6-flash",
+  "top_keys": [
+   "choices",
+   "created",
+   "id",
+   "model",
+   "object",
+   "usage"
+  ],
+  "msg_keys": [
+   "content",
+   "reasoning_content",
+   "role",
+   "tool_calls"
+  ],
+  "finish": "stop",
+  "content_head": "Paxos-On-Sea",
+  "reasoning_head": "The user asks for the coordination layer protocol name. The repeated text says \"",
+  "tool_calls": []
+ },
+ "cache_A2": {
+  "ok": true,
+  "sec": 4.5,
+  "usage": {
+   "completion_tokens": 54,
+   "prompt_tokens": 1862,
+   "total_tokens": 1916,
+   "completion_tokens_details": {
+    "reasoning_tokens": 46
+   },
+   "prompt_tokens_details": {
+    "cached_tokens": 1856
+   }
+  },
+  "model_echo": "mimo-v2.6-flash",
+  "top_keys": [
+   "choices",
+   "created",
+   "id",
+   "model",
+   "object",
+   "usage"
+  ],
+  "msg_keys": [
+   "content",
+   "reasoning_content",
+   "role",
+   "tool_calls"
+  ],
+  "finish": "stop",
+  "content_head": "Paxos-On-Sea",
+  "reasoning_head": "The user asks: \"协调层协议叫什么名字？只答名字。\" The fictional architecture mentions 协调层运行一致性协议",
+  "tool_calls": []
+ },
+ "cache_B": {
+  "ok": true,
+  "sec": 5.3,
+  "usage": {
+   "completion_tokens": 26,
+   "prompt_tokens": 1862,
+   "total_tokens": 1888,
+   "completion_tokens_details": {
+    "reasoning_tokens": 21
+   },
+   "prompt_tokens_details": {
+    "cached_tokens": 1024
+   }
+  },
+  "model_echo": "mimo-v2.6-flash",
+  "top_keys": [
+   "choices",
+   "created",
+   "id",
+   "model",
+   "object",
+   "usage"
+  ],
+  "msg_keys": [
+   "content",
+   "reasoning_content",
+   "role",
+   "tool_calls"
+  ],
+  "finish": "stop",
+  "content_head": "ReefDB",
+  "reasoning_head": "用户问列族引擎的名字，只需简答。根据虚构档案，是ReefDB。",
+  "tool_calls": []
+ },
+ "basic_mimo-v2.6-pro": {
+  "ok": true,
+  "sec": 1.4,
+  "usage": {
+   "completion_tokens": 5,
+   "prompt_tokens": 18,
+   "total_tokens": 23,
+   "completion_tokens_details": {
+    "reasoning_tokens": 2
+   },
+   "prompt_tokens_details": {
+    "cached_tokens": 0
+   }
+  },
+  "model_echo": "mimo-v2.6-pro",
+  "top_keys": [
+   "choices",
+   "created",
+   "id",
+   "model",
+   "object",
+   "usage"
+  ],
+  "msg_keys": [
+   "content",
+   "reasoning_content",
+   "role",
+   "tool_calls"
+  ],
+  "finish": "stop",
+  "content_head": "2",
+  "reasoning_head": "2",
+  "tool_calls": []
+ },
+ "control_api_endpoint": {
+  "ok": false,
+  "status": 401,
+  "error": "{\n    \"error\": {\n        \"message\": \"Invalid API Key\",\n        \"param\": \"Please provide valid API Key\",\n        \"code\": \"401\",\n        \"type\": \"invalid_key\"\n    }\n}\n"
+ }
+}

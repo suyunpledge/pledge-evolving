@@ -1,0 +1,1059 @@
+--- a/forge/acceptance.py
++++ b/forge/acceptance.py
+@@ -5,12 +5,19 @@
+ """
+ from __future__ import annotations
+ 
+-from dataclasses import asdict, dataclass
++from dataclasses import asdict, dataclass, field
+ import hashlib
+ import json
+ from pathlib import Path, PureWindowsPath
+ 
+ from .secrets import read_public_bytes
++
++
++_KIND_FIELDS = {
++    'file': {'path', 'exists', 'contains'},
++    'command': {'command', 'expect_exit', 'timeout'},
++    'env_probe': {'env', 'probe', 'input', 'expect', 'timeout'},
++}
+ 
+ 
+ @dataclass(frozen=True)
+@@ -24,13 +31,16 @@
+     command: str = ""
+     expect_exit: int = 0
+     timeout: int = 30
++    env: str = ""
++    probe: str = ""
++    input: dict = field(default_factory=dict)
++    expect: object = None
+ 
+     @classmethod
+     def parse(cls, row):
+-        if not isinstance(row, dict) or row.get('kind') not in {'file', 'command'}:
+-            raise ValueError('Acceptance criterion kind must be file or command')
+-        allowed = {'id', 'kind', 'required'} | ({'path', 'exists', 'contains'}
+-                  if row['kind'] == 'file' else {'command', 'expect_exit', 'timeout'})
++        if not isinstance(row, dict) or row.get('kind') not in {'file', 'command', 'env_probe'}:
++            raise ValueError('Acceptance criterion kind must be file, command or env_probe')
++        allowed = {'id', 'kind', 'required'} | _KIND_FIELDS[row['kind']]
+         if set(row) - allowed:
+             raise ValueError('Unknown acceptance criterion fields')
+         try:
+@@ -50,6 +60,15 @@
+             if value.contains is not None and (not isinstance(value.contains, str)
+                                                or len(value.contains) > 4000 or not value.exists):
+                 raise ValueError('contains requires exists=true and at most 4000 characters')
++        elif value.kind == 'env_probe':
++            from .probes import identifier, json_value
++            identifier(value.env)
++            identifier(value.probe)
++            if 'expect' not in row or type(value.input) is not dict:
++                raise ValueError('env_probe requires expect and object input')
++            if type(value.timeout) is not int or not 1 <= value.timeout <= 60:
++                raise ValueError('Probe timeout must be 1–60 seconds')
++            value = cls(**{**row, 'input': json_value(value.input), 'expect': json_value(value.expect)})
+         elif (not isinstance(value.command, str) or not value.command.strip()
+               or len(value.command) > 4000 or type(value.expect_exit) is not int
+               or type(value.timeout) is not int or not 1 <= value.timeout <= 60):
+@@ -84,8 +103,7 @@
+     def to_raw(self):
+         rows = []
+         for criterion in self.criteria:
+-            keys = {'id', 'kind', 'required'} | ({'path', 'exists', 'contains'}
+-                   if criterion.kind == 'file' else {'command', 'expect_exit', 'timeout'})
++            keys = {'id', 'kind', 'required'} | _KIND_FIELDS[criterion.kind]
+             rows.append({k: v for k, v in asdict(criterion).items() if k in keys})
+         return {'criteria': rows, 'max_attempts': self.max_attempts}
+ 
+@@ -94,13 +112,15 @@
+             self.to_raw(), ensure_ascii=False, sort_keys=True)
+ 
+ 
+-def verify(contract, *, workspace, registry, context, execute, check_cancel):
++def verify(contract, *, workspace, registry, context, execute, check_cancel, probes=None):
+     """Return fresh evidence. Unknown command outcomes stop the whole verification."""
++    from .probes import ProbeRegistry
++    probes = probes if probes is not None else ProbeRegistry.defaults()
+     results = []
+     unknown = False
+     root = Path(workspace).resolve()
+     # Commands may modify files: inspect final file state after all commands.
+-    for criterion in sorted(contract.criteria, key=lambda c: c.kind == 'file'):
++    for criterion in sorted(contract.criteria, key=lambda c: c.kind != 'command'):
+         check_cancel()
+         passed, detail, evidence = False, '', {}
+         if criterion.kind == 'command':
+@@ -114,6 +134,11 @@
+             detail = (result.error or result.content or 'No command exit evidence')[:2000]
+             evidence = {'action_id': result.meta.get('action_id'), 'exit': code,
+                         'execution_state': result.meta.get('execution_state')}
++        elif criterion.kind == 'env_probe':
++            observed = probes.check(criterion, workspace=workspace, context=context,
++                                    registry=registry, check_cancel=check_cancel)
++            passed, detail, evidence = observed['passed'], observed['detail'], observed['evidence']
++            unknown = observed['unknown_outcome']
+         else:
+             try:
+                 path = (root / criterion.path).resolve()
+--- a/forge/loop.py
++++ b/forge/loop.py
+@@ -191,6 +191,7 @@
+         file_guard=None,
+         parent_run_id: str = '',
+         context_mode: str = 'compact',
++        probes=None,
+     ) -> None:
+         self.home = Path(home)
+         self.workspace = Path(workspace)
+@@ -198,6 +199,10 @@
+         if context_mode not in ('compact', 'lossless'):
+             raise ValueError('context_mode must be compact or lossless')
+         self.context_mode = context_mode
++        from .probes import ProbeRegistry
++        if probes is not None and not isinstance(probes, ProbeRegistry):
++            raise ValueError('probes must be a host-created ProbeRegistry')
++        self.probes = probes if probes is not None else ProbeRegistry.defaults()
+         # Optional trusted-host seams. Never placed in ToolContext or chosen by a plugin.
+         self.child_router_factory = child_router_factory
+         self.child_observer = child_observer
+@@ -1005,6 +1010,9 @@
+             acceptance=None) -> RunReport:
+         from .acceptance import AcceptanceContract
+         acceptance = AcceptanceContract.from_raw(acceptance) if acceptance is not None else None
++        probe_snapshot = self.probes
++        if acceptance is not None:
++            probe_snapshot.validate_contract(acceptance)
+         # A mutable Agent is one session lane. Parallel conversations need
+         # distinct Agents; refusing re-entry avoids cross-run state corruption.
+         if not self._run_lock.acquire(blocking=False):
+@@ -1037,6 +1045,7 @@
+             self._plan = None
+             self.task_contract = None
+             self._acceptance = acceptance
++            self._run_probes = probe_snapshot
+             self._acceptance_attempts = 0
+             self._guard = ExecutionGuard()
+             self._run_thinking_active = False
+@@ -1424,7 +1433,8 @@
+         self._emit(type='task_contract', contract=self.task_contract.to_raw())
+         self._acceptance_attempts += 1
+         result = verify(self._acceptance, workspace=self.workspace, registry=self.registry,
+-            context=self._tool_context(), execute=self._invoke_recorded, check_cancel=self._check_cancel)
++            context=self._tool_context(), execute=self._invoke_recorded, check_cancel=self._check_cancel,
++            probes=self._run_probes)
+         self._emit(type='acceptance_checked', attempt=self._acceptance_attempts, **result)
+         if result['unknown_outcome']:
+             return 'unknown_outcome'
+@@ -1584,12 +1594,12 @@
+                 policy: Policy | None = None, limits: LoopLimits | None = None,
+                 non_interactive: bool = True, expose: Iterable[str] | None = None,
+                 mount_contrib: bool = True, session_path: Path | None = None,
+-                observer: Callable[[dict[str, Any]], None] | None = None) -> Agent:
++                observer: Callable[[dict[str, Any]], None] | None = None, probes=None) -> Agent:
+     """Compatibility entry point; service assembly lives in forge.assembly."""
+     from .assembly import build_agent as assemble
+     return assemble(home=home, workspace=workspace, config=config, router=router,
+         policy=policy, limits=limits, non_interactive=non_interactive, expose=expose,
+-        mount_contrib=mount_contrib, session_path=session_path, observer=observer)
++        mount_contrib=mount_contrib, session_path=session_path, observer=observer, probes=probes)
+ 
+ 
+ __all__ = ["Agent", "LoopLimits", "RunReport", "Step", "THINKING_HOOKS", "THINKING_MODES",
+--- a/forge/assembly.py
++++ b/forge/assembly.py
+@@ -30,6 +30,7 @@
+     mount_contrib: bool = True,
+     session_path: Path | None = None,
+     observer: "Callable[[dict[str, Any]], None] | None" = None,
++    probes=None,
+ ) -> Agent:
+     """Wire a full agent from a composed config tree.
+ 
+@@ -120,6 +121,7 @@
+         service=service,
+         thinking_token_cap=config.get("thinking", "tokenCap", None),
+         observer=observer,
++        probes=probes,
+     )
+ 
+ 
+--- a/forge/vscode_bridge.py
++++ b/forge/vscode_bridge.py
+@@ -129,7 +129,7 @@
+ 
+ 
+ class EditorBridge:
+-    def __init__(self, emit, *, model_router_factory=None):
++    def __init__(self, emit, *, model_router_factory=None, probes=None):
+         self.emit = emit
+         self.agent = None
+         self.history = []
+@@ -141,6 +141,7 @@
+         # It substitutes models only, never config/Policy/tools/session storage.
+         self.model_router_factory = model_router_factory
+         self.model_revision = None
++        self.probes = probes
+ 
+     def _load_model_router(self, config):
+         if self.model_router_factory is not None:
+@@ -202,7 +203,8 @@
+         self.agent = build_agent(home=self.home, workspace=self.workspace, config=config,
+             router=self.router, policy=self.policy('read-only'), limits=limits,
+             expose=config.get('tools', 'expose', None), observer=self.observe,
+-            session_path=self.home / 'sessions' / 'vscode' / (uuid.uuid4().hex + '.jsonl'))
++            session_path=self.home / 'sessions' / 'vscode' / (uuid.uuid4().hex + '.jsonl'),
++            probes=self.probes)
+         self.history = self.agent.secret_scope.protect(_history(params.get('history', [])))
+         self.model_revision = revision
+         return {'protocol': PROTOCOL, 'models': catalog, 'workspace': str(self.workspace),
+--- a/forge/development/runtime.py
++++ b/forge/development/runtime.py
+@@ -24,14 +24,17 @@
+ 
+ 
+ class DevelopmentRuntime:
+-    def __init__(self, state, *, bridge=None, emit=None, runtime_home=None, model_router_factory=None):
++    def __init__(self, state, *, bridge=None, emit=None, runtime_home=None, model_router_factory=None, probes=None):
+         install_logging_redaction()
+         self.state = state
+         self.home = Path(runtime_home or state.home).expanduser().resolve()
+         self.emit = emit or (lambda event: None)
+         self._owns_bridge = bridge is None
+         self._model_router_factory = model_router_factory
+-        self.bridge = bridge or EditorBridge(self._emit, model_router_factory=model_router_factory)
++        if bridge is not None and probes is not None:
++            raise ValueError('Configure probes on the borrowed bridge before attaching it')
++        self._probes = probes
++        self.bridge = bridge or EditorBridge(self._emit, model_router_factory=model_router_factory, probes=probes)
+         self._previous_bridge_emit = getattr(bridge, 'emit', None) if bridge is not None else None
+         if self._previous_bridge_emit is not None:
+             self.bridge.emit = self._emit
+@@ -155,7 +158,7 @@
+             self.initialization_error = redact(str(exc))
+             if self._owns_bridge:
+                 self.bridge.close()
+-                self.bridge = EditorBridge(self._emit, model_router_factory=self._model_router_factory)
++                self.bridge = EditorBridge(self._emit, model_router_factory=self._model_router_factory, probes=self._probes)
+                 self.bridge._development_lane = self._lane
+             raise
+         finally:
+--- a/client/server.py
++++ b/client/server.py
+@@ -353,7 +353,7 @@
+               bundle: str | None, policy_mode: str | None,
+               max_steps: int | None, max_depth: int | None,
+               spawn_budget: int | None,
+-              workspace: Path, acceptance=None, *, store=None) -> None:
++              workspace: Path, acceptance=None, *, store=None, probes=None) -> None:
+     from forge.loop import LoopLimits, build_agent
+     from forge.model import ModelRouter
+     from forge.routing import SmartRouter
+@@ -403,7 +403,7 @@
+         agent = build_agent(
+             home=FORGE_HOME, workspace=workspace, config=cfg, router=router,
+             expose=cfg.get("tools", "expose", None), limits=limits,
+-            session_path=run_session, observer=observe)
++            session_path=run_session, observer=observe, **({'probes': probes} if probes is not None else {}))
+         agent.cancellation_event = cancel
+         agent.child_observer = observe
+         actual_model = model_label or "(auto routing)"
+@@ -683,7 +683,8 @@
+     daemon_threads = True
+     allow_reuse_address = True
+ 
+-    def __init__(self, address, handler=Handler, *, workspace=None, store=None):
++    def __init__(self, address, handler=Handler, *, workspace=None, store=None, probes=None):
++        self.probes = probes
+         self.workspace = Path(workspace or ROOT / 'workspace').resolve()
+         self.store = store if store is not None else STORE
+         self._workers = {}
+@@ -694,7 +695,7 @@
+     def submit(self, rid, args):
+         def invoke():
+             try:
+-                run_forge(*args, store=self.store)
++                run_forge(*args, store=self.store, **({'probes': self.probes} if self.probes is not None else {}))
+             finally:
+                 with self._worker_lock:
+                     self._workers.pop(threading.current_thread(), None)
+--- a/forge-budgets.json
++++ b/forge-budgets.json
+@@ -2,11 +2,11 @@
+   "version": 1,
+   "files": {
+     "forge/__init__.py": 38,
+-    "forge/acceptance.py": 147,
++    "forge/acceptance.py": 172,
+     "forge/adapters.py": 712,
+     "forge/artifact_tools.py": 36,
+     "forge/artifacts.py": 161,
+-    "forge/assembly.py": 125,
++    "forge/assembly.py": 127,
+     "forge/batch_execution.py": 144,
+     "forge/cache_metrics.py": 79,
+     "forge/cache_state.py": 400,
+@@ -49,11 +49,11 @@
+     "forge/development/guard.py": 4,
+     "forge/development/models.py": 112,
+     "forge/development/review.py": 76,
+-    "forge/development/runtime.py": 563,
++    "forge/development/runtime.py": 566,
+     "forge/development/state.py": 173,
+     "forge/development/testing.py": 97,
+     "forge/evolution.py": 602,
+-    "forge/execution.py": 385,
++    "forge/execution.py": 386,
+     "forge/execution_guard.py": 55,
+     "forge/extensions.py": 167,
+     "forge/federation.py": 400,
+@@ -72,7 +72,7 @@
+     "forge/guard.py": 177,
+     "forge/knowledge.py": 118,
+     "forge/local_service.py": 293,
+-    "forge/loop.py": 1596,
++    "forge/loop.py": 1606,
+     "forge/memory.py": 354,
+     "forge/model.py": 918,
+     "forge/model_kinds.py": 150,
+@@ -80,6 +80,7 @@
+     "forge/planning.py": 125,
+     "forge/policy.py": 443,
+     "forge/pricing.py": 312,
++    "forge/probes.py": 249,
+     "forge/project_rules.py": 123,
+     "forge/projector.py": 88,
+     "forge/protocol.py": 103,
+@@ -109,6 +110,7 @@
+     "forge/test_coding_tools.py": 140,
+     "forge/test_desktop_services.py": 201,
+     "forge/test_e2e_modes.py": 192,
++    "forge/test_env_probes.py": 190,
+     "forge/test_execution_review.py": 360,
+     "forge/test_isolated_default.py": 71,
+     "forge/test_loom_integration.py": 268,
+@@ -139,7 +141,7 @@
+     "forge/vendors.py": 1128,
+     "forge/verify_execution.py": 178,
+     "forge/verify_secrets.py": 92,
+-    "forge/vscode_bridge.py": 413,
++    "forge/vscode_bridge.py": 415,
+     "forge/web_backends.py": 352,
+     "forge/wire.py": 341
+   }
+--- a/forge/execution.py
++++ b/forge/execution.py
+@@ -204,7 +204,8 @@
+ 
+     def tool_context(self):
+         return ToolContext(self.policy, self.workspace, self.session, self.tool_emit,
+-            {**self.capabilities, 'trusted_control_root': self.home, 'registry': self.registry},
++            {**self.capabilities, 'trusted_control_root': self.home, 'registry': self.registry,
++             'run_id': self.run.run_id},
+             self.secret_scope, isolated=True, cancellation=self.cancellation)
+ 
+     def publish(self, kind, *, action_id='', **payload):
+--- /dev/null
++++ b/forge/probes.py
+@@ -0,0 +1,249 @@
++"""Host-owned observations for executable acceptance; no model-callable hooks.
++
++Loom supplies environment probes; LangGraph supplies fresh host-bound reads.
++Registries are immutable and each attempt executes a fresh observation.
++"""
++from __future__ import annotations
++
++from dataclasses import dataclass
++import hashlib
++import json
++import math
++import os
++from pathlib import Path, PureWindowsPath
++import re
++import threading
++import time
++
++from .secrets import read_public_bytes
++
++
++def json_value(value, depth=0):
++    """Bounded, finite JSON only; detach caller-owned containers."""
++    if depth > 16:
++        raise ValueError('Probe JSON nesting exceeds 16')
++    kind = type(value)
++    if kind is str and len(value) > 32768:
++        raise ValueError('Probe JSON string exceeds 32768 characters')
++    if kind in (type(None), bool, int, str):
++        result = value
++    elif kind is float and math.isfinite(value):
++        result = value
++    elif kind is list and len(value) <= 1024:
++        result = [json_value(item, depth+1) for item in value]
++    elif kind is dict and len(value) <= 128 and all(type(k) is str for k in value):
++        result = {k: json_value(v, depth+1) for k, v in value.items()}
++    else:
++        raise ValueError('Probe values must be bounded finite JSON')
++    if depth == 0 and len(json.dumps(result, ensure_ascii=False, allow_nan=False)) > 32768:
++        raise ValueError('Probe JSON exceeds 32768 characters')
++    return result
++
++
++def canonical(value):
++    return json.dumps(json_value(value), ensure_ascii=False, sort_keys=True,
++                      separators=(',', ':'), allow_nan=False)
++
++
++def identifier(value):
++    if not isinstance(value, str) or not re.fullmatch(r'[A-Za-z][A-Za-z0-9_.-]{0,79}', value):
++        raise ValueError('Invalid environment/probe name')
++    return value
++
++
++def file_input(value, *, pointer=False):
++    allowed = {'path', 'pointer'} if pointer else {'path'}
++    if set(value) - allowed:
++        raise ValueError('Unknown workspace probe input fields')
++    path = value.get('path')
++    if (not isinstance(path, str) or not path or '\0' in path or len(path) > 1024
++            or Path(path).is_absolute() or PureWindowsPath(path).drive
++            or '..' in path.replace('\\', '/').split('/')):
++        raise ValueError('Probe path must stay relative to workspace')
++    if pointer:
++        p = value.get('pointer', '')
++        if not isinstance(p, str) or (p and not p.startswith('/')) or re.search(r'~(?![01])', p):
++            raise ValueError('Invalid JSON pointer')
++
++
++@dataclass(frozen=True)
++class ProbeSpec:
++    env: str
++    name: str
++    observe: object
++    validate: object = None
++
++
++@dataclass(frozen=True)
++class ProbeContext:
++    workspace: Path
++    run_id: str
++    deadline: float
++    cancellation: threading.Event
++    _check_host: object
++    _read: object
++
++    def check_cancel(self):
++        self._check_host()
++        if self.cancellation.is_set() or time.monotonic() >= self.deadline:
++            raise TimeoutError('Probe observation expired or cancelled')
++
++    def read_text(self, path):
++        self.check_cancel()
++        value = self._read(path)
++        self.check_cancel()
++        return value
++
++    def file_digest(self, path):
++        self.check_cancel()
++        value = self._read(path, digest_only=True)
++        self.check_cancel()
++        return value
++
++
++_active_lock = threading.Lock()
++_active = set()
++
++
++@dataclass(frozen=True)
++class ProbeRegistry:
++    specs: tuple = ()
++
++    def __post_init__(self):
++        specs = tuple(self.specs)
++        keys = set()
++        for spec in specs:
++            if not isinstance(spec, ProbeSpec) or not callable(spec.observe):
++                raise ValueError('Host must supply ProbeSpec with a callable observer')
++            key = (identifier(spec.env), identifier(spec.name))
++            if key in keys or spec.validate is not None and not callable(spec.validate):
++                raise ValueError('Duplicate or invalid host probe')
++            keys.add(key)
++        object.__setattr__(self, 'specs', specs)
++
++    @classmethod
++    def defaults(cls):
++        return cls((ProbeSpec('workspace', 'json_value', _json_probe,
++                             lambda v: file_input(v, pointer=True)),
++                    ProbeSpec('workspace', 'file_digest', _digest_probe, file_input)))
++
++    def with_probe(self, env, name, observe, *, validate=None):
++        return ProbeRegistry((*self.specs, ProbeSpec(env, name, observe, validate)))
++
++    def resolve(self, env, name, value):
++        spec = next((s for s in self.specs if (s.env, s.name) == (env, name)), None)
++        if spec is None:
++            raise ValueError(f'Unknown host environment probe: {env}.{name}')
++        if spec.validate:
++            spec.validate(json_value(value))
++        return spec
++
++    def validate_contract(self, contract):
++        for criterion in contract.criteria:
++            if criterion.kind == 'env_probe':
++                self.resolve(criterion.env, criterion.probe, criterion.input)
++
++    def check(self, criterion, *, workspace, context, registry, check_cancel):
++        spec = self.resolve(criterion.env, criterion.probe, criterion.input)
++        cancel, done = threading.Event(), threading.Event()
++        deadline = time.monotonic() + criterion.timeout
++        root = Path(workspace).resolve()
++        key = (os.path.normcase(str(root)), criterion.env, criterion.probe)
++        evidence = {'env': criterion.env, 'probe': criterion.probe, 'trust': 'untrusted'}
++        files = []
++
++        def read(path, digest_only=False):
++            if len(files) >= 32:
++                raise ValueError('Probe may inspect at most 32 files')
++            target = (root / path).resolve()
++            if not target.is_relative_to(root):
++                raise PermissionError('Probe path/symlink escapes workspace')
++            denial = registry.authorize('read_file', {'path': str(target)}, context)
++            if denial is not None:
++                raise PermissionError(denial.error or 'Probe read denied')
++            data = read_public_bytes(target, limit=8*1024*1024)
++            digest = hashlib.sha256(data).hexdigest()
++            files.append({'path': str(target.relative_to(root)),
++                          'sha256': digest})
++            return digest if digest_only else context.secret_scope.document_text(target, data.decode('utf-8-sig'))
++
++        probe_context = ProbeContext(root, str(context.extras.get('run_id', '')),
++                                     deadline, cancel, check_cancel, read)
++        outcome = {}
++        with _active_lock:
++            if key in _active or len(_active) >= 32:
++                return {'passed': False, 'detail': 'Probe is busy or host probe capacity reached',
++                        'evidence': {**evidence, 'status': 'busy'}, 'unknown_outcome': True}
++            _active.add(key)
++
++        def worker():
++            try:
++                probe_context.check_cancel()
++                actual = json_value(spec.observe(probe_context, json_value(criterion.input)))
++                probe_context.check_cancel()
++                outcome['actual'] = actual
++            except BaseException as exc:
++                outcome['error'] = f'{type(exc).__name__}: {exc}'
++            finally:
++                with _active_lock:
++                    _active.discard(key)
++                done.set()
++
++        thread = threading.Thread(target=worker, daemon=True, name='forge-probe')
++        try:
++            thread.start()
++            while not done.wait(min(.02, max(0, deadline-time.monotonic()))):
++                check_cancel()
++                if time.monotonic() >= deadline:
++                    cancel.set()
++                    return {'passed': False, 'detail': 'Probe timed out; no automatic replay',
++                            'evidence': {**evidence, 'status': 'timeout'}, 'unknown_outcome': True}
++            check_cancel()
++            if time.monotonic() >= deadline:
++                return {'passed': False, 'detail': 'Probe exceeded deadline',
++                        'evidence': {**evidence, 'status': 'timeout'}, 'unknown_outcome': True}
++            if 'error' in outcome:
++                return {'passed': False, 'detail': context.secret_scope.protect_text(outcome['error'])[:2000],
++                        'evidence': {**evidence, 'status': 'error'}, 'unknown_outcome': False}
++            actual = outcome['actual']
++            passed = canonical(actual) == canonical(criterion.expect)
++            safe = context.secret_scope.protect({'actual': actual, 'expect': criterion.expect})
++            return {'passed': passed, 'detail': 'Environment probe passed' if passed else 'Environment probe mismatch',
++                    'evidence': {**evidence, 'status': 'completed', 'files': files, **safe},
++                    'unknown_outcome': False}
++        finally:
++            cancel.set()
++            if thread.ident is None:
++                with _active_lock:
++                    _active.discard(key)
++
++
++def _json_probe(ctx, value):
++    def pairs(items):
++        result = {}
++        for key, val in items:
++            if key in result:
++                raise ValueError('Duplicate JSON field')
++            result[key] = val
++        return result
++    def nonfinite(value):
++        raise ValueError('Non-finite JSON')
++    actual = json.loads(ctx.read_text(value['path']), parse_constant=nonfinite, object_pairs_hook=pairs)
++    pointer = value.get('pointer', '')
++    for token in pointer.split('/')[1:] if pointer else ():
++        ctx.check_cancel()
++        token = token.replace('~1', '/').replace('~0', '~')
++        if isinstance(actual, list):
++            if not re.fullmatch(r'0|[1-9][0-9]*', token):
++                raise ValueError('Invalid JSON array index')
++            actual = actual[int(token)]
++        elif isinstance(actual, dict):
++            actual = actual[token]
++        else:
++            raise ValueError('JSON pointer traverses a scalar')
++    return json_value(actual)
++
++
++def _digest_probe(ctx, value):
++    # Digest the exact source bytes recorded by the mediated read, including BOM/newlines.
++    return ctx.file_digest(value['path'])
+--- /dev/null
++++ b/forge/test_env_probes.py
+@@ -0,0 +1,190 @@
++"""Independent environment acceptance through the real Agent lifecycle."""
++import hashlib
++import json
++from pathlib import Path
++import tempfile
++import threading
++import time
++import unittest
++
++from .acceptance import AcceptanceContract
++from .loop import Agent, LoopLimits
++from .policy import Policy, Mode
++from .probes import ProbeRegistry, json_value
++from .test_task_planning import Router
++from .tools import build_builtin_registry
++
++
++def criterion(**values):
++    return {'id': 'environment', 'kind': 'env_probe', 'env': 'workspace',
++            'probe': 'json_value', 'input': {'path': 'result.json', 'pointer': '/ready'},
++            'expect': True, **values}
++
++
++def contract(**values):
++    return {'max_attempts': 1, 'criteria': [criterion(**values)]}
++
++
++class EnvironmentProbeTests(unittest.TestCase):
++    def setUp(self):
++        self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
++        self.addCleanup(self.tmp.cleanup)
++        self.root = Path(self.tmp.name)
++        self.ws = self.root / 'project'
++        self.ws.mkdir()
++        self.file = self.ws / 'result.json'
++        self.file.write_text('{"ready":false}', encoding='utf-8')
++
++    def agent(self, *responses, probes=None, deny=(), cancellation=None):
++        return Agent(home=self.root / 'home', workspace=self.ws,
++            policy=Policy(workspace=self.ws, mode=Mode.ACCEPT_EDITS,
++                          deny=deny, non_interactive=True),
++            registry=build_builtin_registry(), router=Router(responses or ['done']),
++            limits=LoopLimits(max_steps=6), project_rules=False, probes=probes,
++            cancellation_event=cancellation)
++
++    def result(self, report):
++        return next(e for e in reversed(report.events) if e['type'] == 'acceptance_checked')
++
++    def test_model_claim_cannot_override_actual_state(self):
++        agent = self.agent('Everything is done and ready=true')
++        report = agent.run('finish', acceptance=contract())
++        self.assertEqual(report.stopped, 'acceptance_failed')
++        result = self.result(report)['results'][0]
++        self.assertFalse(result['passed'])
++        self.assertIs(result['evidence']['actual'], False)
++        self.assertTrue(result['evidence']['files'][0]['sha256'])
++        self.assertEqual(agent.task_contract.status, 'blocked')
++
++    def test_failed_probe_repairs_then_observes_fresh_state(self):
++        agent = self.agent('done', json.dumps({'tool': 'write_file', 'args': {
++            'path': 'result.json', 'content': '{"ready":true}'}}), 'done')
++        report = agent.run('finish', acceptance={**contract(), 'max_attempts': 3})
++        self.assertEqual(report.stopped, 'final')
++        self.assertEqual(agent.task_contract.status, 'ready_to_deliver')
++        observed = [e['results'][0]['evidence']['actual'] for e in report.events
++                    if e['type'] == 'acceptance_checked']
++        self.assertEqual(observed, [False, True])
++
++    def test_json_comparison_distinguishes_bool_number_and_string(self):
++        for actual in [1, 'true', None, []]:
++            self.file.write_text(json.dumps({'ready': actual}), encoding='utf-8')
++            self.assertEqual(self.agent().run('finish', acceptance=contract()).stopped, 'acceptance_failed')
++
++    def test_json_pointer_escaping_arrays_and_null(self):
++        self.file.write_text('{"a/b":{"~key":[null,true]}}', encoding='utf-8')
++        report = self.agent().run('finish', acceptance=contract(
++            input={'path': 'result.json', 'pointer': '/a~1b/~0key/0'}, expect=None))
++        self.assertEqual(report.stopped, 'final')
++
++    def test_missing_fields_and_duplicate_or_invalid_json_fail(self):
++        for text in ['{"missing":true}', '{"ready":true,"ready":false}', '{"ready":NaN}', 'broken']:
++            self.file.write_text(text, encoding='utf-8')
++            report = self.agent().run('finish', acceptance=contract())
++            self.assertEqual(report.stopped, 'acceptance_failed')
++
++    def test_digest_matches_exact_bytes_including_bom_and_newlines(self):
++        data = b'\xef\xbb\xbf{"ready":true}\r\n'
++        self.file.write_bytes(data)
++        report = self.agent().run('finish', acceptance=contract(probe='file_digest',
++            input={'path': 'result.json'}, expect=hashlib.sha256(data).hexdigest()))
++        self.assertEqual(report.stopped, 'final')
++
++    def test_policy_denial_never_becomes_probe_success(self):
++        self.file.write_text('{"ready":true}', encoding='utf-8')
++        report = self.agent(deny=('read_file',)).run('finish', acceptance=contract())
++        self.assertEqual(report.stopped, 'acceptance_failed')
++        self.assertEqual(self.result(report)['results'][0]['evidence']['status'], 'error')
++
++    def test_unregistered_probe_and_bad_input_rejected_before_model(self):
++        for raw in [contract(env='unregistered'), contract(probe='exec'),
++                    contract(input={'path': '../secret'}), contract(input={'path': 'result.json', 'extra': True})]:
++            agent = self.agent()
++            with self.assertRaises(ValueError):
++                agent.run('finish', acceptance=raw)
++            self.assertFalse(agent.router.calls)
++
++    def test_schema_roundtrip_and_limits(self):
++        raw = contract(expect={'nested': [True, None, 2]})
++        parsed = AcceptanceContract.from_raw(raw)
++        self.assertEqual(AcceptanceContract.from_raw(parsed.to_raw()), parsed)
++        for bad in [float('nan'), {'non_json': object()}, 'x'*32769]:
++            with self.assertRaises(ValueError):
++                AcceptanceContract.from_raw(contract(expect=bad))
++        for bad in [contract(timeout=True), contract(timeout=0), contract(input=[]),
++                    contract(env='../unsafe')]:
++            with self.assertRaises(ValueError):
++                AcceptanceContract.from_raw(bad)
++        with self.assertRaises(ValueError):
++            json_value([[[[[[[[[[[[[[[[[None]]]]]]]]]]]]]]]]])
++
++    def test_custom_probe_is_host_registered_and_receives_run_context(self):
++        observations = []
++        def observe(ctx, args):
++            observations.append(ctx.run_id)
++            return {'url': 'http://local.test/done', 'count': args['expected_count']}
++        probes = ProbeRegistry.defaults().with_probe('browser', 'state', observe)
++        report = self.agent(probes=probes).run('finish', acceptance=contract(env='browser', probe='state',
++            input={'expected_count': 2}, expect={'count': 2, 'url': 'http://local.test/done'}))
++        self.assertEqual(report.stopped, 'final')
++        self.assertEqual(observations, [report.run_id])
++        with self.assertRaises(ValueError):
++            probes.with_probe('browser', 'state', observe)
++
++    def test_probe_exception_and_non_json_result_do_not_pass(self):
++        for callback in [lambda c, i: object(), lambda c, i: 1/0]:
++            probes = ProbeRegistry.defaults().with_probe('fixture', 'state', callback)
++            report = self.agent(probes=probes).run('finish', acceptance=contract(env='fixture',
++                probe='state', input={}, expect=True))
++            self.assertEqual(report.stopped, 'acceptance_failed')
++
++    def test_registry_replacement_during_run_cannot_weaken_verification(self):
++        probes = ProbeRegistry.defaults().with_probe('fixture', 'state', lambda c, i: False)
++        agent = self.agent(probes=probes)
++        class ReplaceRouter(Router):
++            def complete(self, messages, **options):
++                agent.probes = ProbeRegistry.defaults().with_probe('fixture', 'state', lambda c, i: True)
++                return super().complete(messages, **options)
++        agent.router = ReplaceRouter(['done'])
++        report = agent.run('finish', acceptance=contract(env='fixture', probe='state', input={}))
++        self.assertEqual(report.stopped, 'acceptance_failed')
++
++    def test_timeout_stops_without_replay_and_blocks_busy_probe(self):
++        release, entered, finished = threading.Event(), threading.Event(), threading.Event()
++        def observe(ctx, args):
++            entered.set()
++            try:
++                release.wait(5)
++                return True
++            finally:
++                finished.set()
++        probes = ProbeRegistry.defaults().with_probe('fixture', 'slow', observe)
++        self.addCleanup(release.set)
++        raw = contract(env='fixture', probe='slow', input={}, timeout=1)
++        first = self.agent(probes=probes).run('finish', acceptance=raw)
++        self.assertTrue(entered.is_set())
++        self.assertEqual(first.stopped, 'unknown_outcome')
++        second = self.agent(probes=probes).run('finish', acceptance=raw)
++        self.assertEqual(self.result(second)['results'][0]['evidence']['status'], 'busy')
++        release.set()
++        self.assertTrue(finished.wait(2))
++
++    def test_cancel_during_observation_cannot_deliver(self):
++        cancel = threading.Event()
++        def observe(ctx, args):
++            cancel.set()
++            return True
++        probes = ProbeRegistry.defaults().with_probe('fixture', 'state', observe)
++        report = self.agent(probes=probes, cancellation=cancel).run('finish', acceptance=contract(
++            env='fixture', probe='state', input={}))
++        self.assertEqual(report.stopped, 'cancelled')
++
++    def test_sensitive_probe_evidence_is_redacted_before_log_and_feedback(self):
++        secret = 'fixture-api-key-7349308'
++        self.file.write_text(json.dumps({'api_key': secret, 'ready': False}), encoding='utf-8')
++        report = self.agent().run('finish', acceptance=contract(input={'path': 'result.json'}, expect={}))
++        self.assertNotIn(secret, json.dumps(report.events))
++
++
++if __name__ == '__main__':
++    unittest.main()
+--- /dev/null
++++ b/tests/test_probe_entrypoints.py
+@@ -0,0 +1,110 @@
++"""Environment probe acceptance across real CLI/HTTP/editor entry points."""
++from contextlib import redirect_stderr, redirect_stdout
++import io
++import json
++import threading
++import unittest
++from unittest.mock import patch
++
++import test_client_runtime as http_fixtures
++import test_development_execution as editor_fixtures
++from client import server as client
++from forge import cli
++from forge.probes import ProbeRegistry
++from forge.test_task_planning import Router
++from forge.test_env_probes import contract
++
++
++class HTTPProbeTests(unittest.TestCase):
++    setUp = http_fixtures.ClientRuntimeTests.setUp
++    transport = http_fixtures.ClientRuntimeTests.transport
++    use_transport = http_fixtures.ClientRuntimeTests.use_transport
++    http = http_fixtures.ClientRuntimeTests.http
++    wait_terminal = http_fixtures.ClientRuntimeTests.wait_terminal
++
++    def server(self, probes=None):
++        server = client.ClientServer(('127.0.0.1', 0), workspace=self.ws, store=self.store, probes=probes)
++        threading.Thread(target=server.serve_forever, daemon=True).start()
++        self.addCleanup(server.server_close)
++        self.addCleanup(server.shutdown)
++        return 'http://127.0.0.1:' + str(server.server_address[1])
++
++    def test_http_builtin_observes_real_state_and_persists_failure(self):
++        self.use_transport(self.transport(['ready', 'ready']))
++        path = self.ws / 'result.json'
++        base = self.server()
++        for value, state in [(False, 'error'), (True, 'done')]:
++            path.write_text(json.dumps({'ready': value}), encoding='utf-8')
++            code, started = self.http(base, '/api/run', {'task': 'finish', 'acceptance': contract()})
++            self.assertEqual(code, 202)
++            rec = self.wait_terminal(started['run_id'])
++            self.assertEqual(rec['state'], state)
++            self.assertEqual(rec['acceptance']['passed'], value)
++            self.assertIs(rec['acceptance']['results'][0]['evidence']['actual'], value)
++
++    def test_http_custom_probe_comes_from_server_host_not_payload(self):
++        observations = []
++        probes = ProbeRegistry.defaults().with_probe('application', 'state',
++            lambda ctx, value: observations.append(ctx.run_id) or {'saved': True})
++        self.use_transport(self.transport(['done']))
++        code, started = self.http(self.server(probes), '/api/run', {'task': 'finish',
++            'acceptance': contract(env='application', probe='state', input={}, expect={'saved': True})})
++        self.assertEqual(code, 202)
++        rec = self.wait_terminal(started['run_id'])
++        self.assertEqual(rec['state'], 'done')
++        self.assertEqual(observations, [started['run_id']])
++
++    def test_cli_builtin_enforces_probe_and_json_result(self):
++        # CLI uses its own configured router; inject only the offline transport route.
++        transport = self.transport(['done'])
++        smart_factory = cli.SmartRouter.from_config
++        model_factory = cli.ModelRouter.from_config
++        spec = self.root / 'probe.json'
++        spec.write_text(json.dumps(contract()), encoding='utf-8')
++        (self.ws / 'result.json').write_text('{"ready":false}', encoding='utf-8')
++        stdout, stderr = io.StringIO(), io.StringIO()
++        with patch('forge.cli.SmartRouter.from_config', side_effect=lambda cfg, **kwargs: smart_factory(cfg, transport=transport)), \
++             patch('forge.cli.ModelRouter.from_config', side_effect=lambda cfg, **kwargs: model_factory(cfg, transport=transport)), \
++             redirect_stdout(stdout), redirect_stderr(stderr):
++            code = cli.main(['run', 'finish', '--home', str(self.root / 'cli-home'),
++                '--workspace', str(self.ws), '--no-user-layer', '--acceptance', str(spec), '--json'])
++        self.assertEqual(code, 1)
++        payload = json.loads(stdout.getvalue())
++        self.assertFalse(payload['ok'])
++        self.assertEqual(payload['stopped'], 'acceptance_failed')
++        self.assertIs(payload['acceptance']['results'][0]['evidence']['actual'], False)
++
++
++class EditorProbeTests(unittest.TestCase):
++    setUp = editor_fixtures.ExecutionTests.setUp
++    runtime = editor_fixtures.ExecutionTests.runtime
++
++    def test_development_editor_agent_probe_end_to_end(self):
++        runtime = self.runtime(router=Router(['done']))
++        (self.project / 'result.json').write_text('{"ready":false}', encoding='utf-8')
++        result = runtime.run('finish', permission='workspace-write', planning='none', acceptance=contract())
++        self.assertFalse(result['ok'])
++        self.assertEqual(result['stopped'], 'acceptance_failed')
++        self.assertIs(result['acceptance']['results'][0]['evidence']['actual'], False)
++
++    def test_host_probe_registry_survives_development_bridge_assembly(self):
++        from forge.development.runtime import DevelopmentRuntime
++        from forge.development.state import ModeState
++        observed = []
++        probes = ProbeRegistry.defaults().with_probe('application', 'saved',
++            lambda ctx, value: observed.append(ctx.run_id) or {'persisted': True})
++        runtime = DevelopmentRuntime(ModeState(self.root / 'probe-home'), probes=probes)
++        self.addCleanup(runtime.close)
++        runtime.initialize(self.project)
++        runtime.state.switch('development')
++        runtime.bridge.router = Router(['done'])
++        runtime.bridge.agent.thinking_mode = 'off'
++        runtime.bridge.agent.thinking = False
++        result = runtime.run('finish', permission='workspace-write', planning='none', acceptance=contract(
++            env='application', probe='saved', input={}, expect={'persisted': True}))
++        self.assertTrue(result['ok'])
++        self.assertEqual(observed, [result['messageId']])
++
++
++if __name__ == '__main__':
++    unittest.main()
+--- /dev/null
++++ b/templates/acceptance.probes.example.json
+@@ -0,0 +1,14 @@
++{
++  "max_attempts": 3,
++  "criteria": [
++    {
++      "id": "ready-state",
++      "kind": "env_probe",
++      "env": "workspace",
++      "probe": "json_value",
++      "input": {"path": "result.json", "pointer": "/ready"},
++      "expect": true,
++      "timeout": 5
++    }
++  ]
++}
+--- /dev/null
++++ b/docs/ENVIRONMENT-PROBE-ACCEPTANCE.md
+@@ -0,0 +1,124 @@
++# 环境探针：由宿主独立验收任务状态
++
++本轮目标是让声明了环境条件的任务，在模型交付前取得真实观察值并验收。检查范围仍由显式契约决定，不能据此声称任意自然语言任务都已被完整证明。
++
++## 本机源码对照
++
++| 参考 | 实际读取的源码与取舍 |
++| --- | --- |
++| Loom（`Documents/ChatGPT/Codex/loom`，HEAD `2c8f755`） | `packages/kernel/src/verifier.ts` 的 env_probe：环境暴露观察函数，内核读取并严格比较实际值与期望值。移植其职责边界，增加输入参数和宿主注册快照 |
++| SWE-agent（`Desktop/开发/SWE-agent`，HEAD `3ea751c`） | `sweagent/run/hooks/swe_bench_evaluate.py`：结果提交与外部评测分别处理，不把模型的 submission / exit_status 当成通过评测。吸收独立验收纪律，没有移植 sb-cli、网络提交或容器依赖 |
++| LangGraph（`Desktop/本地工作流/langgraph` 本地源码快照，无 Git 元数据） | `libs/langgraph/langgraph/pregel/_read.py` 的 ChannelRead.do_read：读取来自宿主绑定的函数，未配置即失败，并区分 fresh 读取。Forge 用固定注册表、每次重新观察实现，不导入 Runnable / LangChain |
++
++## 新能力与实现
++
++`forge/probes.py` 是独立观察层，`forge/acceptance.py` 继续负责契约语法和聚合结果，`Agent` 继续负责验收/修复/停止生命周期。原本 file / command 检查保持兼容；本轮也把检查类型的允许字段收口成一份表，防止解析与序列化字段漂移。
++
++新增 `env_probe` 契约：
++
++```json
++{
++  "max_attempts": 3,
++  "criteria": [{
++    "id": "ready-state",
++    "kind": "env_probe",
++    "env": "workspace",
++    "probe": "json_value",
++    "input": {"path": "result.json", "pointer": "/ready"},
++    "expect": true,
++    "timeout": 5
++  }]
++}
++```
++
++CLI 可直接使用：
++
++```powershell
++python run.py run "生成 result.json 并将 ready 设为 true" --acceptance templates/acceptance.probes.example.json --json
++```
++
++两个默认探针无需自定义 Python 或开启 shell：
++
++| 探针 | 输入 | 实际值 |
++| --- | --- | --- |
++| `workspace.json_value` | `path`、可选 `pointer`（缺省为空，表示整个 JSON） | 从真实文件读取并按 JSON Pointer 取值；支持数组及 `~0` / `~1` 转义 |
++| `workspace.file_digest` | `path` | 原始文件字节的 SHA-256，保留 BOM、换行差异；`expect` 填期望摘要字符串 |
++
++默认探针的读取经过现有 `read_file` 授权和公共文件边界；路径限制在工作区，符号链接不得越界。JSON 字段是在现有 SecretScope 保护后的文本上读取，受保护配置秘密不会作为明文观察值回传。摘要探针只返回摘要，不返回文件正文。
++
++缺失文件/字段、重复 JSON 键、NaN/Infinity、无效数组索引和非 JSON 回执都不能通过。比较按规范化 JSON 文本进行，键顺序不影响结果，但 `true`、`1`、`1.0`、`"true"` 不会被混为相等。输入和期望值必须是有限 JSON；嵌套最多 16 层，单值序列化最多 32768 字符。
++
++## 宿主注册真正的环境状态
++
++```python
++from forge.probes import ProbeRegistry
++from forge.assembly import build_agent
++
++def observe_application(ctx, request):
++    ctx.check_cancel()
++    # 该对象由宿主持有，读取实际应用状态，不读取模型自述。
++    return {"saved": application.has_saved_document()}
++
++probes = ProbeRegistry.defaults().with_probe(
++    "application", "document_state", observe_application)
++agent = build_agent(home=home, workspace=workspace, config=config,
++                    router=router, probes=probes)
++report = agent.run("完成保存", acceptance={
++    "criteria": [{"id": "saved", "kind": "env_probe", "env": "application",
++                  "probe": "document_state", "input": {}, "expect": {"saved": True}}]
++})
++```
++
++注册表不可变，重复名字拒绝；`.with_probe()` 返回新表。Agent 在 run 边界固定注册表，未知探针或默认探针的非法输入在模型调用前报错，运行中替换 Agent.probes 不能放宽当前检查。函数对象从不进入契约 JSON、提示词或日志，模型没有注册探针的工具。
++
++宿主扩展入口均为 Python 参数：
++
++- `Agent(..., probes=...)` / `forge.assembly.build_agent(..., probes=...)`，旧 `forge.loop.build_agent` 兼容入口也支持。
++- `EditorBridge(..., probes=...)` / `DevelopmentRuntime(..., probes=...)`；开发模式重建自有桥时保留注册表。借用现有 bridge 时应在原宿主处配置，不隐式更改共享 Agent。
++- `ClientServer(..., probes=...)` / `run_forge(..., probes=...)`；HTTP 客户端只提交契约中的名字、输入和期望值，不能提交实现。
++
++自定义观察函数属于可信宿主代码，必须自行遵守环境授权、只读和线程约束。回调只收到工作区、run_id、截止时间、取消信号与受控读取方法，不收到 Agent、模型历史或工具注册表。此接口不是对任意 Python 函数的安全沙箱。
++
++## 实际调用链与失败语义
++
++```mermaid
++flowchart TD
++    Entry[CLI / HTTP / Editor / DevelopmentRuntime] --> Contract[AcceptanceContract 解析]
++    Host[宿主 ProbeRegistry] --> Freeze[run 边界固定注册表]
++    Contract --> Freeze
++    Freeze --> Model[模型执行任务]
++    Model --> Verify[准备交付时独立验收]
++    Verify --> Probe[读取实际环境状态]
++    Probe --> Compare[严格比较 actual 与 expect]
++    Compare -->|匹配| Deliver[ready_to_deliver]
++    Compare -->|不符| Repair[追加失败证据并限次修复]
++    Repair --> Model
++    Compare --> Log[acceptance_checked 日志 / 客户端结果]
++```
++
++命令检查先执行，文件和探针检查在后，避免某个后置命令改坏已验收状态。每次尝试都重新观察，不复用上一轮 passed。失败回填证据标为 untrusted；必选项不全通过，任务不能 final。
++
++每个探针上限 1–60 秒。观察运行在受限数量的 daemon worker 中，主运行保持取消响应；超时不能产生 passed，也不自动重放尚未结束的观察。相同工作区/探针仍在运行时拒绝再次调用，全宿主最多 32 个在途观察。主机无法强制终止一个不协作的 Python 线程，因此回调应使用自身有界 I/O 并定期 `ctx.check_cancel()`；超时/取消后迟到的回执不会提交成功。探针失败不会伪造对外动作已经完成。
++
++证据包括 actual、expect、探针名、状态以及默认文件观察的字节摘要。它经过现有秘密保护后进入 `acceptance_checked`、修复反馈、`run_payload` 和客户端持久化结果。一次观察仅证明该时刻的声明条件；配置文件 ready=true 不自动证明服务已部署，服务状态应由真正的宿主服务探针检查。
++
++## 验证与边界
++
++新增 15 项内核专项，覆盖虚报完成、真实工具修复后重新观察、严格类型、JSON Pointer、原始字节摘要、权限拒绝、无效契约、未知探针、宿主注册、异常回执、运行时换表、超时/忙碌、取消与证据脱敏。
++
++新增 5 项入口测试，使用真实本地 CLI/HTTP/Editor/DevelopmentRuntime 和离线模型，验证默认探针失败/成功、客户端结果、HTTP 自定义宿主探针，以及开发模式装配时的注册表传递。
++
++最终验证：
++
++| 检查 | 结果 |
++| --- | --- |
++| 新增探针内核专项 | 15/15，通过；计入内核回归 |
++| 新增 CLI / HTTP / Editor / DevelopmentRuntime 入口专项 | 5/5，通过；计入运行时回归 |
++| 内核完整回归 | 384 项，382 通过、2 跳过 |
++| 运行时、客户端和开发模式 12 组回归 | 203 项，202 通过、1 跳过 |
++| 框架自检 | 595/595 |
++| 代码行数预算 / Git 空白检查 | 143 个文件通过；接受 Windows CRLF 的空白检查通过 |
++
++内核与运行时合计 **584 项通过、3 项跳过、0 失败**。未重复计入新增专项；未做真实云模型评测或 GUI 视觉验收。日志：`reports/loom-probe-targeted.log`、`reports/loom-probe-entries.log`、`reports/loom-probe-core.log`、`reports/loom-probe-runtime.log`、`reports/loom-probe-selftest.log`。
++
++快照见 `reports/loom-probe-backup.txt`，本轮补丁见 `reports/loom-probe.patch`。保留既有未提交工作，没有修改参考仓库、开放默认 shell、调用真实云模型、修改凭据或提交 Git。
