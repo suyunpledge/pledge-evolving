@@ -203,14 +203,16 @@ class AuroraBackdrop:
     def _schedule(self, _event=None):
         if self._job is None:
             try:
-                self._job = self.canvas.after(120, self.render)
+                # 定时器挂在根窗口上：任何地方按 id 取消都只删一次回调命令，
+                # 画布随后销毁时不会再去删一个已不存在的命令。
+                self._job = self.canvas._root().after(120, self.render)
             except tk.TclError:
                 pass
 
     def _cancel(self, event):
         if event.widget is self.canvas and self._job is not None:
             try:
-                self.canvas.after_cancel(self._job)
+                self.canvas._root().after_cancel(self._job)
             except tk.TclError:
                 pass
             self._job = None

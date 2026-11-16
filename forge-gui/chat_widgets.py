@@ -1947,7 +1947,8 @@ class MessageArea(tk.Frame):
             if banner is None:
                 return
             viewport = self.scroll.canvas
-            compact = viewport.winfo_height() < ui_px(self, 450) or viewport.winfo_width() < ui_px(self, 680)
+            # 与分支原阈值一致（物理像素）：矮于 450 / 窄于 520 才收起主视觉。
+            compact = viewport.winfo_height() < 450 or viewport.winfo_width() < 520
             box.pack_configure(pady=(ui_px(self, 14 if compact else 56), 12))
             title_label.configure(font=FONT_TITLE if compact else (FONT_TITLE[0], 17, "bold"))
             if compact:
@@ -1961,8 +1962,13 @@ class MessageArea(tk.Frame):
         fit_banner()
         # The callback belongs to this empty state, not to later conversation views.
         def forget_banner(event):
-            if event.widget is box:
+            if event.widget is not box:
+                return
+            # 关窗时画布可能先于 box 被销毁，其回调命令已不在：解绑失败无妨。
+            try:
                 self.scroll.canvas.unbind("<Configure>", binding)
+            except tk.TclError:
+                pass
         box.bind("<Destroy>", forget_banner, add="+")
         self._empty = box
 
