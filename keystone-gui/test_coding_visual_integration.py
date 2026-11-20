@@ -93,7 +93,8 @@ class CodingAppearanceTests(unittest.TestCase):
 class BoundaryTests(unittest.TestCase):
     def test_visual_work_does_not_change_execution_or_pane_state_methods(self):
         root = Path(__file__).resolve().parents[1]
-        path = 'keystone-gui/development_mode/app.py'
+        # Both commits predate the Keystone rename, so the historical path applies.
+        path = 'forge-gui/development_mode/app.py'
         old = subprocess.check_output(['git', 'show', 'ddace89:' + path], cwd=root).decode('utf-8')
         # This boundary belongs to the visual-only commit. Later authorized
         # execution fixes must not be compared to the pre-visual send method.

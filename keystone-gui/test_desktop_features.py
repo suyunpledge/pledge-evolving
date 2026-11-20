@@ -49,7 +49,8 @@ class FeatureBoundaryTests(unittest.TestCase):
     def test_connector_credentials_never_enter_gateway_environment(self):
         env=secret_store.env_for({'model':'normal','connector.github':'github-token',
                                   'connector.microsoft':'token-json'})
-        self.assertEqual(env,{'KEYSTONE_MODEL_KEY':'normal'})
+        # 旧名 FORGE_* 作为别名一并提供；连接器凭据两种名字都不得出现。
+        self.assertEqual(env,{'KEYSTONE_MODEL_KEY':'normal','FORGE_MODEL_KEY':'normal'})
 
     def test_preview_does_not_write_and_detects_external_changes_at_execution(self):
         with tempfile.TemporaryDirectory() as tmp:

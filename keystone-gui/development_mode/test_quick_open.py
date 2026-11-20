@@ -10,7 +10,7 @@ class MatchScoreTests(unittest.TestCase):
         self.assertIsNone(_match_score('keystone/cli.py', 'zzz'))
 
     def test_subsequence_matches_in_order_only(self):
-        self.assertIsNotNone(_match_score('keystone/development/state.py', 'fdst'))
+        self.assertIsNotNone(_match_score('keystone/development/state.py', 'kdst'))
         self.assertIsNone(_match_score('keystone/development/state.py', 'dsf'))
 
     def test_case_insensitive(self):

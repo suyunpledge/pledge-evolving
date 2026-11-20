@@ -304,7 +304,9 @@ class DefaultHomeCase(unittest.TestCase):
 
     def test_default_marketplace_points_at_keystone_home(self):
         market = pm.default_marketplace()
-        self.assertEqual(market.home, Path.home() / ".keystone")
+        # 新装用 ~/.keystone；已有 ~/.forge 而无 ~/.keystone 时沿用旧目录（keystone.compat）。
+        from keystone.compat import default_home
+        self.assertEqual(market.home, default_home())
         self.assertEqual(market.state_path.name, "state.json")
         self.assertEqual(market.log_path.name, "log.ndjson")
 
