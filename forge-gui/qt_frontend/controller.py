@@ -109,6 +109,8 @@ class ChatController(QObject):
         self._connection_epoch = 0
         self._closed = False
         self.tool_authorizer = None
+        # 返回 Work 回合上限的可调用对象（由 app 按 Forge home 接入）；None 用默认值。
+        self.turn_limit = None
         self.tool_filter = None
         self.mcp_tools = None
         self.chat_mcp_tools = None
@@ -578,10 +580,13 @@ class ChatController(QObject):
             try:
                 from .conversation import run
                 context = change_notice if chat_mode else work_context(messages)
+                from .conversation import MAX_TURNS
+                max_turns = self.turn_limit() if self.turn_limit is not None else MAX_TURNS
                 result = run(client, messages, model=model, effort=None if effort == 'off' else effort,
                     cancel=cancel, authorize=authorize, tool_filter=tool_filter, tools_enabled=tools_enabled,
                     system_context=context, mcp=connection, temperature=temperature,
                     chat_mcp=chat_connection, enter_work=enter_work if chat_mode else None,
+                    max_turns=max_turns,
                     chunk=lambda chunk: self._workerEvent.emit('chunk', (generation, chunk)),
                     checkpoint=lambda history: self._workerEvent.emit('checkpoint', (generation, history)),
                     receipt=lambda name, response: self._workerEvent.emit('receipt', (generation, (name, response))),

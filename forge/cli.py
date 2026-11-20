@@ -27,7 +27,8 @@ from .adapters import PlanContext, breakeven_calls, compare_plans
 from .cache_state import prefix_fingerprint
 from .config import USER_LAYER_NAME, Config, ConfigError, load_config
 from .context_plan import CONTEXT_MODES, ContextPlan
-from .loop import THINKING_MODES, LoopLimits, build_agent
+from .loop import THINKING_MODES, build_agent
+from .loop_limits import primary_profile, resolve_loop_limits, resolve_max_steps
 from .model import ModelRouter, warmth_store
 from .policy import Policy
 from .routing import STRATEGIES, SmartRouter
@@ -70,42 +71,8 @@ def _compose(args) -> Config:
 # ---------------------------------------------------------------------------
 
 def _primary_profile(cfg):
-    """解析「实际会首发的那一档」对应的厂商画像。
-
-    不能只看 model.primary：策略为 medium 时真正首发的是 routing.tiers 的第一档，
-    primary 只是配置里写下的默认值。直接问 SmartRouter 要真实顺序，
-    上下文阶梯的判断才会和运行时选到同一家（否则会拿 A 家的阶梯线去限制 B 家）。
-    """
-    order: list[tuple[str, str]] = []
-    selected_router = None
-    try:
-        selected_router = SmartRouter.from_config(cfg)
-        order = list(selected_router._order(None))
-    except Exception:
-        order = []
-    if not order:
-        primary = cfg.get("model", "primary", None)
-        if isinstance(primary, (list, tuple)) and primary:
-            order = [(str(primary[0]), str(primary[1]) if len(primary) > 1 else "")]
-        elif isinstance(primary, str):
-            order = [(primary, "")]
-
-    row_id, model = order[0] if order else ("", "")
-    if selected_router is not None and row_id in selected_router.providers:
-        return selected_router.providers[row_id].profile_for_model(model)
-    row = cfg.row(row_id) if row_id else None
-    conf = dict(row.config) if row is not None else {}
-    actual_model = str(model or conf.get("model", conf.get("defaultModel", "")))
-    default_model = str(conf.get("model", conf.get("defaultModel", "")))
-    return profile_for(
-        base_url=str(conf.get("baseURL", conf.get("base_url", ""))),
-        model=actual_model,
-        service=str(conf.get("service", "")),
-        vendor=str(conf.get("vendor", "")),
-        wire=str(conf.get("wire", "")),
-        model_kind_id=(conf.get("modelKinds") or {}).get(actual_model, "") or
-                      (str(conf.get("modelKindId") or "") if actual_model == default_model else ""),
-    )
+    """解析「实际会首发的那一档」对应的厂商画像（实现已移到 loop_limits，所有入口共用）。"""
+    return primary_profile(cfg)
 
 
 def _credential_report(cfg, home: Path) -> tuple[list[str], list[str], list[str]]:
@@ -349,15 +316,10 @@ def cmd_run(args) -> int:
         print(f"[context] {profile.label} 上下文地板 {profile.context_floor_chars:,} 字符"
               f"（大窗口厂商，压缩阈值从 {base_chars:,} 抬高，避免前缀打回全价）", file=sys.stderr)
     # 2026-11-04 第三轮：按厂家循环步数提示自动抬默认预算（配置显式声明优先）。
-    _loop_row = cfg.row("loop") if hasattr(cfg, "row") else None
-    _explicit_steps = bool(
-        _loop_row and "maxSteps" in (getattr(_loop_row, "config", None) or {})
-        # base.json 里写死的 maxSteps=12 是框架默认值而非用户意图；只有
-        # 用户层（forge.patch.json）重写过 loop 行并声明 maxSteps 才算显式。
-        and str(getattr(_loop_row, "source", "")) == USER_LAYER_NAME)
-    loop_max_steps = int(cfg.get("loop", "maxSteps", 12))
-    if not _explicit_steps and int(getattr(profile, "steps_hint", 0) or 0) > loop_max_steps:
-        loop_max_steps = int(profile.steps_hint)
+    # 规则见 loop_limits.resolve_max_steps；其他入口走同一函数。
+    loop_limits = resolve_loop_limits(cfg, profile=profile, context_chars=ctx_budget)
+    loop_max_steps = loop_limits.max_steps
+    if resolve_max_steps(cfg, profile)[1] == 'hint':
         print(f"[loop] {profile.label} 步数提示 {loop_max_steps} 生效"
               f"（画像 steps_hint；配置未显式声明 maxSteps）", file=sys.stderr)
     if resolved_mode == "lossless" and profile.long_context_threshold:
@@ -393,13 +355,7 @@ def cmd_run(args) -> int:
         # 工具面收敛：配置层声明了 tools.expose 就落到注册表（比 prompt 里
         # "请只用这几个" 强一个数量级）。默认无该行 -> None -> 行为零变化。
         expose=cfg.get("tools", "expose", None),
-        limits=LoopLimits(
-            max_steps=loop_max_steps,
-            max_depth=int(cfg.get("loop", "maxDepth", 2)),
-            spawn_budget=int(cfg.get("loop", "spawnBudget", 8)),
-            wrap_up_on_limit=bool(cfg.get("loop", "wrapUpOnLimit", True)),
-            context_chars=ctx_budget,
-        ),
+        limits=loop_limits,
         observer=progress,
     )
     with agent.session:

@@ -15,7 +15,7 @@ import sys
 import uuid
 
 from .config import load_config
-from .loop import LoopLimits, build_agent
+from .loop import build_agent
 from .model import ModelRouter
 from .policy import Mode, Policy, Sandbox
 from .routing import SmartRouter
@@ -196,10 +196,9 @@ class EditorBridge:
         catalog = [{'id': key, 'label': ' / '.join(pair)} for key, pair in self.models.items()]
         if self.model_router_factory and revision != self.model_router_factory.signature(self.home):
             raise ValueError('模型设置正在变化，请重试载入项目。')
-        limits = LoopLimits(max_steps=min(40, max(1, int(config.get('loop', 'maxSteps', 12)))),
-                            max_depth=min(3, max(0, int(config.get('loop', 'maxDepth', 2)))),
-                            spawn_budget=min(16, max(0, int(config.get('loop', 'spawnBudget', 8)))),
-                            context_chars=min(128000, max(4000, int(config.get('loop', 'contextChars', 24000)))))
+        from .loop_limits import resolve_loop_limits
+        limits = resolve_loop_limits(config, router=self.router, context_chars=min(128000, max(
+            4000, int(config.get('loop', 'contextChars', 24000)))))
         self.agent = build_agent(home=self.home, workspace=self.workspace, config=config,
             router=self.router, policy=self.policy('read-only'), limits=limits,
             expose=config.get('tools', 'expose', None), observer=self.observe,

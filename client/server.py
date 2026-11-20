@@ -304,9 +304,9 @@ def validate_run_payload(payload):
         value = payload.get(key)
         if value is not None and value not in values:
             raise ValueError('invalid ' + key)
-    for key, maximum in [('max_steps', 1000), ('max_depth', 16), ('spawn_budget', 1000)]:
+    from forge.loop_limits import BOUNDS
+    for key, (minimum, maximum) in BOUNDS.items():
         value = payload.get(key)
-        minimum = 1 if key == 'max_steps' else 0
         if value is not None and (type(value) is not int or not minimum <= value <= maximum):
             raise ValueError('invalid ' + key)
     if payload.get('workspace') is not None and not isinstance(payload['workspace'], str):
@@ -385,7 +385,7 @@ def run_forge(run_id: str, task: str, model_label: str | None,
               max_steps: int | None, max_depth: int | None,
               spawn_budget: int | None,
               workspace: Path, acceptance=None, planning=None, planning_model=None, *, store=None, probes=None) -> None:
-    from forge.loop import LoopLimits, build_agent
+    from forge.loop import build_agent
     from forge.model import ModelRouter
     from forge.routing import SmartRouter
     from forge.phase_models import phase_router
@@ -420,10 +420,9 @@ def run_forge(run_id: str, task: str, model_label: str | None,
             # selection does elsewhere. Preserve config, transport and secrets.
             router = phase_router(router, cfg.get('model', 'primary'), router)
 
-        limits = LoopLimits(
-            max_steps=max_steps if max_steps is not None else int(cfg.get("loop", "maxSteps", 12)),
-            max_depth=max_depth if max_depth is not None else int(cfg.get("loop", "maxDepth", 2)),
-            spawn_budget=spawn_budget if spawn_budget is not None else int(cfg.get("loop", "spawnBudget", 8)))
+        from forge.loop_limits import resolve_loop_limits
+        limits = resolve_loop_limits(cfg, router=router, overrides={
+            'max_steps': max_steps, 'max_depth': max_depth, 'spawn_budget': spawn_budget})
 
         def observe(event):
             store.push_event(run_id, event)

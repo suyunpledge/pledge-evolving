@@ -25,7 +25,7 @@ from typing import Any
 from pathlib import Path
 
 from ..config import load_config
-from ..loop import LoopLimits, build_agent
+from ..loop import build_agent
 from ..model import ModelRouter
 from . import InboundMessage, available_channels, load_channel, session_for
 from .weixin import (
@@ -222,11 +222,8 @@ def cmd_channel_weixin_serve(args) -> int:
     session_dir = home / "sessions" / "channels"
 
     router = ModelRouter.from_config(cfg)
-    limits = LoopLimits(
-        max_steps=int(cfg.get("loop", "maxSteps", 12)),
-        max_depth=int(cfg.get("loop", "maxDepth", 2)),
-        spawn_budget=int(cfg.get("loop", "spawnBudget", 8)),
-    )
+    from ..loop_limits import resolve_loop_limits
+    limits = resolve_loop_limits(cfg, router=router)
 
     print(f"weixin serve: account={channel.cfg.account_id} scope={scope}")
     print(f"  workspace : {workspace}")

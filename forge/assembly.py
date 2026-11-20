@@ -51,12 +51,9 @@ def build_agent(
     home = Path(home)
     workspace = Path(workspace)
     policy = policy or Policy.from_config(config, workspace=workspace, non_interactive=non_interactive)
-    limits = limits or LoopLimits(
-        max_steps=int(config.get("loop", "maxSteps", 12)),
-        max_depth=int(config.get("loop", "maxDepth", 2)),
-        spawn_budget=int(config.get("loop", "spawnBudget", 8)),
-        wrap_up_on_limit=bool(config.get("loop", "wrapUpOnLimit", True)),
-    )
+    if limits is None:
+        from .loop_limits import resolve_loop_limits
+        limits = resolve_loop_limits(config, router=router)
 
     capabilities = CapabilityLibrary(
         [home / "capabilities", workspace / ".forge" / "capabilities"],

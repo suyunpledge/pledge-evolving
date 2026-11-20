@@ -1,6 +1,7 @@
 """Bounded gateway tool loop with desktop approvals and no action replay."""
 import copy
 import json
+from pathlib import Path
 
 from forge.execution_guard import ExecutionGuard
 from forge.secrets import redact
@@ -32,7 +33,9 @@ WORK_HANDOFF = {'type': 'function', 'function': {
 CHAT_CONTEXT = ('当前处于 Chat 模式。普通对话和现有 MCP 工具能完成的任务留在 Chat。'
                 '如果当前用户任务确实需要操作电脑、读写项目文件、运行代码或使用其他 Work 工具，'
                 '调用 forge_enter_work 并说明原因，切换后继续同一任务。仅解释步骤或给出建议时不切换。')
-MAX_TURNS = 8
+# 回合上限与核心 loop 同源：loop.maxSteps（见 forge.loop_limits）；读不到配置时用框架默认值。
+MAX_TURNS = 12
+BUDGET_NOTES_MIN = 6   # 与核心 loop 一致：更小的预算不插提醒
 # 只附在当次请求尾部、不写入 messages：前缀缓存不变，续跑时也不残留过期提醒。
 BUDGET_NOTES = {
     2: '本轮还剩 2 次模型回合（含本次）。请集中完成最重要的剩余工作，把互不依赖的工具调用合并到本次一起发出，不要再开新的探索。',
@@ -40,7 +43,21 @@ BUDGET_NOTES = {
 }
 BUDGET_SUMMARY = ('本轮工具调用次数已用完，之后的工具调用不会再执行。请不调用任何工具，用几行简短文字说明：'
                   '已完成什么、工作区当前状态、还剩什么，以及用户让你继续时的下一步。')
-BUDGET_LEAD = f'已达本轮 {MAX_TURNS} 次工具调用上限，以下是进度小结；点「继续」可接着做。\n\n'
+
+
+def budget_lead(limit):
+    return f'已达本轮 {limit} 次工具调用上限，以下是进度小结；点「继续」可接着做。\n\n'
+
+
+def turn_limit(home):
+    """Work 模式的回合上限：与 CLI / VS Code / 网关同一套解析（不套用厂商步数提示，
+    因为这里的模型由界面选择，不一定是配置里的首发路由）。"""
+    try:
+        from forge.config import load_config
+        from forge.loop_limits import resolve_loop_limits
+        return resolve_loop_limits(load_config(Path(home)), use_hint=False).max_steps
+    except Exception:
+        return MAX_TURNS
 
 WORK_CONTEXT = ('当前已切换至 Work，继续处理同一条用户消息。Work 工具定义已随本轮请求提供，'
                 '直接调用列表中的匹配工具。读取项目文件时优先使用已提供的 forge_read_range 或 '
@@ -77,7 +94,7 @@ def preview_receipt(name, response):
 
 def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint, status, next_round,
         receipt=None, system_context='', mcp=None, temperature=0.7, tool_filter=None, tools_enabled=True,
-        chat_mcp=None, enter_work=None):
+        chat_mcp=None, enter_work=None, max_turns=MAX_TURNS):
     def schemas(local, chat_mode):
         if not tools_enabled:
             return None
@@ -101,14 +118,15 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
         mcp_tools = {name: entry for name, entry in mcp_tools.items() if name.startswith('mcp_')}
     tools = schemas(mcp_tools, chat_mode)
     guard = ExecutionGuard()
-    for turn in range(MAX_TURNS):
+    max_turns = max(1, int(max_turns))
+    for turn in range(max_turns):
         if cancel.is_set():
             raise GenerationCancelled('已停止生成')
         guidance = (CHAT_CONTEXT if tools_enabled else '当前处于 Chat 模式，请直接回复。') if chat_mode else ''
         context = '\n'.join(part for part in (system_context, guidance) if part)
         current = [ChatMessage('system', context), *messages] if context else list(messages)
         # 能走到倒数第二轮说明前面一直在调工具；首轮最多是第 1 轮，不会误触。
-        note = BUDGET_NOTES.get(MAX_TURNS - turn)
+        note = BUDGET_NOTES.get(max_turns - turn) if max_turns >= BUDGET_NOTES_MIN else None
         if note:
             current.append(ChatMessage('user', note))
         result = client.stream_chat(current, model=model, reasoning_effort=effort, temperature=temperature,
@@ -134,7 +152,7 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
                     if not tools_enabled:
                         raise PermissionError('当前工具设置或权限不允许此调用。')
                     if name == ENTER_WORK:
-                        if not chat_mode or enter_work is None or switch_reason or turn == MAX_TURNS - 1:
+                        if not chat_mode or enter_work is None or switch_reason or turn == max_turns - 1:
                             raise PermissionError('当前回合不能切换模式。')
                         reason = arguments.get('reason')
                         if set(arguments) != {'reason'} or not isinstance(reason, str) or not 0 < len(reason.strip()) <= 240:
@@ -189,16 +207,17 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
             mcp_tools, call_mcp = mcp or ({}, None)
             tools = schemas(mcp_tools, chat_mode)
         status('工具已返回，正在生成回复…')
-    limit_error = GatewayError(f'已达 {MAX_TURNS} 轮工具调用上限。已有执行记录已保存。')
+    limit_error = GatewayError(f'已达 {max_turns} 轮工具调用上限。已有执行记录已保存。')
     if cancel.is_set():
         raise GenerationCancelled('已停止生成')
     context = '\n'.join(part for part in (system_context, BUDGET_SUMMARY) if part)
     status('工具调用已达上限，正在整理进度…')
     lead = [True]
+    lead_text = budget_lead(max_turns)
 
     def summary_chunk(piece):
         if lead[0]:
-            chunk(BUDGET_LEAD)
+            chunk(lead_text)
             lead[0] = False
         chunk(piece)
     try:
@@ -213,8 +232,8 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
     if result.tool_calls or not (result.text or '').strip():
         raise limit_error
     if lead[0]:
-        chunk(BUDGET_LEAD)
-    result.text = BUDGET_LEAD + result.text.strip()
+        chunk(lead_text)
+    result.text = lead_text + result.text.strip()
     result.tool_calls = []
     result.budget_exhausted = True
     return result

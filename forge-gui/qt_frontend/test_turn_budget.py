@@ -1,8 +1,11 @@
 """Work 工具回合上限：临近上限的临时提醒、触顶后的进度小结与失败回退。"""
+import json
+from pathlib import Path
+import tempfile
 import threading
 import unittest
 
-from .conversation import BUDGET_LEAD, BUDGET_SUMMARY, MAX_TURNS, run
+from .conversation import BUDGET_SUMMARY, MAX_TURNS, budget_lead, run, turn_limit
 from forge_client import ChatMessage, CompletionResult, GatewayError
 
 
@@ -28,11 +31,11 @@ class Client:
         return {'ok': True, 'content': 'value of ' + args['path']}
 
 
-def drive(client):
+def drive(client, **options):
     chunks, checkpoints = [], []
     result = run(client, [ChatMessage('user', 'read everything')], model='test', effort=None,
                  cancel=threading.Event(), authorize=lambda *_: None, chunk=chunks.append,
-                 checkpoint=checkpoints.append, status=lambda _: None, next_round=lambda: None)
+                 checkpoint=checkpoints.append, status=lambda _: None, next_round=lambda: None, **options)
     return result, chunks, checkpoints
 
 
@@ -48,13 +51,28 @@ class TurnBudgetTests(unittest.TestCase):
         self.assertTrue(all('本轮' not in m.content for m in checkpoints[-1]))
         self.assertTrue(result.budget_exhausted)
         self.assertEqual(result.tool_calls, [])
-        self.assertEqual(result.text, BUDGET_LEAD + client.summary)
+        self.assertEqual(result.text, budget_lead(MAX_TURNS) + client.summary)
         self.assertEqual(''.join(chunks), result.text)
 
     def test_failed_or_tool_only_summary_falls_back_to_the_limit_error(self):
         for client in (Client(fail_summary=True), Client(summary='')):
             with self.subTest(fail=client.fail_summary), self.assertRaisesRegex(GatewayError, '轮工具调用上限'):
                 drive(client)
+
+    def test_turn_limit_follows_forge_loop_config(self):
+        with tempfile.TemporaryDirectory() as folder:
+            self.assertEqual(turn_limit(folder), MAX_TURNS)
+            Path(folder, 'forge.patch.json').write_text(
+                json.dumps([{'id': 'loop', 'config': {'maxSteps': 7}}]), encoding='utf-8')
+            self.assertEqual(turn_limit(folder), 7)
+        client = Client()
+        result, _, _ = drive(client, max_turns=7)
+        self.assertEqual(len(client.requests), 8)
+        self.assertIn('还剩 2 次', client.requests[5][-1].content)
+        self.assertTrue(result.text.startswith(budget_lead(7)))
+        small = Client()
+        drive(small, max_turns=4)
+        self.assertFalse(any('本轮' in r[-1].content for r in small.requests[:4]))
 
 
 if __name__ == '__main__':

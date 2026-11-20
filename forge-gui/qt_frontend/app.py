@@ -59,6 +59,8 @@ def main(argv=None):
     if not args.demo:
         from .team_service import work_context
         controller.work_context = lambda messages, model, cancel, status: work_context(args.home, messages, model, cancel, status)
+        from .conversation import turn_limit
+        controller.turn_limit = lambda: turn_limit(args.home)
     preview_home = tempfile.TemporaryDirectory(prefix='forge-workbench-preview-', ignore_cleanup_errors=True) if args.demo else None
     workbench = WorkbenchController(Path(preview_home.name) if preview_home else args.home, demo=args.demo)
     workbench._input_busy = lambda: controller.busy
