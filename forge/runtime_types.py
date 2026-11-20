@@ -23,6 +23,9 @@ class LoopLimits:
     spawn_budget: int = 8
     max_tool_result: int = 4000
     context_chars: int = 24000
+    # 步数将尽时给模型看剩余回合（仅本次请求、不入历史），触顶后再要一段
+    # 不调工具的进度总结；关掉则回到旧的硬截断。
+    wrap_up_on_limit: bool = True
 
 
 @dataclass

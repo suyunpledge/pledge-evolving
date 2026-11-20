@@ -1556,10 +1556,18 @@ class Agent:
                     if self.cancellation_event is not None:
                         request_options['cancel_event'] = self.cancellation_event
                 # 步级重试：可重试错误且本 run 未用过 → 等 5s 再试一次
+                request_messages = messages
+                reminder = self._step_budget_reminder(index)
+                if reminder:
+                    # 只附在本次请求尾部、不写入 messages：前缀缓存不动，
+                    # 续跑时历史里也不会残留过期的"还剩 N 步"。
+                    request_messages = [*messages, {"role": "user", "content": reminder}]
+                    self._emit(type="step_budget_warning", step=index,
+                               remaining=self.limits.max_steps - index + 1)
                 for _model_attempt in (0, 1):
                     try:
                         completion = self.router.complete(
-                            messages, small=False,
+                            request_messages, small=False,
                             tools=declarations,
                             **request_options,
                         )
@@ -1745,8 +1753,10 @@ class Agent:
                         f'<tool_result tool="{call.name}" ok="{ok}">{body}</tool_result>'})
 
         self._emit(type="loop_stop", reason="max_steps", steps=len(steps))
+        summary = self._step_budget_summary(messages, pinned_task, usage_total)
         report = self._finish(RunReport(
-            text=f"[stopped: max_steps={self.limits.max_steps}] last tool: {steps[-1].tool if steps else 'none'}",
+            text=f"[stopped: max_steps={self.limits.max_steps}] last tool: {steps[-1].tool if steps else 'none'}"
+                 + (f"\n\n{summary}" if summary else ""),
             steps=steps,
             usage=usage_total,
             stopped=stopped,
@@ -1754,6 +1764,71 @@ class Agent:
         ))
         self._checkpoint_conversation(messages, task, report, envelope, 'step_budget')
         return report
+
+    _STEP_BUDGET_MIN = 6   # 更小的预算多是调度/探针类短任务，不打扰
+
+    def _step_budget_reminder(self, index: int) -> str:
+        if not self.limits.wrap_up_on_limit or self.limits.max_steps < self._STEP_BUDGET_MIN:
+            return ''
+        remaining = self.limits.max_steps - index + 1
+        if remaining == 2:
+            body = ("Step budget: 2 model turns left in this run, including this one. "
+                    "Finish the most important remaining work now and batch independent tool calls "
+                    "into this turn. Do not start new exploration.")
+        elif remaining == 1:
+            body = ("Step budget: this is the last model turn of this run. Either give the final answer now, "
+                    "or make only the calls needed to leave the workspace consistent; afterwards you will be "
+                    "asked for a progress summary without tools.")
+        else:
+            return ''
+        return "<system-reminder>\n" + body + "\n</system-reminder>"
+
+    _STEP_BUDGET_SUMMARY = (
+        "<system-reminder>\nThe step budget for this run is used up; tool calls are no longer executed. "
+        "Reply in plain prose, without any tool call, in the user's language and in a few short lines: "
+        "what was completed, the current state of the workspace, what remains, and the next concrete step "
+        "if the user asks you to continue.\n</system-reminder>")
+
+    def _step_budget_summary(self, messages, pinned_task, usage_total) -> str:
+        """Best-effort progress summary after max_steps; never raises transport errors."""
+        if not self.limits.wrap_up_on_limit or self.limits.max_steps < self._STEP_BUDGET_MIN:
+            return ''
+        self._check_cancel()
+        request = self.secret_scope.protect([*messages, {"role": "user", "content": self._STEP_BUDGET_SUMMARY}])
+        declarations = self._tool_declarations()
+        budget = self._request_context_budget(request, declarations)
+        if budget and not budget["fits"]:
+            self._emit(type="step_budget_summary", ok=False, error="context_limit")
+            return ''
+        from .routing import SmartRouter
+        options = {'task_context': pinned_task} if type(self.router) is SmartRouter else {}
+        if isinstance(self.router, ModelRouter):
+            options['cache_scope'] = self._conversation_guard_start
+            if self.cancellation_event is not None:
+                options['cancel_event'] = self.cancellation_event
+        try:
+            # 声明照旧带上：部分协议要求历史里有工具调用时必须声明工具；
+            # 模型若仍发起调用，一律不执行，只取文字。
+            completion = self.router.complete(request, small=False, tools=declarations, **options)
+        except TransportError as exc:
+            self._check_cancel()
+            self._emit(type="step_budget_summary", ok=False, error=str(exc)[:200])
+            return ''
+        self._check_cancel()
+        for key in ("prompt_tokens", "completion_tokens", "cached_tokens",
+                    "cache_write_tokens", "reasoning_tokens"):
+            usage_total[key] = usage_total.get(key, 0) + _safe_count(getattr(completion.usage, key, 0))
+        from .cache_metrics import annotate_requests
+        usage_total.setdefault("requests", []).extend(annotate_requests(
+            getattr(completion, "requests", []), self._context_revision,
+            self._context_transaction_id, self._cache_revisions))
+        text = (completion.text or "").strip()
+        if text and (toolwire.parse_text_protocol_calls(text, self._run_model)
+                     or toolwire.looks_like_tool_attempt(text)):
+            text = ''
+        self._emit(type="step_budget_summary", ok=bool(text), chars=len(text),
+                   ignored_calls=len(getattr(completion, "tool_calls", None) or []))
+        return text
 
     def _verify_acceptance(self, messages, candidate):
         if self._acceptance is None:

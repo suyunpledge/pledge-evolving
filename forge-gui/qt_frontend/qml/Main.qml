@@ -132,6 +132,7 @@ ApplicationWindow {
                 required property var changeInfo
                 required property int historyIndex
                 required property var toolReceipts
+                required property bool continuable
                 width: messages.width
                 height: messageBody.height + (roleName === "user" ? 24 : 0)
                     + (messageActions.visible ? messageActions.height + 4 : 0)
@@ -209,6 +210,13 @@ ApplicationWindow {
                             text: "重试"; color: "#c8d7e5"; font.pixelSize: 12
                             HoverHandler { cursorShape: Qt.PointingHandCursor }
                             TapHandler { onTapped: controller.retry() }
+                        }
+                        Text {
+                            objectName: "continueWork"
+                            visible: message.continuable && !controller.busy
+                            text: "继续"; color: continueHover.hovered ? "#e3e7eb" : "#c8d7e5"; font.pixelSize: 12
+                            HoverHandler { id: continueHover; cursorShape: Qt.PointingHandCursor }
+                            TapHandler { onTapped: controller.continueWork() }
                         }
                     }
                 }

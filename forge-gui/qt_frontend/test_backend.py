@@ -200,6 +200,32 @@ class BackendTests(unittest.TestCase):
         until(lambda: not self.controller._stream_timer.isActive())
         self.assertEqual(self.controller.messages.rows, [])
 
+    def test_turn_budget_reply_offers_continue_without_eating_the_draft(self):
+        from forge_client import ForgeGatewayClient
+        client = ForgeGatewayClient(self.controller.gateway)
+        def stream(messages, on_chunk, **_):
+            on_chunk("小结")
+            result = CompletionResult("小结")
+            result.budget_exhausted = len(stream.calls) == 0
+            stream.calls.append(messages)
+            return result
+        stream.calls = []
+        client.stream_chat = stream
+        self.controller._client = client
+        self.controller.draft = "长任务"
+        self.controller.send()
+        until(lambda: not self.controller.busy)
+        summary_row = len(self.controller.messages.rows) - 1
+        self.assertTrue(self.controller.messages.rows[summary_row]["continuable"])
+        self.controller.draft = "还没写完的草稿"
+        self.controller.continueWork()
+        until(lambda: not self.controller.busy)
+        self.assertFalse(self.controller.messages.rows[summary_row]["continuable"])
+        self.assertEqual(self.controller.messages.rows[summary_row + 1]["textContent"], "继续完成剩余工作")
+        self.assertFalse(self.controller.messages.rows[-1].get("continuable", False))
+        self.assertEqual(self.controller.draft, "还没写完的草稿")
+        self.assertEqual(stream.calls[-1][-1].content, "继续完成剩余工作")
+
     def test_invalid_legacy_timestamps_do_not_prevent_history_loading(self):
         legacy = self.home / "gui" / "sessions.json"
         rows = [{"id": str(i), "updated": value, "title": "legacy",

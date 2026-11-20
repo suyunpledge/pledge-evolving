@@ -55,6 +55,7 @@ def build_agent(
         max_steps=int(config.get("loop", "maxSteps", 12)),
         max_depth=int(config.get("loop", "maxDepth", 2)),
         spawn_budget=int(config.get("loop", "spawnBudget", 8)),
+        wrap_up_on_limit=bool(config.get("loop", "wrapUpOnLimit", True)),
     )
 
     capabilities = CapabilityLibrary(

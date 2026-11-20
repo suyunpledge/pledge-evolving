@@ -24,7 +24,7 @@ from .tool_settings import WorkToolSettings
 
 class RowsModel(QAbstractListModel):
     NAMES = ("sessionId", "title", "subtitle", "roleName", "textContent", "state", "stamp", "changeKey", "changeInfo",
-             "historyIndex", "toolReceipts")
+             "historyIndex", "toolReceipts", "continuable")
 
     def __init__(self, rows=(), parent=None):
         super().__init__(parent)
@@ -43,6 +43,8 @@ class RowsModel(QAbstractListModel):
                 name = self.NAMES[i]
                 if name == "toolReceipts":
                     return self.rows[index.row()].get(name, [])
+                if name == "continuable":
+                    return bool(self.rows[index.row()].get(name, False))
                 return self.rows[index.row()].get(name, -1 if name == "historyIndex" else "")
         return None
 
@@ -391,6 +393,23 @@ class ChatController(QObject):
         self._start_generation()
 
     @Slot()
+    def continueWork(self):
+        """工具回合用完后接着做：等同于用户发一句「继续」，历史里已有完整执行记录。"""
+        if self.busy:
+            return
+        marked = [i for i, row in enumerate(self._messages.rows) if row.get('continuable')]
+        prior, attachments = self._draft, self._attachments
+        self._draft, self._attachments = '继续完成剩余工作', []
+        self.send()
+        if self.busy:
+            for index in marked:
+                self._messages.update(index, continuable=False)
+        # 输入框里原有的草稿与附件不被「继续」吞掉。
+        self._draft, self._attachments = prior, attachments
+        self.draftChanged.emit()
+        self.changed.emit()
+
+    @Slot()
     def retry(self):
         if not self.canRetry:
             return
@@ -568,6 +587,8 @@ class ChatController(QObject):
                     receipt=lambda name, response: self._workerEvent.emit('receipt', (generation, (name, response))),
                     status=update_status,
                     next_round=lambda: self._workerEvent.emit('next_round', (generation, '')))
+                if getattr(result, 'budget_exhausted', False):
+                    self._workerEvent.emit('budget_exhausted', (generation, ''))
                 self._workerEvent.emit("done", (generation, result.text))
             except GenerationCancelled:
                 self._workerEvent.emit("cancelled", (generation, ""))
@@ -644,6 +665,9 @@ class ChatController(QObject):
             self._changes.record(*value)
             receipts = self._messages.rows[self._reply_index].get('toolReceipts', [])
             self._messages.update(self._reply_index, toolReceipts=[*receipts, preview_receipt(*value)])
+            return
+        if kind == 'budget_exhausted':
+            self._messages.update(self._reply_index, continuable=True)
             return
         if kind == 'status':
             self._status = value

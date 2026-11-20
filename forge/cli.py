@@ -397,6 +397,7 @@ def cmd_run(args) -> int:
             max_steps=loop_max_steps,
             max_depth=int(cfg.get("loop", "maxDepth", 2)),
             spawn_budget=int(cfg.get("loop", "spawnBudget", 8)),
+            wrap_up_on_limit=bool(cfg.get("loop", "wrapUpOnLimit", True)),
             context_chars=ctx_budget,
         ),
         observer=progress,

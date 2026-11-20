@@ -32,6 +32,16 @@ WORK_HANDOFF = {'type': 'function', 'function': {
 CHAT_CONTEXT = ('当前处于 Chat 模式。普通对话和现有 MCP 工具能完成的任务留在 Chat。'
                 '如果当前用户任务确实需要操作电脑、读写项目文件、运行代码或使用其他 Work 工具，'
                 '调用 forge_enter_work 并说明原因，切换后继续同一任务。仅解释步骤或给出建议时不切换。')
+MAX_TURNS = 8
+# 只附在当次请求尾部、不写入 messages：前缀缓存不变，续跑时也不残留过期提醒。
+BUDGET_NOTES = {
+    2: '本轮还剩 2 次模型回合（含本次）。请集中完成最重要的剩余工作，把互不依赖的工具调用合并到本次一起发出，不要再开新的探索。',
+    1: '这是本轮最后一次模型回合。请直接给出结论；如必须调用工具，只做让工作区保持一致所需的最少操作，之后会请你不带工具地汇报进度。',
+}
+BUDGET_SUMMARY = ('本轮工具调用次数已用完，之后的工具调用不会再执行。请不调用任何工具，用几行简短文字说明：'
+                  '已完成什么、工作区当前状态、还剩什么，以及用户让你继续时的下一步。')
+BUDGET_LEAD = f'已达本轮 {MAX_TURNS} 次工具调用上限，以下是进度小结；点「继续」可接着做。\n\n'
+
 WORK_CONTEXT = ('当前已切换至 Work，继续处理同一条用户消息。Work 工具定义已随本轮请求提供，'
                 '直接调用列表中的匹配工具。读取项目文件时优先使用已提供的 forge_read_range 或 '
                 'forge_read_file。forge_tool_search 只用于发现尚未加载的工具。')
@@ -91,12 +101,16 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
         mcp_tools = {name: entry for name, entry in mcp_tools.items() if name.startswith('mcp_')}
     tools = schemas(mcp_tools, chat_mode)
     guard = ExecutionGuard()
-    for turn in range(8):
+    for turn in range(MAX_TURNS):
         if cancel.is_set():
             raise GenerationCancelled('已停止生成')
         guidance = (CHAT_CONTEXT if tools_enabled else '当前处于 Chat 模式，请直接回复。') if chat_mode else ''
         context = '\n'.join(part for part in (system_context, guidance) if part)
-        current = [ChatMessage('system', context), *messages] if context else messages
+        current = [ChatMessage('system', context), *messages] if context else list(messages)
+        # 能走到倒数第二轮说明前面一直在调工具；首轮最多是第 1 轮，不会误触。
+        note = BUDGET_NOTES.get(MAX_TURNS - turn)
+        if note:
+            current.append(ChatMessage('user', note))
         result = client.stream_chat(current, model=model, reasoning_effort=effort, temperature=temperature,
                                     on_chunk=chunk, cancel_event=cancel, tools=tools)
         if not result.tool_calls:
@@ -120,7 +134,7 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
                     if not tools_enabled:
                         raise PermissionError('当前工具设置或权限不允许此调用。')
                     if name == ENTER_WORK:
-                        if not chat_mode or enter_work is None or switch_reason or turn == 7:
+                        if not chat_mode or enter_work is None or switch_reason or turn == MAX_TURNS - 1:
                             raise PermissionError('当前回合不能切换模式。')
                         reason = arguments.get('reason')
                         if set(arguments) != {'reason'} or not isinstance(reason, str) or not 0 < len(reason.strip()) <= 240:
@@ -175,4 +189,32 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
             mcp_tools, call_mcp = mcp or ({}, None)
             tools = schemas(mcp_tools, chat_mode)
         status('工具已返回，正在生成回复…')
-    raise GatewayError('已达 8 轮工具调用上限。已有执行记录已保存。')
+    limit_error = GatewayError(f'已达 {MAX_TURNS} 轮工具调用上限。已有执行记录已保存。')
+    if cancel.is_set():
+        raise GenerationCancelled('已停止生成')
+    context = '\n'.join(part for part in (system_context, BUDGET_SUMMARY) if part)
+    status('工具调用已达上限，正在整理进度…')
+    lead = [True]
+
+    def summary_chunk(piece):
+        if lead[0]:
+            chunk(BUDGET_LEAD)
+            lead[0] = False
+        chunk(piece)
+    try:
+        # 工具声明照旧带上（历史里有工具调用的协议需要）；模型仍发起调用也一律不执行。
+        result = client.stream_chat([ChatMessage('system', context), *messages], model=model,
+                                    reasoning_effort=effort, temperature=temperature,
+                                    on_chunk=summary_chunk, cancel_event=cancel, tools=tools)
+    except GatewayError:
+        raise limit_error from None
+    if cancel.is_set():
+        raise GenerationCancelled('已停止生成')
+    if result.tool_calls or not (result.text or '').strip():
+        raise limit_error
+    if lead[0]:
+        chunk(BUDGET_LEAD)
+    result.text = BUDGET_LEAD + result.text.strip()
+    result.tool_calls = []
+    result.budget_exhausted = True
+    return result
