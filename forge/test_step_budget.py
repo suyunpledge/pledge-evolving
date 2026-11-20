@@ -1,12 +1,14 @@
 """Step-budget awareness: transient reminders near max_steps and a tool-free wrap-up summary."""
 import copy
+import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 from .context_transaction import valid_tool_pairs
 from .loop import Agent, LoopLimits
-from .model import Completion, TransportError, Usage
+from .model import Completion, RateLimited, TransportError, Usage
 from .policy import Mode, Policy
 from .test_project_rules import Router
 from .tools import build_builtin_registry
@@ -23,6 +25,18 @@ class FailingSummaryRouter(Router):
             self.calls.append(copy.deepcopy(messages))
             raise TransportError('upstream down')
         return super().complete(messages, **kwargs)
+
+
+BAD = '<tool_call>{invalid}</tool_call>'
+
+
+class RaisingRouter(Router):
+    def complete(self, messages, **kwargs):
+        value = next(self.answers)
+        self.calls.append(copy.deepcopy(messages))
+        if isinstance(value, Exception):
+            raise value
+        return value if isinstance(value, Completion) else Completion(value, Usage(1, 1, 'test', 'fake'))
 
 
 class StepBudgetTests(unittest.TestCase):
@@ -89,6 +103,68 @@ class StepBudgetTests(unittest.TestCase):
                 self.assertEqual(len(router.calls), steps)
                 self.assertNotIn('Step budget', str(router.calls))
                 self.assertEqual(report.text, f'[stopped: max_steps={steps}] last tool: read_file')
+
+    # -- 第三组：哪些回合在消耗步数 ------------------------------------------
+    def test_format_errors_count_only_when_consecutive(self):
+        router = Router([BAD, read('f0.txt'), BAD, read('f1.txt'), BAD, read('f2.txt'), 'done'])
+        report = self.agent(router, max_steps=8).run('Read files.')
+        self.assertEqual(report.stopped, 'final')
+        self.assertEqual(report.text, 'done')
+        router = Router([BAD] * 5)
+        self.assertEqual(self.agent(router, max_steps=8).run('Read files.').stopped, 'format_error')
+        self.assertEqual(len(router.calls), 3)
+
+    def test_format_error_turns_are_refunded_up_to_a_cap(self):
+        router = Router([BAD, BAD, *(read(f'f{i}.txt') for i in range(4)), 'done'])
+        report = self.agent(router, max_steps=6).run('Read files.')
+        self.assertEqual(report.stopped, 'final')
+        extended = [e for e in report.events if e['type'] == 'step_budget_extended']
+        self.assertEqual([e['reason'] for e in extended], ['format_error'] * 2)
+        # 第 4 次起不再退还：3 次退还后预算回到 max_steps + 3
+        answers = [BAD, BAD, read('f0.txt'), BAD, BAD, read('f1.txt'), *(read(f'f{i}.txt') for i in range(2, 8))]
+        router = Router(answers)
+        report = self.agent(router, max_steps=6).run('Read files.')
+        self.assertEqual(report.stopped, 'max_steps')
+        self.assertEqual(len([c for c in router.calls if 'used up' not in str(c[-1])]), 9)
+
+    def test_acceptance_repair_keeps_room_to_fix_and_answer(self):
+        result = self.ws / 'result.json'
+        result.write_text('{"ready":false}', encoding='utf-8')
+        fix = Completion('', Usage(1, 1, 'test', 'fake'), wire='openai', tool_calls=[{
+            'id': 'fix', 'name': 'write_file', 'args': {'path': 'result.json', 'content': '{"ready":true}'},
+            'wire': 'openai'}])
+        router = Router([*(read(f'f{i}.txt') for i in range(5)), 'done', fix, 'done'])
+        agent = Agent(home=self.root / 'home', workspace=self.ws, router=router, wire_hint='openai',
+                      registry=build_builtin_registry(),
+                      policy=Policy(workspace=self.ws, mode=Mode.ACCEPT_EDITS, non_interactive=True),
+                      limits=LoopLimits(max_steps=6), project_rules=False)
+        self.addCleanup(agent.secret_scope.close)
+        report = agent.run('finish', acceptance={'max_attempts': 2, 'criteria': [{
+            'id': 'environment', 'kind': 'env_probe', 'env': 'workspace', 'probe': 'json_value',
+            'input': {'path': 'result.json', 'pointer': '/ready'}, 'expect': True}]})
+        self.assertEqual(report.stopped, 'final')
+        self.assertEqual(json.loads(result.read_text(encoding='utf-8')), {'ready': True})
+        self.assertTrue(any(e['type'] == 'step_budget_extended' and e['reason'] == 'acceptance_repair'
+                            for e in report.events))
+
+    def test_model_retries_are_per_step_with_a_run_budget_and_retry_after(self):
+        sleeps = []
+        answers = [RateLimited('429', retry_after=7), read('f0.txt'),
+                   TransportError('502'), read('f1.txt'),
+                   TransportError('503'), read('f2.txt'),
+                   TransportError('504'), 'never reached']
+        router = RaisingRouter(answers)
+        with mock.patch('forge.loop.time.sleep', sleeps.append):
+            report = self.agent(router, max_steps=8).run('Read files.')
+        self.assertEqual(report.stopped, 'error')
+        self.assertEqual(sleeps, [7.0, 10.0, 20.0])
+        retries = [e for e in report.events if e['type'] == 'model_retry']
+        self.assertEqual([e['retries_left'] for e in retries], [2, 1, 0])
+        self.assertEqual(sum(1 for s in report.steps if s.tool), 3)
+        with mock.patch('forge.loop.time.sleep', sleeps.append):
+            sleeps.clear()
+            ok = self.agent(RaisingRouter([RateLimited('429', retry_after=900), 'done'])).run('hi')
+        self.assertEqual((ok.stopped, sleeps), ('final', [60.0]))
 
 
 if __name__ == '__main__':

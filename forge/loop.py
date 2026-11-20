@@ -336,7 +336,7 @@ class Agent:
         # 窗口化：最近 8 次工具调用里同工具 ≥6 次即触发（严格连续 6 是特例）
         self._tool_window = deque(maxlen=8)
         # 步级模型重试：长链路工程任务已积累的工作不应被一次瞬时 API 抖动报废
-        self._model_retry_used = False
+        self._model_retries_left = self._MODEL_RETRY_BUDGET
         self._streak_warned_tool = ''  # 已提醒过的热工具；退出窗口即复位
         self._streak_pending: list[str] = []
         self._streak_budget = 2  # 每 run 至多提醒两次，防提醒本身变噪声
@@ -1213,7 +1213,7 @@ class Agent:
             self._supervisor_pending = []
             self._supervisor_pending_bus = []
             self._tool_window.clear()
-            self._model_retry_used = False
+            self._model_retries_left = self._MODEL_RETRY_BUDGET
             self._streak_warned_tool = ''
             self._streak_pending = []
             self._streak_budget = 2
@@ -1502,10 +1502,15 @@ class Agent:
         self._emit(type="task_contract", contract=self.task_contract.to_raw())
         self._emit(type="workflow_state", run_id=self._run_id, phase="executing")
         self._rule_task_content = pinned_task
-        format_errors = 0
+        format_errors = 0          # 连续格式错误；一次有效的工具回合即清零
+        format_refunds = 0         # 已退还给格式错误回合的步数（每 run 有上限）
         stopped = "max_steps"
+        # 本 run 的回合天花板：从 max_steps 起步，格式错误退还与验收返工保底会抬高它。
+        self._step_ceiling = self.limits.max_steps
 
-        for index in range(1, self.limits.max_steps + 1):
+        index = 0
+        while index < self._step_ceiling:
+            index += 1
             self._check_cancel()
             self._due_check(index)
             self._refresh_project_rules(messages)
@@ -1563,7 +1568,7 @@ class Agent:
                     # 续跑时历史里也不会残留过期的"还剩 N 步"。
                     request_messages = [*messages, {"role": "user", "content": reminder}]
                     self._emit(type="step_budget_warning", step=index,
-                               remaining=self.limits.max_steps - index + 1)
+                               remaining=self._step_ceiling - index + 1)
                 for _model_attempt in (0, 1):
                     try:
                         completion = self.router.complete(
@@ -1576,15 +1581,17 @@ class Agent:
                         self._check_cancel()
                         if (_model_attempt == 0
                                 and getattr(_retry_exc, "retryable", False)
-                                and not self._model_retry_used):
-                            self._model_retry_used = True
-                            self._emit(type="model_retry", wait_seconds=5,
+                                and self._model_retries_left > 0):
+                            wait = self._model_retry_wait(_retry_exc)
+                            self._model_retries_left -= 1
+                            self._emit(type="model_retry", wait_seconds=wait, step=index,
+                                       retries_left=self._model_retries_left,
                                        error=str(_retry_exc)[:200])
                             if self.cancellation_event is not None:
-                                self.cancellation_event.wait(5)
+                                self.cancellation_event.wait(wait)
                                 self._check_cancel()
                             else:
-                                time.sleep(5)
+                                time.sleep(wait)
                             continue
                         raise
             except TransportError as exc:
@@ -1665,6 +1672,7 @@ class Agent:
                     if format_errors >= 3:
                         return self._finish(RunReport(text="[stopped: invalid tool protocol after 3 attempts]",
                             steps=steps, usage=usage_total, stopped="format_error", events=self.events))
+                    format_refunds = self._refund_format_step(format_refunds)
                     # No call in this malformed batch ran. Do not replay invalid
                     # native messages (unmatched IDs make the next request fail).
                     messages.append({"role": "user", "content":
@@ -1691,6 +1699,7 @@ class Agent:
                                 steps=steps, usage=usage_total, stopped="converged", events=self.events))
                         acceptance_state = self._verify_acceptance(messages, text)
                         if acceptance_state == 'repair':
+                            self._reserve_repair_steps(index)
                             continue
                         if acceptance_state != 'passed':
                             return self._finish(RunReport(
@@ -1711,6 +1720,7 @@ class Agent:
                     if format_errors >= 3:
                         return self._finish(RunReport(text="[stopped: invalid tool protocol after 3 attempts]",
                             steps=steps, usage=usage_total, stopped="format_error", events=self.events))
+                    format_refunds = self._refund_format_step(format_refunds)
                     messages.append({"role": "assistant", "content": text})
                     messages.append({"role": "user", "content":
                                      "No valid tool call found. Emit exactly one block like "
@@ -1728,6 +1738,7 @@ class Agent:
                 guard=self._guard, supervisor_row=self._supervisor_tool_row)
             if turn.stopped == 'unknown_outcome':
                 return self._stop_unknown(steps, usage_total)
+            format_errors = 0   # 有效工具回合：格式错误只按"连续"计
             if turn.stopped == 'stalled':
                 self._emit(type='loop_stop', reason='stalled', steps=len(steps), detection=turn.detection)
                 return self._finish(RunReport(
@@ -1765,12 +1776,41 @@ class Agent:
         self._checkpoint_conversation(messages, task, report, envelope, 'step_budget')
         return report
 
+    # 一个 run 里"等一会儿再试"的总次数（每步最多一次）；长任务不再因第二次
+    # 偶发 429/5xx 整体失败。等待优先听服务端 Retry-After，并夹在 [2, 60] 秒。
+    _MODEL_RETRY_BUDGET = 3
+    _FORMAT_REFUND_CAP = 3     # 格式错误回合最多退还 3 步，不让格式问题吃掉干活的步数
+    _REPAIR_RESERVE = 3        # 验收返工后至少还能再走 3 回合（改、验、答）
+
+    def _model_retry_wait(self, exc) -> float:
+        hinted = getattr(exc, "retry_after", None)
+        try:
+            hinted = float(hinted) if hinted is not None else None
+        except (TypeError, ValueError):
+            hinted = None
+        used = self._MODEL_RETRY_BUDGET - self._model_retries_left
+        wait = hinted if hinted is not None and hinted > 0 else 5.0 * (2 ** used)
+        return min(60.0, max(2.0, wait))
+
+    def _refund_format_step(self, refunds: int) -> int:
+        if refunds >= self._FORMAT_REFUND_CAP:
+            return refunds
+        self._step_ceiling += 1
+        self._emit(type="step_budget_extended", reason="format_error", ceiling=self._step_ceiling)
+        return refunds + 1
+
+    def _reserve_repair_steps(self, index: int) -> None:
+        needed = index + self._REPAIR_RESERVE
+        if needed > self._step_ceiling:
+            self._step_ceiling = needed
+            self._emit(type="step_budget_extended", reason="acceptance_repair", ceiling=self._step_ceiling)
+
     _STEP_BUDGET_MIN = 6   # 更小的预算多是调度/探针类短任务，不打扰
 
     def _step_budget_reminder(self, index: int) -> str:
         if not self.limits.wrap_up_on_limit or self.limits.max_steps < self._STEP_BUDGET_MIN:
             return ''
-        remaining = self.limits.max_steps - index + 1
+        remaining = self._step_ceiling - index + 1
         if remaining == 2:
             body = ("Step budget: 2 model turns left in this run, including this one. "
                     "Finish the most important remaining work now and batch independent tool calls "
