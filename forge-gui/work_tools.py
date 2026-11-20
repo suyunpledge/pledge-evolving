@@ -4,16 +4,17 @@ from forge import toolwire
 from forge.secrets import redact
 
 
-def prepare_calls(rows):
+def prepare_calls(rows, *, model=""):
     """Validate the complete native batch before dispatching any call."""
     if not isinstance(rows, list):
         raise ValueError('Tool calls must be a list')
     for row in rows:
         if not isinstance(row, dict) or not isinstance(row.get('function'), dict):
             raise ValueError('Invalid tool call function')
-    calls = toolwire.parse_tool_calls({'tool_calls': rows})
+    message = {'tool_calls': rows}
+    calls = toolwire.parse_tool_calls(message, model=model)
     normalized = toolwire.normalize_native_calls([c.to_raw() for c in calls], 'openai')
-    return toolwire.assistant_message('', normalized, 'openai')['tool_calls']
+    return toolwire.replay_assistant_message(message, '', normalized, 'openai')['tool_calls']
 
 
 def invoke(args, dispatch):

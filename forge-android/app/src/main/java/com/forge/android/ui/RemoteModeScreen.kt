@@ -99,7 +99,7 @@ fun RemoteModeScreen() {
         // 匹配电脑（一键流）
         if (!paired) {
             OutlinedTextField(value = host, onValueChange = { host = it },
-                label = { Text("电脑 IP（如 192.168.1.100）") }, singleLine = true)
+                label = { Text("电脑主机名或 IP") }, singleLine = true)
             OutlinedTextField(value = port, onValueChange = { port = it },
                 label = { Text("端口（默认 8765）") }, singleLine = true)
             Button(onClick = { showCodeDialog = true },
@@ -107,7 +107,7 @@ fun RemoteModeScreen() {
                 modifier = Modifier.fillMaxWidth()) {
                 Text("匹配电脑")
             }
-            Text("电脑侧运行 remote-host.py 后会弹出配对码——点上方按钮输入即可",
+            Text("局域网配对使用桌面 TLS 证书对应的主机名或 IP，再输入桌面显示的配对码。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         }

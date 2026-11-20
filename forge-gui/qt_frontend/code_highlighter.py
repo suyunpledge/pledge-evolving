@@ -8,11 +8,11 @@ class CodeHighlighter(QSyntaxHighlighter):
         super().__init__(document)
         self.rules = []
         for pattern, color in [
-            (r'\b(?:class|def|async|await|return|yield|if|else|elif|for|while|try|except|finally|raise|with|as|import|from|pass|break|continue|in|is|not|and|or|lambda|const|let|var|function|new|export|default|true|false|null|None|True|False)\b', '#ba9bd6'),
-            (r'\b\d+(?:\.\d+)?\b', '#d4bc8d'),
-            (r'\b[A-Za-z_]\w*(?=\s*\()', '#93c4de'),
-            (r'"(?:[^"\\]|\\.)*"|\x27(?:[^\x27\\]|\\.)*\x27', '#a8c79a'),
-            (r'(?://|#).*$', '#788b80'),
+            (r'\b(?:class|def|async|await|return|yield|if|else|elif|for|while|try|except|finally|raise|with|as|import|from|pass|break|continue|in|is|not|and|or|lambda|const|let|var|function|new|export|default|true|false|null|None|True|False)\b', '#c7a4e8'),
+            (r'\b\d+(?:\.\d+)?\b', '#e4c48b'),
+            (r'\b[A-Za-z_]\w*(?=\s*\()', '#8ac8eb'),
+            (r'"(?:[^"\\]|\\.)*"|\x27(?:[^\x27\\]|\\.)*\x27', '#9fd499'),
+            (r'(?://|#).*$', '#7a8c84'),
         ]:
             fmt = QTextCharFormat()
             fmt.setForeground(QColor(color))

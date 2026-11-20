@@ -14,7 +14,7 @@ class Client:
         self.requests, self.summary, self.fail_summary = [], summary, fail_summary
 
     def list_tools(self, **_):
-        return []
+        return [{'type': 'function', 'function': {'name': 'read_file', 'parameters': {'type': 'object'}}}]
 
     def stream_chat(self, messages, on_chunk, **_):
         self.requests.append(list(messages))

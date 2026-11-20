@@ -104,7 +104,7 @@ class RemoteConnector:
                        timeout=10)
             tools_result = self._rpc("tools/list", {}, timeout=20)
             from mcp_connectors import _NAME_TOOL_RE
-            from mcp_bridge import _is_valid_name, _guess_read_only
+            from forge.contrib.mcp_bridge import _is_valid_name, _guess_read_only
             keep = []
             for t in tools_result.get("tools", []):
                 tn = t.get("name", "")

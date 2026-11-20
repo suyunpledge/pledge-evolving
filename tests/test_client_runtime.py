@@ -104,6 +104,17 @@ class ClientRuntimeTests(unittest.TestCase):
             time.sleep(.02)
         self.fail('worker did not reach a terminal state')
 
+    def test_web_permission_and_origin_are_checked_before_creating_a_run(self):
+        base = self.server()
+        for headers in ({'Origin': 'http://unrelated.example'}, {'Host': 'unrelated.example'}):
+            with self.subTest(headers=headers):
+                self.assertEqual(self.http(base, '/api/run', {'task': 'fixture'}, headers=headers)[0], 403)
+        code, _ = self.http(base, '/api/run', {'task': 'fixture', 'policy_mode': 'bypassPermissions'})
+        self.assertEqual(code, 400)
+        self.assertEqual(self.store.list_recent(), [])
+        with self.assertRaisesRegex(ValueError, 'loopback'):
+            client.ClientServer(('0.0.0.0', 0), workspace=self.ws, store=self.store)
+
     def test_config_options_compose_without_overwriting_each_other(self):
         cfg = client.compose_run_config(self.ws, client.CATALOG[1]['label'], 'economy', 'on', 'coding', 'read-only')
         self.assertEqual(cfg.get('model', 'primary'), ['deepseek', client.CATALOG[1]['model']])

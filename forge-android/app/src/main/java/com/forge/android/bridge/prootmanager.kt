@@ -88,7 +88,9 @@ class ProotManager(private val context: Context) {
         target.mkdirs()
     }
 
-    fun exec(command: List<String>): Process = host("libproot.so",listOf(
+    fun exec(command: List<String>): Process = exec(command, null)
+
+    private fun exec(command: List<String>, vaultKey: String?): Process = host("libproot.so",listOf(
         "-0","-r",rootfsDir.absolutePath,"-b","/proc","-b","/sys","-b","/dev",
         "-b","${File(context.filesDir,"workspace").absolutePath}:/workspace",
         "-b","${File(context.filesDir,"forge-home").absolutePath}:/forge-home",
@@ -96,9 +98,11 @@ class ProotManager(private val context: Context) {
         "HOME=/root","PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin","TMPDIR=/tmp",
         "FORGE_ROOT=/opt/forge","FORGE_HOME=/forge-home","FORGE_WORKSPACE=/workspace")+command).apply {
             environment()["FORGE_BRIDGE_TOKEN"] = BridgeToken.get(context)
+            if (vaultKey != null) environment()["FORGE_BRIDGE_VAULT_KEY"] = vaultKey
         }.start()
 
     fun startBridge(): Process = exec(listOf("/usr/bin/python3","-m","uvicorn","forge_bridge:app",
-        "--host","127.0.0.1","--port","8000","--app-dir","/opt/forge","--loop","asyncio"))
+        "--host","127.0.0.1","--port","8000","--app-dir","/opt/forge","--loop","asyncio"),
+        BridgeToken.credentialKey(context))
     fun stop() { stopped=true;extraction.getAndSet(null)?.destroyForcibly() }
 }

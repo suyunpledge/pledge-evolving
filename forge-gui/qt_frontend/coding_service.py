@@ -24,16 +24,19 @@ class CodingService:
         self.contexts, self.events, self.queue = [], [], []
         self.last_prompt, self.status = '', ''
         self.cancel = threading.Event()
+        self._initialize_lock = threading.Lock()
 
     def initialize(self):
-        if self.runtime and self.runtime.ready:
-            return
-        root = self.host.home.parent / ('.forge-development' if self.host.home.name == '.forge' else self.host.home.name + '-development')
-        self.runtime = DevelopmentRuntime(self.state, emit=self.event, runtime_home=root,
+        with self._initialize_lock:
+            if self.runtime and self.runtime.ready:
+                return
+            root = self.host.home.parent / ('.forge-development' if self.host.home.name == '.forge'
+                                            else self.host.home.name + '-development')
+            runtime = DevelopmentRuntime(self.state, emit=self.event, runtime_home=root,
                                          model_router_factory=ModelSettingsSource(self.host.home))
-        result = self.runtime.initialize(self.host.workspace)
-        self.catalog = result['models']
-        self.runtime.bridge.agent.action_executor.approver = self.host.approve
+            result = runtime.initialize(self.host.workspace)
+            runtime.bridge.agent.action_executor.approver = self.host.approve
+            self.catalog, self.runtime = result['models'], runtime
         self.publish()
 
     def event(self, event):
@@ -63,7 +66,7 @@ class CodingService:
                     canRevert=bool(ids) and not restored and not any((a.get('meta') or {}).get('change_review_incomplete') for a in record.actions.values()),
                     files=[Path(c['path']).name for c in list(record.changes.values())[:4]]))
         labels = {rt.catalog[r['id']]: r['label'] for r in self.catalog} if rt else {}
-        self.host.emit('coding_state', state=dict(ready=True, status=self.status,
+        self.host.emit('coding_state', state=dict(ready=bool(rt and rt.ready), status=self.status,
             project=self.host.workspace.name, locked='', busy=self.host.running, loading=False,
             queue=len(self.queue), planning=self.state.value('planning'), model=self.model,
             role=self.role, simple=self.simple, models=['继承配置', *labels.values()],

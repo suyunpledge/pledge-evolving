@@ -116,6 +116,7 @@ def prefix_fingerprint(payload: dict[str, Any], *, model: str = "",
             "wire": wire, "cache_mode": cache_mode,
             "reasoning": reasoning_signature(payload) if include_reasoning else {},
             **({'prompt_cache_key': payload['prompt_cache_key']} if 'prompt_cache_key' in payload else {}),
+            **({'prompt_cache_options': payload['prompt_cache_options']} if 'prompt_cache_options' in payload else {}),
         },
     )
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]

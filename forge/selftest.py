@@ -2741,6 +2741,18 @@ def test_global_optimizations() -> None:
         probs = reg_mod.ModuleRegistry._static_checks(src, "evil")
         check(f"gate:h6-blocked:{label}", len(probs) > 0, str(probs)[:70])
 
+    # Use an artificial restricted name to test the scanner without loading
+    # a contribution or calling any capability.
+    from unittest.mock import patch
+    with patch.object(reg_mod, "DANGEROUS_LEAVES", frozenset({"fixture_action"})):
+        call = reg_mod.ModuleRegistry._static_checks("items[index].fixture_action()", "fixture")
+        reference = reg_mod.ModuleRegistry._static_checks(
+            "selected = items[index].fixture_action", "fixture")
+        benign = reg_mod.ModuleRegistry._static_checks("items[index].label()", "fixture")
+    check("gate:unresolved-subscript-call", "unresolved call to .fixture_action()" in call)
+    check("gate:unresolved-subscript-reference", "unresolved reference: .fixture_action" in reference)
+    check("gate:benign-subscript-clean", not benign, str(benign)[:90])
+
     # benign references must stay clean with the Attribute/Name scanners on
     benign2_src = (
         "import os\nimport io\nfrom pathlib import PurePosixPath\n"

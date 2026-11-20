@@ -23,6 +23,8 @@ ENDPOINTS = {
     "doubao-seed-evolving": "https://ark.cn-beijing.volces.com/api/coding/v3",
     "glm-5.3": "https://open.bigmodel.cn/api/coding/paas/v4",
     "qwen3.8-max": "https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1",
+    "gpt-6.1-sol": "https://api.openai.com/v1",
+    "gpt-6.1-terra": "https://api.openai.com/v1",
 }
 
 
@@ -144,6 +146,69 @@ class VendorWireTests(unittest.TestCase):
     def test_openai_does_not_infer_all_effort_levels_from_one_config(self):
         shaped, _ = shape_reasoning({"reasoning_effort": "xhigh"}, PROFILES["openai"])
         self.assertEqual(shaped["reasoning_effort"], "xhigh")
+
+    def test_openai_61_translates_the_completion_limit(self):
+        for chosen in ("gpt-6.1-sol", "gpt-6.1-terra"):
+            with self.subTest(model=chosen):
+                (_, direct), _ = self.transport_call(chosen, max_tokens=96)
+                self.assertEqual(direct["max_completion_tokens"], 96)
+                self.assertNotIn("max_tokens", direct)
+
+                cfg = GatewayConfig(upstream=ENDPOINTS[chosen], api_key="", models=[chosen],
+                                    wire="openai", upstream_wire="openai")
+                cfg.cache_warmth = CacheWarmth()
+                original = {"model": chosen, "messages": [{"role": "user", "content": "hi"}],
+                            "max_tokens": 96, "max_completion_tokens": 120}
+                gateway, _, _ = cfg.prepare_request(original)
+                self.assertEqual(gateway["max_completion_tokens"], 120)
+                self.assertNotIn("max_tokens", gateway)
+                self.assertEqual(original["max_tokens"], 96)
+
+    def test_openai_61_caches_the_leading_block_across_changing_context(self):
+        prefix = "Stable inventory instructions. " * 180
+        chosen = "gpt-6.1-sol"
+        gateway = GatewayConfig(upstream=ENDPOINTS[chosen], api_key="", models=[chosen],
+                                wire="openai", upstream_wire="openai")
+        gateway.cache_warmth = CacheWarmth()
+        def request(context):
+            return {"model": chosen, "messages": [
+                {"role": "system", "content": prefix},
+                {"role": "system", "content": context},
+                {"role": "user", "content": "Reply READY"},
+            ]}
+        first = request("Context A")
+        shaped, plan, _ = gateway.prepare_request(first)
+        changed, next_plan, _ = gateway.prepare_request(request("Context B"))
+        self.assertEqual(shaped["prompt_cache_options"], {"mode": "implicit", "ttl": "30m"})
+        self.assertEqual(shaped["messages"][0]["content"], [
+            {"type": "text", "text": prefix, "prompt_cache_breakpoint": {"mode": "explicit"}}])
+        self.assertEqual(shaped["messages"][0], changed["messages"][0])
+        self.assertEqual(plan["fingerprint"], next_plan["fingerprint"])
+        self.assertEqual(first["messages"][0]["content"], prefix)
+        self.assertEqual(shaped["messages"][1:], first["messages"][1:])
+
+    def test_openai_cache_does_not_override_older_routes_or_caller_cache_options(self):
+        model_id = "gpt-6.1-terra"
+        messages = [{"role": "system", "content": "Stable fixture " * 400},
+                    {"role": "system", "content": "Changing notes"},
+                    {"role": "user", "content": "Reply READY"}]
+        payload = {"model": model_id, "messages": messages}
+        for base, chosen, mode in (
+                ("https://reseller.invalid/v1", model_id, "auto"),
+                ("https://api.openai.com/v1", "gpt-6-sol", "auto"),
+                ("https://api.openai.com/v1", model_id, "off")):
+            with self.subTest(base=base, model=chosen, mode=mode):
+                provider = model.Provider("probe", base, default_model=chosen, cache_control=mode)
+                shaped, _ = model._plan_and_shape({**payload, "model": chosen}, messages, provider, chosen)
+                self.assertEqual(shaped["messages"], messages)
+                self.assertNotIn("prompt_cache_options", shaped)
+        provider = model.Provider("probe", ENDPOINTS[model_id], default_model=model_id, cache_control="explicit")
+        explicit, _ = model._plan_and_shape(payload, messages, provider, model_id)
+        self.assertEqual(explicit["prompt_cache_options"]["mode"], "explicit")
+        caller = {**payload, "prompt_cache_options": {"mode": "implicit"}}
+        shaped, _ = model._plan_and_shape(caller, messages, provider, model_id)
+        self.assertEqual(shaped["messages"], messages)
+        self.assertEqual(shaped["prompt_cache_options"], caller["prompt_cache_options"])
 
     def test_deepseek_retains_its_verified_effort_parameter(self):
         (_, payload), _ = self.transport_call("deepseek-flash", reasoning_effort="high")

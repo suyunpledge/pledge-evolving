@@ -10,7 +10,7 @@ ApplicationWindow {
     minimumWidth: workbench.browserVisible ? 1080 : 820; minimumHeight: 620
     visible: typeof smokeMode === "undefined" || !smokeMode
     title: controller.isDemo ? "Forge · Integrated Workbench Preview" : "Forge"
-    color: "#11151c"
+    color: Theme.bgBase
     font: uiFont
     readonly property real sideWidth: width < 1000 ? 220 : 252
     readonly property real browserPanelWidth: workbench.browserVisible ? Math.min(workbench.browserWidth, Math.max(300, width - sideWidth - 450)) : 0
@@ -70,7 +70,7 @@ ApplicationWindow {
             property vector2d canvasSize: Qt.vector2d(width, height)
             fragmentShader: "../shaders/ambient.frag.qsb"
         }
-        Rectangle { anchors.fill: parent; visible: !gpuEnabled; color: "#151b24" }
+        Rectangle { anchors.fill: parent; visible: !gpuEnabled; color: Theme.bgFallback }
         Image {
             id: stillWallpaper; objectName: "stillWallpaper"
             readonly property bool loaded: status === Image.Ready
@@ -96,8 +96,8 @@ ApplicationWindow {
             running: window.active && window.visibility !== Window.Minimized && !controller.reduceMotion
         }
     }
-    Rectangle { width: window.sideWidth; height: parent.height; color: "#70101318" }
-    Rectangle { x: window.sideWidth; width: 1; height: parent.height; color: "#13ffffff" }
+    Rectangle { width: window.sideWidth; height: parent.height; color: Theme.sidebarBg }
+    Rectangle { x: window.sideWidth; width: 1; height: parent.height; color: Theme.divider }
     Connections {
         target: window.wallpaper
         function onChanged() { Qt.callLater(window.refreshBackdrop) }
@@ -142,7 +142,9 @@ ApplicationWindow {
                     width: Math.min(parent.width - 32, messageText.contentWidth + 32)
                     height: messageBody.height + 24
                     radius: 16
-                    color: "#193d495a"
+                    color: Theme.userBubble
+                    border.color: Theme.userBubbleBorder
+                    border.width: 1
                 }
                 Column {
                     id: messageBody
@@ -198,17 +200,21 @@ ApplicationWindow {
                     }
                     Row {
                         visible: message.roleName !== "user" && message.state !== "streaming"
-                        spacing: 12
-                        Text {
-                            text: "复制"; color: copyHover.hovered ? "#e3e7eb" : "#8792a0"; font.pixelSize: 12
+                        spacing: 14
+                        Row {
+                            spacing: 5
+                            Glyph { name: "copy"; ink: copyHover.hovered ? Theme.textPrimary : Theme.textMuted; width: 13; height: 13; anchors.verticalCenter: parent.verticalCenter }
+                            Text { text: "复制"; color: copyHover.hovered ? Theme.textPrimary : Theme.textMuted; font.pixelSize: 12; anchors.verticalCenter: parent.verticalCenter }
                             HoverHandler { id: copyHover; cursorShape: Qt.PointingHandCursor }
                             TapHandler { onTapped: controller.copyText(message.textContent) }
                         }
-                        Text { text: message.state === "stopped" ? "已停止" : message.state === "error" ? "回复未完成" : ""; color: "#b9a68a"; font.pixelSize: 12 }
-                        Text {
+                        Text { visible: message.state === "stopped" || message.state === "error"; text: message.state === "stopped" ? "已停止" : "回复未完成"; color: Theme.warning; font.pixelSize: 12; anchors.verticalCenter: parent.verticalCenter }
+                        Row {
                             visible: message.state === "error" && controller.canRetry
-                            text: "重试"; color: "#c8d7e5"; font.pixelSize: 12
-                            HoverHandler { cursorShape: Qt.PointingHandCursor }
+                            spacing: 5
+                            Glyph { name: "refresh-cw"; ink: retryHover.hovered ? Theme.accentInk : Theme.accent; width: 13; height: 13; anchors.verticalCenter: parent.verticalCenter }
+                            Text { text: "重试"; color: retryHover.hovered ? Theme.accentInk : Theme.accent; font.pixelSize: 12; anchors.verticalCenter: parent.verticalCenter }
+                            HoverHandler { id: retryHover; cursorShape: Qt.PointingHandCursor }
                             TapHandler { onTapped: controller.retry() }
                         }
                         Text {
@@ -309,10 +315,11 @@ ApplicationWindow {
         id: search
         visible: !workbench.navigationOpen
         x: 18; y: 238; width: window.sideWidth - 36; height: 36
-        placeholderText: window.label("搜索对话", "Search chats"); placeholderTextColor: "#7f8a99"
-        color: "#dbe0e6"; leftPadding: 13; rightPadding: 10
+        placeholderText: window.label("搜索对话", "Search chats"); placeholderTextColor: Theme.textMuted
+        color: Theme.textPrimary; leftPadding: 34; rightPadding: 10
         onTextChanged: window.sessionQuery = text.toLowerCase()
         background: GlassSurface { material: window.material; radius: 11; emphasis: search.activeFocus ? 0.6 : 0; tint: "#18263140" }
+        Glyph { x: 11; anchors.verticalCenter: parent.verticalCenter; name: "search"; ink: search.activeFocus ? Theme.accent : Theme.textMuted; width: 15; height: 15 }
     }
     Text { visible: !workbench.navigationOpen; x: 24; y: 298; text: window.label("最近对话", "Recent chats"); color: "#7f8998"; font.pixelSize: 11 }
     ListView {
@@ -445,7 +452,7 @@ ApplicationWindow {
                 GlassButton {
                     objectName: "workToolCatalogButton"
                     visible: !window.conversationOnly
-                    material: window.material; glyph: "blocks"
+                    material: window.material; glyph: "wrench"
                     text: window.columnWidth > 630 ? "工具" : ""
                     tip: controller.toolSettings.enabled ? "管理 Work 工具" : "Work 工具调用已关闭"
                     onClicked: toolCatalog.open()
@@ -460,8 +467,8 @@ ApplicationWindow {
                 GlassButton {
                     objectName: "sendButton"
                     material: window.material; glyph: controller.busy ? "square" : "arrow-up"
-                    width: 38; height: 38; cornerRadius: 19; selected: true
-                    enabled: controller.busy || editor.text.trim().length > 0
+                    width: 38; height: 38; cornerRadius: 19; primary: !controller.busy; selected: controller.busy
+                    enabled: controller.busy || (!controller.modelSwitching && editor.text.trim().length > 0)
                     tip: controller.busy ? "停止生成" : "发送消息"
                     onClicked: controller.busy ? controller.stop() : controller.send()
                 }
@@ -473,8 +480,10 @@ ApplicationWindow {
     Rectangle {
         visible: window.chatVisible && controller.error.length > 0
         x: composer.x; y: composer.y - height - 12; width: composer.width
-        height: errorText.implicitHeight + 24; radius: 12; color: "#ed302d29"
-        Text { id: errorText; x: 12; y: 12; width: parent.width - 24; text: controller.error; color: "#e4c49b"; wrapMode: Text.Wrap; font.pixelSize: 12 }
+        height: errorText.implicitHeight + 24; radius: 12
+        color: Theme.dangerSurface; border.color: Theme.dangerBorder; border.width: 1
+        Glyph { x: 12; y: 12; name: "triangle-alert"; ink: Theme.danger; width: 16; height: 16 }
+        Text { id: errorText; x: 34; y: 12; width: parent.width - 46; text: controller.error; color: Theme.dangerText; wrapMode: Text.Wrap; font.pixelSize: 12 }
         TapHandler { onTapped: if (!controller.busy) settings.open() }
     }
 
@@ -488,6 +497,7 @@ ApplicationWindow {
         height: Math.min(400, controller.models.length * 41 + 60)
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         background: GlassSurface { material: window.material; radius: 20; emphasis: 0.3 }
+        onAboutToShow: controller.refreshModelChoices()
         onClosed: if (window.chatVisible) window.focusWorkComposer()
         contentItem: Column {
             spacing: 5
@@ -497,7 +507,7 @@ ApplicationWindow {
                 width: parent.width; height: modelMenu.availableHeight - 30
                 model: controller.models; spacing: 5; clip: true
                 ScrollBar.vertical: ScrollBar { width: 4 }
-                delegate: GlassButton { required property string modelData; material: window.material; width: ListView.view.width; text: modelData.length > 33 ? modelData.slice(0, 32) + "…" : modelData; selected: controller.model === modelData; quiet: true; onClicked: {controller.setModel(modelData); modelMenu.close()} }
+                delegate: GlassButton { required property string modelData; material: window.material; width: ListView.view.width; text: modelData.length > 33 ? modelData.slice(0, 32) + "…" : modelData; selected: controller.model === modelData; enabled: !controller.modelSwitching; quiet: true; onClicked: {controller.setModel(modelData); modelMenu.close()} }
             }
         }
     }
@@ -733,17 +743,17 @@ ApplicationWindow {
             readonly property real buttonWidth: setup.developer ? (width - 2 * spacing) / 3 : (width - spacing) / 2
             GlassButton {
                 objectName: "selectChatMode"; material: window.material; width: modeBar.buttonWidth
-                text: "Chat"; selected: window.chatVisible && window.conversationOnly
+                glyph: modeBar.buttonWidth >= 68 ? "message-square" : ""; text: "Chat"; selected: window.chatVisible && window.conversationOnly
                 tip: "普通对话及 MCP"; enabled: !controller.busy
                 onClicked: { controller.setConversationMode("chat"); workbench.navigate("chat"); window.focusWorkComposer() }
             }
             GlassButton {
                 objectName: "selectWorkMode"; material: window.material; width: modeBar.buttonWidth
-                text: "Work"; selected: window.chatVisible && !window.conversationOnly
+                glyph: modeBar.buttonWidth >= 68 ? "wrench" : ""; text: "Work"; selected: window.chatVisible && !window.conversationOnly
                 tip: "执行任务与使用工具"; enabled: !controller.busy
                 onClicked: { controller.setConversationMode("work"); workbench.navigate("chat"); window.focusWorkComposer() }
             }
-            GlassButton { material: window.material; width: modeBar.buttonWidth; text: "Coding"; visible: setup.developer; selected: window.codingVisible; onClicked: workbench.navigate("development") }
+            GlassButton { material: window.material; width: modeBar.buttonWidth; glyph: modeBar.buttonWidth >= 68 ? "code" : ""; text: "Coding"; visible: setup.developer; selected: window.codingVisible; onClicked: workbench.navigate("development") }
         }
         Row {
             spacing: 8
@@ -801,8 +811,9 @@ ApplicationWindow {
         Rectangle {
             id: hostError; width: parent.width; height: hostErrorText.height + 24
             visible: workbench.nativePageReady && workbench.error !== ""
-            color: "#302d29"; radius: 10
-            Text { id: hostErrorText; x: 12; y: 12; width: parent.width - 70; text: workbench.error; color: "#e4c49b"; wrapMode: Text.Wrap; font.pixelSize: 12 }
+            color: Theme.dangerSurface; border.color: Theme.dangerBorder; border.width: 1; radius: 10
+            Glyph { x: 12; y: 12; name: "triangle-alert"; ink: Theme.danger; width: 16; height: 16 }
+            Text { id: hostErrorText; x: 34; y: 12; width: parent.width - 92; text: workbench.error; color: Theme.dangerText; wrapMode: Text.Wrap; font.pixelSize: 12 }
             GlassButton { material: window.material; glyph: "x"; x: parent.width - width - 8; y: 8; tip: "关闭提示"; onClicked: workbench.clearError() }
         }
         Column {

@@ -83,7 +83,8 @@ class IconRenderingTests(unittest.TestCase):
         widget._copy_selection()
         self.assertEqual(self.root.clipboard_get(), text)
         self.assertGreater(widget.winfo_height(), 24)
-        heading = cw.render_blocks(self.root, "# 完成 🎉 ⏰").winfo_children()[0]
+        heading_row = cw.render_blocks(self.root, "# 完成 🎉 ⏰").winfo_children()[0]
+        heading, = (child for child in heading_row.winfo_children() if isinstance(child, cw.InlineText))
         self.assertEqual(heading.display_text(), "完成 🎉 ⏰")
         self.assertEqual(len(heading.image_names()), 2)
 

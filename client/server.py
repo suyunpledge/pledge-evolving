@@ -21,6 +21,7 @@ v0.3: 功能开关折叠面板 / bundle 模式切换 / 策略配置暴露 / run 
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import os
 import re
@@ -118,7 +119,7 @@ THINKING_MODES = ("off", "smart", "on")
 # TRAE 审查 P0-1：与内核 forge.policy 的合法模式对齐——自定义枚举
 # （full-auto/readonly 不存在于内核）会静默降级为 default（可写基线），
 # 用户选"readonly"实际拿到写权限，语义误导。
-POLICY_MODES = ("default", "acceptEdits", "read-only", "bypassPermissions")
+POLICY_MODES = ("default", "acceptEdits", "read-only")
 
 PROVIDER_ROWS = {
     "deepseek": {"id": "deepseek", "name": "provider:deepseek", "config": {
@@ -370,8 +371,12 @@ def compose_run_config(workspace, model_label=None, strategy=None, thinking=None
         old = cfg.row('thinking')
         patches.append({'id': 'thinking', 'name': 'thinking:mode',
                         'config': {**(dict(old.config) if old else {}), 'mode': thinking}})
+    old = cfg.row('policy')
+    if policy_mode and policy_mode not in POLICY_MODES:
+        raise ValueError('Invalid Web client permission mode')
+    if old and old.config.get('mode') == 'bypassPermissions':
+        policy_mode = policy_mode or 'default'
     if policy_mode:
-        old = cfg.row('policy')
         patches.append({'id': 'policy', 'name': 'policy:core',
                         'config': {**(dict(old.config) if old else {}), 'mode': policy_mode}})
     if patches:
@@ -486,6 +491,32 @@ class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, fmt, *args):
         pass
+
+    def parse_request(self):
+        if not super().parse_request():
+            return False
+        port = self.server.server_port
+        hosts = {f'{self.server.server_address[0]}:{port}', f'localhost:{port}'}
+        if port == 80:
+            hosts.update((self.server.server_address[0], 'localhost'))
+        host = self.headers.get('Host', '').lower()
+        origin = self.headers.get('Origin')
+        cross_origin = (self.command == 'POST'
+                        and self.headers.get('Sec-Fetch-Site') in {'cross-site', 'same-site'})
+        if host not in hosts or cross_origin or (origin is not None and origin != f'http://{host}'):
+            self.close_connection = True
+            # Consume a small request body before closing so Windows can
+            # deliver the rejection instead of resetting an unread socket.
+            try:
+                remaining = int(self.headers.get('Content-Length', '0'))
+                if 0 < remaining <= MAX_PAYLOAD_BYTES:
+                    self.connection.settimeout(1)
+                    self.rfile.read(remaining)
+            except (ValueError, OSError):
+                pass
+            self._send_json({'error': 'local Web client origin required'}, 403)
+            return False
+        return True
 
     def _send_json(self, payload: dict, code: int = 200) -> None:
         body = json.dumps(redact(payload), ensure_ascii=False, default=str).encode("utf-8")
@@ -718,6 +749,11 @@ class ClientServer(ThreadingHTTPServer):
     allow_reuse_address = True
 
     def __init__(self, address, handler=Handler, *, workspace=None, store=None, probes=None):
+        host, port = address
+        host = '127.0.0.1' if host == 'localhost' else host
+        if not ipaddress.IPv4Address(host).is_loopback:
+            raise ValueError('The Web client requires an IPv4 loopback bind')
+        address = (host, port)
         self.probes = probes
         self.workspace = Path(workspace or ROOT / 'workspace').resolve()
         self.store = store if store is not None else STORE

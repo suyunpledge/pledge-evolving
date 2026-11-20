@@ -13,6 +13,7 @@ import logging
 import os
 from pathlib import Path
 import re
+import stat
 import threading
 from urllib.parse import quote, urlsplit
 
@@ -383,7 +384,7 @@ def protect_store_path(path: Path) -> None:
             pass
 
 
-def assert_public_path(path: Path) -> None:
+def assert_public_path(path: Path, *, opened=None) -> None:
     path = Path(path).resolve()
     defaults = {Path.home() / '.forge' / 'secrets.json',
                 Path(os.environ.get('FORGE_HOME', str(Path.home() / '.forge'))) / 'secrets.json'}
@@ -398,7 +399,7 @@ def assert_public_path(path: Path) -> None:
             except OSError:
                 pass
         try:
-            st = path.stat()
+            st = opened if opened is not None else path.stat()
             if (st.st_dev, st.st_ino) in _IDENTITIES:
                 raise PermissionError('Secret Store alias is not accessible to agent tools')
         except FileNotFoundError:
@@ -408,7 +409,14 @@ def assert_public_path(path: Path) -> None:
 def read_public_bytes(path: Path, *, limit: int) -> bytes:
     """Bound the allocation before decoding/parsing untrusted file content."""
     assert_public_path(path)
-    with Path(path).open('rb') as stream:
+    def open_readonly(name, flags):
+        return os.open(name, flags | getattr(os, 'O_NONBLOCK', 0))
+
+    with open(path, 'rb', opener=open_readonly) as stream:
+        opened = os.fstat(stream.fileno())
+        if not stat.S_ISREG(opened.st_mode):
+            raise ValueError('Only regular files can be inspected')
+        assert_public_path(path, opened=opened)
         data = stream.read(limit + 1)
     if len(data) > limit:
         raise ValueError(f'File exceeds the {limit} byte inspection limit')

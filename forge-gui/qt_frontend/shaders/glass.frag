@@ -47,16 +47,16 @@ void main() {
                       texture(backgroundTexture, uv - dispersion).b);
     vec3 frosted = texture(blurredTexture, uv).rgb;
     vec3 col = mix(clear, frosted, frostAmount);
-    col = mix(col, tintColor.rgb, tintColor.a + selectedAmount * 0.035);
+    col = mix(col, tintColor.rgb, tintColor.a + selectedAmount * 0.055);
     // Transmission, a broad reflected softbox, and edge Fresnel are separate terms.
-    col += vec3(0.022, 0.026, 0.032) + selectedAmount * vec3(0.024, 0.028, 0.035);
+    col += vec3(0.022, 0.027, 0.034) + selectedAmount * vec3(0.028, 0.038, 0.052);
     float softbox = pow(1.0 - clamp(local.y / surfaceSize.y, 0.0, 1.0), 3.0);
-    col += softbox * 0.035;
+    col += softbox * 0.040;
     float light = pow(max(dot(normal, normalize(vec2(-0.55, -0.83))), 0.0), 2.0);
     float lowerReflection = pow(max(dot(normal, normalize(vec2(0.7, 0.7))), 0.0), 3.0);
     float hairline = exp(-pow((d + 0.8) / 0.65, 2.0));
-    col += hairline * (0.045 + 0.29 * light + 0.08 * lowerReflection);
-    col += pow(rimDepth, 4.0) * (0.055 * light + 0.025 * lowerReflection);
+    col += hairline * (0.052 + 0.31 * light + 0.09 * lowerReflection + selectedAmount * 0.08);
+    col += pow(rimDepth, 4.0) * (0.060 * light + 0.028 * lowerReflection);
     float pointerGlow = exp(-length((local - pointerPosition) / vec2(145.0, 100.0)) * 2.5);
     col += hoverAmount * pointerGlow * vec3(0.045, 0.048, 0.054);
     float shadowD = roundedBox(p - vec2(0.0, 4.0), surfaceSize * 0.5, r);

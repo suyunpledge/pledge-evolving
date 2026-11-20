@@ -29,10 +29,13 @@ if [[ ! -e /proc/sys/fs/binfmt_misc/qemu-aarch64 ]]; then
 fi
 if [[ "${1:-}" != --repack ]]; then
 debootstrap --variant=minbase --arch=arm64 --foreign --components=main,universe \
-  --include=python3,python3-fastapi,python3-uvicorn,python3-websockets,ca-certificates \
+  --include=python3,python3-fastapi,python3-uvicorn,python3-websockets,python3-cryptography,ca-certificates \
   noble "$ROOT" "${FORGE_UBUNTU_PORTS:-http://ports.ubuntu.com/ubuntu-ports}"
 cp /usr/bin/qemu-aarch64-static "$ROOT/usr/bin/"
 chroot "$ROOT" /debootstrap/debootstrap --second-stage
+elif ! chroot "$ROOT" /usr/bin/python3 -c 'import cryptography'; then
+  chroot "$ROOT" apt-get -o APT::Update::Error-Mode=any update
+  chroot "$ROOT" apt-get install -y --no-install-recommends python3-cryptography
 fi
 mkdir -p "$ROOT/opt/forge" "$ROOT/opt/forge/workspace" "$ROOT/workspace" "$ROOT/forge-home" "$ROOT/tmp"
 chmod 1777 "$ROOT/tmp"
@@ -50,7 +53,7 @@ fi
 mkdir "$ROOT/opt/forge.new"
 "${GIT[@]}" ls-files -z --cached --others --exclude-standard |
   tar --null -T - -cf - | tar -xf - -C "$ROOT/opt/forge.new"
-cp forge-android/bridge/forge_bridge.py forge-android/bridge/bridge_tools.py "$ROOT/opt/forge.new/"
+cp forge-android/bridge/*.py "$ROOT/opt/forge.new/"
 mv "$ROOT/opt/forge" "$ROOT/opt/forge.old"
 mv "$ROOT/opt/forge.new" "$ROOT/opt/forge"
 # Only disposable source in this fixed, resolved build root is replaced.
@@ -60,7 +63,8 @@ printf 'nameserver 1.1.1.1\n' > "$ROOT/etc/resolv.conf"
 chroot "$ROOT" /usr/bin/python3 -c '
 import sys
 sys.path.insert(0,"/opt/forge")
-import forge, fastapi, uvicorn, websockets, forge_bridge
+import forge, fastapi, uvicorn, websockets, cryptography, forge_bridge
+assert {"/assistant/ask", "/remote/pair"} <= {route.path for route in forge_bridge.app.routes}
 from forge.loop import build_agent
 print("arm64 runtime and bridge imports passed")
 '

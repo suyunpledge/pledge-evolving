@@ -30,7 +30,8 @@ def resolve_launch(executable, arguments, environment=None):
     for candidate in candidates:
         root = candidate.resolve()
         gui = root / 'forge-gui'
-        if not (gui / 'forge_qt.py').is_file():
+        if not ((gui / 'forge_qt.py').is_file() and (root / 'run.py').is_file()
+                and (root / 'forge' / '__init__.py').is_file()):
             continue
         runtime = root / '.venv' / 'qt' / 'Scripts' / 'pythonw.exe'
         if not runtime.is_file():

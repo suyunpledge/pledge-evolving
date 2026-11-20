@@ -109,8 +109,11 @@ def main(argv=None):
     controller.chat_mcp_tools = chat_mcp_tools
     controller.navigateRequested.connect(workbench.navigate)
     controller.browseRequested.connect(workbench.openBrowser)
+    controller.modelRequested.connect(workbench.switchChatModel)
+    workbench.gatewayCatalog.connect(controller.setManagedModels)
     workbench.gatewayChanged.connect(controller.setManagedGateway)
     workbench.gatewayChanging.connect(controller.gatewayChanging)
+    workbench.gatewayFailed.connect(controller.gatewayChangeFailed)
     engine = QQmlApplicationEngine()
     engine.rootContext().setContextProperty("controller", controller)
     engine.rootContext().setContextProperty("workbench", workbench)

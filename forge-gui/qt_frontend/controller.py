@@ -14,7 +14,6 @@ from PySide6.QtCore import QAbstractListModel, QModelIndex, QObject, QPointF, Pr
 from PySide6.QtGui import QGuiApplication, QDesktopServices, QTextBlockFormat, QTextCursor, QTransform
 
 from forge_client import ChatMessage, ForgeGatewayClient, GenerationCancelled
-from http_transport import open_response
 from interaction_model import ATTACHMENT_HEADER, MAX_CONTEXT_CHARS, compose_prompt, read_attachment
 from forge.secrets import redact
 from .conversation import preview_receipt
@@ -72,6 +71,7 @@ class ChatController(QObject):
     focusComposer = Signal()
     navigateRequested = Signal(str)
     browseRequested = Signal(str)
+    modelRequested = Signal(str)
     _workerEvent = Signal(str, object)
 
     def __init__(self, home, *, demo=False, client_factory=ForgeGatewayClient, parent=None):
@@ -95,6 +95,9 @@ class ChatController(QObject):
         self._attachments = []
         self._temperature = 0.7
         self._models = ["default"]
+        self._managed_models = None
+        self._pending_model = ''
+        self._switching_model = False
         self._model = str(self._prefs.get("model", "default"))
         self._reasoning = str(self._prefs.get("reasoning", "medium"))
         desktop = {} if demo else self.store.read(Path(home) / 'forge-desktop.json', {})
@@ -148,6 +151,7 @@ class ChatController(QObject):
     error = Property(str, lambda self: self._error, notify=changed)
     model = Property(str, lambda self: self._model, notify=changed)
     models = Property("QStringList", lambda self: self._models, notify=changed)
+    modelSwitching = Property(bool, lambda self: self._switching_model, notify=changed)
     reasoning = Property(str, lambda self: self._reasoning, notify=changed)
     gateway = Property(str, lambda self: self._gateway, notify=changed)
     material = Property(float, lambda self: self._material, notify=changed)
@@ -240,8 +244,7 @@ class ChatController(QObject):
         self._persist()
         self._sid, self._title = sid, str(row.get("title", "对话"))
         self._changes.entries = row.get('changes', {}) if isinstance(row.get('changes'), dict) else {}
-        self._history = [ChatMessage(m['role'], m['content'], tool_calls=m.get('tool_calls'), tool_call_id=m.get('tool_call_id', ''))
-            if m.get('role') == 'tool' or m.get('tool_calls') else ChatMessage.from_session_dict(m)
+        self._history = [ChatMessage.from_session_dict(m)
             for m in row["messages"] if isinstance(m, dict) and m.get("role") in ("user", "assistant", "tool")
             and isinstance(m.get("content"), str)]
         self._messages.reset(self._transcript_rows())
@@ -262,10 +265,36 @@ class ChatController(QObject):
 
     @Slot(str)
     def setModel(self, model):
-        if not self._busy and model in self._models:
-            self._model = model
-            self._save_preferences()
-            self.changed.emit()
+        if self.busy or self._switching_model or model not in self._models:
+            return
+        if model in (self._managed_models or ()):
+            if model != self._model or not self._connected:
+                self._pending_model = model
+                self.gatewayChanging()
+                self.modelRequested.emit(model)
+            return
+        self._model = model
+        self._save_preferences()
+        self.changed.emit()
+
+    @Slot(object)
+    def setManagedModels(self, models):
+        self._managed_models = list(models)
+        self._models = self._managed_models or ["default"]
+        self.changed.emit()
+
+    @Slot()
+    def refreshModelChoices(self):
+        if self._managed_models is None:
+            return
+        from config_model import load_user_layer
+        from .gateway_service import chat_model_routes
+        try:
+            models = list(chat_model_routes(load_user_layer(self.store.home)))
+        except (OSError, ValueError):
+            return
+        if models != self._managed_models:
+            self.setManagedModels(models)
 
     @Slot(str)
     def setReasoning(self, value):
@@ -294,10 +323,12 @@ class ChatController(QObject):
 
     @Slot(str)
     def setGateway(self, value):
+        if self.busy or self._switching_model:
+            return
         self.setManagedGateway(value, None)
 
     @Slot(str, object)
-    def setManagedGateway(self, value, temperature):
+    def setManagedGateway(self, value, details):
         parsed = urlsplit(value.strip())
         if self._busy:
             return
@@ -305,6 +336,16 @@ class ChatController(QObject):
             self._error = "请输入不含账号密码的 HTTP / HTTPS 网关地址。"
             self.changed.emit()
             return
+        model = details.get("model") if isinstance(details, dict) else ""
+        if self._pending_model and model != self._pending_model:
+            return
+        if details is None:
+            self._managed_models = None
+        if model:
+            self._model = model
+        temperature = details.get("temperature") if isinstance(details, dict) else details
+        self._pending_model = ''
+        self._switching_model = False
         self._gateway = value.strip().rstrip("/")
         self._temperature = 0.7 if temperature is None else temperature
         self._save_preferences()
@@ -312,15 +353,27 @@ class ChatController(QObject):
 
     @Slot()
     def gatewayChanging(self):
+        self._switching_model = True
         self._connection_epoch += 1
         self._connected = False
         self._client = None
-        self._status = "正在重新启动网关…"
+        self._error = ""
+        self._status = f"正在连接 {self._pending_model}…" if self._pending_model else "正在重新启动网关…"
+        self.changed.emit()
+
+    @Slot(str, str)
+    def gatewayChangeFailed(self, message, active_url):
+        if not self._switching_model:
+            return
+        self._pending_model = ''
+        self._switching_model = False
+        self._connected = bool(active_url and active_url == self._gateway)
+        self._status, self._error = "切换模型失败", message
         self.changed.emit()
 
     @Slot()
     def refreshConnection(self):
-        if self.demo or self._busy:
+        if self.demo or self._busy or self._switching_model:
             return
         endpoint = self._gateway
         self._connection_epoch += 1
@@ -335,9 +388,7 @@ class ChatController(QObject):
                 online, detail = client.health()
                 models = []
                 if online:
-                    with open_response(client._request("GET", "/v1/models"), timeout=5) as response:
-                        data = json.loads(response.read())
-                        models = [str(x["id"]) for x in data.get("data", []) if isinstance(x, dict) and x.get("id")]
+                    models = client.list_models(timeout=5)
                 self._workerEvent.emit("connection", (ticket, endpoint, online, models, detail))
             except Exception as exc:
                 self._workerEvent.emit("connection", (ticket, endpoint, False, [], str(redact(str(exc)))))
@@ -594,7 +645,7 @@ class ChatController(QObject):
                     next_round=lambda: self._workerEvent.emit('next_round', (generation, '')))
                 if getattr(result, 'budget_exhausted', False):
                     self._workerEvent.emit('budget_exhausted', (generation, ''))
-                self._workerEvent.emit("done", (generation, result.text))
+                self._workerEvent.emit("done", (generation, (result.text, getattr(result, 'responses_replay', None))))
             except GenerationCancelled:
                 self._workerEvent.emit("cancelled", (generation, ""))
             except Exception as exc:
@@ -641,10 +692,17 @@ class ChatController(QObject):
             if endpoint != self._gateway or ticket != self._connection_epoch:
                 return
             self._client = None
+            if self._managed_models is None:
+                self._models = models or ["default"]
+                if self._model not in self._models:
+                    self._model = self._models[0]
+            elif online and self._model not in models:
+                self._connected = False
+                self._status = "网关模型未就绪"
+                self._error = "活动网关与所选模型不一致，请重新选择模型。"
+                self.changed.emit()
+                return
             self._connected = online
-            self._models = models or ["default"]
-            if self._model not in self._models:
-                self._model = self._models[0]
             self._status = "网关已连接" if online else "网关未连接"
             self._error = "" if online else "请启动 Forge 网关，或在连接设置中更改地址。"
             self.changed.emit()
@@ -690,10 +748,13 @@ class ChatController(QObject):
                 self._stream_timer.start()
             return
         self._flush_stream()
+        replay = None
         if kind == "done":
+            if isinstance(value, tuple):
+                value, replay = value
             self._reply = value or self._reply
         if self._reply and kind != "failed":
-            self._history.append(ChatMessage("assistant", self._reply))
+            self._history.append(ChatMessage("assistant", self._reply, responses_replay=replay))
         state = "complete" if kind == "done" else "stopped" if kind == "cancelled" else "error"
         self._messages.update(self._reply_index, textContent=self._reply, state=state)
         if self._changes.active in self._changes.entries:
@@ -745,10 +806,16 @@ class ChatController(QObject):
         import re
         if not re.fullmatch(r"[a-z0-9-]+", name) or not re.fullmatch(r"#[0-9a-fA-F]{6,8}", color):
             return ""
-        name = {"pencil": "square-pen", "panel-right": "panels-top-left", "arrow-down": "chevron-down",
+        lucide_dir = Path(__file__).resolve().parents[1] / "assets" / "ui" / "lucide"
+        path = lucide_dir / (name + ".svg")
+        if not path.is_file():
+            fallback = {
+                "pencil": "square-pen", "panel-right": "panels-top-left", "arrow-down": "chevron-down",
                 "code": "code-xml", "blocks": "puzzle", "grid-2x2": "layers", "list-checks": "clipboard-check",
-                "users": "user-round", "sparkles": "dna", "calendar-clock": "clock-3", "file-code": "file-text"}.get(name, name)
-        path = Path(__file__).resolve().parents[1] / "assets" / "ui" / "lucide" / (name + ".svg")
+                "users": "user-round", "sparkles": "dna", "calendar-clock": "clock-3", "file-code": "file-text",
+                "refresh": "refresh-cw", "file": "file-text", "wrench": "sliders-horizontal",
+            }.get(name, name)
+            path = lucide_dir / (fallback + ".svg")
         if not path.is_file():
             path = path.with_name("info.svg")
         try:

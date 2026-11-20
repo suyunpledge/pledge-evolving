@@ -37,6 +37,7 @@ class ChatMessage:
     # Local transcript metadata; never included in the wire message.
     user_text: str | None = None
     attachment_names: tuple[str, ...] = ()
+    responses_replay: list | None = None
 
     def to_dict(self, secret_scope=None) -> dict:
         d: dict = {"role": self.role, "content": self.content}
@@ -46,6 +47,8 @@ class ChatMessage:
             d["tool_call_id"] = self.tool_call_id
         if self.reasoning_content:
             d["reasoning_content"] = self.reasoning_content
+        if self.responses_replay:
+            d["responses_replay"] = self.responses_replay
         return secret_scope.protect(d) if secret_scope is not None else redact(d)
 
     def to_session_dict(self) -> dict:
@@ -64,8 +67,12 @@ class ChatMessage:
                 names = tuple(name for name in saved_names if isinstance(name, str) and name)
                 if names:
                     text = saved_text
-        return cls(data["role"], data["content"], reasoning_content=str(data.get("reasoning_content") or ""),
-                   user_text=text, attachment_names=names)
+        from forge.openai_responses import replay_items
+        return cls(data["role"], data["content"], tool_calls=data.get("tool_calls"),
+                   tool_call_id=str(data.get("tool_call_id") or ""),
+                   reasoning_content=str(data.get("reasoning_content") or ""),
+                   user_text=text, attachment_names=names,
+                   responses_replay=replay_items(data.get("responses_replay")))
 
 
 @dataclass
@@ -77,6 +84,7 @@ class CompletionResult:
     # 流式累积的工具调用（OpenAI delta 形状：{id,type,function:{name,arguments}}）
     tool_calls: list[dict] = field(default_factory=list)
     reasoning_content: str = ""
+    responses_replay: list = field(default_factory=list)
 
 
 class GatewayError(RuntimeError):
@@ -137,6 +145,13 @@ class ForgeGatewayClient:
         return req
 
     # ── 工具桥（gateway 需以 --tools 启动）──
+
+    def list_models(self, *, timeout=METADATA_RESPONSE_TIMEOUT, cancel_event=None) -> list[str]:
+        request = self._request("GET", "/v1/models")
+        with open_response(request, timeout=timeout, cancel_event=cancel_event) as response:
+            payload = json.loads(response.read())
+        return [row["id"] for row in payload.get("data", [])
+                if isinstance(row, dict) and isinstance(row.get("id"), str) and row["id"]]
 
     def list_tools(self, *, timeout: float | None = None) -> list[dict]:
         """GET /v1/tools → OpenAI function 工具定义列表。gateway 未开工具桥时抛 GatewayError。"""
@@ -312,12 +327,12 @@ class ForgeGatewayClient:
                 raise GenerationCancelled("已停止生成")
 
         check_cancelled()
-        # ``system`` 是调用方固定的身份/行为说明：放在最前、逐轮不变，
-        # 既让模型知道自己是谁，也作为稳定前缀命中缓存。对话本身不含它。
-        prefix = [{"role": "system", "content": system}] if system else []
+        # Keep stable caller instructions first and use the same secret scope
+        # as the rest of the conversation.
+        prefix = [ChatMessage("system", system)] if system else []
         body = {
             "model": model,
-            "messages": prefix + [m.to_dict(self.secret_scope) for m in messages],
+            "messages": [m.to_dict(self.secret_scope) for m in (*prefix, *messages)],
             "temperature": temperature,
             "stream": True,
         }
@@ -332,6 +347,8 @@ class ForgeGatewayClient:
         model_name = ""
         completed = False
         tool_acc: dict[int, dict] = {}   # 按 index 累积 delta.tool_calls
+        responses_replay = []
+        from forge.openai_responses import replay_items
         from forge.secret_http import SecretSSEFilter, iter_model_sse
         fence = SecretSSEFilter()
         try:
@@ -377,6 +394,8 @@ class ForgeGatewayClient:
                         reasoning = delta.get("reasoning_content")
                         if isinstance(reasoning, str) and reasoning:
                             reasoning_parts.append(reasoning)
+                        if delta.get("responses_replay"):
+                            responses_replay.extend(replay_items(delta["responses_replay"]))
                         piece = delta.get("content", "")
                         if isinstance(piece, str) and piece:
                             full_text_parts.append(piece)
@@ -420,4 +439,5 @@ class ForgeGatewayClient:
             tool_calls=[tool_acc[k] for k in sorted(tool_acc)],
             usage=usage,
             reasoning_content="".join(reasoning_parts),
+            responses_replay=responses_replay,
         )

@@ -10,13 +10,12 @@ apt update
 apt install -y --no-install-recommends python3 python3-pip ca-certificates
 
 echo "[2/4] Python 依赖（forge 本体零依赖；仅桥需要）"
-pip3 install --break-system-packages fastapi uvicorn
+pip3 install --break-system-packages fastapi uvicorn websockets cryptography
 
 echo "[3/4] 部署 forge + 桥"
 mkdir -p "$FORGE_DEST"
 cp -r "$SRC/forge" "$SRC/bundles" "$SRC/run.py" "$FORGE_DEST/"
-cp "$(dirname "$0")/../bridge/forge_bridge.py" \
-   "$(dirname "$0")/../bridge/bridge_tools.py" "$FORGE_DEST/"
+cp "$(dirname "$0")"/../bridge/*.py "$FORGE_DEST/"
 cd "$FORGE_DEST"
 python3 - <<'EOF'
 import sys

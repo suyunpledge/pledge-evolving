@@ -199,7 +199,7 @@ Item {
                     Item { Layout.fillWidth: true }
                     GlassButton { material: pane.material; glyph: "square"; tip: "停止任务并清除队列"; visible: !!pane.stateData.busy || !!pane.stateData.queue; onClicked: pane.run("cancel") }
                     GlassButton {
-                        material: pane.material; glyph: "arrow-up"; selected: true
+                        material: pane.material; glyph: "arrow-up"; primary: true
                         cornerRadius: 19; enabled: !!pane.stateData.ready && !pane.stateData.loading && composer.text.trim().length > 0 && !composer.editor.inputMethodComposing
                         tip: pane.stateData.busy ? "排队发送" : "发送任务"
                         onClicked: composer.submit()

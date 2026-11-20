@@ -728,8 +728,9 @@ class ModuleRegistry:
                     node = node.value
                 elif isinstance(node, ast.Subscript):
                     origin = _module_value(node)
-                    if origin:
-                        parts.append(origin)
+                    if not origin:
+                        return None
+                    parts.append(origin)
                     return ".".join(reversed([p for p in parts if p])) or None
                 else:
                     break

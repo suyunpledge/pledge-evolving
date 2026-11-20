@@ -112,9 +112,24 @@ class SecretArchitectureTests(unittest.TestCase):
                 if size < 0:
                     raise AssertionError('Unbounded reads can freeze the gateway before detection')
                 return super().read(size)
-        with patch.object(Path, 'open', return_value=BoundedFile(b'x' * (8 * 1024 * 1024 + 1))):
-            with self.assertRaisesRegex(ValueError, 'limit|exceeds'):
-                self.scope.file_text(p)
+        with p.open('rb') as real_file:
+            fake = BoundedFile(b'x' * (8 * 1024 * 1024 + 1))
+            fake.fileno = real_file.fileno
+            with patch('forge.secrets.open', return_value=fake):
+                with self.assertRaisesRegex(ValueError, 'limit|exceeds'):
+                    self.scope.file_text(p)
+
+    def test_opened_file_identity_is_checked_before_reading(self):
+        from forge.secrets import protect_store_path, read_public_bytes
+
+        public = self.root / 'public.txt'
+        protected = self.root / 'credentials.json'
+        public.write_text('public fixture', encoding='utf-8')
+        protected.write_text('{}', encoding='utf-8')
+        protect_store_path(protected)
+        with patch('forge.secrets.os.fstat', return_value=protected.stat()):
+            with self.assertRaisesRegex(PermissionError, 'alias'):
+                read_public_bytes(public, limit=128)
 
     def test_sensitive_mapping_is_independent_of_field_order(self):
         value = 'audit-order-credential-831'

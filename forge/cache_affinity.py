@@ -1,7 +1,60 @@
-"""Verified Ark Coding Plan cache routing hints; no context or permission changes."""
+"""Cache request extensions for verified upstream endpoints."""
 import hashlib
 import json
 from urllib.parse import urlsplit
+
+from .context_plan import estimate_text
+
+
+def official_gpt61(provider, model):
+    endpoint = urlsplit(provider.base_url)
+    return (provider.wire == "openai" and model in {"gpt-6.1-sol", "gpt-6.1-terra"}
+            and endpoint.scheme == "https" and endpoint.netloc.lower() in {"api.openai.com", "api.openai.com:443"}
+            and endpoint.path.rstrip("/") in {"", "/v1"} and not (endpoint.query or endpoint.fragment))
+
+
+def apply_openai_breakpoint(payload, provider, model):
+    """Keep the first long system block reusable even if later context changes."""
+    mode = (provider.cache_control or "auto").strip().lower()
+    if (not official_gpt61(provider, model) or mode not in {"auto", "explicit"} or not provider.adapt
+            or "prompt_cache_options" in payload or "prompt_cache_retention" in payload):
+        return None
+    if mode == "auto" and provider.expected_calls < 2:
+        return None
+
+    messages = payload.get("messages")
+    roles = {"system", "developer"}
+    if not isinstance(messages, list) or not messages or not isinstance(messages[0], dict):
+        return None
+    first = messages[0]
+    if first.get("role") not in roles:
+        return None
+    content = first.get("content")
+    if isinstance(content, str):
+        chunks = [{"type": "text", "text": content}]
+    elif isinstance(content, list) and content and isinstance(content[0], dict) and content[0].get("type") == "text":
+        chunks = content
+    else:
+        return None
+    later_system = len(messages) > 1 and isinstance(messages[1], dict) and messages[1].get("role") in roles
+    if mode == "auto" and len(chunks) == 1 and not later_system:
+        return None
+    text = chunks[0].get("text")
+    if not isinstance(text, str) or estimate_text(text) < 1024:
+        return None
+    # The caller owns any explicit cache layout it already sent.
+    for message in messages:
+        blocks = message.get("content") if isinstance(message, dict) else None
+        if isinstance(blocks, list) and any(isinstance(block, dict) and "prompt_cache_breakpoint" in block
+                                            for block in blocks):
+            return None
+
+    marker = {**chunks[0], "prompt_cache_breakpoint": {"mode": "explicit"}}
+    payload["messages"] = [{**first, "content": [marker, *chunks[1:]]}, *messages[1:]]
+    wire_mode = "explicit" if mode == "explicit" else "implicit"
+    payload["prompt_cache_options"] = {"mode": wire_mode, "ttl": "30m"}
+    stable = {**payload, "messages": [{**first, "content": [marker]}]}
+    return stable
 
 
 def apply_affinity(payload, provider, model, scope):
