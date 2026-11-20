@@ -2,7 +2,7 @@ import QtQuick
 
 Image {
     property string name: "message-square"
-    property color ink: "#cbd1d8"
+    property color ink: Theme.textSecondary
     source: controller.iconSource(name, ink.toString())
     sourceSize.width: width * Screen.devicePixelRatio
     sourceSize.height: height * Screen.devicePixelRatio

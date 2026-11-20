@@ -17,12 +17,18 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import os
+import re
 import secrets
 import time
 from pathlib import Path
 from typing import Any
+
+from pydantic import BaseModel, StrictBool
+
+import bridge_vault
 
 HOME = Path(os.environ.get("FORGE_HOME", "/opt/forge/.forge-home"))
 CONFIG_PATH = HOME / "remote_pair.json"
@@ -35,18 +41,31 @@ _state: dict[str, Any] = {"mode": "local", "paired": False,
 
 
 def load_cfg() -> dict[str, Any]:
-    if CONFIG_PATH.exists():
-        try:
-            return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-        except Exception:                    # noqa: BLE001
-            pass
-    return {}
+    cfg = bridge_vault.load(CONFIG_PATH)
+    if not cfg.get("token"):
+        cfg["paired"] = False
+    return cfg
 
 
 def save_cfg(cfg: dict[str, Any]) -> None:
-    HOME.mkdir(parents=True, exist_ok=True)
-    CONFIG_PATH.write_text(json.dumps(cfg, ensure_ascii=False, indent=1),
-                           encoding="utf-8")
+    bridge_vault.save(CONFIG_PATH, cfg)
+
+
+def _desktop_uri(host: str, port: int) -> str:
+    if not 1 <= port <= 65535:
+        raise ValueError("Invalid desktop port")
+    host = host.strip()
+    if host.lower() == "localhost":
+        host = "127.0.0.1"
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        if not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?", host):
+            raise ValueError("Invalid desktop hostname") from None
+        return f"wss://{host}:{port}/remote"
+    scheme = "ws" if address.is_loopback else "wss"
+    authority = f"[{address}]" if address.version == 6 else str(address)
+    return f"{scheme}://{authority}:{port}/remote"
 
 
 def status() -> dict[str, Any]:
@@ -69,17 +88,18 @@ def set_mode(mode: str) -> dict[str, Any]:
 async def pair(host: str, port: int, code: str) -> dict[str, Any]:
     """连桌面 remote-host，验证配对码，落配置。"""
     import websockets
-    device_id = load_cfg().get("device_id") or f"phone-{secrets.token_hex(4)}"
-    uri = f"ws://{host}:{port}/remote"
     try:
+        uri = _desktop_uri(host, port)
+        device_id = load_cfg().get("device_id") or f"phone-{secrets.token_hex(16)}"
         async with websockets.connect(uri, open_timeout=8) as ws:
             await ws.send(json.dumps({"type": "pair",
                                       "device_id": device_id, "code": code}))
             resp = json.loads(await asyncio.wait_for(ws.recv(), timeout=8))
-            if resp.get("type") != "paired":
+            token = resp.get("token")
+            if resp.get("type") != "paired" or not isinstance(token, str) or len(token) < 32:
                 return {"ok": False, "error": "配对码错误或已被重置"}
         save_cfg({"paired": True, "host": host, "port": port,
-                  "device_id": device_id, "mode": "remote",
+                  "device_id": device_id, "token": token, "mode": "remote",
                   "paired_at": time.time()})
         _state.update(mode="remote")
         return {"ok": True, "device": device_id, "host": host, "port": port}
@@ -90,6 +110,7 @@ async def pair(host: str, port: int, code: str) -> dict[str, Any]:
 async def unpair() -> dict[str, Any]:
     cfg = load_cfg()
     cfg["paired"] = False
+    cfg.pop("token", None)
     cfg["mode"] = "local"
     save_cfg(cfg)
     _state.update(mode="local", ws=None)
@@ -113,14 +134,14 @@ class DesktopLink:
             await self.emit_app({"type": "run_failed",
                                  "error": "remote mode without pairing"})
             return
-        uri = f"ws://{cfg['host']}:{cfg['port']}/remote"
         try:
+            uri = _desktop_uri(cfg["host"], cfg["port"])
             async with websockets.connect(uri, open_timeout=8,
                                           max_size=8 << 20) as ws:
                 await ws.send(json.dumps({"type": "pair",
                                           "device_id": cfg["device_id"],
-                                          "code": ""}))   # 已配对设备直进
-                hello = json.loads(await ws.recv())
+                                          "token": cfg["token"]}))
+                hello = json.loads(await asyncio.wait_for(ws.recv(), timeout=8))
                 if hello.get("type") != "paired":
                     # 桌面重置过配对码——提示重新配对
                     await self.emit_app({"type": "run_failed",
@@ -140,7 +161,7 @@ class DesktopLink:
                         fut = loop2.create_future()
                         _PENDING[rid] = fut
                         await self.emit_app(ev)
-                        async def _relay():
+                        async def _relay(rid, fut):
                             try:
                                 approved = await asyncio.wait_for(fut, timeout=120)
                             except Exception:                  # noqa: BLE001
@@ -152,7 +173,7 @@ class DesktopLink:
                                     "request_id": rid, "approved": approved}))
                             except Exception:                  # noqa: BLE001
                                 pass
-                        asyncio.create_task(_relay())
+                        asyncio.create_task(_relay(rid, fut))
                     elif etype == "run_done":
                         await self.emit_app(ev)
                         return
@@ -166,22 +187,23 @@ class DesktopLink:
                                  "error": f"desktop link: {exc}"[:200]})
 
 
+class PairBody(BaseModel):
+    host: str
+    port: int
+    code: str
+
+
+class ModeBody(BaseModel):
+    mode: str
+
+
+class ApprovalBody(BaseModel):
+    request_id: str
+    approved: StrictBool
+
+
 def register_routes(app) -> None:
     from fastapi import HTTPException
-    from pydantic import BaseModel
-
-    class PairBody(BaseModel):
-        host: str
-        port: int
-        code: str
-
-    class ModeBody(BaseModel):
-        mode: str
-
-    class ApprovalBody(BaseModel):
-        request_id: str
-        approved: bool
-
 
     @app.post("/remote/pair")
     async def do_pair(body: PairBody):

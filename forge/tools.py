@@ -1146,8 +1146,11 @@ def build_builtin_registry(
             return ToolResult(ok=False, error="apply_patch needs a non-empty 'patches' list of {path, old, new}")
         import os as _os
         import tempfile as _tempfile
+        from .file_revisions import fingerprint
 
         buffers: dict[Path, str] = {}
+        originals: dict[Path, bytes] = {}
+        revisions = args.get('_expected_revisions', {})
         match_modes: list[str] = []
         for i, block in enumerate(blocks):
             if not isinstance(block, dict):
@@ -1161,7 +1164,12 @@ def build_builtin_registry(
             if current is None:
                 if not path.is_file():
                     return ToolResult(ok=False, error=f"patch {i}: not a file: {path}")
-                current = path.read_text(encoding="utf-8", errors="replace")
+                raw = read_public_bytes(path, limit=8 * 1024 * 1024)
+                if str(path) in revisions and fingerprint(raw) != revisions[str(path)]:
+                    return ToolResult(False, error="File changed since preview; regenerate the change",
+                                      meta={"error_code": "revision_conflict"})
+                originals[path] = raw
+                current = raw.decode("utf-8", "replace").replace("\r\n", "\n").replace("\r", "\n")
             old = str(block.get("old", ""))
             if not old:
                 return ToolResult(ok=False, error=f"patch {i}: empty 'old' anchor")
@@ -1183,13 +1191,16 @@ def build_builtin_registry(
                         _os.chmod(tmp_name, _os.stat(path).st_mode & 0o7777)
                     except OSError:
                         pass
+                    if (not ctx.policy.allows_write(path)
+                            or read_public_bytes(path, limit=8 * 1024 * 1024) != originals[path]):
+                        return ToolResult(False, error="File changed before patch write",
+                                          meta={"error_code": "revision_conflict", "committed": committed})
                     _os.replace(tmp_name, path)
-                except BaseException:
+                finally:
                     try:
                         _os.unlink(tmp_name)
                     except OSError:
                         pass
-                    raise
                 committed.append(str(path))
         except OSError as exc:
             return ToolResult(ok=False,
@@ -1203,7 +1214,8 @@ def build_builtin_registry(
     @host_tool(
         "read_range",
         "Read a 1-indexed, inclusive line range from a UTF-8 file (cheaper than a whole-file read). "
-        "Pair with file_outline or grep to find the lines first.",
+        "For an exact line, pass its number as both start and end. "
+        "Use file_outline or grep when the line numbers are unknown.",
         schema={"path": {'type': 'string', 'description': "File path relative to the workspace root, e.g. 'src/app.py'."},
                 "start": {"type": "integer", "description": "First line, 1-indexed."},
                 "end": {"type": "integer", "description": "Last line, inclusive."}},
@@ -1214,10 +1226,11 @@ def build_builtin_registry(
             return ToolResult(ok=False, error=f"not a file: {path}")
         lines = ctx.secret_scope.file_text(path).splitlines()
         s = max(1, int(args.get("start", 1)))
-        e = min(len(lines), int(args.get("end", len(lines))))
+        requested_end = int(args.get("end", len(lines)))
+        e = min(len(lines), requested_end)
         if not lines or s > e:
             return ToolResult(ok=False, error=(
-                f"range {s}-{e} is out of bounds: file has {len(lines)} lines; "
+                f"range {s}-{requested_end} is out of bounds: file has {len(lines)} lines; "
                 f"valid range is 1-{len(lines)}"))
         body = "\n".join(f"{i}\t{lines[i - 1]}" for i in range(s, e + 1))
         return ToolResult(ok=True, content=body, meta={"lines": len(lines), "start": s, "end": e})

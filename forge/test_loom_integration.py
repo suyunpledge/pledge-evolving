@@ -251,6 +251,25 @@ class LoomIntegrationTests(unittest.TestCase):
         self.assertEqual(report.steps[1].decision, 'ok')
         self.assertTrue(self.path.read_text().startswith('new'))
 
+    def test_patch_rechecks_the_bytes_used_to_build_the_replacement(self):
+        from .tools import _replace_anchor
+
+        self.path.write_text('old', encoding='utf-8')
+        agent, _ = self.agent(
+            json.dumps({'tool': 'read_file', 'args': {'path': 'output.txt'}}),
+            json.dumps({'tool': 'apply_patch', 'args': {'patches': [
+                {'path': 'output.txt', 'old': 'old', 'new': 'replacement'}]}}), 'done')
+
+        def external_edit(*args, **kwargs):
+            replacement = _replace_anchor(*args, **kwargs)
+            self.path.write_text('external edit', encoding='utf-8')
+            return replacement
+
+        with patch('forge.tools._replace_anchor', side_effect=external_edit):
+            report = agent.run('edit a file')
+        self.assertEqual(report.steps[1].meta['error_code'], 'revision_conflict')
+        self.assertEqual(self.path.read_text(encoding='utf-8'), 'external edit')
+
     def test_development_import_remains_strict_and_child_drops_observations(self):
         from .development.guard import FileRevisionGuard as LegacyGuard
         self.assertIs(LegacyGuard, FileRevisionGuard)

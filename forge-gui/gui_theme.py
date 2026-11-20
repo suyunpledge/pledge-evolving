@@ -5,7 +5,9 @@
 避免三处各写一套 token。Work Mode 与 Coding Mode 共用这些基础
 原语，但导航、面板布局和密度由各工作空间独立决定。
 
-中性石墨灰层级搭配低饱和蓝色操作反馈；轻量用户气泡与文档式助手正文。
+石墨三层底色 + 品牌熔铁橙（Ember 设计稿，见 design/index.html）：橙色只用于
+主操作、选中指示与运行状态，橙底一律配深色 on_accent 字；钢蓝退为信息/链接色。
+轻量用户气泡与文档式助手正文。
 正文与必要说明优先保证对比度。自绘控件提供键盘激活和可见焦点，
 常用操作保持足够热区，工具提示延迟出现并随控件销毁而清理。
 
@@ -29,104 +31,115 @@ IS_WINDOWS = platform.system() == "Windows"
 
 C: dict[str, str] = {
     # 背景层级
-    "bg": "#15171B",            # Neutral graphite chrome; blue signals actions.
-    "chrome": "#1B1E24",
-    "activity": "#131416",
-    "sidebar": "#181B20",
-    "sidebar_history": "#181B20",
-    "chat": "#202329",
-    "welcome_action": "#282C34",
-    "welcome_edge": "#3A414D",
-    "surface": "#242529",
-    "surface2": "#222327",
-    "surface_subtle": "#202125",
-    "hover": "#2D2F34",
-    "sel": "#2C3038",
-    "code_bg": "#111318",
-    "glass": "#292D36",
-    "glass_hover": "#343A46",
-    "glass_folder": "#232730",
-    "glass_chip": "#292D36",
-    "glass_chip_hover": "#343A46",
-    "input_bg": "#282C34",
-    "glass_rim": "#515766",
-    "glass_inner": "#333742",
-    "glass_sheen": "#656F82",
-    "glass_shadow": "#18191C",
-    "editor_line": "#1A1E26",
+    "bg": "#0B0A14",            # 梦幻星云底（2026-11-14）：近黑偏靛紫
+    "activity": "#08070F",
+    "sidebar": "#100E1B",
+    "sidebar_history": "#100E1B",
+    "chat": "#0C0B17",
+    "surface": "#171527",
+    "surface2": "#1D1A2F",
+    "surface_subtle": "#131221",
+    "hover": "#221F35",
+    "sel": "#2A1D16",
+    "code_bg": "#0E0D1A",
+    "input_bg": "#171527",
+    "editor_line": "#171527",
     "agent_accent": "#B79AF9",
+    # 液态玻璃（2026-11-13）：弹窗 / 菜单浮层内部、对话流里展开的「文件夹」面板、
+    # 胶囊标签。都是比所在底色亮一档的冷灰，亮边与透镜光效由 liquid_glass 绘制。
+    "glass": "#1E1B30",
+    "glass_hover": "#29253F",
+    "glass_folder": "#161425",
+    "glass_chip": "#19172A",
+    "glass_chip_hover": "#211E35",
+    # 合并 main（Codex 11-13）带来的控件 token，按星云底重新取色：
+    # 顶栏 chrome 介于 bg 与 sidebar 之间；输入框玻璃描边 / 内线 / 高光 / 投影
+    # 沿用 glass 的靛紫系；欢迎页动作卡用 surface 底 + border_hi 边。
+    "chrome": "#0E0C19",
+    "glass_rim": "#3D3658",
+    "glass_inner": "#252138",
+    "glass_sheen": "#5E567E",
+    "glass_shadow": "#06050C",
+    "welcome_action": "#171527",
+    "welcome_edge": "#342E4A",
     "black": "#000000",
 
     # 线条
-    "border": "#303237",
-    "border_hi": "#41444C",
-    "sel_border": "#3A6FD8",
-    "scroll": "#2E3440",
+    "border": "#241F35",
+    "border_hi": "#342E4A",
+    "sel_border": "#A8532C",
+    "scroll": "#2E2943",
 
     # 控件状态
-    "control_pressed": "#1B1F28",
-    "disabled_bg": "#181B22",
-    "disabled_fg": "#8E95A2",
-    "disabled_border": "#2A2F39",
-    "focus_ring": "#BCD3FF",
+    "control_pressed": "#19172A",
+    "disabled_bg": "#171527",
+    "disabled_fg": "#8A92A0",
+    "disabled_border": "#2A263C",
+    "focus_ring": "#FFF1E8",
 
     # 主色
-    "accent": "#2E6BE6",
-    "accent_hover": "#2862D6",
-    "accent_pressed": "#2253B8",
-    "accent2": "#6FA3FF",
-    "accent_soft": "#1B2A44",
-    "accent_border": "#3A6FD8",
-    "accent_text": "#B4CEFF",
-    "brand_ice": "#BDCAFF",       # 仅用于品牌图形，避免混同状态颜色
-    "brand_spark": "#F5BC74",
+    "accent": "#E5622A",
+    "accent_hover": "#DB5C26",
+    "accent_pressed": "#D35824",
+    "accent2": "#FF7A3D",
+    "accent_soft": "#2B1D17",
+    "accent_border": "#7A4330",
+    "accent_text": "#FFB58A",
+    # Ember 设计稿（2026-11-11）：品牌熔铁色。accent 是按钮/发送键的填充
+    # （略深，保证 on_accent 深色字与焦点环都过对比度）；ember 是图标、
+    # 选中条与强调文字用的亮色；on_accent 是橙底上的文字/图标色。
+    "ember": "#FF7A3D",
+    "ember_2": "#FFB45E",
+    "on_accent": "#1E0F06",
+    "brand_ice": "#FFD2A8",       # 仅用于品牌图形（发送键高光弧），暖白
+    "brand_spark": "#FFB45E",
 
     # 语义
-    "ok": "#4CC19F",
-    "ok_pressed": "#3AA585",
-    "ok_soft": "#14261F",
-    "warn": "#E8B85F",
-    "warn_soft": "#2A2214",
-    "error": "#F07A7A",
-    "error_soft": "#2E1A1D",
+    "ok": "#47C59B",
+    "ok_pressed": "#38A884",
+    "ok_soft": "#12251F",
+    "warn": "#E9B65A",
+    "warn_soft": "#2A2114",
+    "error": "#F27B7B",
+    "error_soft": "#2D181B",
     "info": "#82A8FF",
-    "info_soft": "#1C2538",
+    "info_soft": "#18213A",
     "link": "#9DBBFF",
     "link_soft": "#1C2538",
 
     # 文字
-    "text": "#ECEEF2",
-    "body": "#CDD2DA",
-    "subtext": "#A3ABB8",
+    "text": "#EEF0F4",
+    "body": "#CBD1DB",
+    "subtext": "#A0A8B6",
     "muted": "#9AA2AF",
     "ter": "#9AA2AF",
-    "placeholder": "#8F98A6",
+    "placeholder": "#8A93A2",
     # Work Mode 设计稿（2026-10-30）新增：最弱一级文字（分组标题、时间戳、
     # 快捷键提示），对 surface 仍 ≥4.5:1；卡内二级控件底；1px 分隔线。
-    "faint": "#9399A4",
-    "raised": "#2A2C31",
-    "line": "#303237",
+    "faint": "#7F8898",
+    "raised": "#231F37",
+    "line": "#241F35",
     "comment": "#7E8796",
 
     # 消息气泡：两侧要能看出「谁在说」，又不能让深色界面变花。
     # user 带一点主色倾向（“我说的话”），agent 用中性面；两者都配一道 hairline 描边。
-    "msg_user_bg": "#1F2633",         # 轻量、低饱和的用户气泡
+    "msg_user_bg": "#1F1B30",         # 轻量、低饱和的用户气泡
     "msg_user_fg": "#FFFFFF",          # 用户气泡文字（白）
-    "msg_agent_bg": "#202329",         # 助手正文融入文档背景
+    "msg_agent_bg": "#0C0B17",         # 助手正文融入文档背景
     "msg_agent_fg": "#E6E9EE",         # AI 气泡文字（浅灰）
     "msg_user_bg_old": "#232134",
     "msg_agent_bg_old": "#1A1A22",
-    "msg_user_border": "#2C3545",
-    "msg_agent_border": "#1D1E21",
+    "msg_user_border": "#302A46",
+    "msg_agent_border": "#0C0B17",
 
     # 代码高亮（One Dark 近似）
-    "code_kw": "#74B4EA",
+    "code_kw": "#FF9F6B",
     "code_cls": "#67D4C0",
-    "code_fn": "#DCDCAA",
-    "code_str": "#CEAB8F",
+    "code_fn": "#E7D58A",
+    "code_str": "#9ED69A",
     "code_const": "#E06C75",
-    "code_num": "#B5CEA8",
-    "code_comment": "#7FA17A",
+    "code_num": "#C5A3FF",
+    "code_comment": "#808A99",
     "code_plain": "#CDD2DA",
 
     # diff
@@ -164,11 +177,11 @@ MOTION_MS = 0
 SHADOW = None
 
 # ─── 字体 ──────────────────────────────────────────────────
-# Codex desktop on Windows uses Segoe UI and Consolas in its default
-# system-font stacks. Tk performs CJK fallback; keep the explicit family for
-# Chinese-only labels and avoid synthetic bold for secondary UI labels.
-UI_FAMILY = "Segoe UI" if IS_WINDOWS else "Helvetica"
-CJK_FAMILY = "Microsoft YaHei UI" if IS_WINDOWS else "PingFang SC"
+# 界面以中文为主：Windows 上统一用 Microsoft YaHei UI 承担拉丁+中文
+# （其拉丁字形与 Segoe UI 同源，观感一致），避免 Segoe UI 逐字回落 CJK 时
+# 中英文基线与行高不一致；Consolas 承担等宽。
+UI_FAMILY = "Microsoft YaHei UI" if IS_WINDOWS else "Helvetica"
+CJK_FAMILY = UI_FAMILY
 MONO_FAMILY = "Consolas" if IS_WINDOWS else "Menlo"
 
 FONT_UI = (UI_FAMILY, 10)
@@ -328,7 +341,15 @@ def bind_scoped_wheel(canvas, content, command=None):
 
 
 def elide(widget, text, width, font=FONT_SMALL):
-    measure = tkfont.Font(root=widget, font=font)
+    # 侧栏会话列表每行都要截断：按 Tk 解释器缓存测量字体，避免每次新建命名字体。
+    owner = widget._root()
+    fonts = getattr(owner, "_forge_elide_fonts", None)
+    if fonts is None:
+        fonts = owner._forge_elide_fonts = {}
+    key = font if isinstance(font, (str, tuple)) else str(font)
+    measure = fonts.get(key)
+    if measure is None:
+        measure = fonts[key] = tkfont.Font(root=owner, font=font)
     if measure.measure(text) <= width:
         return text
     lo, hi = 0, len(text)
@@ -406,6 +427,16 @@ def rounded_points(x1, y1, x2, y2, r, *, seg=10):
     return pts
 
 
+def mix(a: str, b: str, t: float) -> str:
+    """两色线性混合：t=0 → a，t=1 → b。用来在深色底上做半透明效果
+    （Tk 不支持 alpha，投影、光晕、高光线都靠预混色模拟）。"""
+    t = max(0.0, min(1.0, t))
+    ra, ga, ba = (int(a[i:i + 2], 16) for i in (1, 3, 5))
+    rb, gb, bb = (int(b[i:i + 2], 16) for i in (1, 3, 5))
+    return "#%02X%02X%02X" % (round(ra + (rb - ra) * t), round(ga + (gb - ga) * t),
+                              round(ba + (bb - ba) * t))
+
+
 def round_rect(canvas: tk.Canvas, x1, y1, x2, y2, r, **kw):
     """在 Canvas 上画一个圆角矩形，返回 item id。
 
@@ -415,14 +446,6 @@ def round_rect(canvas: tk.Canvas, x1, y1, x2, y2, r, **kw):
     return canvas.create_polygon(rounded_points(x1, y1, x2, y2, r), **kw)
 
 
-def mix(a: str, b: str, t: float) -> str:
-    """两色线性混合：t=0 → a，t=1 → b。用来在深色底上做半透明效果
-    （Tk 不支持 alpha，投影、光晕、高光线都靠预混色模拟）。"""
-    t = max(0.0, min(1.0, t))
-    ra, ga, ba = (int(a[i:i + 2], 16) for i in (1, 3, 5))
-    rb, gb, bb = (int(b[i:i + 2], 16) for i in (1, 3, 5))
-    return "#%02X%02X%02X" % (round(ra + (rb - ra) * t), round(ga + (gb - ga) * t),
-                              round(ba + (bb - ba) * t))
 
 class RoundedCard(tk.Frame):
     """圆角卡片：Canvas 负责画底与描边，`content` 是真正的容器。
@@ -438,8 +461,13 @@ class RoundedCard(tk.Frame):
 
     def __init__(self, parent, *, radius=R_CARD, fill=None, outline=None,
                  padx=PAD_M, pady=10, bg=None, autosize_width=False,
-                 on_click=None):
+                 on_click=None, shadow=0, sheen=False, accent_top=None):
         outer_bg = bg or _bg_of(parent)
+        # 分区框的层次感：shadow=N 在卡片下方留 N px 画渐隐投影；
+        # sheen 在顶边内侧画一道极淡高光线；accent_top 给顶边一条强调色细线。
+        self._shadow = max(0, int(shadow))
+        self._sheen = sheen
+        self._accent_top = accent_top
         super().__init__(parent, bg=outer_bg, highlightthickness=0, bd=0)
         self._bg = outer_bg
         self._radius = radius
@@ -475,7 +503,7 @@ class RoundedCard(tk.Frame):
 
     def _on_content(self, _event=None):
         try:
-            need_h = self.content.winfo_reqheight() + self._pady * 2
+            need_h = self.content.winfo_reqheight() + self._pady * 2 + self._shadow
             if abs(self._cv.winfo_reqheight() - need_h) > 1:
                 self._cv.configure(height=need_h)
             if self._autosize_width:
@@ -516,19 +544,38 @@ class RoundedCard(tk.Frame):
                 return
             if self._shape is not None:
                 self._cv.delete(self._shape)
-            r = min(self._radius, w / 2, h / 2)
+            self._cv.delete("card-decor")
+            s = self._shadow
+            body_h = h - s
+            r = min(self._radius, w / 2, body_h / 2)
             kw = {"fill": self._fill}
             if self._outline:
                 kw.update(outline=self._outline, width=1)
-            self._shape = round_rect(self._cv, 0.5, 0.5, w - 0.5, h - 0.5, r, **kw)
+            self._shape = round_rect(self._cv, 0.5, 0.5, w - 0.5, body_h - 0.5, r, **kw)
+            # 顶边装饰画在形状之上、内容之下（内容是 window item，永远在最上层）。
+            if self._accent_top and r > 0:
+                self._cv.create_line(r, 1, w - r, 1, fill=self._accent_top, width=2,
+                                     capstyle=tk.ROUND, tags=("card-decor",))
+            elif self._sheen and r > 0:
+                self._cv.create_line(r, 1.5, w - r, 1.5, width=1, tags=("card-decor",),
+                                     fill=mix(self._fill, "#FFFFFF", 0.07))
             self._cv.tag_lower(self._shape)
+            # 投影：由远到近叠几层逐步变深的圆角矩形，模拟柔和的下方阴影。
+            for i in range(1, s + 1):
+                tone = mix(self._bg, "#000000", 0.42 * (1 - (i - 1) / s))
+                layer = round_rect(self._cv, 0.5 + i * 0.5, i, w - 0.5 - i * 0.5,
+                                   body_h - 0.5 + i, r, fill=tone, outline="",
+                                   tags=("card-decor",))
+                self._cv.tag_lower(layer)
         except tk.TclError:
             pass
 
-    def set_fill(self, fill: str, outline: str | None = None):
+    def set_fill(self, fill: str, outline: str | None = None, *, accent_top=...):
         self._fill = fill
         if outline is not None:
             self._outline = outline
+        if accent_top is not ...:
+            self._accent_top = accent_top
         self.content.configure(bg=fill)
         self._draw(self._cv.winfo_width(), self._cv.winfo_height())
 
@@ -604,12 +651,12 @@ def pill_button(parent, text, command, *, kind="ghost", bg=None, height=None,
     """扁平按钮（kind: primary / ghost / quiet / danger / accent_soft）。"""
     base = bg or _bg_of(parent)
     palettes = {
-        "primary": (C["accent"], "#FFFFFF", C["accent_hover"], "#FFFFFF"),
+        "primary": (C["accent"], C["on_accent"], C["accent_hover"], C["on_accent"]),
         "ghost": (C["surface2"], C["body"], C["hover"], C["text"]),
         "quiet": (base, C["ter"], C["hover"], C["text"]),
         "danger": (C["surface2"], C["error"], C["error_soft"], C["error"]),
-        "accent_soft": (C["accent_soft"], C["accent_text"], C["accent"], "#FFFFFF"),
-        "ok": (C["ok"], "#0B0B10", "#34D399", "#0B0B10"),
+        "accent_soft": (C["accent_soft"], C["accent_text"], C["accent"], C["on_accent"]),
+        "ok": (C["ok"], "#0B0B10", "#5BD3AA", "#0B0B10"),
     }
     bgb, fg, hovbg, hovfg = palettes.get(kind, palettes["ghost"])
     label = tr("{icon} {label}", icon=icon, label=text) if icon else text
@@ -668,7 +715,7 @@ def chip(parent, text, *, selected=False, command=None, bg=None):
 def badge(parent, text, *, tone="accent", bg=None):
     """小徽章（Beta / Planner / M / A）。"""
     tones = {
-        "accent": (C["accent"], "#FFFFFF"),
+        "accent": (C["accent"], C["on_accent"]),
         "accent_soft": (C["accent_soft"], C["accent_text"]),
         "ok": (C["ok_soft"], C["ok"]),
         "warn": (C["warn_soft"], C["warn"]),
@@ -676,8 +723,10 @@ def badge(parent, text, *, tone="accent", bg=None):
         "muted": (C["surface2"], C["subtext"]),
     }
     bgb, fg = tones.get(tone, tones["accent"])
+    # 描边取底色与文字色的中间调：原先直接用文字色，深色界面上像一个高亮方框。
     return i18n.Label(parent, text=text, bg=bgb, fg=fg, font=FONT_MICRO,
-                    padx=6, pady=2, highlightthickness=1, highlightbackground=fg)
+                    padx=6, pady=2, highlightthickness=1,
+                    highlightbackground=mix(bgb, fg, .3) if bgb.startswith("#") and fg.startswith("#") else fg)
 
 
 def divider(parent, *, color=None, horizontal=True, bg=None):
@@ -897,8 +946,16 @@ def show_popover_menu(anchor, items, *, title=None, width=300, prefer_above=Fals
             backdrop.show(resting)
         check = None
         if selected:
-            check = IconCanvas(row, "check", size=ui_px(row, 14), bg=base, fg=C["accent"])
+            check = IconCanvas(row, "check", size=ui_px(row, 14), bg=base, fg=C["ember"])
             check.pack(side=tk.RIGHT, padx=(8, 0))
+        chip = None
+        if item.get("icon"):
+            # 行首玻璃图标圆片（图案元素，2026-11-13）：危险项用错误色，其余中性。
+            from glass_ornaments import icon_chip
+            chip = icon_chip(row, item["icon"], size=ui_px(row, 24), bg=base,
+                             tone=C["error"] if item.get("danger") else
+                             C["ember"] if selected else C["subtext"])
+            chip.pack(side=tk.LEFT, padx=(0, 10))
         text = tk.Frame(row, bg=base, cursor="hand2")
         text.pack(side=tk.LEFT, fill=tk.X, expand=True)
         label = i18n.Label(text, text=item.get("label", ""), bg=base,
@@ -915,7 +972,7 @@ def show_popover_menu(anchor, items, *, title=None, width=300, prefer_above=Fals
 
         # 行本身始终保持玻璃底色：胶囊位图的透明圆角露出的是它。
         def paint(active, widgets=(text, label, detail, check), backdrop=backdrop,
-                  resting=resting, hovered=hovered, rest_bg=base):
+                  resting=resting, hovered=hovered, rest_bg=base, chip=chip):
             if active:
                 backdrop.show(hovered)
                 colour = hovered.fill
@@ -928,6 +985,9 @@ def show_popover_menu(anchor, items, *, title=None, width=300, prefer_above=Fals
             for widget in widgets:
                 if widget is not None:
                     widget.configure(bg=colour)
+            if chip is not None:
+                from glass_ornaments import set_chip_bg
+                set_chip_bg(chip, colour)
 
         def invoke(_event=None, command=item.get("command")):
             close()
@@ -939,7 +999,7 @@ def show_popover_menu(anchor, items, *, title=None, width=300, prefer_above=Fals
         row.configure(highlightthickness=0)
         row.bind("<FocusIn>", lambda _e, fn=paint: fn(True), add="+")
         row.bind("<FocusOut>", lambda _e, fn=paint: fn(False), add="+")
-        for widget in (row, text, label, detail, check):
+        for widget in (row, chip, text, label, detail, check):
             if widget is None:
                 continue
             widget.bind("<Enter>", lambda _e, fn=paint: fn(True))
@@ -979,13 +1039,13 @@ def show_popover_menu(anchor, items, *, title=None, width=300, prefer_above=Fals
     pop.deiconify()
     try:
         pop.grab_set()
-        (rows[0] if rows else pop).focus_set()
+        glass.focus_when_mapped(rows[0] if rows else pop)
     except tk.TclError:
         pass
     return pop
 
 
-def avatar(parent, *, size=32, glyph="F", fg="#FFFFFF", fill=None,
+def avatar(parent, *, size=32, glyph="F", fg=None, fill=None,
            shape="rounded", bg=None, image=None):
     """头像：圆形（用户）或圆角方（Forge）。给 image 时直接画该位图（品牌标志）。"""
     base = bg or _bg_of(parent)
@@ -1004,6 +1064,7 @@ def avatar(parent, *, size=32, glyph="F", fg="#FFFFFF", fill=None,
         except tk.TclError:
             pass
     fill = fill or C["accent"]
+    fg = fg or (C["on_accent"] if fill == C["accent"] else "#FFFFFF")
     if shape == "circle":
         cv.create_oval(0, 0, size - 1, size - 1, fill=fill, outline="")
     else:
@@ -1011,7 +1072,8 @@ def avatar(parent, *, size=32, glyph="F", fg="#FFFFFF", fill=None,
                    outline="")
         # 左上高光：一块更亮的圆角三角，模拟参考稿的紫色渐变
         cv.create_polygon(2, 2, size - 6, 2, 2, size - 6,
-                          smooth=True, splinesteps=12, fill="#6D63F0", outline="")
+                          smooth=True, splinesteps=12, fill=mix(fill, "#FFD2A8", .28)
+                          if fill.startswith("#") else fill, outline="")
     bitmap = emoji_image(cv, glyph, size=24) if is_emoji(glyph) else None
     if glyph == "你":
         draw_icon(cv, "user", x=4, y=4, size=size-8, fg=fg)
@@ -1035,8 +1097,9 @@ def dot(parent, color, *, size=8, bg=None):
 
 def _circle_palette(kind):
     palettes = {
-        "primary": (C["accent"], "#FFFFFF", C["accent_hover"], C["accent_border"], C["accent_soft"]),
-        "muted": (C["surface2"], C["muted"], C["hover"], C["border_hi"], C["surface_subtle"]),
+        "primary": (C["accent"], C["on_accent"], C["accent_hover"], C["accent_border"], C["accent_pressed"]),
+        # 2026-11-08：空闲态发送钮改为实心 raised 圆、无描边环，不再像一个空心圈。
+        "muted": (C["raised"], C["muted"], C["hover"], C["raised"], C["surface_subtle"]),
         "danger": (C["surface2"], C["error"], C["error_soft"], C["error"], C["surface_subtle"]),
     }
     return palettes.get(kind, palettes["primary"])
@@ -1066,14 +1129,14 @@ def circle_button(parent, glyph, command, *, size=30, kind="primary", bg=None,
                           state=tk.NORMAL if kind == "primary" else tk.HIDDEN)
     icon = icon_key(glyph)
     if icon:
-        icon_size = max(14, size-12)
+        icon_size = max(12, round(size * .5))
         draw_icon(cv, icon, x=(size-icon_size)/2, y=(size-icon_size)/2, size=icon_size, fg=fg, tag="glyph")
         txt = "glyph"
     else:
         txt = cv.create_text(size / 2, size / 2, text=glyph, fill=fg,
                              font=(UI_FAMILY, glyph_size or max(9, int(size * 0.38)), "bold"))
     cv._icon_name = icon
-    cv._icon_size = max(14, size-12)
+    cv._icon_size = max(12, round(size * .5))
     cv._button_size = size
     cv._enabled = True
     cv._kind, cv._circle_palette = kind, _circle_palette(kind)
@@ -1261,9 +1324,75 @@ def _install_scrollbar_autohide():
     ttk.Scrollbar._forge_autohide = True
 
 
+def _colorref(colour):
+    r, g, b = _hex_rgb(colour)
+    return r | (g << 8) | (b << 16)
+
+
+def apply_window_chrome(win, *, popup=None):
+    """Windows 11 窗口外观：深色标题栏 + 与主题同色的标题栏/边框 + 圆角。
+
+    Tk 自身不能画窗口圆角，也不会跟随深色主题切换系统标题栏；对话框原先是
+    白色标题栏配深色内容。这里只调用 DWM 属性，不改窗口几何与焦点。
+    popup=True（无边框浮层：菜单、提示）用小圆角；旧系统不支持时静默跳过。
+    """
+    if not IS_WINDOWS:
+        return
+    try:
+        import ctypes
+        if getattr(win, "_forge_glass", False):
+            # 液态玻璃浮窗自己画圆角与亮边；DWM 的圆角与 1px 描边会在
+            # 挖空的四角外再框出一个矩形，这里关掉。
+            hwnd = int(win.wm_frame(), 16)
+            for attribute, value in ((33, 1), (34, 0xFFFFFFFE)):   # DONOTROUND / COLOR_NONE
+                data = ctypes.c_uint(value)
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                    hwnd, attribute, ctypes.byref(data), ctypes.sizeof(data))
+            return
+        if not win.winfo_ismapped():
+            win.update_idletasks()
+        hwnd = int(win.wm_frame(), 16)
+        if popup is None:
+            popup = bool(win.wm_overrideredirect())
+        dwm = ctypes.windll.dwmapi
+
+        def set_attr(attribute, value):
+            data = ctypes.c_int(value)
+            dwm.DwmSetWindowAttribute(hwnd, attribute, ctypes.byref(data), ctypes.sizeof(data))
+        set_attr(20, 1)                                  # DWMWA_USE_IMMERSIVE_DARK_MODE
+        set_attr(33, 3 if popup else 2)                  # DWMWA_WINDOW_CORNER_PREFERENCE
+        set_attr(34, _colorref(C["border_hi"] if popup else C["border"]))  # BORDER_COLOR
+        if not popup:
+            set_attr(35, _colorref(C["bg"]))             # DWMWA_CAPTION_COLOR
+            set_attr(36, _colorref(C["body"]))           # DWMWA_TEXT_COLOR
+    except Exception:
+        pass
+
+
+def install_window_chrome(root):
+    """主窗口与之后创建的所有 Toplevel（对话框、浮层、提示）统一走 apply_window_chrome。"""
+    done = set()
+
+    def on_map(event):
+        widget = event.widget
+        try:
+            if not isinstance(widget, tk.Toplevel) or str(widget) in done:
+                return
+        except Exception:
+            return
+        done.add(str(widget))
+        widget.bind("<Destroy>", lambda e, key=str(widget): done.discard(key)
+                    if str(e.widget) == key else None, add="+")
+        apply_window_chrome(widget)
+    root.bind_class("Toplevel", "<Map>", on_map, add="+")
+    apply_window_chrome(root, popup=False)
+
+
 def apply_ttk_theme(root):
     """ttk 控件（Combobox / Scrollbar / Notebook）深色主题。"""
     root.configure(background=C['bg'])
+    if isinstance(root, tk.Tk):
+        install_window_chrome(root)
     for widget_class in ('Toplevel', 'Frame', 'Label', 'LabelFrame', 'PanedWindow', 'Menu'):
         root.option_add(f'*{widget_class}.background', C['bg'])
     for widget_class in ('Label', 'LabelFrame', 'Menu'):
@@ -1322,6 +1451,9 @@ def apply_ttk_theme(root):
                     padding=(ui_px(root, 10), ui_px(root, 7)), font=FONT_SMALL, borderwidth=0)
     style.map("TNotebook.Tab",
               foreground=[("selected", C["text"]), ("active", C["body"])],
+              # clam 默认把选中页签刷成浅灰 #dcdad5（白字 1.2:1）；压回深色层级。
+              background=[("selected", C["surface"]), ("active", C["hover"])],
+              lightcolor=[("selected", C["surface"]), ("active", C["hover"])],
               expand=[("selected", (0, 0, 0, 0))])
     style.configure("TFrame", background=C["bg"])
     style.configure("Vertical.TScrollbar", background=C["scroll"],

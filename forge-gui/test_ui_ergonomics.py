@@ -91,7 +91,10 @@ class ErgonomicsTests(unittest.TestCase):
         self.pump()
         entry.event_generate("<Control-k>")
         self.pump()
-        self.assertTrue(app.session_search.winfo_ismapped())
+        # Ctrl+K 在本分支是命令面板（命令 + 会话统一入口），侧栏筛选走搜索图标。
+        palette = getattr(app, "_command_palette", None)
+        self.assertTrue(palette is not None and palette.winfo_exists())
+        palette.close()
         self.assertEqual(entry.get("1.0", "end-1c"), draft)
         self.assertEqual(app.send_var.get(), draft)
 

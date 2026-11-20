@@ -1,4 +1,5 @@
 """Exercise native-page operations against isolated real stores and files."""
+from concurrent.futures import ThreadPoolExecutor
 import json
 from pathlib import Path
 import subprocess
@@ -35,6 +36,27 @@ class NativeServiceTests(unittest.TestCase):
 
     def values(self, page):
         return {f['key']: f['value'] for f in self.host.pages.view(page)['fields']}
+
+    def test_navigation_and_send_share_one_coding_runtime(self):
+        from . import coding_service
+
+        coding = self.host.coding
+        coding.publish()
+        self.assertFalse(self.events[-1][1]['state']['ready'])
+        barrier = threading.Barrier(2)
+
+        def open_coding():
+            barrier.wait(timeout=4)
+            coding.initialize()
+
+        with patch.object(coding_service, 'DevelopmentRuntime', wraps=coding_service.DevelopmentRuntime) as factory:
+            with ThreadPoolExecutor(max_workers=2) as workers:
+                jobs = [workers.submit(open_coding) for _ in range(2)]
+                for job in jobs:
+                    job.result(timeout=12)
+            factory.assert_called_once()
+        self.assertTrue(coding.runtime.ready)
+        self.assertIsNotNone(coding.runtime.bridge.agent)
 
     def test_file_save_preserves_crlf_and_refuses_external_conflicts(self):
         path = self.project / 'sample.txt'
@@ -283,6 +305,98 @@ class NativeServiceTests(unittest.TestCase):
         finally:
             server.shutdown()
             server.server_close()
+
+    def test_chat_catalog_switch_uses_the_selected_provider_and_upstream_model(self):
+        from forge_client import ChatMessage, ForgeGatewayClient
+        from .gateway_service import chat_model_routes
+
+        hits = []
+
+        class Endpoint(BaseHTTPRequestHandler):
+            def log_message(self, *_):
+                pass
+
+            def do_POST(self):
+                payload = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+                hits.append((self.path, payload['model'], self.headers.get('Authorization')))
+                raw = b'{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}'
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+
+        with ThreadingHTTPServer(('127.0.0.1', 0), Endpoint) as server:
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            base = f'http://127.0.0.1:{server.server_port}'
+            rows = [
+                {'id': 'one', 'name': 'provider:one', 'config': {
+                    'baseURL': base + '/one/v1', 'model': 'first', 'modelLabel': 'First',
+                    'apiKey': {'$expr': "get('env.FORGE_TEST_ONE_KEY', '')"}}},
+                {'id': 'two', 'name': 'provider:two', 'config': {
+                    'baseURL': base + '/two/v1', 'model': 'second', 'models': ['second', 'second-alt'],
+                    'modelLabel': 'Second', 'apiKey': {'$expr': "get('env.FORGE_TEST_TWO_KEY', '')"}}},
+                {'id': 'off', 'disabled': True, 'config': {'baseURL': base, 'model': 'disabled'}},
+            ]
+            save_user_layer(self.home, rows)
+            self.assertEqual(list(chat_model_routes(rows)), ['First', 'Second', 'second-alt'])
+            self.host.gateway.demo = False
+            try:
+                with patch.dict('os.environ', {'FORGE_TEST_ONE_KEY': 'fixture-one', 'FORGE_TEST_TWO_KEY': 'fixture-two'}):
+                    self.host.gateway.start('one')
+                    old = self.host.gateway.process
+                    self.host.command({'command': 'apply_model_setup', 'model': 'second-alt'})
+                    self.host.worker.join(12)
+                    self.assertFalse(self.host.worker.is_alive())
+                    self.assertIsNotNone(old.poll())
+                    self.assertIn(('gateway_catalog', {'models': ['First', 'Second', 'second-alt']}), self.events)
+                    client = ForgeGatewayClient(self.host.gateway.url)
+                    self.assertEqual(client.list_models(), ['second-alt'])
+                    client.chat([ChatMessage('user', 'fixture')], model='second-alt')
+                    self.assertEqual(hits, [('/two/v1/chat/completions', 'second-alt', 'Bearer fixture-two')])
+
+                    SessionStore.atomic(self.home / 'gui/qt/onboarding.json', {'provider': 'one'})
+                    SessionStore(self.home).save_preferences({'model': 'Second'})
+                    self.host.gateway.start()
+                    self.assertEqual(ForgeGatewayClient(self.host.gateway.url).list_models(), ['Second'])
+            finally:
+                self.host.gateway.close()
+                server.shutdown()
+
+    def test_chat_selector_keeps_catalog_and_waits_for_matching_gateway(self):
+        from .controller import ChatController
+
+        chat = ChatController(self.home)
+        chat._model = 'First'
+        chat._draft = 'Keep this draft'
+        chat.setManagedModels(['First', 'Second'])
+        chat._on_worker('connection', (chat._connection_epoch, chat.gateway, True, ['First'], ''))
+        self.assertEqual(chat.models, ['First', 'Second'])
+        self.assertTrue(chat.connected)
+        requests = []
+        chat.modelRequested.connect(requests.append)
+        old_url = chat.gateway
+        chat.setModel('Second')
+        self.assertEqual(requests, ['Second'])
+        self.assertEqual(chat.model, 'First')
+        self.assertFalse(chat.connected)
+        chat.setManagedGateway(old_url, {'model': 'First'})
+        self.assertTrue(chat.modelSwitching)
+
+        chat.gatewayChangeFailed('fixture rejection', old_url)
+        self.assertEqual(chat.model, 'First')
+        self.assertTrue(chat.connected)
+        self.assertFalse(chat.modelSwitching)
+
+        chat.setModel('Second')
+        new_url = 'http://127.0.0.1:49490'
+        with patch.object(chat, 'refreshConnection') as refresh:
+            chat.setManagedGateway(new_url, {'model': 'Second', 'temperature': 0.3})
+            refresh.assert_called_once()
+        self.assertEqual(chat.model, 'Second')
+        self.assertEqual(chat.models, ['First', 'Second'])
+        self.assertEqual(chat.draft, 'Keep this draft')
+        self.assertEqual(SessionStore(self.home).preferences()['model'], 'Second')
 
 
 

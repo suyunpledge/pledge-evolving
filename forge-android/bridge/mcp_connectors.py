@@ -21,29 +21,21 @@ import os
 import re
 import subprocess
 import time
+from threading import RLock
 from pathlib import Path
 from typing import Any
 
-FORGE_ROOT = Path(os.environ.get("FORGE_ROOT", "/opt/forge"))
 HOME = Path(os.environ.get("FORGE_HOME", "/opt/forge/.forge-home"))
 
-# forge contrib（纯函数复用）：mcp_bridge 位于 <FORGE_ROOT>/forge/contrib/，
-# 兼容两种布局（PC 工作区 / 镜像内 /opt/forge）——本地注入 path 后导入。
-import sys as _sys
-for _cand in (FORGE_ROOT / "forge" / "contrib",
-              FORGE_ROOT / "contrib",
-              Path(__file__).resolve().parent):
-    if (_cand / "mcp_bridge.py").exists():
-        if str(_cand) not in _sys.path:
-            _sys.path.insert(0, str(_cand))
-        break
-from mcp_bridge import _guess_read_only, _is_valid_name
+from forge.contrib.mcp_bridge import _guess_read_only, _is_valid_name
+import bridge_vault
 CONFIG_PATH = HOME / "mcp_connectors.json"
 
 _NAME_TOOL_RE = re.compile(r"^[A-Za-z0-9_.\-]+$")
 
 # 单实例状态（uvicorn 单进程；重启即清空——冷启动由 ensure_all 恢复）
 _connectors: dict[str, "Connector"] = {}
+_config_lock = RLock()
 
 
 class Connector:
@@ -178,18 +170,11 @@ class Connector:
 
 # ── 配置持久化 ─────────────────────────────────────────────
 def load_config() -> dict[str, dict[str, Any]]:
-    if CONFIG_PATH.exists():
-        try:
-            return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-        except Exception:                    # noqa: BLE001 — 坏配置回空
-            return {}
-    return {}
+    return bridge_vault.load(CONFIG_PATH)
 
 
 def save_config(cfg: dict[str, dict[str, Any]]) -> None:
-    HOME.mkdir(parents=True, exist_ok=True)
-    CONFIG_PATH.write_text(json.dumps(cfg, ensure_ascii=False, indent=1),
-                           encoding="utf-8")
+    bridge_vault.save(CONFIG_PATH, cfg)
 
 
 def upsert(name: str, command: list[str] | None = None, env: dict[str, str] | None = None,
@@ -197,33 +182,35 @@ def upsert(name: str, command: list[str] | None = None, env: dict[str, str] | No
     """新增/更新连接器定义（不自动启动；Kotlin 侧随后调 ensure）。"""
     if not _is_valid_name(name):
         return {"ok": False, "error": f"invalid connector name: {name!r}"}
-    cfg = load_config()
     if url:
         if not isinstance(url, str) or not url.startswith(("http://", "https://")):
             return {"ok": False, "error": "url must be http(s)"}
-        cfg[name] = {"transport": "http", "url": url, "env": env or {},
-                     "enabled": enabled}
+        spec = {"transport": "http", "url": url, "env": env or {}, "enabled": enabled}
     else:
         if not isinstance(command, list) or not command or \
                 not all(isinstance(a, str) for a in command):
             return {"ok": False, "error": "command must be a list of strings"}
-        cfg[name] = {"command": command, "env": env or {}, "enabled": enabled}
-    save_config(cfg)
-    if name in _connectors:
-        _connectors[name].stop()
-        del _connectors[name]
+        spec = {"command": command, "env": env or {}, "enabled": enabled}
+    with _config_lock:
+        cfg = load_config()
+        cfg[name] = spec
+        save_config(cfg)
+        conn = _connectors.pop(name, None)
+        if conn:
+            conn.stop()
     return {"ok": True}
 
 
 def remove(name: str) -> dict[str, Any]:
-    cfg = load_config()
-    if name not in cfg:
-        return {"ok": False, "error": f"unknown connector: {name}"}
-    del cfg[name]
-    save_config(cfg)
-    conn = _connectors.pop(name, None)
-    if conn:
-        conn.stop()
+    with _config_lock:
+        cfg = load_config()
+        if name not in cfg:
+            return {"ok": False, "error": f"unknown connector: {name}"}
+        del cfg[name]
+        save_config(cfg)
+        conn = _connectors.pop(name, None)
+        if conn:
+            conn.stop()
     return {"ok": True}
 
 

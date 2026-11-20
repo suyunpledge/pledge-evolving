@@ -9,7 +9,9 @@ AbstractButton {
     property url iconUrl: ""
     property string detail: ""
     property string status: ""
-    property color statusColor: "#9eacbd"
+    property color statusColor: Theme.textMuted
+    property color glyphInk: row.checked ? Theme.accent : Theme.textSecondary
+    property color actionInk: row.checked ? Theme.accent : Theme.textDim
     property string actionGlyph: "chevron-right"
     implicitHeight: 48
     hoverEnabled: true
@@ -31,23 +33,23 @@ AbstractButton {
             sourceSize.width: 20 * Screen.devicePixelRatio; sourceSize.height: 20 * Screen.devicePixelRatio
             asynchronous: true
         }
-        Glyph { name: row.glyph; visible: !brand.visible; Layout.preferredWidth: 20; Layout.preferredHeight: 18 }
+        Glyph { name: row.glyph; ink: row.glyphInk; visible: !brand.visible; Layout.preferredWidth: 20; Layout.preferredHeight: 18 }
         Text {
             objectName: "glassRowTitle"
             text: row.text.replace(/[\r\n\u2028\u2029]+/g, " ")
             textFormat: Text.PlainText; maximumLineCount: 1
-            color: "#e9edf2"; font.pixelSize: 14; font.weight: Font.Medium; elide: Text.ElideRight
+            color: Theme.textPrimary; font.pixelSize: 14; font.weight: Font.Medium; elide: Text.ElideRight
             Layout.fillWidth: true; Layout.preferredWidth: 190
         }
         Text {
             objectName: "glassRowDetail"
             text: row.detail.replace(/[\r\n\u2028\u2029]+/g, " ")
             textFormat: Text.PlainText; maximumLineCount: 1
-            color: "#99a8b9"; font.pixelSize: 12; elide: Text.ElideRight
+            color: Theme.textMuted; font.pixelSize: 12; elide: Text.ElideRight
             visible: row.width > 360 && !!text; Layout.fillWidth: true; Layout.preferredWidth: 280
         }
         Text { text: row.status; color: row.statusColor; font.pixelSize: 12; elide: Text.ElideRight; Layout.maximumWidth: 120; visible: !!text }
-        Glyph { name: row.actionGlyph; Layout.preferredWidth: 15; Layout.preferredHeight: 15 }
+        Glyph { name: row.actionGlyph; ink: row.actionInk; Layout.preferredWidth: 15; Layout.preferredHeight: 15 }
     }
     Keys.onReturnPressed: clicked()
 }

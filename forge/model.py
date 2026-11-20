@@ -436,7 +436,11 @@ def _plan_and_shape(payload: dict[str, Any], messages: list[dict[str, Any]],
     adapter = adapter_for(profile)
     payload, compatibility_actions = adapter.shape_request(payload, wire=provider.wire)
     reasoning_actions.extend(compatibility_actions)
-    from .cache_affinity import apply_affinity
+    from .cache_affinity import apply_affinity, apply_openai_breakpoint
+    stable_cache_payload = apply_openai_breakpoint(payload, provider, model)
+    if stable_cache_payload is not None:
+        execution["prompt_cache"] = {"mode": payload["prompt_cache_options"]["mode"],
+                                     "ttl": "30m", "boundary": "leading_system_text"}
     affinity = apply_affinity(payload, provider, model, options.get('cache_scope'))
     if affinity is not None:
         execution['cache_affinity'] = affinity
@@ -450,11 +454,11 @@ def _plan_and_shape(payload: dict[str, Any], messages: list[dict[str, Any]],
 
     base_in, base_out, price_known = index_price(model)
 
-    fingerprint = prefix_fingerprint(payload, model=model,
+    fingerprint = prefix_fingerprint(stable_cache_payload or payload, model=model,
                                      endpoint=provider.base_url,
                                      account=provider._credential._account_fingerprint, wire=provider.wire,
                                      cache_mode=provider.cache_control)
-    content_fingerprint = prefix_fingerprint(payload, model=model,
+    content_fingerprint = prefix_fingerprint(stable_cache_payload or payload, model=model,
                                              endpoint=provider.base_url,
                                              account=provider._credential._account_fingerprint,
                                              wire=provider.wire,
@@ -663,6 +667,7 @@ class HttpTransport:
         # 而是枚举该厂商所有合法方案（缓存/不缓存、5m/1h TTL、单/双断点），
         # 用预期复用次数算出每个方案的成本，选最便宜的那个。
         # 返回的 plan 含成本、节省额与人类可读的动作，供运行报告审计。
+        from . import openai_responses
         try:
             options.setdefault("interactive", False)
             payload, plan_raw = _plan_and_shape(payload, messages, provider, model, **options)
@@ -671,7 +676,15 @@ class HttpTransport:
             if plan_raw.get("execution", {}).get("defer", {}).get("delay_seconds"):
                 payload, plan_raw = _plan_and_shape(payload, messages, provider, model, **options)
                 plan_raw["execution"]["defer"]["status"] = "executed"
-        except ValueError as exc:
+            responses = openai_responses.uses_responses(payload, provider)
+            if responses:
+                response_scope = openai_responses.replay_scope(provider, model)
+                payload = openai_responses.to_request(payload, response_scope)
+                url = openai_responses.endpoint(provider)
+                plan_raw["execution"]["transport"] = "responses"
+            else:
+                payload = openai_responses.strip_replay(payload)
+        except (ValueError, TypeError, KeyError) as exc:
             _model_wait(0, cancel_event)
             raise BadRequest(str(exc)) from exc
 
@@ -694,6 +707,8 @@ class HttpTransport:
                 if len(data) > 2 * 1024 * 1024:
                     raise ValueError('Upstream response exceeds 2 MiB')
                 raw = redact(json.loads(data.decode("utf-8", "replace")))
+                if responses:
+                    raw = openai_responses.to_chat(raw, response_scope)
         except urllib.error.HTTPError as exc:
             from .secrets import redact
             try:

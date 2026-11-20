@@ -69,6 +69,11 @@ class GlassSpec:
     inner_line: float = 0.10      # 亮边内侧一道暗线，给玻璃「厚度」
     matte: str | None = None      # 给定时输出不透明 RGB：半透明像素先合成到 matte
     key: str | None = None        # 与 matte 同用：完全透明的像素写成该颜色（窗口挖空）
+    # HUD 角标（科幻感，2026-11-13）：左上与右下两角的亮边染成熔铁色，沿直边
+    # 再延伸 bracket_len 后淡出，像抬头显示器的取景框。0 = 不画。
+    bracket: float = 0.0
+    bracket_len: float = 16.0
+    bracket_colour: str = "#FF7A3D"
 
 
 # ─── 渲染 ─────────────────────────────────────────────────────
@@ -94,6 +99,7 @@ class _Shape:
         self.dy = dy
         self.fill = _rgb(spec.fill)
         self.rimc = _rgb(spec.rim_colour)
+        self.bracketc = _rgb(spec.bracket_colour)
         self.matte = _rgb(spec.matte) if spec.matte else None
         self.key = bytes(_rgb(spec.key)) if spec.key else None
         self.opaque = self.matte is not None
@@ -165,8 +171,29 @@ class _Shape:
                 r += (rr - r) * strength
                 g += (rg - g) * strength
                 b += (rb - b) * strength
+            if spec.bracket and depth < 2.6:
+                lit = self._bracket(px, py)
+                if lit:
+                    k = 1.0 if depth < 1.3 else (2.6 - depth) / 1.3
+                    strength = spec.bracket * lit * k
+                    br, bg_, bb = self.bracketc
+                    r += (br - r) * strength
+                    g += (bg_ - g) * strength
+                    b += (bb - b) * strength
             colour = (r, g, b)
         return self._out(colour, cov, sa)
+
+    def _bracket(self, px, py) -> float:
+        """像素离左上 / 右下角多近（沿边计）：拐角圆弧全亮，直边段末尾 40% 淡出。"""
+        reach = self.r + self.spec.bracket_len
+        best = 0.0
+        for dx, dy in ((px - self.x0, py - self.y0), (self.x1 - px, self.y1 - py)):
+            if dx < reach and dy < reach:
+                along = max(dx, dy) - self.r
+                if along <= self.spec.bracket_len * .6:
+                    return 1.0
+                best = max(best, (reach - max(dx, dy)) / (self.spec.bracket_len * .4))
+        return best
 
     def _out(self, colour, cov, sa) -> bytes:
         alpha = cov + sa * (1 - cov)
@@ -193,7 +220,8 @@ class _Shape:
 
     # 行：两端逐像素，中段同色重复。
     def row(self, y: int, w: int) -> bytes:
-        edge = int(self.mx + self.r + self.spec.band + 3)
+        reach = max(self.spec.band, self.spec.bracket_len if self.spec.bracket else 0)
+        edge = int(self.mx + self.r + reach + 3)
         if edge * 2 + 1 >= w:
             return b"".join(self.pixel(x, y) for x in range(w))
         left = b"".join(self.pixel(x, y) for x in range(edge))
@@ -210,8 +238,9 @@ def _c(value) -> int:
 def _zones(spec: GlassSpec) -> tuple[int, int]:
     s = max(0, int(spec.shadow))
     dy = int(spec.shadow_dy) if s else 0
-    top = math.ceil(max(0, s - dy) + spec.radius + max(spec.band, spec.sheen_h) + 3)
-    bottom = math.ceil(s + dy + spec.radius + spec.band + 3)
+    reach = spec.bracket_len if spec.bracket else 0
+    top = math.ceil(max(0, s - dy) + spec.radius + max(spec.band, spec.sheen_h, reach) + 3)
+    bottom = math.ceil(s + dy + spec.radius + max(spec.band, reach) + 3)
     return top, bottom
 
 
@@ -226,24 +255,43 @@ def _lru_put(cache: OrderedDict, key, value, limit):
         cache.popitem(last=False)
 
 
+def _edge(spec: GlassSpec) -> int:
+    """每行两端需要逐像素计算的宽度（与 _Shape.row 的 edge 一致）。"""
+    reach = max(spec.band, spec.bracket_len if spec.bracket else 0)
+    return int(max(0, int(spec.shadow)) + spec.radius + reach + 3)
+
+
 def _glass_rows(w: int, h: int, spec: GlassSpec) -> list[bytes]:
     top, bottom = _zones(spec)
-    if h < top + bottom + 1:
+    edge = _edge(spec)
+    if h < top + bottom + 1 or w < 2 * edge + 2:
         shape = _Shape(w, h, spec)
         return [shape.row(y, w) for y in range(h)]
-    key = (w, spec)
-    cached = _ROW_CACHE.get(key)
+    # 行的左右两端只依赖到左 / 右边缘的距离，与总宽无关（中段是同一像素重复）；
+    # 所以按 spec 缓存「左段、中段像素、右段」，任意宽度都直接拼接。拖动窗口
+    # 改宽时不再为每个新宽度逐像素重算整圈边缘（展开的文件夹约 27ms / 宽度）。
+    cached = _ROW_CACHE.get(spec)
     if cached is None:
-        # 规范高度：上下边缘区之间留一行纯「中段」，且两区不越过中线。
-        canon = 2 * max(top, bottom) + 1
-        shape = _Shape(w, canon, spec)
-        cached = ([shape.row(y, w) for y in range(top)], shape.row(top, w),
-                  [shape.row(y, w) for y in range(canon - bottom, canon)])
-        _lru_put(_ROW_CACHE, key, cached, 48)
+        # 规范尺寸：宽度刚好放下两端 + 2px 中段；高度在上下边缘区之间留一行中段。
+        canon_w = 2 * edge + 2
+        canon_h = 2 * max(top, bottom) + 1
+        shape = _Shape(canon_w, canon_h, spec)
+
+        def parts(y):
+            return (b"".join(shape.pixel(x, y) for x in range(edge)), shape.pixel(edge, y),
+                    b"".join(shape.pixel(x, y) for x in range(canon_w - edge, canon_w)))
+        cached = ([parts(y) for y in range(top)], parts(top),
+                  [parts(y) for y in range(canon_h - bottom, canon_h)])
+        _lru_put(_ROW_CACHE, spec, cached, 48)
     else:
-        _ROW_CACHE.move_to_end(key)
+        _ROW_CACHE.move_to_end(spec)
     head, middle, tail = cached
-    return [*head, *([middle] * (h - top - bottom)), *tail]
+    span = w - 2 * edge
+
+    def join(part):
+        left, mid, right = part
+        return left + mid * span + right
+    return [*map(join, head), *([join(middle)] * (h - top - bottom)), *map(join, tail)]
 
 
 def glass_png(w: int, h: int, spec: GlassSpec) -> str:
@@ -300,7 +348,8 @@ def spring(t: float, *, zeta: float = 0.68, omega: float = 11.0) -> float:
 def folder_spec(backdrop: str, *, radius=16, shadow=8) -> GlassSpec:
     """对话流里的展开面板（文件夹）：浮在 chat 底上，带下方柔和投影。"""
     return GlassSpec(radius=radius, fill=C["glass_folder"], shadow=shadow, shadow_dy=3,
-                     shadow_alpha=0.50, rim=0.9, glow=1.0, band=8, sheen=1.0, sheen_h=14)
+                     shadow_alpha=0.50, rim=0.9, glow=1.0, band=8, sheen=1.0, sheen_h=14,
+                     bracket=0.8, bracket_len=18, bracket_colour=C["ember"])
 
 
 def chip_spec(fill: str, *, radius, rim=0.75) -> GlassSpec:
@@ -309,11 +358,13 @@ def chip_spec(fill: str, *, radius, rim=0.75) -> GlassSpec:
                      sheen_h=8, inner_line=0.06)
 
 
-def window_spec(fill: str, *, radius, matte: str, shadow=0, shadow_dy=0) -> GlassSpec:
+def window_spec(fill: str, *, radius, matte: str, shadow=0, shadow_dy=0,
+                bracket=0.0) -> GlassSpec:
     """无边框浮窗（弹窗 / 菜单）：四角用颜色键挖空，半透明像素合成到 matte。"""
     return GlassSpec(radius=radius, fill=fill, shadow=shadow, shadow_dy=shadow_dy,
                      shadow_alpha=0.55, rim=1.0, glow=1.1, band=9, sheen=1.0, sheen_h=18,
-                     matte=matte, key=WINDOW_KEY if IS_WINDOWS else None)
+                     matte=matte, key=WINDOW_KEY if IS_WINDOWS else None,
+                     bracket=bracket, bracket_len=26, bracket_colour=C["ember"])
 
 
 # ─── 画布托管的玻璃面 ─────────────────────────────────────────
@@ -616,7 +667,7 @@ def mark_glass_window(win):
 
 
 def glass_window(win, *, fill: str, radius: float, matte: str, inset: int | None = None,
-                 shadow: int = 0, shadow_dy: int = 0) -> tk.Frame:
+                 shadow: int = 0, shadow_dy: int = 0, bracket: float = 0.0) -> tk.Frame:
     """把一个 overrideredirect Toplevel 变成圆角玻璃，返回放内容的 Frame。
 
     窗口矩形四角在 Windows 上用颜色键挖空；其他平台退化为 matte 色角。
@@ -632,7 +683,8 @@ def glass_window(win, *, fill: str, radius: float, matte: str, inset: int | None
         except tk.TclError:
             key = matte
             win.configure(bg=key)
-    spec = window_spec(fill, radius=radius, matte=matte, shadow=shadow, shadow_dy=shadow_dy)
+    spec = window_spec(fill, radius=radius, matte=matte, shadow=shadow, shadow_dy=shadow_dy,
+                       bracket=bracket)
     if key != WINDOW_KEY:
         spec = GlassSpec(**{**spec.__dict__, "key": None})
     pad = int(inset if inset is not None else max(spec.band, 6))
@@ -691,6 +743,38 @@ def glass_window(win, *, fill: str, radius: float, matte: str, inset: int | None
     return host
 
 
+def focus_when_mapped(widget, *, force=False):
+    """给玻璃浮窗里的控件焦点。
+
+    控件是玻璃画布里的内嵌窗口：浮窗映射之后画布重绘时才映射它，而未映射
+    的控件拿不到焦点（Windows 会把焦点记到浮窗本身）。已映射就立即聚焦，
+    否则等它第一次 ``<Map>`` 再聚焦（只一次）。
+    """
+    def apply():
+        try:
+            (widget.focus_force if force else widget.focus_set)()
+        except tk.TclError:
+            pass
+
+    try:
+        if widget.winfo_ismapped():
+            apply()
+            return
+    except tk.TclError:
+        return
+    binding = None
+
+    def on_map(_event=None):
+        try:
+            widget.unbind("<Map>", binding)
+        except tk.TclError:
+            pass
+        apply()
+
+    binding = widget.bind("<Map>", on_map, add="+")
+    apply()                       # 先记下逻辑焦点；映射后再确认一次
+
+
 def fit_glass_window(host):
     """内容建好后调用：把宿主的请求尺寸（加玻璃边距）回传给窗口。"""
     try:
@@ -730,13 +814,13 @@ def modal_scrim(root, *, alpha=0.46):
 def _button_palette(kind: str, base: str):
     """(fill, fg, rim_colour)；fill 是胶囊内部色，hover/pressed 由它派生。"""
     if kind == "primary":
-        return C["accent"], C.get("on_accent", "#FFFFFF"), C["accent2"]
+        return C["accent"], C["on_accent"], C["ember_2"]
     if kind == "danger":
         return mix(base, C["error"], .20), C["error"], C["error"]
     if kind == "ok":
         return C["ok"], "#0B0B10", "#B9F2DC"
     if kind == "accent_soft":
-        return mix(base, C["accent"], .22), C["accent_text"], C["accent2"]
+        return mix(base, C["accent"], .22), C["accent_text"], C["ember_2"]
     if kind == "quiet":
         return mix(base, "#FFFFFF", .035), C["body"], "#FFFFFF"
     return mix(base, "#FFFFFF", .075), C["text"], "#FFFFFF"
@@ -771,6 +855,28 @@ class GlassButton(i18n.Label):
         for key in ("<space>", "<Return>", "<KP_Enter>"):
             self.bind(key, self._keyboard, add="+")
         self._paint()
+
+    def configure(self, cnf=None, **kwargs):
+        result = super().configure(cnf, **kwargs) if cnf is not None else super().configure(**kwargs)
+        if "text" in kwargs or (isinstance(cnf, dict) and "text" in cnf):
+            self._refit()
+        return result
+
+    config = configure
+
+    def _refit(self):
+        """文字变了（含切换界面语言）后按新宽度重做胶囊位图，文字不再溢出。"""
+        fit = getattr(self, "_fit_width", None)
+        if fit is None:
+            return
+        try:
+            width = fit(str(self.cget("text")))
+            if width == int(self.cget("width")):
+                return
+            self._glass_images = self._make_images(width)
+            tk.Label.configure(self, width=width, image=self._glass_images[self._glass_state])
+        except tk.TclError:
+            pass
 
     def _set(self, **changes):
         self._flags.update(changes)
@@ -814,17 +920,38 @@ class GlassButton(i18n.Label):
         return None
 
 
+class _LazyImages(dict):
+    """状态位图按需渲染：首次打开弹窗只画常态图，悬停 / 按下 / 聚焦图
+    在第一次用到时才画（每张约 10ms，两个按钮全画会拖慢弹窗首开）。"""
+
+    def __init__(self, master, width, height, specs):
+        super().__init__()
+        self._master, self._size, self._specs = master, (width, height), specs
+
+    def __missing__(self, name):
+        photo = glass_photo(self._master, *self._size, self._specs[name])
+        self[name] = photo
+        return photo
+
+
 def glass_button(parent, text, command, *, kind="ghost", bg=None, width=None,
                  height=None, font=None, padx=18):
     """胶囊玻璃按钮（GlassButton）：常态、悬停、按下、聚焦四张位图。"""
     base = bg or _bg_of(parent)
+    if not (isinstance(base, str) and len(base) == 7 and base.startswith("#")):
+        base = C["bg"]                    # 系统色名（如 SystemButtonFace）没法混色
     font = font or FONT_UI
     fill, fg, rim_colour = _button_palette(kind, base)
     shown = str(i18n.resolve(text, parent))
-    measure = tkfont.Font(root=parent, font=font).measure(shown)
+    measurer = tkfont.Font(root=parent, font=font)
     h = int(height or ui_px(parent, 36))
-    w = int(width or measure + 2 * ui_px(parent, padx))
-    w = max(w, measure + ui_px(parent, 16), h)
+
+    def fit_width(label):
+        measure = measurer.measure(label)
+        w = int(width or measure + 2 * ui_px(parent, padx))
+        return max(w, measure + ui_px(parent, 16), h)
+
+    w = fit_width(shown)
     radius = h / 2
     lighter = mix(fill, "#FFFFFF", .10)
     darker = mix(fill, "#000000", .16)
@@ -835,15 +962,18 @@ def glass_button(parent, text, command, *, kind="ghost", bg=None, width=None,
 
     specs = {"normal": spec(fill), "hover": spec(lighter, 1.0), "pressed": spec(darker, .6),
              "focus": spec(lighter, 1.0, C["focus_ring"])}
-    images = {name: glass_photo(parent, w, h, value) for name, value in specs.items()}
+    images = _LazyImages(parent, w, h, specs)
     button = GlassButton(parent, text, command, images=images, base=base, fg=fg, font=font,
                          width=w, height=h)
     button._glass_kind = kind
+    button._make_images = lambda new_width: _LazyImages(parent, new_width, h, specs)
+    # 只有宽度跟随文字（未指定 width）时才在换文字后重算。
+    button._fit_width = None if width else fit_width
     return button
 
 
 __all__ = [
     "GLASS_MOTION_MS", "GlassBackdrop", "GlassButton", "GlassPanel", "GlassSpec", "WINDOW_KEY",
     "chip_spec", "folder_spec", "glass_button", "glass_png", "glass_photo", "glass_window",
-    "fit_glass_window", "mark_glass_window", "modal_scrim", "reduce_motion", "spring", "window_spec",
+    "fit_glass_window", "focus_when_mapped", "mark_glass_window", "modal_scrim", "reduce_motion", "spring", "window_spec",
 ]

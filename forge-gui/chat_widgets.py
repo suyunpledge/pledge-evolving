@@ -47,9 +47,9 @@ from ui_icons import IconButton, IconCanvas, emoji_image, emoji_parts, draw_icon
 from gui_theme import (
     position_popover,
     C, FONT_CAPTION, FONT_MICRO, FONT_MONO, FONT_MONO_SM, FONT_MONO_XS, FONT_SECTION,
-    FONT_SMALL, FONT_TITLE, FONT_UI, FONT_UI_BOLD, R_BUBBLE, R_CARD, R_MD, R_PILL,
+    FONT_SMALL, FONT_TITLE, FONT_UI, FONT_UI_BOLD, R_BUBBLE, R_CARD, R_MD, R_PILL, R_PANEL,
     RoundedCard, attach_tooltip, avatar, badge, bind_keyboard_action, circle_button, circle_button_state,
-    dot, emoji_font, glyph_button, highlight_python, round_rect, rounded_label,
+    dot, emoji_font, glyph_button, highlight_python, mix, round_rect, rounded_label,
     setup_code_tags, style_scrollbar, ui_px, text_width, bind_wrap, bind_scoped_wheel, flow_controls,
     _bg_of,
 )
@@ -93,6 +93,51 @@ _FILE_LINK_RE = re.compile(
 def _looks_like_markdown_or_path(token: str) -> bool:
     """识别 token 是否像文件路径（含行号）或被 markdown 链接包裹的路径。"""
     return bool(_FILE_LINK_RE.fullmatch(token)) or _FILE_LINK_RE.search(token)
+
+
+# 网址必须先于文件路径识别：否则 https://host.com/docs 里的 "//host.com"
+# 会被路径规则截成一个假的文件链接，前后的 "https:" 与 "/docs" 落成普通文字。
+# 中文标点与汉字不算网址的一部分（模型常把网址直接接在句子里）。
+URL_PATTERN = r"https?://[^\s<>\"'`\u3000-\u303F\u4E00-\u9FFF\uFF00-\uFFEF]+"
+URL_TRAILING = ".,;:!?)]}'\""   # sentence punctuation is not part of a URL
+_LINK_RE = re.compile("(?P<url>" + URL_PATTERN + ")|" + _FILE_LINK_RE.pattern)
+
+
+def link_spans(text: str):
+    """把一行文字切成 ``(显示文字, 种类, 目标)``：种类为 None（普通文字）、
+    ``"file"`` 或 ``"url"``。Markdown 链接只显示方括号里的文字，目标另存。"""
+    spans, cursor = [], 0
+    for match in _LINK_RE.finditer(text):
+        start, end = match.span()
+        url = match.group("url")
+        if url:
+            target = url.rstrip(URL_TRAILING)
+            end = start + len(target)
+            shown, kind = target, "url"
+        elif match.group("md_path"):
+            target, shown = match.group("md_path"), match.group("md_text")
+            kind = "url" if re.match(r"https?://", target) else "file"
+        else:
+            shown = target = match.group("path")
+            kind = "file"
+        if start > cursor:
+            spans.append((text[cursor:start], None, None))
+        spans.append((shown, kind, target))
+        cursor = end
+    if cursor < len(text):
+        spans.append((text[cursor:], None, None))
+    return spans or [(text, None, None)]
+
+
+def open_url(url: str) -> bool:
+    """用系统浏览器打开网址；只放行 http/https，其余一律不动。"""
+    if not re.match(r"https?://", str(url)):
+        return False
+    try:
+        import webbrowser
+        return bool(webbrowser.open(str(url)))
+    except Exception:
+        return False
 
 
 # ─── 可滚动区域 ────────────────────────────────────────────
@@ -161,12 +206,34 @@ class ScrollArea(tk.Frame):
             self.vbar.pack(side=tk.RIGHT, fill=tk.Y)
             self._bar_visible = True
         self.vbar.set(first, last)
+        backdrop = getattr(self, "backdrop", None)
+        if backdrop is not None:
+            backdrop.follow_view()
         callback = self.on_position_changed
         if callback is not None:
             callback()
 
+    def enable_aurora(self, **options):
+        """在可视区底层挂梦幻极光（消息列内压暗，两侧亮）。"""
+        from aurora import AuroraBackdrop
+
+        def column():
+            if self._max_width is None:
+                return None
+            try:
+                left = self.canvas.coords(self._win)[0]
+                width = float(self.canvas.itemcget(self._win, "width") or 0)
+            except (tk.TclError, IndexError, ValueError):
+                return None
+            return (int(left), int(left + width)) if width > 0 else None
+
+        self.backdrop = AuroraBackdrop(self.canvas, column_of=column, **options)
+        return self.backdrop
+
     def _sync_scrollregion(self, _event=None):
-        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        # 只按内容窗口算滚动区域：极光背景等装饰项跟随可视区移动，算进
+        # bbox("all") 会让滚动区域越滚越大。
+        self.canvas.configure(scrollregion=self.canvas.bbox(self._win) or self.canvas.bbox("all"))
         # Text/card geometry may finish after the first scroll callback. Keep
         # following those height changes until the user explicitly scrolls.
         if self._scroll_follow_end:
@@ -264,6 +331,8 @@ class InlineText(tk.Text):
                          cursor="arrow", insertwidth=0, spacing1=ui_px(parent, 2),
                          spacing2=ui_px(parent, 2), spacing3=ui_px(parent, 3),
                          selectbackground=C["accent_soft"])
+        # Keep mixed Chinese/Latin rows open; pixel measurement below includes
+        # line spacing when calculating the Text widget height.
         self._measure_font = tkfont.Font(root=self, font=self.cget("font"))
         # Font descent supplies the optical inset at every DPI. Width and
         # wrapping still come from the allocated parent, never a fixed gutter.
@@ -276,6 +345,11 @@ class InlineText(tk.Text):
                            underline=True, font=font or theme.FONT_CHAT)
         self._base_bg = base
         self._on_link = on_link
+        # 每个链接一枚独立 tag（link-N）→ (种类, 目标)。点击时按 tag 取完整目标，
+        # 不再靠 Tk 的 wordstart/wordend 猜——那只会拿到光标下的一个单词。
+        self._link_targets = {}
+        self.tag_configure("url_link", foreground=C["link"], underline=True,
+                           font=self.tag_cget("file_link", "font"))
         self._emoji_names = {}
         self._emoji_references = []
         self._recompute_job = None
@@ -290,10 +364,11 @@ class InlineText(tk.Text):
         self.bind("<Button-1>", self._click)
         self.configure(state=tk.DISABLED)
         self._last_h = 1
-        self.tag_bind("file_link", "<Enter>",
-                      lambda _e: self.configure(cursor="hand2"))
-        self.tag_bind("file_link", "<Leave>",
-                      lambda _e: self.configure(cursor="arrow"))
+        for link_tag in ("file_link", "url_link"):
+            self.tag_bind(link_tag, "<Enter>",
+                          lambda _e: self.configure(cursor="hand2"))
+            self.tag_bind(link_tag, "<Leave>",
+                          lambda _e: self.configure(cursor="arrow"))
 
     # -- 高度自适应 --
     def _fit_height(self, _event=None):
@@ -319,34 +394,29 @@ class InlineText(tk.Text):
             if not self.winfo_exists():
                 return
             pixels = int(self.tk.call(self._w, "count", "-update", "-ypixels", "1.0", "end"))
-            line_height = self._measure_font.metrics("linespace")
-            n = max(1, math.ceil(pixels / max(1, line_height)))
-            if n != self._last_h:
-                self._last_h = n
-                self.configure(height=n)
+            line_height = max(1, self._measure_font.metrics("linespace"))
+            # Text 的 height 只能按「字体行高」整行给，而内容像素里还含行距
+            # （spacing1/2/3）。整行向上取整会让单行段落多出一整行空白；改为
+            # 整行取下界，余数由上下 pady 补齐，总高与内容像素至多差 1px。
+            n = max(1, pixels // line_height)
+            pad = max(0, math.ceil((pixels - n * line_height) / 2))
+            if (n, pad) != self._last_h:
+                self._last_h = (n, pad)
+                self.configure(height=n, pady=pad)
         except tk.TclError:
             pass
 
     def set_segments(self, segs):
-        """segs 是 (text, tag|None|iterable) 列表，自动识别文件链接。"""
+        """segs 是 (text, tag|None|iterable) 列表，自动识别文件链接与网址。"""
         self.configure(state=tk.NORMAL)
         self.delete("1.0", tk.END)
         self._emoji_names.clear()
         self._emoji_references.clear()
+        for name in self._link_targets:
+            self.tag_delete(name)
+        self._link_targets.clear()
         for text, tag in segs:
-            if not text:
-                continue
-            extra_tag = ("file_link",) if tag is None else (
-                tag + ("file_link",) if isinstance(tag, tuple)
-                else (tag, "file_link")
-            )
-            ordered = _split_text_into_plain_and_links(text)
-            for piece, is_link in ordered:
-                chosen_tag = extra_tag if is_link else (
-                    tuple(t for t in (extra_tag if isinstance(extra_tag, tuple) else (extra_tag,))
-                          if t != "file_link")
-                )
-                self._insert_display(piece, chosen_tag)
+            self._insert_linked(text, tag)
         self.configure(state=tk.DISABLED)
         self._last_h = -1
         self._schedule_recompute()
@@ -356,28 +426,27 @@ class InlineText(tk.Text):
 
     def append_text(self, text, tag=None):
         self.configure(state=tk.NORMAL)
-        if not text:
-            pass
-        else:
-            extra_tag = ("file_link",) if tag is None else (
-                tag + ("file_link",) if isinstance(tag, tuple)
-                else (tag, "file_link")
-            )
-            ordered = _split_text_into_plain_and_links(text)
-            for piece, is_link in ordered:
-                chosen_tag = extra_tag if is_link else (
-                    tuple(t for t in (extra_tag if isinstance(extra_tag, tuple) else (extra_tag,))
-                          if t != "file_link")
-                )
-                self._insert_display(piece, chosen_tag)
+        self._insert_linked(text, tag)
         self.configure(state=tk.DISABLED)
         self._last_h = -1
         self._schedule_recompute()
 
+    def _insert_linked(self, text, tag):
+        if not text:
+            return
+        base = () if tag is None else tag if isinstance(tag, tuple) else (tag,)
+        for shown, kind, target in link_spans(text):
+            if kind is None:
+                self._insert_display(shown, base)
+                continue
+            name = f"link-{len(self._link_targets)}"
+            self._link_targets[name] = (kind, target)
+            self._insert_display(shown, base + ("url_link" if kind == "url" else "file_link", name))
+
     def _insert_display(self, text, tags):
         # Keep file links and inline code as literal text; their indices/meaning
         # must not be changed by an image renderer.
-        if "code" in tags or "file_link" in tags:
+        if "code" in tags or "file_link" in tags or "url_link" in tags:
             self.insert(tk.END, text, tags)
             return
         self.tag_configure("emoji_text", font=emoji_font("😀", 11))
@@ -407,53 +476,33 @@ class InlineText(tk.Text):
         return "break"
 
     # -- 链接交互 --
-    def _motion(self, event):
+    def _link_at(self, event):
         try:
-            idx = self.index(f"@{event.x},{event.y}")
-            for tag in self.tag_names(idx):
-                if tag == "file_link":
-                    self.configure(cursor="hand2")
-                    return
+            names = self.tag_names(self.index(f"@{event.x},{event.y}"))
         except tk.TclError:
-            pass
-        self.configure(cursor="arrow")
+            return None
+        return next((self._link_targets[name] for name in names if name in self._link_targets), None)
+
+    def _motion(self, event):
+        self.configure(cursor="hand2" if self._link_at(event) else "arrow")
 
     def _click(self, event):
-        try:
-            idx = self.index(f"@{event.x},{event.y}")
-        except tk.TclError:
-            return
-        for tag in self.tag_names(idx):
-            if tag == "file_link":
-                # 走到 file_link 区间起点以拿到完整 token
-                start = self.index(f"{idx} wordstart")
-                end = self.index(f"{idx} wordend")
-                token = self.get(start, end).strip()
-                if self._on_link:
-                    self._on_link(token)
-                else:
-                    _dispatch_file_link(token)
-                return "break"
-        return None
+        link = self._link_at(event)
+        if link is None:
+            return None
+        kind, target = link
+        if kind == "url":
+            open_url(target)
+        elif self._on_link:
+            self._on_link(target)
+        else:
+            _dispatch_file_link(target)
+        return "break"
 
 
 def _split_text_into_plain_and_links(text: str):
-    """把文本切成 (片段, 是否链接) 段。在 markdown 链接场合只用 md_path。"""
-    segs = []
-    i = 0
-    for m in _FILE_LINK_RE.finditer(text):
-        s, e = m.span()
-        if s > i:
-            segs.append((text[i:s], False))
-        if m.group("md_path"):
-            # [text](path)：用 path 作为可点击区域；显示原文可保留 md 文本
-            segs.append((m.group("md"), True))
-        else:
-            segs.append((m.group("path"), True))
-        i = e
-    if i < len(text):
-        segs.append((text[i:], False))
-    return segs or [(text, False)]
+    """把文本切成 (显示片段, 是否链接) 段；细节见 link_spans。"""
+    return [(shown, kind is not None) for shown, kind, _target in link_spans(text)]
 
 
 def _dispatch_file_link(token: str):
@@ -597,15 +646,34 @@ def _render_single_block(host, block, *, base, wrap):
     kind = block["type"]
     if kind == "h":
         f = theme.FONT_MARKDOWN_HEADING if block["level"] <= 2 else theme.FONT_MARKDOWN_SUBHEAD
+        # 标题行：左侧熔铁色刻度游标（科幻感）+ 标题；一、二级标题下方再拉一条
+        # 由左向右淡出的细线，把一节内容框起来。
+        from glass_ornaments import heading_marker
+        head_row = tk.Frame(host, bg=base)
+        head_row.pack(fill=tk.X, pady=(12 if block["level"] <= 2 else 8, 4))
+        line = tkfont.Font(root=head_row, font=f).metrics("linespace")
+        heading_marker(head_row, height=line, bg=base, level=block["level"]).pack(
+            side=tk.LEFT, anchor="n", padx=(0, ui_px(head_row, 6)))
         if any(is_emoji for _part, is_emoji in emoji_parts(block["text"])):
-            heading = InlineText(host, bg=base, fg=C["text"], font=f)
+            heading = InlineText(head_row, bg=base, fg=C["text"], font=f)
             heading.set_text(block["text"])
         else:
-            heading = i18n.Label(host, text=block["text"], bg=base, fg=C["text"], font=f,
+            heading = i18n.Label(head_row, text=block["text"], bg=base, fg=C["text"], font=f,
                                anchor="w", justify=tk.LEFT, wraplength=wrap)
-        heading.pack(fill=tk.X, pady=(ui_px(host, 10), ui_px(host, 4)))
+        heading.pack(side=tk.LEFT, fill=tk.X, expand=True)
         if isinstance(heading, i18n.Label):
             bind_wrap(heading)
+        if block["level"] <= 2:
+            rule = tk.Canvas(host, height=1, bg=base, highlightthickness=0, bd=0)
+            rule.pack(fill=tk.X, pady=(0, 4))
+
+            def draw_rule(event, cv=rule):
+                cv.delete("all")
+                steps = 16
+                for i in range(steps):
+                    cv.create_line(event.width * i / steps, 0, event.width * (i + 1) / steps, 0,
+                                   fill=theme.mix(C["border_hi"], base, i / steps))
+            rule.bind("<Configure>", draw_rule)
     elif kind == "p":
         t = InlineText(host, bg=base)
         t.set_segments(inline_segments(block["text"]))
@@ -644,30 +712,56 @@ def _render_single_block(host, block, *, base, wrap):
     elif kind == "todo":
         row = tk.Frame(host, bg=base)
         row.pack(fill=tk.X, pady=1)
-        mark = "✅" if block["done"] else "⬜"
-        color = C["ok"] if block["done"] else C["muted"]
-        IconCanvas(row, "check_circle" if block["done"] else "stop", size=18,
-                   bg=base, fg=color).pack(side=tk.LEFT, padx=(0, 8))
+        size = ui_px(row, 18)
+        if block["done"]:
+            mark = IconCanvas(row, "check_circle", size=size, bg=base, fg=C["ok"])
+        else:
+            # 未完成：与「已完成」同圆心同半径的空心圆（图标网格 24，半径 9）。
+            mark = tk.Canvas(row, width=size, height=size, bg=base, highlightthickness=0, bd=0)
+            inset = size * 3 / 24
+            mark.create_oval(inset, inset, size - inset, size - inset, outline=C["faint"],
+                             width=max(1, size * 1.75 / 24))
+        mark.pack(side=tk.LEFT, anchor="n", padx=(0, 8))
         t = InlineText(row, bg=base)
         t.set_segments(inline_segments(block["text"]))
         t.pack(side=tk.LEFT, fill=tk.X, expand=True)
     elif kind == "quote":
-        row = tk.Frame(host, bg=base)
-        row.pack(fill=tk.X, pady=2)
-        tk.Frame(row, bg=C["accent_border"], width=3).pack(side=tk.LEFT, fill=tk.Y)
-        t = InlineText(row, bg=base)
+        # 引用：淡熔铁色底的信号条，左缘一道亮轨，文字用次级色。
+        tint = theme.mix(base, C["ember"], .06)
+        row = tk.Frame(host, bg=tint)
+        row.pack(fill=tk.X, pady=4)
+        tk.Frame(row, bg=C["ember"], width=max(2, ui_px(row, 2))).pack(side=tk.LEFT, fill=tk.Y)
+        t = InlineText(row, bg=tint, fg=C["subtext"])
         t.set_segments(inline_segments(block["text"]))
-        t.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 0))
+        t.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(ui_px(row, 10), ui_px(row, 8)),
+               pady=ui_px(row, 6))
     elif kind in ("code", "table"):
         # 代码块不识别文件链接：用不签名 InlineText 的 _on_link 的 Text 直接渲染。
-        card = RoundedCard(host, radius=R_MD, fill=C["code_bg"],
-                           outline=C["border"], padx=10, pady=8, bg=base)
+        from glass_ornaments import HudCard
+        card = HudCard(host, radius=R_MD, fill=C["code_bg"],
+                       outline=C["border"], padx=10, pady=8, bg=base)
         card.pack(fill=tk.X, pady=6)
         toolbar = tk.Frame(card.content, bg=C['code_bg'])
         toolbar.pack(fill=tk.X, pady=(0,6))
         lang = block.get('lang') or ('Markdown' if kind == 'table' else 'Code')
-        i18n.Label(toolbar, text=lang, bg=C['code_bg'], fg=C['muted'],
-                   font=FONT_CAPTION).pack(side=tk.LEFT)
+        # 标题栏像终端读数：熔铁色状态点 + 等宽大写语言名 + 行数 / 行列数。
+        source_lines = block['text'].split('\n')
+        if kind == 'table':
+            data_rows = [line for index, line in enumerate(source_lines) if index != 1 and line.strip()]
+            columns_seen = max((len(re.split(r'(?<!\\)\|', line.strip().strip('|')))
+                                for line in data_rows), default=0)
+            meta = tr('{rows} 行 × {cols} 列', rows=max(0, len(data_rows) - 1), cols=columns_seen)
+        else:
+            meta = tr('{count} 行', count=len(source_lines))
+        dot_size = ui_px(toolbar, 7)
+        dot = tk.Canvas(toolbar, width=dot_size, height=dot_size, bg=C['code_bg'],
+                        highlightthickness=0, bd=0)
+        dot.create_oval(0, 0, dot_size - 1, dot_size - 1, fill=C['ember'], outline='')
+        dot.pack(side=tk.LEFT, padx=(0, ui_px(toolbar, 7)))
+        i18n.Label(toolbar, text=tr('表格') if kind == 'table' else lang.upper(), bg=C['code_bg'],
+                   fg=C['subtext'], font=FONT_MONO_XS).pack(side=tk.LEFT)
+        i18n.Label(toolbar, text=tr(' · {meta}', meta=meta), bg=C['code_bg'],
+                   fg=C['faint'], font=FONT_MONO_XS).pack(side=tk.LEFT)
         def copy_source():
             card.clipboard_clear()
             card.clipboard_append(block['text'])
@@ -695,6 +789,10 @@ def _render_single_block(host, block, *, base, wrap):
             tx.tag_configure('table_heading', font=heading_font,
                              foreground=C['text'], background=C['surface'])
             tx.tag_add('table_heading','1.0','1.end')
+            # 斑马纹：偶数数据行轻微提亮，长表格横向阅读不串行。
+            tx.tag_configure('table_zebra', background=theme.mix(C['code_bg'], '#FFFFFF', .035))
+            for index in range(3, len(rows) + 1, 2):
+                tx.tag_add('table_zebra', f'{index}.0', f'{index}.end+1c')
         else:
             tx.insert("1.0", block["text"])
         if kind == 'code' and (lang in ("Code", "py", "python") or lang.startswith("py")):
@@ -704,6 +802,16 @@ def _render_single_block(host, block, *, base, wrap):
                 pass
         line_count = max(1, len(tx.get('1.0','end-1c').split('\n')))
         tx.configure(height=min(line_count, 24), state=tk.DISABLED)
+        gutter = None
+        if kind == 'code' and line_count >= 4:
+            # 行号槽：等宽暗色数字，右侧一道细分隔；随代码纵向滚动。
+            digits = len(str(line_count))
+            gutter = tk.Text(card.content, bg=C["code_bg"], fg=C["faint"], font=FONT_MONO_SM,
+                             relief=tk.FLAT, bd=0, highlightthickness=0, wrap=tk.NONE,
+                             width=digits + 1, height=min(line_count, 24), cursor='arrow',
+                             takefocus=0)
+            gutter.insert('1.0', '\n'.join(str(n).rjust(digits) for n in range(1, line_count + 1)))
+            gutter.configure(state=tk.DISABLED)
         # 设计稿：原生 tk.Scrollbar 在深色界面里是一条白轨道；改用主题 ttk 滚动条。
         tall = line_count > 24
         sx = ttk.Scrollbar(card.content, orient=tk.HORIZONTAL, command=tx.xview)
@@ -716,12 +824,26 @@ def _render_single_block(host, block, *, base, wrap):
                 sx.pack_forget()
         tx.configure(xscrollcommand=sync_x)
         if tall:
-            sy = ttk.Scrollbar(card.content, orient=tk.VERTICAL, command=tx.yview)
-            tx.configure(yscrollcommand=sy.set)
+            def scroll_both(*args):
+                tx.yview(*args)
+                if gutter is not None:
+                    gutter.yview_moveto(tx.yview()[0])
+            sy = ttk.Scrollbar(card.content, orient=tk.VERTICAL, command=scroll_both)
+
+            def sync_y(first, last):
+                sy.set(first, last)
+                if gutter is not None:
+                    gutter.yview_moveto(first)
+            tx.configure(yscrollcommand=sync_y)
             sy.pack(side=tk.RIGHT, fill=tk.Y)
+        if gutter is not None:
+            gutter.pack(side=tk.LEFT, fill=tk.Y)
+            tk.Frame(card.content, bg=C['border'], width=1).pack(
+                side=tk.LEFT, fill=tk.Y, padx=(ui_px(card, 4), ui_px(card, 8)))
         tx.pack(fill=tk.BOTH, expand=True)
     elif kind == "hr":
-        tk.Frame(host, bg=C["border"], height=1).pack(fill=tk.X, pady=6)
+        from glass_ornaments import HudDivider
+        HudDivider(host, bg=base).pack(fill=tk.X, pady=6)
 
 
 def render_blocks_chunked(parent, text, *, bg=None, max_width=None,
@@ -828,7 +950,7 @@ class _GlassFolder:
         self._arrow.pack(side=tk.LEFT, padx=(0, px(4)))
         self._tab_widgets = [self._arrow]
         if icon:
-            mark = IconCanvas(self._summary, icon, size=px(14), bg=fill, fg=C["accent"])
+            mark = IconCanvas(self._summary, icon, size=px(14), bg=fill, fg=C["ember"])
             mark.pack(side=tk.LEFT, padx=(0, px(6)))
             self._tab_widgets.append(mark)
         self._summary_label = i18n.Label(self._summary, text="", bg=fill,
@@ -837,6 +959,11 @@ class _GlassFolder:
                                        wraplength=ui_px(self, MAX_BUBBLE_WIDTH))
         self._summary_label.pack(side=tk.LEFT)
         self._tab_widgets.append(self._summary_label)
+        # 状态珠串：收起时也能一眼看出里面有几步、哪步没过。
+        from glass_ornaments import BeadStrip
+        self._beads = BeadStrip(self._summary, bg=fill)
+        self._beads.pack(side=tk.LEFT, padx=(px(8), 0))
+        self._tab_widgets.append(self._beads)
         for widget in (self._summary, *self._tab_widgets):
             widget.bind("<Button-1>", lambda _e: self.toggle())
             widget.bind("<Enter>", lambda _e: self._paint_tab(True), add="+")
@@ -913,6 +1040,7 @@ class ToolCard(_GlassFolder, tk.Frame):
             self._set_folder(card, True, animate=False)
         # 计算摘要文字（用全量行数，不等分批完成）
         self._all_row_count = len(rows)
+        self._beads.set_states("ok" if row.get("ok", True) else "fail" for row in rows)
         self._refresh_summary()
 
     def _kick_row_batch(self):
@@ -962,27 +1090,44 @@ class ToolCard(_GlassFolder, tk.Frame):
         self._set_folder(self._card, self._expanded)
 
     def add_row(self, row: dict):
+        """运行轨迹（Ember 设计稿 02）：每步一个状态节点，节点之间竖线相连。"""
         bgc = self._card_fill
         wrap = tk.Frame(self.rows_frame, bg=bgc)
-        wrap.pack(fill=tk.X, pady=1)
+        wrap.pack(fill=tk.X)
         ok = row.get("ok", True)
-        mark = "✅" if ok else "⚠️"
-        IconCanvas(wrap, "check_circle" if ok else "warning", size=18, bg=bgc,
-                   fg=C["ok"] if ok else C["warn"]).pack(side=tk.LEFT, padx=(0, 6))
+        rail = tk.Frame(wrap, bg=bgc, width=ui_px(self, 22))
+        rail.pack(side=tk.LEFT, fill=tk.Y, padx=(0, ui_px(self, 10)))
+        rail.pack_propagate(False)
+        node_size = ui_px(self, 20)
+        node = tk.Canvas(rail, width=node_size, height=node_size, bg=bgc,
+                         highlightthickness=0, bd=0)
+        tone = C["ok"] if ok else C["warn"]
+        node.create_oval(0, 0, node_size - 1, node_size - 1, fill=mix(bgc, tone, .16),
+                         outline=mix(bgc, tone, .45))
+        glyph = ui_px(self, 12)
+        draw_icon(node, "check" if ok else "warning", x=(node_size - glyph) / 2,
+                  y=(node_size - glyph) / 2, size=glyph, fg=tone)
+        node.pack(side=tk.TOP, pady=(ui_px(self, 4), 0))
+        line = tk.Frame(rail, bg=C["border_hi"], width=max(1, ui_px(self, 1.5)))
+        # 上一步的连线此时才有下一步可连；最后一步不画尾巴。
+        if self._rail_lines:
+            self._rail_lines[-1].pack(side=tk.TOP, fill=tk.Y, expand=True, pady=(2, 0))
+        self._rail_lines.append(line)
         # Reserve timing before giving the remaining width to the text column.
         if row.get("elapsed"):
-            i18n.Label(wrap, text=str(row["elapsed"]), bg=bgc, fg=C["muted"],
-                       font=FONT_MONO_SM).pack(side=tk.RIGHT, anchor="n", padx=(8, 0))
+            i18n.Label(wrap, text=str(row["elapsed"]), bg=bgc, fg=C["faint"],
+                       font=FONT_MONO_SM).pack(side=tk.RIGHT, anchor="n", padx=(8, 0),
+                                               pady=(ui_px(self, 5), 0))
         text_box = tk.Frame(wrap, bg=bgc)
-        text_box.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        name = i18n.Label(text_box, text=row.get("name", ""), bg=bgc, fg=C["accent2"],
+        text_box.pack(side=tk.LEFT, fill=tk.X, expand=True, pady=(ui_px(self, 4), ui_px(self, 8)))
+        name = i18n.Label(text_box, text=row.get("name", ""), bg=bgc, fg=C["text"] if ok else C["warn"],
                          font=FONT_MONO_SM, anchor="w", justify=tk.LEFT,
                          wraplength=ui_px(self, MAX_BUBBLE_WIDTH))
         name.pack(fill=tk.X)
         bind_wrap(name)
         desc = row.get("desc")
         if desc:
-            description = i18n.Label(text_box, text=desc, bg=bgc, fg=C["ter"], font=FONT_SMALL,
+            description = i18n.Label(text_box, text=desc, bg=bgc, fg=C["subtext"], font=FONT_SMALL,
                                      anchor="w", justify=tk.LEFT, wraplength=ui_px(self, MAX_BUBBLE_WIDTH))
             description.pack(fill=tk.X)
             bind_wrap(description)
@@ -1006,6 +1151,7 @@ class StepList(_GlassFolder, tk.Frame):
         self._build_tab(base, icon="task")
         n = len(self._items)
         self._summary_label.configure(text=tr("执行步骤 {count} 步", count=n))
+        self._beads.set_states("ok" if item.get("done", True) else "todo" for item in self._items)
 
         # 明细：玻璃面板
         self._detail, self._detail_fill = self._build_folder(base, padx=12, pady=8)
@@ -1072,10 +1218,10 @@ class ActionRow(tk.Frame):
             btn = IconButton(self, text=label,
                             command=action.get("command"),
                             bg=C["accent"] if kind == "primary" else C["surface2"],
-                            fg="#FFFFFF" if kind == "primary" else C["body"],
+                            fg=C["on_accent"] if kind == "primary" else C["body"],
                             activebackground=(C["accent_hover"] if kind == "primary"
                                               else C["hover"]),
-                            activeforeground=("#FFFFFF" if kind == "primary"
+                            activeforeground=(C["on_accent"] if kind == "primary"
                                               else C["text"]),
                             font=FONT_SMALL, relief=tk.FLAT, bd=0, padx=12, pady=4,
                             cursor="hand2", highlightthickness=0,
@@ -1585,7 +1731,19 @@ class NoticeMessage(tk.Frame):
                                   fg=C["body"], font=FONT_SMALL, anchor="w", justify=tk.LEFT)
         self.summary.pack(fill=tk.X, pady=(2, 0))
         bind_wrap(self.summary)
-        self.details = InlineText(card.content, bg=soft, font=FONT_MONO_SM)
+        # 详情收在一块嵌入的玻璃井里（液态玻璃，2026-11-13）：比卡片底深一档，
+        # 亮边与透镜光效落在内边距里。
+        import liquid_glass as glass
+        well_fill = mix(soft, "#000000", .28)
+        # 普通 Frame + 垫底玻璃位图（不用画布内嵌窗口）：展开后正文立刻映射，
+        # 不必等画布多轮重绘。
+        self._details_well = tk.Frame(card.content, bg=soft, padx=ui_px(self, 10),
+                                      pady=ui_px(self, 8))
+        glass.GlassBackdrop(self._details_well, glass.GlassSpec(
+            radius=ui_px(self, 12), fill=well_fill, rim=.55, glow=.7, band=5, sheen=.6,
+            sheen_h=8, inner_line=.06))
+        # 详情正文只在展开时 pack。
+        self.details = InlineText(self._details_well, bg=well_fill, font=FONT_MONO_SM)
         self.details.set_text(text)
         btn_row = tk.Frame(card.content, bg=soft)
         btn_row.pack(anchor='w', pady=(6, 0))
@@ -1604,11 +1762,14 @@ class NoticeMessage(tk.Frame):
             self.actions.pack(fill=tk.X, pady=(6, 0))
 
     def toggle_details(self):
-        if self.details.winfo_manager():
+        well = self._details_well
+        if well.winfo_manager():
+            well.pack_forget()
             self.details.pack_forget()
             self.details_button.configure(text=tr('查看详情'))
         else:
-            self.details.pack(fill=tk.X, pady=(6, 0), before=self.details_button)
+            self.details.pack(fill=tk.X)
+            well.pack(fill=tk.X, pady=(6, 0), before=self.details_button)
             self.details_button.configure(text=tr('收起详情'))
 
 
@@ -1622,6 +1783,7 @@ class MessageArea(tk.Frame):
         self.scroll = ScrollArea(self, bg=base, padx=0, pady=ui_px(self, 20),
                                  max_width=theme.CONTENT_WIDTH)
         self.scroll.pack(fill=tk.BOTH, expand=True)
+        self.scroll.enable_aurora(fade_top=ui_px(self, 70), fade_bottom=ui_px(self, 220))
         self.jump_latest = theme.control_button(
             self, text=tr("回到最新"), command=self.scroll.scroll_to_end,
             bg=C["surface2"], fg=C["text"], activebackground=C["hover"],
@@ -1655,117 +1817,144 @@ class MessageArea(tk.Frame):
     def show_empty(self, title="从一个目标开始",
                    lines=("描述你想解决的问题，或添加文件作为上下文。",
                           "执行工具请选择左侧「任务」；连接信息在右上「状态」。"),
-                   actions=(), compact_actions=False):
+                   actions=()):
         self.clear()
         box = tk.Frame(self.scroll.inner, bg=self._bg)
-        box.pack(fill=tk.X, padx=ui_px(self, 16), pady=(ui_px(self, 48), 12))
-        size = ui_px(self, 42)
-        banner = tk.Canvas(box, width=size, height=size, bg=self._bg,
-                           highlightthickness=0, bd=0)
-        round_rect(banner, .5, .5, size - .5, size - .5, ui_px(self, 12),
-                   fill=C["welcome_action"], outline=C["welcome_edge"])
-        glyph = ui_px(self, 23)
-        draw_icon(banner, "flame", x=(size - glyph) / 2, y=(size - glyph) / 2,
-                  size=glyph, fg=C["brand_spark"], tag="decor")
-        banner.pack(anchor="w", pady=(0, ui_px(self, 14)))
+        box.pack(fill=tk.X, pady=(ui_px(self, 56), 12))
+        # 设计稿（2026-10-30）：主视觉收成一枚 52px 圆角图标块，标题加大，
+        # 工作区信息做成一枚胶囊；说明句由下方「试试」建议胶囊替代。
+        # 2026-11-07：图标块外加一圈渐隐光晕 + 几颗品牌色星芒，主视觉不再单薄。
+        # Ember 设计稿：主视觉 = 构建期烘焙的铁砧品牌块 + 暖色光晕（PNG），
+        # Tk 无法实时模糊；缺资源时回退到原来的画布星芒图标块。
+        from ui_icons import asset_image
+        hero = asset_image(self, "brand-hero", ui_px(self, 64))
+        if hero is not None:
+            banner = tk.Canvas(box, width=hero.width(), height=hero.height(), bg=self._bg,
+                               highlightthickness=0, bd=0)
+            banner.create_image(hero.width() / 2, hero.height() / 2, image=hero, tags=("decor",))
+            banner.image = hero
+        else:
+            banner = self._fallback_banner(box)
+        banner.pack(pady=(0, ui_px(self, 2)))
+        import datetime as _dt
+        hour = _dt.datetime.now().hour
+        greeting = (tr("夜深了") if hour < 5 else tr("早上好") if hour < 11 else
+                    tr("中午好") if hour < 13 else tr("下午好") if hour < 18 else tr("晚上好"))
+        eyebrow = i18n.Label(box, text=greeting, bg=self._bg, fg=C["ember"], font=FONT_SMALL)
+        eyebrow.pack(pady=(0, ui_px(self, 2)))
         title_label = i18n.Label(box, text=title, bg=self._bg, fg=C["text"],
-                                 font=theme.FONT_HERO, anchor="w", justify=tk.LEFT)
-        title_label.pack(fill=tk.X)
-        title_label.bind("<Configure>", lambda e: title_label.configure(wraplength=max(80, e.width)))
+                                 font=(FONT_TITLE[0], 17, "bold"))
+        title_label.pack()
+        context = rounded_label(box, self._context_var.get() or " ", fill=C["surface"],
+                                outline=C["line"], fg=C["subtext"], font=FONT_SMALL,
+                                bg=self._bg, padx=ui_px(self, 12), pady=ui_px(self, 3))
+        context.pack(pady=(ui_px(self, 12), 0))
+        trace = self._context_var.trace_add(
+            "write", lambda *_: context.winfo_exists() and context.set_text(
+                self._context_var.get() or " "))
+        context.bind("<Destroy>", lambda _e: self._context_var.trace_remove("write", trace),
+                     add="+")
         for line in lines:
-            label = i18n.Label(box, text=line, bg=self._bg, fg=C["subtext"],
-                             font=theme.FONT_LEAD, wraplength=500, justify=tk.LEFT, anchor="w")
-            label.pack(fill=tk.X, pady=(ui_px(self, 5), 0))
+            label = i18n.Label(box, text=line, bg=self._bg, fg=C["ter"],
+                             font=FONT_SMALL, wraplength=500, justify=tk.CENTER)
+            label.pack(fill=tk.X, pady=(8, 0))
             label.bind("<Configure>", lambda e, w=label: w.configure(
                 wraplength=max(80, e.width - 16)))
-        context = i18n.Label(box, textvariable=self._context_var, fg=C["muted"],
-                             font=FONT_CAPTION, bg=self._bg, anchor="w", justify=tk.LEFT)
-        context.pack(fill=tk.X, pady=(ui_px(self, 12), 0))
-        context.bind("<Configure>", lambda e: context.configure(wraplength=max(80, e.width)))
         if actions:
             choices = tk.Frame(box, bg=self._bg)
-            choices.pack(fill=tk.X, pady=(ui_px(self, 20), 0))
+            choices.pack(fill=tk.X, padx=24, pady=(ui_px(self, 30), 0))
             action_rows = []
-            # Quiet monochrome actions; only hover adds a raised surface and blue edge.
+            # 2026-11-07：建议卡改为圆角 RoundedCard——柔和投影 + 顶边高光，
+            # 悬停时描边转蓝、顶边亮起强调色细线，右上角出现 → 提示可点击。
             # 可选第 4 项指定图标名。
-            card_bg, card_hover = C["welcome_action"], C["hover"]
+            card_bg, card_hover = C["surface"], mix(C["surface"], C["ember"], 0.07)
             default_icons = ("chat", "task", "workspace")
-            tile = ui_px(self, 24)
+            tones = (C["ember"], C["agent_accent"], C["info"])
+            tile = ui_px(self, 34)
             for index, action in enumerate(actions):
                 title, detail, callback = action[:3]
                 icon_name = action[3] if len(action) > 3 else default_icons[index % 3]
-                idle_edge = C["welcome_edge"]
-                row = tk.Frame(choices, bg=card_bg, padx=ui_px(self, 14), pady=ui_px(self, 16),
-                               cursor="hand2", highlightthickness=1,
-                               highlightbackground=idle_edge)
-                icon = tk.Canvas(row, width=tile, height=tile, bg=card_bg,
+                card = RoundedCard(choices, radius=R_CARD, fill=card_bg, outline=C["line"],
+                                   padx=ui_px(self, 16), pady=ui_px(self, 14), bg=self._bg,
+                                   shadow=ui_px(self, 4), sheen=True)
+                row = card.content
+                row.configure(cursor="hand2")
+                head = tk.Frame(row, bg=card_bg, cursor="hand2")
+                head.pack(fill=tk.X, pady=(0, ui_px(self, 12)))
+                icon = tk.Canvas(head, width=tile, height=tile, bg=card_bg,
                                  highlightthickness=0, bd=0, cursor="hand2")
+                tone = tones[index % len(tones)]
+                round_rect(icon, 0, 0, tile - 1, tile - 1, ui_px(self, 9),
+                           fill=mix(card_bg, tone, 0.13), outline=mix(card_bg, tone, 0.38))
                 glyph = ui_px(self, 18)
                 draw_icon(icon, icon_name, x=(tile - glyph) / 2, y=(tile - glyph) / 2,
-                          size=glyph, fg=C["accent2"])
-                icon.pack(anchor="w", pady=(0, ui_px(self, 10)))
+                          size=glyph, fg=tone)
+                icon.pack(side=tk.LEFT)
+                arrow = tk.Label(head, text="→", bg=card_bg, fg=card_bg,
+                                 font=FONT_UI_BOLD, cursor="hand2")
+                arrow.pack(side=tk.RIGHT, anchor="n")
                 label = i18n.Label(row, text=title, bg=card_bg, fg=C["text"],
-                                 font=theme.FONT_CHAT_BOLD, anchor="w", justify=tk.LEFT, cursor="hand2")
+                                 font=FONT_UI_BOLD, anchor="w", cursor="hand2")
                 label.pack(fill=tk.X)
                 hint = i18n.Label(row, text=detail, bg=card_bg, fg=C["subtext"],
                                 font=FONT_SMALL, anchor="w", justify=tk.LEFT,
                                 cursor="hand2")
-                hint.pack(fill=tk.X, pady=(ui_px(self, 3), 0))
+                hint.pack(fill=tk.X, pady=(ui_px(self, 4), 0))
                 bind_keyboard_action(row, callback)
-                row.configure(highlightbackground=idle_edge)
-                action_rows.append((row, icon, label, hint))
-                parts = (row, icon, label, hint)
+                action_rows.append((card, label, hint, head))
+                parts = (row, head, icon, label, hint)
 
-                def paint(fill, edge, parts=parts):
-                    parts[0].configure(highlightbackground=edge)
+                def paint(hover, card=card, parts=parts, arrow=arrow):
+                    fill = card_hover if hover else card_bg
+                    card.set_fill(fill, C["accent_border"] if hover else C["line"],
+                                  accent_top=C["ember"] if hover else None)
                     for w in parts:
                         w.configure(bg=fill)
-                for widget in parts:
+                    arrow.configure(bg=fill, fg=C["accent2"] if hover else fill)
+                for widget in parts + (arrow, card.canvas):
                     widget.bind("<Button-1>", lambda _e, fn=callback: fn())
-                    widget.bind("<Enter>", lambda _e, fn=paint: fn(card_hover, C["accent_border"]))
-                    widget.bind("<Leave>", lambda _e, fn=paint: fn(card_bg, idle_edge))
+                    widget.bind("<Enter>", lambda _e, fn=paint: fn(True))
+                    widget.bind("<Leave>", lambda _e, fn=paint: fn(False))
 
             def fit_choices(event):
-                columns = len(action_rows) if event.width >= ui_px(self, 620) else 1
+                columns = len(action_rows) if event.width >= 720 else 1
                 for col in range(len(action_rows)):
                     choices.grid_columnconfigure(col, weight=1 if col < columns else 0,
                                                  uniform="actions" if col < columns else "")
                 width = max(120, event.width // columns - ui_px(self, 48))
-                for index, (row, icon, label, hint) in enumerate(action_rows):
+                for index, (row, label, hint, head) in enumerate(action_rows):
                     row.grid(row=index // columns, column=index % columns,
-                             sticky="nsew", padx=(0, ui_px(self, 8) if index % columns < columns - 1 else 0),
-                             pady=ui_px(self, 4))
-                    # Side panels turn the welcome choices into compact rows;
-                    # keep all three actions visible instead of tall stacked tiles.
-                    inline = columns == 1 or compact_actions
-                    icon.pack_configure(side=tk.LEFT if inline else tk.TOP,
-                                        padx=(0, ui_px(self, 12) if inline else 0),
-                                        pady=(0, 0 if inline else ui_px(self, 10)))
-                    row.configure(pady=ui_px(self, 10 if inline else 16))
-                    text_width = max(80, width - (ui_px(self, 36) if inline else 0))
-                    label.configure(wraplength=text_width)
-                    hint.configure(wraplength=text_width)
+                             sticky="nsew", padx=ui_px(self, 6), pady=ui_px(self, 4 if columns == 1 else 6))
+                    # 单列（侧栏 / 窄窗）时收起装饰图标行，卡片只留标题与说明，
+                    # 保证所有动作都在输入框上方可见（合并 main 的紧凑排布要求）。
+                    if columns == 1 and head.winfo_manager():
+                        head.pack_forget()
+                    elif columns > 1 and not head.winfo_manager():
+                        head.pack(fill=tk.X, pady=(0, ui_px(self, 12)), before=label)
+                    label.configure(wraplength=width)
+                    hint.configure(wraplength=width)
 
             choices.bind("<Configure>", fit_choices)
             # Pack/grid needs an initial size before the first Configure event.
-            for index, (row, icon, label, hint) in enumerate(action_rows):
+            for index, (row, label, hint, head) in enumerate(action_rows):
                 row.grid(row=index, column=0, sticky="ew", pady=4)
 
         self._suggest_row = tk.Frame(box, bg=self._bg)
-        self._suggest_row.pack(fill=tk.X, pady=(ui_px(self, 14), 0))
+        self._suggest_row.pack(pady=(ui_px(self, 18), 0))
         self._fill_suggestions()
 
         def fit_banner(_event=None):
             if banner is None:
                 return
             viewport = self.scroll.canvas
-            compact = viewport.winfo_height() < ui_px(self, 450) or viewport.winfo_width() < ui_px(self, 680)
-            box.pack_configure(pady=(ui_px(self, 14 if compact else 48), 12))
-            title_label.configure(font=FONT_TITLE if compact else theme.FONT_HERO)
+            # 与分支原阈值一致（物理像素）：矮于 450 / 窄于 520 才收起主视觉。
+            compact = viewport.winfo_height() < 450 or viewport.winfo_width() < 520
+            box.pack_configure(pady=(ui_px(self, 14 if compact else 56), 12))
+            title_label.configure(font=FONT_TITLE if compact else (FONT_TITLE[0], 17, "bold"))
             if compact:
                 banner.pack_forget()
             elif not banner.winfo_manager():
-                banner.pack(anchor="w", pady=(0, ui_px(self, 14)), before=title_label)
+                banner.pack(pady=(0, ui_px(self, 2)), before=eyebrow)
 
         binding = self.scroll.canvas.bind("<Configure>", fit_banner, add="+")
         # A new conversation can replace an existing view without resizing its
@@ -1773,10 +1962,34 @@ class MessageArea(tk.Frame):
         fit_banner()
         # The callback belongs to this empty state, not to later conversation views.
         def forget_banner(event):
-            if event.widget is box:
+            if event.widget is not box:
+                return
+            # 关窗时画布可能先于 box 被销毁，其回调命令已不在：解绑失败无妨。
+            try:
                 self.scroll.canvas.unbind("<Configure>", binding)
+            except tk.TclError:
+                pass
         box.bind("<Destroy>", forget_banner, add="+")
         self._empty = box
+
+    def _fallback_banner(self, box):
+        size = ui_px(self, 52)
+        halo = ui_px(self, 26)
+        span = size + halo * 2
+        banner = tk.Canvas(box, width=span, height=span, bg=self._bg,
+                           highlightthickness=0, bd=0)
+        for i in range(7, 0, -1):
+            grow = halo * i / 7
+            tone = mix(self._bg, C["ember"], 0.26 * (1 - (i - 1) / 7) ** 1.8)
+            round_rect(banner, halo - grow, halo - grow, halo + size + grow,
+                       halo + size + grow, ui_px(self, 14) + grow, fill=tone,
+                       outline="", tags=("decor",))
+        round_rect(banner, halo + 1, halo + 1, halo + size - 2, halo + size - 2,
+                   ui_px(self, 14), fill=C["accent"], outline=C["accent_border"], tags=("decor",))
+        glyph = ui_px(self, 28)
+        draw_icon(banner, "anvil", x=halo + (size - glyph) / 2, y=halo + (size - glyph) / 2,
+                  size=glyph, fg=C["on_accent"], tag="decor")
+        return banner
 
     def clear(self):
         self.scroll._cancel_scroll()
@@ -2194,7 +2407,9 @@ class InputCard(tk.Frame):
         self._on_settings = on_settings
         self.send_var = tk.StringVar()
 
-        card = theme.GlassControlCard(self, bg=base)
+        card = RoundedCard(self, radius=R_PANEL, fill=C["input_bg"],
+                           outline=C["border_hi"], padx=14, pady=12, bg=base,
+                           shadow=ui_px(self, 5), sheen=True)
         card.pack(fill=tk.X)
         self._card = card
         inner = card.content
@@ -2238,8 +2453,6 @@ class InputCard(tk.Frame):
                               fg=C["placeholder"], font=theme.FONT_CHAT, anchor="w",
                               cursor="xterm")
         self._hint.place(x=1, y=2)
-        # The entire painted input surface is clickable, including the rim
-        # and padding. Child toolbar buttons retain their own bindings.
         for surface in (card, card.canvas, inner, top_row, entry_host, self._hint):
             surface.bind("<Button-1>", lambda _e: self.focus_entry(), add="+")
         self.entry.bind("<Return>", self._enter)
@@ -2487,7 +2700,7 @@ class InputCard(tk.Frame):
             pass
 
     def _set_focus(self, focused: bool):
-        self._card.set_focused(focused)
+        self._card.set_fill(C["input_bg"], C["accent2"] if focused else C["border_hi"])
         self._sync_hint()
 
     def _toggle_reasoning_popup(self):
@@ -2527,7 +2740,7 @@ class InputCard(tk.Frame):
         h = slider.winfo_reqheight() + 2 * (inset + 4) + 4
         position_popover(pop, self.mode_pill, w, h, align_right=True)
         pop.deiconify()
-        slider.canvas.focus_set()
+        glass.focus_when_mapped(slider.canvas)
         self._reasoning_popup = pop
         self._reasoning_popup_slider = slider
 

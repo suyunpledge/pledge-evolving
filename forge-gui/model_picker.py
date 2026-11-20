@@ -283,7 +283,7 @@ class ModelPicker(tk.Frame):
                         (provider or {}).get('model') or tr("未配置"))
         else:
             shown = value
-        self._shown_text = "Model：" + shown
+        self._shown_text = str(i18n.resolve(tr("Model：{name}", name=shown), self))
         self._fit_caption()
 
     def set_width_budget(self, pixels):
@@ -449,7 +449,7 @@ class ModelPicker(tk.Frame):
             # 由用户点击打开时，把键盘焦点明确交给浮层；否则在某些 Windows/Tk
             # 环境中 focus_set 只记录逻辑焦点，随后的后台检查会把它误判为失焦。
             pop.focus_force()
-            search.focus_set()
+            glass.focus_when_mapped(search)
         except tk.TclError:
             pass
 
@@ -639,7 +639,7 @@ class ModelPicker(tk.Frame):
             bg = C["accent"] if selected else C["surface2"]
             host.configure(bg=bg, highlightthickness=0)
             text.configure(bg=bg,
-                           fg="#FFFFFF" if selected else C["subtext"],
+                           fg=C["on_accent"] if selected else C["subtext"],
                            font=FONT_UI_BOLD if selected else FONT_MICRO)
 
     def _pick_router(self, value: str) -> None:
@@ -812,7 +812,7 @@ class ModelPicker(tk.Frame):
             check = tk.Canvas(title_row, width=14, height=14, bg=base,
                               highlightthickness=0, bd=0, cursor="hand2")
             check.create_oval(1, 1, 13, 13, fill=C["accent"], outline="")
-            check.create_line(4, 7, 6, 9, 10, 5, fill="#FFFFFF", width=1.5)
+            check.create_line(4, 7, 6, 9, 10, 5, fill=C["on_accent"], width=1.5)
             check.pack(side=tk.LEFT, padx=(7, 0), before=title)
         desc = i18n.Label(text, text=self._description(value, provider), bg=base,
                         fg=C["subtext"], font=FONT_CAPTION, anchor="w", cursor="hand2")

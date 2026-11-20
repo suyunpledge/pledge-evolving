@@ -346,6 +346,48 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(owner.conversationMode, 'chat')
         self.assertEqual(owner.messages.rows[-1]['textContent'], '普通对话')
 
+    def test_work_recovers_an_unavailable_tool_and_replays_a_source_line_verbatim(self):
+        from forge_client import ForgeGatewayClient
+
+        owner = self.controller
+        client = ForgeGatewayClient(owner.gateway)
+        approved = []
+        arguments = {'path': 'fixture.txt', 'start': 2, 'end': 2}
+        client.list_tools = lambda **_: [{'type': 'function', 'function': {'name': 'forge_read_range'}}]
+
+        def stream(messages, **_):
+            last = messages[-1]
+            if last.role == 'user':
+                name, identifier = 'Read', 'unavailable'
+            elif last.tool_call_id == 'unavailable':
+                result = json.loads(last.content)
+                self.assertFalse(result['ok'])
+                self.assertEqual(result['meta']['execution_state'], 'not_started')
+                self.assertIn('本轮提供', result['error'])
+                name, identifier = 'read_range', 'read-line'
+            else:
+                self.assertEqual(last.tool_call_id, 'read-line')
+                self.assertEqual(messages[-2].tool_calls[0]['function']['name'], 'forge_read_range')
+                result = json.loads(last.content)
+                self.assertEqual(result['content'], '\t  exact line')
+                self.assertEqual(result['meta']['start'], 2)
+                return CompletionResult(result['content'])
+            return CompletionResult('', tool_calls=[{'id': identifier, 'type': 'function',
+                'function': {'name': name, 'arguments': json.dumps(arguments)}}])
+
+        client.stream_chat = stream
+        client.call_tool = lambda *_: {'ok': True, 'content': '2\t\t  exact line',
+            'meta': {'start': 2, 'end': 2, 'execution_state': 'completed'}}
+        owner._client = client
+        owner.tool_authorizer = lambda: lambda name, args, _: approved.append((name, args))
+        owner.draft = '原样读取第二行'
+        owner.send()
+        until(lambda: not owner.busy)
+        self.assertFalse(owner.error, owner.error)
+        self.assertEqual(approved, [('forge_read_range', arguments)])
+        self.assertEqual(owner._history[-1].content, '\t  exact line')
+        self.assertEqual([row['outcome'] for row in owner.messages.rows[-1]['toolReceipts']], ['未执行', '已完成'])
+
     def test_disabled_work_tools_stay_disabled_after_reload_and_are_not_dispatched(self):
         from forge_client import ForgeGatewayClient
         from .tool_settings import WorkToolSettings

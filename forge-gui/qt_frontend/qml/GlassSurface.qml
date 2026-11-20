@@ -7,7 +7,7 @@ Item {
     property real emphasis: 0
     property real hoverAmount: 0
     property point pointer: Qt.point(width / 2, 0)
-    property color tint: "#24313b49"
+    property color tint: Theme.glassTint
     Behavior on hoverAmount { NumberAnimation { duration: glass.material.reduced ? 0 : 150 } }
     Behavior on emphasis { NumberAnimation { duration: glass.material.reduced ? 0 : 150 } }
     readonly property bool useShader: material.hardware && !material.solid
@@ -24,8 +24,8 @@ Item {
         anchors.fill: parent
         visible: !glass.useShader
         radius: glass.radius
-        color: glass.emphasis > 0 ? "#343e4b" : "#252d38"
-        border.color: "#68717f"
+        color: glass.emphasis > 0 ? Theme.solidSelected : Theme.solidSurface
+        border.color: Theme.solidBorder
         border.width: glass.activeFocus ? 2 : 1
     }
     ShaderEffect {

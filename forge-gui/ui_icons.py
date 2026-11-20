@@ -5,6 +5,8 @@ The application logo remains in brand_marks/assets/forge-logo-*.png.
 from __future__ import annotations
 
 import json
+import math
+import re
 import base64
 import struct
 import sys
@@ -13,87 +15,299 @@ import zlib
 from pathlib import Path
 import i18n
 
-# Coordinates use a 24 × 24 grid; all icons share a 1.7px rounded stroke.
+# Coordinates use a 24 × 24 grid; all icons share a 1.75-unit rounded stroke.
 # Shapes are also consumed by desktop/make_ui_assets.py.
+# 2026-11-08 图标刷新：曲线（齿轮、DNA、刷新箭头、人像肩线、对话气泡圆角）由
+# 下列小工具在网格上生成折线，canvas 与位图图集共享同一份坐标；
+# 「rect」统一画成 2 网格单位圆角，与图集（rounded_rectangle）一致。
+
+
+def _arc(cx, cy, r, start, end, steps=14):
+    """Polyline along a circle; angles in degrees, 0° = east, clockwise on screen."""
+    points = []
+    for i in range(steps + 1):
+        a = math.radians(start + (end - start) * i / steps)
+        points += [round(cx + r * math.cos(a), 2), round(cy + r * math.sin(a), 2)]
+    return tuple(points)
+
+
+def _rounded(x1, y1, x2, y2, r, *, tail=()):
+    """Closed rounded-rectangle outline; ``tail`` points are spliced into the bottom edge."""
+    points = []
+    for cx, cy, start in ((x2 - r, y1 + r, 270), (x2 - r, y2 - r, 0),
+                          (x1 + r, y2 - r, 90), (x1 + r, y1 + r, 180)):
+        points += _arc(cx, cy, r, start, start + 90, 4)
+        if start == 0:
+            points += tail
+    return tuple(points)
+
+
+# ── v2 图标（2026-11-11 Ember 设计稿）──────────────────────────
+# 设计源：design/icons.js。这里用一个极小的 SVG path 解析器把同一份
+# path 数据折成 line / poly / circle / dot / fill 原语，canvas 与位图
+# 图集（desktop/make_ui_assets.py）共用，不再手抄两套坐标。
+# 规格：24 网格、活动区 3–21、1.75 圆头描边、外框圆角 2.5。
+
+_TOKEN = re.compile(r"[MmLlHhVvAaCcSsZz]|-?(?:\d+\.?\d*|\.\d+)(?:[eE]-?\d+)?")
+
+
+def _arc_points(x1, y1, rx, ry, large, sweep, x2, y2):
+    """SVG 端点式椭圆弧 → 折线点（不含起点）。仅支持 x-axis-rotation = 0。"""
+    if rx == 0 or ry == 0 or (x1 == x2 and y1 == y2):
+        return [x2, y2]
+    dx, dy = (x1 - x2) / 2, (y1 - y2) / 2
+    lam = dx * dx / (rx * rx) + dy * dy / (ry * ry)
+    if lam > 1:
+        rx, ry = rx * math.sqrt(lam), ry * math.sqrt(lam)
+    num = rx * rx * ry * ry - rx * rx * dy * dy - ry * ry * dx * dx
+    den = rx * rx * dy * dy + ry * ry * dx * dx
+    coef = math.sqrt(max(0.0, num / den)) if den else 0.0
+    if large == sweep:
+        coef = -coef
+    cxp, cyp = coef * rx * dy / ry, -coef * ry * dx / rx
+    cx, cy = cxp + (x1 + x2) / 2, cyp + (y1 + y2) / 2
+    start = math.atan2((dy - cyp) / ry, (dx - cxp) / rx)
+    end = math.atan2((-dy - cyp) / ry, (-dx - cxp) / rx)
+    delta = end - start
+    if sweep and delta < 0:
+        delta += 2 * math.pi
+    elif not sweep and delta > 0:
+        delta -= 2 * math.pi
+    steps = max(2, math.ceil(abs(delta) / (math.pi / 10)))
+    points = []
+    for i in range(1, steps + 1):
+        a = start + delta * i / steps
+        points += [cx + rx * math.cos(a), cy + ry * math.sin(a)]
+    return points
+
+
+def _bezier(x0, y0, c1x, c1y, c2x, c2y, x, y, steps=8):
+    points = []
+    for i in range(1, steps + 1):
+        t = i / steps
+        u = 1 - t
+        points += [u ** 3 * x0 + 3 * u * u * t * c1x + 3 * u * t * t * c2x + t ** 3 * x,
+                   u ** 3 * y0 + 3 * u * u * t * c1y + 3 * u * t * t * c2y + t ** 3 * y]
+    return points
+
+
+def _path(d, *, filled=False):
+    """最小 SVG path 解析：M L H V A C S Z（含相对写法）。"""
+    tokens = _TOKEN.findall(d)
+    shapes, points = [], []
+    index, command = 0, None
+    x = y = start_x = start_y = 0.0
+    control = None
+
+    def number():
+        nonlocal index
+        value = float(tokens[index])
+        index += 1
+        return value
+
+    def flush(closed):
+        if len(points) >= 4:
+            kind = "fill" if filled else ("poly" if closed else "line")
+            shapes.append((kind, tuple(round(v, 2) for v in points)))
+        points.clear()
+
+    while index < len(tokens):
+        if tokens[index].isalpha():
+            command = tokens[index]
+            index += 1
+            if command in "Zz":
+                flush(True)
+                x, y = start_x, start_y
+                control = None
+                continue
+        relative = command.islower()
+        op = command.upper()
+        base_x, base_y = (x, y) if relative else (0.0, 0.0)
+        if op == "M":
+            flush(False)
+            x, y = base_x + number(), base_y + number()
+            start_x, start_y = x, y
+            points += [x, y]
+            command = "l" if relative else "L"
+            control = None
+        elif op == "L":
+            x, y = base_x + number(), base_y + number()
+            points += [x, y]
+            control = None
+        elif op == "H":
+            x = base_x + number()
+            points += [x, y]
+            control = None
+        elif op == "V":
+            y = base_y + number()
+            points += [x, y]
+            control = None
+        elif op == "A":
+            rx, ry, _rotation, large, sweep = number(), number(), number(), number(), number()
+            nx, ny = base_x + number(), base_y + number()
+            points += _arc_points(x, y, rx, ry, int(large), int(sweep), nx, ny)
+            x, y = nx, ny
+            control = None
+        elif op in "CS":
+            if op == "C":
+                c1x, c1y = base_x + number(), base_y + number()
+            else:
+                c1x, c1y = (2 * x - control[0], 2 * y - control[1]) if control else (x, y)
+            c2x, c2y = base_x + number(), base_y + number()
+            nx, ny = base_x + number(), base_y + number()
+            points += _bezier(x, y, c1x, c1y, c2x, c2y, nx, ny)
+            control = (c2x, c2y)
+            x, y = nx, ny
+        else:
+            raise ValueError(f"unsupported path command {command!r}")
+    flush(False)
+    return shapes
+
+
+def _shapes(*specs, flip=False):
+    """紧凑描述：'p …' 描边 path，'P …' 实心 path，'c cx cy r' 圆，'C …' 实心点，
+    'r x y w h rx' 圆角矩形，'R …' 实心圆角矩形。"""
+    shapes = []
+    for spec in specs:
+        tag, _, body = spec.partition(" ")
+        if tag in "pP":
+            shapes += _path(body, filled=tag == "P")
+            continue
+        values = [float(v) for v in body.split()]
+        if tag in "cC":
+            cx, cy, r = values
+            shapes.append(("circle" if tag == "c" else "dot", (cx - r, cy - r, cx + r, cy + r)))
+        elif tag in "rR":
+            x0, y0, w, h, r = values
+            outline = _rounded(x0, y0, x0 + w, y0 + h, r)
+            shapes.append(("poly" if tag == "r" else "fill", outline))
+    if flip:
+        flipped = []
+        for kind, coords in shapes:
+            coords = [v if i % 2 == 0 else 24 - v for i, v in enumerate(coords)]
+            if kind in ("circle", "dot"):
+                coords = [coords[0], coords[3], coords[2], coords[1]]
+            flipped.append((kind, tuple(round(v, 2) for v in coords)))
+        shapes = flipped
+    return shapes
+
+
+def _gear(teeth=6, outer=9.4, inner=7.1):
+    """6 枚宽齿：16px 下不再像 8 窄齿那样起锯齿。"""
+    points = []
+    for i in range(teeth):
+        a = 2 * math.pi * i / teeth - math.pi / 2
+        for radius, offset in ((inner, -.4), (outer, -.22), (outer, .22), (inner, .4)):
+            points += [round(12 + radius * math.cos(a + offset), 2),
+                       round(12 + radius * math.sin(a + offset), 2)]
+    return [("poly", tuple(points))] + _shapes("c 12 12 2.9")
+
+
+def _spark(cx, cy, r):
+    k = r * .24
+    return (f"p M{cx} {cy - r}L{cx + k} {cy - k}L{cx + r} {cy}L{cx + k} {cy + k}"
+            f"L{cx} {cy + r}L{cx - k} {cy + k}L{cx - r} {cy}L{cx - k} {cy - k}Z")
+
+
+_FILE = "p M7 3h7l5 5v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"
+_THUMB = ("p M8 10.5 11.3 3.6a2.1 2.1 0 0 1 2.5 2.4l-.6 3.5h5a2 2 0 0 1 2 2.4l-1.3 6.4a2 2 0 0 1-2 1.7H8z",
+          "r 3.5 10.5 4.5 9.5 1.5")
+
 ICONS = {
-    "chat": [("poly", (4, 4, 20, 4, 20, 16, 11, 16, 6, 20, 6, 16, 4, 16))],
-    "task": [("rect", (5, 4, 19, 21)), ("rect", (9, 2, 15, 6)), ("line", (8, 13, 11, 16, 16, 10))],
-    "agents": [("rect", (4, 7, 20, 20)), ("line", (12, 3, 12, 7)), ("circle", (11, 1, 13, 3)),
-               ("circle", (7, 11, 9, 13)), ("circle", (15, 11, 17, 13)), ("line", (9, 17, 15, 17))],
-    "tools": [("line", (3, 6, 21, 6)), ("line", (3, 12, 21, 12)), ("line", (3, 18, 21, 18)),
-              ("circle", (7, 4, 11, 8)), ("circle", (14, 10, 18, 14)), ("circle", (5, 16, 9, 20))],
-    "knowledge": [("poly", (3, 4, 8, 4, 12, 7, 16, 4, 21, 4, 21, 19, 16, 19, 12, 22, 8, 19, 3, 19)),
-                  ("line", (12, 7, 12, 22))],
-    "evolution": [("line", (7, 3, 16, 9, 8, 15, 17, 21)), ("line", (17, 3, 8, 9, 16, 15, 7, 21)),
-                  ("line", (9, 5, 15, 5)), ("line", (9, 12, 15, 12)), ("line", (9, 19, 15, 19))],
-    "files": [("poly", (3, 5, 10, 5, 12, 8, 21, 8, 21, 20, 3, 20)), ("line", (3, 10, 21, 10))],
-    "file": [("poly", (6, 2, 14, 2, 19, 7, 19, 22, 6, 22)), ("line", (14, 2, 14, 7, 19, 7)),
-             ("line", (9, 12, 16, 12)), ("line", (9, 16, 15, 16))],
-    "code": [("line", (8, 7, 3, 12, 8, 17)), ("line", (16, 7, 21, 12, 16, 17)), ("line", (14, 4, 10, 20))],
-    "config": [("poly", (9, 3, 15, 3, 16, 6, 19, 7, 21, 11, 19, 14, 19, 17, 15, 20, 12, 19,
-                           9, 21, 5, 18, 5, 15, 3, 12, 5, 8, 8, 7)), ("circle", (9, 9, 15, 15))],
-    "search": [("circle", (3, 3, 16, 16)), ("line", (15, 15, 21, 21))],
-    "plus": [("line", (12, 4, 12, 20)), ("line", (4, 12, 20, 12))],
-    "minus": [("line", (4, 12, 20, 12))],
-    "close": [("line", (6, 6, 18, 18)), ("line", (18, 6, 6, 18))],
-    # Filled dots keep the overflow affordance legible at 16–20px. Outlined
-    # dots blur into three small rings on Windows' non-retina scaling.
-    "more": [("dot", (3.5, 10.5, 6.5, 13.5)), ("dot", (10.5, 10.5, 13.5, 13.5)),
-             ("dot", (17.5, 10.5, 20.5, 13.5))],
-    "chevron_right": [("line", (9, 5, 16, 12, 9, 19))],
-    "chevron_left": [("line", (15, 5, 8, 12, 15, 19))],
-    "chevron_down": [("line", (5, 9, 12, 16, 19, 9))],
-    "chevron_up": [("line", (5, 15, 12, 8, 19, 15))],
-    "hexagram": [("line", (5, 5, 19, 5)), ("line", (8, 12, 11, 12)),
-                 ("line", (13, 12, 16, 12)), ("line", (5, 19, 19, 19))],
-    "refresh": [("line", (20, 9, 17, 5, 12, 3, 7, 5, 4, 9, 4, 14, 7, 19, 12, 21, 17, 19, 20, 15)),
-                ("line", (20, 3, 20, 9, 14, 9))],
-    "external": [("line", (13, 3, 21, 3, 21, 11)), ("line", (21, 3, 11, 13)),
-                 ("line", (9, 4, 4, 4, 4, 20, 20, 20, 20, 15))],
-    "sidebar": [("rect", (3, 4, 21, 20)), ("line", (9, 4, 9, 20)), ("line", (5, 8, 7, 8)), ("line", (5, 12, 7, 12))],
-    "workspace": [("rect", (3, 4, 21, 20)), ("line", (3, 9, 21, 9)), ("line", (10, 9, 10, 20))],
-    "diff": [("circle", (4, 2, 8, 6)), ("circle", (4, 18, 8, 22)), ("circle", (17, 9, 21, 13)),
-             ("line", (6, 6, 6, 18)), ("line", (6, 7, 12, 7, 16, 11, 17, 11))],
-    "send": [("line", (12, 20, 12, 4)), ("line", (5, 11, 12, 4, 19, 11))],
-    "play": [("poly", (7, 3, 21, 12, 7, 21))],
-    "stop": [("rect", (6, 6, 18, 18))],
-    "check": [("line", (4, 12, 10, 18, 21, 5))],
-    "check_circle": [("circle", (2, 2, 22, 22)), ("line", (6, 12, 10, 16, 18, 8))],
-    # Keep the warning outline one grid unit inside the box so its stroke does
-    # not clip at small sizes.
-    "warning": [("poly", (12, 2, 22, 20, 2, 20)), ("line", (12, 8, 12, 14)), ("dot", (11, 16.5, 13, 18.5))],
-    "error": [("circle", (2, 2, 22, 22)), ("line", (8, 8, 16, 16)), ("line", (16, 8, 8, 16))],
-    "info": [("circle", (2, 2, 22, 22)), ("line", (12, 11, 12, 17)), ("circle", (11.5, 6, 12.5, 7))],
-    "copy": [("rect", (8, 8, 21, 22)), ("line", (16, 4, 16, 2, 3, 2, 3, 16, 5, 16))],
-    "thumb_up": [("poly", (8, 20, 8, 10, 12, 3, 15, 3, 15, 10, 21, 10, 19, 20)), ("rect", (2, 10, 6, 20))],
-    "thumb_down": [("poly", (8, 4, 8, 14, 12, 21, 15, 21, 15, 14, 21, 14, 19, 4)), ("rect", (2, 4, 6, 14))],
-    "paperclip": [("line", (8, 12, 15, 5, 18, 5, 20, 7, 20, 10, 10, 20, 6, 20, 3, 17, 3, 13, 13, 3)),
-                  ("line", (15, 8, 7, 16))],
-    "key": [("circle", (3, 3, 12, 12)), ("line", (11, 11, 21, 21, 23, 19)), ("line", (17, 17, 20, 14))],
-    "model": [("poly", (12, 2, 21, 7, 21, 17, 12, 22, 3, 17, 3, 7)),
-              ("line", (3, 7, 12, 12, 21, 7)), ("line", (12, 12, 12, 22))],
-    "terminal": [("rect", (2, 4, 22, 20)), ("line", (6, 9, 10, 12, 6, 15)), ("line", (13, 16, 18, 16))],
-    "preview": [("poly", (1, 12, 5, 7, 12, 4, 19, 7, 23, 12, 19, 17, 12, 20, 5, 17)), ("circle", (9, 9, 15, 15))],
-    "image": [("rect", (3, 3, 21, 21)), ("circle", (6, 6, 10, 10)), ("line", (3, 18, 10, 12, 14, 16, 17, 12, 21, 17))],
-    "user": [("circle", (8, 3, 16, 11)), ("line", (3, 21, 4, 16, 8, 14, 16, 14, 20, 16, 21, 21))],
-    "edit": [("poly", (4, 15, 15, 4, 20, 9, 9, 20, 3, 21)), ("line", (12, 7, 17, 12))],
-    "folder_open": [("poly", (3, 5, 10, 5, 12, 8, 21, 8, 21, 11, 6, 11, 3, 20, 3, 5)),
-                    ("poly", (6, 11, 23, 11, 20, 20, 3, 20))],
-    "save": [("poly", (3, 3, 17, 3, 21, 7, 21, 21, 3, 21)), ("rect", (7, 3, 15, 9)), ("rect", (7, 14, 17, 21))],
-    # 品牌火花（FORGE 火焰）：外焰单笔闭合 + 内焰小瓣。任务书示例图顶部
-    # 即火焰图标 + FORGE；颜色由调用方用 gui_theme 的 brand_spark token
-    # （橙），不在此写死。
-    "flame": [("poly", (12, 1, 15.5, 6, 20, 10.5, 18.5, 16.5, 13, 21.5,
-                        12, 23, 11, 21.5, 5.5, 16.5, 4, 10.5, 8.5, 6)),
-              ("poly", (12, 8, 14.5, 11.5, 13.5, 15.5, 10.5, 14.5, 11, 11.5))],
+    "chat": _shapes("p M6 4.5h12A2.5 2.5 0 0 1 20.5 7v8a2.5 2.5 0 0 1-2.5 2.5h-6.5L7 21v-3.5H6A2.5 2.5 0 0 1 3.5 15V7A2.5 2.5 0 0 1 6 4.5z"),
+    "task": _shapes("r 5 4.5 14 16.5 2.5", "r 9 2.75 6 3.5 1.25", "p M9 13l2.2 2.2L15.5 11"),
+    "agents": _shapes("r 4.5 8 15 11.5 3.5", "p M12 8V5.4", "C 12 4.2 1.2", "C 9.4 13.6 1.15",
+                      "C 14.6 13.6 1.15", "p M2.5 12.5v3", "p M21.5 12.5v3"),
+    "tools": _shapes("p M4 7h4", "p M12 7h8", "p M4 17h8", "p M16 17h4", "c 10 7 2", "c 14 17 2"),
+    "knowledge": _shapes("p M3 5.5c3-.8 6-.5 9 1.5v13c-3-2-6-2.3-9-1.5z",
+                         "p M21 5.5c-3-.8-6-.5-9 1.5v13c3-2 6-2.3 9-1.5z"),
+    # 演化 = 新芽（生长），不再用 DNA 双螺旋。
+    "evolution": _shapes("p M12 21v-8.5", "p M12 14.5c-4 0-6.8-2.5-6.8-6.8 4 0 6.8 2.7 6.8 6.8z",
+                         "p M12 12c0-4.3 2.7-7.3 6.8-7.3 0 4.3-2.7 7.3-6.8 7.3z"),
+    "files": _shapes("p M3.5 7a2 2 0 0 1 2-2h3.8l2 2.2h7.2a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"),
+    "file": _shapes(_FILE, "p M14 3v5h5", "p M9 13h6", "p M9 17h4"),
+    "code": _shapes("p M8.5 7.5 4 12l4.5 4.5", "p M15.5 7.5 20 12l-4.5 4.5", "p M13.5 5l-3 14"),
+    "config": _gear(),
+    "search": _shapes("c 10.5 10.5 6.5", "p M15.4 15.4 20.5 20.5"),
+    "plus": _shapes("p M12 5v14", "p M5 12h14"),
+    "minus": _shapes("p M5 12h14"),
+    "close": _shapes("p M6.5 6.5l11 11", "p M17.5 6.5l-11 11"),
+    # Filled dots keep the overflow affordance legible at 16–20px.
+    "more": _shapes("C 5.5 12 1.5", "C 12 12 1.5", "C 18.5 12 1.5"),
+    "chevron_right": _shapes("p M9.5 6l6 6-6 6"),
+    "chevron_left": _shapes("p M14.5 6l-6 6 6 6"),
+    "chevron_down": _shapes("p M6 9.5l6 6 6-6"),
+    "chevron_up": _shapes("p M6 14.5l6-6 6 6"),
+    "hexagram": _shapes("p M5 6h14", "p M5 12h5.5", "p M13.5 12H19", "p M5 18h14"),
+    "refresh": _shapes("p M20 12a8 8 0 1 1-2.34-5.66L20 8.5", "p M20 4v4.5h-4.5"),
+    "external": _shapes("p M14 4h6v6", "p M20 4l-8.5 8.5",
+                        "p M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"),
+    "sidebar": _shapes("r 3.5 4.5 17 15 2.5", "p M9.5 4.5v15"),
+    "workspace": _shapes("r 3.5 4.5 17 15 2.5", "p M3.5 9.5h17", "p M10 9.5v10"),
+    "diff": _shapes(_FILE, "p M12 8.5v5", "p M9.5 11h5", "p M9.5 17h5"),
+    "send": _shapes("p M12 19V5.5", "p M6 11.5l6-6 6 6"),
+    "play": _shapes("P M8 5.6v12.8a1 1 0 0 0 1.53.85l10.1-6.4a1 1 0 0 0 0-1.7L9.53 4.75A1 1 0 0 0 8 5.6z"),
+    "stop": _shapes("R 6.5 6.5 11 11 2.2"),
+    "check": _shapes("p M5 12.5l4.5 4.5L19 7.5"),
+    "check_circle": _shapes("c 12 12 9", "p M8 12.3l2.7 2.7L16 9.7"),
+    # Warning keeps its exclamation dot as the third shape (size-specific mark).
+    "warning": _shapes("p M10.27 4.3a2 2 0 0 1 3.46 0l7.2 12.7a2 2 0 0 1-1.73 3H4.8a2 2 0 0 1-1.73-3z",
+                       "p M12 9.5v4", "C 12 16.8 1.1"),
+    "error": _shapes("c 12 12 9", "p M9 9l6 6", "p M15 9l-6 6"),
+    "info": _shapes("c 12 12 9", "p M12 11v5.5", "C 12 7.8 1.1"),
+    "copy": _shapes("r 8.5 8.5 12 12 2.5", "p M15.5 8.5V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v7.5a2 2 0 0 0 2 2h2.5"),
+    "thumb_up": _shapes(*_THUMB),
+    "thumb_down": _shapes(*_THUMB, flip=True),
+    "paperclip": _shapes("p M20 11.5l-7.8 7.8a5 5 0 0 1-7.1-7.1l8.2-8.2a3.3 3.3 0 0 1 4.7 4.7l-8.2 8.2a1.7 1.7 0 0 1-2.4-2.4L15 6.9"),
+    "key": _shapes("c 8 15.5 4.5", "p M11.2 12.3 20 3.5", "p M16.5 7l2.5 2.5", "p M14 9.5l2 2"),
+    "model": _shapes("p M12 3 20 7.5v9L12 21l-8-4.5v-9z", "p M4 7.5l8 4.5 8-4.5", "p M12 12v9"),
+    "terminal": _shapes("r 3 4.5 18 15 2.5", "p M7 9.5l3 2.5-3 2.5", "p M12.5 15H17"),
+    "preview": _shapes("p M2.5 12C4 9 7.5 5.5 12 5.5S20 9 21.5 12C20 15 16.5 18.5 12 18.5S4 15 2.5 12z", "c 12 12 3"),
+    "image": _shapes("r 3.5 4 17 16 2.5", "c 9 9.5 1.6", "p M20.5 15.5 16 11l-9 9"),
+    "user": _shapes("c 12 8 4", "p M4.5 20.5a7.5 7.5 0 0 1 15 0"),
+    "edit": _shapes("p M15.5 4.5l4 4L9 19H5v-4z", "p M13.2 6.8l4 4"),
+    "folder_open": _shapes("p M3.5 18V7a2 2 0 0 1 2-2h3.8l2 2.2h6.2a2 2 0 0 1 2 2V11",
+                           "p M3.6 18.4 6.1 12a1.5 1.5 0 0 1 1.4-1H20a1 1 0 0 1 .94 1.35L18.6 18.5a1.5 1.5 0 0 1-1.4 1H4.5a1 1 0 0 1-.9-1.1z"),
+    "save": _shapes("p M6 3.5h10l4 4v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2z",
+                    "p M8 3.5v4h7v-4", "p M8 20.5v-6h8v6"),
+    # 品牌火焰：颜色由调用方取 gui_theme 的 brand_spark / ember。
+    "flame": _shapes("p M12 21c-3.9 0-6.5-2.6-6.5-6.2 0-3.6 2.7-5.6 4-8.8.6 1.8 1.6 2.8 2.8 3.4C12.6 6.6 13.6 4.4 15.5 3c-.3 3 3 5.9 3 11.3 0 4-2.7 6.7-6.5 6.7z",
+                     "p M12 21c-1.7 0-2.8-1.2-2.8-2.8 0-1.8 1.4-2.7 2.3-4.2.9 1.5 3.3 2.3 3.3 4.4 0 1.5-1.1 2.6-2.8 2.6z"),
+    "clock": _shapes("c 12 12 9", "p M12 7.5V12l3 2"),
+    "connector": _shapes("p M9 3v4", "p M15 3v4", "p M6.5 7h11v3.5a5.5 5.5 0 0 1-11 0z", "p M12 16v5"),
+    # ── v2 新增 ──
+    "inspector": _shapes("r 3.5 4.5 17 15 2.5", "p M14.5 4.5v15", "p M17 8.5h1", "p M17 11.5h1"),
+    "branch": _shapes("c 6.5 5.5 2", "c 6.5 18.5 2", "c 17.5 8 2", "p M6.5 7.5v9", "p M17.5 10c0 3-2.5 4-6 4H6.5"),
+    "history": _shapes("p M3.6 12A8.5 8.5 0 1 0 6 6", "p M3.5 3.8V8h4.2", "p M12 8v4l2.8 1.8"),
+    "pin": _shapes("p M9 3.5h6", "p M10 3.5V9l-3.5 4h11L14 9V3.5", "p M12 13v7.5"),
+    "spark": _shapes(_spark(12, 12, 8.5)),
+    "sparkles": _shapes(_spark(10, 13, 7), _spark(18.5, 5.5, 3)),
+    "bolt": _shapes("p M13 3 5 13.5h6L10.5 21 19 10.5h-6z"),
+    "cpu": _shapes("r 6.5 6.5 11 11 2", "r 9.5 9.5 5 5 1", "p M9.5 3.5v3", "p M14.5 3.5v3", "p M9.5 17.5v3",
+                   "p M14.5 17.5v3", "p M3.5 9.5h3", "p M3.5 14.5h3", "p M17.5 9.5h3", "p M17.5 14.5h3"),
+    "globe": _shapes("c 12 12 9", "p M3 12h18",
+                     "p M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z"),
+    "cursor": _shapes("p M5 4l5.5 15 2.3-6.2L19 10.5z", "p M13.2 13.2 18.5 18.5"),
+    "timeline": _shapes("c 6 5.5 1.9", "c 6 12 1.9", "c 6 18.5 1.9", "p M6 7.4v2.7", "p M6 13.9v2.7",
+                        "p M10.5 5.5h9", "p M10.5 12h6.5", "p M10.5 18.5h8"),
+    "mic": _shapes("r 9 3 6 11 3", "p M5.5 11a6.5 6.5 0 0 0 13 0", "p M12 17.5V21"),
+    "at": _shapes("c 12 12 3.5", "p M15.5 12v1.5a2.5 2.5 0 0 0 5 0V12a8.5 8.5 0 1 0-3.5 6.9"),
+    "command": _shapes("r 3.5 3.5 17 17 4", "p M14 8l-4 8"),
+    "layers": _shapes("p M12 3.5 21 8l-9 4.5L3 8z", "p M3 12.5l9 4.5 9-4.5", "p M3 16.5l9 4.5 9-4.5"),
+    # 品牌标：铁砧 + 火花（Forge = 锻造）。
+    "anvil": _shapes("p M3.5 7.5h11.5c.3 2.6 2.2 4.1 5.5 4.3v1.7h-5.3L12.8 16v2h2.7v2.5H6.5V18h2.7v-2L6.8 13.6C4.7 12.4 3.5 10.3 3.5 7.5z",
+                     _spark(19, 4.5, 2.6)),
+    "pause": _shapes("R 6.5 5.5 3.8 13 1.3", "R 13.7 5.5 3.8 13 1.3"),
+    "retry": _shapes("p M4 12a8 8 0 0 1 13.66-5.66L20 8.5", "p M20 4v4.5h-4.5",
+                     "p M20 12a8 8 0 0 1-13.66 5.66L4 15.5", "p M4 20v-4.5h4.5"),
+    "keyboard": _shapes("r 2.5 6 19 12 2.5", "C 6.5 10 .9", "C 10 10 .9", "C 13.5 10 .9", "C 17 10 .9",
+                        "p M7.5 14.5h9"),
 }
 
-ICONS['clock'] = [('circle',(3,3,21,21)),('line',(12,6,12,12,16,14))]
-ICONS['connector'] = [('rect',(7,8,17,17)),('line',(9,3,9,8)),('line',(15,3,15,8)),('line',(12,17,12,22))]
 # Compatibility fallback only; the shipped masks use distinct Lucide geometry.
-ICONS['plugin'] = ICONS['tools']
-ICONS['context'] = ICONS['copy']
-ICONS['computer'] = ICONS['workspace']
+ICONS['plugin'] = ICONS.get('plugin', ICONS['tools'])
+ICONS['context'] = ICONS.get('context', ICONS['copy'])
+ICONS['computer'] = ICONS.get('computer', ICONS['workspace'])
 
 ALIASES = {
     '◷':'clock', '⏰':'clock', '🔌':'connector', '🛠':'code',
@@ -131,7 +345,7 @@ def draw_icon(canvas, name, *, x=0, y=0, size=24, fg="#A2ADC5", tag="icon"):
         # Owning-interpreter cache retains the image across widget repaints.
         return
     factor = size / 24
-    width = max(1.2, factor * 1.7)
+    width = max(1.2, factor * 1.75)
     for kind, points in ICONS[name]:
         coordinates = [v * factor + (x if i % 2 == 0 else y) for i, v in enumerate(points)]
         if kind == "line":
@@ -140,9 +354,23 @@ def draw_icon(canvas, name, *, x=0, y=0, size=24, fg="#A2ADC5", tag="icon"):
         elif kind == "circle":
             canvas.create_oval(*coordinates, outline=fg, width=width, tags=tag)
         elif kind == "rect":
-            canvas.create_rectangle(*coordinates, outline=fg, width=width, tags=tag)
+            # Same 2-unit corner radius as the bitmap atlas (rounded_rectangle).
+            x1, y1, x2, y2 = coordinates
+            radius = min(2 * factor, (x2 - x1) / 2, (y2 - y1) / 2)
+            outline = []
+            for cx, cy, start in ((x2 - radius, y1 + radius, 270), (x2 - radius, y2 - radius, 0),
+                                  (x1 + radius, y2 - radius, 90), (x1 + radius, y1 + radius, 180)):
+                for step in range(4):
+                    angle = math.radians(start + 90 * step / 3)
+                    outline += [cx + radius * math.cos(angle), cy + radius * math.sin(angle)]
+            canvas.create_polygon(*outline, outline=fg, fill="", width=width,
+                                  joinstyle=tk.ROUND, tags=tag)
         elif kind == "dot":
             canvas.create_oval(*coordinates, outline="", fill=fg, tags=tag)
+        elif kind == "fill":
+            # 实心块（播放 / 停止 / 暂停）：描边同色，圆角连接，小尺寸不缩水。
+            canvas.create_polygon(*coordinates, outline=fg, fill=fg, width=max(1, width * .5),
+                                  joinstyle=tk.ROUND, tags=tag)
         else:
             canvas.create_polygon(*coordinates, outline=fg, fill="", width=width,
                                   joinstyle=tk.ROUND, tags=tag)
@@ -248,7 +476,7 @@ class IconCanvas(tk.Canvas):
         if self._focused and self._state == tk.NORMAL:
             inset = max(1, round(self._size / 16))
             self.create_rectangle(inset, inset, self._hit_size - inset, self._hit_size - inset,
-                                  outline="#78B5FF", width=1, tags="focus")  # v0.5: 与 gui_theme.focus_ring 同源
+                                  outline="#FFC7A6", width=1, tags="focus")  # 与 gui_theme.focus_ring 同源
 
     def configure(self, cnf=None, **kwargs):
         if isinstance(cnf, dict):
@@ -361,9 +589,34 @@ def _tile(master, atlas_name, index, tile_size):
         return None
 
 
-PALETTE = {"muted": "#A2ADC5", "text": "#EDF1F7", "accent": "#7B9CFF",
-           "ok": "#48B89A", "warn": "#E5B45C", "error": "#E57373",
-           "disabled": "#8894AD"}
+def asset_image(master, stem, size):
+    """assets/ui/{stem}-{n}.png 中挑最接近 size 的一张（品牌块 / hero 光晕）。
+
+    与图集共用按 Tk 解释器隔离的缓存；找不到文件时返回 None，调用方回退绘制。
+    """
+    sizes = sorted(int(path.stem.rsplit("-", 1)[1]) for path in _ROOT.glob(f"{stem}-*.png")
+                   if path.stem.rsplit("-", 1)[1].isdigit())
+    if not sizes:
+        return None
+    best = min(sizes, key=lambda n: (abs(n - size), -n))
+    owner = master._root()
+    cache = getattr(owner, "_forge_ui_images", None)
+    if cache is None:
+        cache = owner._forge_ui_images = {}
+    key = ("asset", stem, best)
+    if key not in cache:
+        try:
+            cache[key] = tk.PhotoImage(master=master, file=str(_ROOT / f"{stem}-{best}.png"))
+        except tk.TclError:
+            return None
+    return cache[key]
+
+
+# 位图图集的固定色板：icon_image 按最近色挑图集。与 gui_theme.C 同步
+# （Ember 设计稿）：accent = 熔铁橙，ink = 橙底按钮上的深色图标。
+PALETTE = {"muted": "#A0A8B6", "text": "#EEF0F4", "accent": "#FF7A3D",
+           "ok": "#47C59B", "warn": "#E9B65A", "error": "#F27B7B",
+           "disabled": "#7F8898", "info": "#82A8FF", "ink": "#1E0F06"}
 
 
 def icon_image(master, name, *, size=20, fg="#9A9AA8"):
@@ -395,7 +648,7 @@ class IconButton(tk.Button):
         self._explicit_icon = icon_key(icon) if icon else None
         self._icon_size = icon_size
         self._icon_name = None
-        text = kwargs.get("text", "")
+        text = i18n.as_message(kwargs.get("text", ""))
         localized_text = text
         text = i18n.resolve(text, parent)
         kwargs["text"] = text
@@ -498,6 +751,7 @@ class IconButton(tk.Button):
                     self._feedback_outline_override = value
             self._feedback_visual = None
         if "text" in kwargs:
+            kwargs["text"] = i18n.as_message(kwargs["text"])
             i18n.remember(self, kwargs["text"], method="_set_localized_text")
             text = i18n.resolve(kwargs["text"], self)
             kwargs["text"] = text

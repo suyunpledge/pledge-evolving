@@ -1128,7 +1128,7 @@ class WorkspacePanel(tk.Frame):
         self._diff_empty_title = title
         self._diff_empty_actions = ActionRow(empty, [{"label": "浏览更改", "command": self.open_changes}], bg=C["code_bg"])
         self._diff_empty_actions.pack(fill=tk.X)
-        self._diff_empty_detail = tk.StringVar()
+        self._diff_empty_detail = i18n.StringVar(self)
         detail = i18n.Label(empty, textvariable=self._diff_empty_detail, bg=C["code_bg"], fg=C["muted"],
                           font=FONT_CAPTION, anchor="w", justify=tk.LEFT)
         detail.pack(fill=tk.X, pady=(6, 0))
@@ -1263,7 +1263,7 @@ class WorkspacePanel(tk.Frame):
         # 统计行
         stats = tk.Frame(card, bg=C["bg"])
         stats.pack(fill=tk.X)
-        self._home_summary_var = tk.StringVar(value="")
+        self._home_summary_var = i18n.StringVar(self, value="")
         i18n.Label(stats, textvariable=self._home_summary_var, bg=C["bg"],
                  fg=C["body"], font=FONT_SMALL, anchor="w").pack(
             side=tk.LEFT, fill=tk.X, expand=True)
@@ -1284,7 +1284,7 @@ class WorkspacePanel(tk.Frame):
                     font=FONT_SMALL).pack(side=tk.LEFT)
 
         # 提示文案（非 git / 无改动时显示）
-        self._home_empty_var = tk.StringVar(value="")
+        self._home_empty_var = i18n.StringVar(self, value="")
         self._home_empty_lbl = i18n.Label(card, textvariable=self._home_empty_var,
                                         bg=C["bg"], fg=C["muted"],
                                         font=FONT_SMALL, anchor="w",
@@ -2129,14 +2129,15 @@ class WorkspacePanel(tk.Frame):
             return
         count = len(self._git_status)
         if not self._is_git_repo:
-            title = "暂无 Git Diff"
-            detail = "此目录不是 Git 仓库。你仍可以打开真实文件查看代码。"
+            title = tr("暂无 Git Diff")
+            detail = tr("此目录不是 Git 仓库。你仍可以打开真实文件查看代码。")
         elif count:
             title = tr("选择文件查看 Diff")
-            detail = f"工作区有 {count} 个文件修改。选择变更列表中的文件；拖动分隔线可调整区域高度。"
+            detail = tr("工作区有 {count} 个文件修改。选择变更列表中的文件；拖动分隔线可调整区域高度。",
+                        count=count)
         else:
-            title = "工作区暂无改动"
-            detail = "当前没有未提交的变更。打开文件查看代码，或刷新工作区读取新状态。"
+            title = tr("工作区暂无改动")
+            detail = tr("当前没有未提交的变更。打开文件查看代码，或刷新工作区读取新状态。")
         self._diff_empty_title.configure(text=title)
         self._diff_empty_detail.set(detail)
         self._diff_empty_actions.destroy()

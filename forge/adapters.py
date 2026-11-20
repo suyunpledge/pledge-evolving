@@ -485,6 +485,14 @@ class OpenAIAdapter(VendorAdapter):
 
     vendor_id = "openai"
 
+    def shape_request(self, payload: dict[str, Any], *, wire: str = '') -> tuple[dict[str, Any], list[str]]:
+        if wire != "openai" or "max_completion_tokens" not in self.profile.model_traits or "max_tokens" not in payload:
+            return payload, []
+        shaped = dict(payload)
+        legacy_limit = shaped.pop("max_tokens")
+        shaped.setdefault("max_completion_tokens", legacy_limit)
+        return shaped, ["使用 max_completion_tokens 限制生成长度"]
+
     def extra_actions(self, ctx: PlanContext, plan: RequestPlan, prefix_tokens: int) -> None:
         if ctx.flex and ctx.profile.supports_flex:
             plan.actions.append("走 Flex 经济档（约 5 折，牺牲延迟）")

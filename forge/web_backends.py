@@ -249,8 +249,8 @@ def search(*, query: str, num: int = 5, site: str = "all", region: str = "auto",
 _FAKE_IP = ipaddress.ip_network("198.18.0.0/15")
 
 
-def check_public(url: str) -> str:
-    """Raises ValueError unless url is http(s) on a host that resolves only to public IPs."""
+def _public_addresses(url: str):
+    """Resolve the URL once and retain the checked socket addresses."""
     parts = urllib.parse.urlsplit(url)
     if parts.scheme not in ("http", "https") or not parts.hostname:
         raise ValueError("only http(s) URLs with a host can be fetched")
@@ -263,9 +263,64 @@ def check_public(url: str) -> str:
         raise ValueError(f"cannot resolve {parts.hostname}: {exc}") from exc
     for info in infos:
         address = ipaddress.ip_address(info[4][0].split("%")[0])
-        if not address.is_global and address not in _FAKE_IP:
+        address = getattr(address, "ipv4_mapped", None) or address
+        if address.is_multicast or (not address.is_global and address not in _FAKE_IP):
             raise ValueError(f"{parts.hostname} resolves to a private or local address ({address}); not fetched")
+    if not infos:
+        raise ValueError(f"cannot resolve {parts.hostname}")
+    return tuple(infos)
+
+
+def check_public(url: str) -> str:
+    _public_addresses(url)
     return url
+
+
+def _open_public(request, timeout):
+    addresses = _public_addresses(request.full_url)
+
+    def connect(_destination, timeout, source_address):
+        last_error = None
+        for family, kind, protocol, _, address in addresses:
+            sock = socket.socket(family, kind, protocol)
+            try:
+                sock.settimeout(timeout)
+                if source_address:
+                    sock.bind(source_address)
+                sock.connect(address)
+                return sock
+            except OSError as exc:
+                last_error = exc
+                sock.close()
+        raise last_error
+
+    def connection(kind):
+        def create(host, **kwargs):
+            conn = kind(host, **kwargs)
+            # The original hostname stays in Host and TLS SNI. Connect only
+            # to the checked socket addresses, without another DNS lookup.
+            conn._create_connection = connect
+            return conn
+        return create
+
+    class PublicHTTPHandler(urllib.request.HTTPHandler):
+        def http_open(self, req):
+            return self.do_open(connection(http.client.HTTPConnection), req)
+
+    class PublicHTTPSHandler(urllib.request.HTTPSHandler):
+        def https_open(self, req):
+            return self.do_open(connection(http.client.HTTPSConnection), req, context=_tls_context())
+
+    # A forward proxy could resolve the destination independently of this
+    # process. Fetch uses the OS network route to the validated address.
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect,
+                                         PublicHTTPHandler(), PublicHTTPSHandler())
+    try:
+        return opener.open(request, timeout=timeout)
+    except urllib.error.HTTPError as exc:
+        if 300 <= exc.code < 400:
+            return exc
+        raise
 
 
 class _Text(HTMLParser):
@@ -359,14 +414,17 @@ def _charset(content_type, raw):
             return raw.decode("gb18030", "replace")
 
 
-def fetch(*, url: str, max_chars: int = 5000, open_: Opener = _default_open,
+def fetch(*, url: str, max_chars: int = 5000, open_: Opener | None = None,
           check: Callable[[str], str] = check_public) -> tuple[str, str]:
     for _ in range(6):
-        check(url)
         req = urllib.request.Request(url, headers={"User-Agent": UA,
             "Accept": "text/html,application/xhtml+xml,text/plain,application/json;q=0.9,*/*;q=0.5",
             "Accept-Language": "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7"})
-        resp = open_(req, TIMEOUT)
+        if open_ is None:
+            resp = _open_public(req, TIMEOUT)
+        else:
+            check(url)
+            resp = open_(req, TIMEOUT)
         try:
             status = getattr(resp, "status", None) or getattr(resp, "code", 200)
             if 300 <= status < 400:

@@ -16,6 +16,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -146,40 +147,33 @@ def register_routes(app) -> None:
         device.* 仍走 WS tool_call 通道（Kotlin 双通道执行）——两种
         扩展在同一轮对话里可混用。
         """
-        from forge_bridge import _sessions, _build_session_agent, _agent_lock
+        from forge_bridge import _sessions, _build_session_agent, _agent_lock, _sessions_busy, _connected_sessions
         task = f"{ASSISTANT_SYSTEM_HINT}\n\n任务：{body.task}"
         session_id = "assistant-default"
-        agent = _sessions.get(session_id)
-        if agent is None:
-            async with _agent_lock:
+        async with _agent_lock:
+            if session_id in _sessions_busy or session_id in _connected_sessions:
+                raise HTTPException(409, "Assistant session is already active")
+            _sessions_busy.add(session_id)
+
+        async def execute():
+            try:
                 agent = _sessions.get(session_id)
                 if agent is None:
                     agent = _build_session_agent(session_id)
                     _sessions[session_id] = agent
 
-        import asyncio
+                def run():
+                    with agent.session:
+                        return agent.run(task, history=body.history or [])
 
-        done: asyncio.Future = asyncio.get_running_loop().create_future()
+                return await asyncio.to_thread(run)
+            finally:
+                _sessions_busy.discard(session_id)
 
-        def _worker():
-            try:
-                with agent.session:
-                    report = agent.run(task, history=body.history or [])
-                loop = done.get_loop()
-                loop.call_soon_threadsafe(done.set_result, {
-                    "answer": getattr(report, "answer", "") or "",
-                    "steps": getattr(report, "steps", 0),
-                    "cost": float(getattr(report, "cost", 0.0) or 0.0),
-                })
-            except Exception as exc:        # noqa: BLE001
-                done.get_loop().call_soon_threadsafe(done.set_exception, exc)
-
-        import concurrent.futures
-        loop = asyncio.get_running_loop()
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-            ex.submit(_worker)
+        worker = asyncio.create_task(execute())
         try:
-            summary = await done
-            return {"ok": True, **summary}
-        except Exception as exc:              # noqa: BLE001
-            raise HTTPException(500, str(exc)) from exc
+            report = await asyncio.shield(worker)
+            return {"ok": True, "answer": report.text, "steps": len(report.steps),
+                    "cost": float(report.usage.get("cost") or 0.0)}
+        except Exception:
+            raise HTTPException(500, "Assistant run failed") from None

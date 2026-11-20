@@ -23,6 +23,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import forge_gui_v2 as gui  # noqa: E402
+from test_layout_dpi import isolated_app
 
 # 窗口档位：1080p / 2K / 半屏 / 最小支持宽
 SIZES = [(1920, 1080), (2560, 1600), (1280, 800), (1120, 720)]
@@ -44,33 +45,12 @@ class UIRRegression(unittest.TestCase):
         gui._setup_dpi()
 
     def _build(self, w, h):
-        root = tk.Tk()
-        self.errors = []
-        root.report_callback_exception = lambda *a: self.errors.append(a)
-        with patch.object(gui, "_autostart_enabled", return_value=False), \
-             patch.object(gui.ForgeGuiApp, "_start_sysmon"):
-            app = gui.ForgeGuiApp(root)
-            # __init__ 里 geometry(WINDOW_SIZE) 会覆盖外部请求；构造完成后再缩
-            root.geometry(f"{w}x{h}+10+10")
-        root.update()
-        time.sleep(0.3)
-        root.update()
-        # 若仍被顶住（minsize=940x700 以下会），按实际尺寸记录
-        actual = (root.winfo_width(), root.winfo_height())
+        self._fixture = isolated_app(1, (w, h))
+        root, app, self.errors = self._fixture.__enter__()
         return root, app
 
     def _teardown(self, root, app):
-        app._closing = True
-        for attr in ("_autostart_after_id", "_event_poll"):
-            aid = getattr(app, attr, None)
-            if aid is not None:
-                try:
-                    root.after_cancel(aid)
-                except (tk.TclError, ValueError):
-                    pass
-        if getattr(app, "_sysmon", None):
-            app._sysmon.stop()
-        root.destroy()
+        self._fixture.__exit__(None, None, None)
 
     def test_structure_across_window_sizes(self):
         """多档窗口尺寸下：输入卡结构 / 发送按钮 / 侧栏分组齐全。"""

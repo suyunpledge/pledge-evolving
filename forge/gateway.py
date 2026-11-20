@@ -688,12 +688,22 @@ def build_handler(cfg: GatewayConfig):
             # （如 mimo-v2.6-flash）。有映射就改写请求体里的 model。
             body = self._apply_model_map(body)
             plan = provider = None
+            responses = False
+            from . import openai_responses
             if self.path.split("?")[0].rstrip("/").endswith(("/chat/completions", "/messages")):
                 try:
                     payload, plan, provider = cfg.prepare_request(json.loads(body),
                         secret_scope=cfg.secret_scope(self.headers.get('X-Forge-Secret-Scope', '')))
-                    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-                except (ValueError, TypeError) as exc:
+                    responses = (self.path.split("?")[0].rstrip("/").endswith("/chat/completions")
+                                 and openai_responses.uses_responses(payload, provider))
+                    if responses:
+                        response_scope = openai_responses.replay_scope(provider, payload["model"])
+                        upstream_payload = openai_responses.to_request(payload, response_scope)
+                        plan["execution"]["transport"] = "responses"
+                    else:
+                        upstream_payload = openai_responses.strip_replay(payload)
+                    body = json.dumps(upstream_payload, ensure_ascii=False).encode("utf-8")
+                except (ValueError, TypeError, KeyError) as exc:
                     self._json(400, {"error": {"message": str(exc)}})
                     return
 
@@ -704,7 +714,7 @@ def build_handler(cfg: GatewayConfig):
             stripped = self.path
             if stripped.startswith("/v1/"):
                 stripped = stripped[len("/v1"):]
-            url = cfg.upstream + stripped
+            url = openai_responses.endpoint(provider) if responses else cfg.upstream + stripped
             headers = {k: v for k, v in self.headers.items()
                        if k.lower() in {'content-type', 'accept', 'user-agent', 'anthropic-version', 'anthropic-beta'}}
             headers.pop("Authorization", None)
@@ -724,9 +734,9 @@ def build_handler(cfg: GatewayConfig):
                     from .request_execution import UsageObserver
                     observer = UsageObserver()
                     ctype = response.headers.get("content-type", "")
-                    self.send_response(response.status)
-                    self.send_header("Content-Type", ctype)
                     if "text/event-stream" in ctype:
+                        self.send_response(response.status)
+                        self.send_header("Content-Type", ctype)
                         # close on completion, otherwise the client waits for the stream to end forever
                         self.send_header("Cache-Control", "no-cache")
                         self.send_header("Connection", "close")
@@ -735,7 +745,9 @@ def build_handler(cfg: GatewayConfig):
                         self._upstream_started = True
                         from .secret_http import SecretSSEFilter, iter_model_sse
                         fence = SecretSSEFilter()
-                        for chunk in iter_model_sse(response, expected_choices=(payload or {}).get('n', 1)):
+                        chunks = (openai_responses.stream_chat(response, payload["model"], response_scope) if responses
+                                  else iter_model_sse(response, expected_choices=(payload or {}).get('n', 1)))
+                        for chunk in chunks:
                             observer.feed(chunk)
                             self.wfile.write(fence.feed(chunk))
                             self.wfile.flush()
@@ -745,10 +757,15 @@ def build_handler(cfg: GatewayConfig):
                         from .secrets import redact
                         from .secret_http import redact_response
                         data = redact_response(response.read())
+                        if responses:
+                            data = json.dumps(openai_responses.to_chat(json.loads(data), response_scope),
+                                              ensure_ascii=False).encode("utf-8")
                         try:
                             observer.observe(json.loads(data))
                         except (ValueError, UnicodeDecodeError):
                             pass
+                        self.send_response(response.status)
+                        self.send_header("Content-Type", ctype)
                         self.send_header("Content-Length", str(len(data)))
                         self.end_headers()
                         self.wfile.write(data)

@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import json
+import io
 import socket
 import threading
 import unittest
 import urllib.request
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from forge import web_backends as wb
 from forge.policy import Policy
@@ -162,6 +163,27 @@ class FetchTests(unittest.TestCase):
     def test_fake_ip_proxy_range_counts_as_public(self):
         with dns({"site.example": "198.18.1.47"}):
             self.assertEqual(wb.check_public("https://site.example/"), "https://site.example/")
+
+    def test_fetch_connects_to_the_checked_address_with_the_original_host_header(self):
+        for scheme, port in (("http", 80), ("https", 443)):
+            address = ("93.184.216.34", port)
+            info = [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", address)]
+            tls = Mock()
+            with self.subTest(scheme=scheme), \
+                    patch.object(socket, "getaddrinfo", return_value=info) as resolve, \
+                    patch.object(socket, "socket") as create_socket, \
+                    patch.object(wb, "_tls_context", return_value=tls):
+                conn = create_socket.return_value
+                tls.wrap_socket.return_value = conn
+                conn.makefile.return_value = io.BytesIO(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\n\r\nOK")
+                _, text = wb.fetch(url=f"{scheme}://public.example/read")
+                self.assertTrue(text.startswith("OK"))
+                resolve.assert_called_once()
+                conn.connect.assert_called_once_with(address)
+                self.assertIn(b"Host: public.example\r\n", conn.sendall.call_args.args[0])
+                if scheme == "https":
+                    tls.wrap_socket.assert_called_once_with(conn, server_hostname="public.example")
 
     def test_encodings_types_and_truncation(self):
         gbk = "<html><head><meta charset='gb2312'><title>标题</title></head><body><p>中文正文</p></body></html>"

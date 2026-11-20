@@ -33,6 +33,8 @@ class WorkbenchController(QObject):
     permissionRequested = Signal()
     gatewayChanged = Signal(str, object)
     gatewayChanging = Signal()
+    gatewayCatalog = Signal(object)
+    gatewayFailed = Signal(str, str)
     codingChanged = Signal()
     codingDraftChanged = Signal()
     codingFocusRequested = Signal()
@@ -59,7 +61,7 @@ class WorkbenchController(QObject):
         self._onboarding.can_save = lambda: not (self._busy or self.hasUnsaved or self._pending or self._input_busy())
         self._onboarding.saved.connect(self._apply_model_setup)
         self._onboarding.preferencesChanged.connect(self._apply_onboarding_preferences)
-        self._model_setup_pending = ''
+        self._model_setup_pending = None
         self._page, self._profile = 'chat', 'sandbox'
         self._navigation = False
         self._browser_visible, self._browser_loaded = False, False
@@ -291,11 +293,18 @@ class WorkbenchController(QObject):
 
     def _apply_model_setup(self, row_id):
         self.gatewayChanging.emit()
+        self._request_gateway({'command': 'apply_model_setup', 'provider': row_id})
+
+    @Slot(str)
+    def switchChatModel(self, label):
+        self._request_gateway({'command': 'apply_model_setup', 'model': label})
+
+    def _request_gateway(self, request):
         if not self._service_ready:
-            self._model_setup_pending = row_id
+            self._model_setup_pending = request
             self.start_host()
         else:
-            self._send({'command': 'apply_model_setup', 'provider': row_id})
+            self._send(request)
 
     @Slot()
     def start_host(self):
@@ -345,8 +354,8 @@ class WorkbenchController(QObject):
             self._send({'command': 'permission', 'profile': self._profile})
             self._apply_onboarding_preferences()
             if self._model_setup_pending:
-                self._apply_model_setup(self._model_setup_pending)
-                self._model_setup_pending = ''
+                request, self._model_setup_pending = self._model_setup_pending, None
+                self._send(request)
             self._send_navigation()
         elif kind == 'page':
             self._pages[row['page']] = row['data']
@@ -435,7 +444,11 @@ class WorkbenchController(QObject):
                 self._profile = row['profile']
             self.changed.emit()
         elif kind == 'gateway':
-            self.gatewayChanged.emit(row['url'], row.get('temperature'))
+            self.gatewayChanged.emit(row['url'], {'temperature': row.get('temperature'), 'model': row.get('model')})
+        elif kind == 'gateway_catalog':
+            self.gatewayCatalog.emit(row['models'])
+        elif kind == 'gateway_error':
+            self.gatewayFailed.emit(row['message'], row.get('active_url', ''))
         elif kind == 'error':
             self._error = str(row.get('message', '工作台载入失败'))
             self.changed.emit()
@@ -455,11 +468,15 @@ class WorkbenchController(QObject):
     def _process_error(self, _):
         if not self._closing:
             self._error = '工作台启动失败：' + self._process.errorString()
+            self._model_setup_pending = None
+            self.gatewayFailed.emit(self._error, '')
             self.changed.emit()
 
     def _host_timeout(self):
         if not self._service_ready:
             self._error = '工作台仍未就绪。可返回对话，或关闭后重新打开。'
+            self._model_setup_pending = None
+            self.gatewayFailed.emit(self._error, '')
             self.changed.emit()
 
     def _finished(self, exit_code, exit_status):
@@ -476,6 +493,8 @@ class WorkbenchController(QObject):
         self._pending = [r for r in self._pending if r['source'] != 'host']
         if not self._closing:
             self._error = self._error or f'功能工作台已关闭（退出码 {exit_code}），可点击重新载入。'
+            self._model_setup_pending = None
+            self.gatewayFailed.emit(self._error, '')
         self.changed.emit()
 
     @Slot(str)

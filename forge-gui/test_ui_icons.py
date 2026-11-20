@@ -47,12 +47,13 @@ class IconRenderingTests(unittest.TestCase):
         self.assertTrue(shapes)
         self.assertNotIn("text", [button.type(item) for item in shapes])
         self.assertEqual(button.type(shapes[0]), "image")
-        bitmap = icon_image(self.root, "send", size=button._icon_size, fg="#FFFFFF")
+        bitmap = icon_image(self.root, "send", size=button._icon_size, fg=theme.C["on_accent"])
         self.assertEqual(button.itemcget(shapes[0], "image"), str(bitmap))
         visible = [bitmap.get(x, y) for y in range(bitmap.height()) for x in range(bitmap.width())
                    if not bitmap.transparency_get(x, y)]
         self.assertTrue(visible)
-        self.assertEqual(set(visible), {(255, 255, 255)})
+        on_accent = tuple(int(theme.C["on_accent"][i:i + 2], 16) for i in (1, 3, 5))
+        self.assertEqual(set(visible), {on_accent})
 
     def test_all_library_icons_preserve_dpi_size_and_semantic_color(self):
         for name in ICONS:
@@ -82,7 +83,8 @@ class IconRenderingTests(unittest.TestCase):
         widget._copy_selection()
         self.assertEqual(self.root.clipboard_get(), text)
         self.assertGreater(widget.winfo_height(), 24)
-        heading = cw.render_blocks(self.root, "# 完成 🎉 ⏰").winfo_children()[0]
+        heading_row = cw.render_blocks(self.root, "# 完成 🎉 ⏰").winfo_children()[0]
+        heading, = (child for child in heading_row.winfo_children() if isinstance(child, cw.InlineText))
         self.assertEqual(heading.display_text(), "完成 🎉 ⏰")
         self.assertEqual(len(heading.image_names()), 2)
 

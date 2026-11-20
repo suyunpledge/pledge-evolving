@@ -11,6 +11,26 @@ import liquid_glass as glass
 from test_layout_dpi import pump
 
 
+class GlassRenderCacheTests(unittest.TestCase):
+    def test_width_changes_reuse_edges_and_match_a_full_render(self):
+        spec = glass.folder_spec("#0B0D11", radius=16, shadow=8)
+        glass._ROW_CACHE.clear()
+        glass._PNG_CACHE.clear()
+        for width in (700, 701, 913):
+            rows = glass._glass_rows(width, 320, spec)
+            shape = glass._Shape(width, 320, spec)
+            self.assertEqual(rows, [shape.row(y, width) for y in range(320)], width)
+        # 三个宽度共用一份边缘缓存，而不是每个宽度各算一遍。
+        self.assertEqual(list(glass._ROW_CACHE), [spec])
+
+    def test_narrow_and_short_shapes_still_render_every_pixel(self):
+        spec = glass.chip_spec("#161A21", radius=15)
+        for width, height in ((20, 20), (40, 30)):
+            rows = glass._glass_rows(width, height, spec)
+            shape = glass._Shape(width, height, spec)
+            self.assertEqual(rows, [shape.row(y, width) for y in range(height)])
+
+
 class GlassInteractionTests(unittest.TestCase):
     def setUp(self):
         self.root = tk.Tk()
@@ -84,9 +104,17 @@ class GlassInteractionTests(unittest.TestCase):
         pump(self.root)
         seen = []
 
+        tries = [40]
+
         def inspect():
             dialog = self.root.grab_current()
-            button = dialog.focus_get()
+            button = dialog.focus_get() if dialog is not None else None
+            # 进程里首个弹窗要加载中文字体、渲染玻璃位图；等焦点落到按钮上
+            # （最多 2s）再检查，不赌固定时刻。
+            if (button is None or button is dialog) and tries[0] > 0:
+                tries[0] -= 1
+                self.root.after(50, inspect)
+                return
             seen.append(str(button.cget("text")))
             button.event_generate("<Return>")
 

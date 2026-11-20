@@ -4,23 +4,61 @@ if (-not $PythonExe) { $PythonExe = 'python' }
 $guiDirectory = Split-Path -Parent $PSScriptRoot
 $repoDirectory = Split-Path -Parent $guiDirectory
 $distDirectory = Join-Path $PSScriptRoot 'dist'
-$launcher = Join-Path $distDirectory 'forge-desktop.exe'
-$backup = Join-Path $distDirectory 'forge-desktop.legacy.exe'
-if ((Test-Path -LiteralPath $launcher) -and -not (Test-Path -LiteralPath $backup)) {
-    Copy-Item -LiteralPath $launcher -Destination $backup
-}
-& $PythonExe -m PyInstaller --noconfirm --distpath $distDirectory --workpath (Join-Path $PSScriptRoot 'build-source') (Join-Path $PSScriptRoot 'forge-source.spec')
+$buildDirectory = Join-Path $PSScriptRoot 'build-source'
+$buildId = [guid]::NewGuid().ToString('N')
+$staging = Join-Path $buildDirectory "publish-$buildId"
+& $PythonExe -m PyInstaller --noconfirm --distpath $staging --workpath $buildDirectory (Join-Path $PSScriptRoot 'forge-source.spec')
 if ($LASTEXITCODE -ne 0) { throw 'Source launcher build failed.' }
+$builtLauncher = Join-Path $staging 'forge-desktop.exe'
 $config = @{ sourceRoot = $repoDirectory; kind = 'forge-source-launcher' } | ConvertTo-Json
-[IO.File]::WriteAllText((Join-Path $distDirectory 'forge-source.json'), $config, [Text.UTF8Encoding]::new($false))
-$oldDist = Join-Path $guiDirectory 'dist'
-if (Test-Path -LiteralPath $oldDist) {
-    $oldLauncher = Join-Path $oldDist 'forge-desktop.exe'
-    $oldBackup = Join-Path $oldDist 'forge-desktop.legacy.exe'
-    if ((Test-Path -LiteralPath $oldLauncher) -and -not (Test-Path -LiteralPath $oldBackup)) {
-        Copy-Item -LiteralPath $oldLauncher -Destination $oldBackup
+
+function Publish-Launcher([string]$Directory) {
+    [IO.Directory]::CreateDirectory($Directory) | Out-Null
+    $launcher = Join-Path $Directory 'forge-desktop.exe'
+    $legacy = Join-Path $Directory 'forge-desktop.legacy.exe'
+    $pending = Join-Path $Directory "forge-desktop.$buildId.pending"
+    $previous = Join-Path $Directory "forge-desktop.$buildId.previous"
+    $manifest = Join-Path $Directory 'forge-source.json'
+    $sourceFile = Join-Path $Directory "forge-source.$buildId.pending"
+    if ((Test-Path -LiteralPath $launcher) -and -not (Test-Path -LiteralPath $legacy)) {
+        Copy-Item -LiteralPath $launcher -Destination $legacy
     }
-    Copy-Item -LiteralPath $launcher -Destination $oldLauncher -Force
-    [IO.File]::WriteAllText((Join-Path $oldDist 'forge-source.json'), $config, [Text.UTF8Encoding]::new($false))
+    Copy-Item -LiteralPath $builtLauncher -Destination $pending
+    [IO.File]::WriteAllText($sourceFile, $config, [Text.UTF8Encoding]::new($false))
+    $published = $false
+    try {
+        # Build first, then rename the existing image so a running launcher
+        # can keep its mapped binary while the next launch picks up the update.
+        if (Test-Path -LiteralPath $launcher) { [IO.File]::Move($launcher, $previous) }
+        try {
+            [IO.File]::Move($pending, $launcher)
+            $published = $true
+            if (Test-Path -LiteralPath $manifest) {
+                [IO.File]::Replace($sourceFile, $manifest, [NullString]::Value)
+            } else {
+                [IO.File]::Move($sourceFile, $manifest)
+            }
+        } catch {
+            if ($published) { [IO.File]::Move($launcher, $pending) }
+            if (Test-Path -LiteralPath $previous) { [IO.File]::Move($previous, $launcher) }
+            throw
+        }
+    } finally {
+        [IO.File]::Delete($pending)
+        [IO.File]::Delete($sourceFile)
+    }
+    if (Test-Path -LiteralPath $previous) {
+        try { [IO.File]::Delete($previous) } catch [IO.IOException] {
+            Write-Output "Previous launcher is still in use: $previous"
+        } catch [UnauthorizedAccessException] {
+            Write-Output "Previous launcher retained: $previous"
+        }
+    }
+    Write-Output "Ready: $launcher (loads current source each time)"
 }
-Write-Output "Ready: $launcher (loads current source each time)"
+
+Publish-Launcher $distDirectory
+$oldDist = Join-Path $guiDirectory 'dist'
+if (Test-Path -LiteralPath $oldDist) { Publish-Launcher $oldDist }
+[IO.File]::Delete($builtLauncher)
+[IO.Directory]::Delete($staging)

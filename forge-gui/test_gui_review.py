@@ -4,6 +4,7 @@ All writes use temporary directories; no real gateway or model is contacted.
 Run: python -m unittest test_gui_review -v
 """
 import copy
+from contextlib import ExitStack
 import json
 import tempfile
 import threading
@@ -84,9 +85,19 @@ class GuiReviewTests(unittest.TestCase):
         self.home = Path(self.tmp.name)
         save_user_layer(self.home, sample_rows())
         self.root = tk.Tk()
-        with patch.object(gui, "DEFAULT_FORGE_HOME", self.home), patch.object(gui, "_find_run_py", return_value=None), \
-             patch.object(gui, "_autostart_enabled", return_value=False):
-            self.app = gui.ForgeGuiApp(self.root)
+        self.root.tk.call("tk", "scaling", 96 / 72)
+        self.stack = ExitStack()
+        for target, name, options in (
+            (gui, "DEFAULT_FORGE_HOME", {"new": self.home}),
+            (gui, "_desktop_config_path", {"return_value": self.home / "desktop.json"}),
+            (gui, "_find_run_py", {"return_value": None}),
+            (gui, "_autostart_enabled", {"return_value": False}),
+            (gui.ForgeGuiApp, "_start_sysmon", {}),
+            (gui.ForgeGuiApp, "_repo_root", {"return_value": self.home}),
+            (Path, "home", {"return_value": self.home}),
+        ):
+            self.stack.enter_context(patch.object(target, name, **options))
+        self.app = gui.ForgeGuiApp(self.root)
         self.errors = []
         self.root.report_callback_exception = lambda *args: self.errors.append(args)
         self.root.update()
@@ -103,6 +114,8 @@ class GuiReviewTests(unittest.TestCase):
         if getattr(self.app, "_sysmon", None) is not None:
             self.app._sysmon.stop()
         self.root.destroy()
+        self.app.desktop_features.thread.join(3)
+        self.stack.close()
         self.tmp.cleanup()
         self.assertEqual(self.errors, [])
 
@@ -192,7 +205,7 @@ class GuiReviewTests(unittest.TestCase):
     def test_unsaved_raw_draft_can_cancel_close(self):
         self.app._clear_placeholder()
         self.app.input_text.insert("1.0", "unsaved text")
-        with patch.object(gui.messagebox, "askyesno", return_value=False) as question:
+        with patch.object(self.app, "_confirm_discard_dialog", return_value=False) as question:
             self.app._on_close()
         question.assert_called_once()
         self.assertFalse(self.app._closing)

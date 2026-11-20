@@ -92,7 +92,7 @@ class ServiceHost:
                     if not self.closed.is_set():
                         if self.pending_model is not None:
                             selected, self.pending_model = self.pending_model, None
-                            self.command({'command': 'apply_model_setup', 'provider': selected})
+                            self.command(selected)
                         elif self.coding.queue:
                             request = self.coding.queue.pop(0)
                             self.work(lambda: self.coding.run(request))
@@ -210,10 +210,14 @@ class ServiceHost:
                 waiter['done'].set()
         elif command == 'apply_model_setup':
             if self.running:
-                self.pending_model = row.get('provider', '')
+                self.pending_model = dict(row)
                 return
             def setup():
-                self.gateway.start(row.get('provider', ''))
+                try:
+                    self.gateway.start(row.get('provider', ''), model=row.get('model', ''))
+                except Exception as exc:
+                    self.emit('gateway_error', message=str(redact(str(exc))), active_url=self.gateway.url)
+                    return
                 if self.coding.runtime:
                     result = self.coding.runtime.refresh_models()
                     if result:

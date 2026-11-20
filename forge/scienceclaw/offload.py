@@ -120,7 +120,7 @@ class ToolResultOffloader:
 
     def _file_path(self, tool_name: str, call_id: str) -> Path:
         short = hashlib.md5(f"{call_id}{time.time()}".encode()).hexdigest()[:8]
-        safe = re.sub(r"[/\s]", "_", tool_name)
+        safe = re.sub(r"[^\w.-]", "_", tool_name)[:80].strip(".") or "tool"
         return self.workspace / self.offload_dir / f"{safe}_{short}.md"
 
     def wrap_result_text(self, tool_name: str, call_id: str, text: str) -> str:

@@ -35,6 +35,9 @@ CHAT_CONTEXT = ('当前处于 Chat 模式。普通对话和现有 MCP 工具能�
 WORK_CONTEXT = ('当前已切换至 Work，继续处理同一条用户消息。Work 工具定义已随本轮请求提供，'
                 '直接调用列表中的匹配工具。读取项目文件时优先使用已提供的 forge_read_range 或 '
                 'forge_read_file。forge_tool_search 只用于发现尚未加载的工具。')
+TOOL_CONTEXT = ('需要工具时，通过本轮提供的函数接口调用最匹配的工具。'
+                '收到工具结果后按用户要求回答，若还缺信息就继续调用所需工具。'
+                '单行读取结果的行号在元数据中，引用原文时保留内容本身。')
 
 
 def tool_label(name):
@@ -63,6 +66,18 @@ def preview_receipt(name, response):
         files = [path for path in result['files'][:8] if isinstance(path, str)]
         detail = redact('\n'.join([result['destination'], *files]))
     return {'name': tool_label(name), 'outcome': outcome, 'detail': detail[:600] + ('…' if len(detail) > 600 else '')}
+
+
+def model_tool_result(name, response):
+    """Keep a single source line separate from its display line number."""
+    if name.removeprefix('forge_') == 'read_range' and response['ok']:
+        meta, content = response.get('meta', {}), response.get('content')
+        start = meta.get('start')
+        if type(start) is int and start == meta.get('end') and isinstance(content, str):
+            prefix = f'{start}\t'
+            if content.startswith(prefix):
+                return {**response, 'content': content.removeprefix(prefix)}
+    return response
 
 
 def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint, status, next_round,
@@ -95,7 +110,7 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
         if cancel.is_set():
             raise GenerationCancelled('已停止生成')
         guidance = (CHAT_CONTEXT if tools_enabled else '当前处于 Chat 模式，请直接回复。') if chat_mode else ''
-        context = '\n'.join(part for part in (system_context, guidance) if part)
+        context = '\n'.join(part for part in (system_context, guidance, TOOL_CONTEXT if tools else '') if part)
         current = [ChatMessage('system', context), *messages] if context else messages
         result = client.stream_chat(current, model=model, reasoning_effort=effort, temperature=temperature,
                                     on_chunk=chunk, cancel_event=cancel, tools=tools)
@@ -103,9 +118,16 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
             return result
         if authorize is None and enter_work is None:
             raise GatewayError('当前连接没有工具执行权限。')
-        calls = prepare_calls(result.tool_calls)
+        calls = prepare_calls(result.tool_calls, model=getattr(result, 'model', '') or model)
+        available = {row['function']['name'] for row in tools or []}
+        for call in calls:
+            function = call['function']
+            name = function['name']
+            if name not in available and f'forge_{name}' in available:
+                function['name'] = f'forge_{name}'
         messages.append(ChatMessage('assistant', result.text, tool_calls=calls,
-                                    reasoning_content=result.reasoning_content))
+                                    reasoning_content=result.reasoning_content,
+                                    responses_replay=getattr(result, 'responses_replay', None)))
         stopped, switch_reason = None, ''
         for call in calls:
             name = call['function']['name']
@@ -131,6 +153,8 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
                             raise PermissionError('该工具需要先进入 Work。')
                         if authorize is None or (tool_filter is not None and not tool_filter(name)):
                             raise PermissionError('当前工具设置或权限不允许此调用。')
+                        if name not in available:
+                            raise ValueError(f'工具 {name} 未在本轮提供。请从当前工具列表选择并使用准确名称。')
                         authorize(name, arguments, cancel)
                     if cancel.is_set():
                         raise GenerationCancelled('已停止工具调用')
@@ -149,7 +173,7 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
                     else:
                         status('正在执行：' + tool_label(name))
                         response = invoke(arguments, lambda: client.call_tool(name, arguments))
-            body = json.dumps(response, ensure_ascii=False)
+            body = json.dumps(model_tool_result(name, response), ensure_ascii=False)
             messages.append(ChatMessage('tool', body, tool_call_id=call['id']))
             if receipt is not None:
                 receipt(name, response)

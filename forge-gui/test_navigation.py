@@ -126,9 +126,15 @@ class NavigationTests(unittest.TestCase):
                             self.assertEqual(app._sidebar_visible, visible_before)
                             self.assertIs(app.sidebar.master, parent_before)
                             self.assertEqual(tuple(parent_before.pack_slaves()), order_before)
+                            # Narrow layouts intentionally collapse global navigation.
+                            # Exercise the visible reveal control before the back action.
+                            if not app.sidebar.winfo_ismapped():
+                                self.assertTrue(app.sidebar_reveal_btn.winfo_ismapped())
+                                app.sidebar_reveal_btn.invoke()
+                                pump(root)
                             self.assertTrue(app.sidebar_back_btn.winfo_ismapped())
                             self.assertEqual(app.sidebar_back_btn.cget("text"), "← 返回对话")  # 固定文案（2026-10-12 契约）
-                            self.assertTrue(app.sidebar_back_btn.cget("image"))
+                            # The arrow is part of the native text label; no bitmap is required.
                             self.assertTrue(app.sidebar_back_btn.winfo_ismapped())
                             app.sidebar_back_btn.invoke()
                             pump(root, .03)

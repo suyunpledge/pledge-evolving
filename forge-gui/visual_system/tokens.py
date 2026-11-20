@@ -8,7 +8,7 @@ COLOR_ROLES = MappingProxyType({
     'text.primary': 'text', 'text.body': 'body', 'text.secondary': 'subtext',
     'border.default': 'border', 'state.hover': 'hover', 'state.selected': 'accent_soft',
     'state.pressed': 'control_pressed', 'state.disabled': 'disabled_fg', 'state.focus': 'focus_ring',
-    'action.primary': 'accent', 'action.primary-text': 'msg_user_fg',
+    'action.primary': 'accent', 'action.primary-text': 'on_accent',
     'status.info': 'info', 'status.success': 'ok', 'status.warning': 'warn', 'status.error': 'error',
 })
 FONT_ROLES = MappingProxyType({'body': 'FONT_UI', 'label': 'FONT_SMALL', 'title': 'FONT_TITLE',

@@ -81,9 +81,9 @@ Item {
         Flow {
             Layout.fillWidth: true; spacing: 7
             Repeater { model: page.viewData.actions || []
-                GlassButton { required property var modelData; material: page.material; text: modelData.label; enabled: !workbench.busy || modelData.key === "cancel"; ink: modelData.danger ? "#e9aaa4" : "#e1e5e9"; onClicked: page.invoke(modelData.key) }
+                GlassButton { required property var modelData; material: page.material; text: modelData.label; enabled: !workbench.busy || modelData.key === "cancel"; ink: modelData.danger ? Theme.danger : Theme.textPrimary; onClicked: page.invoke(modelData.key) }
             }
-            GlassButton { material: page.material; glyph: "refresh"; tip: "刷新"; enabled: !workbench.busy; onClicked: page.invoke("refresh") }
+            GlassButton { material: page.material; glyph: "refresh-cw"; tip: "刷新"; enabled: !workbench.busy; onClicked: page.invoke("refresh") }
         }
         Item {
             Layout.fillWidth: true; Layout.fillHeight: true
