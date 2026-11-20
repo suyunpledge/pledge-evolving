@@ -51,6 +51,7 @@ from .task_contract import ContractStatus, TaskContract, advance_status, extract
 from .phase_models import model_pair, phase_router
 from .project_rules import ProjectRules, MAX_TARGETS
 from .execution_guard import ExecutionGuard
+from .tool_feedback import ToolBlocker
 from .execution import (ActionExecutor, ActionRequest, EventEnvelope, RunRequest,
                         RunResult, create_execution_context)
 
@@ -337,6 +338,7 @@ class Agent:
         self._tool_window = deque(maxlen=8)
         # 步级模型重试：长链路工程任务已积累的工作不应被一次瞬时 API 抖动报废
         self._model_retries_left = self._MODEL_RETRY_BUDGET
+        self._tool_blocker = ToolBlocker()
         self._streak_warned_tool = ''  # 已提醒过的热工具；退出窗口即复位
         self._streak_pending: list[str] = []
         self._streak_budget = 2  # 每 run 至多提醒两次，防提醒本身变噪声
@@ -1214,6 +1216,7 @@ class Agent:
             self._supervisor_pending_bus = []
             self._tool_window.clear()
             self._model_retries_left = self._MODEL_RETRY_BUDGET
+            self._tool_blocker.reset()
             self._streak_warned_tool = ''
             self._streak_pending = []
             self._streak_budget = 2
@@ -1294,10 +1297,21 @@ class Agent:
 
     def _invoke_recorded(self, name, args, *, tool_call_id=''):
         self._check_cancel()
+        refusal = self._tool_blocker.refusal(str(name))
+        if refusal:
+            # 熔断：本 run 已确认整体不可用的工具，不再走策略/执行往返。
+            self._emit(type='tool_blocked', tool=str(name), repeated=True)
+            return ToolResult(False, error=refusal, meta={
+                'action_id': uuid.uuid4().hex, 'authorization': 'deny', 'error_code': 'tool_blocked',
+                'execution_state': 'not_started', 'outcome': 'failed'})
         result = self.action_executor.execute(self.execution_context(),
             ActionRequest(name, args, tool_call_id=tool_call_id)).as_tool_result()
         if result.meta.get('error_code') == 'cancelled':
             raise RunCancelled()
+        note = self._tool_blocker.observe(str(name), result, self.registry.names())
+        if note:
+            result.error = (result.error + '\n' + note) if result.error else note
+            self._emit(type='tool_blocked', tool=str(name), repeated=False, reason=note[:300])
         if result.ok and name in {'read_file', 'read_range', 'file_outline', 'edit_config'}:
             path = args.get('path')
             if isinstance(path, str) and path not in self._rule_targets and len(self._rule_targets) < MAX_TARGETS:

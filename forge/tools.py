@@ -222,6 +222,8 @@ class ToolRegistry:
         self._effects: dict[str, ToolEffect] = {}
         self._requires: dict[str, tuple[str, ...]] = {}
         self._result_fields: dict[str, tuple[str, ...]] = {}
+        # 结果反馈（forge.tool_feedback）：写入后语法检查、缺失路径的就近建议。
+        self.feedback = True
 
     # -- registration ----------------------------------------------------
     def register(self, spec: ToolSpec, *, force: bool = False, trusted: bool = False,
@@ -398,6 +400,7 @@ class ToolRegistry:
         out._effects = dict(self._effects)
         out._requires = dict(self._requires)
         out._result_fields = dict(self._result_fields)
+        out.feedback = self.feedback
         return out
 
     def result_fields(self, name):
@@ -455,6 +458,7 @@ class ToolRegistry:
             self._remember_originals(name, args, ctx)
             with self.write_guard(name, args, ctx):
                 result = self._invoke(name, args, ctx)
+            self._feedback(name, args, ctx, result)
             result.content = ctx.secret_scope.protect_text(result.content)
             result.error = redact(result.error)
             result.meta = redact(result.meta)
@@ -466,6 +470,35 @@ class ToolRegistry:
             return ToolResult(False, error=redact(f"{type(exc).__name__}: {exc}"),
                               meta={'authorization': 'unknown', 'error_code': 'result_processing_failed',
                                     'execution_state': 'unknown' if self.side_effects(name, args) else 'completed'})
+
+    def _feedback(self, name: str, args: dict[str, Any] | None, ctx: ToolContext, result: ToolResult) -> None:
+        """Enrich a finished result so the model needs no extra turn (best effort, never raises)."""
+        if not self.feedback:
+            return
+        from . import tool_feedback as fb
+
+        def public(raw):
+            path = ctx.policy.abs_path(raw)
+            assert_public_path(path)
+            return path
+        try:
+            if result.ok and self.writes(name, args):
+                note, rows = fb.write_checks(args, ctx.workspace, public)
+                if rows:
+                    result.content = (result.content or '') + note
+                    result.meta = {**(result.meta or {}), 'post_write_checks': rows}
+            elif not result.ok and fb.looks_missing(result.error):
+                for raw in fb._targets(args):
+                    if ctx.policy.abs_path(raw).exists():
+                        continue
+                    found = fb.path_suggestions(raw, ctx.workspace, _walk_files(ctx.workspace),
+                                                public=assert_public_path)
+                    if found:
+                        result.error = f"{result.error}\nDid you mean: {', '.join(found)}?"
+                        result.meta = {**(result.meta or {}), 'path_suggestions': found}
+                    break
+        except Exception:
+            return
 
     def _remember_originals(self, name: str, args: dict[str, Any] | None, ctx: ToolContext) -> None:
         """First write to a file in this agent session: keep its prior text for review_changes.
