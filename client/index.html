@@ -298,7 +298,7 @@ textarea#task{width:100%;height:72px;background:var(--bg);color:var(--text);bord
 <main>
   <div class="tab-panel active" id="tab-run">
     <div class="task-box">
-      <textarea id="task" placeholder="输入任务描述&#10;例如：写一个 HTML 页面展示 forge 的架构，保存到 outputs/"></textarea>
+      <textarea id="task" placeholder="输入任务描述&#10;例如：写一个 HTML 页面展示 keystone 的架构，保存到 outputs/"></textarea>
       <div class="task-actions">
         <button class="primary" id="runBtn" onclick="startRun()">执 行</button>
         <button class="danger sm" id="cancelBtn" onclick="cancelRun()" style="display:none">取消</button>
@@ -523,7 +523,7 @@ async function loadFiles(sub){try{const{files}=await api('/api/files'+(sub?'?pat
 async function viewFile(path){const el=document.getElementById('fileContent');try{const r=await api('/api/file?path='+encodeURIComponent(path));if(r.error){el.innerHTML=`<div class="empty">${esc(r.error)}</div>`;return}if(r.binary){el.innerHTML=`<div class="empty">二进制 ${fmtSize(r.size)}</div>`;return}el.innerHTML=`<div class="meta">${esc(r.path)} · ${fmtSize(r.size)}</div><pre>${esc(r.text)}</pre>`}catch(e){el.innerHTML='<div class="empty">失败</div>'}}
 
 // ── diag ──
-async function loadDiag(){try{const d=await api('/api/diag');const el=document.getElementById('diagPanel');let h='';h+=kv('forge home',d.forge_home);h+=kv('secrets.json',d.keys_exists?'✅ 存在':'❌ 缺失');h+=kv('workspace',d.workspace);h+=kv('version',d.forge_version);h+='<div style="margin:12px 0 6px;font-size:11px;color:var(--muted)">KEY 注入</div>';for(const[k,v]of Object.entries(d.env_status||{})){h+=kv(k,v?'✅':'❌')}el.innerHTML=h}catch(e){document.getElementById('diagPanel').innerHTML='失败'}}
+async function loadDiag(){try{const d=await api('/api/diag');const el=document.getElementById('diagPanel');let h='';h+=kv('keystone home',d.keystone_home);h+=kv('secrets.json',d.keys_exists?'✅ 存在':'❌ 缺失');h+=kv('workspace',d.workspace);h+=kv('version',d.keystone_version);h+='<div style="margin:12px 0 6px;font-size:11px;color:var(--muted)">KEY 注入</div>';for(const[k,v]of Object.entries(d.env_status||{})){h+=kv(k,v?'✅':'❌')}el.innerHTML=h}catch(e){document.getElementById('diagPanel').innerHTML='失败'}}
 
 function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function escAttr(s){return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}

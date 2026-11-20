@@ -6,7 +6,7 @@
 
 旧实现每次根据当前可见工具按名称排序。原来声明为 `[file_outline,...,write_file]`，发现 `aaa_total` 后会变成 `[aaa_total,file_outline,...,write_file]`：新工具插入已经发送的声明前方，改变后续整个前缀。跨轮系统提示还会重新拼接可见工具名，使已保存的真实工具历史因头部变化而放弃复用。
 
-新增 `forge/tool_surface.py`：首次投影确定顺序，后续发现的工具追加在末尾；工具撤销立即移除，定义修改立即采用当前 schema，不会为了缓存保留失效能力。子 Agent 继承父声明顺序，但按自己的工具范围重新过滤，之后各自维护顺序。
+新增 `keystone/tool_surface.py`：首次投影确定顺序，后续发现的工具追加在末尾；工具撤销立即移除，定义修改立即采用当前 schema，不会为了缓存保留失效能力。子 Agent 继承父声明顺序，但按自己的工具范围重新过滤，之后各自维护顺序。
 
 Agent 的运行、缓存 guard、压缩事务预算统一使用这个投影。系统提示改为引用当前请求里的工具声明，避免再次复制可变工具名。独立调用 `toolwire.tool_declarations()` 的缺省字母排序保持兼容。
 
@@ -56,9 +56,9 @@ MiMo [官方计费说明](https://mimo.mi.com/docs/en-US/pricing) 将命中归�
 包括协议问题定位的首次尝试，本轮共 33 次 HTTP 尝试、30 次成功响应及 3 次 TLS 失败。成功回执输入合计 44,597、输出 1,436 token；失败尝试的实际服务端消费未知，未作为已核对账单。
 
 ```powershell
-python -m unittest forge.test_tool_surface forge.test_runtime_structure -q
-python -m unittest discover -s forge -t . -q
-python -m forge.cli selftest
+python -m unittest keystone.test_tool_surface keystone.test_runtime_structure -q
+python -m unittest discover -s keystone -t . -q
+python -m keystone.cli selftest
 python scripts/budget_check.py
 
 # 真实 API，消耗现有 Token Plan 额度；每个模型上限 20 次 HTTP 尝试。

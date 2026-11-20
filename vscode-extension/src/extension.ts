@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'node:path';
 import { realpath } from 'node:fs/promises';
-import { ForgeBridge, BridgeEvent, Context, Ready, Result, Turn } from './bridge';
+import { KeystoneBridge, BridgeEvent, Context, Ready, Result, Turn } from './bridge';
 import { inside, validMessage } from './paths';
 import { viewHtml } from './view';
 
@@ -9,9 +9,9 @@ type VisibleTurn = { role: 'user' | 'assistant' | 'error' | 'plan'; text: string
   review?: { loading: boolean; text?: string; error?: string; truncated?: boolean; usage?: string } };
 type Credential = { vendor: string; configured: boolean; name: string; env: string[] };
 
-export class ForgeView implements vscode.WebviewViewProvider, vscode.Disposable {
+export class KeystoneView implements vscode.WebviewViewProvider, vscode.Disposable {
   private view?: vscode.WebviewView;
-  private bridge?: ForgeBridge;
+  private bridge?: KeystoneBridge;
   private connecting?: Promise<void>;
   private workspace?: vscode.WorkspaceFolder;
   private ready?: Ready & { onboarding?: Credential[]; config_dir?: string };
@@ -35,18 +35,18 @@ export class ForgeView implements vscode.WebviewViewProvider, vscode.Disposable 
   private bar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 80);
 
   constructor(private context: vscode.ExtensionContext) {
-    const saved = context.workspaceState?.get<string>('forge.planning', 'none');
+    const saved = context.workspaceState?.get<string>('keystone.planning', 'none');
     if (['none', 'low', 'medium', 'high'].includes(saved || '')) { this.planning = saved!; }
-    this.planningModel = context.workspaceState?.get<string>('forge.planningModel', '') || '';
-    this.reviewModel = context.workspaceState?.get<string>('forge.reviewModel', '') || '';
-    this.reviewEnabled = context.workspaceState?.get<boolean>('forge.reviewEnabled', false) === true;
-    this.bar.text = '$(comment-discussion) Forge'; this.bar.command = 'forge.open'; this.bar.show();
+    this.planningModel = context.workspaceState?.get<string>('keystone.planningModel', '') || '';
+    this.reviewModel = context.workspaceState?.get<string>('keystone.reviewModel', '') || '';
+    this.reviewEnabled = context.workspaceState?.get<boolean>('keystone.reviewEnabled', false) === true;
+    this.bar.text = '$(comment-discussion) Keystone'; this.bar.command = 'keystone.open'; this.bar.show();
     context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(editor => {
       if (editor?.document.uri.scheme === 'file') { this.editor = editor; }
     }));
   }
   private chinese(): boolean {
-    const lang = vscode.workspace.getConfiguration('forge').get<string>('language', 'auto');
+    const lang = vscode.workspace.getConfiguration('keystone').get<string>('language', 'auto');
     return lang === 'zh-cn' || lang === 'auto' && vscode.env.language.startsWith('zh');
   }
   private text(zh: string, en: string): string { return this.chinese() ? zh : en; }
@@ -70,12 +70,12 @@ export class ForgeView implements vscode.WebviewViewProvider, vscode.Disposable 
       transcript: this.transcript, attachments: this.contexts.map((c, index) => ({ index, name: path.basename(c.path), selection: c.selection })),
       onboarding: this.ready?.onboarding || [],
       pythonChecked: this.pythonChecked, pythonSaved: this.pythonSaved, keyStatus: this.keyStatus });
-    this.bar.text = this.busy ? '$(sync~spin) Forge' : '$(comment-discussion) Forge';
+    this.bar.text = this.busy ? '$(sync~spin) Keystone' : '$(comment-discussion) Keystone';
   }
 
   // --- friendly error mapping: pick the right recovery action ---------------------
   private showError(err: unknown): void {
-    const message = err instanceof Error ? err.message : this.text('Forge 操作失败', 'Forge operation failed');
+    const message = err instanceof Error ? err.message : this.text('Keystone 操作失败', 'Keystone operation failed');
     this.transcript.push({ role: 'error', text: message });
     this.status = this.bridge && this.ready ? 'ready' : 'offline';
     const normalized = message.toLowerCase();
@@ -95,12 +95,12 @@ export class ForgeView implements vscode.WebviewViewProvider, vscode.Disposable 
   }
 
   // ----------------------------------------------------------------
-  open(): void { vscode.commands.executeCommand('workbench.view.extension.forge.chat'); this.refresh(); }
+  open(): void { vscode.commands.executeCommand('workbench.view.extension.keystone.chat'); this.refresh(); }
   async connect(): Promise<void> {
     // Restricted Mode must never start the engine: an untrusted workspace gets
     // no Python process, no tool execution and no credential reads. This guard
     // was lost when the file was rewritten; host.test.cjs pins it.
-    if (!vscode.workspace.isTrusted) { throw new Error(this.text('请先信任当前工作区，再启动 Forge。', 'Trust this workspace before starting Forge.')); }
+    if (!vscode.workspace.isTrusted) { throw new Error(this.text('请先信任当前工作区，再启动 Keystone。', 'Trust this workspace before starting Keystone.')); }
     if (this.connecting) { return this.connecting; }
     if (this.bridge && this.status === 'ready') { return; }
     const connecting = this.initialize(this.generation); this.connecting = connecting;
@@ -114,12 +114,12 @@ export class ForgeView implements vscode.WebviewViewProvider, vscode.Disposable 
       (folders.length === 1 ? folders[0] : await vscode.window.showWorkspaceFolderPick());
     if (!this.workspace) { return; }
     if (generation !== this.generation) { return; }
-    const config = vscode.workspace.getConfiguration('forge');
+    const config = vscode.workspace.getConfiguration('keystone');
     let engine = config.get('enginePath', '').trim();
     const python = config.get('pythonPath', 'python').trim();
-    if (!python || python.toLowerCase().endsWith('pythonw.exe')) { throw new Error(this.text('请使用 python.exe，以便读取 Forge 响应。', 'Use python.exe so Forge responses can be read.')); }
-    if (engine && !path.isAbsolute(engine)) { throw new Error(this.text('Forge 源码目录必须为绝对路径。', 'Forge source directory must be an absolute path.')); }
-    const bridge = new ForgeBridge(); this.bridge = bridge; this.status = 'connecting'; this.refresh();
+    if (!python || python.toLowerCase().endsWith('pythonw.exe')) { throw new Error(this.text('请使用 python.exe，以便读取 Keystone 响应。', 'Use python.exe so Keystone responses can be read.')); }
+    if (engine && !path.isAbsolute(engine)) { throw new Error(this.text('Keystone 源码目录必须为绝对路径。', 'Keystone source directory must be an absolute path.')); }
+    const bridge = new KeystoneBridge(); this.bridge = bridge; this.status = 'connecting'; this.refresh();
     bridge.on('event', (event: BridgeEvent) => {
       if (this.bridge !== bridge) { return; }
       if (event.event === 'user' && typeof event.content === 'string' && typeof event.display === 'string') {
@@ -150,7 +150,7 @@ export class ForgeView implements vscode.WebviewViewProvider, vscode.Disposable 
       bridge.start({ python, engine, launcher: vscode.Uri.joinPath(this.context.extensionUri, 'python', 'launch.py').fsPath, cwd: this.workspace.uri.fsPath });
       const ready = await bridge.request<Ready>('initialize', { workspace: this.workspace.uri.fsPath, home: config.get('homePath', ''), history: this.history }, 30000);
       if (generation !== this.generation || this.bridge !== bridge) { bridge.dispose(); return; }
-      if (!ready || ready.protocol !== 1 || !Array.isArray(ready.models) || !ready.ready) { throw new Error('Forge bridge protocol is incompatible. Update Forge and the extension.'); }
+      if (!ready || ready.protocol !== 1 || !Array.isArray(ready.models) || !ready.ready) { throw new Error('Keystone bridge protocol is incompatible. Update Keystone and the extension.'); }
       this.ready = ready as Ready & { onboarding?: Credential[]; config_dir?: string };
       if (this.model && !ready.models.some(model => model.id === this.model)) { this.model = ''; }
       this.status = 'ready'; this.pythonChecked = undefined; this.refresh();
@@ -190,7 +190,7 @@ export class ForgeView implements vscode.WebviewViewProvider, vscode.Disposable 
         const dirty = vscode.workspace.textDocuments.filter(d => d.isDirty && d.uri.scheme === 'file' && inside(this.workspace!.uri.fsPath, d.uri.fsPath));
         if (dirty.length) {
           const save = this.text('保存并继续', 'Save and continue');
-          const choice = await vscode.window.showWarningMessage(this.text('Forge 编辑前需要保存工作区内未保存的文件，以避免冲突。', 'Save unsaved workspace files before Forge edits them to avoid conflicts.'), { modal: true }, save);
+          const choice = await vscode.window.showWarningMessage(this.text('Keystone 编辑前需要保存工作区内未保存的文件，以避免冲突。', 'Save unsaved workspace files before Keystone edits them to avoid conflicts.'), { modal: true }, save);
           if (choice !== save || !(await Promise.all(dirty.map(d => d.save()))).every(Boolean)) { return; }
         }
       }
@@ -201,11 +201,11 @@ export class ForgeView implements vscode.WebviewViewProvider, vscode.Disposable 
         if (attached) { attached.content = document.getText(); }
       }
       if (generation !== this.generation || this.bridge !== bridge) { return; }
-      const seconds = Math.min(1800, Math.max(30, vscode.workspace.getConfiguration('forge').get('requestTimeoutSeconds', 300)));
+      const seconds = Math.min(1800, Math.max(30, vscode.workspace.getConfiguration('keystone').get('requestTimeoutSeconds', 300)));
       const result = await bridge.request<Result>('run', { prompt, contexts: this.contexts, model: this.model, mode: this.mode,
         planning: this.planning, planningModel: this.planningModel }, seconds * 1000);
       if (generation !== this.generation) { return; }
-      if (!result || typeof result.text !== 'string') { throw new Error('Invalid Forge result'); }
+      if (!result || typeof result.text !== 'string') { throw new Error('Invalid Keystone result'); }
       this.history.push({ role: 'assistant', content: result.text });
       this.history = this.history.slice(-40);
       this.transcript.push({ role: result.ok ? 'assistant' : 'error', text: result.text,
@@ -247,7 +247,7 @@ export class ForgeView implements vscode.WebviewViewProvider, vscode.Disposable 
     this.refresh();
   }
   newChat(): void { this.stop(); this.history = []; this.transcript = []; this.contexts = []; this.activity = ''; this.refresh(); }
-  async configure(): Promise<void> { await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:forge-local.forge-agent'); }
+  async configure(): Promise<void> { await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:keystone-local.keystone-agent'); }
   async reconnect(): Promise<void> { this.stop(); await this.connect(); }
   async action(review: boolean): Promise<void> {
     const generation = this.generation;
@@ -261,7 +261,7 @@ export class ForgeView implements vscode.WebviewViewProvider, vscode.Disposable 
   /**
    * Refuse to spawn anything while the workspace is untrusted.
    *
-   * `forge.pythonPath` is listed in package.json `restrictedConfigurations`, so
+   * `keystone.pythonPath` is listed in package.json `restrictedConfigurations`, so
    * in Restricted Mode the *setting* is already inert. But the wizard handlers
    * take a path straight from a webview message, which would sidestep that
    * protection. This is the host-side equivalent of the gate in connect().
@@ -269,8 +269,8 @@ export class ForgeView implements vscode.WebviewViewProvider, vscode.Disposable 
   private assertTrustedForSpawn(what: string): boolean {
     if (vscode.workspace.isTrusted) { return true; }
     void vscode.window.showErrorMessage(
-      this.text('请先信任当前工作区，Forge 才能启动 Python 或写入密钥。',
-                'Trust this workspace before Forge can start Python or write credentials.'));
+      this.text('请先信任当前工作区，Keystone 才能启动 Python 或写入密钥。',
+                'Trust this workspace before Keystone can start Python or write credentials.'));
     this.transcript.push({ role: 'error',
       text: this.text(`已拒绝 ${what}：工作区未受信任。`, `${what} refused: workspace is not trusted.`) });
     this.refresh();
@@ -320,17 +320,17 @@ export class ForgeView implements vscode.WebviewViewProvider, vscode.Disposable 
   private async checkPython(pythonPath: string): Promise<{ ok: boolean; reason?: string }> {
     // 不走 bridge：向导的「选 Python」必须能在还没有可用连接时运行，
     // 否则就是鸡生蛋——连不上内核恰恰是因为 Python 配错了。
-    // 直接 spawn 候选解释器：①能跑起来 ②版本 ≥ 3.10 ③（若能找到 engine）可导入 forge。
-    const engine = vscode.workspace.getConfiguration('forge').get('enginePath', '').trim();
+    // 直接 spawn 候选解释器：①能跑起来 ②版本 ≥ 3.10 ③（若能找到 engine）可导入 keystone。
+    const engine = vscode.workspace.getConfiguration('keystone').get('enginePath', '').trim();
     const code = [
       'import importlib.util, json, sys',
       'out = {"version": "%d.%d.%d" % sys.version_info[:3]}',
       'ok = sys.version_info >= (3, 10)',
       `root = ${JSON.stringify(engine)}`,
       'if root: sys.path.insert(0, root)',
-      'found = {n: bool(importlib.util.find_spec(n)) for n in ["forge.config","forge.loop","forge.policy","forge.secrets","forge.routing"]}',
-      'out["forge"] = found',
-      'out["ok"] = ok and (not root or found.get("forge.config", False))',
+      'found = {n: bool(importlib.util.find_spec(n)) for n in ["keystone.config","keystone.loop","keystone.policy","keystone.secrets","keystone.routing"]}',
+      'out["keystone"] = found',
+      'out["ok"] = ok and (not root or found.get("keystone.config", False))',
       'print(json.dumps(out))',
     ].join('; ');
     try {
@@ -349,10 +349,10 @@ export class ForgeView implements vscode.WebviewViewProvider, vscode.Disposable 
         return { ok: false, reason: (result.stderr || 'python exited non-zero').split('\n')[0].slice(0, 160) };
       }
       const last = result.stdout.trim().split(/\r?\n/).pop() || '';
-      const info = JSON.parse(last) as { ok: boolean; version: string; forge: Record<string, boolean> };
+      const info = JSON.parse(last) as { ok: boolean; version: string; keystone: Record<string, boolean> };
       if (!info.ok) {
-        return { ok: false, reason: info.forge && !info.forge['forge.config']
-          ? this.text('这个 Python 导入不了 forge——Forge 未安装或 forge.enginePath 指错。', 'This Python cannot import forge — install Forge or fix forge.enginePath.')
+        return { ok: false, reason: info.keystone && !info.keystone['keystone.config']
+          ? this.text('这个 Python 导入不了 keystone——Keystone 未安装或 keystone.enginePath 指错。', 'This Python cannot import keystone — install Keystone or fix keystone.enginePath.')
           : this.text('需要 Python 3.10+（当前 ' + info.version + '）。', 'Requires Python 3.10+ (found ' + info.version + ').') };
       }
       return { ok: true, reason: 'Python ' + info.version };
@@ -364,8 +364,8 @@ export class ForgeView implements vscode.WebviewViewProvider, vscode.Disposable 
   private async saveSecret(vendor: string, value: string): Promise<{ ok: boolean; error?: string }> {
     // 与 checkPython 同理由：不能依赖 bridge。密钥值走 stdin 不进 argv
     // （argv 对同机任意进程可见）；落盘逻辑在受信任的 save_secret.py 里，
-    // 与 forge.secrets._store_set_secret 同一套路径保护与原子写入。
-    const config = vscode.workspace.getConfiguration('forge');
+    // 与 keystone.secrets._store_set_secret 同一套路径保护与原子写入。
+    const config = vscode.workspace.getConfiguration('keystone');
     const python = config.get('pythonPath', 'python').trim() || 'python';
     const home = config.get('homePath', '').trim();
     const engine = config.get('enginePath', '').trim();
@@ -422,17 +422,17 @@ export class ForgeView implements vscode.WebviewViewProvider, vscode.Disposable 
           this.mode = message.mode; this.model = message.model;
           if (typeof message.planning === 'string') {
             this.planning = message.planning;
-            await this.context.workspaceState?.update('forge.planning', this.planning);
+            await this.context.workspaceState?.update('keystone.planning', this.planning);
           }
           for (const key of ['planningModel', 'reviewModel'] as const) {
             if (typeof message[key] === 'string') {
               this[key] = message[key] as string;
-              await this.context.workspaceState?.update('forge.' + key, this[key]);
+              await this.context.workspaceState?.update('keystone.' + key, this[key]);
             }
           }
           if (typeof message.reviewEnabled === 'boolean') {
             this.reviewEnabled = message.reviewEnabled;
-            await this.context.workspaceState?.update('forge.reviewEnabled', this.reviewEnabled);
+            await this.context.workspaceState?.update('keystone.reviewEnabled', this.reviewEnabled);
           }
           this.refresh();
         }
@@ -448,7 +448,7 @@ export class ForgeView implements vscode.WebviewViewProvider, vscode.Disposable 
           lastReason = check.reason;
         }
         if (chosen) {
-          await vscode.workspace.getConfiguration('forge').update('pythonPath', chosen, vscode.ConfigurationTarget.Global);
+          await vscode.workspace.getConfiguration('keystone').update('pythonPath', chosen, vscode.ConfigurationTarget.Global);
           this.pythonChecked = 'ok';
           this.pythonSaved = chosen;
         } else {
@@ -464,7 +464,7 @@ export class ForgeView implements vscode.WebviewViewProvider, vscode.Disposable 
           const candidate = message.path.trim();
           const check = await this.checkPython(candidate);
           if (check.ok) {
-            await vscode.workspace.getConfiguration('forge').update('pythonPath', candidate, vscode.ConfigurationTarget.Global);
+            await vscode.workspace.getConfiguration('keystone').update('pythonPath', candidate, vscode.ConfigurationTarget.Global);
             this.pythonChecked = 'ok';
             this.pythonSaved = candidate;
           } else {
@@ -499,16 +499,16 @@ export class ForgeView implements vscode.WebviewViewProvider, vscode.Disposable 
 }
 
 export function activate(context: vscode.ExtensionContext): void {
-  const view = new ForgeView(context);
+  const view = new KeystoneView(context);
   const register = (name: string, action: () => void | Promise<void>) => context.subscriptions.push(vscode.commands.registerCommand(name, async () => {
-    try { await action(); } catch (error) { void vscode.window.showErrorMessage(error instanceof Error ? error.message : 'Forge operation failed'); }
+    try { await action(); } catch (error) { void vscode.window.showErrorMessage(error instanceof Error ? error.message : 'Keystone operation failed'); }
   }));
-  context.subscriptions.push(view, vscode.window.registerWebviewViewProvider('forge.chat', view));
-  register('forge.open', () => view.open()); register('forge.newChat', () => view.newChat()); register('forge.stop', () => view.stop());
-  register('forge.attachFile', () => view.attach()); register('forge.attachSelection', () => view.attach(true));
-  register('forge.explainSelection', () => view.action(false)); register('forge.reviewSelection', () => view.action(true));
-  register('forge.configure', () => view.configure()); register('forge.reconnect', () => view.reconnect());
-  context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => { if (event.affectsConfiguration('forge')) { view.settingsChanged(); } }),
+  context.subscriptions.push(view, vscode.window.registerWebviewViewProvider('keystone.chat', view));
+  register('keystone.open', () => view.open()); register('keystone.newChat', () => view.newChat()); register('keystone.stop', () => view.stop());
+  register('keystone.attachFile', () => view.attach()); register('keystone.attachSelection', () => view.attach(true));
+  register('keystone.explainSelection', () => view.action(false)); register('keystone.reviewSelection', () => view.action(true));
+  register('keystone.configure', () => view.configure()); register('keystone.reconnect', () => view.reconnect());
+  context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => { if (event.affectsConfiguration('keystone')) { view.settingsChanged(); } }),
     vscode.workspace.onDidChangeWorkspaceFolders(() => view.newChat()),
     vscode.workspace.onDidGrantWorkspaceTrust(() => view.settingsChanged()));
 }

@@ -5,9 +5,9 @@ import threading
 import unittest
 from pathlib import Path
 
-from forge.development.state import ModeState, WorkMode
-from forge.development.editor import Document, ConflictError, ProjectBoundary
-from forge.development.runtime import DevelopmentRuntime
+from keystone.development.state import ModeState, WorkMode
+from keystone.development.editor import Document, ConflictError, ProjectBoundary
+from keystone.development.runtime import DevelopmentRuntime
 
 
 class DevelopmentTests(unittest.TestCase):
@@ -67,7 +67,7 @@ class DevelopmentTests(unittest.TestCase):
 
     def test_direct_reply_skips_extra_phases_and_keeps_history(self):
         from unittest.mock import patch
-        from forge.test_task_planning import Router
+        from keystone.test_task_planning import Router
         state = ModeState(self.home)
         state.switch('development')
         runtime = DevelopmentRuntime(state)
@@ -85,7 +85,7 @@ class DevelopmentTests(unittest.TestCase):
         self.assertEqual((agent.thinking, agent.thinking_mode), (True, 'on'))
 
     def test_selected_planning_reaches_runtime_and_explicit_none_overrides(self):
-        from forge.test_task_planning import Router, plan_json
+        from keystone.test_task_planning import Router, plan_json
         state = ModeState(self.home)
         state.switch('development')
         state.configure_planning('low')
@@ -163,7 +163,7 @@ class DevelopmentTests(unittest.TestCase):
         binary.write_bytes(b'\x00\xff')
         with self.assertRaises(ValueError):
             Document.open(ProjectBoundary(self.project), binary)
-        from forge.secrets import protect_store_path
+        from keystone.secrets import protect_store_path
         store = self.project / 'store.json'
         store.write_text('{}')
         protect_store_path(store)
@@ -185,7 +185,7 @@ class DevelopmentTests(unittest.TestCase):
         p.write_text('old')
         d = Document.open(ProjectBoundary(self.project), p)
         d.update('new')
-        with patch('forge.development.editor.os.replace', side_effect=OSError('disk failure')):
+        with patch('keystone.development.editor.os.replace', side_effect=OSError('disk failure')):
             with self.assertRaises(OSError):
                 d.save()
         self.assertEqual(d.status, 'failed')
@@ -219,7 +219,7 @@ class DevelopmentTests(unittest.TestCase):
         self.assertEqual(p.read_bytes(), b'plain')
 
     def test_recovery_preserves_actual_history_and_unknown_actions(self):
-        from forge.session import Session
+        from keystone.session import Session
         s = Session(self.home / 'sessions' / 'development' / 'old.jsonl')
         with s:
             s.append('user_message', content='real task')
@@ -232,7 +232,7 @@ class DevelopmentTests(unittest.TestCase):
         self.assertEqual(recovery['history'], [{'role': 'user', 'content': 'real task'}])
 
     def test_runtime_rejects_shared_or_project_local_home(self):
-        rt = DevelopmentRuntime(ModeState(self.project / '.forge'))
+        rt = DevelopmentRuntime(ModeState(self.project / '.keystone'))
         with self.assertRaises(ValueError):
             rt.initialize(self.project)
 
@@ -283,7 +283,7 @@ class DevelopmentTests(unittest.TestCase):
         self.assertEqual(rt.last_snapshot.mode, WorkMode.DEVELOPMENT)
 
     def test_payload_never_contains_secret_value(self):
-        from forge.test_vscode_bridge import FakeRouter
+        from keystone.test_vscode_bridge import FakeRouter
         rt = DevelopmentRuntime(ModeState(self.home))
         self.addCleanup(rt.close)
         rt.initialize(self.project)
@@ -298,8 +298,8 @@ class DevelopmentTests(unittest.TestCase):
         self.assertIn('SECRET_REF', json.dumps(fake.messages))
 
     def test_mode_guide_only_changes_on_next_task_not_permissions(self):
-        from forge.test_vscode_bridge import FakeRouter
-        from forge.development.runtime import DEVELOPMENT_GUIDANCE
+        from keystone.test_vscode_bridge import FakeRouter
+        from keystone.development.runtime import DEVELOPMENT_GUIDANCE
         state = ModeState(self.home)
         rt = DevelopmentRuntime(state)
         self.addCleanup(rt.close)

@@ -6,7 +6,7 @@ the Work Agent, its Policy, tool registry, session, memory or checkpoints.
 ## Desktop host wiring
 
 ```python
-state = ModeState(Path.home() / '.forge-development')
+state = ModeState(Path.home() / '.keystone-development')
 state.switch('development')
 bench = DevelopmentWorkbench(parent, state, hosted=True,
                              workspace_request=workspace_request,
@@ -19,7 +19,7 @@ panel construction, navigation, layout and visibility semantics remain unchanged
 
 `model_settings_home` is a trusted Python-host capability, not an Agent tool or an
 EditorBridge JSONL parameter. If omitted, existing independent-runtime behavior
-continues. Standalone Development launch explicitly supplies `~/.forge` as the
+continues. Standalone Development launch explicitly supplies `~/.keystone` as the
 model source, while its own home continues to store execution state.
 
 ## Model settings projection

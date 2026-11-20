@@ -31,7 +31,7 @@ Web 新增 `planning` 和 `planning_model` 请求字段：前者为 none/low/med
 - 规划、独立模型与 token 链路定向回归：45 项通过。
 - 桌面规划客户端及独立模型协议：6 项通过，覆盖 OpenAI/Anthropic、取消与凭据保护。
 - Web JavaScript 通过 Node 语法检查。
-- 预算检查通过：156 个 Forge 文件、48480 行。
+- 预算检查通过：156 个 Keystone 文件、48480 行。
 
 桌面端多 DPI 窗口测试长时间未结束，已停止该测试进程，该项不计为通过；独立桌面客户端测试结果见 `reports/planning-execution-desktop-client.log`。本轮采用隔离文件、真实本地 HTTP 和脚本化模型响应验证，没有调用付费模型 API，未将这些结果当作 MiMo 的实测质量指标。
 

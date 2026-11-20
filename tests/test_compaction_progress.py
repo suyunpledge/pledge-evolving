@@ -6,14 +6,14 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from forge.compaction import ContextBudget
-from forge.compaction_notes import LABEL
-from forge.context_transaction import valid_tool_pairs
-from forge.loop import Agent, LoopLimits
-from forge.model import Completion, Usage
-from forge.policy import Mode, Policy, Sandbox, ToolEffect
-from forge.tools import ToolSpec, ToolResult, build_builtin_registry
-from forge.test_project_rules import Router
+from keystone.compaction import ContextBudget
+from keystone.compaction_notes import LABEL
+from keystone.context_transaction import valid_tool_pairs
+from keystone.loop import Agent, LoopLimits
+from keystone.model import Completion, Usage
+from keystone.policy import Mode, Policy, Sandbox, ToolEffect
+from keystone.tools import ToolSpec, ToolResult, build_builtin_registry
+from keystone.test_project_rules import Router
 
 
 def group(name, output, path='', wire='openai'):

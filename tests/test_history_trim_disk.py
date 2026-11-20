@@ -6,11 +6,11 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from forge.conversation_prefix import ConversationPrefix
-from forge.loop import Agent
-from forge.model import HttpTransport, ModelRouter, Provider
-from forge.policy import Mode, Policy
-from forge.tools import build_builtin_registry
+from keystone.conversation_prefix import ConversationPrefix
+from keystone.loop import Agent
+from keystone.model import HttpTransport, ModelRouter, Provider
+from keystone.policy import Mode, Policy
+from keystone.tools import build_builtin_registry
 
 
 class TrimPersistenceTests(unittest.TestCase):

@@ -5,9 +5,9 @@ from unittest.mock import patch
 
 import test_client_runtime as http_fixtures
 import test_development_execution as code_fixtures
-from forge.policy import ToolEffect
-from forge.test_task_planning import Router
-from forge.tools import ToolResult, ToolSpec
+from keystone.policy import ToolEffect
+from keystone.test_task_planning import Router
+from keystone.tools import ToolResult, ToolSpec
 
 
 class WorkModeEntryTests(unittest.TestCase):
@@ -19,7 +19,7 @@ class WorkModeEntryTests(unittest.TestCase):
     wait_terminal = http_fixtures.ClientRuntimeTests.wait_terminal
 
     def test_work_http_stops_multi_tool_cycle_with_durable_diagnostics(self):
-        from forge import loop
+        from keystone import loop
         responses = [json.dumps({'tool': f'fixture_lookup_{index % 3}', 'args': {}})
                      for index in range(20)]
         self.use_transport(self.transport(responses))

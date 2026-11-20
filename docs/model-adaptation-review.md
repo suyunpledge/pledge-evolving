@@ -31,26 +31,26 @@
 
 ## 验证
 
-- `python -m unittest forge.test_model_adaptation`：30 项通过。
-- `python -m forge.test_adapters`：48/48；`python -m forge.test_vendors`：73/73。
-- `python -m forge.selftest`：569/569（本地核心检查）。
+- `python -m unittest keystone.test_model_adaptation`：30 项通过。
+- `python -m keystone.test_adapters`：48/48；`python -m keystone.test_vendors`：73/73。
+- `python -m keystone.selftest`：569/569（本地核心检查）。
 - `python -m unittest discover -s tests`：12 项通过，另执行该目录脚本中的顶层断言。
 - `python tests/test_setup_patch.py`：旧配置接口全部断言通过。
-- `forge-gui/run_offline_checks.py test_message_delivery test_chat_widgets test_market_responsiveness.ImeEventTests test_ui_polish`：37 项通过。
+- `keystone-gui/run_offline_checks.py test_message_delivery test_chat_widgets test_market_responsiveness.ImeEventTests test_ui_polish`：37 项通过。
 - GUI Provider 导入、原配置真值表和客户端测试：11 项通过。
 - 消息收缩与窗口变化覆盖 100%、125%、150%、175%、200% Tk 字体/DPI 缩放；没有修改 Windows 的显示设置。实际 Emoji 消息的五档缩放测试也通过。
-- 已用源码启动 Forge，打开原有会话，确认回复保持可见。没有向真实模型发送测试对话。
+- 已用源码启动 Keystone，打开原有会话，确认回复保持可见。没有向真实模型发送测试对话。
 
 ## 保证边界
 
 - 缓存计划是估算与观测记录，不能证明上游一定命中，更不能决定插件权限。所有折扣与收益按当前本地画像计算；完整厂商价格目录和全部模型能力未做在线实调用验证。
-- `cacheControl=off` 阻止 Forge 主动注入标记；厂商自身的隐式缓存不能通过这个本地开关保证关闭。
+- `cacheControl=off` 阻止 Keystone 主动注入标记；厂商自身的隐式缓存不能通过这个本地开关保证关闭。
 - `Completion.plan` 是当前请求的计划；premium 合并后的 usage 包含两个阶段，plan 本身不是两个阶段的完整费用账单。
 - `defer/reasoning_budget/cliff_action` 是规划提示，未新增调度器，也未把这些提示描述成已执行的限流、思考限额或动态压缩。
 - CacheWarmth 的线程锁只协调同一个进程内的实例操作，原子替换防止部分文件；多进程不会因此获得完整事务协调。这些记录只作建议，不作为安全或权限依据。
 - GUI 的直接 Gateway 转发路径与 HttpTransport 路由路径不同。本次保留该结构，没有声称所有 GUI 流式请求都已经使用新的成本规划器。
 - 新向导的交互目录仍以云厂商为主；兼容的 `_build_patch` 可以配置原有本地/custom Provider，GUI 原有自定义 Provider 功能保留。
-- 原 EXE 没有重新打包，源码修复入口为桌面 `Forge（源码修复版）.lnk`。
+- 原 EXE 没有重新打包，源码修复入口为桌面 `Keystone（源码修复版）.lnk`。
 
 ## 协议依据
 

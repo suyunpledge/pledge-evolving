@@ -5,9 +5,9 @@ import json
 import unittest
 
 import test_development_execution as fixtures
-from forge.model import HttpTransport, ModelRouter, Provider
-from forge.compaction import ContextBudget
-from forge.context_transaction import valid_tool_pairs
+from keystone.model import HttpTransport, ModelRouter, Provider
+from keystone.compaction import ContextBudget
+from keystone.context_transaction import valid_tool_pairs
 
 
 class EditorWirePrefixTests(unittest.TestCase):

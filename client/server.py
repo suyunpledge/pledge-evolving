@@ -37,16 +37,17 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from forge.client_runs import RunStore, RUN_ID_RE, TERMINAL_STATES
-from forge.execution import RunRequest
-from forge.protocol import PROTOCOL_VERSION
-from forge.secrets import redact
+from keystone.client_runs import RunStore, RUN_ID_RE, TERMINAL_STATES
+from keystone.execution import RunRequest
+from keystone.protocol import PROTOCOL_VERSION
+from keystone.secrets import redact
+from keystone.compat import default_home
 
-FORGE_HOME = Path.home() / ".forge"
-# W3 P0-02：与内核/GUI/VSCode 桥共用同一凭据存储 ~/.forge/secrets.json
+KEYSTONE_HOME = default_home()
+# W3 P0-02：与内核/GUI/VSCode 桥共用同一凭据存储 ~/.keystone/secrets.json
 # （此前读 keys.json——内核没有任何代码读它，等价于凭据链路断裂）。
-# 命名约定与 vscode_bridge._load_credentials 一致：name → FORGE_<NAME>_KEY。
-SECRETS_FILE = FORGE_HOME / "secrets.json"
+# 命名约定与 vscode_bridge._load_credentials 一致：name → KEYSTONE_<NAME>_KEY。
+SECRETS_FILE = KEYSTONE_HOME / "secrets.json"
 
 # ── Constants ──────────────────────────────────────────────────────────────
 MAX_PAYLOAD_BYTES    = 1_048_576   # 1 MB POST body cap
@@ -59,14 +60,14 @@ ROOT.mkdir(parents=True, exist_ok=True)
 
 
 def load_keys() -> dict[str, str]:
-    """读内核凭据存储 secrets.json，返回 {FORGE_<NAME>_KEY: value}。
+    """读内核凭据存储 secrets.json，返回 {KEYSTONE_<NAME>_KEY: value}。
 
     读取走内核既有安全机制（protect_store_path + SecretScope.reference +
     有界读取 + 形状校验）；TRAE P0-2 的约束保留——绝不写入 os.environ
     （shell_exec 子进程会继承环境变量，明文密钥可被 `env | grep` 读出），
-    值只在 run_forge 组装 Provider 配置时内存内替换。API 响应只出现布尔。
+    值只在 run_keystone 组装 Provider 配置时内存内替换。API 响应只出现布尔。
     """
-    from forge.secrets import SecretScope, protect_store_path
+    from keystone.secrets import SecretScope, protect_store_path
 
     keys: dict[str, str] = {}
     if not SECRETS_FILE.is_file():
@@ -85,7 +86,7 @@ def load_keys() -> dict[str, str]:
                 if (isinstance(name, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,128}", name)
                         and isinstance(value, str) and value):
                     scope.reference(value)
-                    keys[f"FORGE_{name.upper().replace('-', '_')}_KEY"] = value
+                    keys[f"KEYSTONE_{name.upper().replace('-', '_')}_KEY"] = value
         finally:
             scope.close()
     except (json.JSONDecodeError, OSError, ValueError):
@@ -95,28 +96,28 @@ def load_keys() -> dict[str, str]:
 
 CATALOG: list[dict] = [
     {"id": "deepseek", "label": "DeepSeek v4 Flash", "model": "deepseek-flash",
-     "env": "FORGE_DEEPSEEK_KEY", "tier": "economy",
+     "env": "KEYSTONE_DEEPSEEK_KEY", "tier": "economy",
      "note": "默认主力档，快且便宜，简单任务首选"},
     {"id": "deepseek", "label": "DeepSeek v4 Pro", "model": "deepseek-v4-pro",
-     "env": "FORGE_DEEPSEEK_KEY", "tier": "standard",
+     "env": "KEYSTONE_DEEPSEEK_KEY", "tier": "standard",
      "note": "长推演、复杂推理，需要 32k+ token 预算"},
     {"id": "mimo", "label": "Claude Sonnet 5", "model": "claude-sonnet-5",
-     "env": "FORGE_MIMO_KEY", "tier": "standard",
+     "env": "KEYSTONE_MIMO_KEY", "tier": "standard",
      "note": "中端主力档，代码与综合能力均衡"},
     {"id": "review", "label": "Claude Opus 5", "model": "claude-opus-5",
-     "env": "FORGE_CLAUDE_KEY", "tier": "premium",
+     "env": "KEYSTONE_CLAUDE_KEY", "tier": "premium",
      "note": "高端裁决档，仅用于审查或复杂决策"},
     {"id": "glm", "label": "GLM 5.3", "model": "glm-5.3",
-     "env": "FORGE_GLM_KEY", "tier": "standard",
+     "env": "KEYSTONE_GLM_KEY", "tier": "standard",
      "note": "智谱官方接口，中文表现好"},
     {"id": "qwen", "label": "Qwen 3.8 Max", "model": "qwen3.8-max",
-     "env": "FORGE_QWEN_KEY", "tier": "standard",
+     "env": "KEYSTONE_QWEN_KEY", "tier": "standard",
      "note": "阿里 max 档，超长上下文"},
 ]
 
 STRATEGIES = ("economy", "balanced", "premium")
 THINKING_MODES = ("off", "smart", "on")
-# TRAE 审查 P0-1：与内核 forge.policy 的合法模式对齐——自定义枚举
+# TRAE 审查 P0-1：与内核 keystone.policy 的合法模式对齐——自定义枚举
 # （full-auto/readonly 不存在于内核）会静默降级为 default（可写基线），
 # 用户选"readonly"实际拿到写权限，语义误导。
 POLICY_MODES = ("default", "acceptEdits", "read-only")
@@ -124,23 +125,23 @@ POLICY_MODES = ("default", "acceptEdits", "read-only")
 PROVIDER_ROWS = {
     "deepseek": {"id": "deepseek", "name": "provider:deepseek", "config": {
         "wire": "openai", "baseURL": "https://api.deepseek.com",
-        "apiKey": {"$expr": "get('env.FORGE_DEEPSEEK_KEY', '')"},
+        "apiKey": {"$expr": "get('env.KEYSTONE_DEEPSEEK_KEY', '')"},
         "model": "deepseek-flash", "smallModel": "deepseek-flash"}},
     "mimo": {"id": "mimo", "name": "provider:mimo", "config": {
         "wire": "openai", "baseURL": "https://api.qnaigc.com",
-        "apiKey": {"$expr": "get('env.FORGE_MIMO_KEY', '')"},
+        "apiKey": {"$expr": "get('env.KEYSTONE_MIMO_KEY', '')"},
         "model": "claude-sonnet-5"}},
     "review": {"id": "review", "name": "provider:review", "config": {
         "wire": "openai", "baseURL": "https://api.qnaigc.com/v1",
-        "apiKey": {"$expr": "get('env.FORGE_CLAUDE_KEY', '')"},
+        "apiKey": {"$expr": "get('env.KEYSTONE_CLAUDE_KEY', '')"},
         "model": "claude-opus-5"}},
     "glm": {"id": "glm", "name": "provider:glm", "config": {
         "wire": "openai", "baseURL": "https://open.bigmodel.cn/api/coding/paas/v4",
-        "apiKey": {"$expr": "get('env.FORGE_GLM_KEY', '')"},
+        "apiKey": {"$expr": "get('env.KEYSTONE_GLM_KEY', '')"},
         "model": "glm-5.3"}},
     "qwen": {"id": "qwen", "name": "provider:qwen", "config": {
         "wire": "openai", "baseURL": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        "apiKey": {"$expr": "get('env.FORGE_QWEN_KEY', '')"},
+        "apiKey": {"$expr": "get('env.KEYSTONE_QWEN_KEY', '')"},
         "model": "qwen3.8-max"}},
 }
 
@@ -154,12 +155,12 @@ BUNDLES = {
 def _resolved_provider_row(hit: dict) -> dict:
     """CATALOG 条目 → Provider 行，apiKey 的 $expr 在内存内解析为真实值。
 
-    此前 Provider 只带 {"$expr": "get('env.FORGE_*_KEY', '')"}，而本进程
+    此前 Provider 只带 {"$expr": "get('env.KEYSTONE_*_KEY', '')"}，而本进程
     从不向 os.environ 注入密钥（TRAE P0-2），表达式恒解析为空——链路断裂。
     现在：secrets.json 有对应键 → 直接替换为值（仅存在于本次 run 的内存
     Config，不落 env、不回 API）；没有 → 保留 $expr（照旧解析为空，诚实
-    反映“未配置密钥”）。别名兜底：CATALOG 的 env 名（如 FORGE_CLAUDE_KEY）
-    与按 provider id 推导的名字（如 FORGE_REVIEW_KEY）都会尝试。
+    反映“未配置密钥”）。别名兜底：CATALOG 的 env 名（如 KEYSTONE_CLAUDE_KEY）
+    与按 provider id 推导的名字（如 KEYSTONE_REVIEW_KEY）都会尝试。
     """
     import copy
 
@@ -169,7 +170,7 @@ def _resolved_provider_row(hit: dict) -> dict:
     if not (isinstance(expr, dict) and "$expr" in expr):
         return row
     env_names = [hit.get("env", ""),
-                 f"FORGE_{hit['id'].upper().replace('-', '_')}_KEY"]
+                 f"KEYSTONE_{hit['id'].upper().replace('-', '_')}_KEY"]
     for env_name in env_names:
         value = keys.get(env_name)
         if value:
@@ -265,9 +266,9 @@ def read_file(workspace: Path, rel_path: str) -> dict:
 def get_config_snapshot() -> dict:
     """读取当前 base bundle 的配置，暴露给前端做开关面板。"""
     try:
-        from forge.cli import _compose
+        from keystone.cli import _compose
         ns = argparse.Namespace(
-            home=str(FORGE_HOME), workspace=str(ROOT / "workspace"),
+            home=str(KEYSTONE_HOME), workspace=str(ROOT / "workspace"),
             bundle=None, overlay=[], no_user_layer=False,
             profile=None, i_know=None, coding=False)
         cfg = _compose(ns)
@@ -305,7 +306,7 @@ def validate_run_payload(payload):
         value = payload.get(key)
         if value is not None and value not in values:
             raise ValueError('invalid ' + key)
-    from forge.loop_limits import BOUNDS
+    from keystone.loop_limits import BOUNDS
     for key, (minimum, maximum) in BOUNDS.items():
         value = payload.get(key)
         if value is not None and (type(value) is not int or not minimum <= value <= maximum):
@@ -314,15 +315,15 @@ def validate_run_payload(payload):
         raise ValueError('invalid workspace')
     validated = {**payload, 'task': task.strip()}
     if payload.get('acceptance') is not None:
-        from forge.acceptance import AcceptanceContract
+        from keystone.acceptance import AcceptanceContract
         validated['acceptance'] = AcceptanceContract.from_raw(payload['acceptance']).to_raw()
     return validated
 
 
 def compose_run_config(workspace, model_label=None, strategy=None, thinking=None,
                        bundle=None, policy_mode=None, planning=None, planning_model=None):
-    from forge.cli import _compose
-    ns = argparse.Namespace(home=str(FORGE_HOME), workspace=str(workspace), bundle=None,
+    from keystone.cli import _compose
+    ns = argparse.Namespace(home=str(KEYSTONE_HOME), workspace=str(workspace), bundle=None,
         overlay=[], no_user_layer=False, profile=None, i_know=True, coding=(bundle == 'coding'))
     # UI bundle names are selectors, not arbitrary paths supplied to _compose.
     cfg = _compose(ns)
@@ -331,7 +332,7 @@ def compose_run_config(workspace, model_label=None, strategy=None, thinking=None
         old_plan = cfg.row('planning')
         plan = dict(old_plan.config) if old_plan else {}
         if planning is not None:
-            from forge.planning import planning_level
+            from keystone.planning import planning_level
             plan['level'] = planning_level(planning)
         if planning_model is not None:
             plan['model'] = None
@@ -384,16 +385,16 @@ def compose_run_config(workspace, model_label=None, strategy=None, thinking=None
     return cfg
 
 
-def run_forge(run_id: str, task: str, model_label: str | None,
+def run_keystone(run_id: str, task: str, model_label: str | None,
               strategy: str | None, thinking: str | None,
               bundle: str | None, policy_mode: str | None,
               max_steps: int | None, max_depth: int | None,
               spawn_budget: int | None,
               workspace: Path, acceptance=None, planning=None, planning_model=None, *, store=None, probes=None) -> None:
-    from forge.loop import build_agent
-    from forge.model import ModelRouter
-    from forge.routing import SmartRouter
-    from forge.phase_models import phase_router
+    from keystone.loop import build_agent
+    from keystone.model import ModelRouter
+    from keystone.routing import SmartRouter
+    from keystone.phase_models import phase_router
 
     store = store if store is not None else STORE
     cancel = store.claim(run_id)
@@ -425,7 +426,7 @@ def run_forge(run_id: str, task: str, model_label: str | None,
             # selection does elsewhere. Preserve config, transport and secrets.
             router = phase_router(router, cfg.get('model', 'primary'), router)
 
-        from forge.loop_limits import resolve_loop_limits
+        from keystone.loop_limits import resolve_loop_limits
         limits = resolve_loop_limits(cfg, router=router, overrides={
             'max_steps': max_steps, 'max_depth': max_depth, 'spawn_budget': spawn_budget})
 
@@ -437,9 +438,9 @@ def run_forge(run_id: str, task: str, model_label: str | None,
                 store.push_step(run_id, {**event, 'event_id': event['event_id'] + '-step',
                     'index': event.get('step'), 'note': '', 'result': event.get('result', '')})
 
-        run_session = FORGE_HOME / "sessions" / f"s-{run_id}.jsonl"
+        run_session = KEYSTONE_HOME / "sessions" / f"s-{run_id}.jsonl"
         agent = build_agent(
-            home=FORGE_HOME, workspace=workspace, config=cfg, router=router,
+            home=KEYSTONE_HOME, workspace=workspace, config=cfg, router=router,
             expose=cfg.get("tools", "expose", None), limits=limits,
             session_path=run_session, observer=observe, **({'probes': probes} if probes is not None else {}))
         agent.cancellation_event = cancel
@@ -456,7 +457,7 @@ def run_forge(run_id: str, task: str, model_label: str | None,
         result = report.as_result().as_dict()
         state = {'succeeded': 'done', 'cancelled': 'cancelled'}.get(result['outcome'], 'error')
         delivery = scan_delivery(workspace, t0, report.text)
-        from forge.protocol import acceptance_payload
+        from keystone.protocol import acceptance_payload
         acceptance_result = acceptance_payload(report)
         store.transition(run_id, **result, state=state, finished=time.time(),
             usage=report.usage, delivery=delivery, stopped=report.stopped, planning=report.planning,
@@ -659,14 +660,14 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/diag":
             key_status = {k: bool(v) for k, v in load_keys().items()}
             self._send_json({
-                "forge_home": str(FORGE_HOME),
+                "keystone_home": str(KEYSTONE_HOME),
                 "keys_file": str(SECRETS_FILE),
                 "keys_exists": SECRETS_FILE.is_file(),
                 "env_status": key_status,
-                "forge_version": "0.3",
+                "keystone_version": "0.3",
                 "workspace": str(self.server.workspace)})
         elif path == "/api/health":
-            self._send_json({"ok": True, "version": "0.3", "home": str(FORGE_HOME)})
+            self._send_json({"ok": True, "version": "0.3", "home": str(KEYSTONE_HOME)})
         else:
             self._send_json({"error": "not found"}, 404)
 
@@ -765,14 +766,14 @@ class ClientServer(ThreadingHTTPServer):
     def submit(self, rid, args):
         def invoke():
             try:
-                run_forge(*args, store=self.store, **({'probes': self.probes} if self.probes is not None else {}))
+                run_keystone(*args, store=self.store, **({'probes': self.probes} if self.probes is not None else {}))
             finally:
                 with self._worker_lock:
                     self._workers.pop(threading.current_thread(), None)
         with self._worker_lock:
             if self._closing:
                 raise RuntimeError('server is closing')
-            worker = threading.Thread(target=invoke, daemon=True, name='forge-client-' + rid[:8])
+            worker = threading.Thread(target=invoke, daemon=True, name='keystone-client-' + rid[:8])
             self._workers[worker] = rid
             try:
                 worker.start()
@@ -802,10 +803,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--workspace", default=str(ROOT / "workspace"))
     args = ap.parse_args(argv)
-    STORE = RunStore(FORGE_HOME / 'sessions' / 'client')
+    STORE = RunStore(KEYSTONE_HOME / 'sessions' / 'client')
     srv = ClientServer((args.host, args.port), Handler, workspace=args.workspace)
     print(f"[planet-evolving] v0.3 on http://{args.host}:{args.port}"
-          f"  (home={FORGE_HOME})")
+          f"  (home={KEYSTONE_HOME})")
     # Periodic cleanup of stale runs and cancel flags
     import sched
     _scheduler = sched.scheduler(time.time, time.sleep)

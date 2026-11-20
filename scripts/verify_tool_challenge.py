@@ -12,13 +12,13 @@ import tempfile
 from verify_seed_execution import SeedRecorder, provider_for as seed_provider
 from verify_mimo_live import provider_for as mimo_provider, router_for
 from verify_deepseek_execution import DeepSeekRecorder, totals
-from forge.loop import Agent, LoopLimits
-from forge.compaction import ContextBudget
-from forge.file_revisions import FileRevisionGuard
-from forge.policy import Policy, Mode, Sandbox, ToolEffect
-from forge.tools import build_builtin_registry, ToolSpec, ToolResult
-from forge.probes import ProbeRegistry
-from forge.builtin_views import command_metadata, FIELDS
+from keystone.loop import Agent, LoopLimits
+from keystone.compaction import ContextBudget
+from keystone.file_revisions import FileRevisionGuard
+from keystone.policy import Policy, Mode, Sandbox, ToolEffect
+from keystone.tools import build_builtin_registry, ToolSpec, ToolResult
+from keystone.probes import ProbeRegistry
+from keystone.builtin_views import command_metadata, FIELDS
 
 SOURCE = {
  'pricing.py': '''def line_total(unit_price, quantity, discount="0"):
@@ -182,12 +182,12 @@ def main():
     args=parser.parse_args()
     if not args.live or args.output.exists(): parser.error('Requires --live and a new output path')
     chosen=args.model or ('doubao-seed-evolving' if args.vendor=='seed' else 'mimo-v2.6-flash')
-    provider=(seed_provider if args.vendor=='seed' else mimo_provider)(chosen,Path.home()/'.forge')
+    provider=(seed_provider if args.vendor=='seed' else mimo_provider)(chosen,Path.home()/'.keystone')
     budget_cls=ContextBudget
     agent_cls=Agent
     if args.baseline_dir:
         def load(name):
-            spec=importlib.util.spec_from_file_location('forge._challenge_baseline_'+name,args.baseline_dir/f'forge/{name}.py')
+            spec=importlib.util.spec_from_file_location('keystone._challenge_baseline_'+name,args.baseline_dir/f'keystone/{name}.py')
             module=importlib.util.module_from_spec(spec);sys.modules[spec.name]=module;spec.loader.exec_module(module)
             return module
         budget_cls=load('compaction').ContextBudget
@@ -198,15 +198,15 @@ def main():
         else: recorder.thinking=args.thinking=='on'
     recorder.timeout=45
     result={'vendor':args.vendor,'model':chosen,'thinking':args.thinking,'feedback_views':args.feedback_views,'cases':[]}
-    result['compaction_sha256']=sha(args.baseline_dir/'forge/compaction.py' if args.baseline_dir else Path(__file__).resolve().parents[1]/'forge/compaction.py')
+    result['compaction_sha256']=sha(args.baseline_dir/'keystone/compaction.py' if args.baseline_dir else Path(__file__).resolve().parents[1]/'keystone/compaction.py')
     project=Path(__file__).resolve().parents[1]
-    result['loop_sha256']=sha(args.baseline_dir/'forge/loop.py' if args.baseline_dir else project/'forge/loop.py')
-    result['compaction_notes_sha256']=None if args.baseline_dir else sha(project/'forge/compaction_notes.py')
+    result['loop_sha256']=sha(args.baseline_dir/'keystone/loop.py' if args.baseline_dir else project/'keystone/loop.py')
+    result['compaction_notes_sha256']=None if args.baseline_dir else sha(project/'keystone/compaction_notes.py')
     result['runtime_sha256']={name:sha(project/name) for name in [
-        'scripts/verify_tool_challenge.py','forge/artifact_tools.py','forge/artifacts.py',
-        'forge/builtin_views.py','forge/tools.py','forge/compaction.py']}
+        'scripts/verify_tool_challenge.py','keystone/artifact_tools.py','keystone/artifacts.py',
+        'keystone/builtin_views.py','keystone/tools.py','keystone/compaction.py']}
     try:
-        with tempfile.TemporaryDirectory(prefix='forge-tool-challenge-') as tmp:
+        with tempfile.TemporaryDirectory(prefix='keystone-tool-challenge-') as tmp:
             result['cases']=run_case(provider,recorder,Path(tmp),args.output,feedback_views=args.feedback_views,
                                      budget_cls=budget_cls,agent_cls=agent_cls)
     except Exception as exc:

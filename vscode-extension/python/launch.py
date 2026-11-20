@@ -9,12 +9,12 @@ parser.add_argument('--engine-root', default='')
 options = parser.parse_args()
 if options.engine_root:
     root = Path(options.engine_root).expanduser().resolve()
-    if not (root / 'forge' / 'vscode_bridge.py').is_file():
-        sys.stderr.write('Forge source directory does not contain forge/vscode_bridge.py\n')
+    if not (root / 'keystone' / 'vscode_bridge.py').is_file():
+        sys.stderr.write('Keystone source directory does not contain keystone/vscode_bridge.py\n')
         raise SystemExit(2)
     sys.path.insert(0, str(root))
 try:
-    runpy.run_module('forge.vscode_bridge', run_name='__main__')
+    runpy.run_module('keystone.vscode_bridge', run_name='__main__')
 except ModuleNotFoundError:
-    sys.stderr.write('Install the current Forge package or configure forge.enginePath.\n')
+    sys.stderr.write('Install the current Keystone package or configure keystone.enginePath.\n')
     raise SystemExit(2) from None

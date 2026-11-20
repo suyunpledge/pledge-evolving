@@ -2,8 +2,8 @@
 import unittest
 
 import test_runtime_convergence as fixtures
-from forge.policy import Policy, Mode, ToolEffect
-from forge.tools import ToolSpec, ToolResult, build_builtin_registry
+from keystone.policy import Policy, Mode, ToolEffect
+from keystone.tools import ToolSpec, ToolResult, build_builtin_registry
 
 
 class ArtifactGatewayTests(unittest.TestCase):
@@ -38,8 +38,8 @@ class ArtifactGatewayTests(unittest.TestCase):
         self.assertEqual(sorted(p.name for p in self.ws.iterdir()), before)
 
     def test_raw_workspace_write_cannot_overwrite_host_artifacts(self):
-        from forge.artifacts import ArtifactStore
-        from forge.execution import ActionExecutor, ActionRequest, create_execution_context
+        from keystone.artifacts import ArtifactStore
+        from keystone.execution import ActionExecutor, ActionRequest, create_execution_context
         store = ArtifactStore(self.home, self.ws)
         identifier = store.put('original')['id']
         context = create_execution_context(home=self.home, workspace=self.ws,

@@ -11,7 +11,7 @@ import tkinter as tk
 
 def main():
     u=c.WinDLL('user32')
-    root=tk.Tk();root.title('Forge owned keyboard fixture');root.geometry('420x120+80+80')
+    root=tk.Tk();root.title('Keystone owned keyboard fixture');root.geometry('420x120+80+80')
     root.attributes('-topmost',True)  # Test fixture only: keystrokes are refused unless this is in front.
     entry=tk.Entry(root,font=('Arial',16));entry.pack(fill='x',padx=12,pady=30)
     submitted=[]

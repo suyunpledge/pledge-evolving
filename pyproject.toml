@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "forge-agent-framework"
+name = "pledge-keystone"
 version = "0.8.0"
-description = "A unified agent framework assembled from contributions written by other agents"
+description = "Pledge Keystone: a local-first agent kernel that keeps its promises (contracts, permissions, acceptance checks)"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -21,15 +21,17 @@ classifiers = [
 secrets = ["PyYAML>=6,<7", "tomli>=2; python_version < '3.11'"]
 
 [project.scripts]
-forge = "forge.cli:main"
+keystone = "keystone.cli:main"
+# 旧命令名，兼容改名前的脚本与习惯
+forge = "keystone.cli:main"
 
 [project.urls]
-Documentation = "https://example.invalid/forge"
+Homepage = "https://github.com/suyunpledge/pledge-keystone"
 
 [tool.setuptools.packages.find]
-include = ["forge", "forge.*"]
+include = ["keystone", "keystone.*"]
 
 [tool.setuptools.package-data]
-forge = ["contrib/*.py", "contrib/*.md", "contrib/*.json",
+keystone = ["contrib/*.py", "contrib/*.md", "contrib/*.json",
          "bundles/*.json", "bundles/modes/*.json",
          "templates/*.py", "templates/*.json"]

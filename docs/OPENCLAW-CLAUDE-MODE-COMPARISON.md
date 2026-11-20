@@ -1,6 +1,6 @@
 # OpenClaw / Claude Code：按 Work 与 Code 模式对照
 
-本轮对应 Forge 的 Work / General（`WorkMode.GENERAL`）和 Code / Development（`WorkMode.DEVELOPMENT`）。两个入口共享 Agent、工具执行、权限和验收内核，模式本身不授予权限。
+本轮对应 Keystone 的 Work / General（`WorkMode.GENERAL`）和 Code / Development（`WorkMode.DEVELOPMENT`）。两个入口共享 Agent、工具执行、权限和验收内核，模式本身不授予权限。
 
 ## 源码范围
 
@@ -10,11 +10,11 @@
 
 ## Work 模式：主要对照 OpenClaw
 
-| 主题 | OpenClaw 实现 | Forge 对照与本轮决定 |
+| 主题 | OpenClaw 实现 | Keystone 对照与本轮决定 |
 | --- | --- | --- |
-| 工具循环 | 有界调用历史、稳定参数/结果摘要，以及 generic repeat / known polling / ping-pong / global breaker 的诊断信息；该本地源码的检测配置缺省关闭，不能误称所有运行都启用 | Forge 已默认做精确动作/结果循环检测，但只覆盖 1–2 步周期。本轮扩展完整周期并补结构化停止原因，保留既有阈值 |
-| 压缩前记忆 | `memory-flush.ts` 在接近容量时安排独立 flush 阶段，按 compactionCount 防止重复，提示对日记追加 | Forge 已有压缩前完整源归档、事务校验、任务锚点与受审批约束的长期记忆。未直接加入额外模型调用或让模型自动覆盖长期记忆文件 |
-| 请求上下文剪枝 | `context-pruning.ts` 明确仅影响当前请求的内存上下文，不重写磁盘历史 | Forge 的请求投影、artifact 留存和压缩事务已分层；还需遵守 lossless 模式及多厂商缓存约束，未把上游剪枝策略作为全局默认 |
+| 工具循环 | 有界调用历史、稳定参数/结果摘要，以及 generic repeat / known polling / ping-pong / global breaker 的诊断信息；该本地源码的检测配置缺省关闭，不能误称所有运行都启用 | Keystone 已默认做精确动作/结果循环检测，但只覆盖 1–2 步周期。本轮扩展完整周期并补结构化停止原因，保留既有阈值 |
+| 压缩前记忆 | `memory-flush.ts` 在接近容量时安排独立 flush 阶段，按 compactionCount 防止重复，提示对日记追加 | Keystone 已有压缩前完整源归档、事务校验、任务锚点与受审批约束的长期记忆。未直接加入额外模型调用或让模型自动覆盖长期记忆文件 |
+| 请求上下文剪枝 | `context-pruning.ts` 明确仅影响当前请求的内存上下文，不重写磁盘历史 | Keystone 的请求投影、artifact 留存和压缩事务已分层；还需遵守 lossless 模式及多厂商缓存约束，未把上游剪枝策略作为全局默认 |
 
 ### 已实现：完整多工具周期检测
 
@@ -26,16 +26,16 @@
 - 停止事件记录 `detector`、`period`、`repetitions`、`observations` 和 `contains_error`，不复制参数/原始结果或秘密。
 - 诊断经 `TurnResult` 传给 Agent 的 `loop_stop`，客户端日志同样收到。原生与文本协议共用这条路径；unknown_outcome 仍优先停止。
 
-这是受 OpenClaw 的有界历史和可解释诊断启发的 Forge 实现，没有照搬其阈值或默认开关。默认 max_steps 仍可能早于较长周期阈值停止；时间戳等真实输出变化也不会被猜测为“无进展”。
+这是受 OpenClaw 的有界历史和可解释诊断启发的 Keystone 实现，没有照搬其阈值或默认开关。默认 max_steps 仍可能早于较长周期阈值停止；时间戳等真实输出变化也不会被猜测为“无进展”。
 
 ## Code 模式：主要对照 Claude Code 的可读材料
 
-| 主题 | 已核验的本地材料 | Forge 对照与本轮决定 |
+| 主题 | 已核验的本地材料 | Keystone 对照与本轮决定 |
 | --- | --- | --- |
-| 项目指引 | 官方 claude-md-management 描述根目录与模块级 CLAUDE.md；SDK `ReadFileOutput` 的 seeded 分支明确提到启动时的 CLAUDE.md / nested memory | Forge 只读 AGENTS.md，复用 Claude 项目的指引存在真实缺口。本轮沿用既有受控加载器，加入 CLAUDE.md |
-| 编程工作流 | feature-dev 插件分成发现、代码阅读、设计、实现、审查，并使用待办状态跟踪 | Forge 已有 TaskPlan、开发任务快照、实际动作/差异/验收证据、独立 review；插件文本不等于核心调度实现，本轮没有以提示词替代执行器 |
-| 动态任务列表 | SDK 声明 TaskCreate / TaskUpdate / TaskList，以及 pending / in_progress / completed 与 blockedBy 字段 | 接口说明可以启发后续任务状态层，但不能仅凭类型声明声称已了解其依赖调度算法；模型标记 completed 也不能替代 Forge 的独立验收 |
-| Read 去重 | SDK 返回类型有 file_unchanged 与 seeded 来源 | Forge 的文件版本保护和压缩会影响旧读取是否仍在模型上下文中；本轮没有仅因文件未变就省略内容，避免压缩后出现“内容没给模型但声称已读”的问题 |
+| 项目指引 | 官方 claude-md-management 描述根目录与模块级 CLAUDE.md；SDK `ReadFileOutput` 的 seeded 分支明确提到启动时的 CLAUDE.md / nested memory | Keystone 只读 AGENTS.md，复用 Claude 项目的指引存在真实缺口。本轮沿用既有受控加载器，加入 CLAUDE.md |
+| 编程工作流 | feature-dev 插件分成发现、代码阅读、设计、实现、审查，并使用待办状态跟踪 | Keystone 已有 TaskPlan、开发任务快照、实际动作/差异/验收证据、独立 review；插件文本不等于核心调度实现，本轮没有以提示词替代执行器 |
+| 动态任务列表 | SDK 声明 TaskCreate / TaskUpdate / TaskList，以及 pending / in_progress / completed 与 blockedBy 字段 | 接口说明可以启发后续任务状态层，但不能仅凭类型声明声称已了解其依赖调度算法；模型标记 completed 也不能替代 Keystone 的独立验收 |
+| Read 去重 | SDK 返回类型有 file_unchanged 与 seeded 来源 | Keystone 的文件版本保护和压缩会影响旧读取是否仍在模型上下文中；本轮没有仅因文件未变就省略内容，避免压缩后出现“内容没给模型但声称已读”的问题 |
 
 ### 已实现：目录作用域内的 CLAUDE.md
 
@@ -52,7 +52,7 @@
 
 ## 实际验证
 
-新增 `forge/test_modes_reference.py` 的 11 项行为测试，覆盖长周期循环、旧阈值、真实进展、上下文作用域、双原生协议、前缀稳定、权限拒绝、秘密保护、文件变更与共享预算。
+新增 `keystone/test_modes_reference.py` 的 11 项行为测试，覆盖长周期循环、旧阈值、真实进展、上下文作用域、双原生协议、前缀稳定、权限拒绝、秘密保护、文件变更与共享预算。
 
 新增 `tests/test_mode_reference_entries.py` 的 2 项入口测试：
 

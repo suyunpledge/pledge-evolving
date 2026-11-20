@@ -17,7 +17,7 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 GUI_MODULES = ['test_plugin_capabilities', 'test_plugin_skills', 'test_plugin_runtime',
     'test_plugin_lifecycle', 'test_phase_models', 'test_runtime_review', 'test_task_planning',
-    'test_sub_agent', 'test_forge_client', 'test_interaction_intent']
+    'test_sub_agent', 'test_keystone_client', 'test_interaction_intent']
 
 
 def main():
@@ -26,15 +26,15 @@ def main():
     args = parser.parse_args()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    bootstrap = ('import sys,runpy; sys.path[:0]=' + repr([str(ROOT), str(ROOT / 'forge-gui')])
+    bootstrap = ('import sys,runpy; sys.path[:0]=' + repr([str(ROOT), str(ROOT / 'keystone-gui')])
                  + "; sys.argv[0]='unittest'; runpy.run_module('unittest',run_name='__main__')")
     suites = [('tests', ['-c', bootstrap, 'discover', '-s', 'tests', '-p', 'test*.py']),
-              ('forge', ['-c', bootstrap, 'discover', '-s', 'forge', '-p', 'test*.py', '-t', '.']),
+              ('keystone', ['-c', bootstrap, 'discover', '-s', 'keystone', '-p', 'test*.py', '-t', '.']),
               ('selftest', ['run.py', 'selftest']), ('gui_adapters', ['-c', bootstrap, *GUI_MODULES])]
     report = {'environment': {'python': sys.version, 'executable': sys.executable,
         'platform': platform.platform()}, 'gui_modules': GUI_MODULES, 'suites': [],
         'source_sha256': {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest()
-            for p in [*ROOT.glob('forge/*.py'), ROOT / 'tests/test_runtime_convergence.py']}}
+            for p in [*ROOT.glob('keystone/*.py'), ROOT / 'tests/test_runtime_convergence.py']}}
     try:
         import yaml
         report['environment']['PyYAML'] = yaml.__version__

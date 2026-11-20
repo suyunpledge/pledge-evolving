@@ -4,7 +4,7 @@
 
 本轮继续读取本机 Loom（`Documents/ChatGPT/Codex/loom`，HEAD `2c8f755`）和 Codex（`Desktop/开发/codex`，HEAD `67f0994`）源码。它们只作为参考，未修改。没有把本机所有框架都视为已经完成审查。
 
-| 尚未集成的设计 | Forge 当前缺口 | 本轮选择 |
+| 尚未集成的设计 | Keystone 当前缺口 | 本轮选择 |
 | --- | --- | --- |
 | 内容寻址 artifact + 分页/搜索 | 旧 ScienceClaw 外置器自动写 `workspace/research_data`；随机文件名无法去重；摘要建议用 `read_file`，但该工具本身有预览上限；工具轮次还可能再次截断结果 | 优先实现：直接改善长任务可用性，并消除运行时对用户工作区的隐式写入 |
 | 事件 DAG 与分支工作区恢复 | 线性 fork 复制日志，不能等同于回滚文件 | 需同时处理分支所有权、未提交文件和多个入口，未在本轮改存储 |
@@ -17,22 +17,22 @@
 - Loom `packages/kernel/src/artifacts.ts`：SHA-256 内容句柄、来源合并、完整内容与预览分离、分页和字面量搜索。
 - Loom `packages/kernel/src/kernel.ts:619` / `:640` / `:734`：内置 artifact 读取/搜索工具，大输出转引用。
 - Codex `codex-rs/core/src/tools/context.rs:428`、`:570`：留存输出和模型可见截断分别处理，并为元数据/提示预留输出预算，避免二次截断。
-- Forge `forge/scienceclaw/offload.py`：原有阈值和独立嵌入 API 保留，运行时改接新的宿主存储；重复的 wrap / wrap_result_text 写入逻辑合并。
+- Keystone `keystone/scienceclaw/offload.py`：原有阈值和独立嵌入 API 保留，运行时改接新的宿主存储；重复的 wrap / wrap_result_text 写入逻辑合并。
 
 语言与边界不同，因此按设计重新实现 Python 标准库版本，没有引入 Rust/Node 运行时或第三方依赖。
 
 ## 实际实现
 
-`forge/artifacts.py` 提供宿主存储：
+`keystone/artifacts.py` 提供宿主存储：
 
 - 句柄为 `a_<SHA-256>`；内容相同只保存一份，合并最多 64 条来源记录。
-- 路径为 `<Forge home>/artifacts/<workspace fingerprint>/`，不再自动写 `research_data`。通常 home 在工作区外；若宿主刻意把 home 放进工作区，物理位置仍由该宿主配置决定。
+- 路径为 `<Keystone home>/artifacts/<workspace fingerprint>/`，不再自动写 `research_data`。通常 home 在工作区外；若宿主刻意把 home 放进工作区，物理位置仍由该宿主配置决定。
 - 内容先落临时文件、flush/fsync，再原子替换；元数据是完成标记。按对象锁串行化写入，读取校验摘要和字节/字符长度。
 - 以实际工作区分区，句柄不能作为任意路径；拒绝越界、非法句柄和重定向的存储路径。原始文件工具也不能覆盖受保护的 host artifacts。
 - 单项最多 8 MiB；不自动删除已有证据。超限、磁盘故障或损坏不会冒充保存成功。
 - 保存已经过现有 SecretScope 保护的工具返回文本，统一标记为 untrusted；来源记录包括工具名和 action_id。来源标签是数据描述，不是执行授权。
 
-`forge/artifact_tools.py` 注册两个现有权限链内的只读工具：
+`keystone/artifact_tools.py` 注册两个现有权限链内的只读工具：
 
 ```json
 {"tool":"artifact_read","args":{"id":"a_<64位摘要>","offset":0,"limit":2000}}
@@ -71,7 +71,7 @@ flowchart TD
 
 ## 验证
 
-新增 `forge/test_artifacts.py` 的 14 项测试，覆盖去重/来源、Unicode 单行分页、字面量搜索续页、非法参数、跨工作区隔离、损坏和未完成写入、超限、脱敏、存储失败后的动作去重、已知失败语义、deny、有限读取、真实 Agent 搜索并读取预览之外的尾部、编码模式暴露和失败时不回退工作区。
+新增 `keystone/test_artifacts.py` 的 14 项测试，覆盖去重/来源、Unicode 单行分页、字面量搜索续页、非法参数、跨工作区隔离、损坏和未完成写入、超限、脱敏、存储失败后的动作去重、已知失败语义、deny、有限读取、真实 Agent 搜索并读取预览之外的尾部、编码模式暴露和失败时不回退工作区。
 
 新增 `tests/test_artifact_gateway.py` 的 2 项测试，通过真正的本地 HTTP 验证只读网关的大结果保存、动作回执查询、分页/搜索，以及宿主 artifact 不可被原始写工具覆盖。
 

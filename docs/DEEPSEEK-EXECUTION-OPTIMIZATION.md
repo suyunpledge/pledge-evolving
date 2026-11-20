@@ -64,6 +64,6 @@ python scripts/verify_deepseek_execution.py --live --scenario planning --planner
 - DeepSeek、规划入口和 Web runtime：38 项通过；覆盖原始请求不变、缓存指纹、显式参数优先、模型采样差异、网关与直连一致、真实 Agent 工具回放、截断规划不执行。
 - 桌面规划客户端：6 项通过。
 - 定向规划 / MiMo 兼容回归：69 项通过（与上述核心测试有重叠，不重复相加）。
-- 预算检查：156 个 Forge 文件，48,515 行，通过；工作区 diff 空白检查通过。
+- 预算检查：156 个 Keystone 文件，48,515 行，通过；工作区 diff 空白检查通过。
 
 本轮增量补丁 `reports/deepseek-execution.patch` 以开始时的工作区为基准，保留此前尚未提交的修改。文件清单和哈希见 `reports/deepseek-execution-files.json`，原文件备份路径见 `reports/deepseek-execution-backup.txt`。

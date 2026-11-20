@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from forge.tool_adapter import parse_tool_call_tags, repair_arguments
+from keystone.tool_adapter import parse_tool_call_tags, repair_arguments
 
 # Malformed 1: truncated JSON inside <tools>
 c1 = '<tools>{"name": "get_weather", "arguments": {"city": "Bei'

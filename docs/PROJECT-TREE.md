@@ -7,7 +7,7 @@
 ## 中文
 
 ```text
-forge 统一智能体框架（仓库 pledge-evolving）
+keystone 统一智能体框架（仓库 pledge-keystone）
 ├── 主循环 Main Loop ── 原生工具调用优先、文本兜底（loop.py · session.py · checkpoint.py）
 ├── 模型与路由 Model & Routing ── base / medium / premium 三档（model.py · routing.py · pricing.py）
 ├── 工具与协议 Tools & Protocol ── 原生工具 + Anthropic ↔ OpenAI 协议翻译（toolwire.py · wire.py · gateway.py）
@@ -21,7 +21,7 @@ forge 统一智能体框架（仓库 pledge-evolving）
 ## English
 
 ```text
-forge — Unified Agent Framework (repo: pledge-evolving)
+keystone — Unified Agent Framework (repo: pledge-keystone)
 ├── Main Loop ── native tool calls first, text fallback (loop.py · session.py · checkpoint.py)
 ├── Model & Routing ── three tiers: base / medium / premium (model.py · routing.py · pricing.py)
 ├── Tools & Protocol ── native tools + Anthropic ↔ OpenAI translation (toolwire.py · wire.py · gateway.py)

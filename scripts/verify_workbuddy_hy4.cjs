@@ -63,7 +63,7 @@ async function connect() {
   const clientNonce = crypto.randomBytes(16).toString('base64url');
   send({type: 'session_hello', protocol_min: 1, protocol_max: 1, client_nonce: clientNonce,
     ticket_id: crypto.createHash('sha256').update(discovery.ticket).digest('hex').slice(0, 16),
-    client: {kind: 'cli', id: 'forge-hy4-verification', version: '1'}});
+    client: {kind: 'cli', id: 'keystone-hy4-verification', version: '1'}});
   const challenge = await receive();
   const transcript = {endpoint: discovery.endpoint, clientNonce, serverNonce: challenge.server_nonce};
   const expected = proof(discovery.ticket, 'server', transcript);

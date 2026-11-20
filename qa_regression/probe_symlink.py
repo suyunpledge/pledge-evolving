@@ -14,7 +14,7 @@ from pathlib import Path
 
 from _bootstrap import check, summary  # noqa: E402  (sys.path bootstrap first)
 
-from forge.development.editor import Document, ProjectBoundary  # noqa: E402
+from keystone.development.editor import Document, ProjectBoundary  # noqa: E402
 
 
 def main() -> int:

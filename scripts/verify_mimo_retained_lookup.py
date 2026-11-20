@@ -9,13 +9,13 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from verify_mimo_live import MODELS, provider_for, router_for
 from verify_mimo_long_context import LongRecorder, dataset, cursor, final_value
-from forge import model
-from forge.cache_state import CacheWarmth
-from forge.context_transaction import valid_tool_pairs
-from forge.loop import Agent, LoopLimits
-from forge.policy import Mode, Policy, ToolEffect
-from forge.secrets import redact
-from forge.tools import ToolSpec, ToolResult, build_builtin_registry
+from keystone import model
+from keystone.cache_state import CacheWarmth
+from keystone.context_transaction import valid_tool_pairs
+from keystone.loop import Agent, LoopLimits
+from keystone.policy import Mode, Policy, ToolEffect
+from keystone.secrets import redact
+from keystone.tools import ToolSpec, ToolResult, build_builtin_registry
 
 
 def main():
@@ -28,10 +28,10 @@ def main():
     if not args.live or not 1 <= args.request_limit <= 12:
         parser.error('Requires --live and request-limit 1..12')
     recorder = LongRecorder(args.request_limit, retries=1)
-    provider = provider_for(args.model, Path.home() / '.forge')
+    provider = provider_for(args.model, Path.home() / '.keystone')
     result = {'model': args.model, 'requests': recorder.rows, 'ok': False}
     try:
-        with tempfile.TemporaryDirectory(prefix='forge-view-lookup-') as temporary:
+        with tempfile.TemporaryDirectory(prefix='keystone-view-lookup-') as temporary:
             root = Path(temporary)
             model._WARMTH = CacheWarmth(root / 'warmth.json')
             items, header = dataset()[0]

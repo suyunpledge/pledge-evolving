@@ -13,10 +13,10 @@ from pathlib import Path
 
 from _bootstrap import check, summary  # noqa: E402
 
-from forge.checkpoint import CheckpointStore  # noqa: E402
-from forge.evolution import EvolutionEngine  # noqa: E402
-from forge.memory import MemoryStore  # noqa: E402
-from forge.session import Session  # noqa: E402
+from keystone.checkpoint import CheckpointStore  # noqa: E402
+from keystone.evolution import EvolutionEngine  # noqa: E402
+from keystone.memory import MemoryStore  # noqa: E402
+from keystone.session import Session  # noqa: E402
 
 
 def tmp(label: str) -> Path:

@@ -4,7 +4,7 @@
 
 ## 使用
 
-从本分支运行 `python forge-gui/forge_gui_v2.py`。Work Mode 聊天顶部选择「电脑操作」：
+从本分支运行 `python keystone-gui/keystone_gui_v2.py`。Work Mode 聊天顶部选择「电脑操作」：
 
 1. 刷新窗口，在列表中选择目标，点击「绑定所选窗口」。标题、PID、HWND 会显示在面板中；绑定不改变窗口焦点。
 2. 点击「截图预览」进行本地采集。截图仅保存在内存中，展示尺寸和 SHA-256；尚未勾选云端授权时不会发送图片。
@@ -24,14 +24,14 @@
 
 ## 接口与权限
 
-- `forge.computer_win32.list_windows(exclude_pid=...)`：用户打开面板后枚举最多 128 个带标题的可见顶层窗口；返回 `window/process_id/title`，没有图像或可执行动作。GUI 排除自身进程。
+- `keystone.computer_win32.list_windows(exclude_pid=...)`：用户打开面板后枚举最多 128 个带标题的可见顶层窗口；返回 `window/process_id/title`，没有图像或可执行动作。GUI 排除自身进程。
 - `WindowsControlDriver.screenshot(cancelled=...)`：绑定 HWND/PID 校验后返回 `{png: bytes, width, height, sha256, target}`。不接受模型指定 HWND/PID，不改变焦点，不回退到全桌面采集。
 - `ComputerLane`：GUI 可信宿主适配器。配置、目标、授权、取消 token、工作区在 UI 线程快照，经 `create_execution_context` 和公共 `ActionExecutor` 执行；保留既有 deny/ask/mode/sandbox，仅增加选定窗口的精确读取 grant。与 Coding Mode registry 分离。
 - `computer_observe({})`：原生控件观察；受其既有控件数量/文本预算约束。
 - `computer_screenshot({})`：本地采集，工具结果只包含尺寸、摘要及目标，主模型不会通过此工具获得图片。
 - `computer_vision({"question": "描述可见界面"})`：须云端授权，重新采集当前目标并交给所选视觉模型；返回视觉描述、用量、图像摘要与目标。可选 `target` 用于结构化定位，返回原图像素坐标及观察 ID。结果是非可信观察证据，不证明任何操作成功。
 
-每个工具结果携带 `run_id/task_id/action_id/execution_state/authorization`；`<ForgeHome>/gui/computer-use/sessions/runtime/` 中记录意图与结果，不记录 PNG/base64。不会把完整图片加入主聊天历史。面板保存预览仅在内存；窗口绑定和发送授权不跨重启恢复。
+每个工具结果携带 `run_id/task_id/action_id/execution_state/authorization`；`<KeystoneHome>/gui/computer-use/sessions/runtime/` 中记录意图与结果，不记录 PNG/base64。不会把完整图片加入主聊天历史。面板保存预览仅在内存；窗口绑定和发送授权不跨重启恢复。
 
 工具名由宿主保留，不允许插件别名遮蔽；与附着电脑能力的同名 Gateway 工具冲突时给出明确错误。未绑定时不向 Work 模型公布本地电脑工具。已启动的聊天不会因后来勾选授权而扩大权限，需要发送新消息。
 
@@ -41,4 +41,4 @@
 
 GPU/受保护内容和部分自绘应用可能返回黑图；不能把 PrintWindow 返回成功等同于内容完整。没有全桌面回退、绕过受保护内容、键盘热键或拖拽。新增的 `computer_click` 需要独立开启并逐次确认；面板仍不注册原生控件 `computer_act`。
 
-撤销会中断本机后续采集和 HTTP 等待，无法召回服务端已经收到的图片。视觉请求有现有 60 秒网络超时；OS DNS 解析仍受系统解析器控制。窗口选择是 Forge 的能力边界，不是操作系统沙箱。
+撤销会中断本机后续采集和 HTTP 等待，无法召回服务端已经收到的图片。视觉请求有现有 60 秒网络超时；OS DNS 解析仍受系统解析器控制。窗口选择是 Keystone 的能力边界，不是操作系统沙箱。

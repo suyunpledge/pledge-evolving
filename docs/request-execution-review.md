@@ -14,7 +14,7 @@
 | 故障/场景 | 修复前行为 | 风险 | 本轮修复 | 验证 |
 | --- | --- | --- | --- | --- |
 | defer 只有建议 | 高峰建议出现在 plan，发送时间不变 | 报告与执行不同 | 显式 opt-in、最长等待限制、可取消等待；交互请求拒绝 defer；等待后重新规划 | 高峰边界、超等待上限、取消、交互拒绝 |
-| Batch 只有折扣建议 | 普通请求不提交 Batch | 误算异步折扣 | 新增小型 BatchExecutor 与 `forge batch submit/status/results/cancel`；上传 JSONL、提交、查询、下载结果、取消；保存不含密钥的任务回执 | 本地模拟完整生命周期、重开执行器、网络结果不确定时不自动重复 POST |
+| Batch 只有折扣建议 | 普通请求不提交 Batch | 误算异步折扣 | 新增小型 BatchExecutor 与 `keystone batch submit/status/results/cancel`；上传 JSONL、提交、查询、下载结果、取消；保存不含密钥的任务回执 | 本地模拟完整生命周期、重开执行器、网络结果不确定时不自动重复 POST |
 | Flex 未写入请求 | 只在估算中使用折扣 | 未执行却声称省钱 | 支持的 OpenAI 兼容请求设置 service_tier=flex；不支持的厂商/协议提前拒绝；按返回的 service_tier 标记 confirmed/unconfirmed | 实际 payload 断言、厂商/协议边界；没有调用未授权的 OpenAI 付费模型 |
 | 思考预算只是数值 | plan 的 reasoning_budget 容易被理解成已生效 | 超预算或发送非法参数 | 显式 thinkBudget：千问使用 thinking_budget；DeepSeek 使用总输出 max_tokens 上限并标记 total_output；不支持的端点标记 unsupported；显式 effort/thinking 保留并标记 override | 参数到线、payload 不被原地修改、冲突处理 |
 | premium/MoA 合并不完整 | 只保留最后请求的 plan；MoA 候选 usage 也可能丢失 | 账本漏记或模型归属错误 | Completion.requests 保留每次成功调用的模型、usage、plan；premium/MoA 汇总实际 usage；循环报告携带请求回执；账本按实际模型分别记 token | 两阶段不同模型、不同 plan、MoA 三次调用统计；核心回归 |
@@ -43,14 +43,14 @@ python run.py batch results --provider <同一配置行ID> --job <返回的任�
 python run.py batch cancel --provider <同一配置行ID> --job <返回的任务ID>
 ```
 
-任务元数据保存在指定 Forge home 下的 `batch-jobs/`，没有 API key 或输入对话正文。
+任务元数据保存在指定 Keystone home 下的 `batch-jobs/`，没有 API key 或输入对话正文。
 若提交结果因网络失败不确定，保留上传文件回执供恢复；不会自动再提交一个可能重复计费的任务。
 
 ## 真实联网结果
 
 授权上限：每个模型 5,000,000 tokens。本次每次完整探测采用更小的 100,000 tokens 保守预约上限。
 只向现有配置中的 `deepseek-flash`、`qwen3.8-flash`、`mimo-v2.6-flash` 发送探测请求；未修改密钥。
-输入是明确标记的合成测试记录，未使用仓库正文或用户对话，也未写入 Forge 会话历史。
+输入是明确标记的合成测试记录，未使用仓库正文或用户对话，也未写入 Keystone 会话历史。
 
 | 模型 | 实际验证 | 这轮全部成功请求返回的 tokens | 最后一次真实 Gateway 流式请求 |
 | --- | --- | ---: | --- |
@@ -66,7 +66,7 @@ python run.py batch cancel --provider <同一配置行ID> --job <返回的任务
 首轮脚本中标为 gateway_stream 的调用遗漏了 via_gateway=True，实际是直连重复请求。
 该轮仍计入真实 token 消耗，但不能作为 Gateway SSE 证据。
 已修正脚本，第二轮通过真实本地 Gateway 转发到厂商，并新增本地回归断言发送路径必须为 non-stream、non-stream、stream。
-首轮原始数据保留在 `forge-gui/desktop/build/vendor-live-review/`；有效流式证据在 `forge-gui/desktop/build/vendor-gateway-live-verified/`。
+首轮原始数据保留在 `keystone-gui/desktop/build/vendor-live-review/`；有效流式证据在 `keystone-gui/desktop/build/vendor-gateway-live-verified/`。
 这些验证目录被 Git 忽略，没有打包到产品。
 
 ### 仍未验证的边界
@@ -77,7 +77,7 @@ python run.py batch cancel --provider <同一配置行ID> --job <返回的任务
 - 上游请求失败/超时后是否计费，以及具体金额：没有正式账单证据，不能由 plan 推断。
 - thinking_budget 到线经过离线验证；不能声称对三个厂商均完成独立思考硬上限的实测。
 
-可复用的探测入口：`python -m forge.verify_execution --execute --output <报告目录> --models <授权模型> --max-tokens <不超过5000000> --ttl-wait 315`。
+可复用的探测入口：`python -m keystone.verify_execution --execute --output <报告目录> --models <授权模型> --max-tokens <不超过5000000> --ttl-wait 315`。
 不给 --execute 时不发请求。正式测试发现流程不会自动运行它。
 
 ## 自动化验证
@@ -89,7 +89,7 @@ python run.py batch cancel --provider <同一配置行ID> --job <返回的任务
 - 插件故障隔离、运行时、能力与权限门回归：94/94，无插件系统改造。
 - GUI 运行/启动/消息/导入回归组：51 项通过；导入/消息/导航/DPI 组：50 项通过，含五档缩放和五种窗口尺寸。两组有重叠，不能相加为唯一测试数。
 - 一次 GUI 组合测试退出时遇到临时目录 WinError 32；隔离重跑通过，原始失败日志保留。
-- Python 编译检查排除了 `forge/templates/` 的未填参数模板（模板含 `def ...(...)` 占位符）；运行源码及改动的 GUI 文件编译通过。
+- Python 编译检查排除了 `keystone/templates/` 的未填参数模板（模板含 `def ...(...)` 占位符）；运行源码及改动的 GUI 文件编译通过。
 
 ## 官方接口依据
 

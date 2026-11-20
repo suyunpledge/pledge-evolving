@@ -1,4 +1,4 @@
-"""Independent QA regression runner for Forge.
+"""Independent QA regression runner for Keystone.
 
 Run every probe in this directory and aggregate pass/fail.
 

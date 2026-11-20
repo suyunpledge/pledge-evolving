@@ -6,12 +6,12 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from forge.config import ConfigError
-from forge.development.models import ModelSettingsSource
-from forge.development.runtime import DevelopmentRuntime
-from forge.development.state import ModeState
-from forge.model import Usage
-from forge.secrets import redact
+from keystone.config import ConfigError
+from keystone.development.models import ModelSettingsSource
+from keystone.development.runtime import DevelopmentRuntime
+from keystone.development.state import ModeState
+from keystone.model import Usage
+from keystone.secrets import redact
 
 
 class ReadinessTests(unittest.TestCase):
@@ -24,7 +24,7 @@ class ReadinessTests(unittest.TestCase):
         self.key = 'sk-synthetic-readiness-key-0123456789'
         self.rows = [
             {'id': 'writer', 'name': 'provider:writer', 'config': {'baseURL': 'https://example.invalid/v1',
-                'model': 'code-one', 'apiKey': {'$expr': "get('env.FORGE_WRITER_KEY', '')"}}},
+                'model': 'code-one', 'apiKey': {'$expr': "get('env.KEYSTONE_WRITER_KEY', '')"}}},
             {'id': 'model', 'name': 'model:router', 'config': {'primary': ['writer', 'code-one']}},
             {'id': 'policy', 'name': 'policy:core', 'config': {'mode': 'bypassPermissions', 'sandbox': 'danger-full-access'}},
             {'id': 'tools', 'name': 'tools:core', 'config': {'expose': ['shell_exec']}},
@@ -37,7 +37,7 @@ class ReadinessTests(unittest.TestCase):
         self.addCleanup(self.runtime.close)
 
     def settings(self, rows, home=None):
-        ((home or self.host)/'forge.patch.json').write_text(json.dumps(rows), encoding='utf-8')
+        ((home or self.host)/'keystone.patch.json').write_text(json.dumps(rows), encoding='utf-8')
 
     def test_host_projection_resolves_key_without_env_disk_or_authority_sharing(self):
         before = dict(os.environ)
@@ -49,7 +49,7 @@ class ReadinessTests(unittest.TestCase):
         self.assertTrue(self.runtime.bridge.router.providers['writer'].api_key)
         self.assertEqual(self.runtime.bridge.agent.policy.mode.value, 'read-only')
         self.assertNotEqual(self.runtime.bridge.agent.policy.sandbox.value, 'danger-full-access')
-        self.assertFalse((self.home/'forge.patch.json').exists())
+        self.assertFalse((self.home/'keystone.patch.json').exists())
         self.assertFalse((self.home/'secrets.json').exists())
         self.assertTrue(self.runtime.bridge.agent.session.path.resolve().is_relative_to(self.home.resolve()))
         self.assertEqual({p:p.read_bytes() for p in self.host.iterdir()}, files)
@@ -63,7 +63,7 @@ class ReadinessTests(unittest.TestCase):
         self.assertTrue(self.runtime.readiness()['ready'])
 
     def test_empty_host_is_model_missing_instead_of_fake_sample_catalog(self):
-        (self.host/'forge.patch.json').unlink()
+        (self.host/'keystone.patch.json').unlink()
         self.runtime.initialize(self.project)
         self.assertEqual(self.runtime.catalog,{})
         self.assertEqual(self.runtime.readiness()['code'],'model_missing')
@@ -75,13 +75,13 @@ class ReadinessTests(unittest.TestCase):
         self.assertTrue(self.runtime.readiness()['ready'])
 
     def test_borrowed_custom_router_keeps_its_own_transport_contract(self):
-        from forge.test_vscode_bridge import FakeRouter
-        from forge.development.models import model_readiness
+        from keystone.test_vscode_bridge import FakeRouter
+        from keystone.development.models import model_readiness
         self.assertTrue(model_readiness(FakeRouter())['ready'])
 
     def test_missing_cloud_key_is_diagnosed_before_model_request(self):
         (self.host/'secrets.json').unlink()
-        with patch.dict(os.environ, {'FORGE_WRITER_KEY':''}):
+        with patch.dict(os.environ, {'KEYSTONE_WRITER_KEY':''}):
             self.runtime.initialize(self.project)
         self.assertEqual(self.runtime.readiness()['code'],'credential_missing')
 
@@ -105,7 +105,7 @@ class ReadinessTests(unittest.TestCase):
         self.runtime.initialize(self.project)
         bridge, catalog = self.runtime.bridge, dict(self.runtime.catalog)
         router = bridge.router
-        (self.host/'forge.patch.json').write_text('{broken')
+        (self.host/'keystone.patch.json').write_text('{broken')
         with self.assertRaises(ConfigError): self.runtime.refresh_models()
         self.assertIs(bridge.router,router)
         self.assertEqual(self.runtime.catalog,catalog)

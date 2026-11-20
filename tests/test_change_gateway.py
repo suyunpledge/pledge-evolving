@@ -1,6 +1,6 @@
 import unittest
 import test_runtime_convergence as fixtures
-from forge.policy import Policy, Mode
+from keystone.policy import Policy, Mode
 
 
 class ChangeGatewayTests(unittest.TestCase):

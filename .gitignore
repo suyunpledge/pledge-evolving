@@ -29,14 +29,14 @@ Thumbs.db
 # 本地工作区（AutoClaw）
 .openclaw/
 *.pyc
-.forge/ 
+.keystone/ 
 
-# forge 桌面应用：本机运行时状态（记住的 Forge 目录等）
-forge-desktop.json
-forge-diagnose.json
+# keystone 桌面应用：本机运行时状态（记住的 Keystone 目录等）
+keystone-desktop.json
+keystone-diagnose.json
 
-# forge 桌面应用：图标预览（make_icon.py 派生产物）
-forge-gui/desktop/forge.png
+# keystone 桌面应用：图标预览（make_icon.py 派生产物）
+keystone-gui/desktop/keystone.png
 
 # 本地备份与测试产物（保留在磁盘，不入库）
 *.bak-*
@@ -47,5 +47,5 @@ mimo26-test-artifacts/
 .env
 *.env
 !.env.example
-forge-gui/.secret_store.json
-.forge-development-home/
+keystone-gui/.secret_store.json
+.keystone-development-home/

@@ -17,10 +17,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from client import server as client
-from forge.checkpoint import CheckpointStore
-from forge.client_runs import RunStore
-from forge.model import Usage
-from forge.routing import SmartRouter
+from keystone.checkpoint import CheckpointStore
+from keystone.client_runs import RunStore
+from keystone.model import Usage
+from keystone.routing import SmartRouter
 
 
 def main():
@@ -40,8 +40,8 @@ def main():
     def command(*values):
         return subprocess.run(values, cwd=project, capture_output=True, text=True,
                               creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-    for values in [('git', 'init', '--quiet'), ('git', 'config', 'user.name', 'Forge Verification'),
-                   ('git', 'config', 'user.email', 'forge@localhost'), ('git', 'add', '.'),
+    for values in [('git', 'init', '--quiet'), ('git', 'config', 'user.name', 'Keystone Verification'),
+                   ('git', 'config', 'user.email', 'keystone@localhost'), ('git', 'add', '.'),
                    ('git', 'commit', '--quiet', '-m', 'baseline')]:
         command(*values).check_returncode()
 
@@ -64,7 +64,7 @@ def main():
             headers={'Content-Type': 'application/json'})
         with urllib.request.urlopen(request, timeout=10) as response:
             return json.loads(response.read())
-    with patch.object(client, 'FORGE_HOME', home), patch.object(client, 'SECRETS_FILE', home / 'secrets.json'), \
+    with patch.object(client, 'KEYSTONE_HOME', home), patch.object(client, 'SECRETS_FILE', home / 'secrets.json'), \
          patch.object(SmartRouter, 'from_config', side_effect=lambda cfg: factory(cfg, transport=transport)):
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()

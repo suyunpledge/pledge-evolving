@@ -14,17 +14,17 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from verify_mimo_live import Recorder, provider_for, router_for, MODELS, digest
-from forge import model
-from forge.cache_metrics import cache_coverage
-from forge.cache_state import CacheWarmth
-from forge.compaction import ContextBudget
-from forge.context_transaction import valid_tool_pairs
-from forge.development.runtime import DEVELOPMENT_GUIDANCE
-from forge.loop import Agent, LoopLimits
-from forge.memory import MemoryStore
-from forge.policy import Mode, Policy, Sandbox, ToolEffect
-from forge.secrets import redact
-from forge.tools import ToolSpec, ToolResult, build_builtin_registry
+from keystone import model
+from keystone.cache_metrics import cache_coverage
+from keystone.cache_state import CacheWarmth
+from keystone.compaction import ContextBudget
+from keystone.context_transaction import valid_tool_pairs
+from keystone.development.runtime import DEVELOPMENT_GUIDANCE
+from keystone.loop import Agent, LoopLimits
+from keystone.memory import MemoryStore
+from keystone.policy import Mode, Policy, Sandbox, ToolEffect
+from keystone.secrets import redact
+from keystone.tools import ToolSpec, ToolResult, build_builtin_registry
 
 
 def final_value(text):
@@ -59,8 +59,8 @@ def load_baseline(directory):
         spec.loader.exec_module(module)
         return module
     # 只执行本轮修改前已保存的本地宿主代码，不从模型或网络加载代码。
-    loop = load('forge._long_baseline_loop', 'forge/loop.py')
-    budget = load('forge._long_baseline_compaction', 'forge/compaction.py')
+    loop = load('keystone._long_baseline_loop', 'keystone/loop.py')
+    budget = load('keystone._long_baseline_compaction', 'keystone/compaction.py')
     return loop.Agent, budget.ContextBudget
 
 
@@ -284,7 +284,7 @@ def main():
     if not args.result_views:
         backup = args.baseline_dir or Path((ROOT / 'reports/mimo-long-backup.txt').read_text(encoding='utf-8').strip())
         baseline_agent, baseline_budget = load_baseline(backup)
-    provider = provider_for(args.model, Path.home() / '.forge')
+    provider = provider_for(args.model, Path.home() / '.keystone')
     # 这是测试宿主的较小窗口约束，用于触发真实压缩；不宣称测试了模型的 1M 极限。
     provider.route_capabilities = {'contextWindow': args.context_window, 'maxOutputTokens': 4096}
     recorder = LongRecorder(args.request_limit, retries=args.retries)
@@ -301,7 +301,7 @@ def main():
         result['comparison'] = 'Same current Agent and full result bytes; host-selected result_fields disabled/enabled'
     args.output.parent.mkdir(parents=True, exist_ok=True)
     try:
-        with tempfile.TemporaryDirectory(prefix='forge-mimo-long-') as tmp:
+        with tempfile.TemporaryDirectory(prefix='keystone-mimo-long-') as tmp:
             root = Path(tmp)
             model._WARMTH = CacheWarmth(root / 'warmth.json')
             for index, strategy in enumerate(args.strategies, 1):

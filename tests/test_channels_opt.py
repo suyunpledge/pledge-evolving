@@ -22,7 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from forge.channels.cli import (
+from keystone.channels.cli import (
     _acquire_lock,
     _LaneCache,
     _pid_alive,
@@ -30,7 +30,7 @@ from forge.channels.cli import (
     _ServeStats,
     _touch_lock,
 )
-from forge.channels.weixin import PollTimeout, WeixinChannel
+from keystone.channels.weixin import PollTimeout, WeixinChannel
 
 # ── 1. a poll timeout is "nothing yet", not an error ────────────────────
 
@@ -190,7 +190,7 @@ with tempfile.TemporaryDirectory() as td:
 print("9. lock staleness (PID reuse): OK")
 
 # ── 8c. lane cache is bounded and evicts LRU ───────────────────────────
-from forge.channels.cli import _LaneCache
+from keystone.channels.cli import _LaneCache
 
 cache = _LaneCache(max_size=3)
 for i in range(3):
@@ -227,7 +227,7 @@ print("11. serve stats: OK")
 
 with tempfile.TemporaryDirectory() as td:
     spath = Path(td) / "seen.json"
-    from forge.channels import SeenSet
+    from keystone.channels import SeenSet
 
     s = SeenSet(spath, max_items=100)
     writes = []

@@ -11,7 +11,7 @@ This isn't a supplement to the author's self-checks — it's verification that i
 ## Usage
 
 ```bash
-cd agent-forge
+cd agent-keystone
 python verify/independent_audit.py          # human-readable output
 python verify/independent_audit.py --json   # machine-readable output
 ```
@@ -33,6 +33,6 @@ Group 3 is the heart of this verifier: **it doesn't read the author's assertions
 
 ## Discipline
 
-- **Only reads the code under verification**: it never writes any file under `forge/`; group 3's modifications happen inside a `tempfile` copy.
+- **Only reads the code under verification**: it never writes any file under `keystone/`; group 3's modifications happen inside a `tempfile` copy.
 - **Never cites the author's self-check conclusions**: the evidence for groups 3, 4, and 5 is constructed entirely by this file itself.
 - **Reports measurements as they are**: probe failures, missing environments, and unknown conclusions are all recorded as WARN with the reason written out — never silently skipped.

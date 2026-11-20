@@ -6,12 +6,12 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from forge.cache_state import CacheWarmth, prefix_fingerprint
-from forge.config import Config
-from forge.loop import Agent
-from forge.model import BadRequest, HttpTransport, ModelRouter, Provider, _plan_and_shape
-from forge.policy import Mode, Policy
-from forge.tools import build_builtin_registry
+from keystone.cache_state import CacheWarmth, prefix_fingerprint
+from keystone.config import Config
+from keystone.loop import Agent
+from keystone.model import BadRequest, HttpTransport, ModelRouter, Provider, _plan_and_shape
+from keystone.policy import Mode, Policy
+from keystone.tools import build_builtin_registry
 
 BASE='https://ark.cn-beijing.volces.com/api/coding/v3'
 MODEL='doubao-seed-evolving'

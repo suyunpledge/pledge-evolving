@@ -27,7 +27,7 @@
 
 ## 维护方式
 
-资源在 `forge-gui/locales/<language>.json`，UTF-8；键为稳定的中文原文。主代码显式 `tr(...)` 标记系统文案，使用 `i18n.Label` / `Button` 等控件，或自绘控件的显式文本绑定。不要给用户输入或第三方内容自动套 `tr`。
+资源在 `keystone-gui/locales/<language>.json`，UTF-8；键为稳定的中文原文。主代码显式 `tr(...)` 标记系统文案，使用 `i18n.Label` / `Button` 等控件，或自绘控件的显式文本绑定。不要给用户输入或第三方内容自动套 `tr`。
 
 动态文案采用命名占位符，例如 `tr("当前工作区：{name}", name=repo)`。所有翻译必须保留相同占位符及格式；复杂对象访问和嵌套格式字段不接受。可组合的翻译保持标记，避免用 f-string 或 `str(...)` 提前丢掉绑定。
 
@@ -36,12 +36,12 @@
 运行验证：
 
 ```powershell
-python forge-gui/run_offline_checks.py test_i18n test_plugin_market_ui
-python forge-gui/run_offline_checks.py
+python keystone-gui/run_offline_checks.py test_i18n test_plugin_market_ui
+python keystone-gui/run_offline_checks.py
 ```
 
-测试使用临时 Forge home 与桌面配置，不修改真实语言偏好或 API 密钥。
+测试使用临时 Keystone home 与桌面配置，不修改真实语言偏好或 API 密钥。
 
 本轮验证：**377 个不同测试用例分批全部通过**。包括既有桌面回归、两个授权 / 撤权入口回归、多语言的 8 项检查，以及 10 种语言 × 5 个 DPI 比例的最小窗口检查。
 
-第一次合并运行在末尾多语言组出现异常耗时，暂停了本轮测试进程；没有修改 Forge 应用进程。随后在相同功能源码上启用 Windows DPI 感知，独立多语言组 8 项全部通过（70.4 秒），并补跑了尚无成功记录的 19 项。按实际成功的测试 ID 合并记录，得到 377/377，未将仅开始执行的用例算作通过。异常耗时原因尚未确定，不能据此宣称已解决所有 Tk 或实际应用的响应性问题。
+第一次合并运行在末尾多语言组出现异常耗时，暂停了本轮测试进程；没有修改 Keystone 应用进程。随后在相同功能源码上启用 Windows DPI 感知，独立多语言组 8 项全部通过（70.4 秒），并补跑了尚无成功记录的 19 项。按实际成功的测试 ID 合并记录，得到 377/377，未将仅开始执行的用例算作通过。异常耗时原因尚未确定，不能据此宣称已解决所有 Tk 或实际应用的响应性问题。

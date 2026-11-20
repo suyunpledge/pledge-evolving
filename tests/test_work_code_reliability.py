@@ -8,13 +8,13 @@ import unittest
 from unittest.mock import patch, Mock
 import urllib.error
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'forge-gui'))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'keystone-gui'))
 from work_tools import prepare_calls, invoke
-from forge_client import ForgeGatewayClient, GatewayError
-from forge.development.testing import execute
-from forge.gateway import GatewayConfig, serve
-from forge.policy import Policy, Mode
-from forge.tools import ToolRegistry, ToolSpec, ToolResult
+from keystone_client import KeystoneGatewayClient, GatewayError
+from keystone.development.testing import execute
+from keystone.gateway import GatewayConfig, serve
+from keystone.policy import Policy, Mode
+from keystone.tools import ToolRegistry, ToolSpec, ToolResult
 
 
 class WorkCodeReliabilityTests(unittest.TestCase):
@@ -59,12 +59,12 @@ class WorkCodeReliabilityTests(unittest.TestCase):
         self.assertEqual(result['meta']['execution_state'], 'not_started')
 
     def test_gateway_lost_response_has_queryable_identity_without_repost(self):
-        client = ForgeGatewayClient()
+        client = KeystoneGatewayClient()
         requests = []
         def lost(req, **kwargs):
             requests.append(json.loads(req.data))
             raise urllib.error.URLError('receipt lost')
-        with patch('forge_client.open_response', side_effect=lost):
+        with patch('keystone_client.open_response', side_effect=lost):
             result = invoke({}, lambda: client.call_tool('click', {}))
         self.assertEqual(len(requests), 1)
         self.assertEqual(result['meta']['action_id'], requests[0]['action_id'])
@@ -74,7 +74,7 @@ class WorkCodeReliabilityTests(unittest.TestCase):
     def test_code_pre_cancel_never_launches_but_records_evidence(self):
         with tempfile.TemporaryDirectory() as tmp:
             stop = threading.Event(); stop.set()
-            with patch('forge.development.testing.subprocess.Popen') as launch:
+            with patch('keystone.development.testing.subprocess.Popen') as launch:
                 result = execute([sys.executable, '-c', 'raise SystemExit(99)'], tmp, tmp, stop,
                                  task_id='task', run_id='run')
             launch.assert_not_called()
@@ -98,14 +98,14 @@ class WorkCodeReliabilityTests(unittest.TestCase):
                 policy=Policy(workspace=workspace, mode=Mode.ACCEPT_EDITS), gateway_token='test-key')
             server = serve(cfg)
             thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
-            client = ForgeGatewayClient('http://127.0.0.1:' + str(server.server_address[1]), api_key='test-key')
-            from forge_client import open_response
+            client = KeystoneGatewayClient('http://127.0.0.1:' + str(server.server_address[1]), api_key='test-key')
+            from keystone_client import open_response
             def lose_after_receipt(request, **kw):
                 with open_response(request, **kw) as response:
                     response.read()
                 raise OSError('reply lost after completion')
             try:
-                with patch('forge_client.open_response', side_effect=lose_after_receipt):
+                with patch('keystone_client.open_response', side_effect=lose_after_receipt):
                     result = invoke({}, lambda: client.call_tool('operate', {}))
                 meta = result['meta']
                 req = client._request('GET', f"/v1/runs/{meta['run_id']}/actions/{meta['action_id']}")
@@ -133,9 +133,9 @@ class WorkCodeReliabilityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             process = Mock(returncode=0)
             process.poll.return_value = 0
-            with patch('forge.development.testing.subprocess.Popen', return_value=process), \
-                 patch('forge.development.testing.threading.Thread') as thread, \
-                 patch('forge.development.testing._stop'):
+            with patch('keystone.development.testing.subprocess.Popen', return_value=process), \
+                 patch('keystone.development.testing.threading.Thread') as thread, \
+                 patch('keystone.development.testing._stop'):
                 thread.return_value.is_alive.return_value = True
                 result = execute(['fixture'], tmp, tmp, threading.Event())
             self.assertEqual(result['status'], 'unknown')

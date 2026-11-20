@@ -1,4 +1,4 @@
-# Forge 桌面自动化、连接器与修改预览
+# Keystone 桌面自动化、连接器与修改预览
 
 ## 使用入口
 
@@ -41,7 +41,7 @@ GitHub 更新文件需要现有 sha，修改 Teams 消息须满足账户及 Grap
 
 ## 权限与故障边界
 
-连接器 → Forge ToolRegistry → Policy → 账户/能力授权 → 每次写入确认 → HTTP → Audit。
+连接器 → Keystone ToolRegistry → Policy → 账户/能力授权 → 每次写入确认 → HTTP → Audit。
 
 | 场景 | 执行行为 | 验证 |
 |---|---|---|
@@ -59,14 +59,14 @@ GitHub 更新文件需要现有 sha，修改 Teams 消息须满足账户及 Grap
 | 文件替换失败 | 原文件保留，清理临时文件 | 原子写失败测试 |
 | 工作区切换期间发送 | 保留草稿，等新 Gateway 就绪；不把新项目请求发给旧工作区 | 切换状态测试 |
 
-连接器工具名保留给 Forge，第三方插件不能用同名工具替换连接器。
+连接器工具名保留给 Keystone，第三方插件不能用同名工具替换连接器。
 
-这里是 Forge 执行层的权限门，不是操作系统级沙箱，不能防御已在同一宿主进程运行的任意恶意 Python 代码。已经发送到服务端的写入无法通过本地撤销追回。
+这里是 Keystone 执行层的权限门，不是操作系统级沙箱，不能防御已在同一宿主进程运行的任意恶意 Python 代码。已经发送到服务端的写入无法通过本地撤销追回。
 GUI 使用可取消 HTTP 传输和 20 秒请求截止时间；DNS 解析仍受操作系统控制。独立 urllib 后备调用只有 socket timeout，不承诺绝对的进程终止。
 
 ## 定时任务
 
-支持一次执行及分钟间隔重复，可指定独立 provider/model、项目目录和任务内容。**仅在 Forge 打开时执行**，没有创建 Windows 常驻服务。
+支持一次执行及分钟间隔重复，可指定独立 provider/model、项目目录和任务内容。**仅在 Keystone 打开时执行**，没有创建 Windows 常驻服务。
 调度 Agent 与前台对话独立，只读、最多六步、每次请求最多 2048 输出 tokens、三分钟取消计时；不自动写文件或调用连接器。
 在 **定时任务** 页选择一项任务，再从 **运行记录** 选择某次执行，可查看本地开始时间、状态和脱敏后的输出。每项任务在本地 SQLite 保留最近 20 次；旧数据库升级时保留原先存下的最近一次结果。
 最多 100 条已保存任务。多个 GUI 实例共享同一 home 的数据库；间隔任务不补跑所有错过的周期。
@@ -80,12 +80,12 @@ GUI 使用可取消 HTTP 传输和 20 秒请求截止时间；DNS 解析仍受�
 
 ## 项目与修改预览
 
-**代码预览 → 选择项目工作区** 独立于 Forge 后端源码目录。真实文件树/Git Diff 使用所选项目；项目切换不改变 Forge 可执行入口。
+**代码预览 → 选择项目工作区** 独立于 Keystone 后端源码目录。真实文件树/Git Diff 使用所选项目；项目切换不改变 Keystone 可执行入口。
 对话中经 Gateway 中介的 write_file/edit_file/apply_patch/delete_file/edit_config 修改先显示实际预览，允许同意、拒绝或取消；最长等待五分钟。
 默认不同步。开启自动同步后仍执行 Policy、Secret validator、路径边界和版本检查。
 任务 CLI 模式在关闭同步时使用只读策略；开启后按既有 Policy 写入，当前没有对 CLI 的每一步提供 staged preview。
 每次最多 40 个文件，每文件最多 512 KiB，完整预览最多 120,000 字符；超限拒绝并要求拆分，不静默截断后让用户批准。
-这仅覆盖 Forge 中介的文件工具；不声称能截获任意 shell 或恶意插件自身的磁盘写入。
+这仅覆盖 Keystone 中介的文件工具；不声称能截获任意 shell 或恶意插件自身的磁盘写入。
 
 ## 参考与验证
 
@@ -94,12 +94,12 @@ GUI 使用可取消 HTTP 传输和 20 秒请求截止时间；DNS 解析仍受�
 自动化验证命令：
 
 ```powershell
-python -m forge.selftest
-python -m unittest discover -s forge -t . -p 'test_*.py' -q
-python forge-gui/run_offline_checks.py
+python -m keystone.selftest
+python -m unittest discover -s keystone -t . -p 'test_*.py' -q
+python keystone-gui/run_offline_checks.py
 ```
 
-新增测试：forge/test_desktop_services.py、forge-gui/test_desktop_features.py。现有 DPI、导航、规划、复审、Secret、插件生命周期测试继续运行。
+新增测试：keystone/test_desktop_services.py、keystone-gui/test_desktop_features.py。现有 DPI、导航、规划、复审、Secret、插件生命周期测试继续运行。
 测试均使用临时目录和模拟 HTTP/模型调用；**未用真实账户登录、未执行真实 GitHub/Microsoft 写入、未产生付费模型调用**。
 
 API 依据：

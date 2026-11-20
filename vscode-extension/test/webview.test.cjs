@@ -45,8 +45,8 @@ test('webview is responsive, safe for model text, cancellable and IME-aware', { 
     };
     html = require('../out/view').viewHtml({ cspSource: url, asWebviewUri: resource => url + resource }, '/');
   } finally { Module._load = load; }
-  const browser = await chromium.launch(process.env.FORGE_TEST_BROWSER
-    ? { executablePath: process.env.FORGE_TEST_BROWSER, headless: true }
+  const browser = await chromium.launch(process.env.KEYSTONE_TEST_BROWSER
+    ? { executablePath: process.env.KEYSTONE_TEST_BROWSER, headless: true }
     : process.platform === 'win32' ? { channel: 'msedge', headless: true } : { headless: true });
   try {
     const context = await browser.newContext({ viewport: { width: 320, height: 800 }, deviceScaleFactor: 1.5 });
@@ -65,7 +65,7 @@ test('webview is responsive, safe for model text, cancellable and IME-aware', { 
       await page.waitForFunction(() => document.getElementById('status').textContent.length > 0);
     };
     await update();
-    assert.equal(await page.locator('#welcome').textContent(), '在代码旁边，与 Forge 协作');
+    assert.equal(await page.locator('#welcome').textContent(), '在代码旁边，与 Keystone 协作');
     assert.equal(await page.locator('#planning option').count(), 4);
     await page.locator('#planning').selectOption('high');
     assert.equal(await page.evaluate(() => window.sent.at(-1).planning), 'high');
@@ -124,8 +124,8 @@ test('webview is responsive, safe for model text, cancellable and IME-aware', { 
     await page.waitForFunction(() => document.getElementById('status').textContent === 'Disconnected');
     assert(await page.locator('#connect').isDisabled()); assert(await page.locator('#send').isDisabled());
     state.trusted = true; state.language = 'zh-cn'; state.transcript = []; await update();
-    await page.waitForFunction(() => document.getElementById('welcome').textContent === '在代码旁边，与 Forge 协作');
-    await page.screenshot({ path: path.join(osTemp(), 'forge-vscode-webview.png') });
+    await page.waitForFunction(() => document.getElementById('welcome').textContent === '在代码旁边，与 Keystone 协作');
+    await page.screenshot({ path: path.join(osTemp(), 'keystone-vscode-webview.png') });
     await context.close();
   } finally { await browser.close(); await new Promise(resolve => server.close(resolve)); }
 });

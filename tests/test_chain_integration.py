@@ -9,8 +9,8 @@ import test_client_runtime as client_fixtures
 import test_runtime_convergence as gateway_fixtures
 import test_development_execution as editor_fixtures
 from client import server as client
-from forge.client_runs import RunStore
-from forge.test_task_planning import Router
+from keystone.client_runs import RunStore
+from keystone.test_task_planning import Router
 
 
 def acceptance(path='result.txt'):
@@ -50,7 +50,7 @@ class ClientChainTests(unittest.TestCase):
     def test_http_acceptance_success_and_zero_spawn_limits_reach_agent(self):
         (self.ws / 'result.txt').write_text('ready', encoding='utf-8')
         self.use_transport(self.transport(['done']))
-        import forge.loop as loop
+        import keystone.loop as loop
         build = loop.build_agent
         captured = []
         def capture(**kwargs):
@@ -123,9 +123,9 @@ class EditorChainTests(unittest.TestCase):
 class ImportBoundaryTests(unittest.TestCase):
     def test_values_and_turn_import_without_execution_or_vendor_protocols(self):
         result = subprocess.run([sys.executable, '-c',
-            'import sys; import forge.runtime_types; import forge.tool_turn; '
-            'assert "forge.execution" not in sys.modules; '
-            'assert "forge.tools" not in sys.modules; assert "forge.toolwire" not in sys.modules'],
+            'import sys; import keystone.runtime_types; import keystone.tool_turn; '
+            'assert "keystone.execution" not in sys.modules; '
+            'assert "keystone.tools" not in sys.modules; assert "keystone.toolwire" not in sys.modules'],
             cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 

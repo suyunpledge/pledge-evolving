@@ -1,4 +1,4 @@
-// Forge 图标 v2 —— 24 网格，活动区 3–21，1.75 圆头描边，圆角 2–2.5。
+// Keystone 图标 v2 —— 24 网格，活动区 3–21，1.75 圆头描边，圆角 2–2.5。
 // 只用 line / polyline / polygon / circle / rect / arc，可无损落回 ui_icons.ICONS。
 (function () {
   function gear() {

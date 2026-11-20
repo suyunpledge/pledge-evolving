@@ -4,7 +4,7 @@
 
 ## 实现与安全边界
 
-`forge/secrets.py` 提供独立 `SecretStore` 抽象和进程内 `MemorySecretStore`。
+`keystone/secrets.py` 提供独立 `SecretStore` 抽象和进程内 `MemorySecretStore`。
 真实映射不落 Session、项目文件或工具响应。每个 session/operation 使用独立随机 scope；
 引用为 `{{SECRET_REF:128-bit-random-id}}`，同一 scope 内稳定，ID 不使用 Secret 的哈希、前后缀或长度。
 Facade 没有公开的 resolve/list/export。关闭 scope 会撤销映射。
@@ -35,8 +35,8 @@ URL 用户信息密码以及完整/未闭合 Private Key 块。JSON/YAML/TOML/.e
 
 Python private 属性、子进程超时、插件 ack 均不能阻止同一 OS 用户的原生代码读取文件/环境变量，
 也不能保护宿主进程内存。因此 protected Agent 禁止 shell/notebook/native 工具和原生插件 import/register/call，
-原生 federation subprocess 也默认拒绝；受控声明式插件继续通过 Forge Registry → Policy → 工具桥执行。
-Agent 不能改写 Forge 执行源码、受保护控制目录或通过配置 patch 提升 Policy/模块/插件授权。
+原生 federation subprocess 也默认拒绝；受控声明式插件继续通过 Keystone Registry → Policy → 工具桥执行。
+Agent 不能改写 Keystone 执行源码、受保护控制目录或通过配置 patch 提升 Policy/模块/插件授权。
 旧 worker 仅保留可信宿主明确传入 `secret_isolation=False` 的接口，生命周期回归在此模式运行；
 这个 opt-out **不具有 Secret 隔离保证**，GUI 没有替模型开启此开关。
 
@@ -65,8 +65,8 @@ Agent 不能改写 Forge 执行源码、受保护控制目录或通过配置 pat
 支持 add/replace/remove/test，JSON Pointer 路径，最多 100 操作，文件最大 1 MiB。
 校验引用所有权、位置和 protected 字段，保留空值与环境变量引用；拒绝伪造、互换、搬到普通字段和原文重写。
 请求地址、厂商、代理、TLS 验证、认证 headers 等变更也绑定 Secret 使用授权，防止保留 Key 却改到攻击者端点。
-跨线程及协作 Forge 进程使用锁、revision 和原文 CAS；验证、序列化重读、fsync、同目录原子 replace 后才返回成功。
-外部编辑器不遵守 Forge 锁时仍有极短的最终比较/replace 竞争窗口，重新检查可发现之后的变更。
+跨线程及协作 Keystone 进程使用锁、revision 和原文 CAS；验证、序列化重读、fsync、同目录原子 replace 后才返回成功。
+外部编辑器不遵守 Keystone 锁时仍有极短的最终比较/replace 竞争窗口，重新检查可发现之后的变更。
 
 默认禁止新增/替换/删除 Secret。可信的人类审批控制器可调用
 `authorize_config_secret` 或 `authorize_config_destination`，绑定 scope、文件、revision、字段和精确引用/目的地。
@@ -97,10 +97,10 @@ JSON/JSONL 响应采用结构化脱敏，避免标点 Secret 破坏协议分隔�
 凭据极短或与普通协议标量相同可能导致保守误脱敏；不能以 JSON 必然含有字符 `{` 为理由宣称泄露了密码 `{`。
 
 GUI 原有 Key 编辑器保留，展示固定完整遮罩 + `Protected`，不显示前后缀或原值长度。
-附件和配置检查只给非阻塞保护数量提示。Forge 的公开 rollout `session_id` 保持原身份，
+附件和配置检查只给非阻塞保护数量提示。Keystone 的公开 rollout `session_id` 保持原身份，
 只对该宿主字段跳过凭据字段分类，其内容仍经过已知值脱敏；嵌套 Session Token 不豁免。
 
-兼容 GUI 密钥文件仍为原来的用户目录 `~/.forge/secrets.json`，没有迁入项目或 Session，
+兼容 GUI 密钥文件仍为原来的用户目录 `~/.keystone/secrets.json`，没有迁入项目或 Session，
 其路径和原子保存临时文件被登记禁止 Agent 读取。它是既有的本地明文存储，
 POSIX 0600 **不等于 Windows 加密或系统凭据保险箱**。本次新增的引用映射仅在内存。
 没有自动清除旧历史文件或把已有项目明文密钥迁移到 OS Keychain；旧历史读取/重新保存时脱敏。
@@ -138,7 +138,7 @@ GUI 安全/交互/Client/子任务/适配检查 **48/48**；原插件 adversaria
 回归还发现 Windows CacheWarmth 构造器未加锁读取会阻止另一进程的原子 replace：
 构造读取已复用原事务锁，原“3 进程共 90 条”用例先失败，再连续三次通过；没有改缓存规划算法。
 
-新增安全合同位于 `forge/test_secret_virtualization.py` 与 `forge-gui/test_secret_boundary.py`。
+新增安全合同位于 `keystone/test_secret_virtualization.py` 与 `keystone-gui/test_secret_boundary.py`。
 关键缺陷先新增失败用例，再修复（原文进入模型、Ref 篡改、目的地变更、数字类型、跨 operation Ref、控制字段提升）。
 进程/线程未处理异常、Tk crash callback、logging extras/stack_info 也有出口过滤和攻击测试，
 不向 crash callback 传递含原值的 exception/traceback 对象。
@@ -147,16 +147,16 @@ GUI 安全/交互/Client/子任务/适配检查 **48/48**；原插件 adversaria
 用户原先给每个目标模型的上限是 5,000,000 tokens，此探针每模型设置 20,000 reserve 上限，只发送小请求。
 千问账户既有欠费阻塞未重试；没有声称通过千问真实联网验证。
 探针显式 `--execute` 才联网，不在 unittest discovery 中付费。
-本机捕获文件在系统 Temp 下 `forge-secret-t10-review.json`，不作为项目 Secret 文件提交。
+本机捕获文件在系统 Temp 下 `keystone-secret-t10-review.json`，不作为项目 Secret 文件提交。
 
 可复验命令（离线，合成 Secret；GUI runner 将真实用户状态替换为临时目录）：
 
 ```powershell
-python -m forge.selftest
-python -m unittest forge.test_secret_virtualization forge.test_execution_review forge.test_model_adaptation forge.test_read_scope
+python -m keystone.selftest
+python -m unittest keystone.test_secret_virtualization keystone.test_execution_review keystone.test_model_adaptation keystone.test_read_scope
 python -m unittest discover -s tests
-python forge-gui/run_offline_checks.py test_secret_boundary test_interactions
-python forge-gui/run_offline_checks.py test_plugin_adversarial test_plugin_runtime test_plugin_capabilities
+python keystone-gui/run_offline_checks.py test_secret_boundary test_interactions
+python keystone-gui/run_offline_checks.py test_plugin_adversarial test_plugin_runtime test_plugin_capabilities
 ```
 
-部署需要重启 Forge/Gateway，使已有进程改用新的请求边界。没有打包、发布或改 EXE。
+部署需要重启 Keystone/Gateway，使已有进程改用新的请求边界。没有打包、发布或改 EXE。

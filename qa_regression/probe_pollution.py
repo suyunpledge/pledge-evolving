@@ -12,8 +12,8 @@ from pathlib import Path
 
 from _bootstrap import check, summary  # noqa: E402
 
-import forge.phase_models as pm  # noqa: E402
-from forge.development.state import ModeState  # noqa: E402
+import keystone.phase_models as pm  # noqa: E402
+from keystone.development.state import ModeState  # noqa: E402
 
 
 def scenario(label: str):
@@ -42,13 +42,13 @@ def main() -> int:
     import importlib
 
     suspects = [
-        "forge.loop",
-        "forge.policy",
-        "forge.tools",
-        "forge.test_task_planning",
-        "forge.test_phase_models",
-        "forge.model",
-        "forge.session",
+        "keystone.loop",
+        "keystone.policy",
+        "keystone.tools",
+        "keystone.test_task_planning",
+        "keystone.test_phase_models",
+        "keystone.model",
+        "keystone.session",
     ]
     changed = None
     for name in suspects:

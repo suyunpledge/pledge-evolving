@@ -19,15 +19,15 @@ import unittest
 from unittest.mock import Mock, patch
 import zlib
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'forge-gui'))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'keystone-gui'))
 from computer_panel import ComputerLane, ComputerPanel
 from phase_client import VisionClient
-from forge.computer_capture import _chunk, capture_window
-from forge.computer_use import ComputerSession
-from forge.computer_win32 import WindowsControlDriver
-from forge.model import Completion, Usage
-from forge.policy import Policy, Mode, Sandbox
-from forge.secrets import SecretScope
+from keystone.computer_capture import _chunk, capture_window
+from keystone.computer_use import ComputerSession
+from keystone.computer_win32 import WindowsControlDriver
+from keystone.model import Completion, Usage
+from keystone.policy import Policy, Mode, Sandbox
+from keystone.secrets import SecretScope
 
 
 def fixture_png():
@@ -188,11 +188,11 @@ class VisionTests(unittest.TestCase):
 class WindowTests(unittest.TestCase):
     def setUp(self):
         self.isolated = (self._testMethodName == 'test_real_selected_window_png_and_closed_target'
-                         and os.environ.get('FORGE_NATIVE_CAPTURE_FIXTURE') != '1')
+                         and os.environ.get('KEYSTONE_NATIVE_CAPTURE_FIXTURE') != '1')
         if self.isolated: return
-        self.root = tk.Tk(); self.root.title('Forge owned screenshot fixture')
+        self.root = tk.Tk(); self.root.title('Keystone owned screenshot fixture')
         self.root.geometry('420x220+20+20')
-        tk.Label(self.root, text='FORGE VISION TEST 4729',bg='#ff0000',fg='white',font=('Arial',18)).pack(fill='both',expand=True)
+        tk.Label(self.root, text='KEYSTONE VISION TEST 4729',bg='#ff0000',fg='white',font=('Arial',18)).pack(fill='both',expand=True)
         self.root.update()
         self.addCleanup(self.root.destroy)
 
@@ -213,7 +213,7 @@ class WindowTests(unittest.TestCase):
                 "import sys,unittest; sys.path.insert(0,'tests'); "
                 "unittest.main(module='test_computer_vision',argv=['fixture','WindowTests.test_real_selected_window_png_and_closed_target','-v'])"],
                 cwd=Path(__file__).resolve().parents[1],
-                env={**os.environ,'FORGE_NATIVE_CAPTURE_FIXTURE':'1'}, capture_output=True,
+                env={**os.environ,'KEYSTONE_NATIVE_CAPTURE_FIXTURE':'1'}, capture_output=True,
                 timeout=20, creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
             self.assertEqual(result.returncode,0,result.stderr.decode('utf-8','replace'))
             return

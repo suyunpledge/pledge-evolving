@@ -3,7 +3,7 @@ setlocal enabledelayedexpansion
 cd /d "%~dp0"
 echo.
 echo  =============================
-echo   Planet evolving (forge)
+echo   Planet evolving (keystone)
 echo  =============================
 echo.
 set /p TASK=Enter task: 

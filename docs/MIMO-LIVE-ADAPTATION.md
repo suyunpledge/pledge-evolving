@@ -4,7 +4,7 @@
 
 ## 测试范围
 
-新增 `scripts/verify_mimo_live.py`，必须显式传入 `--live`。使用 Python 标准库和 Forge 的 `HttpTransport` / `ModelRouter` / `Agent`，不是另一套模拟 SDK。
+新增 `scripts/verify_mimo_live.py`，必须显式传入 `--live`。使用 Python 标准库和 Keystone 的 `HttpTransport` / `ModelRouter` / `Agent`，不是另一套模拟 SDK。
 
 - 协议探针：要求 `add(17,25)`，同题重发，然后把原生调用及工具结果回放给模型；分别测试关闭和开启思考。
 - Agent 探针：真实执行 `read_file → write_file → read_file`，输入为隔离目录中的 JSON。第一轮写出总量 42 及 alpha/beta，第二轮从新文件写出总量 46 及 gamma/delta。两轮均由宿主 `workspace.json_value` 环境探针验收，并独立比较最终 JSON 和全部 id。
@@ -44,7 +44,7 @@ pro 最终第 4、7 个请求分别只报 256、128 缓存 token；对应请求�
 1. 在 `VendorAdapter.shape_request()` 增加请求兼容边界，MiMo 的处理在 `_plan_and_shape()` 内、缓存指纹计算之前执行。直连与 Gateway 共用，不另建私有发送路径。
 2. 对已识别的 MiMo 2.6 家族，把默认与显式开启思考规范成 `thinking.type=enabled`，有工具时统一使用 `tool_choice=auto`。等价请求得到同一实际请求形状及本地缓存指纹；关闭思考仍独立分区。模型别名绑定同样生效，未核实的未来型号不套用这些约束。
 3. 思考开启时移除会被后端覆盖的 temperature/top_p；关闭思考保留受支持的自定义采样，并校验 temperature 的 0–1.5 范围。测试中的 0.7 不再被误解为思考模式下的有效采样设置。
-4. MiMo 官方只承诺 `tool_choice=auto`，非 auto 会被移除。Forge 现在对 none/required/指定函数在发请求前明确报不支持，避免把降级 auto 当作约束已生效。旧 MiMo wire 验证脚本改为 auto 加宿主结果检查。
+4. MiMo 官方只承诺 `tool_choice=auto`，非 auto 会被移除。Keystone 现在对 none/required/指定函数在发请求前明确报不支持，避免把降级 auto 当作约束已生效。旧 MiMo wire 验证脚本改为 auto 加宿主结果检查。
 5. 保留原生工具及最终回复的 reasoning_content；这一能力由上一轮跨会话前缀实现提供，本轮用真实 MiMo API 验证。没有把 reasoning 文本中的伪工具片段提升为可执行动作。
 6. 补齐 `repetition_truncation` / `content_filter` 的停止处理：不解析为可执行工具，也不把模型文字当成功结束，保留 usage 和明确失败原因。这两个异常分支使用离线夹具验证，本次线上没有触发它们。
 7. 更新模型行为画像，去掉“推理参数一变就必然全价重读”的泛化诊断。实测开关思考后的短请求仍可能报告命中；本地保守分区不等于服务端实际零命中。
@@ -68,9 +68,9 @@ pro 最终第 4、7 个请求分别只报 256、128 缓存 token；对应请求�
 核心与客户端回归日志为 `reports/mimo-adapter-core.log`、`reports/mimo-adapter-runtime.log`，专项日志为 `reports/mimo-adapter-new-tests.log`；自检及空白检查分别见 `reports/mimo-adapter-selftest.log`、`reports/mimo-adapter-whitespace.log`。
 
 ```powershell
-python -m unittest forge.test_mimo_adapter forge.test_vendor_wire forge.test_model_kinds -q
-python -m unittest discover -s forge -t . -q
-python -m forge.cli selftest
+python -m unittest keystone.test_mimo_adapter keystone.test_vendor_wire keystone.test_model_kinds -q
+python -m unittest discover -s keystone -t . -q
+python -m keystone.cli selftest
 python scripts/budget_check.py
 
 # 下列命令会调用真实 API 并消耗 Token Plan 额度。

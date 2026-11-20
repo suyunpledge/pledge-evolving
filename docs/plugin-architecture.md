@@ -1,4 +1,4 @@
-# Forge 插件能力与执行边界
+# Keystone 插件能力与执行边界
 
 更新：2026-10-04。本文描述当前源码行为；不承诺未实现的沙箱、签名或 CLI。
 
@@ -18,12 +18,12 @@ discover → inspect → install → verify → acknowledge → enable → grant
 
 | 状态 | 当前含义 |
 |---|---|
-| installed | 文件已复制到 `~/.forge/plugins/<id>`，未自动执行 |
+| installed | 文件已复制到 `~/.keystone/plugins/<id>`，未自动执行 |
 | verified | 有界扫描并计算当前包文件指纹；**不是发布者身份或签名验证** |
 | acknowledged | 用户知悉当前指纹对应的文件和能力声明；没有执行授权 |
-| enabled | 可被 Forge 检查和注册；没有具体能力的授权仍不可调用 |
+| enabled | 可被 Keystone 检查和注册；没有具体能力的授权仍不可调用 |
 | granted | 用户逐项授予当前文件版本在某工作区或某对话中的能力 |
-| active | 当前范围的授权有效，并且 Forge 网关确实提供对应的宿主工具 |
+| active | 当前范围的授权有效，并且 Keystone 网关确实提供对应的宿主工具 |
 
 新声明式能力插件必须先知悉再启用。旧格式条目的兼容状态不等于执行权限：授予能力
 仍要求当前版本已知悉。安装和更新不自动启用，不继承旧知悉或旧授权。
@@ -40,7 +40,7 @@ discover → inspect → install → verify → acknowledge → enable → grant
 
 ## 声明式工具格式
 
-清单文件名是 `forge-plugin.json`。例如：
+清单文件名是 `keystone-plugin.json`。例如：
 
 ```json
 {
@@ -77,18 +77,18 @@ discover → inspect → install → verify → acknowledge → enable → grant
 旧 `workspace:read` / `workspace:write` 权限规范化为 `repo.read` / `repo.write`；
 未知能力、任意 Python、shell 或未声明的能力不产生可执行工具。
 参数只支持与目标文件工具匹配的封闭平面 schema；拒绝自定义 callable、代码和未知执行字段。
-工具名冲突拒绝整组贡献，不能覆盖 Forge 内置名、`forge_` 别名或先注册的插件工具。
+工具名冲突拒绝整组贡献，不能覆盖 Keystone 内置名、`keystone_` 别名或先注册的插件工具。
 
 ## 真实执行链
 
 ```text
 manifest + 当前指纹
-  → Forge CapabilityRuntime（不 import 插件代码）
-  → Forge ToolRegistry 注册工具别名
+  → Keystone CapabilityRuntime（不 import 插件代码）
+  → Keystone ToolRegistry 注册工具别名
   → 检查已知悉/启用/授权/工作区/session/代次
   → 检查路径及有界参数
   → 写入调用准入审计
-  → Forge gateway /v1/tools/call
+  → Keystone gateway /v1/tools/call
   → 网关实际配置的 ToolRegistry + Policy
   → 权限模式与文件路径限制
   → 宿主文件 handler
@@ -102,18 +102,18 @@ manifest + 当前指纹
 这一协议时，客户端不发送插件执行请求，市场提示更新并重启；不会静默忽略插件权限上下文。
 插件 grant 不修改 Policy allow 列表，不更改 gateway 的 permission profile。
 网关无 Policy 时拒绝调用；当前 headless 网关没有交互审批器，未解决的 ASK 降为 DENY。
-用户可以按 Forge 原有方式配置 Policy，授权窗口不能自行代替审批。
+用户可以按 Keystone 原有方式配置 Policy，授权窗口不能自行代替审批。
 
 文件操作限制：规范路径必须留在授权工作区，拒绝越界链接/目录穿越、设备路径和 NTFS
 附加数据流；现有文件上限 2 MiB，请求上限 256 KiB，目录上限 2,000 项。
 具有多个链接的文件及非普通文件（如管道/设备）不交给插件文件工具，防止硬链接越界或阻塞。
-Forge home 中的授权、配置、插件和审计文件不能由插件读取或改写；当前宿主 GUI/框架代码
+Keystone home 中的授权、配置、插件和审计文件不能由插件读取或改写；当前宿主 GUI/框架代码
 及启动入口也不能由插件改写，即使这些路径位于授权工作区中。
 GUI 使用 3 秒工具 RPC 超时；这是网络等待上限，**不能宣称终止网关内正在执行的 I/O**。
 不执行第三方 Python，所以声明式插件不能用 import、子进程或网络调用绕过此链。
 
 该 broker **不是 OS 沙箱**。其他本机进程并发更换文件/链接、底层文件系统 I/O、被篡改的
-宿主或网关不在这个边界的保护范围。Forge 的原有路径策略也不是操作系统级资源隔离。
+宿主或网关不在这个边界的保护范围。Keystone 的原有路径策略也不是操作系统级资源隔离。
 
 ## 多类型贡献
 
@@ -144,7 +144,7 @@ GUI 使用 3 秒工具 RPC 超时；这是网络等待上限，**不能宣称终
 - 内置目录条目可以不写 `file`，正文内联在 `provides.skill_body`（≤8 KiB），
   避免为随程序分发的示例打包额外资源文件。
 - 技能工具调用返回正文文本；不接受参数；授予 `skill.read` 能力后才会出现在
-  模型 schema 里。技能名与工具名共用同一冲突规则（内置名、`forge_` 前缀、
+  模型 schema 里。技能名与工具名共用同一冲突规则（内置名、`keystone_` 前缀、
   跨插件重名、同插件 tool/skill 重名都整组拒绝）。
 - `skill.read` 与 `repo.read/repo.write` 一样走逐项授权（grant）与撤销；
   它不涉及工作区文件，也不经过网关执行器，因此调用不发 `plugin_context`。
@@ -158,11 +158,11 @@ GUI 使用 3 秒工具 RPC 超时；这是网络等待上限，**不能宣称终
 清单 `requires` 自 2026-10-12 起为硬检查（此前只进指纹，从未校验）：
 
 ```json
-{"forge": ">=0.7.0", "plugins": {"other-id": ">=1.0 <2.0"}}
+{"keystone": ">=0.7.0", "plugins": {"other-id": ">=1.0 <2.0"}}
 ```
 
 - 安装与启用都会执行 `plugin_dependencies.check_requirements`：
-  Forge 版本、依赖插件已安装且版本满足、依赖环（含自依赖）。
+  Keystone 版本、依赖插件已安装且版本满足、依赖环（含自依赖）。
 - 只支持比较运算符（`>= <= > < == != =`，空格/逗号 AND 连接）；`^ ~ *` 等
   范围语法明确拒绝，fail closed。版本按点分段数值比较，缺段补零（1.0 == 1.0.0）。
 - 未知 `requires` 键不硬拒（兼容旧清单），doctor 诊断会提示。
@@ -187,15 +187,15 @@ GUI 使用 3 秒工具 RPC 超时；这是网络等待上限，**不能宣称终
 
 ## 审计与测试
 
-生命周期记录：`~/.forge/marketplace/log.ndjson`。
-插件调用记录：`~/.forge/marketplace/plugin-audit.ndjson`，包括调用 ID、插件、指纹、别名、
+生命周期记录：`~/.keystone/marketplace/log.ndjson`。
+插件调用记录：`~/.keystone/marketplace/plugin-audit.ndjson`，包括调用 ID、插件、指纹、别名、
 宿主目标、工作区、session、准入、dispatch、结果与授权裁决；不保存文件正文或模型提示。
 准入审计写入失败会阻止执行。结果阶段磁盘写入失败会报告失败，但不能回滚已完成的文件操作，
 先前准入记录仍提供排障线索。
 如果已 dispatch 的调用后来失败，会返回 `execution_may_have_completed`，避免调用方把
 结果审计失败或网络等待失败误当成“尚未执行”并盲目重试。
 
-离线回归入口：`forge-gui/run_offline_checks.py`，使用临时 home 和本地测试网关。
+离线回归入口：`keystone-gui/run_offline_checks.py`，使用临时 home 和本地测试网关。
 插件相关测试：`test_plugin_capabilities.py`、`test_plugin_market_ui.py`、
 `test_plugin_skills.py`（技能执行器真实验证）、`test_plugin_dependencies.py`
 （requires/版本冲突/环/更新）、`test_plugin_cli.py`（headless 生命周期、doctor、

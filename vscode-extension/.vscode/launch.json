@@ -1,7 +1,7 @@
 {
   "version": "0.2.0",
   "configurations": [{
-    "name": "Run Forge Extension", "type": "extensionHost", "request": "launch",
+    "name": "Run Keystone Extension", "type": "extensionHost", "request": "launch",
     "args": ["--extensionDevelopmentPath=${workspaceFolder}"],
     "outFiles": ["${workspaceFolder}/out/**/*.js"], "preLaunchTask": "npm: compile"
   }]

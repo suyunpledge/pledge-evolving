@@ -3,12 +3,12 @@ import json
 import unittest
 
 import test_client_runtime as fixtures
-from forge.execution import ActionExecutor, ActionRequest, create_execution_context
-from forge.policy import Policy, Mode, Sandbox
-from forge.tools import build_builtin_registry
-from forge.loop import Agent
-from forge.model import Completion, Usage
-from forge.test_project_rules import Router
+from keystone.execution import ActionExecutor, ActionRequest, create_execution_context
+from keystone.policy import Policy, Mode, Sandbox
+from keystone.tools import build_builtin_registry
+from keystone.loop import Agent
+from keystone.model import Completion, Usage
+from keystone.test_project_rules import Router
 from client import server as client
 
 
@@ -89,7 +89,7 @@ class PlanningExecutionControls(unittest.TestCase):
         self.assertFalse((self.ws / 'blocked.txt').exists())
 
     def test_follow_execution_does_not_silently_select_a_small_model(self):
-        from forge.model import ModelRouter, Provider
+        from keystone.model import ModelRouter, Provider
         calls = []
         class Transport:
             def complete(inner, provider, model, messages, **options):

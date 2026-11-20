@@ -71,9 +71,9 @@
 测试覆盖：新增目录及无根规则场景的 append-only 原生前缀、变更/删除清除所有旧片段、压缩与续接后的完整有效规则、规划阶段只携带一份完整规则、单次任务正文与独立完整 anchor、两种协议的摘要结果尾部保留、Premium 宿主任务及参数不透传，以及预算暂停不冒充完成、完整原生交换续接、旧客户端历史拒绝和错误/取消清理。
 
 ```powershell
-python -m unittest forge.test_token_efficiency forge.test_conversation_prefix forge.test_task_planning -q
-python -m unittest discover -s forge -t . -q
-python -m forge.cli selftest
+python -m unittest keystone.test_token_efficiency keystone.test_conversation_prefix keystone.test_task_planning -q
+python -m unittest discover -s keystone -t . -q
+python -m keystone.cli selftest
 python scripts/budget_check.py
 git -c core.whitespace=cr-at-eol diff --check
 

@@ -11,12 +11,13 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from verify_mimo_live import Recorder, router_for, wire_probe
-from forge.model import Provider, HttpTransport, ModelRouter
-from forge.loop import Agent, LoopLimits
-from forge.compaction import ContextBudget
-from forge.policy import Policy, Mode, Sandbox
-from forge.tools import build_builtin_registry
-from forge.cache_metrics import cache_coverage
+from keystone.model import Provider, HttpTransport, ModelRouter
+from keystone.loop import Agent, LoopLimits
+from keystone.compaction import ContextBudget
+from keystone.policy import Policy, Mode, Sandbox
+from keystone.tools import build_builtin_registry
+from keystone.cache_metrics import cache_coverage
+from keystone.compat import user_layer
 
 
 class DeepSeekRecorder(Recorder):
@@ -30,7 +31,7 @@ class DeepSeekRecorder(Recorder):
 
 
 def provider_for(chosen, home):
-    rows = json.loads((home / 'forge.patch.json').read_text(encoding='utf-8-sig'))
+    rows = json.loads(user_layer(home).read_text(encoding='utf-8-sig'))
     secrets = json.loads((home / 'secrets.json').read_text(encoding='utf-8-sig'))
     for row in rows:
         config = row.get('config', {})
@@ -135,9 +136,9 @@ def main():
         parser.error('--live is required for paid API calls')
     if args.output.exists():
         parser.error('Use a new report path to preserve earlier evidence')
-    provider = provider_for(args.model, Path.home() / '.forge')
+    provider = provider_for(args.model, Path.home() / '.keystone')
     provider.reasoning_mode = args.reasoning_mode
-    planner = provider_for(args.planner_model, Path.home() / '.forge') if args.planner_model else None
+    planner = provider_for(args.planner_model, Path.home() / '.keystone') if args.planner_model else None
     if planner:
         planner.name = 'deepseek-planner'
     recorder = DeepSeekRecorder(args.request_limit, retries=args.retries)
@@ -145,7 +146,7 @@ def main():
     result = {'model': args.model, 'planner_model': args.planner_model, 'scenario': args.scenario,
               'reasoning_mode':args.reasoning_mode, 'cases': []}
     try:
-        with tempfile.TemporaryDirectory(prefix='forge-deepseek-live-') as tmp:
+        with tempfile.TemporaryDirectory(prefix='keystone-deepseek-live-') as tmp:
             root = Path(tmp)
             if args.scenario == 'wire':
                 result['cases'] = wire_probe(provider, recorder)

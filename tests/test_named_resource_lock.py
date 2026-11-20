@@ -9,7 +9,7 @@ import threading
 import unittest
 import uuid
 
-from forge.runtime_lock import named_resource_lock, LockCancelled
+from keystone.runtime_lock import named_resource_lock, LockCancelled
 
 
 class NamedResourceLockTests(unittest.TestCase):
@@ -39,7 +39,7 @@ class NamedResourceLockTests(unittest.TestCase):
         for kind in ('computer-target', 'computer-input'):
             source = f'''
 import sys
-from forge.runtime_lock import named_resource_lock
+from keystone.runtime_lock import named_resource_lock
 print('ready', flush=True)
 with named_resource_lock({kind!r},sys.argv[1]):
     print('acquired', flush=True)
@@ -56,7 +56,7 @@ with named_resource_lock({kind!r},sys.argv[1]):
     def test_os_lock_wait_cancels_without_waiting_for_owner(self):
         process, output = self.child('''
 import sys
-from forge.runtime_lock import named_resource_lock
+from keystone.runtime_lock import named_resource_lock
 with named_resource_lock('computer-target',sys.argv[1]):
     print('held',flush=True)
     sys.stdin.readline()

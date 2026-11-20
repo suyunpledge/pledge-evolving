@@ -20,7 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from forge.channels import (
+from keystone.channels import (
     Cursor,
     InboundMessage,
     SeenSet,
@@ -29,7 +29,7 @@ from forge.channels import (
     available_channels,
     session_for,
 )
-from forge.channels.weixin import (
+from keystone.channels.weixin import (
     WeixinChannel,
     WeixinConfig,
     _client_version,
@@ -116,19 +116,19 @@ with tempfile.TemporaryDirectory() as td:
     cred.write_text(json.dumps({"token": "from-file"}), encoding="utf-8")
     import os
 
-    os.environ["FORGE_TEST_WX_TOKEN"] = "from-env"
+    os.environ["KEYSTONE_TEST_WX_TOKEN"] = "from-env"
     try:
         # env wins
-        cfg = WeixinConfig(token_env="FORGE_TEST_WX_TOKEN", token_file=str(cred), token="inline")
+        cfg = WeixinConfig(token_env="KEYSTONE_TEST_WX_TOKEN", token_file=str(cred), token="inline")
         assert cfg.resolve_token() == "from-env"
         # file wins over inline when env is empty
-        cfg2 = WeixinConfig(token_env="FORGE_TEST_WX_TOKEN_UNSET", token_file=str(cred), token="inline")
+        cfg2 = WeixinConfig(token_env="KEYSTONE_TEST_WX_TOKEN_UNSET", token_file=str(cred), token="inline")
         assert cfg2.resolve_token() == "from-file"
         # inline is the last resort
         cfg3 = WeixinConfig(token="inline")
         assert cfg3.resolve_token() == "inline"
     finally:
-        os.environ.pop("FORGE_TEST_WX_TOKEN", None)
+        os.environ.pop("KEYSTONE_TEST_WX_TOKEN", None)
 
     # no source at all must raise, not silently yield ""
     try:

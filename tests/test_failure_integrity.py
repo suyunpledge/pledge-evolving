@@ -9,9 +9,9 @@ import threading
 import unittest
 from unittest.mock import Mock, patch
 
-from forge import config
-from forge.gateway import build_handler, GatewayConfig
-from forge.session import Event, Session, SessionIndex
+from keystone import config
+from keystone.gateway import build_handler, GatewayConfig
+from keystone.session import Event, Session, SessionIndex
 
 
 class SessionTests(unittest.TestCase):

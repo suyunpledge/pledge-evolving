@@ -5,9 +5,9 @@ import sys
 import tempfile
 import unittest
 
-from forge.execution import ActionExecutor,ActionRequest,create_execution_context
-from forge.policy import Policy,Mode,Sandbox,ToolEffect
-from forge.tools import build_builtin_registry,ToolSpec
+from keystone.execution import ActionExecutor,ActionRequest,create_execution_context
+from keystone.policy import Policy,Mode,Sandbox,ToolEffect
+from keystone.tools import build_builtin_registry,ToolSpec
 
 
 class CommandFeedbackTests(unittest.TestCase):

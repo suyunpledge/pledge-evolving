@@ -24,9 +24,9 @@
 
 当前只对已核实的 MiMo 2.6 家族及其显式模型别名绑定启用 on/off；其他模型明确报不支持。`thinking` / `enable_thinking` 等显式请求参数优先。报告里的 `execution.reasoning_default` 区分 provider 默认与请求覆盖。
 
-链路为 `Config → ModelRouter.from_config → Provider → _plan_and_shape → HttpTransport`；Gateway 的 `provider_options` 使用同一规则。它与 Forge 的沉思扩展开关是不同概念。切换推理默认值保留可信工具历史；不同推理参数的本地温暖度仍分开记录，压缩事务也检测模式变化。
+链路为 `Config → ModelRouter.from_config → Provider → _plan_and_shape → HttpTransport`；Gateway 的 `provider_options` 使用同一规则。它与 Keystone 的沉思扩展开关是不同概念。切换推理默认值保留可信工具历史；不同推理参数的本地温暖度仍分开记录，压缩事务也检测模式变化。
 
-如需使用，在已有 provider 行的 `config` 中增加 `"reasoningMode": "off"`，保留该行其他字段；Forge 的配置层是整行替换。本轮没有据少量夹具结果自动改掉用户默认值。
+如需使用，在已有 provider 行的 `config` 中增加 `"reasoningMode": "off"`，保留该行其他字段；Keystone 的配置层是整行替换。本轮没有据少量夹具结果自动改掉用户默认值。
 
 ### 冻结模型原始工具表面，补齐协议边界
 
@@ -74,9 +74,9 @@
 专项 65 项通过（包含既有协议用例，不重复计数）。核心回归 441 项（2 跳过），客户端与运行链 206 项（1 跳过），合计 **644 项通过、3 项跳过、0 失败**；框架自检 **595/595**。代码预算 147 个文件、Git 空白检查通过。
 
 ```powershell
-python -m unittest forge.test_mimo_adapter forge.test_conversation_prefix forge.test_vendor_wire -q
-python -m unittest discover -s forge -t . -q
-python -m forge.cli selftest
+python -m unittest keystone.test_mimo_adapter keystone.test_conversation_prefix keystone.test_vendor_wire -q
+python -m unittest discover -s keystone -t . -q
+python -m keystone.cli selftest
 python scripts/budget_check.py
 
 # 真实 API；最多 40 次尝试，消耗现有 Token Plan 额度。

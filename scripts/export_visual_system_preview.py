@@ -3,7 +3,7 @@ from pathlib import Path
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / 'forge-gui'))
+sys.path.insert(0, str(ROOT / 'keystone-gui'))
 import gui_theme as theme
 from ui_icons import ICONS
 from visual_system.contracts import DENSITIES, WorkspaceKind
@@ -29,7 +29,7 @@ def svg(name):
 
 
 def main():
-    value = (ROOT / 'reports/forge-visual-system-2.template.html').read_text(encoding='utf-8')
+    value = (ROOT / 'reports/keystone-visual-system-2.template.html').read_text(encoding='utf-8')
     tokens = {key.replace('_', '-'): color for key, color in theme.C.items()}
     tokens.update({'r-sm': f'{theme.R_SM}px', 'r-panel': f'{theme.R_PANEL}px',
                    'content-width': f'{theme.CONTENT_WIDTH}px',
@@ -45,7 +45,7 @@ def main():
         value = value.replace('%%ICON_' + name.upper() + '%%', svg(name))
     if '%%' in value:
         raise ValueError('Unresolved preview token')
-    target = ROOT / 'reports/forge-visual-system-2-preview.html'
+    target = ROOT / 'reports/keystone-visual-system-2-preview.html'
     target.write_text(value, encoding='utf-8')
     print(target)
 

@@ -81,11 +81,11 @@ Pro 总 token 降低 **8.72%**，Flash 降低 **1.61%**。Pro 两臂无工具错
 ```powershell
 python scripts/verify_mimo_builtin_views.py --live --model mimo-v2.6-pro --request-limit 48 --output reports/new-builtin-pro.json
 python scripts/verify_mimo_builtin_views.py --live --model mimo-v2.6-flash --strategies improved baseline --request-limit 40 --output reports/new-builtin-flash.json
-python -m unittest forge.test_builtin_views forge.test_result_view forge.test_coding_tools forge.test_token_efficiency -q
-python -m unittest discover -s forge -t . -q
+python -m unittest keystone.test_builtin_views keystone.test_result_view keystone.test_coding_tools keystone.test_token_efficiency -q
+python -m unittest discover -s keystone -t . -q
 $env:PYTHONPATH='tests;.'
 python -m unittest discover -s tests -q
-python -m forge.cli selftest
+python -m keystone.cli selftest
 python scripts/budget_check.py
 ```
 

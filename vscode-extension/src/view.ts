@@ -8,8 +8,8 @@ export function viewHtml(webview: VSCode.Webview, root: VSCode.Uri): string {
   return `<!DOCTYPE html><html><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}'; img-src ${webview.cspSource};">
-<link rel="stylesheet" href="${asset('chat.css')}"><title>Forge</title></head><body>
-<header><div class="brand">FORGE <span id="status" role="status" aria-live="polite"></span></div>
+<link rel="stylesheet" href="${asset('chat.css')}"><title>Keystone</title></head><body>
+<header><div class="brand">KEYSTONE <span id="status" role="status" aria-live="polite"></span></div>
 <div class="toolbar"><button id="connect" type="button"></button><button id="settings" type="button"></button></div></header>
 <main id="messages" aria-label="Conversation" aria-live="polite" aria-relevant="additions">
 <section id="empty"><h2 id="welcome"></h2><p id="intro"></p>

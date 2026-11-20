@@ -11,12 +11,12 @@ import tempfile
 from verify_seed_execution import SeedRecorder, provider_for as seed_provider
 from verify_mimo_live import provider_for as mimo_provider
 from verify_deepseek_execution import DeepSeekRecorder, totals
-from forge.context_transaction import valid_tool_pairs
-from forge.loop import Agent, LoopLimits
-from forge.model import ModelRouter, TransportError
-from forge.policy import Policy, Mode
-from forge.tools import build_builtin_registry
-from forge.tool_adapter import sanitize_messages
+from keystone.context_transaction import valid_tool_pairs
+from keystone.loop import Agent, LoopLimits
+from keystone.model import ModelRouter, TransportError
+from keystone.policy import Policy, Mode
+from keystone.tools import build_builtin_registry
+from keystone.tool_adapter import sanitize_messages
 
 
 class PauseAfterRead:
@@ -35,7 +35,7 @@ class PauseAfterRead:
 
 
 def load_before(directory):
-    spec=importlib.util.spec_from_file_location('forge._transport_before_loop',directory/'forge/loop.py')
+    spec=importlib.util.spec_from_file_location('keystone._transport_before_loop',directory/'keystone/loop.py')
     module=importlib.util.module_from_spec(spec);sys.modules[spec.name]=module;spec.loader.exec_module(module)
     return module.Agent
 
@@ -101,7 +101,7 @@ def main():
     if not args.live or args.output.exists() or not 1<=args.request_limit<=40:
         parser.error('Requires --live, request-limit 1..40 and a new output path')
     chosen='mimo-v2.6-flash' if args.vendor=='mimo' else 'doubao-seed-evolving'
-    provider=(mimo_provider if args.vendor=='mimo' else seed_provider)(chosen,Path.home()/'.forge')
+    provider=(mimo_provider if args.vendor=='mimo' else seed_provider)(chosen,Path.home()/'.keystone')
     recorder=(DeepSeekRecorder(args.request_limit,retries=1) if args.vendor=='mimo' else SeedRecorder(args.request_limit))
     recorder.timeout=45
     before=load_before(args.baseline_dir)
@@ -109,10 +109,10 @@ def main():
     sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
     result={'vendor':args.vendor,'model':chosen,'samples':[],
         'scope':'Only the pause is injected before HTTP dispatch; all reads, calculator calls and model responses are real.',
-        'runtime_sha256':{'before_loop':sha(args.baseline_dir/'forge/loop.py'),
-            'after_loop':sha(project/'forge/loop.py'),'script':sha(Path(__file__))}}
+        'runtime_sha256':{'before_loop':sha(args.baseline_dir/'keystone/loop.py'),
+            'after_loop':sha(project/'keystone/loop.py'),'script':sha(Path(__file__))}}
     try:
-        with tempfile.TemporaryDirectory(prefix='forge-transport-resume-') as tmp:
+        with tempfile.TemporaryDirectory(prefix='keystone-transport-resume-') as tmp:
             for index,strategy in enumerate(args.strategies,1):
                 sample=run_sample(before if strategy=='baseline' else Agent,provider,recorder,Path(tmp),strategy,index)
                 result['samples'].append(sample)

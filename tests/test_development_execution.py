@@ -9,15 +9,15 @@ import threading
 import unittest
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'forge-gui'))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'keystone-gui'))
 from development_mode.project import WorkspaceSource
-from forge.development.editor import Document, ProjectBoundary, ConflictError
-from forge.development.evidence import TaskEvidence
-from forge.development.runtime import DevelopmentRuntime
-from forge.development.state import ModeState
-from forge.model import Completion, Usage, ModelRouter, Provider
-from forge.test_task_planning import Router
-from forge.test_phase_models import Transport
+from keystone.development.editor import Document, ProjectBoundary, ConflictError
+from keystone.development.evidence import TaskEvidence
+from keystone.development.runtime import DevelopmentRuntime
+from keystone.development.state import ModeState
+from keystone.model import Completion, Usage, ModelRouter, Provider
+from keystone.test_task_planning import Router
+from keystone.test_phase_models import Transport
 
 
 def call(name, **args):
@@ -33,7 +33,7 @@ class ExecutionTests(unittest.TestCase):
         self.project.mkdir()
         self.path = self.project / 'value.py'
         self.path.write_text('VALUE = 1\n', encoding='utf-8')
-        network = patch('forge.model.HttpTransport.complete', side_effect=AssertionError('External model I/O forbidden in this suite'))
+        network = patch('keystone.model.HttpTransport.complete', side_effect=AssertionError('External model I/O forbidden in this suite'))
         network.start()
         self.addCleanup(network.stop)
 
@@ -95,7 +95,7 @@ class ExecutionTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             rt.execute_tests([sys.executable, '-c', 'pass'], trusted=True)
         self.assertEqual(ModeState(rt.state.home).value('project'), str(self.project))
-        if target := os.environ.get('FORGE_ACCEPTANCE_OUTPUT'):
+        if target := os.environ.get('KEYSTONE_ACCEPTANCE_OUTPUT'):
             Path(target).write_text(json.dumps({'task_id': result['task_id'],
                 'result': result, 'diff': diff, 'test': test, 'restore': restored,
                 'recovered_events': len(recovery['events']),
@@ -129,7 +129,7 @@ class ExecutionTests(unittest.TestCase):
         rt = self.runtime(router=Router(['general finished']))
         rt.state.configure_role('subagent', ('missing', 'missing'))
         rt.state.configure_role('review', ('missing', 'missing'))
-        rt.state.configure_agent_model('forge/sub1', ('missing', 'missing'))
+        rt.state.configure_agent_model('keystone/sub1', ('missing', 'missing'))
         rt.state.switch('general')
         policy = rt.bridge.agent.policy
         result = rt.run('general', child_model=('missing', 'missing'))
@@ -208,7 +208,7 @@ class ExecutionTests(unittest.TestCase):
         worker.join(10)
         self.assertFalse(worker.is_alive())
         self.assertEqual(results[0]['stopped'], 'cancelled')
-        self.assertEqual(rt.evidence.agents['forge/sub1']['status'], 'cancelled')
+        self.assertEqual(rt.evidence.agents['keystone/sub1']['status'], 'cancelled')
         self.assertFalse((self.project / 'unexpected.py').exists())
 
     def test_two_simultaneous_agents_conflict_without_losing_a_write(self):
@@ -292,7 +292,7 @@ class ExecutionTests(unittest.TestCase):
         view = TaskEvidence.from_events(events, recovered=True)
         self.assertEqual(set(view.actions), {'a2'})
         self.assertEqual(view.actions['a2']['status'], 'unknown')
-        self.assertEqual(view.runs[('forge', 'r2')]['status'], 'interrupted')
+        self.assertEqual(view.runs[('keystone', 'r2')]['status'], 'interrupted')
         p = TaskEvidence()
         for action in ['one', 'two']:
             p.apply({'type': 'tool_started', 'action_id': action, 'run_id': action, 'tool': 'read_file'})
@@ -314,7 +314,7 @@ class ExecutionTests(unittest.TestCase):
         rt.state.configure_role('subagent', ('child', 'small'))
         self.run_task(rt)
         writes = [r for r in rt.evidence.actions.values() if r['tool'] == 'write_file']
-        self.assertEqual([(r['agent'], r['ok']) for r in writes], [('forge/sub1', True), ('forge', False)])
+        self.assertEqual([(r['agent'], r['ok']) for r in writes], [('keystone/sub1', True), ('keystone', False)])
         self.assertEqual(self.path.read_text(), 'VALUE = 2\n')
 
     def test_external_change_during_read_never_becomes_a_valid_observation(self):
@@ -412,8 +412,8 @@ class ExecutionTests(unittest.TestCase):
         self.assertNotIn(secret, Path(result['artifact']).read_text(encoding='utf-8'))
 
     def test_recovery_public_session_identity_does_not_pollute_model_names(self):
-        from forge.session import Session
-        from forge.secrets import redact
+        from keystone.session import Session
+        from keystone.secrets import redact
         rt = self.runtime()
         identifier = 'public-rollout-fixture-identity'
         journal = rt.home / 'sessions' / (identifier + '.jsonl')

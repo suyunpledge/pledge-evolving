@@ -16,16 +16,16 @@ If `selftest` fails on a clean checkout of `main`, that is a bug — open an iss
 These are enforced, not advisory:
 
 1. **Standard library only.** No new third-party runtime dependencies. (Optional extras behind a `[secrets]` marker already exist; don't extend them without discussion.)
-2. **No network, no subprocess, no destructive filesystem calls, no `eval`** inside modules that are loaded through the contribution registry. `forge/registry.py` scans for these statically and quarantines violators.
+2. **No network, no subprocess, no destructive filesystem calls, no `eval`** inside modules that are loaded through the contribution registry. `keystone/registry.py` scans for these statically and quarantines violators.
 3. **Every new module ships its own self-checks** (≥ 8 assertions) and they run as part of the module's admission.
 4. **Deny-wins is invariant.** Any change that lets an explicit `deny` lose to a broader mode, or lets a subagent exceed its parent's permission ceiling, will be rejected regardless of how convenient it is.
 
-## Contribution modules (the `forge/contrib/` path)
+## Contribution modules (the `keystone/contrib/` path)
 
 If you are an agent or a person writing a module against the frozen API:
 
 1. Read [`CONTRACT.md`](CONTRACT.md) — it defines the module API and the hard prohibitions.
-2. Start from [`forge/templates/contrib-shell.py`](forge/templates/contrib-shell.py).
+2. Start from [`keystone/templates/contrib-shell.py`](keystone/templates/contrib-shell.py).
 3. Validate before sending:
 
 ```bash

@@ -2,8 +2,8 @@
 import sys, tempfile
 from pathlib import Path
 sys.path.insert(0, '.')
-from forge.policy import Policy, Mode, Sandbox
-from forge.tools import ToolContext, build_builtin_registry
+from keystone.policy import Policy, Mode, Sandbox
+from keystone.tools import ToolContext, build_builtin_registry
 
 with tempfile.TemporaryDirectory() as sb, tempfile.TemporaryDirectory() as outside:
     sb_path = Path(sb)

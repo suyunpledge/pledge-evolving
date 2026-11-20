@@ -10,15 +10,15 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from verify_mimo_live import MODELS, provider_for, router_for
 from verify_mimo_long_context import LongRecorder, final_value
-from forge import model
-from forge.cache_metrics import cache_coverage
-from forge.cache_state import CacheWarmth
-from forge.compaction import ContextBudget
-from forge.context_transaction import digest, valid_tool_pairs
-from forge.loop import Agent, LoopLimits
-from forge.policy import Mode, Policy, Sandbox
-from forge.secrets import redact
-from forge.tools import build_builtin_registry
+from keystone import model
+from keystone.cache_metrics import cache_coverage
+from keystone.cache_state import CacheWarmth
+from keystone.compaction import ContextBudget
+from keystone.context_transaction import digest, valid_tool_pairs
+from keystone.loop import Agent, LoopLimits
+from keystone.policy import Mode, Policy, Sandbox
+from keystone.secrets import redact
+from keystone.tools import build_builtin_registry
 
 
 TOOLS = ['list_dir', 'find_files', 'file_outline', 'grep', 'read_range',
@@ -174,7 +174,7 @@ def main():
     args = parser.parse_args()
     if not args.live or not 1 <= args.request_limit <= 64:
         parser.error('Requires --live and request-limit 1..64')
-    provider = provider_for(args.model, Path.home() / '.forge')
+    provider = provider_for(args.model, Path.home() / '.keystone')
     provider.route_capabilities = {'contextWindow': 16000, 'maxOutputTokens': 4096}
     recorder = LongRecorder(args.request_limit, retries=1)
     result = {'model': args.model, 'samples': [], 'requests': recorder.rows,
@@ -182,7 +182,7 @@ def main():
               'comparison': 'Same current builtin handlers and schemas; result_views disabled/enabled; fresh Agent each user turn'}
     args.output.parent.mkdir(parents=True, exist_ok=True)
     try:
-        with tempfile.TemporaryDirectory(prefix='forge-builtin-live-') as temporary:
+        with tempfile.TemporaryDirectory(prefix='keystone-builtin-live-') as temporary:
             root = Path(temporary)
             model._WARMTH = CacheWarmth(root / 'warmth.json')
             for strategy in args.strategies:

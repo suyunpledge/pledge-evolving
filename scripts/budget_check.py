@@ -1,7 +1,7 @@
-"""Check Forge's per-file source line ceilings.
+"""Check Keystone's per-file source line ceilings.
 
 This is an engineering ratchet, not a test-coverage claim.  Every Python file
-under ``forge/`` must be listed in the manifest; deliberate growth requires a
+under ``keystone/`` must be listed in the manifest; deliberate growth requires a
 visible ``--update`` step in the same change.
 """
 
@@ -19,7 +19,7 @@ def _line_count(path: Path) -> int:
 
 
 def _discover(root: Path) -> dict[str, int]:
-    base = root / "forge"
+    base = root / "keystone"
     rows: dict[str, int] = {}
     if not base.is_dir():
         return rows
@@ -60,7 +60,7 @@ def audit(root: Path, manifest_path: Path) -> dict[str, Any]:
             errors.append(f"{rel}: {used} lines exceeds ceiling {ceiling}")
 
     for rel in sorted(set(current) - set(entries)):
-        errors.append(f"unlisted forge file: {rel}")
+        errors.append(f"unlisted keystone file: {rel}")
 
     return {"ok": not errors, "errors": errors, "files": rows,
             "count": len(rows), "total_lines": sum(row["lines"] for row in rows)}
@@ -84,7 +84,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true", dest="as_json")
     args = parser.parse_args(argv)
     root = args.root.resolve()
-    manifest = (args.manifest or (root / "forge-budgets.json")).resolve()
+    manifest = (args.manifest or (root / "keystone-budgets.json")).resolve()
     result = update(root, manifest) if args.update else audit(root, manifest)
     if args.as_json:
         print(json.dumps(result, ensure_ascii=False, indent=2))

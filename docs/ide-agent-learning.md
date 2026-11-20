@@ -1,26 +1,26 @@
 # Antigravity、Cursor、Qoder CN：调研与最小接入
 
-调研日期：2026-10-10。依据公开官方文档；没有访问这些产品的私有源码，下面是机制借鉴，不是把它们的专有 Agent 引擎装进 Forge。
+调研日期：2026-10-10。依据公开官方文档；没有访问这些产品的私有源码，下面是机制借鉴，不是把它们的专有 Agent 引擎装进 Keystone。
 
 ## 选择矩阵
 
-| 产品 | 值得学习的公开能力 | Forge 对照与本次决定 |
+| 产品 | 值得学习的公开能力 | Keystone 对照与本次决定 |
 | --- | --- | --- |
-| [Antigravity：Artifact review](https://www.antigravity.google/docs/artifact-review/) | Planning/Fast 分开；计划与改动可作为可审阅成果；审阅暂停策略独立配置 | 现有四档规划、独立规划模型、手动复审和执行事件已承担部分职责。未新增自动弹窗或计划暂停协议；Forge 当前没有完整的可编辑 Artifact 审批流。 |
+| [Antigravity：Artifact review](https://www.antigravity.google/docs/artifact-review/) | Planning/Fast 分开；计划与改动可作为可审阅成果；审阅暂停策略独立配置 | 现有四档规划、独立规划模型、手动复审和执行事件已承担部分职责。未新增自动弹窗或计划暂停协议；Keystone 当前没有完整的可编辑 Artifact 审批流。 |
 | [Antigravity：Walkthrough](https://www.antigravity.google/docs/walkthrough/) | 用实施总结帮助用户理解交付内容 | 保留现有 RunReport、diff、审计记录。不能把模型生成的总结当作测试通过的证据，也未伪造截图或浏览器录屏。 |
 | [Cursor：Rules](https://cursor.com/docs/rules) | 项目规则可按文件范围加载，支持根目录与嵌套 AGENTS.md | **新增 AGENTS.md 自动上下文加载**。复用通用 Markdown 约定，不实现完整 `.cursor/rules/*.mdc`、自动相关性判断或团队规则后台。 |
-| [Cursor：Plan Mode](https://cursor.com/docs/agent/plan-mode) | 先了解代码，再形成可审阅、可修改的计划 | 保持已有规划能力。Forge 的规划阶段目前不执行工具；不能宣称已复制 Cursor 的规划阶段代码检索与编辑器。 |
+| [Cursor：Plan Mode](https://cursor.com/docs/agent/plan-mode) | 先了解代码，再形成可审阅、可修改的计划 | 保持已有规划能力。Keystone 的规划阶段目前不执行工具；不能宣称已复制 Cursor 的规划阶段代码检索与编辑器。 |
 | [Qoder CN：规则设置](https://docs.qoder.cn/user-guide/rules) | 项目级规则；始终、文件范围、手动、模型决定四种应用方式 | 借鉴范围与按需加载，接入同一 AGENTS.md 实现。Qoder CN 官方规则目录是 `.lingma/rules`；本次**不声称兼容该格式**。 |
 | [Qoder CN：Spec 驱动](https://docs.qoder.cn/user-guide/quest/spec-driven) | 澄清需求、形成需求/设计/任务/验收标准，再由用户审阅执行 | 现有 high 规划包含这些结构化字段，但不是完整 Quest Spec 审批与持续验收循环。本次复用现有规划，不再造另一套任务状态机。 |
 | [Qoder CN：Repo Wiki](https://docs.qoder.cn/user-guide/repo-wiki) | 项目知识结构化，并检测代码与文档变化 | 现有记忆与能力库不等同完整 Repo Wiki。索引、生成成本、来源定位和增量更新需单独设计，本次不新增自动全仓库生成或后台扫描。 |
 
-[Qoder CN Agent SDK](https://docs.qoder.cn/cli/sdk/overview) 已公开提供 TypeScript/Python 应用接口，其 [权限回调](https://docs.qoder.cn/cli/sdk/permissions) 也值得学习。技术上可以另做适配，但它会引入另一套 Agent runtime；现有 Forge 已有工具可见性与调用授权的分离，当前没有证明新增运行时的收益。
+[Qoder CN Agent SDK](https://docs.qoder.cn/cli/sdk/overview) 已公开提供 TypeScript/Python 应用接口，其 [权限回调](https://docs.qoder.cn/cli/sdk/permissions) 也值得学习。技术上可以另做适配，但它会引入另一套 Agent runtime；现有 Keystone 已有工具可见性与调用授权的分离，当前没有证明新增运行时的收益。
 
-外部 Agent SDK、云端 Agent、专有代码补全和整套浏览器控制没有接入。它们需要独立的账号、执行边界和数据外传审查；本次没有明确需求，不能通过原生第三方 SDK 顺便绕开 Forge Policy/Secret 边界。
+外部 Agent SDK、云端 Agent、专有代码补全和整套浏览器控制没有接入。它们需要独立的账号、执行边界和数据外传审查；本次没有明确需求，不能通过原生第三方 SDK 顺便绕开 Keystone Policy/Secret 边界。
 
 ## 已接入：有范围、有来源的项目规则
 
-源码：`forge/project_rules.py`；运行入口：`forge/loop.py`；编辑器入口：`forge/vscode_bridge.py`。
+源码：`keystone/project_rules.py`；运行入口：`keystone/loop.py`；编辑器入口：`keystone/vscode_bridge.py`。
 
 - 每次任务重新加载 `<workspace>/AGENTS.md`。
 - 成功读取 `read_file`、`read_range`、`file_outline`、`edit_config` 的文件后，在下一次模型请求前加载其祖先目录中的 AGENTS.md。
@@ -57,9 +57,9 @@ Premium 集成阶段仍遵循现有“最后用户输入 + 草稿”的缩减数
 
 ## 验证
 
-`forge/test_project_rules.py` 覆盖目录作用域、无关目录、权限拒绝/ASK、工具隐藏、超限、UTF-8 错误、符号链接/Secret Store 别名、注入不能授权写入、Secret 不进入请求或审计、新任务刷新、运行中更新/删除、重复读取、压缩保留、原生 OpenAI/Anthropic 调用结果顺序、禁用配置与编辑器未保存文件。
+`keystone/test_project_rules.py` 覆盖目录作用域、无关目录、权限拒绝/ASK、工具隐藏、超限、UTF-8 错误、符号链接/Secret Store 别名、注入不能授权写入、Secret 不进入请求或审计、新任务刷新、运行中更新/删除、重复读取、压缩保留、原生 OpenAI/Anthropic 调用结果顺序、禁用配置与编辑器未保存文件。
 
-`forge/test_vscode_bridge.py` 增加实际 EditorBridge 的范围规则附件测试。先运行失败断言，再接入运行循环。测试使用离线替身和本机测试服务器，没有发起真实付费请求。
+`keystone/test_vscode_bridge.py` 增加实际 EditorBridge 的范围规则附件测试。先运行失败断言，再接入运行循环。测试使用离线替身和本机测试服务器，没有发起真实付费请求。
 
 - 原有 selftest：569/569 通过。
 - 完整核心 unittest：运行 213 项，212 项通过，1 项因当前 Windows 不允许创建符号链接而跳过。

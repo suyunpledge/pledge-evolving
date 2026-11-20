@@ -17,7 +17,7 @@
 
 ## 1. 不可破坏的接口契约
 
-下面这些是 `forge/test_model_adaptation.py`（30 项）与 `forge/test_adapters.py`（56 项）直接断言的对象。改签名 = 直接打破契约。
+下面这些是 `keystone/test_model_adaptation.py`（30 项）与 `keystone/test_adapters.py`（56 项）直接断言的对象。改签名 = 直接打破契约。
 
 | 契约 | 位置 | 说明 |
 |---|---|---|
@@ -57,7 +57,7 @@
 | G4 | 未做真实联网验证 | 全部断言离线；没有向任何真实厂商发过付费请求 | 缓存是否真的命中、TTL 是否真的按文档生效，**未经验证** |
 | G5 | GUI / gateway 流式路径 | GUI 直连 Gateway 的转发路径与 `HttpTransport` 是两条路 | GUI 流式请求可能**不经过**新的成本规划器 |
 | G6 | `CacheWarmth` 是**进程内**协调 | 有锁 + 原子替换；多进程不共享事务 | 多进程部署下温暖度可能互相看不到 |
-| G7 | `cacheControl=off` 只能阻止 Forge 主动打标记 | 无法关闭厂商自身的隐式缓存 | 文档口径要写清楚，别承诺「关掉缓存」 |
+| G7 | `cacheControl=off` 只能阻止 Keystone 主动打标记 | 无法关闭厂商自身的隐式缓存 | 文档口径要写清楚，别承诺「关掉缓存」 |
 
 ---
 
@@ -101,11 +101,11 @@
 ## 6. 验证命令（改完必须全绿）
 
 ```bash
-python -m forge.test_model_adaptation     # 30 项 —— 接口契约
-python -m forge.test_adapters             # 56 项 —— 适配器与缓存连续性
-python -m forge.test_vendors              # 77 项 —— 厂商画像与计价
-python -m forge.cli selftest              # 569 项 —— 全量回归
-python -m forge.cli smoke --dry-run
+python -m keystone.test_model_adaptation     # 30 项 —— 接口契约
+python -m keystone.test_adapters             # 56 项 —— 适配器与缓存连续性
+python -m keystone.test_vendors              # 77 项 —— 厂商画像与计价
+python -m keystone.cli selftest              # 569 项 —— 全量回归
+python -m keystone.cli smoke --dry-run
 python -m unittest discover -s tests      # 12 项 —— 含旧配置兼容入口
 ```
 

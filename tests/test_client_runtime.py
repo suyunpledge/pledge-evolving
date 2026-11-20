@@ -13,15 +13,15 @@ import urllib.error
 import urllib.request
 
 from client import server as client
-from forge.client_runs import RunStore
-from forge.execution import RunRequest
-from forge.loop import Agent, LoopLimits, build_agent
-from forge.model import Usage
-from forge.policy import Policy, Mode, ToolEffect
-from forge.routing import SmartRouter
-from forge.session import Session
-from forge.test_task_planning import Router
-from forge.tools import build_builtin_registry, ToolSpec
+from keystone.client_runs import RunStore
+from keystone.execution import RunRequest
+from keystone.loop import Agent, LoopLimits, build_agent
+from keystone.model import Usage
+from keystone.policy import Policy, Mode, ToolEffect
+from keystone.routing import SmartRouter
+from keystone.session import Session
+from keystone.test_task_planning import Router
+from keystone.tools import build_builtin_registry, ToolSpec
 
 
 class ClientRuntimeTests(unittest.TestCase):
@@ -35,7 +35,7 @@ class ClientRuntimeTests(unittest.TestCase):
         self.store = RunStore(self.home / 'sessions' / 'client')
         self.addCleanup(self.store.close)
         self.addCleanup(patch.stopall)
-        patch.object(client, 'FORGE_HOME', self.home).start()
+        patch.object(client, 'KEYSTONE_HOME', self.home).start()
         patch.object(client, 'SECRETS_FILE', self.home / 'secrets.json').start()
         self.calls = []
 
@@ -62,7 +62,7 @@ class ClientRuntimeTests(unittest.TestCase):
         def build(**kwargs):
             kwargs['mount_contrib'] = False
             return original_build(**kwargs)
-        patch('forge.loop.build_agent', side_effect=build).start()
+        patch('keystone.loop.build_agent', side_effect=build).start()
 
     def run_task(self, *, task='change value', **options):
         rec = self.store.create(task)
@@ -70,7 +70,7 @@ class ClientRuntimeTests(unittest.TestCase):
         return self.store.get(rec['id'])
 
     def worker(self, rid, *, task='change value', **options):
-        client.run_forge(rid, task, options.get('model'), options.get('strategy'),
+        client.run_keystone(rid, task, options.get('model'), options.get('strategy'),
             options.get('thinking'), options.get('bundle'), options.get('policy_mode'),
             options.get('max_steps'), options.get('max_depth'), options.get('spawn_budget'),
             self.ws, store=self.store)
@@ -167,7 +167,7 @@ class ClientRuntimeTests(unittest.TestCase):
     def test_queued_cancel_does_not_construct_agent(self):
         rec = self.store.create('queued')
         self.store.request_cancel(rec['id'])
-        with patch('forge.loop.build_agent') as builder:
+        with patch('keystone.loop.build_agent') as builder:
             self.worker(rec['id'])
         self.assertFalse(builder.called)
         result = self.store.get(rec['id'])
@@ -219,7 +219,7 @@ class ClientRuntimeTests(unittest.TestCase):
     def test_completed_task_cannot_be_reexecuted(self):
         self.use_transport(self.transport(['finished']))
         rec = self.run_task()
-        with patch('forge.loop.build_agent') as builder:
+        with patch('keystone.loop.build_agent') as builder:
             self.worker(rec['id'])
         self.assertFalse(builder.called)
 
@@ -275,7 +275,7 @@ class ClientRuntimeTests(unittest.TestCase):
     def test_partial_write_failure_remains_unknown_despite_final_model_text(self):
         self.use_transport(self.transport([
             '<tool_call>{"tool":"partial_write","args":{}}</tool_call>', 'finished']))
-        previous = __import__('forge.loop', fromlist=['build_agent']).build_agent
+        previous = __import__('keystone.loop', fromlist=['build_agent']).build_agent
         def build(**kwargs):
             agent = previous(**kwargs)
             def handler(args, ctx):
@@ -284,20 +284,20 @@ class ClientRuntimeTests(unittest.TestCase):
             agent.registry.register(ToolSpec('partial_write', 'verified test writer', handler),
                                     trusted=True, effect=ToolEffect.WRITE)
             return agent
-        with patch('forge.loop.build_agent', side_effect=build):
+        with patch('keystone.loop.build_agent', side_effect=build):
             rec = self.run_task(policy_mode='acceptEdits')
         self.assertTrue((self.ws / 'partial.txt').exists(), rec['error'])
         self.assertEqual((rec['state'], rec['outcome'], rec['execution_state']), ('error', 'unknown', 'unknown'))
         self.assertTrue(rec['requires_inspection'])
 
     def test_real_file_diff_test_and_checkpoint_restore(self):
-        from forge.checkpoint import CheckpointStore
+        from keystone.checkpoint import CheckpointStore
         def git(*args):
             return subprocess.run(['git', *args], cwd=self.ws, check=True, capture_output=True,
                                   text=True, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)).stdout
         git('init', '--quiet')
-        git('config', 'user.name', 'Forge Test')
-        git('config', 'user.email', 'forge-test@localhost')
+        git('config', 'user.name', 'Keystone Test')
+        git('config', 'user.email', 'keystone-test@localhost')
         (self.ws / 'value.py').write_text('VALUE = 1\n')
         (self.ws / 'test_value.py').write_text(
             'import unittest\nfrom value import VALUE\nclass Tests(unittest.TestCase):\n'
@@ -335,7 +335,7 @@ class ClientRuntimeTests(unittest.TestCase):
         self.assertTrue(blocked.wait(10))
         # The second worker gets its own transport and Agent; no selected-panel state.
         other = self.transport(['second completed'])
-        from forge.model import ModelRouter
+        from keystone.model import ModelRouter
         def second_router(cfg):
             return ModelRouter.from_config(cfg, transport=other)
         with patch.object(SmartRouter, 'from_config', side_effect=second_router):
@@ -350,7 +350,7 @@ class ClientRuntimeTests(unittest.TestCase):
 
     def test_separate_processes_keep_durable_runs_isolated(self):
         script = '''
-from forge.client_runs import RunStore
+from keystone.client_runs import RunStore
 import sys
 s = RunStore(sys.argv[1])
 r = s.create(sys.argv[2])
@@ -388,7 +388,7 @@ s.close()
         self.assertTrue(list(path.parent.glob('*.incomplete-*')))
 
     def test_immutable_snapshots_and_durable_paging_after_cache_eviction(self):
-        with patch('forge.client_runs.EVENT_LIMIT', 3):
+        with patch('keystone.client_runs.EVENT_LIMIT', 3):
             rec = self.store.create('many events')
             for i in range(10):
                 self.store.push_event(rec['id'], {'type': 'tick', 'value': i})
@@ -462,7 +462,7 @@ s.close()
                     self.assertEqual(router.calls, [])
 
     def test_projection_redacts_secrets_before_memory_and_disk_publication(self):
-        from forge.secrets import SecretScope
+        from keystone.secrets import SecretScope
         scope = SecretScope()
         self.addCleanup(scope.close)
         secret = 'fixture-secret-' + 'x' * 32

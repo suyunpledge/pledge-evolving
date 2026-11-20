@@ -2,7 +2,7 @@
 
 ## 使用
 
-从本工作树启动 `python forge-gui/forge_gui_v2.py`，进入 Work Mode 顶部「电脑操作」。绑定窗口后勾选「允许鼠标与键盘输入」。权限模式必须允许输入；READ_ONLY、PLAN、只读 Sandbox 和显式 deny 不会因勾选而升级。
+从本工作树启动 `python keystone-gui/keystone_gui_v2.py`，进入 Work Mode 顶部「电脑操作」。绑定窗口后勾选「允许鼠标与键盘输入」。权限模式必须允许输入；READ_ONLY、PLAN、只读 Sandbox 和显式 deny 不会因勾选而升级。
 
 两条流程均已接入：
 
@@ -71,14 +71,14 @@ GUI 发起点击后立即清除可执行的旧观察和模型落点。点击后�
 
 `named_resource_lock(kind, identity, cancelled=token)` 用于电脑等非文件资源，标识不依赖当前工作目录。现有 `resource_lock(kind, path)` 的文件路径语义保持兼容。窗口锁为 `('computer-target', driver.target_id)`，桌面输入锁为 `('computer-input', 'desktop')`；同一用户、同一系统临时目录下的不同工作树和进程共享它们。
 
-`ComputerSession.operation(cancelled)` 将请求取消与宿主撤销合并，依次取得会话线程锁及跨进程目标锁。视觉点击通过同一 token 等待桌面输入锁、确认和截图；等待阶段每 50 ms 内检查取消（OS 文件锁重试为 10 ms），尚未派发时返回 `cancelled/not_started`。输入后的错误继续为 `unknown`。`TargetCancellation` 从 `forge.computer_use` 导出，原 `computer_panel` 导入方式仍兼容。
+`ComputerSession.operation(cancelled)` 将请求取消与宿主撤销合并，依次取得会话线程锁及跨进程目标锁。视觉点击通过同一 token 等待桌面输入锁、确认和截图；等待阶段每 50 ms 内检查取消（OS 文件锁重试为 10 ms），尚未派发时返回 `cancelled/not_started`。输入后的错误继续为 `unknown`。`TargetCancellation` 从 `keystone.computer_use` 导出，原 `computer_panel` 导入方式仍兼容。
 
-升级时应退出并重新启动旧版本 Forge 进程。旧版本按工作目录生成电脑锁，不能与新的命名锁协议混用；不承诺跨版本滚动升级互斥。取消不会强制终止不支持取消的第三方宿主回调，实际响应还受调度和驱动影响。
+升级时应退出并重新启动旧版本 Keystone 进程。旧版本按工作目录生成电脑锁，不能与新的命名锁协议混用；不承诺跨版本滚动升级互斥。取消不会强制终止不支持取消的第三方宿主回调，实际响应还受调度和驱动影响。
 
 ## 边界
 
 为避免标题栏激活颜色造成无关失效，比较客户区像素摘要，而非全 PNG 摘要。客户区任意变化仍会拒绝，包括动画、时钟、光标、焦点样式或异步更新；暂不做宽松图像匹配。模型定位精度受模型影响，确认界面显示实际落点，不把模型坐标当成可信操作指令。
 
-Windows UIPI/安全桌面、受保护或黑图窗口、不可见目标不绕过；不支持拖拽，也不提供原生控件树（UIA）。新的顶层弹窗必须另选目标。跨进程锁只协调 Forge，不能锁住用户、第三方程序或窗口自身状态，最终检查到系统输入之间仍有微小竞态。
+Windows UIPI/安全桌面、受保护或黑图窗口、不可见目标不绕过；不支持拖拽，也不提供原生控件树（UIA）。新的顶层弹窗必须另选目标。跨进程锁只协调 Keystone，不能锁住用户、第三方程序或窗口自身状态，最终检查到系统输入之间仍有微小竞态。
 
 实现依据：[SendInput](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput)、[窗口命中检查](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-windowfrompoint)、[DPI 点映射](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-physicaltologicalpointforpermonitordpi)。

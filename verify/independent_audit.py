@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""forge 独立验证器 —— 第三方验证，不修改被验证的框架代码。
+"""keystone 独立验证器 —— 第三方验证，不修改被验证的框架代码。
 
 由 deepseek 实例（辅助迭代方）提供。它不重复作者的自检，只回答作者自检
 结构上回答不了的三个问题：
@@ -10,7 +10,7 @@
   3. 接缝通不通：各 contrib 模块自己的自检都绿，但它们之间的数据契约是否对得上
      （mcp_bridge 产出的工具名，toolhost 收不收；toolhost 判定权限依据什么）。
 
-用法（在 agent-forge 根目录执行）：
+用法（在 agent-keystone 根目录执行）：
     python verify/independent_audit.py
     python verify/independent_audit.py --json
 
@@ -32,7 +32,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-DEFAULT_HOME = Path.home() / ".forge"
+DEFAULT_HOME = Path.home() / ".keystone"
 WORKSPACE = str(Path.cwd())
 
 RESULTS: list[dict] = []
@@ -44,7 +44,7 @@ def record(section: str, rid: str, title: str, verdict: str, evidence: str) -> N
 
 
 def build_registry():
-    from forge.registry import ContribAPI, ModuleRegistry
+    from keystone.registry import ContribAPI, ModuleRegistry
 
     api = ContribAPI(home=DEFAULT_HOME, workspace=Path(WORKSPACE))
     reg = ModuleRegistry(api, DEFAULT_HOME / "contrib")
@@ -52,7 +52,7 @@ def build_registry():
         reg.discover()
     except Exception as exc:  # noqa: BLE001
         record("0", "setup:home-contrib", "扫描用户 contrib 目录", "WARN", f"{type(exc).__name__}: {exc}")
-    reg.discover(ROOT / "forge" / "contrib")
+    reg.discover(ROOT / "keystone" / "contrib")
     return reg
 
 
@@ -130,7 +130,7 @@ EVIDENCE_FREE_MARKERS = ("no output", "produced no output", "no verdict", "no ro
 
 
 def section_evidence(reg) -> None:
-    from forge.registry import ADAPTER_MIN_ASSERTIONS
+    from keystone.registry import ADAPTER_MIN_ASSERTIONS
 
     healthy = reg.healthy()
     total_rows = 0
@@ -195,7 +195,7 @@ def _guess_read_only(name: str) -> bool:
 def _mutated_run(tmp_root: Path, module_file: str, suffix: str, label: str) -> dict:
     dst = tmp_root / label
     shutil.copytree(ROOT, dst, ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".openclaw_tmp_out.txt"))
-    target = dst / "forge" / "contrib" / module_file
+    target = dst / "keystone" / "contrib" / module_file
     target.write_text(target.read_text(encoding="utf-8") + suffix, encoding="utf-8")
     text = run_modules_validate(dst)
     return {"summary": summary_of(text), "rows": module_rows(text), "text": text}
@@ -203,7 +203,7 @@ def _mutated_run(tmp_root: Path, module_file: str, suffix: str, label: str) -> d
 
 def section_gate() -> None:
     baseline = summary_of(run_modules_validate(ROOT))
-    with tempfile.TemporaryDirectory(prefix="forge-gate-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="keystone-gate-") as tmp:
         tmp_root = Path(tmp)
         try:
             empty = _mutated_run(tmp_root, "toolhost.py", EXPLOIT_SUFFIX, "empty-test")

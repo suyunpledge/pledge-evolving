@@ -1,6 +1,6 @@
 """Probe: Tool Registry invariants (registration, conflicts, lazy activation).
 
-Verifies claims about forge.tools.ToolRegistry directly against the source:
+Verifies claims about keystone.tools.ToolRegistry directly against the source:
   - duplicate registration behaviour
   - presence/absence of an unregister path
   - name validation
@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from _bootstrap import check, summary  # noqa: E402
 
-from forge.tools import ToolRegistry, ToolSpec, build_builtin_registry  # noqa: E402
+from keystone.tools import ToolRegistry, ToolSpec, build_builtin_registry  # noqa: E402
 
 
 def _spec(name, desc, handler=None):

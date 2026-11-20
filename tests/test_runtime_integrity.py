@@ -7,11 +7,11 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from forge.checkpoint import CheckpointStore
-from forge.federation import subprocess_runner
-from forge.policy import Policy, Mode
-from forge.tools import build_builtin_registry, ToolContext
-from forge.tool_adapter import parse_tool_call_tags, parse_text_protocol_calls
+from keystone.checkpoint import CheckpointStore
+from keystone.federation import subprocess_runner
+from keystone.policy import Policy, Mode
+from keystone.tools import build_builtin_registry, ToolContext
+from keystone.tool_adapter import parse_tool_call_tags, parse_text_protocol_calls
 
 
 class RuntimeIntegrityTests(unittest.TestCase):
@@ -40,7 +40,7 @@ class RuntimeIntegrityTests(unittest.TestCase):
             if not store.enabled:
                 self.skipTest("Git unavailable")
             original = subprocess.run
-            with patch("forge.checkpoint.subprocess.run", wraps=original) as run:
+            with patch("keystone.checkpoint.subprocess.run", wraps=original) as run:
                 point = store.snapshot("runtime regression")
             self.assertIsNotNone(point)
             self.assertGreaterEqual(run.call_count, 5)

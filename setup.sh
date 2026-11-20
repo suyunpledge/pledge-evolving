@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Forge 一键配置（macOS / Linux）
+# Keystone 一键配置（macOS / Linux）
 # 唯一前提：能上网。缺 Python 会自动安装（系统包管理器需要 sudo 时会提示输一次密码）。
 # 用法：./setup.sh [gui|web|check|selftest]
 set -u
@@ -8,7 +8,7 @@ cd "$(dirname "$0")"
 MODE="${1:-gui}"
 
 echo "============================================================"
-echo "  Forge 一键配置（macOS / Linux）"
+echo "  Keystone 一键配置（macOS / Linux）"
 echo "  唯一前提：能上网。缺 Python 会自动安装。"
 echo "  用法：./setup.sh [gui/web/check/selftest]"
 echo "============================================================"
@@ -108,16 +108,16 @@ if [ "$(uname -s)" = "Linux" ] && command -v mkdir >/dev/null 2>&1; then
   APPS="$HOME/.local/share/applications"
   mkdir -p "$APPS" 2>/dev/null
   REPO="$(pwd)"
-  cat > "$APPS/forge.desktop" <<EOF 2>/dev/null || true
+  cat > "$APPS/keystone.desktop" <<EOF 2>/dev/null || true
 [Desktop Entry]
 Type=Application
-Name=Forge
-Exec=$PY $REPO/forge-gui/forge_gui_v2.py
+Name=Keystone
+Exec=$PY $REPO/keystone-gui/keystone_gui_v2.py
 Path=$REPO
 Terminal=false
 Categories=Development;
 EOF
-  [ -f "$APPS/forge.desktop" ] && echo "[3/4] 应用菜单已创建：Forge（应用列表中可找到）" || echo "[3/4] 跳过快捷方式创建"
+  [ -f "$APPS/keystone.desktop" ] && echo "[3/4] 应用菜单已创建：Keystone（应用列表中可找到）" || echo "[3/4] 跳过快捷方式创建"
 else
   echo "[3/4] 跳过快捷方式创建（macOS 无需）"
 fi
@@ -137,7 +137,7 @@ if [ "$MODE" = "web" ] || [ "$HAS_TK" = "0" ]; then
   exit 0
 fi
 
-echo "[4/4] 启动 Forge 桌面窗口..."
-nohup "$PY" forge-gui/forge_gui_v2.py >/dev/null 2>&1 &
-echo "已启动。窗口没出现就手动运行：python3 forge-gui/forge_gui_v2.py"
+echo "[4/4] 启动 Keystone 桌面窗口..."
+nohup "$PY" keystone-gui/keystone_gui_v2.py >/dev/null 2>&1 &
+echo "已启动。窗口没出现就手动运行：python3 keystone-gui/keystone_gui_v2.py"
 exit 0

@@ -17,12 +17,12 @@ GUI_SUITES = [
     ('coding_layout', ['development_mode.test_layout_regression']),
     ('workspace_visual', ['test_workspace_wiring', 'test_visual_system', 'test_coding_visual_integration']),
 ]
-SOURCES = ['forge-gui/development_mode/app.py', 'forge-gui/development_mode/policy_widgets.py',
-           'forge-gui/development_mode/test_app.py', 'forge-gui/development_mode/test_submission.py',
-           'forge-gui/test_coding_visual_integration.py',
-           'forge-gui/test_workspace_wiring.py', 'forge-gui/forge_gui_v2.py',
-           'forge-gui/development_mode/test_readiness.py', 'tests/test_development_readiness.py',
-           'forge/development/runtime.py', 'forge/development/models.py', 'forge/vscode_bridge.py']
+SOURCES = ['keystone-gui/development_mode/app.py', 'keystone-gui/development_mode/policy_widgets.py',
+           'keystone-gui/development_mode/test_app.py', 'keystone-gui/development_mode/test_submission.py',
+           'keystone-gui/test_coding_visual_integration.py',
+           'keystone-gui/test_workspace_wiring.py', 'keystone-gui/keystone_gui_v2.py',
+           'keystone-gui/development_mode/test_readiness.py', 'tests/test_development_readiness.py',
+           'keystone/development/runtime.py', 'keystone/development/models.py', 'keystone/vscode_bridge.py']
 
 
 def main():
@@ -35,7 +35,7 @@ def main():
         'platform': platform.platform()}, 'suites': [], 'gui_modules': dict(GUI_SUITES),
         'source_sha256': {p: hashlib.sha256((ROOT / p).read_bytes()).hexdigest() for p in SOURCES}}
     env = {**os.environ, 'PYTHONIOENCODING': 'utf-8', 'PYTHONDONTWRITEBYTECODE': '1'}
-    bootstrap = ('import sys,runpy;sys.path[:0]=' + repr([str(ROOT), str(ROOT / 'forge-gui')])
+    bootstrap = ('import sys,runpy;sys.path[:0]=' + repr([str(ROOT), str(ROOT / 'keystone-gui')])
                  + ";sys.argv[0]='unittest';runpy.run_module('unittest',run_name='__main__')")
     for name, modules in GUI_SUITES:
         command = [sys.executable, '-B', '-c', bootstrap, *modules, '-v']

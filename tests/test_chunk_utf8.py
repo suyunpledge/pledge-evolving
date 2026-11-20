@@ -16,7 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from forge.channels import chunk_text
+from keystone.channels import chunk_text
 
 
 def encodes_cleanly(s: str) -> bool:

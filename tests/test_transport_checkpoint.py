@@ -7,12 +7,12 @@ import tempfile
 import unittest
 import urllib.error
 
-from forge.context_transaction import valid_tool_pairs
-from forge.loop import Agent
-from forge.model import BadRequest, HttpTransport, ModelRouter, Provider, TransportError, Usage
-from forge.tool_adapter import sanitize_messages
-from forge.policy import Mode, Policy
-from forge.tools import build_builtin_registry
+from keystone.context_transaction import valid_tool_pairs
+from keystone.loop import Agent
+from keystone.model import BadRequest, HttpTransport, ModelRouter, Provider, TransportError, Usage
+from keystone.tool_adapter import sanitize_messages
+from keystone.policy import Mode, Policy
+from keystone.tools import build_builtin_registry
 
 
 class TransportCheckpointTests(unittest.TestCase):

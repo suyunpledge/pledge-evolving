@@ -4,13 +4,13 @@ import argparse
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO / 'forge-gui'))
+sys.path.insert(0, str(REPO / 'keystone-gui'))
 from test_layout_dpi import isolated_app
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--compact', action='store_true')
 parser.add_argument('--workspace', action='store_true')
-parser.add_argument('--title', default='Forge · Product Design Preview')
+parser.add_argument('--title', default='Keystone · Product Design Preview')
 options = parser.parse_args()
 size = (960, 700) if options.compact else (1440, 900)
 with isolated_app(1, size, repo=REPO) as (root, app, errors):

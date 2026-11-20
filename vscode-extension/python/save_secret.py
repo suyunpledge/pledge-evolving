@@ -11,7 +11,7 @@ Why the value comes over stdin:
     manager, ``ps``, WMI). stdin is not. The extension writes the value to the
     child's stdin and closes it; nothing else sees it.
 
-The write mirrors ``forge.secrets._store_set_secret``: same path protections,
+The write mirrors ``keystone.secrets._store_set_secret``: same path protections,
 same 1 MiB cap, same atomic replace, same name grammar. It deliberately does
 NOT touch the environment — the bridge re-reads the store at ``initialize``,
 so an env write here would be a second source of truth that can disagree.
@@ -38,9 +38,9 @@ def main() -> int:
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--home", default="", help="Forge config dir; empty = ~/.forge")
+    parser.add_argument("--home", default="", help="Keystone config dir; empty = ~/.keystone")
     parser.add_argument("--name", required=True, help="credential name (secrets.json key)")
-    parser.add_argument("--engine-root", default="", help="Forge source root for path guards")
+    parser.add_argument("--engine-root", default="", help="Keystone source root for path guards")
     options = parser.parse_args()
 
     name = options.name.strip()
@@ -53,16 +53,16 @@ def main() -> int:
     if len(value.encode("utf-8")) > 64 * 1024:
         fail("Credential value exceeds the 64 KiB limit")
 
-    home = Path(options.home or (Path.home() / ".forge")).expanduser().resolve()
+    home = Path(options.home or (Path.home() / ".keystone")).expanduser().resolve()
 
     # Reuse the engine's own path protections when we can import it; otherwise
     # fall back to an equivalent local check rather than skipping the guard.
     if options.engine_root:
         root = Path(options.engine_root).expanduser().resolve()
-        if (root / "forge" / "secrets.py").is_file():
+        if (root / "keystone" / "secrets.py").is_file():
             sys.path.insert(0, str(root))
     try:
-        from forge.secrets import protect_store_path
+        from keystone.secrets import protect_store_path
     except ImportError:
         def protect_store_path(path: Path) -> None:
             resolved = path.resolve()

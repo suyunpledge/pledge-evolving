@@ -6,11 +6,11 @@ import tempfile
 
 from verify_deepseek_execution import DeepSeekRecorder, task_probe, totals
 from verify_mimo_live import wire_probe
-from forge.model import Provider
+from keystone.model import Provider
 
 
 def provider_for(chosen, home):
-    rows=json.loads((home/'forge.patch.json').read_text(encoding='utf-8-sig'))
+    rows=json.loads((home/'keystone.patch.json').read_text(encoding='utf-8-sig'))
     secrets=json.loads((home/'secrets.json').read_text(encoding='utf-8-sig'))
     for row in rows:
         c=row.get('config',{})
@@ -82,11 +82,11 @@ def main():
     args=parser.parse_args()
     if not args.live: parser.error('--live required for paid requests')
     if args.output.exists(): parser.error('Use a new report path')
-    provider=provider_for(args.model,Path.home()/'.forge')
+    provider=provider_for(args.model,Path.home()/'.keystone')
     recorder=SeedRecorder(args.request_limit,{'auto':None,'on':True,'off':False}[args.thinking],args.retries)
     result={'model':args.model,'scenario':args.scenario,'thinking':args.thinking,'retries':args.retries,'cases':[]}
     try:
-        with tempfile.TemporaryDirectory(prefix='forge-seed-live-') as tmp:
+        with tempfile.TemporaryDirectory(prefix='keystone-seed-live-') as tmp:
             root=Path(tmp)
             if args.scenario=='wire':
                 result['cases']=wire_cases(provider,recorder)

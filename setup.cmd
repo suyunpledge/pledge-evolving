@@ -6,7 +6,7 @@ set "MODE=%~1"
 if "%MODE%"=="" set "MODE=gui"
 
 echo ============================================================
-echo   Forge 一键配置（Windows）
+echo   Keystone 一键配置（Windows）
 echo   唯一前提：能上网。缺 Python 会自动静默安装。
 echo   用法：setup.cmd [gui/web/check/selftest]
 echo ============================================================
@@ -40,7 +40,7 @@ if /i "%MODE%"=="selftest" (
 )
 
 call :shortcut
-echo [3/4] 桌面快捷方式已创建：Forge
+echo [3/4] 桌面快捷方式已创建：Keystone
 
 set "PYW=%PYEXE%"
 for %%I in ("%PYEXE%") do set "PYDIR=%%~dpI"
@@ -48,8 +48,8 @@ if exist "%PYDIR%pythonw.exe" set "PYW=%PYDIR%pythonw.exe"
 
 if /i "%MODE%"=="web" goto :web
 if not defined HAS_TK goto :web
-echo [4/4] 启动 Forge 桌面窗口...
-start "" "%PYW%" forge-gui\forge_gui_v2.py
+echo [4/4] 启动 Keystone 桌面窗口...
+start "" "%PYW%" keystone-gui\keystone_gui_v2.py
 exit /b 0
 
 :web
@@ -86,12 +86,12 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-curl -L -o "%TEMP%\forge-py-installer.exe" "https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe"
-"%TEMP%\forge-py-installer.exe" /quiet InstallAllUsers=0 PrependPath=1 Include_launcher=1 Include_tcltk=1
+curl -L -o "%TEMP%\keystone-py-installer.exe" "https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe"
+"%TEMP%\keystone-py-installer.exe" /quiet InstallAllUsers=0 PrependPath=1 Include_launcher=1 Include_tcltk=1
 exit /b 0
 
 :shortcut
-powershell -NoProfile -Command "$py='%PYEXE%'; $pyw=Join-Path (Split-Path $py) 'pythonw.exe'; if(-not(Test-Path $pyw)){$pyw=$py}; $repo='%~dp0'; $ws=New-Object -ComObject WScript.Shell; $desk=[Environment]::GetFolderPath('Desktop'); $s=$ws.CreateShortcut((Join-Path $desk 'Forge.lnk')); $s.TargetPath=$pyw; $s.Arguments=[char]34+(Join-Path $repo 'forge-gui\forge_gui_v2.py')+[char]34; $s.WorkingDirectory=$repo; $s.IconLocation=$pyw; $s.Save()" >nul 2>nul
+powershell -NoProfile -Command "$py='%PYEXE%'; $pyw=Join-Path (Split-Path $py) 'pythonw.exe'; if(-not(Test-Path $pyw)){$pyw=$py}; $repo='%~dp0'; $ws=New-Object -ComObject WScript.Shell; $desk=[Environment]::GetFolderPath('Desktop'); $s=$ws.CreateShortcut((Join-Path $desk 'Keystone.lnk')); $s.TargetPath=$pyw; $s.Arguments=[char]34+(Join-Path $repo 'keystone-gui\keystone_gui_v2.py')+[char]34; $s.WorkingDirectory=$repo; $s.IconLocation=$pyw; $s.Save()" >nul 2>nul
 exit /b 0
 
 :py_fail

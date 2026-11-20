@@ -1,11 +1,11 @@
 {
-  "name": "forge-agent",
-  "displayName": "pledge-evolving",
-  "description": "Forge coding agent beside your code: workspace tools, model routing, policy sandbox and secret virtualization.",
+  "name": "keystone-agent",
+  "displayName": "pledge-keystone",
+  "description": "Keystone coding agent beside your code: workspace tools, model routing, policy sandbox and secret virtualization.",
   "version": "0.2.0",
   "publisher": "pledgedeveloper0418",
   "license": "MIT",
-  "icon": "media/forge-logo.png",
+  "icon": "media/keystone-logo.png",
   "engines": {
     "vscode": "^1.96.0"
   },
@@ -14,7 +14,7 @@
     "Other"
   ],
   "keywords": [
-    "forge",
+    "keystone",
     "agent",
     "coding",
     "secret-virtualization"
@@ -29,9 +29,9 @@
       "supported": "limited",
       "description": "%trust.description%",
       "restrictedConfigurations": [
-        "forge.pythonPath",
-        "forge.enginePath",
-        "forge.homePath"
+        "keystone.pythonPath",
+        "keystone.enginePath",
+        "keystone.homePath"
       ]
     },
     "virtualWorkspaces": {
@@ -42,125 +42,125 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "forge",
-          "title": "Forge",
-          "icon": "media/forge.svg"
+          "id": "keystone",
+          "title": "Keystone",
+          "icon": "media/keystone.svg"
         }
       ]
     },
     "views": {
-      "forge": [
+      "keystone": [
         {
           "type": "webview",
-          "id": "forge.chat",
+          "id": "keystone.chat",
           "name": "%view.title%"
         }
       ]
     },
     "commands": [
       {
-        "command": "forge.open",
+        "command": "keystone.open",
         "title": "%command.open%",
-        "category": "Forge"
+        "category": "Keystone"
       },
       {
-        "command": "forge.newChat",
+        "command": "keystone.newChat",
         "title": "%command.newChat%",
-        "category": "Forge",
+        "category": "Keystone",
         "icon": "$(add)"
       },
       {
-        "command": "forge.stop",
+        "command": "keystone.stop",
         "title": "%command.stop%",
-        "category": "Forge",
+        "category": "Keystone",
         "icon": "$(debug-stop)"
       },
       {
-        "command": "forge.attachFile",
+        "command": "keystone.attachFile",
         "title": "%command.attachFile%",
-        "category": "Forge"
+        "category": "Keystone"
       },
       {
-        "command": "forge.attachSelection",
+        "command": "keystone.attachSelection",
         "title": "%command.attachSelection%",
-        "category": "Forge"
+        "category": "Keystone"
       },
       {
-        "command": "forge.explainSelection",
+        "command": "keystone.explainSelection",
         "title": "%command.explain%",
-        "category": "Forge"
+        "category": "Keystone"
       },
       {
-        "command": "forge.reviewSelection",
+        "command": "keystone.reviewSelection",
         "title": "%command.review%",
-        "category": "Forge"
+        "category": "Keystone"
       },
       {
-        "command": "forge.configure",
+        "command": "keystone.configure",
         "title": "%command.configure%",
-        "category": "Forge",
+        "category": "Keystone",
         "icon": "$(gear)"
       },
       {
-        "command": "forge.reconnect",
+        "command": "keystone.reconnect",
         "title": "%command.reconnect%",
-        "category": "Forge",
+        "category": "Keystone",
         "icon": "$(refresh)"
       }
     ],
     "menus": {
       "view/title": [
         {
-          "command": "forge.newChat",
-          "when": "view == forge.chat",
+          "command": "keystone.newChat",
+          "when": "view == keystone.chat",
           "group": "navigation@1"
         },
         {
-          "command": "forge.configure",
-          "when": "view == forge.chat",
+          "command": "keystone.configure",
+          "when": "view == keystone.chat",
           "group": "navigation@2"
         }
       ],
       "editor/context": [
         {
-          "command": "forge.explainSelection",
+          "command": "keystone.explainSelection",
           "when": "editorHasSelection && resourceScheme == file",
-          "group": "forge@1"
+          "group": "keystone@1"
         },
         {
-          "command": "forge.reviewSelection",
+          "command": "keystone.reviewSelection",
           "when": "editorHasSelection && resourceScheme == file",
-          "group": "forge@2"
+          "group": "keystone@2"
         },
         {
-          "command": "forge.attachFile",
+          "command": "keystone.attachFile",
           "when": "resourceScheme == file",
-          "group": "forge@3"
+          "group": "keystone@3"
         }
       ]
     },
     "configuration": {
-      "title": "Forge",
+      "title": "Keystone",
       "properties": {
-        "forge.pythonPath": {
+        "keystone.pythonPath": {
           "type": "string",
           "default": "python",
           "scope": "machine",
           "description": "%setting.python%"
         },
-        "forge.enginePath": {
+        "keystone.enginePath": {
           "type": "string",
           "default": "",
           "scope": "machine",
           "description": "%setting.engine%"
         },
-        "forge.homePath": {
+        "keystone.homePath": {
           "type": "string",
           "default": "",
           "scope": "machine",
           "description": "%setting.home%"
         },
-        "forge.requestTimeoutSeconds": {
+        "keystone.requestTimeoutSeconds": {
           "type": "number",
           "default": 300,
           "minimum": 30,
@@ -168,7 +168,7 @@
           "scope": "window",
           "description": "%setting.timeout%"
         },
-        "forge.language": {
+        "keystone.language": {
           "type": "string",
           "enum": [
             "auto",
@@ -196,10 +196,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/suyunpledge/pledge-evolving"
+    "url": "https://github.com/suyunpledge/pledge-keystone"
   },
-  "homepage": "https://github.com/suyunpledge/pledge-evolving#readme",
+  "homepage": "https://github.com/suyunpledge/pledge-keystone#readme",
   "bugs": {
-    "url": "https://github.com/suyunpledge/pledge-evolving/issues"
+    "url": "https://github.com/suyunpledge/pledge-keystone/issues"
   }
 }
