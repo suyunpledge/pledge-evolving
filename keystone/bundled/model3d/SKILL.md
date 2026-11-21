@@ -6,9 +6,8 @@ allowed-tools: [model3d_build, model3d_inspect, read_file, list_dir]
 ---
 # 3D modelling playbook (model3d)
 
-Use `model3d_build` for every 3D model request (furniture, brackets, gears, enclosures, stands,
-game props). Never write STL/OBJ text or vertex lists by hand: the tool compiles a short JSON
-spec, checks the mesh and writes the file in one call.
+Use `model3d_build` for every 3D model request. Never write STL/OBJ text or vertex lists by
+hand: the tool compiles a short JSON spec, checks the mesh and writes the file in one call.
 
 ## Loop: plan → build → check → export
 1. **Plan (no tool call).** Fix the units (default mm), the overall size and every key dimension
@@ -19,7 +18,8 @@ spec, checks the mesh and writes the file in one call.
    `expect` block restating the request: `{"size":[40,40,10],"through_holes":1}`.
 3. **Read the result.** `checks: PASS` with every `expect` line ok → done. Otherwise fix exactly
    what the `problem:`/`expect ... FAIL` lines name and call again with the same `path`.
-   Do not re-read the file or inspect it separately: the result already re-read it.
+   Do not re-read or inspect the file: the result already re-read it.
+   Keep the plan short: approximate angles with rounded coordinates instead of long derivations.
 4. **Answer** with the file path(s), the measured size, and any assumption you made.
    Two build calls is normal; more than three means the plan was wrong — re-plan.
 
@@ -38,22 +38,22 @@ spec, checks the mesh and writes the file in one call.
   `rect` (with corner `radius`), `circle`, `regular_polygon`, `gear` (`teeth` + `module` or
   `outer_diameter`); `holes` cut through an extrusion. `revolve` profiles live in the (r, z)
   half-plane with r ≥ 0 (x = distance from the axis).
-- Curves: default facets ≈ one per 1.5 mm; set `segments` only when needed (big booleans on
-  many high-segment curves are slow).
+- Curves: default ≈ one facet per 1.5 mm; set `segments` only when needed.
 
 ## Units, scale, printability (purpose "print", the default)
 - STL/OBJ are written in mm whatever `units` says; glTF in metres, Y up. A 2 m table is
   `{"units":"m"}` or 2000 mm — never 2 mm.
 - Rest the model on z=0; put the largest flat face down; keep overhangs ≤45° or accept supports.
-- Typical FDM minimums: walls ≥1.2 mm, holes +0.2–0.4 mm clearance for fits (an M3 screw hole is
-  d 3.2–3.4), text/details ≥0.8 mm, bed ≈ 220–250 mm.
-- Phone stands, brackets, hooks: think about the load path; fillet-free but ≥3 mm thick parts.
+- FDM minimums: walls ≥1.2 mm; holes +0.2–0.4 mm clearance (M3 hole d 3.2–3.4); bed ≈ 220–250 mm.
 
 ## Recipes
+- Stands, brackets, hooks, L/Z profiles: draw the side outline as ONE `polygon` with points
+  `[depth, height]` (round to 0.5 mm, no trigonometry essays) and extrude it to the width with
+  `"rotate":[90,0,90]` — width runs along X, depth along Y, height along Z, one solid by construction.
 - Plate with a hole: `difference` of `box` and a `cylinder` overshooting top and bottom.
 - Gear: `extrude` a `gear` profile with a `holes:[{"shape":"circle","d":5}]` bore.
 - Chair/table: seat `box` + legs via `linear_array`/`mirror_copy` overlapping the seat by 1 mm,
   all in one `union`; low-poly look = low `segments`.
-- Bowl/vase/cup: `revolve` a closed wall profile; lathe-like parts likewise.
+- Bowl/vase/cup: `revolve` a closed wall profile.
 - Existing file from the user: `tool_search` "model3d_inspect", then call it with `expect` to
   check size and watertightness.

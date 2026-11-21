@@ -1,0 +1,688 @@
+{
+ "date": "2026-11-21T12:07:37",
+ "live": true,
+ "model": "mimo-v2.6-flash",
+ "summary": {
+  "stand/after": {
+   "runs": 3,
+   "pass": 0,
+   "final": 0,
+   "avg_tool_calls": 2.0,
+   "avg_seconds": 165.2
+  }
+ },
+ "runs": [
+  {
+   "arm": "after",
+   "task": "stand",
+   "stopped": "output_limit",
+   "seconds": 166.1,
+   "tool_calls": 2,
+   "tools": [
+    "skill_list",
+    "artifact_read"
+   ],
+   "failed_tool_calls": 0,
+   "model_requests": [
+    {
+     "provider": "mimo-live",
+     "model": "mimo-v2.6-flash",
+     "usage": {
+      "prompt_tokens": 5807,
+      "completion_tokens": 52,
+      "model": "mimo-v2.6-flash",
+      "provider": "mimo-live",
+      "cached_tokens": 0,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 31,
+      "cache_observed": false
+     },
+     "plan": {
+      "vendor": "mimo",
+      "vendor_label": "小米 MiMo",
+      "actions": [
+       "依赖厂商自动缓存（命中 0.00833333×），无需标记",
+       "MiMo 思考模式使用厂商固定采样，已摘除 temperature"
+      ],
+      "notes": [
+       "Token Plan 订阅池：倍率仅供比例参考，命中已实证且被 usage 如实计入",
+       "thinking 仅 on/off 两态，默认 enabled；没有已验证的 effort 强度分档",
+       "2.6 家族 tool_choice 仅 auto；工具调用需回放 reasoning_content，不能假定强制选工具生效",
+       "该模型无目录价，金额按单位价折算，仅用于比较比例，不代表真实账单"
+      ],
+      "cache_control": false,
+      "breakpoints": 1,
+      "ttl": "managed",
+      "est_tokens": 8583,
+      "est_cost": 0.000668,
+      "baseline_cost": 0.001294,
+      "saving": 0.000627,
+      "saving_pct": 48.4,
+      "cliff_action": "pass",
+      "reasoning_budget": null,
+      "defer": false,
+      "cache_engages": true,
+      "route_capabilities": {},
+      "request_budget": {},
+      "adapter_id": "mimo.v2.6.flash",
+      "model_kind_id": "mimo.v2.6.flash",
+      "model_family_id": "mimo.v2.6",
+      "manufacturer_id": "mimo",
+      "behavior_fingerprint": "6bc1ad5e8223d2e9",
+      "model_match_source": "model_id",
+      "model_evidence": "live",
+      "model_traits": [
+       "thinking_type",
+       "nullable_cache_details",
+       "native_tool_replay",
+       "auto_tool_choice_only",
+       "fixed_sampling_when_thinking"
+      ],
+      "reasoning_shaped": true,
+      "fingerprint": "2c56094cb9e825c5",
+      "execution": {},
+      "estimate_scope": "reuse_window",
+      "includes_output_cost": false,
+      "price_known": false,
+      "model": "mimo-v2.6-flash"
+     },
+     "finish_reason": "tool_calls",
+     "estimate_scope": "reuse_window",
+     "invoice_verified": false,
+     "context_revision": 0
+    },
+    {
+     "provider": "mimo-live",
+     "model": "mimo-v2.6-flash",
+     "usage": {
+      "prompt_tokens": 6118,
+      "completion_tokens": 87,
+      "model": "mimo-v2.6-flash",
+      "provider": "mimo-live",
+      "cached_tokens": 5760,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 10,
+      "cache_observed": true
+     },
+     "plan": {
+      "vendor": "mimo",
+      "vendor_label": "小米 MiMo",
+      "actions": [
+       "依赖厂商自动缓存（命中 0.00833333×），无需标记",
+       "MiMo 思考模式使用厂商固定采样，已摘除 temperature"
+      ],
+      "notes": [
+       "Token Plan 订阅池：倍率仅供比例参考，命中已实证且被 usage 如实计入",
+       "thinking 仅 on/off 两态，默认 enabled；没有已验证的 effort 强度分档",
+       "2.6 家族 tool_choice 仅 auto；工具调用需回放 reasoning_content，不能假定强制选工具生效",
+       "该模型无目录价，金额按单位价折算，仅用于比较比例，不代表真实账单"
+      ],
+      "cache_control": false,
+      "breakpoints": 1,
+      "ttl": "managed",
+      "est_tokens": 8911,
+      "est_cost": 0.000717,
+      "baseline_cost": 0.001344,
+      "saving": 0.000627,
+      "saving_pct": 46.6,
+      "cliff_action": "pass",
+      "reasoning_budget": null,
+      "defer": false,
+      "cache_engages": true,
+      "route_capabilities": {},
+      "request_budget": {},
+      "adapter_id": "mimo.v2.6.flash",
+      "model_kind_id": "mimo.v2.6.flash",
+      "model_family_id": "mimo.v2.6",
+      "manufacturer_id": "mimo",
+      "behavior_fingerprint": "6bc1ad5e8223d2e9",
+      "model_match_source": "model_id",
+      "model_evidence": "live",
+      "model_traits": [
+       "thinking_type",
+       "nullable_cache_details",
+       "native_tool_replay",
+       "auto_tool_choice_only",
+       "fixed_sampling_when_thinking"
+      ],
+      "reasoning_shaped": true,
+      "fingerprint": "2c56094cb9e825c5",
+      "execution": {},
+      "estimate_scope": "reuse_window",
+      "includes_output_cost": false,
+      "price_known": false,
+      "model": "mimo-v2.6-flash"
+     },
+     "finish_reason": "tool_calls",
+     "estimate_scope": "reuse_window",
+     "invoice_verified": false,
+     "context_revision": 0
+    },
+    {
+     "provider": "mimo-live",
+     "model": "mimo-v2.6-flash",
+     "usage": {
+      "prompt_tokens": 6849,
+      "completion_tokens": 4096,
+      "model": "mimo-v2.6-flash",
+      "provider": "mimo-live",
+      "cached_tokens": 6080,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 4095,
+      "cache_observed": true
+     },
+     "plan": {
+      "vendor": "mimo",
+      "vendor_label": "小米 MiMo",
+      "actions": [
+       "依赖厂商自动缓存（命中 0.00833333×），无需标记",
+       "MiMo 思考模式使用厂商固定采样，已摘除 temperature"
+      ],
+      "notes": [
+       "Token Plan 订阅池：倍率仅供比例参考，命中已实证且被 usage 如实计入",
+       "thinking 仅 on/off 两态，默认 enabled；没有已验证的 effort 强度分档",
+       "2.6 家族 tool_choice 仅 auto；工具调用需回放 reasoning_content，不能假定强制选工具生效",
+       "该模型无目录价，金额按单位价折算，仅用于比较比例，不代表真实账单"
+      ],
+      "cache_control": false,
+      "breakpoints": 1,
+      "ttl": "managed",
+      "est_tokens": 9773,
+      "est_cost": 0.00022,
+      "baseline_cost": 0.001474,
+      "saving": 0.001253,
+      "saving_pct": 85.0,
+      "cliff_action": "pass",
+      "reasoning_budget": null,
+      "defer": false,
+      "cache_engages": true,
+      "route_capabilities": {},
+      "request_budget": {},
+      "adapter_id": "mimo.v2.6.flash",
+      "model_kind_id": "mimo.v2.6.flash",
+      "model_family_id": "mimo.v2.6",
+      "manufacturer_id": "mimo",
+      "behavior_fingerprint": "6bc1ad5e8223d2e9",
+      "model_match_source": "model_id",
+      "model_evidence": "live",
+      "model_traits": [
+       "thinking_type",
+       "nullable_cache_details",
+       "native_tool_replay",
+       "auto_tool_choice_only",
+       "fixed_sampling_when_thinking"
+      ],
+      "reasoning_shaped": true,
+      "fingerprint": "2c56094cb9e825c5",
+      "execution": {},
+      "estimate_scope": "reuse_window",
+      "includes_output_cost": false,
+      "price_known": false,
+      "model": "mimo-v2.6-flash"
+     },
+     "finish_reason": "length",
+     "estimate_scope": "reuse_window",
+     "invoice_verified": false,
+     "context_revision": 0
+    }
+   ],
+   "prompt_tokens": 18774,
+   "completion_tokens": 4235,
+   "grade": {
+    "file": null,
+    "ok": false,
+    "why": "no mesh file written"
+   },
+   "answer": "[stopped: model output reached its token limit]",
+   "run": 0
+  },
+  {
+   "arm": "after",
+   "task": "stand",
+   "stopped": "output_limit",
+   "seconds": 186.9,
+   "tool_calls": 1,
+   "tools": [
+    "skill_list"
+   ],
+   "failed_tool_calls": 0,
+   "model_requests": [
+    {
+     "provider": "mimo-live",
+     "model": "mimo-v2.6-flash",
+     "usage": {
+      "prompt_tokens": 5807,
+      "completion_tokens": 32,
+      "model": "mimo-v2.6-flash",
+      "provider": "mimo-live",
+      "cached_tokens": 0,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 11,
+      "cache_observed": false
+     },
+     "plan": {
+      "vendor": "mimo",
+      "vendor_label": "小米 MiMo",
+      "actions": [
+       "依赖厂商自动缓存（命中 0.00833333×），无需标记",
+       "MiMo 思考模式使用厂商固定采样，已摘除 temperature"
+      ],
+      "notes": [
+       "Token Plan 订阅池：倍率仅供比例参考，命中已实证且被 usage 如实计入",
+       "thinking 仅 on/off 两态，默认 enabled；没有已验证的 effort 强度分档",
+       "2.6 家族 tool_choice 仅 auto；工具调用需回放 reasoning_content，不能假定强制选工具生效",
+       "该模型无目录价，金额按单位价折算，仅用于比较比例，不代表真实账单"
+      ],
+      "cache_control": false,
+      "breakpoints": 1,
+      "ttl": "managed",
+      "est_tokens": 8583,
+      "est_cost": 4.1e-05,
+      "baseline_cost": 0.001294,
+      "saving": 0.001253,
+      "saving_pct": 96.8,
+      "cliff_action": "pass",
+      "reasoning_budget": null,
+      "defer": false,
+      "cache_engages": true,
+      "route_capabilities": {},
+      "request_budget": {},
+      "adapter_id": "mimo.v2.6.flash",
+      "model_kind_id": "mimo.v2.6.flash",
+      "model_family_id": "mimo.v2.6",
+      "manufacturer_id": "mimo",
+      "behavior_fingerprint": "6bc1ad5e8223d2e9",
+      "model_match_source": "model_id",
+      "model_evidence": "live",
+      "model_traits": [
+       "thinking_type",
+       "nullable_cache_details",
+       "native_tool_replay",
+       "auto_tool_choice_only",
+       "fixed_sampling_when_thinking"
+      ],
+      "reasoning_shaped": true,
+      "fingerprint": "2c56094cb9e825c5",
+      "execution": {},
+      "estimate_scope": "reuse_window",
+      "includes_output_cost": false,
+      "price_known": false,
+      "model": "mimo-v2.6-flash"
+     },
+     "finish_reason": "tool_calls",
+     "estimate_scope": "reuse_window",
+     "invoice_verified": false,
+     "context_revision": 0
+    },
+    {
+     "provider": "mimo-live",
+     "model": "mimo-v2.6-flash",
+     "usage": {
+      "prompt_tokens": 6098,
+      "completion_tokens": 4096,
+      "model": "mimo-v2.6-flash",
+      "provider": "mimo-live",
+      "cached_tokens": 5760,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 4095,
+      "cache_observed": true
+     },
+     "plan": {
+      "vendor": "mimo",
+      "vendor_label": "小米 MiMo",
+      "actions": [
+       "依赖厂商自动缓存（命中 0.00833333×），无需标记",
+       "MiMo 思考模式使用厂商固定采样，已摘除 temperature"
+      ],
+      "notes": [
+       "Token Plan 订阅池：倍率仅供比例参考，命中已实证且被 usage 如实计入",
+       "thinking 仅 on/off 两态，默认 enabled；没有已验证的 effort 强度分档",
+       "2.6 家族 tool_choice 仅 auto；工具调用需回放 reasoning_content，不能假定强制选工具生效",
+       "该模型无目录价，金额按单位价折算，仅用于比较比例，不代表真实账单"
+      ],
+      "cache_control": false,
+      "breakpoints": 1,
+      "ttl": "managed",
+      "est_tokens": 8911,
+      "est_cost": 9e-05,
+      "baseline_cost": 0.001344,
+      "saving": 0.001253,
+      "saving_pct": 93.3,
+      "cliff_action": "pass",
+      "reasoning_budget": null,
+      "defer": false,
+      "cache_engages": true,
+      "route_capabilities": {},
+      "request_budget": {},
+      "adapter_id": "mimo.v2.6.flash",
+      "model_kind_id": "mimo.v2.6.flash",
+      "model_family_id": "mimo.v2.6",
+      "manufacturer_id": "mimo",
+      "behavior_fingerprint": "6bc1ad5e8223d2e9",
+      "model_match_source": "model_id",
+      "model_evidence": "live",
+      "model_traits": [
+       "thinking_type",
+       "nullable_cache_details",
+       "native_tool_replay",
+       "auto_tool_choice_only",
+       "fixed_sampling_when_thinking"
+      ],
+      "reasoning_shaped": true,
+      "fingerprint": "2c56094cb9e825c5",
+      "execution": {},
+      "estimate_scope": "reuse_window",
+      "includes_output_cost": false,
+      "price_known": false,
+      "model": "mimo-v2.6-flash"
+     },
+     "finish_reason": "length",
+     "estimate_scope": "reuse_window",
+     "invoice_verified": false,
+     "context_revision": 0
+    }
+   ],
+   "prompt_tokens": 11905,
+   "completion_tokens": 4128,
+   "grade": {
+    "file": null,
+    "ok": false,
+    "why": "no mesh file written"
+   },
+   "answer": "[stopped: model output reached its token limit]",
+   "run": 1
+  },
+  {
+   "arm": "after",
+   "task": "stand",
+   "stopped": "output_limit",
+   "seconds": 142.7,
+   "tool_calls": 3,
+   "tools": [
+    "skill_list",
+    "artifact_read",
+    "artifact_read"
+   ],
+   "failed_tool_calls": 2,
+   "model_requests": [
+    {
+     "provider": "mimo-live",
+     "model": "mimo-v2.6-flash",
+     "usage": {
+      "prompt_tokens": 5807,
+      "completion_tokens": 59,
+      "model": "mimo-v2.6-flash",
+      "provider": "mimo-live",
+      "cached_tokens": 0,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 38,
+      "cache_observed": false
+     },
+     "plan": {
+      "vendor": "mimo",
+      "vendor_label": "小米 MiMo",
+      "actions": [
+       "依赖厂商自动缓存（命中 0.00833333×），无需标记",
+       "MiMo 思考模式使用厂商固定采样，已摘除 temperature"
+      ],
+      "notes": [
+       "Token Plan 订阅池：倍率仅供比例参考，命中已实证且被 usage 如实计入",
+       "thinking 仅 on/off 两态，默认 enabled；没有已验证的 effort 强度分档",
+       "2.6 家族 tool_choice 仅 auto；工具调用需回放 reasoning_content，不能假定强制选工具生效",
+       "该模型无目录价，金额按单位价折算，仅用于比较比例，不代表真实账单"
+      ],
+      "cache_control": false,
+      "breakpoints": 1,
+      "ttl": "managed",
+      "est_tokens": 8583,
+      "est_cost": 4.1e-05,
+      "baseline_cost": 0.001294,
+      "saving": 0.001253,
+      "saving_pct": 96.8,
+      "cliff_action": "pass",
+      "reasoning_budget": null,
+      "defer": false,
+      "cache_engages": true,
+      "route_capabilities": {},
+      "request_budget": {},
+      "adapter_id": "mimo.v2.6.flash",
+      "model_kind_id": "mimo.v2.6.flash",
+      "model_family_id": "mimo.v2.6",
+      "manufacturer_id": "mimo",
+      "behavior_fingerprint": "6bc1ad5e8223d2e9",
+      "model_match_source": "model_id",
+      "model_evidence": "live",
+      "model_traits": [
+       "thinking_type",
+       "nullable_cache_details",
+       "native_tool_replay",
+       "auto_tool_choice_only",
+       "fixed_sampling_when_thinking"
+      ],
+      "reasoning_shaped": true,
+      "fingerprint": "2c56094cb9e825c5",
+      "execution": {},
+      "estimate_scope": "reuse_window",
+      "includes_output_cost": false,
+      "price_known": false,
+      "model": "mimo-v2.6-flash"
+     },
+     "finish_reason": "tool_calls",
+     "estimate_scope": "reuse_window",
+     "invoice_verified": false,
+     "context_revision": 0
+    },
+    {
+     "provider": "mimo-live",
+     "model": "mimo-v2.6-flash",
+     "usage": {
+      "prompt_tokens": 6125,
+      "completion_tokens": 85,
+      "model": "mimo-v2.6-flash",
+      "provider": "mimo-live",
+      "cached_tokens": 5760,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 8,
+      "cache_observed": true
+     },
+     "plan": {
+      "vendor": "mimo",
+      "vendor_label": "小米 MiMo",
+      "actions": [
+       "依赖厂商自动缓存（命中 0.00833333×），无需标记",
+       "MiMo 思考模式使用厂商固定采样，已摘除 temperature"
+      ],
+      "notes": [
+       "Token Plan 订阅池：倍率仅供比例参考，命中已实证且被 usage 如实计入",
+       "thinking 仅 on/off 两态，默认 enabled；没有已验证的 effort 强度分档",
+       "2.6 家族 tool_choice 仅 auto；工具调用需回放 reasoning_content，不能假定强制选工具生效",
+       "该模型无目录价，金额按单位价折算，仅用于比较比例，不代表真实账单"
+      ],
+      "cache_control": false,
+      "breakpoints": 1,
+      "ttl": "managed",
+      "est_tokens": 8911,
+      "est_cost": 9e-05,
+      "baseline_cost": 0.001344,
+      "saving": 0.001253,
+      "saving_pct": 93.3,
+      "cliff_action": "pass",
+      "reasoning_budget": null,
+      "defer": false,
+      "cache_engages": true,
+      "route_capabilities": {},
+      "request_budget": {},
+      "adapter_id": "mimo.v2.6.flash",
+      "model_kind_id": "mimo.v2.6.flash",
+      "model_family_id": "mimo.v2.6",
+      "manufacturer_id": "mimo",
+      "behavior_fingerprint": "6bc1ad5e8223d2e9",
+      "model_match_source": "model_id",
+      "model_evidence": "live",
+      "model_traits": [
+       "thinking_type",
+       "nullable_cache_details",
+       "native_tool_replay",
+       "auto_tool_choice_only",
+       "fixed_sampling_when_thinking"
+      ],
+      "reasoning_shaped": true,
+      "fingerprint": "2c56094cb9e825c5",
+      "execution": {},
+      "estimate_scope": "reuse_window",
+      "includes_output_cost": false,
+      "price_known": false,
+      "model": "mimo-v2.6-flash"
+     },
+     "finish_reason": "tool_calls",
+     "estimate_scope": "reuse_window",
+     "invoice_verified": false,
+     "context_revision": 0
+    },
+    {
+     "provider": "mimo-live",
+     "model": "mimo-v2.6-flash",
+     "usage": {
+      "prompt_tokens": 6384,
+      "completion_tokens": 171,
+      "model": "mimo-v2.6-flash",
+      "provider": "mimo-live",
+      "cached_tokens": 6080,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 72,
+      "cache_observed": true
+     },
+     "plan": {
+      "vendor": "mimo",
+      "vendor_label": "小米 MiMo",
+      "actions": [
+       "依赖厂商自动缓存（命中 0.00833333×），无需标记",
+       "MiMo 思考模式使用厂商固定采样，已摘除 temperature"
+      ],
+      "notes": [
+       "Token Plan 订阅池：倍率仅供比例参考，命中已实证且被 usage 如实计入",
+       "thinking 仅 on/off 两态，默认 enabled；没有已验证的 effort 强度分档",
+       "2.6 家族 tool_choice 仅 auto；工具调用需回放 reasoning_content，不能假定强制选工具生效",
+       "该模型无目录价，金额按单位价折算，仅用于比较比例，不代表真实账单"
+      ],
+      "cache_control": false,
+      "breakpoints": 1,
+      "ttl": "managed",
+      "est_tokens": 9024,
+      "est_cost": 0.000107,
+      "baseline_cost": 0.001361,
+      "saving": 0.001253,
+      "saving_pct": 92.1,
+      "cliff_action": "pass",
+      "reasoning_budget": null,
+      "defer": false,
+      "cache_engages": true,
+      "route_capabilities": {},
+      "request_budget": {},
+      "adapter_id": "mimo.v2.6.flash",
+      "model_kind_id": "mimo.v2.6.flash",
+      "model_family_id": "mimo.v2.6",
+      "manufacturer_id": "mimo",
+      "behavior_fingerprint": "6bc1ad5e8223d2e9",
+      "model_match_source": "model_id",
+      "model_evidence": "live",
+      "model_traits": [
+       "thinking_type",
+       "nullable_cache_details",
+       "native_tool_replay",
+       "auto_tool_choice_only",
+       "fixed_sampling_when_thinking"
+      ],
+      "reasoning_shaped": true,
+      "fingerprint": "2c56094cb9e825c5",
+      "execution": {},
+      "estimate_scope": "reuse_window",
+      "includes_output_cost": false,
+      "price_known": false,
+      "model": "mimo-v2.6-flash"
+     },
+     "finish_reason": "tool_calls",
+     "estimate_scope": "reuse_window",
+     "invoice_verified": false,
+     "context_revision": 0
+    },
+    {
+     "provider": "mimo-live",
+     "model": "mimo-v2.6-flash",
+     "usage": {
+      "prompt_tokens": 6729,
+      "completion_tokens": 4096,
+      "model": "mimo-v2.6-flash",
+      "provider": "mimo-live",
+      "cached_tokens": 6336,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 4097,
+      "cache_observed": true
+     },
+     "plan": {
+      "vendor": "mimo",
+      "vendor_label": "小米 MiMo",
+      "actions": [
+       "依赖厂商自动缓存（命中 0.00833333×），无需标记",
+       "MiMo 思考模式使用厂商固定采样，已摘除 temperature"
+      ],
+      "notes": [
+       "Token Plan 订阅池：倍率仅供比例参考，命中已实证且被 usage 如实计入",
+       "thinking 仅 on/off 两态，默认 enabled；没有已验证的 effort 强度分档",
+       "2.6 家族 tool_choice 仅 auto；工具调用需回放 reasoning_content，不能假定强制选工具生效",
+       "该模型无目录价，金额按单位价折算，仅用于比较比例，不代表真实账单"
+      ],
+      "cache_control": false,
+      "breakpoints": 1,
+      "ttl": "managed",
+      "est_tokens": 9137,
+      "est_cost": 0.000125,
+      "baseline_cost": 0.001378,
+      "saving": 0.001253,
+      "saving_pct": 91.0,
+      "cliff_action": "pass",
+      "reasoning_budget": null,
+      "defer": false,
+      "cache_engages": true,
+      "route_capabilities": {},
+      "request_budget": {},
+      "adapter_id": "mimo.v2.6.flash",
+      "model_kind_id": "mimo.v2.6.flash",
+      "model_family_id": "mimo.v2.6",
+      "manufacturer_id": "mimo",
+      "behavior_fingerprint": "6bc1ad5e8223d2e9",
+      "model_match_source": "model_id",
+      "model_evidence": "live",
+      "model_traits": [
+       "thinking_type",
+       "nullable_cache_details",
+       "native_tool_replay",
+       "auto_tool_choice_only",
+       "fixed_sampling_when_thinking"
+      ],
+      "reasoning_shaped": true,
+      "fingerprint": "2c56094cb9e825c5",
+      "execution": {},
+      "estimate_scope": "reuse_window",
+      "includes_output_cost": false,
+      "price_known": false,
+      "model": "mimo-v2.6-flash"
+     },
+     "finish_reason": "length",
+     "estimate_scope": "reuse_window",
+     "invoice_verified": false,
+     "context_revision": 0
+    }
+   ],
+   "prompt_tokens": 25045,
+   "completion_tokens": 4411,
+   "grade": {
+    "file": null,
+    "ok": false,
+    "why": "no mesh file written"
+   },
+   "answer": "[stopped: model output reached its token limit]",
+   "run": 2
+  }
+ ]
+}
