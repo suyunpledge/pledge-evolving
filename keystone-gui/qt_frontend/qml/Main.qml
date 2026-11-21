@@ -60,6 +60,8 @@ ApplicationWindow {
     }
 
     readonly property var wallpaper: workbench.wallpaper
+    readonly property string ambientMode: window.codingVisible ? "code" : (window.conversationOnly ? "chat" : "work")
+    onAmbientModeChanged: Qt.callLater(refreshBackdrop)
     // Keep the static ambient capture separate from changing page content.
     Item {
         id: ambient
@@ -68,9 +70,18 @@ ApplicationWindow {
             anchors.fill: parent
             visible: gpuEnabled
             property vector2d canvasSize: Qt.vector2d(width, height)
+            property real modeAccent: window.codingVisible ? 1.0 : 0.0
             fragmentShader: "../shaders/ambient.frag.qsb"
         }
         Rectangle { anchors.fill: parent; visible: !gpuEnabled; color: Theme.bgFallback }
+        DreamyBackdrop {
+            id: dreamyBackdrop
+            anchors.fill: parent
+            visible: !stillWallpaper.loaded && window.wallpaper.kind === "none"
+            sideInset: window.sideWidth
+            mode: window.ambientMode
+            onPainted: Qt.callLater(window.refreshBackdrop)
+        }
         Image {
             id: stillWallpaper; objectName: "stillWallpaper"
             readonly property bool loaded: status === Image.Ready
