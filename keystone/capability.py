@@ -28,6 +28,11 @@ from pathlib import Path
 from typing import Any, Iterable
 from .compat import capability_manifest
 
+#: Product tree shipped with the package (first anchor: it shadows profile and
+#: project copies of the same name). The directory name contains "bundled",
+#: which is what makes ``_load`` treat it as host-trusted.
+BUNDLED_ROOT = Path(__file__).resolve().parent / "bundled"
+
 FRONTMATTER = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.S)
 MANIFEST_NAMES = ("keystone.capability.json", "forge.capability.json", "plugin.json", "SKILL.md")
 
@@ -334,4 +339,10 @@ class CapabilityLibrary:
         return "\n".join(lines)
 
 
-__all__ = ["Capability", "CapabilityLibrary", "MANIFEST_NAMES", "_parse_frontmatter"]
+def default_roots(home: Path, workspace_capability_dirs: Iterable[Path] = ()) -> list[Path]:
+    """Product tree first, then the profile tree, then project trees."""
+    return [BUNDLED_ROOT, Path(home) / "capabilities", *workspace_capability_dirs]
+
+
+__all__ = ["BUNDLED_ROOT", "Capability", "CapabilityLibrary", "MANIFEST_NAMES", "_parse_frontmatter",
+           "default_roots"]

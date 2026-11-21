@@ -497,12 +497,12 @@ def cmd_sessions(args) -> int:
 
 
 def cmd_capabilities(args) -> int:
-    from .capability import CapabilityLibrary
+    from .capability import CapabilityLibrary, default_roots
 
     home = Path(args.home)
     workspace = Path(args.workspace or Path.cwd())
     lib = CapabilityLibrary(
-        [home / "capabilities", *(d / "capabilities" for d in workspace_dirs(workspace))],
+        default_roots(home, (d / "capabilities" for d in workspace_dirs(workspace))),
         state_path=home / "capabilities.state.json",
     )
     lib.scan()

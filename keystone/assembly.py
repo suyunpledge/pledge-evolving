@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable, Iterable, TYPE_CHECKING
 import uuid
-from .capability import CapabilityLibrary
+from .capability import CapabilityLibrary, default_roots
 from .checkpoint import CheckpointStore
 from .memory import MemoryStore
 from .model import ModelRouter
@@ -57,7 +57,7 @@ def build_agent(
         limits = resolve_loop_limits(config, router=router)
 
     capabilities = CapabilityLibrary(
-        [home / "capabilities", *(d / "capabilities" for d in workspace_dirs(workspace))],
+        default_roots(home, (d / "capabilities" for d in workspace_dirs(workspace))),
         state_path=home / "capabilities.state.json",
     )
     capabilities.scan()

@@ -42,6 +42,7 @@ BUILTIN_TOOL_NAMES = frozenset({
     "find_files", "review_changes", "file_stats", "file_export",
     "git_status", "git_add", "git_commit", "git_log",
     "artifact_read", "artifact_grep",
+    "model3d_build", "model3d_inspect",
 })
 
 #: 代码搜索 / 查找时整棵跳过的目录：版本控制、依赖、虚拟环境、各类缓存。
@@ -729,6 +730,8 @@ def build_builtin_registry(
     view_tool = partial(host_tool, result_fields=FIELDS if result_views else ())
     from .artifact_tools import register_artifact_tools
     register_artifact_tools(reg)
+    from .model3d_tools import register_model3d_tools
+    register_model3d_tools(reg)
 
     @host_tool("edit_config", "Inspect a protected JSON/YAML/TOML/.env configuration, then apply a structured "
               "patch with its revision. Credentials remain opaque and unchanged.",
@@ -1329,11 +1332,24 @@ def build_builtin_registry(
         lines = [f"{s.name}: {s.description}" for s in found] or ["no matching tools"]
         return ToolResult(ok=True, content="\n".join(lines), meta={"activated": [s.name for s in found]})
 
-    @host_tool("skill_list", "List installed capabilities (skills/plugins).", no_defer=True, requires=("capabilities",))
+    @host_tool("skill_list", "List installed capabilities (skills/plugins); pass name to load that "
+              "skill's instructions.", no_defer=True, requires=("capabilities",),
+              schema={"name": {"type": "string", "description": "Optional: capability to load."}})
     def skill_list(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         lib = ctx.extras.get("capabilities")
         if lib is None:
             return ToolResult(ok=True, content="(no capability library attached)")
+        wanted = str(args.get("name") or "").strip()
+        if wanted:
+            cap = lib.get(wanted)
+            if cap is None or not cap.enabled:
+                names = ", ".join(c.name for c in lib.list() if c.enabled) or "(none)"
+                return ToolResult(ok=False, error=f"no enabled capability {wanted!r}; installed: {names}")
+            if not cap.trusted:
+                return ToolResult(ok=False, error=f"capability {wanted!r} is not trusted; "
+                                                  "the user must trust it first (keystone capabilities trust)")
+            return ToolResult(ok=True, content=cap.instructions(),
+                              meta={"capability": cap.name, "version": cap.version})
         lines = []
         for cap in lib.list():
             flag = "trusted" if cap.trusted else "UNTRUSTED"
