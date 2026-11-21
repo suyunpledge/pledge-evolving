@@ -8,6 +8,7 @@ AbstractButton {
     property bool selected: false
     property bool primary: false
     property bool quiet: false
+    property bool flat: false
     property string tip: ""
     property real cornerRadius: 12
     property color ink: primary ? Theme.accentInk : selected ? Theme.textPrimary : "#dce3ec"
@@ -24,8 +25,9 @@ AbstractButton {
     ToolTip.delay: 650
     background: GlassSurface {
         material: control.material
+        flat: control.flat
         radius: control.cornerRadius
-        tint: control.primary ? Theme.accentTint : control.selected ? Theme.selectedTint : Theme.glassTint
+        tint: control.flat ? "#25292f" : control.primary ? Theme.accentTint : control.selected ? Theme.selectedTint : Theme.glassTint
         visible: !control.quiet || control.hovered || control.selected || control.primary || control.visualFocus
         emphasis: control.primary ? 1.15 : control.selected ? 1 : control.visualFocus ? 0.65 : 0
         hoverAmount: control.hovered || control.down ? 1 : 0

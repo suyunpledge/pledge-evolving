@@ -16,7 +16,9 @@ from keystone.secrets import redact
 from qt_frontend.store import SessionStore
 from qt_frontend.gateway_service import GatewayService
 from qt_frontend.workspace_service import WorkspaceService
+from qt_frontend.workspace_navigation import Explorer, WorkspaceQueries
 from qt_frontend.coding_service import CodingService
+from qt_frontend.terminal_service import TerminalService
 from keystone.compat import desktop_config
 
 
@@ -42,6 +44,8 @@ class ServiceHost:
         self._emitter = emit
         self.gateway = GatewayService(self.home, self.workspace, self.emit, demo=demo)
         self.pages = WorkspaceService(self)
+        self.queries = WorkspaceQueries(self.emit)
+        self.terminal = TerminalService(self)
         self.coding = CodingService(self)
         from qt_frontend.scheduler_service import SchedulerService
         self.scheduler = SchedulerService(self)
@@ -102,17 +106,22 @@ class ServiceHost:
         self.worker = threading.Thread(target=run, name='Keystone-Service-Worker', daemon=True)
         self.worker.start()
 
-    def approve(self, title, arguments, cancel=None):
+    def approve(self, title, arguments, cancel=None, *, independent=False):
         identifier = uuid.uuid4().hex
         done = threading.Event()
         waiter = {'done': done, 'approved': False}
         self.waiters[identifier] = waiter
         self.emit('approval', id=identifier, title=str(title), detail=json.dumps(redact(arguments), ensure_ascii=False, indent=2, default=str))
+        stops = [self.closed]
+        if not independent:
+            stops.append(self.cancel)
+        if cancel is not None:
+            stops.append(cancel)
         try:
             while not done.wait(.1):
-                if self.closed.is_set() or self.cancel.is_set() or cancel is not None and cancel.is_set():
+                if any(event.is_set() for event in stops):
                     return False
-            return waiter['approved'] and not self.closed.is_set() and not self.cancel.is_set()
+            return waiter['approved'] and not any(event.is_set() for event in stops)
         finally:
             self.waiters.pop(identifier, None)
             self.emit('approval_closed', id=identifier)
@@ -136,11 +145,19 @@ class ServiceHost:
         if self.pages.unsaved:
             raise ValueError('请先保存或放弃当前项目的编辑内容。')
         self.coding.close()
-        self.coding = CodingService(self)
-        self.workspace = target.root
-        self.pages.boundary, self.pages.directory = target, ''
-        self.pages.documents.clear()
-        self.pages.active_document = ''
+        with self.lock:
+            self.terminal.close()
+            self.workspace = target.root
+            self.terminal = TerminalService(self)
+            self.coding = CodingService(self)
+            self.pages.results.pop('development', None)
+            self.queries.reset()
+            self.pages.explorer = Explorer(target)
+            self.pages.search_results = None
+            self.pages.revisions.clear()
+            self.pages.boundary, self.pages.directory = target, ''
+            self.pages.documents.clear()
+            self.pages.active_document = ''
         prefs = SessionStore.read(desktop_config(self.home), {})
         SessionStore.atomic(desktop_config(self.home), {**prefs, 'project_workspace': str(target.root)})
         self.gateway.workspace = target.root
@@ -155,6 +172,16 @@ class ServiceHost:
             self.page = row['page']
             # Loading never blocks stdin: cancellation/approval remains responsive.
             self.navigation.submit(self.navigate, dict(row))
+        elif command == 'terminal':
+            with self.lock:
+                if row.get('action') == 'stop':
+                    self.terminal.cancel.set()
+                elif self.page == 'development' and row.get('root') == str(self.workspace):
+                    if row.get('action') in {'run', 'git'}:
+                        self.terminal.start(row.get('text', ''), git_status=row['action'] == 'git')
+        elif command == 'workspace_query':
+            with self.lock:
+                self.queries.request(self.pages, row)
         elif command == 'page_action':
             page, action, values = row['page'], row['action'], row.get('values', {})
             if action == 'cancel':
@@ -202,6 +229,8 @@ class ServiceHost:
                 self.coding.command(row)
         elif command == 'permission':
             if not self.running and row.get('profile') in {'sandbox', 'manual', 'full'}:
+                if self.profile != row['profile']:
+                    self.terminal.close()
                 self.profile = row['profile']
             self.emit('permission', profile=self.profile)
         elif command == 'approval':
@@ -239,6 +268,8 @@ class ServiceHost:
         self.cancel.set()
         for waiter in tuple(self.waiters.values()):
             waiter['done'].set()
+        self.terminal.close()
+        self.queries.close()
         self.navigation.shutdown(wait=False, cancel_futures=True)
         self.scheduler.close()
         self.coding.cancel.set()

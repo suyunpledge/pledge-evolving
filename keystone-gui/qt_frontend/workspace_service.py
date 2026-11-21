@@ -13,6 +13,7 @@ from keystone.desktop_permissions import profile_policy
 from keystone.policy import Policy
 from keystone.secrets import MARKER, redact
 from .store import SessionStore
+from .workspace_navigation import Explorer
 from keystone.compat import desktop_config
 
 
@@ -45,6 +46,7 @@ class WorkspaceService:
         self.host = host
         self.home = host.home
         self.boundary = ProjectBoundary(host.workspace)
+        self.explorer = Explorer(self.boundary)
         self.documents = {}
         self.active_document = ''
         self.directory = ''
@@ -75,23 +77,29 @@ class WorkspaceService:
         data['result'] = self.results.get(page, '')
         self.host.emit('page', page=page, data=data)
 
+    def directory_rows(self):
+        if self.search_results is not None:
+            return self.search_results
+        target = self.boundary.path(self.directory or '.')
+        entries = []
+        for p in sorted(target.iterdir(), key=lambda p: (not p.is_dir(), p.name.casefold())):
+            if p.name in {'.git', '.venv', 'node_modules', '__pycache__', '.pytest_cache'}:
+                continue
+            try:
+                self.boundary.path(p)
+            except PermissionError:
+                continue
+            entries.append(dict(id=str(p.relative_to(self.host.workspace)), title=p.name,
+                subtitle='文件夹' if p.is_dir() else f'{p.stat().st_size:,} B', directory=p.is_dir(), actions=[button('open', '打开')]))
+            if len(entries) >= 1000:
+                break
+        return entries
+
     def view(self, page):
         data = dict(fields=[], actions=[], rows=[], hint='')
         rows = load_user_layer(self.home)
         if page in {'files', 'development'}:
-            target = self.boundary.path(self.directory or '.')
-            entries = []
-            for p in sorted(target.iterdir(), key=lambda p: (not p.is_dir(), p.name.casefold())):
-                if p.name in {'.git', '.venv', 'node_modules', '__pycache__', '.pytest_cache'}:
-                    continue
-                try:
-                    self.boundary.path(p)
-                except PermissionError:
-                    continue
-                entries.append(dict(id=str(p.relative_to(self.host.workspace)), title=p.name,
-                    subtitle='文件夹' if p.is_dir() else f'{p.stat().st_size:,} B', directory=p.is_dir(), actions=[button('open', '打开')]))
-                if len(entries) >= 1000:
-                    break
+            entries = self.explorer.rows() if page == 'development' else self.directory_rows()
             doc = self.documents.get(self.active_document)
             data.update(hint=str(self.host.workspace), directory=self.directory, rows=entries,
                 actions=[button('chooseProject', '选择项目'), button('parent', '上一级'), button('git', 'Git 变更')],
@@ -99,8 +107,6 @@ class WorkspaceService:
                               original=doc.original, encoding=doc.encoding, newline=repr(doc.newline),
                               version=self.revisions.get(self.active_document, 0)) if doc else {},
                 tabs=[dict(path=p, name=d.path.name, dirty=d.dirty) for p, d in self.documents.items()])
-            if self.search_results is not None:
-                data['rows'] = self.search_results
         elif page == 'task':
             data.update(hint='在当前工作区运行任务，沿用当前权限；输出与执行状态保留在此页。',
                 fields=[field('prompt', '任务内容', kind='multiline'), field('planning', '规划程度', 'none', 'choice', ['none', 'low', 'medium', 'high'])],
@@ -187,10 +193,16 @@ class WorkspaceService:
     def action(self, page, action, values):
         key = str(values.get('id', ''))
         if action == 'refresh':
+            if page == 'development':
+                self.explorer.children.clear()
             self.publish(page)
             return
         if page in {'development', 'files'}:
             self.file_action(page, action, values)
+            if action == 'save':
+                self.host.emit('saved', page=page)
+            self.host.status()
+            return
         elif action == 'git' and page == 'preview':
             self.git(page)
         elif page == 'task':
@@ -349,6 +361,13 @@ class WorkspaceService:
 
     def file_action(self, page, action, values):
         path = values.get('path') or values.get('id') or self.active_document
+        if action in {'toggleFolder', 'collapseFolders'} and page == 'development':
+            if action == 'collapseFolders':
+                self.explorer.expanded.clear()
+            else:
+                self.explorer.toggle(path)
+            self.publish(page)
+            return
         if action == 'open':
             target = self.boundary.path(path)
             if target.is_dir():
@@ -359,6 +378,7 @@ class WorkspaceService:
                 if path not in self.documents:
                     self.documents[path] = Document.open(self.boundary, target)
                 self.active_document = path
+                self.explorer.reveal(target)
         elif action == 'parent':
             self.search_results = None
             target = self.boundary.path(self.directory or '.')
@@ -403,6 +423,8 @@ class WorkspaceService:
             del self.documents[path]
             self.documents[str(target)] = doc
             self.active_document = str(target)
+            self.explorer.children.clear()
+            self.explorer.reveal(target)
             self.revisions[str(target)] = self.revisions.pop(path, 0)
         elif action in {'save', 'discard', 'close', 'merge', 'compare'}:
             doc = self.documents[path]

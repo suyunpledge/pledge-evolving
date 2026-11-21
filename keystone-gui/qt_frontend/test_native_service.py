@@ -37,6 +37,63 @@ class NativeServiceTests(unittest.TestCase):
     def values(self, page):
         return {f['key']: f['value'] for f in self.host.pages.view(page)['fields']}
 
+    def test_terminal_runs_in_project_streams_and_honors_permissions(self):
+        terminal = self.host.terminal
+        command = ('Write-Output "first 中文"; [Console]::Error.WriteLine("stderr"); '
+                   'Start-Sleep -Seconds 2; Write-Output (Get-Location).Path; exit 7'
+                   if sys.platform == 'win32' else
+                   "echo 'first 中文'; echo stderr >&2; sleep 2; pwd; exit 7")
+        def output():
+            return ''.join(data['text'] for kind, data in self.events if kind == 'terminal')
+
+        self.host.demo = False
+        terminal.start(command)
+        self.assertIsNone(terminal.worker)
+        self.assertIn('当前权限', output())
+        self.host.profile = 'manual'
+        with patch.object(self.host, 'approve', return_value=False) as approve:
+            terminal.start(command)
+            terminal.worker.join(5)
+            self.assertEqual(approve.call_args.args[1]['command'], command)
+            self.assertIn('未执行', output())
+        self.host.profile = 'full'
+        self.events.clear()
+        chunk = threading.Event()
+        emit = self.host._emitter
+        def observe(kind, **data):
+            emit(kind, **data)
+            if kind == 'terminal' and data['text'].startswith('first 中文'):
+                chunk.set()
+        self.host._emitter = observe
+        terminal.start(command)
+        self.assertTrue(chunk.wait(8))
+        self.assertTrue(terminal.worker.is_alive())
+        self.assertFalse(self.host.running)
+        terminal.worker.join(8)
+        self.assertIn(str(self.project), output())
+        self.assertIn('stderr\n', output().replace('\r\n', '\n'))
+        self.assertIn('退出码 7', output())
+        self.assertFalse(self.events[-1][1]['running'])
+
+        self.events.clear()
+        terminal.start('Start-Sleep -Seconds 20' if sys.platform == 'win32' else 'sleep 20')
+        terminal.close()
+        self.assertFalse(terminal.worker.is_alive())
+        self.assertIn('已停止', output())
+
+    def test_terminal_displays_only_coding_command_and_test_events(self):
+        self.host.coding.event({'event': 'progress', 'data': {
+            'type': 'tool_completed', 'tool': 'shell_exec', 'args': {'command': 'sample'},
+            'ok': True, 'action_result': {'content': 'full output'}, 'meta': {'exit': 0}}})
+        self.host.coding.event({'event': 'progress', 'data': {
+            'type': 'tool_call', 'tool': 'shell_exec', 'result': 'duplicate'}})
+        self.host.coding.event({'event': 'progress', 'data': {
+            'type': 'test_result', 'status': 'failed', 'exit_code': 1, 'output': '1 test failed'}})
+        text = ''.join(d['text'] for k, d in self.events if k == 'terminal')
+        self.assertIn('full output', text)
+        self.assertIn('1 test failed', text)
+        self.assertNotIn('duplicate', text)
+
     def test_navigation_and_send_share_one_coding_runtime(self):
         from . import coding_service
 
@@ -84,6 +141,36 @@ class NativeServiceTests(unittest.TestCase):
         self.assertEqual([r['title'] for r in pages.view('files')['rows']], ['copy.txt'])
         with self.assertRaises(PermissionError):
             pages.action('files', 'open', {'path': '../outside.txt'})
+
+    def test_workspace_queries_use_buffers_git_exclusions_and_editor_limits(self):
+        from .workspace_navigation import project_names, quick_files, text_matches
+        from keystone.development.editor import MAX_DOCUMENT
+
+        subprocess.run(['git', 'init', '-q'], cwd=self.project, check=True)
+        (self.project / '.gitignore').write_text('ignored.txt\n', encoding='utf-8')
+        path = self.project / 'notes.md'
+        path.write_text('disk', encoding='utf-8')
+        (self.project / 'ignored.txt').write_text('draft', encoding='utf-8')
+        (self.project / 'binary.bin').write_bytes(b'draft\0')
+        (self.project / 'large.txt').write_bytes(b'draft' + b' ' * MAX_DOCUMENT)
+        (self.project / 'note.md').write_text('unrelated', encoding='utf-8')
+        boundary = self.host.pages.boundary
+        cancel = threading.Event()
+        names = list(project_names(boundary, cancel))
+        self.assertNotIn('ignored.txt', names)
+        self.assertEqual(quick_files(boundary, names, 'notes.md', {}, cancel)[0]['path'], str(path))
+
+        self.host.pages.action('development', 'open', {'path': str(path)})
+        self.host.pages.update_document(str(path), '😀 draft', 1)
+        self.host.command(dict(command='workspace_query', kind='text', query='DRAFT', ticket=19))
+        self.host.queries.pool.shutdown(wait=True)
+        reply = next(value for event, value in reversed(self.events) if event == 'workspace_query')
+        self.assertEqual((reply['ticket'], reply['done'], reply['limited']), (19, True, False))
+        self.assertEqual([(r['relative'], r['line'], r['column'], r['token']) for r in reply['rows']],
+                         [('notes.md', 1, 4, 'draft')])
+        self.assertEqual(path.read_text(), 'disk')
+        cancel.set()
+        self.assertEqual(text_matches(boundary, names, 'disk', {}, cancel, lambda *_: None), ([], False))
 
     def test_closing_editor_tabs_keeps_selection_and_confirms_dirty_files(self):
         pages = self.host.pages

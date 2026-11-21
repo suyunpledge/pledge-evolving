@@ -3,6 +3,7 @@ import QtQuick
 Item {
     id: glass
     required property var material
+    property bool flat: false
     property real radius: 18
     property real emphasis: 0
     property real hoverAmount: 0
@@ -10,7 +11,7 @@ Item {
     property color tint: Theme.glassTint
     Behavior on hoverAmount { NumberAnimation { duration: glass.material.reduced ? 0 : 150 } }
     Behavior on emphasis { NumberAnimation { duration: glass.material.reduced ? 0 : 150 } }
-    readonly property bool useShader: material.hardware && !material.solid
+    readonly property bool useShader: !flat && material.hardware && !material.solid
     // mapToItem alone does not subscribe to ancestor transforms. Read the chain
     // explicitly: Popup reparents its content into Overlay only when it opens.
     readonly property point scenePoint: {
@@ -23,10 +24,10 @@ Item {
     Rectangle {
         anchors.fill: parent
         visible: !glass.useShader
-        radius: glass.radius
-        color: glass.emphasis > 0 ? Theme.solidSelected : Theme.solidSurface
-        border.color: Theme.solidBorder
-        border.width: glass.activeFocus ? 2 : 1
+        radius: glass.flat ? Math.min(glass.radius, 2) : glass.radius
+        color: glass.flat ? (glass.emphasis >= 1 ? "#303b48" : glass.hoverAmount > 0 ? "#30353d" : glass.tint) : glass.emphasis > 0 ? Theme.solidSelected : Theme.solidSurface
+        border.color: glass.flat ? "#689cdb" : Theme.solidBorder
+        border.width: glass.flat ? (glass.emphasis > 0 && glass.emphasis < 1 ? 1 : 0) : glass.activeFocus ? 2 : 1
     }
     ShaderEffect {
         id: lens

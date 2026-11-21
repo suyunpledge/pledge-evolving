@@ -10,11 +10,13 @@ from keystone.development.models import ModelSettingsSource
 from keystone.development.runtime import DevelopmentRuntime
 from keystone.development.state import ModeState
 from keystone.secrets import redact
+from .terminal_service import coding_output
 
 
 class CodingService:
     def __init__(self, host):
         self.host = host
+        self.terminal = host.terminal
         self.state = ModeState(host.home / 'gui/qt/coding')
         self.state.switch('development')
         self.runtime = None
@@ -41,6 +43,9 @@ class CodingService:
 
     def event(self, event):
         data = event.get('data', event)
+        output = coding_output(data)
+        if output:
+            self.terminal.publish(str(redact(output)), reveal=data.get('type') == 'test_started')
         self.events.append(json.dumps(redact(data), ensure_ascii=False))
         self.events = self.events[-100:]
         # Progress can arrive per token; coalesce at the service boundary.

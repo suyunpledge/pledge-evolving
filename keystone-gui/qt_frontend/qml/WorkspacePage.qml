@@ -9,6 +9,17 @@ Item {
     required property string pageKey
     readonly property var viewData: workbench.pageData[pageKey] || ({})
     readonly property bool files: pageKey === "files" || pageKey === "development"
+    readonly property bool ide: pageKey === "development"
+    property bool sidebarOpen: true
+    property bool dockOpen: false
+    property bool dockVisited: false
+    property string dockTab: "terminal"
+    property real dockHeight: 226
+    property string lastResult: ""
+    property var pendingSelection: null
+    property var cursorPositions: ({})
+    component PageButton: GlassButton { flat: page.ide }
+    component PageSurface: GlassSurface { flat: page.ide }
     property var schema: []
     property var values: ({})
     property bool initialized: false
@@ -43,20 +54,47 @@ Item {
         const doc = viewData.document || {}
         if (doc.path && (doc.path !== editorPath || Number(doc.version || 0) >= editorVersion)) {
             syncing = true
-            if (doc.path !== editorPath) jumpOpen = false
+            const switched = doc.path !== editorPath
+            if (switched) {
+                jumpOpen = false
+                if (ide && editorPath) cursorPositions[editorPath] = code.editor.cursorPosition
+            }
             editorPath = doc.path
             editorVersion = Number(doc.version || 0)
             if (code.text !== doc.text) code.text = doc.text
+            if (ide && switched) {
+                if (!pendingSelection || pendingSelection.path !== doc.path) pendingSelection = {path: doc.path}
+            }
             syncing = false
         } else if (!doc.path && files) {
             syncing = true; editorPath = ""; code.text = ""; syncing = false
             findOpen = false; jumpOpen = false
         }
-        if (viewData.result) outputOpen = true
+        if (pendingSelection && doc.path === pendingSelection.path) Qt.callLater(applySelection)
+        const result = viewData.result || ""
+        if (result && result !== lastResult) {
+            if (ide) {
+                if (!dockOpen) showDock("output", false)
+            } else outputOpen = true
+        }
+        lastResult = result
     }
     onViewDataChanged: sync()
     Component.onCompleted: sync()
+    function showDock(tab, focus) {
+        dockTab = tab
+        dockVisited = true
+        dockOpen = true
+        if (focus && dock.item) Qt.callLater(dock.item.focusPanel)
+    }
+    function toggleDock(tab) {
+        if (dockOpen && dockTab === tab) {
+            dockOpen = false
+            code.editor.forceActiveFocus()
+        } else showDock(tab, true)
+    }
     function invoke(action, row) {
+        if (ide && (action === "git" || action === "compare")) showDock("output", false)
         if (action === "chooseProject") { projectPicker.open(); return }
         if (action === "find") { openFind(); return }
         if (action === "reference") { referenceOpen = !referenceOpen; return }
@@ -66,6 +104,11 @@ Item {
     }
     Connections {
         target: workbench
+        function onTerminalRevealRequested() { if (page.ide && page.visible) page.showDock("terminal", false) }
+        function onChanged() {
+            if (page.pendingSelection && !workbench.busy && page.pendingSelection.path === page.editorPath)
+                Qt.callLater(page.applySelection)
+        }
         function onFormReset(key) { if (key === page.pageKey) { page.initialized = false; page.schema = [] } }
         function onFormValues(key, patch) {
             if (key !== page.pageKey) return
@@ -149,36 +192,103 @@ Item {
         code.editor.forceActiveFocus()
     }
 
-    GlassSurface { anchors.fill: parent; material: page.material; radius: 20; tint: "#22232d39" }
-    ColumnLayout {
-        anchors.fill: parent; anchors.margins: 18; spacing: 12
-        Text { Layout.fillWidth: true; text: page.viewData.hint || "正在载入…"; color: "#9eacbc"; font.pixelSize: 12; wrapMode: Text.Wrap; maximumLineCount: 3; elide: Text.ElideMiddle }
-        Flow {
-            Layout.fillWidth: true; spacing: 7
-            Repeater { model: page.viewData.actions || []
-                GlassButton { required property var modelData; material: page.material; text: modelData.label; enabled: !workbench.busy || modelData.key === "cancel"; ink: modelData.danger ? Theme.danger : Theme.textPrimary; onClicked: page.invoke(modelData.key) }
+    function applySelection() {
+        const hit = pendingSelection
+        if (!hit || editorPath !== hit.path || workbench.busy) return
+        pendingSelection = null
+        code.editor.forceActiveFocus()
+        if (hit.line) {
+            const start = jumpOffset(hit.line + ":" + hit.column)
+            if (start >= 0) {
+                code.editor.select(start, start + hit.length)
+                code.revealPosition(start)
             }
-            GlassButton { material: page.material; glyph: "refresh-cw"; tip: "刷新"; enabled: !workbench.busy; onClicked: page.invoke("refresh") }
+        } else {
+            code.editor.cursorPosition = Math.min(hit.position ?? cursorPositions[hit.path] ?? 0, code.text.length)
+            code.revealPosition(code.editor.cursorPosition)
+        }
+    }
+    function openEntry(entry) {
+        if (!entry || workbench.busy) return
+        pendingSelection = entry.path === editorPath && !entry.line
+            ? {path: entry.path, position: code.editor.cursorPosition} : entry
+        if (entry.path === editorPath) applySelection()
+        else invoke("open", {path: entry.path})
+    }
+    function openQuick() {
+        if (!workbench.busy) quickOpen.open()
+    }
+    function openSearch() {
+        sidebarOpen = true
+        sidebar.search(code.editor.selectedText)
+    }
+    CodeQuickOpen { id: quickOpen; objectName: "codeQuickOpen"; rootPath: page.viewData.hint || ""; onPicked: entry => page.openEntry(entry) }
+    PageSurface { anchors.fill: parent; material: page.material; radius: page.ide ? 0 : 20; tint: page.ide ? "#191b1f" : "#22232d39" }
+    ColumnLayout {
+        anchors.fill: parent; anchors.margins: page.ide ? 0 : 18; spacing: page.ide ? 0 : 12
+        Text { visible: !page.ide; Layout.fillWidth: true; text: page.viewData.hint || "正在载入…"; color: "#9eacbc"; font.pixelSize: 12; wrapMode: Text.Wrap; maximumLineCount: 3; elide: Text.ElideMiddle }
+        Flow {
+            visible: !page.ide; Layout.fillWidth: true; spacing: 7
+            Repeater { model: page.viewData.actions || []
+                PageButton { required property var modelData; material: page.material; text: modelData.label; enabled: !workbench.busy || modelData.key === "cancel"; ink: modelData.danger ? Theme.danger : Theme.textPrimary; onClicked: page.invoke(modelData.key) }
+            }
+            PageButton { material: page.material; glyph: "refresh-cw"; tip: "刷新"; enabled: !workbench.busy; onClicked: page.invoke("refresh") }
         }
         Item {
             Layout.fillWidth: true; Layout.fillHeight: true
             visible: page.files
             RowLayout {
-                anchors.fill: parent; spacing: 12
+                anchors.fill: parent; spacing: page.ide ? 0 : 12
+                Rectangle {
+                    visible: page.ide; Layout.preferredWidth: 43; Layout.fillHeight: true; color: "#181b1f"
+                    Column {
+                        anchors.top: parent.top; width: parent.width; spacing: 2
+                        Repeater {
+                            model: [{key:"explorer", glyph:"folder", tip:"资源管理器 · Ctrl+Shift+E"},
+                                    {key:"search", glyph:"search", tip:"工作区搜索 · Ctrl+Shift+F"},
+                                    {key:"git", glyph:"git-branch", tip:"Git 变更"},
+                                    {key:"terminal", glyph:"square-terminal", tip:"终端面板 · Ctrl+J"}]
+                            IdeButton {
+                                required property var modelData
+                                width: parent.width; height: 42; glyph: modelData.glyph; tip: modelData.tip
+                                objectName: "codeRail_" + modelData.key
+                                selected: modelData.key === "terminal" ? page.dockOpen && page.dockTab === "terminal"
+                                    : page.sidebarOpen && sidebar.mode === modelData.key
+                                Rectangle { visible: parent.selected; y: 7; height: parent.height - 14; width: 2; color: "#82b1f1" }
+                                onClicked: {
+                                    if (modelData.key === "terminal") { page.toggleDock("terminal"); return }
+                                    if (modelData.key === "git") { if (!workbench.busy) page.invoke("git"); return }
+                                    if (selected) { page.sidebarOpen = false; code.editor.forceActiveFocus(); return }
+                                    page.sidebarOpen = true
+                                    if (modelData.key === "search") page.openSearch()
+                                    else sidebar.explorer()
+                                }
+                            }
+                        }
+                    }
+                }
+                CodeSidebar {
+                    id: sidebar; visible: page.ide && page.sidebarOpen
+                    Layout.preferredWidth: Math.min(250, Math.max(165, parent.width * 0.27)); Layout.fillHeight: true
+                    viewData: page.ide ? page.viewData : ({}); activePath: page.editorPath
+                    onAction: (key, args) => page.invoke(key, args)
+                    onPicked: entry => page.openEntry(entry)
+                }
                 ColumnLayout {
+                    visible: !page.ide
                     Layout.preferredWidth: Math.min(200, parent.width * 0.3); Layout.fillHeight: true; spacing: 7
                     Text { Layout.fillWidth: true; text: page.viewData.directory || "项目文件"; color: "#8897a8"; elide: Text.ElideMiddle; font.pixelSize: 11 }
                     TextField {
                         id: fileQuery; objectName: "projectFileSearch"; Layout.fillWidth: true; placeholderText: "查找文件 · Enter"
                         color: "#e4eaf1"; placeholderTextColor: "#8293a5"; font.pixelSize: 12; selectByMouse: true
-                        background: GlassSurface { material: page.material; radius: 9 }
+                        background: PageSurface { material: page.material; radius: 9 }
                         onAccepted: page.invoke("search", {query:text})
                     }
                     ListView {
                         id: tree; objectName: "projectFiles"; Layout.fillWidth: true; Layout.fillHeight: true
                         model: page.viewData.rows || []; clip: true; spacing: 3
                         ScrollBar.vertical: ScrollBar {}
-                        delegate: GlassButton {
+                        delegate: PageButton {
                             required property var modelData
                             width: tree.width - 6; material: page.material; text: modelData.title; glyph: modelData.directory ? "folder" : "file"
                             quiet: true; selected: page.editorPath.endsWith(modelData.id.replace(/\//g, "\\")) || page.editorPath.endsWith(modelData.id)
@@ -189,19 +299,20 @@ Item {
                     }
                 }
                 ColumnLayout {
-                    Layout.fillWidth: true; Layout.fillHeight: true; spacing: 9
+                    Layout.fillWidth: true; Layout.fillHeight: true; spacing: page.ide ? 0 : 9
                     Flickable {
                         id: tabStrip
+                        visible: !page.ide || tabs.width > 0
                         Layout.fillWidth: true; Layout.preferredHeight: 34; contentWidth: tabs.width; clip: true
                         boundsBehavior: Flickable.StopAtBounds
                         flickableDirection: Flickable.HorizontalFlick
-                        Row { id: tabs; spacing: 5
+                        Row { id: tabs; spacing: page.ide ? 0 : 5
                             Repeater { model: page.viewData.tabs || []
                                 Row {
                                     id: fileTab
                                     required property var modelData
                                     readonly property bool selected: page.editorPath === modelData.path
-                                    spacing: 2
+                                    spacing: page.ide ? 0 : 2
                                     Component.onCompleted: if (selected) Qt.callLater(reveal)
                                     onSelectedChanged: if (selected) Qt.callLater(reveal)
                                     function reveal() {
@@ -209,13 +320,14 @@ Item {
                                         else if (x + width > tabStrip.contentX + tabStrip.width)
                                             tabStrip.contentX = x + width - tabStrip.width
                                     }
-                                    GlassButton {
+                                    PageButton {
                                         material: page.material; height: 32
                                         text: fileTab.modelData.name + ((fileTab.selected ? page.bufferDirty : fileTab.modelData.dirty) ? " •" : "")
+                                        Rectangle { visible: page.ide && fileTab.selected; width: parent.width + 28; height: 2; color: "#84b5f5"; z: 1 }
                                         tip: fileTab.modelData.path; selected: fileTab.selected; enabled: !workbench.busy
                                         onClicked: page.invoke("open", {path:fileTab.modelData.path})
                                     }
-                                    GlassButton {
+                                    PageButton {
                                         objectName: "closeEditorTab"; material: page.material; width: 28; height: 32; glyph: "x"; quiet: true
                                         tip: "关闭 " + fileTab.modelData.name; enabled: !workbench.busy
                                         onClicked: page.invoke("close", {path:fileTab.modelData.path})
@@ -224,9 +336,25 @@ Item {
                             }
                         }
                     }
+                    Rectangle {
+                        visible: page.ide; Layout.fillWidth: true; Layout.preferredHeight: 31; color: "#212429"
+                        RowLayout {
+                            anchors.fill: parent; anchors.leftMargin: 10; anchors.rightMargin: 4; spacing: 3
+                            Text { Layout.fillWidth: true; text: page.editorPath ? page.editorPath.slice((page.viewData.hint || "").length + 1).replace(/[\\\\/]/g, "  ›  ") : "编辑器"; elide: Text.ElideMiddle; color: "#aab4c2"; font.pixelSize: 12 }
+                            IdeButton { glyph: "save"; tip: "保存 · Ctrl+S"; enabled: page.hasDocument && !workbench.busy; onClicked: page.invoke("save", {path:page.editorPath}) }
+                            IdeButton { glyph: "sliders-horizontal"; tip: "编辑器操作"; enabled: page.hasDocument && !workbench.busy; onClicked: editMenu.open()
+                                Menu { id: editMenu; y: parent.height
+                                    Repeater {
+                                        model: [{key:"saveAs",label:"另存为…"},{key:"find",label:"查找 / 替换"},{key:"reference",label:"原文参考"},{key:"compare",label:"比较磁盘版本"},{key:"merge",label:"合并"},{key:"discard",label:"重新载入"},{key:"close",label:"关闭文件"}]
+                                        MenuItem { required property var modelData; text: modelData.label; onTriggered: page.invoke(modelData.key, {path:page.editorPath}) }
+                                    }
+                                }
+                            }
+                        }
+                    }
                     Item {
                         Layout.fillWidth: true; Layout.fillHeight: true
-                        GlassSurface { anchors.fill: parent; material: page.material; radius: 14; tint: "#50131b25"; emphasis: code.editor.activeFocus ? 0.5 : 0 }
+                        PageSurface { anchors.fill: parent; material: page.material; radius: page.ide ? 0 : 14; tint: page.ide ? "#1c1e22" : "#50131b25"; emphasis: !page.ide && code.editor.activeFocus ? 0.5 : 0 }
                         Item {
                             id: gutter; objectName: "editorLineNumbers"
                             visible: page.hasDocument; clip: true
@@ -264,7 +392,7 @@ Item {
                             id: code; objectName: "nativeCodeEditor"; editorName: "codeEditorInput"
                             anchors.fill: parent; anchors.margins: 14; anchors.leftMargin: gutter.visible ? gutter.width + 10 : 14
                             anchors.rightMargin: page.referenceOpen ? parent.width / 2 + 7 : 14; submitOnEnter: false; horizontalScroll: true
-                            placeholder: "选择文件开始编辑"
+                            placeholder: page.ide ? "" : "选择文件开始编辑"
                             editor.readOnly: !page.editorPath || workbench.busy
                             editor.font.family: "Cascadia Code"; editor.font.pixelSize: 13
                             Component.onCompleted: controller.formatCode(editor.textDocument)
@@ -278,6 +406,15 @@ Item {
                             ScrollBar.vertical: ScrollBar {}
                             ScrollBar.horizontal: ScrollBar {}
                         }
+                        Column {
+                            visible: page.ide && !page.hasDocument; anchors.centerIn: parent; spacing: 8
+                            IdeButton { glyph: "file-code"; text: "快速打开文件"; tip: "Ctrl+P"; onClicked: page.openQuick()
+                                Text { anchors.left: parent.right; anchors.verticalCenter: parent.verticalCenter; text: "Ctrl+P"; color: "#929ca9"; font.pixelSize: 11 }
+                            }
+                            IdeButton { glyph: "search"; text: "工作区搜索"; tip: "Ctrl+Shift+F"; onClicked: page.openSearch()
+                                Text { anchors.left: parent.right; anchors.verticalCenter: parent.verticalCenter; text: "Ctrl+Shift+F"; color: "#929ca9"; font.pixelSize: 11 }
+                            }
+                        }
                         ComposerText {
                             visible: page.referenceOpen; x: parent.width / 2 + 7; y: 14; width: parent.width / 2 - 21; height: parent.height - 28
                             text: (page.viewData.document || {}).original || ""; submitOnEnter: false; horizontalScroll: true
@@ -289,34 +426,57 @@ Item {
                     }
                     RowLayout {
                         visible: page.findOpen; Layout.fillWidth: true; spacing: 6
-                        TextField { id: findText; objectName: "editorFindInput"; Layout.fillWidth: true; color: Theme.textPrimary; placeholderText: "在文件中查找"; placeholderTextColor: Theme.textMuted; font.pixelSize: 12; selectByMouse: true; leftPadding: 10; rightPadding: 10; background: GlassSurface { material: page.material; radius: 9; emphasis: findText.activeFocus ? 0.65 : 0 } onAccepted: page.findMatch(false) }
+                        TextField { id: findText; objectName: "editorFindInput"; Layout.fillWidth: true; color: Theme.textPrimary; placeholderText: "在文件中查找"; placeholderTextColor: Theme.textMuted; font.pixelSize: 12; selectByMouse: true; leftPadding: 10; rightPadding: 10; background: PageSurface { material: page.material; radius: 9; emphasis: findText.activeFocus ? 0.65 : 0 } onAccepted: page.findMatch(false) }
                         Text { objectName: "editorMatchCount"; visible: !!findText.text; color: Theme.textSecondary; font.pixelSize: 12; text: !page.matches.length ? "无匹配" : page.selectedMatch >= 0 ? (page.selectedMatch + 1) + " / " + page.matches.length : page.matches.length + " 处" }
-                        GlassButton { material: page.material; Layout.preferredWidth: 30; glyph: "chevron-up"; tip: "上一处 · Shift+F3"; enabled: !!page.matches.length; onClicked: page.findMatch(true) }
-                        GlassButton { material: page.material; Layout.preferredWidth: 30; glyph: "chevron-down"; tip: "下一处 · F3"; enabled: !!page.matches.length; onClicked: page.findMatch(false) }
-                        GlassButton { material: page.material; Layout.preferredWidth: 30; glyph: "x"; tip: "关闭查找 · Esc"; onClicked: page.closeNavigation() }
+                        PageButton { material: page.material; Layout.preferredWidth: 30; glyph: "chevron-up"; tip: "上一处 · Shift+F3"; enabled: !!page.matches.length; onClicked: page.findMatch(true) }
+                        PageButton { material: page.material; Layout.preferredWidth: 30; glyph: "chevron-down"; tip: "下一处 · F3"; enabled: !!page.matches.length; onClicked: page.findMatch(false) }
+                        PageButton { material: page.material; Layout.preferredWidth: 30; glyph: "x"; tip: "关闭查找 · Esc"; onClicked: page.closeNavigation() }
                     }
                     RowLayout {
                         visible: page.findOpen; Layout.fillWidth: true; spacing: 6
-                        TextField { id: replaceText; objectName: "editorReplaceInput"; Layout.fillWidth: true; color: Theme.textPrimary; placeholderText: "替换为"; placeholderTextColor: Theme.textMuted; font.pixelSize: 12; selectByMouse: true; leftPadding: 10; rightPadding: 10; background: GlassSurface { material: page.material; radius: 9; emphasis: replaceText.activeFocus ? 0.65 : 0 } onAccepted: if (!workbench.busy && page.matches.length) page.replaceMatch() }
-                        GlassButton { objectName: "replaceEditorMatch"; material: page.material; text: "替换"; enabled: !workbench.busy && !!page.matches.length; onClicked: page.replaceMatch() }
+                        TextField { id: replaceText; objectName: "editorReplaceInput"; Layout.fillWidth: true; color: Theme.textPrimary; placeholderText: "替换为"; placeholderTextColor: Theme.textMuted; font.pixelSize: 12; selectByMouse: true; leftPadding: 10; rightPadding: 10; background: PageSurface { material: page.material; radius: 9; emphasis: replaceText.activeFocus ? 0.65 : 0 } onAccepted: if (!workbench.busy && page.matches.length) page.replaceMatch() }
+                        PageButton { objectName: "replaceEditorMatch"; material: page.material; text: "替换"; enabled: !workbench.busy && !!page.matches.length; onClicked: page.replaceMatch() }
                     }
                     RowLayout {
                         visible: page.jumpOpen; Layout.fillWidth: true; spacing: 6
-                        TextField { id: jumpText; objectName: "editorJumpInput"; Layout.fillWidth: true; color: Theme.textPrimary; placeholderText: "行:列"; placeholderTextColor: Theme.textMuted; font.pixelSize: 12; selectByMouse: true; leftPadding: 10; rightPadding: 10; background: GlassSurface { material: page.material; radius: 9; emphasis: jumpText.activeFocus ? 0.65 : 0 } onAccepted: page.jumpToPosition() }
+                        TextField { id: jumpText; objectName: "editorJumpInput"; Layout.fillWidth: true; color: Theme.textPrimary; placeholderText: "行:列"; placeholderTextColor: Theme.textMuted; font.pixelSize: 12; selectByMouse: true; leftPadding: 10; rightPadding: 10; background: PageSurface { material: page.material; radius: 9; emphasis: jumpText.activeFocus ? 0.65 : 0 } onAccepted: page.jumpToPosition() }
                         Text { color: Theme.textSecondary; text: "第 1–" + page.lineStarts.length + " 行"; font.pixelSize: 12 }
-                        GlassButton { material: page.material; text: "跳转"; enabled: page.jumpOffset(jumpText.text) >= 0; onClicked: page.jumpToPosition() }
-                        GlassButton { material: page.material; Layout.preferredWidth: 30; glyph: "x"; tip: "取消跳转 · Esc"; onClicked: page.closeNavigation() }
+                        PageButton { material: page.material; text: "跳转"; enabled: page.jumpOffset(jumpText.text) >= 0; onClicked: page.jumpToPosition() }
+                        PageButton { material: page.material; Layout.preferredWidth: 30; glyph: "x"; tip: "取消跳转 · Esc"; onClicked: page.closeNavigation() }
                     }
-                    RowLayout {
-                        visible: page.hasDocument; Layout.fillWidth: true; spacing: 8
-                        GlassButton { objectName: "editorPosition"; material: page.material; quiet: true; height: 25; text: "行 " + (page.cursorLine + 1) + "，列 " + page.cursorColumn; tip: "跳转到行 · Ctrl+G"; onClicked: page.openJump() }
-                        Text { Layout.fillWidth: true; text: [((page.viewData.document || {}).encoding || "").toUpperCase(), page.editorPath].join(" · "); color: Theme.textMuted; elide: Text.ElideMiddle; font.pixelSize: 11 }
-                        Text { text: (page.viewData.document || {}).status === "conflict" ? "磁盘有变更" : page.bufferDirty ? "未保存" : ""; color: Theme.warning; font.pixelSize: 11 }
+                    Loader {
+                        id: dock
+                        visible: page.ide && page.dockOpen; active: page.ide && page.dockVisited
+                        Layout.fillWidth: true; Layout.preferredHeight: Math.min(page.dockHeight, page.height * 0.56)
+                        sourceComponent: CodeTerminalPanel {
+                            resultText: page.viewData.result || ""; tab: page.dockTab
+                            onTabRequested: name => page.dockTab = name
+                            onCollapseRequested: page.toggleDock(page.dockTab)
+                            onResizeRequested: pixels => page.dockHeight = Math.min(page.height * 0.56, Math.max(110, pixels))
+                        }
+                    }
+                    Rectangle {
+                        visible: page.ide || page.hasDocument; Layout.fillWidth: true; Layout.preferredHeight: 26
+                        color: page.ide ? "#202328" : "transparent"
+                        Rectangle { visible: page.ide; width: parent.width; height: 1; color: "#363c44" }
+                        RowLayout {
+                            anchors.fill: parent; anchors.leftMargin: 8; anchors.rightMargin: 6; spacing: 7
+                            Glyph { visible: page.ide; name: "folder"; Layout.preferredWidth: 13; Layout.preferredHeight: 13; ink: "#9aa7b8" }
+                            Text {
+                                Layout.fillWidth: true
+                                text: page.ide ? workbench.workspace.replace(/\\/g, "/").split("/").pop() : page.editorPath
+                                color: Theme.textMuted; elide: Text.ElideMiddle; font.pixelSize: 11
+                            }
+                            Text { text: (page.viewData.document || {}).status === "conflict" ? "磁盘有变更" : page.bufferDirty ? "未保存" : ""; color: Theme.warning; font.pixelSize: 11 }
+                            PageButton { visible: page.hasDocument; objectName: "editorPosition"; material: page.material; quiet: true; Layout.preferredHeight: 24; text: "行 " + (page.cursorLine + 1) + "，列 " + page.cursorColumn; tip: "跳转到行 · Ctrl+G"; onClicked: page.openJump() }
+                            Text { visible: page.hasDocument; text: ((page.viewData.document || {}).encoding || "").toUpperCase(); color: Theme.textMuted; font.pixelSize: 11 }
+                            IdeButton { visible: page.ide; glyph: "square-terminal"; tip: "切换终端"; selected: page.dockOpen && page.dockTab === "terminal"; Layout.preferredHeight: 22; onClicked: page.toggleDock("terminal") }
+                        }
                     }
                     Flow {
-                        Layout.fillWidth: true; spacing: 6
+                        visible: !page.ide; Layout.fillWidth: true; spacing: 6
                         Repeater { model: [{key:"save",label:"保存"},{key:"saveAs",label:"另存为"},{key:"find",label:"查找 / 替换"},{key:"reference",label:"原文参考"},{key:"compare",label:"比较磁盘版本"},{key:"merge",label:"合并"},{key:"discard",label:"重新载入"},{key:"close",label:"关闭文件"}]
-                            GlassButton { required property var modelData; material: page.material; text: modelData.label; enabled: !!page.editorPath && !workbench.busy; onClicked: page.invoke(modelData.key, {path:page.editorPath}) }
+                            PageButton { required property var modelData; material: page.material; text: modelData.label; enabled: !!page.editorPath && !workbench.busy; onClicked: page.invoke(modelData.key, {path:page.editorPath}) }
                         }
                     }
                 }
@@ -379,8 +539,8 @@ Item {
             }
         }
         ColumnLayout {
-            visible: !!page.viewData.result; Layout.fillWidth: true; spacing: 7
-            GlassButton { material: page.material; text: page.outputOpen ? "收起结果" : "展开结果"; onClicked: page.outputOpen = !page.outputOpen }
+            visible: !page.ide && !!page.viewData.result; Layout.fillWidth: true; spacing: 7
+            PageButton { material: page.material; text: page.outputOpen ? "收起结果" : "展开结果"; onClicked: page.outputOpen = !page.outputOpen }
             ScrollView {
                 visible: page.outputOpen; Layout.fillWidth: true; Layout.preferredHeight: Math.min(240, page.height * 0.3); clip: true
                 TextArea { text: page.viewData.result || ""; readOnly: true; selectByMouse: true; wrapMode: TextEdit.Wrap; color: "#c5d1dd"; font.family: "Cascadia Code"; font.pixelSize: 12; background: null }
@@ -396,5 +556,9 @@ Item {
     Shortcut { sequence: "Ctrl+G"; enabled: page.visible && page.files && page.hasDocument; onActivated: page.openJump() }
     Shortcut { sequence: "Escape"; enabled: page.visible && !controller.busy && (page.findOpen || page.jumpOpen); onActivated: page.closeNavigation() }
     Shortcut { sequence: "Ctrl+W"; enabled: page.visible && page.files && page.hasDocument && !workbench.busy; onActivated: page.invoke("close", {path:page.editorPath}) }
-    Shortcut { sequence: "Ctrl+P"; enabled: page.visible && page.files; onActivated: fileQuery.forceActiveFocus() }
+    Shortcut { sequence: "Ctrl+P"; enabled: page.visible && page.files; onActivated: if (page.ide) page.openQuick(); else fileQuery.forceActiveFocus() }
+    Shortcut { sequence: "Ctrl+Shift+F"; enabled: page.visible && page.ide && !quickOpen.visible; onActivated: page.openSearch() }
+    Shortcut { sequence: "Ctrl+Shift+E"; enabled: page.visible && page.ide && !quickOpen.visible; onActivated: { page.sidebarOpen = true; sidebar.explorer() } }
+    Shortcut { sequence: "Ctrl+`"; enabled: page.visible && page.ide && !quickOpen.visible; onActivated: page.toggleDock("terminal") }
+    Shortcut { sequence: "Ctrl+J"; enabled: page.visible && page.ide && !quickOpen.visible; onActivated: page.toggleDock(page.dockTab) }
 }

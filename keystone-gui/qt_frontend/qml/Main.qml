@@ -24,8 +24,9 @@ ApplicationWindow {
     readonly property real columnX: sideWidth + (mainRight - sideWidth - columnWidth) / 2
     readonly property var editor: editorScroll.editor
     readonly property bool codingVisible: workbench.page === "development"
-    readonly property real codingWidth: Math.min(540, Math.max(306,
-        Math.min((mainRight - sideWidth) * 0.42, mainRight - sideWidth - 280)))
+    property bool agentPaneOpen: true
+    readonly property real codingWidth: agentPaneOpen ? Math.min(430, Math.max(300, mainRight * 0.30)) : 0
+    signal quickFileRequested()
     onChatVisibleChanged: {
         if (chatVisible) Qt.callLater(focusWorkComposer)
     }
@@ -42,7 +43,7 @@ ApplicationWindow {
             event.accepted = false
             return
         }
-        if (!exitConfirmed && (workbench.hasUnsaved || workbench.busy || controller.busy || workbench.mcp.saving || workbench.mediaModels.saving)) {
+        if (!exitConfirmed && (workbench.hasUnsaved || workbench.busy || workbench.terminalRunning || controller.busy || workbench.mcp.saving || workbench.mediaModels.saving)) {
             event.accepted = false
             exitPopup.open()
         }
@@ -360,19 +361,19 @@ ApplicationWindow {
     property bool lastSolid: false
 
     Row {
-        x: 22; y: 23; spacing: 10
+        visible: !window.codingVisible; x: 22; y: 23; spacing: 10
         Image { width: 27; height: 27; source: brandUrl; smooth: true }
         Text { text: "Keystone"; color: "#f2f3f5"; font.pixelSize: 21; font.weight: Font.DemiBold; anchors.verticalCenter: parent.verticalCenter }
     }
     GlassButton {
-        visible: !workbench.navigationOpen
+        visible: !window.codingVisible && !workbench.navigationOpen
         material: window.material; x: 18; y: 184; width: window.sideWidth - 36; height: 42
         glyph: "square-pen"; text: window.label("新建对话", "New chat"); enabled: !controller.busy
         onClicked: { workbench.navigate("chat"); controller.newSession() }
     }
     TextField {
         id: search
-        visible: !workbench.navigationOpen
+        visible: !window.codingVisible && !workbench.navigationOpen
         x: 18; y: 238; width: window.sideWidth - 36; height: 36
         placeholderText: window.label("搜索对话", "Search chats"); placeholderTextColor: Theme.textMuted
         color: Theme.textPrimary; leftPadding: 34; rightPadding: 10
@@ -380,10 +381,10 @@ ApplicationWindow {
         background: GlassSurface { material: window.material; radius: 11; emphasis: search.activeFocus ? 0.6 : 0; tint: "#18263140" }
         Glyph { x: 11; anchors.verticalCenter: parent.verticalCenter; name: "search"; ink: search.activeFocus ? Theme.accent : Theme.textMuted; width: 15; height: 15 }
     }
-    Text { visible: !workbench.navigationOpen; x: 24; y: 298; text: window.label("最近对话", "Recent chats"); color: "#7f8998"; font.pixelSize: 11 }
+    Text { visible: !window.codingVisible && !workbench.navigationOpen; x: 24; y: 298; text: window.label("最近对话", "Recent chats"); color: "#7f8998"; font.pixelSize: 11 }
     ListView {
         id: history
-        visible: !workbench.navigationOpen
+        visible: !window.codingVisible && !workbench.navigationOpen
         objectName: "sessionList"
         x: 12; y: 324; width: window.sideWidth - 24; height: window.height - y - 163
         clip: true; spacing: 7
@@ -420,17 +421,17 @@ ApplicationWindow {
         }
     }
     Column {
-        x: 18; y: window.height - 148; width: window.sideWidth - 36; spacing: 8
+        visible: !window.codingVisible; x: 18; y: window.height - 148; width: window.sideWidth - 36; spacing: 8
         GlassButton { objectName: "permissionButton"; material: window.material; width: parent.width; glyph: "shield"; text: workbench.permissionLabel; selected: true; tip: "切换执行权限"; enabled: !controller.busy && !workbench.busy && workbench.approvals.length === 0; onClicked: permissionPopup.open() }
         GlassButton { material: window.material; width: parent.width; glyph: "panels-top-left"; text: "Agent 协作设置"; quiet: true; onClicked: workbench.navigate("agents") }
         GlassButton { material: window.material; objectName: "connectionSettingsEntry"; width: parent.width; glyph: "settings-2"; text: window.label("连接与外观", "Connection & appearance"); quiet: true; onClicked: settings.open() }
     }
     Text {
-        x: window.sideWidth + 28; y: 29; width: window.mainRight - x - 190
+        visible: !window.codingVisible; x: window.sideWidth + 28; y: 29; width: window.mainRight - x - 190
         text: window.chatVisible ? controller.title : workbench.pageTitle; elide: Text.ElideRight; color: "#d8dee6"; font.pixelSize: 14; font.weight: Font.Medium
     }
     Row {
-        x: window.mainRight - width - 20; y: 20; spacing: 8
+        visible: !window.codingVisible; x: window.mainRight - width - 20; y: 20; spacing: 8
         GlassButton { objectName: "quickSetupToolbar"; visible: workbench.page === "config"; material: window.material; glyph: "plug"; text: window.label("一键配置", "Quick setup"); onClicked: onboarding.showSetup() }
         GlassButton { objectName: "mediaModelsToolbar"; visible: workbench.page === "config"; material: window.material; glyph: "image"; text: window.label("图片与视频", "Image and video"); onClicked: mediaModels.showSettings() }
         GlassButton { visible: workbench.page === "config" && setup.developer; material: window.material; glyph: "box"; text: "模型厂商"; onClicked: workbench.showProviderCatalog("") }
@@ -796,7 +797,7 @@ ApplicationWindow {
     }
     FileDialog { id: files; title: "添加文本附件"; nameFilters: ["文本与代码 (*.txt *.md *.py *.js *.ts *.json *.qml *.css *.html)", "所有文件 (*)"]; onAccepted: controller.addAttachment(selectedFile) }
     Column {
-        x: 18; y: 82; width: window.sideWidth - 36; spacing: 9
+        visible: !window.codingVisible; x: 18; y: 82; width: window.sideWidth - 36; spacing: 9
         Row {
             id: modeBar
             width: parent.width; spacing: 6
@@ -827,7 +828,7 @@ ApplicationWindow {
         }
     }
     Flickable {
-        visible: workbench.navigationOpen
+        visible: !window.codingVisible && workbench.navigationOpen
         x: 18; y: 184; width: window.sideWidth - 36; height: window.height - y - 164
         contentHeight: navigation.height; clip: true; boundsBehavior: Flickable.StopAtBounds
         ScrollBar.vertical: ScrollBar { width: 3 }
@@ -863,9 +864,30 @@ ApplicationWindow {
             }
         }
     }
+    Rectangle {
+        visible: window.codingVisible; width: window.mainRight; height: 39; color: "#202328"
+        RowLayout {
+            anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 8; spacing: 4
+            Image { source: brandUrl; Layout.preferredWidth: 20; Layout.preferredHeight: 20 }
+            Text { text: "Keystone"; color: "#e3e7ed"; font.pixelSize: 13; font.weight: Font.DemiBold; rightPadding: 10 }
+            IdeButton { text: "Chat"; enabled: !controller.busy; onClicked: { controller.setConversationMode("chat"); workbench.navigate("chat") } }
+            IdeButton { text: "Work"; enabled: !controller.busy; onClicked: { controller.setConversationMode("work"); workbench.navigate("chat") } }
+            Text { text: "Code"; color: "#c1dafb"; font.pixelSize: 12; leftPadding: 6; rightPadding: 6 }
+            Item { Layout.fillWidth: true }
+            IdeButton { glyph: "search"; text: "快速打开文件    Ctrl+P"; selected: true; enabled: workbench.nativePageReady && !workbench.busy; onClicked: window.quickFileRequested() }
+            Item { Layout.fillWidth: true }
+            IdeButton { glyph: "globe"; tip: "内置浏览器"; selected: workbench.browserVisible; onClicked: workbench.toggleBrowser() }
+            IdeButton { glyph: "message-square"; text: "AI 对话"; selected: window.agentPaneOpen; onClicked: window.agentPaneOpen = !window.agentPaneOpen }
+            IdeButton { glyph: "settings-2"; tip: "连接与外观"; onClicked: settings.open() }
+        }
+        Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: "#343940" }
+    }
     Item {
         id: nativePage; objectName: "nativePage"
-        x: window.sideWidth + 12; y: 76; width: window.mainRight - x - 12 - (window.codingVisible ? window.codingWidth + 12 : 0); height: window.height - y - 12
+        x: window.codingVisible ? 0 : window.sideWidth + 12
+        y: window.codingVisible ? 39 : 76
+        width: window.mainRight - x - (window.codingVisible ? window.codingWidth : 12)
+        height: window.height - y - (window.codingVisible ? 0 : 12)
         visible: !window.chatVisible && workbench.page !== "connectors"
 
         Rectangle {
@@ -893,7 +915,10 @@ ApplicationWindow {
                 anchors.topMargin: hostError.visible ? hostError.height + 8 : 0
                 active: visited; asynchronous: true
                 visible: selected && status === Loader.Ready && workbench.nativePageReady
-                sourceComponent: WorkspacePage { material: window.material; pageKey: modelData }
+                sourceComponent: WorkspacePage {
+                    id: loadedPage; material: window.material; pageKey: modelData
+                    Connections { target: window; enabled: loadedPage.visible && loadedPage.ide; function onQuickFileRequested() { loadedPage.openQuick() } }
+                }
             }
         }
     }
@@ -903,9 +928,9 @@ ApplicationWindow {
         property bool visited: false
         onVisibleChanged: if (visible) visited = true
         active: visited; asynchronous: true
-        visible: window.codingVisible && workbench.nativePageReady
-        x: window.mainRight - width - 12; y: nativePage.y
-        width: window.codingWidth; height: nativePage.height
+        visible: window.codingVisible && window.agentPaneOpen && workbench.nativePageReady
+        x: window.mainRight - width - 6; y: nativePage.y + 6
+        width: Math.max(0, window.codingWidth - 12); height: nativePage.height - 12
         sourceComponent: CodingPanel {
             material: window.material
             onPermissionRequested: permissionPopup.open()

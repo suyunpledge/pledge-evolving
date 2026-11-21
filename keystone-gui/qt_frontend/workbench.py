@@ -38,10 +38,13 @@ class WorkbenchController(QObject):
     codingChanged = Signal()
     codingDraftChanged = Signal()
     codingFocusRequested = Signal()
+    terminalChanged = Signal()
+    terminalRevealRequested = Signal()
     pageReadyChanged = Signal()
     catalogRequested = Signal(str)
     modelSetupRequested = Signal()
     pagesChanged = Signal()
+    workspaceQueryResult = Signal('QVariantMap')
     formReset = Signal(str)
     formValues = Signal(str, 'QVariantMap')
     historyRequested = Signal('QVariantList')
@@ -78,6 +81,12 @@ class WorkbenchController(QObject):
         self._service_calls = {}
         self._serviceCommand.connect(self._send)
         self._coding = {}
+        self._terminal_text = ''
+        self._terminal_running = False
+        self._terminal_timer = QTimer(self)
+        self._terminal_timer.setSingleShot(True)
+        self._terminal_timer.setInterval(50)
+        self._terminal_timer.timeout.connect(self.terminalChanged)
         self._coding_messages = RowsModel(parent=self)
         self._coding_draft = ''
         self._draft_version = 0
@@ -142,6 +151,8 @@ class WorkbenchController(QObject):
     browserLoaded = Property(bool, lambda s: s._browser_loaded, notify=browserChanged)
     browserUrl = Property(str, lambda s: s._browser_url, notify=browserChanged)
     browserWidth = Property(float, lambda s: s._browser_width, notify=browserChanged)
+    terminalText = Property(str, lambda s: s._terminal_text, notify=terminalChanged)
+    terminalRunning = Property(bool, lambda s: s._terminal_running, notify=terminalChanged)
     coding = Property('QVariantMap', lambda s: s._coding, notify=codingChanged)
     codingMessages = Property(QObject, lambda s: s._coding_messages, constant=True)
     codingDraft = Property(str, lambda s: s._coding_draft, notify=codingDraftChanged)
@@ -177,6 +188,18 @@ class WorkbenchController(QObject):
             self.changed.emit()
             return
         self._send({'command': 'page_action', 'page': page, 'action': action, 'values': values})
+
+    @Slot(str, str, int, bool)
+    def queryWorkspace(self, kind, query, ticket, cancel):
+        self._send({'command': 'workspace_query', 'kind': kind, 'query': query, 'ticket': ticket, 'cancel': cancel})
+
+    @Slot(str, str)
+    def terminalAction(self, action, text):
+        if action == 'clear':
+            self._terminal_text = ''
+            self.terminalChanged.emit()
+        elif self._page == 'development' and self._native_ready:
+            self._send({'command': 'terminal', 'action': action, 'text': text, 'root': self._workspace})
 
     @Slot(str, bool)
     def setFormDirty(self, page, dirty):
@@ -366,6 +389,19 @@ class WorkbenchController(QObject):
                 self._document_dirty.discard(document['path'])
             self.pagesChanged.emit()
             self.changed.emit()
+        elif kind == 'terminal' and row['root'] == self._workspace:
+            text = self._terminal_text + row['text'].replace('\r\n', '\n')
+            self._terminal_text = ('[仅显示最近的输出]\n' + text[-131072:]) if len(text) > 131072 else text
+            if row.get('reveal'):
+                self.terminalRevealRequested.emit()
+            if 'running' in row:
+                self._terminal_running = row['running']
+                self._terminal_timer.stop()
+                self.terminalChanged.emit()
+            elif not self._terminal_timer.isActive():
+                self._terminal_timer.start()
+        elif kind == 'workspace_query':
+            self.workspaceQueryResult.emit(row)
         elif kind == 'reset_form':
             self._form_dirty.discard(row['page'])
             self.formReset.emit(row['page'])
@@ -407,7 +443,12 @@ class WorkbenchController(QObject):
         elif kind == 'status':
             self._busy = bool(row.get('busy'))
             self._unsaved = bool(row.get('unsaved'))
-            self._workspace = row.get('workspace', self._workspace)
+            workspace = row.get('workspace', self._workspace)
+            if workspace != self._workspace:
+                self._workspace = workspace
+                self._terminal_text = ''
+                self._terminal_running = False
+                self.terminalChanged.emit()
             self._status = row.get('status', '')
             self.changed.emit()
         elif kind == 'navigate':
@@ -487,6 +528,10 @@ class WorkbenchController(QObject):
         for waiter in self._service_calls.values():
             waiter['done'].set()
         self._busy = False
+        if self._terminal_running:
+            self._terminal_text += '\n[终端连接已关闭]\n'
+            self._terminal_running = False
+            self.terminalChanged.emit()
         self._coding = {}
         self._coding_messages.reset([])
         self.codingChanged.emit()
