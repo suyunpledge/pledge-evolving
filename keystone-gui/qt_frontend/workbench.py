@@ -183,9 +183,9 @@ class WorkbenchController(QObject):
         (self._form_dirty.add if dirty else self._form_dirty.discard)(page)
         self.changed.emit()
 
-    @Slot(str, str, int)
-    def updateDocument(self, path, text, version):
-        self._document_dirty.add(path)
+    @Slot(str, str, int, bool)
+    def updateDocument(self, path, text, version, dirty):
+        (self._document_dirty.add if dirty else self._document_dirty.discard)(path)
         self._document_versions[path] = version
         self._send({'command': 'document', 'path': path, 'text': text, 'version': version})
         self.changed.emit()

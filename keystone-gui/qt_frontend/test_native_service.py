@@ -85,6 +85,28 @@ class NativeServiceTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             pages.action('files', 'open', {'path': '../outside.txt'})
 
+    def test_closing_editor_tabs_keeps_selection_and_confirms_dirty_files(self):
+        pages = self.host.pages
+        first, middle, last, end = (str(self.project / (name + '.py')) for name in ('first', 'middle', 'last', 'end'))
+        for path in (first, middle, last, end, last):
+            Path(path).touch()
+            pages.action('development', 'open', {'path': path})
+        pages.update_document(middle, 'unsaved', 1)
+        with patch.object(self.host, 'approve', return_value=False) as approve:
+            pages.action('development', 'close', {'path': middle})
+            approve.assert_called_once()
+        self.assertTrue(pages.documents[middle].dirty)
+
+        pages.action('development', 'close', {'path': middle})
+        self.assertNotIn(middle, pages.documents)
+        self.assertEqual(pages.active_document, last)
+        pages.action('development', 'close', {'path': last})
+        self.assertEqual(pages.active_document, end)
+        pages.action('development', 'close', {'path': end})
+        self.assertEqual(pages.active_document, first)
+        pages.action('development', 'close', {'path': first})
+        self.assertEqual(pages.active_document, '')
+
     def test_config_optimistic_save_and_model_disable(self):
         row = dict(id='fixture', name='provider:fixture', config={'baseURL': 'http://127.0.0.1:1/v1', 'model': 'fixture'})
         save_user_layer(self.home, [row])

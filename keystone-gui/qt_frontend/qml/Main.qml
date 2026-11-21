@@ -112,8 +112,23 @@ ApplicationWindow {
                      && window.visibility !== Window.Hidden && !controller.reduceMotion
         }
     }
-    Rectangle { width: window.sideWidth; height: parent.height; color: Theme.sidebarBg }
-    Rectangle { x: window.sideWidth; width: 1; height: parent.height; color: Theme.divider }
+    Rectangle {
+        width: window.sideWidth; height: parent.height
+        gradient: Gradient {
+            GradientStop { position: 0.0; color: "#960a0e16" }
+            GradientStop { position: 0.5; color: "#780f1726" }
+            GradientStop { position: 1.0; color: "#920a0e16" }
+        }
+    }
+    Rectangle {
+        x: window.sideWidth; width: 1; height: parent.height
+        gradient: Gradient {
+            GradientStop { position: 0.0; color: "#0cffffff" }
+            GradientStop { position: 0.35; color: "#26ffffff" }
+            GradientStop { position: 0.7; color: "#1cffffff" }
+            GradientStop { position: 1.0; color: "#0affffff" }
+        }
+    }
     Connections {
         target: window.wallpaper
         function onChanged() { Qt.callLater(window.refreshBackdrop) }
@@ -264,13 +279,41 @@ ApplicationWindow {
                 }
             }
         }
+        Rectangle {
+            x: window.sideWidth + 1; y: 0
+            width: window.mainRight - window.sideWidth - 1; height: 74
+            gradient: Gradient {
+                GradientStop { position: 0.0; color: "#48090d14" }
+                GradientStop { position: 1.0; color: "#00090d14" }
+            }
+        }
         Column {
             visible: window.chatVisible && messages.count === 0
             x: window.columnX + 16
             y: Math.max(155, window.height * 0.27)
             width: window.columnWidth - 32
             spacing: 16
-            Image { source: brandUrl; width: 42; height: 42; smooth: true }
+            Item {
+                width: 48; height: 48
+                Canvas {
+                    id: brandHalo
+                    anchors.centerIn: parent; width: 112; height: 112
+                    property bool warm: !window.conversationOnly
+                    onWarmChanged: requestPaint()
+                    onPaint: {
+                        const ctx = getContext("2d")
+                        ctx.clearRect(0, 0, width, height)
+                        const g = ctx.createRadialGradient(width / 2, height / 2, 4, width / 2, height / 2, width / 2)
+                        const rgb = warm ? "232, 157, 90" : "91, 155, 248"
+                        g.addColorStop(0.0, `rgba(${rgb}, 0.28)`)
+                        g.addColorStop(0.45, `rgba(${rgb}, 0.10)`)
+                        g.addColorStop(1.0, `rgba(${rgb}, 0.0)`)
+                        ctx.fillStyle = g
+                        ctx.fillRect(0, 0, width, height)
+                    }
+                }
+                Image { anchors.centerIn: parent; source: brandUrl; width: 42; height: 42; smooth: true }
+            }
             Text { text: window.conversationOnly ? "今天想聊些什么？" : "今天想完成什么？"; color: "#f0f1f3"; font.pixelSize: 30; font.weight: Font.DemiBold }
             Text { text: window.conversationOnly ? "可以使用已连接且获准的 MCP。需要实际操作时，AI 可切换到 Work。" : "描述目标，带上上下文，让想法成为下一步。"; color: "#9fa8b4"; font.pixelSize: 15; wrapMode: Text.Wrap; width: parent.width }
         }

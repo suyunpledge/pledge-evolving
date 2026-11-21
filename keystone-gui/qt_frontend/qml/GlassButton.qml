@@ -34,22 +34,23 @@ AbstractButton {
     HoverHandler { id: hover; cursorShape: Qt.PointingHandCursor }
     contentItem: Item {
         id: content
+        readonly property bool compact: control.width > 0 && control.width < 80 && control.text.length > 0 && control.glyph.length > 0
         implicitWidth: contentRow.implicitWidth
         implicitHeight: 18
         Row {
         id: contentRow
         anchors.centerIn: parent
-        spacing: control.text.length > 0 && control.glyph.length > 0 ? 8 : 0
+        spacing: control.text.length > 0 && control.glyph.length > 0 ? (content.compact ? 4 : 8) : 0
         Glyph {
             visible: control.glyph.length > 0
-            width: visible ? 17 : 0; height: 17
+            width: visible ? (content.compact ? 14 : 17) : 0; height: content.compact ? 14 : 17
             anchors.verticalCenter: parent.verticalCenter
             name: control.glyph; ink: control.glyphInk
         }
         Text {
             text: control.text
             color: control.ink
-            font.pixelSize: 13
+            font.pixelSize: content.compact ? 12 : 13
             anchors.verticalCenter: parent.verticalCenter
         }
         }

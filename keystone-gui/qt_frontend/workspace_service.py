@@ -421,8 +421,12 @@ class WorkspaceService:
             elif action == 'close':
                 if doc.dirty and not self.host.approve('关闭并放弃未保存修改', {'path': path}):
                     return
+                if path == self.active_document:
+                    tabs = list(self.documents)
+                    index = tabs.index(path)
+                    remaining = tabs[:index] + tabs[index + 1:]
+                    self.active_document = remaining[min(index, len(remaining) - 1)] if remaining else ''
                 del self.documents[path]
-                self.active_document = next(iter(self.documents), '')
         for target in ('development', 'files'):
             self.publish(target)
 

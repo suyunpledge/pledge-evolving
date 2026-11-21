@@ -678,6 +678,13 @@ class ChatController(QObject):
             self._code_highlighters[key] = CodeHighlighter(document)
             document.destroyed.connect(lambda: self._code_highlighters.pop(key, None))
 
+    @Slot(QObject, int, int, str)
+    def replaceCodeSelection(self, quick_document, start, end, replacement):
+        cursor = QTextCursor(quick_document.textDocument())
+        cursor.setPosition(start)
+        cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+        cursor.insertText(replacement)
+
     def _flush_stream(self):
         self._stream_timer.stop()
         if self._pending_chunks:

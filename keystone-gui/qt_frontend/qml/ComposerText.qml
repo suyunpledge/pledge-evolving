@@ -27,6 +27,19 @@ Flickable {
         if (input.activeFocus && input.visible && win && win.active)
             controller.syncInputMethod(input.mapToItem(null, 0, 0), input.width, input.height)
     }
+    function scrollToRect(rect) {
+        if (rect.y < contentY)
+            contentY = rect.y
+        else if (rect.y + rect.height > contentY + height)
+            contentY = rect.y + rect.height - height
+        if (horizontalScroll && rect.x < contentX)
+            contentX = rect.x
+        else if (horizontalScroll && rect.x + rect.width > contentX + width)
+            contentX = rect.x + rect.width - width
+    }
+    function revealPosition(position) {
+        scrollToRect(input.positionToRectangle(position))
+    }
     onSceneOriginChanged: Qt.callLater(refreshInputMethod)
     Connections {
         target: field.Window.window
@@ -49,10 +62,7 @@ Flickable {
         selectionColor: "#526477"; selectedTextColor: "white"
         onActiveFocusChanged: Qt.callLater(field.refreshInputMethod)
         onCursorRectangleChanged: {
-            if (cursorRectangle.y < field.contentY)
-                field.contentY = cursorRectangle.y
-            else if (cursorRectangle.y + cursorRectangle.height > field.contentY + field.height)
-                field.contentY = cursorRectangle.y + cursorRectangle.height - field.height
+            field.scrollToRect(cursorRectangle)
             Qt.callLater(field.refreshInputMethod)
         }
         function enter(event) {

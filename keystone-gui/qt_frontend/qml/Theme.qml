@@ -23,8 +23,8 @@ QtObject {
     readonly property color ember: "#e89d5a"
 
     // User message bubble
-    readonly property color userBubble: "#2434485f"
-    readonly property color userBubbleBorder: "#24ffffff"
+    readonly property color userBubble: "#30334a66"
+    readonly property color userBubbleBorder: "#2effffff"
 
     // Semantic status colors
     readonly property color success: "#6fd69e"
