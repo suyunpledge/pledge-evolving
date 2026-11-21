@@ -33,10 +33,14 @@ def steps_declared_by_user(cfg) -> bool:
 
     base.json's ``maxSteps: 12`` is the framework default spelled out, not user
     intent, so it must not suppress the vendor steps_hint.
+
+    A role template (keystone.agent_templates, layer label ``template:<id>``)
+    states its budget on purpose too, so it counts as declared.
     """
     row = cfg.row("loop") if hasattr(cfg, "row") else None
+    source = str(getattr(row, "source", "")) if row else ""
     return bool(row and "maxSteps" in (getattr(row, "config", None) or {})
-                and str(getattr(row, "source", "")) == USER_LAYER_NAME)
+                and (source == USER_LAYER_NAME or source.startswith("template:")))
 
 
 def primary_profile(cfg, router=None):

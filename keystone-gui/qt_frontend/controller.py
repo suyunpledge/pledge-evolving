@@ -122,6 +122,8 @@ class ChatController(QObject):
         self.chat_mcp_tools = None
         self._conversation_mode = 'work'
         self._tool_settings = WorkToolSettings(self)
+        from .role_templates import RoleTemplates
+        self._templates = RoleTemplates(self, home)
         from .changes import ReplyChanges
         self._changes = ReplyChanges(self)
         self._client = None
@@ -146,6 +148,7 @@ class ChatController(QObject):
     busy = Property(bool, lambda self: self._busy or self._changes.busy, notify=changed)
     changeReview = Property(QObject, lambda self: self._changes, constant=True)
     toolSettings = Property(QObject, lambda self: self._tool_settings, constant=True)
+    templates = Property(QObject, lambda self: self._templates, constant=True)
     conversationMode = Property(str, lambda self: self._conversation_mode, notify=changed)
     connected = Property(bool, lambda self: self._connected, notify=changed)
     canRetry = Property(bool, lambda self: self.connected and not self.busy and bool(self._history)
@@ -611,14 +614,19 @@ class ChatController(QObject):
             chat_connection = self.chat_mcp_tools() if tools_enabled and self.chat_mcp_tools else ({}, None)
         change_notice = self._changes.notice()
         temperature = self._temperature
+        # 角色模板：角色指引随每轮系统上下文走（切换到 Work 后也保留）；工具与权限
+        # 的收窄在 tool_settings.snapshot / permissions.authorize 里，回合上限在 turn_limit。
+        role = self._templates.active()
+        role_text = role.role_text() if role is not None else ''
 
         def update_status(value):
             self._workerEvent.emit('status', (generation, value))
 
         def work_context(history):
             if self.work_context is None:
-                return change_notice
-            return change_notice + '\n' + self.work_context(history, model, cancel, update_status)
+                return '\n'.join(part for part in (role_text, change_notice) if part)
+            return '\n'.join(part for part in (role_text, change_notice,
+                                                self.work_context(history, model, cancel, update_status)) if part)
 
         def enter_work(reason, history):
             arrived = threading.Event()
@@ -633,7 +641,8 @@ class ChatController(QObject):
         def worker():
             try:
                 from .conversation import run
-                context = change_notice if chat_mode else work_context(messages)
+                context = ('\n'.join(part for part in (role_text, change_notice) if part)
+                           if chat_mode else work_context(messages))
                 from .conversation import MAX_TURNS
                 max_turns = self.turn_limit() if self.turn_limit is not None else MAX_TURNS
                 result = run(client, messages, model=model, effort=None if effort == 'off' else effort,

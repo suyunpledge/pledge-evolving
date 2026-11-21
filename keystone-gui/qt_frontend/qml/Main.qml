@@ -262,6 +262,49 @@ ApplicationWindow {
             Image { source: brandUrl; width: 42; height: 42; smooth: true }
             Text { text: window.conversationOnly ? "今天想聊些什么？" : "今天想完成什么？"; color: "#f0f1f3"; font.pixelSize: 30; font.weight: Font.DemiBold }
             Text { text: window.conversationOnly ? "可以使用已连接且获准的 MCP。需要实际操作时，AI 可切换到 Work。" : "描述目标，带上上下文，让想法成为下一步。"; color: "#9fa8b4"; font.pixelSize: 15; wrapMode: Text.Wrap; width: parent.width }
+            Item { width: 1; height: 4 }
+            Text { text: "选择角色"; color: "#7f8998"; font.pixelSize: 12 }
+            // 角色模板：一键换成预设角色（指引、工具、权限上限、步数预算都随之切换）。
+            Flow {
+                objectName: "templatePicker"
+                width: parent.width; spacing: 8
+                GlassButton {
+                    material: window.material; glyph: "bot"; text: "通用"; height: 34
+                    selected: controller.templates.activeId === ""; enabled: !controller.busy
+                    onClicked: controller.templates.select("")
+                }
+                Repeater {
+                    model: controller.templates.rows
+                    GlassButton {
+                        required property var modelData
+                        objectName: "templateChip_" + modelData.id
+                        material: window.material; glyph: modelData.icon; text: modelData.name; height: 34
+                        selected: modelData.active; enabled: !controller.busy; tip: modelData.description
+                        onClicked: controller.templates.select(modelData.id)
+                    }
+                }
+                GlassButton {
+                    material: window.material; glyph: "sliders-horizontal"; text: "管理"; quiet: true; height: 34
+                    tip: "复制并自定义角色"; onClicked: rolePicker.open()
+                }
+            }
+            Text {
+                text: controller.templates.activeDescription; color: "#a9b4c1"; font.pixelSize: 13
+                wrapMode: Text.Wrap; width: parent.width
+            }
+            Flow {
+                objectName: "templateStarters"
+                visible: controller.templates.activeStarters.length > 0
+                width: parent.width; spacing: 6
+                Repeater {
+                    model: controller.templates.activeStarters
+                    GlassButton {
+                        required property string modelData
+                        material: window.material; glyph: "sparkles"; text: modelData; quiet: true; height: 32
+                        tip: "填入输入框"; onClicked: controller.templates.useStarter(modelData)
+                    }
+                }
+            }
         }
     }
     ShaderEffectSource {
@@ -443,6 +486,15 @@ ApplicationWindow {
                     glyph: "box"; enabled: !controller.busy; tip: "切换模型"; onClicked: modelMenu.open()
                 }
                 GlassButton {
+                    id: roleButton
+                    objectName: "templateButton"
+                    material: window.material; glyph: controller.templates.activeIcon
+                    text: window.columnWidth > 560 ? controller.templates.activeName : ""
+                    selected: controller.templates.activeId !== ""
+                    enabled: !controller.busy; tip: "当前角色：" + controller.templates.activeName + "（点击切换）"
+                    onClicked: rolePicker.open()
+                }
+                GlassButton {
                     id: optionsButton
                     material: window.material; glyph: "sliders-horizontal"; text: window.columnWidth > 600 ? "选项" : ""
                     selected: options.opened; tip: "推理强度与玻璃外观"; onClicked: options.open()
@@ -515,6 +567,17 @@ ApplicationWindow {
                 delegate: GlassButton { required property string modelData; material: window.material; width: ListView.view.width; text: modelData.length > 33 ? modelData.slice(0, 32) + "…" : modelData; selected: controller.model === modelData; enabled: !controller.modelSwitching; quiet: true; onClicked: {controller.setModel(modelData); modelMenu.close()} }
             }
         }
+    }
+    RolePicker {
+        id: rolePicker
+        parent: Overlay.overlay
+        x: Math.round((parent.width - width) / 2); y: Math.round((parent.height - height) / 2)
+        width: Math.min(720, window.width - 48)
+        height: Math.min(660, window.height - 48)
+        material: window.material
+        service: controller.templates
+        changesAllowed: !controller.busy
+        onClosed: window.focusWorkComposer()
     }
     WorkToolCatalog {
         id: toolCatalog

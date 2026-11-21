@@ -49,13 +49,20 @@ def budget_lead(limit):
     return f'已达本轮 {limit} 次工具调用上限，以下是进度小结；点「继续」可接着做。\n\n'
 
 
-def turn_limit(home):
+def turn_limit(home, template=None):
     """Work 模式的回合上限：与 CLI / VS Code / 网关同一套解析（不套用厂商步数提示，
-    因为这里的模型由界面选择，不一定是配置里的首发路由）。"""
+    因为这里的模型由界面选择，不一定是配置里的首发路由）。
+
+    ``template``（keystone.agent_templates.AgentTemplate）给出角色的步数预算；
+    用户在 keystone.patch.json 里自己写的 maxSteps 是上限，模板不会越过它。"""
     try:
         from keystone.config import load_config
         from keystone.loop_limits import resolve_loop_limits
-        return resolve_loop_limits(load_config(Path(home)), use_hint=False).max_steps
+        cfg = load_config(Path(home))
+        if template is not None:
+            from keystone.agent_templates import apply_template
+            apply_template(cfg, template)
+        return resolve_loop_limits(cfg, use_hint=False).max_steps
     except Exception:
         return MAX_TURNS
 
