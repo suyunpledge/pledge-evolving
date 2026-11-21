@@ -6,9 +6,12 @@ from urllib.parse import urlsplit
 from .context_plan import estimate_text
 
 
-def official_gpt61(provider, model):
+GPT61_MODELS = frozenset({"gpt-6.1-sol", "gpt-6.1-terra"})
+
+
+def official_openai_endpoint(provider):
     endpoint = urlsplit(provider.base_url)
-    return (provider.wire == "openai" and model in {"gpt-6.1-sol", "gpt-6.1-terra"}
+    return (provider.wire == "openai"
             and endpoint.scheme == "https" and endpoint.netloc.lower() in {"api.openai.com", "api.openai.com:443"}
             and endpoint.path.rstrip("/") in {"", "/v1"} and not (endpoint.query or endpoint.fragment))
 
@@ -16,7 +19,8 @@ def official_gpt61(provider, model):
 def apply_openai_breakpoint(payload, provider, model):
     """Keep the first long system block reusable even if later context changes."""
     mode = (provider.cache_control or "auto").strip().lower()
-    if (not official_gpt61(provider, model) or mode not in {"auto", "explicit"} or not provider.adapt
+    if (model not in GPT61_MODELS or not official_openai_endpoint(provider)
+            or mode not in {"auto", "explicit"} or not provider.adapt
             or "prompt_cache_options" in payload or "prompt_cache_retention" in payload):
         return None
     if mode == "auto" and provider.expected_calls < 2:

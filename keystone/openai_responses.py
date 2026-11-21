@@ -3,14 +3,15 @@ from __future__ import annotations
 
 import json
 
-from .cache_affinity import official_gpt61
+from .cache_affinity import GPT61_MODELS, official_openai_endpoint
 
 REPLAY = "responses_replay"
+TOOL_MODELS = GPT61_MODELS | {"gpt-6-sol"}
 
 
 def uses_responses(payload, provider):
     messages = payload.get("messages") or []
-    return (provider.adapt and official_gpt61(provider, payload.get("model"))
+    return (provider.adapt and payload.get("model") in TOOL_MODELS and official_openai_endpoint(provider)
             and bool(payload.get("tools") or any(
                 m.get("role") == "tool" or m.get("tool_calls") or m.get(REPLAY)
                 for m in messages if isinstance(m, dict))))

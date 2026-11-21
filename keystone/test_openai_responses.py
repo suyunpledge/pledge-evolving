@@ -51,6 +51,20 @@ class ResponsesTests(unittest.TestCase):
             {"model": "gpt-6.1-terra", "messages": [extra["assistant_message"]]}, "other")
         self.assertEqual([i["type"] for i in alternate["input"]], ["function_call"])
 
+    def test_gpt6_sol_reasoning_tools_use_native_endpoint_without_gpt61_cache_extensions(self):
+        from .cache_affinity import apply_openai_breakpoint
+        model = 'gpt-6-sol'
+        payload = {'model': model, 'messages': [{'role': 'user', 'content': 'calculate'}],
+                   'reasoning_effort': 'medium'}
+        provider = Provider('official', 'https://api.openai.com/v1', default_model=model)
+        tools = {**payload, 'tools': TOOLS}
+        self.assertTrue(native.uses_responses(tools, provider))
+        self.assertEqual(native.to_request(tools, 'scope')['reasoning'], {'effort': 'medium'})
+        self.assertTrue(native.uses_responses({**payload, 'messages': [{'role': 'tool'}]}, provider))
+        self.assertFalse(native.uses_responses(payload, provider))
+        self.assertFalse(native.uses_responses(tools, Provider('other', 'https://example.com/v1')))
+        self.assertIsNone(apply_openai_breakpoint(tools, provider, model))
+
     def test_stream_has_no_native_calls_until_completed(self):
         pending = {"type": "response.function_call_arguments.delta", "delta": '{"unfinished"'}
         def frame(event):
