@@ -8,6 +8,7 @@ Popup {
     required property var material
     required property var service
     required property bool changesAllowed
+    required property bool chatMode
     property string category: "全部"
     readonly property var filtered: {
         const term = search.text.trim().toLowerCase()
@@ -23,16 +24,16 @@ Popup {
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
     Overlay.modal: Rectangle { color: "#7705080d" }
     background: GlassSurface { material: panel.material; radius: 24; tint: "#e11c2430" }
-    onOpened: { service.refresh(); search.forceActiveFocus() }
+    onOpened: { category = "全部"; search.clear(); service.refresh(); search.forceActiveFocus() }
 
     contentItem: ColumnLayout {
         spacing: 10
         RowLayout {
             Layout.fillWidth: true
-            Text { Layout.fillWidth: true; text: "Work 工具"; color: "#eef2f7"; font.pixelSize: 20; font.weight: Font.DemiBold }
+            Text { Layout.fillWidth: true; text: panel.chatMode ? "Chat 工具" : "Work 工具"; color: "#eef2f7"; font.pixelSize: 20; font.weight: Font.DemiBold }
             GlassButton {
                 objectName: "toggleWorkTools"
-                material: panel.material; glyph: "blocks"; text: panel.service.enabled ? "调用已开启" : "调用已关闭"
+                material: panel.material; glyph: "blocks"; tip: "Chat 与 Work 共享工具开关"; text: panel.service.enabled ? "调用已开启" : "调用已关闭"
                 selected: panel.service.enabled; enabled: panel.changesAllowed
                 onClicked: panel.service.setEnabled(!panel.service.enabled)
             }
@@ -49,7 +50,7 @@ Popup {
         Flow {
             Layout.fillWidth: true; spacing: 6
             Repeater {
-                model: ["全部", "计算", "文本", "搜索", "文件与代码", "媒体", "连接器", "其他"]
+                model: panel.chatMode ? ["全部", "计算", "图表与办公", "连接器"] : ["全部", "计算", "图表与办公", "文本", "搜索", "文件与代码", "媒体", "连接器", "其他"]
                 GlassButton {
                     required property string modelData
                     material: panel.material; text: modelData; height: 30
@@ -59,8 +60,8 @@ Popup {
         }
         RowLayout {
             Layout.fillWidth: true
-            GlassButton { material: panel.material; quiet: true; text: "全部启用"; enabled: panel.changesAllowed && panel.service.enabled; onClicked: panel.service.setAll(true) }
-            GlassButton { material: panel.material; quiet: true; text: "全部关闭"; enabled: panel.changesAllowed && panel.service.enabled; onClicked: panel.service.setAll(false) }
+            GlassButton { material: panel.material; visible: !panel.chatMode; quiet: true; text: "全部启用"; enabled: panel.changesAllowed && panel.service.enabled; onClicked: panel.service.setAll(true) }
+            GlassButton { material: panel.material; visible: !panel.chatMode; quiet: true; text: "全部关闭"; enabled: panel.changesAllowed && panel.service.enabled; onClicked: panel.service.setAll(false) }
             Text {
                 Layout.fillWidth: true
                 text: panel.service.loading ? "正在读取网关工具…" : panel.service.error

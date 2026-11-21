@@ -14,6 +14,7 @@ from PySide6.QtQuick import QQuickWindow, QSGRendererInterface
 from .controller import ChatController
 from .media_generation import tool_set as media_tool_set
 from .workbench import WorkbenchController
+from .productivity_tools import with_productivity
 from keystone.compat import default_home
 
 
@@ -100,12 +101,12 @@ def main(argv=None):
                 return workbench.call_service(target[1], arguments, cancel)
             return workbench.mcp.call_chat_tool(target, arguments, cancel)
 
-        return tools, dispatch
+        return with_productivity((tools, dispatch), controller.store.folder)
 
     controller.mcp_tools = mcp_tools
     def chat_mcp_tools():
         tools = {} if workbench.permission == 'sandbox' else workbench.mcp.chat_tools(workbench.workspace, remote_only=True)
-        return tools, workbench.mcp.call_chat_tool
+        return with_productivity((tools, workbench.mcp.call_chat_tool), controller.store.folder)
 
     controller.chat_mcp_tools = chat_mcp_tools
     controller.navigateRequested.connect(workbench.navigate)

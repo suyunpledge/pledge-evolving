@@ -174,11 +174,8 @@ class ServiceHost:
             self.navigation.submit(self.navigate, dict(row))
         elif command == 'terminal':
             with self.lock:
-                if row.get('action') == 'stop':
-                    self.terminal.cancel.set()
-                elif self.page == 'development' and row.get('root') == str(self.workspace):
-                    if row.get('action') in {'run', 'git'}:
-                        self.terminal.start(row.get('text', ''), git_status=row['action'] == 'git')
+                if self.page == 'development' and row.get('root') == str(self.workspace):
+                    self.terminal.handle(row)
         elif command == 'workspace_query':
             with self.lock:
                 self.queries.request(self.pages, row)

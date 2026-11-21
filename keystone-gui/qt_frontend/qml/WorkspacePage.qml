@@ -104,7 +104,7 @@ Item {
     }
     Connections {
         target: workbench
-        function onTerminalRevealRequested() { if (page.ide && page.visible) page.showDock("terminal", false) }
+        function onTerminalRevealRequested() { if (page.ide && page.visible && !page.dockOpen) page.showDock("output", false) }
         function onChanged() {
             if (page.pendingSelection && !workbench.busy && page.pendingSelection.path === page.editorPath)
                 Qt.callLater(page.applySelection)
@@ -452,7 +452,7 @@ Item {
                             resultText: page.viewData.result || ""; tab: page.dockTab
                             onTabRequested: name => page.dockTab = name
                             onCollapseRequested: page.toggleDock(page.dockTab)
-                            onResizeRequested: pixels => page.dockHeight = Math.min(page.height * 0.56, Math.max(110, pixels))
+                            onResizeRequested: pixels => page.dockHeight = Math.min(page.height * 0.56, Math.max(160, pixels))
                         }
                     }
                     Rectangle {

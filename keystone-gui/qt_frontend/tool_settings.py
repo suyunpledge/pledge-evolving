@@ -7,7 +7,8 @@ from .conversation import tool_label, tool_schemas
 
 
 _GROUPS = {
-    '计算': ('calculator', 'unit_convert', 'datetime'),
+    '计算': ('calculator', 'unit_convert', 'datetime', 'evaluate_math', 'summarize_numbers'),
+    '图表与办公': ('plot_chart', 'create_document', 'create_spreadsheet', 'create_slides'),
     '文本': ('text_transform',),
     '搜索': ('public_search', 'web_search', 'fetch_url'),
     '媒体': ('generate_image', 'generate_video', 'comfyui_run'),
@@ -88,6 +89,10 @@ class WorkToolSettings(QObject):
 
     @Slot()
     def refresh(self):
+        if self.owner.conversationMode == 'chat':
+            self._local = self.owner.chat_mcp_tools()[0] if self.owner.chat_mcp_tools else {}
+            self._receive('', [], '')
+            return
         if self._loading:
             return
         self._local = self.owner.mcp_tools()[0] if self.owner.mcp_tools else {}
@@ -113,6 +118,8 @@ class WorkToolSettings(QObject):
         if self.owner._closed:
             return
         self._loading = False
+        if endpoint and self.owner.conversationMode == 'chat':
+            return
         if endpoint and endpoint != self.owner.gateway:
             self.refresh()
             return

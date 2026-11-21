@@ -39,6 +39,7 @@ class WorkbenchController(QObject):
     codingDraftChanged = Signal()
     codingFocusRequested = Signal()
     terminalChanged = Signal()
+    terminalTabsChanged = Signal()
     terminalRevealRequested = Signal()
     pageReadyChanged = Signal()
     catalogRequested = Signal(str)
@@ -81,8 +82,11 @@ class WorkbenchController(QObject):
         self._service_calls = {}
         self._serviceCommand.connect(self._send)
         self._coding = {}
-        self._terminal_text = ''
-        self._terminal_running = False
+        self._terminal_serial = 0
+        self._terminals = {}
+        self._terminal_output = ''
+        self._terminal_size = [100, 24]
+        self._add_terminal()
         self._terminal_timer = QTimer(self)
         self._terminal_timer.setSingleShot(True)
         self._terminal_timer.setInterval(50)
@@ -151,8 +155,12 @@ class WorkbenchController(QObject):
     browserLoaded = Property(bool, lambda s: s._browser_loaded, notify=browserChanged)
     browserUrl = Property(str, lambda s: s._browser_url, notify=browserChanged)
     browserWidth = Property(float, lambda s: s._browser_width, notify=browserChanged)
-    terminalText = Property(str, lambda s: s._terminal_text, notify=terminalChanged)
-    terminalRunning = Property(bool, lambda s: s._terminal_running, notify=terminalChanged)
+    terminalText = Property(str, lambda s: s._terminals[s._terminal_id]['log'] + s._terminals[s._terminal_id]['screen'], notify=terminalChanged)
+    terminalOutput = Property(str, lambda s: s._terminal_output, notify=terminalChanged)
+    terminalRunning = Property(bool, lambda s: any(tab['running'] for tab in s._terminals.values()), notify=terminalChanged)
+    activeTerminalRunning = Property(bool, lambda s: s._terminals[s._terminal_id]['running'], notify=terminalChanged)
+    activeTerminal = Property(int, lambda s: s._terminal_id, notify=terminalTabsChanged)
+    terminalTabs = Property('QVariantList', lambda s: list(s._terminals), notify=terminalTabsChanged)
     coding = Property('QVariantMap', lambda s: s._coding, notify=codingChanged)
     codingMessages = Property(QObject, lambda s: s._coding_messages, constant=True)
     codingDraft = Property(str, lambda s: s._coding_draft, notify=codingDraftChanged)
@@ -193,13 +201,76 @@ class WorkbenchController(QObject):
     def queryWorkspace(self, kind, query, ticket, cancel):
         self._send({'command': 'workspace_query', 'kind': kind, 'query': query, 'ticket': ticket, 'cancel': cancel})
 
+    def _add_terminal(self):
+        self._terminal_serial += 1
+        self._terminal_id = self._terminal_serial
+        self._terminals[self._terminal_id] = {'log': '', 'screen': '', 'running': False}
+
+    def _publish_tabs(self):
+        self.terminalTabsChanged.emit()
+        self.terminalChanged.emit()
+
+    @Slot(int)
+    def selectTerminal(self, identifier):
+        if identifier in self._terminals and self._terminal_id != identifier:
+            self._terminal_id = identifier
+            self._publish_tabs()
+            self.terminalAction('resize', '')
+
+    @Slot(int, int)
+    def resizeTerminal(self, columns, rows):
+        if self._terminal_size != [columns, rows]:
+            self._terminal_size = [columns, rows]
+            self.terminalAction('resize', '')
+
     @Slot(str, str)
     def terminalAction(self, action, text):
+        if self._page != 'development' or not self._native_ready:
+            return
+        if action == 'new':
+            if len(self._terminals) < 16:
+                self._add_terminal()
+                self._publish_tabs()
+            return
+        self._send({'command': 'terminal', 'action': action, 'text': text, 'session': self._terminal_id,
+                    'size': self._terminal_size, 'root': self._workspace})
         if action == 'clear':
-            self._terminal_text = ''
+            self._terminals[self._terminal_id].update(log='', screen='')
             self.terminalChanged.emit()
-        elif self._page == 'development' and self._native_ready:
-            self._send({'command': 'terminal', 'action': action, 'text': text, 'root': self._workspace})
+        elif action == 'close':
+            position = list(self._terminals).index(self._terminal_id)
+            del self._terminals[self._terminal_id]
+            if self._terminals:
+                self._terminal_id = list(self._terminals)[min(position, len(self._terminals) - 1)]
+            else:
+                self._add_terminal()
+            self._publish_tabs()
+
+    def _terminal_event(self, row):
+        text = row['text'].replace('\r\n', '\n')
+        session = self._terminals.get(row.get('session'))
+        if session:
+            if row.get('cleared'):
+                session.update(log='', screen='')
+            if row.get('ended') and session['screen']:
+                session['log'] += session['screen'] + '\n'
+                session['screen'] = ''
+            session['log'] = (session['log'] + text)[-131072:]
+            if 'screen' in row:
+                session['screen'] = row['screen']
+            if 'running' in row:
+                session['running'] = row['running']
+        elif 'session' not in row:
+            self._terminal_output = (self._terminal_output + text)[-131072:]
+            if row.get('reveal'):
+                self.terminalRevealRequested.emit()
+        else:
+            return
+        if 'running' in row:
+            self._terminal_timer.stop()
+            self.terminalChanged.emit()
+        elif not self._terminal_timer.isActive():
+            self._terminal_timer.start()
 
     @Slot(str, bool)
     def setFormDirty(self, page, dirty):
@@ -390,16 +461,7 @@ class WorkbenchController(QObject):
             self.pagesChanged.emit()
             self.changed.emit()
         elif kind == 'terminal' and row['root'] == self._workspace:
-            text = self._terminal_text + row['text'].replace('\r\n', '\n')
-            self._terminal_text = ('[仅显示最近的输出]\n' + text[-131072:]) if len(text) > 131072 else text
-            if row.get('reveal'):
-                self.terminalRevealRequested.emit()
-            if 'running' in row:
-                self._terminal_running = row['running']
-                self._terminal_timer.stop()
-                self.terminalChanged.emit()
-            elif not self._terminal_timer.isActive():
-                self._terminal_timer.start()
+            self._terminal_event(row)
         elif kind == 'workspace_query':
             self.workspaceQueryResult.emit(row)
         elif kind == 'reset_form':
@@ -446,9 +508,10 @@ class WorkbenchController(QObject):
             workspace = row.get('workspace', self._workspace)
             if workspace != self._workspace:
                 self._workspace = workspace
-                self._terminal_text = ''
-                self._terminal_running = False
-                self.terminalChanged.emit()
+                self._terminals.clear()
+                self._terminal_output = ''
+                self._add_terminal()
+                self._publish_tabs()
             self._status = row.get('status', '')
             self.changed.emit()
         elif kind == 'navigate':
@@ -528,10 +591,11 @@ class WorkbenchController(QObject):
         for waiter in self._service_calls.values():
             waiter['done'].set()
         self._busy = False
-        if self._terminal_running:
-            self._terminal_text += '\n[终端连接已关闭]\n'
-            self._terminal_running = False
-            self.terminalChanged.emit()
+        for session in self._terminals.values():
+            if session['running']:
+                session['log'] = (session['log'] + session['screen'] + '\n[终端连接已关闭]\n')[-131072:]
+                session.update(screen='', running=False)
+        self.terminalChanged.emit()
         self._coding = {}
         self._coding_messages.reset([])
         self.codingChanged.emit()

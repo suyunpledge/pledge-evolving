@@ -12,21 +12,47 @@ Rectangle {
     readonly property bool terminal: tab === "terminal"
     readonly property bool canRun: workbench.permission !== "sandbox"
     readonly property string project: workbench.workspace
+    property var drafts: ({})
+    property int displayedId: workbench.activeTerminal
     property var history: []
     property int historyIndex: -1
     property string savedDraft: ""
     property bool follow: true
     color: "#1c1e22"
-    onProjectChanged: if (input) { input.clear(); history = []; historyIndex = -1; savedDraft = "" }
+    function switchInput() {
+        const selected = workbench.activeTerminal
+        if (displayedId === selected) return
+        drafts[displayedId] = {text: input.text, history: history, index: historyIndex, saved: savedDraft}
+        for (const key of Object.keys(drafts))
+            if (workbench.terminalTabs.indexOf(Number(key)) < 0) delete drafts[key]
+        const state = drafts[selected] || {text: "", history: [], index: -1, saved: ""}
+        displayedId = selected
+        input.text = state.text
+        history = state.history
+        historyIndex = state.index
+        savedDraft = state.saved
+        follow = true
+        Qt.callLater(tail)
+        if (visible) Qt.callLater(focusPanel)
+    }
+    Connections { target: workbench; function onTerminalTabsChanged() { panel.switchInput() } }
+    Component.onCompleted: displayedId = workbench.activeTerminal
+    FontMetrics { id: metrics; font: transcript.font }
+    Timer {
+        id: resizeTimer; interval: 90
+        onTriggered: if (panel.visible && panel.terminal)
+            workbench.resizeTerminal(Math.max(20, Math.floor((scroll.width - 27) / metrics.advanceWidth("M"))),
+                                     Math.max(3, Math.floor((scroll.height - 13) / metrics.height)))
+    }
     function focusPanel() {
         if (!visible) return
-        if (terminal && canRun && !workbench.terminalRunning) input.forceActiveFocus()
+        if (terminal && canRun) input.forceActiveFocus()
         else transcript.forceActiveFocus()
     }
     function submit() {
-        const value = input.text.trim()
-        if (!value || !canRun || workbench.terminalRunning || input.inputMethodComposing) return
-        if (history[history.length - 1] !== value) history = history.concat([value]).slice(-50)
+        const value = input.text
+        if (!canRun || (!value && !workbench.activeTerminalRunning) || input.inputMethodComposing) return
+        if (value && history[history.length - 1] !== value) history = history.concat([value]).slice(-50)
         historyIndex = -1
         savedDraft = ""
         input.clear()
@@ -46,8 +72,8 @@ Rectangle {
         if (historyIndex === history.length) historyIndex = -1
     }
     function tail() { if (visible && follow) scroll.contentY = Math.max(0, scroll.contentHeight - scroll.height) }
-    onVisibleChanged: if (visible) Qt.callLater(tail)
-    onTabChanged: { follow = true; Qt.callLater(tail) }
+    onVisibleChanged: if (visible) { resizeTimer.restart(); Qt.callLater(tail) }
+    onTabChanged: { follow = true; resizeTimer.restart(); Qt.callLater(tail) }
     ColumnLayout {
         anchors.fill: parent; spacing: 0
         Rectangle {
@@ -68,21 +94,42 @@ Rectangle {
                     }
                 }
                 Item { Layout.fillWidth: true }
-                Text {
-                    visible: panel.terminal && panel.width > 420
-                    text: workbench.terminalRunning ? "运行中" : (Qt.platform.os === "windows" ? "PowerShell" : "sh")
-                    color: workbench.terminalRunning ? "#92c3aa" : "#a3afba"; font.pixelSize: 11
+                IdeButton {
+                    visible: panel.terminal; objectName: "terminalNew"; glyph: "plus"; tip: "新建终端"
+                    enabled: workbench.terminalTabs.length < 16
+                    onClicked: workbench.terminalAction("new", "")
                 }
                 IdeButton {
-                    visible: panel.terminal; objectName: "terminalGitStatus"; glyph: "git-branch"; tip: "查看 Git 状态"
-                    enabled: !workbench.terminalRunning; onClicked: { panel.follow = true; workbench.terminalAction("git", "") }
+                    visible: panel.terminal; objectName: "terminalGitStatus"; glyph: "git-branch"; tip: "查看项目 Git 状态"
+                    enabled: !workbench.activeTerminalRunning
+                    onClicked: { panel.follow = true; workbench.terminalAction("git", "") }
                 }
                 IdeButton {
-                    visible: panel.terminal && workbench.terminalRunning; glyph: "square"; tip: "停止命令"
-                    onClicked: workbench.terminalAction("stop", "")
+                    visible: panel.terminal && workbench.activeTerminalRunning; glyph: "square"; tip: "中断前台程序 · Ctrl+C"
+                    onClicked: workbench.terminalAction("interrupt", "")
                 }
-                IdeButton { visible: panel.terminal; text: "清空"; tip: "清空终端输出"; enabled: !!workbench.terminalText; onClicked: workbench.terminalAction("clear", "") }
+                IdeButton { visible: panel.terminal; text: "清空"; tip: "清空当前终端输出"; enabled: !!workbench.terminalText; onClicked: workbench.terminalAction("clear", "") }
+                IdeButton { visible: panel.terminal; objectName: "terminalClose"; glyph: "x"; tip: "关闭当前终端"; onClicked: workbench.terminalAction("close", "") }
                 IdeButton { glyph: "chevron-down"; tip: "收起面板"; onClicked: panel.collapseRequested() }
+            }
+        }
+        ListView {
+            id: sessions
+            visible: panel.terminal; Layout.fillWidth: true; Layout.preferredHeight: 28
+            orientation: ListView.Horizontal; clip: true; spacing: 2
+            model: workbench.terminalTabs
+            currentIndex: workbench.terminalTabs.indexOf(workbench.activeTerminal)
+            highlightRangeMode: ListView.ApplyRange
+            delegate: IdeButton {
+                required property int modelData
+                objectName: "terminalSession_" + modelData
+                height: sessions.height
+                glyph: "square-terminal"
+                text: (Qt.platform.os === "windows" ? "PowerShell " : "sh ") + modelData
+                selected: workbench.activeTerminal === modelData
+                Accessible.role: Accessible.PageTab
+                Accessible.selected: selected
+                onClicked: workbench.selectTerminal(modelData)
             }
         }
         Flickable {
@@ -91,12 +138,13 @@ Rectangle {
             onMovementStarted: panel.follow = false
             onMovementEnded: panel.follow = atYEnd
             onContentHeightChanged: Qt.callLater(panel.tail)
-            onHeightChanged: Qt.callLater(panel.tail)
+            onHeightChanged: { resizeTimer.restart(); Qt.callLater(panel.tail) }
+            onWidthChanged: resizeTimer.restart()
             ScrollBar.vertical: ScrollBar { onPressedChanged: panel.follow = !pressed && scroll.atYEnd }
             TextArea {
                 id: transcript; objectName: "codeTerminalTranscript"; width: scroll.width
-                text: panel.terminal ? workbench.terminalText : panel.resultText
-                placeholderText: panel.terminal ? panel.project + "\n等待命令或项目测试输出…" : "Git 变更和文件比较结果将显示在这里"
+                text: panel.terminal ? workbench.terminalText : [panel.resultText, workbench.terminalOutput].filter(Boolean).join("\n")
+                placeholderText: panel.terminal ? panel.project + "\n等待输入命令…" : "Git 变更、文件比较和项目测试输出将显示在这里"
                 textFormat: TextEdit.PlainText; wrapMode: TextEdit.WrapAnywhere; readOnly: true; selectByMouse: true
                 leftPadding: 12; rightPadding: 12; topPadding: 7; bottomPadding: 6
                 background: null; color: "#d2d9e3"; placeholderTextColor: "#919ba9"
@@ -112,16 +160,23 @@ Rectangle {
                 TextField {
                     id: input; objectName: "codeTerminalInput"; Layout.fillWidth: true; Layout.fillHeight: true
                     Accessible.name: "终端命令"; color: "#e0e6ee"; placeholderTextColor: "#99a4b3"
-                    placeholderText: !panel.canRun ? "沙箱运行 · 可查看输出和 Git 状态" : "在项目根目录运行命令"
+                    placeholderText: !panel.canRun ? "沙箱运行 · 可查看输出和 Git 状态" : (workbench.activeTerminalRunning ? "输入命令或回复正在运行的程序" : "输入第一条命令以启动终端")
                     readOnly: !panel.canRun; selectByMouse: true; font.family: "Cascadia Mono"; font.pixelSize: 12
                     background: null; leftPadding: 2; rightPadding: 2
                     onAccepted: panel.submit()
+                    Keys.onPressed: event => {
+                        if (event.key === Qt.Key_C && (event.modifiers & Qt.ControlModifier)
+                            && !selectedText && workbench.activeTerminalRunning) {
+                            workbench.terminalAction("interrupt", "")
+                            event.accepted = true
+                        }
+                    }
                     Keys.onUpPressed: event => { if (!inputMethodComposing) panel.recall(-1); else event.accepted = false }
                     Keys.onDownPressed: event => { if (!inputMethodComposing) panel.recall(1); else event.accepted = false }
                 }
                 IdeButton { visible: !panel.canRun; glyph: "shield"; tip: "切换执行权限"; onClicked: workbench.permissionRequested() }
                 IdeButton {
-                    visible: panel.canRun; glyph: "play"; tip: "运行命令"; enabled: !workbench.terminalRunning && !!input.text.trim()
+                    visible: panel.canRun; glyph: "play"; tip: "发送到当前终端"; enabled: !!input.text || workbench.activeTerminalRunning
                     onClicked: panel.submit()
                 }
             }

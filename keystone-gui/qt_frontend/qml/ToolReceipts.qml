@@ -19,6 +19,21 @@ Column {
         onClicked: card.expanded = !card.expanded
     }
 
+    FontMetrics { id: attachmentMetrics; font.pixelSize: 13 }
+    Repeater {
+        model: card.receipts.filter(row => !!row.attachment)
+        GlassButton {
+            required property var modelData
+            objectName: "openToolAttachment"
+            readonly property string filename: modelData.attachment.split("/").pop()
+            material: card.material; glyph: "file"
+            text: attachmentMetrics.elidedText(filename, Qt.ElideMiddle, Math.max(60, card.width - 60))
+            Accessible.name: "打开 " + filename
+            tip: "打开 " + filename
+            onClicked: controller.openAttachment(modelData.attachment)
+        }
+    }
+
     Repeater {
         model: card.expanded ? card.receipts : []
         delegate: Item {

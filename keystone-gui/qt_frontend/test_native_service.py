@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import patch
@@ -37,49 +38,79 @@ class NativeServiceTests(unittest.TestCase):
     def values(self, page):
         return {f['key']: f['value'] for f in self.host.pages.view(page)['fields']}
 
-    def test_terminal_runs_in_project_streams_and_honors_permissions(self):
-        terminal = self.host.terminal
-        command = ('Write-Output "first 中文"; [Console]::Error.WriteLine("stderr"); '
-                   'Start-Sleep -Seconds 2; Write-Output (Get-Location).Path; exit 7'
-                   if sys.platform == 'win32' else
-                   "echo 'first 中文'; echo stderr >&2; sleep 2; pwd; exit 7")
-        def output():
-            return ''.join(data['text'] for kind, data in self.events if kind == 'terminal')
+    def terminal_action(self, session, text='', action='run'):
+        self.host.command({'command': 'terminal', 'root': str(self.project), 'session': session,
+                           'action': action, 'text': text})
 
+    def terminal_wait(self, session, expected, timeout=12):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            for kind, data in list(self.events):
+                if kind == 'terminal' and data.get('session') == session:
+                    if expected in data.get('screen', '') or expected in data['text']:
+                        return
+            time.sleep(.025)
+        self.fail(f'Terminal {session} did not produce {expected!r}')
+
+    def test_terminal_input_is_checked_before_shell_start_and_each_write(self):
         self.host.demo = False
-        terminal.start(command)
-        self.assertIsNone(terminal.worker)
-        self.assertIn('当前权限', output())
+        self.terminal_action(1, 'echo first')
+        self.assertFalse(self.host.terminal.sessions)  # Chat cannot start a Code terminal
+        self.host.page = 'development'
+        self.terminal_action(1, 'echo first')
+        self.terminal_wait(1, '当前权限')
+        self.assertIsNone(self.host.terminal.sessions[1].pty)
         self.host.profile = 'manual'
-        with patch.object(self.host, 'approve', return_value=False) as approve:
-            terminal.start(command)
-            terminal.worker.join(5)
-            self.assertEqual(approve.call_args.args[1]['command'], command)
-            self.assertIn('未执行', output())
-        self.host.profile = 'full'
-        self.events.clear()
-        chunk = threading.Event()
-        emit = self.host._emitter
-        def observe(kind, **data):
-            emit(kind, **data)
-            if kind == 'terminal' and data['text'].startswith('first 中文'):
-                chunk.set()
-        self.host._emitter = observe
-        terminal.start(command)
-        self.assertTrue(chunk.wait(8))
-        self.assertTrue(terminal.worker.is_alive())
-        self.assertFalse(self.host.running)
-        terminal.worker.join(8)
-        self.assertIn(str(self.project), output())
-        self.assertIn('stderr\n', output().replace('\r\n', '\n'))
-        self.assertIn('退出码 7', output())
-        self.assertFalse(self.events[-1][1]['running'])
+        with patch.object(self.host, 'approve', side_effect=[True, False]) as approve:
+            self.terminal_action(1, 'echo first')
+            self.terminal_wait(1, '\nfirst\n')
+            self.terminal_action(1, 'echo second')
+            self.terminal_wait(1, '未执行')
+            self.assertEqual([c.args[1]['command'] for c in approve.call_args_list], ['echo first', 'echo second'])
+        self.host.command({'command': 'permission', 'profile': 'sandbox'})
+        self.assertFalse(self.host.terminal.sessions)
+        self.terminal_wait(1, '已停止')
 
-        self.events.clear()
-        terminal.start('Start-Sleep -Seconds 20' if sys.platform == 'win32' else 'sleep 20')
-        terminal.close()
-        self.assertFalse(terminal.worker.is_alive())
-        self.assertIn('已停止', output())
+    def test_terminal_sessions_preserve_directory_environment_and_program_input(self):
+        self.host.demo, self.host.page, self.host.profile = False, 'development', 'full'
+        (self.project / '子 目录').mkdir()
+        win = sys.platform == 'win32'
+        self.terminal_action(1, "cd '子 目录'")
+        self.terminal_action(1, "$env:TERMCHECK='one'" if win else "export TERMCHECK=one")
+        self.terminal_action(1, '"HERE="+(Split-Path -Leaf (Get-Location))+"|"+$env:TERMCHECK' if win
+                             else 'echo "HERE=${PWD##*/}|$TERMCHECK"')
+        self.terminal_wait(1, 'HERE=子 目录|one')
+        self.terminal_action(2, '"OTHER="+(Split-Path -Leaf (Get-Location))+"|"+$env:TERMCHECK' if win
+                             else 'echo "OTHER=${PWD##*/}|$TERMCHECK"')
+        self.terminal_wait(2, 'OTHER=project|')
+        self.terminal_action(1, """$v=Read-Host ('na'+'me'); 'RESULT='+$v""" if win
+                             else """printf 'na%s: ' me; read v; echo "RESULT=$v" """)
+        self.terminal_wait(1, '\nname:')
+        self.terminal_action(2, 'exit 7')
+        self.terminal_wait(2, '退出码 7')
+        self.terminal_action(2, action='close')
+        self.terminal_action(1, '你好')
+        self.terminal_wait(1, 'RESULT=你好')
+        # A native child reads the PTY directly, independently of the shell's built-in prompt.
+        python = Path(sys.executable)
+        prompt = self.project / 'prompt.py'
+        prompt.write_text("print('child?', flush=True)\nprint('CHILD=' + input(), flush=True)", encoding='utf8')
+        command = f"""& '{python}' '../prompt.py'""" if win else f"""'{python}' ../prompt.py"""
+        self.terminal_action(1, command)
+        self.terminal_wait(1, 'child?')
+        self.terminal_action(1, 'from stdin')
+        self.terminal_wait(1, 'CHILD=from stdin')
+        self.assertFalse(self.host.running)
+        self.terminal_action(1, 'Start-Sleep 30' if win else 'sleep 30')
+        time.sleep(.3)
+        self.terminal_action(1, action='interrupt')
+        self.terminal_action(1, """'AFTER='+$env:TERMCHECK""" if win else 'echo AFTER=$TERMCHECK')
+        self.terminal_wait(1, 'AFTER=one')
+        next_project = self.root / 'other'
+        next_project.mkdir()
+        self.host.set_workspace(str(next_project))
+        self.assertFalse(self.host.terminal.sessions)
+        self.terminal_wait(1, '已停止')
 
     def test_terminal_displays_only_coding_command_and_test_events(self):
         self.host.coding.event({'event': 'progress', 'data': {

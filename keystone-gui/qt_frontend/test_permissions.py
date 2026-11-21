@@ -72,7 +72,8 @@ class DesktopBoundaryTests(unittest.TestCase):
     def test_cancelling_a_batch_completes_protocol_without_more_dispatch(self):
         cancel, checkpoints, executions = threading.Event(), [], []
         class Client:
-            def list_tools(self, **_): return []
+            def list_tools(self, **_):
+                return [{'type': 'function', 'function': {'name': 'keystone_write_file'}}]
             def stream_chat(self, *_args, **_kwargs):
                 return CompletionResult('', tool_calls=[{'id': 'a' + str(i), 'type': 'function',
                     'function': {'name': 'write_file', 'arguments': '{"path":"a.txt"}'}} for i in range(2)])

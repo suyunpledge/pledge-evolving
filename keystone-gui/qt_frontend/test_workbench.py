@@ -130,7 +130,7 @@ class WorkbenchTests(unittest.TestCase):
         chat.clicked.emit()
         self.assertEqual(self.controller.conversationMode, 'chat')
         self.assertTrue(mcp.isVisible())
-        self.assertFalse(tools.isVisible())
+        self.assertTrue(tools.isVisible())
         work.clicked.emit()
         self.assertEqual(self.controller.conversationMode, 'work')
         self.assertFalse(mcp.isVisible())
@@ -156,6 +156,70 @@ class WorkbenchTests(unittest.TestCase):
         search.setProperty('text', 'comfyui')
         until(lambda: len(popup.property('filtered').toVariant()) == 1)
         self.assertFalse(popup.property('filtered').toVariant()[0]['available'])
+
+    def test_chat_catalog_and_persisted_attachment_button(self):
+        from unittest.mock import patch
+        from keystone_client import ChatMessage
+        from .productivity_tools import call, with_productivity
+
+        owner = self.controller
+        owner.chat_mcp_tools = lambda: with_productivity(({}, None), owner.store.folder)
+        owner.setConversationMode('chat')
+        self.window.findChild(QObject, 'workToolCatalogButton').clicked.emit()
+        popup = self.window.findChild(QObject, 'workToolCatalog')
+        until(lambda: popup.property('opened'))
+        self.assertTrue(popup.property('chatMode'))
+        rows = owner.toolSettings.rows
+        self.assertEqual(len(rows), 6)
+        self.assertIn('图表与办公', {r['category'] for r in rows})
+        owner.toolSettings.setTool('keystone_plot_chart', False)
+        self.assertFalse(owner.toolSettings.snapshot()[1]('keystone_plot_chart'))
+        QMetaObject.invokeMethod(popup, 'close')
+
+        result = call('create_document', {'title': '周报', 'sections': [{'paragraphs': ['正文']}]},
+                      owner.store.folder, threading.Event())
+        owner._history = [ChatMessage('assistant', '', tool_calls=[
+            {'id': 'doc', 'function': {'name': 'keystone_create_document'}}]),
+            ChatMessage('tool', json.dumps(result), tool_call_id='doc'), ChatMessage('assistant', '周报已生成')]
+        owner._messages.reset(owner._transcript_rows())
+        until(lambda: visual_item(self.window.contentItem(), 'openToolAttachment') is not None)
+        button = visual_item(self.window.contentItem(), 'openToolAttachment')
+        self.assertTrue(button.isVisible())
+        self.assertEqual(button.property('filename'), '周报.docx')
+        with patch('qt_frontend.productivity_tools.office_fallback', return_value=None), \
+             patch('qt_frontend.controller.QDesktopServices.openUrl', return_value=True) as opened:
+            button.clicked.emit()
+        self.assertEqual(Path(opened.call_args.args[0].toLocalFile()), Path(result['path']))
+        with patch('qt_frontend.productivity_tools.office_fallback', return_value=Path('WINWORD.EXE')), \
+             patch.object(QProcess, 'startDetached', return_value=(True, 123)) as started, \
+             patch('qt_frontend.controller.QDesktopServices.openUrl') as shell:
+            button.clicked.emit()
+        started.assert_called_once_with('WINWORD.EXE', [result['path']])
+        shell.assert_not_called()
+
+    def test_chart_receipt_reopens_in_app_from_history(self):
+        from unittest.mock import patch
+        from keystone_client import ChatMessage
+        from .productivity_tools import call
+
+        owner = self.controller
+        result = call('plot_chart', {'kind': 'line', 'title': '趋势', 'y': [1, 3]},
+                      owner.store.folder, threading.Event())
+        owner._history = [ChatMessage('assistant', '', tool_calls=[
+            {'id': 'plot', 'function': {'name': 'keystone_plot_chart'}}]),
+            ChatMessage('tool', json.dumps(result), tool_call_id='plot'), ChatMessage('assistant', '图表已生成')]
+        owner._messages.reset(owner._transcript_rows())
+        until(lambda: visual_item(self.window.contentItem(), 'openToolAttachment') is not None)
+        preview = self.window.findChild(QObject, 'chartAttachmentPreview')
+        image = preview.findChild(QObject, 'attachmentChartImage')
+        with patch('qt_frontend.controller.QDesktopServices.openUrl') as shell:
+            visual_item(self.window.contentItem(), 'openToolAttachment').clicked.emit()
+            until(lambda: preview.property('opened') and image.property('progress') == 1
+                  and image.property('implicitWidth') > 0)
+            self.assertEqual(Path(image.property('source').toLocalFile()), Path(result['path']))
+            preview.findChild(QObject, 'closeChartPreview').clicked.emit()
+            until(lambda: image.property('source').isEmpty())
+        shell.assert_not_called()
 
     def test_public_search_panel_and_browser_use_selected_engine(self):
         from urllib.parse import parse_qs, urlsplit
@@ -442,6 +506,37 @@ class WorkbenchTests(unittest.TestCase):
         QTest.keyClick(self.window, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
         self.assertEqual(editor.property('text'), contents)
         until(lambda: not self.workbench.hasUnsaved)
+
+    def test_terminal_tabs_restore_drafts_and_isolate_background_output(self):
+        wb = self.workbench
+        wb.navigate('development')
+        until(lambda: wb.nativePageReady)
+        page = visual_item(self.window.contentItem(), 'page_development')
+        visual_item(page, 'codeRail_terminal').clicked.emit()
+        entry = visual_item(page, 'codeTerminalInput')
+        first = wb.activeTerminal
+        entry.setProperty('text', 'unfinished')
+        visual_item(page, 'terminalNew').clicked.emit()
+        second = wb.activeTerminal
+        self.assertNotEqual(first, second)
+        self.assertEqual(entry.property('text'), '')
+        for identifier, marker in ((first, 'first output'), (second, 'second output')):
+            wb._receive({'event': 'terminal', 'root': wb.workspace, 'session': identifier,
+                         'text': '', 'screen': marker, 'running': True})
+        self.assertEqual(wb.terminalText, 'second output')
+        visual_item(page, f'terminalSession_{first}').clicked.emit()
+        self.assertEqual(entry.property('text'), 'unfinished')
+        self.assertEqual(wb.terminalText, 'first output')
+        visual_item(page, 'terminalClose').clicked.emit()
+        self.assertEqual(wb.activeTerminal, second)
+        wb._receive({'event': 'terminal', 'root': wb.workspace, 'session': first,
+                     'text': 'late output', 'running': False})
+        self.assertEqual(wb.terminalText, 'second output')
+        self.assertTrue(wb.terminalRunning)
+        wb._receive({'event': 'terminal', 'root': wb.workspace, 'text': 'test output', 'reveal': True})
+        self.assertEqual(page.property('dockTab'), 'terminal')
+        visual_item(page, 'codeDockTab_output').clicked.emit()
+        self.assertEqual(wb.terminalOutput, 'test output')
 
     def test_code_terminal_dock_preserves_output_and_editor_across_toggles(self):
         project = Path(self.temp.name).resolve() / 'project'

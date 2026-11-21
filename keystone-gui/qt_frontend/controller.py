@@ -73,6 +73,7 @@ class ChatController(QObject):
     navigateRequested = Signal(str)
     browseRequested = Signal(str)
     modelRequested = Signal(str)
+    chartPreviewRequested = Signal(QUrl, str)
     _workerEvent = Signal(str, object)
 
     def __init__(self, home, *, demo=False, client_factory=KeystoneGatewayClient, parent=None):
@@ -833,6 +834,28 @@ class ChatController(QObject):
             return "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode("ascii")
         except OSError:
             return ""
+
+    @Slot(str)
+    def openAttachment(self, reference):
+        from .productivity_tools import attachment_path, office_fallback
+        from .local_tool_runtime import ToolFailure
+        try:
+            path = attachment_path(self.store.folder, reference)
+            url = QUrl.fromLocalFile(str(path))
+            if path.suffix == '.png':
+                self.chartPreviewRequested.emit(url, path.name)
+                return
+            application = office_fallback(path.suffix)
+            if application:
+                from PySide6.QtCore import QProcess
+                started, _ = QProcess.startDetached(str(application), [str(path)])
+                if started:
+                    return
+            if not QDesktopServices.openUrl(url):
+                raise ValueError('系统未能打开附件。文件位于 ' + str(path))
+        except (ValueError, OSError, ToolFailure) as exc:
+            self._error = str(exc)
+            self.changed.emit()
 
     @Slot(str)
     def openLink(self, url):

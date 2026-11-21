@@ -511,10 +511,9 @@ ApplicationWindow {
                 }
                 GlassButton {
                     objectName: "workToolCatalogButton"
-                    visible: !window.conversationOnly
                     material: window.material; glyph: "wrench"
                     text: window.columnWidth > 630 ? "工具" : ""
-                    tip: controller.toolSettings.enabled ? "管理 Work 工具" : "Work 工具调用已关闭"
+                    tip: controller.toolSettings.enabled ? "管理当前模式的工具" : "工具调用已关闭"
                     onClicked: toolCatalog.open()
                 }
                 GlassButton {
@@ -571,11 +570,50 @@ ApplicationWindow {
             }
         }
     }
+    Popup {
+        id: chartPreview
+        objectName: "chartAttachmentPreview"
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        width: Math.min(960, window.width - 48)
+        height: Math.min(680, window.height - 48)
+        padding: 16; modal: true; focus: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        background: GlassSurface { material: window.material; radius: 18; tint: "#ed1c2430" }
+        onClosed: chartImage.source = ""
+        contentItem: ColumnLayout {
+            spacing: 10
+            RowLayout {
+                Layout.fillWidth: true
+                Text {
+                    id: chartName; Layout.fillWidth: true
+                    textFormat: Text.PlainText; elide: Text.ElideMiddle; color: Theme.textPrimary
+                }
+                GlassButton { objectName: "closeChartPreview"; material: window.material; glyph: "x"; tip: "关闭预览"; onClicked: chartPreview.close() }
+            }
+            Image {
+                id: chartImage; objectName: "attachmentChartImage"
+                Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumWidth: 0; Layout.minimumHeight: 0
+                fillMode: Image.PreserveAspectFit; asynchronous: true; mipmap: true
+                Accessible.name: chartName.text
+            }
+            Text { visible: chartImage.status === Image.Error; text: "无法读取图表文件。"; color: Theme.warning }
+        }
+        Connections {
+            target: controller
+            function onChartPreviewRequested(url, filename) {
+                chartName.text = filename
+                chartImage.source = url
+                chartPreview.open()
+            }
+        }
+    }
     WorkToolCatalog {
         id: toolCatalog
         parent: Overlay.overlay
         material: window.material
         service: controller.toolSettings
+        chatMode: window.conversationOnly
         changesAllowed: !controller.busy
         onClosed: window.focusWorkComposer()
     }

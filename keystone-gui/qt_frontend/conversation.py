@@ -7,6 +7,7 @@ from keystone.execution_guard import ExecutionGuard
 from keystone.secrets import redact
 from keystone_client import ChatMessage, GatewayError, GenerationCancelled
 from work_tools import prepare_calls, invoke
+from . import productivity_tools
 
 
 TOOL_LABELS = {
@@ -18,6 +19,7 @@ TOOL_LABELS = {
     '7zip_extract': '7-Zip 解压', 'comfyui_run': 'ComfyUI',
     'generate_image': '生成图片', 'generate_video': '生成视频',
     'enter_work': '切换至 Work',
+    **{key: row[0] for key, row in productivity_tools.CATALOG.items()},
 }
 
 ENTER_WORK = 'keystone_enter_work'
@@ -30,7 +32,7 @@ WORK_HANDOFF = {'type': 'function', 'function': {
         'reason': {'type': 'string', 'description': 'Brief user-facing reason for switching, in the user language.'}},
         'required': ['reason'], 'additionalProperties': False},
 }}
-CHAT_CONTEXT = ('当前处于 Chat 模式。普通对话和现有 MCP 工具能完成的任务留在 Chat。'
+CHAT_CONTEXT = ('当前处于 Chat 模式。数学计算、函数求值、绘图，以及根据对话内容创建表格、幻灯片和文档时留在 Chat。已有 MCP 可直接调用。'
                 '如果当前用户任务确实需要操作电脑、读写项目文件、运行代码或使用其他 Work 工具，'
                 '调用 keystone_enter_work 并说明原因，切换后继续同一任务。仅解释步骤或给出建议时不切换。')
 # 回合上限与核心 loop 同源：loop.maxSteps（见 keystone.loop_limits）；读不到配置时用框架默认值。
@@ -92,7 +94,11 @@ def preview_receipt(name, response):
     if not detail and isinstance(result.get('destination'), str) and isinstance(result.get('files'), list):
         files = [path for path in result['files'][:8] if isinstance(path, str)]
         detail = redact('\n'.join([result['destination'], *files]))
-    return {'name': tool_label(name), 'outcome': outcome, 'detail': detail[:600] + ('…' if len(detail) > 600 else '')}
+    row = {'name': tool_label(name), 'outcome': outcome, 'detail': detail[:600] + ('…' if len(detail) > 600 else '')}
+    if result.get('ok') and name.removeprefix('keystone_') in productivity_tools.FILES and isinstance(meta, dict):
+        if isinstance(meta.get('attachment'), str):
+            row['attachment'] = meta['attachment']
+    return row
 
 
 def model_tool_result(name, response):
@@ -130,7 +136,7 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
     chat_mode = chat_mcp is not None
     mcp_tools, call_mcp = (chat_mcp if chat_mode else mcp) or ({}, None)
     if chat_mode:
-        mcp_tools = {name: entry for name, entry in mcp_tools.items() if name.startswith('mcp_')}
+        mcp_tools = {name: entry for name, entry in mcp_tools.items() if name.startswith('mcp_') or name in productivity_tools.NAMES}
     tools = schemas(mcp_tools, chat_mode)
     guard = ExecutionGuard()
     max_turns = max(1, int(max_turns))
