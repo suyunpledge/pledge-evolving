@@ -106,7 +106,9 @@ class ChatController(QObject):
         port = port if isinstance(port, int) and 1024 <= port <= 65535 else 8799
         self._gateway = str(self._prefs.get("gateway", os.environ.get("KEYSTONE_GATEWAY_URL", f"http://127.0.0.1:{port}")))
         self._material = float(self._prefs.get("material", 0.75))
-        self._reduce_motion = bool(self._prefs.get("reduceMotion", False))
+        # KEYSTONE_REDUCE_MOTION (shared with the Tk shell) wins over the saved preference when set.
+        forced = os.environ.get("KEYSTONE_REDUCE_MOTION", "").strip()
+        self._reduce_motion = (forced != "0") if forced else bool(self._prefs.get("reduceMotion", False))
         self._solid = bool(self._prefs.get("solid", False))
         self._cancel = threading.Event()
         self._generation = 0

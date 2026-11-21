@@ -1,62 +1,194 @@
-"""Local wallpaper import, validation and persistence for the Qt workbench."""
+"""Local wallpaper library: import, validation, thumbnails, selection and persistence.
+
+Imported files are copied into ``<home>/gui/qt/wallpapers`` and listed in its
+``index.json``. The chosen wallpaper and its dimming live under the
+``"wallpaper"`` key of the desktop settings file (``keystone.compat.desktop_config``),
+next to the keys other desktop front ends own, which are preserved on write.
+"""
 
 import math
 from pathlib import Path
 import re
 import threading
+import time
 import uuid
 
-from PySide6.QtCore import QLockFile, QObject, Property, Qt, QTimer, QUrl, Signal, Slot
-from PySide6.QtGui import QImageReader
-from PySide6.QtMultimedia import QMediaPlayer
+from PySide6.QtCore import QLockFile, QObject, Property, QSize, Qt, QTimer, QUrl, Signal, Slot
+from PySide6.QtGui import QImage, QImageReader
+from PySide6.QtMultimedia import QMediaPlayer, QVideoSink
+
+from keystone.compat import desktop_config
 
 from .store import SessionStore
 
 IMAGE_SUFFIXES = {'.png', '.jpg', '.jpeg', '.webp', '.bmp'}
 VIDEO_SUFFIXES = {'.mp4', '.webm', '.mov', '.m4v'}
+KINDS = ('image', 'gif', 'video')
 DEFAULT_DIM = 0.52
+MAX_IMAGE_BYTES = 80 * 1024 * 1024
+MAX_VIDEO_BYTES = 1024 * 1024 * 1024
+MAX_IMAGE_PIXELS = 64_000_000
+# GIF frames are decoded on the GUI thread while playing; keep them small enough not to stall input.
+MAX_GIF_PIXELS = 16_000_000
+THUMB_SIZE = QSize(320, 200)
+FILE_NAME = re.compile(r'[a-f0-9]{32}\.[a-z0-9]+')
+
+
+def _thumb_name(file):
+    return file.split('.', 1)[0] + '.thumb.jpg'
+
+
+def _thumbnail(image):
+    scaled = image.scaled(THUMB_SIZE, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                          Qt.TransformationMode.SmoothTransformation)
+    x, y = max(0, (scaled.width() - THUMB_SIZE.width()) // 2), max(0, (scaled.height() - THUMB_SIZE.height()) // 2)
+    return scaled.copy(x, y, min(scaled.width(), THUMB_SIZE.width()), min(scaled.height(), THUMB_SIZE.height()))
 
 
 class Wallpaper(QObject):
     changed = Signal()
+    itemsChanged = Signal()  # only when the library itself changes, so picker tiles persist
     _copied = Signal(object, str)
 
     def __init__(self, home, parent=None):
         super().__init__(parent)
-        self.folder = Path(home) / 'gui' / 'qt' / 'wallpapers'
-        self.path = self.folder.parent / 'wallpaper.json'
-        self._record = {}
+        self.home = Path(home)
+        self.folder = self.home / 'gui' / 'qt' / 'wallpapers'
+        self.index_path = self.folder / 'index.json'
+        self.legacy_path = self.folder.parent / 'wallpaper.json'
+        self._items = []          # [{'file', 'kind', 'name'}], newest first
+        self._current = ''        # file name of the selected wallpaper; '' = built-in background
+        self._broken = set()      # files that failed to render this session
         self._dim = DEFAULT_DIM
         self._busy = False
         self._error = ''
         self._pending = None
         self._probe = None
-        self._discard = set()
+        self._sink = None
+        self._probe_loaded = False
+        self._discard = {}
         self._stop = threading.Event()
         self._copied.connect(self._finish_copy, Qt.ConnectionType.QueuedConnection)
         self._deadline = QTimer(self, singleShot=True, interval=12000)
-        self._deadline.timeout.connect(self._video_error)
-        record = SessionStore.read(self.path, {})
-        if isinstance(record, dict):
-            dim = record.get('dim')
-            if type(dim) in (int, float) and 0 <= dim <= 0.9:
-                self._dim = float(dim)
-            name, kind = record.get('file'), record.get('kind')
-            if (isinstance(name, str) and re.fullmatch(r'[a-f0-9]{32}\.[a-z0-9]+', name)
-                    and kind in ('image', 'gif', 'video')):
-                if (self.folder / name).is_file():
-                    label = record.get('name')
-                    self._record = {'file': name, 'kind': kind,
-                                    'name': label[:120] if isinstance(label, str) else name}
-                else:
-                    self._error = '找不到已导入的壁纸。'
+        self._deadline.timeout.connect(self._probe_timeout)
+        self._sweeper = QTimer(self, singleShot=True, interval=500)
+        self._sweeper.timeout.connect(self._remove_discarded)
+        self._load()
 
-    source = Property(QUrl, lambda s: QUrl.fromLocalFile(str(s.folder / s._record['file'])) if s._record else QUrl(), notify=changed)
-    kind = Property(str, lambda s: s._record.get('kind', ''), notify=changed)
-    name = Property(str, lambda s: s._record.get('name', ''), notify=changed)
+    # ------------------------------------------------------------------ state
+
+    def _read_index(self):
+        data = SessionStore.read(self.index_path, {})
+        rows = data.get('items') if isinstance(data, dict) else None
+        items, seen = [], set()
+        for row in rows if isinstance(rows, list) else []:
+            if not isinstance(row, dict):
+                continue
+            file, kind, name = row.get('file'), row.get('kind'), row.get('name')
+            if (isinstance(file, str) and FILE_NAME.fullmatch(file) and kind in KINDS
+                    and file not in seen and (self.folder / file).is_file()):
+                seen.add(file)
+                items.append({'file': file, 'kind': kind,
+                              'name': name[:120] if isinstance(name, str) and name else file})
+        return items
+
+    def _load(self):
+        self._items = self._read_index()
+        settings = SessionStore.read(desktop_config(self.home), {})
+        choice = settings.get('wallpaper') if isinstance(settings, dict) else None
+        if not isinstance(choice, dict):
+            choice = self._adopt_legacy()
+        dim = choice.get('dim')
+        if type(dim) in (int, float) and 0 <= dim <= 0.9:
+            self._dim = float(dim)
+        file = choice.get('file')
+        if isinstance(file, str) and file:
+            if any(item['file'] == file for item in self._items):
+                self._current = file
+            else:
+                self._error = '找不到已导入的壁纸，已改用默认背景。'
+        self._sweep_orphans()
+
+    def _adopt_legacy(self):
+        """Bring a wallpaper chosen with the earlier single-slot settings into the library."""
+        record = SessionStore.read(self.legacy_path, {})
+        if not isinstance(record, dict):
+            return {}
+        file, kind, name = record.get('file'), record.get('kind'), record.get('name')
+        if (isinstance(file, str) and FILE_NAME.fullmatch(file) and kind in KINDS
+                and (self.folder / file).is_file()
+                and not any(item['file'] == file for item in self._items)):
+            self._items.insert(0, {'file': file, 'kind': kind,
+                                   'name': name[:120] if isinstance(name, str) and name else file})
+            self._write(index=True)
+        return {'file': file if isinstance(file, str) else '', 'dim': record.get('dim')}
+
+    def _sweep_orphans(self):
+        """Remove copies no longer listed (e.g. a deletion interrupted by a locked file)."""
+        if not self.folder.is_dir():
+            return
+        keep = {item['file'] for item in self._items} | {_thumb_name(item['file']) for item in self._items}
+        cutoff = time.time() - 600  # another window may still be importing a recent file
+        try:
+            for path in self.folder.iterdir():
+                if (path.name not in keep and (FILE_NAME.fullmatch(path.name) or path.name.endswith('.thumb.jpg'))
+                        and path.stat().st_mtime < cutoff):
+                    path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    def _write(self, *, index=False, choice=False):
+        """Persist the index and/or the selection; returns an error message or ''."""
+        try:
+            self.folder.mkdir(parents=True, exist_ok=True)
+            lock = QLockFile(str(self.folder / '.lock'))
+            if not lock.tryLock(2000):
+                return '另一个 Keystone 窗口正在保存壁纸，请稍后重试。'
+            try:
+                if index:
+                    SessionStore.atomic(self.index_path, {'items': self._items})
+                if choice:
+                    path = desktop_config(self.home)
+                    settings = SessionStore.read(path, {})
+                    settings = settings if isinstance(settings, dict) else {}
+                    settings['wallpaper'] = {'file': self._current, 'dim': self._dim}
+                    SessionStore.atomic(path, settings)
+            finally:
+                lock.unlock()
+        except OSError:
+            return '无法保存壁纸设置。'
+        return ''
+
+    def _item(self, file):
+        return next((item for item in self._items if item['file'] == file), None)
+
+    def _active(self):
+        item = self._item(self._current)
+        return item if item is not None and self._current not in self._broken else None
+
+    def _url(self, name):
+        return QUrl.fromLocalFile(str(self.folder / name))
+
+    def _thumb_url(self, file):
+        thumb = self.folder / _thumb_name(file)
+        return QUrl.fromLocalFile(str(thumb)) if thumb.is_file() else QUrl()
+
+    def _rows(self):
+        return [{'id': item['file'], 'name': item['name'], 'kind': item['kind'],
+                 'source': self._url(item['file']).toString(),
+                 'thumb': self._thumb_url(item['file']).toString()} for item in self._items]
+
+    source = Property(QUrl, lambda s: s._url(s._active()['file']) if s._active() else QUrl(), notify=changed)
+    thumb = Property(QUrl, lambda s: s._thumb_url(s._active()['file']) if s._active() else QUrl(), notify=changed)
+    kind = Property(str, lambda s: (s._active() or {}).get('kind', ''), notify=changed)
+    name = Property(str, lambda s: (s._active() or {}).get('name', ''), notify=changed)
+    currentId = Property(str, lambda s: s._current if s._active() else '', notify=changed)
+    items = Property('QVariantList', _rows, notify=itemsChanged)
     dim = Property(float, lambda s: s._dim, notify=changed)
     busy = Property(bool, lambda s: s._busy, notify=changed)
     error = Property(str, lambda s: s._error, notify=changed)
+
+    # ----------------------------------------------------------------- import
 
     @Slot(QUrl, bool)
     def importFile(self, url, dynamic):
@@ -88,7 +220,7 @@ class Wallpaper(QObject):
             if not source.is_file():
                 raise ValueError('无法读取选中的壁纸文件。')
             self.folder.mkdir(parents=True, exist_ok=True)
-            limit = (1024 if record['kind'] == 'video' else 80) * 1024 * 1024
+            limit = MAX_VIDEO_BYTES if record['kind'] == 'video' else MAX_IMAGE_BYTES
             if source.stat().st_size > limit:
                 raise ValueError('图片和 GIF 最大支持 80 MB，视频最大支持 1 GB。')
             with source.open('rb') as incoming, partial.open('xb') as outgoing:
@@ -104,19 +236,7 @@ class Wallpaper(QObject):
             if self._stop.is_set():
                 return
             if record['kind'] != 'video':
-                reader = QImageReader(str(partial))
-                try:
-                    detected = bytes(reader.format())
-                    allowed = {b'gif'} if record['kind'] == 'gif' else {b'png', b'jpeg', b'webp', b'bmp'}
-                    if not reader.canRead() or detected not in allowed:
-                        raise ValueError('无法读取该图片，或文件内容与所选类型不符。')
-                    dimensions = reader.size()
-                    if not dimensions.isValid() or dimensions.width() * dimensions.height() > 64_000_000:
-                        raise ValueError('壁纸图片太大，请缩小分辨率后重试。')
-                    if reader.read().isNull():
-                        raise ValueError('无法解码选中的壁纸图片。')
-                finally:
-                    del reader
+                self._validate_image(partial, record)
             partial.rename(target)
         except (OSError, ValueError) as exc:
             message = str(exc) if isinstance(exc, ValueError) else '无法导入文件。请检查文件和可用磁盘空间。'
@@ -125,13 +245,34 @@ class Wallpaper(QObject):
                 partial.unlink(missing_ok=True)
             except OSError:
                 pass
-        if self._stop.is_set():
-            try:
-                target.unlink(missing_ok=True)
-            except OSError:
-                pass
-        else:
+        if self._stop.is_set() or message:
+            for path in (target, self.folder / _thumb_name(record['file'])):
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+        if not self._stop.is_set():
             self._copied.emit(record, message)
+
+    def _validate_image(self, path, record):
+        reader = QImageReader(str(path))
+        try:
+            reader.setAutoTransform(True)
+            detected = bytes(reader.format())
+            allowed = {b'gif'} if record['kind'] == 'gif' else {b'png', b'jpeg', b'webp', b'bmp'}
+            if not reader.canRead() or detected not in allowed:
+                raise ValueError('无法读取该图片，或文件内容与所选类型不符。')
+            dimensions = reader.size()
+            limit = MAX_GIF_PIXELS if record['kind'] == 'gif' else MAX_IMAGE_PIXELS
+            if not dimensions.isValid() or dimensions.width() * dimensions.height() > limit:
+                raise ValueError('壁纸图片太大，请缩小分辨率后重试。')
+            image = reader.read()
+            if image.isNull():
+                raise ValueError('无法解码选中的壁纸图片。')
+        finally:
+            del reader
+        # A missing thumbnail only costs the picker a live preview; never fail the import for it.
+        _thumbnail(image).save(str(self.folder / _thumb_name(record['file'])), 'JPG', 86)
 
     def _finish_copy(self, record, error):
         if self._stop.is_set():
@@ -139,17 +280,42 @@ class Wallpaper(QObject):
         if error or record['kind'] != 'video':
             self._finish_import(error)
             return
+        # Probe the copy: it must hold a playable video track. The first decoded frame
+        # becomes the thumbnail. No audio output is attached, so nothing is heard.
+        self._probe_loaded = False
+        self._sink = QVideoSink(self)
+        self._sink.videoFrameChanged.connect(self._video_frame)
         self._probe = QMediaPlayer(self)
+        self._probe.setVideoSink(self._sink)
         self._probe.mediaStatusChanged.connect(self._video_status)
         self._probe.errorOccurred.connect(self._video_error)
         self._deadline.start()
-        self._probe.setSource(QUrl.fromLocalFile(str(self.folder / record['file'])))
+        self._probe.setSource(self._url(record['file']))
 
     def _video_status(self, status):
-        if status == QMediaPlayer.MediaStatus.LoadedMedia:
-            self._finish_import('' if self._probe.hasVideo() else '文件中没有可播放的视频轨道。')
+        if self._probe is None:
+            return
+        if status == QMediaPlayer.MediaStatus.LoadedMedia and not self._probe_loaded:
+            if not self._probe.hasVideo():
+                self._finish_import('文件中没有可播放的视频轨道。')
+                return
+            self._probe_loaded = True
+            self._probe.play()
         elif status == QMediaPlayer.MediaStatus.InvalidMedia:
             self._video_error()
+
+    def _video_frame(self, frame):
+        if self._probe is None or self._pending is None or not frame.isValid():
+            return
+        image = frame.toImage()
+        if image.isNull():
+            return
+        _thumbnail(image).save(str(self.folder / _thumb_name(self._pending['file'])), 'JPG', 86)
+        self._finish_import('')
+
+    def _probe_timeout(self):
+        # Loaded with a video track but no frame in time: accept it without a thumbnail.
+        self._finish_import('' if self._probe_loaded else '无法读取该视频。可尝试使用 H.264 编码的 MP4。')
 
     def _video_error(self, *_):
         if self._probe is not None:
@@ -161,67 +327,109 @@ class Wallpaper(QObject):
             probe, self._probe = self._probe, None
             probe.mediaStatusChanged.disconnect(self._video_status)
             probe.errorOccurred.disconnect(self._video_error)
+            self._sink.videoFrameChanged.disconnect(self._video_frame)
+            probe.stop()
             probe.setSource(QUrl())
             probe.deleteLater()
+            self._sink.deleteLater()
+            self._sink = None
         record, self._pending = self._pending, None
+        if record is None:
+            return
         if not error:
-            error = self._apply(record, self._dim)
+            # Merge with what another window may have added meanwhile.
+            self._items = [record] + [i for i in self._read_index() if i['file'] != record['file']]
+            previous = self._current
+            self._current = record['file']
+            error = self._write(index=True, choice=True)
+            if error:
+                self._items = [i for i in self._items if i['file'] != record['file']]
+                self._current = previous
         if error:
-            self._queue_remove(record)
+            self._queue_remove(record['file'])
+        else:
+            self.itemsChanged.emit()
         self._error, self._busy = error, False
         self.changed.emit()
 
-    def _apply(self, record, dim):
-        try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            lock = QLockFile(str(self.path) + '.lock')
-            if not lock.tryLock(0):
-                return '另一个 Keystone 窗口正在保存壁纸。'
-            try:
-                previous = SessionStore.read(self.path, {})
-                if record == self._record and record:
-                    if not isinstance(previous, dict) or previous.get('file') != record['file']:
-                        return '壁纸已在另一个窗口更换，请重新导入。'
-                SessionStore.atomic(self.path, {**record, 'dim': dim})
-            finally:
-                lock.unlock()
-        except OSError:
-            return '无法保存壁纸设置。'
-        old = previous.get('file') if isinstance(previous, dict) else None
-        if isinstance(old, str) and old != record.get('file') and re.fullmatch(r'[a-f0-9]{32}\.[a-z0-9]+', old):
-            self._queue_remove({'file': old})
-        self._record, self._dim = record, dim
-        return ''
+    # -------------------------------------------------------------- selection
 
-    def _queue_remove(self, record):
-        if record:
-            self._discard.add(self.folder / record['file'])
-            QTimer.singleShot(500, self, self._remove_discarded)
-
-    def _remove_discarded(self):
-        for path in tuple(self._discard):
-            try:
-                path.unlink(missing_ok=True)
-            except OSError:
-                continue
-            self._discard.discard(path)
-
-    @Slot(float)
-    def setDim(self, value):
-        if self._record and math.isfinite(value):
-            self._error = self._apply(self._record, min(0.9, max(0.0, value)))
+    @Slot(str)
+    def select(self, file):
+        if self._busy:
+            return
+        file = file or ''
+        if file and self._item(file) is None:
+            self._error = '找不到该壁纸。'
             self.changed.emit()
+            return
+        self._broken.discard(file)
+        previous, self._current = self._current, file
+        self._error = self._write(choice=True)
+        if self._error:
+            self._current = previous
+        self.changed.emit()
 
     @Slot()
     def reset(self):
-        if not self._busy:
-            self._error = self._apply({}, DEFAULT_DIM)
+        """Return to the built-in background; imported wallpapers stay in the library."""
+        self.select('')
+
+    @Slot(str)
+    def remove(self, file):
+        if self._busy or self._item(file) is None:
+            return
+        self._items = [i for i in self._read_index() if i['file'] != file]
+        clear_choice = self._current == file
+        if clear_choice:
+            self._current = ''
+        self._error = self._write(index=True, choice=clear_choice)
+        self._broken.discard(file)
+        # The displayed copy may still be open in a player; delete after it has been released.
+        self._queue_remove(file)
+        self.itemsChanged.emit()
+        self.changed.emit()
+
+    @Slot(str)
+    def reportFailure(self, file):
+        """The view could not render ``file``: show the built-in background this session."""
+        if file and file == self._current and file not in self._broken:
+            self._broken.add(file)
+            self._error = '无法显示所选壁纸（文件可能已损坏），已改用默认背景。'
             self.changed.emit()
+
+    @Slot(float)
+    def setDim(self, value):
+        if math.isfinite(value):
+            previous, self._dim = self._dim, min(0.9, max(0.0, value))
+            self._error = self._write(choice=True)
+            if self._error:
+                self._dim = previous
+            self.changed.emit()
+
+    # ---------------------------------------------------------------- cleanup
+
+    def _queue_remove(self, file):
+        for path in (self.folder / file, self.folder / _thumb_name(file)):
+            self._discard[path] = 20
+        self._sweeper.start()
+
+    def _remove_discarded(self):
+        for path, tries in tuple(self._discard.items()):
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                if tries > 1:
+                    self._discard[path] = tries - 1
+                    continue
+            del self._discard[path]
+        if self._discard and not self._stop.is_set():
+            self._sweeper.start()
 
     def shutdown(self):
         self._stop.set()
         if self._probe is not None:
             self._video_error()
         elif self._pending is not None:
-            self._queue_remove(self._pending)
+            self._queue_remove(self._pending['file'])
         self._remove_discarded()

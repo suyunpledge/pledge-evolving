@@ -78,7 +78,10 @@ ApplicationWindow {
             source: window.wallpaper.kind === "image" ? window.wallpaper.source : ""
             asynchronous: true; cache: false; autoTransform: true
             fillMode: Image.PreserveAspectCrop; clip: true
-            onStatusChanged: Qt.callLater(window.refreshBackdrop)
+            onStatusChanged: {
+                if (status === Image.Error) window.wallpaper.reportFailure(window.wallpaper.currentId)
+                Qt.callLater(window.refreshBackdrop)
+            }
         }
         Rectangle {
             anchors.fill: parent; color: "#080c12"
@@ -93,7 +96,9 @@ ApplicationWindow {
         active: window.wallpaper.kind === "gif" || window.wallpaper.kind === "video"
         sourceComponent: MotionWallpaper {
             wallpaper: window.wallpaper
-            running: window.active && window.visibility !== Window.Minimized && !controller.reduceMotion
+            // Keep playing beside other apps; stop decoding once nobody can see it.
+            running: window.visible && window.visibility !== Window.Minimized
+                     && window.visibility !== Window.Hidden && !controller.reduceMotion
         }
     }
     Rectangle { width: window.sideWidth; height: parent.height; color: Theme.sidebarBg }
@@ -588,11 +593,12 @@ ApplicationWindow {
     }
     WallpaperSettings {
         id: wallpaperSettings
-        parent: Overlay.overlay; anchors.centerIn: parent
-        width: Math.min(460, window.width - 48)
+        parent: Overlay.overlay
+        x: Math.round((parent.width - width) / 2); y: Math.round((parent.height - height) / 2)
+        width: Math.min(520, window.width - 48)
+        height: Math.min(implicitHeight, window.height - 48)
         material: window.material; wallpaper: window.wallpaper
         reduced: controller.reduceMotion
-        playbackError: motionWallpaper.item?.failure || (stillWallpaper.status === Image.Error ? "无法显示已导入的图片。" : "")
         onClosed: if (window.chatVisible) window.focusWorkComposer()
     }
     ChangeReview {

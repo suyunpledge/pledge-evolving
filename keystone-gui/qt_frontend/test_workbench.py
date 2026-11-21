@@ -255,6 +255,7 @@ class WorkbenchTests(unittest.TestCase):
                 self.assertIsNotNone(element)
                 if kind == 'gif':
                     until(lambda: element.property('frameCount') > 1)
+                    element.parent().setProperty('running', False)
                     self.assertTrue(element.property('paused'))
                     first_frame = element.property('currentFrame')
                     element.parent().setProperty('running', True)
