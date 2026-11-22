@@ -309,11 +309,11 @@ class NativeServiceTests(unittest.TestCase):
         self.host.demo = False
         with patch.object(self.host.coding.runtime, 'run') as run:
             with self.assertRaisesRegex(ValueError, '保存'):
-                self.host.coding.run(('hello', False, '继承配置', 'default', 'none', (str(path),)))
+                self.host.coding.run(('hello', False, '继承配置', 'default', 'none', (str(path),), None))
             run.assert_not_called()
         self.host.pages.action('development', 'save', {'path': str(path)})
         with patch.object(self.host.coding.runtime, 'run', return_value={'text': 'done'}) as run:
-            self.host.coding.run(('hello', False, '继承配置', 'default', 'none', (str(path),)))
+            self.host.coding.run(('hello', False, '继承配置', 'default', 'none', (str(path),), None))
             self.assertEqual(run.call_args.kwargs['contexts'], [{'path': str(path), 'content': 'value = 2\n'}])
 
     def test_cold_process_imports_no_tk_and_exits_cleanly(self):

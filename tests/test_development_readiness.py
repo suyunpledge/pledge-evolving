@@ -39,6 +39,20 @@ class ReadinessTests(unittest.TestCase):
     def settings(self, rows, home=None):
         ((home or self.host)/'keystone.patch.json').write_text(json.dumps(rows), encoding='utf-8')
 
+    def test_legacy_host_file_and_credentials_refresh_without_exporting_secrets(self):
+        self.rows[0]['config']['apiKey'] = {'$expr': "get('env.FORGE_WRITER_KEY', '')"}
+        self.settings(self.rows)
+        legacy = self.host / 'forge.patch.json'
+        (self.host / 'keystone.patch.json').rename(legacy)
+        before = dict(os.environ)
+        self.runtime.initialize(self.project)
+        self.assertTrue(self.runtime.bridge.router.providers['writer'].api_key)
+        self.rows[0]['config']['model'] = 'legacy-updated'
+        legacy.write_text(json.dumps(self.rows), encoding='utf-8')
+        self.assertIsNotNone(self.runtime.refresh_models())
+        self.assertIn(('writer', 'legacy-updated'), self.runtime.catalog.values())
+        self.assertEqual(dict(os.environ), before)
+
     def test_host_projection_resolves_key_without_env_disk_or_authority_sharing(self):
         before = dict(os.environ)
         files = {p:p.read_bytes() for p in self.host.iterdir()}

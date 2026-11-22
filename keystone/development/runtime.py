@@ -1,5 +1,6 @@
 """One lane over the existing EditorBridge/Agent; no scheduler or executor here."""
 import hashlib
+import json
 from pathlib import Path
 import threading
 import uuid
@@ -170,7 +171,8 @@ class DevelopmentRuntime:
 
     def run(self, prompt, *, explicit_model=None, agent_model=None, role='default',
             permission='read-only', planning=None, contexts=(), snapshot=None,
-            delegate=False, child_model=None, cancellation=None, acceptance=None):
+            delegate=False, child_model=None, cancellation=None, acceptance=None, planning_model=None,
+            resume_task=None):
         from keystone.planning import planning_level
         planning = planning_level(self.state.value('planning') if planning is None else planning)
         if acceptance is not None:
@@ -191,10 +193,19 @@ class DevelopmentRuntime:
         try:
             snap = snapshot or self.state.task_snapshot(explicit_model=explicit_model, agent_model=agent_model,
                                                        role=role, permission=permission)
+            if resume_task:
+                last = self.tasks.get(resume_task, {})
+                if resume_task != self.last_task_id or last.get('result', {}).get('stopped') != 'cancelled':
+                    raise ValueError('只能继续最近一次已停止的任务。')
+                if self.evidence.plan or self.evidence.actions:
+                    planning = 'none'
+                    prompt = self.evidence.continuation_prompt()
+                    delegate = False
+            else:
+                self.evidence = TaskEvidence()
+                self.last_task_id = uuid.uuid4().hex
+                self.tasks[self.last_task_id] = {'snapshot': snap, 'evidence': self.evidence}
             self.last_snapshot = snap
-            self.evidence = TaskEvidence()
-            self.last_task_id = uuid.uuid4().hex
-            self.tasks[self.last_task_id] = {'snapshot': snap, 'evidence': self.evidence}
             self.bridge.last_result = None
             started = True
             self._publish('development_task_started', phase='executing', work_mode=snap.mode.value)
@@ -206,6 +217,9 @@ class DevelopmentRuntime:
             params = {'prompt': prompt, 'model': selected, 'mode': snap.permission,
                       'planning': planning if snap.mode == WorkMode.DEVELOPMENT else 'none',
                       'contexts': list(contexts)}
+            if planning_model and params['planning'] != 'none':
+                from keystone.phase_models import model_pair
+                params['planningModel'] = json.dumps(model_pair(planning_model), ensure_ascii=False)
             if acceptance is not None:
                 params['acceptance'] = acceptance
             for source in tuple(self.context_sources) if snap.mode == WorkMode.DEVELOPMENT else ():

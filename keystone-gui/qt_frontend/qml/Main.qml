@@ -168,6 +168,7 @@ ApplicationWindow {
                 required property int historyIndex
                 required property var toolReceipts
                 required property var steps
+                required property var todos
                 required property bool continuable
                 width: messages.width
                 height: messageBody.height + (roleName === "user" ? 24 : 0)
@@ -194,6 +195,7 @@ ApplicationWindow {
                         Image { width: 22; height: 22; source: brandUrl; smooth: true }
                         Text { text: "Keystone"; color: "#dfe4eb"; font.weight: Font.DemiBold; font.pixelSize: 13; anchors.verticalCenter: parent.verticalCenter }
                     }
+                    TodoList { width: parent.width; items: message.todos || []; running: message.state === "streaming" }
                     ToolTimeline {
                         width: parent.width
                         steps: message.steps || []
@@ -510,7 +512,7 @@ ApplicationWindow {
                 GlassButton {
                     id: optionsButton
                     material: window.material; glyph: "sliders-horizontal"; text: window.columnWidth > 600 ? "选项" : ""
-                    selected: options.opened; tip: "推理强度与玻璃外观"; onClicked: options.open()
+                    selected: options.opened; tip: "事前规划、推理强度与外观"; onClicked: options.open()
                 }
                 GlassButton {
                     objectName: "publicSearchButton"
@@ -632,16 +634,40 @@ ApplicationWindow {
         id: options
         focus: true
         objectName: "glassOptions"
+        onAboutToShow: controller.planning.refresh()
         parent: Overlay.overlay
         x: Math.min(composer.x + 170, window.width - width - 20)
-        y: Math.max(76, composer.y - height - 12)
+        y: Math.max(8, Math.min(window.height - height - 8, composer.y - height - 12))
         width: 348; padding: 20
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         background: GlassSurface { objectName: "optionsGlass"; material: window.material; radius: 22; emphasis: 0.4 }
         onClosed: if (window.chatVisible) window.focusWorkComposer()
         contentItem: Column {
-            spacing: 16
+            spacing: 12
             Text { text: "对话选项"; color: "#eef1f4"; font.pixelSize: 16; font.weight: Font.DemiBold }
+            Text { text: "事前规划"; color: Theme.textSecondary; font.pixelSize: 12 }
+            Row {
+                spacing: 7
+                Repeater { model: [{key:"none",label:"关闭"},{key:"low",label:"简要"},{key:"medium",label:"标准"},{key:"high",label:"深入"}]
+                    GlassButton { required property var modelData; material: window.material; width: 70; text: modelData.label
+                        selected: controller.planning.level === modelData.key; enabled: !controller.busy
+                        onClicked: controller.planning.save("level", modelData.key) }
+                }
+            }
+            WorkbenchField {
+                width: parent.width; material: window.material; enabled: !controller.busy
+                definition: ({key: "planningModel", label: "规划模型", kind: "choice",
+                              value: controller.planning.model, options: controller.planning.options})
+                onDefinitionChanged: value = definition.value
+                onEdited: value => controller.planning.save("model", value)
+            }
+            GlassButton {
+                width: parent.width; material: window.material; glyph: "sliders-horizontal"
+                objectName: "managePlanningKey"
+                text: controller.planning.hasKey ? "管理独立规划密钥" : "设置独立规划密钥"
+                enabled: !!controller.planning.endpoint && !controller.busy && !controller.isDemo
+                onClicked: { options.close(); plannerKey.open() }
+            }
             Text { text: "推理强度"; color: "#a9b3bf"; font.pixelSize: 12 }
             Row {
                 spacing: 7
@@ -659,6 +685,50 @@ ApplicationWindow {
             }
             GlassButton { material: window.material; width: parent.width; text: controller.solid ? "✓  降低透明度" : "降低透明度"; selected: controller.solid; onClicked: controller.setSolid(!controller.solid) }
             GlassButton { material: window.material; width: parent.width; text: controller.reduceMotion ? "✓  减少动态效果" : "减少动态效果"; selected: controller.reduceMotion; onClicked: controller.setReduceMotion(!controller.reduceMotion) }
+        }
+    }
+    Popup {
+        id: plannerKey
+        objectName: "plannerKeyPopup"
+        parent: Overlay.overlay; anchors.centerIn: parent
+        modal: true; focus: true; width: Math.min(window.width - 44, 416); padding: 20
+        property string selection: ""
+        property string address: ""
+        property string feedback: ""
+        function saveKey(value) {
+            if (controller.planning.setCredential(selection, address, value)) close()
+            else feedback = controller.error || "当前无法保存，请重新打开设置。"
+        }
+        onAboutToShow: {
+            controller.planning.refresh()
+            selection = controller.planning.model
+            address = controller.planning.endpoint
+            feedback = ""
+        }
+        onClosed: plannerPassword.clear()
+        background: GlassSurface { material: window.material; radius: 20; tint: "#ed18212b" }
+        contentItem: Column {
+            spacing: 12
+            Text { text: "独立规划密钥"; color: Theme.textPrimary; font.pixelSize: 17; font.weight: Font.DemiBold }
+            Text { width: parent.width; color: Theme.textSecondary; wrapMode: Text.WrapAnywhere; textFormat: Text.PlainText
+                   text: (plannerKey.selection ? JSON.parse(plannerKey.selection).join(" / ") : "") + "\n" + plannerKey.address }
+            TextField {
+                id: plannerPassword; objectName: "plannerPassword"; width: parent.width
+                echoMode: TextInput.Password; inputMethodHints: Qt.ImhHiddenText | Qt.ImhSensitiveData | Qt.ImhNoPredictiveText
+                Accessible.name: "规划专用 API 密钥"; placeholderText: "填入此模型的规划专用 API 密钥"
+                selectByMouse: true; color: Theme.textPrimary; placeholderTextColor: Theme.textMuted; leftPadding: 10
+                background: GlassSurface { material: window.material; radius: 10; emphasis: parent.activeFocus ? 0.8 : 0 }
+            }
+            Text { visible: !!plannerKey.feedback; width: parent.width; wrapMode: Text.Wrap
+                   text: plannerKey.feedback; color: Theme.dangerText; textFormat: Text.PlainText }
+            Row {
+                spacing: 8
+                GlassButton { objectName: "savePlannerKey"; material: window.material; text: "保存密钥"; enabled: !!plannerPassword.text && !controller.busy
+                    onClicked: plannerKey.saveKey(plannerPassword.text) }
+                GlassButton { material: window.material; text: "恢复提供商密钥"; visible: controller.planning.hasKey; enabled: !controller.busy
+                    onClicked: plannerKey.saveKey("") }
+                GlassButton { material: window.material; text: "关闭"; onClicked: plannerKey.close() }
+            }
         }
     }
     Popup {
@@ -982,6 +1052,7 @@ ApplicationWindow {
         sourceComponent: CodingPanel {
             material: window.material
             onPermissionRequested: permissionPopup.open()
+            onPlannerKeyRequested: plannerKey.open()
             Component.onCompleted: if (visible) Qt.callLater(focusComposer)
         }
     }

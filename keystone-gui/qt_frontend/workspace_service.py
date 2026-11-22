@@ -52,6 +52,7 @@ class WorkspaceService:
         self.directory = ''
         self.search_results = None
         self.results, self.snapshots, self.revisions = {}, {}, {}
+        self.task_todos = []
         self.store = DesktopStore(self.home / 'desktop-services.sqlite3')
         from http_transport import open_response
         import secret_store
@@ -108,8 +109,17 @@ class WorkspaceService:
                               version=self.revisions.get(self.active_document, 0)) if doc else {},
                 tabs=[dict(path=p, name=d.path.name, dirty=d.dirty) for p, d in self.documents.items()])
         elif page == 'task':
+            from phase_client import model_catalog, planning_selection
+            level, planner = planning_selection(rows)
+            models = [{'label': '沿用执行模型', 'value': ''}, *[
+                {'label': label, 'value': json.dumps(pair, ensure_ascii=False)} for pair, label in model_catalog(rows)]]
+            selected = json.dumps(planner, ensure_ascii=False) if planner else ''
+            if planner and not any(m['value'] == selected for m in models):
+                models.append({'label': '已移除 · ' + ' / '.join(planner), 'value': selected})
             data.update(hint='在当前工作区运行任务，沿用当前权限；输出与执行状态保留在此页。',
-                fields=[field('prompt', '任务内容', kind='multiline'), field('planning', '规划程度', 'none', 'choice', ['none', 'low', 'medium', 'high'])],
+                todos=self.task_todos,
+                fields=[field('prompt', '任务内容', kind='multiline'), field('planning', '规划程度', level, 'choice', ['none', 'low', 'medium', 'high']),
+                        field('planningModel', '规划模型', selected, 'choice', models)],
                 actions=[button('run', '开始任务'), button('cancel', '停止')])
         elif page == 'config':
             self.snapshots.setdefault(page, copy.deepcopy(rows))
@@ -212,13 +222,25 @@ class WorkspaceService:
                 raise ValueError('预览模式不发送模型请求。')
             if not values.get('prompt', '').strip():
                 raise ValueError('请填写任务内容。')
-            bridge = EditorBridge(lambda event: self.output(page, json.dumps(event, ensure_ascii=False)), model_router_factory=ModelSettingsSource(self.home))
+            from keystone import todos
+            self.task_todos = []
+            def event_received(event):
+                items = todos.event_items(event.get('data') or {}) if event.get('event') == 'progress' else None
+                if items is not None:
+                    self.task_todos = items
+                self.output(page, json.dumps(event, ensure_ascii=False))
+            bridge = EditorBridge(event_received, model_router_factory=ModelSettingsSource(self.home))
             try:
                 bridge.initialize({'workspace': str(self.host.workspace), 'home': str(self.home.parent / (self.home.name + '-qt-tasks'))})
+                from functools import partial
+                from phase_client import apply_planning_key
+                bridge.agent.prepare_planning_route = partial(apply_planning_key, self.home)
                 bridge.agent.cancellation_event = self.host.cancel
                 bridge.agent.action_executor.approver = self.host.approve
                 bridge.agent.action_executor.trusted_native = self.host.profile != 'sandbox'
-                self.output(page, bridge.run({'prompt': values['prompt'], 'planning': values.get('planning', 'none'), 'mode': self.host.permission_mode}))
+                level = values.get('planning', 'none')
+                self.output(page, bridge.run({'prompt': values['prompt'], 'planning': level,
+                    'planningModel': values.get('planningModel', '') if level != 'none' else '', 'mode': self.host.permission_mode}))
             finally:
                 bridge.close()
         elif page == 'config':

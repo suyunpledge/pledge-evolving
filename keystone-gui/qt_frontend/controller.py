@@ -19,12 +19,14 @@ from keystone.secrets import redact
 from .conversation import preview_receipt
 from .store import SessionStore
 from .tool_settings import WorkToolSettings
+from .planning_settings import PlanningSettings, make_plan
+from phase_client import planning_selection
 from keystone.compat import desktop_config
 
 
 class RowsModel(QAbstractListModel):
     NAMES = ("sessionId", "title", "subtitle", "roleName", "textContent", "state", "stamp", "changeKey", "changeInfo",
-             "historyIndex", "toolReceipts", "continuable", "steps")
+             "historyIndex", "toolReceipts", "continuable", "steps", "todos")
 
     def __init__(self, rows=(), parent=None):
         super().__init__(parent)
@@ -41,7 +43,7 @@ class RowsModel(QAbstractListModel):
             i = int(role) - int(Qt.ItemDataRole.UserRole)
             if 0 <= i < len(self.NAMES):
                 name = self.NAMES[i]
-                if name in ("toolReceipts", "steps"):
+                if name in ("toolReceipts", "steps", "todos"):
                     return self.rows[index.row()].get(name, [])
                 if name == "continuable":
                     return bool(self.rows[index.row()].get(name, False))
@@ -94,6 +96,9 @@ class ChatController(QObject):
         self._status = "预览 · 不发送请求" if demo else "正在检查网关…"
         self._connected = False
         self._error = ""
+        self._planning = PlanningSettings(self.store.home, self)
+        self._planning.failed.connect(self._planning_error)
+        self._planning.refresh()
         self._attachments = []
         self._temperature = 0.7
         self._models = ["default"]
@@ -157,6 +162,11 @@ class ChatController(QObject):
     models = Property("QStringList", lambda self: self._models, notify=changed)
     modelSwitching = Property(bool, lambda self: self._switching_model, notify=changed)
     reasoning = Property(str, lambda self: self._reasoning, notify=changed)
+    planning = Property(QObject, lambda self: self._planning, constant=True)
+
+    def _planning_error(self, error):
+        self._error = str(redact(error))
+        self.changed.emit()
     gateway = Property(str, lambda self: self._gateway, notify=changed)
     material = Property(float, lambda self: self._material, notify=changed)
     reduceMotion = Property(bool, lambda self: self._reduce_motion, notify=changed)
@@ -451,10 +461,15 @@ class ChatController(QObject):
 
     @Slot()
     def continueWork(self):
-        """工具回合用完后接着做：等同于用户发一句「继续」，历史里已有完整执行记录。"""
+        """Resume a stopped turn at its checkpoint, or extend a completed turn budget."""
         if self.busy:
             return
         marked = [i for i, row in enumerate(self._messages.rows) if row.get('continuable')]
+        latest = next((m for m in reversed(self._history) if m.role == 'user'), None)
+        if marked and latest and latest.interrupted:
+            if self.connected and marked[-1] == len(self._messages.rows) - 1:
+                self._start_generation(resuming=True)
+            return
         prior, attachments = self._draft, self._attachments
         self._draft, self._attachments = '继续完成剩余工作', []
         self.send()
@@ -470,7 +485,7 @@ class ChatController(QObject):
     def retry(self):
         if not self.canRetry:
             return
-        self._messages.reset(self._transcript_rows())
+        self._messages.reset(self._transcript_rows(retrying=True))
         self._start_generation()
 
     @Slot(str, int, result=bool)
@@ -541,19 +556,23 @@ class ChatController(QObject):
             self._start_generation()
         return True
 
-    def _transcript_rows(self):
+    def _transcript_rows(self, *, retrying=False):
         rows, receipts, names = [], [], {}
+        pending_todos = []
 
         def flush_receipts():
-            if receipts:
+            nonlocal pending_todos
+            if receipts or pending_todos:
                 rows.append({'roleName': 'assistant', 'textContent': '', 'state': 'complete',
-                             'toolReceipts': receipts.copy()})
+                             'toolReceipts': receipts.copy(), 'todos': pending_todos})
+                pending_todos = []
                 receipts.clear()
                 names.clear()
 
         for index, message in enumerate(self._history):
             if message.role == 'user':
                 flush_receipts()
+                pending_todos = message.todos or []
             if isinstance(message.tool_calls, list):
                 for call in message.tool_calls:
                     if isinstance(call, dict) and isinstance(call.get('id'), str):
@@ -561,6 +580,8 @@ class ChatController(QObject):
                         if isinstance(function, dict) and isinstance(function.get('name'), str):
                             names[call['id']] = function['name']
             if message.role == 'tool':
+                if names.get(message.tool_call_id) in ('update_todos', 'keystone_update_todos'):
+                    continue
                 try:
                     result = json.loads(message.content)
                 except ValueError:
@@ -573,6 +594,8 @@ class ChatController(QObject):
                     rows[-1]['toolReceipts'] = receipts.copy()
                     receipts.clear()
                     names.clear()
+                if message.role == 'assistant' and not message.tool_calls and pending_todos:
+                    rows[-1]['todos'], pending_todos = pending_todos, []
             for key, entry in self._changes.entries.items():
                 if entry.get('anchor') == index:
                     if message.role != 'assistant' or not message.content:
@@ -580,14 +603,21 @@ class ChatController(QObject):
                                      'toolReceipts': receipts.copy()})
                         receipts.clear()
                     rows[-1].update(changeKey=key, changeInfo=self._changes.card(key))
+        if retrying:
+            pending_todos = []
         flush_receipts()
         for key, entry in self._changes.entries.items():
             if entry.get('anchor') is None:
                 rows.append({'roleName': 'assistant', 'textContent': '已移除对话的文件修改', 'state': 'complete',
                              'changeKey': key, 'changeInfo': self._changes.card(key)})
+        latest = next((m for m in reversed(self._history) if m.role == 'user'), None)
+        if latest and latest.interrupted and not retrying:
+            if not rows or rows[-1]['roleName'] == 'user' or rows[-1].get('changeInfo'):
+                rows.append({'roleName': 'assistant', 'textContent': '', 'todos': latest.todos or []})
+            rows[-1].update(state='stopped', continuable=True)
         return rows
 
-    def _start_generation(self):
+    def _start_generation(self, *, resuming=False):
         self._changes.begin()
         self._generation += 1
         generation = self._generation
@@ -595,14 +625,36 @@ class ChatController(QObject):
         cancel = self._cancel
         self._busy, self._error, self._status = True, "", "正在生成…"
         self._turn_start = time.monotonic()
-        self._messages.append({"roleName": "assistant", "textContent": "", "state": "streaming",
-                               "steps": [{"phase": "prepare", "label": "准备对话和工具", "at": 0, "ms": -1}]})
+        messages, model, effort = copy.deepcopy(self._history), self._model, self._reasoning
+        task_index = next(i for i in reversed(range(len(messages))) if messages[i].role == 'user')
+        steps = []
+        if resuming:
+            previous = self._messages.rows[-1]
+            steps = list(previous.get('steps') or [])
+            elapsed = steps[-1]['at'] + max(0, steps[-1]['ms']) if steps else 0
+            self._turn_start -= elapsed / 1000
+        else:
+            elapsed = 0
+        steps.append({'phase': 'prepare', 'label': '继续未完成的任务' if resuming else '准备对话和工具',
+                      'at': elapsed, 'ms': -1})
+        row = {'roleName': 'assistant', 'textContent': '', 'state': 'streaming', 'continuable': False,
+               'todos': messages[task_index].todos or [], 'steps': steps[-128:]}
+        if resuming:
+            self._messages.update(len(self._messages.rows) - 1, **row)
+        else:
+            for index, prior in enumerate(self._messages.rows):
+                if prior.get('continuable'):
+                    self._messages.update(index, continuable=False)
+            self._messages.append(row)
         self._reply_index = len(self._messages.rows) - 1
         self._reply = ""
         self._persist()
         self.changed.emit()
         self.streamAdvanced.emit()
-        messages, model, effort = copy.deepcopy(self._history), self._model, self._reasoning
+
+        def show_todos(items):
+            messages[task_index].todos = items
+            self._workerEvent.emit('todos', (generation, (task_index, items, messages[task_index].task_plan)))
         client = self._client or self.factory(self._gateway)
         self._client = client
         authorize = self.tool_authorizer() if self.tool_authorizer is not None else None
@@ -640,6 +692,17 @@ class ChatController(QObject):
         def worker():
             try:
                 from .conversation import run
+                from config_model import load_user_layer
+                from keystone.todos import from_plan
+                rows = load_user_layer(self.store.home)
+                level, pair = planning_selection(rows)
+                if level != 'none' and messages[task_index].task_plan is None:
+                    progress('planning', '正在列待办 · ' + (' / '.join(pair) if pair else model))
+                    plan = make_plan(self.store.home, rows, pair, client, messages, level, model, cancel)
+                    if cancel.is_set():
+                        raise GenerationCancelled('已停止规划')
+                    messages[task_index].task_plan = plan
+                    show_todos(from_plan(plan.tasks))
                 context = change_notice if chat_mode else work_context(messages)
                 from .conversation import MAX_TURNS
                 max_turns = self.turn_limit() if self.turn_limit is not None else MAX_TURNS
@@ -648,6 +711,8 @@ class ChatController(QObject):
                     system_context=context, mcp=connection, temperature=temperature,
                     chat_mcp=chat_connection, enter_work=enter_work if chat_mode else None,
                     max_turns=max_turns, attachment_folder=self.store.folder, progress=progress,
+                    on_todos=show_todos if authorize is not None else None,
+                    resuming=resuming,
                     chunk=lambda chunk: self._workerEvent.emit('chunk', (generation, chunk)),
                     checkpoint=lambda history: self._workerEvent.emit('checkpoint', (generation, history)),
                     receipt=lambda name, response: self._workerEvent.emit('receipt', (generation, (name, response))),
@@ -745,6 +810,14 @@ class ChatController(QObject):
             self._changes.anchor()
             self._persist()
             return
+        if kind == 'todos':
+            index, items, plan = value
+            self._history[index].todos = items
+            self._history[index].task_plan = plan
+            self._messages.update(self._reply_index, todos=items)
+            self._persist()
+            self.streamAdvanced.emit()
+            return
         if kind == 'receipt':
             self._changes.record(*value)
             receipts = self._messages.rows[self._reply_index].get('toolReceipts', [])
@@ -786,6 +859,10 @@ class ChatController(QObject):
         if self._reply and kind != "failed":
             self._history.append(ChatMessage("assistant", self._reply, responses_replay=replay, steps=steps))
         state = "complete" if kind == "done" else "stopped" if kind == "cancelled" else "error"
+        task = next(m for m in reversed(self._history) if m.role == 'user')
+        task.interrupted = kind == 'cancelled' or (task.interrupted and kind == 'failed')
+        if task.interrupted:
+            self._messages.update(self._reply_index, continuable=True)
         self._messages.update(self._reply_index, textContent=self._reply, state=state, steps=steps)
         if self._changes.active in self._changes.entries:
             key = self._changes.active

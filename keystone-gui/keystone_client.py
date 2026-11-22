@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import Callable
 from http_transport import open_response, RequestCancelled
 from keystone.secrets import SecretScope, redact, VendorCredential
+from keystone.planning import TaskPlan
 from keystone.request_timing import (gateway_client_timeout, request_timeout, transient_disconnect,
                                  METADATA_RESPONSE_TIMEOUT, TOOL_RESPONSE_TIMEOUT)
 
@@ -39,6 +40,9 @@ class ChatMessage:
     attachment_names: tuple[str, ...] = ()
     responses_replay: list | None = None
     steps: list | None = None  # Local elapsed timings for the reply.
+    todos: list | None = None  # Latest checklist for this user turn, including interrupted turns.
+    task_plan: TaskPlan | None = None
+    interrupted: bool = False
 
     def to_dict(self, secret_scope=None) -> dict:
         d: dict = {"role": self.role, "content": self.content}
@@ -54,6 +58,12 @@ class ChatMessage:
 
     def to_session_dict(self) -> dict:
         data = self.to_dict()
+        if self.role == "user" and self.todos:
+            data["todos"] = self.todos
+        if self.role == "user" and self.task_plan:
+            data["task_plan"] = self.task_plan.to_dict()
+        if self.role == "user" and self.interrupted:
+            data["interrupted"] = True
         if self.role == "assistant" and self.steps:
             data["steps"] = self.steps
         if self.role == "user" and self.attachment_names and self.user_text is not None:
@@ -71,10 +81,25 @@ class ChatMessage:
                 if names:
                     text = saved_text
         from keystone.openai_responses import replay_items
+        from keystone.todos import checked
+        try:
+            saved_todos = checked(data.get('todos')) if data['role'] == 'user' and data.get('todos') else None
+        except ValueError:
+            saved_todos = None
+        plan = None
+        if data['role'] == 'user' and isinstance(data.get('task_plan'), dict):
+            fields = dict(data['task_plan'])
+            level = fields.pop('level', None)
+            try:
+                plan = TaskPlan.parse(json.dumps(fields, ensure_ascii=False), level)
+            except ValueError:
+                pass
         return cls(data["role"], data["content"], tool_calls=data.get("tool_calls"),
                    tool_call_id=str(data.get("tool_call_id") or ""),
                    reasoning_content=str(data.get("reasoning_content") or ""),
                    user_text=text, attachment_names=names,
+                   todos=saved_todos, task_plan=plan,
+                   interrupted=data['role'] == 'user' and data.get('interrupted') is True,
                    responses_replay=replay_items(data.get("responses_replay")),
                    steps=[s for s in data["steps"][-128:] if isinstance(s, dict)
                           and isinstance(s.get("label"), str) and type(s.get("at")) is int

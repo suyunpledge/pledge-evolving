@@ -10,6 +10,7 @@ Item {
     property string tab: "chat"
     property bool followTail: true
     signal permissionRequested()
+    signal plannerKeyRequested()
     readonly property var planningModes: [
         {value: "none", label: "直接回答"}, {value: "low", label: "简要规划"},
         {value: "medium", label: "标准规划"}, {value: "high", label: "深入规划"}
@@ -118,6 +119,7 @@ Item {
                 }
                 footer: Column {
                     width: transcript.width; spacing: 10
+                    TodoList { width: parent.width; items: pane.stateData.todos || []; running: !!pane.stateData.taskRunning }
                     Repeater {
                         model: pane.stateData.changes || []
                         Item {
@@ -160,13 +162,18 @@ Item {
             ScrollView {
                 id: details; anchors.fill: parent; visible: pane.tab !== "chat"; clip: true
                 contentWidth: availableWidth
-                TextArea {
-                    text: pane.tab === "tasks" ? pane.stateData.tasks || "暂无任务"
-                        : pane.tab === "agents" ? (pane.stateData.agents || []).map(a => a.name + "  ·  " + a.status + "\n" + a.output).join("\n\n") || "暂无子 Agent"
-                        : pane.stateData.events || "暂无事件"
-                    color: "#cbd5e1"; font.pixelSize: 13; padding: 10
-                    readOnly: true; selectByMouse: true; wrapMode: TextEdit.Wrap
-                    background: null
+                Column {
+                    width: details.availableWidth
+                    TodoList { width: parent.width; items: pane.tab === "tasks" ? (pane.stateData.todos || []) : []; running: !!pane.stateData.taskRunning }
+                    TextArea {
+                        width: parent.width
+                        text: pane.tab === "tasks" ? pane.stateData.tasks || "暂无任务"
+                            : pane.tab === "agents" ? (pane.stateData.agents || []).map(a => a.name + "  ·  " + a.status + "\n" + a.output).join("\n\n") || "暂无子 Agent"
+                            : pane.stateData.events || "暂无事件"
+                        color: "#cbd5e1"; font.pixelSize: 13; padding: 10
+                        readOnly: true; selectByMouse: true; wrapMode: TextEdit.Wrap
+                        background: null
+                    }
                 }
             }
         }
@@ -197,6 +204,8 @@ Item {
                     GlassButton { material: pane.material; glyph: "box"; text: pane.width > 340 ? (pane.stateData.model || "继承配置").slice(0, 11) : ""; tip: "切换 Coding 模型"; onClicked: choices.showChoices("model") }
                     GlassButton { material: pane.material; glyph: "sliders-horizontal"; tip: "回复方式"; text: pane.width > 390 ? (pane.planningModes.find(m => m.value === pane.stateData.planning) || pane.planningModes[0]).label : ""; onClicked: choices.showChoices("planning") }
                     Item { Layout.fillWidth: true }
+                    GlassButton { objectName: "continueCoding"; material: pane.material; text: "继续"; tip: "继续已停止的任务"
+                        visible: !!pane.stateData.canResume && !pane.stateData.busy; onClicked: pane.run("resume") }
                     GlassButton { material: pane.material; glyph: "square"; tip: "停止任务并清除队列"; visible: !!pane.stateData.busy || !!pane.stateData.queue; onClicked: pane.run("cancel") }
                     GlassButton {
                         material: pane.material; glyph: "arrow-up"; primary: true
@@ -223,7 +232,7 @@ Item {
         modal: true; focus: true
         property string kind: "settings"
         property string roleModel: "default"
-        function showChoices(value) { kind = value; open() }
+        function showChoices(value) { controller.planning.refresh(); kind = value; open() }
         onClosed: pane.focusComposer()
         background: GlassSurface { material: pane.material; radius: 22; tint: "#ed18212b" }
         contentItem: ListView {
@@ -232,6 +241,8 @@ Item {
             ScrollBar.vertical: ScrollBar { width: 4 }
             model: choices.kind === "planning" ? pane.planningModes.map(m => ({value: m.value, label: m.label, action: "planning", selected: pane.stateData.planning === m.value}))
                 : choices.kind === "model" ? (pane.stateData.models || []).map(m => ({value: m, label: m, action: "model", selected: pane.stateData.model === m}))
+                : choices.kind === "planner" ? controller.planning.options.map(m => ({
+                      value: m.value, label: m.label, action: "planner", selected: controller.planning.model === m.value}))
                 : choices.kind === "role" ? [
                     {value:"default", label:"默认"}, {value:"simple", label:"简单任务"},
                     {value:"complex", label:"复杂任务"}, {value:"review", label:"代码复审"}
@@ -242,7 +253,8 @@ Item {
                 : choices.kind === "roleModel" ? (pane.stateData.models || []).map(m => ({
                     label: m, value: choices.roleModel + "\n" + m, action: "roleModel",
                     selected: (pane.stateData.roleModels || {})[choices.roleModel] === m}))
-                : [{label:"回复方式", submenu:"planning"}, {label:"模型", submenu:"model"}, {label:"任务角色", submenu:"role"},
+                : [{label:"回复方式", submenu:"planning"}, {label:"执行模型", submenu:"model"}, {label:"规划模型", submenu:"planner"},
+                   ...(controller.planning.endpoint && !controller.isDemo ? [{label:"独立规划密钥", action:"plannerKey"}] : []), {label:"任务角色", submenu:"role"},
                    {label:pane.stateData.simple ? "切换到专业视图" : "切换到简洁视图", action:"density"},
                    {label:"复审", action:"review"}, {label:"运行测试", action:"tests"}, {label:"重试任务", action:"retry"},
                    {label:"创建子 Agent", action:"delegate"}, {label:"模型角色设置", submenu:"roles"}, {label:"审批记录", action:"approvals"}]
@@ -257,6 +269,8 @@ Item {
                         if (modelData.role) choices.roleModel = modelData.role
                         choices.kind = modelData.submenu
                     }
+                    else if (modelData.action === "planner") { controller.planning.save("model", modelData.value); choices.close() }
+                    else if (modelData.action === "plannerKey") { choices.close(); pane.plannerKeyRequested() }
                     else { pane.run(modelData.action, modelData.value || ""); choices.close() }
                 }
             }

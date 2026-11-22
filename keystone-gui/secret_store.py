@@ -82,12 +82,12 @@ def save(secrets: dict[str, str], *, path=None) -> None:
                 tmp.unlink(missing_ok=True)
 
 
-def set_provider(name: str, api_key: str) -> None:
+def set_provider(name: str, api_key: str, *, path=None) -> None:
     with _LOCK:
-        cur = load(strict=True)
+        cur = load(strict=True, path=path)
         if api_key:
             cur[name] = api_key
-        save(cur)
+            save(cur, path=path)
 
 
 @contextmanager
@@ -115,12 +115,12 @@ def get_provider(name: str) -> str | None:
     return load().get(name)
 
 
-def delete_provider(name: str) -> None:
+def delete_provider(name: str, *, path=None) -> None:
     """Remove one credential without racing another local credential update."""
     with _LOCK:
-        current=load(strict=True)
+        current=load(strict=True, path=path)
         current.pop(name,None)
-        save(current)
+        save(current, path=path)
 
 
 def env_for(secrets: dict[str, str] | None = None) -> dict[str, str]:
@@ -128,8 +128,8 @@ def env_for(secrets: dict[str, str] | None = None) -> dict[str, str]:
     s = secrets if secrets is not None else load()
     out: dict[str, str] = {}
     for name, key in s.items():
-        if isinstance(name,str) and name.startswith('connector.'):
-            continue  # Connector credentials never enter model/gateway environments.
+        if isinstance(name, str) and name.startswith(('connector.', 'planning-key-')):
+            continue  # Scoped credentials are resolved only by the selected adapter.
         if not isinstance(name, str) or not isinstance(key, str):
             continue
         env_name = "KEYSTONE_" + name.upper().replace("-", "_") + "_KEY"

@@ -665,6 +665,7 @@ Item {
             contentWidth: availableWidth; clip: true
             ColumnLayout {
                 width: body.availableWidth; spacing: 14
+                TodoList { Layout.fillWidth: true; items: page.viewData.todos || []; running: workbench.busy }
                 Repeater {
                     id: fields; model: page.schema
                     WorkbenchField {

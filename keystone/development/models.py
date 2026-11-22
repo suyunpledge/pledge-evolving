@@ -11,7 +11,8 @@ from pathlib import Path
 import re
 from urllib.parse import urlsplit
 
-from keystone.config import Config, USER_LAYER_NAME, load_config
+from keystone.compat import mirror_env, user_layer
+from keystone.config import Config, load_config
 from keystone.model import HttpTransport, ModelRouter
 from keystone.routing import SmartRouter
 from keystone.secrets import SecretScope, protect_store_path
@@ -29,8 +30,7 @@ class ModelSettingsSource:
     def signature(self, local_home):
         result = []
         for home in (Path(local_home), self.home):
-            for name in (USER_LAYER_NAME, 'secrets.json'):
-                path = home / name
+            for path in (user_layer(home), home / 'secrets.json'):
                 try:
                     stat = path.stat()
                     result.append((str(path), stat.st_mtime_ns, stat.st_size))
@@ -50,9 +50,9 @@ class ModelSettingsSource:
                 for r in rows]
         # Resolve only references actually used by model rows, not connector or
         # arbitrary Work secrets. Raw credentials never enter the public result.
-        names = set(re.findall(r'env\.(KEYSTONE_[A-Z0-9_]+_KEY)',
+        names = set(re.findall(r'env\.((?:KEYSTONE|FORGE)_[A-Z0-9_]+_KEY)',
                                json.dumps([r.config for r in rows])))
-        env = {name: os.environ.get(name, '') for name in names}
+        env = {name: os.environ[name] for name in mirror_env(dict.fromkeys(names, '')) if name in os.environ}
         path = home / 'secrets.json'
         protect_store_path(path)
         try:
@@ -68,9 +68,10 @@ class ModelSettingsSource:
             try:
                 for key, value in values.items():
                     name = 'KEYSTONE_' + key.upper().replace('-', '_') + '_KEY'
-                    if name in names and not key.startswith('connector.'):
+                    aliases = mirror_env({name: value})
+                    if names.intersection(aliases) and not key.startswith(('connector.', 'planning-key-')):
                         scope.reference(value)
-                        env[name] = value
+                        env.update(aliases)
             finally:
                 scope.close()
         except FileNotFoundError:
@@ -79,7 +80,7 @@ class ModelSettingsSource:
             raise ValueError('模型密钥文件不可读或格式损坏，请在模型设置中修复：' + str(path)) from None
         projection = Config()
         projection.apply_patch([{'id': row_id, 'name': name, 'config': conf}
-                                for row_id, name, conf in _resolved(rows, env)], label='host models only')
+                                for row_id, name, conf in _resolved(rows, mirror_env(env))], label='host models only')
         cls = SmartRouter if projection.get('model', 'routing', None) is not None else ModelRouter
         return cls.from_config(projection)
 

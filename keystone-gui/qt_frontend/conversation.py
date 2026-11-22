@@ -1,9 +1,11 @@
 """Bounded gateway tool loop with desktop approvals and no action replay."""
 import copy
+from dataclasses import replace
 import json
 from pathlib import Path
 
 from keystone.execution_guard import ExecutionGuard
+from keystone import todos
 from keystone.secrets import redact
 from keystone_client import ChatMessage, GatewayError, GenerationCancelled, ModelStreamInterrupted
 from work_tools import prepare_calls, invoke
@@ -19,10 +21,13 @@ TOOL_LABELS = {
     '7zip_extract': '7-Zip 解压', 'comfyui_run': 'ComfyUI',
     'generate_image': '生成图片', 'generate_video': '生成视频',
     'enter_work': '切换至 Work',
+    'update_todos': '更新待办清单',
     **{key: row[0] for key, row in productivity_tools.CATALOG.items()},
 }
 
 ENTER_WORK = 'keystone_enter_work'
+UPDATE_TODOS = 'keystone_' + todos.NAME
+TODO_GUIDANCE = todos.GUIDANCE.replace(todos.NAME, UPDATE_TODOS)
 WORK_HANDOFF = {'type': 'function', 'function': {
     'name': ENTER_WORK,
     'description': 'Switch this conversation to Work when the user task requires operating their computer, '
@@ -124,7 +129,8 @@ def model_tool_result(name, response):
 
 def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint, status, next_round,
         receipt=None, system_context='', mcp=None, temperature=0.7, tool_filter=None, tools_enabled=True,
-        chat_mcp=None, enter_work=None, max_turns=MAX_TURNS, attachment_folder=None, progress=None):
+        chat_mcp=None, enter_work=None, max_turns=MAX_TURNS, attachment_folder=None, progress=None,
+        on_todos=None, resuming=False):
     def stage(kind, label):
         if progress is not None:
             progress(kind, label)
@@ -141,11 +147,14 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
             except GatewayError:
                 status('网关未开放工具，正在生成对话…')
         tools = tool_schemas(gateway_tools, local) if authorize is not None else []
-        tools = [row for row in tools if row['function']['name'] != ENTER_WORK]
+        tools = [row for row in tools if row['function']['name'] not in (ENTER_WORK, UPDATE_TODOS, todos.NAME)]
         if tool_filter is not None:
             tools = [row for row in tools if tool_filter(row['function'].get('name'))]
         if chat_mode and enter_work is not None:
             tools.append(WORK_HANDOFF)
+        if on_todos is not None:
+            tools.append({'type': 'function', 'function': {'name': UPDATE_TODOS,
+                          'description': TODO_GUIDANCE, 'parameters': todos.SCHEMA}})
         return tools or None
 
     chat_mode = chat_mcp is not None
@@ -156,6 +165,19 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
     guard = ExecutionGuard()
     exports = productivity_tools.completed_exports(messages)
     retries_left = MAX_GENERATION_RETRIES
+    resume_at = len(messages)
+    if resuming:
+        task = next(m for m in reversed(messages) if m.role == 'user')
+        resume_note = ChatMessage('user', '继续这个任务。根据上面的工具回执和当前清单，只执行剩余步骤。'
+            '已经提交成功的操作直接使用原结果；结果不明的操作先核实。当前清单：'
+            + json.dumps(task.todos or [], ensure_ascii=False))
+
+    def execution_messages():
+        current = [replace(m, content=m.content + '\n\n' + m.task_plan.context())
+                if m.role == 'user' and m.task_plan else m for m in messages]
+        if resuming:
+            current.insert(resume_at, resume_note)
+        return current
 
     def stream(current, round_number, prefix=''):
         nonlocal retries_left
@@ -205,8 +227,11 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
         if cancel.is_set():
             raise GenerationCancelled('已停止生成')
         guidance = (CHAT_CONTEXT if tools_enabled else '当前处于 Chat 模式，请直接回复。') if chat_mode else ''
-        context = '\n'.join(part for part in (system_context, guidance, TOOL_CONTEXT if tools else '') if part)
-        current = [ChatMessage('system', context), *messages] if context else list(messages)
+        context = '\n'.join(part for part in (system_context, guidance, TOOL_CONTEXT if tools else '',
+                            TODO_GUIDANCE if on_todos and tools else '') if part)
+        current = execution_messages()
+        if context:
+            current.insert(0, ChatMessage('system', context))
         # 能走到倒数第二轮说明前面一直在调工具；首轮最多是第 1 轮，不会误触。
         note = BUDGET_NOTES.get(max_turns - turn) if max_turns >= BUDGET_NOTES_MIN else None
         if note:
@@ -214,7 +239,7 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
         result = stream(current, turn + 1)
         if not result.tool_calls:
             return result
-        if authorize is None and enter_work is None:
+        if authorize is None and enter_work is None and on_todos is None:
             raise GatewayError('当前连接没有工具执行权限。')
         calls = prepare_calls(result.tool_calls, model=getattr(result, 'model', '') or model)
         available = {row['function']['name'] for row in tools or []}
@@ -234,6 +259,13 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
                         'meta': {'execution_state': 'not_started'}}
             if cancel.is_set():
                 stopped = GenerationCancelled('已停止工具调用')
+            if not stopped and name == UPDATE_TODOS and name in available and on_todos:
+                result_update = todos.update(arguments)
+                if result_update.ok:
+                    on_todos(result_update.meta['todos'])
+                messages.append(ChatMessage('tool', json.dumps({'ok': result_update.ok,
+                    'content': result_update.content or result_update.error}, ensure_ascii=False), tool_call_id=call['id']))
+                continue
             if stopped is None:
                 stage('permission', '正在检查权限 · ' + tool_label(name))
                 try:
@@ -308,7 +340,7 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
     lead_text = budget_lead(max_turns)
     try:
         # 工具声明照旧带上（历史里有工具调用的协议需要）；模型仍发起调用也一律不执行。
-        result = stream([ChatMessage('system', context), *messages], max_turns + 1, prefix=lead_text)
+        result = stream([ChatMessage('system', context), *execution_messages()], max_turns + 1, prefix=lead_text)
     except GenerationCancelled:
         raise
     except GatewayError:

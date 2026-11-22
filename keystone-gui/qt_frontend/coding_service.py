@@ -1,5 +1,6 @@
 """UI-independent Coding session, used by the Qt service process."""
 import json
+from functools import partial
 from pathlib import Path
 import sys
 import threading
@@ -25,6 +26,7 @@ class CodingService:
         self.role, self.model, self.simple = 'default', '继承配置', True
         self.contexts, self.events, self.queue = [], [], []
         self.last_prompt, self.status = '', ''
+        self.interrupted_request = None
         self.cancel = threading.Event()
         self._initialize_lock = threading.Lock()
 
@@ -37,6 +39,8 @@ class CodingService:
             runtime = DevelopmentRuntime(self.state, emit=self.event, runtime_home=root,
                                          model_router_factory=ModelSettingsSource(self.host.home))
             result = runtime.initialize(self.host.workspace)
+            from phase_client import apply_planning_key
+            runtime.bridge.agent.prepare_planning_route = partial(apply_planning_key, self.host.home)
             runtime.bridge.agent.action_executor.approver = self.host.approve
             self.catalog, self.runtime = result['models'], runtime
         self.publish()
@@ -50,7 +54,8 @@ class CodingService:
         self.events = self.events[-100:]
         # Progress can arrive per token; coalesce at the service boundary.
         now = time.monotonic()
-        if now - getattr(self, '_last_event', 0) > .12:
+        if (data.get('type') == 'task_plan' or data.get('tool') == 'update_todos'
+                or now - getattr(self, '_last_event', 0) > .12):
             self._last_event = now
             self.publish()
 
@@ -78,6 +83,8 @@ class CodingService:
             roleModels={r: labels.get(tuple(p or ()), '继承配置') for r, p in self.state.value('roles').items()},
             contexts=[Path(p).name for p in self.contexts], hasDocument=bool(self.host.pages.active_document),
             tasks='\n'.join(self.events[-10:])[-12000:], events='\n'.join(self.events)[-12000:],
+            todos=rt.evidence.todos if rt else [], canResume=bool(self.interrupted_request),
+            taskRunning=bool(rt and rt.busy and self.status == '正在处理…'),
             agents=[{'name': a.get('agent', a.get('name', 'Agent')), 'status': a.get('status', ''), 'output': str(a.get('output', ''))[:4000]}
                     for a in list(rt.evidence.agents.values())[-32:]] if rt else [], changes=changes))
 
@@ -98,13 +105,22 @@ class CodingService:
             if self.runtime:
                 self.runtime.cancel()
             return
-        if action in {'send', 'delegate', 'retry'}:
+        if action == 'resume':
+            if self.host.running or not self.interrupted_request:
+                return
+            request, task_id = self.interrupted_request
+            self.host.work(lambda: self.run(request, resume_task=task_id))
+        elif action in {'send', 'delegate', 'retry'}:
             prompt = self.last_prompt if action == 'retry' else self.draft.strip()
             if not prompt:
                 return
             if len(self.queue) >= 3:
                 raise ValueError('最多排队三个任务。')
-            request = (prompt, action == 'delegate', self.model, self.role, self.state.value('planning'), tuple(self.contexts))
+            from config_model import load_user_layer
+            from phase_client import planning_selection
+            planning = self.state.value('planning')
+            planner = planning_selection(load_user_layer(self.host.home))[1] if planning != 'none' else None
+            request = (prompt, action == 'delegate', self.model, self.role, planning, tuple(self.contexts), planner)
             if self.host.running:
                 self.queue.append(request)
             else:
@@ -153,24 +169,28 @@ class CodingService:
             raise ValueError('所选模型已移除，请重新选择。')
         return self.runtime.catalog[row['id']]
 
-    def run(self, request):
+    def run(self, request, *, resume_task=None):
         if self.host.demo:
             raise ValueError('预览模式不发送模型请求。')
         self.initialize()
         self.cancel = self.host.cancel
         while request and not self.cancel.is_set():
-            prompt, delegate, label, role, planning, contexts = request
+            prompt, delegate, label, role, planning, contexts, planner = request
             if self.host.pages.unsaved:
                 raise ValueError('请先保存或放弃编辑器修改，再运行 Agent。')
+            self.interrupted_request = None
             self.last_prompt = prompt
-            self.message('user', prompt)
+            self.message('user', '继续未完成的任务' if resume_task else prompt)
             self.runtime.bridge.agent.action_executor.trusted_native = self.host.profile != 'sandbox'
             self.status = '正在处理…'
             self.publish()
             result = self.runtime.run(prompt, explicit_model=self.pair(label), role=role,
-                permission=self.host.permission_mode, planning=planning,
+                permission=self.host.permission_mode, planning=planning, planning_model=planner,
                 contexts=[{'path': p, 'content': self.host.pages.documents[p].text} for p in contexts if p in self.host.pages.documents],
-                delegate=delegate, cancellation=self.cancel)
+                delegate=delegate, cancellation=self.cancel, resume_task=resume_task)
+            if result.get('stopped') == 'cancelled':
+                self.interrupted_request = (request, self.runtime.last_task_id)
+            resume_task = None
             self.message('assistant', result.get('text') or result.get('output') or json.dumps(result, ensure_ascii=False, indent=2))
             self.status = '已停止' if self.cancel.is_set() else '任务结束'
             self.host.pages.refresh_documents()
@@ -184,6 +204,7 @@ class CodingService:
         if self.host.pages.unsaved and action in {'revert', 'restore', 'new'}:
             raise ValueError('请先保存或放弃编辑器修改。')
         if action == 'new':
+            self.interrupted_request = None
             from keystone.session import Session
             from keystone.development.evidence import TaskEvidence
             old = rt.bridge.agent.session
@@ -201,6 +222,7 @@ class CodingService:
             self.host.pages.show_history(rt.home / 'sessions')
         elif action == 'restore':
             result = rt.restore_history(value)
+            self.interrupted_request = None
             self.host.emit('coding_message', message=None)
             self.message('assistant', json.dumps(result, ensure_ascii=False, indent=2))
         elif action == 'review':

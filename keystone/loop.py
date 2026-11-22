@@ -220,6 +220,7 @@ class Agent:
         self._context_id = uuid.uuid4().hex
         self.action_executor = ActionExecutor()
         self.phase_catalog = router
+        self.prepare_planning_route = None
         self.registry = registry
         from .tool_surface import ToolSurface
         self._tool_surface = ToolSurface()
@@ -1486,6 +1487,8 @@ class Agent:
                 plan_messages[-1] = {"role": "user", "content": pinned_task + "\n\n" +
                                      contract + ("\n\n" + self._rule_context if self._rule_context else '')}
                 planner = phase_router(self.phase_catalog, self.planning_model, self.router)
+                if self.planning_model and self.prepare_planning_route:
+                    planner = self.prepare_planning_route(self.planning_model, planner)
                 plan_completion = planner.complete(self.secret_scope.protect(plan_messages),
                     small=False,
                     max_tokens=token_cap(self.planning_level),

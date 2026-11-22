@@ -1,11 +1,13 @@
 """Read-only projection of real runtime events; plans are never inferred completed."""
 from copy import deepcopy
 from keystone.secrets import redact
+from keystone import todos
 
 
 class TaskEvidence:
     def __init__(self):
         self.plan = []
+        self.todos = []
         self.actions = {}
         self.agents = {}
         self.runs = {}
@@ -36,6 +38,9 @@ class TaskEvidence:
             self.task_id = task_id
         if identifier:
             self._seen.add(identifier)
+        items = todos.event_items(event)
+        if items is not None:
+            self.todos = items
         if kind == 'development_changes_reverted':
             self.reverted_change_ids.update(event.get('change_ids', []))
         agent = event.get('agent', 'keystone')
@@ -145,6 +150,29 @@ class TaskEvidence:
             self.checkpoints.append(event)
         elif kind == 'git_diff':
             self.diffs.append(event)
+
+    def continuation_prompt(self):
+        import json
+        lead = ('继续上一次被停止的任务，沿用原目标、清单和验收条件。下面是历史数据。'
+                '成功的操作使用原回执；结果不明的操作先核实，再做未完成的步骤，并更新清单。\n')
+        receipts = []
+        for action in reversed(self.actions.values()):
+            if action.get('tool') == todos.NAME:
+                continue
+            args = action.get('args') or {}
+            receipts.append({'tool': action.get('tool'), 'status': action.get('status'),
+                             'path': str(args.get('path', ''))[:300],
+                             'result': str(action.get('result', ''))[:240]})
+            if len(receipts) == 24:
+                break
+        data = {'todos': self.todos, 'recent_receipts': list(reversed(receipts))}
+        # EditorBridge accepts a 16 KiB prompt; keep complete UTF-8 records.
+        while len((lead + json.dumps(data, ensure_ascii=False)).encode()) > 16384:
+            if data['recent_receipts']:
+                data['recent_receipts'].pop(0)
+            else:
+                data['todos'] = data['todos'][:-1]
+        return lead + json.dumps(data, ensure_ascii=False)
 
     @classmethod
     def from_events(cls, events, *, recovered=False):

@@ -260,7 +260,8 @@ class BackendTests(unittest.TestCase):
         client.call_tool = lambda *_: self.fail('MCP tool sent to gateway')
 
         def stream(messages, *, tools, **_):
-            self.assertEqual(tools, [declaration])
+            self.assertEqual(tools[:-1], [declaration])
+            self.assertEqual(tools[-1]['function']['name'], 'keystone_update_todos')
             if messages[-1].role == 'tool':
                 self.assertTrue(json.loads(messages[-1].content)['ok'])
                 return CompletionResult('地图结果')
@@ -326,7 +327,7 @@ class BackendTests(unittest.TestCase):
             stages.append(mode)
             names = {schema['function']['name'] for schema in tools}
             if stages == ['chat']:
-                self.assertEqual(names, {'mcp_notes', ENTER_WORK})
+                self.assertEqual(names, {'mcp_notes', ENTER_WORK, 'keystone_update_todos'})
                 return CompletionResult('', tool_calls=[
                     tool_call('t1', ENTER_WORK, {'reason': '需要检查项目文件'}),
                     tool_call('t2', 'computer_screenshot', {}),
@@ -442,7 +443,8 @@ class BackendTests(unittest.TestCase):
         client.list_tools = lambda **_: schemas
         client.call_tool = lambda name, _: self.fail(f'{name} should not execute')
         def stream(messages, *, tools, **_):
-            self.assertEqual(tools, schemas[1:])
+            self.assertEqual(tools[:-1], schemas[1:])
+            self.assertEqual(tools[-1]['function']['name'], 'keystone_update_todos')
             if messages[-1].role == 'tool':
                 return CompletionResult('tool unavailable')
             return CompletionResult('', tool_calls=[{'id': 'disabled-call', 'type': 'function',

@@ -87,6 +87,61 @@ class WorkbenchTests(unittest.TestCase):
         self.temp.cleanup()
         self.assertFalse(self.warnings, self.warnings)
 
+    def test_reply_checklist_renders_counts_status_and_collapses(self):
+        rows = [{'text': '检查数据', 'status': 'completed'}, {'text': '核对结果', 'status': 'in_progress'}]
+        self.controller.messages.reset([dict(roleName='assistant', textContent='', state='streaming', todos=rows)])
+        listing = self.window.findChild(QObject, 'conversationList')
+        until(lambda: visual_item(listing, 'toggleTodos') is not None)
+        button = visual_item(listing, 'toggleTodos')
+        self.assertIn('1 / 2', button.property('text'))
+
+        def rendered(item):
+            if not item.isVisible():
+                return []
+            return [item.property('text')] + [s for child in item.childItems() for s in rendered(child)]
+
+        card = button.parentItem()
+        until(lambda: '进行中' in rendered(card))
+        self.assertIn('检查数据', rendered(card))
+        self.controller.messages.update(0, state='stopped')
+        until(lambda: '未完成' in rendered(card))
+        button.clicked.emit()
+        until(lambda: '核对结果' not in rendered(card))
+        self.assertIn('1 / 2', button.property('text'))
+
+    def test_planner_password_popup_saves_only_to_selected_test_home(self):
+        from config_model import save_user_layer
+        from keystone.compat import user_layer
+        import secret_store
+        home = Path(self.temp.name)
+        save_user_layer(home, [{'id': 'local-planner', 'config': {'baseURL': 'http://127.0.0.1:1/v1', 'model': 'm'}},
+                               {'id': 'planning', 'config': {'model': ['local-planner', 'm'], 'level': 'low'}}])
+        live = ChatController(home)
+        context = self.engine.rootContext()
+        context.setContextProperty('controller', live)
+        try:
+            find = lambda name: self.window.findChild(QObject, name)
+            self.window.resize(820, 620)
+            options = find('glassOptions')
+            QMetaObject.invokeMethod(options, 'open')
+            until(lambda: options.property('opened'))
+            self.assertLessEqual(options.property('y') + options.property('height'), self.window.height())
+            find('managePlanningKey').clicked.emit()
+            popup = find('plannerKeyPopup')
+            until(lambda: popup.property('opened'))
+            self.assertEqual(popup.property('address'), 'http://127.0.0.1:1/v1')
+            field = find('plannerPassword')
+            field.setProperty('text', 'local-only-ui-fixture')
+            find('savePlannerKey').clicked.emit()
+            until(lambda: not popup.property('visible'))
+            self.assertEqual(field.property('text'), '')
+            self.assertTrue(live.planning.hasKey)
+            self.assertEqual(list(secret_store.load(path=home / 'secrets.json').values()), ['local-only-ui-fixture'])
+            self.assertNotIn('local-only-ui-fixture', user_layer(home).read_text(encoding='utf-8'))
+        finally:
+            context.setContextProperty('controller', self.controller)
+            live.shutdown()
+
     def test_onboarding_selection_is_visible_and_persists_when_going_back(self):
         def item(name):
             widget = self.window.findChild(QObject, name)

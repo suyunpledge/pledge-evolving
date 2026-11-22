@@ -2,12 +2,20 @@
 from keystone.config import Config, resolve
 from keystone.model import ModelRouter, HttpTransport
 from keystone.phase_models import model_pair, phase_router
-from keystone.planning import TaskPlan, PlanningError, planning_prompt, token_cap
+from keystone.planning import TaskPlan, PlanningError, PlanningSyntaxError, planning_prompt, token_cap
 from keystone.code_review import review_code
 from keystone_client import GenerationCancelled
 from http_transport import open_response
 import base64
+from dataclasses import replace
+import hashlib
 import json
+
+
+def planning_selection(rows):
+    from keystone.planning import planning_level
+    cfg = next((row.get('config', {}) for row in rows if row['id'] == 'planning' and not row.get('disabled')), {})
+    return planning_level(cfg.get('level', 'none')), model_pair(cfg.get('model'))
 
 
 def model_catalog(rows):
@@ -21,6 +29,26 @@ def model_catalog(rows):
             pair = (str(row['id']), model)
             entries.append((pair, pair[0] + ' / ' + model))
     return entries
+
+
+def planning_key_id(pair, address):
+    binding = json.dumps([*pair, address.rstrip('/')], ensure_ascii=False).encode()
+    return 'planning-key-' + hashlib.sha256(binding).hexdigest()
+
+
+def apply_planning_key(home, pair, router, *, secrets=None):
+    """Only the explicit, single-provider planning route may receive this key."""
+    if pair:
+        import secret_store
+        provider = router.providers[pair[0]]
+        if secrets is None:
+            secrets = secret_store.load(path=home / 'secrets.json', strict=True)
+        key = secrets.get(planning_key_id(pair, provider.base_url))
+        if key:
+            from keystone.secrets import secret_field
+            headers = {k: v for k, v in provider.headers.items() if not secret_field(k)}
+            router.providers[pair[0]] = replace(provider, api_key=key, _credential=None, headers=headers)
+    return router
 
 
 class PhaseClient:
@@ -38,7 +66,7 @@ class PhaseClient:
         opener = lambda request, **kw: open_response(request, cancel_event=cancel_event, **kw)
         router = ModelRouter.from_config(config, transport=HttpTransport(response_opener=opener))
         self.router = phase_router(router, pair, router)
-        self.router.retries_per_provider = 0  # one explicit manual request; don't wait in retry sleeps
+        self.router.retries_per_provider = 0  # No transport retries or fallback to another provider.
         self.scope, self.cancel_event = scope, cancel_event
 
     def _call(self, callback):
@@ -60,13 +88,27 @@ class PhaseClient:
             contract = planning_prompt(level)
             inputs = [{'role': 'system', 'content': contract},
                       *[m.to_dict(self.scope) for m in messages if m.role in {'user', 'assistant'}]]
-            result = self.router.complete(self.scope.protect(inputs), small=False, max_tokens=token_cap(level))
-            if result.finish_reason in {'length', 'max_tokens'}:
-                raise PlanningError('Planner exhausted its output budget; no execution started')
-            if result.tool_calls: raise PlanningError('Planner attempted a tool call')
-            return TaskPlan.parse(self.scope.protect_text(result.text), level), {
-                'prompt_tokens': result.usage.prompt_tokens, 'completion_tokens': result.usage.completion_tokens,
-                'requests': result.requests}
+            usage = {'prompt_tokens': 0, 'completion_tokens': 0, 'requests': []}
+
+            def ask():
+                result = self._call(lambda: self.router.complete(
+                    self.scope.protect(inputs), small=False, max_tokens=token_cap(level)))
+                usage['prompt_tokens'] += result.usage.prompt_tokens
+                usage['completion_tokens'] += result.usage.completion_tokens
+                usage['requests'].extend(result.requests)
+                if result.finish_reason in {'length', 'max_tokens'}:
+                    raise PlanningError('Planner exhausted its output budget; no execution started')
+                if result.tool_calls:
+                    raise PlanningError('Planner attempted a tool call')
+                return TaskPlan.parse(self.scope.protect_text(result.text), level)
+
+            try:
+                plan = ask()
+            except PlanningSyntaxError:
+                inputs.append({'role': 'user', 'content': '上一份规划的 JSON 无法解析。再为同一任务生成一次，'
+                               '只输出规划要求的 JSON 对象，文本中的双引号须转义。'})
+                plan = ask()
+            return plan, usage
         return self._call(request)
 
     def review_code(self, code, **_kwargs):

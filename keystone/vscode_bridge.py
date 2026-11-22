@@ -121,6 +121,8 @@ def _load_credentials(home, scope):
                 raise ValueError('Invalid credential store')
             scope.reference(value)
         for name, value in values.items():
+            if name.startswith('planning-key-'):
+                continue
             os.environ['KEYSTONE_' + name.upper().replace('-', '_') + '_KEY'] = value
     except FileNotFoundError:
         pass
@@ -173,6 +175,7 @@ class EditorBridge:
             raise ValueError('模型设置正在变化，草稿已保留，请稍后重试发送。')
         self.router, self.models = router, models
         self.agent.router = router
+        self.agent.phase_catalog = router
         self.model_revision = revision
         return {'models': [{'id': key, 'label': ' / '.join(pair)} for key, pair in models.items()]}
 
@@ -204,6 +207,8 @@ class EditorBridge:
             expose=config.get('tools', 'expose', None), observer=self.observe,
             session_path=self.home / 'sessions' / 'vscode' / (uuid.uuid4().hex + '.jsonl'),
             probes=self.probes)
+        from .todos import install
+        install(self.agent)
         self.history = self.agent.secret_scope.protect(_history(params.get('history', [])))
         self.model_revision = revision
         return {'protocol': PROTOCOL, 'models': catalog, 'workspace': str(self.workspace),
