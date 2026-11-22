@@ -115,9 +115,19 @@ def _connection(vendor_id, api_key, base_url):
     key = api_key.strip()
     if not v.keyless and not key:
         raise ValueError("请先粘贴 API 密钥。")
+    check_key(key)
+    address = check_address(v.base_url if base_url is None else base_url)
+    return v, "" if v.keyless else key, address
+
+
+def check_key(key: str) -> None:
     if any(ch.isspace() or ord(ch) < 32 for ch in key):
         raise ValueError("密钥里有空格或换行，请重新复制。")
-    address = (v.base_url if base_url is None else base_url.strip()).rstrip("/")
+
+
+def check_address(base_url: str) -> str:
+    """Normalised HTTP(S) API base without credentials, query or fragment."""
+    address = str(base_url).strip().rstrip("/")
     try:
         parsed = urlsplit(address)
         parsed.port
@@ -129,7 +139,7 @@ def _connection(vendor_id, api_key, base_url):
         valid = False
     if not valid:
         raise ValueError("请输入有效的 HTTP / HTTPS 接口地址，不含账号、参数或片段。")
-    return v, "" if v.keyless else key, address
+    return address
 
 
 def apply_key(home: Path, vendor_id: str, api_key: str, *, model: str | None = None,
@@ -194,11 +204,17 @@ def test_connection(vendor_id: str, api_key: str, *, base_url: str | None = None
         v, key, address = _connection(vendor_id, api_key, base_url)
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
-    if v.wire == "anthropic" and not urlsplit(address).path.endswith("/v1"):
+    return probe(address, key, wire=v.wire, keyless=v.keyless, timeout=timeout, opener=opener)
+
+
+def probe(address: str, key: str, *, wire: str = "openai", keyless: bool = False,
+          timeout: float = 8.0, opener=open_authenticated) -> dict:
+    """GET <base>/models with the given credential; shared by setup and row editing."""
+    if wire == "anthropic" and not urlsplit(address).path.endswith("/v1"):
         address += "/v1"
     url = address + "/models"
     headers = {"Accept": "application/json"}
-    if v.wire == "anthropic":
+    if wire == "anthropic":
         headers.update({"x-api-key": key, "anthropic-version": "2023-06-01"})
     elif key:
         headers["Authorization"] = f"Bearer {key}"
@@ -211,7 +227,7 @@ def test_connection(vendor_id: str, api_key: str, *, base_url: str | None = None
             return {"ok": False, "error": "密钥无效或没有权限，请检查是否复制完整"}
         return {"ok": False, "error": f"服务返回 {exc.code}，可以先保存，稍后再试"}
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        hint = "本地 Ollama 没有运行" if v.keyless else "网络连不上该厂商（海外厂商可能需要代理）"
+        hint = "本地 Ollama 没有运行" if keyless else "网络连不上该厂商（海外厂商可能需要代理）"
         return {"ok": False, "error": f"{hint}，请检查接口地址。"}
     try:
         data = json.loads(body.decode("utf-8", "replace"))

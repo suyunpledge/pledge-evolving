@@ -30,7 +30,7 @@ ApplicationWindow {
         if (chatVisible) Qt.callLater(focusWorkComposer)
     }
     function focusWorkComposer() {
-        if (chatVisible && !onboarding.opened && !localToolSetup.opened && !mediaModels.opened && !toolCatalog.opened) {
+        if (chatVisible && !onboarding.opened && !localToolSetup.opened && !mediaModels.opened && !toolCatalog.opened && !modelEditor.opened) {
             editor.forceActiveFocus()
             editorScroll.refreshInputMethod()
         }
@@ -56,7 +56,7 @@ ApplicationWindow {
         property bool solid: controller.solid
         property real strength: controller.material
         property bool reduced: controller.reduceMotion
-        property real epoch: window.width + window.height + history.contentY + composer.y + composer.height + options.height + modelMenu.height + modelList.contentY + modelButton.width
+        property real epoch: window.width + window.height + history.contentY + composer.y + composer.height + options.height + modelMenu.height + modelList.contentY + modelButton.width + effortButton.width
     }
 
     readonly property var wallpaper: workbench.wallpaper
@@ -254,11 +254,14 @@ ApplicationWindow {
             }
         }
         Column {
+            id: welcome
+            objectName: "welcome"
             visible: window.chatVisible && messages.count === 0
             x: window.columnX + 16
-            y: Math.max(155, window.height * 0.27)
+            // 欢迎区始终落在输入框（及其上方的错误提示）之上，不与之重叠。
+            y: Math.max(96, Math.min(window.height * 0.24, (errorBanner.visible ? errorBanner.y : composer.y) - height - 28))
             width: window.columnWidth - 32
-            spacing: 16
+            spacing: 14
             Image { source: brandUrl; width: 42; height: 42; smooth: true }
             Text { text: window.conversationOnly ? "今天想聊些什么？" : "今天想完成什么？"; color: "#f0f1f3"; font.pixelSize: 30; font.weight: Font.DemiBold }
             Text { text: window.conversationOnly ? "可以使用已连接且获准的 MCP。需要实际操作时，AI 可切换到 Work。" : "描述目标，带上上下文，让想法成为下一步。"; color: "#9fa8b4"; font.pixelSize: 15; wrapMode: Text.Wrap; width: parent.width }
@@ -415,12 +418,16 @@ ApplicationWindow {
         GlassButton { material: window.material; objectName: "connectionSettingsEntry"; width: parent.width; glyph: "settings-2"; text: window.label("连接与外观", "Connection & appearance"); quiet: true; onClicked: settings.open() }
     }
     Text {
-        x: window.sideWidth + 28; y: 29; width: window.mainRight - x - 190
-        text: window.chatVisible ? controller.title : workbench.pageTitle; elide: Text.ElideRight; color: "#d8dee6"; font.pixelSize: 14; font.weight: Font.Medium
+        objectName: "pageTitle"
+        x: window.sideWidth + 28; y: 38 - height / 2; width: window.mainRight - x - 220
+        text: window.chatVisible ? controller.title : workbench.pageTitle; elide: Text.ElideRight
+        color: Theme.textPrimary; font.pixelSize: 15; font.weight: Font.DemiBold
     }
+    Rectangle { visible: window.chatVisible; x: window.sideWidth; y: 75; width: window.mainRight - x; height: 1; color: Theme.divider; opacity: messages.contentY > -messages.topMargin + 4 ? 1 : 0 }
     Row {
         x: window.mainRight - width - 20; y: 20; spacing: 8
         GlassButton { objectName: "quickSetupToolbar"; visible: workbench.page === "config"; material: window.material; glyph: "plug"; text: window.label("一键配置", "Quick setup"); onClicked: onboarding.showSetup() }
+        GlassButton { objectName: "manageModelsToolbar"; visible: workbench.page === "config"; material: window.material; glyph: "settings-2"; text: "管理模型"; onClicked: window.openModelEditor("") }
         GlassButton { objectName: "mediaModelsToolbar"; visible: workbench.page === "config"; material: window.material; glyph: "image"; text: window.label("图片与视频", "Image and video"); onClicked: mediaModels.showSettings() }
         GlassButton { visible: workbench.page === "config" && setup.developer; material: window.material; glyph: "box"; text: "模型厂商"; onClicked: workbench.showProviderCatalog("") }
         GlassButton { visible: workbench.page === "connector_accounts"; material: window.material; glyph: "chevron-left"; text: "MCP 接口"; onClicked: workbench.navigate("connectors") }
@@ -477,50 +484,66 @@ ApplicationWindow {
                 onTextChanged: if (controller.draft !== text) controller.draft = text
                 onSubmit: controller.send()
             }
+            // 左侧是决定这条消息怎么跑的三项：模型、思考强度、角色；右侧是附加能力与发送。
             RowLayout {
-                width: parent.width; spacing: 8
-                GlassButton { material: window.material; glyph: "paperclip"; tip: "添加文本附件"; enabled: !controller.busy; onClicked: files.open() }
+                id: composerBar
+                width: parent.width; spacing: 6
+                readonly property bool roomy: window.columnWidth > 640
+                readonly property int modelChars: window.columnWidth < 560 ? 10 : window.columnWidth < 700 ? 16 : 24
                 GlassButton {
                     id: modelButton
-                    material: window.material; text: controller.model.length > (window.columnWidth < 550 ? 13 : 24) ? controller.model.slice(0, window.columnWidth < 550 ? 12 : 23) + "…" : controller.model
-                    glyph: "box"; enabled: !controller.busy; tip: "切换模型"; onClicked: modelMenu.open()
+                    objectName: "modelButton"
+                    material: window.material; glyph: "box"
+                    text: controller.model.length > composerBar.modelChars ? controller.model.slice(0, composerBar.modelChars - 1) + "…" : controller.model
+                    selected: modelMenu.opened
+                    enabled: !controller.busy; tip: "切换模型：" + controller.model; onClicked: modelMenu.open()
+                }
+                GlassButton {
+                    id: effortButton
+                    objectName: "effortButton"
+                    readonly property var names: ({off: "默认", low: "轻量", medium: "标准", high: "深入"})
+                    material: window.material; glyph: "gauge"
+                    text: (window.columnWidth > 520 ? "思考 · " : "") + names[controller.effectiveReasoning]
+                    selected: effortPicker.opened
+                    ink: controller.reasoningSupported ? "#dce3ec" : Theme.textMuted
+                    glyphInk: controller.reasoningSupported ? (controller.effectiveReasoning === "off" ? "#dce3ec" : Theme.accent) : Theme.textDim
+                    enabled: !controller.busy
+                    tip: controller.reasoningSupported ? "思考强度（点击调整）" : "当前模型不支持调节思考强度"
+                    onClicked: effortPicker.open()
                 }
                 GlassButton {
                     id: roleButton
                     objectName: "templateButton"
                     material: window.material; glyph: controller.templates.activeIcon
-                    text: window.columnWidth > 560 ? controller.templates.activeName : ""
+                    text: window.columnWidth > 600 ? controller.templates.activeName : ""
                     selected: controller.templates.activeId !== ""
                     enabled: !controller.busy; tip: "当前角色：" + controller.templates.activeName + "（点击切换）"
                     onClicked: rolePicker.open()
                 }
-                GlassButton {
-                    id: optionsButton
-                    material: window.material; glyph: "sliders-horizontal"; text: window.columnWidth > 600 ? "选项" : ""
-                    selected: options.opened; tip: "推理强度与玻璃外观"; onClicked: options.open()
-                }
+                Item { Layout.fillWidth: true }
+                GlassButton { objectName: "attachButton"; material: window.material; glyph: "paperclip"; quiet: true; tip: "添加文本附件"; enabled: !controller.busy; onClicked: files.open() }
                 GlassButton {
                     objectName: "publicSearchButton"
                     visible: !window.conversationOnly
-                    material: window.material; glyph: "search"
-                    text: window.columnWidth > 620 ? "搜索" : ""
+                    material: window.material; glyph: "search"; quiet: true
+                    text: composerBar.roomy ? "搜索" : ""
                     tip: "联网搜索"; onClicked: searchPanel.open()
                 }
                 GlassButton {
                     objectName: "workToolCatalogButton"
                     visible: !window.conversationOnly
-                    material: window.material; glyph: "wrench"
-                    text: window.columnWidth > 630 ? "工具" : ""
+                    material: window.material; glyph: "wrench"; quiet: true
+                    text: composerBar.roomy ? "工具" : ""
                     tip: controller.toolSettings.enabled ? "管理 Work 工具" : "Work 工具调用已关闭"
                     onClicked: toolCatalog.open()
                 }
                 GlassButton {
                     objectName: "chatMcpButton"
                     visible: window.conversationOnly
-                    material: window.material; glyph: "plug"; text: "MCP"
+                    material: window.material; glyph: "plug"; text: "MCP"; quiet: true
                     tip: "管理 Chat 可用的远程 MCP"; onClicked: workbench.navigate("connectors")
                 }
-                Item { Layout.fillWidth: true }
+                Item { width: 2 }
                 GlassButton {
                     objectName: "sendButton"
                     material: window.material; glyph: controller.busy ? "square" : "arrow-up"
@@ -535,6 +558,7 @@ ApplicationWindow {
     Text { visible: window.chatVisible; x: composer.x + 4; y: window.height - 27; text: controller.status; color: "#7e8998"; font.pixelSize: 11 }
     Text { visible: window.chatVisible && window.columnWidth > 520; anchors.right: composer.right; y: window.height - 27; text: "Enter 发送  ·  Shift + Enter 换行"; color: "#7e8998"; font.pixelSize: 11 }
     Rectangle {
+        id: errorBanner
         visible: window.chatVisible && controller.error.length > 0
         x: composer.x; y: composer.y - height - 12; width: composer.width
         height: errorText.implicitHeight + 24; radius: 12
@@ -548,25 +572,64 @@ ApplicationWindow {
         id: modelMenu
         focus: true
         parent: Overlay.overlay
-        x: Math.min(composer.x + 52, window.width - width - 16)
+        x: Math.min(composer.x + 18, window.width - width - 16)
         y: Math.max(16, composer.y - height - 10)
         width: Math.min(340, window.columnWidth); padding: 12
-        height: Math.min(400, controller.models.length * 41 + 60)
+        height: Math.min(440, controller.models.length * 41 + 104)
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         background: GlassSurface { material: window.material; radius: 20; emphasis: 0.3 }
         onAboutToShow: controller.refreshModelChoices()
-        onClosed: if (window.chatVisible) window.focusWorkComposer()
+        onClosed: if (window.chatVisible && !modelEditor.opened && !onboarding.opened) window.focusWorkComposer()
         contentItem: Column {
             spacing: 5
             Text { text: "模型"; color: "#9aa7b5"; font.pixelSize: 12; padding: 6 }
             ListView {
                 id: modelList
-                width: parent.width; height: modelMenu.availableHeight - 30
+                width: parent.width; height: modelMenu.availableHeight - 78
                 model: controller.models; spacing: 5; clip: true
                 ScrollBar.vertical: ScrollBar { width: 4 }
                 delegate: GlassButton { required property string modelData; material: window.material; width: ListView.view.width; text: modelData.length > 33 ? modelData.slice(0, 32) + "…" : modelData; selected: controller.model === modelData; enabled: !controller.modelSwitching; quiet: true; onClicked: {controller.setModel(modelData); modelMenu.close()} }
             }
+            Rectangle { width: parent.width; height: 1; color: Theme.divider }
+            Row {
+                width: parent.width; spacing: 6
+                GlassButton {
+                    objectName: "manageModelsButton"
+                    width: (parent.width - 6) / 2; material: window.material; glyph: "settings-2"; text: "管理模型"; quiet: true
+                    enabled: !controller.isDemo
+                    onClicked: { modelMenu.close(); window.openModelEditor("") }
+                }
+                GlassButton {
+                    width: (parent.width - 6) / 2; material: window.material; glyph: "plus"; text: "添加模型"; quiet: true
+                    onClicked: { modelMenu.close(); onboarding.showSetup() }
+                }
+            }
         }
+    }
+    EffortPicker {
+        id: effortPicker
+        parent: Overlay.overlay
+        x: Math.max(16, Math.min(composer.x + 18 + effortButton.x, window.width - width - 16))
+        y: Math.max(16, composer.y - height - 10)
+        material: window.material
+        service: controller
+        onClosed: if (window.chatVisible) window.focusWorkComposer()
+    }
+    ModelEditor {
+        id: modelEditor
+        parent: Overlay.overlay
+        x: Math.round((parent.width - width) / 2); y: Math.round((parent.height - height) / 2)
+        width: Math.min(860, window.width - 48)
+        height: Math.min(600, window.height - 48)
+        material: window.material
+        service: workbench.modelRows
+        changesAllowed: !controller.busy
+        onAddRequested: onboarding.showSetup()
+        onClosed: if (window.chatVisible) window.focusWorkComposer()
+    }
+    function openModelEditor(rowId) {
+        workbench.modelRows.reload()
+        modelEditor.openFor(rowId)
     }
     RolePicker {
         id: rolePicker
@@ -593,7 +656,7 @@ ApplicationWindow {
         focus: true
         objectName: "glassOptions"
         parent: Overlay.overlay
-        x: Math.min(composer.x + 170, window.width - width - 20)
+        x: Math.round((window.width - width) / 2)
         y: Math.max(76, composer.y - height - 12)
         width: 348; padding: 20
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
@@ -601,14 +664,7 @@ ApplicationWindow {
         onClosed: if (window.chatVisible) window.focusWorkComposer()
         contentItem: Column {
             spacing: 16
-            Text { text: "对话选项"; color: "#eef1f4"; font.pixelSize: 16; font.weight: Font.DemiBold }
-            Text { text: "推理强度"; color: "#a9b3bf"; font.pixelSize: 12 }
-            Row {
-                spacing: 7
-                Repeater { model: [{key:"off",label:"关闭"},{key:"low",label:"轻量"},{key:"medium",label:"标准"},{key:"high",label:"深入"}]
-                    GlassButton { required property var modelData; material: window.material; text: modelData.label; width: 70; selected: controller.reasoning === modelData.key; enabled: !controller.busy; onClicked: controller.setReasoning(modelData.key) }
-                }
-            }
+            Text { text: "玻璃外观"; color: "#eef1f4"; font.pixelSize: 16; font.weight: Font.DemiBold }
             Text { text: "玻璃通透度"; color: "#a9b3bf"; font.pixelSize: 12 }
             Slider {
                 id: materialSlider
@@ -640,6 +696,7 @@ ApplicationWindow {
             TextField { id: endpoint; width: parent.width; height: 42; color: "#e2e7ec"; selectByMouse: true; leftPadding: 12; background: GlassSurface { material: window.material; radius: 12; emphasis: endpoint.activeFocus ? 0.8 : 0 } }
             Text { width: parent.width; text: "沿用现有 Keystone 网关。Coding、工具和连接器均在当前工作台内打开。"; color: "#939eac"; wrapMode: Text.Wrap; font.pixelSize: 12 }
             GlassButton { material: window.material; width: parent.width; text: "应用并连接"; glyph: "plug"; enabled: !controller.busy; onClicked: {controller.setGateway(endpoint.text); settings.close()} }
+            GlassButton { objectName: "manageModelsEntry"; material: window.material; width: parent.width; text: "管理已添加的模型"; glyph: "settings-2"; enabled: !controller.isDemo; onClicked: { settings.close(); window.openModelEditor("") } }
             GlassButton { objectName: "quickSetupEntry"; material: window.material; width: parent.width; text: window.label("一键配置模型", "Quick model setup"); glyph: "plug"; onClicked: { settings.close(); onboarding.showSetup() } }
             GlassButton { objectName: "welcomeGuideEntry"; material: window.material; width: parent.width; text: window.label("重新运行首次引导", "Run setup guide"); glyph: "sparkles"; onClicked: { settings.close(); onboarding.showGuide() } }
             GlassButton { material: window.material; width: parent.width; text: "壁纸"; glyph: "image"; onClicked: { settings.close(); wallpaperSettings.open() } }
@@ -990,6 +1047,7 @@ ApplicationWindow {
         target: workbench
         function onPermissionRequested() { permissionPopup.open() }
         function onModelSetupRequested() { onboarding.showSetup() }
+        function onModelEditRequested(rowId) { modelEditor.openFor(rowId) }
         function onHistoryRequested(rows) { codingHistory.rows = rows; codingHistory.open() }
     }
     Popup {
@@ -1022,7 +1080,7 @@ ApplicationWindow {
     }
     Shortcut { sequence: "Ctrl+N"; enabled: window.chatVisible && !reviseMessage.opened && !onboarding.opened; onActivated: controller.newSession() }
     Shortcut { sequence: "Ctrl+K"; enabled: window.chatVisible && !reviseMessage.opened && !onboarding.opened; onActivated: {search.forceActiveFocus(); search.selectAll()} }
-    Shortcut { sequence: "Escape"; enabled: controller.busy && !options.opened && !settings.opened && !wallpaperSettings.opened && !searchPanel.opened && !modelMenu.opened && !onboarding.opened && !localToolSetup.opened && !mediaModels.opened && !toolCatalog.opened; onActivated: controller.stop() }
+    Shortcut { sequence: "Escape"; enabled: controller.busy && !options.opened && !settings.opened && !wallpaperSettings.opened && !searchPanel.opened && !modelMenu.opened && !effortPicker.opened && !modelEditor.opened && !onboarding.opened && !localToolSetup.opened && !mediaModels.opened && !toolCatalog.opened; onActivated: controller.stop() }
     Connections {
         target: controller
         function onDraftChanged() { if (editor.text !== controller.draft) editor.text = controller.draft }

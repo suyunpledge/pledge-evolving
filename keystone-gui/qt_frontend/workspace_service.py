@@ -111,7 +111,8 @@ class WorkspaceService:
                 actions=[button('modelSetup', '添加或配置模型'), button('providerCatalog', '提供商目录'), button('reload', '重新读取')],
                 rows=[dict(id=r['id'], title=r['config'].get('modelLabel') or r['config'].get('model') or r['id'],
                     subtitle=(r['config'].get('baseURL') or r.get('name', '')) + (' · 已停用' if r.get('disabled') else ''),
-                    actions=[button('toggle', '启用' if r.get('disabled') else '停用')]) for r in rows if 'baseURL' in r['config']],
+                    actions=[button('editModel', '编辑'), button('toggle', '启用' if r.get('disabled') else '停用')])
+                    for r in rows if 'baseURL' in r['config']],
                 fields=[field('json', '高级配置', json.dumps(redact(rows), ensure_ascii=False, indent=2), 'code')])
             data['fields'][0]['advanced'] = True
             data['actions'].append(button('save', '保存高级配置'))

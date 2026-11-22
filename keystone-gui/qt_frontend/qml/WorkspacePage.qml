@@ -47,6 +47,7 @@ Item {
         if (action === "find") { findOpen = !findOpen; if (findOpen) findText.forceActiveFocus(); return }
         if (action === "reference") { referenceOpen = !referenceOpen; return }
         if (action === "saveAs") { savePicker.open(); return }
+        if (action === "editModel") { workbench.editModel(String((row || {}).id || "")); return }
         const payload = Object.assign({}, values, row || {})
         workbench.pageAction(pageKey, action, JSON.stringify(payload))
     }

@@ -101,6 +101,7 @@ class ChatController(QObject):
         self._switching_model = False
         self._model = str(self._prefs.get("model", "default"))
         self._reasoning = str(self._prefs.get("reasoning", "medium"))
+        self._effort_cache = {}
         desktop = {} if demo else self.store.read(desktop_config(Path(home)), {})
         port = desktop.get('gateway_port', 8799) if isinstance(desktop, dict) else 8799
         port = port if isinstance(port, int) and 1024 <= port <= 65535 else 8799
@@ -159,6 +160,11 @@ class ChatController(QObject):
     models = Property("QStringList", lambda self: self._models, notify=changed)
     modelSwitching = Property(bool, lambda self: self._switching_model, notify=changed)
     reasoning = Property(str, lambda self: self._reasoning, notify=changed)
+    # 思考强度随模型变化：只给当前模型可用的档位；所选档位不可用时按不超过它的最高档发送。
+    reasoningLevels = Property("QStringList", lambda self: self._effort_info()['levels'], notify=changed)
+    reasoningSupported = Property(bool, lambda self: self._effort_info()['supported'], notify=changed)
+    reasoningHint = Property(str, lambda self: self._effort_info()['hint'], notify=changed)
+    effectiveReasoning = Property(str, lambda self: self._effective_reasoning(), notify=changed)
     gateway = Property(str, lambda self: self._gateway, notify=changed)
     material = Property(float, lambda self: self._material, notify=changed)
     reduceMotion = Property(bool, lambda self: self._reduce_motion, notify=changed)
@@ -287,6 +293,7 @@ class ChatController(QObject):
     def setManagedModels(self, models):
         self._managed_models = list(models)
         self._models = self._managed_models or ["default"]
+        self._effort_cache.clear()
         self.changed.emit()
 
     @Slot()
@@ -301,6 +308,24 @@ class ChatController(QObject):
             return
         if models != self._managed_models:
             self.setManagedModels(models)
+
+    def _effort_info(self):
+        model = self._model
+        if model not in self._effort_cache:
+            from . import effort
+            info = effort.support(None)
+            if self._managed_models is not None and not self.demo:
+                from config_model import load_user_layer
+                try:
+                    info = effort.for_label(load_user_layer(self.store.home), model)
+                except (OSError, ValueError):
+                    pass
+            self._effort_cache[model] = info
+        return self._effort_cache[model]
+
+    def _effective_reasoning(self):
+        from . import effort
+        return effort.effective(self._reasoning, self._effort_info()['levels'])
 
     @Slot(str)
     def setReasoning(self, value):
@@ -602,7 +627,7 @@ class ChatController(QObject):
         self._persist()
         self.changed.emit()
         self.streamAdvanced.emit()
-        messages, model, effort = copy.deepcopy(self._history), self._model, self._reasoning
+        messages, model, effort = copy.deepcopy(self._history), self._model, self._effective_reasoning()
         client = self._client or self.factory(self._gateway)
         self._client = client
         authorize = self.tool_authorizer() if self.tool_authorizer is not None else None
