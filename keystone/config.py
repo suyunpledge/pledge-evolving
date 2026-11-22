@@ -103,7 +103,7 @@ class Row:
     disabled: bool = False
     inject: tuple[str, ...] = ()
     # 最后写入该行的层标签（2026-11-04 第三轮）：区分「bundle 默认」与
-    # 「用户层显式声明」——例如 base.json 里的 loop.maxSteps=12 是框架
+    # 「用户层显式声明」——例如 base.json 里的 loop.maxSteps 是框架
     # 默认值的另一种写法，不应抑制厂商画像的 steps_hint 自动适配。
     source: str = ""
 

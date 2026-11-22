@@ -40,6 +40,40 @@ def restore_config_secrets(edited, original):
     return edited
 
 
+def configured_steps(rows):
+    """The step limit the user set in their own layer; 0 (no limit) when they never set one."""
+    row = next((r for r in rows if r.get('id') == 'loop'), None)
+    value = (row or {}).get('config', {}).get('maxSteps', 0)
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def parse_max_steps(text):
+    text = str(text).strip()
+    if text in {'', '不限', '无', 'none', 'unlimited'}:
+        return 0
+    try:
+        value = int(text)
+    except ValueError:
+        value = -1
+    if not 0 <= value <= 1000:
+        raise ValueError('步数上限须为 0（不限）或 1–1000 的整数。')
+    return value
+
+
+def with_max_steps(rows, value):
+    """Copy of the user layer with loop.maxSteps set; other loop settings are kept."""
+    edited = copy.deepcopy(rows)
+    row = next((r for r in edited if r.get('id') == 'loop'), None)
+    if row is None:
+        row = {'id': 'loop', 'name': 'loop:core', 'config': {}}
+        edited.append(row)
+    row.setdefault('config', {})['maxSteps'] = value
+    return edited
+
+
 class WorkspaceService:
     def __init__(self, host):
         self.host = host
@@ -107,7 +141,9 @@ class WorkspaceService:
                 actions=[button('run', '开始任务'), button('cancel', '停止')])
         elif page == 'config':
             self.snapshots.setdefault(page, copy.deepcopy(rows))
-            data.update(hint='模型按行管理；图片与视频模型使用右上方的生成模型配置。高级配置支持原有 Keystone JSON 格式。',
+            steps = configured_steps(rows)
+            data.update(hint='模型按行管理；图片与视频模型使用右上方的生成模型配置。高级配置支持原有 Keystone JSON 格式。'
+                             '步数上限默认不限；填 1–1000 可限制每个任务最多调用多少次工具，填 0 或留空恢复不限。',
                 actions=[button('modelSetup', '添加或配置模型'), button('providerCatalog', '提供商目录'), button('reload', '重新读取')],
                 rows=[dict(id=r['id'], title=r['config'].get('modelLabel') or r['config'].get('model') or r['id'],
                     subtitle=(r['config'].get('baseURL') or r.get('name', '')) + (' · 已停用' if r.get('disabled') else ''),
@@ -115,7 +151,11 @@ class WorkspaceService:
                     for r in rows if 'baseURL' in r['config']],
                 fields=[field('json', '高级配置', json.dumps(redact(rows), ensure_ascii=False, indent=2), 'code')])
             data['fields'][0]['advanced'] = True
+            data['fields'].append(field('max_steps', f"步数上限（当前：{'不限' if steps == 0 else f'{steps} 步'}）",
+                                        str(steps)))
+            data['fields'][1]['advanced'] = True
             data['actions'].append(button('save', '保存高级配置'))
+            data['actions'].append(button('saveSteps', '保存步数上限'))
         elif page == 'agents':
             import sub_agent
             conf = sub_agent.load_config(self.home / 'agent-cluster.json')
@@ -232,6 +272,11 @@ class WorkspaceService:
                 edited = [restore_config_secrets(r, previous.get(r.get('id'))) for r in edited]
                 save_user_layer(self.home, edited, expected_rows=self.snapshots[page])
                 self.snapshots[page] = copy.deepcopy(edited)
+            elif action == 'saveSteps':
+                edited = with_max_steps(rows, parse_max_steps(values.get('max_steps', '')))
+                save_user_layer(self.home, edited, expected_rows=rows)
+                self.snapshots[page] = copy.deepcopy(edited)
+                self.host.emit('reset_form', page=page)
             elif action in {'modelSetup', 'providerCatalog'}:
                 self.host.emit('model_setup' if action == 'modelSetup' else 'provider_catalog', query='')
             if action in {'save', 'toggle'}:

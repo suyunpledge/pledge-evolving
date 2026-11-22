@@ -500,7 +500,9 @@ def apply_template(cfg, template: AgentTemplate, *, workspace: Path | None = Non
     user_set = loop_row is not None and str(loop_row.source) == USER_LAYER_NAME
     for key, value in template.loop.items():
         if user_set and key in loop_conf and int(loop_conf[key]) < value:
-            notes.append(f"loop.{key} 保持用户设定的 {loop_conf[key]}（模板建议 {value}）")
+            # maxSteps 0 is "no step limit": the user lifted the limit, so no role budget applies.
+            shown = "不限" if key == "maxSteps" and int(loop_conf[key]) <= 0 else loop_conf[key]
+            notes.append(f"loop.{key} 保持用户设定的 {shown}（模板建议 {value}）")
             continue
         loop_conf[key] = value
     cfg.apply_patch([{"id": "loop", "name": loop_row.name if loop_row and loop_row.name else "loop:core",

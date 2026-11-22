@@ -9,6 +9,7 @@ import unittest
 from keystone.agent_templates import get_template
 from .controller import ChatController
 from .conversation import MAX_TURNS, turn_limit
+from keystone.loop_limits import NO_STEP_LIMIT
 from .permissions import authorize
 from .test_backend import Gateway, until
 
@@ -136,12 +137,16 @@ class RolePermissionTests(unittest.TestCase):
 
     def test_turn_limit_uses_the_role_budget_under_the_users_ceiling(self):
         with tempfile.TemporaryDirectory() as home:
-            self.assertEqual(turn_limit(home), MAX_TURNS)
+            self.assertEqual(turn_limit(home), NO_STEP_LIMIT)
             self.assertEqual(turn_limit(home, get_template('fullstack')), 40)
             self.assertEqual(turn_limit(home, get_template('tutor')), 16)
             Path(home, 'keystone.patch.json').write_text(
                 json.dumps([{'id': 'loop', 'config': {'maxSteps': 9}}]), encoding='utf-8')
             self.assertEqual(turn_limit(home, get_template('fullstack')), 9)
+            # "No limit" set by the user (0) is also a ceiling: no role budget applies.
+            Path(home, 'keystone.patch.json').write_text(
+                json.dumps([{'id': 'loop', 'config': {'maxSteps': 0}}]), encoding='utf-8')
+            self.assertEqual(turn_limit(home, get_template('tutor')), NO_STEP_LIMIT)
 
 
 class RoleGuidanceTests(unittest.TestCase):
