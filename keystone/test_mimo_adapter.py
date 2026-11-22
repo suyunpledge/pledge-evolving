@@ -111,6 +111,29 @@ class MiMoAdapterTests(unittest.TestCase):
             self.assertEqual(shaped['thinking'], {'type': 'enabled' if requested else 'disabled'})
             self.assertEqual(plan['execution']['reasoning_default']['source'], 'request')
 
+    def test_light_planning_uses_json_mode_only_for_the_direct_flash_route(self):
+        captured = []
+        def opener(request, **kwargs):
+            captured.append(json.loads(request.data))
+            return io.BytesIO(b'{"choices":[{"message":{"role":"assistant","content":"ok"}}]}')
+        transport = model.HttpTransport(response_opener=opener)
+        provider = model.Provider('planner', BASE, default_model=MODEL)
+        inputs = [{'role': 'user', 'content': 'Plan the work.'}]
+        for form in ('json', 'json_repair', 'lines'):
+            transport.complete(provider, MODEL, inputs, coding_plan_format=form)
+            self.assertEqual(captured[-1]['thinking'], {'type': 'disabled'})
+            self.assertEqual(captured[-1].get('response_format'), None if form == 'lines' else {'type': 'json_object'})
+        transport.complete(provider, MODEL, inputs)
+        self.assertNotIn('response_format', captured[-1])
+        self.assertNotEqual(captured[-1].get('thinking'), {'type': 'disabled'})
+        provider.reasoning_mode = 'on'
+        transport.complete(provider, MODEL, inputs, coding_plan_format='json')
+        self.assertEqual(captured[-1]['thinking'], {'type': 'enabled'})
+        self.assertNotIn('response_format', captured[-1])
+        custom = model.Provider('custom', 'https://example.invalid/v1', default_model=MODEL)
+        transport.complete(custom, MODEL, inputs, coding_plan_format='json')
+        self.assertNotIn('response_format', captured[-1])
+
     def test_gateway_honours_same_reasoning_default(self):
         original = {'model': MODEL, 'messages': [{'role': 'user', 'content': 'hello'}]}
         direct, left = self.shape(original, reasoning_mode='off')

@@ -10,6 +10,12 @@ from keystone.secrets import redact
 
 def coding_output(event):
     kind = event.get('type')
+    if kind == 'planning_attempt':
+        phase = {'json': '首次规划', 'json_repair': 'JSON 格式重试', 'lines': '逐行规划恢复'}[event['format']]
+        status = {'accepted': '已采用', 'invalid_json': 'JSON 无效', 'invalid_format': '字段无效',
+                  'original_task': '清单无法解析，已按用户原任务继续',
+                  'failed': '未完成'}[event['status']]
+        return f"[{phase}] {event['elapsed_ms'] / 1000:.2f}s · {status}\n"
     if kind == 'model_request_timing':
         header = event.get('headers_ms')
         first = f"响应头 {header / 1000:.1f}s" if header is not None else "未收到响应头"

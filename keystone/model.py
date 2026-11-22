@@ -666,6 +666,17 @@ class HttpTransport:
         for key in ("reasoning_effort", "thinking", "thinking_budget", "enable_thinking", "service_tier", "tool_choice"):
             if key in options:
                 payload[key] = copy.deepcopy(options[key])
+        # Verified on the direct MiMo Flash token-plan endpoint. A low-level
+        # plan needs short labels; keep explicit provider reasoning choices.
+        plan_form = options.get('coding_plan_format')
+        if (plan_form in ('json', 'json_repair', 'lines') and provider.adapt and provider.wire == 'openai'
+                and model == 'mimo-v2.6-flash' and provider.reasoning_mode in ('auto', 'off')
+                and provider.think_budget is None and not options.get('tools')
+                and url == 'https://token-plan-cn.xiaomimimo.com/v1/chat/completions'):
+            payload['thinking'] = {'type': 'disabled'}
+            payload['temperature'] = 0
+            if plan_form != 'lines':
+                payload['response_format'] = {'type': 'json_object'}
         if "reasoning_effort" in payload and "thinking_budget" in payload:
             raise BadRequest("reasoning_effort and thinking_budget cannot be combined")
         # 厂商适配器规划：适配器（adapters.py）不只看「要不要打标记」，
