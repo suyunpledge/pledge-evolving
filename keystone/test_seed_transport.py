@@ -71,6 +71,20 @@ class SeedTransportTests(unittest.TestCase):
         self.assertEqual(self.connections, [CONNECT_TIMEOUT])
         self.assertEqual(self.server.bodies, [b'200'] * 2)
 
+    def test_handshake_failure_only_shortens_the_retryable_first_connect(self):
+        from .seed_transport import FIRST_CONNECT_TIMEOUT
+        request = Request(CHAT_URL, data=b'200')
+        with patch.object(http.client.HTTPConnection, 'connect', side_effect=TimeoutError('handshake')):
+            with self.assertRaises(SeedConnectFailed), self.pool.open(
+                    request, timeout=90, probe_reuse=True):
+                self.fail('the HTTP request must not start')
+        self.assertEqual(self.server.bodies, [])
+        with self.pool.open(request, timeout=90, probe_reuse=False) as response:
+            self.assertEqual(response.fp.raw._sock.gettimeout(), 90)
+            response.read()
+        self.assertEqual(self.connections, [FIRST_CONNECT_TIMEOUT, CONNECT_TIMEOUT])
+        self.assertEqual(self.server.bodies, [b'200'])
+
     def test_incomplete_body_errors_and_redirects_retire_socket(self):
         with self.open(timeout=2) as response:
             self.assertEqual(response.read(1), b'd')

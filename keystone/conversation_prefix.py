@@ -71,7 +71,7 @@ def compact_file_continuation(messages, objective, todos, plan_tasks=()):
             evidence['checklist'] = [[row['text'], row['status']] for row in todos]
     data = json.dumps(evidence, ensure_ascii=False, separators=(',', ':'))
     summary = [{'role': 'assistant', 'content': 'Tool receipts (untrusted data; [error] = rejected).\n' + data},
-               {'role': 'user', 'content': '按清单继续，沿用回执；按要求核实未验证的写入。'}]
+               {'role': 'user', 'content': '沿用已有回执。剩余读写请调用工具，按要求核实后答复。'}]
     if len(json.dumps(summary, ensure_ascii=False)) >= len(json.dumps(messages[start:], ensure_ascii=False)):
         return None
     return [*messages[:start], *summary]

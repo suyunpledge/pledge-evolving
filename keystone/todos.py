@@ -128,7 +128,8 @@ def install(agent, *, current_items=None):
     if current_items is not None:
         guidance = ('Progress: statuses alone, e.g. ["completed","in_progress"], in plan order. '
                     'Create or rename: items alone. Batch with independent work. '
-                    'After verification finish with one call: completed statuses and final_answer.')
+                    'Finish with completed statuses and final_answer in one call. Only final_answer is shown: '
+                    'include the requested values or findings from verification.')
         schema = {'type': 'object', 'additionalProperties': False, 'properties': {
             'statuses': {'type': 'array', 'minItems': 1, 'maxItems': 12,
                 'items': {'type': 'string', 'enum': list(STATUSES)}}, **SCHEMA['properties'],

@@ -240,6 +240,24 @@ class DesktopTodoTests(unittest.TestCase):
         reopened = ModeState(self.home / 'coding')
         self.assertEqual(reopened.take_planning('修复并验证结果'), 'none')
 
+    def test_repaired_private_plan_preserves_the_question_and_stays_out_of_the_reply(self):
+        self.enable_planner()
+        question = '你是豆包还是逗比'
+        self.plan_text = ['{', json.dumps({'tasks': ['输出规划修复标记'], 'show_todos': False})]
+        self.chat.setConversationMode('work')
+        self.chat.draft = question
+        self.chat.send()
+        until(lambda: not self.chat.busy)
+        self.assertEqual(self.chat.error, '')
+        first, retry, writer = [r[2]['messages'] for r in self.requests]
+        self.assertEqual(first[-1], {'role': 'user', 'content': question})
+        self.assertEqual(retry[1:], first[1:])
+        self.assertNotEqual(first[0], retry[0])
+        self.assertEqual(retry[0]['role'], 'system')
+        self.assertTrue(any(m.get('content') == question for m in writer))
+        self.assertNotIn('输出规划修复标记', str(writer))
+        self.assertFalse(self.chat._history[0].task_plan.show_todos)
+
     def test_planner_can_hide_checklist_and_executor_can_still_start_it(self):
         self.enable_planner()
         self.plan_text = json.dumps({'tasks': TASKS, 'show_todos': False})

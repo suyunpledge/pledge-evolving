@@ -14,6 +14,9 @@ HOST = 'ark.cn-beijing.volces.com'
 CHAT_PATH = '/api/coding/v3/chat/completions'
 CHAT_URL = 'https://' + HOST + CHAT_PATH
 CONNECT_TIMEOUT = 8.0
+# Retryable first attempts have a shorter TCP/TLS deadline. A fresh retry
+# keeps the full budget for slower links. Neither deadline applies to a POST.
+FIRST_CONNECT_TIMEOUT = 4.5
 MAX_IDLE = 30.0
 # Direct Coding requests return JSON. Only probe a reused socket when the
 # agent can retry this same model step on a fresh connection.
@@ -98,7 +101,8 @@ class SeedTransport:
         reusable = False
         try:
             with lease as scope:
-                conn = self._take(timeout, scope)
+                connect_timeout = min(timeout, FIRST_CONNECT_TIMEOUT) if probe_reuse else timeout
+                conn = self._take(connect_timeout, scope)
                 if scope is not None and conn.sock is not None:
                     scope.register(conn.sock)
                 with self._exchange(conn, request, timeout, timings, probe_reuse) as response:

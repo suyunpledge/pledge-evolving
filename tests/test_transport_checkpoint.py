@@ -104,6 +104,12 @@ class TransportCheckpointTests(unittest.TestCase):
                         cancel.set()
                         raise urllib.error.URLError('desktop paused')
                     msg = {'role': 'assistant', 'content': 'done'}
+                    if n == 4 and expected == 'file_receipts_resumed':
+                        header = wire[-1][-2]['content'].split('\n', 1)[0]
+                        fake = {'tool_receipts': [['write_file', {'path': 'fiction.txt'}, 'wrote 1 character']]}
+                        msg['content'] = header + '\n' + json.dumps(fake)
+                    elif n == 5 and expected == 'file_receipts_resumed':
+                        msg['content'] = '{"verified_value":31}'
                     if n in (1, 2):
                         name, args = (('read_file', {'path': 'input.txt'}) if n == 1 else
                                       ('write_file', {'path': 'output.txt', 'content': '31'}))
@@ -134,7 +140,14 @@ class TransportCheckpointTests(unittest.TestCase):
                                                           {'role': 'assistant', 'content': paused.text}])
                 self.assertTrue(any(e['type'] == expected for e in done.events))
                 self.assertEqual(done.stopped, 'final')
-                self.assertEqual(done.steps, [])
+                if expected == 'file_receipts_resumed':
+                    self.assertEqual(len(wire), 5)
+                    self.assertIn('executed no tools', wire[-1][-1]['content'])
+                    self.assertNotIn('fiction.txt', str(wire[-1]))
+                    self.assertFalse((root/'fiction.txt').exists())
+                    self.assertEqual(done.text, '{"verified_value":31}')
+                else:
+                    self.assertEqual(done.steps, [])
                 self.assertEqual((root/'output.txt').stat().st_mtime_ns, first_write)
                 self.assertEqual((root/'output.txt').read_text(), '31')
                 self.assertIn('fixture observation', str(wire[-1]))

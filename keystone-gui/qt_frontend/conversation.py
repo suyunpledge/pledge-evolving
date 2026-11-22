@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from keystone.execution_guard import ExecutionGuard
+from keystone.planning import task_planning_level
 from keystone import todos
 from keystone.secrets import redact
 from keystone_client import ChatMessage, GatewayError, GenerationCancelled, ModelStreamInterrupted
@@ -177,8 +178,16 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
             + json.dumps(task.todos or [], ensure_ascii=False))
 
     def execution_messages():
-        current = [replace(m, content=m.content + '\n\n' + m.task_plan.context())
-                if m.role == 'user' and m.task_plan else m for m in messages]
+        current = list(messages)
+        for i, m in enumerate(current):
+            if m.role != 'user' or not m.task_plan:
+                continue
+            # A private low-level plan for a simple turn is planner metadata.
+            # This also protects conversations saved before repair prompts were isolated.
+            if (m.task_plan.level == 'low' and not m.task_plan.show_todos
+                    and task_planning_level('auto', 'none', m.user_text or m.content) == 'none'):
+                continue
+            current[i] = replace(m, content=m.content + '\n\n' + m.task_plan.context())
         if resuming:
             current.insert(resume_at, resume_note)
         if turn_context and turn_context.strip():

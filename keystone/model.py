@@ -91,7 +91,7 @@ class ModelCancelled(TransportError):
 
 
 class ReconnectSeed(TransportError):
-    """Retry this model step on a fresh connection after a failed header probe."""
+    """Retry this model step on a fresh connection after a connect or header failure."""
 
 
 def _model_wait(seconds, cancel_event=None):
@@ -699,7 +699,7 @@ class HttpTransport:
         request = urllib.request.Request(url, data=body, headers=headers, method="POST")
         from .http_transport import RequestCancelled, open_response
         from .request_timing import coding_request
-        from .seed_transport import CHAT_URL, SeedHeaderInterrupted
+        from .seed_transport import CHAT_URL, SeedConnectFailed, SeedHeaderInterrupted
         desktop = coding_request.get()
         wire_start = time.monotonic()
         timings = {}
@@ -765,6 +765,8 @@ class HttpTransport:
             raise ModelCancelled('已停止模型请求') from None
         except SeedHeaderInterrupted as exc:
             raise ReconnectSeed(f'{provider.name}: reused Seed connection failed before headers ({exc})') from None
+        except SeedConnectFailed as exc:
+            raise ReconnectSeed(f'{provider.name}: Seed connection failed before sending the request ({exc})') from None
         except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
             raise TransportError(f"{provider.name}: {exc!r}") from None
         except Exception as exc:

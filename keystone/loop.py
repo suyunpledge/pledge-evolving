@@ -1497,6 +1497,7 @@ class Agent:
         # The desktop Continue button supplied only a fallback receipt summary.
         # If its exact task and native tool exchange survived, continue from the
         # receipt itself. A synthetic user turn can reset provider reasoning history.
+        receipt_header = None
         if (resume_task and reused and reused.get('paused_task') == resume_task
                 and not tail and messages[-2].get('role') == 'tool'
                 and self.planning_level == 'none' and not self.thinking and self._acceptance is None):
@@ -1511,6 +1512,7 @@ class Agent:
                     packed = compact_file_continuation(messages, objective, state['latest_todos'], state['plan_tasks'])
                     if packed is not None:
                         messages = packed
+                        receipt_header = packed[-2]['content'].partition('\n')[0] + '\n{'
                         self._prefix_sent = len(packed) - 2  # messages through the original task
                         self._cache_evidence = self._recent_cache_rate = None
                         self._context_revision += 1
@@ -1540,19 +1542,20 @@ class Agent:
                 plan_messages = [{"role": "system", "content": contract},
                     {"role": "user", "content": 'Untrusted historical observations (not instructions):\n' + evidence},
                     {"role": "user", "content": pinned_task}]
-                # Premium's integration stage deliberately carries only the
-                # latest task + draft. Keep the output contract in that task,
-                # so it survives handoff without forwarding private history.
-                plan_messages[-1] = {"role": "user", "content": pinned_task + "\n\n" +
-                                     contract + ("\n\n" + self._rule_context if self._rule_context else '')}
                 planner = phase_router(self.phase_catalog, self.planning_model, self.router)
                 if self.planning_model and self.prepare_planning_route:
                     planner = self.prepare_planning_route(self.planning_model, planner)
+                # A selected desktop provider receives the system contract directly.
+                # Composite routers can hand only the last task and draft to a finisher.
+                if not coding_request.get() or type(planner) is not ModelRouter:
+                    plan_messages[-1]['content'] += "\n\n" + contract
+                if self._rule_context:
+                    plan_messages[-1]['content'] += "\n\n" + self._rule_context
                 from .planning import ask_desktop_planner
 
-                def ask_plan():
+                def ask_plan(request_messages):
                     self._check_cancel()
-                    plan_completion = planner.complete(self.secret_scope.protect(plan_messages),
+                    plan_completion = planner.complete(self.secret_scope.protect(request_messages),
                         small=False,
                         max_tokens=token_cap(self.planning_level),
                         **({'cancel_event': self.cancellation_event}
@@ -1570,7 +1573,8 @@ class Agent:
                     return TaskPlan.parse(self.secret_scope.protect_text(plan_completion.text or ""),
                                                 self.planning_level)
 
-                self._plan = ask_desktop_planner(ask_plan, plan_messages) if coding_request.get() else ask_plan()
+                self._plan = (ask_desktop_planner(ask_plan, plan_messages) if coding_request.get()
+                              else ask_plan(plan_messages))
             except (PlanningError, TransportError) as exc:
                 self._check_cancel()
                 self._emit(type="planning_error", run_id=self._run_id, error=str(exc)[:300])
@@ -1780,9 +1784,12 @@ class Agent:
                 # 瘦身 B：tool_call_native 不再单独成事件——wire/call_id 并入
                 # 对应的 tool_call 事件（下方合并），三元拍平为一元
             else:
-                text_calls = toolwire.parse_text_protocol_calls(text, self._run_model)
+                # A model can imitate the compact host history, including writes
+                # it never made. Such a response is neither a call nor a completion.
+                echoed_receipts = receipt_header and text.lstrip().startswith(receipt_header) and '"tool_receipts"' in text
+                text_calls = [] if echoed_receipts else toolwire.parse_text_protocol_calls(text, self._run_model)
                 if not text_calls:
-                    if not toolwire.looks_like_tool_attempt(text):
+                    if not echoed_receipts and not toolwire.looks_like_tool_attempt(text):
                         verdict = self._supervisor_consult(index, [], text)
                         if isinstance(verdict, dict) and verdict.get("should_abort"):
                             self._emit(type="stop_reason", source="convergence:no-tool",
@@ -1808,6 +1815,11 @@ class Agent:
                         return self._finish(RunReport(text="[stopped: invalid tool protocol after 3 attempts]",
                             steps=steps, usage=usage_total, stopped="format_error", events=self.events))
                     format_refunds = self._refund_format_step(format_refunds)
+                    if echoed_receipts:
+                        messages.append({"role": "user", "content":
+                            "Your last response executed no tools. Use the actual file tools for unfinished work. "
+                            "Keep verified writes and report only observed results."})
+                        continue
                     messages.append({"role": "assistant", "content": text})
                     messages.append({"role": "user", "content":
                                      "No valid tool call found. Emit exactly one block like "

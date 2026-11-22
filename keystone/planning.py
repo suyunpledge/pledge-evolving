@@ -42,11 +42,13 @@ class PlanningSyntaxError(PlanningError):
 
 def ask_desktop_planner(ask, messages):
     try:
-        return ask()
+        return ask(messages)
     except PlanningSyntaxError:
-        messages.append({'role': 'user', 'content': '上一份规划的 JSON 无法解析。请用短句重新生成同一任务的规划，'
-                         '只输出要求的 JSON 对象，字符串中的双引号须转义。'})
-        return ask()
+        # The final user message remains the original task on both attempts.
+        system, *history = messages
+        repair = ('\nYour previous planner response was malformed. Return valid plan JSON. '
+                  'Keep serialization instructions out of the task list and user-facing answer.')
+        return ask([{**system, 'content': system['content'] + repair}, *history])
 
 
 def planning_level(value):

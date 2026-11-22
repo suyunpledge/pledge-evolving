@@ -94,9 +94,9 @@ class PhaseClient:
                       *[m.to_dict(self.scope) for m in messages if m.role in {'user', 'assistant'}]]
             usage = {'prompt_tokens': 0, 'completion_tokens': 0, 'requests': []}
 
-            def ask():
+            def ask(request_messages):
                 result = self._call(lambda: self.router.complete(
-                    self.scope.protect(inputs), small=False, max_tokens=token_cap(level)))
+                    self.scope.protect(request_messages), small=False, max_tokens=token_cap(level)))
                 usage['prompt_tokens'] += result.usage.prompt_tokens
                 usage['completion_tokens'] += result.usage.completion_tokens
                 usage['requests'].extend(result.requests)
