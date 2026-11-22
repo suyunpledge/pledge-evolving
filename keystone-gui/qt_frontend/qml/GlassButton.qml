@@ -48,6 +48,7 @@ AbstractButton {
             width: visible ? (content.compact ? 14 : 17) : 0; height: content.compact ? 14 : 17
             anchors.verticalCenter: parent.verticalCenter
             name: control.glyph; ink: control.glyphInk
+            glowing: control.selected || control.primary
         }
         Text {
             text: control.text

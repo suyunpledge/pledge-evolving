@@ -61,24 +61,27 @@ ApplicationWindow {
     }
 
     readonly property var wallpaper: workbench.wallpaper
+    readonly property bool hasWallpaper: window.wallpaper.kind !== ""
     readonly property string ambientMode: window.codingVisible ? "code" : (window.conversationOnly ? "chat" : "work")
     onAmbientModeChanged: Qt.callLater(refreshBackdrop)
     // Keep the static ambient capture separate from changing page content.
     Item {
         id: ambient
         anchors.fill: parent
+        Rectangle { anchors.fill: parent; color: Theme.bgBase }
         ShaderEffect {
+            id: auroraShader
             anchors.fill: parent
-            visible: gpuEnabled
+            visible: gpuEnabled && !stillWallpaper.loaded && !motionWallpaper.active
             property vector2d canvasSize: Qt.vector2d(width, height)
             property real modeAccent: window.codingVisible ? 1.0 : 0.0
             fragmentShader: "../shaders/ambient.frag.qsb"
         }
-        Rectangle { anchors.fill: parent; visible: !gpuEnabled; color: Theme.bgFallback }
+        Rectangle { anchors.fill: parent; visible: !gpuEnabled && !stillWallpaper.loaded && !motionWallpaper.active; color: Theme.bgFallback }
         DreamyBackdrop {
             id: dreamyBackdrop
             anchors.fill: parent
-            visible: !stillWallpaper.loaded && window.wallpaper.kind === "none"
+            visible: !window.hasWallpaper && !stillWallpaper.loaded && !motionWallpaper.active
             sideInset: window.sideWidth
             mode: window.ambientMode
             onPainted: Qt.callLater(window.refreshBackdrop)
@@ -281,6 +284,7 @@ ApplicationWindow {
             }
         }
         Rectangle {
+            visible: !window.hasWallpaper
             x: window.sideWidth + 1; y: 0
             width: window.mainRight - window.sideWidth - 1; height: 74
             gradient: Gradient {
@@ -903,14 +907,14 @@ ApplicationWindow {
         }
     }
     Rectangle {
-        visible: window.codingVisible; width: window.mainRight; height: 39; color: "#202328"
+        visible: window.codingVisible; width: window.mainRight; height: 39; color: "#151b26"
         RowLayout {
             anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 8; spacing: 4
             Image { source: brandUrl; Layout.preferredWidth: 20; Layout.preferredHeight: 20 }
-            Text { text: "Keystone"; color: "#e3e7ed"; font.pixelSize: 13; font.weight: Font.DemiBold; rightPadding: 10 }
+            Text { text: "Keystone"; color: "#e8edf5"; font.pixelSize: 13; font.weight: Font.DemiBold; rightPadding: 10 }
             IdeButton { text: "Chat"; enabled: !controller.busy; onClicked: { controller.setConversationMode("chat"); workbench.navigate("chat") } }
             IdeButton { text: "Work"; enabled: !controller.busy; onClicked: { controller.setConversationMode("work"); workbench.navigate("chat") } }
-            Text { text: "Code"; color: "#c1dafb"; font.pixelSize: 12; leftPadding: 6; rightPadding: 6 }
+            Text { text: "Code"; color: "#9bc6ff"; font.pixelSize: 12; font.weight: Font.DemiBold; leftPadding: 6; rightPadding: 6 }
             Item { Layout.fillWidth: true }
             IdeButton { glyph: "search"; text: "快速打开文件    Ctrl+P"; selected: true; enabled: workbench.nativePageReady && !workbench.busy; onClicked: window.quickFileRequested() }
             Item { Layout.fillWidth: true }
@@ -918,7 +922,7 @@ ApplicationWindow {
             IdeButton { glyph: "message-square"; text: "AI 对话"; selected: window.agentPaneOpen; onClicked: window.agentPaneOpen = !window.agentPaneOpen }
             IdeButton { glyph: "settings-2"; tip: "连接与外观"; onClicked: settings.open() }
         }
-        Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: "#343940" }
+        Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: "#263142" }
     }
     Item {
         id: nativePage; objectName: "nativePage"

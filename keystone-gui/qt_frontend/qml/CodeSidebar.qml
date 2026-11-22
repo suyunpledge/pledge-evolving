@@ -17,7 +17,7 @@ Rectangle {
     readonly property string rootPath: viewData.hint || ""
     signal action(string key, var args)
     signal picked(var entry)
-    color: "#212429"; clip: true
+    color: "#151b26"; clip: true
     function explorer() {
         mode = "explorer"
         Qt.callLater(() => tree.forceActiveFocus())

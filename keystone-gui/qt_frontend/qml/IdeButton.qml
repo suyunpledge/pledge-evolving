@@ -7,7 +7,7 @@ AbstractButton {
     property string glyph: ""
     property string tip: ""
     property bool selected: false
-    property color iconColor: selected ? "#e1ebf9" : "#aeb8c5"
+    property color iconColor: selected ? "#8ec0ff" : (hovered ? "#dce6f4" : "#9aa8bc")
     implicitHeight: 28
     implicitWidth: text ? content.implicitWidth + 18 : 30
     hoverEnabled: true
@@ -18,15 +18,15 @@ AbstractButton {
     ToolTip.visible: hovered && !!tip
     ToolTip.delay: 500
     background: Rectangle {
-        radius: 3
-        color: control.down ? "#39414c" : control.selected ? "#303842" : control.hovered ? "#292e35" : "transparent"
+        radius: 5
+        color: control.down ? "#334660" : control.selected ? "#26364d" : control.hovered ? "#212b3a" : "transparent"
         border.width: control.visualFocus ? 1 : 0; border.color: "#72aaf2"
     }
     contentItem: Item {
         implicitWidth: content.implicitWidth
         RowLayout {
             id: content; anchors.centerIn: parent; spacing: 6
-            Glyph { visible: !!control.glyph; name: control.glyph; ink: control.iconColor; Layout.preferredWidth: 16; Layout.preferredHeight: 16 }
+            Glyph { visible: !!control.glyph; name: control.glyph; ink: control.iconColor; glowing: control.selected; Layout.preferredWidth: 16; Layout.preferredHeight: 16 }
             Text { visible: !!control.text; text: control.text; color: "#d0d6de"; font.pixelSize: 12 }
         }
     }

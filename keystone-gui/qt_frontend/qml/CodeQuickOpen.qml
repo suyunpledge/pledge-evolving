@@ -16,7 +16,7 @@ Popup {
     width: Math.min(580, parent.width - 48)
     padding: 8; modal: true; dim: false; focus: true
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-    background: Rectangle { color: "#252931"; border.color: "#48505d"; radius: 6 }
+    background: Rectangle { color: "#181f2b"; border.color: "#35455e"; radius: 10 }
     function schedule() {
         ++ticket
         rows = []
@@ -54,7 +54,7 @@ Popup {
             Layout.fillWidth: true; Layout.preferredHeight: 33
             placeholderText: "按名称或路径搜索文件"; color: "#e1e6ee"; placeholderTextColor: "#939eac"
             leftPadding: 10; selectByMouse: true
-            background: Rectangle { radius: 3; color: "#191d22"; border.color: "#6c9fe2" }
+            background: Rectangle { radius: 6; color: "#111620"; border.color: "#5b9bf8" }
             onTextChanged: if (picker.opened) picker.schedule()
             Keys.onDownPressed: choices.currentIndex = Math.min(choices.count - 1, choices.currentIndex + 1)
             Keys.onUpPressed: choices.currentIndex = Math.max(0, choices.currentIndex - 1)
@@ -73,7 +73,7 @@ Popup {
                 id: option; required property int index; required property var modelData
                 width: choices.width; height: 30; leftPadding: 8; rightPadding: 12
                 Accessible.name: modelData.relative
-                background: Rectangle { radius: 3; color: option.ListView.isCurrentItem ? "#304560" : option.hovered ? "#323944" : "transparent" }
+                background: Rectangle { radius: 5; color: option.ListView.isCurrentItem ? "#2b4364" : option.hovered ? "#253042" : "transparent" }
                 contentItem: RowLayout {
                     Glyph { name: "file-code"; ink: "#8db4db"; Layout.preferredWidth: 15; Layout.preferredHeight: 15 }
                     Text { text: option.modelData.name; color: "#e1e6ec"; font.pixelSize: 13; elide: Text.ElideRight; Layout.maximumWidth: choices.width * 0.55 }

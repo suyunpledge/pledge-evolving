@@ -674,10 +674,14 @@ class ChatController(QObject):
     def formatCode(self, quick_document):
         from .code_highlighter import CodeHighlighter
         document = quick_document.textDocument()
-        key = id(document)
+        if document is None:
+            return
+        key = id(quick_document)
         if key not in self._code_highlighters:
-            self._code_highlighters[key] = CodeHighlighter(document)
-            document.destroyed.connect(lambda: self._code_highlighters.pop(key, None))
+            highlighter = CodeHighlighter(document)
+            self._code_highlighters[key] = (highlighter, document)
+            document.destroyed.connect(lambda _obj=None, k=key: self._code_highlighters.pop(k, None))
+            highlighter.rehighlight()
 
     @Slot(QObject, int, int, str)
     def replaceCodeSelection(self, quick_document, start, end, replacement):
@@ -831,6 +835,7 @@ class ChatController(QObject):
             path = path.with_name("info.svg")
         try:
             svg = path.read_text(encoding="utf-8").replace("currentColor", color)
+            svg = svg.replace('stroke-width="2"', 'stroke-width="1.75"')
             return "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode("ascii")
         except OSError:
             return ""

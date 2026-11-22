@@ -18,7 +18,7 @@ Rectangle {
     property int historyIndex: -1
     property string savedDraft: ""
     property bool follow: true
-    color: "#1c1e22"
+    color: "#121721"
     function switchInput() {
         const selected = workbench.activeTerminal
         if (displayedId === selected) return
@@ -77,7 +77,7 @@ Rectangle {
     ColumnLayout {
         anchors.fill: parent; spacing: 0
         Rectangle {
-            Layout.fillWidth: true; Layout.preferredHeight: 35; color: "#202328"
+            Layout.fillWidth: true; Layout.preferredHeight: 35; color: "#151b26"
             RowLayout {
                 anchors.fill: parent; anchors.leftMargin: 9; anchors.rightMargin: 5; spacing: 3
                 Repeater {
