@@ -10,6 +10,12 @@ from keystone.secrets import redact
 
 def coding_output(event):
     kind = event.get('type')
+    if kind == 'model_request_timing':
+        header = event.get('headers_ms')
+        first = f"响应头 {header / 1000:.1f}s" if header is not None else "未收到响应头"
+        return f"[{event['model']}] {first} · 请求 {event['elapsed_ms'] / 1000:.1f}s · {event['status']}\n"
+    if kind == 'model_retry':
+        return f"[模型重试] 第 {event['step']} 步，等待 {event['wait_seconds']:g}s 后重试\n"
     if kind == 'test_started':
         return f"\n[项目测试] {event.get('command', '')}\n"
     if kind == 'test_result':

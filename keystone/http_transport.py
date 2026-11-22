@@ -107,6 +107,30 @@ def _connection(scope, connection_type, host, **kwargs):
     return connection
 
 
+@contextmanager
+def cancellable_https(cancel_event):
+    """Lease one socket to a cancellation watcher until the request releases it."""
+    scope = _Scope(cancel_event)
+    scope.check()
+    watcher = threading.Thread(target=scope.watch, daemon=True, name="Keystone-https-cancel")
+    watcher.start()
+    try:
+        yield scope
+        scope.check()
+    except (OSError, http.client.HTTPException):
+        scope.check()
+        raise
+    finally:
+        with scope.lock:
+            scope.done.set()
+            scope.sock = None
+        watcher.join(.2)
+
+
+def scoped_https_connection(scope, host, timeout):
+    return _connection(scope, _HTTPSConnection, host, timeout=timeout)
+
+
 class _HTTPHandler(urllib.request.HTTPHandler):
     def __init__(self, scope):
         super().__init__()

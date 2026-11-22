@@ -39,6 +39,23 @@ class ReadinessTests(unittest.TestCase):
     def settings(self, rows, home=None):
         ((home or self.host)/'keystone.patch.json').write_text(json.dumps(rows), encoding='utf-8')
 
+    def test_retryable_model_failure_keeps_resume_but_fatal_error_does_not(self):
+        from keystone.model import BadRequest, TransportError
+        self.runtime.initialize(self.project)
+        router = self.runtime.bridge.router
+        router.retries_per_provider = 0
+        with (patch.object(self.runtime.bridge.agent, '_model_retry_wait', return_value=0),
+              patch.object(router.transport, 'complete', side_effect=[
+                  TransportError('disconnect'), TransportError('disconnect'), ('done', Usage(1, 1)),
+                  BadRequest('invalid request')])):
+            first = self.runtime.run('Report status', planning='none')
+            self.assertTrue(first['can_resume'])
+            final = self.runtime.run('Report status', planning='none', resume_task=first['task_id'])
+            self.assertTrue(final['ok'])
+            self.assertEqual(final['task_id'], first['task_id'])
+            fatal = self.runtime.run('Next task', planning='none')
+            self.assertFalse(fatal['can_resume'])
+
     def test_legacy_host_file_and_credentials_refresh_without_exporting_secrets(self):
         self.rows[0]['config']['apiKey'] = {'$expr': "get('env.FORGE_WRITER_KEY', '')"}
         self.settings(self.rows)

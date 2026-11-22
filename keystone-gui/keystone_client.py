@@ -43,6 +43,7 @@ class ChatMessage:
     todos: list | None = None  # Latest checklist for this user turn, including interrupted turns.
     task_plan: TaskPlan | None = None
     interrupted: bool = False
+    requested_planning: str | None = None
 
     def to_dict(self, secret_scope=None) -> dict:
         d: dict = {"role": self.role, "content": self.content}
@@ -58,6 +59,8 @@ class ChatMessage:
 
     def to_session_dict(self) -> dict:
         data = self.to_dict()
+        if self.role == "user" and self.requested_planning is not None:
+            data["requested_planning"] = self.requested_planning
         if self.role == "user" and self.todos:
             data["todos"] = self.todos
         if self.role == "user" and self.task_plan:
@@ -99,6 +102,8 @@ class ChatMessage:
                    reasoning_content=str(data.get("reasoning_content") or ""),
                    user_text=text, attachment_names=names,
                    todos=saved_todos, task_plan=plan,
+                   requested_planning=data.get('requested_planning') if data['role'] == 'user'
+                       and data.get('requested_planning') in ('none', 'low', 'medium', 'high') else None,
                    interrupted=data['role'] == 'user' and data.get('interrupted') is True,
                    responses_replay=replay_items(data.get("responses_replay")),
                    steps=[s for s in data["steps"][-128:] if isinstance(s, dict)

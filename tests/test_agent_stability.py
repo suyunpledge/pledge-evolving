@@ -188,10 +188,12 @@ class AgentStabilityTests(unittest.TestCase):
         self.assertIn('_raw', router.requests[1][-2]['content'][0]['input'])
 
     def test_failed_child_is_not_a_successful_tool_result(self):
-        child_router = Router([TransportError('offline provider unavailable')])
+        child_router = Router([TransportError('offline provider unavailable') for _ in range(2)])
         agent, _ = self.agent([text_call('spawn_subagent', {'task': 'inspect'}), 'child failed'],
                               child_router_factory=lambda *a: child_router)
-        report = agent.run('delegate inspection')
+        with patch.object(Agent, '_model_retry_wait', return_value=0):
+            report = agent.run('delegate inspection')
+        self.assertEqual(len(child_router.requests), 2)
         self.assertEqual(report.steps[0].decision, 'error')
         self.assertEqual(report.steps[0].meta['child_outcome'], 'failed')
         self.assertEqual(report.steps[0].meta['execution_state'], 'completed')

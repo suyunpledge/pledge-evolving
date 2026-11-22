@@ -648,6 +648,15 @@ ApplicationWindow {
             Text { text: "事前规划"; color: Theme.textSecondary; font.pixelSize: 12 }
             Row {
                 spacing: 7
+                Repeater { model: [{key:"auto",label:"自动判断"},{key:"manual",label:"手动开启"}]
+                    GlassButton { required property var modelData; material: window.material; width: 124; text: modelData.label
+                        selected: controller.planning.policy === modelData.key; enabled: !controller.busy
+                        onClicked: controller.planning.save("policy", modelData.key) }
+                }
+            }
+            Text { text: controller.planning.policy === "auto" ? "多步骤或复杂任务先规划，简单任务直接执行。" : "下一条消息的规划"; color: Theme.textSecondary; font.pixelSize: 12 }
+            Row {
+                visible: controller.planning.policy === "manual"; spacing: 7
                 Repeater { model: [{key:"none",label:"关闭"},{key:"low",label:"简要"},{key:"medium",label:"标准"},{key:"high",label:"深入"}]
                     GlassButton { required property var modelData; material: window.material; width: 70; text: modelData.label
                         selected: controller.planning.level === modelData.key; enabled: !controller.busy

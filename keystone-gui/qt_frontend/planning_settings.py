@@ -7,8 +7,8 @@ from urllib.parse import urlsplit
 from PySide6.QtCore import QObject, Property, Signal, Slot
 from config_model import load_user_layer, save_user_layer
 from keystone.phase_models import model_pair
-from keystone.planning import planning_level
-from phase_client import PhaseClient, apply_planning_key, model_catalog, planning_key_id, planning_selection
+from keystone.planning import planning_level, planning_policy, task_planning_level
+from phase_client import PhaseClient, apply_planning_key, model_catalog, planning_config, planning_key_id, planning_selection
 import secret_store
 
 
@@ -35,12 +35,14 @@ class PlanningSettings(QObject):
         self.home = home
         self._preview_rows = [] if parent.demo else None
         self._level, self._model, self._options = 'none', '', []
+        self._policy = 'manual'
         self._endpoint, self._has_key = '', False
 
     def _rows(self):
         return self._preview_rows if self._preview_rows is not None else load_user_layer(self.home)
 
     level = Property(str, lambda s: s._level, notify=changed)
+    policy = Property(str, lambda s: s._policy, notify=changed)
     model = Property(str, lambda s: s._model, notify=changed)
     options = Property('QVariantList', lambda s: s._options, notify=changed)
     endpoint = Property(str, lambda s: s._endpoint, notify=changed)
@@ -62,6 +64,7 @@ class PlanningSettings(QObject):
         try:
             rows = self._rows()
             level, pair = planning_selection(rows)
+            self._policy = planning_policy(planning_config(rows).get('policy', 'manual'))
             self._level, self._model = level, json.dumps(pair) if pair else ''
             self._endpoint = self._address(rows, pair)
             self._has_key = bool(self._endpoint and self._preview_rows is None and
@@ -106,6 +109,8 @@ class PlanningSettings(QObject):
             rows = copy.deepcopy(latest)
             if key == 'level':
                 value = planning_level(value)
+            elif key == 'policy':
+                value = planning_policy(value)
             elif key == 'model':
                 value = model_pair(json.loads(value)) if value else None
                 if value and value not in dict(model_catalog(rows)):
@@ -118,6 +123,8 @@ class PlanningSettings(QObject):
                 rows.append(row)
             row.pop('disabled', None)
             row.setdefault('config', {})[key] = value
+            if key == 'policy' and value != self._policy:
+                row['config']['level'] = 'none'
             if self._preview_rows is not None:
                 self._preview_rows = rows
             else:
@@ -125,3 +132,18 @@ class PlanningSettings(QObject):
             self.refresh()
         except (ValueError, OSError) as exc:
             self.failed.emit(str(exc))
+
+    def take_level(self, text):
+        latest = self._rows()
+        cfg = planning_config(latest)
+        policy = cfg.get('policy', 'manual')
+        level = task_planning_level(policy, cfg.get('level', 'none'), text)
+        if policy == 'manual' and level != 'none':
+            rows = copy.deepcopy(latest)
+            planning_config(rows)['level'] = 'none'
+            if self._preview_rows is not None:
+                self._preview_rows = rows
+            else:
+                save_user_layer(self.home, rows, expected_rows=latest)
+            self.refresh()
+        return level

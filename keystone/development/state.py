@@ -9,7 +9,7 @@ import tempfile
 import threading
 
 from keystone.phase_models import model_pair
-from keystone.planning import planning_level
+from keystone.planning import planning_level, planning_policy, task_planning_level
 from keystone.secrets import redact
 
 
@@ -39,6 +39,7 @@ class ModeState:
         self._listeners = []
         self._data = {'version': 1, 'mode': 'general', 'project': '', 'recent': [],
                       'roles': {}, 'agent_models': {}, 'tabs': [], 'session': '', 'planning': 'none',
+                      'planningPolicy': 'manual',
                       'layout': {'visible': True, 'preset': 'agent', 'fractions': [.2, .6],
                                  'output': .72, 'focus': 'editor'}}
         if self.path.exists():
@@ -47,6 +48,7 @@ class ModeState:
                 raise ValueError('Unsupported Development Mode state; preserve the file for repair')
             WorkMode(raw.get('mode', 'general'))
             planning_level(raw.get('planning', 'none'))
+            planning_policy(raw.get('planningPolicy', 'manual'))
             self._validate_layout(raw.get('layout', self._data['layout']))
             for role, pair in raw.get('roles', {}).items():
                 self._validate_role(role, pair)
@@ -143,6 +145,26 @@ class ModeState:
             except Exception:
                 self._data['planning'] = previous
                 raise
+
+    def configure_planning_policy(self, policy):
+        policy = planning_policy(policy)
+        with self._lock:
+            previous = self._data['planningPolicy']
+            if previous != policy:
+                self._data['planningPolicy'] = policy
+                try:
+                    self.configure_planning('none')
+                except Exception:
+                    self._data['planningPolicy'] = previous
+                    raise
+
+    def take_planning(self, prompt):
+        with self._lock:
+            policy = self._data['planningPolicy']
+            level = task_planning_level(policy, self._data['planning'], prompt)
+            if policy == 'manual' and level != 'none':
+                self.configure_planning('none')
+            return level
 
     def _validate_agent(self, name, pair):
         if not isinstance(name, str) or not name.strip() or len(name) > 128 or redact(name) != name:

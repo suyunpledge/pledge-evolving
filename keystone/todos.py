@@ -4,8 +4,9 @@ from .tools import ToolResult, ToolSpec
 
 NAME = 'update_todos'
 STATUSES = ('pending', 'in_progress', 'completed', 'blocked')
-GUIDANCE = ('For multi-step tasks, publish a short checklist before doing the work with update_todos. '
-            'If a pre-execution plan is supplied, start from its tasks. Send the full updated list as '
+GUIDANCE = ('Decide whether a checklist would help track dependencies or unfinished work. '
+            'Use update_todos when helpful, even without a planning phase. When show_todos is true the '
+            'planned checklist is already visible; only publish changes. Send the full updated list as '
             'work progresses, with at most one active step. Mark work completed only after you verify it. '
             'Keep unfinished or blocked work visible. Use the user\'s language. Answer simple questions directly.')
 SCHEMA = {'type': 'object', 'properties': {'items': {'type': 'array', 'minItems': 1, 'maxItems': 12,
@@ -37,7 +38,8 @@ def event_items(event):
         return None
     try:
         if event.get('type') == 'task_plan':
-            return from_plan(event.get('plan', {}).get('tasks', []))
+            plan = event.get('plan', {})
+            return from_plan(plan.get('tasks', [])) if plan.get('show_todos', True) else []
         if event.get('type') == 'tool_completed' and event.get('tool') == NAME and event.get('ok'):
             return checked((event.get('meta') or {}).get('todos'))
     except (ValueError, TypeError, AttributeError):

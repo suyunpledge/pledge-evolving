@@ -694,6 +694,13 @@ class HttpTransport:
         headers = {"content-type": "application/json", **provider._execution_headers(url)}
         request = urllib.request.Request(url, data=body, headers=headers, method="POST")
         from .http_transport import RequestCancelled, open_response
+        from .request_timing import coding_request
+        from .seed_transport import CHAT_URL
+        desktop = coding_request.get()
+        wire_start = time.monotonic()
+        timings = {}
+        headers_ms = None
+        wire_status = 'failed'
         try:
             from .secret_http import open_authenticated
             # 慢端点按提供方放宽超时（0=传输默认）；实测 ark coding 单请求
@@ -702,7 +709,16 @@ class HttpTransport:
             effective_timeout = request_timeout(provider.request_timeout, default=self.timeout)
             opener = self._response_opener or (open_response if cancel_event is not None else open_authenticated)
             cancel_options = {'cancel_event': cancel_event} if self._response_opener is None and cancel_event is not None else {}
+            if (desktop and not self._response_opener and url == CHAT_URL
+                    and provider.wire == 'openai' and model == 'doubao-seed-evolving'):
+                # Like the desktop gateway, connect directly to Ark. Preserve
+                # explicit environment proxy configuration and host-injected openers.
+                proxies = urllib.request.getproxies_environment()
+                if not (proxies.get('https') or proxies.get('all')):
+                    opener = desktop[0].open_coding
+                    cancel_options = {'cancel_event': cancel_event, 'timings': timings}
             with opener(request, timeout=effective_timeout, **cancel_options) as response:
+                headers_ms = round((time.monotonic() - wire_start) * 1000)
                 from .secrets import redact
                 data = response.read(2 * 1024 * 1024 + 1)
                 if len(data) > 2 * 1024 * 1024:
@@ -710,7 +726,10 @@ class HttpTransport:
                 raw = redact(json.loads(data.decode("utf-8", "replace")))
                 if responses:
                     raw = openai_responses.to_chat(raw, response_scope)
+                wire_status = 'ok'
         except urllib.error.HTTPError as exc:
+            headers_ms = round((time.monotonic() - wire_start) * 1000)
+            wire_status = f'http_{exc.code}'
             from .secrets import redact
             try:
                 detail = redact(getattr(exc, '_keystone_detail', '') or exc.read(500).decode("utf-8", "replace"))[:300]
@@ -737,12 +756,18 @@ class HttpTransport:
                 raise Overloaded(f"{provider.name}: {exc.code} {detail}") from None
             raise BadRequest(f"{provider.name}: {exc.code} {detail}") from None
         except RequestCancelled:
+            wire_status = 'cancelled'
             raise ModelCancelled('已停止模型请求') from None
         except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
             raise TransportError(f"{provider.name}: {exc!r}") from None
         except Exception as exc:
             # Suppress chained transport exceptions containing request headers.
             raise TransportError(f"{provider.name}: {type(exc).__name__}: {exc}") from None
+        finally:
+            if desktop and desktop[1]:
+                desktop[1](type='model_request_timing', model=model, headers_ms=headers_ms,
+                           elapsed_ms=round((time.monotonic() - wire_start) * 1000), status=wire_status,
+                           connection=timings.get('seed_connection', 'default'))
 
         # usage 归一：各家字段名不一（prompt_cache_hit_tokens /
         # cache_read_input_tokens / prompt_tokens_details.cached_tokens …），
@@ -909,14 +934,19 @@ class ModelRouter:
         scope = options.pop('secret_scope', None) or SecretScope()
         messages, options = scope.protect(messages), scope.protect(options)
         attempts: list[dict[str, Any]] = []
-        for provider_name, model in self._order(primary):
+        order = self._order(primary)
+        step_retry = options.pop('step_owns_seed_retry', False)
+        for provider_name, model in order:
             provider = self.providers.get(provider_name)
             if provider is None:
                 attempts.append({"provider": provider_name, "status": "missing"})
                 continue
             if small and provider.small_model:
                 model = provider.small_model
-            for attempt in range(self.retries_per_provider + 1):
+            from .seed_transport import CHAT_URL
+            outer_retry = (step_retry and len(order) == 1 and model == 'doubao-seed-evolving'
+                           and provider.wire == 'openai' and provider.url('/chat/completions') == CHAT_URL)
+            for attempt in range(1 if outer_retry else self.retries_per_provider + 1):
                 try:
                     value = self.transport.complete(provider, model, provider._secret_scope.protect(messages),
                                                     **provider._secret_scope.protect(options))
@@ -943,7 +973,7 @@ class ModelRouter:
                         "status": "retryable" if exc.retryable else "fatal",
                         "error": str(exc)[:200],
                     })
-                    if not exc.retryable:
+                    if not exc.retryable or outer_retry:
                         raise
                     if isinstance(exc, RateLimited) and exc.retry_after is not None:
                         wait = max(float(exc.retry_after), 2.0)

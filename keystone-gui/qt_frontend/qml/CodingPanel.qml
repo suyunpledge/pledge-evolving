@@ -202,7 +202,7 @@ Item {
                     width: parent.width; spacing: 5
                     GlassButton { material: pane.material; glyph: "paperclip"; tip: "附加当前编辑器"; enabled: !!pane.stateData.hasDocument; onClicked: pane.run("attach") }
                     GlassButton { material: pane.material; glyph: "box"; text: pane.width > 340 ? (pane.stateData.model || "继承配置").slice(0, 11) : ""; tip: "切换 Coding 模型"; onClicked: choices.showChoices("model") }
-                    GlassButton { material: pane.material; glyph: "sliders-horizontal"; tip: "回复方式"; text: pane.width > 390 ? (pane.planningModes.find(m => m.value === pane.stateData.planning) || pane.planningModes[0]).label : ""; onClicked: choices.showChoices("planning") }
+                    GlassButton { material: pane.material; glyph: "sliders-horizontal"; tip: "事前规划"; text: pane.width > 390 ? (pane.stateData.planningPolicy === "auto" ? "自动规划" : (pane.planningModes.find(m => m.value === pane.stateData.planning) || pane.planningModes[0]).label) : ""; onClicked: choices.showChoices("planning") }
                     Item { Layout.fillWidth: true }
                     GlassButton { objectName: "continueCoding"; material: pane.material; text: "继续"; tip: "继续已停止的任务"
                         visible: !!pane.stateData.canResume && !pane.stateData.busy; onClicked: pane.run("resume") }
@@ -239,7 +239,10 @@ Item {
             id: optionList
             spacing: 5; clip: true
             ScrollBar.vertical: ScrollBar { width: 4 }
-            model: choices.kind === "planning" ? pane.planningModes.map(m => ({value: m.value, label: m.label, action: "planning", selected: pane.stateData.planning === m.value}))
+            model: choices.kind === "planning" ? [
+                    {value:"auto", label:"自动判断", action:"planningPolicy", selected:pane.stateData.planningPolicy === "auto"},
+                    {value:"manual", label:"手动开启", action:"planningPolicy", selected:pane.stateData.planningPolicy === "manual"},
+                    ...(pane.stateData.planningPolicy === "manual" ? pane.planningModes.map(m => ({value:m.value, label:"下个任务 · " + m.label, action:"planning", selected:pane.stateData.planning === m.value})) : [])]
                 : choices.kind === "model" ? (pane.stateData.models || []).map(m => ({value: m, label: m, action: "model", selected: pane.stateData.model === m}))
                 : choices.kind === "planner" ? controller.planning.options.map(m => ({
                       value: m.value, label: m.label, action: "planner", selected: controller.planning.model === m.value}))
@@ -253,7 +256,7 @@ Item {
                 : choices.kind === "roleModel" ? (pane.stateData.models || []).map(m => ({
                     label: m, value: choices.roleModel + "\n" + m, action: "roleModel",
                     selected: (pane.stateData.roleModels || {})[choices.roleModel] === m}))
-                : [{label:"回复方式", submenu:"planning"}, {label:"执行模型", submenu:"model"}, {label:"规划模型", submenu:"planner"},
+                : [{label:"事前规划", submenu:"planning"}, {label:"执行模型", submenu:"model"}, {label:"规划模型", submenu:"planner"},
                    ...(controller.planning.endpoint && !controller.isDemo ? [{label:"独立规划密钥", action:"plannerKey"}] : []), {label:"任务角色", submenu:"role"},
                    {label:pane.stateData.simple ? "切换到专业视图" : "切换到简洁视图", action:"density"},
                    {label:"复审", action:"review"}, {label:"运行测试", action:"tests"}, {label:"重试任务", action:"retry"},
@@ -270,6 +273,10 @@ Item {
                         choices.kind = modelData.submenu
                     }
                     else if (modelData.action === "planner") { controller.planning.save("model", modelData.value); choices.close() }
+                    else if (modelData.action === "planningPolicy") {
+                        pane.run("planningPolicy", modelData.value)
+                        if (modelData.value === "auto") choices.close()
+                    }
                     else if (modelData.action === "plannerKey") { choices.close(); pane.plannerKeyRequested() }
                     else { pane.run(modelData.action, modelData.value || ""); choices.close() }
                 }

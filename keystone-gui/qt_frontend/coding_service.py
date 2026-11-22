@@ -78,7 +78,7 @@ class CodingService:
         labels = {rt.catalog[r['id']]: r['label'] for r in self.catalog} if rt else {}
         self.host.emit('coding_state', state=dict(ready=bool(rt and rt.ready), status=self.status,
             project=self.host.workspace.name, locked='', busy=self.host.running, loading=False,
-            queue=len(self.queue), planning=self.state.value('planning'), model=self.model,
+            queue=len(self.queue), planning=self.state.value('planning'), planningPolicy=self.state.value('planningPolicy'), model=self.model,
             role=self.role, simple=self.simple, models=['继承配置', *labels.values()],
             roleModels={r: labels.get(tuple(p or ()), '继承配置') for r, p in self.state.value('roles').items()},
             contexts=[Path(p).name for p in self.contexts], hasDocument=bool(self.host.pages.active_document),
@@ -118,8 +118,8 @@ class CodingService:
                 raise ValueError('最多排队三个任务。')
             from config_model import load_user_layer
             from phase_client import planning_selection
-            planning = self.state.value('planning')
-            planner = planning_selection(load_user_layer(self.host.home))[1] if planning != 'none' else None
+            _, planner = planning_selection(load_user_layer(self.host.home))
+            planning = self.state.take_planning(prompt)
             request = (prompt, action == 'delegate', self.model, self.role, planning, tuple(self.contexts), planner)
             if self.host.running:
                 self.queue.append(request)
@@ -129,6 +129,8 @@ class CodingService:
             self.host.emit('coding_draft', text='', version=self.version)
         elif action == 'planning':
             self.state.configure_planning(value)
+        elif action == 'planningPolicy':
+            self.state.configure_planning_policy(value)
         elif action == 'role' and value in self.state.ROLES:
             self.role = value
         elif action == 'model':
@@ -188,11 +190,13 @@ class CodingService:
                 permission=self.host.permission_mode, planning=planning, planning_model=planner,
                 contexts=[{'path': p, 'content': self.host.pages.documents[p].text} for p in contexts if p in self.host.pages.documents],
                 delegate=delegate, cancellation=self.cancel, resume_task=resume_task)
-            if result.get('stopped') == 'cancelled':
+            if result.get('can_resume'):
                 self.interrupted_request = (request, self.runtime.last_task_id)
             resume_task = None
             self.message('assistant', result.get('text') or result.get('output') or json.dumps(result, ensure_ascii=False, indent=2))
             self.status = '已停止' if self.cancel.is_set() else '任务结束'
+            if result.get('stopped') == 'error' and self.interrupted_request:
+                self.status = '模型连接中断，可继续'
             self.host.pages.refresh_documents()
             with self.host.lock:
                 request = self.queue.pop(0) if self.queue and not self.cancel.is_set() else None

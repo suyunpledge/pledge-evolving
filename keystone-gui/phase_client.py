@@ -2,7 +2,7 @@
 from keystone.config import Config, resolve
 from keystone.model import ModelRouter, HttpTransport
 from keystone.phase_models import model_pair, phase_router
-from keystone.planning import TaskPlan, PlanningError, PlanningSyntaxError, planning_prompt, token_cap
+from keystone.planning import TaskPlan, PlanningError, ask_desktop_planner, planning_prompt, token_cap
 from keystone.code_review import review_code
 from keystone_client import GenerationCancelled
 from http_transport import open_response
@@ -12,9 +12,13 @@ import hashlib
 import json
 
 
+def planning_config(rows):
+    return next((row.get('config', {}) for row in rows if row['id'] == 'planning' and not row.get('disabled')), {})
+
+
 def planning_selection(rows):
     from keystone.planning import planning_level
-    cfg = next((row.get('config', {}) for row in rows if row['id'] == 'planning' and not row.get('disabled')), {})
+    cfg = planning_config(rows)
     return planning_level(cfg.get('level', 'none')), model_pair(cfg.get('model'))
 
 
@@ -102,12 +106,7 @@ class PhaseClient:
                     raise PlanningError('Planner attempted a tool call')
                 return TaskPlan.parse(self.scope.protect_text(result.text), level)
 
-            try:
-                plan = ask()
-            except PlanningSyntaxError:
-                inputs.append({'role': 'user', 'content': '上一份规划的 JSON 无法解析。再为同一任务生成一次，'
-                               '只输出规划要求的 JSON 对象，文本中的双引号须转义。'})
-                plan = ask()
+            plan = ask_desktop_planner(ask, inputs)
             return plan, usage
         return self._call(request)
 

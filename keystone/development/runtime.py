@@ -195,8 +195,8 @@ class DevelopmentRuntime:
                                                        role=role, permission=permission)
             if resume_task:
                 last = self.tasks.get(resume_task, {})
-                if resume_task != self.last_task_id or last.get('result', {}).get('stopped') != 'cancelled':
-                    raise ValueError('只能继续最近一次已停止的任务。')
+                if resume_task != self.last_task_id or not last.get('result', {}).get('can_resume'):
+                    raise ValueError('只能继续最近一次中断的任务。')
                 if self.evidence.plan or self.evidence.actions:
                     planning = 'none'
                     prompt = self.evidence.continuation_prompt()
@@ -291,10 +291,16 @@ class DevelopmentRuntime:
                                          task_id=self.last_task_id,
                                          selected_model=snap.model, permission=snap.permission,
                                          delegated=bool(delegate))
-            result = self.bridge.run(params)
+            from keystone.request_timing import coding_requests
+            with coding_requests(getattr(agent, '_emit', None)):
+                result = self.bridge.run(params)
             if agent is not None:
                 self.tasks[self.last_task_id]['router'] = agent.router
             result = {**result, 'task_id': self.last_task_id}
+            result['can_resume'] = result.get('stopped') == 'cancelled' or (
+                result.get('stopped') == 'error' and any(
+                    e.get('type') == 'model_error' and e.get('retryable') and e.get('run_id') == result.get('messageId')
+                    for e in getattr(agent, 'events', ())))
             self.tasks[self.last_task_id]['result'] = redact(result)
             self._publish('development_task_finished', phase='completed' if result.get('ok') else
                           'cancelled' if result.get('stopped') == 'cancelled' else 'failed',

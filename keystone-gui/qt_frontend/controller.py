@@ -444,13 +444,14 @@ class ChatController(QObject):
         self._client = self._client or self.factory(self._gateway)
         try:
             prompt = compose_prompt(text, self._attachments, secret_scope=self._client.secret_scope)
-        except ValueError as exc:
+            planning = self._planning.take_level(text)
+        except (OSError, ValueError) as exc:
             self._error = str(exc)
             self.changed.emit()
             return
         if not self._history:
             self._title = text.splitlines()[0][:36]
-        self._history.append(ChatMessage("user", prompt, user_text=text,
+        self._history.append(ChatMessage("user", prompt, user_text=text, requested_planning=planning,
                             attachment_names=tuple(Path(a["path"]).name for a in self._attachments)))
         self._messages.append({"roleName": "user", "textContent": text, "state": "complete",
                                "historyIndex": len(self._history) - 1})
@@ -523,9 +524,9 @@ class ChatController(QObject):
                     prompt += old.content[split:]
                     if len(prompt) > MAX_CONTEXT_CHARS:
                         raise ValueError('修改后的消息和原附件合计过长。')
-                history.append(ChatMessage('user', prompt, user_text=text,
+                history.append(ChatMessage('user', prompt, user_text=text, requested_planning=self._planning.take_level(text),
                                            attachment_names=old.attachment_names))
-            except ValueError as exc:
+            except (OSError, ValueError) as exc:
                 self._error = str(redact(str(exc)))
                 self.changed.emit()
                 return False
@@ -696,13 +697,14 @@ class ChatController(QObject):
                 from keystone.todos import from_plan
                 rows = load_user_layer(self.store.home)
                 level, pair = planning_selection(rows)
+                level = messages[task_index].requested_planning or level
                 if level != 'none' and messages[task_index].task_plan is None:
-                    progress('planning', '正在列待办 · ' + (' / '.join(pair) if pair else model))
+                    progress('planning', '正在规划 · ' + (' / '.join(pair) if pair else model))
                     plan = make_plan(self.store.home, rows, pair, client, messages, level, model, cancel)
                     if cancel.is_set():
                         raise GenerationCancelled('已停止规划')
                     messages[task_index].task_plan = plan
-                    show_todos(from_plan(plan.tasks))
+                    show_todos(from_plan(plan.tasks) if plan.show_todos else [])
                 context = change_notice if chat_mode else work_context(messages)
                 from .conversation import MAX_TURNS
                 max_turns = self.turn_limit() if self.turn_limit is not None else MAX_TURNS

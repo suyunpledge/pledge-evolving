@@ -7,7 +7,7 @@ from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request
 
-from .seed_transport import CHAT_URL, CONNECT_TIMEOUT, SeedTransport
+from .seed_transport import CHAT_URL, CONNECT_TIMEOUT, SeedConnectFailed, SeedTransport
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -95,3 +95,65 @@ class SeedTransportTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             with self.pool.open(Request('https://elsewhere.invalid/', data=b'200'), timeout=45):
                 self.fail('unrelated origin')
+
+    def test_cancelling_reused_socket_wakes_header_wait_and_retires_connection(self):
+        from .http_transport import RequestCancelled
+        with self.open() as response:
+            response.read()
+        received, release, cancel = threading.Event(), threading.Event(), threading.Event()
+        self.addCleanup(release.set)
+        def stalled(handler):
+            received.set()
+            release.wait(4)
+            handler.close_connection = True
+        errors = []
+        def request():
+            try:
+                with self.pool.open(Request(CHAT_URL, data=b'200'), timeout=45, cancel_event=cancel):
+                    pass
+            except Exception as exc:
+                errors.append(exc)
+        with patch.object(Handler, 'do_POST', stalled):
+            worker = threading.Thread(target=request)
+            worker.start()
+            self.assertTrue(received.wait(2))
+            cancel.set()
+            worker.join(2)
+            release.set()
+        self.assertFalse(worker.is_alive())
+        self.assertIsInstance(errors[0], RequestCancelled)
+        self.assertIsNone(self.pool.idle)
+
+    def test_outer_step_owns_exactly_one_transport_attempt(self):
+        from .model import ModelRouter, Provider, RateLimited
+        from unittest.mock import Mock
+        transport = Mock()
+        limited = RateLimited('busy', retry_after=7)
+        transport.complete.side_effect = limited
+        model = 'doubao-seed-evolving'
+        provider = Provider('seed', CHAT_URL.removesuffix('/chat/completions'), default_model=model)
+        router = ModelRouter([provider], primary=('seed', model), transport=transport, retries_per_provider=2)
+        with self.assertRaises(RateLimited) as error:
+            router.complete([], step_owns_seed_retry=True)
+        self.assertIs(error.exception, limited)
+        self.assertEqual(transport.complete.call_count, 1)
+
+    def test_proxy_recovery_only_before_post_and_after_two_failed_connects(self):
+        from contextlib import nullcontext
+        request = Request(CHAT_URL, data=b'200')
+        timings = {}
+        with (patch.object(self.pool, 'open', side_effect=SeedConnectFailed('connect')),
+              patch('keystone.seed_transport.getproxies', return_value={'https': 'http://proxy.invalid'}),
+              patch('keystone.seed_transport.proxy_bypass', return_value=False),
+              patch('keystone.http_transport.open_response', return_value=nullcontext('response')) as fallback):
+            with self.assertRaises(SeedConnectFailed), self.pool.open_coding(request, timings=timings, timeout=5):
+                self.fail()
+            fallback.assert_not_called()
+            with self.pool.open_coding(request, timings=timings, timeout=5) as response:
+                self.assertEqual(response, 'response')
+            self.assertEqual(timings['seed_connection'], 'system_proxy_after_connect')
+        with (patch.object(self.pool, 'open', side_effect=ConnectionResetError('after POST')),
+              patch('keystone.http_transport.open_response') as fallback):
+            with self.assertRaises(ConnectionResetError), self.pool.open_coding(request, timings={}, timeout=5):
+                self.fail()
+            fallback.assert_not_called()

@@ -7,12 +7,30 @@ import math
 import socket
 import ssl
 import urllib.error
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 MODEL_RESPONSE_TIMEOUT = 600.0
 GATEWAY_RESPONSE_GRACE = 60.0
 METADATA_RESPONSE_TIMEOUT = 10.0
 TOOL_RESPONSE_TIMEOUT = 90.0
 STREAM_FINISH_GRACE = 5.0
+
+# Scoped to one desktop Coding worker. Routers shared with planners and child
+# sessions never inherit another task's socket or timing observer.
+coding_request = ContextVar('coding_request', default=None)
+
+
+@contextmanager
+def coding_requests(observer):
+    from .seed_transport import SeedTransport
+    pool = SeedTransport()
+    token = coding_request.set((pool, observer))
+    try:
+        yield
+    finally:
+        coding_request.reset(token)
+        pool.close()
 
 
 def request_timeout(value=0, *, default=MODEL_RESPONSE_TIMEOUT):

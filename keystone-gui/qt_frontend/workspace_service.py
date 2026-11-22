@@ -109,8 +109,10 @@ class WorkspaceService:
                               version=self.revisions.get(self.active_document, 0)) if doc else {},
                 tabs=[dict(path=p, name=d.path.name, dirty=d.dirty) for p, d in self.documents.items()])
         elif page == 'task':
-            from phase_client import model_catalog, planning_selection
+            from phase_client import model_catalog, planning_config, planning_selection
             level, planner = planning_selection(rows)
+            if planning_config(rows).get('policy') == 'auto':
+                level = 'auto'
             models = [{'label': '沿用执行模型', 'value': ''}, *[
                 {'label': label, 'value': json.dumps(pair, ensure_ascii=False)} for pair, label in model_catalog(rows)]]
             selected = json.dumps(planner, ensure_ascii=False) if planner else ''
@@ -118,7 +120,9 @@ class WorkspaceService:
                 models.append({'label': '已移除 · ' + ' / '.join(planner), 'value': selected})
             data.update(hint='在当前工作区运行任务，沿用当前权限；输出与执行状态保留在此页。',
                 todos=self.task_todos,
-                fields=[field('prompt', '任务内容', kind='multiline'), field('planning', '规划程度', level, 'choice', ['none', 'low', 'medium', 'high']),
+                fields=[field('prompt', '任务内容', kind='multiline'), field('planning', '本次规划', level, 'choice', [
+                            {'label': label, 'value': value} for value, label in [('auto', '自动判断'), ('none', '关闭'),
+                                ('low', '简要'), ('medium', '标准'), ('high', '深入')]]),
                         field('planningModel', '规划模型', selected, 'choice', models)],
                 actions=[button('run', '开始任务'), button('cancel', '停止')])
         elif page == 'config':
@@ -239,6 +243,9 @@ class WorkspaceService:
                 bridge.agent.action_executor.approver = self.host.approve
                 bridge.agent.action_executor.trusted_native = self.host.profile != 'sandbox'
                 level = values.get('planning', 'none')
+                if level == 'auto':
+                    from keystone.planning import task_planning_level
+                    level = task_planning_level('auto', 'none', values['prompt'])
                 self.output(page, bridge.run({'prompt': values['prompt'], 'planning': level,
                     'planningModel': values.get('planningModel', '') if level != 'none' else '', 'mode': self.host.permission_mode}))
             finally:

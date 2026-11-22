@@ -122,6 +122,48 @@ class DesktopTodoTests(unittest.TestCase):
         self.assertTrue(settings.hasKey)
         self.assertNotIn(SECOND_KEY, secret_store.env_for(secret_store.load(path=self.home / 'secrets.json')).values())
 
+    def test_manual_plan_is_used_once_and_auto_decides_from_prompt(self):
+        self.enable_planner()
+        settings = self.chat.planning
+        self.send('chat')
+        until(lambda: not self.chat.busy)
+        self.assertEqual(self.chat._history[0].requested_planning, 'low')
+        self.assertEqual(settings.level, 'none')
+        self.send('chat')
+        until(lambda: not self.chat.busy)
+        self.assertEqual(sum(r[0] == 'planner' for r in self.requests), 1)
+        settings.save('policy', 'auto')
+        self.assertEqual(settings.take_level('你好'), 'none')
+        self.assertEqual(settings.take_level('先读数据，然后生成图表'), 'low')
+        self.assertEqual(settings.take_level('跳过规划，先读数据再画图'), 'none')
+        settings.refresh()
+        self.assertEqual(settings.policy, 'auto')
+
+    def test_coding_policy_persists_but_manual_activation_is_one_task(self):
+        from keystone.development.state import ModeState
+        state = ModeState(self.home / 'coding')
+        state.configure_planning_policy('auto')
+        self.assertEqual(state.take_planning('先检查文件，再做回归测试'), 'low')
+        self.assertEqual(state.take_planning('hello'), 'none')
+        state.configure_planning_policy('manual')
+        state.configure_planning('high')
+        self.assertEqual(state.take_planning('short'), 'high')
+        reopened = ModeState(self.home / 'coding')
+        self.assertEqual(reopened.take_planning('修复并验证结果'), 'none')
+
+    def test_planner_can_hide_checklist_and_executor_can_still_start_it(self):
+        self.enable_planner()
+        self.plan_text = json.dumps({'tasks': TASKS, 'show_todos': False})
+        self.updates = [items('completed', 'completed')]
+        self.pause_round = 1
+        self.send('work')
+        until(lambda: self.received.is_set())
+        self.assertFalse(self.chat.messages.rows[-1].get('todos'))
+        self.release.set()
+        until(lambda: not self.chat.busy)
+        self.assertEqual(self.chat.messages.rows[-1]['todos'], self.updates[0])
+        self.assertFalse(self.chat._history[0].task_plan.show_todos)
+
     def send(self, mode):
         self.chat.setConversationMode(mode)
         self.chat.draft = '整理示例数据并验证结果'

@@ -1489,23 +1489,30 @@ class Agent:
                 planner = phase_router(self.phase_catalog, self.planning_model, self.router)
                 if self.planning_model and self.prepare_planning_route:
                     planner = self.prepare_planning_route(self.planning_model, planner)
-                plan_completion = planner.complete(self.secret_scope.protect(plan_messages),
-                    small=False,
-                    max_tokens=token_cap(self.planning_level),
-                    **({'cancel_event': self.cancellation_event}
-                       if self.cancellation_event is not None and isinstance(planner, ModelRouter) else {}))
-                usage_total["prompt_tokens"] += plan_completion.usage.prompt_tokens
-                usage_total["completion_tokens"] += plan_completion.usage.completion_tokens
-                usage_total["cached_tokens"] += _safe_count(getattr(plan_completion.usage, "cached_tokens", 0))
-                usage_total["cache_write_tokens"] += _safe_count(getattr(plan_completion.usage, "cache_write_tokens", 0))
-                usage_total["reasoning_tokens"] += _safe_count(getattr(plan_completion.usage, "reasoning_tokens", 0))
-                usage_total.setdefault("requests", []).extend(getattr(plan_completion, "requests", []))
-                if getattr(plan_completion, "tool_calls", None):
-                    raise PlanningError("Planner attempted to call tools")
-                if getattr(plan_completion, "finish_reason", None) in {'length', 'max_tokens'}:
-                    raise PlanningError("Planner exhausted its output budget; no execution started")
-                self._plan = TaskPlan.parse(self.secret_scope.protect_text(plan_completion.text or ""),
-                                            self.planning_level)
+                from .request_timing import coding_request
+                from .planning import ask_desktop_planner
+
+                def ask_plan():
+                    self._check_cancel()
+                    plan_completion = planner.complete(self.secret_scope.protect(plan_messages),
+                        small=False,
+                        max_tokens=token_cap(self.planning_level),
+                        **({'cancel_event': self.cancellation_event}
+                           if self.cancellation_event is not None and isinstance(planner, ModelRouter) else {}))
+                    usage_total["prompt_tokens"] += plan_completion.usage.prompt_tokens
+                    usage_total["completion_tokens"] += plan_completion.usage.completion_tokens
+                    usage_total["cached_tokens"] += _safe_count(getattr(plan_completion.usage, "cached_tokens", 0))
+                    usage_total["cache_write_tokens"] += _safe_count(getattr(plan_completion.usage, "cache_write_tokens", 0))
+                    usage_total["reasoning_tokens"] += _safe_count(getattr(plan_completion.usage, "reasoning_tokens", 0))
+                    usage_total.setdefault("requests", []).extend(getattr(plan_completion, "requests", []))
+                    if getattr(plan_completion, "tool_calls", None):
+                        raise PlanningError("Planner attempted to call tools")
+                    if getattr(plan_completion, "finish_reason", None) in {'length', 'max_tokens'}:
+                        raise PlanningError("Planner exhausted its output budget; no execution started")
+                    return TaskPlan.parse(self.secret_scope.protect_text(plan_completion.text or ""),
+                                                self.planning_level)
+
+                self._plan = ask_desktop_planner(ask_plan, plan_messages) if coding_request.get() else ask_plan()
             except (PlanningError, TransportError) as exc:
                 self._check_cancel()
                 self._emit(type="planning_error", run_id=self._run_id, error=str(exc)[:300])
@@ -1574,6 +1581,9 @@ class Agent:
                 request_options = ({'task_context': pinned_task}
                                    if type(self.router) is SmartRouter else {})
                 if isinstance(self.router, ModelRouter):
+                    from .request_timing import coding_request
+                    if coding_request.get():
+                        request_options['step_owns_seed_retry'] = True
                     request_options['cache_scope'] = self._conversation_guard_start
                     if self.cancellation_event is not None:
                         request_options['cancel_event'] = self.cancellation_event
@@ -1623,7 +1633,7 @@ class Agent:
                     err_msg += " → check provider API key (env/overlay)"
                 elif "all providers failed" in err_msg:
                     err_msg += " → check provider ids and overlay config"
-                self._emit(type="model_error", error=err_msg)
+                self._emit(type="model_error", error=err_msg, retryable=bool(getattr(exc, 'retryable', False)))
                 report = self._finish(RunReport(text=f"[model error] {exc}", steps=steps,
                                                usage=usage_total, stopped="error", events=self.events))
                 if getattr(exc, 'retryable', False):
