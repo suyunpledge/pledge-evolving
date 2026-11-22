@@ -154,7 +154,7 @@ class TaskEvidence:
     def continuation_prompt(self):
         import json
         lead = ('继续上一次被停止的任务，沿用原目标、清单和验收条件。下面是历史数据。'
-                '成功的操作使用原回执；结果不明的操作先核实，再做未完成的步骤，并更新清单。\n')
+                '从已保存的清单状态接着做，有变化再更新。沿用成功回执；写后尚未核实或结果不明的操作先核实。\n')
         receipts = []
         for action in reversed(self.actions.values()):
             if action.get('tool') == todos.NAME:

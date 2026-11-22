@@ -61,16 +61,19 @@ def install(agent, *, current_items=None):
     from .policy import ToolEffect
     handler, schema, guidance = update, SCHEMA, GUIDANCE
     if current_items is not None:
-        guidance = ('Update the visible plan with statuses in task order, e.g. ["completed","in_progress"]. '
-                    'Use items only to create or rename steps. Verify completion; at most one active step.')
+        guidance = ('Send changed statuses in task order. Use items to create or rename steps. '
+                    'Batch progress with independent work. After verification, send final_answer with '
+                    'all completed statuses as a single tool call to finish.')
         schema = {'type': 'object', 'additionalProperties': False, 'properties': {
             'statuses': {'type': 'array', 'minItems': 1, 'maxItems': 12,
-                'items': {'type': 'string', 'enum': list(STATUSES)}}, **SCHEMA['properties']}}
+                'items': {'type': 'string', 'enum': list(STATUSES)}}, **SCHEMA['properties'],
+            'final_answer': {'type': 'string', 'description': 'Final reply to the user after verification.'}}}
 
-        def handler(args, ctx):
+        def update_progress(args, rows, ctx):
+            if set(args) == {'todos'}:
+                return update({'items': args['todos']}, ctx)
             if 'statuses' not in args:
                 return update(args, ctx)
-            rows = current_items(ctx.extras.get('run_id'))
             statuses = args['statuses']
             if (set(args) != {'statuses'} or not rows or not isinstance(statuses, list)
                     or len(statuses) != len(rows)):
@@ -85,9 +88,25 @@ def install(agent, *, current_items=None):
             return update({'items': [{'text': row['text'], 'status': status}
                 for row, status in zip(rows, statuses)]}, ctx)
 
+        def handler(args, ctx):
+            args = dict(args)
+            answer = args.pop('final_answer', None)
+            rows = current_items(ctx.extras.get('run_id'))
+            result = update_progress(args, rows, ctx)
+            if not result.ok:
+                return result
+            updated = result.meta['todos']
+            if answer is not None:
+                if not isinstance(answer, str) or not answer.strip() or any(r['status'] != 'completed' for r in updated):
+                    return ToolResult(False, error='只在清单已全部完成后提交 final_answer。')
+                result.meta['todo_final_answer'] = True
+            if updated == rows:
+                result.content = '清单状态已保留；接着处理下一步。'
+            return result
+
     agent.registry.register(ToolSpec(NAME, guidance, handler, schema=schema, no_defer=True),
                             trusted=True, effect=ToolEffect.READ)
     if NAME in agent.registry.names():
-        note = ('Use update_todos when a checklist helps or the user requests one. '
-                'For a visible plan, send only its status changes using statuses.') if current_items is not None else GUIDANCE
+        note = ('The checklist persists across stops. Send only changes. Put the final reply in the last '
+                'update_todos call after verifying the work.') if current_items is not None else GUIDANCE
         agent.extra_system = (agent.extra_system or '') + '\n' + note

@@ -25,6 +25,41 @@ def items(first, second):
 
 
 class CodingStatusTests(unittest.TestCase):
+    def test_final_reply_completes_only_an_accepted_standalone_checklist(self):
+        from keystone.context_transaction import valid_tool_pairs
+        from keystone.loop import Agent
+        from keystone.model import Completion, Usage
+        from keystone.policy import Mode, Policy
+        from keystone.request_timing import coding_requests
+        from keystone.todos import install
+        from keystone.tools import build_builtin_registry
+
+        for case in ('complete', 'unfinished', 'batch', 'repair'):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as folder:
+                root = Path(folder)
+                statuses = ['completed', 'pending' if case == 'unfinished' else 'completed']
+                args = {'statuses': statuses, 'final_answer': 'Results from verified files.'}
+                calls = [{'id': 'todo', 'name': 'update_todos', 'args': args, 'wire': 'openai'}]
+                if case == 'batch':
+                    calls.append({'id': 'ls', 'name': 'list_dir', 'args': {'path': '.'}, 'wire': 'openai'})
+                usage = Usage(20, 5, 'test', 'fake')
+                router = Mock()
+                router.complete.side_effect = [Completion('', usage, tool_calls=calls, wire='openai'),
+                                               Completion('Regular final reply.', usage)]
+                agent = Agent(home=root/'home', workspace=root, router=router, project_rules=False,
+                    registry=build_builtin_registry(), policy=Policy(workspace=root, mode=Mode.READ_ONLY))
+                self.addCleanup(agent.secret_scope.close)
+                install(agent, current_items=lambda _: items('completed', 'in_progress'))
+                if case == 'repair':
+                    agent._verify_acceptance = Mock(side_effect=['repair', 'passed'])
+                with coding_requests(None):
+                    result = agent.run('Report the result and update the checklist.')
+                self.assertEqual(result.stopped, 'final')
+                self.assertEqual(router.complete.call_count, 1 if case == 'complete' else 2)
+                self.assertEqual(result.text, args['final_answer'] if case == 'complete' else 'Regular final reply.')
+                self.assertEqual(result.steps[0].decision == 'ok', case != 'unfinished')
+                self.assertTrue(valid_tool_pairs(agent._conversation_prefix._saved['messages']))
+
     def test_echoed_status_rows_require_the_current_titles_and_order(self):
         from types import SimpleNamespace
         from keystone.todos import install
@@ -35,6 +70,9 @@ class CodingStatusTests(unittest.TestCase):
         ctx = SimpleNamespace(extras={'run_id': 'active'})
         rows = items('completed', 'in_progress')
         self.assertEqual(update({'statuses': rows}, ctx).meta['todos'], rows)
+        self.assertEqual(update({'todos': rows}, ctx).meta['todos'], rows)
+        self.assertFalse(update({'todos': rows, 'items': rows}, ctx).ok)
+        self.assertFalse(update({'todos': rows, 'final_answer': 'late'}, ctx).ok)
         self.assertFalse(update({'statuses': rows[::-1]}, ctx).ok)
         self.assertFalse(update({'statuses': items('in_progress', 'in_progress')}, ctx).ok)
         self.assertFalse(update({'statuses': rows}, SimpleNamespace(extras={})).ok)

@@ -1526,7 +1526,7 @@ class Agent:
             try:
                 # No tools and no privileged resolve capability on this request.
                 # Feed existing evidence only, with a separate planning contract.
-                contract = (planning_prompt(self.planning_level) +
+                contract = (planning_prompt(self.planning_level, coding=bool(coding_request.get())) +
                     f"\nExecution mode: {self.policy.mode.value}; sandbox: {self.policy.sandbox.value}. "
                     + "Tools declared for execution: " + ", ".join(s.name for s in self._execution_specs()) +
                     ". Declarations are not grants; Policy decides each invocation. "
@@ -1794,20 +1794,10 @@ class Agent:
                             return self._finish(RunReport(
                                 text="[stopped: convergence supervisor requested a bounded stop]",
                                 steps=steps, usage=usage_total, stopped="converged", events=self.events))
-                        acceptance_state = self._verify_acceptance(messages, text)
-                        if acceptance_state == 'repair':
-                            self._reserve_repair_steps(index)
+                        report = self._final_answer(text, messages, completion.assistant_message, wire,
+                            index, steps, usage_total, task, envelope)
+                        if report is None:
                             continue
-                        if acceptance_state != 'passed':
-                            return self._finish(RunReport(
-                                text='[stopped: ' + acceptance_state + '; inspect acceptance_checked evidence]',
-                                steps=steps, usage=usage_total, stopped=acceptance_state, events=self.events))
-                        if self.session is not None:
-                            self._emit(type="assistant_message", content=text)
-                        report = self._finish(RunReport(text=text.strip(), steps=steps, usage=usage_total,
-                            stopped="final", events=self.events))
-                        self._remember_conversation([*messages, toolwire.replay_assistant_message(
-                            completion.assistant_message, report.text, [], wire)], task, report, envelope)
                         return report
                     # Recognizable malformed tool attempts get bounded format
                     # feedback; ordinary JSON prose is a legitimate answer.
@@ -1863,6 +1853,16 @@ class Agent:
                         f'<tool_result tool="{call.name}" ok="{ok}">{body}</tool_result>'})
             if paused_task:
                 self._cancel_prefix = (messages, task, envelope)
+            # A batch needs another turn to consume its other tool results.
+            if (coding_request.get() and self.depth == 0 and len(native_calls) == 1
+                    and native_calls[0].name == 'update_todos' and steps[-1].decision == 'ok'
+                    and steps[-1].meta.get('todo_final_answer') is True):
+                answer = native_calls[0].args.get('final_answer')
+                if isinstance(answer, str) and answer.strip():
+                    self._check_cancel()
+                    report = self._final_answer(answer, messages, None, wire, index, steps, usage_total, task, envelope)
+                    if report is not None:
+                        return report
 
         self._emit(type="loop_stop", reason="max_steps", steps=len(steps))
         summary = self._step_budget_summary(messages, pinned_task, usage_total)
@@ -1875,6 +1875,21 @@ class Agent:
             events=self.events,
         ))
         self._checkpoint_conversation(messages, task, report, envelope, 'step_budget')
+        return report
+
+    def _final_answer(self, text, messages, assistant_message, wire, index, steps, usage, task, envelope):
+        acceptance = self._verify_acceptance(messages, text)
+        if acceptance == 'repair':
+            self._reserve_repair_steps(index)
+            return None
+        if acceptance != 'passed':
+            return self._finish(RunReport(text='[stopped: ' + acceptance + '; inspect acceptance_checked evidence]',
+                steps=steps, usage=usage, stopped=acceptance, events=self.events))
+        if self.session is not None:
+            self._emit(type='assistant_message', content=text)
+        report = self._finish(RunReport(text=text.strip(), steps=steps, usage=usage, stopped='final', events=self.events))
+        self._remember_conversation([*messages, toolwire.replay_assistant_message(
+            assistant_message, report.text, [], wire)], task, report, envelope)
         return report
 
     # 一个 run 里"等一会儿再试"的总次数（每步最多一次）；长任务不再因第二次
