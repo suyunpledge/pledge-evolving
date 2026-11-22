@@ -685,7 +685,7 @@ ApplicationWindow {
         focus: true
         objectName: "glassOptions"
         parent: Overlay.overlay
-        x: Math.round((window.width - width) / 2)
+        x: Math.round((parent.width - width) / 2)
         y: Math.max(76, composer.y - height - 12)
         width: 348; padding: 20
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
@@ -1114,8 +1114,9 @@ ApplicationWindow {
     CommandPalette {
         id: commandPalette
         parent: Overlay.overlay
-        x: Math.round((parent.width - width) / 2); y: Math.max(40, Math.round(parent.height * 0.14))
-        width: Math.min(620, window.width - 48); height: Math.min(460, window.height - 80)
+        x: Math.round((parent.width - width) / 2); y: Math.round((parent.height - height) / 3)
+        width: Math.min(620, window.width - 48)
+        height: Math.min(460, window.height - 80)
         material: window.material
         onClosed: if (window.chatVisible && !modelEditor.opened && !rolePicker.opened) window.focusWorkComposer()
     }
