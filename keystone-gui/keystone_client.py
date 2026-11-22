@@ -38,6 +38,7 @@ class ChatMessage:
     user_text: str | None = None
     attachment_names: tuple[str, ...] = ()
     responses_replay: list | None = None
+    steps: list | None = None  # Local elapsed timings for the reply.
 
     def to_dict(self, secret_scope=None) -> dict:
         d: dict = {"role": self.role, "content": self.content}
@@ -53,6 +54,8 @@ class ChatMessage:
 
     def to_session_dict(self) -> dict:
         data = self.to_dict()
+        if self.role == "assistant" and self.steps:
+            data["steps"] = self.steps
         if self.role == "user" and self.attachment_names and self.user_text is not None:
             data["display"] = redact({"text": self.user_text, "attachments": list(self.attachment_names)})
         return data
@@ -72,7 +75,10 @@ class ChatMessage:
                    tool_call_id=str(data.get("tool_call_id") or ""),
                    reasoning_content=str(data.get("reasoning_content") or ""),
                    user_text=text, attachment_names=names,
-                   responses_replay=replay_items(data.get("responses_replay")))
+                   responses_replay=replay_items(data.get("responses_replay")),
+                   steps=[s for s in data["steps"][-128:] if isinstance(s, dict)
+                          and isinstance(s.get("label"), str) and type(s.get("at")) is int
+                          and type(s.get("ms")) is int] if isinstance(data.get("steps"), list) else None)
 
 
 @dataclass
@@ -325,6 +331,7 @@ class KeystoneGatewayClient:
                     cancel_event: threading.Event | None = None,
                     tools: list[dict] | None = None,
                     system: str | None = None,
+                    on_progress: Callable[[str, str], None] | None = None,
                     ) -> CompletionResult:
         def check_cancelled():
             if cancel_event is not None and cancel_event.is_set():
@@ -350,6 +357,7 @@ class KeystoneGatewayClient:
         usage = None
         model_name = ""
         completed = False
+        first_packet = True
         tool_acc: dict[int, dict] = {}   # 按 index 累积 delta.tool_calls
         responses_replay = []
         from keystone.openai_responses import replay_items
@@ -384,6 +392,17 @@ class KeystoneGatewayClient:
                                 break  # Only trailing usage was lost.
                             raise ModelStreamInterrupted("上游模型流式连接中断。")
                         raise GatewayError(f"上游流式请求失败：{str(ev['error'])[:500]}")
+                    if first_packet and on_progress:
+                        first_packet = False
+                        timing = getattr(resp, 'headers', {}).get('Server-Timing', '')
+                        detail = ''
+                        if timing == 'seed_reuse;dur=0':
+                            detail = '已复用连接'
+                        elif timing.startswith('seed_connect;dur='):
+                            millis = timing.removeprefix('seed_connect;dur=')
+                            if millis.isascii() and millis.isdigit() and len(millis) <= 8:
+                                detail = f'建连 {int(millis) / 1000:.1f} 秒'
+                        on_progress('packet', detail)
                     if isinstance(ev.get("usage"), dict):
                         usage = ev["usage"]
                     if not model_name and ev.get("model"):
@@ -418,6 +437,10 @@ class KeystoneGatewayClient:
                             idx = item.get("index")
                             if not isinstance(idx, int):
                                 idx = 0
+                            if idx not in tool_acc and on_progress:
+                                fn = item.get("function")
+                                name = fn.get("name") if isinstance(fn, dict) else None
+                                on_progress('tool_call', name if isinstance(name, str) else '')
                             slot = tool_acc.setdefault(
                                 idx, {"id": "", "type": "function",
                                       "function": {"name": "", "arguments": ""}})

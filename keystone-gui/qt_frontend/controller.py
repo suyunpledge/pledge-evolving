@@ -24,7 +24,7 @@ from keystone.compat import desktop_config
 
 class RowsModel(QAbstractListModel):
     NAMES = ("sessionId", "title", "subtitle", "roleName", "textContent", "state", "stamp", "changeKey", "changeInfo",
-             "historyIndex", "toolReceipts", "continuable")
+             "historyIndex", "toolReceipts", "continuable", "steps")
 
     def __init__(self, rows=(), parent=None):
         super().__init__(parent)
@@ -41,7 +41,7 @@ class RowsModel(QAbstractListModel):
             i = int(role) - int(Qt.ItemDataRole.UserRole)
             if 0 <= i < len(self.NAMES):
                 name = self.NAMES[i]
-                if name == "toolReceipts":
+                if name in ("toolReceipts", "steps"):
                     return self.rows[index.row()].get(name, [])
                 if name == "continuable":
                     return bool(self.rows[index.row()].get(name, False))
@@ -568,7 +568,7 @@ class ChatController(QObject):
                 receipts.append(preview_receipt(names.get(message.tool_call_id, ''), result))
             elif message.content:
                 rows.append({'roleName': message.role, 'textContent': message.user_text or message.content,
-                             'state': 'complete', 'historyIndex': index})
+                             'state': 'complete', 'historyIndex': index, 'steps': message.steps or []})
                 if message.role == 'assistant' and not message.tool_calls and receipts:
                     rows[-1]['toolReceipts'] = receipts.copy()
                     receipts.clear()
@@ -594,7 +594,9 @@ class ChatController(QObject):
         self._cancel = threading.Event()
         cancel = self._cancel
         self._busy, self._error, self._status = True, "", "正在生成…"
-        self._messages.append({"roleName": "assistant", "textContent": "", "state": "streaming"})
+        self._turn_start = time.monotonic()
+        self._messages.append({"roleName": "assistant", "textContent": "", "state": "streaming",
+                               "steps": [{"phase": "prepare", "label": "准备对话和工具", "at": 0, "ms": -1}]})
         self._reply_index = len(self._messages.rows) - 1
         self._reply = ""
         self._persist()
@@ -615,6 +617,10 @@ class ChatController(QObject):
 
         def update_status(value):
             self._workerEvent.emit('status', (generation, value))
+
+        def progress(kind, label):
+            step = (kind, str(redact(label))[:160], self.turnElapsedMs())
+            self._workerEvent.emit('timeline', (generation, step))
 
         def work_context(history):
             if self.work_context is None:
@@ -641,7 +647,7 @@ class ChatController(QObject):
                     cancel=cancel, authorize=authorize, tool_filter=tool_filter, tools_enabled=tools_enabled,
                     system_context=context, mcp=connection, temperature=temperature,
                     chat_mcp=chat_connection, enter_work=enter_work if chat_mode else None,
-                    max_turns=max_turns, attachment_folder=self.store.folder,
+                    max_turns=max_turns, attachment_folder=self.store.folder, progress=progress,
                     chunk=lambda chunk: self._workerEvent.emit('chunk', (generation, chunk)),
                     checkpoint=lambda history: self._workerEvent.emit('checkpoint', (generation, history)),
                     receipt=lambda name, response: self._workerEvent.emit('receipt', (generation, (name, response))),
@@ -747,6 +753,14 @@ class ChatController(QObject):
         if kind == 'budget_exhausted':
             self._messages.update(self._reply_index, continuable=True)
             return
+        if kind == 'timeline':
+            phase, label, elapsed = value
+            steps = self._finish_step(elapsed)
+            steps.append({'phase': phase, 'label': label, 'at': elapsed, 'ms': -1})
+            self._messages.update(self._reply_index, steps=steps[-128:])
+            self._status = label
+            self.changed.emit()
+            return
         if kind == 'status':
             self._status = value
             self.changed.emit()
@@ -768,10 +782,11 @@ class ChatController(QObject):
             if isinstance(value, tuple):
                 value, replay = value
             self._reply = value or self._reply
+        steps = self._finish_step(self.turnElapsedMs())
         if self._reply and kind != "failed":
-            self._history.append(ChatMessage("assistant", self._reply, responses_replay=replay))
+            self._history.append(ChatMessage("assistant", self._reply, responses_replay=replay, steps=steps))
         state = "complete" if kind == "done" else "stopped" if kind == "cancelled" else "error"
-        self._messages.update(self._reply_index, textContent=self._reply, state=state)
+        self._messages.update(self._reply_index, textContent=self._reply, state=state, steps=steps)
         if self._changes.active in self._changes.entries:
             key = self._changes.active
             self._changes.anchor()
@@ -783,6 +798,16 @@ class ChatController(QObject):
         self._changes.finish()
         self.changed.emit()
         self.streamAdvanced.emit()
+
+    @Slot(result=int)
+    def turnElapsedMs(self):
+        return int((time.monotonic() - self._turn_start) * 1000)
+
+    def _finish_step(self, elapsed):
+        steps = list(self._messages.rows[self._reply_index].get('steps', ()))
+        if steps:
+            steps[-1] = {**steps[-1], 'ms': max(0, elapsed - steps[-1]['at'])}
+        return steps
 
     @Slot(str)
     def copyText(self, text):

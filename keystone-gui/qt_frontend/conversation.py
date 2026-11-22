@@ -86,18 +86,22 @@ def tool_schemas(gateway, local):
     return list(rows.values())
 
 
+def receipt_outcome(result):
+    meta = result.get('meta')
+    execution = meta.get('execution_state') if isinstance(meta, dict) else None
+    return ('结果未知' if execution == 'unknown' else '已完成' if result.get('ok') is True
+            else '未执行' if execution == 'not_started' else '未完成')
+
+
 def preview_receipt(name, response):
     result = response if isinstance(response, dict) else {}
     meta = result.get('meta')
-    execution = meta.get('execution_state') if isinstance(meta, dict) else None
-    outcome = ('结果未知' if execution == 'unknown' else '已完成' if result.get('ok') is True
-               else '未执行' if execution == 'not_started' else '未完成')
     value = result.get('error') or result.get('content') or result.get('result')
     detail = str(redact(value)) if isinstance(value, (str, int, float)) else ''
     if not detail and isinstance(result.get('destination'), str) and isinstance(result.get('files'), list):
         files = [path for path in result['files'][:8] if isinstance(path, str)]
         detail = redact('\n'.join([result['destination'], *files]))
-    row = {'name': tool_label(name), 'outcome': outcome, 'detail': detail[:600] + ('…' if len(detail) > 600 else '')}
+    row = {'name': tool_label(name), 'outcome': receipt_outcome(result), 'detail': detail[:600] + ('…' if len(detail) > 600 else '')}
     if result.get('ok') and name.removeprefix('keystone_') in productivity_tools.FILES and isinstance(meta, dict):
         if isinstance(meta.get('attachment'), str):
             row['attachment'] = meta['attachment']
@@ -120,7 +124,13 @@ def model_tool_result(name, response):
 
 def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint, status, next_round,
         receipt=None, system_context='', mcp=None, temperature=0.7, tool_filter=None, tools_enabled=True,
-        chat_mcp=None, enter_work=None, max_turns=MAX_TURNS, attachment_folder=None):
+        chat_mcp=None, enter_work=None, max_turns=MAX_TURNS, attachment_folder=None, progress=None):
+    def stage(kind, label):
+        if progress is not None:
+            progress(kind, label)
+        else:
+            status(label)
+
     def schemas(local, chat_mode):
         if not tools_enabled:
             return None
@@ -147,21 +157,34 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
     exports = productivity_tools.completed_exports(messages)
     retries_left = MAX_GENERATION_RETRIES
 
-    def stream(current, prefix=''):
+    def stream(current, round_number, prefix=''):
         nonlocal retries_left
         for attempt in range(len(MODEL_RETRY_DELAYS) + 1):
             started = False
+            if progress is not None:
+                waiting = f'第 {round_number} 轮 · 等待模型首包'
+                progress('wait', waiting if not attempt else waiting + f'（重试 {attempt}）')
+
+            def stream_progress(kind, detail):
+                if kind == 'packet':
+                    stage('packet', '已收到首包，模型正在生成' + (' · ' + detail if detail else ''))
+                elif kind == 'tool_call':
+                    label = '正在生成工具参数'
+                    stage('tool_call', label + ' · ' + tool_label(detail) if detail else label)
 
             def emit(piece):
                 nonlocal started
+                if not started and progress is not None:
+                    stage('output', '正在输出回复')
                 if prefix and not started:
                     chunk(prefix)
                 started = True
                 chunk(piece)
 
             try:
+                callbacks = {'on_progress': stream_progress} if progress is not None else {}
                 result = client.stream_chat(current, model=model, reasoning_effort=effort, temperature=temperature,
-                                            on_chunk=emit, cancel_event=cancel, tools=tools)
+                                            on_chunk=emit, cancel_event=cancel, tools=tools, **callbacks)
                 if prefix and not started:
                     chunk(prefix)
                 return result
@@ -173,7 +196,7 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
                 retries_left -= 1
                 delay = MODEL_RETRY_DELAYS[attempt]
                 next_round()  # Discard only this attempt's partial text; tool receipts stay visible.
-                status(f'模型连接中断，{delay} 秒后自动重试（{attempt + 1}/{len(MODEL_RETRY_DELAYS)}）…')
+                stage('retry', f'模型连接中断，{delay} 秒后自动重试（{attempt + 1}/{len(MODEL_RETRY_DELAYS)}）…')
                 if cancel.wait(delay):
                     raise GenerationCancelled('已停止生成') from None
 
@@ -188,7 +211,7 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
         note = BUDGET_NOTES.get(max_turns - turn) if max_turns >= BUDGET_NOTES_MIN else None
         if note:
             current.append(ChatMessage('user', note))
-        result = stream(current)
+        result = stream(current, turn + 1)
         if not result.tool_calls:
             return result
         if authorize is None and enter_work is None:
@@ -212,7 +235,7 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
             if cancel.is_set():
                 stopped = GenerationCancelled('已停止工具调用')
             if stopped is None:
-                status('正在检查权限：' + tool_label(name))
+                stage('permission', '正在检查权限 · ' + tool_label(name))
                 try:
                     if not tools_enabled:
                         raise PermissionError('当前工具设置或权限不允许此调用。')
@@ -242,17 +265,19 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
                         response = {'ok': True, 'content': '已接受 Work 切换请求。请使用下一轮提供的 Work 工具继续。' + switch_reason,
                                     'meta': {'execution_state': 'completed'}}
                     elif name in mcp_tools:
-                        status('正在执行：' + tool_label(name))
+                        stage('tool', '正在执行 · ' + tool_label(name))
                         target = mcp_tools[name][1]
                         response = invoke(arguments, lambda: productivity_tools.dispatch_with_exports(
                             call_mcp, target, arguments, cancel, exports, attachment_folder))
                     else:
-                        status('正在执行：' + tool_label(name))
+                        stage('tool', '正在执行 · ' + tool_label(name))
                         response = invoke(arguments, lambda: client.call_tool(name, arguments))
             body = json.dumps(model_tool_result(name, response), ensure_ascii=False)
             messages.append(ChatMessage('tool', body, tool_call_id=call['id']))
             if receipt is not None:
                 receipt(name, response)
+            if progress is not None:
+                stage('result', tool_label(name) + ' · ' + receipt_outcome(response))
             if response.get('meta', {}).get('execution_state') == 'unknown':
                 if name in {'keystone_generate_image', 'keystone_generate_video'} and response.get('job_id'):
                     stopped = GatewayError(f"生成结果未取回，请先检查厂商任务 {response['job_id']}。")
@@ -283,7 +308,7 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
     lead_text = budget_lead(max_turns)
     try:
         # 工具声明照旧带上（历史里有工具调用的协议需要）；模型仍发起调用也一律不执行。
-        result = stream([ChatMessage('system', context), *messages], prefix=lead_text)
+        result = stream([ChatMessage('system', context), *messages], max_turns + 1, prefix=lead_text)
     except GenerationCancelled:
         raise
     except GatewayError:

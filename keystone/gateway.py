@@ -119,6 +119,8 @@ class GatewayConfig:
         self.upstream_wire = upstream_wire    # wire the *upstream* speaks
         self.model_map = model_map or {}
         self.proxy = proxy
+        from .seed_transport import SeedTransport
+        self.seed_transport = SeedTransport()
         self.gateway_token = gateway_token    # trusted gateway authentication only
         if gateway_token:
             from .secrets import _remember
@@ -216,6 +218,7 @@ class GatewayConfig:
             return ctx
 
     def close_runtime(self):
+        self.seed_transport.close()
         with self._context_lock:
             for ctx in self._contexts.values():
                 ctx.session.close()
@@ -732,13 +735,23 @@ def build_handler(cfg: GatewayConfig):
             request = urllib.request.Request(url, data=body or None, headers=headers, method=self.command)
             try:
                 from .request_timing import request_timeout
-                with open_upstream(request, timeout=request_timeout(cfg.provider_options.get('requestTimeout', 0)), proxy=cfg.proxy) as response:
+                from .seed_transport import CHAT_URL
+                timeout = request_timeout(cfg.provider_options.get('requestTimeout', 0))
+                timings = {}
+                if (not cfg.proxy and url == CHAT_URL and self.command == 'POST' and provider is not None
+                        and provider.wire == 'openai' and payload.get('model') == 'doubao-seed-evolving'):
+                    upstream = cfg.seed_transport.open(request, timeout=timeout, timings=timings)
+                else:
+                    upstream = open_upstream(request, timeout=timeout, proxy=cfg.proxy)
+                with upstream as response:
                     from .request_execution import UsageObserver
                     observer = UsageObserver()
                     ctype = response.headers.get("content-type", "")
                     if "text/event-stream" in ctype:
                         self.send_response(response.status)
                         self.send_header("Content-Type", ctype)
+                        if timings:
+                            self.send_header("Server-Timing", timings['seed_connection'])
                         # close on completion, otherwise the client waits for the stream to end forever
                         self.send_header("Cache-Control", "no-cache")
                         self.send_header("Connection", "close")

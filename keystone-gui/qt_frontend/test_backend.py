@@ -82,6 +82,14 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(Gateway.requests[-1]["model"], "local-test")
         saved = self.controller.store.sessions()[0]
         self.assertEqual(saved["messages"][-1]["role"], "assistant")
+        steps = saved['messages'][-1]['steps']
+        self.assertEqual([s['phase'] for s in steps], ['prepare', 'wait', 'packet', 'output'])
+        self.assertTrue(all(s['ms'] >= 0 for s in steps))
+        sid = self.controller.sessionId
+        self.controller.newSession()
+        self.controller.selectSession(sid)
+        self.assertEqual(self.controller.messages.rows[-1]['steps'], steps)
+        self.assertNotIn('steps', self.controller._history[-1].to_dict())
         self.assertFalse((self.home / "gui" / "sessions.json").exists())
 
     def test_failed_send_can_retry_without_duplicating_user_turn(self):

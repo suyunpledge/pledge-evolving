@@ -167,6 +167,7 @@ ApplicationWindow {
                 required property var changeInfo
                 required property int historyIndex
                 required property var toolReceipts
+                required property var steps
                 required property bool continuable
                 width: messages.width
                 height: messageBody.height + (roleName === "user" ? 24 : 0)
@@ -192,7 +193,12 @@ ApplicationWindow {
                         spacing: 9
                         Image { width: 22; height: 22; source: brandUrl; smooth: true }
                         Text { text: "Keystone"; color: "#dfe4eb"; font.weight: Font.DemiBold; font.pixelSize: 13; anchors.verticalCenter: parent.verticalCenter }
-                        Text { visible: message.state === "streaming"; text: controller.status; color: "#939da9"; font.pixelSize: 12; anchors.verticalCenter: parent.verticalCenter }
+                    }
+                    ToolTimeline {
+                        width: parent.width
+                        steps: message.steps || []
+                        running: message.state === "streaming"
+                        visible: steps.length > 0
                     }
                     TextEdit {
                         id: messageText
@@ -200,7 +206,7 @@ ApplicationWindow {
                         visible: text.length > 0
                         width: parent.width
                         height: Math.max(20, contentHeight)
-                        text: message.textContent || (message.state === "streaming" ? "…" : "")
+                        text: message.textContent
                         color: "#dce1e7"
                         font.pixelSize: 15
                         textFormat: message.roleName === "user" ? TextEdit.PlainText : TextEdit.MarkdownText
