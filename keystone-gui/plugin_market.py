@@ -134,7 +134,12 @@ HIGH_RISK_PERMISSIONS = {"shell:exec", "workspace:write", "net:outbound", "model
 CAPABILITY_ALIASES = {"workspace:read": "repo.read", "workspace:write": "repo.write",
                       "shell:exec": "process.exec", "net:outbound": "network.outbound"}
 GRANTABLE_CAPABILITIES = frozenset({"repo.read", "repo.write", "skill.read"})
-CONTRIBUTION_TYPES = frozenset({"tools", "skills", "policies", "hooks", "providers", "agents", "ui_panels"})
+CONTRIBUTION_TYPES = frozenset({"tools", "skills", "policies", "hooks", "providers", "agents", "ui_panels",
+                                "patch"})
+#: contributions.patch：插件束补丁层（DSH「profile = 有序插件束补丁层」）。插件
+#: 已安装、已启用且已确认时物化到 <home>/plugin-layers/<id>.json，由
+#: keystone.config.load_config 插在 bundle 层与用户层之间；宿主授权行一律拒收。
+PLUGIN_LAYER_DIR = "plugin-layers"
 
 
 def workspace_key(workspace) -> str:
@@ -442,6 +447,11 @@ def parse_manifest(raw: dict[str, Any], *, source: str = "local") -> Plugin:
             any(not isinstance(v, list) or len(v) > 32 or any(not isinstance(x, dict) for x in v)
                 for v in contributions.values())):
         raise ValueError("contributions 必须按已知类型声明，且每类最多 32 项")
+    if "patch" in contributions:
+        from keystone.config import plugin_patch_problems
+        problems = plugin_patch_problems(contributions["patch"])
+        if problems:
+            raise ValueError("补丁层不合规：" + "；".join(problems[:3]))
     declared = raw.get("provides", {})
     declared = declared.get("tools", []) if isinstance(declared, dict) else []
     if isinstance(declared, list) and (len(declared) > 32 or any(
@@ -618,6 +628,47 @@ class Marketplace:
                 self._persisted_state = json.loads(json.dumps(self._state))
             finally:
                 Path(name).unlink(missing_ok=True)
+            self.sync_plugin_layers()
+
+    def layer_path(self, pid: str) -> Path:
+        return self.home / PLUGIN_LAYER_DIR / f"{pid}.json"
+
+    def sync_plugin_layers(self) -> list[str]:
+        """Materialise the patch layer of every installed+enabled+acked plugin; drop the rest.
+
+        Derived from saved state and files only (never from catalog(), which may save),
+        so it is safe to run after every save. Returns the ids whose layer is live.
+        """
+        state = self._state
+        live: dict[str, list] = {}
+        for plugin in self.local_entries():
+            patch = plugin.contributions.get("patch") if not plugin.error else None
+            if (not patch or plugin.id not in state.get("installed", {})
+                    or plugin.id not in state.get("enabled", [])
+                    or state.get("acked", {}).get(plugin.id) != plugin.ack_of()):
+                continue
+            live[plugin.id] = patch
+        directory = self.home / PLUGIN_LAYER_DIR
+        try:
+            for stale in (directory.glob("*.json") if directory.is_dir() else ()):
+                if stale.stem not in live:
+                    stale.unlink(missing_ok=True)
+            for pid, patch in live.items():
+                target = self.layer_path(pid)
+                text = json.dumps(patch, ensure_ascii=False, indent=2)
+                if target.is_file() and target.read_text(encoding="utf-8") == text:
+                    continue
+                directory.mkdir(parents=True, exist_ok=True)
+                fd, name = tempfile.mkstemp(prefix=".layer-", suffix=".tmp", dir=directory)
+                try:
+                    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                        handle.write(text)
+                    os.replace(name, target)
+                finally:
+                    Path(name).unlink(missing_ok=True)
+        except OSError as exc:
+            self._log_raw("warn", "plugin-layer", str(exc))
+        return sorted(live)
 
     @_fresh_state
     def state(self) -> dict[str, Any]:

@@ -17,6 +17,29 @@ from .store import SessionStore
 from keystone.compat import desktop_config
 
 
+def model_rows(home):
+    """Rows that can offer chat models: live plugin patch layers, then the user layer (user wins by id).
+
+    Provider plugins (contributions.patch with provider:* rows) thus appear in the model picker
+    exactly like rows the user added; a broken plugin layer is skipped, never fatal.
+    """
+    from keystone.config import plugin_layers, plugin_patch_problems
+    merged = {}
+    for layer in plugin_layers(home):
+        try:
+            patch = json.loads(layer.read_text(encoding='utf-8-sig'))
+            if plugin_patch_problems(patch):
+                continue
+        except (OSError, ValueError):
+            continue
+        for op in patch:
+            for row in (op['insert'] if isinstance(op.get('insert'), list) else [op]):
+                merged[str(row['id'])] = {**row, 'plugin': layer.stem}
+    for row in load_user_layer(home):
+        merged[row['id']] = row
+    return list(merged.values())
+
+
 def chat_model_routes(rows):
     """Match each displayed model to one configured provider and upstream ID."""
     routes = {}
@@ -56,7 +79,7 @@ class GatewayService:
         if self.demo or self.closed.is_set():
             return
         with self.lock:
-            rows = load_user_layer(self.home)
+            rows = model_rows(self.home)
             routes = chat_model_routes(rows)
             self.emit('gateway_catalog', models=list(routes))
             prefs = SessionStore.read(self.home / 'gui/qt/onboarding.json', {})
