@@ -90,6 +90,10 @@ class ModelCancelled(TransportError):
     retryable = False
 
 
+class ReconnectSeed(TransportError):
+    """Retry this model step on a fresh connection after a failed header probe."""
+
+
 def _model_wait(seconds, cancel_event=None):
     if cancel_event is not None:
         if cancel_event.wait(max(0, seconds)):
@@ -695,7 +699,7 @@ class HttpTransport:
         request = urllib.request.Request(url, data=body, headers=headers, method="POST")
         from .http_transport import RequestCancelled, open_response
         from .request_timing import coding_request
-        from .seed_transport import CHAT_URL
+        from .seed_transport import CHAT_URL, SeedHeaderInterrupted
         desktop = coding_request.get()
         wire_start = time.monotonic()
         timings = {}
@@ -716,7 +720,8 @@ class HttpTransport:
                 proxies = urllib.request.getproxies_environment()
                 if not (proxies.get('https') or proxies.get('all')):
                     opener = desktop[0].open_coding
-                    cancel_options = {'cancel_event': cancel_event, 'timings': timings}
+                    cancel_options = {'cancel_event': cancel_event, 'timings': timings,
+                                      'probe_reuse': options.get('probe_seed_reuse', False)}
             with opener(request, timeout=effective_timeout, **cancel_options) as response:
                 headers_ms = round((time.monotonic() - wire_start) * 1000)
                 from .secrets import redact
@@ -758,6 +763,8 @@ class HttpTransport:
         except RequestCancelled:
             wire_status = 'cancelled'
             raise ModelCancelled('已停止模型请求') from None
+        except SeedHeaderInterrupted as exc:
+            raise ReconnectSeed(f'{provider.name}: reused Seed connection failed before headers ({exc})') from None
         except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
             raise TransportError(f"{provider.name}: {exc!r}") from None
         except Exception as exc:
@@ -767,7 +774,7 @@ class HttpTransport:
             if desktop and desktop[1]:
                 desktop[1](type='model_request_timing', model=model, headers_ms=headers_ms,
                            elapsed_ms=round((time.monotonic() - wire_start) * 1000), status=wire_status,
-                           connection=timings.get('seed_connection', 'default'))
+                           connection=timings.pop('seed_connection', 'default'), **timings)
 
         # usage 归一：各家字段名不一（prompt_cache_hit_tokens /
         # cache_read_input_tokens / prompt_tokens_details.cached_tokens …），
@@ -936,6 +943,7 @@ class ModelRouter:
         attempts: list[dict[str, Any]] = []
         order = self._order(primary)
         step_retry = options.pop('step_owns_seed_retry', False)
+        can_probe = options.pop('probe_seed_reuse', False)
         for provider_name, model in order:
             provider = self.providers.get(provider_name)
             if provider is None:
@@ -946,6 +954,8 @@ class ModelRouter:
             from .seed_transport import CHAT_URL
             outer_retry = (step_retry and len(order) == 1 and model == 'doubao-seed-evolving'
                            and provider.wire == 'openai' and provider.url('/chat/completions') == CHAT_URL)
+            if outer_retry and can_probe:
+                options['probe_seed_reuse'] = True
             for attempt in range(1 if outer_retry else self.retries_per_provider + 1):
                 try:
                     value = self.transport.complete(provider, model, provider._secret_scope.protect(messages),

@@ -30,7 +30,7 @@ from .capability import CapabilityLibrary
 from .checkpoint import CheckpointStore
 from .local_service import resolve_thinking_mode, service_from_config, thinking_token_cap
 from .memory import ContextBudget, MemoryStore  # noqa: F401
-from .model import Completion, ModelRouter, TransportError, _safe_count
+from .model import Completion, ModelRouter, ReconnectSeed, TransportError, _safe_count
 from .protocol import PROTOCOL_VERSION
 from . import projector
 from .pricing import CostLedger, cost_of, rate_for
@@ -1646,7 +1646,7 @@ class Agent:
                     request_options['cache_scope'] = self._conversation_guard_start
                     if self.cancellation_event is not None:
                         request_options['cancel_event'] = self.cancellation_event
-                # 步级重试：可重试错误且本 run 未用过 → 等 5s 再试一次
+                # 只重试本步的模型请求，沿用已完成的工具回执和本轮剩余重试预算。
                 request_messages = messages
                 reminder = self._step_budget_reminder(index)
                 if reminder:
@@ -1657,6 +1657,8 @@ class Agent:
                                remaining=self._step_ceiling - index + 1)
                 for _model_attempt in (0, 1):
                     try:
+                        if request_options.get('step_owns_seed_retry'):
+                            request_options['probe_seed_reuse'] = _model_attempt == 0 and self._model_retries_left > 0
                         completion = self.router.complete(
                             request_messages, small=False,
                             tools=declarations,
@@ -1882,6 +1884,8 @@ class Agent:
     _REPAIR_RESERVE = 3        # 验收返工后至少还能再走 3 回合（改、验、答）
 
     def _model_retry_wait(self, exc) -> float:
+        if isinstance(exc, ReconnectSeed):
+            return 0.5
         hinted = getattr(exc, "retry_after", None)
         try:
             hinted = float(hinted) if hinted is not None else None

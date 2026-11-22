@@ -18,6 +18,41 @@ from keystone.tools import build_builtin_registry
 
 
 class TransportCheckpointTests(unittest.TestCase):
+    def test_coding_reconnect_retries_only_the_request_after_committed_append(self):
+        from keystone.model import ReconnectSeed
+        from keystone.seed_transport import CHAT_URL
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            target = root / 'marker.txt'
+            requests = []
+            class Transport:
+                def complete(self, provider, model, messages, **opts):
+                    requests.append((copy.deepcopy(messages), opts.get('probe_seed_reuse', False)))
+                    usage = Usage(20, 4, model, provider.name)
+                    if len(requests) == 1:
+                        return '', usage, {'wire': 'openai', 'tool_calls': [{'id': 'append', 'name': 'write_file',
+                            'args': {'path': 'marker.txt', 'content': 'once', 'append': True}, 'wire': 'openai'}]}
+                    if len(requests) == 2:
+                        self.after_write = target.stat().st_mtime_ns
+                        raise ReconnectSeed('reused socket closed before response headers')
+                    return 'done', usage, {}
+            transport = Transport()
+            model = 'doubao-seed-evolving'
+            router = ModelRouter([Provider('seed', CHAT_URL.removesuffix('/chat/completions'),
+                                 default_model=model)], primary=('seed', model), transport=transport)
+            agent = Agent(home=root/'home', workspace=root, router=router, project_rules=False,
+                registry=build_builtin_registry(expose=['write_file']), policy=Policy(workspace=root, mode=Mode.ACCEPT_EDITS))
+            self.addCleanup(agent.secret_scope.close)
+            with coding_requests(None):
+                result = agent.run('Append the marker once.')
+            self.assertEqual(result.stopped, 'final')
+            self.assertEqual([s.tool for s in result.steps], ['write_file'])
+            self.assertEqual(target.read_text(), 'once')
+            self.assertEqual(target.stat().st_mtime_ns, transport.after_write)
+            self.assertEqual([probe for _, probe in requests], [True, True, False])
+            self.assertEqual(requests[1][0], requests[2][0])
+            self.assertEqual([e['wait_seconds'] for e in result.events if e['type'] == 'model_retry'], [.5])
+
     def test_receipt_projection_requires_complete_known_successful_exchanges(self):
         from keystone.conversation_prefix import compact_file_continuation
         objective = 'Read the file and report.'

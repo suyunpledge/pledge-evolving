@@ -7,7 +7,7 @@ from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request
 
-from .seed_transport import CHAT_URL, CONNECT_TIMEOUT, SeedConnectFailed, SeedTransport
+from .seed_transport import CHAT_URL, CONNECT_TIMEOUT, SeedConnectFailed, SeedHeaderInterrupted, SeedTransport
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -84,6 +84,47 @@ class SeedTransportTests(unittest.TestCase):
         self.assertEqual(self.connections, [2, CONNECT_TIMEOUT, CONNECT_TIMEOUT])
         self.assertEqual(self.server.bodies, [b'200', b'502', b'302'])
 
+    def test_silent_reused_socket_expires_and_retry_uses_fresh_connection(self):
+        request = Request(CHAT_URL, data=b'200')
+        timings = {}
+        release = threading.Event()
+        def stall(handler):
+            self.server.bodies.append(handler.rfile.read(int(handler.headers['Content-Length'])))
+            release.wait(4)
+            handler.close_connection = True
+
+        with self.open() as response:
+            response.read()
+        try:
+            with (patch.object(Handler, 'do_POST', stall),
+                  patch('keystone.seed_transport.REUSED_HEADER_TIMEOUT', .15),
+                  self.assertRaises(SeedHeaderInterrupted)):
+                with self.pool.open_coding(request, timeout=3, timings=timings, probe_reuse=True):
+                    self.fail('silent socket returned a response')
+        finally:
+            release.set()
+        self.assertEqual(timings['seed_connection'], 'seed_reuse;dur=0')
+        self.assertEqual(timings['header_timeout_s'], .15)
+        self.assertEqual(timings['header_failure'], 'TimeoutError')
+        self.assertIsNone(self.pool.idle)
+        self.assertEqual(len(self.connections), 1)  # transport did not retry the POST
+        timings = {}
+        with self.pool.open_coding(request, timeout=3, timings=timings) as response:
+            response.read()
+        self.assertEqual(timings['header_timeout_s'], 3)
+        self.assertEqual(len(self.connections), 2)
+        self.assertEqual(self.server.bodies, [b'200'] * 3)
+
+    def test_probe_preserves_body_timeout_and_shorter_provider_settings(self):
+        with patch('keystone.seed_transport.REUSED_HEADER_TIMEOUT', .5):
+            for timeout, expected in [(5, 5), (6, .5), (.4, .4)]:
+                timings = {}
+                with self.pool.open_coding(Request(CHAT_URL, data=b'200'), timeout=timeout,
+                                           timings=timings, probe_reuse=True) as response:
+                    self.assertEqual(timings['header_timeout_s'], expected)
+                    self.assertEqual(response.fp.raw._sock.gettimeout(), timeout)
+                    response.read()
+
     def test_response_consumer_failure_does_not_replay_and_next_request_uses_fresh_socket(self):
         with self.assertRaises(ValueError):
             with self.open():
@@ -109,7 +150,7 @@ class SeedTransportTests(unittest.TestCase):
         errors = []
         def request():
             try:
-                with self.pool.open(Request(CHAT_URL, data=b'200'), timeout=45, cancel_event=cancel):
+                with self.pool.open(Request(CHAT_URL, data=b'200'), timeout=45, cancel_event=cancel, probe_reuse=True):
                     pass
             except Exception as exc:
                 errors.append(exc)

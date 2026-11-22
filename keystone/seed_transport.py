@@ -15,10 +15,17 @@ CHAT_PATH = '/api/coding/v3/chat/completions'
 CHAT_URL = 'https://' + HOST + CHAT_PATH
 CONNECT_TIMEOUT = 8.0
 MAX_IDLE = 30.0
+# Direct Coding requests return JSON. Only probe a reused socket when the
+# agent can retry this same model step on a fresh connection.
+REUSED_HEADER_TIMEOUT = 30.0
 
 
 class SeedConnectFailed(ConnectionError):
     """TCP/TLS failed before any HTTP request bytes were sent."""
+
+
+class SeedHeaderInterrupted(ConnectionError):
+    """A reused connection returned no complete response headers."""
 
 
 class SeedTransport:
@@ -62,7 +69,7 @@ class SeedTransport:
         connection.close()
 
     @contextmanager
-    def open_coding(self, request, *, timeout, cancel_event=None, timings):
+    def open_coding(self, request, *, timeout, cancel_event=None, timings, probe_reuse=False):
         # The outer step owns the retry. If two direct handshakes fail, retain
         # the system proxy route used by older desktop installations. Never
         # switch paths after a POST may have reached Ark.
@@ -70,7 +77,7 @@ class SeedTransport:
         with ExitStack() as stack:
             try:
                 response = stack.enter_context(self.open(request, timeout=timeout, timings=timings,
-                                                         cancel_event=cancel_event))
+                                                         cancel_event=cancel_event, probe_reuse=probe_reuse))
             except SeedConnectFailed:
                 self.connect_failures += 1
                 if self.connect_failures < 2 or not getproxies().get('https') or proxy_bypass(HOST):
@@ -82,7 +89,7 @@ class SeedTransport:
             yield response
 
     @contextmanager
-    def open(self, request, *, timeout, timings=None, cancel_event=None):
+    def open(self, request, *, timeout, timings=None, cancel_event=None, probe_reuse=False):
         if request.full_url != CHAT_URL or request.get_method() != 'POST':
             raise ValueError('Unexpected Seed request destination')
         from .http_transport import cancellable_https
@@ -94,7 +101,7 @@ class SeedTransport:
                 conn = self._take(timeout, scope)
                 if scope is not None and conn.sock is not None:
                     scope.register(conn.sock)
-                with self._exchange(conn, request, timeout, timings) as response:
+                with self._exchange(conn, request, timeout, timings, probe_reuse) as response:
                     yield response
                 reusable = not response.will_close and conn.sock is not None
         except BaseException:
@@ -107,7 +114,7 @@ class SeedTransport:
                 conn.close()
 
     @contextmanager
-    def _exchange(self, conn, request, timeout, timings):
+    def _exchange(self, conn, request, timeout, timings, probe_reuse=False):
         conn.set_debuglevel(0)  # Never inherit process-wide debugging for credentialed requests.
         fresh = conn.sock is None
         start = monotonic()
@@ -126,9 +133,32 @@ class SeedTransport:
         if timings is not None:
             duration = round((monotonic() - start) * 1000)
             timings['seed_connection'] = f'seed_connect;dur={duration}' if fresh else 'seed_reuse;dur=0'
-        conn.sock.settimeout(timeout)
+        sock = conn.sock
+        sock.settimeout(timeout)
+        sent_at = monotonic()
         conn.request('POST', CHAT_PATH, body=request.data, headers=dict(request.header_items()))
-        with conn.getresponse() as response:
+        waiting_at = monotonic()
+        probe = probe_reuse and not fresh
+        header_timeout = min(timeout, REUSED_HEADER_TIMEOUT) if probe else timeout
+        if timings is not None:
+            timings['send_ms'] = round((waiting_at - sent_at) * 1000)
+            timings['header_timeout_s'] = header_timeout
+        if probe:
+            sock.settimeout(header_timeout)
+        try:
+            response = conn.getresponse()
+        except (TimeoutError, ConnectionError, ssl.SSLEOFError) as exc:
+            if timings is not None:
+                timings['header_failure'] = type(exc).__name__
+            if probe:
+                raise SeedHeaderInterrupted(type(exc).__name__) from exc
+            raise
+        finally:
+            if timings is not None:
+                timings['header_wait_ms'] = round((monotonic() - waiting_at) * 1000)
+        with response:
+            if probe:
+                sock.settimeout(timeout)  # Keep the provider's body inactivity timeout.
             if 300 <= response.status < 400:
                 raise PermissionError('Authenticated HTTP redirects are disabled')
             if not 200 <= response.status < 300:
