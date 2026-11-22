@@ -17,6 +17,7 @@ from .mcp_catalog import McpCatalog
 from .search_service import SearchService
 from .wallpaper import Wallpaper
 from .onboarding import Onboarding
+from .model_rows import ModelRows
 from .local_tools import LocalTools
 from .media_models import MediaModels
 
@@ -44,6 +45,7 @@ class WorkbenchController(QObject):
     pageReadyChanged = Signal()
     catalogRequested = Signal(str)
     modelSetupRequested = Signal()
+    modelEditRequested = Signal(str)
     pagesChanged = Signal()
     workspaceQueryResult = Signal('QVariantMap')
     formReset = Signal(str)
@@ -65,6 +67,9 @@ class WorkbenchController(QObject):
         self._onboarding.can_save = lambda: not (self._busy or self.hasUnsaved or self._pending or self._input_busy())
         self._onboarding.saved.connect(self._apply_model_setup)
         self._onboarding.preferencesChanged.connect(self._apply_onboarding_preferences)
+        self._model_rows = ModelRows(self.home, self, demo=demo)
+        self._model_rows.can_save = self._onboarding.can_save
+        self._model_rows.saved.connect(self._apply_model_edit)
         self._model_setup_pending = None
         self._page, self._profile = 'chat', 'sandbox'
         self._navigation = False
@@ -142,6 +147,7 @@ class WorkbenchController(QObject):
     localTools = Property(QObject, lambda s: s._local_tools, constant=True)
     mediaModels = Property(QObject, lambda s: s._media_models, constant=True)
     onboarding = Property(QObject, lambda s: s._onboarding, constant=True)
+    modelRows = Property(QObject, lambda s: s._model_rows, constant=True)
     busy = Property(bool, lambda s: s._busy, notify=changed)
     hasUnsaved = Property(bool, lambda s: s._unsaved or bool(s._form_dirty or s._document_dirty), notify=changed)
     pageData = Property('QVariantMap', lambda s: s._pages, notify=pagesChanged)
@@ -397,6 +403,18 @@ class WorkbenchController(QObject):
     def _apply_model_setup(self, row_id):
         self.gatewayChanging.emit()
         self._request_gateway({'command': 'apply_model_setup', 'provider': row_id})
+
+    @Slot(str)
+    def editModel(self, row_id):
+        self._model_rows.reload()
+        self.modelEditRequested.emit(row_id)
+
+    def _apply_model_edit(self, _row_id):
+        # Restart on the saved chat choice; an edited label falls back like any removed model.
+        self.gatewayChanging.emit()
+        self._request_gateway({'command': 'apply_model_setup'})
+        if self._page == 'config' and self._service_ready:
+            self._send({'command': 'page_action', 'page': 'config', 'action': 'reload', 'values': {}})
 
     @Slot(str)
     def switchChatModel(self, label):

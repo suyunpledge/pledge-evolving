@@ -62,13 +62,20 @@ def budget_lead(limit):
     return f'已达本轮 {limit} 次工具调用上限，以下是进度小结；点「继续」可接着做。\n\n'
 
 
-def turn_limit(home):
+def turn_limit(home, template=None):
     """Work 模式的回合上限：与 CLI / VS Code / 网关同一套解析（不套用厂商步数提示，
-    因为这里的模型由界面选择，不一定是配置里的首发路由）。"""
+    因为这里的模型由界面选择，不一定是配置里的首发路由）。
+
+    ``template``（keystone.agent_templates.AgentTemplate）给出角色的步数预算；
+    用户在 keystone.patch.json 里自己写的 maxSteps 是上限，模板不会越过它。"""
     try:
         from keystone.config import load_config
         from keystone.loop_limits import resolve_loop_limits
-        return resolve_loop_limits(load_config(Path(home)), use_hint=False).max_steps
+        cfg = load_config(Path(home))
+        if template is not None:
+            from keystone.agent_templates import apply_template
+            apply_template(cfg, template)
+        return resolve_loop_limits(cfg, use_hint=False).max_steps
     except Exception:
         return MAX_TURNS
 
@@ -135,6 +142,7 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
         receipt=None, system_context='', mcp=None, temperature=0.7, tool_filter=None, tools_enabled=True,
         chat_mcp=None, enter_work=None, max_turns=MAX_TURNS, attachment_folder=None, progress=None,
         on_todos=None, resuming=False, turn_context=''):
+    role_context = system_context  # 调用方的稳定指引（如角色模板），切换到 Work 后仍要带上
     def stage(kind, label):
         if progress is not None:
             progress(kind, label)
@@ -349,7 +357,7 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
                 raise GenerationCancelled('已停止生成')
             turn_context = enter_work(switch_reason, messages)
             context_at = len(messages)
-            system_context = WORK_CONTEXT
+            system_context = '\n'.join(part for part in (WORK_CONTEXT, role_context) if part)
             chat_mode = False
             mcp_tools, call_mcp = mcp or ({}, None)
             tools = schemas(mcp_tools, chat_mode)

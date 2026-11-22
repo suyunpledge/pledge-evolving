@@ -107,6 +107,7 @@ class ChatController(QObject):
         self._switching_model = False
         self._model = str(self._prefs.get("model", "default"))
         self._reasoning = str(self._prefs.get("reasoning", "medium"))
+        self._effort_cache = {}
         desktop = {} if demo else self.store.read(desktop_config(Path(home)), {})
         port = desktop.get('gateway_port', 8799) if isinstance(desktop, dict) else 8799
         port = port if isinstance(port, int) and 1024 <= port <= 65535 else 8799
@@ -128,6 +129,8 @@ class ChatController(QObject):
         self.chat_mcp_tools = None
         self._conversation_mode = 'work'
         self._tool_settings = WorkToolSettings(self)
+        from .role_templates import RoleTemplates
+        self._templates = RoleTemplates(self, home)
         from .changes import ReplyChanges
         self._changes = ReplyChanges(self)
         self._client = None
@@ -152,6 +155,7 @@ class ChatController(QObject):
     busy = Property(bool, lambda self: self._busy or self._changes.busy, notify=changed)
     changeReview = Property(QObject, lambda self: self._changes, constant=True)
     toolSettings = Property(QObject, lambda self: self._tool_settings, constant=True)
+    templates = Property(QObject, lambda self: self._templates, constant=True)
     conversationMode = Property(str, lambda self: self._conversation_mode, notify=changed)
     connected = Property(bool, lambda self: self._connected, notify=changed)
     canRetry = Property(bool, lambda self: self.connected and not self.busy and bool(self._history)
@@ -167,6 +171,12 @@ class ChatController(QObject):
     def _planning_error(self, error):
         self._error = str(redact(error))
         self.changed.emit()
+
+    # 思考强度随模型变化：只给当前模型可用的档位；所选档位不可用时按不超过它的最高档发送。
+    reasoningLevels = Property("QStringList", lambda self: self._effort_info()['levels'], notify=changed)
+    reasoningSupported = Property(bool, lambda self: self._effort_info()['supported'], notify=changed)
+    reasoningHint = Property(str, lambda self: self._effort_info()['hint'], notify=changed)
+    effectiveReasoning = Property(str, lambda self: self._effective_reasoning(), notify=changed)
     gateway = Property(str, lambda self: self._gateway, notify=changed)
     material = Property(float, lambda self: self._material, notify=changed)
     reduceMotion = Property(bool, lambda self: self._reduce_motion, notify=changed)
@@ -295,6 +305,7 @@ class ChatController(QObject):
     def setManagedModels(self, models):
         self._managed_models = list(models)
         self._models = self._managed_models or ["default"]
+        self._effort_cache.clear()
         self.changed.emit()
 
     @Slot()
@@ -309,6 +320,24 @@ class ChatController(QObject):
             return
         if models != self._managed_models:
             self.setManagedModels(models)
+
+    def _effort_info(self):
+        model = self._model
+        if model not in self._effort_cache:
+            from . import effort
+            info = effort.support(None)
+            if self._managed_models is not None and not self.demo:
+                from config_model import load_user_layer
+                try:
+                    info = effort.for_label(load_user_layer(self.store.home), model)
+                except (OSError, ValueError):
+                    pass
+            self._effort_cache[model] = info
+        return self._effort_cache[model]
+
+    def _effective_reasoning(self):
+        from . import effort
+        return effort.effective(self._reasoning, self._effort_info()['levels'])
 
     @Slot(str)
     def setReasoning(self, value):
@@ -626,7 +655,7 @@ class ChatController(QObject):
         cancel = self._cancel
         self._busy, self._error, self._status = True, "", "正在生成…"
         self._turn_start = time.monotonic()
-        messages, model, effort = copy.deepcopy(self._history), self._model, self._reasoning
+        messages, model, effort = copy.deepcopy(self._history), self._model, self._effective_reasoning()
         task_index = next(i for i in reversed(range(len(messages))) if messages[i].role == 'user')
         steps = []
         if resuming:
@@ -667,6 +696,10 @@ class ChatController(QObject):
             chat_connection = self.chat_mcp_tools() if tools_enabled and self.chat_mcp_tools else ({}, None)
         change_notice = self._changes.notice()
         temperature = self._temperature
+        # 角色模板：角色指引随每轮系统上下文走（切换到 Work 后也保留）；工具与权限
+        # 的收窄在 tool_settings.snapshot / permissions.authorize 里，回合上限在 turn_limit。
+        role = self._templates.active()
+        role_text = role.role_text() if role is not None else ''
 
         def update_status(value):
             self._workerEvent.emit('status', (generation, value))
@@ -675,10 +708,12 @@ class ChatController(QObject):
             step = (kind, str(redact(label))[:160], self.turnElapsedMs())
             self._workerEvent.emit('timeline', (generation, step))
 
+        # 角色指引整轮会话不变：走系统上下文（稳定前缀、可缓存）；工作台背景才是逐轮的轮次上下文。
         def work_context(history):
             if self.work_context is None:
                 return change_notice
-            return change_notice + '\n' + self.work_context(history, model, cancel, update_status)
+            return '\n'.join(part for part in (change_notice,
+                                                self.work_context(history, model, cancel, update_status)) if part)
 
         def enter_work(reason, history):
             arrived = threading.Event()
@@ -710,7 +745,7 @@ class ChatController(QObject):
                 max_turns = self.turn_limit() if self.turn_limit is not None else MAX_TURNS
                 result = run(client, messages, model=model, effort=None if effort == 'off' else effort,
                     cancel=cancel, authorize=authorize, tool_filter=tool_filter, tools_enabled=tools_enabled,
-                    turn_context=context, mcp=connection, temperature=temperature,
+                    turn_context=context, system_context=role_text, mcp=connection, temperature=temperature,
                     chat_mcp=chat_connection, enter_work=enter_work if chat_mode else None,
                     max_turns=max_turns, attachment_folder=self.store.folder, progress=progress,
                     on_todos=show_todos if authorize is not None else None,

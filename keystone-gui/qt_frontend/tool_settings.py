@@ -43,12 +43,19 @@ class WorkToolSettings(QObject):
     error = Property(str, lambda self: self._save_error or self._error, notify=changed)
     rows = Property('QVariantList', lambda self: self._rows, notify=changed)
 
+    def _role(self):
+        """Tools the active role template exposes (always narrows, never widens)."""
+        templates = getattr(self.owner, '_templates', None)
+        role = templates.active() if templates is not None else None
+        return role.tool_allowed if role is not None else (lambda _: True)
+
     def snapshot(self):
         default, exceptions = self._default, frozenset(self._exceptions)
         profile = self.owner.tool_filter() if self.owner.tool_filter else lambda _: True
+        role = self._role()
 
         def allowed(name):
-            return profile(name) and (default != (name.removeprefix('keystone_') in exceptions))
+            return profile(name) and role(name) and (default != (name.removeprefix('keystone_') in exceptions))
 
         return self._enabled and (default or bool(exceptions)), allowed
 
@@ -127,7 +134,10 @@ class WorkToolSettings(QObject):
         self._publish()
 
     def _publish(self):
-        profile = self.owner.tool_filter() if self.owner.tool_filter else lambda _: True
+        base, role = (self.owner.tool_filter() if self.owner.tool_filter else lambda _: True), self._role()
+
+        def profile(name):
+            return base(name) and role(name)
         rows = []
         for schema in tool_schemas(self._gateway, self._local):
             function = schema['function']

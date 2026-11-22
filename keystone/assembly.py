@@ -119,6 +119,9 @@ def build_agent(
                        else config.get('project_rules', 'enabled', True)),
         service=service,
         thinking_token_cap=config.get("thinking", "tokenCap", None),
+        # 角色模板（keystone.agent_templates）的角色指引：走 run_envelope 请求尾部，
+        # 不改写 system 头部，前缀缓存不受影响。无模板时为空串，行为不变。
+        extra_system=str(config.get("role", "guidance", "") or ""),
         observer=observer,
         probes=probes,
     )

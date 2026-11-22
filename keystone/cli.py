@@ -65,7 +65,30 @@ def _compose(args) -> Config:
         include_user_layer=not getattr(args, "no_user_layer", False),
     )
     _apply_profile(args, cfg)
+    _apply_template(args, cfg)
     return cfg
+
+
+def _apply_template(args, cfg) -> None:
+    """--template <id>：在 bundle + 用户层 + --profile 之后叠加角色模板。
+
+    顺序是安全契约的一部分：此时的 policy 行就是用户自己的权限上限，模板只会
+    被收窄到它之内（见 keystone.agent_templates.clamp_policy），拒绝规则永远胜出。
+    """
+    template_id = getattr(args, "template", None)
+    if not template_id:
+        return
+    from .agent_templates import TemplateError, apply_template, get_template
+    try:
+        template = get_template(template_id, args.home)
+    except TemplateError as exc:
+        raise SystemExit(str(exc)) from None
+    applied = apply_template(cfg, template, workspace=Path(getattr(args, "workspace", None) or Path.cwd()))
+    if getattr(args, "command", "") == "run":
+        print(f"[template] {template.name}（{template.id}）：权限 {applied.policy['mode']} / "
+              f"{applied.policy['sandbox']}，步数 {applied.loop.get('maxSteps', '默认')}", file=sys.stderr)
+        for note in applied.narrowed:
+            print(f"[template] 已按你的策略收窄：{note}", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -494,6 +517,48 @@ def cmd_sessions(args) -> int:
               f"status={row.get('workflow', {}).get('status', 'legacy')} cwd={row['meta'].get('cwd', '?')}")
     print(f"({len(payload['sessions'])} sessions, index v{payload['version']})")
     return 0
+
+
+def cmd_templates(args) -> int:
+    """List / show / duplicate / delete role templates (built-ins + <home>/agents)."""
+    from .agent_templates import (TemplateError, delete_template, duplicate_template, get_template,
+                                  load_templates, user_dir)
+    home = Path(args.home)
+    action = args.action
+    try:
+        if action == "list":
+            templates, problems = load_templates(home)
+            if getattr(args, "json", False):
+                print(json.dumps([t.summary() for t in templates], ensure_ascii=False, indent=2))
+            else:
+                for t in templates:
+                    origin = "内置" if t.builtin else "自定义"
+                    print(f"  {t.id:<16} {t.name:<8} [{origin}] {t.mode.value}/{t.sandbox.value} "
+                          f"步数 {t.loop.get('maxSteps', '-')}  {t.description}")
+                print()
+                print(f"自定义模板目录：{user_dir(home)}")
+            for problem in problems:
+                print(f"[template warn] {problem}", file=sys.stderr)
+            return 0
+        if not args.id:
+            raise SystemExit(f"templates {action} 需要模板 id")
+        if action == "show":
+            template = get_template(args.id, home)
+            print(json.dumps(template.to_raw(), ensure_ascii=False, indent=2))
+            return 0
+        if action == "duplicate":
+            copy = duplicate_template(home, args.id, name=getattr(args, "name", None))
+            print(f"已复制为 {copy.id}：{copy.path}")
+            print(f"编辑该文件即可自定义；使用：keystone run --template {copy.id} \"任务\"")
+            return 0
+        if action == "delete":
+            delete_template(home, args.id)
+            print(f"已删除自定义模板 {args.id}")
+            return 0
+    except TemplateError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    return 2
 
 
 def cmd_capabilities(args) -> int:
@@ -992,6 +1057,10 @@ def _common_options() -> argparse.ArgumentParser:
     common.add_argument("--coding", action="store_true", default=argparse.SUPPRESS,
                         help="coding mode: layer bundles/modes/coding.json "
                              "(read-before-write contract, wider tool surface, bigger loop budget)")
+    # 第五维 · 角色模板：keystone/bundles/agents/<id>.json 或 <home>/agents/<id>.json。
+    # 只收窄、不放宽：叠加在 --profile 之后，权限被夹在用户策略之内。
+    common.add_argument("--template", metavar="ID", default=argparse.SUPPRESS,
+                        help="agent role template (see `keystone templates`), e.g. fullstack, reviewer")
     # 读范围：与写沙箱**解耦**的独立轴。典型用法就是
     # `--profile balanced --read-scope all`：写仍然锁在工作区，但读可以到处读。
     common.add_argument("--read-scope", choices=["auto", "workspace", "all"],
@@ -1113,6 +1182,13 @@ def build_parser() -> argparse.ArgumentParser:
                           "compact=compress before the vendor's cliff, "
                           "ask=prompt when interactive")
     run.set_defaults(func=cmd_run)
+
+    templates = sub.add_parser("templates", parents=[common], help="list / show / duplicate / delete role templates")
+    templates.add_argument("action", nargs="?", default="list", choices=["list", "show", "duplicate", "delete"])
+    templates.add_argument("id", nargs="?")
+    templates.add_argument("--name", help="display name for a duplicate")
+    templates.add_argument("--json", action="store_true")
+    templates.set_defaults(func=cmd_templates)
 
     review = sub.add_parser('review', parents=[common], help='manually review a completed response/code; no tools')
     review.add_argument('code')

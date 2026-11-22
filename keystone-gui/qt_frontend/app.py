@@ -62,15 +62,16 @@ def main(argv=None):
         from .team_service import work_context
         controller.work_context = lambda messages, model, cancel, status: work_context(args.home, messages, model, cancel, status)
         from .conversation import turn_limit
-        controller.turn_limit = lambda: turn_limit(args.home)
+        controller.turn_limit = lambda: turn_limit(args.home, controller.templates.active())
     preview_home = tempfile.TemporaryDirectory(prefix='keystone-workbench-preview-', ignore_cleanup_errors=True) if args.demo else None
     workbench = WorkbenchController(Path(preview_home.name) if preview_home else args.home, demo=args.demo)
     workbench._input_busy = lambda: controller.busy
     from .permissions import authorize, tool_available
     def tool_authorizer():
         profile, workspace = workbench.permission, workbench.workspace
+        template = controller.templates.active()
         return lambda name, arguments, cancel: authorize(
-            profile, workspace, name, arguments, workbench.approve, cancel)
+            profile, workspace, name, arguments, workbench.approve, cancel, template=template)
     controller.tool_authorizer = tool_authorizer
     controller.tool_filter = lambda: partial(tool_available, workbench.permission)
 

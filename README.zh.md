@@ -119,6 +119,8 @@ flowchart LR
 | `wrapUpOnLimit` | `true` | 剩余回合提示与触顶进度小结（`maxSteps` 小于 6 时不启用） |
 | `contextChars` | 24000 | 压缩预算，会再按厂商画像调整 |
 
+**角色模板**：不想从零配置时，可以直接选一个预设角色——全栈开发师、建模设计师、学习助手、智能管家、写作助手、代码审查员、信息调研师。每个角色是 `keystone/bundles/agents/<id>.json` 里的一份数据：角色指引、可用工具、权限与沙箱、步数预算、规划档位、偏好技能和起手提示。命令行用 `python run.py run --template reviewer "审查当前改动"`，`python run.py templates` 列出全部，`templates duplicate <id>` 复制到 `~/.keystone/agents/` 后自行修改；桌面版在新对话页和输入框旁切换。角色只会在你自己的权限之内再收窄：它叠加在用户层和 `--profile` 之后，拒绝和询问规则永远优先，也不能放宽沙箱、读取范围或你在用户层写下的步数（`keystone/agent_templates.py`）。
+
 密钥来自环境变量（`KEYSTONE_<名字>_KEY`）或密钥保险箱，从不写在配置里；`doctor` 发现配置里直接写了 `apiKey` 会报警告。
 
 ### 从 Forge 迁移

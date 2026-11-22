@@ -33,6 +33,6 @@ include = ["keystone", "keystone.*"]
 
 [tool.setuptools.package-data]
 keystone = ["contrib/*.py", "contrib/*.md", "contrib/*.json",
-         "bundles/*.json", "bundles/modes/*.json",
+         "bundles/*.json", "bundles/modes/*.json", "bundles/agents/*.json",
          "templates/*.py", "templates/*.json",
          "bundled/*/*.md", "bundled/*/*.json"]

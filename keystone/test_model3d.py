@@ -385,7 +385,9 @@ class SkillTests(unittest.TestCase):
         entry = next(e for e in catalog["entries"] if e["id"] == "skill-model3d")
         self.assertEqual(entry["provides"]["skill_body"], body,
                          "catalog skill_body drifted from keystone/bundled/model3d/SKILL.md")
-        self.assertLessEqual(len(body), 8192)
+        # must fit one inline tool result (LoopLimits.max_tool_result = 4000): a longer body is
+        # retained as an artifact and the model burns turns paging it with artifact_read
+        self.assertLessEqual(len(body), 3900)
         self.assertFalse(entry["executes_code"])
 
 

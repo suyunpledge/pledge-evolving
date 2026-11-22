@@ -12,7 +12,7 @@ MEDIATED = READ_PATH_TOOLS | CATALOG.keys() | {'write_file', 'edit_file', 'apply
 def tool_available(profile, name):
     return isinstance(name, str) and (profile != 'sandbox' or name.removeprefix('keystone_') in MEDIATED)
 
-def authorize(profile, workspace, name, args, approve, cancel=None):
+def authorize(profile, workspace, name, args, approve, cancel=None, template=None):
     # /v1/tools advertises keystone_* names; the gateway resolves one prefix
     # before policy evaluation. Match that same canonical identity locally.
     if not isinstance(name, str):
@@ -25,6 +25,8 @@ def authorize(profile, workspace, name, args, approve, cancel=None):
         raise PermissionError('ComfyUI 是本机外部服务，请在 Work 中切换到手动批准或完全访问后重试。')
     if not tool_available(profile, name):
         raise PermissionError('此工具在沙箱模式下不可用。')
+    if template is not None and not template.tool_allowed(name):
+        raise PermissionError(f'当前角色「{template.name}」未开放此工具。')
     name = name.removeprefix('keystone_')
     policy = profile_policy(Policy(workspace=Path(workspace).resolve()), profile)
     paths = [str(v) for k, v in args.items() if k in {'path', 'file', 'root', 'target', 'source', 'destination'} and v]
@@ -41,6 +43,16 @@ def authorize(profile, workspace, name, args, approve, cancel=None):
         effect = ToolEffect.WRITE
     decision = policy.evaluate(name, args=args, touching=paths, effect=effect)
     decision = policy.resolve_ask(decision)
+    if template is not None:
+        # 角色模板叠在桌面授权之上，只会更严：它拒绝的一律拒绝；它要求询问而桌面
+        # 授权本可直接放行时，改为征求用户批准。模板永远不能把拒绝或询问变成放行。
+        role = template.own_policy(Path(workspace).resolve())
+        verdict = role.evaluate(name, args=args, touching=paths, effect=effect)
+        if verdict is Decision.DENY:
+            raise PermissionError(f'当前角色「{template.name}」不允许此操作'
+                                  f'（{template.mode.value} / {template.sandbox.value}）。')
+        if verdict is Decision.ASK and decision is Decision.ALLOW:
+            decision = Decision.ASK
     if decision is Decision.DENY:
         raise PermissionError('当前权限或已有拒绝规则禁止此操作。')
     if decision is Decision.ASK and not approve(name, args, cancel):

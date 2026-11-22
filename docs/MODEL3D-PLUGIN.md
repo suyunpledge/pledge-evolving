@@ -44,3 +44,17 @@
 - `keystone-gui/test_plugin_model3d.py`（插件安装→知悉→启用→授权→加载正文→禁用撤销）
 - `python scripts/verify_model3d_ab.py`：离线脚本模型演示（先把孔放在角上，工具检查判 `through_holes want 1, got 0 [FAIL]`，第二次修正后通过）
 - `python scripts/verify_model3d_ab.py --live --tasks plate,gear,stand`：真实模型前后对照，产物由独立评分器从磁盘重新解析评分
+
+## 实测：前后对照（2026-11-21，mimo-v2.6-flash，思考开，每次全新工作区，24 步上限）
+
+before = 现有工具面去掉 model3d（模型只能用 write_file 手写网格）；after = 默认工具面 + 内置技能。产物一律由独立评分器从磁盘重新解析评分（水密、朝向、尺寸、通孔数）。原始数据：`reports/model3d-ab-live-mimo-flash*.json`。
+
+| 任务 | before 通过 | after 通过 | after 平均工具调用 | after 平均耗时 |
+|---|---|---|---|---|
+| 40×40×10 方板 + Ø20 通孔 | 0/2（均 output_limit，未写出文件） | **2/2** | 3.5 | 114 s（before 265 s 失败） |
+| 12 齿 m2 齿轮 + Ø5 孔 | 0/2（均 output_limit） | **2/2** | 2.0 | 45 s（before 158 s 失败） |
+| 手机支架（开放设计） | 0/2 | 0/2 + 复测 0/6 | — | — |
+
+- before 失败形态与 2026-11-09 记录一致：模型试图在一次回复里输出整份 STL/顶点表撞 4096 输出上限；方板任务还先试 `shell_exec`（受保护 agent 禁用）和 `tool_search` 找 Python 执行器。
+- after 的校验闭环在真实模型上生效：方板 run0 中模型把方块 `center:true` 而刀具仍从 z=-1 起，得到盲孔；结果里 `expect through_holes: want 1, got 0 [FAIL]`，下一次调用即修正通过。
+- 手机支架仍失败：MiMo flash 在思考模式下把 4096 输出预算全花在开放式设计推理上，来不及发出工具调用（不是规格或工具错误）。复测中发现并修正一处：技能正文曾超过 4000 字符单次工具结果上限，被转为工件后模型用 `artifact_read` 翻页浪费回合；现已压到 3.8k 并由测试锁定。剩余问题需要更大的输出预算或更强模型，列为后续。
