@@ -141,6 +141,29 @@ class ControllerEffortTests(unittest.TestCase):
         # Other rows of the user layer are untouched.
         self.assertEqual([r['id'] for r in load_user_layer(self.home)], [r['id'] for r in ROWS] + ['thinking'])
 
+    def test_contemplate_runs_rounds_before_answering(self):
+        self.connect('ds')
+        self.controller.setReasoning('contemplate')
+        Gateway.requests.clear()
+        self.controller.draft = '设计一个缓存层'
+        self.controller.send()
+        until(lambda: not self.controller.busy)
+        requests = list(Gateway.requests)
+        # The fake gateway answers identically, so the second round converges: 2 rounds + the answer.
+        self.assertEqual(len(requests), 3)
+        self.assertIn('设计一个缓存层', requests[0]['messages'][-1]['content'])
+        self.assertTrue(all(r.get('reasoning_effort') == 'high' for r in requests))
+        final_system = requests[-1]['messages'][0]['content']
+        self.assertIn('<contemplation>', final_system)
+        reply = self.controller.messages.rows[-1]
+        self.assertEqual(reply['contemplation']['rounds'], 2)
+        self.assertIn('已收敛', reply['contemplation']['label'])
+        self.assertEqual(reply['textContent'], '真实流式 reply 123')
+        # Notes are per request only: the next turn does not resend them from history.
+        self.controller.setReasoning('high')
+        follow = self.send()
+        self.assertFalse(any('<contemplation>' in str(m.get('content')) for m in follow['messages']))
+
     def test_choice_persists_like_the_model_choice(self):
         self.connect('ds')
         self.controller.setReasoning('low')

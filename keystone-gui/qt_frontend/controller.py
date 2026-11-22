@@ -24,7 +24,7 @@ from keystone.compat import desktop_config
 
 class RowsModel(QAbstractListModel):
     NAMES = ("sessionId", "title", "subtitle", "roleName", "textContent", "state", "stamp", "changeKey", "changeInfo",
-             "historyIndex", "toolReceipts", "continuable")
+             "historyIndex", "toolReceipts", "continuable", "contemplation")
 
     def __init__(self, rows=(), parent=None):
         super().__init__(parent)
@@ -43,6 +43,8 @@ class RowsModel(QAbstractListModel):
                 name = self.NAMES[i]
                 if name == "toolReceipts":
                     return self.rows[index.row()].get(name, [])
+                if name == "contemplation":
+                    return self.rows[index.row()].get(name) or {}
                 if name == "continuable":
                     return bool(self.rows[index.row()].get(name, False))
                 return self.rows[index.row()].get(name, -1 if name == "historyIndex" else "")
@@ -667,6 +669,12 @@ class ChatController(QObject):
             chat_connection = self.chat_mcp_tools() if tools_enabled and self.chat_mcp_tools else ({}, None)
         change_notice = self._changes.notice()
         temperature = self._temperature
+        # 沉思档：回答前先跑沉思轮（套件走插件席位），笔记只进本轮系统上下文，不写入历史。
+        contemplating = self._reasoning == 'contemplate' and not self.demo
+        task = next((m.content for m in reversed(messages)
+                     if m.role == 'user' and isinstance(m.content, str)), '')
+        home = self.store.home
+        thought = ['']
         # 角色模板：角色指引随每轮系统上下文走（切换到 Work 后也保留）；工具与权限
         # 的收窄在 tool_settings.snapshot / permissions.authorize 里，回合上限在 turn_limit。
         role = self._templates.active()
@@ -677,8 +685,8 @@ class ChatController(QObject):
 
         def work_context(history):
             if self.work_context is None:
-                return '\n'.join(part for part in (role_text, change_notice) if part)
-            return '\n'.join(part for part in (role_text, change_notice,
+                return '\n'.join(part for part in (role_text, thought[0], change_notice) if part)
+            return '\n'.join(part for part in (role_text, thought[0], change_notice,
                                                 self.work_context(history, model, cancel, update_status)) if part)
 
         def enter_work(reason, history):
@@ -694,7 +702,15 @@ class ChatController(QObject):
         def worker():
             try:
                 from .conversation import run
-                context = ('\n'.join(part for part in (role_text, change_notice) if part)
+                if contemplating:
+                    from .contemplation import contemplate, thinking_suite
+                    notes = contemplate(client, thinking_suite(home), task, model=model, effort=effort,
+                                        temperature=temperature, cancel=cancel, status=update_status)
+                    thought[0] = notes.context()
+                    if notes.rounds:
+                        self._workerEvent.emit('contemplation', (generation, notes.summary()))
+                    update_status('正在生成…')
+                context = ('\n'.join(part for part in (role_text, thought[0], change_notice) if part)
                            if chat_mode else work_context(messages))
                 from .conversation import MAX_TURNS
                 max_turns = self.turn_limit() if self.turn_limit is not None else MAX_TURNS
@@ -793,6 +809,9 @@ class ChatController(QObject):
             self._changes.record(*value)
             receipts = self._messages.rows[self._reply_index].get('toolReceipts', [])
             self._messages.update(self._reply_index, toolReceipts=[*receipts, preview_receipt(*value)])
+            return
+        if kind == 'contemplation':
+            self._messages.update(self._reply_index, contemplation=value)
             return
         if kind == 'budget_exhausted':
             self._messages.update(self._reply_index, continuable=True)

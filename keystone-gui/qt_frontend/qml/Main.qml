@@ -138,6 +138,7 @@ ApplicationWindow {
                 required property int historyIndex
                 required property var toolReceipts
                 required property bool continuable
+                required property var contemplation
                 width: messages.width
                 height: messageBody.height + (roleName === "user" ? 24 : 0)
                     + (messageActions.visible ? messageActions.height + 4 : 0)
@@ -163,6 +164,33 @@ ApplicationWindow {
                         Image { width: 22; height: 22; source: brandUrl; smooth: true }
                         Text { text: "Keystone"; color: "#dfe4eb"; font.weight: Font.DemiBold; font.pixelSize: 13; anchors.verticalCenter: parent.verticalCenter }
                         Text { visible: message.state === "streaming"; text: controller.status; color: "#939da9"; font.pixelSize: 12; anchors.verticalCenter: parent.verticalCenter }
+                    }
+                    // 沉思：回答前的几轮笔记，默认折叠，只占一行。
+                    Column {
+                        objectName: "contemplationCard"
+                        property bool open: false
+                        visible: message.roleName !== "user" && !!message.contemplation && !!message.contemplation.label
+                        width: parent.width; spacing: 6
+                        Row {
+                            spacing: 6
+                            Glyph { name: parent.parent.open ? "chevron-up" : "chevron-down"; ink: Theme.ember; width: 13; height: 13; anchors.verticalCenter: parent.verticalCenter }
+                            Text { text: message.contemplation ? (message.contemplation.label || "") : ""; color: Theme.ember; font.pixelSize: 12; anchors.verticalCenter: parent.verticalCenter }
+                            HoverHandler { cursorShape: Qt.PointingHandCursor }
+                            TapHandler { onTapped: parent.parent.open = !parent.parent.open }
+                        }
+                        Rectangle {
+                            visible: parent.open
+                            width: parent.width; height: notesText.implicitHeight + 20; radius: 10
+                            color: "#1a2a1f14"; border.color: "#33e89d5a"; border.width: 1
+                            TextEdit {
+                                id: notesText
+                                x: 12; y: 10; width: parent.width - 24
+                                text: message.contemplation ? (message.contemplation.notes || "") : ""
+                                textFormat: TextEdit.PlainText; wrapMode: TextEdit.Wrap
+                                readOnly: true; selectByMouse: true
+                                color: Theme.textSecondary; font.pixelSize: 12
+                            }
+                        }
                     }
                     TextEdit {
                         id: messageText
