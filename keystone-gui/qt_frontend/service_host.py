@@ -1,6 +1,5 @@
 """Private JSON service process. No UI toolkit, foreign window or message pump."""
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import replace
 import argparse
 import json
 import os
@@ -73,9 +72,10 @@ class ServiceHost:
     def publish_tools(self):
         schemas = list(self.pages.connectors.schemas())
         computer = self.pages.computer
-        if computer and computer.lane:
-            schemas.extend(computer.lane.schemas())
-        self.emit('service_tools', schemas=schemas)
+        lane = computer.lane if computer else None
+        if lane:
+            schemas.extend(lane.schemas())
+        self.emit('service_tools', schemas=schemas, computerGrant=lane.session.grant_id if lane else '')
 
     def work(self, fn):
         with self.lock:
@@ -183,6 +183,10 @@ class ServiceHost:
             page, action, values = row['page'], row['action'], row.get('values', {})
             if action == 'cancel':
                 self.cancel.set()
+            elif page == 'computer' and action == 'revoke' and self.pages.computer:
+                self.pages.computer.close()
+                self.pages.publish('computer')
+                self.publish_tools()
             else:
                 self.work(lambda: self.pages.action(page, action, values))
         elif command == 'document':
@@ -194,14 +198,9 @@ class ServiceHost:
                     name, args = row['name'], row['arguments']
                     if name.startswith('computer_'):
                         computer = self.pages.computer
-                        if not computer or not computer.lane:
+                        if not computer:
                             raise PermissionError('请先选择窗口并截图。')
-                        # A fresh cancellation token for this explicit turn; the target
-                        # revocation token still remains authoritative inside the lane.
-                        from keystone.computer_use import TargetCancellation
-                        computer.lane.cancel = TargetCancellation(self.cancel, computer.session.revoked)
-                        computer.lane.ctx = replace(computer.lane.ctx, cancellation=computer.lane.cancel)
-                        result = computer.lane.call(name, args)
+                        result = computer.call(name, args, grant=row.get('computerGrant') or '')
                     else:
                         result = self.pages.connectors.invoke(name, args, self.policy(),
                             approve=self.approve, cancel_event=self.cancel, agent=True)
@@ -228,7 +227,10 @@ class ServiceHost:
             if not self.running and row.get('profile') in {'sandbox', 'manual', 'full'}:
                 if self.profile != row['profile']:
                     self.terminal.close()
-                self.profile = row['profile']
+                    self.profile = row['profile']
+                    if self.pages.computer:
+                        self.pages.computer.settings_changed()
+                        self.publish_tools()
             self.emit('permission', profile=self.profile)
         elif command == 'approval':
             waiter = self.waiters.get(row.get('id'))

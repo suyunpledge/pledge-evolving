@@ -79,6 +79,7 @@ class WorkbenchController(QObject):
         self._document_dirty = set()
         self._document_versions = {}
         self._service_tools = []
+        self._computer_grant = ''
         self._service_calls = {}
         self._serviceCommand.connect(self._send)
         self._coding = {}
@@ -166,13 +167,19 @@ class WorkbenchController(QObject):
     codingDraft = Property(str, lambda s: s._coding_draft, notify=codingDraftChanged)
 
     def service_tools(self):
-        return {r['function']['name']: (r, ('service', r['function']['name'])) for r in self._service_tools}
+        tools = {}
+        for schema in self._service_tools:
+            name = schema['function']['name']
+            grant = self._computer_grant if name.startswith('computer_') else ''
+            tools[name] = (schema, ('service', name, grant))
+        return tools
 
-    def call_service(self, name, arguments, cancel):
+    def call_service(self, name, arguments, cancel, grant=''):
         identifier = uuid.uuid4().hex
         waiter = {'done': threading.Event(), 'result': None}
         self._service_calls[identifier] = waiter
-        self._serviceCommand.emit({'command': 'call_tool', 'id': identifier, 'name': name, 'arguments': arguments})
+        self._serviceCommand.emit({'command': 'call_tool', 'id': identifier, 'name': name,
+                                   'arguments': arguments, 'computerGrant': grant})
         try:
             while not waiter['done'].wait(.1):
                 if self._closing or cancel.is_set():
@@ -184,9 +191,6 @@ class WorkbenchController(QObject):
 
     @Slot(str, str, str)
     def pageAction(self, page, action, payload):
-        if page == 'computer' and action == 'settings':
-            self._send({'command': 'computer_settings'})
-            return
         try:
             values = json.loads(payload)
             if not isinstance(values, dict):
@@ -194,6 +198,11 @@ class WorkbenchController(QObject):
         except (ValueError, TypeError) as exc:
             self._error = str(exc)
             self.changed.emit()
+            return
+        if page == 'computer' and action == 'settings':
+            if values.get('changed') == 'model':
+                self.formValues.emit(page, {'consent': False})
+            self._send({'command': 'computer_settings'})
             return
         self._send({'command': 'page_action', 'page': page, 'action': action, 'values': values})
 
@@ -477,6 +486,7 @@ class WorkbenchController(QObject):
         elif kind == 'history':
             self.historyRequested.emit(row['rows'])
         elif kind == 'service_tools':
+            self._computer_grant = row.get('computerGrant', '')
             self._service_tools = row['schemas']
         elif kind == 'call_result':
             waiter = self._service_calls.get(row['id'])

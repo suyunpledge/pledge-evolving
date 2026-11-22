@@ -95,7 +95,8 @@ def capture_window(window, process_id, *, cancelled=None, timeout=6):
     env['PYTHONPATH'] = str(root)
     env['PYTHONIOENCODING'] = 'utf-8'
     process = subprocess.Popen([sys.executable, '-B', '-m', 'keystone.computer_capture', str(int(window)), str(int(process_id))],
-        cwd=root, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        # The Qt service owns a live command pipe on stdin. A capture worker has no input protocol.
+        cwd=root, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
     import time
     deadline = time.monotonic() + timeout

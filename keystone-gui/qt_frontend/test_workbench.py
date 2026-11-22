@@ -192,6 +192,66 @@ class WorkbenchTests(unittest.TestCase):
         self.assertTrue(tools.isVisible())
         self.assertEqual(self.controller.draft, '保留这个草稿')
 
+    @unittest.skipUnless(os.name == 'nt', 'Windows window capture')
+    def test_capture_worker_leaves_qt_service_command_pipe_available(self):
+        from tests.test_computer_coordinates import OwnedWindow
+        target = OwnedWindow('aware')
+        self.addCleanup(target.close)
+        target_id = str(target.target['window'])
+        self.workbench.navigate('computer')
+        until(lambda: self.workbench.nativePageReady)
+        self.workbench.setPermission('full')
+        until(lambda: self.workbench.permission == 'full')
+        pid = self.workbench._process.processId()
+        view = lambda: self.workbench.pageData['computer']
+        self.workbench.pageAction('computer', 'windows', '{}')
+        until(lambda: not self.workbench.busy and any(r['id'] == target_id for r in view()['rows']))
+        self.workbench.pageAction('computer', 'bind', json.dumps({'id': target_id}))
+        until(lambda: not self.workbench.busy and 'computer_observe' in self.workbench.service_tools())
+        previous = ''
+        for _ in range(2):
+            self.workbench.pageAction('computer', 'capture', '{}')
+            until(lambda: not self.workbench.busy and view().get('observationId') and view()['observationId'] != previous)
+            previous = view()['observationId']
+            self.assertTrue(view()['image'].startswith('data:image/png;base64,'))
+            self.assertEqual(self.workbench._process.processId(), pid)
+
+    def test_computer_preview_maps_only_image_pixels_and_disarms_on_refresh(self):
+        from unittest.mock import patch
+        from PySide6.QtCore import QPointF
+        self.workbench.navigate('computer')
+        until(lambda: self.workbench.nativePageReady and visual_item(self.window.contentItem(), 'page_computer'))
+        page = visual_item(self.window.contentItem(), 'page_computer')
+        sample = Path(self.temp.name) / 'window.png'
+        image = QImage(200, 400, QImage.Format.Format_RGB32)
+        image.fill(QColor('white'))
+        self.assertTrue(image.save(str(sample)))
+        data = dict(self.workbench.pageData['computer'], image=QUrl.fromLocalFile(str(sample)).toString(),
+                    canInput=True, observationId='first', point=None)
+        self.workbench._receive({'event': 'page', 'page': 'computer', 'data': data})
+        picture = page.findChild(QObject, 'computerPreviewImage')
+        button = page.findChild(QObject, 'confirmPreviewPoint')
+        self.window.grabWindow()  # Lay out the off-screen test window before injecting pointer events.
+        until(lambda: picture.isVisible() and picture.property('paintedWidth') > 0)
+        def tap(x, y):
+            QTest.mouseClick(self.window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier,
+                             picture.mapToScene(QPointF(x, y)).toPoint())
+        self.assertFalse(button.isEnabled())
+        self.assertGreater(picture.property('imageLeft'), 4)
+        tap(2, picture.height() / 2)
+        self.assertFalse(button.isEnabled())
+        with patch.object(self.workbench, '_send') as send:
+            tap(picture.width() / 2, picture.height() / 2)
+            self.assertTrue(button.isEnabled())
+            send.assert_not_called()
+            button.clicked.emit()
+            sent = send.call_args.args[0]
+            self.assertEqual((sent['action'], sent['values']['observation_id']), ('click', 'first'))
+            self.assertAlmostEqual(sent['values']['x'], 100, delta=2)
+            self.assertAlmostEqual(sent['values']['y'], 200, delta=2)
+        self.workbench._receive({'event': 'page', 'page': 'computer', 'data': dict(data, observationId='next')})
+        self.assertFalse(button.isEnabled())
+
     def test_work_tool_catalog_filters_and_toggles_advertised_tools(self):
         from functools import partial
         from .permissions import tool_available

@@ -98,7 +98,7 @@ def main(argv=None):
             if target[0] == 'local':
                 return workbench.localTools.call(target[1], workspace, arguments, cancel)
             if target[0] == 'service':
-                return workbench.call_service(target[1], arguments, cancel)
+                return workbench.call_service(target[1], arguments, cancel, target[2])
             return workbench.mcp.call_chat_tool(target, arguments, cancel)
 
         return with_productivity((tools, dispatch), controller.store.folder)

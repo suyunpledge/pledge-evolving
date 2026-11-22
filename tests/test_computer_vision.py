@@ -73,7 +73,7 @@ class VisionTests(unittest.TestCase):
 
     def test_without_consent_no_capture_or_network(self):
         lane = self.lane(False)
-        with patch('computer_panel.VisionClient') as client:
+        with patch('computer_runtime.VisionClient') as client:
             result = lane.call('computer_vision', {'question':'describe'})
         self.assertFalse(result['ok']); client.assert_not_called()
         self.assertEqual(self.driver.captures, 0)
@@ -94,7 +94,7 @@ class VisionTests(unittest.TestCase):
 
     def test_invalid_question_does_not_capture_or_request(self):
         for question in (None, [], '', ' '*3, 'x'*4001):
-            with patch('computer_panel.VisionClient') as client:
+            with patch('computer_runtime.VisionClient') as client:
                 result=self.lane().call('computer_vision', {'question':question})
             self.assertFalse(result['ok']); client.assert_not_called()
         self.assertEqual(self.driver.captures,0)
@@ -119,12 +119,12 @@ class VisionTests(unittest.TestCase):
         def revoke(**kwargs):
             frame = original(**kwargs); self.session.revoke(); return frame
         self.driver.screenshot = revoke
-        with patch('computer_panel.VisionClient') as client:
+        with patch('computer_runtime.VisionClient') as client:
             result = self.lane().call('computer_vision', {'question':'describe'})
         self.assertFalse(result['ok']); client.return_value.analyze.assert_not_called()
 
     def test_vision_result_has_image_identity_without_pixels(self):
-        with patch('computer_panel.VisionClient') as client:
+        with patch('computer_runtime.VisionClient') as client:
             client.return_value.analyze.return_value = {'text':'Red button', 'model':'fixture', 'usage':{}}
             lane = self.lane()
             result = lane.call('computer_vision', {'question':'describe'})

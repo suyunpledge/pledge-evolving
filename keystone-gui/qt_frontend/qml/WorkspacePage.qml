@@ -260,7 +260,7 @@ Item {
         Flow {
             visible: !page.ide; Layout.fillWidth: true; spacing: 7
             Repeater { model: page.viewData.actions || []
-                PageButton { required property var modelData; material: page.material; text: modelData.label; enabled: !workbench.busy || modelData.key === "cancel"; ink: modelData.danger ? Theme.danger : Theme.textPrimary; onClicked: page.invoke(modelData.key) }
+                PageButton { required property var modelData; material: page.material; text: modelData.label; enabled: !workbench.busy || modelData.key === "cancel" || (page.pageKey === "computer" && modelData.key === "revoke"); ink: modelData.danger ? Theme.danger : Theme.textPrimary; onClicked: page.invoke(modelData.key) }
             }
             PageButton { material: page.material; glyph: "refresh-cw"; tip: "刷新"; enabled: !workbench.busy; onClicked: page.invoke("refresh") }
         }
@@ -666,6 +666,13 @@ Item {
             ColumnLayout {
                 width: body.availableWidth; spacing: 14
                 TodoList { Layout.fillWidth: true; items: page.viewData.todos || []; running: workbench.busy }
+                ComputerPreview {
+                    Layout.fillWidth: true; visible: page.pageKey === "computer" && !!imageSource
+                    material: page.material; enabled: !workbench.busy
+                    imageSource: page.viewData.image || ""; observationId: page.viewData.observationId || ""
+                    proposedPoint: page.viewData.point || null; canInput: !!page.viewData.canInput
+                    onClickRequested: (observation, x, y) => page.invoke("click", {observation_id: observation, x: x, y: y})
+                }
                 Repeater {
                     id: fields; model: page.schema
                     WorkbenchField {
@@ -673,12 +680,11 @@ Item {
                         Layout.fillWidth: true; material: page.material; definition: modelData
                         onEdited: value => {
                             page.values[definition.key] = value
-                            if (page.pageKey === "computer" && ["model", "consent", "clicks"].includes(definition.key)) page.invoke("settings")
+                            if (page.pageKey === "computer" && ["model", "consent", "clicks"].includes(definition.key)) page.invoke("settings", {changed: definition.key})
                             if (["config", "agents", "connector_accounts"].includes(page.pageKey)) workbench.setFormDirty(page.pageKey, true)
                         }
                     }
                 }
-                Image { Layout.fillWidth: true; Layout.preferredHeight: visible ? 260 : 0; visible: !!page.viewData.image; source: page.viewData.image || ""; fillMode: Image.PreserveAspectFit; cache: false }
                 Repeater {
                     model: page.viewData.rows || []
                     Item {

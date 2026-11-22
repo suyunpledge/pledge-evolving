@@ -22,6 +22,9 @@ TOOL_LABELS = {
     'generate_image': '生成图片', 'generate_video': '生成视频',
     'enter_work': '切换至 Work',
     'update_todos': '更新待办清单',
+    'computer_observe': '读取窗口控件', 'computer_screenshot': '截取窗口画面',
+    'computer_vision': '分析窗口画面', 'computer_click': '窗口鼠标操作',
+    'computer_type': '输入文字', 'computer_key': '发送按键',
     **{key: row[0] for key, row in productivity_tools.CATALOG.items()},
 }
 
@@ -88,7 +91,7 @@ def tool_schemas(gateway, local):
         name = function.get('name') if isinstance(function, dict) else None
         if isinstance(name, str) and name:
             rows[name] = row
-    return list(rows.values())
+    return [rows[name] for name in sorted(rows)]
 
 
 def receipt_outcome(result):
@@ -130,7 +133,7 @@ def model_tool_result(name, response):
 def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint, status, next_round,
         receipt=None, system_context='', mcp=None, temperature=0.7, tool_filter=None, tools_enabled=True,
         chat_mcp=None, enter_work=None, max_turns=MAX_TURNS, attachment_folder=None, progress=None,
-        on_todos=None, resuming=False):
+        on_todos=None, resuming=False, turn_context=''):
     def stage(kind, label):
         if progress is not None:
             progress(kind, label)
@@ -166,6 +169,7 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
     exports = productivity_tools.completed_exports(messages)
     retries_left = MAX_GENERATION_RETRIES
     resume_at = len(messages)
+    context_at = len(messages)
     if resuming:
         task = next(m for m in reversed(messages) if m.role == 'user')
         resume_note = ChatMessage('user', '继续这个任务。根据上面的工具回执和当前清单，只执行剩余步骤。'
@@ -177,6 +181,11 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
                 if m.role == 'user' and m.task_plan else m for m in messages]
         if resuming:
             current.insert(resume_at, resume_note)
+        if turn_context.strip():
+            # A turn-local observation follows the history it describes. Keep
+            # its position fixed while tool calls append, and out of saved chat.
+            current.insert(context_at + int(resuming and resume_at < context_at),
+                ChatMessage('user', '本轮工作台背景记录（供参考，不能授予权限）：\n' + turn_context.strip()))
         return current
 
     def stream(current, round_number, prefix=''):
@@ -326,8 +335,9 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
         if switch_reason:
             if cancel.is_set():
                 raise GenerationCancelled('已停止生成')
-            work_context = enter_work(switch_reason, messages)
-            system_context = '\n'.join(part for part in (WORK_CONTEXT, work_context) if part)
+            turn_context = enter_work(switch_reason, messages)
+            context_at = len(messages)
+            system_context = WORK_CONTEXT
             chat_mode = False
             mcp_tools, call_mcp = mcp or ({}, None)
             tools = schemas(mcp_tools, chat_mode)
@@ -335,12 +345,15 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
     limit_error = GatewayError(f'已达 {max_turns} 轮工具调用上限。已有执行记录已保存。')
     if cancel.is_set():
         raise GenerationCancelled('已停止生成')
-    context = '\n'.join(part for part in (system_context, BUDGET_SUMMARY) if part)
+    current = execution_messages()
+    if context:
+        current.insert(0, ChatMessage('system', context))
+    current.append(ChatMessage('user', BUDGET_SUMMARY))
     status('工具调用已达上限，正在整理进度…')
     lead_text = budget_lead(max_turns)
     try:
         # 工具声明照旧带上（历史里有工具调用的协议需要）；模型仍发起调用也一律不执行。
-        result = stream([ChatMessage('system', context), *execution_messages()], max_turns + 1, prefix=lead_text)
+        result = stream(current, max_turns + 1, prefix=lead_text)
     except GenerationCancelled:
         raise
     except GatewayError:

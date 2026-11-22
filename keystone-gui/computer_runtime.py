@@ -21,10 +21,15 @@ class ComputerLane:
         registry.unregister('computer_act')  # Input uses the separately approved screenshot-bound tools.
         registry.register(ToolSpec('computer_screenshot',
             'Capture the selected window locally; returns size, hash and a fresh observation_id, not pixels. '
-            'You cannot see the image: use computer_vision to read it or locate a target. '
+            'For a classic control, pass the observation_id and control_ref from computer_observe to get '
+            'its verified point locally, then use this screenshot\'s new observation_id and point for computer_click. '
+            'For custom-drawn content use computer_vision. '
             'To only read public web pages, web_search/fetch_url are faster than driving a browser; '
             'use the window when the page needs a login or interaction.',
-            self._screenshot, schema={'type': 'object', 'properties': {}, 'additionalProperties': False}),
+            self._screenshot, schema={'type': 'object', 'properties': {
+                'observation_id': {'type': 'string', 'description': 'Native observation ID, required with control_ref'},
+                'control_ref': {'type': 'string', 'description': 'ref of the button or editable field in that observation'}},
+                'additionalProperties': False}),
             trusted=True, effect=ToolEffect.READ, requires=('computer',))
         registry.register(ToolSpec('computer_vision',
             'Analyze a fresh selected-window screenshot with the explicitly selected vision model. '
@@ -90,10 +95,13 @@ class ComputerLane:
         if self.cancel.is_set():
             raise PermissionError('窗口授权已撤销或请求已取消，请重新选择目标')
 
-    def capture(self):
+    def capture(self, control=None):
         self.check()
         with self.session.operation(self.cancel):
+            element = self.session.observed_control(self.scope, control['observation_id'], control['control_ref']) if control else None
             frame = self.session.driver.screenshot(cancelled=self.cancel)
+            if element is not None:
+                frame['point'] = self.session.driver.locate_control(frame, element)
             frame = self.session.visual.remember(frame,self.scope)
         self.check()
         return frame
@@ -113,8 +121,10 @@ class ComputerLane:
         return result
 
     def _screenshot(self, args, ctx):
-        if args: raise ValueError('截图工具不接受参数')
-        frame = self.capture()
+        if args and (set(args) != {'observation_id', 'control_ref'} or
+                     not all(isinstance(v, str) and v for v in args.values())):
+            raise ValueError('本地定位须同时提供 computer_observe 返回的 observation_id 和控件 ref。')
+        frame = self.capture(args)
         self.last_frame = frame
         return ToolResult(True, json.dumps({k:v for k,v in frame.items() if k != 'png'}))
 
@@ -131,7 +141,7 @@ class ComputerLane:
         result = (client.locate(frame,args['target'],consent=True) if 'target' in args else
                   client.analyze(frame, args['question'], consent=True))
         self.check()
-        self.last_frame = frame
+        self.last_frame = {**frame, 'point': result.get('point')}
         return ToolResult(True, json.dumps({**result,
             'image': {k:v for k,v in frame.items() if k != 'png'},
             'evidence': 'untrusted_visual_observation'}, ensure_ascii=False))

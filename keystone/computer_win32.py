@@ -334,8 +334,9 @@ class WindowsControlDriver:
         cls = c.create_unicode_buffer(128)
         self.u.GetClassNameW(window, cls, len(cls))
         rect = w.RECT()
-        if not self.u.GetWindowRect(window, c.byref(rect)):
-            raise ValueError('Cannot read target geometry')
+        with dpi_context(self.u):
+            if not self.u.GetWindowRect(window, c.byref(rect)):
+                raise ValueError('Cannot read target geometry')
         kind = cls.value.lower()
         password = kind == 'edit' and self.u.GetWindowLongW(window, -16) & 0x20
         text = c.create_unicode_buffer(4096)
@@ -349,6 +350,25 @@ class WindowsControlDriver:
         return {'ref': str(int(window)), 'class': cls.value, 'text': text.value,
                 'rect': [rect.left, rect.top, rect.right, rect.bottom], 'enabled': enabled,
                 'actions': actions, 'checked': self._message(window, 0xF0) if kind == 'button' else None}
+
+    def locate_control(self, frame, element):
+        """Map a previously observed native control to a verified screenshot pixel."""
+        window = int(element['ref'])
+        owner = w.DWORD()
+        self.u.GetWindowThreadProcessId(window, c.byref(owner))
+        if (owner.value != self.process_id or not self.u.IsChild(self.window, window)
+                or self._element(window) != element):
+            raise CoordinateNotStarted('控件已变化，请重新观察。')
+        left, top, right, bottom = element['rect']
+        cl, ct, cr, cb = frame['client_rect']
+        left, top, right, bottom = max(left, cl), max(top, ct), min(right, cr), min(bottom, cb)
+        if left >= right or top >= bottom:
+            raise CoordinateNotStarted('控件位于截图可操作区域之外。')
+        x = (left + right) // 2 - frame['rect'][0]
+        y = (top + bottom) // 2 - frame['rect'][1]
+        if self.prepare_coordinate(frame, x, y)['window'] != window:
+            raise CoordinateNotStarted('控件中心被遮挡，请重新定位。')
+        return {'found': True, 'x': x, 'y': y, 'label': element['class']}
 
     def observe(self):
         """Bounded and partial: over-budget, foreign-process or unreadable children are

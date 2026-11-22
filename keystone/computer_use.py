@@ -38,6 +38,7 @@ class ComputerSession:
         if not 0 < ttl <= 120:
             raise ValueError('Observation ttl must be in (0, 120]')
         self.driver, self.approve, self.ttl, self.clock = driver, approve, ttl, clock
+        self.grant_id = uuid.uuid4().hex
         self._lock = threading.RLock()
         self._revoked = threading.Event()
         self._observations = weakref.WeakKeyDictionary()
@@ -95,6 +96,17 @@ class ComputerSession:
                 return self._observe(ctx)
         except LockCancelled as exc:
             return self._failure('cancelled', str(exc))
+
+    def observed_control(self, scope, observation_id, ref):
+        with self._lock:
+            before = self._observations.get(scope)
+            if (not before or before['observation_id'] != observation_id
+                    or self.clock() - before['captured_at'] > self.ttl):
+                raise ValueError('控件观察已失效，请重新调用 computer_observe。')
+            for element in before['state']['elements']:
+                if element['ref'] == ref and element['actions']:
+                    return element
+            raise ValueError('当前观察中没有可操作的对应控件。')
 
     def _observe(self, ctx):
         with self._lock:

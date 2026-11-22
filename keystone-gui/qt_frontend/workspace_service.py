@@ -67,11 +67,12 @@ class WorkspaceService:
     def unsaved(self):
         return any(d.dirty for d in self.documents.values())
 
-    def output(self, page, value):
+    def output(self, page, value, *, publish=True):
         if isinstance(value, dict) and isinstance(value.get('files'), list) and all(isinstance(f, dict) and 'diff' in f for f in value['files']):
             value = '\n\n'.join(f.get('name', '') + '\n' + (f.get('diff') or '无文本差异') for f in value['files'])
         self.results[page] = str(redact(value)) if isinstance(value, str) else json.dumps(redact(value), ensure_ascii=False, indent=2, default=str)
-        self.publish(page)
+        if publish:
+            self.publish(page)
 
     def publish(self, page):
         data = self.view(page)

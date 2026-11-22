@@ -369,6 +369,25 @@ class NativeServiceTests(unittest.TestCase):
             run.assert_not_called()
             self.assertFalse(self.host.running)
 
+    def test_binding_a_window_publishes_local_reads_and_replaces_previous_grants(self):
+        from .computer_service import ComputerService
+        service = self.host.pages.computer = ComputerService(self.host)
+        service.windows = [{'window': 1, 'process_id': 2, 'title': 'Selected'}]
+        self.host.profile = 'full'
+        with patch('qt_frontend.computer_service.WindowsControlDriver') as driver:
+            driver.return_value.target_id = 'owned-window'
+            self.host.pages.action('computer', 'bind', {'id': '1', 'consent': True, 'clicks': True})
+            grant = service.session.grant_id
+            published = next(data for event, data in self.events if event == 'service_tools')
+            names = {row['function']['name'] for row in published['schemas']}
+            self.assertEqual(published['computerGrant'], grant)
+            self.assertTrue({'computer_observe', 'computer_screenshot'} <= names)
+            self.assertTrue({'computer_click', 'computer_type', 'computer_vision'}.isdisjoint(names))
+            self.host.pages.action('computer', 'bind', {'id': '1'})
+            with self.assertRaisesRegex(PermissionError, '窗口授权已变化'):
+                service.call('computer_observe', {}, grant=grant)
+            driver.return_value.observe.assert_not_called()
+
     def test_manual_computer_capture_waits_for_host_approval(self):
         from keystone.computer_use import ComputerSession
         from .computer_service import ComputerService
@@ -386,6 +405,7 @@ class NativeServiceTests(unittest.TestCase):
         driver = Driver()
         service = self.host.pages.computer = ComputerService(self.host)
         service.session = ComputerSession(driver)
+        self.host.page = 'computer'
         self.host.profile = 'manual'
         decisions = iter((False, True, False, True))
         requests = []
@@ -403,7 +423,7 @@ class NativeServiceTests(unittest.TestCase):
         self.assertIsNotNone(service.frame)
         for identifier, approved in [('denied', False), ('approved', True)]:
             self.host.command({'command': 'call_tool', 'id': identifier,
-                               'name': 'computer_screenshot', 'arguments': {}})
+                               'name': 'computer_screenshot', 'arguments': {}, 'computerGrant': service.session.grant_id})
             self.host.worker.join(3)
             self.assertFalse(self.host.worker.is_alive())
             response = next(row['result'] for kind, row in self.events
@@ -411,6 +431,18 @@ class NativeServiceTests(unittest.TestCase):
             self.assertIs(response['ok'], approved, response)
             self.assertEqual(driver.calls, 2 if approved else 1)
         self.assertEqual(requests, [('computer_screenshot', {}, before) for before in (0, 0, 1, 1)])
+        current = service.view()
+        self.assertTrue(current['observationId'])
+        self.assertTrue(any(kind == 'page' and row['data'].get('observationId') == current['observationId']
+                            for kind, row in self.events))
+        with self.assertRaisesRegex(ValueError, '预览已更新'):
+            service.action('click', {'clicks': True, 'observation_id': 'old', 'x': 0, 'y': 0})
+        with self.assertRaisesRegex(PermissionError, '窗口授权已变化'):
+            service.call('computer_screenshot', {}, grant='previous-window')
+        self.assertEqual(driver.calls, 2)
+        self.host.command({'command': 'permission', 'profile': 'sandbox'})
+        self.assertIsNone(service.lane)
+        self.assertEqual(service.view()['observationId'], '')
 
     def test_gateway_starts_from_saved_custom_endpoint_and_stops_its_child(self):
         requests = []

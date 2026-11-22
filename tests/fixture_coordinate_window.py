@@ -32,6 +32,13 @@ def main():
     u.GetParent.argtypes=[w.HWND];u.GetParent.restype=w.HWND
     hwnd=u.GetParent(root.winfo_id())
     driver=WindowsControlDriver(hwnd,os.getpid())
+    u.CreateWindowExW.argtypes = [w.DWORD, w.LPCWSTR, w.LPCWSTR, w.DWORD, c.c_int, c.c_int,
+        c.c_int, c.c_int, w.HWND, w.HMENU, w.HINSTANCE, w.LPVOID]
+    u.CreateWindowExW.restype = w.HWND
+    checkbox = u.CreateWindowExW(0, 'Button', 'Local check', 0x50000003, 8, 8, 105, 28,
+                                 canvas.winfo_id(), None, None, None)
+    if not checkbox:
+        raise RuntimeError('Could not create native fixture checkbox')
     u.LogicalToPhysicalPointForPerMonitorDPI.argtypes=[w.HWND,c.POINTER(w.POINT)]
     def ready():
         root.lift();root.focus_force()
@@ -56,7 +63,8 @@ def main():
             if command['op']=='move': root.geometry('+160+160');root.update_idletasks()
             if command['op']=='change': canvas.itemconfigure('label',text='CHANGED');root.update_idletasks()
             if command['op']=='activate':root.lift();root.focus_force()
-            print(json.dumps({'clicks':clicks,'text':canvas.itemcget('label','text')}),flush=True)
+            print(json.dumps({'clicks':clicks,'text':canvas.itemcget('label','text'),
+                              'checked':driver._message(checkbox, 0xF0)}),flush=True)
         root.after(10,poll)
     root.after(10,poll);root.mainloop()
 

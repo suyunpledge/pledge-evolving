@@ -311,6 +311,24 @@ class NativeCoordinateTests(unittest.TestCase):
                         frame=json.loads(lane.call('computer_screenshot',{})['content'])
                         fixture.command('move');args['observation_id']=frame['observation_id']
                         self.assertFalse(lane.call('computer_click',args)['ok'])
+                        observation = json.loads(lane.call('computer_observe', {})['content'])
+                        checkbox = next(e for e in observation['state']['elements'] if e['text'] == 'Local check')
+                        lookup = {'observation_id': observation['observation_id'], 'control_ref': checkbox['ref']}
+                        self.assertFalse(lane.call('computer_screenshot', {**lookup, 'control_ref': 'missing'})['ok'])
+                        located = lane.call('computer_screenshot', lookup)
+                        self.assertTrue(located['ok'], located)
+                        shot = json.loads(located['content'])
+                        point = shot['point']
+                        self.assertNotEqual(shot['observation_id'], observation['observation_id'])
+                        self.assertEqual(fixture.command('state')['checked'], 0)
+                        clicked = lane.call('computer_click', {'observation_id': shot['observation_id'],
+                            'x': point['x'], 'y': point['y'], 'reason': 'Toggle owned native checkbox'})
+                        self.assertTrue(clicked['ok'], clicked)
+                        deadline = time.monotonic() + 2
+                        while not fixture.command('state')['checked'] and time.monotonic() < deadline:
+                            time.sleep(.025)
+                        self.assertEqual(fixture.command('state')['checked'], 1)
+                        self.assertFalse(lane.call('computer_screenshot', lookup)['ok'])
                     finally:scope.close()
                 finally:fixture.close()
 

@@ -1,6 +1,12 @@
 # 视觉坐标输入：单击、双击、右键、滚动、打字、按键
 
-## 使用
+## Qt 桌面的本地定位
+
+在「电脑操作」里刷新并选择窗口。手动批准或完全访问模式下，Work 对话可以立即调用 `computer_observe` 读取这个窗口的标准控件。要操作其中一个按钮或输入框，把观察结果的 `observation_id` 和该控件的 `ref` 分别作为 `computer_screenshot` 的 `observation_id`、`control_ref`。它会返回一张新截图的 ID 及原图像素落点 `point.x`、`point.y`。这一步只在本机执行。自绘界面也可以在获得授权后使用 `computer_vision` 定位。
+
+勾选允许输入并重新截图后，可以在预览上选点，检查标记，再点击「点击选中位置」。Work 使用同一套屏幕工具，操作后的截图也会显示在这里。点击和键盘输入继续逐次确认。刷新截图会清除手选落点，更换窗口需要重新授权输入和云端分析。
+
+## 旧版 Tk 界面
 
 从本工作树启动 `python keystone-gui/keystone_gui_v2.py`，进入 Work Mode 顶部「电脑操作」。绑定窗口后勾选「允许鼠标与键盘输入」。权限模式必须允许输入；READ_ONLY、PLAN、只读 Sandbox 和显式 deny 不会因勾选而升级。
 
