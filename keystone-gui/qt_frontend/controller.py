@@ -329,10 +329,36 @@ class ChatController(QObject):
 
     @Slot(str)
     def setReasoning(self, value):
-        if not self._busy and value in ("off", "low", "medium", "high"):
-            self._reasoning = value
-            self._save_preferences()
-            self.changed.emit()
+        from . import effort
+        if self._busy or value not in effort.LEVELS:
+            return
+        self._reasoning = value
+        self._save_preferences()
+        self._sync_task_thinking()
+        self.changed.emit()
+
+    def _sync_task_thinking(self):
+        """沉思档同时打开 Keystone 任务沉思（用户层 thinking.mode），与 Tk 版一致；只在变化时写。"""
+        if self.demo:
+            return
+        from . import effort
+        from config_model import load_user_layer, save_user_layer
+        mode = effort.task_thinking(self._reasoning)
+        try:
+            latest = load_user_layer(self.store.home)
+            row = next((r for r in latest if r.get('id') == 'thinking'), None)
+            current = str(((row or {}).get('config') or {}).get('mode', 'off')).lower()
+            if current == mode:
+                return
+            rows = copy.deepcopy(latest)
+            row = next((r for r in rows if r.get('id') == 'thinking'), None)
+            if row is None:
+                rows.append({'id': 'thinking', 'name': 'thinking:mode', 'config': {'mode': mode}})
+            else:
+                row.setdefault('config', {})['mode'] = mode
+            save_user_layer(self.store.home, rows, expected_rows=latest)
+        except (OSError, ValueError):
+            self._error = "沉思模式未能写入配置，本次对话仍按所选强度发送。"
 
     @Slot(float)
     def setMaterial(self, value):
@@ -627,7 +653,9 @@ class ChatController(QObject):
         self._persist()
         self.changed.emit()
         self.streamAdvanced.emit()
-        messages, model, effort = copy.deepcopy(self._history), self._model, self._effective_reasoning()
+        from . import effort as effort_levels
+        messages, model = copy.deepcopy(self._history), self._model
+        effort = effort_levels.wire_effort(self._effective_reasoning(), self._effort_info()['levels'])
         client = self._client or self.factory(self._gateway)
         self._client = client
         authorize = self.tool_authorizer() if self.tool_authorizer is not None else None
@@ -670,7 +698,7 @@ class ChatController(QObject):
                            if chat_mode else work_context(messages))
                 from .conversation import MAX_TURNS
                 max_turns = self.turn_limit() if self.turn_limit is not None else MAX_TURNS
-                result = run(client, messages, model=model, effort=None if effort == 'off' else effort,
+                result = run(client, messages, model=model, effort=effort,
                     cancel=cancel, authorize=authorize, tool_filter=tool_filter, tools_enabled=tools_enabled,
                     system_context=context, mcp=connection, temperature=temperature,
                     chat_mcp=chat_connection, enter_work=enter_work if chat_mode else None,

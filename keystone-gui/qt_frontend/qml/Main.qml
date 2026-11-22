@@ -501,14 +501,15 @@ ApplicationWindow {
                 GlassButton {
                     id: effortButton
                     objectName: "effortButton"
-                    readonly property var names: ({off: "默认", low: "轻量", medium: "标准", high: "深入"})
+                    readonly property var names: ({off: "默认", low: "轻量", medium: "标准", high: "深入", contemplate: "沉思"})
                     material: window.material; glyph: "gauge"
                     text: (window.columnWidth > 520 ? "思考 · " : "") + names[controller.effectiveReasoning]
                     selected: effortPicker.opened
-                    ink: controller.reasoningSupported ? "#dce3ec" : Theme.textMuted
-                    glyphInk: controller.reasoningSupported ? (controller.effectiveReasoning === "off" ? "#dce3ec" : Theme.accent) : Theme.textDim
+                    readonly property bool contemplating: controller.effectiveReasoning === "contemplate"
+                    ink: controller.reasoningSupported || contemplating ? "#dce3ec" : Theme.textMuted
+                    glyphInk: contemplating ? Theme.ember : controller.reasoningSupported ? (controller.effectiveReasoning === "off" ? "#dce3ec" : Theme.accent) : Theme.textDim
                     enabled: !controller.busy
-                    tip: controller.reasoningSupported ? "思考强度（点击调整）" : "当前模型不支持调节思考强度"
+                    tip: contemplating ? "沉思：最高强度推理并开启任务沉思（点击调整）" : controller.reasoningSupported ? "思考强度（点击调整）" : "当前模型不支持强度分档，可选「默认」或「沉思」"
                     onClicked: effortPicker.open()
                 }
                 GlassButton {
