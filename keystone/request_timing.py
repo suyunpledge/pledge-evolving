@@ -19,16 +19,19 @@ STREAM_FINISH_GRACE = 5.0
 # Scoped to one desktop Coding worker. Routers shared with planners and child
 # sessions never inherit another task's socket or timing observer.
 coding_request = ContextVar('coding_request', default=None)
+coding_resume_task = ContextVar('coding_resume_task', default=None)
 
 
 @contextmanager
-def coding_requests(observer):
+def coding_requests(observer, *, resume_task=None):
     from .seed_transport import SeedTransport
     pool = SeedTransport()
     token = coding_request.set((pool, observer))
+    resume_token = coding_resume_task.set(resume_task)
     try:
         yield
     finally:
+        coding_resume_task.reset(resume_token)
         coding_request.reset(token)
         pool.close()
 

@@ -279,10 +279,11 @@ class GatewayConfig:
             max_defer_seconds=float(conf.get("maxDeferSeconds", 0)))
         from . import sampling
         sampling.strip_extra_params(payload, model, self.upstream_wire)
-        # These three vendors document include_usage on streaming Chat
-        # Completions. Unknown compatibility gateways retain their own shape.
+        # Ask only supported Chat Completions routes for the trailing usage event.
+        from .seed_transport import CHAT_URL
         if (payload.get("stream") and self.upstream_wire == "openai"
-                and provider.profile_for_model(model).id in ("deepseek", "bailian", "mimo", "openai")):
+                and (provider.profile_for_model(model).id in ("deepseek", "bailian", "mimo", "openai")
+                     or (model == "doubao-seed-evolving" and self.upstream + "/chat/completions" == CHAT_URL))):
             payload["stream_options"] = {**(payload.get("stream_options") or {}), "include_usage": True}
         if "reasoning_effort" in payload and "thinking_budget" in payload:
             raise ValueError("reasoning_effort and thinking_budget cannot be combined")

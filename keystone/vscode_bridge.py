@@ -131,7 +131,7 @@ def _load_credentials(home, scope):
 
 
 class EditorBridge:
-    def __init__(self, emit, *, model_router_factory=None, probes=None):
+    def __init__(self, emit, *, model_router_factory=None, probes=None, current_todos=None):
         self.emit = emit
         self.agent = None
         self.history = []
@@ -144,6 +144,7 @@ class EditorBridge:
         self.model_router_factory = model_router_factory
         self.model_revision = None
         self.probes = probes
+        self.current_todos = current_todos
 
     def _load_model_router(self, config):
         if self.model_router_factory is not None:
@@ -208,7 +209,7 @@ class EditorBridge:
             session_path=self.home / 'sessions' / 'vscode' / (uuid.uuid4().hex + '.jsonl'),
             probes=self.probes)
         from .todos import install
-        install(self.agent)
+        install(self.agent, current_items=self.current_todos)
         self.history = self.agent.secret_scope.protect(_history(params.get('history', [])))
         self.model_revision = revision
         return {'protocol': PROTOCOL, 'models': catalog, 'workspace': str(self.workspace),

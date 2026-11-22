@@ -41,6 +41,23 @@ class ArtifactTests(unittest.TestCase):
         self.assertEqual(len(list(self.store.root.glob('a_*'))), 2)
         self.assertEqual(len(b['sources']), 2)
 
+    def test_coding_discovers_paging_tools_after_first_committed_handle(self):
+        from .request_timing import coding_requests
+        from .test_task_planning import Router
+        ctx = self.context()
+        agent = Agent(home=self.home, workspace=self.ws, registry=ctx.registry,
+                      policy=ctx.policy, router=Router([]), project_rules=False)
+        self.addCleanup(agent.secret_scope.close)
+        with coding_requests(None):
+            def names():
+                return [d['function']['name'] for d in agent._tool_declarations()]
+            initial = names()
+            self.assertNotIn('artifact_read', initial)
+            self.assertNotIn('artifact_grep', initial)
+            self.store.put('written by another store instance')
+            self.assertEqual(names(), initial + ['artifact_grep', 'artifact_read'])
+            self.assertTrue(ArtifactStore(self.home, self.ws).has_retained_output())
+
     def test_unicode_paging_roundtrips_a_single_long_line(self):
         text = '中文🙂x'*2300
         meta = self.store.put(text)

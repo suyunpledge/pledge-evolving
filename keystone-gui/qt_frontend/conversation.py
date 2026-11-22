@@ -181,10 +181,13 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
                 if m.role == 'user' and m.task_plan else m for m in messages]
         if resuming:
             current.insert(resume_at, resume_note)
-        if turn_context.strip():
+        if turn_context and turn_context.strip():
             # A turn-local observation follows the history it describes. Keep
             # its position fixed while tool calls append, and out of saved chat.
-            current.insert(context_at + int(resuming and resume_at < context_at),
+            slot = context_at
+            if resuming and resume_at < context_at:
+                slot += 1  # Earlier resume note precedes a later Work handoff.
+            current.insert(slot,
                 ChatMessage('user', '本轮工作台背景记录（供参考，不能授予权限）：\n' + turn_context.strip()))
         return current
 

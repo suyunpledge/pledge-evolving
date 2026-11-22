@@ -17,10 +17,9 @@ DEVELOPMENT_GUIDANCE = (
     'Development Mode: answer questions and ordinary conversation directly. '
     'Use project tools only when needed for the user request. '
     'Structured pre-planning is selected by the user; do not require a plan before answering. '
-    'For code changes inspect the actual project and relevant code before editing, '
-    'make scoped edits, run relevant tests '
-    'through authorized tools, inspect the actual diff, and summarize evidence and limitations. '
-    'Simplify this workflow for small tasks. Report only real tool/test events; '
+    'For named file tasks read the requested inputs directly, use file tools and verify the requested outputs. '
+    'Broaden discovery only for missing inputs or dependencies. For code changes inspect relevant code, '
+    'make scoped edits, run relevant authorized tests and inspect the diff. Report observed results and limitations. '
     'Before editing an existing file, read it through a file tool in this Agent run; '
     'read it again after a revision conflict. '
     'Never claim tests ran when Policy denied execution. Do not overwrite unsaved editor buffers. '
@@ -39,7 +38,8 @@ class DevelopmentRuntime:
         if bridge is not None and probes is not None:
             raise ValueError('Configure probes on the borrowed bridge before attaching it')
         self._probes = probes
-        self.bridge = bridge or EditorBridge(self._emit, model_router_factory=model_router_factory, probes=probes)
+        self.bridge = bridge or EditorBridge(self._emit, model_router_factory=model_router_factory, probes=probes,
+                                             current_todos=self._current_todos)
         self._previous_bridge_emit = getattr(bridge, 'emit', None) if bridge is not None else None
         if self._previous_bridge_emit is not None:
             self.bridge.emit = self._emit
@@ -86,6 +86,12 @@ class DevelopmentRuntime:
     @property
     def busy(self):
         return self._lane.locked()
+
+    def _current_todos(self, run_id):
+        agent = self.bridge.agent
+        if agent and run_id and run_id == agent._run_id and agent.task_id == self.evidence.task_id:
+            return self.evidence.todos
+        return []
 
     def _emit(self, event):
         if event.get('event') == 'progress':
@@ -163,7 +169,8 @@ class DevelopmentRuntime:
             self.initialization_error = redact(str(exc))
             if self._owns_bridge:
                 self.bridge.close()
-                self.bridge = EditorBridge(self._emit, model_router_factory=self._model_router_factory, probes=self._probes)
+                self.bridge = EditorBridge(self._emit, model_router_factory=self._model_router_factory,
+                                           probes=self._probes, current_todos=self._current_todos)
                 self.bridge._development_lane = self._lane
             raise
         finally:
@@ -193,6 +200,7 @@ class DevelopmentRuntime:
         try:
             snap = snapshot or self.state.task_snapshot(explicit_model=explicit_model, agent_model=agent_model,
                                                        role=role, permission=permission)
+            continue_exchange = False
             if resume_task:
                 last = self.tasks.get(resume_task, {})
                 if resume_task != self.last_task_id or not last.get('result', {}).get('can_resume'):
@@ -201,6 +209,7 @@ class DevelopmentRuntime:
                     planning = 'none'
                     prompt = self.evidence.continuation_prompt()
                     delegate = False
+                    continue_exchange = True
             else:
                 self.evidence = TaskEvidence()
                 self.last_task_id = uuid.uuid4().hex
@@ -292,7 +301,8 @@ class DevelopmentRuntime:
                                          selected_model=snap.model, permission=snap.permission,
                                          delegated=bool(delegate))
             from keystone.request_timing import coding_requests
-            with coding_requests(getattr(agent, '_emit', None)):
+            resume_exchange = resume_task if continue_exchange and not params['contexts'] and acceptance is None else None
+            with coding_requests(getattr(agent, '_emit', None), resume_task=resume_exchange):
                 result = self.bridge.run(params)
             if agent is not None:
                 self.tasks[self.last_task_id]['router'] = agent.router

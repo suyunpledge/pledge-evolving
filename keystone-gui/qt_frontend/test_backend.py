@@ -337,10 +337,16 @@ class BackendTests(unittest.TestCase):
             self.assertEqual(mode, 'work')
             self.assertNotIn(ENTER_WORK, names)
             self.assertIn('computer_screenshot', names)
+            background = [i for i, message in enumerate(messages) if 'work-context-fixture' in message.content]
+            self.assertEqual(len(background), 1)
+            slot = background[0]
+            self.assertEqual(messages[slot].role, 'user')
+            receipts = messages[slot - 4:slot]
+            self.assertEqual([m.tool_call_id for m in receipts], ['t1', 't2', 't3', 't4'])
             if len(stages) == 2:
-                self.assertIn('先进入 Work', json.loads(messages[-3].content)['error'])
-                self.assertIn('先进入 Work', json.loads(messages[-2].content)['error'])
-                self.assertTrue(json.loads(messages[-1].content)['ok'])
+                self.assertIn('先进入 Work', json.loads(receipts[1].content)['error'])
+                self.assertIn('先进入 Work', json.loads(receipts[2].content)['error'])
+                self.assertTrue(json.loads(receipts[3].content)['ok'])
                 return CompletionResult('', tool_calls=[tool_call('t5', 'computer_screenshot', {})])
             return CompletionResult('完成')
 
@@ -353,7 +359,7 @@ class BackendTests(unittest.TestCase):
         owner.mcp_tools = lambda: ({'computer_screenshot': (declaration('computer_screenshot'), 'screen')}, work_mcp)
         owner.tool_authorizer = lambda: lambda name, args, token: authorize('manual', self.home, name, args,
             lambda tool, payload, _: approved.append(tool) or True, token)
-        owner.work_context = lambda *_: context_calls.append(owner.conversationMode) or ''
+        owner.work_context = lambda *_: context_calls.append(owner.conversationMode) or 'work-context-fixture'
         owner.draft = '请求测试'
         owner.send()
         until(lambda: not owner.busy)

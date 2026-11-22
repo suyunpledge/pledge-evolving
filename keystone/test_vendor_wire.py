@@ -81,6 +81,17 @@ class VendorWireTests(unittest.TestCase):
                                              "thinking": {"type": "auto"}})
         self.assertNotIn("thinking", payload)
 
+    def test_seed_stream_requests_usage_only_for_its_supported_route(self):
+        model_id = 'doubao-seed-evolving'
+        for endpoint, stream, expected in ((ENDPOINTS[model_id], True, True),
+                                           (ENDPOINTS[model_id], False, False),
+                                           ('https://fixture.invalid/api', True, False)):
+            with self.subTest(endpoint=endpoint, stream=stream):
+                cfg = GatewayConfig(upstream=endpoint, upstream_wire='openai', wire='openai',
+                                    model_map={'local-label': model_id})
+                body, _, _ = cfg.prepare_request({'model': 'local-label', 'messages': [], 'stream': stream})
+                self.assertEqual(body.get('stream_options', {}).get('include_usage', False), expected)
+
     def test_explicit_small_output_cap_is_honoured(self):
         for chosen in ("minimax-m3", "deepseek-flash", "doubao-seed-evolving", "mimo-v2.6-flash"):
             with self.subTest(model=chosen):

@@ -391,8 +391,17 @@ class Agent:
             parts.append(self.extra_system)
         return "[运行环境]\n" + "\n\n".join(parts)
 
+    def _execution_specs(self):
+        # Agent.execution_context always creates an isolated tool context.
+        from .request_timing import coding_request
+        specs = [s for s in self.registry.visible()
+                 if s.name not in {'shell_exec', 'notebook_edit'} and 'native' not in s.tags]
+        if coding_request.get() and self.depth == 0 and not self.artifacts.has_retained_output():
+            specs = [s for s in specs if 'artifact_store' not in self.registry.required_extras(s.name)]
+        return specs
+
     def _tool_declarations(self):
-        return self._tool_surface.project(self.registry.visible(), self.wire_hint)
+        return self._tool_surface.project(self._execution_specs(), self.wire_hint)
 
     def _conversation_guard(self, head):
         from .conversation_prefix import digest
@@ -903,8 +912,21 @@ class Agent:
             count += 1
         return messages[:count]
 
-    def _remember_conversation(self, messages, task, report, envelope):
+    def _remember_conversation(self, messages, task, report, envelope, *, paused_task=None):
+        paused = {}
+        if paused_task:
+            paused['paused_objective'] = self._rule_task_content
+            if self._seed_resume_window is not None and self._cache_evidence:
+                first_input, last_input, last_hit = self._seed_resume_window
+                # On this Seed route observed reusable prefixes advance in 1024-token
+                # steps. Leave a potentially newly warm block intact.
+                if 0 < last_hit <= first_input and last_input - last_hit < 1024:
+                    paused['file_receipt_scope'] = self._cache_evidence['namespace']
+                    paused['plan_tasks'] = list(self._plan.tasks) if self._plan else []
+                    paused['latest_todos'] = next((step.meta['todos'] for step in reversed(report.steps)
+                        if step.tool == 'update_todos' and step.meta.get('todos')), [])
         return self._conversation_prefix.commit(
+            paused_task=paused_task,
             history=[*self._chat_history, {'role': 'user', 'content': task},
                      {'role': 'assistant', 'content': report.text}],
             messages=self.secret_scope.protect(messages),
@@ -912,6 +934,7 @@ class Agent:
             rule_context=self._rule_context, rule_sources=(self._rule_audit or ([], []))[0],
             targets=self._rule_targets, run_envelope=envelope,
             continuation={'prefix_count': len(self._matching_compaction_prefix(messages)),
+                **paused,
                 'rule_fragments': list(self._rule_fragments),
                 'revision': self._context_revision, 'transaction_id': self._context_transaction_id,
                 'seen': [[p, m, revision] for (p, m), revision in self._cache_revisions.items()],
@@ -1184,6 +1207,7 @@ class Agent:
             self._run_lock.release()
             raise
         previous_identity = self.task_id, self.parent_run_id
+        self._cancel_prefix = None
         try:
             self._run_id = run_request.run_id if run_request is not None else uuid.uuid4().hex
             self._host_run_request = run_request
@@ -1211,6 +1235,7 @@ class Agent:
             # 命中率 cached/prompt；None=尚无数据，不参与延迟判定。
             self._recent_cache_rate = None
             self._cache_evidence = None
+            self._seed_resume_window = None
             self._compaction_prefix = []
             self._supervisor_bus = {"last_render": {}}
             self._supervisor_pending = []
@@ -1238,13 +1263,20 @@ class Agent:
             self._check_cancel()
             return self._run(task, history=history)
         except RunCancelled:
-            return self._finish(RunReport(text='[cancelled: inspect files and diff before continuing]',
+            report = self._finish(RunReport(text='[cancelled: inspect files and diff before continuing]',
                 steps=self._cancel_steps, usage=self._cancel_usage, stopped='cancelled', events=self.events))
+            if (self._cancel_prefix is not None
+                    and self._conversation_guard(self._conversation_head) == self._conversation_guard_start):
+                messages, task, envelope = self._cancel_prefix
+                if self._remember_conversation(messages, task, report, envelope, paused_task=self.task_id):
+                    self._emit(type='cache_prefix_checkpointed', reason='task_paused', completed=False)
+            return report
         except BaseException:
             self._conversation_prefix.clear()
             self._emit(type="workflow_state", run_id=self._run_id, phase="failed")
             raise
         finally:
+            self._cancel_prefix = None
             if run_request is not None:
                 self.task_id, self.parent_run_id = previous_identity
             self._run_lock.release()
@@ -1375,7 +1407,10 @@ class Agent:
         self._last_head_digest = head_digest
         self._refresh_project_rules(messages)
         initial_prefix = list(messages)
-        saved = self._conversation_prefix.candidate(previous, self._conversation_guard_start)
+        from .request_timing import coding_request, coding_resume_task
+        paused_task = self.task_id if coding_request.get() and self.depth == 0 and self._acceptance is None else None
+        resume_task = paused_task if paused_task == coding_resume_task.get() else None
+        saved = self._conversation_prefix.candidate(previous, self._conversation_guard_start, task_id=resume_task)
         reused = None
         if saved is not None:
             targets = list(dict.fromkeys([*self._rule_targets, *saved['targets']]))[:MAX_TARGETS]
@@ -1459,6 +1494,30 @@ class Agent:
         self._cancel_steps, self._cancel_usage = steps, usage_total
         self._check_cancel()
         pinned_task = str(messages[-1].get("content", task))
+        # The desktop Continue button supplied only a fallback receipt summary.
+        # If its exact task and native tool exchange survived, continue from the
+        # receipt itself. A synthetic user turn can reset provider reasoning history.
+        if (resume_task and reused and reused.get('paused_task') == resume_task
+                and not tail and messages[-2].get('role') == 'tool'
+                and self.planning_level == 'none' and not self.thinking and self._acceptance is None):
+            objective = reused['continuation'].get('paused_objective')
+            if objective and any(m.get('role') == 'user' and m.get('content') == objective for m in messages[:-1]):
+                messages.pop()
+                pinned_task = objective
+                state = reused['continuation']
+                layout = 'tool_exchange_resumed'
+                if self._cache_evidence and state.get('file_receipt_scope') == self._cache_evidence['namespace']:
+                    from .conversation_prefix import compact_file_continuation
+                    packed = compact_file_continuation(messages, objective, state['latest_todos'], state['plan_tasks'])
+                    if packed is not None:
+                        messages = packed
+                        self._prefix_sent = len(packed) - 2  # messages through the original task
+                        self._cache_evidence = self._recent_cache_rate = None
+                        self._context_revision += 1
+                        self._context_transaction_id = uuid.uuid4().hex
+                        layout = 'file_receipts_resumed'
+                self._cancel_prefix = (messages, task, envelope)
+                self._emit(type=layout, messages=len(messages))
         if self.planning_level != "none":
             self.task_contract = advance_status(self.task_contract, ContractStatus.PLANNING)
             self._emit(type="task_contract", contract=self.task_contract.to_raw())
@@ -1469,7 +1528,7 @@ class Agent:
                 # Feed existing evidence only, with a separate planning contract.
                 contract = (planning_prompt(self.planning_level) +
                     f"\nExecution mode: {self.policy.mode.value}; sandbox: {self.policy.sandbox.value}. "
-                    + "Tools declared for execution: " + ", ".join(self.registry.names()) +
+                    + "Tools declared for execution: " + ", ".join(s.name for s in self._execution_specs()) +
                     ". Declarations are not grants; Policy decides each invocation. "
                     "Native process execution and secret resolution are unavailable.")
                 # Independent planners may use a different wire protocol. Historical
@@ -1489,7 +1548,6 @@ class Agent:
                 planner = phase_router(self.phase_catalog, self.planning_model, self.router)
                 if self.planning_model and self.prepare_planning_route:
                     planner = self.prepare_planning_route(self.planning_model, planner)
-                from .request_timing import coding_request
                 from .planning import ask_desktop_planner
 
                 def ask_plan():
@@ -1569,6 +1627,8 @@ class Agent:
                         (pinned_task, envelope, *self._rule_fragments, self._plan.context() if self._plan else ''),
                         declarations, budget)
                     budget = self._request_context_budget(messages, declarations)
+            if self._cancel_prefix is not None:
+                self._cancel_prefix = (messages, task, envelope)
             self._check_cancel()
             if budget and not budget["fits"]:
                 self._emit(type="context_limit", **budget)
@@ -1581,7 +1641,6 @@ class Agent:
                 request_options = ({'task_context': pinned_task}
                                    if type(self.router) is SmartRouter else {})
                 if isinstance(self.router, ModelRouter):
-                    from .request_timing import coding_request
                     if coding_request.get():
                         request_options['step_owns_seed_retry'] = True
                     request_options['cache_scope'] = self._conversation_guard_start
@@ -1645,12 +1704,21 @@ class Agent:
             from .cache_metrics import foreground_hit_rate
             self._recent_cache_rate = foreground_hit_rate(completion)
             self._cache_evidence = None
+            previous_window, self._seed_resume_window = self._seed_resume_window, None
             namespace = self._cache_namespace()
             if namespace is not None and self._recent_cache_rate is not None:
                 row = completion.requests[0]
                 if (row.get('provider'), row.get('model')) == self.router._order(None)[0]:
                     self._cache_evidence = {'rate': self._recent_cache_rate, 'namespace': namespace,
                                             'observed_at': time.monotonic()}
+                    from .seed_transport import CHAT_URL
+                    if (paused_task and not reused and not self._context_revision
+                            and (index == 1 or previous_window is not None)
+                            and row['model'] == 'doubao-seed-evolving'
+                            and self.router.providers[row['provider']].chat_url() == CHAT_URL):
+                        prompt = completion.usage.prompt_tokens
+                        first = previous_window[0] if previous_window else prompt
+                        self._seed_resume_window = (first, prompt, completion.usage.cached_tokens)
                 else:
                     self._recent_cache_rate = None  # 回退路由的热度不能用于首选路由。
             usage_total["cache_write_tokens"] += _safe_count(getattr(completion.usage, "cache_write_tokens", 0))
@@ -1759,6 +1827,8 @@ class Agent:
 
             calls = native_calls if native_calls else calls
             from .tool_turn import execute_turn
+            # A cancellation inside a batch can leave later calls unanswered.
+            self._cancel_prefix = None
             turn = execute_turn(calls, native=bool(native_calls), wire=wire, steps=steps,
                 usage_delta=turn_usage_delta, max_result=self.limits.max_tool_result,
                 invoke=self._invoke_recorded, emit=self._emit, offloader=self.offloader,
@@ -1789,6 +1859,8 @@ class Agent:
                 for call, body, ok in turn.answered:
                     messages.append({'role': 'user', 'content':
                         f'<tool_result tool="{call.name}" ok="{ok}">{body}</tool_result>'})
+            if paused_task:
+                self._cancel_prefix = (messages, task, envelope)
 
         self._emit(type="loop_stop", reason="max_steps", steps=len(steps))
         summary = self._step_budget_summary(messages, pinned_task, usage_total)

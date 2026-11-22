@@ -31,6 +31,20 @@ class ArtifactStore:
         scope = hashlib.sha256(canonical.encode('utf-8')).hexdigest()
         self.root = Path(home).resolve() / 'artifacts' / scope
 
+    def has_retained_output(self):
+        """Metadata is written last, and a workspace may gain handles in another process."""
+        if self.root.resolve() != self.root:
+            return False
+        try:
+            with os.scandir(self.root) as entries:
+                return any(entry.name.endswith('.json') and HANDLE.fullmatch(entry.name[:-5])
+                           and entry.is_file(follow_symlinks=False) for entry in entries)
+        except FileNotFoundError:
+            return False
+        except OSError:
+            # Discovery is best effort. Retrieval still validates paths and content.
+            return True
+
     def _path(self, identifier, suffix=''):
         if self.root.resolve() != self.root:
             raise ValueError('Artifact store contains a redirected directory')

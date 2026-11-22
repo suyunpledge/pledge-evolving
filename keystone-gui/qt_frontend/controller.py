@@ -710,7 +710,7 @@ class ChatController(QObject):
                 max_turns = self.turn_limit() if self.turn_limit is not None else MAX_TURNS
                 result = run(client, messages, model=model, effort=None if effort == 'off' else effort,
                     cancel=cancel, authorize=authorize, tool_filter=tool_filter, tools_enabled=tools_enabled,
-                    system_context=context, mcp=connection, temperature=temperature,
+                    turn_context=context, mcp=connection, temperature=temperature,
                     chat_mcp=chat_connection, enter_work=enter_work if chat_mode else None,
                     max_turns=max_turns, attachment_folder=self.store.folder, progress=progress,
                     on_todos=show_todos if authorize is not None else None,

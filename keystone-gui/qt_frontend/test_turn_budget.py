@@ -5,7 +5,7 @@ import tempfile
 import threading
 import unittest
 
-from .conversation import BUDGET_SUMMARY, MAX_TURNS, budget_lead, run, turn_limit
+from .conversation import BUDGET_SUMMARY, MAX_TURNS, budget_lead, run, tool_schemas, turn_limit
 from keystone_client import ChatMessage, CompletionResult, GatewayError
 
 
@@ -18,7 +18,7 @@ class Client:
 
     def stream_chat(self, messages, on_chunk, **_):
         self.requests.append(list(messages))
-        if BUDGET_SUMMARY in messages[0].content:
+        if messages[-1].content == BUDGET_SUMMARY:
             if self.fail_summary:
                 raise GatewayError('upstream down')
             on_chunk(self.summary)
@@ -40,6 +40,33 @@ def drive(client, **options):
 
 
 class TurnBudgetTests(unittest.TestCase):
+    def test_changing_work_context_follows_shared_history_and_stays_out_of_checkpoints(self):
+        old = Client()
+        _, _, history = drive(old, system_context='fixed', turn_context='observation A', max_turns=1)
+        start, summary = old.requests
+        self.assertEqual(start[0], summary[0])
+        self.assertEqual(summary[:len(start)], start)
+        self.assertEqual([m.role for m in summary[-3:]], ['assistant', 'tool', 'user'])
+        self.assertEqual(sum('observation A' in m.content for m in summary), 1)
+        self.assertFalse(any('observation A' in m.content for m in history[-1]))
+        second = Client()
+        messages = [*history[-1], ChatMessage('assistant', 'first answer'), ChatMessage('user', 'follow-up')]
+        run(second, messages, model='test', effort=None, cancel=threading.Event(),
+            authorize=lambda *_: None, chunk=lambda _: None, checkpoint=lambda _: None,
+            status=lambda _: None, next_round=lambda: None, system_context='fixed', turn_context='observation B',
+            max_turns=1)
+        current = second.requests[0]
+        self.assertEqual(current[:2], start[:2])
+        self.assertIn('observation B', current[-1].content)
+        self.assertFalse(any('observation A' in m.content for m in current))
+
+    def test_tool_declarations_have_stable_order_and_keep_local_overrides(self):
+        gateway = [{'type': 'function', 'function': {'name': name}} for name in ('zeta', 'alpha')]
+        replacement = {'type': 'function', 'function': {'name': 'alpha', 'description': 'local'}}
+        local = {'alpha': (replacement, None)}
+        self.assertEqual(tool_schemas(gateway, local), [replacement, gateway[0]])
+        self.assertEqual(tool_schemas(list(reversed(gateway)), local), [replacement, gateway[0]])
+
     def test_reminders_stay_off_history_and_summary_marks_the_reply_continuable(self):
         client = Client()
         result, chunks, checkpoints = drive(client)
@@ -52,6 +79,7 @@ class TurnBudgetTests(unittest.TestCase):
         self.assertTrue(result.budget_exhausted)
         self.assertEqual(result.tool_calls, [])
         self.assertEqual(result.text, budget_lead(MAX_TURNS) + client.summary)
+        self.assertEqual(client.requests[-1][0].content, client.requests[-2][0].content)
         self.assertEqual(''.join(chunks), result.text)
 
     def test_failed_or_tool_only_summary_falls_back_to_the_limit_error(self):

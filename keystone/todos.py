@@ -57,9 +57,37 @@ def update(args, _ctx=None):
     return ToolResult(True, '待办清单已更新。', meta={'todos': rows})
 
 
-def install(agent):
+def install(agent, *, current_items=None):
     from .policy import ToolEffect
-    agent.registry.register(ToolSpec(NAME, GUIDANCE, update, schema=SCHEMA, no_defer=True),
+    handler, schema, guidance = update, SCHEMA, GUIDANCE
+    if current_items is not None:
+        guidance = ('Update the visible plan with statuses in task order, e.g. ["completed","in_progress"]. '
+                    'Use items only to create or rename steps. Verify completion; at most one active step.')
+        schema = {'type': 'object', 'additionalProperties': False, 'properties': {
+            'statuses': {'type': 'array', 'minItems': 1, 'maxItems': 12,
+                'items': {'type': 'string', 'enum': list(STATUSES)}}, **SCHEMA['properties']}}
+
+        def handler(args, ctx):
+            if 'statuses' not in args:
+                return update(args, ctx)
+            rows = current_items(ctx.extras.get('run_id'))
+            statuses = args['statuses']
+            if (set(args) != {'statuses'} or not rows or not isinstance(statuses, list)
+                    or len(statuses) != len(rows)):
+                return ToolResult(False, error='statuses 需要与当前清单逐项对应。创建或更改清单请使用 items。')
+            # Seed sometimes echoes full rows under statuses. Accept them only
+            # when every title still identifies the current item in that slot.
+            if all(isinstance(value, dict) for value in statuses):
+                if any(set(value) != {'text', 'status'} or value['text'] != row['text']
+                       for value, row in zip(statuses, rows)):
+                    return ToolResult(False, error='清单标题已变化。请使用 items 提交新的清单。')
+                return update({'items': statuses}, ctx)
+            return update({'items': [{'text': row['text'], 'status': status}
+                for row, status in zip(rows, statuses)]}, ctx)
+
+    agent.registry.register(ToolSpec(NAME, guidance, handler, schema=schema, no_defer=True),
                             trusted=True, effect=ToolEffect.READ)
     if NAME in agent.registry.names():
-        agent.extra_system = (agent.extra_system or '') + '\n' + GUIDANCE
+        note = ('Use update_todos when a checklist helps or the user requests one. '
+                'For a visible plan, send only its status changes using statuses.') if current_items is not None else GUIDANCE
+        agent.extra_system = (agent.extra_system or '') + '\n' + note

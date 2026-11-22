@@ -50,6 +50,17 @@ class PersistenceTests(unittest.TestCase):
             cp.clear()
             self.assertFalse(path.exists())
 
+    def test_paused_snapshot_replaces_prior_disk_snapshot_only_in_memory(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'cp.json'
+            history = [{'role': 'user', 'content': 'continue'}]
+            cp = self._commit(path, history)
+            self.assertTrue(cp.commit(history=history, messages=history, guard='g1',
+                rule_context='', rule_sources=(), targets=[], paused_task='task'))
+            self.assertTrue(cp.candidate(history, 'g1', task_id='task'))
+            self.assertFalse(path.exists())
+            self.assertIsNone(ConversationPrefix(path).candidate(history, 'g1', task_id='task'))
+
 
 if __name__ == '__main__':
     unittest.main()

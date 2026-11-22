@@ -409,6 +409,9 @@ class ToolRegistry:
         """Host-owned output projection; it grants no invocation capabilities."""
         return self._result_fields.get(name, ())
 
+    def required_extras(self, name):
+        return self._requires.get(name, ())
+
     def effect(self, name, args=None):
         effect = self._effects.get(name, ToolEffect.UNKNOWN)
         if effect is ToolEffect.CONFIG:
@@ -741,9 +744,8 @@ def build_builtin_registry(
         from .config_edit import edit_config
         return edit_config(args, ctx)
 
-    @host_tool("read_file", "Read a UTF-8 text file. Returns at most the first 400 lines / 6000 characters; "
-               "for larger files use file_outline to locate code, then read_range for the lines you need.",
-               schema={"path": {'type': 'string', 'description': "File path relative to the workspace root, e.g. 'src/app.py'."}})
+    @host_tool("read_file", "Read UTF-8 text (first 400 lines / 6000 characters). For larger files use file_outline and read_range.",
+               schema={"path": {'type': 'string', 'description': "Workspace-relative file path."}})
     def read_file(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         path = _resolve(ctx.workspace, args.get("path", ""))
         if not path.is_file():
@@ -1068,10 +1070,9 @@ def build_builtin_registry(
 
     @host_tool(
         "write_file",
-        "Create or overwrite a UTF-8 text file with the full content (append=true adds to the end). "
-        "Creates missing folders. For changing part of an existing file prefer edit_file or apply_patch.",
+        "Write UTF-8 text, creating parent folders. For partial edits use edit_file or apply_patch.",
         read_only=False,
-        schema={"path": {'type': 'string', 'description': "File path relative to the workspace root, e.g. 'src/app.py'."},
+        schema={"path": {'type': 'string', 'description': "Workspace-relative file path."},
                 "content": {"type": "string", "description": "Complete new file content."},
                 "append": {"type": "boolean", "description": "Append instead of overwrite. Default false."}},
     )
@@ -1079,12 +1080,13 @@ def build_builtin_registry(
         path = _resolve(ctx.workspace, args.get("path", ""))
         path.parent.mkdir(parents=True, exist_ok=True)
         content = str(args.get("content", ""))
+        shown = _shown_path(path, ctx.workspace)
         if args.get("append"):
             previous=path.read_text(encoding='utf-8') if path.exists() else ''
             _atomic_text(path,previous+content)
-            return ToolResult(ok=True, content=f"appended {len(content)} bytes to {path}")
+            return ToolResult(ok=True, content=f"appended {len(content)} characters to {shown}")
         _atomic_text(path,content)
-        return ToolResult(ok=True, content=f"wrote {len(content)} bytes to {path}")
+        return ToolResult(ok=True, content=f"wrote {len(content)} characters to {shown}")
 
     @host_tool(
         "delete_file",
@@ -1109,7 +1111,7 @@ def build_builtin_registry(
         "Refuses an absent or ambiguous anchor unless replace_all; pass either 'old' "
         "or a line range, not both.",
         read_only=False,
-        schema={"path": {'type': 'string', 'description': "File path relative to the workspace root, e.g. 'src/app.py'."},
+        schema={"path": {'type': 'string', 'description': "Workspace-relative file path."},
                 "old": {"type": "string", "description": "Exact existing text to replace (copy it from a read; "
                                                          "include enough lines to be unique)."},
                 "new": {"type": "string", "description": "Replacement text."},
@@ -1172,7 +1174,7 @@ def build_builtin_registry(
         read_only=False,
         schema={"patches": {"type": "array", "description": "Edits applied all-or-nothing.",
                             "items": {"type": "object", "properties": {
-                                "path": {'type': 'string', 'description': "File path relative to the workspace root, e.g. 'src/app.py'."},
+                                "path": {'type': 'string', 'description': "Workspace-relative file path."},
                                 "old": {"type": "string", "description": "Exact existing text."},
                                 "new": {"type": "string", "description": "Replacement text."}},
                                 "required": ["path", "old", "new"]}}},
@@ -1250,10 +1252,8 @@ def build_builtin_registry(
 
     @host_tool(
         "read_range",
-        "Read a 1-indexed, inclusive line range from a UTF-8 file (cheaper than a whole-file read). "
-        "For an exact line, pass its number as both start and end. "
-        "Use file_outline or grep when the line numbers are unknown.",
-        schema={"path": {'type': 'string', 'description': "File path relative to the workspace root, e.g. 'src/app.py'."},
+        "Read inclusive UTF-8 lines. For one line set start=end. Find line numbers with file_outline or grep.",
+        schema={"path": {'type': 'string', 'description': "Workspace-relative file path."},
                 "start": {"type": "integer", "description": "First line, 1-indexed."},
                 "end": {"type": "integer", "description": "Last line, inclusive."}},
     )
@@ -1275,7 +1275,7 @@ def build_builtin_registry(
     @view_tool(
         "file_outline",
         "List the symbols (class/def signatures with line numbers) of a source file without reading it whole." + HELP,
-        schema={"path": {'type': 'string', 'description': "File path relative to the workspace root, e.g. 'src/app.py'."}},
+        schema={"path": {'type': 'string', 'description': "Workspace-relative file path."}},
     )
     def file_outline(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         import re as _re
