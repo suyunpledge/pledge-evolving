@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import errno
+import http.client
 import math
+import socket
+import ssl
 import urllib.error
 
 MODEL_RESPONSE_TIMEOUT = 600.0
@@ -36,3 +39,11 @@ def is_timeout(error):
         error = error.reason
     return isinstance(error, TimeoutError) or (isinstance(error, OSError)
         and (error.errno == errno.ETIMEDOUT or getattr(error, 'winerror', None) == 10060))
+
+
+def transient_disconnect(error):
+    if isinstance(error, urllib.error.URLError):
+        error = error.reason
+    return (is_timeout(error)
+            or isinstance(error, (ConnectionError, ssl.SSLEOFError, http.client.IncompleteRead))
+            or isinstance(error, socket.gaierror) and error.errno == socket.EAI_AGAIN)

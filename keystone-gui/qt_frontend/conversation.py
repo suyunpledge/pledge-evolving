@@ -5,7 +5,7 @@ from pathlib import Path
 
 from keystone.execution_guard import ExecutionGuard
 from keystone.secrets import redact
-from keystone_client import ChatMessage, GatewayError, GenerationCancelled
+from keystone_client import ChatMessage, GatewayError, GenerationCancelled, ModelStreamInterrupted
 from work_tools import prepare_calls, invoke
 from . import productivity_tools
 
@@ -37,6 +37,8 @@ CHAT_CONTEXT = ('当前处于 Chat 模式。数学计算、函数求值、绘图
                 '调用 keystone_enter_work 并说明原因，切换后继续同一任务。仅解释步骤或给出建议时不切换。')
 # 回合上限与核心 loop 同源：loop.maxSteps（见 keystone.loop_limits）；读不到配置时用框架默认值。
 MAX_TURNS = 12
+MODEL_RETRY_DELAYS = (1, 3)
+MAX_GENERATION_RETRIES = 4
 BUDGET_NOTES_MIN = 6   # 与核心 loop 一致：更小的预算不插提醒
 # 只附在当次请求尾部、不写入 messages：前缀缓存不变，续跑时也不残留过期提醒。
 BUDGET_NOTES = {
@@ -66,6 +68,7 @@ WORK_CONTEXT = ('当前已切换至 Work，继续处理同一条用户消息。W
                 'keystone_read_file。keystone_tool_search 只用于发现尚未加载的工具。')
 TOOL_CONTEXT = ('需要工具时，通过本轮提供的函数接口调用最匹配的工具。'
                 '收到工具结果后按用户要求回答，若还缺信息就继续调用所需工具。'
+                '已经有成功的文件回执时，沿用该附件并继续剩余步骤。'
                 '单行读取结果的行号在元数据中，引用原文时保留内容本身。')
 
 
@@ -98,6 +101,8 @@ def preview_receipt(name, response):
     if result.get('ok') and name.removeprefix('keystone_') in productivity_tools.FILES and isinstance(meta, dict):
         if isinstance(meta.get('attachment'), str):
             row['attachment'] = meta['attachment']
+            if meta.get('reused_attachment'):
+                row['detail'] = '已复用附件：' + meta['attachment'].split('/')[-1]
     return row
 
 
@@ -115,7 +120,7 @@ def model_tool_result(name, response):
 
 def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint, status, next_round,
         receipt=None, system_context='', mcp=None, temperature=0.7, tool_filter=None, tools_enabled=True,
-        chat_mcp=None, enter_work=None, max_turns=MAX_TURNS):
+        chat_mcp=None, enter_work=None, max_turns=MAX_TURNS, attachment_folder=None):
     def schemas(local, chat_mode):
         if not tools_enabled:
             return None
@@ -139,6 +144,39 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
         mcp_tools = {name: entry for name, entry in mcp_tools.items() if name.startswith('mcp_') or name in productivity_tools.NAMES}
     tools = schemas(mcp_tools, chat_mode)
     guard = ExecutionGuard()
+    exports = productivity_tools.completed_exports(messages)
+    retries_left = MAX_GENERATION_RETRIES
+
+    def stream(current, prefix=''):
+        nonlocal retries_left
+        for attempt in range(len(MODEL_RETRY_DELAYS) + 1):
+            started = False
+
+            def emit(piece):
+                nonlocal started
+                if prefix and not started:
+                    chunk(prefix)
+                started = True
+                chunk(piece)
+
+            try:
+                result = client.stream_chat(current, model=model, reasoning_effort=effort, temperature=temperature,
+                                            on_chunk=emit, cancel_event=cancel, tools=tools)
+                if prefix and not started:
+                    chunk(prefix)
+                return result
+            except ModelStreamInterrupted:
+                if cancel.is_set():
+                    raise GenerationCancelled('已停止生成') from None
+                if attempt == len(MODEL_RETRY_DELAYS) or not retries_left:
+                    raise
+                retries_left -= 1
+                delay = MODEL_RETRY_DELAYS[attempt]
+                next_round()  # Discard only this attempt's partial text; tool receipts stay visible.
+                status(f'模型连接中断，{delay} 秒后自动重试（{attempt + 1}/{len(MODEL_RETRY_DELAYS)}）…')
+                if cancel.wait(delay):
+                    raise GenerationCancelled('已停止生成') from None
+
     max_turns = max(1, int(max_turns))
     for turn in range(max_turns):
         if cancel.is_set():
@@ -150,8 +188,7 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
         note = BUDGET_NOTES.get(max_turns - turn) if max_turns >= BUDGET_NOTES_MIN else None
         if note:
             current.append(ChatMessage('user', note))
-        result = client.stream_chat(current, model=model, reasoning_effort=effort, temperature=temperature,
-                                    on_chunk=chunk, cancel_event=cancel, tools=tools)
+        result = stream(current)
         if not result.tool_calls:
             return result
         if authorize is None and enter_work is None:
@@ -207,7 +244,8 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
                     elif name in mcp_tools:
                         status('正在执行：' + tool_label(name))
                         target = mcp_tools[name][1]
-                        response = invoke(arguments, lambda: call_mcp(target, arguments, cancel))
+                        response = invoke(arguments, lambda: productivity_tools.dispatch_with_exports(
+                            call_mcp, target, arguments, cancel, exports, attachment_folder))
                     else:
                         status('正在执行：' + tool_label(name))
                         response = invoke(arguments, lambda: client.call_tool(name, arguments))
@@ -242,27 +280,18 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
         raise GenerationCancelled('已停止生成')
     context = '\n'.join(part for part in (system_context, BUDGET_SUMMARY) if part)
     status('工具调用已达上限，正在整理进度…')
-    lead = [True]
     lead_text = budget_lead(max_turns)
-
-    def summary_chunk(piece):
-        if lead[0]:
-            chunk(lead_text)
-            lead[0] = False
-        chunk(piece)
     try:
         # 工具声明照旧带上（历史里有工具调用的协议需要）；模型仍发起调用也一律不执行。
-        result = client.stream_chat([ChatMessage('system', context), *messages], model=model,
-                                    reasoning_effort=effort, temperature=temperature,
-                                    on_chunk=summary_chunk, cancel_event=cancel, tools=tools)
+        result = stream([ChatMessage('system', context), *messages], prefix=lead_text)
+    except GenerationCancelled:
+        raise
     except GatewayError:
         raise limit_error from None
     if cancel.is_set():
         raise GenerationCancelled('已停止生成')
     if result.tool_calls or not (result.text or '').strip():
         raise limit_error
-    if lead[0]:
-        chunk(lead_text)
     result.text = lead_text + result.text.strip()
     result.tool_calls = []
     result.budget_exhausted = True

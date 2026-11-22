@@ -50,6 +50,7 @@ CATALOG = {
 FILES = {'plot_chart': ('.png', write_chart), 'create_spreadsheet': ('.xlsx', write_spreadsheet),
          'create_slides': ('.pptx', write_slides), 'create_document': ('.docx', write_document)}
 NAMES = frozenset('keystone_' + key for key in CATALOG)
+EXPORT_NAMES = frozenset('keystone_' + key for key in FILES)
 
 
 def attachment_path(folder, reference):
@@ -59,6 +60,54 @@ def attachment_path(folder, reference):
     if path.suffix not in {suffix for suffix, _ in FILES.values()} or not path.is_file():
         raise ValueError('附件已移动或删除。')
     return path
+
+
+def _export_key(tool, arguments):
+    return tool, json.dumps(arguments, sort_keys=True, ensure_ascii=False)
+
+
+def completed_exports(messages):
+    """Recover successful tool receipts from the current user request, including manual retries."""
+    calls, exports = {}, {}
+    start = next((i + 1 for i in range(len(messages) - 1, -1, -1) if messages[i].role == 'user'), 0)
+    for message in messages[start:]:
+        if message.role == 'assistant':
+            calls.clear()
+            for call in message.tool_calls or ():
+                try:
+                    fn = call['function']
+                    name = fn['name']
+                    if name in EXPORT_NAMES:
+                        calls[call['id']] = _export_key(name.removeprefix('keystone_'), json.loads(fn['arguments']))
+                except (KeyError, TypeError, ValueError):
+                    continue
+        elif message.role == 'tool' and (key := calls.get(message.tool_call_id)):
+            try:
+                row = json.loads(message.content)
+            except (TypeError, ValueError):
+                continue
+            meta = row.get('meta') if isinstance(row, dict) else None
+            if isinstance(meta, dict) and row.get('ok') is True and isinstance(meta.get('attachment'), str):
+                exports[key] = row
+    return exports
+
+
+def dispatch_with_exports(dispatch, target, arguments, cancel, completed, folder):
+    if not (isinstance(target, tuple) and len(target) == 2 and target[0] == 'productivity' and target[1] in FILES):
+        return dispatch(target, arguments, cancel)
+    key = _export_key(target[1], arguments)
+    previous = completed.get(key)
+    if previous and folder is not None:
+        try:
+            attachment_path(folder, previous['meta']['attachment'])
+        except (ValueError, OSError, ToolFailure):
+            previous = None
+    if previous:
+        return {**previous, 'meta': {**previous['meta'], 'reused_attachment': True}}
+    result = dispatch(target, arguments, cancel)
+    if result.get('ok') and (result.get('meta') or {}).get('attachment'):
+        completed[key] = result
+    return result
 
 
 def office_fallback(suffix):

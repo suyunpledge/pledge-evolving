@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from typing import Callable
 from http_transport import open_response, RequestCancelled
 from keystone.secrets import SecretScope, redact, VendorCredential
-from keystone.request_timing import (gateway_client_timeout, request_timeout,
+from keystone.request_timing import (gateway_client_timeout, request_timeout, transient_disconnect,
                                  METADATA_RESPONSE_TIMEOUT, TOOL_RESPONSE_TIMEOUT)
 
 
@@ -90,6 +90,10 @@ class CompletionResult:
 class GatewayError(RuntimeError):
     def __init__(self, message):
         super().__init__(redact(str(message)))
+
+
+class ModelStreamInterrupted(GatewayError):
+    """A model request may be repeated with the same committed tool history."""
 
 
 def http_error_detail(error, limit=500):
@@ -373,6 +377,12 @@ class KeystoneGatewayClient:
                     if not isinstance(ev, dict):
                         continue
                     if ev.get("error"):
+                        detail = ev['error']
+                        if (isinstance(detail, dict) and detail.get('code') == 'keystone_upstream_failure'
+                                and detail.get('retryable') is True):
+                            if completed:
+                                break  # Only trailing usage was lost.
+                            raise ModelStreamInterrupted("上游模型流式连接中断。")
                         raise GatewayError(f"上游流式请求失败：{str(ev['error'])[:500]}")
                     if isinstance(ev.get("usage"), dict):
                         usage = ev["usage"]
@@ -422,17 +432,20 @@ class KeystoneGatewayClient:
         except RequestCancelled as exc:
             raise GenerationCancelled("已停止生成") from exc
         except urllib.error.HTTPError as e:
+            check_cancelled()
             err_body = http_error_detail(e)
+            if e.code in (502, 504) and (e.headers or {}).get('X-Keystone-Retryable') != '0':
+                raise ModelStreamInterrupted(f"HTTP {e.code}: {err_body}") from None
             raise GatewayError(f"HTTP {e.code}: {err_body}") from None
-        except (urllib.error.URLError, socket.timeout) as e:
+        except (OSError, http.client.IncompleteRead) as e:
             check_cancelled()
-            raise GatewayError(f"网络错误：{e}") from None
-        except OSError as e:
-            check_cancelled()
-            raise GatewayError(f"流式连接中断：{e}") from None
+            if not transient_disconnect(e):
+                raise GatewayError(f"流式连接中断：{e}") from None
+            if not completed:
+                raise ModelStreamInterrupted(f"流式连接中断：{e}") from None
         check_cancelled()
         if not completed:
-            raise GatewayError("流式连接提前结束，回复尚未完成；请重试。")
+            raise ModelStreamInterrupted("流式连接提前结束，回复尚未完成；请重试。")
         return CompletionResult(
             text="".join(full_text_parts),
             model=model_name or model,

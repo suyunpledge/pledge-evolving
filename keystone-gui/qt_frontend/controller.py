@@ -641,7 +641,7 @@ class ChatController(QObject):
                     cancel=cancel, authorize=authorize, tool_filter=tool_filter, tools_enabled=tools_enabled,
                     system_context=context, mcp=connection, temperature=temperature,
                     chat_mcp=chat_connection, enter_work=enter_work if chat_mode else None,
-                    max_turns=max_turns,
+                    max_turns=max_turns, attachment_folder=self.store.folder,
                     chunk=lambda chunk: self._workerEvent.emit('chunk', (generation, chunk)),
                     checkpoint=lambda history: self._workerEvent.emit('checkpoint', (generation, history)),
                     receipt=lambda name, response: self._workerEvent.emit('receipt', (generation, (name, response))),

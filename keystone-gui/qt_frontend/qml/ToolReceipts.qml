@@ -21,7 +21,14 @@ Column {
 
     FontMetrics { id: attachmentMetrics; font.pixelSize: 13 }
     Repeater {
-        model: card.receipts.filter(row => !!row.attachment)
+        model: {
+            const seen = new Set()
+            return card.receipts.filter(row => {
+                if (!row.attachment || seen.has(row.attachment)) return false
+                seen.add(row.attachment)
+                return true
+            })
+        }
         GlassButton {
             required property var modelData
             objectName: "openToolAttachment"

@@ -325,13 +325,15 @@ def build_handler(cfg: GatewayConfig):
                 raise ValueError("request body ended before Content-Length")
             return body
 
-        def _json(self, code: int, payload: dict[str, Any]) -> None:
+        def _json(self, code: int, payload: dict[str, Any], *, retryable: bool | None = None) -> None:
             from .secrets import redact
             payload = redact(payload)
             data = json.dumps(payload, ensure_ascii=False).encode()
             self.send_response(code)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(data)))
+            if retryable is not None:
+                self.send_header("X-Keystone-Retryable", "1" if retryable else "0")
             self.end_headers()
             self.wfile.write(data)
 
@@ -787,7 +789,9 @@ def build_handler(cfg: GatewayConfig):
 
         def _upstream_failure(self, exc):
             from .secrets import redact
-            payload = {"type": "error", "error": {"type": "api_error", "message": redact(str(exc))}}
+            from .request_timing import transient_disconnect
+            payload = {"type": "error", "error": {"type": "api_error", "code": "keystone_upstream_failure",
+                       "retryable": transient_disconnect(exc), "message": redact(str(exc))}}
             if getattr(self, "_upstream_started", False):
                 # HTTP headers cannot be sent twice after streaming starts.
                 self.close_connection = True
@@ -797,7 +801,7 @@ def build_handler(cfg: GatewayConfig):
                 except OSError:
                     pass  # client already disconnected
             else:
-                self._json(502, payload)
+                self._json(502, payload, retryable=payload["error"]["retryable"])
 
         # -- anthropic client in, openai upstream ------------------------
         def _apply_model_map(self, body: bytes) -> bytes:
