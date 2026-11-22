@@ -24,7 +24,7 @@
     "id": "loop",
     "name": "loop:core",
     "config": {
-      "maxSteps": 12,
+      "maxSteps": 0,
       "maxDepth": 2,
       "spawnBudget": 8
     }

@@ -408,7 +408,11 @@ def cmd_dump_config(args) -> int:
     if getattr(args, "dump_defaults_only", False):
         args.no_user_layer = True
     cfg = _compose(args)
-    print(cfg.to_json())
+    if getattr(args, "provenance", False):
+        print(json.dumps({"layers": cfg.history, "rows": cfg.provenance(), "warnings": cfg.warnings},
+                         ensure_ascii=False, indent=2))
+    else:
+        print(cfg.to_json())
     return 0
 
 
@@ -1198,6 +1202,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     for name, func in (("dump-config", cmd_dump_config), ("dump-default-config", cmd_dump_config)):
         item = sub.add_parser(name, parents=[common])
+        item.add_argument("--provenance", action="store_true",
+                          help="show which layer (bundle / plugin:<id> / user / overlay) last wrote each row")
         item.set_defaults(func=func)
         if name == "dump-default-config":
             # BUG-FIX (2026-09-24): 原为 set_defaults(no_user_layer=True)。argparse

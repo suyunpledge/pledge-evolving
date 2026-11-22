@@ -26,7 +26,7 @@ from keystone.compat import desktop_config
 
 class RowsModel(QAbstractListModel):
     NAMES = ("sessionId", "title", "subtitle", "roleName", "textContent", "state", "stamp", "changeKey", "changeInfo",
-             "historyIndex", "toolReceipts", "continuable", "steps", "todos")
+             "historyIndex", "toolReceipts", "continuable", "steps", "todos", "contemplation")
 
     def __init__(self, rows=(), parent=None):
         super().__init__(parent)
@@ -45,6 +45,8 @@ class RowsModel(QAbstractListModel):
                 name = self.NAMES[i]
                 if name in ("toolReceipts", "steps", "todos"):
                     return self.rows[index.row()].get(name, [])
+                if name == "contemplation":
+                    return self.rows[index.row()].get(name) or {}
                 if name == "continuable":
                     return bool(self.rows[index.row()].get(name, False))
                 return self.rows[index.row()].get(name, -1 if name == "historyIndex" else "")
@@ -76,6 +78,7 @@ class ChatController(QObject):
     browseRequested = Signal(str)
     modelRequested = Signal(str)
     chartPreviewRequested = Signal(QUrl, str)
+    commandRequested = Signal(str, str)
     _workerEvent = Signal(str, object)
 
     def __init__(self, home, *, demo=False, client_factory=KeystoneGatewayClient, parent=None):
@@ -313,9 +316,9 @@ class ChatController(QObject):
         if self._managed_models is None:
             return
         from config_model import load_user_layer
-        from .gateway_service import chat_model_routes
+        from .gateway_service import chat_model_routes, model_rows
         try:
-            models = list(chat_model_routes(load_user_layer(self.store.home)))
+            models = list(chat_model_routes(model_rows(self.store.home)))
         except (OSError, ValueError):
             return
         if models != self._managed_models:
@@ -327,9 +330,9 @@ class ChatController(QObject):
             from . import effort
             info = effort.support(None)
             if self._managed_models is not None and not self.demo:
-                from config_model import load_user_layer
+                from .gateway_service import model_rows
                 try:
-                    info = effort.for_label(load_user_layer(self.store.home), model)
+                    info = effort.for_label(model_rows(self.store.home), model)
                 except (OSError, ValueError):
                     pass
             self._effort_cache[model] = info
@@ -339,12 +342,66 @@ class ChatController(QObject):
         from . import effort
         return effort.effective(self._reasoning, self._effort_info()['levels'])
 
+    def _run_command(self, text):
+        """斜杠命令：本地处理并清空输入框；识别不了的按普通消息发送。"""
+        from . import slash
+        roles = [(t.id, t.name) for t in getattr(self._templates, '_templates', [])]
+        command = slash.parse(text, models=self._models, roles=roles)
+        if command is None:
+            return False
+        action, argument = command
+        if action == 'error':
+            self._error = argument
+            self.changed.emit()
+            return True
+        self._draft = ''
+        self._error = ''
+        self.draftChanged.emit()
+        if action == 'new':
+            self.newSession()
+        elif action == 'model':
+            self.setModel(argument)
+        elif action == 'effort':
+            self.setReasoning(argument)
+        elif action == 'role':
+            self._templates.select(argument)
+        else:
+            self.commandRequested.emit(action, argument)
+        self.changed.emit()
+        return True
+
     @Slot(str)
     def setReasoning(self, value):
-        if not self._busy and value in ("off", "low", "medium", "high"):
-            self._reasoning = value
-            self._save_preferences()
-            self.changed.emit()
+        from . import effort
+        if self._busy or value not in effort.LEVELS:
+            return
+        self._reasoning = value
+        self._save_preferences()
+        self._sync_task_thinking()
+        self.changed.emit()
+
+    def _sync_task_thinking(self):
+        """沉思档同时打开 Keystone 任务沉思（用户层 thinking.mode），与 Tk 版一致；只在变化时写。"""
+        if self.demo:
+            return
+        from . import effort
+        from config_model import load_user_layer, save_user_layer
+        mode = effort.task_thinking(self._reasoning)
+        try:
+            latest = load_user_layer(self.store.home)
+            row = next((r for r in latest if r.get('id') == 'thinking'), None)
+            current = str(((row or {}).get('config') or {}).get('mode', 'off')).lower()
+            if current == mode:
+                return
+            rows = copy.deepcopy(latest)
+            row = next((r for r in rows if r.get('id') == 'thinking'), None)
+            if row is None:
+                rows.append({'id': 'thinking', 'name': 'thinking:mode', 'config': {'mode': mode}})
+            else:
+                row.setdefault('config', {})['mode'] = mode
+            save_user_layer(self.store.home, rows, expected_rows=latest)
+        except (OSError, ValueError):
+            self._error = "沉思模式未能写入配置，本次对话仍按所选强度发送。"
 
     @Slot(float)
     def setMaterial(self, value):
@@ -461,6 +518,8 @@ class ChatController(QObject):
     def send(self):
         text = self._draft.strip()
         if self.busy or not text:
+            return
+        if self._run_command(text):
             return
         if self.demo:
             self._error = "当前是材质预览。请用不带 --demo 的启动入口连接真实网关。"
@@ -685,6 +744,8 @@ class ChatController(QObject):
         def show_todos(items):
             messages[task_index].todos = items
             self._workerEvent.emit('todos', (generation, (task_index, items, messages[task_index].task_plan)))
+        from . import effort as effort_levels
+        effort = effort_levels.wire_effort(effort, self._effort_info()['levels'])
         client = self._client or self.factory(self._gateway)
         self._client = client
         authorize = self.tool_authorizer() if self.tool_authorizer is not None else None
@@ -696,6 +757,13 @@ class ChatController(QObject):
             chat_connection = self.chat_mcp_tools() if tools_enabled and self.chat_mcp_tools else ({}, None)
         change_notice = self._changes.notice()
         temperature = self._temperature
+        # 沉思档：回答前先跑沉思轮（套件走插件席位），笔记只进本轮系统上下文，不写入历史。
+        contemplating = self._reasoning == 'contemplate' and not self.demo
+        task = next((m.content for m in reversed(messages)
+                     if m.role == 'user' and isinstance(m.content, str)), '')
+        home = self.store.home
+        thought = ['']
+        session_id = self._sid
         # 角色模板：角色指引随每轮系统上下文走（切换到 Work 后也保留）；工具与权限
         # 的收窄在 tool_settings.snapshot / permissions.authorize 里，回合上限在 turn_limit。
         role = self._templates.active()
@@ -711,8 +779,8 @@ class ChatController(QObject):
         # 角色指引整轮会话不变：走系统上下文（稳定前缀、可缓存）；工作台背景才是逐轮的轮次上下文。
         def work_context(history):
             if self.work_context is None:
-                return change_notice
-            return '\n'.join(part for part in (change_notice,
+                return '\n'.join(part for part in (thought[0], change_notice) if part)
+            return '\n'.join(part for part in (thought[0], change_notice,
                                                 self.work_context(history, model, cancel, update_status)) if part)
 
         def enter_work(reason, history):
@@ -740,10 +808,30 @@ class ChatController(QObject):
                         raise GenerationCancelled('已停止规划')
                     messages[task_index].task_plan = plan
                     show_todos(from_plan(plan.tasks) if plan.show_todos else [])
-                context = change_notice if chat_mode else work_context(messages)
+                # 长期记忆（分级检索插件，与 Tk 版同一桥）：未启用零网络调用；服务挂了对话照常。
+                from .memory import bridge_for
+                memory = bridge_for(home)
+                if memory is not None:
+                    update_status('检索长期记忆…')
+                    block = memory.context_for(task, model=model)
+                    notice = memory.consume_notice()
+                    if notice:
+                        update_status(notice)
+                    if block:
+                        thought[0] = block
+                if contemplating:
+                    from .contemplation import contemplate, thinking_suite
+                    notes = contemplate(client, thinking_suite(home), task, model=model, effort=effort,
+                                        temperature=temperature, cancel=cancel, status=update_status)
+                    thought[0] = '\n'.join(part for part in (thought[0], notes.context()) if part)
+                    if notes.rounds:
+                        self._workerEvent.emit('contemplation', (generation, notes.summary()))
+                    update_status('正在生成…')
+                context = ('\n'.join(part for part in (thought[0], change_notice) if part)
+                           if chat_mode else work_context(messages))
                 from .conversation import MAX_TURNS
                 max_turns = self.turn_limit() if self.turn_limit is not None else MAX_TURNS
-                result = run(client, messages, model=model, effort=None if effort == 'off' else effort,
+                result = run(client, messages, model=model, effort=effort,
                     cancel=cancel, authorize=authorize, tool_filter=tool_filter, tools_enabled=tools_enabled,
                     turn_context=context, system_context=role_text, mcp=connection, temperature=temperature,
                     chat_mcp=chat_connection, enter_work=enter_work if chat_mode else None,
@@ -757,6 +845,8 @@ class ChatController(QObject):
                     next_round=lambda: self._workerEvent.emit('next_round', (generation, '')))
                 if getattr(result, 'budget_exhausted', False):
                     self._workerEvent.emit('budget_exhausted', (generation, ''))
+                if memory is not None:
+                    memory.ingest_turn_async(task, result.text, session=session_id)
                 self._workerEvent.emit("done", (generation, (result.text, getattr(result, 'responses_replay', None))))
             except GenerationCancelled:
                 self._workerEvent.emit("cancelled", (generation, ""))
@@ -859,6 +949,9 @@ class ChatController(QObject):
             self._changes.record(*value)
             receipts = self._messages.rows[self._reply_index].get('toolReceipts', [])
             self._messages.update(self._reply_index, toolReceipts=[*receipts, preview_receipt(*value)])
+            return
+        if kind == 'contemplation':
+            self._messages.update(self._reply_index, contemplation=value)
             return
         if kind == 'budget_exhausted':
             self._messages.update(self._reply_index, continuable=True)

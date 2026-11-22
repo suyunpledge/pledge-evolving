@@ -7,7 +7,14 @@ same model got a different step budget depending on how it was launched.
 
 Precedence for ``max_steps``: per-request override > ``maxSteps`` declared in
 the user layer (keystone.patch.json) > vendor ``steps_hint`` when it is larger >
-bundle/mode ``maxSteps`` > the LoopLimits default.
+bundle/mode ``maxSteps`` > no limit.
+
+``maxSteps: 0`` means no step limit, and it is the framework default (base.json and the coding
+mode ship 0). A run then ends when the model answers, the user stops it, or another guard trips
+(repeated calls without progress, cost budgets); it never stops for having taken many steps.
+Internally "no limit" is ``NO_STEP_LIMIT``, a count no run reaches, so every loop keeps its usual
+integer comparisons. Users set a limit of 1-1000 in the desktop app's advanced settings, which
+writes ``loop.maxSteps`` to their own layer.
 """
 from __future__ import annotations
 
@@ -19,6 +26,8 @@ from .runtime_types import LoopLimits
 # Shared sanity bounds; per-request overrides outside them are rejected by the
 # caller (client server), config values are clamped here.
 BOUNDS = {'max_steps': (1, 1000), 'max_depth': (0, 16), 'spawn_budget': (0, 1000)}
+UNLIMITED = 0  # config value for "no step limit"
+NO_STEP_LIMIT = 1_000_000  # what "no step limit" resolves to; no run gets there
 _KEYS = {'max_steps': 'maxSteps', 'max_depth': 'maxDepth', 'spawn_budget': 'spawnBudget'}
 _DEFAULTS = LoopLimits()
 
@@ -28,10 +37,20 @@ def _clamp(name: str, value: Any) -> int:
     return min(high, max(low, int(value)))
 
 
+def steps_value(value: Any) -> int:
+    """A configured or requested ``maxSteps``: 0 or less is no limit, others are clamped."""
+    number = int(value)
+    return NO_STEP_LIMIT if number <= UNLIMITED else _clamp('max_steps', number)
+
+
+def is_unlimited(max_steps: int) -> bool:
+    return int(max_steps) >= NO_STEP_LIMIT
+
+
 def steps_declared_by_user(cfg) -> bool:
     """True only when the user layer itself wrote ``loop.maxSteps``.
 
-    base.json's ``maxSteps: 12`` is the framework default spelled out, not user
+    base.json's ``maxSteps`` is the framework default spelled out, not user
     intent, so it must not suppress the vendor steps_hint.
 
     A role template (keystone.agent_templates, layer label ``template:<id>``)
@@ -93,8 +112,8 @@ def primary_profile(cfg, router=None):
 def resolve_max_steps(cfg, profile=None, override: int | None = None) -> tuple[int, str]:
     """Return ``(max_steps, source)``; source is override|user|hint|config."""
     if override is not None:
-        return _clamp('max_steps', override), 'override'
-    configured = _clamp('max_steps', cfg.get("loop", "maxSteps", _DEFAULTS.max_steps))
+        return steps_value(override), 'override'
+    configured = steps_value(cfg.get("loop", "maxSteps", UNLIMITED))
     if steps_declared_by_user(cfg):
         return configured, 'user'
     hint = int(getattr(profile, "steps_hint", 0) or 0)

@@ -5,6 +5,29 @@ import os
 from .runtime_types import ThinkingSuite
 
 THINKING_HOOKS = ("should_think", "build_thinking_task", "split_thinking", "estimate_budget")
+# 运行席位 = 内置插件：每个席位由包内模块保底，<home>/contrib 同名模块过闸可接管，
+# 用户层 {"id": "seats", "config": {"disabled": [...]}} 或 KEYSTONE_DISABLE_SEATS 可停用。
+SEATS = {
+    "scheduler": "due_jobs", "router": "match", "teams": "deliver", "supervisor": "supervise",
+    "curator": "curate", "compactor": "should_compact", "replay": "replay", "thinking": "suite",
+}
+
+
+def disabled_seats(home: Path | None = None) -> set[str]:
+    """Seats switched off by the environment or the user layer's ``seats`` row."""
+    out = {item.strip() for item in os.environ.get("KEYSTONE_DISABLE_SEATS", "").split(",") if item.strip()}
+    if home is not None:
+        try:
+            import json
+            from .compat import user_layer
+            rows = json.loads(user_layer(Path(home)).read_text(encoding="utf-8-sig"))
+            row = next((r for r in rows if isinstance(r, dict) and r.get("id") == "seats"
+                        and not r.get("disabled")), None)
+            values = ((row or {}).get("config") or {}).get("disabled", [])
+            out |= {str(v) for v in values if str(v) in SEATS} if isinstance(values, list) else set()
+        except (OSError, ValueError, TypeError, AttributeError):
+            pass
+    return out
 
 
 def mount_contrib_extensions(
@@ -53,8 +76,7 @@ def mount_contrib_extensions(
         warnings.append(f"home contrib discovery failed: {exc}")
 
     slots: dict[str, Any] = {}
-    disabled_seats = {item.strip() for item in os.environ.get("KEYSTONE_DISABLE_SEATS", "").split(",")
-                      if item.strip()}
+    off_seats = disabled_seats(home)
     for module_name, canonical in (("scheduler", "due_jobs"),
                                    ("router", "match"),
                                    ("teams", "deliver"),
@@ -62,8 +84,8 @@ def mount_contrib_extensions(
                                    ("curator", "curate"),
                                    ("compactor", "should_compact"),
                                    ("replay", "replay")):
-        if module_name in disabled_seats:
-            warnings.append(f"contrib seat '{module_name}' disabled by KEYSTONE_DISABLE_SEATS")
+        if module_name in off_seats:
+            warnings.append(f"contrib seat '{module_name}' disabled by KEYSTONE_DISABLE_SEATS / seats row")
             continue
         # 包内保底席位
         base = pkg_registry.contributions.get(module_name)
@@ -129,12 +151,14 @@ def mount_contrib_extensions(
         return suite, "ok"
 
     think_suite, think_why = _resolve_thinking(home_registry)
-    if think_suite is not None:
+    if "thinking" in off_seats:
+        warnings.append("contrib seat 'thinking' disabled by KEYSTONE_DISABLE_SEATS / seats row")
+    elif think_suite is not None:
         slots["thinking"] = think_suite
         warnings.append(
             f"contrib seat 'thinking' taken over by home module "
             f"{home_registry.contributions['thinking'].path}")
-    else:
+    if "thinking" not in off_seats and think_suite is None:
         if home_registry.contributions.get("thinking") is not None:
             warnings.append(
                 f"home contrib 'thinking' cannot serve the suite ({think_why}) — "

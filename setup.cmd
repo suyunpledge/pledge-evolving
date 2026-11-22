@@ -1,4 +1,5 @@
-﻿@echo off
+@echo off
+chcp 65001 >nul
 setlocal
 cd /d "%~dp0"
 
@@ -6,9 +7,15 @@ set "MODE=%~1"
 if "%MODE%"=="" set "MODE=gui"
 
 echo ============================================================
-echo   Keystone 一键配置（Windows）
-echo   唯一前提：能上网。缺 Python 会自动静默安装。
-echo   用法：setup.cmd [gui/web/check/selftest]
+echo   Pledge Keystone 一键部署（Windows）
+echo   唯一前提：能上网。缺 Python 会自动静默安装；
+echo   桌面版（Qt）运行时装在本目录 .venv\qt，不改动全局 Python。
+echo   用法：setup.cmd [gui/tk/web/check/selftest]
+echo     gui      默认：Qt 桌面版（Qt 安装失败时自动退回经典版或 Web）
+echo     tk       经典 Tk 桌面版
+echo     web      浏览器版 http://127.0.0.1:7712
+echo     check    只检查环境
+echo     selftest 离线自检（无需网络与密钥）
 echo ============================================================
 echo.
 
@@ -39,16 +46,28 @@ if /i "%MODE%"=="selftest" (
   exit /b %errorlevel%
 )
 
-call :shortcut
-echo [3/4] 桌面快捷方式已创建：Keystone
-
 set "PYW=%PYEXE%"
 for %%I in ("%PYEXE%") do set "PYDIR=%%~dpI"
 if exist "%PYDIR%pythonw.exe" set "PYW=%PYDIR%pythonw.exe"
 
+set "HAS_QT="
+set "QTPY=%~dp0.venv\qt\Scripts\python.exe"
+set "QTPYW=%~dp0.venv\qt\Scripts\pythonw.exe"
+if /i "%MODE%"=="gui" call :qt_runtime
+
+call :shortcut
+echo [3/4] 桌面快捷方式已创建：Pledge Keystone
+
 if /i "%MODE%"=="web" goto :web
+if /i "%MODE%"=="tk" goto :tk
+if defined HAS_QT (
+  echo [4/4] 启动 Keystone 桌面版（Qt）...
+  start "" "%QTPYW%" keystone-gui\keystone_qt.py
+  exit /b 0
+)
+:tk
 if not defined HAS_TK goto :web
-echo [4/4] 启动 Keystone 桌面窗口...
+echo [4/4] 启动 Keystone 经典桌面窗口...
 start "" "%PYW%" keystone-gui\keystone_gui_v2.py
 exit /b 0
 
@@ -90,8 +109,32 @@ curl -L -o "%TEMP%\keystone-py-installer.exe" "https://www.python.org/ftp/python
 "%TEMP%\keystone-py-installer.exe" /quiet InstallAllUsers=0 PrependPath=1 Include_launcher=1 Include_tcltk=1
 exit /b 0
 
+:qt_runtime
+echo [3/4] 准备 Qt 桌面运行时（首次约需下载 200 MB）...
+if not exist "%QTPY%" "%PYEXE%" -m venv "%~dp0.venv\qt"
+if not exist "%QTPY%" goto :qt_fail
+"%QTPY%" -c "import PySide6" >nul 2>nul && goto :qt_ready
+"%QTPY%" -m pip install --disable-pip-version-check -q -r keystone-gui\requirements-qt.txt
+if errorlevel 1 (
+  echo       官方源失败，改用清华镜像重试...
+  "%QTPY%" -m pip install --disable-pip-version-check -q -i https://pypi.tuna.tsinghua.edu.cn/simple -r keystone-gui\requirements-qt.txt
+)
+"%QTPY%" -c "import PySide6" >nul 2>nul || goto :qt_fail
+:qt_ready
+"%QTPY%" keystone-gui\qt_frontend\build_shaders.py >nul 2>nul
+set "HAS_QT=1"
+echo       Qt 运行时就绪。
+exit /b 0
+:qt_fail
+echo       [提示] Qt 运行时安装失败，将改用经典桌面版或 Web 版；稍后可重跑 setup.cmd 重试。
+exit /b 0
+
 :shortcut
-powershell -NoProfile -Command "$py='%PYEXE%'; $pyw=Join-Path (Split-Path $py) 'pythonw.exe'; if(-not(Test-Path $pyw)){$pyw=$py}; $repo='%~dp0'; $ws=New-Object -ComObject WScript.Shell; $desk=[Environment]::GetFolderPath('Desktop'); $s=$ws.CreateShortcut((Join-Path $desk 'Keystone.lnk')); $s.TargetPath=$pyw; $s.Arguments=[char]34+(Join-Path $repo 'keystone-gui\keystone_gui_v2.py')+[char]34; $s.WorkingDirectory=$repo; $s.IconLocation=$pyw; $s.Save()" >nul 2>nul
+set "SC_TARGET=%PYW%"
+set "SC_SCRIPT=keystone-gui\keystone_gui_v2.py"
+if defined HAS_QT set "SC_TARGET=%QTPYW%"
+if defined HAS_QT set "SC_SCRIPT=keystone-gui\keystone_qt.py"
+powershell -NoProfile -Command "$repo='%~dp0'; $ws=New-Object -ComObject WScript.Shell; $desk=[Environment]::GetFolderPath('Desktop'); $s=$ws.CreateShortcut((Join-Path $desk 'Pledge Keystone.lnk')); $s.TargetPath='%SC_TARGET%'; $s.Arguments=[char]34+(Join-Path $repo '%SC_SCRIPT%')+[char]34; $s.WorkingDirectory=(Join-Path $repo 'keystone-gui'); $ico=Join-Path $repo 'keystone-gui\desktop\keystone.ico'; if(Test-Path $ico){$s.IconLocation=$ico}; $s.Save()" >nul 2>nul
 exit /b 0
 
 :py_fail

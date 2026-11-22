@@ -41,6 +41,40 @@ def restore_config_secrets(edited, original):
     return edited
 
 
+def configured_steps(rows):
+    """The step limit the user set in their own layer; 0 (no limit) when they never set one."""
+    row = next((r for r in rows if r.get('id') == 'loop'), None)
+    value = (row or {}).get('config', {}).get('maxSteps', 0)
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def parse_max_steps(text):
+    text = str(text).strip()
+    if text in {'', '不限', '无', 'none', 'unlimited'}:
+        return 0
+    try:
+        value = int(text)
+    except ValueError:
+        value = -1
+    if not 0 <= value <= 1000:
+        raise ValueError('步数上限须为 0（不限）或 1–1000 的整数。')
+    return value
+
+
+def with_max_steps(rows, value):
+    """Copy of the user layer with loop.maxSteps set; other loop settings are kept."""
+    edited = copy.deepcopy(rows)
+    row = next((r for r in edited if r.get('id') == 'loop'), None)
+    if row is None:
+        row = {'id': 'loop', 'name': 'loop:core', 'config': {}}
+        edited.append(row)
+    row.setdefault('config', {})['maxSteps'] = value
+    return edited
+
+
 class WorkspaceService:
     def __init__(self, host):
         self.host = host
@@ -128,7 +162,9 @@ class WorkspaceService:
                 actions=[button('run', '开始任务'), button('cancel', '停止')])
         elif page == 'config':
             self.snapshots.setdefault(page, copy.deepcopy(rows))
-            data.update(hint='模型按行管理；图片与视频模型使用右上方的生成模型配置。高级配置支持原有 Keystone JSON 格式。',
+            steps = configured_steps(rows)
+            data.update(hint='模型按行管理；图片与视频模型使用右上方的生成模型配置。高级配置支持原有 Keystone JSON 格式。'
+                             '步数上限默认不限；填 1–1000 可限制每个任务最多调用多少次工具，填 0 或留空恢复不限。',
                 actions=[button('modelSetup', '添加或配置模型'), button('providerCatalog', '提供商目录'), button('reload', '重新读取')],
                 rows=[dict(id=r['id'], title=r['config'].get('modelLabel') or r['config'].get('model') or r['id'],
                     subtitle=(r['config'].get('baseURL') or r.get('name', '')) + (' · 已停用' if r.get('disabled') else ''),
@@ -136,7 +172,11 @@ class WorkspaceService:
                     for r in rows if 'baseURL' in r['config']],
                 fields=[field('json', '高级配置', json.dumps(redact(rows), ensure_ascii=False, indent=2), 'code')])
             data['fields'][0]['advanced'] = True
+            data['fields'].append(field('max_steps', f"步数上限（当前：{'不限' if steps == 0 else f'{steps} 步'}）",
+                                        str(steps)))
+            data['fields'][1]['advanced'] = True
             data['actions'].append(button('save', '保存高级配置'))
+            data['actions'].append(button('saveSteps', '保存步数上限'))
         elif page == 'agents':
             import sub_agent
             conf = sub_agent.load_config(self.home / 'agent-cluster.json')
@@ -170,13 +210,9 @@ class WorkspaceService:
                     if c.status != 'applied' else [button('inspect', '详情'), button('rollback', '回滚', danger=True)])) for c in [*engine.pending(), *engine.applied()]])
         elif page == 'tools':
             from plugin_market import Marketplace
-            market = Marketplace(self.home)
-            data.update(hint='插件的安装、信任与工作区能力授权独立管理。',
-                fields=[field('path', '本地插件目录')], actions=[button('installDir', '导入插件'), button('sync', '刷新在线目录'), button('logs', '运行日志')],
-                rows=[dict(id=p.id, title=p.name or p.id, subtitle=p.description + (' · 已启用' if p.enabled else ' · 已安装' if p.installed else ''),
-                    actions=([button('inspect', '权限'), button('disable' if p.enabled else 'enable', '停用' if p.enabled else '启用'),
-                        button('ack', '信任'), button('grant', '授权能力'), button('revoke', '撤销授权'), button('uninstall', '卸载', danger=True)]
-                        if p.installed else [button('install', '安装')])) for p in market.catalog()])
+            from . import plugin_page
+            data.update(plugin_page.view(self.home, Marketplace(self.home), self.host.workspace,
+                                         getattr(self, 'plugin_query', '')))
         elif page == 'schedules':
             from phase_client import model_catalog
             models = [{'label': label, 'value': json.dumps(pair)} for pair, label in model_catalog(rows)]
@@ -274,6 +310,11 @@ class WorkspaceService:
                 edited = [restore_config_secrets(r, previous.get(r.get('id'))) for r in edited]
                 save_user_layer(self.home, edited, expected_rows=self.snapshots[page])
                 self.snapshots[page] = copy.deepcopy(edited)
+            elif action == 'saveSteps':
+                edited = with_max_steps(rows, parse_max_steps(values.get('max_steps', '')))
+                save_user_layer(self.home, edited, expected_rows=rows)
+                self.snapshots[page] = copy.deepcopy(edited)
+                self.host.emit('reset_form', page=page)
             elif action in {'modelSetup', 'providerCatalog'}:
                 self.host.emit('model_setup' if action == 'modelSetup' else 'provider_catalog', query='')
             if action in {'save', 'toggle'}:
@@ -340,33 +381,13 @@ class WorkspaceService:
             self.results[page] = json.dumps(result, ensure_ascii=False, indent=2)
         elif page == 'tools':
             from plugin_market import Marketplace
-            market = Marketplace(self.home)
-            if action == 'installDir':
-                result = market.install_from_dir(values['path']).to_dict()
-            elif action == 'sync':
-                result = market.sync_sources()
-            elif action == 'logs':
-                result = market.log_tail()
-            else:
-                p = market.find(key)
-                if p is None:
-                    raise ValueError('插件已移除。')
-                if action in {'ack', 'grant', 'uninstall'} and not self.host.approve('插件 ' + action, p.to_dict()):
-                    return
-                if action == 'inspect':
-                    result = p.to_dict()
-                elif action == 'install':
-                    result = market.install_from_catalog(key).to_dict()
-                elif action == 'ack':
-                    result = market.ack(key, expected_fingerprint=p.ack_of()).to_dict()
-                elif action == 'grant':
-                    result = market.grant(key, sorted(p.declared_capabilities), self.host.workspace, expected_fingerprint=p.ack_of())
-                elif action == 'revoke':
-                    result = market.revoke_grants(key, workspace=self.host.workspace)
-                else:
-                    result = getattr(market, action)(key)
-                    result = result.to_dict() if hasattr(result, 'to_dict') else result
-            self.results[page] = json.dumps(redact(result), ensure_ascii=False, indent=2, default=str)
+            from . import plugin_page
+            if action == 'filter':
+                self.plugin_query = str(values.get('query', ''))
+            result = plugin_page.act(self.home, Marketplace(self.home), self.host.workspace, action, values,
+                                     self.host.approve)
+            if result is not None:
+                self.results[page] = plugin_page.render(result)
         elif page == 'schedules':
             if action == 'add':
                 delay, interval = float(values['delay']), float(values['interval'])

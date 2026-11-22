@@ -18,10 +18,10 @@
     "id": "loop",
     "name": "loop:coding",
     "config": {
-      "maxSteps": 40,
+      "maxSteps": 0,
       "maxDepth": 3,
       "spawnBudget": 16,
-      "notes": "编码任务步数更长、可派更多子代理（tester/reviewer）。"
+      "notes": "编码任务不限步数（maxSteps 0），可派更多子代理（tester/reviewer）。"
     }
   },
   {

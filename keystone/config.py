@@ -103,7 +103,7 @@ class Row:
     disabled: bool = False
     inject: tuple[str, ...] = ()
     # 最后写入该行的层标签（2026-11-04 第三轮）：区分「bundle 默认」与
-    # 「用户层显式声明」——例如 base.json 里的 loop.maxSteps=12 是框架
+    # 「用户层显式声明」——例如 base.json 里的 loop.maxSteps 是框架
     # 默认值的另一种写法，不应抑制厂商画像的 steps_hint 自动适配。
     source: str = ""
 
@@ -207,6 +207,7 @@ class Config:
         self.rows: dict[str, Row] = {}
         self.order: list[str] = []
         self.history: list[str] = []
+        self.warnings: list[str] = []
 
     # -- composition -----------------------------------------------------
     def apply_patch(self, patch: Iterable[dict[str, Any]], label: str = "layer") -> None:
@@ -294,6 +295,11 @@ class Config:
     def to_json(self) -> str:
         return json.dumps(self.dump(), ensure_ascii=False, indent=2)
 
+    def provenance(self) -> list[dict[str, Any]]:
+        """Which layer last wrote each row — the offline answer to "where did this come from"."""
+        return [{"id": r.id, "name": r.name, "source": r.source, "disabled": r.disabled}
+                for r in self._ordered()]
+
 
 def _read_json(path: Path) -> Any:
     # 按 utf-8-sig 读：能同时处理无 BOM 与带 BOM 两种文件。
@@ -321,15 +327,72 @@ def _no_dup_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return out
 
 
+# -- plugin bundle layers ------------------------------------------------------
+#
+# DSH 的 profile 是「有序插件束补丁层」。Keystone 的对应物：插件市场在插件
+# 「已安装 + 已启用 + 已确认（指纹一致）」时，把清单里的 contributions.patch
+# 物化为 <home>/plugin-layers/<id>.json；合成时插在 bundle 层与用户层之间，
+# 按文件名排序、后写胜——用户层永远压过插件层。
+#
+# 插件层是外部输入：不得触碰权限/沙箱/工具暴露等宿主授权行，不得 remove 行；
+# 违规或解析失败只跳过该插件层（单插件降级），不会让整棵配置启动失败。
+# dump-default-config（跳过用户层）同样跳过插件层，作为恢复通道。
+PLUGIN_LAYER_DIR = "plugin-layers"
+PLUGIN_PROTECTED_ROWS = frozenset({
+    "policy", "sandbox", "permissions", "capabilities", "grants", "secretisolation",
+    "toolregistry", "pluginruntime", "modules", "entrypoint", "executescode", "plugins",
+    "tools", "seats", "role",
+})
+
+
+def _row_key(value: Any) -> str:
+    return "".join(ch for ch in str(value or "").lower() if ch.isalnum())
+
+
+def plugin_patch_problems(patch: Any) -> list[str]:
+    """Why a plugin patch may not be composed ([] = acceptable)."""
+    if not isinstance(patch, list):
+        return ["patch must be a list of rows"]
+    problems: list[str] = []
+    if len(patch) > 32:
+        problems.append("patch has more than 32 rows")
+    for op in patch:
+        if not isinstance(op, dict):
+            problems.append("patch rows must be objects")
+            continue
+        if "remove" in op:
+            problems.append("plugin patches may not remove rows")
+            continue
+        rows = op["insert"] if isinstance(op.get("insert"), list) else [op]
+        for row in rows:
+            if not isinstance(row, dict) or not str(row.get("id", "")).strip():
+                problems.append("every row needs an id")
+                continue
+            if not isinstance(row.get("config", {}), dict):
+                problems.append(f"row {row['id']!r}: config must be an object")
+            kind = str(row.get("name", "")).split(":", 1)[0]
+            if _row_key(row["id"]) in PLUGIN_PROTECTED_ROWS or _row_key(kind) in PLUGIN_PROTECTED_ROWS:
+                problems.append(f"row {row['id']!r} controls host authority and cannot come from a plugin")
+    return problems
+
+
+def plugin_layers(home: str | Path) -> list[Path]:
+    directory = Path(home) / PLUGIN_LAYER_DIR
+    if not directory.is_dir():
+        return []
+    return sorted(p for p in directory.glob("*.json") if p.is_file())
+
+
 def load_config(
     home: str | Path,
     *,
     bundles: Iterable[str | Path] = (),
     overlays: Iterable[str | Path] = (),
     include_user_layer: bool = True,
+    include_plugins: bool | None = None,
     validate: Callable[[str, str, dict[str, Any]], None] | None = None,
 ) -> Config:
-    """Compose: bundle layers -> user layer -> extra overlays.
+    """Compose: bundle layers -> plugin layers -> user layer -> extra overlays.
 
     每一层都带上它来自哪个文件，这样 JSON 写坏时能把文件名与行列号报出来——
     否则用户只看到 ``Expecting ',' delimiter`` 而不知道是哪个文件出的错。
@@ -349,6 +412,18 @@ def load_config(
         bundle_path = Path(bundle)
         if bundle_path.is_file():
             _apply(bundle_path, bundle_path.name)
+    if include_user_layer if include_plugins is None else include_plugins:
+        for layer in plugin_layers(home):
+            label = f"plugin:{layer.stem}"
+            try:
+                patch = _read_json(layer)
+                problems = plugin_patch_problems(patch)
+                if problems:
+                    raise ConfigError("; ".join(problems[:3]))
+                cfg.apply_patch(patch, label=label)
+            except (ConfigError, json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
+                cfg.warnings.append(f"{label} skipped: {exc}")
+                print(f"[config warn] {label} skipped: {exc}", file=sys.stderr)
     if include_user_layer:
         user = user_layer(home)
         if user.is_file():

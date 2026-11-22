@@ -44,7 +44,8 @@ WORK_HANDOFF = {'type': 'function', 'function': {
 CHAT_CONTEXT = ('当前处于 Chat 模式。数学计算、函数求值、绘图，以及根据对话内容创建表格、幻灯片和文档时留在 Chat。已有 MCP 可直接调用。'
                 '如果当前用户任务确实需要操作电脑、读写项目文件、运行代码或使用其他 Work 工具，'
                 '调用 keystone_enter_work 并说明原因，切换后继续同一任务。仅解释步骤或给出建议时不切换。')
-# 回合上限与核心 loop 同源：loop.maxSteps（见 keystone.loop_limits）；读不到配置时用框架默认值。
+# 回合上限与核心 loop 同源：loop.maxSteps（见 keystone.loop_limits），框架默认不限步数。
+# MAX_TURNS 只是 run() 未传 max_turns 时的参数默认值；桌面端总是传入 turn_limit() 的结果。
 MAX_TURNS = 12
 MODEL_RETRY_DELAYS = (1, 3)
 MAX_GENERATION_RETRIES = 4
@@ -77,7 +78,9 @@ def turn_limit(home, template=None):
             apply_template(cfg, template)
         return resolve_loop_limits(cfg, use_hint=False).max_steps
     except Exception:
-        return MAX_TURNS
+        # Same as the framework default: no step limit. MAX_TURNS stays run()'s own default.
+        from keystone.loop_limits import NO_STEP_LIMIT
+        return NO_STEP_LIMIT
 
 WORK_CONTEXT = ('当前已切换至 Work，继续处理同一条用户消息。Work 工具定义已随本轮请求提供，'
                 '直接调用列表中的匹配工具。读取项目文件时优先使用已提供的 keystone_read_range 或 '

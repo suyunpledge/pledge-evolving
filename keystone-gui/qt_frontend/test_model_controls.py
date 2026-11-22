@@ -47,13 +47,14 @@ class ManagedGateway(Gateway):
 
 class EffortSupportTests(unittest.TestCase):
     def test_levels_follow_declarations_then_vendor_profile(self):
-        self.assertEqual(effort.support(ROWS[2]['config'])['levels'], ['off', 'high'])
+        # 沉思 is always offered: it also turns on Keystone task contemplation.
+        self.assertEqual(effort.support(ROWS[2]['config'])['levels'], ['off', 'high', 'contemplate'])
         none = effort.support({**ROWS[2]['config'], 'routeCapabilities': {'reasoningEfforts': []}})
-        self.assertEqual((none['levels'], none['supported']), (['off'], False))
+        self.assertEqual((none['levels'], none['supported']), (['off', 'contemplate'], False))
         mimo = effort.support(ROWS[1]['config'])
-        self.assertEqual((mimo['levels'], mimo['supported']), (['off'], False))
+        self.assertEqual((mimo['levels'], mimo['supported']), (['off', 'contemplate'], False))
         self.assertTrue(mimo['hint'])
-        self.assertEqual(effort.support(ROWS[0]['config'])['levels'], ['off', 'low', 'high'])
+        self.assertEqual(effort.support(ROWS[0]['config'])['levels'], ['off', 'low', 'high', 'contemplate'])
         unknown = effort.support({'baseURL': 'https://unknown.example.test/v1', 'model': 'x'})
         self.assertEqual(unknown['levels'], list(effort.LEVELS))
 
@@ -62,6 +63,11 @@ class EffortSupportTests(unittest.TestCase):
         self.assertEqual(effort.effective('high', ['off', 'low', 'high']), 'high')
         self.assertEqual(effort.effective('medium', ['off', 'high']), 'off')
         self.assertEqual(effort.effective('high', ['off']), 'off')
+        self.assertEqual(effort.wire_effort('contemplate', ['off', 'low', 'high', 'contemplate']), 'high')
+        self.assertEqual(effort.wire_effort('contemplate', ['off', 'low', 'contemplate']), 'low')
+        self.assertIsNone(effort.wire_effort('contemplate', ['off', 'contemplate']))
+        self.assertIsNone(effort.wire_effort('off', list(effort.LEVELS)))
+        self.assertEqual([effort.task_thinking(l) for l in effort.LEVELS], ['off', 'smart', 'smart', 'smart', 'on'])
 
 
 class ControllerEffortTests(unittest.TestCase):
@@ -100,7 +106,7 @@ class ControllerEffortTests(unittest.TestCase):
     def test_effort_is_bound_to_the_current_model_and_sent_clamped(self):
         self.connect('ds')
         self.controller.setReasoning('medium')
-        self.assertEqual(list(self.controller.reasoningLevels), ['off', 'low', 'high'])
+        self.assertEqual(list(self.controller.reasoningLevels), ['off', 'low', 'high', 'contemplate'])
         self.assertTrue(self.controller.reasoningSupported)
         self.assertEqual(self.controller.effectiveReasoning, 'low')
         self.assertEqual(self.send().get('reasoning_effort'), 'low')
@@ -111,8 +117,52 @@ class ControllerEffortTests(unittest.TestCase):
         self.assertEqual(self.controller.effectiveReasoning, 'off')
         self.assertIsNone(self.send().get('reasoning_effort'))
         self.connect('proxy')
-        self.assertEqual(list(self.controller.reasoningLevels), ['off', 'high'])
+        self.assertEqual(list(self.controller.reasoningLevels), ['off', 'high', 'contemplate'])
         self.assertEqual(self.send().get('reasoning_effort'), 'high')
+
+    def thinking_mode(self):
+        row = next((r for r in load_user_layer(self.home) if r['id'] == 'thinking'), {})
+        return row.get('config', {}).get('mode', 'off')
+
+    def test_contemplate_sends_top_effort_and_turns_on_task_contemplation(self):
+        self.connect('ds')
+        self.assertEqual(self.thinking_mode(), 'off')
+        self.controller.setReasoning('contemplate')
+        self.assertEqual(self.controller.effectiveReasoning, 'contemplate')
+        self.assertEqual(self.send().get('reasoning_effort'), 'high')
+        self.assertEqual(self.thinking_mode(), 'on')
+        self.connect('mimo')
+        self.assertEqual(self.controller.effectiveReasoning, 'contemplate')
+        self.assertIsNone(self.send().get('reasoning_effort'))
+        self.controller.setReasoning('low')
+        self.assertEqual(self.thinking_mode(), 'smart')
+        self.controller.setReasoning('off')
+        self.assertEqual(self.thinking_mode(), 'off')
+        # Other rows of the user layer are untouched.
+        self.assertEqual([r['id'] for r in load_user_layer(self.home)], [r['id'] for r in ROWS] + ['thinking'])
+
+    def test_contemplate_runs_rounds_before_answering(self):
+        self.connect('ds')
+        self.controller.setReasoning('contemplate')
+        Gateway.requests.clear()
+        self.controller.draft = '设计一个缓存层'
+        self.controller.send()
+        until(lambda: not self.controller.busy)
+        requests = list(Gateway.requests)
+        # The fake gateway answers identically, so the second round converges: 2 rounds + the answer.
+        self.assertEqual(len(requests), 3)
+        self.assertIn('设计一个缓存层', requests[0]['messages'][-1]['content'])
+        self.assertTrue(all(r.get('reasoning_effort') == 'high' for r in requests))
+        final = [str(m.get('content')) for m in requests[-1]['messages']]
+        self.assertTrue(any('<contemplation>' in text for text in final), final)
+        reply = self.controller.messages.rows[-1]
+        self.assertEqual(reply['contemplation']['rounds'], 2)
+        self.assertIn('已收敛', reply['contemplation']['label'])
+        self.assertEqual(reply['textContent'], '真实流式 reply 123')
+        # Notes are per request only: the next turn does not resend them from history.
+        self.controller.setReasoning('high')
+        follow = self.send()
+        self.assertFalse(any('<contemplation>' in str(m.get('content')) for m in follow['messages']))
 
     def test_choice_persists_like_the_model_choice(self):
         self.connect('ds')
@@ -273,6 +323,9 @@ class MainScreenControlTests(unittest.TestCase):
         self.assertEqual(slider.property('value'), 3)
         self.controller.setReasoning('low')
         self.assertEqual(slider.property('value'), 1)
+        self.controller.setReasoning('contemplate')
+        self.assertEqual(slider.property('value'), 4)
+        self.assertIn('沉思', button.property('text'))
 
     def test_model_editor_and_entry_points_exist(self):
         editor = self.window.findChild(QObject, 'modelEditor')

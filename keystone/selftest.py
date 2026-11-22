@@ -3614,8 +3614,9 @@ def test_coding_mode() -> None:
               coded.get("policy", "mode") == "acceptEdits"
               and "edit_file" in (coded.get("policy", "allow") or ()),
               str(coded.get("policy", "mode")))
-        check("coding:flag-raises-loop-budget", coded.get("loop", "maxSteps") == 40,
-              str(coded.get("loop", "maxSteps")))
+        # Coding used to raise the budget from 12 to 40; both now ship without a step limit (0).
+        check("coding:flag-keeps-no-step-limit", coded.get("loop", "maxSteps") == 0
+              and plain.get("loop", "maxSteps") == 0, str(coded.get("loop", "maxSteps")))
         exposed = coded.get("tools", "expose") or []
         check("coding:flag-sets-tool-surface", "apply_patch" in exposed, str(exposed))
         narrowed = build_builtin_registry(expose=exposed)

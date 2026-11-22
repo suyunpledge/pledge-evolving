@@ -6,6 +6,7 @@ import threading
 import unittest
 
 from .conversation import BUDGET_SUMMARY, MAX_TURNS, budget_lead, run, tool_schemas, turn_limit
+from keystone.loop_limits import NO_STEP_LIMIT
 from keystone_client import ChatMessage, CompletionResult, GatewayError
 
 
@@ -89,7 +90,7 @@ class TurnBudgetTests(unittest.TestCase):
 
     def test_turn_limit_follows_keystone_loop_config(self):
         with tempfile.TemporaryDirectory() as folder:
-            self.assertEqual(turn_limit(folder), MAX_TURNS)
+            self.assertEqual(turn_limit(folder), NO_STEP_LIMIT)  # the framework default is no limit
             Path(folder, 'keystone.patch.json').write_text(
                 json.dumps([{'id': 'loop', 'config': {'maxSteps': 7}}]), encoding='utf-8')
             self.assertEqual(turn_limit(folder), 7)

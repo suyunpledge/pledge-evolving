@@ -5,7 +5,7 @@ import unittest
 
 from .assembly import build_agent
 from .config import USER_LAYER_NAME, Config
-from .loop_limits import BOUNDS, resolve_loop_limits, resolve_max_steps
+from .loop_limits import BOUNDS, NO_STEP_LIMIT, is_unlimited, resolve_loop_limits, resolve_max_steps
 from .test_project_rules import Router
 
 MIMO = [{"id": "p", "name": "provider:reseller", "config": {
@@ -48,6 +48,23 @@ class LoopLimitsTests(unittest.TestCase):
         self.assertEqual((limits.max_steps, limits.max_depth, limits.spawn_budget),
                          (BOUNDS['max_steps'][1], 0, BOUNDS['spawn_budget'][1]))
         self.assertEqual(resolve_loop_limits(cfg, context_chars=777).context_chars, 777)
+
+    def test_zero_or_missing_max_steps_means_no_limit(self):
+        self.assertEqual(resolve_max_steps(Config(), None), (NO_STEP_LIMIT, 'config'))
+        unlimited = config(([{"id": "loop", "config": {"maxSteps": 0}}], USER_LAYER_NAME))
+        self.assertEqual(resolve_max_steps(unlimited, None), (NO_STEP_LIMIT, 'user'))
+        self.assertTrue(is_unlimited(resolve_loop_limits(unlimited).max_steps))
+        # A vendor hint only raises a numeric default; it never shrinks "no limit".
+        self.assertEqual(resolve_loop_limits(config((MIMO, "bundle"),
+                         ([{"id": "loop", "config": {"maxSteps": 0}}], "base.json"))).max_steps, NO_STEP_LIMIT)
+        self.assertEqual(resolve_loop_limits(config(), overrides={'max_steps': 0}).max_steps, NO_STEP_LIMIT)
+        self.assertEqual(resolve_loop_limits(config(), overrides={'max_steps': 7}).max_steps, 7)
+
+    def test_shipped_bundles_have_no_step_limit(self):
+        from .config import load_config
+        with tempfile.TemporaryDirectory() as home:
+            limits = resolve_loop_limits(load_config(Path(home)), use_hint=False)
+        self.assertTrue(is_unlimited(limits.max_steps))
 
     def test_wrap_up_flag_and_context_chars_come_from_config(self):
         cfg = config(([{"id": "loop", "config": {"wrapUpOnLimit": False, "contextChars": 50000}}], "bundle"))

@@ -273,6 +273,36 @@ class NativeServiceTests(unittest.TestCase):
         self.assertEqual(saved['first']['config']['model'], 'updated')
         self.assertEqual(saved['second']['config']['apiKey'], rows[1]['config']['apiKey'])
 
+    def test_step_limit_entry_writes_the_user_layer(self):
+        rows = [dict(id='first', name='provider:first', config={'baseURL': 'http://127.0.0.1:1/v1', 'model': 'one'}),
+                dict(id='loop', name='loop:core', config={'maxDepth': 3})]
+        save_user_layer(self.home, rows)
+        view = self.host.pages.view('config')
+        steps = next(f for f in view['fields'] if f['key'] == 'max_steps')
+        self.assertTrue(steps['advanced'])
+        self.assertEqual(steps['value'], '0')
+        self.assertIn('不限', steps['label'])
+        self.assertIn('saveSteps', [a['key'] for a in view['actions']])
+        values = self.values('config')
+        values['max_steps'] = '30'
+        self.host.pages.action('config', 'saveSteps', values)
+        loop = next(r for r in load_user_layer(self.home) if r['id'] == 'loop')
+        self.assertEqual(loop['config'], {'maxDepth': 3, 'maxSteps': 30})
+        self.assertIn('30 步', next(f for f in self.host.pages.view('config')['fields'] if f['key'] == 'max_steps')['label'])
+        # The JSON editor's snapshot follows, so saving it right after is not a false conflict.
+        json_values = self.values('config')
+        self.host.pages.action('config', 'save', json_values)
+        values['max_steps'] = ''
+        self.host.pages.action('config', 'saveSteps', values)
+        self.assertEqual(next(r for r in load_user_layer(self.home) if r['id'] == 'loop')['config']['maxSteps'], 0)
+        for bad in ('-1', '1001', 'many'):
+            values['max_steps'] = bad
+            with self.assertRaisesRegex(ValueError, '步数上限'):
+                self.host.pages.action('config', 'saveSteps', values)
+        from keystone.config import load_config
+        from keystone.loop_limits import is_unlimited, resolve_loop_limits
+        self.assertTrue(is_unlimited(resolve_loop_limits(load_config(self.home), use_hint=False).max_steps))
+
     def test_agent_settings_are_scoped_to_home_and_concurrency_checked(self):
         values = self.values('agents')
         values.update(mode='on', count='3', cluster=True)
