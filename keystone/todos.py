@@ -1,9 +1,12 @@
 """A turn-local, model-reported checklist. Updates never authorize other tools."""
+import re
+
 from .secrets import redact
 from .tools import ToolResult, ToolSpec
 
 NAME = 'update_todos'
 STATUSES = ('pending', 'in_progress', 'completed', 'blocked')
+_TITLE_REFERENCES = re.compile(r'`[^`\n]+`|[A-Za-z0-9_./-]+\.[A-Za-z][A-Za-z0-9_-]*')
 GUIDANCE = ('Decide whether a checklist would help track dependencies or unfinished work. '
             'Use update_todos when helpful, even without a planning phase. When show_todos is true the '
             'planned checklist is already visible; only publish changes. Send the full updated list as '
@@ -57,42 +60,85 @@ def update(args, _ctx=None):
     return ToolResult(True, '待办清单已更新。', meta={'todos': rows})
 
 
+def _echo_matches(echo, current):
+    """A shortened label must still identify its current slot. Never rename from an echo."""
+    titles = [row['text'] for row in current]
+
+    def references(label):
+        return {ref.strip('`') for ref in _TITLE_REFERENCES.findall(label)}
+
+    def shortened(label, title):
+        if len(label) < 4:
+            return False
+        if label in title:
+            return True
+        # Some echoes drop words inside a title. Require the same opening
+        # phrase and every remaining character in order in one unique slot.
+        if len(label) < 8 or title[:4] != label[:4]:
+            return False
+        remaining = iter(title[4:])
+        return all(char in remaining for char in label[4:])
+
+    refs = [references(title) for title in titles]
+    for index, row in enumerate(echo):
+        label = row['text']
+        if label == titles[index]:
+            continue
+        if label in titles:
+            return False  # exact title of a different slot
+        anchors = references(label)
+        if anchors:
+            matches = [i for i, known in enumerate(refs) if anchors == known]
+        else:
+            matches = [i for i, title in enumerate(titles) if shortened(label, title)]
+        if matches != [index]:
+            return False
+    return True
+
+
+def _coding_progress(args, rows):
+    if set(args) == {'todos'}:
+        args = {'items': args['todos']}
+    if 'statuses' not in args:
+        return update(args)
+    statuses = args['statuses']
+    if (set(args) - {'statuses', 'items'} or not rows or not isinstance(statuses, list)
+            or len(statuses) != len(rows)):
+        return ToolResult(False, error='statuses 需要与当前清单逐项对应。创建或更改清单请使用 items。')
+
+    def echo_statuses(values):
+        echoed = checked(values)
+        if len(echoed) != len(rows) or not _echo_matches(echoed, rows):
+            raise ValueError('清单标题或顺序无法对应。进度请只发状态字符串，改名请单独使用 items。')
+        return [row['status'] for row in echoed]
+
+    try:
+        if all(isinstance(value, dict) for value in statuses):
+            statuses = echo_statuses(statuses)
+        if 'items' in args and echo_statuses(args['items']) != statuses:
+            raise ValueError('items 和 statuses 的进度不一致。')
+    except ValueError as exc:
+        return ToolResult(False, error=str(exc))
+    return update({'items': [dict(row, status=status) for row, status in zip(rows, statuses)]})
+
+
 def install(agent, *, current_items=None):
     from .policy import ToolEffect
     handler, schema, guidance = update, SCHEMA, GUIDANCE
     if current_items is not None:
-        guidance = ('Send changed statuses in task order. Use items to create or rename steps. '
-                    'Batch progress with independent work. After verification, send final_answer with '
-                    'all completed statuses as a single tool call to finish.')
+        guidance = ('Progress: statuses alone, e.g. ["completed","in_progress"], in plan order. '
+                    'Create or rename: items alone. Batch with independent work. '
+                    'After verification finish with one call: completed statuses and final_answer.')
         schema = {'type': 'object', 'additionalProperties': False, 'properties': {
             'statuses': {'type': 'array', 'minItems': 1, 'maxItems': 12,
                 'items': {'type': 'string', 'enum': list(STATUSES)}}, **SCHEMA['properties'],
-            'final_answer': {'type': 'string', 'description': 'Final reply to the user after verification.'}}}
-
-        def update_progress(args, rows, ctx):
-            if set(args) == {'todos'}:
-                return update({'items': args['todos']}, ctx)
-            if 'statuses' not in args:
-                return update(args, ctx)
-            statuses = args['statuses']
-            if (set(args) != {'statuses'} or not rows or not isinstance(statuses, list)
-                    or len(statuses) != len(rows)):
-                return ToolResult(False, error='statuses 需要与当前清单逐项对应。创建或更改清单请使用 items。')
-            # Seed sometimes echoes full rows under statuses. Accept them only
-            # when every title still identifies the current item in that slot.
-            if all(isinstance(value, dict) for value in statuses):
-                if any(set(value) != {'text', 'status'} or value['text'] != row['text']
-                       for value, row in zip(statuses, rows)):
-                    return ToolResult(False, error='清单标题已变化。请使用 items 提交新的清单。')
-                return update({'items': statuses}, ctx)
-            return update({'items': [{'text': row['text'], 'status': status}
-                for row, status in zip(rows, statuses)]}, ctx)
+            'final_answer': {'type': 'string'}}}
 
         def handler(args, ctx):
             args = dict(args)
             answer = args.pop('final_answer', None)
             rows = current_items(ctx.extras.get('run_id'))
-            result = update_progress(args, rows, ctx)
+            result = _coding_progress(args, rows)
             if not result.ok:
                 return result
             updated = result.meta['todos']
@@ -107,6 +153,5 @@ def install(agent, *, current_items=None):
     agent.registry.register(ToolSpec(NAME, guidance, handler, schema=schema, no_defer=True),
                             trusted=True, effect=ToolEffect.READ)
     if NAME in agent.registry.names():
-        note = ('The checklist persists across stops. Send only changes. Put the final reply in the last '
-                'update_todos call after verifying the work.') if current_items is not None else GUIDANCE
+        note = 'Reuse the saved checklist. Publish changes only.' if current_items is not None else GUIDANCE
         agent.extra_system = (agent.extra_system or '') + '\n' + note

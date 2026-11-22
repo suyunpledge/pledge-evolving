@@ -25,6 +25,40 @@ def items(first, second):
 
 
 class CodingStatusTests(unittest.TestCase):
+    def test_seed_title_echoes_and_redundant_forms_update_only_the_original_slots(self):
+        from types import SimpleNamespace
+        from keystone.todos import install
+        from keystone.tools import ToolRegistry
+        titles = ['读取 numbers.txt，计算三数之和后写入 sum.txt，并读回核实',
+                  '从 sum.txt 读取和值，将两倍写入 double.txt，读回核实']
+        saved = [{'text': title, 'status': 'pending'} for title in titles]
+        agent = SimpleNamespace(registry=ToolRegistry(), extra_system='')
+        install(agent, current_items=lambda _: saved)
+        update = agent.registry.visible()[0].handler
+        ctx = SimpleNamespace(extras={'run_id': 'active'})
+        echoed = [{'text': 'numbers.txt 求和写入 `sum.txt`', 'status': 'completed'},
+                  {'text': '读取 sum.txt 写入 double.txt', 'status': 'in_progress'}]
+        vector = ['completed', 'in_progress']
+        expected = [dict(row, status=s) for row, s in zip(saved, vector)]
+        for args in [{'statuses': echoed}, {'statuses': vector, 'items': expected},
+                     {'statuses': echoed, 'items': expected}]:
+            with self.subTest(args=args):
+                self.assertEqual(update(args, ctx).meta['todos'], expected)
+        for args in [{'statuses': vector[::-1], 'items': expected}, {'statuses': echoed[::-1]},
+                     {'statuses': vector, 'items': expected[:1]}, {'statuses': [echoed[0], 'pending']},
+                     {'statuses': [dict(echoed[0], text='some_other.py'), echoed[1]]}]:
+            with self.subTest(args=args):
+                self.assertFalse(update(args, ctx).ok)
+        self.assertEqual([r['status'] for r in saved], ['pending', 'pending'])
+        saved[1]['text'] = '复核三个文件内容并汇报 sum 与 double 两个数'
+        abbreviated = dict(echoed[1], text='复核三个文件并汇报 sum 与 double')
+        result = update({'statuses': vector, 'items': [echoed[0], abbreviated]}, ctx)
+        self.assertEqual(result.meta['todos'][1]['text'], saved[1]['text'])
+        changed = dict(abbreviated, text='复核三个文件并汇报不存在的值')
+        self.assertFalse(update({'statuses': vector, 'items': [echoed[0], changed]}, ctx).ok)
+        saved[:] = [dict(row, text=f'{i}: 处理 sum.txt') for i, row in enumerate(saved)]
+        self.assertFalse(update({'statuses': [dict(row, text='核对 sum.txt') for row in echoed]}, ctx).ok)
+
     def test_final_reply_completes_only_an_accepted_standalone_checklist(self):
         from keystone.context_transaction import valid_tool_pairs
         from keystone.loop import Agent

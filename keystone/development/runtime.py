@@ -14,17 +14,11 @@ from .state import WorkMode
 from ..compat import default_home
 
 DEVELOPMENT_GUIDANCE = (
-    'Development Mode: answer questions and ordinary conversation directly. '
-    'Use project tools only when needed for the user request. '
-    'Structured pre-planning is selected by the user; do not require a plan before answering. '
-    'Read named inputs directly. Use a write-followed-by-read to verify a requested output once; '
-    'reuse that observation for dependent steps and reporting unless it changed or a fresh check is requested. '
-    'List directories for discovery when paths are unknown. For code changes inspect relevant code, '
-    'make scoped edits, run relevant authorized tests and inspect the diff. Report observed results and limitations. '
-    'Before editing an existing file, read it through a file tool in this Agent run; '
-    'read it again after a revision conflict. '
-    'Never claim tests ran when Policy denied execution. Do not overwrite unsaved editor buffers. '
-    'Mode selection grants no permissions.'
+    'Development Mode: answer directly; use tools as needed and honor the selected planning mode. '
+    'Read named paths directly; list unknown paths. Verify requested outputs once by reading after writing. '
+    'Reuse observations unless changed or a fresh check is requested. Inspect code, scope edits, run authorized '
+    'tests and review the diff. Report observed results and limits. Before editing existing files, read them '
+    'with a file tool this run; reread after conflicts. Preserve unsaved buffers. Mode grants no permissions.'
 )
 
 

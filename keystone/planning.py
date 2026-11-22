@@ -99,8 +99,9 @@ def planning_prompt(level, *, coding=False):
         task_guidance = ('Use one short title per requested deliverable (aim for 24 Chinese characters or 12 words). '
                          'Group reading, verification and reporting with that deliverable. ')
         if coding:
-            task_guidance = ('Keep exactly the user-defined stages when supplied. Each title names the deliverable briefly. '
-                             'Include its verification in that stage; report from those observations. Use supplied file paths directly. ')
+            task_guidance = ('One short title per requested deliverable. If the user numbers stages, use exactly those '
+                             'stages in order. Fold reading, checking and reporting into the relevant stage. '
+                             'Use named paths directly. Aim for 24 Chinese characters or 12 words per title. ')
             acceptance_guidance = 'Acceptance criteria must be observable. '
     return (
         'Produce a concise actionable pre-execution task plan, not private reasoning. '
