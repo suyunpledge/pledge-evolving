@@ -507,7 +507,7 @@ ApplicationWindow {
                 width: parent.width
                 height: Math.min(Math.max(60, editor.contentHeight + 10), Math.max(60, window.height * 0.19))
                 editorName: "messageEditor"
-                placeholder: "向 Keystone 描述你的想法…"
+                placeholder: "向 Keystone 描述你的想法…   输入 / 使用命令，Ctrl+K 打开命令面板"
                 text: controller.draft
                 onTextChanged: if (controller.draft !== text) controller.draft = text
                 onSubmit: controller.send()
@@ -1108,11 +1108,82 @@ ApplicationWindow {
         }
     }
     Shortcut { sequence: "Ctrl+N"; enabled: window.chatVisible && !reviseMessage.opened && !onboarding.opened; onActivated: controller.newSession() }
-    Shortcut { sequence: "Ctrl+K"; enabled: window.chatVisible && !reviseMessage.opened && !onboarding.opened; onActivated: {search.forceActiveFocus(); search.selectAll()} }
+    Shortcut { sequence: "Ctrl+K"; enabled: !reviseMessage.opened && !onboarding.opened && !commandPalette.opened; onActivated: window.openPalette("") }
+    Shortcut { sequence: "Ctrl+L"; enabled: !reviseMessage.opened && !onboarding.opened; onActivated: { if (!window.chatVisible) workbench.navigate("chat"); Qt.callLater(window.focusWorkComposer) } }
+    Shortcut { sequence: "Alt+Left"; enabled: !window.chatVisible && !onboarding.opened; onActivated: workbench.navigate("chat") }
+    CommandPalette {
+        id: commandPalette
+        parent: Overlay.overlay
+        x: Math.round((parent.width - width) / 2); y: Math.max(40, Math.round(parent.height * 0.14))
+        width: Math.min(620, window.width - 48); height: Math.min(460, window.height - 80)
+        material: window.material
+        onClosed: if (window.chatVisible && !modelEditor.opened && !rolePicker.opened) window.focusWorkComposer()
+    }
+    function openPalette(query) {
+        commandPalette.items = window.paletteItems()
+        commandPalette.open()
+        if (query) commandPalette.query = query
+    }
+    function go(page) {
+        if (page === "files") workbench.toggleFiles()
+        else workbench.navigate(page)
+    }
+    // 命令面板条目：每次打开现取（命令 / 页面 / 模型 / 思考强度 / 角色 / 最近对话）。
+    function paletteItems() {
+        const out = []
+        const add = (label, group, icon, run, keywords, hint) => out.push({label: label, group: group, icon: icon, run: run, keywords: keywords || "", hint: hint || ""})
+        add("新建对话", "命令", "square-pen", () => { workbench.navigate("chat"); controller.newSession() }, "new chat /new", "Ctrl N")
+        add("聚焦输入框", "命令", "message-square", () => { workbench.navigate("chat"); Qt.callLater(window.focusWorkComposer) }, "input", "Ctrl L")
+        add("筛选对话", "命令", "search", () => { search.forceActiveFocus(); search.selectAll() }, "history session filter")
+        add("联网搜索", "命令", "globe", () => searchPanel.open(), "search web /search")
+        add("思考强度…", "命令", "gauge", () => effortPicker.open(), "effort reasoning /effort")
+        add("切换角色…", "命令", "bot", () => rolePicker.open(), "role template /role")
+        add("管理模型", "命令", "settings-2", () => window.openModelEditor(""), "model edit key /models")
+        add("添加模型", "命令", "plus", () => onboarding.showSetup(), "model add setup")
+        add("切换到 Chat", "命令", "message-square", () => { controller.setConversationMode("chat"); workbench.navigate("chat") }, "mode chat")
+        add("切换到 Work", "命令", "wrench", () => { controller.setConversationMode("work"); workbench.navigate("chat") }, "mode work")
+        add("壁纸", "命令", "image", () => wallpaperSettings.open(), "wallpaper background")
+        add("玻璃外观", "命令", "sliders-horizontal", () => options.open(), "glass appearance")
+        add("连接与外观", "命令", "settings-2", () => settings.open(), "gateway connection settings")
+        add("重新运行首次引导", "命令", "sparkles", () => onboarding.showGuide(), "welcome guide onboarding language")
+        const pages = [["task", "任务", "list-checks"], ["files", "文件与项目", "folder"], ["tools", "工具与插件", "blocks"],
+                       ["config", "模型与配置", "settings-2"], ["agents", "Agents", "users"], ["knowledge", "知识库", "book-open"],
+                       ["schedules", "定时任务", "calendar-clock"], ["connectors", "连接器", "plug"], ["preview", "代码预览", "file-code"],
+                       ["computer", "电脑操作", "monitor"], ["development", "Coding", "code"], ["evolution", "演化", "sparkles"]]
+        for (const page of pages)
+            if (setup.developer || (page[0] !== "development" && page[0] !== "evolution"))
+                add("打开 " + page[1], "页面", page[2], () => window.go(page[0]), page[0])
+        for (const model of controller.models)
+            add(model, "模型", "box", () => controller.setModel(model), "model 模型", controller.model === model ? "当前模型" : "模型")
+        const efforts = [["off", "默认"], ["low", "轻量"], ["medium", "标准"], ["high", "深入"], ["contemplate", "沉思"]]
+        for (const level of efforts)
+            if (controller.reasoningLevels.indexOf(level[0]) >= 0)
+                add("思考强度：" + level[1], "思考", "gauge", () => controller.setReasoning(level[0]), "effort " + level[0], controller.reasoning === level[0] ? "当前" : "思考")
+        add("角色：通用", "角色", "bot", () => controller.templates.select(""), "role general")
+        for (const role of controller.templates.rows)
+            add("角色：" + role.name, "角色", role.icon, () => controller.templates.select(role.id), "role " + role.id, role.active ? "当前" : "角色")
+        for (let i = 0; i < Math.min(40, controller.sessions.rowCount()); ++i) {
+            const index = controller.sessions.index(i, 0)
+            const sid = controller.sessions.data(index, 256), title = controller.sessions.data(index, 257), when = controller.sessions.data(index, 258)
+            add(title || "未命名对话", "对话", "message-square", () => { workbench.navigate("chat"); controller.selectSession(sid) }, "session", when)
+        }
+        return out
+    }
     Shortcut { sequence: "Escape"; enabled: controller.busy && !options.opened && !settings.opened && !wallpaperSettings.opened && !searchPanel.opened && !modelMenu.opened && !effortPicker.opened && !modelEditor.opened && !onboarding.opened && !localToolSetup.opened && !mediaModels.opened && !toolCatalog.opened; onActivated: controller.stop() }
     Connections {
         target: controller
         function onDraftChanged() { if (editor.text !== controller.draft) editor.text = controller.draft }
+        function onCommandRequested(action, argument) {
+            if (action === "palette") window.openPalette("")
+            else if (action === "models") modelMenu.open()
+            else if (action === "roles") rolePicker.open()
+            else if (action === "search") searchPanel.open()
+            else if (action === "navigate") window.go(argument)
+            else if (action === "task") {
+                workbench.navigate("task")
+                if (argument) Qt.callLater(() => workbench.formValues("task", {prompt: argument}))
+            }
+        }
         function onFocusComposer() { window.focusWorkComposer(); window.followTail = true; messages.positionViewAtEnd() }
         function onStreamAdvanced() { if (window.followTail) Qt.callLater(messages.positionViewAtEnd) }
     }

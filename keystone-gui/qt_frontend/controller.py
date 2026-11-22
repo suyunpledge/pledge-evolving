@@ -75,6 +75,7 @@ class ChatController(QObject):
     navigateRequested = Signal(str)
     browseRequested = Signal(str)
     modelRequested = Signal(str)
+    commandRequested = Signal(str, str)
     _workerEvent = Signal(str, object)
 
     def __init__(self, home, *, demo=False, client_factory=KeystoneGatewayClient, parent=None):
@@ -303,9 +304,9 @@ class ChatController(QObject):
         if self._managed_models is None:
             return
         from config_model import load_user_layer
-        from .gateway_service import chat_model_routes
+        from .gateway_service import chat_model_routes, model_rows
         try:
-            models = list(chat_model_routes(load_user_layer(self.store.home)))
+            models = list(chat_model_routes(model_rows(self.store.home)))
         except (OSError, ValueError):
             return
         if models != self._managed_models:
@@ -317,9 +318,9 @@ class ChatController(QObject):
             from . import effort
             info = effort.support(None)
             if self._managed_models is not None and not self.demo:
-                from config_model import load_user_layer
+                from .gateway_service import model_rows
                 try:
-                    info = effort.for_label(load_user_layer(self.store.home), model)
+                    info = effort.for_label(model_rows(self.store.home), model)
                 except (OSError, ValueError):
                     pass
             self._effort_cache[model] = info
@@ -328,6 +329,34 @@ class ChatController(QObject):
     def _effective_reasoning(self):
         from . import effort
         return effort.effective(self._reasoning, self._effort_info()['levels'])
+
+    def _run_command(self, text):
+        """斜杠命令：本地处理并清空输入框；识别不了的按普通消息发送。"""
+        from . import slash
+        roles = [(t.id, t.name) for t in getattr(self._templates, '_templates', [])]
+        command = slash.parse(text, models=self._models, roles=roles)
+        if command is None:
+            return False
+        action, argument = command
+        if action == 'error':
+            self._error = argument
+            self.changed.emit()
+            return True
+        self._draft = ''
+        self._error = ''
+        self.draftChanged.emit()
+        if action == 'new':
+            self.newSession()
+        elif action == 'model':
+            self.setModel(argument)
+        elif action == 'effort':
+            self.setReasoning(argument)
+        elif action == 'role':
+            self._templates.select(argument)
+        else:
+            self.commandRequested.emit(action, argument)
+        self.changed.emit()
+        return True
 
     @Slot(str)
     def setReasoning(self, value):
@@ -477,6 +506,8 @@ class ChatController(QObject):
     def send(self):
         text = self._draft.strip()
         if self.busy or not text:
+            return
+        if self._run_command(text):
             return
         if self.demo:
             self._error = "当前是材质预览。请用不带 --demo 的启动入口连接真实网关。"
@@ -675,6 +706,7 @@ class ChatController(QObject):
                      if m.role == 'user' and isinstance(m.content, str)), '')
         home = self.store.home
         thought = ['']
+        session_id = self._sid
         # 角色模板：角色指引随每轮系统上下文走（切换到 Work 后也保留）；工具与权限
         # 的收窄在 tool_settings.snapshot / permissions.authorize 里，回合上限在 turn_limit。
         role = self._templates.active()
@@ -702,11 +734,22 @@ class ChatController(QObject):
         def worker():
             try:
                 from .conversation import run
+                # 长期记忆（分级检索插件，与 Tk 版同一桥）：未启用零网络调用；服务挂了对话照常。
+                from .memory import bridge_for
+                memory = bridge_for(home)
+                if memory is not None:
+                    update_status('检索长期记忆…')
+                    block = memory.context_for(task, model=model)
+                    notice = memory.consume_notice()
+                    if notice:
+                        update_status(notice)
+                    if block:
+                        thought[0] = block
                 if contemplating:
                     from .contemplation import contemplate, thinking_suite
                     notes = contemplate(client, thinking_suite(home), task, model=model, effort=effort,
                                         temperature=temperature, cancel=cancel, status=update_status)
-                    thought[0] = notes.context()
+                    thought[0] = '\n'.join(part for part in (thought[0], notes.context()) if part)
                     if notes.rounds:
                         self._workerEvent.emit('contemplation', (generation, notes.summary()))
                     update_status('正在生成…')
@@ -726,6 +769,8 @@ class ChatController(QObject):
                     next_round=lambda: self._workerEvent.emit('next_round', (generation, '')))
                 if getattr(result, 'budget_exhausted', False):
                     self._workerEvent.emit('budget_exhausted', (generation, ''))
+                if memory is not None:
+                    memory.ingest_turn_async(task, result.text, session=session_id)
                 self._workerEvent.emit("done", (generation, (result.text, getattr(result, 'responses_replay', None))))
             except GenerationCancelled:
                 self._workerEvent.emit("cancelled", (generation, ""))
