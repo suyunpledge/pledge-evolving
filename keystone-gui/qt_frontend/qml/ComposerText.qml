@@ -9,6 +9,7 @@ Flickable {
     property string editorName: ""
     property bool submitOnEnter: true
     property bool horizontalScroll: false
+    property bool tabNavigates: submitOnEnter
     signal submit()
     clip: true
     boundsBehavior: Flickable.StopAtBounds
@@ -75,5 +76,19 @@ Flickable {
         }
         Keys.onReturnPressed: event => enter(event)
         Keys.onEnterPressed: event => enter(event)
+        // Chat composers are single-purpose prompts: Tab must leave the field so
+        // keyboard users can reach the model/effort/send controls (no focus trap).
+        // Code/document editors (submitOnEnter: false) keep literal tabs.
+        function moveFocus(event, forward) {
+            if (!field.tabNavigates || inputMethodComposing) {
+                event.accepted = false
+                return
+            }
+            const next = input.nextItemInFocusChain(forward)
+            if (next && next !== input) next.forceActiveFocus(forward ? Qt.TabFocusReason : Qt.BacktabFocusReason)
+            event.accepted = true
+        }
+        Keys.onTabPressed: event => moveFocus(event, true)
+        Keys.onBacktabPressed: event => moveFocus(event, false)
     }
 }

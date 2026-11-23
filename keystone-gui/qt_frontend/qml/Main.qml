@@ -272,31 +272,38 @@ ApplicationWindow {
                         onReviewRequested: controller.changeReview.open(message.changeKey)
                         onRevertRequested: { controller.changeReview.open(message.changeKey); changeReview.confirmUndo = true }
                     }
+                    // Reply actions are real buttons: keyboard-reachable, 30px targets,
+                    // the same quiet style as edit/withdraw on the user's own messages.
                     Row {
                         visible: message.roleName !== "user" && message.state !== "streaming"
-                        spacing: 14
-                        Row {
-                            spacing: 5
-                            Glyph { name: "copy"; ink: copyHover.hovered ? Theme.textPrimary : Theme.textMuted; width: 13; height: 13; anchors.verticalCenter: parent.verticalCenter }
-                            Text { text: "复制"; color: copyHover.hovered ? Theme.textPrimary : Theme.textMuted; font.pixelSize: 12; anchors.verticalCenter: parent.verticalCenter }
-                            HoverHandler { id: copyHover; cursorShape: Qt.PointingHandCursor }
-                            TapHandler { onTapped: controller.copyText(message.textContent) }
+                        spacing: 4
+                        x: -10  // align button labels with the reply text edge
+                        GlassButton {
+                            objectName: "copyReply"
+                            material: window.material; quiet: true; implicitHeight: 30
+                            glyph: "copy"; text: "复制"
+                            onClicked: controller.copyText(message.textContent)
                         }
-                        Text { visible: message.state === "stopped" || message.state === "error"; text: message.state === "stopped" ? "已停止" : "回复未完成"; color: Theme.warning; font.pixelSize: 12; anchors.verticalCenter: parent.verticalCenter }
                         Row {
+                            visible: message.state === "stopped" || message.state === "error"
+                            spacing: 5; leftPadding: 6; rightPadding: 6
+                            anchors.verticalCenter: parent.verticalCenter
+                            Glyph { name: "triangle-alert"; ink: Theme.warning; width: 13; height: 13; anchors.verticalCenter: parent.verticalCenter }
+                            Text { text: message.state === "stopped" ? "已停止" : "回复未完成"; color: Theme.warningText; font.pixelSize: Theme.captionSize; anchors.verticalCenter: parent.verticalCenter }
+                        }
+                        GlassButton {
+                            objectName: "retryReply"
                             visible: message.state === "error" && controller.canRetry
-                            spacing: 5
-                            Glyph { name: "refresh-cw"; ink: retryHover.hovered ? Theme.accentInk : Theme.accent; width: 13; height: 13; anchors.verticalCenter: parent.verticalCenter }
-                            Text { text: "重试"; color: retryHover.hovered ? Theme.accentInk : Theme.accent; font.pixelSize: 12; anchors.verticalCenter: parent.verticalCenter }
-                            HoverHandler { id: retryHover; cursorShape: Qt.PointingHandCursor }
-                            TapHandler { onTapped: controller.retry() }
+                            material: window.material; implicitHeight: 30
+                            glyph: "refresh-cw"; text: "重试"; selected: true
+                            onClicked: controller.retry()
                         }
-                        Text {
+                        GlassButton {
                             objectName: "continueWork"
                             visible: message.continuable && !controller.busy
-                            text: "继续"; color: continueHover.hovered ? "#e3e7eb" : "#c8d7e5"; font.pixelSize: 12
-                            HoverHandler { id: continueHover; cursorShape: Qt.PointingHandCursor }
-                            TapHandler { onTapped: controller.continueWork() }
+                            material: window.material; quiet: true; implicitHeight: 30
+                            glyph: "play"; text: "继续"
+                            onClicked: controller.continueWork()
                         }
                     }
                 }
@@ -364,7 +371,7 @@ ApplicationWindow {
             Text { text: window.conversationOnly ? "今天想聊些什么？" : "今天想完成什么？"; color: "#f0f1f3"; font.pixelSize: 30; font.weight: Font.DemiBold }
             Text { text: window.conversationOnly ? "可以使用已连接且获准的 MCP。需要实际操作时，AI 可切换到 Work。" : "描述目标，带上上下文，让想法成为下一步。"; color: "#9fa8b4"; font.pixelSize: 15; wrapMode: Text.Wrap; width: parent.width }
             Item { width: 1; height: 4 }
-            Text { text: "选择角色"; color: "#7f8998"; font.pixelSize: 12 }
+            Text { text: "选择角色"; color: Theme.textMuted; font.pixelSize: 12 }
             // 角色模板：一键换成预设角色（指引、工具、权限上限、步数预算都随之切换）。
             Flow {
                 objectName: "templatePicker"
@@ -470,7 +477,7 @@ ApplicationWindow {
         background: GlassSurface { material: window.material; radius: 11; emphasis: search.activeFocus ? 0.6 : 0; tint: "#18263140" }
         Glyph { x: 11; anchors.verticalCenter: parent.verticalCenter; name: "search"; ink: search.activeFocus ? Theme.accent : Theme.textMuted; width: 15; height: 15 }
     }
-    Text { visible: !window.codingVisible && !workbench.navigationOpen; x: 24; y: 298; text: window.label("最近对话", "Recent chats"); color: "#7f8998"; font.pixelSize: 11 }
+    Text { visible: !window.codingVisible && !workbench.navigationOpen; x: 24; y: 298; text: window.label("最近对话", "Recent chats"); color: Theme.textMuted; font.pixelSize: Theme.captionSize }
     ListView {
         id: history
         visible: !window.codingVisible && !workbench.navigationOpen
@@ -498,12 +505,17 @@ ApplicationWindow {
                 emphasis: session.current ? 1 : 0.2
                 hoverAmount: session.hovered ? 1 : 0
                 pointer: sessionHover.point.position
+                Rectangle {
+                    visible: session.visualFocus
+                    anchors.fill: parent; anchors.margins: -2; radius: 17
+                    color: "transparent"; border.color: Theme.focusRing; border.width: Theme.focusRingWidth
+                }
             }
             HoverHandler { id: sessionHover; cursorShape: Qt.PointingHandCursor }
             contentItem: Column {
                 spacing: 7
                 Text { text: session.title; width: parent.width; elide: Text.ElideRight; color: session.current ? "#f4f5f6" : "#b2bbc6"; font.pixelSize: 13; font.weight: session.current ? Font.Medium : Font.Normal }
-                Text { text: session.subtitle; color: "#7f8b99"; font.pixelSize: 11 }
+                Text { text: session.subtitle; color: Theme.textMuted; font.pixelSize: Theme.captionSize }
             }
             onClicked: { workbench.navigate("chat"); controller.selectSession(sessionId) }
             Keys.onReturnPressed: clicked()
@@ -648,19 +660,65 @@ ApplicationWindow {
                     tip: "管理 Chat 可用的远程 MCP"; onClicked: workbench.navigate("connectors")
                 }
                 Item { width: 2 }
+                // Send and stop share one 40px target in the same place (Fitts); both are
+                // solid primary so "stop" is as easy to find mid-turn as "send" was.
                 GlassButton {
+                    id: sendButton
                     objectName: "sendButton"
                     material: window.material; glyph: controller.busy ? "square" : "arrow-up"
-                    width: 38; height: 38; cornerRadius: 19; primary: !controller.busy; selected: controller.busy
+                    width: 40; height: 40; cornerRadius: 20; primary: true
                     enabled: controller.busy || (!controller.modelSwitching && editor.text.trim().length > 0)
-                    tip: controller.busy ? "停止生成" : "发送消息"
+                    tip: controller.busy ? "停止生成（Esc）" : "发送消息（Enter）"
+                    Accessible.name: controller.busy ? "停止生成" : "发送消息"
                     onClicked: controller.busy ? controller.stop() : controller.send()
+                    Rectangle {
+                        objectName: "busyRing"
+                        anchors.fill: parent; anchors.margins: -5
+                        radius: width / 2; color: "transparent"
+                        border.color: Theme.accent; border.width: 2
+                        visible: controller.busy
+                        opacity: 0.85
+                        SequentialAnimation on opacity {
+                            running: controller.busy && !controller.reduceMotion
+                            loops: Animation.Infinite
+                            NumberAnimation { from: 0.85; to: 0.25; duration: 900; easing.type: Easing.InOutSine }
+                            NumberAnimation { from: 0.25; to: 0.85; duration: 900; easing.type: Easing.InOutSine }
+                        }
+                    }
                 }
             }
         }
     }
-    Text { visible: window.chatVisible; x: composer.x + 4; y: window.height - 27; text: controller.status; color: "#7e8998"; font.pixelSize: 11 }
-    Text { visible: window.chatVisible && window.columnWidth > 520; anchors.right: composer.right; y: window.height - 27; text: "Enter 发送  ·  Shift + Enter 换行"; color: "#7e8998"; font.pixelSize: 11 }
+    // System status for long agent turns: what is happening and for how long.
+    property bool turnBusy: controller.busy
+    property real turnStartedAt: 0
+    property int turnSeconds: 0
+    onTurnBusyChanged: { turnStartedAt = turnBusy ? Date.now() : 0; turnSeconds = 0 }
+    Timer {
+        interval: 1000; repeat: true; running: window.turnBusy
+        onTriggered: window.turnSeconds = Math.floor((Date.now() - window.turnStartedAt) / 1000)
+    }
+    function elapsedLabel(seconds) {
+        return seconds < 60 ? seconds + " 秒" : Math.floor(seconds / 60) + " 分 " + (seconds % 60) + " 秒"
+    }
+    Row {
+        objectName: "turnStatus"
+        visible: window.chatVisible
+        x: composer.x + 4; y: window.height - 30; spacing: 7
+        Rectangle {
+            visible: controller.busy
+            width: 7; height: 7; radius: 4; color: Theme.accent
+            anchors.verticalCenter: parent.verticalCenter
+        }
+        Text {
+            objectName: "turnStatusText"
+            text: controller.busy ? (controller.status || "正在处理") + "  ·  已用 " + window.elapsedLabel(window.turnSeconds) + "  ·  Esc 停止" : controller.status
+            color: controller.busy ? Theme.textSecondary : Theme.textMuted; font.pixelSize: Theme.captionSize
+            elide: Text.ElideRight; width: Math.min(implicitWidth, composer.width - (shortcutHint.visible ? shortcutHint.width + 24 : 0) - 20)
+        }
+    }
+    Text { id: shortcutHint; visible: window.chatVisible && window.columnWidth > 520 && !controller.busy; anchors.right: composer.right; y: window.height - 30; text: "Enter 发送  ·  Shift + Enter 换行  ·  Tab 移到按钮"; color: Theme.textMuted; font.pixelSize: Theme.captionSize }
+
     Rectangle {
         id: errorBanner
         visible: window.chatVisible && controller.error.length > 0
@@ -902,29 +960,51 @@ ApplicationWindow {
         id: settings
         objectName: "connectionSettings"
         parent: Overlay.overlay
-        anchors.centerIn: parent
-        width: Math.min(440, window.width - 48); padding: 24
+        width: Math.min(480, window.width - 48); padding: 24
+        height: Math.min(implicitHeight, window.height - 48)
+        x: Math.round((parent.width - width) / 2); y: Math.round((parent.height - height) / 2)
         modal: true; focus: true
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         Overlay.modal: Rectangle { color: "#6605080d" }
         background: GlassSurface { material: window.material; radius: 24; emphasis: 0.6 }
         onOpened: endpoint.text = controller.gateway
         onClosed: if (window.chatVisible) window.focusWorkComposer()
+        // Three labelled groups (connection / models / appearance) instead of eight
+        // equal-weight rows: grouping cuts scan time (Hick) and shows what belongs together.
         contentItem: Column {
-            spacing: 16
-            Text { text: "连接与外观"; color: "#f0f2f4"; font.pixelSize: 20; font.weight: Font.DemiBold }
-            Text { text: "Keystone 网关地址"; color: "#a7b3c0"; font.pixelSize: 13 }
-            TextField { id: endpoint; width: parent.width; height: 42; color: "#e2e7ec"; selectByMouse: true; leftPadding: 12; background: GlassSurface { material: window.material; radius: 12; emphasis: endpoint.activeFocus ? 0.8 : 0 } }
-            Text { width: parent.width; text: "沿用现有 Keystone 网关。Coding、工具和连接器均在当前工作台内打开。"; color: "#939eac"; wrapMode: Text.Wrap; font.pixelSize: 12 }
-            GlassButton { material: window.material; width: parent.width; text: "应用并连接"; glyph: "plug"; enabled: !controller.busy; onClicked: {controller.setGateway(endpoint.text); settings.close()} }
-            GlassButton { objectName: "manageModelsEntry"; material: window.material; width: parent.width; text: "管理已添加的模型"; glyph: "settings-2"; enabled: !controller.isDemo; onClicked: { settings.close(); window.openModelEditor("") } }
-            GlassButton { objectName: "quickSetupEntry"; material: window.material; width: parent.width; text: window.label("一键配置模型", "Quick model setup"); glyph: "plug"; onClicked: { settings.close(); onboarding.showSetup() } }
-            GlassButton { objectName: "welcomeGuideEntry"; material: window.material; width: parent.width; text: window.label("重新运行首次引导", "Run setup guide"); glyph: "sparkles"; onClicked: { settings.close(); onboarding.showGuide() } }
-            GlassButton { material: window.material; width: parent.width; text: "壁纸"; glyph: "image"; onClicked: { settings.close(); wallpaperSettings.open() } }
-            GlassButton { objectName: "petSettingsEntry"; material: window.material; width: parent.width; text: "桌面宠物"; glyph: "sparkles"; onClicked: { settings.close(); petSettings.open() } }
-            GlassButton { material: window.material; width: parent.width; text: "调整玻璃外观"; glyph: "sliders-horizontal"; onClicked: {settings.close(); options.open()} }
-            GlassButton { material: window.material; width: parent.width; text: "打开完整工作台"; quiet: true; onClicked: controller.openWorkbench("config") }
-            Text { width: parent.width; text: gpuEnabled ? "GPU 渲染 · 原生文本输入" : "兼容渲染 · 玻璃光学效果不可用"; color: "#798797"; font.pixelSize: 11 }
+            spacing: 10
+            Text { text: "连接与外观"; color: Theme.textPrimary; font.pixelSize: 20; font.weight: Font.DemiBold; bottomPadding: 4 }
+            Text { objectName: "settingsGroupConnection"; text: "连接"; color: Theme.textMuted; font.pixelSize: Theme.captionSize; font.weight: Font.DemiBold }
+            Row {
+                width: parent.width; spacing: 8
+                TextField { id: endpoint; width: parent.width - applyGateway.width - 8; height: 40; color: "#e2e7ec"; selectByMouse: true; leftPadding: 12
+                    placeholderText: "Keystone 网关地址"; placeholderTextColor: Theme.textMuted
+                    Accessible.name: "Keystone 网关地址"
+                    background: GlassSurface { material: window.material; radius: 12; emphasis: endpoint.activeFocus ? 0.8 : 0 } }
+                GlassButton { id: applyGateway; material: window.material; height: 40; text: "应用并连接"; glyph: "plug"; enabled: !controller.busy; onClicked: {controller.setGateway(endpoint.text); settings.close()} }
+            }
+            Text { width: parent.width; text: "沿用现有 Keystone 网关。Coding、工具和连接器均在当前工作台内打开。"; color: Theme.textMuted; wrapMode: Text.Wrap; font.pixelSize: Theme.captionSize; bottomPadding: 8 }
+            Text { objectName: "settingsGroupModels"; text: "模型"; color: Theme.textMuted; font.pixelSize: Theme.captionSize; font.weight: Font.DemiBold }
+            Row {
+                width: parent.width; spacing: 8
+                GlassButton { objectName: "manageModelsEntry"; material: window.material; width: (parent.width - 8) / 2; text: "管理已添加的模型"; glyph: "settings-2"; enabled: !controller.isDemo; tip: controller.isDemo ? "预览模式下不可编辑模型" : ""; onClicked: { settings.close(); window.openModelEditor("") } }
+                GlassButton { objectName: "quickSetupEntry"; material: window.material; width: (parent.width - 8) / 2; text: window.label("一键配置模型", "Quick model setup"); glyph: "plug"; onClicked: { settings.close(); onboarding.showSetup() } }
+            }
+            GlassButton { objectName: "welcomeGuideEntry"; material: window.material; width: parent.width; quiet: true; text: window.label("重新运行首次引导", "Run setup guide"); glyph: "sparkles"; onClicked: { settings.close(); onboarding.showGuide() } }
+            Item { width: 1; height: 4 }
+            Text { objectName: "settingsGroupAppearance"; text: "外观"; color: Theme.textMuted; font.pixelSize: Theme.captionSize; font.weight: Font.DemiBold }
+            Row {
+                width: parent.width; spacing: 8
+                GlassButton { material: window.material; width: (parent.width - 16) / 3; text: "壁纸"; glyph: "image"; onClicked: { settings.close(); wallpaperSettings.open() } }
+                GlassButton { objectName: "petSettingsEntry"; material: window.material; width: (parent.width - 16) / 3; text: "桌面宠物"; glyph: "sparkles"; onClicked: { settings.close(); petSettings.open() } }
+                GlassButton { material: window.material; width: (parent.width - 16) / 3; text: "玻璃外观"; glyph: "sliders-horizontal"; onClicked: {settings.close(); options.open()} }
+            }
+            Rectangle { width: parent.width; height: 1; color: Theme.divider }
+            Row {
+                width: parent.width
+                Text { width: parent.width - fullBench.width; anchors.verticalCenter: parent.verticalCenter; text: gpuEnabled ? "GPU 渲染 · 原生文本输入" : "兼容渲染 · 玻璃光学效果不可用"; color: Theme.textMuted; font.pixelSize: Theme.captionSize; elide: Text.ElideRight }
+                GlassButton { id: fullBench; material: window.material; text: "打开完整工作台"; glyph: "panels-top-left"; quiet: true; onClicked: controller.openWorkbench("config") }
+            }
         }
     }
     PublicSearch {
@@ -1282,30 +1362,65 @@ ApplicationWindow {
             Repeater { model: [{key:"sandbox",label:"沙箱运行",hint:"工作区内读写，系统命令关闭"}, {key:"manual",label:"手动批准",hint:"每次工具执行前由你确认"}, {key:"full",label:"完全访问",hint:"不限工作区，保留工具拒绝规则"}]
                 Column { required property var modelData; width: parent.width; spacing: 6
                     GlassButton { material: window.material; width: parent.width; text: modelData.label; selected: workbench.permission === modelData.key; enabled: !controller.busy && !workbench.busy && workbench.approvals.length === 0; onClicked: {workbench.setPermission(modelData.key); permissionPopup.close()} }
-                    Text { width: parent.width; text: modelData.hint; wrapMode: Text.Wrap; color: "#99a6b5"; font.pixelSize: 11 }
+                    Text { width: parent.width; text: modelData.hint; wrapMode: Text.Wrap; color: Theme.textMuted; font.pixelSize: Theme.captionSize }
                 }
             }
-            Text { width: parent.width; text: "沙箱采用 Keystone 工具与路径限制。权限不替代网站登录和连接器授权。"; wrapMode: Text.Wrap; color: "#7f8b9b"; font.pixelSize: 11 }
+            Text { width: parent.width; text: "沙箱采用 Keystone 工具与路径限制。权限不替代网站登录和连接器授权。"; wrapMode: Text.Wrap; color: Theme.textMuted; font.pixelSize: Theme.captionSize }
         }
     }
+    // Approval: an opaque card over a scrim (content must not bleed through the
+    // command being approved), the risky action as the solid primary, and keys that
+    // cannot fire by accident: plain Enter does nothing, Ctrl+Enter approves, Esc denies.
     Rectangle {
+        objectName: "approvalScrim"
         visible: workbench.approvals.length > 0
+        x: window.sideWidth; y: 0; width: window.mainRight - x; height: window.height
+        color: Theme.scrim
+        MouseArea { anchors.fill: parent; hoverEnabled: true; acceptedButtons: Qt.AllButtons; onWheel: wheel => wheel.accepted = true }
+    }
+    Rectangle {
+        id: approvalCard
+        objectName: "approvalCard"
+        readonly property var current: workbench.approvals.length ? workbench.approvals[0] : null
+        visible: current !== null
         x: window.sideWidth + 20; y: 82; width: window.mainRight - x - 20; height: window.height - y - 30
-        color: "#f019212b"; radius: 20
+        color: Theme.overlayCard; radius: 20
+        border.color: Theme.warningBorder; border.width: 1
+        focus: visible
+        onVisibleChanged: visible ? Qt.callLater(() => approvalCard.forceActiveFocus()) : Qt.callLater(window.focusWorkComposer)
+        function resolve(approved) {
+            if (current) workbench.resolveApproval(current.id, approved)
+        }
+        Keys.onEscapePressed: event => { resolve(false); event.accepted = true }
+        Keys.onPressed: event => {
+            if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter) && (event.modifiers & Qt.ControlModifier)) {
+                resolve(true); event.accepted = true
+            }
+        }
         ColumnLayout {
-            anchors.fill: parent; anchors.margins: 24; spacing: 16
-            Text { text: "等待你批准"; color: "#edf1f5"; font.pixelSize: 22; font.weight: Font.DemiBold }
-            Text { Layout.fillWidth: true; text: workbench.approvals.length ? workbench.approvals[0].title : ""; color: "#c4d2df"; font.pixelSize: 16; wrapMode: Text.Wrap }
+            anchors.fill: parent; anchors.margins: 24; spacing: 14
+            RowLayout {
+                spacing: 10
+                Glyph { name: "shield"; ink: Theme.warning; width: 22; height: 22 }
+                Text { text: "等待你批准"; color: Theme.textPrimary; font.pixelSize: 22; font.weight: Font.DemiBold }
+                Text {
+                    objectName: "approvalQueue"
+                    visible: workbench.approvals.length > 1
+                    text: "还有 " + (workbench.approvals.length - 1) + " 项"
+                    color: Theme.warningText; font.pixelSize: Theme.captionSize
+                }
+            }
+            Text { Layout.fillWidth: true; text: approvalCard.current ? approvalCard.current.title : ""; color: Theme.textPrimary; font.pixelSize: 16; wrapMode: Text.Wrap }
             ScrollView {
                 Layout.fillWidth: true; Layout.fillHeight: true; clip: true
-                TextArea { readOnly: true; selectByMouse: true; wrapMode: TextEdit.Wrap; color: "#b8c3cf"; font.pixelSize: 13; text: workbench.approvals.length ? workbench.approvals[0].detail : ""; background: null }
+                background: Rectangle { radius: 12; color: "#0b1017"; border.color: Theme.divider; border.width: 1 }
+                TextArea { readOnly: true; selectByMouse: true; wrapMode: TextEdit.Wrap; color: Theme.textSecondary; font.pixelSize: 13; font.family: "Cascadia Code"; padding: 14; text: approvalCard.current ? approvalCard.current.detail : ""; background: null }
             }
             RowLayout {
-                Layout.fillWidth: true
-                Text { text: "仅批准当前操作"; color: "#919faf"; font.pixelSize: 12 }
-                Item { Layout.fillWidth: true }
-                GlassButton { material: window.material; text: "拒绝"; onClicked: workbench.resolveApproval(workbench.approvals[0].id, false) }
-                GlassButton { material: window.material; text: "批准本次"; selected: true; onClicked: workbench.resolveApproval(workbench.approvals[0].id, true) }
+                Layout.fillWidth: true; spacing: 10
+                Text { Layout.fillWidth: true; text: "仅批准当前这一次操作  ·  Ctrl+Enter 批准  ·  Esc 拒绝"; color: Theme.textMuted; font.pixelSize: Theme.captionSize; elide: Text.ElideRight }
+                GlassButton { objectName: "denyApproval"; material: window.material; implicitHeight: 40; implicitWidth: 112; glyph: "x"; text: "拒绝"; onClicked: approvalCard.resolve(false) }
+                GlassButton { objectName: "approveApproval"; material: window.material; implicitHeight: 40; implicitWidth: 132; glyph: "check"; text: "批准本次"; primary: true; onClicked: approvalCard.resolve(true) }
             }
         }
     }
@@ -1331,16 +1446,20 @@ ApplicationWindow {
         }
     }
     Popup {
-        id: exitPopup; objectName: "exitPopup"; parent: Overlay.overlay; anchors.centerIn: parent
-        width: 420; padding: 24; modal: true; focus: true
+        id: exitPopup; objectName: "exitPopup"; parent: Overlay.overlay
+        // Explicit geometry: anchors.centerIn + implicit height left the glass shorter than its content.
+        width: 420; height: implicitHeight; padding: 24; modal: true; focus: true
+        x: Math.round((parent.width - width) / 2); y: Math.round((parent.height - height) / 2)
+        onOpened: keepWorking.forceActiveFocus(Qt.TabFocusReason)
         background: GlassSurface { material: window.material; radius: 20 }
         contentItem: Column {
             spacing: 18
             Text { text: "退出工作台？"; color: "#eef2f6"; font.pixelSize: 20 }
             Text { width: parent.width; text: workbench.hasUnsaved ? "仍有未保存的编辑或设置。退出会丢弃这些改动，并停止正在运行的任务。" : "仍有任务在运行。退出会请求停止当前任务。"; wrapMode: Text.Wrap; color: "#acb8c6"; font.pixelSize: 14 }
             Row { spacing: 10
-                GlassButton { material: window.material; text: "继续工作"; onClicked: exitPopup.close() }
-                GlassButton { material: window.material; text: "确认退出"; onClicked: {window.exitConfirmed = true; window.close()} }
+                // The safe choice holds focus; the irreversible one is marked as danger.
+                GlassButton { id: keepWorking; objectName: "keepWorking"; material: window.material; implicitHeight: 40; text: "继续工作"; selected: true; onClicked: exitPopup.close() }
+                GlassButton { objectName: "confirmExit"; material: window.material; implicitHeight: 40; text: "确认退出"; danger: true; onClicked: {window.exitConfirmed = true; window.close()} }
             }
         }
     }
@@ -1409,7 +1528,7 @@ ApplicationWindow {
         }
         return out
     }
-    Shortcut { sequence: "Escape"; enabled: controller.busy && !options.opened && !settings.opened && !wallpaperSettings.opened && !petSettings.opened && !searchPanel.opened && !modelMenu.opened && !effortPicker.opened && !modelEditor.opened && !onboarding.opened && !localToolSetup.opened && !mediaModels.opened && !toolCatalog.opened; onActivated: controller.stop() }
+    Shortcut { sequence: "Escape"; enabled: controller.busy && workbench.approvals.length === 0 && !options.opened && !settings.opened && !wallpaperSettings.opened && !petSettings.opened && !searchPanel.opened && !modelMenu.opened && !effortPicker.opened && !modelEditor.opened && !onboarding.opened && !localToolSetup.opened && !mediaModels.opened && !toolCatalog.opened; onActivated: controller.stop() }
     Connections {
         target: controller
         function onDraftChanged() { if (editor.text !== controller.draft) editor.text = controller.draft }

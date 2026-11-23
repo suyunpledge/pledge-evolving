@@ -9,10 +9,12 @@ AbstractButton {
     property bool primary: false
     property bool quiet: false
     property bool flat: false
+    // Destructive/irreversible choice: danger-coloured text so it never reads as the default.
+    property bool danger: false
     property string tip: ""
     property real cornerRadius: 12
-    property color ink: primary ? Theme.accentInk : selected ? Theme.textPrimary : "#dce3ec"
-    property color glyphInk: primary ? Theme.accentInk : selected ? Theme.accent : ink
+    property color ink: primary ? Theme.accentInk : danger ? Theme.dangerText : selected ? Theme.textPrimary : "#dce3ec"
+    property color glyphInk: primary ? Theme.accentInk : danger ? Theme.danger : selected ? Theme.accent : ink
     implicitHeight: 36
     implicitWidth: Math.max(36, content.implicitWidth + 24)
     hoverEnabled: true
@@ -23,7 +25,9 @@ AbstractButton {
     ToolTip.visible: hovered && tip.length > 0
     ToolTip.text: tip
     ToolTip.delay: 650
-    background: GlassSurface {
+    background: Item {
+    GlassSurface {
+        anchors.fill: parent
         material: control.material
         flat: control.flat
         radius: control.cornerRadius
@@ -32,6 +36,27 @@ AbstractButton {
         emphasis: control.primary ? 1.15 : control.selected ? 1 : control.visualFocus ? 0.65 : 0
         hoverAmount: control.hovered || control.down ? 1 : 0
         pointer: hover.point.position
+    }
+    // Primary actions get a solid fill on top of the glass so they win the
+    // preattentive contest against every tinted secondary control.
+    Rectangle {
+        objectName: "primaryFill"
+        anchors.fill: parent
+        visible: control.primary && !control.flat
+        radius: control.cornerRadius
+        color: control.hovered || control.down ? Theme.primaryFillHover : Theme.primaryFill
+        border.color: Theme.primaryBorder; border.width: 1
+        opacity: 0.92
+    }
+    // Keyboard focus ring (WCAG 2.4.7): drawn outside the control so it shows on any tint.
+    Rectangle {
+        objectName: "focusRing"
+        visible: control.visualFocus
+        anchors.fill: parent; anchors.margins: -3
+        radius: control.cornerRadius + 3
+        color: "transparent"
+        border.color: Theme.focusRing; border.width: Theme.focusRingWidth
+    }
     }
     HoverHandler { id: hover; cursorShape: Qt.PointingHandCursor }
     contentItem: Item {

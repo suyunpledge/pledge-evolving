@@ -4,7 +4,7 @@ import QtQuick.Controls
 // 命令面板（Ctrl+K，沿用 Tk 版）：命令、页面、模型、思考强度、角色与最近对话的统一入口。
 // items: [{label, group, hint, keywords, icon, run: function}]，打开时由 Main 现取。
 Popup {
-    id: palette
+    id: paletteRoot
     objectName: "commandPalette"
     required property var material
     property var items: []
@@ -21,7 +21,7 @@ Popup {
     modal: true; focus: true; padding: 12
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
     Overlay.modal: Rectangle { color: "#5505080d" }
-    background: GlassSurface { material: palette.material; radius: 20; emphasis: 0.6 }
+    background: GlassSurface { material: paletteRoot.material; radius: 20; emphasis: 0.6 }
     onOpened: { query = ""; field.text = ""; current = 0; field.forceActiveFocus() }
     onQueryChanged: current = 0
 
@@ -41,24 +41,24 @@ Popup {
             placeholderText: "搜索命令、页面、模型、角色或对话…"
             placeholderTextColor: Theme.textMuted; color: Theme.textPrimary
             leftPadding: 38; selectByMouse: true
-            background: GlassSurface { material: palette.material; radius: 12; tint: "#40212d38"; emphasis: 0.5 }
+            background: GlassSurface { material: paletteRoot.material; radius: 12; tint: "#40212d38"; emphasis: 0.5 }
             Glyph { x: 12; anchors.verticalCenter: parent.verticalCenter; name: "search"; ink: Theme.accent; width: 16; height: 16 }
-            onTextChanged: palette.query = text
-            Keys.onDownPressed: palette.current = Math.min(palette.matches.length - 1, palette.current + 1)
-            Keys.onUpPressed: palette.current = Math.max(0, palette.current - 1)
-            Keys.onReturnPressed: palette.runCurrent()
-            Keys.onEnterPressed: palette.runCurrent()
+            onTextChanged: paletteRoot.query = text
+            Keys.onDownPressed: paletteRoot.current = Math.min(paletteRoot.matches.length - 1, paletteRoot.current + 1)
+            Keys.onUpPressed: paletteRoot.current = Math.max(0, paletteRoot.current - 1)
+            Keys.onReturnPressed: paletteRoot.runCurrent()
+            Keys.onEnterPressed: paletteRoot.runCurrent()
         }
         Text {
-            visible: palette.matches.length === 0
+            visible: paletteRoot.matches.length === 0
             text: "没有匹配项"; color: Theme.textMuted; font.pixelSize: 12; leftPadding: 10
         }
         ListView {
             id: list
             objectName: "paletteList"
-            width: parent.width; height: palette.availableHeight - field.height - 8
-            model: palette.matches; clip: true; spacing: 2
-            currentIndex: palette.current
+            width: parent.width; height: paletteRoot.availableHeight - field.height - 8
+            model: paletteRoot.matches; clip: true; spacing: 2
+            currentIndex: paletteRoot.current
             onCurrentIndexChanged: positionViewAtIndex(currentIndex, ListView.Contain)
             ScrollBar.vertical: ScrollBar { width: 4 }
             delegate: AbstractButton {
@@ -66,9 +66,15 @@ Popup {
                 required property var modelData
                 required property int index
                 width: list.width; height: 40; hoverEnabled: true
+                // The Enter target must be obvious: selected tint plus an accent bar.
                 background: Rectangle {
                     radius: 10
-                    color: entry.index === palette.current ? "#2e5b9bf8" : entry.hovered ? "#14ffffff" : "transparent"
+                    color: entry.index === paletteRoot.current ? Theme.selectedTint : entry.hovered ? "#14ffffff" : "transparent"
+                    Rectangle {
+                        visible: entry.index === paletteRoot.current
+                        x: 0; y: 9; width: 3; height: parent.height - 18; radius: 2
+                        color: Theme.accent
+                    }
                 }
                 contentItem: Row {
                     spacing: 10; leftPadding: 10
@@ -84,8 +90,8 @@ Popup {
                         color: Theme.textMuted; font.pixelSize: 11; anchors.verticalCenter: parent.verticalCenter
                     }
                 }
-                onHoveredChanged: if (hovered) palette.current = index
-                onClicked: { palette.current = index; palette.runCurrent() }
+                onHoveredChanged: if (hovered) paletteRoot.current = index
+                onClicked: { paletteRoot.current = index; paletteRoot.runCurrent() }
             }
         }
     }
