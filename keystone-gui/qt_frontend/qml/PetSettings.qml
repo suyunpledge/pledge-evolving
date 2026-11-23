@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Dialogs
 
 // 桌面宠物设置：显示 / 隐藏、选择宠物、改名、打开自定义宠物包文件夹。
 Popup {
@@ -11,7 +12,20 @@ Popup {
     padding: 22; modal: true; focus: true
     Overlay.modal: Rectangle { color: "#6605080d" }
     background: GlassSurface { material: settings.material; radius: 22; tint: "#ef19232d" }
-    onAboutToShow: { pets.reload(); nameField.text = pets.current.name || "" }
+    onAboutToShow: { pets.reload(); nameField.text = pets.current.name || ""; feedback = "" }
+    property string feedback: ""
+
+    FolderDialog {
+        id: folderPicker
+        objectName: "petFolderPicker"
+        property bool replace: false
+        title: replace ? "选择图片文件夹，替换当前宠物的形象" : "选择图片文件夹，导入为新宠物"
+        onAccepted: {
+            const error = settings.pets.importFolder(selectedFolder, replace)
+            settings.feedback = error ? "" : "已导入：" + settings.pets.current.name
+            nameField.text = settings.pets.current.name
+        }
+    }
 
     contentItem: ColumnLayout {
         spacing: 14
@@ -92,7 +106,23 @@ Popup {
         }
         Text {
             Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.textMuted; font.pixelSize: 11
-            text: "自定义：在宠物包文件夹里新建子文件夹（如 my-cat），放入 pet.json 和图片；子文件夹与内置宠物同名（crab / robot / whale）即替换该宠物的形象。格式见 qt_frontend/pets/README.md。"
+            text: "导入：选一个放着表情图（default / happy / serious / confused …）的文件夹；或选一个含全身图（*sprite* / *body*）和 expressions 子文件夹的文件夹，全身图做宠物、表情在身旁弹出。图片会复制到宠物包文件夹。也可以手写 pet.json，格式见 qt_frontend/pets/README.md。"
+        }
+        RowLayout {
+            Layout.fillWidth: true; spacing: 8
+            GlassButton {
+                objectName: "petImportNew"; material: settings.material; text: "导入图片文件夹…"; glyph: "plus"
+                onClicked: { folderPicker.replace = false; folderPicker.open() }
+            }
+            GlassButton {
+                objectName: "petImportReplace"; material: settings.material; text: "用图片替换当前形象…"; glyph: "image"
+                onClicked: { folderPicker.replace = true; folderPicker.open() }
+            }
+        }
+        Text {
+            visible: !!settings.feedback
+            Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText
+            text: settings.feedback; color: Theme.textSecondary; font.pixelSize: 12
         }
         Text {
             objectName: "petError"

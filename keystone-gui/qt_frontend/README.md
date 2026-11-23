@@ -54,7 +54,7 @@ Coding 页的任务变更摘要也提供「回退本次修改」，复用相同�
 开启「减少动态效果」时不走动、不播放帧动画；隐藏时所有定时器暂停。主窗口关闭时宠物一并退出。
 
 内置三只原创占位宠物 `crab` / `robot` / `whale`（`pets/`）。自定义宠物包放在
-`<home>/gui/qt/pets/<id>/`，与内置同名即替换其形象，无效时退回内置；格式见 [pets/README.md](pets/README.md)。
+`<home>/gui/qt/pets/<id>/`，与内置同名即替换其形象，无效时退回内置；也可在设置里「导入图片文件夹」自动生成（一组表情图，或全身图 + expressions 子文件夹）。格式见 [pets/README.md](pets/README.md)。
 是否显示、当前宠物、自定义名字和位置保存在桌面设置文件（`keystone.compat.desktop_config`）的 `"pets"` 键。
 
 ## 启动动画

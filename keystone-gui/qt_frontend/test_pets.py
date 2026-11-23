@@ -16,7 +16,7 @@ from ._test_app import APP
 from . import pets as pets_module
 from .controller import ChatController
 from .pets import (BUILTIN_ROOT, HAPPY_MS, STATES, WORRIED_MS, MoodTracker, PackError, PetController,
-                   animation_state, art_for, load_pack, scan_packs)
+                   animation_state, art_for, import_folder, load_pack, plan_import, scan_packs)
 from .test_wallpaper import save_png
 from .test_workbench import until
 from .workbench import WorkbenchController
@@ -214,6 +214,86 @@ class MoodTests(unittest.TestCase):
         until(lambda: pets.mood == '', timeout=HAPPY_MS / 1000 + 3)
 
 
+class ImportTests(unittest.TestCase):
+    """Building a pack at runtime from a folder of the user's own images."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.home = Path(self.temp.name) / 'home'
+        self.src = Path(self.temp.name) / 'src'
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def images(self, folder, *names, size=(64, 64)):
+        folder.mkdir(parents=True, exist_ok=True)
+        for name in names:
+            save_png(folder / name, size=size)
+        return folder
+
+    def test_expression_folder_maps_filenames_to_states(self):
+        folder = self.images(self.src / 'expressions', 'default.png', 'happy.png', 'serious.png', 'think.png',
+                             'confused.png', 'puzzled.png', 'shy.png', 'surprised.png', 'notes.txt.png')
+        manifest, files = plan_import(folder)
+        self.assertEqual(manifest['states'], {'idle': 'default.png', 'think': 'serious.png', 'happy': 'happy.png',
+                                              'worried': 'confused.png'})
+        self.assertEqual(manifest['size'], [128, 128])
+        self.assertEqual(set(files), {'default.png', 'serious.png', 'happy.png', 'confused.png'})
+        # No keyword for idle: the first unmatched image stands in.
+        other = self.images(self.src / 'other', 'a.png', 'happy.png')
+        self.assertEqual(plan_import(other)[0]['states'], {'happy': 'happy.png', 'idle': 'a.png'})
+        with self.assertRaisesRegex(PackError, '没有可用的图片'):
+            plan_import(self.images(self.src / 'empty'))
+
+    def test_body_with_expressions_subfolder_becomes_body_plus_faces(self):
+        assets = self.images(self.src / 'assets', 'girl-sprite.png', size=(90, 220))
+        (assets / 'flow.svg').write_text('<svg xmlns="http://www.w3.org/2000/svg"/>', encoding='utf-8')
+        self.images(assets / 'expressions', 'default.png', 'happy.png', 'serious.png', 'confused.png')
+        manifest, files = plan_import(assets)
+        self.assertEqual(manifest['states'], {'idle': 'girl-sprite.png'})
+        self.assertEqual(manifest['faces'], {'idle': 'faces/default.png', 'think': 'faces/serious.png',
+                                             'happy': 'faces/happy.png', 'worried': 'faces/confused.png'})
+        self.assertEqual(manifest['size'], [90, 220])
+        pack = import_folder(self.home, assets, 'whale', '小鲸')
+        self.assertEqual((pack['name'], pack['width'], pack['height']), ('小鲸', 90, 220))
+        self.assertIn('/gui/qt/pets/whale/faces/happy.png', pack['faces']['happy'])
+        self.assertTrue((self.home / 'gui/qt/pets/whale/girl-sprite.png').is_file())
+        self.assertFalse((self.home / 'gui/qt/pets/whale/flow.svg').exists())
+        self.assertEqual([p.name for p in (self.home / 'gui/qt/pets').iterdir()], ['whale'])  # no staging left
+
+    def test_reimport_replaces_only_imported_packs(self):
+        folder = self.images(self.src / 'faces1', 'default.png', 'happy.png')
+        import_folder(self.home, folder, 'cat', '猫')
+        folder2 = self.images(self.src / 'faces2', 'idle.png')
+        pack = import_folder(self.home, folder2, 'cat', '猫')
+        self.assertEqual(set(pack['states']), {'idle'})
+        self.assertFalse((self.home / 'gui/qt/pets/cat/happy.png').exists())
+        handmade = write_pack(self.home / 'gui/qt/pets/dog', {'states': {'idle': 'idle.png'}})
+        with self.assertRaisesRegex(PackError, '手工制作'):
+            import_folder(self.home, folder2, 'dog', '狗')
+        self.assertTrue((handmade / 'pet.json').is_file())
+
+    def test_controller_import_replaces_current_or_adds_a_new_pet(self):
+        assets = self.images(self.src / 'desktop-pet' / 'assets', 'sprite.png', size=(90, 220))
+        self.images(assets / 'expressions', 'default.png', 'happy.png')
+        pets = PetController(self.home)
+        pets.select('whale')
+        pets.rename('whale', '小鲸')
+        self.assertEqual(pets.importFolder(QUrl.fromLocalFile(str(assets)), True), '')
+        self.assertEqual((pets.currentId, pets.current['name']), ('whale', '小鲸'))
+        self.assertTrue(next(r for r in pets.packs if r['id'] == 'whale')['custom'])
+        self.assertIn('happy', pets.current['faces'])
+        self.assertEqual(pets.importFolder(QUrl.fromLocalFile(str(assets)), False), '')
+        self.assertEqual(pets.currentId, 'desktop-pet')
+        self.assertEqual(pets.current['name'], 'desktop-pet')
+        self.assertEqual(pets.importFolder(QUrl.fromLocalFile(str(assets)), False), '')
+        self.assertEqual(pets.currentId, 'desktop-pet-2')
+        error = pets.importFolder(QUrl.fromLocalFile(str(self.images(self.src / 'nothing'))), False)
+        self.assertIn('导入失败', error)
+        self.assertEqual(pets.currentId, 'desktop-pet-2')
+        self.assertIn('请选择', pets.importFolder(QUrl('https://example.com/x'), False))
+
+
 class PersistenceTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
@@ -372,6 +452,25 @@ class PetWindowTests(unittest.TestCase):
         until(lambda: self.loader.property('item') is None)
         pet = self.show_pet()
         self.assertEqual((pet.x(), pet.y()), (start.x() + 40, start.y() + 20))
+
+    def test_face_badge_pops_up_for_moods_only(self):
+        src = Path(self.temp.name) / 'src'
+        save_png((src / 'a').mkdir(parents=True) or src / 'a' / 'sprite.png', size=(90, 220))
+        (src / 'a' / 'expressions').mkdir()
+        for name in ('default.png', 'serious.png'):
+            save_png(src / 'a' / 'expressions' / name)
+        self.assertEqual(self.pets.importFolder(QUrl.fromLocalFile(str(src / 'a')), False), '')
+        pet = self.show_pet()
+        face = pet.findChild(QObject, 'petFace')
+        self.assertEqual(pet.width(), 90 + 24 + 68)
+        self.assertFalse(face.property('visible'))
+        self.pets.observe(busy=True, error='', approvals=0)
+        self.assertTrue(face.property('visible'))
+        self.assertIn('/faces/serious.png', pet.property('face'))
+        self.assertFalse(pet.findChild(QObject, 'petBubble').property('visible'))
+        self.pets.observe(busy=False, error='', approvals=0)  # happy has no face: text bubble instead
+        self.assertFalse(face.property('visible'))
+        self.assertTrue(pet.findChild(QObject, 'petBubble').property('visible'))
 
     def test_reduced_motion_and_hidden_window_stop_all_timers(self):
         pet = self.show_pet()

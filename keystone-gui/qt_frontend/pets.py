@@ -23,9 +23,12 @@ the built-in art. The selection, user-chosen names and window position live unde
 the ``"pets"`` key of the desktop settings file (``keystone.compat.desktop_config``).
 """
 
+import json
 from pathlib import Path
 import re
+import shutil
 import time
+import uuid
 
 from PySide6.QtCore import QLockFile, QObject, Property, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QImageReader
@@ -144,14 +147,144 @@ def load_pack(folder, *, builtin=False):
     unknown = sorted(set(states) - set(STATES))
     if unknown:
         raise PackError('未知的状态：' + '、'.join(map(str, unknown)))
+    faces = data.get('faces', {})
+    if not isinstance(faces, dict):
+        raise PackError('faces 需为 {状态: 图片} 对象')
+    unknown = sorted(set(faces) - set(STATES))
+    if unknown:
+        raise PackError('faces 里有未知的状态：' + '、'.join(map(str, unknown)))
     return {'id': pack_id, 'name': name.strip()[:MAX_NAME], 'builtin': builtin,
             'folder': str(folder), 'width': width, 'height': height, 'smooth': smooth, 'facing': facing,
-            'states': {state: _state(folder, state, value) for state, value in states.items()}}
+            'states': {state: _state(folder, state, value) for state, value in states.items()},
+            'faces': {state: QUrl.fromLocalFile(str(_art(folder, value, state))).toString()
+                      for state, value in faces.items()}}
 
 
 def art_for(pack, state):
     """The art to show for an animation state; undeclared states use the idle art."""
     return pack['states'].get(state) or pack['states']['idle']
+
+
+# Filename keywords for importing a folder of images, best match first per state.
+IMPORT_KEYWORDS = {
+    'idle': ('default', 'idle', 'normal', 'neutral', '默认', '待机', '普通'),
+    'think': ('serious', 'think', 'focus', '认真', '思考'),
+    'happy': ('happy', 'smile', 'joy', 'success', 'laugh', '开心', '高兴'),
+    'worried': ('confused', 'puzzled', 'worried', 'worry', 'sad', 'error', 'surprised', '困惑', '担心', '疑惑', '惊讶'),
+    'sleep': ('sleep', 'tired', 'rest', '睡'),
+    'walk': ('walk', 'move', '走'),
+}
+BODY_KEYWORDS = ('sprite', 'body', 'full', 'character', '立绘', '全身', '角色')
+FACE_FOLDERS = ('expressions', 'expression', 'faces', 'face', '表情')
+MAX_IMPORT_FILES = 64
+
+
+def _images(folder):
+    try:
+        return sorted(p for p in folder.iterdir()
+                      if p.is_file() and p.suffix.lower() in ART_SUFFIXES and p.stat().st_size <= MAX_ART_BYTES)
+    except OSError:
+        return []
+
+
+def _match(files):
+    """Map image files to states by filename keyword; unmatched files are ignored."""
+    chosen = {}
+    for state, words in IMPORT_KEYWORDS.items():
+        for word in words:
+            hit = next((f for f in files if word in f.stem.lower() and f not in chosen.values()), None)
+            if hit is not None:
+                chosen[state] = hit
+                break
+    return chosen
+
+
+def _fit(path, longest):
+    """Display size keeping the image's aspect, with the longer side at ``longest``."""
+    size = QImageReader(str(path)).size()
+    if not size.isValid() or size.isEmpty():
+        return [96, 96]
+    scale = longest / max(size.width(), size.height())
+    return [max(SIZE_RANGE[0], min(SIZE_RANGE[1], round(v * scale))) for v in (size.width(), size.height())]
+
+
+def plan_import(source):
+    """Work out a pack from a folder of images; returns (manifest, {relative path: source file}).
+
+    Two layouts are understood: a folder of expression images (``happy.png`` ...)
+    that each become a state; or a body image (``*sprite*`` / ``*body*`` / the only
+    top-level image) plus an ``expressions/`` (or ``faces/``) subfolder, where the
+    body is the pet and the expressions pop up as a face next to it.
+    """
+    source = Path(source)
+    top = _images(source)
+    sub = next((source / n for n in FACE_FOLDERS if (source / n).is_dir()), None)
+    faces = _match(_images(sub)) if sub is not None else {}
+    body = next((f for w in BODY_KEYWORDS for f in top if w in f.stem.lower()), None)
+    if body is None and faces and len(top) == 1:
+        body = top[0]
+    if body is not None and faces:
+        files = {body.name: body, **{f'faces/{f.name}': f for f in faces.values()}}
+        return ({'size': _fit(body, 220), 'states': {'idle': body.name},
+                 'faces': {state: f'faces/{f.name}' for state, f in faces.items()}}, files)
+    images = top or (_images(sub) if sub is not None else [])
+    states = _match(images)
+    if 'idle' not in states and images:
+        states['idle'] = next((f for f in images if f not in states.values()), images[0])
+    if not states:
+        raise PackError('文件夹里没有可用的图片（支持 png / jpg / webp / bmp / gif / svg）')
+    return ({'size': _fit(states['idle'], 128), 'states': {s: f.name for s, f in states.items()}},
+            {f.name: f for f in states.values()})
+
+
+def import_folder(home, source, pack_id, name):
+    """Copy a folder of images into ``<home>/gui/qt/pets/<pack_id>`` as a validated pack.
+
+    Only a folder made by an earlier import is replaced; a hand-made pack is left alone.
+    """
+    if not PACK_ID.fullmatch(pack_id):
+        raise PackError('宠物包名称无效')
+    manifest, files = plan_import(source)
+    if len(files) > MAX_IMPORT_FILES:
+        raise PackError('图片太多')
+    target = Path(home) / 'gui' / 'qt' / 'pets' / pack_id
+    if target.exists():
+        previous = SessionStore.read(target / 'pet.json', None)
+        if not (isinstance(previous, dict) and previous.get('imported') is True):
+            raise PackError(f'已有手工制作的宠物包「{pack_id}」，请先把它移出宠物包文件夹')
+    # Stage under a valid but unused id, validate, then swap in.
+    staging = target.with_name(f'{pack_id[:20]}-import-{uuid.uuid4().hex[:8]}')
+    try:
+        for relative, path in files.items():
+            (staging / relative).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(path, staging / relative)
+        manifest = {'format': 1, 'name': (name or '').strip()[:MAX_NAME] or pack_id, 'imported': True,
+                    'source': str(source), **manifest}
+        (staging / 'pet.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')
+        load_pack(staging)
+        if target.exists():
+            shutil.rmtree(target)
+        staging.rename(target)
+    except OSError as exc:
+        raise PackError('无法写入宠物包文件夹') from exc
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+    return load_pack(target)
+
+
+def new_pack_id(home, source):
+    """A free folder name for a pack imported from ``source``."""
+    source = Path(source)
+    stem = source.parent.name if source.name.lower() in ('assets', 'images', 'img', 'art') + FACE_FOLDERS \
+        else source.name
+    base = re.sub(r'[^a-z0-9_-]+', '-', stem.lower()).strip('-_')[:24]
+    base = base if PACK_ID.fullmatch(base or '') else 'my-pet'
+    taken = {p.name for p in BUILTIN_ROOT.iterdir()} if BUILTIN_ROOT.is_dir() else set()
+    folder = Path(home) / 'gui' / 'qt' / 'pets'
+    candidate, n = base, 2
+    while candidate in taken or (folder / candidate).exists():
+        candidate, n = f'{base}-{n}', n + 1
+    return candidate
 
 
 def animation_state(mood, ambient):
@@ -309,7 +442,8 @@ class PetController(QObject):
         if pack is None:
             return {}
         return {'id': pack['id'], 'name': self._display(pack['id']), 'width': pack['width'],
-                'height': pack['height'], 'smooth': pack['smooth'], 'facing': pack['facing'], 'states': {s: art_for(pack, s) for s in STATES}}
+                'height': pack['height'], 'smooth': pack['smooth'], 'facing': pack['facing'],
+                'faces': pack.get('faces', {}), 'states': {s: art_for(pack, s) for s in STATES}}
 
     def _rows(self):
         return [{'id': pack['id'], 'name': self._display(pack['id']), 'defaultName': pack['name'],
@@ -376,6 +510,29 @@ class PetController(QObject):
         except OSError:
             pass
         return QUrl.fromLocalFile(str(self.folder))
+
+    @Slot(QUrl, bool, result=str)
+    def importFolder(self, url, replace_current):
+        """Make a pet pack from a folder of the user's own images; returns an error message or ''."""
+        source = Path(url.toLocalFile()) if url.isLocalFile() else None
+        if source is None or not source.is_dir():
+            return '请选择一个图片文件夹。'
+        if replace_current:
+            pack_id, name = self._current, self._display(self._current)
+        else:
+            pack_id = new_pack_id(self.home, source)
+            name = (source.parent if source.name.lower() in ('assets', 'expressions') else source).name
+        try:
+            import_folder(self.home, source, pack_id, name)
+        except PackError as exc:
+            self._error = f'导入失败：{exc}'
+            self.changed.emit()
+            return self._error
+        self._scan()
+        if pack_id in self._packs:
+            self._current = pack_id
+        self._persist()
+        return ''
 
     @Slot()
     def reload(self):

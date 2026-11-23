@@ -29,8 +29,12 @@ Window {
     readonly property bool moving: live && !reduced
     readonly property bool mirrored: ambient === "walk" && animState === "walk"
                                      && (walkDirection < 0) === (info.facing !== "left")
+    // 可选的表情脸（pet.json 的 faces）：思考 / 开心 / 担心 / 睡觉时在身旁弹出，空闲和走路时不显示。
+    readonly property var faces: info.faces || ({})
+    readonly property int faceSpace: Object.keys(faces).length ? 68 : 0
+    readonly property string face: animState !== "idle" && animState !== "walk" ? (faces[animState] || "") : ""
 
-    width: artW + 24
+    width: artW + 24 + faceSpace
     height: artH + bubbleSpace
     color: "transparent"
     flags: Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.NoDropShadowWindowHint
@@ -165,8 +169,11 @@ Window {
         id: body
         objectName: "petBody"
         width: pet.artW; height: pet.artH
-        x: 12; y: pet.bubbleSpace
-        transform: Scale { origin.x: body.width / 2; xScale: pet.mirrored ? -1 : 1 }
+        x: 12 + pet.faceSpace; y: pet.bubbleSpace
+        transform: [
+            Scale { origin.x: body.width / 2; xScale: pet.mirrored ? -1 : 1 },
+            Translate { id: jitter }
+        ]
 
         Image {
             objectName: "petStill"
@@ -212,10 +219,10 @@ Window {
         }
         SequentialAnimation {
             id: shake
-            NumberAnimation { target: body; property: "x"; to: 9; duration: 50 }
-            NumberAnimation { target: body; property: "x"; to: 15; duration: 70 }
-            NumberAnimation { target: body; property: "x"; to: 10; duration: 70 }
-            NumberAnimation { target: body; property: "x"; to: 12; duration: 50 }
+            NumberAnimation { target: jitter; property: "x"; to: -3; duration: 50 }
+            NumberAnimation { target: jitter; property: "x"; to: 3; duration: 70 }
+            NumberAnimation { target: jitter; property: "x"; to: -2; duration: 70 }
+            NumberAnimation { target: jitter; property: "x"; to: 0; duration: 50 }
         }
     }
 
@@ -228,7 +235,7 @@ Window {
                                        : pet.animState === "sleep" ? ["z", "z Z", "z Z z"][bubbleClock.tick]
                                        : pet.animState === "worried" ? "!"
                                        : pet.animState === "happy" ? "✓" : ""
-        visible: !!mark
+        visible: !!mark && !pet.face
         anchors.horizontalCenter: body.horizontalCenter
         anchors.horizontalCenterOffset: pet.artW * 0.22
         y: 2
@@ -242,6 +249,21 @@ Window {
             text: bubble.mark
             color: pet.animState === "worried" ? "#8a4f00" : pet.animState === "happy" ? "#1d7a46" : "#33404c"
             font.pixelSize: 13; font.weight: Font.DemiBold
+        }
+    }
+
+    Rectangle {
+        objectName: "petFace"
+        visible: !!pet.face
+        x: 4; y: pet.bubbleSpace + 8
+        width: 62; height: 62; radius: 16
+        color: "#f7fafc"; border.color: pet.animState === "worried" ? "#d49a2a" : "#8c9aa8"; border.width: 1.5
+        Image {
+            anchors.fill: parent; anchors.margins: 3
+            source: pet.face
+            sourceSize: Qt.size(112, 112)
+            fillMode: Image.PreserveAspectFit
+            smooth: true
         }
     }
 
