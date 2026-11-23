@@ -112,6 +112,10 @@ class WorkspaceService:
         data = self.view(page)
         data['result'] = self.results.get(page, '')
         self.host.emit('page', page=page, data=data)
+        runner = getattr(self.host, 'runner', None)
+        if page == 'development' and runner is not None and runner._for != (self.active_document or ''):
+            # Run/build tasks follow the active editor, like VS Code's ${file}.
+            runner.publish()
 
     def directory_rows(self):
         if self.search_results is not None:
@@ -119,7 +123,7 @@ class WorkspaceService:
         target = self.boundary.path(self.directory or '.')
         entries = []
         for p in sorted(target.iterdir(), key=lambda p: (not p.is_dir(), p.name.casefold())):
-            if p.name in {'.git', '.venv', 'node_modules', '__pycache__', '.pytest_cache'}:
+            if p.name in {'.git', '.venv', 'node_modules', '__pycache__', '.pytest_cache', '.keystone-build'}:
                 continue
             try:
                 self.boundary.path(p)

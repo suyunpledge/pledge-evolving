@@ -22,6 +22,7 @@ from keystone.development.state import ModeState, WorkMode
 from keystone.development.editor import Document
 from keystone.development.runtime import DevelopmentRuntime
 from keystone.development.evidence import TaskEvidence
+from keystone.development import toolchains, tasks as project_tasks
 from keystone.secrets import redact, install_tk_exception_redaction
 from .bottom_panel import ToolPanel, count_problems, count_tests, highlight_diff_lines
 from .buttons import dev_button  # P0 修复：模块级——对话框等非 _build_editor 作用域也要用
@@ -757,6 +758,13 @@ class DevelopmentWorkbench(ttk.Frame):
                     '' if self._model_settings_home is not None else '独立运行时不可用'),
             Command('model_roles', '模型角色（默认 / 复杂 / 复审 / 子 Agent）…', '模型', self.model_settings),
             Command('run_tests', '运行测试', '任务', self._shortcut_run_tests, key('run_tests'), no_project),
+            Command('run_file', '运行当前文件（Python / Java / C++ / Kotlin / JS / TS）', '任务',
+                    lambda: self.run_project_task('run'), '', no_project),
+            Command('build_project', '构建项目 / 编译当前文件', '任务', lambda: self.run_project_task('build'), '', no_project),
+            Command('test_project', '运行项目测试（pytest / Maven / Gradle / CTest / npm）', '任务',
+                    lambda: self.run_project_task('test'), '', no_project),
+            Command('stop_task', '停止正在运行的任务', '任务', self.cancel_project_task, ''),
+            Command('toolchains', '检测运行环境（工具链与安装指引）', '任务', self.show_toolchains, ''),
             Command('review', '复审当前改动', '任务', self.review, '', no_project),
             Command('view_changes', '查看 Agent 改动', '任务', self._view_agent_changes, '', no_project),
             Command('density', '视图：切换为「专业」（显示全部面板）' if self._density == 'simple'
@@ -2231,6 +2239,7 @@ class DevelopmentWorkbench(ttk.Frame):
         self.tabs.add(frame, text=document.path.name)
         self.tabs.select(frame)
         self._sync_editor_empty()  # P1-3：有文档 → 撤空态卡
+        self._apply_pending_goto(row)
         self.state.remember_tabs(self.documents)
         # M7：新标签成为当前文档——编码/换行/语言/光标全量刷新一次
         # （on_cursor 只推光标字段；set_text 的首帧通知早于此赋值，
@@ -2942,6 +2951,128 @@ class DevelopmentWorkbench(ttk.Frame):
             return
         self.work(lambda: self.runtime.execute_tests(argv, trusted=True),
                     lambda value, error: (self.refresh_project(), self.refresh_documents()) if not error else None)
+
+    # ── 运行 / 构建 / 测试（VS Code 式任务 + 问题匹配） ──────────────────
+    def run_project_task(self, action):
+        """F5 式一键运行当前文件，或构建 / 测试项目；经权限策略与人工确认后执行。"""
+        names = {'run': '运行', 'build': '构建', 'test': '测试'}
+        if self.source is None:
+            self.status.set(names[action] + ' · 请先打开一个项目')
+            return
+        if self.runtime.busy or self._loading or self._submission_active or getattr(self, '_task_running', False):
+            self.status.set('请等待当前任务结束后再' + names[action])
+            return
+        if self.permission.get() == 'read-only':
+            self.status.set('只读模式不执行项目代码；请先允许修改这个项目')
+            self.write_output('问题', '只读模式不执行项目代码。请在右上角授予修改权限后再运行、构建或测试。\n')
+            return
+        row = self.current_row()
+        if row and row['document'].dirty:
+            self.status.set('请先保存当前文件再' + names[action])
+            return
+        chains = toolchains.Toolchains(self.source.root)
+        found, notes = toolchains.available(chains, str(row['document'].path) if row else None)
+        task = toolchains.choose(found, action)
+        if task is None:
+            reason = '\n'.join(notes) or f'当前文件和项目没有可{names[action]}的任务。'
+            self.status.set(reason.splitlines()[0])
+            self.write_output('问题', reason + '\n')
+            self.bottom.select('问题')
+            return
+        commands = '\n'.join(project_tasks.command_line(argv) for argv in task['steps'])
+        if not messagebox.askyesno('信任并' + names[action] + '项目代码',
+                '此操作将以当前账户执行项目代码，具有文件和网络访问能力。仅在信任该项目时继续。\n\n'
+                f"任务：{task['label']}\n命令：\n{commands}\n\n是否执行？", parent=self):
+            return
+        policy = self.runtime.bridge.policy('manual-approval')
+        generation, results = self._generation, self.results
+        def stream(text):
+            results.put((generation, lambda value, _e: self.write_output('输出', value), text, None, False))
+        self._task_running = True
+        self._task_cancel = threading.Event()
+        self.write_output('输出', '')
+        self.bottom.select('输出')
+        self.status.set('正在' + task['label'])
+        workspace = self.source.root
+        self.work(lambda: project_tasks.execute(task, workspace=workspace, policy=policy,
+                                               approve=lambda *a: True, cancelled=self._task_cancel,
+                                               on_output=stream),
+                  self._project_task_done)
+
+    def cancel_project_task(self):
+        event = getattr(self, '_task_cancel', None)
+        if event is not None:
+            event.set()
+
+    def _project_task_done(self, result, error):
+        self._task_running = False
+        if error:
+            return
+        self.show_problems(result['problems'], label=result['task']['label'], status=result['status'])
+        counts = result['counts']
+        self.status.set(f"{result['task']['label']} · {result['status']} · "
+                        f"{counts['errors']} 个错误 · {counts['warnings']} 个警告")
+        self.refresh_documents()
+
+    def show_problems(self, problems, *, label='', status=''):
+        """问题页：每行 文件:行:列 严重性 消息，单击跳转到源码位置。"""
+        widget = self.output_views['问题']
+        self.write_output('问题', '', clear=True)
+        widget.configure(state='normal')
+        widget.insert('end', f"{label} · {status} · {len(problems)} 个问题\n" if label else '')
+        icons = {'error': '✖', 'warning': '▲', 'info': 'ℹ'}
+        for index, problem in enumerate(problems):
+            tag = f'problem-{index}'
+            widget.insert('end', f"{icons.get(problem['severity'], '•')} {problem['relative']}:{problem['line']}:"
+                                 f"{problem['column']}  {problem['message']}\n", ('problem_link', tag))
+            widget.tag_bind(tag, '<Button-1>', lambda _e, row=problem: self.open_file_at(
+                row['path'], row['line'], row['column']))
+        widget.tag_configure('problem_link', foreground=C['text'])
+        widget.tag_bind('problem_link', '<Enter>', lambda _e: widget.configure(cursor='hand2'))
+        widget.tag_bind('problem_link', '<Leave>', lambda _e: widget.configure(cursor=''))
+        widget.configure(state='disabled')
+        if problems and status != 'completed':
+            self.bottom.select('问题')
+
+    def open_file_at(self, path, line, column=1):
+        """打开文件并把光标放到 line:column（问题页 / 匹配结果跳转）。"""
+        if not self.source:
+            return
+        try:
+            key = str(self.source.boundary.path(path))
+        except (ValueError, PermissionError, OSError) as exc:
+            self.status.set(redact(str(exc)))
+            return
+        self._pending_goto = (key, int(line), int(column))
+        if key in self.documents:
+            self.tabs.select(self.documents[key]['frame'])
+            self._apply_pending_goto(self.documents[key])
+        else:
+            self.open_file(key)
+
+    def _apply_pending_goto(self, row):
+        pending = getattr(self, '_pending_goto', None)
+        if not pending or pending[0] != str(row['document'].path):
+            return
+        self._pending_goto = None
+        widget = row['widget']
+        index = f'{pending[1]}.{max(0, pending[2] - 1)}'
+        widget.mark_set('insert', index)
+        widget.see(index)
+        widget.focus_set()
+
+    def show_toolchains(self):
+        """把各语言工具链检测结果与安装指引写入「输出」页。"""
+        root = self.source.root if self.source else Path.cwd()
+        lines = ['运行环境检测（VS Code 式：项目 .venv / JAVA_HOME / PATH / node_modules/.bin）']
+        for row in toolchains.Toolchains(root).detect():
+            lines.append(('✓ ' if row['ready'] else '✗ ') + row['label'] +
+                         ('' if row['ready'] else ' · 缺少 ' + '、'.join(row['missing'])))
+            lines.extend(f"    {t['name']}：{t['path'] or '未找到'}" for t in row['tools'])
+            if row['guidance']:
+                lines.append('    ' + row['guidance'])
+        self.write_output('输出', '\n'.join(lines) + '\n')
+        self.bottom.select('输出')
 
     def review(self):
         if (self.runtime.busy or not self.runtime.ready or self._loading

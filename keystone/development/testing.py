@@ -31,8 +31,27 @@ def execute(argv, workspace, home, cancelled, *, timeout=120, task_id='', run_id
     return _persist(argv, workspace, home, task_id, run_id, result)
 
 
-def run_process(argv, workspace, cancelled, *, timeout=120, on_output=None):
-    """Run an approved, non-interactive command with bounded, merged output."""
+def decode_output(raw):
+    """UTF-8 first; native tools on CJK Windows (javac, cl, cmd) may still write the ANSI code page."""
+    try:
+        return raw.decode('utf-8')
+    except UnicodeDecodeError:
+        pass
+    if os.name == 'nt':
+        try:
+            return raw.decode('mbcs')
+        except (UnicodeDecodeError, LookupError):
+            pass
+    return raw.decode('utf-8', 'replace')
+
+
+def run_process(argv, workspace, cancelled, *, timeout=120, on_output=None, extra_env=None, decode=None):
+    """Run an approved, non-interactive command with bounded, merged output.
+
+    ``extra_env`` adds named variables a toolchain needs (JAVA_HOME, INCLUDE…);
+    ``decode`` turns raw bytes into text (default: UTF-8 with replacement).
+    """
+    decode = decode or (lambda raw: raw.decode('utf-8', 'replace'))
     if (not isinstance(argv, (list, tuple)) or not argv or
             any(not isinstance(x, str) or '\0' in x for x in argv) or not 0 < timeout <= 600):
         raise ValueError('Use an argument list and a timeout of at most 600 seconds')
@@ -42,6 +61,9 @@ def run_process(argv, workspace, cancelled, *, timeout=120, on_output=None):
     environment = {k: v for k, v in os.environ.items()
                    if k.upper() in {'PATH', 'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'TEMP', 'TMP', 'LANG'}}
     environment['PYTHONIOENCODING'] = 'utf-8'
+    for key, value in (extra_env or {}).items():
+        if isinstance(key, str) and isinstance(value, str) and '\0' not in value:
+            environment[key] = value
     options = {'creationflags': subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == 'nt' else {'start_new_session': True}
     process = subprocess.Popen(argv, cwd=workspace, env=environment, stdin=subprocess.DEVNULL,
                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, shell=False, **options)
@@ -59,12 +81,12 @@ def run_process(argv, workspace, cancelled, *, timeout=120, on_output=None):
                         pending.extend(chunk)
                         end = pending.rfind(b'\n') + 1
                         if end:
-                            on_output(redact(pending[:end].decode('utf-8', 'replace')))
+                            on_output(redact(decode(bytes(pending[:end]))))
                             del pending[:end]
                 size += min(len(raw), room)
                 truncated |= len(raw) > room
             if pending and not truncated:
-                on_output(redact(pending.decode('utf-8', 'replace')))
+                on_output(redact(decode(bytes(pending))))
         finally:
             process.stdout.close()
     reader = threading.Thread(target=drain, daemon=True, name='keystone-test-output')
@@ -93,7 +115,7 @@ def run_process(argv, workspace, cancelled, *, timeout=120, on_output=None):
         truncated = True
         if status == 'completed':
             status = 'unknown'  # Exit 0 does not establish a complete test receipt.
-    output = redact(b''.join(chunks).decode('utf-8', 'replace'))
+    output = redact(decode(b''.join(chunks)))
     if status == 'completed' and process.returncode != 0:
         status = 'failed'
     return {'status': status, 'exit_code': process.returncode, 'output': output,

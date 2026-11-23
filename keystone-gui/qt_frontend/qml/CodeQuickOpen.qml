@@ -71,7 +71,7 @@ Popup {
             ScrollBar.vertical: ScrollBar {}
             delegate: ItemDelegate {
                 id: option; required property int index; required property var modelData
-                width: choices.width; height: 30; leftPadding: 8; rightPadding: 12
+                width: choices.width; height: 30; leftPadding: 8; rightPadding: 12; topPadding: 0; bottomPadding: 0
                 Accessible.name: modelData.relative
                 background: Rectangle { radius: 5; color: option.ListView.isCurrentItem ? "#2b4364" : option.hovered ? "#253042" : "transparent" }
                 contentItem: RowLayout {

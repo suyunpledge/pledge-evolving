@@ -62,6 +62,27 @@ class WorkbenchTests(unittest.TestCase):
             time.sleep(.015)
         self.fail('Tk condition timed out: ' + self.app.status.get())
 
+    def test_run_current_file_maps_problems_and_jumps_to_line(self):
+        script = self.project.resolve() / '运行 脚本.py'
+        script.write_text('print("开始")\n\nraise ValueError("第三行")\n', encoding='utf-8')
+        self.app.open_file(script)
+        self.pump(lambda: self.app.current_row() is not None)
+        self.app.permission.set('read-only')
+        self.app.run_project_task('run')
+        self.assertIn('只读', self.app.status.get())
+        self.app.permission.set('workspace-write')
+        with patch('development_mode.app.messagebox.askyesno', return_value=True) as asked:
+            self.app.run_project_task('run')
+        self.assertIn(str(script), asked.call_args[0][1])
+        self.pump(lambda: not self.app._task_running and self.app._jobs == 0)
+        self.pump(lambda: '运行 脚本.py:3:1' in self.app.output_views['问题'].get('1.0', 'end'))
+        self.assertIn('开始', self.app.output_views['输出'].get('1.0', 'end'))
+        self.app.open_file(self.project / 'one.py')
+        self.pump(lambda: self.app.current_row()['document'].path.name == 'one.py')
+        self.app.open_file_at(str(script), 3, 1)
+        self.pump(lambda: self.app.current_row()['document'].path == script)
+        self.assertEqual(self.app.current_row()['widget'].index('insert'), '3.0')
+
     def test_mode_roundtrip_keeps_buffers_runtime_and_parent(self):
         self.app.open_file(self.project / 'one.py')
         self.pump(lambda: bool(self.app.documents))

@@ -12,7 +12,7 @@ from keystone.development.editor import Document, MAX_DOCUMENT
 from keystone.secrets import redact
 
 
-EXCLUDED = {'.git', '.hg', '.svn', '.venv', 'venv', 'node_modules', '__pycache__', '.pytest_cache'}
+EXCLUDED = {'.git', '.hg', '.svn', '.venv', 'venv', 'node_modules', '__pycache__', '.pytest_cache', '.keystone-build'}
 QUICK_LIMIT = 80
 MATCH_LIMIT = 400
 

@@ -37,6 +37,7 @@ class WorkbenchController(QObject):
     gatewayCatalog = Signal(object)
     gatewayFailed = Signal(str, str)
     codingChanged = Signal()
+    runChanged = Signal()
     codingDraftChanged = Signal()
     codingFocusRequested = Signal()
     terminalChanged = Signal()
@@ -88,6 +89,7 @@ class WorkbenchController(QObject):
         self._service_calls = {}
         self._serviceCommand.connect(self._send)
         self._coding = {}
+        self._run = {}
         self._terminal_serial = 0
         self._terminals = {}
         self._terminal_output = ''
@@ -169,6 +171,7 @@ class WorkbenchController(QObject):
     activeTerminal = Property(int, lambda s: s._terminal_id, notify=terminalTabsChanged)
     terminalTabs = Property('QVariantList', lambda s: list(s._terminals), notify=terminalTabsChanged)
     coding = Property('QVariantMap', lambda s: s._coding, notify=codingChanged)
+    runState = Property('QVariantMap', lambda s: s._run, notify=runChanged)
     codingMessages = Property(QObject, lambda s: s._coding_messages, constant=True)
     codingDraft = Property(str, lambda s: s._coding_draft, notify=codingDraftChanged)
 
@@ -315,6 +318,17 @@ class WorkbenchController(QObject):
             return
         self._send_coding_draft()
         self._send({'command': 'coding', 'action': action, 'value': value})
+
+    @Slot(str, str)
+    def runAction(self, action, value):
+        """Run/build/test the active file or project (the service checks permission and asks)."""
+        if self._page != 'development' or action not in {'run', 'build', 'test', 'task', 'cancel', 'refresh', 'clearProblems'}:
+            return
+        if action in {'run', 'build', 'test', 'task'} and self._document_dirty:
+            self._error = '请先保存编辑器修改，再运行任务。'
+            self.changed.emit()
+            return
+        self._send({'command': 'run', 'action': action, 'value': value})
 
     def _send_coding_draft(self):
         self._send({'command': 'coding', 'action': 'draft', 'value': self._coding_draft,
@@ -517,6 +531,9 @@ class WorkbenchController(QObject):
             if first and self._coding_draft:
                 self._send_coding_draft()
             self.codingChanged.emit()
+        elif kind == 'run_state':
+            self._run = row['state']
+            self.runChanged.emit()
         elif kind == 'coding_message':
             message = row['message']
             if message is None:
@@ -627,6 +644,8 @@ class WorkbenchController(QObject):
         self._coding = {}
         self._coding_messages.reset([])
         self.codingChanged.emit()
+        self._run = {}
+        self.runChanged.emit()
         self._pending = [r for r in self._pending if r['source'] != 'host']
         if not self._closing:
             self._error = self._error or f'功能工作台已关闭（退出码 {exit_code}），可点击重新载入。'

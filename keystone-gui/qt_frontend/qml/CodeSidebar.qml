@@ -110,6 +110,9 @@ Rectangle {
             delegate: ItemDelegate {
                 id: item; required property int index; required property var modelData
                 width: tree.width; height: 25; leftPadding: 8 + 13 * modelData.depth; rightPadding: 6
+                // Basic ItemDelegate pads 12px top and bottom; with a 25px row that left a 1px content box,
+                // so labels overflowed downward onto the next row's selection. Let the row own the height.
+                topPadding: 0; bottomPadding: 0
                 Accessible.name: modelData.title; Accessible.role: Accessible.TreeItem
                 ToolTip.visible: hovered; ToolTip.delay: 700; ToolTip.text: modelData.id
                 background: Rectangle {
@@ -158,7 +161,7 @@ Rectangle {
             ScrollBar.vertical: ScrollBar {}
             delegate: ItemDelegate {
                 id: hit; required property int index; required property var modelData
-                width: hits.width; height: 25; leftPadding: 12; rightPadding: 8
+                width: hits.width; height: 25; leftPadding: 12; rightPadding: 8; topPadding: 0; bottomPadding: 0
                 Accessible.name: modelData.relative + " 行 " + modelData.line + " 列 " + modelData.column + " " + modelData.before + modelData.token + modelData.after
                 ToolTip.text: Accessible.name; ToolTip.visible: hovered; ToolTip.delay: 650
                 background: Rectangle { color: hit.ListView.isCurrentItem ? "#304156" : hit.hovered ? "#292e35" : "transparent" }

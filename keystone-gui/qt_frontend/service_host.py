@@ -17,6 +17,7 @@ from qt_frontend.gateway_service import GatewayService
 from qt_frontend.workspace_service import WorkspaceService
 from qt_frontend.workspace_navigation import Explorer, WorkspaceQueries
 from qt_frontend.coding_service import CodingService
+from qt_frontend.run_service import RunService
 from qt_frontend.terminal_service import TerminalService
 from keystone.compat import desktop_config
 
@@ -46,6 +47,7 @@ class ServiceHost:
         self.queries = WorkspaceQueries(self.emit)
         self.terminal = TerminalService(self)
         self.coding = CodingService(self)
+        self.runner = RunService(self)
         from qt_frontend.scheduler_service import SchedulerService
         self.scheduler = SchedulerService(self)
 
@@ -150,6 +152,8 @@ class ServiceHost:
             self.workspace = target.root
             self.terminal = TerminalService(self)
             self.coding = CodingService(self)
+            self.runner.cancel.set()
+            self.runner = RunService(self)
             self.pages.results.pop('development', None)
             self.queries.reset()
             self.pages.explorer = Explorer(target)
@@ -223,6 +227,9 @@ class ServiceHost:
         elif command == 'coding':
             with self.lock:
                 self.coding.command(row)
+        elif command == 'run':
+            if self.page == 'development':
+                self.runner.command(row)
         elif command == 'permission':
             if not self.running and row.get('profile') in {'sandbox', 'manual', 'full'}:
                 if self.profile != row['profile']:

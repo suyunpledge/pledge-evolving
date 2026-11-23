@@ -14,6 +14,7 @@ Item {
     property bool dockOpen: false
     property bool dockVisited: false
     property string dockTab: "terminal"
+    property real lastRunStamp: 0
     property real dockHeight: 226
     property string lastResult: ""
     property var pendingSelection: null
@@ -93,6 +94,20 @@ Item {
             code.editor.forceActiveFocus()
         } else showDock(tab, true)
     }
+    function runnable(action) {
+        return (workbench.runState.tasks || []).some(t => t.action === action)
+    }
+    function runTip() {
+        const tasks = workbench.runState.tasks || []
+        const file = tasks.find(t => t.action === "run" && t.scope === "file") || tasks.find(t => t.action === "run")
+        if (file) return file.label + " · F5"
+        return (workbench.runState.notes || [])[0] || "打开可运行的源文件（Python / Java / C++ / Kotlin / JavaScript / TypeScript）"
+    }
+    function runTask(action, value) {
+        if (workbench.busy) return
+        showDock("output", false)
+        workbench.runAction(action, value)
+    }
     function invoke(action, row) {
         if (ide && (action === "git" || action === "compare")) showDock("output", false)
         if (action === "chooseProject") { projectPicker.open(); return }
@@ -105,6 +120,14 @@ Item {
     }
     Connections {
         target: workbench
+        function onRunChanged() {
+            // A failed run with located problems jumps to the Problems tab once, like VS Code's "reveal problems".
+            const last = workbench.runState.last
+            if (!last || last.stamp === page.lastRunStamp) return
+            page.lastRunStamp = last.stamp
+            if (page.ide && page.visible && last.status !== "completed" && (workbench.runState.problems || []).length)
+                page.showDock("problems", false)
+        }
         function onTerminalRevealRequested() { if (page.ide && page.visible && !page.dockOpen) page.showDock("output", false) }
         function onChanged() {
             if (page.pendingSelection && !workbench.busy && page.pendingSelection.path === page.editorPath)
@@ -440,6 +463,32 @@ Item {
                                 text: page.editorPath ? page.editorPath.slice((page.viewData.hint || "").length + 1).replace(/[\\\\/]/g, "  ›  ") : "编辑器"
                                 elide: Text.ElideMiddle; color: page.hasDocument ? "#b6c2d3" : "#6c7b90"; font.pixelSize: 12
                             }
+                            IdeButton {
+                                objectName: "codeRunFile"; visible: page.ide
+                                glyph: (workbench.runState.running || "") ? "square" : "play"
+                                tip: (workbench.runState.running || "") ? "停止：" + workbench.runState.running : page.runTip()
+                                enabled: !!(workbench.runState.running || "") || (!workbench.busy && page.runnable("run"))
+                                Layout.preferredHeight: 23
+                                onClicked: (workbench.runState.running || "") ? workbench.runAction("cancel", "") : page.runTask("run", "")
+                            }
+                            IdeButton {
+                                objectName: "codeTaskMenu"; visible: page.ide; glyph: "wrench"; tip: "运行任务：构建 Ctrl+Shift+B · 测试 · 运行环境"
+                                enabled: !workbench.busy; Layout.preferredHeight: 23; onClicked: taskMenu.open()
+                                Menu {
+                                    id: taskMenu; y: parent.height
+                                    Repeater {
+                                        model: workbench.runState.tasks || []
+                                        MenuItem {
+                                            required property var modelData
+                                            text: ({run: "▶ ", build: "⚒ ", test: "✓ "}[modelData.action] || "") + modelData.label
+                                            onTriggered: page.runTask("task", modelData.id)
+                                        }
+                                    }
+                                    MenuSeparator {}
+                                    MenuItem { text: "问题面板"; onTriggered: page.showDock("problems", true) }
+                                    MenuItem { text: "检测运行环境"; onTriggered: { workbench.runAction("refresh", ""); page.showDock("toolchains", true) } }
+                                }
+                            }
                             IdeButton { glyph: "search"; tip: "在文件中查找 · Ctrl+F"; enabled: page.hasDocument && !workbench.busy; selected: page.findOpen; Layout.preferredHeight: 23; onClicked: page.openFind() }
                             IdeButton { glyph: "panels-top-left"; tip: "原文参考分屏"; enabled: page.hasDocument && !workbench.busy; selected: page.referenceOpen; Layout.preferredHeight: 23; onClicked: page.invoke("reference") }
                             IdeButton { glyph: "save"; tip: "保存 · Ctrl+S"; enabled: page.hasDocument && !workbench.busy; Layout.preferredHeight: 23; onClicked: page.invoke("save", {path:page.editorPath}) }
@@ -617,6 +666,7 @@ Item {
                         sourceComponent: CodeTerminalPanel {
                             resultText: page.viewData.result || ""; tab: page.dockTab
                             onTabRequested: name => page.dockTab = name
+                            onProblemPicked: entry => page.openEntry(entry)
                             onCollapseRequested: page.toggleDock(page.dockTab)
                             onResizeRequested: pixels => page.dockHeight = Math.min(page.height * 0.56, Math.max(160, pixels))
                         }
@@ -746,5 +796,8 @@ Item {
     Shortcut { sequence: "Ctrl+Shift+F"; enabled: page.visible && page.ide && !quickOpen.visible; onActivated: page.openSearch() }
     Shortcut { sequence: "Ctrl+Shift+E"; enabled: page.visible && page.ide && !quickOpen.visible; onActivated: { page.sidebarOpen = true; sidebar.explorer() } }
     Shortcut { sequence: "Ctrl+`"; enabled: page.visible && page.ide && !quickOpen.visible; onActivated: page.toggleDock("terminal") }
+    Shortcut { sequence: "F5"; enabled: page.visible && page.ide && !quickOpen.visible && !workbench.busy; onActivated: page.runTask("run", "") }
+    Shortcut { sequence: "Ctrl+Shift+B"; enabled: page.visible && page.ide && !quickOpen.visible && !workbench.busy; onActivated: page.runTask("build", "") }
+    Shortcut { sequence: "Ctrl+Shift+M"; enabled: page.visible && page.ide && !quickOpen.visible; onActivated: page.toggleDock("problems") }
     Shortcut { sequence: "Ctrl+J"; enabled: page.visible && page.ide && !quickOpen.visible; onActivated: page.toggleDock(page.dockTab) }
 }

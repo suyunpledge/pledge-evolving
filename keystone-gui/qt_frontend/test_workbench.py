@@ -688,6 +688,65 @@ class WorkbenchTests(unittest.TestCase):
         QTest.keyClick(self.window, Qt.Key.Key_J, Qt.KeyboardModifier.ControlModifier)
         self.assertFalse(transcript.isVisible())
 
+    def open_code_project(self, files):
+        project = Path(self.temp.name).resolve() / '项目 空格'
+        for name, text in files.items():
+            (project / name).parent.mkdir(parents=True, exist_ok=True)
+            (project / name).write_text(text, encoding='utf-8')
+        self.workbench.navigate('development')
+        until(lambda: self.workbench.nativePageReady)
+        self.workbench.pageAction('development', 'project', json.dumps({'path': str(project)}))
+        until(lambda: self.workbench.workspace == str(project) and not self.workbench.busy)
+        page = visual_item(self.window.contentItem(), 'page_development')
+        return project, page
+
+    def test_code_tree_labels_stay_inside_their_rows(self):
+        project, page = self.open_code_project({'src/主 程序.py': 'x = 1\n', 'b.js': ''})
+        tree = visual_item(page, 'codeProjectTree')
+        until(lambda: tree.property('count') == 2)
+        QTest.qWait(100)
+        rows = [item for item in tree.property('contentItem').childItems() if item.property('modelData')]
+        self.assertTrue(rows)
+        for row in rows:
+            content = row.property('contentItem')
+            label = next(c for c in content.childItems() if c.property('text') == row.property('modelData')['title'])
+            top = label.mapToItem(row, label.boundingRect().topLeft()).y()
+            # The label box must sit inside the row (selection rectangle), centred within a pixel.
+            self.assertGreaterEqual(top, 0)
+            self.assertLessEqual(top + label.height(), row.height())
+            self.assertAlmostEqual(top + label.height() / 2, row.height() / 2, delta=1.0)
+
+    def test_code_run_state_problems_jump_to_file_line(self):
+        project, page = self.open_code_project({'src/主 程序.cpp': 'int main() {\n  return y;\n}\n', 'app.py': 'print(1)\n'})
+        self.workbench.pageAction('development', 'open', json.dumps({'path': str(project / 'app.py')}))
+        until(lambda: self.workbench.runState.get('file') == str(project / 'app.py') and not self.workbench.busy)
+        self.assertIn('file.run', [t['id'] for t in self.workbench.runState['tasks']])
+        self.assertEqual(self.workbench.runState['toolchains'][0]['language'], 'python')
+        self.assertFalse(self.workbench.runState['canRun'], 'preview/sandbox never executes project code')
+        run = visual_item(page, 'codeRunFile')
+        self.assertTrue(run.isVisible())
+        target = str(project / 'src' / '主 程序.cpp')
+        self.window.setFlag(Qt.WindowType.WindowDoesNotAcceptFocus, False)
+        self.window.show()
+        self.window.requestActivate()
+        until(self.window.isActive)
+        self.workbench._run = {**self.workbench._run, 'problems': [
+            {'path': target, 'line': 2, 'column': 10, 'severity': 'error', 'message': "'y' was not declared",
+             'code': '', 'source': 'gcc', 'inWorkspace': True, 'relative': 'src/主 程序.cpp'}],
+            'last': {'label': '编译并运行', 'status': 'failed', 'stamp': 1.0}}
+        self.workbench.runChanged.emit()
+        until(lambda: page.property('dockTab') == 'problems')
+        problems = visual_item(page, 'codeProblemList')
+        until(lambda: problems.isVisible() and problems.property('count') == 1)
+        problems.setProperty('currentIndex', 0)
+        until(lambda: problems.property('currentItem') is not None and problems.property('height') > 0)
+        QTest.qWait(300)
+        item = problems.property('currentItem')
+        from PySide6.QtCore import QPointF
+        point = item.mapToScene(QPointF(item.width() / 2, item.height() / 2)).toPoint()
+        QTest.mouseClick(self.window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, point)
+        until(lambda: page.property('editorPath') == target and page.property('cursorLine') == 1)
+
     def test_code_tree_quick_open_and_workspace_matches(self):
         project = Path(self.temp.name).resolve() / 'project'
         folder = project / 'src' / 'nested'

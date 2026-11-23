@@ -9,7 +9,10 @@ Rectangle {
     signal tabRequested(string name)
     signal collapseRequested()
     signal resizeRequested(real pixels)
+    signal problemPicked(var entry)
     readonly property bool terminal: tab === "terminal"
+    readonly property bool listing: tab === "problems" || tab === "toolchains"
+    readonly property var problems: workbench.runState.problems || []
     readonly property bool canRun: workbench.permission !== "sandbox"
     readonly property string project: workbench.workspace
     property var drafts: ({})
@@ -47,6 +50,8 @@ Rectangle {
     function focusPanel() {
         if (!visible) return
         if (terminal && canRun) input.forceActiveFocus()
+        else if (tab === "problems") problemList.forceActiveFocus()
+        else if (tab === "toolchains") chains.forceActiveFocus()
         else transcript.forceActiveFocus()
     }
     function submit() {
@@ -71,6 +76,9 @@ Rectangle {
         input.cursorPosition = input.length
         if (historyIndex === history.length) historyIndex = -1
     }
+    function pickProblem(row) {
+        if (row) panel.problemPicked({path: row.path, line: row.line, column: row.column, length: 0})
+    }
     function tail() { if (visible && follow) scroll.contentY = Math.max(0, scroll.contentHeight - scroll.height) }
     onVisibleChanged: if (visible) { resizeTimer.restart(); Qt.callLater(tail) }
     onTabChanged: { follow = true; resizeTimer.restart(); Qt.callLater(tail) }
@@ -81,7 +89,9 @@ Rectangle {
             RowLayout {
                 anchors.fill: parent; anchors.leftMargin: 9; anchors.rightMargin: 5; spacing: 3
                 Repeater {
-                    model: [{key:"terminal", label:"终端"}, {key:"output", label:"输出"}]
+                    model: [{key:"terminal", label:"终端"}, {key:"output", label:"输出"},
+                            {key:"problems", label:"问题" + (panel.problems.length ? " " + panel.problems.length : "")},
+                            {key:"toolchains", label:"运行环境"}]
                     IdeButton {
                         required property var modelData
                         objectName: "codeDockTab_" + modelData.key
@@ -94,6 +104,8 @@ Rectangle {
                     }
                 }
                 Item { Layout.fillWidth: true }
+                IdeButton { visible: panel.tab === "problems" && panel.problems.length > 0; text: "清除"; tip: "清除问题列表"; onClicked: workbench.runAction("clearProblems", "") }
+                IdeButton { visible: panel.tab === "toolchains"; glyph: "refresh-cw"; tip: "重新检测已安装的工具链"; onClicked: workbench.runAction("refresh", "") }
                 IdeButton {
                     visible: panel.terminal; objectName: "terminalNew"; glyph: "plus"; tip: "新建终端"
                     enabled: workbench.terminalTabs.length < 16
@@ -132,8 +144,85 @@ Rectangle {
                 onClicked: workbench.selectTerminal(modelData)
             }
         }
+        ListView {
+            id: problemList; objectName: "codeProblemList"; visible: panel.tab === "problems"
+            Layout.fillWidth: true; Layout.fillHeight: true; clip: true; model: panel.problems
+            keyNavigationEnabled: true; highlightMoveDuration: 0; boundsBehavior: Flickable.StopAtBounds
+            ScrollBar.vertical: ScrollBar {}
+            Keys.onReturnPressed: if (currentIndex >= 0) panel.pickProblem(model[currentIndex])
+            Text {
+                anchors.fill: parent; anchors.margins: 14; visible: !problemList.count; wrapMode: Text.Wrap
+                color: "#919ba9"; font.pixelSize: 12
+                text: workbench.runState.last ? "上次任务“" + workbench.runState.last.label + "”没有报告问题。"
+                    : "运行、构建或测试后，编译器与运行时报告的错误会按 文件:行 显示在这里（F5 运行当前文件，Ctrl+Shift+B 构建）。"
+            }
+            delegate: ItemDelegate {
+                id: problem; required property int index; required property var modelData
+                width: problemList.width; height: 26; leftPadding: 12; rightPadding: 10; topPadding: 0; bottomPadding: 0
+                Accessible.name: modelData.severity + " " + modelData.relative + " " + modelData.line + " " + modelData.message
+                ToolTip.text: modelData.path + ":" + modelData.line + ":" + modelData.column + "\n" + modelData.message
+                ToolTip.visible: hovered; ToolTip.delay: 650
+                background: Rectangle { color: problem.ListView.isCurrentItem ? "#283a52" : problem.hovered ? "#222a36" : "transparent" }
+                contentItem: RowLayout {
+                    spacing: 7
+                    Glyph {
+                        Layout.preferredWidth: 14; Layout.preferredHeight: 14
+                        name: problem.modelData.severity === "error" ? "circle-x" : problem.modelData.severity === "warning" ? "triangle-alert" : "info"
+                        ink: problem.modelData.severity === "error" ? "#f0787a" : problem.modelData.severity === "warning" ? "#e9c46a" : "#8db4db"
+                    }
+                    Text { Layout.fillWidth: true; text: problem.modelData.message; elide: Text.ElideRight; color: "#d6dce5"; font.pixelSize: 12; textFormat: Text.PlainText }
+                    Text {
+                        Layout.maximumWidth: problemList.width * 0.45
+                        text: problem.modelData.relative + ":" + problem.modelData.line + ":" + problem.modelData.column
+                        elide: Text.ElideMiddle; color: problem.modelData.inWorkspace ? "#94a8c1" : "#6f7c8d"; font.pixelSize: 11; textFormat: Text.PlainText
+                    }
+                }
+                onClicked: { problemList.currentIndex = index; panel.pickProblem(modelData) }
+            }
+        }
         Flickable {
-            id: scroll; Layout.fillWidth: true; Layout.fillHeight: true; clip: true; boundsBehavior: Flickable.StopAtBounds
+            id: chains; objectName: "codeToolchains"; visible: panel.tab === "toolchains"
+            Layout.fillWidth: true; Layout.fillHeight: true; clip: true; boundsBehavior: Flickable.StopAtBounds
+            contentWidth: width; contentHeight: chainColumn.implicitHeight + 16
+            ScrollBar.vertical: ScrollBar {}
+            Column {
+                id: chainColumn; x: 12; y: 8; width: chains.width - 24; spacing: 8
+                Text {
+                    width: parent.width; wrapMode: Text.Wrap; color: "#a5afbc"; font.pixelSize: 11; textFormat: Text.PlainText
+                    text: (workbench.runState.canRun ? "运行、构建和测试按当前权限策略执行；需要批准时会先弹出确认。"
+                                                     : "当前为沙箱运行：可以查看检测结果，但不会执行项目代码。切换到“手动批准”或“完全访问”后可运行。")
+                        + ((workbench.runState.notes || []).length ? "\n" + workbench.runState.notes.join("\n") : "")
+                }
+                Repeater {
+                    model: workbench.runState.toolchains || []
+                    Rectangle {
+                        id: chainCard; required property var modelData
+                        width: chainColumn.width; radius: 6; color: "#182030"; border.color: modelData.ready ? "#2c4a3a" : "#4a3a2c"
+                        implicitHeight: chainRow.implicitHeight + 16; height: implicitHeight
+                        Column {
+                            id: chainRow; x: 10; y: 8; width: parent.width - 20; spacing: 3
+                            RowLayout {
+                                spacing: 7
+                                Glyph { Layout.preferredWidth: 14; Layout.preferredHeight: 14; name: chainCard.modelData.ready ? "circle-check" : "triangle-alert"; ink: chainCard.modelData.ready ? "#7fd19b" : "#e9c46a" }
+                                Text { text: chainCard.modelData.label + (chainCard.modelData.ready ? "" : " · 缺少 " + chainCard.modelData.missing.join("、")); color: "#e2e7ee"; font.pixelSize: 12; font.weight: Font.DemiBold }
+                            }
+                            Repeater {
+                                model: chainCard.modelData.tools
+                                Text {
+                                    required property var modelData
+                                    width: chainRow.width; elide: Text.ElideMiddle; font.pixelSize: 11; textFormat: Text.PlainText
+                                    color: modelData.path ? "#aeb9c7" : "#6f7c8d"
+                                    text: modelData.name + "：" + (modelData.path || "未找到") + (modelData.origin ? "（" + modelData.origin + "）" : "")
+                                }
+                            }
+                            Text { visible: !!chainCard.modelData.guidance; width: chainRow.width; wrapMode: Text.Wrap; color: "#e6cf9a"; font.pixelSize: 11; text: chainCard.modelData.guidance; textFormat: Text.PlainText }
+                        }
+                    }
+                }
+            }
+        }
+        Flickable {
+            id: scroll; visible: !panel.listing; Layout.fillWidth: true; Layout.fillHeight: true; clip: true; boundsBehavior: Flickable.StopAtBounds
             contentWidth: width; contentHeight: Math.max(height, transcript.implicitHeight)
             onMovementStarted: panel.follow = false
             onMovementEnded: panel.follow = atYEnd
