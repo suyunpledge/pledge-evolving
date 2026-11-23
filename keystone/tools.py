@@ -41,7 +41,7 @@ BUILTIN_TOOL_NAMES = frozenset({
     "web_search", "fetch_url", "datetime", "calculator",
     "find_files", "review_changes", "file_stats", "file_export",
     "git_status", "git_add", "git_commit", "git_log",
-    "artifact_read", "artifact_grep",
+    "artifact_read", "artifact_grep", "catalog_expand",
     "model3d_build", "model3d_inspect",
 })
 
@@ -735,6 +735,8 @@ def build_builtin_registry(
     register_artifact_tools(reg)
     from .model3d_tools import register_model3d_tools
     register_model3d_tools(reg)
+    from .retrieval_catalog import register_catalog_tools
+    register_catalog_tools(reg)
 
     @host_tool("edit_config", "Inspect a protected JSON/YAML/TOML/.env configuration, then apply a structured "
               "patch with its revision. Credentials remain opaque and unchanged.",
@@ -1358,14 +1360,24 @@ def build_builtin_registry(
 
     @host_tool(
         "spawn_subagent",
-        "Spawn a nested agent with its own context window and a permission ceiling.",
+        "Spawn a nested agent with its own context window and a permission ceiling. "
+        "Optional domain routes the whole subtask to a configured specialist model "
+        "(retrieval / coding / computer / ...); constraints, prior and acceptance form its handoff.",
         read_only=False, effect=ToolEffect.CONTROL, requires=("spawn",),
-        schema={"task": "string", "mode": "string"},
+        schema={"task": "string", "mode": "string",
+                "domain": {"type": "string", "description": "Optional specialist domain, e.g. retrieval, coding, computer."},
+                "constraints": {"type": "string", "description": "Optional: limits the subtask must respect."},
+                "prior": {"type": "string", "description": "Optional: conclusions already established."},
+                "acceptance": {"type": "string", "description": "Optional: how the result will be judged done."}},
     )
     def spawn_subagent(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         runner = ctx.extras.get("spawn")
         if runner is None:
             return ToolResult(ok=False, error="subagent runtime not attached")
+        handoff = {k: args[k] for k in ("domain", "constraints", "prior", "acceptance")
+                   if isinstance(args.get(k), (str, list)) and args.get(k)}
+        if handoff:
+            return runner(str(args.get("task", "")), str(args.get("mode", "")), handoff=handoff)
         return runner(str(args.get("task", "")), str(args.get("mode", "")))
 
     @host_tool("memory_recall", "Recall typed long-term memory entries.", no_defer=True, requires=("memory",))

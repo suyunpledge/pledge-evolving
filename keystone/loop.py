@@ -197,6 +197,7 @@ class Agent:
         parent_run_id: str = '',
         context_mode: str = 'compact',
         probes=None,
+        specialists=None,
     ) -> None:
         self.home = Path(home)
         self.workspace = Path(workspace)
@@ -346,6 +347,24 @@ class Agent:
         from .artifacts import ArtifactStore
         self.artifacts = ArtifactStore(self.home, self.workspace)
         self.offloader = ToolResultOffloader(self.workspace, artifact_store=self.artifacts)
+        # 专家路由（keystone.specialists）：只有根（主控）持有路由表；未配置 = 今天的行为。
+        from .specialists import SpecialistTable
+        if specialists is not None and not isinstance(specialists, SpecialistTable):
+            raise ValueError('specialists must be a host-created SpecialistTable')
+        self.specialists = specialists if specialists is not None and specialists.active else None
+        # Specialists are cut from the full surface; under delegation=require the
+        # brain's own surface loses the tools that configured domains own.
+        self._specialist_pool = self.registry
+        withheld = self.specialists.brain_withheld() if self.specialists is not None else set()
+        if withheld:
+            self._specialist_pool = self.registry.clone()
+            self.registry = self.registry.clone()
+            for name in withheld:
+                self.registry.unregister(name)
+        from .retrieval_catalog import CatalogIndex
+        catalog = CatalogIndex(self.artifacts)
+        self.catalog_index = catalog if ((self.specialists and 'retrieval' in self.specialists.routes)
+                                         or catalog.path.is_file()) else None
         from .conversation_prefix import ConversationPrefix
         # 快照持久化到 home：GUI client/server.py 每轮新建 Agent，内存快照恒空——磁盘快照让第二轮请求也能逐字节延续首轮已发送前缀。
         self._conversation_prefix = ConversationPrefix(
@@ -389,6 +408,8 @@ class Agent:
                  f"Permission mode: {self.policy.mode.value}; sandbox: {self.policy.sandbox.value}."]
         if self.extra_system:
             parts.append(self.extra_system)
+        if self.specialists is not None:
+            parts.append(self.specialists.guidance())
         return "[运行环境]\n" + "\n\n".join(parts)
 
     def _execution_specs(self):
@@ -578,21 +599,27 @@ class Agent:
             secret_scope=self.secret_scope, checkpoints=self.checkpoints, file_guard=self.file_guard,
             subscriber=self._observe_event, tool_emit=self._emit, agent=self.name, depth=self.depth,
             capabilities={'memory': self.memory, 'capabilities': self.capabilities, 'spawn': self._spawn_handler,
-                          'artifact_store': self.artifacts, 'artifact_inline_limit': self.limits.max_tool_result})
+                          'artifact_store': self.artifacts, 'artifact_inline_limit': self.limits.max_tool_result,
+                          'catalog': self.catalog_index})
 
     def _tool_context(self) -> ToolContext:
         return self.execution_context().tool_context()
 
-    def _spawn_handler(self, task: str, mode: str) -> ToolResult:
+    def _spawn_handler(self, task: str, mode: str, *, handoff: dict | None = None) -> ToolResult:
         self._check_cancel()
         task = self.secret_scope.protect_text(task)
         if self.depth >= self.limits.max_depth:
             return ToolResult(ok=False, error=f"max subagent depth {self.limits.max_depth} reached")
         if self.budget[0] <= 0:
             return ToolResult(ok=False, error="subagent spawn budget exhausted")
+        handoff = {k: self.secret_scope.protect_text(str(v)) for k, v in (handoff or {}).items()}
         child_mode = Mode(mode) if mode else None
         child_policy = self.policy.child(child_mode)
         child_name = f"{self.name}/sub{self.depth + 1}"
+        specialist = self._specialist_setup(task, mode, handoff)
+        if specialist is not None:
+            child_policy = specialist['policy']
+            child_name = f"{self.name}/{specialist['route'].domain}"
 
         # Dispatch stage: router seat orders the candidates, teams seat
         # delivers the task message to the chosen member. Both verdicts land
@@ -611,7 +638,9 @@ class Agent:
                        denied=dispatch["delivery"]["denied"][:4])
 
         child_router = self.router
-        if self.child_router_factory is not None:
+        if specialist is not None:
+            child_router = specialist['router']
+        elif self.child_router_factory is not None:
             try:
                 child_router = self.child_router_factory(child_name, child_policy, self.router)
                 if not callable(getattr(child_router, 'complete', None)):
@@ -626,13 +655,13 @@ class Agent:
             router=child_router,
             # a child gets its own activation set, otherwise a child's
             # tool_search silently widens the parent's tool surface too
-            registry=self.registry.clone(),
+            registry=specialist['registry'] if specialist else self.registry.clone(),
             policy=child_policy,
             memory=self.memory,
             capabilities=self.capabilities,
             checkpoints=self.checkpoints,
             session=self.session,
-            limits=self.limits,
+            limits=specialist['limits'] if specialist else self.limits,
             wire_hint=self.wire_hint,
             name=child_name,
             depth=self.depth + 1,
@@ -663,8 +692,14 @@ class Agent:
         child.task_id = self.task_id or self._run_id
         self._emit(type="subagent_spawn", task=task[:300], mode=child_policy.mode.value,
                    depth=child.depth, budget_left=self.budget[0])
+        if specialist is not None:
+            route = specialist['route']
+            self._emit(type='specialist_route', domain=route.domain, member=child_name,
+                       model=list(route.model), tools=sorted(specialist['registry'].names())[:24],
+                       mode=child_policy.mode.value, max_steps=specialist['limits'].max_steps,
+                       source=specialist['source'])
         try:
-            report = child.run(task)
+            report = child.run(specialist['task'] if specialist else task)
         except Exception as exc:  # a failed child must not kill the parent
             from .execution_guard import workflow_status
             status = workflow_status(child.events, child._run_id)
@@ -707,6 +742,9 @@ class Agent:
         self._child_tokens = int(getattr(self, "_child_tokens", 0)) + child_delta
         clean = sanitise_child_output(report.text)
         child_result = report.as_result()
+        extra_meta: dict[str, Any] = {}
+        if specialist is not None:
+            clean, extra_meta = self._specialist_answer(specialist, report, clean)
         self._emit(type="subagent_result", chars=len(clean), steps=len(report.steps),
                    child_run_id=report.run_id, child_task_id=report.task_id,
                    outcome=child_result.outcome, error_code=child_result.error_code,
@@ -717,7 +755,67 @@ class Agent:
             error='' if succeeded else clean[:self.limits.max_tool_result], meta={
                 'depth': child.depth, 'child_run_id': report.run_id, 'child_task_id': report.task_id,
                 'child_outcome': child_result.outcome, 'error_code': child_result.error_code,
-                'execution_state': child_result.execution_state})
+                'execution_state': child_result.execution_state, **extra_meta})
+
+    # -- specialists (keystone.specialists) -------------------------------
+    def _specialist_setup(self, task, mode, handoff):
+        """Resolve a domain route into a clamped child; None = plain sub-agent (today's path)."""
+        if self.specialists is None or self.depth != 0:
+            return None
+        domain = str(handoff.get('domain') or '').strip().lower()
+        route = self.specialists.route_for(domain, task)
+        if route is None:
+            if domain:
+                self._emit(type='specialist_fallback', domain=domain[:40], reason='not_configured')
+            return None
+        from .specialists import Handoff, narrow_registry, specialist_limits, specialist_policy
+        try:
+            router = phase_router(self.phase_catalog, route.model, self.router)
+            policy = specialist_policy(self.policy, route, mode)
+        except Exception as exc:
+            self._emit(type='specialist_fallback', domain=route.domain, reason='model_unavailable',
+                       error=str(exc)[:200])
+            return None
+        registry = narrow_registry(self._specialist_pool, route.tools)
+        ledger = None
+        if route.output == 'catalog':
+            from .retrieval_catalog import CatalogIndex, EvidenceLedger
+            ledger = EvidenceLedger(self.artifacts, label=f'specialist-{route.domain}')
+            ledger.wrap(registry, route.tools)
+            if self.catalog_index is None:
+                self.catalog_index = CatalogIndex(self.artifacts)
+        envelope = Handoff.from_args(task, handoff)
+        return {'route': route, 'router': router, 'policy': policy, 'registry': registry,
+                'limits': specialist_limits(self.limits, route), 'ledger': ledger, 'handoff': envelope,
+                'task': envelope.render(route), 'source': 'explicit' if domain else 'auto'}
+
+    def _specialist_answer(self, specialist, report, clean):
+        """Catalog or receipt for the brain; full retrieved texts stay in the artifact store."""
+        from .specialists import parse_receipt, render_receipt, touched_paths
+        route = specialist['route']
+        meta: dict[str, Any] = {'specialist': {'domain': route.domain, 'model': list(route.model),
+                                               'steps': len(report.steps)}}
+        if route.output == 'catalog':
+            from .retrieval_catalog import build_catalog, render_catalog
+            catalog = build_catalog(clean, specialist['ledger'], question=specialist['handoff'].goal)
+            if catalog['entries']:
+                try:
+                    self.catalog_index.add(catalog['entries'])
+                except (OSError, ValueError) as exc:
+                    self._emit(type='specialist_error', domain=route.domain, error=str(exc)[:200])
+            text = render_catalog(catalog, header=f"[检索目录 retrieval catalog · 模型 {route.model[0]}/{route.model[1]}"
+                                                  f" · {len(report.steps)} 步]")
+            meta['catalog'] = [{k: e[k] for k in ('id', 'title', 'source', 'relevance', 'chars')}
+                               for e in catalog['entries']]
+            self._emit(type='specialist_catalog', domain=route.domain, entries=len(catalog['entries']),
+                       evidence=catalog['evidence_count'], complied=catalog['complied'],
+                       retained_chars=sum(e['chars'] for e in catalog['entries']), shown_chars=len(text))
+            return sanitise_child_output(text), meta
+        receipt = parse_receipt(clean, touched=touched_paths(report.steps))
+        meta['handoff'] = receipt
+        self._emit(type='specialist_receipt', domain=route.domain, complied=receipt['complied'],
+                   evidence=len(receipt['evidence']), open_questions=len(receipt['open_questions']))
+        return sanitise_child_output(render_receipt(receipt, route=route, steps=len(report.steps))), meta
 
     def _dispatch_consult(self, task: str, child_name: str, child_policy: Policy) -> dict[str, Any]:
         """Ask the router/teams seats about an upcoming subagent dispatch.

@@ -91,6 +91,13 @@ def build_agent(
             home=home, workspace=workspace, return_warnings=True)
     from .context_plan import ContextPlan
     context_plan = ContextPlan.from_config(config)
+    # 专家路由默认关闭；配置错误不拖垮启动，退回今天的行为并留下挂载警告。
+    from .specialists import SpecialistTable
+    try:
+        specialists = SpecialistTable.from_config(config)
+    except ValueError as exc:
+        specialists = None
+        mount_warnings.append(f'specialists disabled: {exc}')
     return Agent(
         home=home,
         workspace=workspace,
@@ -124,6 +131,7 @@ def build_agent(
         extra_system=str(config.get("role", "guidance", "") or ""),
         observer=observer,
         probes=probes,
+        specialists=specialists,
     )
 
 

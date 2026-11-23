@@ -94,6 +94,35 @@
     }
   },
   {
+    "id": "specialists",
+    "name": "specialists:routing",
+    "config": {
+      "enabled": false,
+      "autoRoute": false,
+      "domains": {
+        "retrieval": {
+          "model": null
+        },
+        "coding": {
+          "model": null
+        },
+        "computer": {
+          "model": null
+        },
+        "math": {
+          "model": null
+        },
+        "model3d": {
+          "model": null
+        },
+        "video": {
+          "model": null
+        }
+      },
+      "notes": "主控 + 专家模型（keystone.specialists，默认关闭）。enabled=true 后，给某个领域填 model=[provider_id, model] 即为其配置专家：spawn_subagent(domain=…) 把整段子任务交给该模型，工具面按领域收窄、权限不超过主控。retrieval 专家返回目录，主控用 catalog_expand 按需展开全文。未配置 model 的领域退回今天的行为。实测结论见 docs/specialists-ab.md。"
+    }
+  },
+  {
     "id": "lite",
     "name": "provider:lite",
     "config": {
