@@ -64,7 +64,8 @@ class DesktopBoundaryTests(unittest.TestCase):
         run(Client(), [ChatMessage('user', 'test')], model='test', effort=None, cancel=cancelled,
             authorize=sandbox, tool_filter=lambda name: tool_available('sandbox', name),
             chunk=lambda _: None, checkpoint=lambda _: None, status=lambda _: None, next_round=lambda: None)
-        self.assertEqual(observed, available)
+        # Declarations are sorted by name so the request prefix stays stable for prompt caching.
+        self.assertEqual(observed, sorted(available))
         sandbox('keystone_calculator', {'expression': '1+2'}, cancelled)
         with self.assertRaises(ValueError):
             sandbox('keystone_apply_patch', {'patches': 7}, cancelled)

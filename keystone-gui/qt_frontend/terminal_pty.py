@@ -32,6 +32,22 @@ class TerminalScreen(pyte.Screen):
         return history, screen
 
 
+def allow_child_ctrl_c():
+    """Let the terminal's shell receive Ctrl+C on Windows.
+
+    Windows' "ignore Ctrl+C" flag is inherited by child processes. When this
+    process was started with it set (from a background shell, a scheduler, or a
+    parent that used CREATE_NEW_PROCESS_GROUP), PowerShell in the pseudo console
+    inherits it and silently ignores the \\x03 the Stop button sends, so a
+    running command can never be interrupted. Clearing it here only changes what
+    children inherit: this process is not attached to the pseudo console, so
+    the shell's Ctrl+C never reaches it.
+    """
+    if os.name == 'nt':
+        import ctypes
+        ctypes.windll.kernel32.SetConsoleCtrlHandler(None, False)
+
+
 class ProjectPty:
     def __init__(self, root, size):
         self.screen = TerminalScreen(*size)
@@ -48,6 +64,7 @@ class ProjectPty:
             # Qt edits the submitted line. Let the console handle subsequent program input.
             args = ' -NoLogo -NoProfile -NoExit -Command "Remove-Module PSReadLine -ErrorAction SilentlyContinue"'
             environment = '\0'.join(f'{k}={v}' for k, v in sorted(env.items())) + '\0'
+            allow_child_ctrl_c()
             self.process.spawn(str(shell), cmdline=args, cwd=str(root), env=environment)
         else:
             from ptyprocess import PtyProcess
