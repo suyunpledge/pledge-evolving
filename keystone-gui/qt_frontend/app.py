@@ -57,6 +57,13 @@ def main(argv=None):
     icon = root.parent / "desktop" / "keystone.ico"
     if icon.is_file():
         app.setWindowIcon(QIcon(str(icon)))
+    brand = QUrl.fromLocalFile(str(root.parent / "assets" / "keystone-logo-104.png"))
+    # Launch animation slot: shown before the heavy main-window load, ended by its first frame.
+    from .launch import LaunchSlot, should_play
+    launch = None
+    if should_play(args.home, smoke=bool(args.smoke)):
+        app.setQuitOnLastWindowClosed(False)
+        launch = LaunchSlot(args.home, brand).show()
     controller = ChatController(args.home, demo=args.demo)
     if not args.demo:
         from .team_service import work_context
@@ -110,6 +117,7 @@ def main(argv=None):
         return with_productivity((tools, workbench.mcp.call_chat_tool), controller.store.folder)
 
     controller.chat_mcp_tools = chat_mcp_tools
+    workbench.pets.bind(controller, workbench)
     controller.navigateRequested.connect(workbench.navigate)
     controller.browseRequested.connect(workbench.openBrowser)
     controller.modelRequested.connect(workbench.switchChatModel)
@@ -123,14 +131,19 @@ def main(argv=None):
     engine.rootContext().setContextProperty("smokeMode", bool(args.smoke))
     engine.rootContext().setContextProperty("uiFont", ui_font)
     engine.rootContext().setContextProperty("gpuEnabled", not args.software)
-    engine.rootContext().setContextProperty("brandUrl", QUrl.fromLocalFile(str(root.parent / "assets" / "keystone-logo-104.png")))
+    engine.rootContext().setContextProperty("brandUrl", brand)
     warnings = []
     engine.warnings.connect(lambda items: warnings.extend(str(item) for item in items))
     engine.load(QUrl.fromLocalFile(str(root / "qml" / "Main.qml")))
     if not engine.rootObjects():
+        if launch is not None:
+            launch.skip()
         print("\n".join(warnings), file=sys.stderr, flush=True)
         return 1
     window = engine.rootObjects()[0]
+    if launch is not None:
+        launch.finished.connect(lambda: app.setQuitOnLastWindowClosed(True))
+        window.frameSwapped.connect(launch.markReady, Qt.ConnectionType.SingleShotConnection)
     if args.smoke:
         window.setFlag(Qt.WindowType.WindowDoesNotAcceptFocus, True)
         window.setPosition(-4000, -3000)

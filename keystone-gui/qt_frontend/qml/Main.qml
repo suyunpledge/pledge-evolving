@@ -46,7 +46,10 @@ ApplicationWindow {
         if (!exitConfirmed && (workbench.hasUnsaved || workbench.busy || workbench.terminalRunning || controller.busy || workbench.mcp.saving || workbench.mediaModels.saving)) {
             event.accepted = false
             exitPopup.open()
+            return
         }
+        // 桌面宠物是独立的顶层窗口，主窗口关闭时一并退出，免得程序只剩宠物在后台运行。
+        if (petLoader.item) Qt.callLater(Qt.quit)
     }
     property string sessionQuery: ""
     property var material: QtObject {
@@ -918,6 +921,7 @@ ApplicationWindow {
             GlassButton { objectName: "quickSetupEntry"; material: window.material; width: parent.width; text: window.label("一键配置模型", "Quick model setup"); glyph: "plug"; onClicked: { settings.close(); onboarding.showSetup() } }
             GlassButton { objectName: "welcomeGuideEntry"; material: window.material; width: parent.width; text: window.label("重新运行首次引导", "Run setup guide"); glyph: "sparkles"; onClicked: { settings.close(); onboarding.showGuide() } }
             GlassButton { material: window.material; width: parent.width; text: "壁纸"; glyph: "image"; onClicked: { settings.close(); wallpaperSettings.open() } }
+            GlassButton { objectName: "petSettingsEntry"; material: window.material; width: parent.width; text: "桌面宠物"; glyph: "sparkles"; onClicked: { settings.close(); petSettings.open() } }
             GlassButton { material: window.material; width: parent.width; text: "调整玻璃外观"; glyph: "sliders-horizontal"; onClicked: {settings.close(); options.open()} }
             GlassButton { material: window.material; width: parent.width; text: "打开完整工作台"; quiet: true; onClicked: controller.openWorkbench("config") }
             Text { width: parent.width; text: gpuEnabled ? "GPU 渲染 · 原生文本输入" : "兼容渲染 · 玻璃光学效果不可用"; color: "#798797"; font.pixelSize: 11 }
@@ -938,6 +942,25 @@ ApplicationWindow {
         material: window.material; wallpaper: window.wallpaper
         reduced: controller.reduceMotion
         onClosed: if (window.chatVisible) window.focusWorkComposer()
+    }
+    PetSettings {
+        id: petSettings
+        parent: Overlay.overlay
+        x: Math.round((parent.width - width) / 2); y: Math.round((parent.height - height) / 2)
+        width: Math.min(480, window.width - 48)
+        height: Math.min(implicitHeight, window.height - 48)
+        material: window.material; pets: workbench.pets
+        onClosed: if (window.chatVisible) window.focusWorkComposer()
+    }
+    Loader {
+        id: petLoader
+        objectName: "petLoader"
+        active: workbench.pets.enabled
+        sourceComponent: PetWindow {
+            pets: workbench.pets; host: window; reduced: controller.reduceMotion
+            visible: true
+            onSettingsRequested: petSettings.open()
+        }
     }
     ChangeReview {
         id: changeReview
@@ -1358,6 +1381,8 @@ ApplicationWindow {
         add("切换到 Chat", "命令", "message-square", () => { controller.setConversationMode("chat"); workbench.navigate("chat") }, "mode chat")
         add("切换到 Work", "命令", "wrench", () => { controller.setConversationMode("work"); workbench.navigate("chat") }, "mode work")
         add("壁纸", "命令", "image", () => wallpaperSettings.open(), "wallpaper background")
+        add("桌面宠物…", "命令", "sparkles", () => petSettings.open(), "pet desktop 宠物")
+        add(workbench.pets.enabled ? "隐藏桌面宠物" : "显示桌面宠物", "命令", "sparkles", () => workbench.pets.toggle(), "pet toggle show hide 宠物")
         add("事前规划与外观", "命令", "sliders-horizontal", () => options.open(), "planning glass appearance 规划")
         add("连接与外观", "命令", "settings-2", () => settings.open(), "gateway connection settings")
         add("重新运行首次引导", "命令", "sparkles", () => onboarding.showGuide(), "welcome guide onboarding language")
@@ -1384,7 +1409,7 @@ ApplicationWindow {
         }
         return out
     }
-    Shortcut { sequence: "Escape"; enabled: controller.busy && !options.opened && !settings.opened && !wallpaperSettings.opened && !searchPanel.opened && !modelMenu.opened && !effortPicker.opened && !modelEditor.opened && !onboarding.opened && !localToolSetup.opened && !mediaModels.opened && !toolCatalog.opened; onActivated: controller.stop() }
+    Shortcut { sequence: "Escape"; enabled: controller.busy && !options.opened && !settings.opened && !wallpaperSettings.opened && !petSettings.opened && !searchPanel.opened && !modelMenu.opened && !effortPicker.opened && !modelEditor.opened && !onboarding.opened && !localToolSetup.opened && !mediaModels.opened && !toolCatalog.opened; onActivated: controller.stop() }
     Connections {
         target: controller
         function onDraftChanged() { if (editor.text !== controller.draft) editor.text = controller.draft }

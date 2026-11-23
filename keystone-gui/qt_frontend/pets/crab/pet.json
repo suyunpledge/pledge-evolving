@@ -1,0 +1,13 @@
+{
+  "format": 1,
+  "name": "像素小蟹",
+  "size": 96,
+  "states": {
+    "idle": "idle.svg",
+    "walk": {"sheet": "walk.svg", "frames": 2, "fps": 6},
+    "sleep": "sleep.svg",
+    "think": "think.svg",
+    "happy": "happy.svg",
+    "worried": "worried.svg"
+  }
+}

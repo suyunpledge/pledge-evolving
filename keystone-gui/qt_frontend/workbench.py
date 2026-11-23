@@ -15,6 +15,7 @@ from brand_marks import mark_path
 import provider_catalog
 from .mcp_catalog import McpCatalog
 from .search_service import SearchService
+from .pets import PetController
 from .wallpaper import Wallpaper
 from .onboarding import Onboarding
 from .model_rows import ModelRows
@@ -62,6 +63,7 @@ class WorkbenchController(QObject):
         self._mcp = McpCatalog(self.home, self, demo=demo)
         self._search = SearchService(self.home, self, demo=demo)
         self._wallpaper = Wallpaper(self.home, self)
+        self._pets = PetController(self.home, self)
         self._local_tools = LocalTools(self.home, self, demo=demo)
         self._media_models = MediaModels(self.home, self, demo=demo)
         self._onboarding = Onboarding(self.home, self, demo=demo)
@@ -146,6 +148,7 @@ class WorkbenchController(QObject):
     mcp = Property(QObject, lambda s: s._mcp, constant=True)
     search = Property(QObject, lambda s: s._search, constant=True)
     wallpaper = Property(QObject, lambda s: s._wallpaper, constant=True)
+    pets = Property(QObject, lambda s: s._pets, constant=True)
     localTools = Property(QObject, lambda s: s._local_tools, constant=True)
     mediaModels = Property(QObject, lambda s: s._media_models, constant=True)
     onboarding = Property(QObject, lambda s: s._onboarding, constant=True)

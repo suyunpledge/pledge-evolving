@@ -46,6 +46,34 @@ Coding 页的任务变更摘要也提供「回退本次修改」，复用相同�
 源码启动器会加载新界面代码；已经运行的 Keystone 和网关需要重启。
 旧网关产生的记录只能显示已有差异，不能补造修改前的快照。
 
+## 桌面宠物
+
+「连接与外观 → 桌面宠物」或命令面板（Ctrl+K，搜「宠物」）可显示 / 隐藏宠物、切换和改名。
+宠物是独立的无边框透明置顶小窗：拖动移动并记住位置，点击打开 Keystone，右键可换宠物或隐藏。
+它跟随 Agent：工作时思考，完成时开心，出错或有待批准的操作时担心；空闲时偶尔走动，久无动静会睡着。
+开启「减少动态效果」时不走动、不播放帧动画；隐藏时所有定时器暂停。主窗口关闭时宠物一并退出。
+
+内置三只原创占位宠物 `crab` / `robot` / `whale`（`pets/`）。自定义宠物包放在
+`<home>/gui/qt/pets/<id>/`，与内置同名即替换其形象，无效时退回内置；格式见 [pets/README.md](pets/README.md)。
+是否显示、当前宠物、自定义名字和位置保存在桌面设置文件（`keystone.compat.desktop_config`）的 `"pets"` 键。
+
+## 启动动画
+
+程序启动时先弹出一个小的启动窗口（默认是约 1.4 秒的品牌标志淡入），然后才加载主界面。
+主窗口一画出第一帧，启动窗口就淡出（约 0.2 秒），无论动画是否播完，所以它不会推迟可用时间；
+加载比动画慢时停在最后一帧。点击或 Esc 跳过。减少动态效果、`--smoke`、`KEYSTONE_NO_SPLASH=1`
+或 `"launch": {"enabled": false}` 时不显示。
+
+替换为自己的动画（先匹配者生效）：
+
+1. 桌面设置文件里的 `"launch": {"source": "<路径>"}`（相对路径以 `<home>/gui/qt/launch/` 为基准）；
+2. `<home>/gui/qt/launch/launch.<扩展名>`。
+
+支持 `.qml`（根元素为 Item，可读取 `launch.ready`、调用 `launch.skip()`）、视频
+`.mp4 .webm .mov .m4v`（静音）、动图 `.gif .webp`、静态图 `.png .jpg .jpeg .svg`。
+文件缺失、过大或类型不符时使用默认动画。默认动画只用 Animator，主界面加载时也不卡顿；
+视频和 QML 动画在主界面加载期间可能停顿。实现见 `launch.py`。
+
 ## 本地验证
 
 从仓库根目录运行，使用 Qt 专用解释器：
@@ -56,6 +84,7 @@ $env:PYTHONPATH = (Get-Location).Path
 Set-Location keystone-gui
 ..\.venv\qt\Scripts\python.exe -m unittest qt_frontend.test_changes qt_frontend.test_backend qt_frontend.test_permissions -q
 ..\.venv\qt\Scripts\python.exe -m unittest qt_frontend.test_rendering -q
+..\.venv\qt\Scripts\python.exe -m unittest qt_frontend.test_pets qt_frontend.test_launch -q
 ..\.venv\qt\Scripts\python.exe -m unittest development_mode.test_agent_panel -q
 ```
 
