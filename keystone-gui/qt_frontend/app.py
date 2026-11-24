@@ -12,6 +12,7 @@ from PySide6.QtGui import QFont, QGuiApplication, QIcon
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuick import QQuickWindow, QSGRendererInterface
 from .controller import ChatController
+from .pet_chat import PetChat
 from .media_generation import tool_set as media_tool_set
 from .workbench import WorkbenchController
 from .productivity_tools import with_productivity
@@ -118,6 +119,7 @@ def main(argv=None):
 
     controller.chat_mcp_tools = chat_mcp_tools
     workbench.pets.bind(controller, workbench)
+    pet_chat = PetChat(controller, workbench.pets)
     controller.navigateRequested.connect(workbench.navigate)
     controller.browseRequested.connect(workbench.openBrowser)
     controller.modelRequested.connect(workbench.switchChatModel)
@@ -128,6 +130,7 @@ def main(argv=None):
     engine = QQmlApplicationEngine()
     engine.rootContext().setContextProperty("controller", controller)
     engine.rootContext().setContextProperty("workbench", workbench)
+    engine.rootContext().setContextProperty("petChatService", pet_chat)
     engine.rootContext().setContextProperty("smokeMode", bool(args.smoke))
     engine.rootContext().setContextProperty("uiFont", ui_font)
     engine.rootContext().setContextProperty("gpuEnabled", not args.software)
@@ -150,6 +153,7 @@ def main(argv=None):
         window.show()
     app.aboutToQuit.connect(controller.shutdown)
     app.aboutToQuit.connect(workbench.shutdown)
+    app.aboutToQuit.connect(pet_chat.shutdown)
     if not args.demo:
         QTimer.singleShot(250, workbench.start_host)
     if args.page != 'chat':

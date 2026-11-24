@@ -71,10 +71,16 @@ class PackTests(unittest.TestCase):
     def test_builtin_packs_are_original_svgs_with_every_state(self):
         packs, errors = scan_packs(self.home)
         self.assertEqual(errors, [])
-        self.assertEqual(set(packs), {'crab', 'robot', 'whale'})
+        self.assertEqual(set(packs), {'crab', 'robot', 'whale', 'mingyue'})
         for pack in packs.values():
             self.assertTrue(pack['builtin'])
             self.assertEqual(set(pack['states']), set(STATES))
+            if pack['id'] == 'mingyue':
+                # 溟月·鲸鱼娘：MIT 授权素材（见 pets/mingyue/NOTICE.md），webp 立绘。
+                self.assertTrue((BUILTIN_ROOT / 'mingyue' / 'NOTICE.md').is_file())
+                for art in pack['states'].values():
+                    self.assertTrue(QUrl(art['source']).toLocalFile().endswith('.webp'))
+                continue
             self.assertEqual(pack['states']['walk']['kind'], 'sheet')
             for art in pack['states'].values():
                 self.assertTrue(QUrl(art['source']).toLocalFile().endswith('.svg'))

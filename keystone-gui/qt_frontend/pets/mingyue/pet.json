@@ -1,0 +1,20 @@
+{
+  "format": 1,
+  "name": "溟月·鲸鱼娘",
+  "size": 128,
+  "smooth": true,
+  "facing": "right",
+  "states": {
+    "idle": "idle-cute.webp",
+    "walk": "running.webp",
+    "sleep": "sleep.webp",
+    "think": "thinking.webp",
+    "happy": "success.webp",
+    "worried": "failure.webp"
+  },
+  "faces": {
+    "think": "curious.webp",
+    "happy": "celebrate.webp",
+    "worried": "meme-cry.webp"
+  }
+}

@@ -1038,6 +1038,7 @@ ApplicationWindow {
         active: workbench.pets.enabled
         sourceComponent: PetWindow {
             pets: workbench.pets; host: window; reduced: controller.reduceMotion
+            petChat: typeof petChatService !== 'undefined' ? petChatService : null
             visible: true
             onSettingsRequested: petSettings.open()
         }

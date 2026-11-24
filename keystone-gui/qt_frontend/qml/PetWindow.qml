@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Window
 
-// 桌面宠物：无边框、透明、置顶的小窗口。可拖动并记住位置，点击打开 Keystone，
+// 桌面宠物：无边框、透明、置顶的小窗口。可拖动并记住位置，点击聊两句（无聊天服务时打开 Keystone），
 // 随 Agent 状态思考 / 开心 / 担心。空闲时只有低频定时器（眨眼、闲逛、入睡），
 // 减少动态效果时不走动、不播放帧动画，窗口隐藏时所有定时器暂停。
 Window {
@@ -11,6 +11,8 @@ Window {
     required property var pets
     required property var host
     required property bool reduced
+    property var petChat: null
+    property bool chatOpen: false
     signal settingsRequested()
 
     readonly property var info: pets.current
@@ -34,8 +36,10 @@ Window {
     readonly property int faceSpace: Object.keys(faces).length ? 68 : 0
     readonly property string face: animState !== "idle" && animState !== "walk" ? (faces[animState] || "") : ""
 
-    width: artW + 24 + faceSpace
-    height: artH + bubbleSpace
+    readonly property int chatW: 268
+    readonly property int chatH: chatOpen && petChat ? 200 : 0
+    width: Math.max(artW + 24 + faceSpace, chatH ? chatW + 24 : 0)
+    height: artH + bubbleSpace + chatH
     color: "transparent"
     flags: Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.NoDropShadowWindowHint
     transientParent: null
@@ -62,6 +66,15 @@ Window {
         host.raise()
         host.requestActivate()
     }
+    function toggleChat() {
+        if (!petChat) return
+        chatOpen = !chatOpen
+        if (chatOpen) {
+            if (!petChat.reply) petChat.refreshGreeting()
+            pet.requestActivate()
+            Qt.callLater(() => chatInput.forceActiveFocus())
+        }
+    }
     function wake() {
         if (ambient === "sleep") ambient = "idle"
         drowsy.restart()
@@ -80,6 +93,13 @@ Window {
         if (pets.mood) Qt.callLater(wake)
     }
     onReducedChanged: if (reduced) stopWalking()
+    onChatOpenChanged: {
+        if (!petChat) return
+        if (chatOpen) stopWalking()
+        // 窗口向上长高，宠物本体在屏幕上不动；保存的位置始终折算成收起态。
+        pet.y -= chatOpen ? 200 : -200
+        pets.savePosition(pet.x, pet.y + (chatOpen ? 200 : 0))
+    }
     onLiveChanged: if (!live) stopWalking()
     Component.onCompleted: { place(); drowsy.restart() }
 
@@ -100,7 +120,7 @@ Window {
         id: wander
         interval: 22000 + Math.random() * 26000
         repeat: true
-        running: pet.moving && pet.animState === "idle" && !drag.pressed
+        running: pet.moving && pet.animState === "idle" && !drag.pressed && !pet.chatOpen
         onTriggered: {
             interval = 22000 + Math.random() * 26000
             const s = pet.screen
@@ -132,7 +152,7 @@ Window {
     Timer {
         id: drowsy
         interval: 180000
-        running: pet.live && pet.animState === "idle"
+        running: pet.live && pet.animState === "idle" && !pet.chatOpen
         onTriggered: if (!pets.mood) pet.ambient = "sleep"
     }
     // 精灵图翻帧（只在当前状态确有多帧且允许动效时运行）。
@@ -169,7 +189,7 @@ Window {
         id: body
         objectName: "petBody"
         width: pet.artW; height: pet.artH
-        x: 12 + pet.faceSpace; y: pet.bubbleSpace
+        x: 12 + pet.faceSpace; y: pet.bubbleSpace + pet.chatH
         transform: [
             Scale { origin.x: body.width / 2; xScale: pet.mirrored ? -1 : 1 },
             Translate { id: jitter }
@@ -214,8 +234,8 @@ Window {
         SequentialAnimation {
             id: hop
             loops: 2
-            NumberAnimation { target: body; property: "y"; to: pet.bubbleSpace - 14; duration: 170; easing.type: Easing.OutQuad }
-            NumberAnimation { target: body; property: "y"; to: pet.bubbleSpace; duration: 190; easing.type: Easing.InQuad }
+            NumberAnimation { target: body; property: "y"; to: pet.bubbleSpace + pet.chatH - 14; duration: 170; easing.type: Easing.OutQuad }
+            NumberAnimation { target: body; property: "y"; to: pet.bubbleSpace + pet.chatH; duration: 190; easing.type: Easing.InQuad }
         }
         SequentialAnimation {
             id: shake
@@ -235,7 +255,7 @@ Window {
                                        : pet.animState === "sleep" ? ["z", "z Z", "z Z z"][bubbleClock.tick]
                                        : pet.animState === "worried" ? "!"
                                        : pet.animState === "happy" ? "✓" : ""
-        visible: !!mark && !pet.face
+        visible: !!mark && !pet.face && !pet.chatOpen
         anchors.horizontalCenter: body.horizontalCenter
         anchors.horizontalCenterOffset: pet.artW * 0.22
         y: 2
@@ -267,6 +287,75 @@ Window {
         }
     }
 
+    // ------------------------------------------------------------- pet chat
+
+    Rectangle {
+        id: chatPanel
+        objectName: "petChatPanel"
+        visible: pet.chatH > 0
+        x: 12; y: 2
+        width: pet.chatW; height: pet.chatH - 10; radius: 14
+        color: "#f7fafc"; border.color: "#8c9aa8"; border.width: 1.5
+        Column {
+            anchors.fill: parent; anchors.margins: 10; spacing: 6
+            Text {
+                width: parent.width
+                text: (pet.info.name || "桌面宠物") + " · 聊两句"
+                color: "#5a6b7c"; font.pixelSize: 11; font.weight: Font.DemiBold
+                elide: Text.ElideRight
+            }
+            Text {
+                id: chatReply
+                objectName: "petChatReply"
+                width: parent.width
+                text: pet.petChat ? (pet.petChat.reply || pet.petChat.greeting) : ""
+                color: "#26333f"; font.pixelSize: 12
+                wrapMode: Text.Wrap; maximumLineCount: 6; elide: Text.ElideRight
+                textFormat: Text.PlainText
+            }
+            Text {
+                width: parent.width
+                visible: pet.petChat && pet.petChat.error !== ""
+                text: pet.petChat ? pet.petChat.error : ""
+                color: "#b3402a"; font.pixelSize: 11
+                wrapMode: Text.Wrap; maximumLineCount: 2; elide: Text.ElideRight
+            }
+            Row {
+                width: parent.width; spacing: 6
+                TextField {
+                    id: chatInput
+                    objectName: "petChatInput"
+                    width: parent.width - 64
+                    placeholderText: pet.petChat && pet.petChat.busy ? "正在想…" : "和她说点什么…"
+                    font.pixelSize: 12
+                    enabled: pet.petChat && !pet.petChat.busy
+                    onAccepted: chatSend.send()
+                }
+                Button {
+                    id: chatSend
+                    objectName: "petChatSend"
+                    width: 58; height: chatInput.height
+                    text: pet.petChat && pet.petChat.busy ? "停止" : "发送"
+                    font.pixelSize: 12
+                    onClicked: {
+                        if (!pet.petChat) return
+                        if (pet.petChat.busy) { pet.petChat.stop(); return }
+                        const text = chatInput.text
+                        if (text.trim() === "") return
+                        chatInput.text = ""
+                        pet.petChat.send(text)
+                    }
+                }
+            }
+        }
+    }
+    Shortcut {
+        sequence: "Escape"
+        enabled: pet.chatOpen
+        context: Qt.WindowShortcut
+        onActivated: pet.chatOpen = false
+    }
+
     // ------------------------------------------------------------ interaction
 
     MouseArea {
@@ -276,7 +365,7 @@ Window {
         acceptedButtons: Qt.LeftButton | Qt.RightButton
         cursorShape: moved ? Qt.ClosedHandCursor : Qt.PointingHandCursor
         Accessible.role: Accessible.Button
-        Accessible.name: (pet.info.name || "桌面宠物") + "，点击打开 Keystone，拖动可移动"
+        Accessible.name: (pet.info.name || "桌面宠物") + (pet.petChat ? "，点击聊天，拖动可移动" : "，点击打开 Keystone，拖动可移动")
         property point pressAt
         property point origin
         property bool moved: false
@@ -300,7 +389,8 @@ Window {
         }
         onReleased: mouse => {
             if (mouse.button !== Qt.LeftButton) return
-            if (moved) pets.savePosition(pet.x, pet.y)
+            if (moved) pets.savePosition(pet.x, pet.y + (pet.chatOpen ? 200 : 0))
+            else if (pet.petChat) pet.toggleChat()
             else pet.activateHost()
             moved = false
         }
@@ -311,6 +401,11 @@ Window {
         objectName: "petMenu"
         popupType: Popup.Window
         MenuItem { text: "打开 Keystone"; onTriggered: pet.activateHost() }
+        MenuItem {
+            text: pet.chatOpen ? "收起聊天" : "聊两句"
+            enabled: !!pet.petChat
+            onTriggered: pet.toggleChat()
+        }
         Menu {
             id: switchMenu
             title: "换一只宠物"
