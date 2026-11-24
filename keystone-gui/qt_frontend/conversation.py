@@ -21,6 +21,8 @@ TOOL_LABELS = {
     'apply_patch': '应用补丁', 'delete_file': '删除文件', 'public_search': '联网搜索',
     '7zip_extract': '7-Zip 解压', 'comfyui_run': 'ComfyUI',
     'generate_image': '生成图片', 'generate_video': '生成视频',
+    'office_list': '列出办公文件', 'office_read': '读取办公内容', 'office_create': '新建办公文件',
+    'office_apply': '提交办公编辑', 'office_export': '导出办公文件',
     'enter_work': '切换至 Work',
     'update_todos': '更新待办清单',
     'computer_observe': '读取窗口控件', 'computer_screenshot': '截取窗口画面',

@@ -3,8 +3,9 @@ from pathlib import Path
 from keystone.policy import Decision, Policy, ToolEffect, READ_PATH_TOOLS, WRITE_TOOLS
 from keystone.desktop_permissions import profile_policy
 from .productivity_tools import CATALOG, FILES
+from .office_controller import CATALOG as OFFICE, OFFICE_WRITES
 
-MEDIATED = READ_PATH_TOOLS | CATALOG.keys() | {'write_file', 'edit_file', 'apply_patch', 'delete_file', 'tool_search',
+MEDIATED = READ_PATH_TOOLS | CATALOG.keys() | OFFICE.keys() | {'write_file', 'edit_file', 'apply_patch', 'delete_file', 'tool_search',
                              'public_search', '7zip_extract', 'generate_image', 'generate_video',
                              'calculator', 'datetime', 'text_transform', 'unit_convert'}
 
@@ -39,7 +40,9 @@ def authorize(profile, workspace, name, args, approve, cancel=None, template=Non
     # policy. Sandbox exposes only the mediated allowlist above; manual/full
     # can reach other host tools after this explicit desktop grant.
     effect = ToolEffect.FILE_READ if name in READ_PATH_TOOLS else None
-    if name in WRITE_TOOLS or name in FILES or name in {'7zip_extract', 'comfyui_run', 'generate_image', 'generate_video'}:
+    if name in {'office_list', 'office_read'}:
+        effect = ToolEffect.FILE_READ
+    if name in WRITE_TOOLS or name in FILES or name in OFFICE_WRITES or name in {'7zip_extract', 'comfyui_run', 'generate_image', 'generate_video'}:
         effect = ToolEffect.WRITE
     decision = policy.evaluate(name, args=args, touching=paths, effect=effect)
     decision = policy.resolve_ask(decision)

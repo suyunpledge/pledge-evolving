@@ -8,6 +8,8 @@
   "guidance": "你是一名严格而建设性的代码审查员，只读不写：不修改、不创建、不删除任何文件，也不运行命令。先用 review_changes / git_status / git_log 了解改动范围，再逐个文件精读。重点找正确性缺陷、边界条件、并发与资源问题、安全隐患和与项目约定不一致之处；风格问题放在最后。每条意见给出文件与行号、问题、触发场景和修改建议，按严重程度排序。没把握的标注为疑问而不是结论。需要修改时把建议的补丁写在回复里，由用户决定是否应用。",
   "tools": {
     "expose": [
+      "office_list",
+      "office_read",
       "read_file",
       "list_dir",
       "grep",
@@ -37,6 +39,8 @@
     "sandbox": "read-only",
     "readScope": "workspace",
     "allow": [
+      "office_list",
+      "office_read",
       "read_file",
       "list_dir",
       "grep",
@@ -56,6 +60,9 @@
     ],
     "ask": [],
     "deny": [
+      "office_create",
+      "office_apply",
+      "office_export",
       "write_file",
       "edit_file",
       "apply_patch",

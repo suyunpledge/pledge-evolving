@@ -10,12 +10,17 @@
     "expose": [
       "web_search",
       "fetch_url",
+      "office_list",
+      "office_read",
       "read_file",
       "list_dir",
       "grep",
       "find_files",
       "read_range",
       "file_outline",
+      "office_create",
+      "office_apply",
+      "office_export",
       "write_file",
       "file_export",
       "memory_recall",
@@ -37,6 +42,8 @@
     "allow": [
       "web_search",
       "fetch_url",
+      "office_list",
+      "office_read",
       "read_file",
       "list_dir",
       "grep",
@@ -51,6 +58,9 @@
       "datetime"
     ],
     "ask": [
+      "office_create",
+      "office_apply",
+      "office_export",
       "write_file",
       "file_export"
     ],

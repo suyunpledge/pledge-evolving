@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self' qrc:; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'"
+    />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>办公</title>
+    <link rel="stylesheet" href="office.css" />
+    <script defer src="qrc:///qtwebchannel/qwebchannel.js"></script>
+    <script defer src="office.js"></script>
+  </head>
+  <body>
+    <main id="home">
+      <h1>办公</h1>
+      <p class="lead">在本地创建文档、表格和演示，与 AI 一起编辑。</p>
+      <form id="homeAsk" class="prompt">
+        <input
+          aria-label="让 AI 创建办公文件"
+          placeholder="让 AI 创建一份报告、表格或演示…"
+        /><button class="primary">发送</button>
+      </form>
+      <div class="cards">
+        <button data-create="document">
+          <b class="type document">W</b><strong>空白文档</strong
+          ><small>报告、方案、会议纪要</small>
+        </button>
+        <button data-create="spreadsheet">
+          <b class="type spreadsheet">X</b><strong>空白表格</strong
+          ><small>数据、计算与汇总</small>
+        </button>
+        <button data-create="presentation">
+          <b class="type presentation">P</b><strong>空白演示</strong
+          ><small>幻灯片与汇报</small>
+        </button>
+        <button id="pick">
+          <b class="type import">↗</b><strong>导入文件</strong
+          ><small>提取文本、单元格或幻灯片文字为副本</small>
+        </button>
+      </div>
+      <h2>最近文件</h2>
+      <div id="recent"></div>
+    </main>
+    <section id="editor" hidden>
+      <header>
+        <button id="back">‹ 办公</button><b id="kindIcon" class="type"></b
+        ><input
+          id="title"
+          data-field="title"
+          aria-label="文件名"
+          maxlength="120"
+        /><span class="spacer"></span><button id="undo">撤销我的编辑</button
+        ><button id="export" class="primary">导出</button>
+      </header>
+      <nav id="toolbar">
+        <button id="add"></button
+        ><select id="style" aria-label="段落样式">
+          <option value="paragraph">正文</option>
+          <option value="heading">标题</option>
+          <option value="bullet">项目符号</option>
+        </select>
+        <label id="sheetAddress" hidden
+          >单元格
+          <input id="cellAddress" value="A1" aria-label="跳转到单元格" /><button
+            id="goCell"
+          >
+            转到
+          </button></label
+        >
+        <button id="play" hidden>放映</button><span class="spacer"></span
+        ><button id="aiToggle" aria-expanded="true">AI 协作</button>
+      </nav>
+      <div class="desk">
+        <aside id="outline"></aside>
+        <div id="canvas"></div>
+        <aside id="collab">
+          <h2>AI 协作</h2>
+          <label
+            >写入模式
+            <select id="mode">
+              <option value="suggest">建议</option>
+              <option value="direct">直接编辑</option>
+            </select></label
+          >
+          <div class="selection" id="selection">整份文件</div>
+          <form id="ask">
+            <textarea
+              placeholder="描述想要的修改…"
+              aria-label="AI 编辑要求"
+            ></textarea
+            ><button class="primary">发送给 AI</button>
+          </form>
+          <div id="agentState" role="status"></div>
+          <h3>待处理建议</h3>
+          <div id="proposals"></div>
+          <details>
+            <summary>编辑历史</summary>
+            <div id="history"></div>
+          </details>
+          <button id="undoAI">撤销 AI 修改</button>
+        </aside>
+      </div>
+      <footer>
+        <span id="saveState" role="status"></span><span id="detail"></span>
+      </footer>
+    </section>
+    <div id="message" role="status" hidden>
+      <span></span><button id="dismiss" aria-label="关闭提示">×</button>
+    </div>
+    <dialog id="conflict">
+      <h2>同一字段有更新</h2>
+      <p>本地草稿和最新保存的内容不同。</p>
+      <button id="useLatest">采用已保存内容</button
+      ><button id="useDraft">保存我的草稿</button>
+    </dialog>
+    <dialog id="presentation">
+      <div id="screen"></div>
+      <div>
+        <button id="prevSlide">上一页</button
+        ><button id="nextSlide">下一页</button
+        ><button id="endShow">结束放映</button>
+      </div>
+    </dialog>
+  </body>
+</html>

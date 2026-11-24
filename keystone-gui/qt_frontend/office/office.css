@@ -1,0 +1,471 @@
+/* Office's local canvas uses the palette and paper surfaces from Claude's office-suite design. */
+:root {
+  color-scheme: dark;
+  --bg: #0d1118;
+  --side: #10161f;
+  --surface: #141b25;
+  --raised: #202b3a;
+  --line: #2c3746;
+  --text: #eef2f7;
+  --muted: #a9b6c7;
+  --blue: #5b9bf8;
+  --ember: #e89d5a;
+  font:
+    14px/1.5 "Segoe UI",
+    "Microsoft YaHei UI",
+    sans-serif;
+  color: var(--text);
+  background: var(--bg);
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  height: 100vh;
+}
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+button,
+select {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+button:hover,
+select:hover {
+  background: var(--raised);
+}
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+:focus-visible {
+  outline: 2px solid #a9cbff;
+  outline-offset: 1px;
+}
+.primary {
+  background: #316ec8;
+  border-color: #588bd5;
+  color: white;
+}
+.primary:hover {
+  background: #3d7fe0;
+}
+input,
+textarea {
+  background: transparent;
+  border: 0;
+}
+textarea {
+  resize: vertical;
+}
+small,
+.lead,
+.selection,
+#agentState,
+footer,
+#detail {
+  color: var(--muted);
+}
+[hidden] {
+  display: none !important;
+}
+.spacer {
+  flex: 1;
+}
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+h1 {
+  font-size: 32px;
+  letter-spacing: -1px;
+}
+h2 {
+  font-size: 17px;
+}
+h3,
+summary {
+  font-size: 13px;
+  font-weight: 650;
+}
+#home {
+  max-width: 1130px;
+  margin: auto;
+  padding: clamp(20px, 5vw, 64px);
+  height: 100%;
+  overflow: auto;
+}
+.lead {
+  margin: 6px 0 24px;
+}
+.prompt {
+  display: flex;
+  padding: 9px 10px 9px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.prompt input {
+  min-width: 0;
+  flex: 1;
+}
+.cards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin: 22px 0 36px;
+}
+.cards button {
+  text-align: left;
+  padding: 16px 12px;
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-height: 121px;
+}
+.cards strong {
+  font-size: 16px;
+}
+.cards small {
+  font-size: 12px;
+}
+.type {
+  width: 29px;
+  height: 29px;
+  display: inline-grid;
+  place-items: center;
+  color: #fff;
+  border-radius: 6px;
+  font-weight: 700;
+  flex: none;
+}
+.cards .type {
+  margin-bottom: 5px;
+}
+.document {
+  background: #3d7fe0;
+}
+.spreadsheet {
+  background: #2f885c;
+}
+.presentation {
+  background: #b76535;
+}
+.import {
+  background: #38495f;
+}
+.recent {
+  display: flex;
+  width: 100%;
+  gap: 12px;
+  align-items: center;
+  border-width: 0 0 1px;
+  border-radius: 0;
+  background: none;
+  text-align: left;
+  padding: 11px 4px;
+}
+.recent strong {
+  flex: 1;
+}
+.empty {
+  padding: 12px 0;
+  color: var(--muted);
+}
+#editor {
+  height: 100%;
+  display: grid;
+  grid-template-rows: 48px auto minmax(0, 1fr) 27px;
+}
+header,
+nav,
+footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--line);
+}
+header input {
+  font-size: 16px;
+  font-weight: 600;
+  min-width: 40px;
+  width: clamp(110px, 27vw, 350px);
+}
+nav {
+  background: var(--surface);
+  flex-wrap: wrap;
+}
+nav button {
+  white-space: nowrap;
+}
+footer {
+  font-size: 12px;
+  justify-content: space-between;
+  border-top: 1px solid var(--line);
+}
+.desk {
+  display: grid;
+  min-height: 0;
+  grid-template-columns: clamp(100px, 14vw, 190px) minmax(0, 1fr) clamp(
+      185px,
+      23vw,
+      320px
+    );
+}
+.without-ai .desk {
+  grid-template-columns: clamp(100px, 14vw, 190px) minmax(0, 1fr);
+}
+aside {
+  background: var(--side);
+  padding: 14px 10px;
+  overflow: auto;
+}
+#outline {
+  border-right: 1px solid var(--line);
+}
+#outline button {
+  display: block;
+  width: 100%;
+  margin-top: 5px;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: transparent;
+  border-color: transparent;
+}
+#outline button.on {
+  background: var(--raised);
+  border-color: var(--line);
+}
+#collab {
+  border-left: 1px solid var(--line);
+}
+#collab h2,
+#collab label,
+#collab h3,
+details {
+  display: block;
+  margin-bottom: 12px;
+}
+#collab h3,
+details {
+  margin-top: 18px;
+}
+#collab select {
+  margin-left: 5px;
+}
+.selection {
+  font-size: 12px;
+  margin: 12px 0;
+}
+#ask textarea {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  min-height: 78px;
+}
+#ask button {
+  margin: 6px 0;
+}
+#agentState {
+  font-size: 12px;
+}
+.proposal {
+  border-left: 2px solid var(--ember);
+  padding: 6px 8px;
+  margin: 6px 0;
+  background: var(--surface);
+}
+.proposal p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 100px;
+  overflow: auto;
+}
+.proposal button {
+  margin: 5px 3px 0 0;
+}
+#canvas {
+  background: #1b222d;
+  overflow: auto;
+  min-height: 0;
+  padding: clamp(10px, 2vw, 32px);
+}
+.paper,
+.slide {
+  color-scheme: light;
+  background: #fff;
+  color: #202a39;
+  box-shadow: 0 6px 18px #0004;
+  border-radius: 3px;
+  margin: auto;
+  padding: clamp(20px, 5vw, 68px);
+}
+.paper {
+  min-height: 95%;
+  max-width: 794px;
+}
+.paper textarea,
+.slide textarea {
+  width: 100%;
+  display: block;
+  line-height: 1.65;
+  resize: none;
+  border: 0;
+  overflow: hidden;
+  padding: 4px;
+  color: #202a39;
+}
+.paper .heading,
+.slide .slide-title {
+  font-size: clamp(22px, 3vw, 36px);
+  font-weight: 700;
+}
+.paper .bullet {
+  border-left: 3px solid #7498ca;
+  padding-left: 12px;
+}
+.slide {
+  aspect-ratio: 16/9;
+  min-height: 220px;
+  max-width: 960px;
+  border-top: 6px solid #3d7fe0;
+}
+.slide-body {
+  margin-top: 12px;
+  font-size: 17px;
+}
+#sheetAddress {
+  color: var(--muted);
+}
+#cellAddress {
+  background: var(--bg);
+  width: 64px;
+  border: 1px solid var(--line);
+  margin: 0 5px;
+}
+#canvas.grid {
+  padding: 0;
+  background: #fff;
+}
+.grid table {
+  border-collapse: separate;
+  border-spacing: 0;
+  color: #263444;
+  font:
+    13px "Segoe UI",
+    sans-serif;
+}
+.grid th,
+.grid td {
+  height: 28px;
+  border: solid #d4dce5;
+  border-width: 0 1px 1px 0;
+  padding: 0;
+}
+.grid th {
+  background: #eef2f7;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  font-weight: 500;
+  min-width: 38px;
+}
+.grid td input {
+  color: #263444;
+  width: 91px;
+  padding: 4px 6px;
+  outline-offset: -2px;
+}
+.grid tr > th:first-child {
+  left: 0;
+  z-index: 2;
+}
+#message {
+  position: fixed;
+  bottom: 30px;
+  left: 12px;
+  right: 12px;
+  width: fit-content;
+  max-width: 95%;
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  padding: 8px 12px;
+  color: #fff;
+  background: #243448;
+  border: 1px solid #6b86a9;
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+  z-index: 5;
+}
+dialog {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  max-width: 95vw;
+}
+dialog::backdrop {
+  background: #0009;
+}
+#presentation {
+  width: 94vw;
+}
+#screen {
+  background: white;
+  color: #203049;
+  padding: 7%;
+  aspect-ratio: 16/9;
+  overflow: auto;
+}
+#screen h2 {
+  font-size: 2.2em;
+  margin-bottom: 1em;
+}
+#screen p {
+  white-space: pre-wrap;
+}
+#presentation button {
+  margin-top: 8px;
+}
+@media (max-width: 720px) {
+  .cards {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .desk,
+  .without-ai .desk {
+    grid-template-columns: 84px minmax(0, 1fr);
+  }
+  #collab {
+    position: fixed;
+    right: 0;
+    top: 90px;
+    bottom: 28px;
+    width: min(255px, 75vw);
+    z-index: 3;
+    box-shadow: -6px 0 18px #0005;
+  }
+  header {
+    gap: 5px;
+    padding: 4px;
+  }
+  .paper,
+  .slide {
+    padding: 16px;
+  }
+}

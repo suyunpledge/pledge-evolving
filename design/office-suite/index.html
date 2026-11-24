@@ -1,0 +1,607 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Keystone Office · 设计样稿</title>
+<style>
+:root{
+  --bg:#0d1118; --side:#0c1017; --surface:#141b25; --surface2:#1a2330; --raised:#202b3a;
+  --line:rgba(255,255,255,.10); --line2:rgba(255,255,255,.16);
+  --text:#eef2f7; --text2:#b8c4d2; --muted:#9eabbb; --dim:#8392a5;
+  --accent:#5b9bf8; --primary:#3d7fe0; --ember:#e89d5a; --emberTint:rgba(232,157,90,.16);
+  --ok:#6fd69e; --warn:#eab875; --danger:#f08a8a; --focus:#a9cbff;
+  --paper:#ffffff; --ink:#1f2937; --inkMuted:#6b7280;
+  --font:"Segoe UI","Microsoft YaHei UI","PingFang SC",sans-serif;
+  --mono:"Cascadia Code",Consolas,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:14px/1.5 var(--font)}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+button:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--focus);outline-offset:2px;border-radius:6px}
+svg.i{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.app{display:grid;grid-template-rows:48px 1fr;height:100vh;min-width:1280px}
+
+/* App bar */
+.appbar{display:flex;align-items:center;gap:8px;padding:0 14px;border-bottom:1px solid var(--line);background:#0b0f15}
+.brand{display:flex;align-items:center;gap:8px;font-weight:600;margin-right:12px}
+.brand b{width:22px;height:22px;border-radius:6px;background:linear-gradient(135deg,var(--ember),#b8633a);display:inline-block}
+.seg{display:flex;gap:2px;padding:3px;background:var(--surface);border:1px solid var(--line);border-radius:9px}
+.seg button{padding:4px 12px;border-radius:6px;color:var(--text2)}
+.seg button.on{background:var(--raised);color:var(--text)}
+.spacer{flex:1}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);color:var(--text2);font-size:12px}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--ok)}
+
+.body{display:grid;grid-template-columns:56px 1fr;min-height:0}
+/* Work nav rail */
+.rail{display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 0;border-right:1px solid var(--line);background:var(--side)}
+.rail button{width:40px;height:40px;border-radius:10px;display:grid;place-items:center;color:var(--muted);position:relative}
+.rail button.on{background:var(--surface2);color:var(--text)}
+.rail button.on::before{content:"";position:absolute;left:-8px;top:10px;bottom:10px;width:3px;border-radius:3px;background:var(--accent)}
+.rail small{font-size:10px;color:var(--dim);margin-top:-4px}
+
+/* Editor page */
+.page{display:grid;grid-template-rows:46px 42px 1fr 28px;min-height:0}
+.titlebar{display:flex;align-items:center;gap:10px;padding:0 16px;border-bottom:1px solid var(--line)}
+.filetype{width:26px;height:26px;border-radius:6px;display:grid;place-items:center;font-size:12px;font-weight:700;color:#fff}
+.t-doc{background:#3d7fe0}.t-sheet{background:#2f9a62}.t-slides{background:#d0743a}
+.fname{font-weight:600;font-size:15px}
+.saved{color:var(--muted);font-size:12px;display:flex;align-items:center;gap:6px}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:7px;border:1px solid var(--line);color:var(--text2);font-size:13px;background:var(--surface)}
+.btn:hover{border-color:var(--line2);color:var(--text)}
+.btn.primary{background:var(--primary);border-color:#8ab8ff;color:#fff}
+.btn[disabled]{opacity:.45;cursor:not-allowed}
+.toolbar{display:flex;align-items:center;gap:2px;padding:0 12px;border-bottom:1px solid var(--line);background:var(--surface)}
+.toolbar .tb{height:30px;min-width:30px;padding:0 7px;border-radius:6px;display:inline-flex;align-items:center;gap:5px;color:var(--text2);font-size:13px}
+.toolbar .tb:hover{background:var(--raised);color:var(--text)}
+.toolbar .sel{border:1px solid var(--line);background:var(--bg);padding:0 8px;min-width:96px;justify-content:space-between}
+.sep{width:1px;height:20px;background:var(--line);margin:0 6px}
+.tb.ai{color:var(--ember)}
+
+.work{display:grid;grid-template-columns:220px 1fr 360px;min-height:0}
+.left{border-right:1px solid var(--line);padding:12px 10px;overflow:auto;background:var(--side)}
+.left h4{margin:4px 6px 8px;font-size:12px;color:var(--muted);font-weight:600}
+.outline a{display:block;padding:5px 8px;border-radius:6px;color:var(--text2);text-decoration:none;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.outline a.l2{padding-left:20px;color:var(--muted)}
+.outline a.on{background:var(--surface2);color:var(--text)}
+.outline a .badge{float:right}
+.badge{font-size:11px;padding:0 6px;border-radius:999px;background:var(--emberTint);color:var(--ember)}
+
+.canvas{overflow:auto;background:#1b222d;position:relative}
+.statusbar{display:flex;align-items:center;gap:16px;padding:0 14px;border-top:1px solid var(--line);font-size:12px;color:var(--muted)}
+.statusbar .aiwork{color:var(--ember);display:flex;align-items:center;gap:6px}
+.pulse{width:7px;height:7px;border-radius:50%;background:var(--ember);animation:p 1.2s infinite}
+@keyframes p{50%{opacity:.3}}
+
+/* Doc paper */
+.paper{width:794px;margin:28px auto 60px;background:var(--paper);color:var(--ink);border-radius:3px;box-shadow:0 2px 18px rgba(0,0,0,.35);padding:72px 84px;font:15px/1.8 "Microsoft YaHei UI","Segoe UI",sans-serif;position:relative}
+.paper h1{font-size:26px;margin:0 0 6px;line-height:1.4}
+.paper .meta{color:var(--inkMuted);font-size:13px;margin-bottom:26px}
+.paper h2{font-size:18px;margin:26px 0 8px}
+.paper p{margin:0 0 12px}
+.blk{position:relative}
+.blk.ai-editing::before{content:"";position:absolute;left:-22px;top:4px;bottom:4px;width:3px;border-radius:3px;background:var(--ember)}
+.blk.ai-editing .tag{position:absolute;left:-84px;top:2px;font-size:11px;color:#b45f22;width:56px;text-align:right}
+.blk.user-here::before{content:"";position:absolute;left:-22px;top:4px;bottom:4px;width:3px;border-radius:3px;background:var(--accent)}
+del.sg{color:#b4232a;text-decoration:line-through;background:#fde8e8}
+ins.sg{color:#0f6b3a;text-decoration:none;background:#dcf5e6;border-bottom:2px solid #34a464}
+.sgwrap{position:relative;cursor:pointer}
+.sgpop{position:absolute;z-index:5;left:0;top:30px;background:#fff;border:1px solid #d5dbe3;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.18);padding:10px 12px;width:330px;font-size:13px;line-height:1.5;color:var(--ink)}
+.sgpop .who{display:flex;align-items:center;gap:6px;font-weight:600;margin-bottom:4px}
+.sgpop .why{color:var(--inkMuted);margin-bottom:8px}
+.sgpop .acts{display:flex;gap:6px}
+.sgpop button{white-space:nowrap;padding:3px 10px;border-radius:6px;border:1px solid #cfd6df;color:var(--ink)}
+.sgpop button.ok{background:#1f7a4a;border-color:#1f7a4a;color:#fff}
+.kbd{font:11px var(--mono);padding:0 5px;border:1px solid #cfd6df;border-radius:4px;color:var(--inkMuted)}
+.caret-ai{display:inline-block;width:2px;height:20px;background:var(--ember);vertical-align:-4px;position:relative;animation:p 1s infinite}
+.caret-ai::after{content:"Keystone";position:absolute;top:-17px;left:-1px;font:600 10px var(--font);color:#fff;background:var(--ember);padding:0 4px;border-radius:3px 3px 3px 0;white-space:nowrap}
+.caret-user{display:inline-block;width:2px;height:20px;background:#2563eb;vertical-align:-4px}
+.ai-mark{background:rgba(232,157,90,.12);border-bottom:1px dashed rgba(180,95,34,.5)}
+.floatbar{position:absolute;display:flex;gap:2px;padding:4px;background:#1a2330;border:1px solid var(--line2);border-radius:9px;box-shadow:0 8px 22px rgba(0,0,0,.35);color:var(--text2);font-size:12.5px;z-index:4}
+.floatbar button{padding:4px 9px;border-radius:6px}
+.floatbar button:hover{background:var(--raised);color:var(--text)}
+.floatbar .ai{color:var(--ember)}
+.selection{background:rgba(37,99,235,.18)}
+.ptable{width:100%;border-collapse:collapse;font-size:13.5px;margin:6px 0 14px}
+.ptable th,.ptable td{border:1px solid #d5dbe3;padding:6px 10px;text-align:left}
+.ptable th{background:#f1f4f8}
+
+/* AI side panel */
+.ai{border-left:1px solid var(--line);display:grid;grid-template-rows:auto auto 1fr auto;min-height:0;background:var(--surface)}
+.ai-head{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line)}
+.ai-head .title{font-weight:600;display:flex;align-items:center;gap:6px}
+.mode{margin-left:auto;display:flex;gap:2px;padding:2px;border:1px solid var(--line);border-radius:8px;font-size:12px}
+.mode button{padding:2px 8px;border-radius:6px;color:var(--muted)}
+.mode button.on{background:var(--raised);color:var(--text)}
+.ctx{padding:10px 14px;border-bottom:1px solid var(--line);font-size:12px;color:var(--muted);display:flex;flex-wrap:wrap;gap:6px}
+.chip{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:999px;background:var(--surface2);border:1px solid var(--line);color:var(--text2)}
+.chip.warn{border-color:rgba(234,184,117,.5);color:var(--warn)}
+.feed{overflow:auto;padding:14px;display:flex;flex-direction:column;gap:12px}
+.msg-u{align-self:flex-end;max-width:85%;background:rgba(48,51,74,.75);border:1px solid var(--line2);padding:8px 12px;border-radius:12px 12px 4px 12px}
+.msg-a{color:var(--text2)}
+.msg-a strong{color:var(--text)}
+.steps{margin:8px 0 0;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);font-size:12.5px}
+.steps div{display:flex;gap:8px;align-items:center;padding:2px 0;color:var(--muted)}
+.steps .ok{color:var(--ok)} .steps .run{color:var(--ember)}
+.steps code{font:12px var(--mono);color:var(--text2)}
+.pending{border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.pending .ph{display:flex;align-items:center;padding:8px 10px;background:var(--surface2);font-size:13px;font-weight:600;gap:8px}
+.pending .ph .btn{margin-left:auto;padding:2px 9px;font-size:12px}
+.prow{display:grid;grid-template-columns:1fr auto;gap:6px;padding:8px 10px;border-top:1px solid var(--line);font-size:12.5px;color:var(--text2)}
+.prow .acts{display:flex;gap:4px}
+.prow .acts button{width:26px;height:26px;border-radius:6px;display:grid;place-items:center;border:1px solid var(--line)}
+.prow .acts .yes{color:var(--ok)} .prow .acts .no{color:var(--danger)}
+.prow s{color:var(--danger)} .prow em{font-style:normal;color:var(--ok)}
+.composer{border-top:1px solid var(--line);padding:10px 12px}
+.composer .box{border:1px solid var(--line2);border-radius:10px;background:var(--bg);padding:8px 10px}
+.composer .ph{color:var(--dim);min-height:40px}
+.composer .row{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted)}
+.composer .send{margin-left:auto;width:30px;height:30px;border-radius:50%;background:var(--primary);display:grid;place-items:center;color:#fff}
+.quick{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.quick button{font-size:12px;padding:3px 9px;border-radius:999px;border:1px solid var(--line);color:var(--text2)}
+
+/* Sheet */
+.formula{display:flex;align-items:center;gap:8px;height:34px;padding:0 10px;border-bottom:1px solid #d5dbe3;background:#f7f9fb;color:var(--ink);font:13px var(--mono)}
+.formula .ref{width:70px;padding:2px 6px;border:1px solid #d5dbe3;border-radius:4px;background:#fff;font-family:var(--font)}
+.formula .fx{color:var(--inkMuted);font-style:italic;font-family:serif}
+.sheetwrap{background:#fff;margin:0;height:100%;display:flex;flex-direction:column}
+.grid{border-collapse:collapse;font-size:13px;color:var(--ink);background:#fff}
+.grid th{background:#f1f4f8;color:var(--inkMuted);font-weight:500;border:1px solid #e1e6ec;height:24px;min-width:44px;font-size:12px}
+.grid td{border:1px solid #e6eaef;height:26px;padding:0 8px;min-width:96px;white-space:nowrap}
+.grid td.num{text-align:right;font-variant-numeric:tabular-nums}
+.grid tr.hd td{background:#265578;color:#fff;font-weight:600}
+.grid td.sel{outline:2px solid #2563eb;outline-offset:-2px}
+.grid td.aicell{background:rgba(232,157,90,.14);box-shadow:inset 0 0 0 1px rgba(232,157,90,.6)}
+.grid td.f{color:#0f5f99}
+.sheettabs{display:flex;gap:2px;padding:0 8px;border-top:1px solid #d5dbe3;background:#f1f4f8;height:32px;align-items:flex-end}
+.sheettabs span{padding:5px 14px;font-size:12.5px;color:var(--inkMuted);border-radius:6px 6px 0 0}
+.sheettabs span.on{background:#fff;color:var(--ink);font-weight:600;box-shadow:0 -1px 0 #d5dbe3}
+.sheettabs span.new{color:#b45f22}
+.chartcard{position:absolute;left:470px;top:190px;width:330px;background:#fff;border:1px solid #d5dbe3;border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,.15);padding:12px 14px;color:var(--ink)}
+.chartcard .ct{font-weight:600;font-size:13px;margin-bottom:8px;display:flex;align-items:center}
+.chartcard .ct .badge{margin-left:auto}
+
+/* Slides */
+.slidestage{display:flex;flex-direction:column;align-items:center;padding:26px 0}
+.slide{zoom:.92;width:800px;height:450px;background:#fff;border-radius:4px;box-shadow:0 2px 18px rgba(0,0,0,.35);position:relative;overflow:hidden;color:#16263a}
+.slide .band{position:absolute;left:0;top:0;bottom:0;width:10px;background:#265578}
+.slide h2{position:absolute;left:56px;top:38px;margin:0;font-size:28px;color:#265578}
+.slide .sub{position:absolute;left:56px;top:84px;font-size:14px;color:#5a6b80}
+.slide ul{position:absolute;left:56px;top:130px;width:330px;margin:0;padding-left:18px;font-size:16px;line-height:1.9}
+.slide .chart{position:absolute;left:420px;top:126px;width:330px;height:240px}
+.slide .sel-box{position:absolute;border:1.5px solid #2563eb}
+.slide .sel-box i{position:absolute;width:8px;height:8px;background:#fff;border:1.5px solid #2563eb}
+.slide .ai-box{position:absolute;border:1.5px dashed var(--ember)}
+.slide .ai-box .lbl{position:absolute;top:-20px;left:-1px;font:600 11px var(--font);background:var(--ember);color:#fff;padding:1px 6px;border-radius:4px 4px 4px 0}
+.notes{width:736px;margin-top:14px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--muted);font-size:13px}
+.thumbs{display:flex;flex-direction:column;gap:10px}
+.thumb{display:grid;grid-template-columns:18px 1fr;gap:6px;align-items:start;font-size:11px;color:var(--dim)}
+.thumb .mini{aspect-ratio:16/9;background:#fff;border-radius:3px;border:2px solid transparent;position:relative;overflow:hidden}
+.thumb .mini::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:#265578}
+.thumb .mini b{position:absolute;left:12px;top:10px;width:55%;height:6px;background:#265578;border-radius:2px}
+.thumb .mini i{position:absolute;left:12px;top:24px;width:40%;height:3px;background:#c5ced9;border-radius:2px;box-shadow:0 7px 0 #c5ced9,0 14px 0 #c5ced9}
+.thumb.on .mini{border-color:var(--accent)}
+.thumb.ai .mini{border-color:var(--ember)}
+.thumb.gen .mini{background:repeating-linear-gradient(45deg,#e9edf2 0 6px,#f5f7fa 6px 12px)}
+.thumb.gen .mini::before,.thumb.gen .mini b,.thumb.gen .mini i{display:none}
+
+/* Home */
+.home{padding:32px 48px;overflow:auto}
+.home h1{font-size:22px;margin:0 0 4px}
+.home .lead{color:var(--muted);margin-bottom:24px}
+.newrow{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:30px}
+.newcard{border:1px solid var(--line);border-radius:12px;background:var(--surface);padding:16px;text-align:left;display:flex;flex-direction:column;gap:10px}
+.newcard:hover{border-color:var(--line2);background:var(--surface2)}
+.newcard .nm{font-weight:600}
+.newcard .ds{font-size:12.5px;color:var(--muted)}
+.home h3{font-size:14px;color:var(--text2);margin:0 0 10px}
+.recent{width:100%;border-collapse:collapse;font-size:13px}
+.recent td{padding:10px 8px;border-top:1px solid var(--line);color:var(--text2)}
+.recent td:first-child{display:flex;align-items:center;gap:10px;color:var(--text)}
+.askbar{margin:0 0 28px;border:1px solid var(--line2);border-radius:12px;background:var(--surface);padding:12px 14px;display:flex;align-items:center;gap:10px;color:var(--dim)}
+.askbar .send{margin-left:auto}
+
+.hidden{display:none!important}
+.note{position:fixed;right:16px;bottom:40px;width:300px;background:#11161f;border:1px solid var(--line2);border-radius:10px;padding:12px 14px;font-size:12px;color:var(--muted);z-index:20}
+.note b{color:var(--text)}
+.note button{position:absolute;right:8px;top:6px;color:var(--dim)}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute">
+  <symbol id="spark" viewBox="0 0 24 24"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></symbol>
+  <symbol id="chat" viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/></symbol>
+  <symbol id="office" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></symbol>
+  <symbol id="task" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2"/></symbol>
+  <symbol id="agent" viewBox="0 0 24 24"><rect x="5" y="8" width="14" height="11" rx="3"/><path d="M12 4v4M9 13h.01M15 13h.01"/></symbol>
+  <symbol id="clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></symbol>
+  <symbol id="history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 8v4l3 2"/></symbol>
+  <symbol id="export" viewBox="0 0 24 24"><path d="M12 3v12M7 8l5-5 5 5M5 15v4h14v-4"/></symbol>
+  <symbol id="undo" viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></symbol>
+  <symbol id="check" viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></symbol>
+  <symbol id="x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="send" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></symbol>
+  <symbol id="plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+  <symbol id="cloud" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></symbol>
+  <symbol id="table" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="1"/><path d="M3 10h18M9 5v14"/></symbol>
+  <symbol id="image" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 17l-5-5-8 7"/></symbol>
+  <symbol id="chart" viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></symbol>
+  <symbol id="comment" viewBox="0 0 24 24"><path d="M4 5h16v11h-6l-4 4v-4H4z"/></symbol>
+  <symbol id="list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/></symbol>
+  <symbol id="align" viewBox="0 0 24 24"><path d="M4 6h16M4 10h10M4 14h16M4 18h10"/></symbol>
+  <symbol id="file" viewBox="0 0 24 24"><path d="M14 3H6v18h12V7z"/><path d="M14 3v4h4"/></symbol>
+  <symbol id="play" viewBox="0 0 24 24"><path d="M7 5l12 7-12 7z"/></symbol>
+  <symbol id="theme" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 0 0 16z"/></symbol>
+  <symbol id="layout" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M10 9v11"/></symbol>
+  <symbol id="filter" viewBox="0 0 24 24"><path d="M4 5h16l-6 8v6l-4-2v-4z"/></symbol>
+  <symbol id="sort" viewBox="0 0 24 24"><path d="M7 4v16M3 16l4 4 4-4M17 20V4M13 8l4-4 4 4"/></symbol>
+  <symbol id="warn" viewBox="0 0 24 24"><path d="M12 3l10 18H2z"/><path d="M12 10v4M12 17h.01"/></symbol>
+</svg>
+
+<div class="app">
+  <header class="appbar">
+    <div class="brand"><b></b>Keystone</div>
+    <div class="seg" role="tablist" aria-label="工作空间">
+      <button class="on">Work Mode</button><button>Coding Mode</button>
+    </div>
+    <span class="pill" style="margin-left:8px"><svg class="i"><use href="#file"/></svg>pledge-evolving</span>
+    <div class="spacer"></div>
+    <div class="seg" role="tablist" aria-label="样稿视图" id="views">
+      <button data-v="home">主页</button>
+      <button data-v="doc" class="on">文档</button>
+      <button data-v="sheet">表格</button>
+      <button data-v="slides">演示</button>
+    </div>
+    <span class="pill"><span class="dot"></span>本地 · 离线可用</span>
+  </header>
+
+  <div class="body">
+    <nav class="rail" aria-label="Work 导航">
+      <button title="对话"><svg class="i"><use href="#chat"/></svg></button><small>对话</small>
+      <button class="on" title="办公"><svg class="i"><use href="#office"/></svg></button><small>办公</small>
+      <button title="任务"><svg class="i"><use href="#task"/></svg></button><small>任务</small>
+      <button title="Agents"><svg class="i"><use href="#agent"/></svg></button><small>Agents</small>
+      <button title="定时"><svg class="i"><use href="#clock"/></svg></button><small>定时</small>
+    </nav>
+
+    <!-- ============ HOME ============ -->
+    <main class="home hidden" data-view="home">
+      <h1>办公</h1>
+      <div class="lead">文档保存在工作区 <code style="font-family:var(--mono)">Office/</code>，你和 Keystone 都可以直接编辑。</div>
+      <div class="askbar"><svg class="i" style="color:var(--ember)"><use href="#spark"/></svg>描述你要的文件，例如"根据 销售明细.xlsx 做一份 8 页季度汇报"……<button class="send composer" style="padding:0;border:0"><span class="send" style="width:30px;height:30px;border-radius:50%;background:var(--primary);display:grid;place-items:center;color:#fff"><svg class="i"><use href="#send"/></svg></span></button></div>
+      <div class="newrow">
+        <button class="newcard"><span class="filetype t-doc">W</span><span class="nm">空白文档</span><span class="ds">报告、方案、合同、纪要</span></button>
+        <button class="newcard"><span class="filetype t-sheet">X</span><span class="nm">空白表格</span><span class="ds">公式实时计算，可插入图表</span></button>
+        <button class="newcard"><span class="filetype t-slides">P</span><span class="nm">空白演示</span><span class="ds">版式与主题，一键换风格</span></button>
+        <button class="newcard"><span class="filetype" style="background:var(--raised)"><svg class="i"><use href="#export"/></svg></span><span class="nm">导入文件</span><span class="ds">docx · xlsx · pptx · md · csv</span></button>
+      </div>
+      <h3>最近</h3>
+      <table class="recent">
+        <tr><td><span class="filetype t-doc">W</span>Q3 区域销售复盘</td><td>你和 Keystone · 2 分钟前</td><td><span class="badge">3 条待处理建议</span></td><td>Office/Q3 区域销售复盘.kdoc</td></tr>
+        <tr><td><span class="filetype t-sheet">X</span>销售明细</td><td>Keystone · 10 分钟前</td><td></td><td>Office/销售明细.ksheet</td></tr>
+        <tr><td><span class="filetype t-slides">P</span>Q3 季度汇报</td><td>Keystone 正在编辑</td><td><span class="badge">生成中 5/8</span></td><td>Office/Q3 季度汇报.kslides</td></tr>
+        <tr><td><span class="filetype t-doc">W</span>供应商合同（导入）</td><td>你 · 昨天</td><td style="color:var(--warn)">2 处只读块</td><td>Office/供应商合同.kdoc</td></tr>
+      </table>
+    </main>
+
+    <!-- ============ EDITOR (doc / sheet / slides) ============ -->
+    <section class="page" data-view="editor">
+      <div class="titlebar">
+        <span class="filetype t-doc" id="ftype">W</span>
+        <span class="fname" id="fname">Q3 区域销售复盘</span>
+        <span class="saved"><svg class="i" style="width:14px;height:14px;color:var(--ok)"><use href="#cloud"/></svg><span id="saved">本地已保存 · v44</span></span>
+        <div class="spacer"></div>
+        <button class="btn" title="撤销 Keystone 的上一次修改，保留你之后的编辑"><svg class="i"><use href="#undo"/></svg>撤销 AI 修改</button>
+        <button class="btn"><svg class="i"><use href="#history"/></svg>版本历史</button>
+        <button class="btn" id="slideplay" style="display:none"><svg class="i"><use href="#play"/></svg>放映</button>
+        <button class="btn primary"><svg class="i"><use href="#export"/></svg>导出</button>
+      </div>
+
+      <!-- toolbars -->
+      <div class="toolbar" data-for="doc">
+        <button class="tb sel">正文 <svg class="i" style="width:12px"><use href="#chev"/></svg></button>
+        <button class="tb sel" style="min-width:110px">微软雅黑 <svg class="i" style="width:12px"><use href="#chev"/></svg></button>
+        <span class="sep"></span>
+        <button class="tb"><b>B</b></button><button class="tb"><i>I</i></button><button class="tb"><u>U</u></button>
+        <span class="sep"></span>
+        <button class="tb"><svg class="i"><use href="#list"/></svg></button><button class="tb"><svg class="i"><use href="#align"/></svg></button>
+        <span class="sep"></span>
+        <button class="tb"><svg class="i"><use href="#table"/></svg>表格</button><button class="tb"><svg class="i"><use href="#image"/></svg>图片</button><button class="tb"><svg class="i"><use href="#chart"/></svg>图表</button><button class="tb"><svg class="i"><use href="#comment"/></svg>批注</button>
+        <span class="sep"></span>
+        <button class="tb ai"><svg class="i"><use href="#spark"/></svg>显示 AI 修改</button>
+      </div>
+      <div class="toolbar hidden" data-for="sheet">
+        <button class="tb sel">常规 <svg class="i" style="width:12px"><use href="#chev"/></svg></button>
+        <button class="tb">¥</button><button class="tb">%</button><button class="tb">.00</button>
+        <span class="sep"></span>
+        <button class="tb"><b>B</b></button><button class="tb"><svg class="i"><use href="#align"/></svg></button>
+        <span class="sep"></span>
+        <button class="tb"><svg class="i"><use href="#sort"/></svg>排序</button><button class="tb"><svg class="i"><use href="#filter"/></svg>筛选</button><button class="tb">冻结</button>
+        <span class="sep"></span>
+        <button class="tb"><svg class="i"><use href="#chart"/></svg>图表</button><button class="tb">Σ 求和</button>
+        <span class="sep"></span>
+        <button class="tb ai"><svg class="i"><use href="#spark"/></svg>显示 AI 修改</button>
+      </div>
+      <div class="toolbar hidden" data-for="slides">
+        <button class="tb"><svg class="i"><use href="#plus"/></svg>新幻灯片</button>
+        <button class="tb sel">标题 + 要点 + 图表 <svg class="i" style="width:12px"><use href="#chev"/></svg></button>
+        <button class="tb"><svg class="i"><use href="#theme"/></svg>主题：深海蓝</button>
+        <span class="sep"></span>
+        <button class="tb">T 文本框</button><button class="tb"><svg class="i"><use href="#image"/></svg>图片</button><button class="tb"><svg class="i"><use href="#table"/></svg>表格</button><button class="tb"><svg class="i"><use href="#chart"/></svg>图表</button>
+        <span class="sep"></span>
+        <button class="tb"><svg class="i"><use href="#layout"/></svg>对齐</button>
+        <span class="sep"></span>
+        <button class="tb ai"><svg class="i"><use href="#spark"/></svg>排版体检</button>
+      </div>
+
+      <div class="work">
+        <!-- LEFT -->
+        <aside class="left">
+          <div data-for="doc">
+            <h4>大纲</h4>
+            <nav class="outline">
+              <a href="#" class="on">Q3 区域销售复盘</a>
+              <a href="#" class="l2">一、总体表现</a>
+              <a href="#" class="l2">二、区域对比 <span class="badge">AI</span></a>
+              <a href="#" class="l2">三、问题与原因</a>
+              <a href="#" class="l2">四、Q4 行动计划</a>
+            </nav>
+            <h4 style="margin-top:20px">批注 · 建议</h4>
+            <nav class="outline">
+              <a href="#">建议 · 改为正式语气 (2)</a>
+              <a href="#">建议 · 补充数据来源 (1)</a>
+              <a href="#">批注 · 华南口径？</a>
+            </nav>
+          </div>
+          <div data-for="sheet" class="hidden">
+            <h4>工作表</h4>
+            <nav class="outline">
+              <a href="#">明细 <span style="float:right;color:var(--dim)">1,284 行</span></a>
+              <a href="#" class="on">地区汇总 <span class="badge">新建</span></a>
+              <a href="#">参数</a>
+            </nav>
+            <h4 style="margin-top:20px">图表</h4>
+            <nav class="outline"><a href="#">各地区销售额 <span class="badge">AI</span></a></nav>
+            <h4 style="margin-top:20px">诊断</h4>
+            <nav class="outline"><a href="#" style="color:var(--ok)">公式 0 错误 · 0 循环引用</a></nav>
+          </div>
+          <div data-for="slides" class="hidden">
+            <div class="thumbs">
+              <div class="thumb"><span>1</span><div class="mini"><b></b><i></i></div></div>
+              <div class="thumb"><span>2</span><div class="mini"><b></b><i></i></div></div>
+              <div class="thumb on"><span>3</span><div class="mini"><b></b><i></i></div></div>
+              <div class="thumb ai"><span>4</span><div class="mini"><b></b><i></i></div></div>
+              <div class="thumb ai"><span>5</span><div class="mini"><b></b><i></i></div></div>
+              <div class="thumb gen"><span>6</span><div class="mini"></div></div>
+              <div class="thumb gen"><span>7</span><div class="mini"></div></div>
+            </div>
+          </div>
+        </aside>
+
+        <!-- CANVAS -->
+        <div class="canvas">
+          <!-- DOC -->
+          <div data-for="doc">
+            <article class="paper">
+              <div class="blk"><h1>Q3 区域销售复盘</h1></div>
+              <div class="meta">销售运营部 · 2026 年 10 月 · 内部</div>
+              <div class="blk"><h2>一、总体表现</h2></div>
+              <div class="blk user-here"><p>第三季度全国销售额 4,826 万元，同比增长 12.4%，完成年度目标的 78%。新客户贡献占比提升至 31%<span class="caret-user"></span></p></div>
+
+              <div class="blk ai-editing"><span class="tag">AI 编辑中</span><h2>二、区域对比</h2></div>
+              <div class="blk ai-editing" style="position:relative">
+                <p>
+                  华东仍是最大市场，
+                  <span class="sgwrap"><del class="sg">卖得特别好，基本把其他地区都甩开了</del><ins class="sg">销售额 1,920 万元，占全国 39.8%，领先第二名华南 9.3 个百分点</ins>
+                    </span>。
+                  华南、华北分列二、三位，西南增速最快（+27.5%）<span class="caret-ai"></span>。
+                </p>
+                <div class="sgpop" style="left:110px;top:70px"><span class="who"><svg class="i" style="color:var(--ember)"><use href="#spark"/></svg>Keystone 建议 · 改为正式语气</span>
+                      <div class="why">口语表述替换为可核对的数据，数值引用自《销售明细》地区汇总!B2:C2。</div>
+                      <div class="acts"><button class="ok">接受 <span class="kbd" style="color:#d9f2e3;border-color:#5aa77d">Tab</span></button><button>拒绝 <span class="kbd">Esc</span></button><button>下一条 <span class="kbd">Alt+]</span></button></div>
+                    </div>
+              </div>
+              <div class="blk"><table class="ptable">
+                <tr><th>地区</th><th>销售额（万元）</th><th>同比</th><th>占比</th></tr>
+                <tr class="ai-mark"><td>华东</td><td>1,920</td><td>+9.8%</td><td>39.8%</td></tr>
+                <tr class="ai-mark"><td>华南</td><td>1,471</td><td>+11.2%</td><td>30.5%</td></tr>
+                <tr class="ai-mark"><td>华北</td><td>862</td><td>+6.1%</td><td>17.9%</td></tr>
+                <tr class="ai-mark"><td>西南</td><td>573</td><td>+27.5%</td><td>11.9%</td></tr>
+              </table></div>
+              <div class="blk"><h2>三、问题与原因</h2></div>
+              <div class="blk" style="position:relative">
+                <p><span class="selection">渠道库存周转天数上升到 46 天，主要因为华北两家经销商压货</span>，回款周期同步拉长。</p>
+                <div class="floatbar" style="left:40px;top:36px">
+                  <button class="ai">✦ 改写</button><button>扩写</button><button>缩写</button><button>翻译</button><button>解释</button><button class="ai">✦ 问 Keystone…</button>
+                </div>
+              </div>
+              <div class="blk"><h2>四、Q4 行动计划</h2></div>
+              <div class="blk"><p style="color:#9aa3ae">（待补充）</p></div>
+            </article>
+          </div>
+
+          <!-- SHEET -->
+          <div data-for="sheet" class="hidden sheetwrap">
+            <div class="formula"><span class="ref">C2</span><span class="fx">fx</span><span>=SUMIF(明细!$D:$D, A2, 明细!$G:$G)/10000</span></div>
+            <div style="overflow:auto;flex:1;position:relative">
+              <table class="grid">
+                <tr><th></th><th>A</th><th>B</th><th>C</th><th>D</th><th>E</th><th>F</th><th>G</th><th>H</th></tr>
+                <tr class="hd"><th>1</th><td>地区</td><td>订单数</td><td>销售额（万元）</td><td>同比</td><td>占比</td><td></td><td></td><td></td></tr>
+                <tr><th>2</th><td class="aicell">华东</td><td class="num aicell f">412</td><td class="num aicell f sel">1,920.4</td><td class="num aicell f">9.8%</td><td class="num aicell f">39.8%</td><td></td><td></td><td></td></tr>
+                <tr><th>3</th><td class="aicell">华南</td><td class="num aicell f">351</td><td class="num aicell f">1,471.2</td><td class="num aicell f">11.2%</td><td class="num aicell f">30.5%</td><td></td><td></td><td></td></tr>
+                <tr><th>4</th><td class="aicell">华北</td><td class="num aicell f">268</td><td class="num aicell f">862.0</td><td class="num aicell f">6.1%</td><td class="num aicell f">17.9%</td><td></td><td></td><td></td></tr>
+                <tr><th>5</th><td class="aicell">西南</td><td class="num aicell f">253</td><td class="num aicell f">572.9</td><td class="num aicell f">27.5%</td><td class="num aicell f">11.9%</td><td></td><td></td><td></td></tr>
+                <tr><th>6</th><td style="font-weight:600">合计</td><td class="num f" style="font-weight:600">1,284</td><td class="num f" style="font-weight:600">4,826.5</td><td class="num f">12.4%</td><td class="num f">100.0%</td><td></td><td></td><td></td></tr>
+                <tr><th>7</th><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+                <tr><th>8</th><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+                <tr><th>9</th><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+                <tr><th>10</th><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+                <tr><th>11</th><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+                <tr><th>12</th><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+                <tr><th>13</th><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+                <tr><th>14</th><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+              </table>
+              <div class="chartcard">
+                <div class="ct">各地区销售额（万元）<span class="badge">Keystone 插入</span></div>
+                <svg viewBox="0 0 350 170" width="100%">
+                  <g font-size="11" fill="#6b7280" font-family="Segoe UI, Microsoft YaHei UI">
+                    <line x1="40" y1="140" x2="340" y2="140" stroke="#d5dbe3"/>
+                    <line x1="40" y1="100" x2="340" y2="100" stroke="#eef1f5"/><line x1="40" y1="60" x2="340" y2="60" stroke="#eef1f5"/><line x1="40" y1="20" x2="340" y2="20" stroke="#eef1f5"/>
+                    <text x="34" y="144" text-anchor="end">0</text><text x="34" y="104" text-anchor="end">700</text><text x="34" y="64" text-anchor="end">1400</text><text x="34" y="24" text-anchor="end">2100</text>
+                    <rect x="62" y="30.3" width="44" height="109.7" fill="#265578" rx="2"/>
+                    <rect x="136" y="56" width="44" height="84" fill="#265578" rx="2"/>
+                    <rect x="210" y="90.7" width="44" height="49.3" fill="#265578" rx="2"/>
+                    <rect x="284" y="107.3" width="44" height="32.7" fill="#e89d5a" rx="2"/>
+                    <text x="84" y="158" text-anchor="middle">华东</text><text x="158" y="158" text-anchor="middle">华南</text><text x="232" y="158" text-anchor="middle">华北</text><text x="306" y="158" text-anchor="middle">西南</text>
+                    <text x="306" y="101" text-anchor="middle" fill="#b45f22">+27.5%</text>
+                  </g>
+                </svg>
+              </div>
+            </div>
+            <div class="sheettabs"><span>明细</span><span class="on">地区汇总</span><span>参数</span><span class="new">＋</span></div>
+          </div>
+
+          <!-- SLIDES -->
+          <div data-for="slides" class="hidden slidestage">
+            <div class="slide">
+              <div class="band"></div>
+              <h2>区域表现：华东领跑，西南增速最快</h2>
+              <div class="sub">Q3 · 销售额 4,826 万元 · 同比 +12.4%</div>
+              <ul>
+                <li>华东 1,920 万元，占比 39.8%</li>
+                <li>华南 1,471 万元，同比 +11.2%</li>
+                <li>西南增速 27.5%，新客户贡献过半</li>
+                <li>华北库存周转 46 天，需关注</li>
+              </ul>
+              <div class="sel-box" style="left:48px;top:124px;width:348px;height:180px"><i style="left:-5px;top:-5px"></i><i style="right:-5px;top:-5px"></i><i style="left:-5px;bottom:-5px"></i><i style="right:-5px;bottom:-5px"></i></div>
+              <svg class="chart" viewBox="0 0 330 240">
+                <g font-size="12" fill="#5a6b80" font-family="Segoe UI, Microsoft YaHei UI">
+                  <rect x="20" y="30" width="50" height="170" fill="#265578" rx="3"/><rect x="95" y="70" width="50" height="130" fill="#3b6f96" rx="3"/><rect x="170" y="124" width="50" height="76" fill="#5d8db3" rx="3"/><rect x="245" y="150" width="50" height="50" fill="#e89d5a" rx="3"/>
+                  <line x1="10" y1="200" x2="320" y2="200" stroke="#c5ced9"/>
+                  <text x="45" y="220" text-anchor="middle">华东</text><text x="120" y="220" text-anchor="middle">华南</text><text x="195" y="220" text-anchor="middle">华北</text><text x="270" y="220" text-anchor="middle">西南</text>
+                </g>
+              </svg>
+              <div class="ai-box" style="left:414px;top:118px;width:342px;height:256px"><span class="lbl">Keystone · 关联《销售明细》图表</span></div>
+            </div>
+            <div class="notes">备注：先讲结论（华东领跑），再指出西南的增长机会；华北库存问题放到第 6 页展开。</div>
+          </div>
+        </div>
+
+        <!-- AI PANEL -->
+        <aside class="ai" aria-label="Keystone 侧栏">
+          <div class="ai-head">
+            <span class="title"><svg class="i" style="color:var(--ember)"><use href="#spark"/></svg>Keystone</span>
+            <div class="mode" role="radiogroup" aria-label="AI 写入模式" title="只读：只能查看；建议：修改需你确认；直接编辑：立即生效，可撤销">
+              <button>只读</button><button class="on" id="m-sug">建议</button><button id="m-dir">直接编辑</button>
+            </div>
+          </div>
+          <div class="ctx">
+            <span class="chip" id="ctx1">选区：第二节 · 2 段</span>
+            <span class="chip" id="ctx2">引用：销售明细.ksheet</span>
+            <span class="chip" id="ctx3">版本 v44</span>
+          </div>
+
+          <div class="feed">
+            <!-- doc feed -->
+            <div data-for="doc" style="display:contents">
+              <div class="msg-u">把第二节改得正式一点，数字都用销售明细里的</div>
+              <div class="msg-a">好的，我读取了 <strong>销售明细 › 地区汇总</strong>，按数据重写第二节：
+                <div class="steps">
+                  <div class="ok"><svg class="i"><use href="#check"/></svg><code>office_query</code> 第二节 · v41</div>
+                  <div class="ok"><svg class="i"><use href="#check"/></svg><code>office_query</code> 销售明细!地区汇总 A1:E6</div>
+                  <div class="ok"><svg class="i"><use href="#check"/></svg><code>office_apply</code> 表格 4 行 · 直接写入（新内容）</div>
+                  <div class="run"><span class="pulse"></span><code>office_apply</code> 正文改写 · 作为建议</div>
+                </div>
+              </div>
+              <div class="pending">
+                <div class="ph">待处理建议 · 3<button class="btn">全部接受</button></div>
+                <div class="prow"><span><s>卖得特别好…</s> → <em>销售额 1,920 万元，占全国 39.8%…</em></span><span class="acts"><button class="yes" title="接受"><svg class="i"><use href="#check"/></svg></button><button class="no" title="拒绝"><svg class="i"><use href="#x"/></svg></button></span></div>
+                <div class="prow"><span><s>增长挺快</s> → <em>增速最快（+27.5%）</em></span><span class="acts"><button class="yes"><svg class="i"><use href="#check"/></svg></button><button class="no"><svg class="i"><use href="#x"/></svg></button></span></div>
+                <div class="prow"><span>在表格下方插入"数据来源"注释</span><span class="acts"><button class="yes"><svg class="i"><use href="#check"/></svg></button><button class="no"><svg class="i"><use href="#x"/></svg></button></span></div>
+              </div>
+              <div class="msg-a" style="font-size:12.5px;color:var(--muted)">你正在编辑第一节，我不会改动那里。</div>
+            </div>
+            <!-- sheet feed -->
+            <div data-for="sheet" class="hidden" style="display:contents">
+              <div class="msg-u">按地区汇总明细里的销售额，放新工作表，再画个柱状图</div>
+              <div class="msg-a">已完成。新建 <strong>地区汇总</strong>，用公式引用明细，数据更新后会自动重算。
+                <div class="steps">
+                  <div class="ok"><svg class="i"><use href="#check"/></svg><code>office_query</code> 明细 表头与 1,284 行</div>
+                  <div class="ok"><svg class="i"><use href="#check"/></svg><code>office_apply</code> 新工作表 + A1:E6 公式 21 个</div>
+                  <div class="ok"><svg class="i"><use href="#check"/></svg>重算：0 错误 · 合计 4,826.5 与明细一致</div>
+                  <div class="ok"><svg class="i"><use href="#check"/></svg><code>office_apply</code> 插入柱状图（地区汇总!A2:C5）</div>
+                </div>
+              </div>
+              <div class="msg-a" style="font-size:12.5px;color:var(--muted)">西南柱用强调色标出，因为它是增速最高的地区。要改成按同比排序吗？</div>
+            </div>
+            <!-- slides feed -->
+            <div data-for="slides" class="hidden" style="display:contents">
+              <div class="msg-u">根据复盘文档和销售明细，做一份 8 页季度汇报</div>
+              <div class="msg-a">正在生成，已完成 5/8 页。你可以同时修改已完成的页面。
+                <div class="steps">
+                  <div class="ok"><svg class="i"><use href="#check"/></svg><code>office_create</code> 演示 · 主题「深海蓝」</div>
+                  <div class="ok"><svg class="i"><use href="#check"/></svg>第 1–5 页 · 版式占位写入</div>
+                  <div class="ok"><svg class="i"><use href="#check"/></svg><code>office_lint</code> 第 3 页：要点溢出 → 已改为 4 条</div>
+                  <div class="run"><span class="pulse"></span>第 6 页 · 华北库存问题</div>
+                </div>
+              </div>
+              <div class="pending">
+                <div class="ph" style="font-weight:600"><svg class="i" style="color:var(--warn)"><use href="#warn"/></svg>排版体检</div>
+                <div class="prow"><span>第 3 页：图表与要点无重叠，文字对比度 9.6:1</span><span style="color:var(--ok)">通过</span></div>
+                <div class="prow"><span>第 5 页：标题 34 字，超出建议长度</span><span class="acts"><button class="yes" title="让 Keystone 修正"><svg class="i"><use href="#check"/></svg></button></span></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="composer">
+            <div class="quick" id="quick">
+              <button>总结全文</button><button>检查数据一致性</button><button>生成汇报 PPT</button>
+            </div>
+            <div class="box">
+              <div class="ph">让 Keystone 修改选区，或描述你要的内容……</div>
+              <div class="row"><span>@ 引用文件</span><span>上下文：选区</span><button class="send" aria-label="发送"><svg class="i"><use href="#send"/></svg></button></div>
+            </div>
+          </div>
+        </aside>
+      </div>
+
+      <footer class="statusbar">
+        <span id="st1">字数 1,248 · 选区 38 字</span>
+        <span class="aiwork" id="st2"><span class="pulse"></span>Keystone 正在编辑「二、区域对比」</span>
+        <span style="margin-left:auto">建议模式 · 你的输入优先</span>
+        <span>100%</span>
+      </footer>
+    </section>
+  </div>
+</div>
+
+<div class="note" id="note"><button aria-label="关闭说明" onclick="this.parentNode.remove()">×</button><b>设计样稿</b>：静态界面示意，非可用编辑器。右上角切换主页 / 文档 / 表格 / 演示。蓝色为你的光标与选区，橙色为 Keystone 的光标、建议与修改标记。</div>
+
+<script>
+const META = {
+  doc:{t:'W',c:'t-doc',n:'Q3 区域销售复盘',s:'本地已保存 · v44',st1:'字数 1,248 · 选区 38 字',st2:'Keystone 正在编辑「二、区域对比」',ctx1:'选区：第二节 · 2 段',ctx2:'引用：销售明细.ksheet',q:['总结全文','检查数据一致性','生成汇报 PPT']},
+  sheet:{t:'X',c:'t-sheet',n:'销售明细',s:'本地已保存 · v118',st1:'选区 C2:C5 · 求和 4,826.5 · 平均 1,206.6 · 计数 4',st2:'Keystone 已完成 · 21 个公式',ctx1:'选区：地区汇总!C2:C5',ctx2:'工作表：明细 · 1,284 行',q:['解释这个公式','找出异常值','按月做透视']},
+  slides:{t:'P',c:'t-slides',n:'Q3 季度汇报',s:'本地已保存 · v27',st1:'第 3 / 8 页 · 已选中文本框',st2:'Keystone 正在生成第 6 页',ctx1:'当前页：第 3 页',ctx2:'来源：复盘文档 · 销售明细',q:['换个主题','精简每页文字','补充演讲备注']}
+};
+function show(v){
+  document.querySelectorAll('#views button').forEach(b=>b.classList.toggle('on',b.dataset.v===v));
+  document.querySelector('[data-view=home]').classList.toggle('hidden',v!=='home');
+  document.querySelector('[data-view=editor]').classList.toggle('hidden',v==='home');
+  if(v==='home')return;
+  document.querySelectorAll('[data-for]').forEach(el=>el.classList.toggle('hidden',el.dataset.for!==v));
+  const m=META[v];
+  ftype.textContent=m.t; ftype.className='filetype '+m.c; fname.textContent=m.n; saved.textContent=m.s;
+  st1.textContent=m.st1; st2.lastChild.textContent=m.st2; ctx1.textContent=m.ctx1; ctx2.textContent=m.ctx2; ctx3.textContent='版本 '+m.s.split('· ')[1];
+  st2.querySelector('.pulse').style.display=v==='sheet'?'none':'';
+  slideplay.style.display=v==='slides'?'':'none';
+  quick.innerHTML=m.q.map(x=>`<button>${x}</button>`).join('');
+  const direct=v!=='doc';
+  document.getElementById('m-sug').classList.toggle('on',!direct);
+  document.getElementById('m-dir').classList.toggle('on',direct);
+}
+document.querySelectorAll('#views button').forEach(b=>b.onclick=()=>show(b.dataset.v));
+const q=new URLSearchParams(location.search).get('v'); if(q)show(q);
+</script>
+</body>
+</html>

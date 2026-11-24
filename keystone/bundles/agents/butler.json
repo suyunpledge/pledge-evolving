@@ -12,9 +12,14 @@
       "calculator",
       "unit_convert",
       "memory_recall",
+      "office_list",
+      "office_read",
       "read_file",
       "list_dir",
       "find_files",
+      "office_create",
+      "office_apply",
+      "office_export",
       "write_file",
       "edit_file",
       "web_search",
@@ -36,6 +41,8 @@
       "calculator",
       "unit_convert",
       "memory_recall",
+      "office_list",
+      "office_read",
       "read_file",
       "list_dir",
       "find_files",
@@ -45,6 +52,9 @@
       "skill_list"
     ],
     "ask": [
+      "office_create",
+      "office_apply",
+      "office_export",
       "write_file",
       "edit_file"
     ],

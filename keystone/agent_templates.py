@@ -62,7 +62,8 @@ _LOOP_BOUNDS = {"maxSteps": (1, 200), "maxDepth": (0, 8), "spawnBudget": (0, 64)
 TOOL_ALIASES = {"public_search": "web_search"}
 #: Tools only the desktop app provides (mediated locally, not kernel builtins).
 DESKTOP_TOOLS = frozenset({"public_search", "text_transform", "unit_convert", "7zip_extract",
-                           "generate_image", "generate_video", "comfyui_run"})
+                           "generate_image", "generate_video", "comfyui_run",
+                           "office_list", "office_read", "office_create", "office_apply", "office_export"})
 
 _TOP_KEYS = {"schema", "id", "name", "nameEn", "icon", "description", "guidance", "tools", "policy",
              "loop", "planning", "thinking", "skills", "starters", "basedOn"}

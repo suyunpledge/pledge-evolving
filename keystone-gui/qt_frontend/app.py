@@ -89,6 +89,7 @@ def main(argv=None):
         if workbench.permission != 'sandbox':
             tools.update(workbench.service_tools())
         tools.update(workbench.localTools.tools())
+        tools.update(workbench.office.tools(workspace))
         tools.update(media_tool_set())
         tools['keystone_public_search'] = workbench.search.work_tool()
         skipped_media = {}
@@ -106,6 +107,8 @@ def main(argv=None):
                 return response
             if target[0] == 'local':
                 return workbench.localTools.call(target[1], workspace, arguments, cancel)
+            if target[0] == 'office':
+                return workbench.office.call(target[1], target[2], arguments, cancel)
             if target[0] == 'service':
                 return workbench.call_service(target[1], arguments, cancel, target[2])
             return workbench.mcp.call_chat_tool(target, arguments, cancel)
@@ -171,11 +174,14 @@ def main(argv=None):
                     "qml_warnings": warnings, "render_messages": render_messages,
                     "workbench": {"page": workbench.page, "ready": workbench.nativePageReady,
                                   "error": workbench.error, "status": workbench.status}}
-            args.smoke.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
             if args.page == 'connectors':
                 ready = workbench.page == 'connectors' and workbench.mcp.loaded
+            elif args.page == 'office':
+                ready = workbench.page == 'office' and window.property('officeReady')
             else:
-                ready = args.page in {'chat', 'connectors'} or workbench.nativePageReady
+                ready = args.page == 'chat' or workbench.nativePageReady
+            data["workbench"]["ready"] = ready
+            args.smoke.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
             app.exit(0 if not image.isNull() and not warnings and ready and not workbench.error else 2)
         QTimer.singleShot(20000 if not args.demo else 7000 if args.page != 'chat' or args.browser else 1800, capture)
     result = app.exec()

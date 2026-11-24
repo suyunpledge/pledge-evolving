@@ -19,6 +19,7 @@ ApplicationWindow {
     readonly property bool english: setup.language === "en"
     function label(zh, en) { return english ? en : zh }
     readonly property bool chatVisible: workbench.page === "chat"
+    readonly property bool officeReady: officeLoader.item ? officeLoader.item.ready : false
     readonly property bool conversationOnly: controller.conversationMode === "chat"
     readonly property real columnWidth: Math.min(800, mainRight - sideWidth - 48)
     readonly property real columnX: sideWidth + (mainRight - sideWidth - columnWidth) / 2
@@ -1241,6 +1242,7 @@ ApplicationWindow {
                 model: [
                     {key:"task", label:window.label("任务", "Tasks"), icon:"list-checks"},
                     {key:"files", label:window.label("文件与项目", "Files & projects"), icon:"folder"},
+                    {key:"office", label:window.label("办公", "Office"), icon:"panels-top-left"},
                     {key:"search", label:window.label("联网搜索", "Web search"), icon:"search"},
                     {key:"tools", label:window.label("工具与插件", "Tools & plugins"), icon:"blocks"},
                     {key:"config", label:window.label("模型与配置", "Model settings"), icon:"settings-2"},
@@ -1251,7 +1253,7 @@ ApplicationWindow {
                     {key:"connectors", label:window.label("连接器", "Connectors"), icon:"plug"},
                     {key:"computer", label:window.label("电脑操作", "Computer use"), icon:"monitor"},
                     {key:"preview", label:window.label("代码预览", "Code preview"), icon:"file-code"}
-                ].filter(item => (setup.developer || item.key !== "evolution") && (!window.conversationOnly || item.key !== "computer"))
+                ].filter(item => (setup.developer || item.key !== "evolution") && (!window.conversationOnly || !["computer", "office"].includes(item.key)))
                 GlassButton {
                     required property var modelData
                     material: window.material; width: navigation.width
@@ -1291,7 +1293,7 @@ ApplicationWindow {
         y: window.codingVisible ? 39 : 76
         width: window.mainRight - x - (window.codingVisible ? window.codingWidth : 12)
         height: window.height - y - (window.codingVisible ? 0 : 12)
-        visible: !window.chatVisible && workbench.page !== "connectors"
+        visible: !window.chatVisible && workbench.page !== "connectors" && workbench.page !== "office"
 
         Rectangle {
             id: hostError; width: parent.width; height: hostErrorText.height + 24
@@ -1324,6 +1326,17 @@ ApplicationWindow {
                 }
             }
         }
+    }
+
+    Loader {
+        id: officeLoader
+        property bool visited: false
+        visible: workbench.page === "office"
+        onVisibleChanged: if (visible) visited = true
+        active: visited || visible
+        x: window.sideWidth + 8; y: 76
+        width: window.mainRight - x - 8; height: window.height - y - 8
+        source: "OfficePage.qml"
     }
 
     Loader {
@@ -1526,6 +1539,7 @@ ApplicationWindow {
                        ["config", "模型与配置", "settings-2"], ["agents", "Agents", "users"], ["knowledge", "知识库", "book-open"],
                        ["schedules", "定时任务", "calendar-clock"], ["connectors", "连接器", "plug"], ["preview", "代码预览", "file-code"],
                        ["computer", "电脑操作", "monitor"], ["development", "Coding", "code"], ["evolution", "演化", "sparkles"]]
+        if (!window.conversationOnly) pages.push(["office", "办公", "panels-top-left"])
         for (const page of pages)
             if (setup.developer || (page[0] !== "development" && page[0] !== "evolution"))
                 add("打开 " + page[1], "页面", page[2], () => window.go(page[0]), page[0])

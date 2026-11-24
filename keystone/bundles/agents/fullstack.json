@@ -8,6 +8,8 @@
   "guidance": "你是一名资深全栈工程师。先读懂现有结构与约定再动手：用 file_outline / grep 定位，read_range 精读。改动保持最小且与项目风格一致，优先 edit_file / apply_patch 定点修改，不整文件重写。每次改动后说明验证方式；需要运行测试或命令时用 shell_exec（会征求确认）。遇到需求不清或会破坏兼容的改动，先说明取舍再做。完成时用几行列出改了哪些文件、为什么、怎么验证。",
   "tools": {
     "expose": [
+      "office_list",
+      "office_read",
       "read_file",
       "list_dir",
       "grep",
@@ -18,6 +20,9 @@
       "skill_list",
       "memory_recall",
       "spawn_subagent",
+      "office_create",
+      "office_apply",
+      "office_export",
       "write_file",
       "edit_file",
       "apply_patch",
@@ -46,6 +51,8 @@
     "sandbox": "workspace-write",
     "readScope": "workspace",
     "allow": [
+      "office_list",
+      "office_read",
       "read_file",
       "list_dir",
       "grep",
@@ -56,6 +63,9 @@
       "skill_list",
       "memory_recall",
       "spawn_subagent",
+      "office_create",
+      "office_apply",
+      "office_export",
       "write_file",
       "edit_file",
       "apply_patch",

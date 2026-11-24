@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 
 from PySide6.QtCore import QObject, Property, QProcess, QProcessEnvironment, QTimer, Signal, Slot
 from keystone.desktop_permissions import LABELS, PROFILES
+from keystone.compat import desktop_config
 from keystone.secrets import redact
 from .controller import RowsModel
 from brand_marks import mark_path
@@ -21,12 +22,15 @@ from .onboarding import Onboarding
 from .model_rows import ModelRows
 from .local_tools import LocalTools
 from .media_models import MediaModels
+from .office_controller import OfficeController
+from .store import SessionStore
 
 PAGES = {'chat': 'Work 对话', 'development': 'Coding', 'task': '任务', 'files': '文件与项目',
          'tools': '工具与插件', 'config': '模型与配置', 'agents': 'Agents', 'knowledge': '知识库',
          'evolution': '演化', 'schedules': '定时任务', 'connectors': '连接器',
          'preview': '代码预览', 'computer': '电脑操作', 'work': 'Work 完整功能'}
 PAGES['connector_accounts'] = '连接器账户'
+PAGES['office'] = '办公'
 
 
 class WorkbenchController(QObject):
@@ -121,7 +125,11 @@ class WorkbenchController(QObject):
                         'usable': plan.usable, 'note': plan.note} for plan in preset.plans]}
             for preset in provider_catalog.PRESETS
         ]
-        self._workspace = str(Path(__file__).resolve().parents[2])
+        default_workspace = Path(__file__).resolve().parents[2]
+        prefs = SessionStore.read(desktop_config(self.home), {})
+        selected = Path(prefs.get('project_workspace') or default_workspace).resolve()
+        self._workspace = str(selected if selected.is_dir() else default_workspace)
+        self._office = OfficeController(lambda: self._workspace, self)
         self._pending = []
         self._waiters = {}
         self._input_busy = lambda: False
@@ -159,6 +167,7 @@ class WorkbenchController(QObject):
     error = Property(str, lambda s: s._error, notify=changed)
     status = Property(str, lambda s: s._status, notify=changed)
     workspace = Property(str, lambda s: s._workspace, notify=changed)
+    office = Property(QObject, lambda s: s._office, constant=True)
     permission = Property(str, lambda s: s._profile, notify=changed)
     permissionLabel = Property(str, lambda s: LABELS[s._profile], notify=changed)
     approvals = Property('QVariantList', lambda s: s._pending, notify=changed)
@@ -358,7 +367,7 @@ class WorkbenchController(QObject):
             page = 'chat'
         if page not in PAGES or (not self._onboarding.developer and page in {'development', 'evolution'}):
             return
-        if page == self._page and (self._native_ready or page in {'chat', 'connectors'}):
+        if page == self._page and (self._native_ready or page in {'chat', 'connectors', 'office'}):
             return
         if page == 'files' and self._page != 'files':
             self._before_files = self._page
@@ -373,7 +382,7 @@ class WorkbenchController(QObject):
         if page != 'connector_accounts':
             self._pending_account = ''
         self._navigation = page != 'chat'
-        if page not in {'chat', 'connectors'} and self._process.state() == QProcess.ProcessState.NotRunning:
+        if page not in {'chat', 'connectors', 'office'} and self._process.state() == QProcess.ProcessState.NotRunning:
             self.start_host()
         self._send_navigation()
         self.changed.emit()
@@ -384,6 +393,8 @@ class WorkbenchController(QObject):
             self.pageReadyChanged.emit()
 
     def _send_navigation(self):
+        if self._page == 'office':
+            return
         if self._service_ready:
             self._send({'command': 'navigate', 'page': self._page, 'ticket': self._navigation_ticket})
         elif self._page in {'chat', 'connectors'}:

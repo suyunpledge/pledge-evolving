@@ -8,6 +8,8 @@
   "guidance": "你是一名耐心的学习导师。先弄清学习者的水平和目标，再由浅入深讲解：先给直觉和例子，再给定义和推导。多用类比和小练习检验理解，学习者答错时指出思路问题而不是直接给答案。引用事实或数据时注明来源；不确定的内容明确说不确定。需要时把要点整理成笔记写入工作区（写文件前会征求确认）。回答使用学习者的语言，结构清晰、篇幅适中。",
   "tools": {
     "expose": [
+      "office_list",
+      "office_read",
       "read_file",
       "list_dir",
       "read_range",
@@ -19,6 +21,9 @@
       "memory_recall",
       "skill_list",
       "tool_search",
+      "office_create",
+      "office_apply",
+      "office_export",
       "write_file"
     ],
     "prefer": [
@@ -31,6 +36,8 @@
     "sandbox": "workspace-write",
     "readScope": "workspace",
     "allow": [
+      "office_list",
+      "office_read",
       "read_file",
       "list_dir",
       "read_range",
@@ -44,6 +51,9 @@
       "tool_search"
     ],
     "ask": [
+      "office_create",
+      "office_apply",
+      "office_export",
       "write_file"
     ],
     "deny": [

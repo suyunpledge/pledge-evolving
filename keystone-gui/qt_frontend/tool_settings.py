@@ -8,7 +8,8 @@ from .conversation import tool_label, tool_schemas
 
 _GROUPS = {
     '计算': ('calculator', 'unit_convert', 'datetime', 'evaluate_math', 'summarize_numbers'),
-    '图表与办公': ('plot_chart', 'create_document', 'create_spreadsheet', 'create_slides'),
+    '图表与办公': ('plot_chart', 'create_document', 'create_spreadsheet', 'create_slides',
+                 'office_list', 'office_read', 'office_create', 'office_apply', 'office_export'),
     '文本': ('text_transform',),
     '搜索': ('public_search', 'web_search', 'fetch_url'),
     '媒体': ('generate_image', 'generate_video', 'comfyui_run'),
