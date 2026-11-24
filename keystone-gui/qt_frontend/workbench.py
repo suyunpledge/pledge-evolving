@@ -213,8 +213,13 @@ class WorkbenchController(QObject):
             return
         if page == 'computer' and action == 'settings':
             if values.get('changed') == 'model':
+                values['consent'] = False
                 self.formValues.emit(page, {'consent': False})
-            self._send({'command': 'computer_settings'})
+            if values.get('changed') == 'inputMode':
+                values['clicks'] = False
+                self.formValues.emit(page, {'clicks': False})
+            self._send({'command': 'computer_settings', 'values': {
+                key: values.get(key) for key in ('inputMode', 'clicks', 'consent', 'model')}})
             return
         self._send({'command': 'page_action', 'page': page, 'action': action, 'values': values})
 

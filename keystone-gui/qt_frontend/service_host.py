@@ -222,7 +222,7 @@ class ServiceHost:
                 self.cancel.set()
         elif command == 'computer_settings':
             if self.pages.computer:
-                self.pages.computer.settings_changed()
+                self.pages.computer.settings_changed(row.get('values'))
                 self.publish_tools()
         elif command == 'coding':
             with self.lock:

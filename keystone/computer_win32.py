@@ -162,10 +162,30 @@ class WindowsControlDriver:
         self.u.SendMessageTimeoutW.restype = w.LPARAM
         self._validate()
 
+    def background_controls(self):
+        from .computer_background import window_controls
+        self._validate()
+        return window_controls(self.window, self.process_id)
+
     def screenshot(self, *, cancelled=None):
         from .computer_capture import capture_window
         self._validate()
         return capture_window(self.window, self.process_id, cancelled=cancelled)
+
+    def inspect_screenshot(self, options, *, cancelled=None):
+        from .computer_capture import capture_window
+        self._validate()
+        return capture_window(self.window, self.process_id, cancelled=cancelled,
+                              inspect=options, timeout=18 if options.get('target') else 8)
+
+    def observed_screenshot(self, *, cancelled=None):
+        """Provide local control state with an ordinary or post-action screenshot."""
+        try:
+            return self.inspect_screenshot({'list_controls': True}, cancelled=cancelled)
+        except TimeoutError:
+            frame = self.screenshot(cancelled=cancelled)
+            frame['local'] = {'source': 'visfunc_uia', 'status': 'timeout'}
+            return frame
 
     def geometry(self):
         self._validate()

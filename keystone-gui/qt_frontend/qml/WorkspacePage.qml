@@ -729,9 +729,10 @@ Item {
                     WorkbenchField {
                         required property var modelData
                         Layout.fillWidth: true; material: page.material; definition: modelData
+                        visible: page.pageKey !== "computer" || definition.key !== "key" || page.viewData.inputMode === "foreground"
                         onEdited: value => {
                             page.values[definition.key] = value
-                            if (page.pageKey === "computer" && ["model", "consent", "clicks"].includes(definition.key)) page.invoke("settings", {changed: definition.key})
+                            if (page.pageKey === "computer" && ["model", "consent", "clicks", "inputMode"].includes(definition.key)) page.invoke("settings", {changed: definition.key})
                             if (["config", "agents", "connector_accounts"].includes(page.pageKey)) workbench.setFormDirty(page.pageKey, true)
                         }
                     }

@@ -87,16 +87,18 @@ def _capture(window, process_id):
         if source: u.ReleaseDC(window, source)
 
 
-def capture_window(window, process_id, *, cancelled=None, timeout=6):
+def capture_window(window, process_id, *, cancelled=None, timeout=6, inspect=None):
     """No credentials or user config enter the capture worker."""
     if cancelled is not None and cancelled.is_set(): raise RuntimeError('Capture cancelled')
     env = {k:v for k,v in os.environ.items() if k.upper() in {'SYSTEMROOT','WINDIR','PATH','TEMP','TMP'}}
     root = Path(__file__).resolve().parents[1]
     env['PYTHONPATH'] = str(root)
     env['PYTHONIOENCODING'] = 'utf-8'
-    process = subprocess.Popen([sys.executable, '-B', '-m', 'keystone.computer_capture', str(int(window)), str(int(process_id))],
-        # The Qt service owns a live command pipe on stdin. A capture worker has no input protocol.
-        cwd=root, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    args = [sys.executable, '-B', '-m', 'keystone.computer_capture', str(int(window)), str(int(process_id))]
+    request = None if inspect is None else json.dumps(inspect, ensure_ascii=False).encode('utf-8')
+    process = subprocess.Popen(args + ([] if request is None else ['--inspect']),
+        cwd=root, env=env, stdin=subprocess.DEVNULL if request is None else subprocess.PIPE,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
     import time
     deadline = time.monotonic() + timeout
@@ -105,14 +107,15 @@ def capture_window(window, process_id, *, cancelled=None, timeout=6):
             if cancelled is not None and cancelled.is_set(): raise RuntimeError('Capture cancelled')
             if time.monotonic() >= deadline: raise TimeoutError('Window capture exceeded time budget')
             try:
-                data, error = process.communicate(timeout=.1)
+                data, error = process.communicate(input=request, timeout=.1)
                 break
-            except subprocess.TimeoutExpired: pass
+            except subprocess.TimeoutExpired:
+                request = None  # communicate resumes its existing pipes on the next poll
         if process.returncode != 0:
             raise RuntimeError(error.decode('utf-8', 'replace')[-500:])
         if len(data) < 4: raise ValueError('Incomplete capture metadata')
         size = struct.unpack('>I',data[:4])[0]
-        if not 0 < size <= 4096: raise ValueError('Invalid capture metadata size')
+        if not 0 < size <= (131072 if inspect is not None else 4096): raise ValueError('Invalid capture metadata size')
         metadata = json.loads(data[4:4+size])
         data = data[4+size:]
         if not data.startswith(b'\x89PNG\r\n\x1a\n') or len(data) > 8*1024*1024:
@@ -129,9 +132,25 @@ def capture_window(window, process_id, *, cancelled=None, timeout=6):
 
 if __name__ == '__main__':
     try:
-        frame = _capture(int(sys.argv[1]), int(sys.argv[2]))
+        window, pid = int(sys.argv[1]), int(sys.argv[2])
+        frame = _capture(window, pid)
+        if sys.argv[3:] == ['--inspect']:
+            import contextlib
+            from .computer_win32 import WindowsControlDriver
+            from .computer_visfunc import inspect_window
+            options = json.loads(sys.stdin.buffer.read(4096))
+            driver = WindowsControlDriver(window, pid)
+            with contextlib.redirect_stdout(sys.stderr):
+                local = inspect_window(driver, frame, options)
+            if driver.geometry() != {k: frame[k] for k in ('rect', 'client_rect', 'dpi')}:
+                raise ValueError('Window moved during local recognition')
+            frame['local'] = local
+            if 'point' in local:
+                point = local.pop('point')
+                driver.prepare_coordinate(frame, point['x'], point['y'])
+                frame['point'] = point
         png = frame.pop('png')
-        metadata = json.dumps(frame).encode('utf-8')
+        metadata = json.dumps(frame, ensure_ascii=False).encode('utf-8')
         sys.stdout.buffer.write(struct.pack('>I',len(metadata))+metadata+png)
     except Exception as exc:
         sys.stderr.write(str(exc)); raise SystemExit(1)

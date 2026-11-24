@@ -67,6 +67,23 @@ class CoordinateTests(unittest.TestCase):
         self.assertNotEqual(json.loads(result['content'])['observation_id'],frame['observation_id'])
         self.assertFalse(lane.call('computer_click',self.args(frame))['ok'])
 
+    def test_dense_window_returns_chainable_observations_for_reads_and_clicks(self):
+        controls = [{'label': 'field ' + str(i) + 'x'*70, 'id': 'container.'*12 + str(i),
+                     'role': 'edit', 'enabled': True} for i in range(64)]
+        controls[-1]['focused'] = True
+        self.driver.observed_screenshot = lambda **kw: {
+            **self.driver.screenshot(**kw), 'local': {'status': 'ok', 'controls': controls}}
+        lane = self.lane()
+        before = self.observe(lane)
+        result = lane.call('computer_click', self.args(before))
+        after = json.loads(result['content'])
+        self.assertTrue(result['ok'])
+        self.assertNotIn('artifact', result['meta'])
+        self.assertLessEqual(len(result['content']), lane.ctx.capabilities['artifact_inline_limit'])
+        self.assertTrue(after['local']['truncated'] and after['local']['controls'][0]['focused'])
+        self.assertEqual(len(lane.last_frame['local']['controls']), 64)
+        self.assertNotEqual(before['observation_id'], after['observation_id'])
+
     def test_readonly_plan_sandbox_and_denies_cannot_be_upgraded(self):
         for policy in ({'mode':Mode.READ_ONLY},{'mode':Mode.PLAN},{'sandbox':Sandbox.READ_ONLY},
                        {'mode':Mode.PLAN,'allow':('*',)},

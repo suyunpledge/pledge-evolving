@@ -1,4 +1,5 @@
 """Screenshot-bound pointer and keyboard input. No guessed desktop position or replay."""
+from collections import Counter
 import json
 import uuid
 import weakref
@@ -18,6 +19,43 @@ _STATE = ('target','width','height','rect','client_rect','dpi','client_sha256')
 # Keystrokes go to the focused control, not a pixel, and a blinking caret changes the
 # client hash between captures; the window identity and geometry must still match.
 _GEOMETRY = _STATE[:-1]
+
+
+def screenshot_content(frame, ctx):
+    """Keep the next action's observation ID inline even on a crowded window."""
+    def encode(value):
+        return json.dumps(value, ensure_ascii=False, separators=(',', ':'))
+
+    payload = {k: v for k, v in frame.items() if k != 'png'}
+    text = encode(payload)
+    limit = ctx.extras.get('artifact_inline_limit', 4000)
+    local = payload.get('local') or {}
+    controls = local.get('controls')
+    if len(text) <= limit or not controls:
+        return text
+
+    # A unique label and role already locate the control. Keep IDs for ambiguous ones.
+    selectors = [(row['role'], ''.join(row['label'].split()).casefold()) for row in controls]
+    counts = Counter(selectors)
+    compact = [dict(row) for row in controls]
+    for row, selector in zip(compact, selectors):
+        if selector[1] and counts[selector] == 1:
+            row.pop('id', None)
+    payload['local'] = {**local, 'controls': compact}
+    text = encode(payload)
+    if len(text) <= limit:
+        return text
+
+    visible = []
+    payload['local'].update(controls=visible, truncated=True)
+    remaining = limit - len(encode(payload))
+    for row in sorted(compact, key=lambda r: (not r.get('focused'), not r.get('selected'),
+                                              not r.get('enabled'), r['role'] == 'text')):
+        size = len(encode(row)) + bool(visible)
+        if size <= remaining:
+            visible.append(row)
+            remaining -= size
+    return encode(payload)
 
 
 def _reason_ok(args):
@@ -131,11 +169,12 @@ class VisualClickSession:
     def _finish(self, before, ctx, stopped, token, dispatch):
         """Post-input screenshot is a fresh observation, so the next step can chain on it."""
         try:
-            after = self.computer.driver.screenshot(cancelled=token)
+            driver = self.computer.driver
+            capture = getattr(driver, 'observed_screenshot', driver.screenshot)
+            after = capture(cancelled=token)
             if stopped(): return self.failure('cancelled_after_dispatch','Input may have completed; inspect target',True)
             after = self.remember(after,ctx.secret_scope)
-            meta = {k:v for k,v in after.items() if k!='png'}
-            return ToolResult(True,json.dumps(meta),meta={'execution_state':'completed',
+            return ToolResult(True,screenshot_content(after, ctx),meta={'execution_state':'completed',
                 'verification':'post_screenshot', 'dispatch':dispatch,
                 'changed':after['client_sha256']!=before['client_sha256']}), after
         except Exception as exc:

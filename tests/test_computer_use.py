@@ -80,6 +80,47 @@ class ComputerTests(unittest.TestCase):
         self.assertEqual(self.act(observation).meta['error_code'], 'stale_observation')
         self.assertFalse(self.driver.inputs)
 
+    def test_approval_past_observation_lifetime_does_not_dispatch(self):
+        self.session.clock = lambda: 0
+        observation = self.observe()
+        def approve(*_):
+            self.session.clock = lambda: self.session.ttl + 1
+            return True
+        self.session.approve = approve
+        self.assertEqual(self.act(observation).meta['error_code'], 'stale_observation')
+        self.assertEqual(self.driver.inputs, [])
+
+    def test_background_revocation_while_resolving_pattern_stops_dispatch(self):
+        from contextlib import nullcontext
+        prepared, release = threading.Event(), threading.Event()
+
+        def dispatch(ref, action, text, before_input):
+            prepared.set()
+            if not release.wait(5):
+                raise TimeoutError('fixture was not released')
+            before_input()
+            self.driver.act(ref, action, text)
+
+        self.driver.background_controls = lambda: nullcontext((self.driver.observe(), dispatch))
+        registry = ToolRegistry()
+        register_computer_tools(registry, background=True, approve=lambda *_: True)
+        observation = json.loads(registry.invoke('computer_observe', {}, self.ctx).content)
+        args = {'observation_id': observation['observation_id'], 'ref': 'edit',
+                'action': 'type_text', 'text': 'must not reach the window'}
+        results = []
+        worker = threading.Thread(target=lambda: results.append(registry.invoke('computer_act', args, self.ctx)))
+        worker.start()
+        try:
+            self.assertTrue(prepared.wait(5))
+            self.session.revoke()
+        finally:
+            release.set()
+            worker.join(5)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(results[0].meta['execution_state'], 'not_started')
+        self.assertFalse(registry.invoke('computer_act', args, self.ctx).ok)
+        self.assertEqual(self.driver.inputs, [])
+
     def test_policy_and_missing_host_never_send_input(self):
         for mode in (Mode.READ_ONLY, Mode.PLAN):
             ctx = self.context(mode)

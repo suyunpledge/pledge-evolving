@@ -9,7 +9,7 @@ import threading
 import time
 import uuid
 import weakref
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 
 from .runtime_lock import named_resource_lock, cancellable_lock, LockCancelled
 from .tools import ToolResult, ToolSpec
@@ -66,8 +66,17 @@ class ComputerSession:
         return ToolResult(False, error=message, meta={'error_code': code,
             'execution_state': 'unknown' if unknown else 'not_started'})
 
-    def _capture(self, scope):
-        state = self.driver.observe()
+    def _snapshot(self, background):
+        if background:
+            return self.driver.background_controls()
+        return nullcontext((self.driver.observe(), self.driver.act))
+
+    def _capture(self, scope, background=False):
+        if background:
+            with self.driver.background_controls() as (snapshot, _):
+                state = dict(snapshot)
+        else:
+            state = self.driver.observe()
         # Capture only JSON contracts; never silently stringify native handles.
         state = json.loads(json.dumps(state, allow_nan=False))
         if (not isinstance(state, dict) or not isinstance(state.get('elements'), list)
@@ -81,19 +90,25 @@ class ComputerSession:
                 for action in row['actions']) for row in state['elements']):
             raise ValueError('Computer observation needs explicit supported actions')
         digest = hashlib.sha256(json.dumps(state, sort_keys=True).encode()).hexdigest()
+        state.pop('_value_revision', None)
         observation = {'observation_id': uuid.uuid4().hex, 'target': self.driver.target_id,
                        'state': state, 'captured_at': self.clock(), 'revision': digest}
+        if background:
+            observation['input_mode'] = 'background'
         if not state['elements'] or state.get('truncated'):
             # Browsers, Electron and Office draw their own controls; this list cannot see them.
-            observation['hint'] = ('Native control list is empty or partial for this window. '
-                                   'Use computer_screenshot or computer_vision, then coordinate/keyboard tools.')
+            observation['hint'] = ('No further background actions are available in this observation. '
+                                   'Do not use foreground input.' if background else
+                                   'Native control list is empty or partial for this window. '
+                                   'Where available, use computer_screenshot(list_controls=true) or '
+                                   'computer_screenshot(target="visible label") for local VisFunc recognition.')
         self._observations[scope] = observation
         return observation
 
-    def observe(self, ctx):
+    def observe(self, ctx, *, background=False):
         try:
             with self.operation(ctx.cancellation):
-                return self._observe(ctx)
+                return self._observe(ctx, background)
         except LockCancelled as exc:
             return self._failure('cancelled', str(exc))
 
@@ -108,7 +123,7 @@ class ComputerSession:
                     return element
             raise ValueError('当前观察中没有可操作的对应控件。')
 
-    def _observe(self, ctx):
+    def _observe(self, ctx, background):
         with self._lock:
             self._observations.pop(ctx.secret_scope, None)
             if self._revoked.is_set():
@@ -116,83 +131,116 @@ class ComputerSession:
             if ctx.cancellation is not None and ctx.cancellation.is_set():
                 return self._failure('cancelled', 'Computer observation cancelled')
             try:
-                observation = self._capture(ctx.secret_scope)
+                observation = self._capture(ctx.secret_scope, background)
+                if self._revoked.is_set() or ctx.cancellation is not None and ctx.cancellation.is_set():
+                    self._observations.pop(ctx.secret_scope, None)
+                    return self._failure('cancelled', 'Computer observation cancelled')
                 return ToolResult(True, json.dumps(ctx.secret_scope.protect(observation)),
                                   meta={'execution_state': 'completed'})
             except Exception as exc:
                 self._observations.pop(ctx.secret_scope, None)
                 return self._failure('observation_failed', str(exc))
 
-    def act(self, args, ctx):
+    def act(self, args, ctx, *, background=False, approve=None):
         try:
             with self.operation(ctx.cancellation):
-                return self._act(args, ctx)
+                return self._act(args, ctx, background, approve)
         except LockCancelled as exc:
             return self._failure('cancelled', str(exc))
 
-    def _act(self, args, ctx):
+    def _act(self, args, ctx, background, approve):
         if (set(args) - {'observation_id', 'ref', 'action', 'text'}
                 or not isinstance(args.get('action'), str)
                 or args.get('action') not in {'click', 'type_text'}
+                or background and (args.get('action') == 'type_text') != ('text' in args)
                 or not isinstance(args.get('ref'), str)
                 or not isinstance(args.get('text', ''), str)
                 or len(args.get('text', '')) > 10000 or '\0' in args.get('text', '')):
             return self._failure('invalid_arguments', 'Use a current ref and click/type_text action')
         with self._lock:
-            before = self._observations.pop(ctx.secret_scope, None)
+            before = self._observations.get(ctx.secret_scope)
             if (before is None or before['observation_id'] != args.get('observation_id')
+                    or background != (before.get('input_mode') == 'background')
                     or self.clock() - before['captured_at'] > self.ttl):
                 return self._failure('stale_observation', 'Observe the selected target again before acting')
+            del self._observations[ctx.secret_scope]
             element = next((row for row in before['state']['elements'] if row['ref'] == args['ref']), None)
             if element is None or args['action'] not in element.get('actions', []):
                 return self._failure('unsupported_target', 'Element does not support the requested action')
+            dispatched = False
             try:
-                if self.approve is None or not self.approve(self.driver.target_id, dict(args)):
+                approver = self.approve if approve is None else approve
+                details = dict(args)
+                if background:
+                    details.update(control=element.get('name', ''), role=element.get('class', ''))
+                if approver is None or not approver(self.driver.target_id, details):
                     return self._failure('approval_required', 'Computer action was not approved by the host')
                 if ctx.cancellation is not None and ctx.cancellation.is_set():
                     return self._failure('cancelled', 'Computer action cancelled before dispatch')
                 # Approval may wait while the target moves, navigates or changes.
-                current = self.driver.observe()
-                digest = hashlib.sha256(json.dumps(current, sort_keys=True, allow_nan=False).encode()).hexdigest()
-                if digest != before['revision']:
-                    return self._failure('stale_observation', 'Target changed; observe again')
-            except Exception as exc:
-                return self._failure('preparation_failed', str(exc))
-            try:
-                if self._revoked.is_set():
-                    return self._failure('capability_revoked', 'Computer capability was revoked before input')
-                if ctx.cancellation is not None and ctx.cancellation.is_set():
-                    return self._failure('cancelled', 'Computer action cancelled before input')
-                self._observations.clear()  # Other lanes must reobserve even if the UI looks unchanged.
-                self.visual.observations.clear()
-                self.driver.act(args['ref'], args['action'], args.get('text', ''))
-                after = self._capture(ctx.secret_scope)
+                with self._snapshot(background) as (current, dispatch):
+                    digest = hashlib.sha256(json.dumps(current, sort_keys=True, allow_nan=False).encode()).hexdigest()
+                    if digest != before['revision']:
+                        return self._failure('stale_observation', 'Target changed; observe again')
+
+                    def start_input():
+                        nonlocal dispatched
+                        if self._revoked.is_set() or ctx.cancellation is not None and ctx.cancellation.is_set():
+                            raise LockCancelled('Computer action cancelled before input')
+                        if self.clock() - before['captured_at'] > self.ttl:
+                            raise TimeoutError('Observation expired before input; observe again')
+                        self._observations.clear()
+                        self.visual.observations.clear()
+                        dispatched = True
+
+                    arguments = (args['ref'], args['action'], args.get('text', ''))
+                    if background:
+                        dispatch(*arguments, before_input=start_input)
+                    else:
+                        start_input()
+                        dispatch(*arguments)
+                after = self._capture(ctx.secret_scope, background)
                 # Cancellation after dispatch must not hide possible effects.
                 if ctx.cancellation is not None and ctx.cancellation.is_set():
                     self._observations.pop(ctx.secret_scope, None)
                     return self._failure('cancelled_after_dispatch', 'Action may have completed; observe before continuing', unknown=True)
+                verification = 'post_observation'
+                if background:
+                    verification = 'value_readback' if args['action'] == 'type_text' else 'dispatched_with_post_observation'
                 return ToolResult(True, json.dumps(ctx.secret_scope.protect(after)), meta={
-                    'execution_state': 'completed', 'verification': 'post_observation',
+                    'execution_state': 'completed', 'verification': verification,
                     'changed': after['revision'] != before['revision']})
             except Exception as exc:
                 self._observations.pop(ctx.secret_scope, None)
+                if not dispatched:
+                    if self._revoked.is_set():
+                        return self._failure('capability_revoked', 'Computer capability was revoked before input')
+                    if isinstance(exc, LockCancelled):
+                        return self._failure('cancelled', str(exc))
+                    if self.clock() - before['captured_at'] > self.ttl:
+                        return self._failure('stale_observation', 'Observation expired; observe again')
+                    return self._failure('preparation_failed', str(exc))
                 return self._failure('computer_outcome_unknown', str(exc), unknown=True)
 
 
-def register_computer_tools(registry):
+def register_computer_tools(registry, *, background=False, approve=None):
     """Trusted host opt-in only. Missing capability never exposes usable tools."""
     def observe(args, ctx):
         if args:
             return ComputerSession._failure('invalid_arguments', 'Observe takes no arguments')
-        return ctx.extras['computer'].observe(ctx)
+        return ctx.extras['computer'].observe(ctx, background=background)
     def act(args, ctx):
-        return ctx.extras['computer'].act(args, ctx)
+        return ctx.extras['computer'].act(args, ctx, background=background, approve=approve)
     registry.register(ToolSpec('computer_observe',
+        'List actionable accessibility controls in the selected background window, with fresh single-use refs. '
+        'Use computer_act only for actions listed on that ref.' if background else
         'List classic native controls (buttons, text boxes) of the host-selected window with fresh refs. '
-        'Modern apps (browsers, Electron, Office, WeChat) usually return none; then use screenshots instead.',
+        'For Qt or other custom windows, use computer_screenshot with list_controls=true or target when available.',
         observe, schema={'type': 'object', 'properties': {}, 'additionalProperties': False}),
         trusted=True, effect=ToolEffect.READ, requires=('computer',))
-    registry.register(ToolSpec('computer_act', 'One approved action using a current observation/ref; returns fresh state.',
+    registry.register(ToolSpec('computer_act', 'One approved action on the selected control using a current observation/ref. '
+        'type_text replaces the entire value. Returns fresh controls. Button effects may arrive asynchronously; '
+        'verify the application result before repeating. If outcome is unknown, inspect before continuing.',
         act, read_only=False, schema={'type': 'object', 'properties': {
             'observation_id': {'type': 'string'}, 'ref': {'type': 'string'},
             'action': {'type': 'string', 'enum': ['click', 'type_text']}, 'text': {'type': 'string'}},

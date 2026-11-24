@@ -6,32 +6,49 @@ from keystone.execution import ActionExecutor, ActionRequest, create_execution_c
 from keystone.policy import ToolEffect
 from keystone.tools import ToolRegistry, ToolSpec, ToolResult
 from phase_client import VisionClient
-from keystone.computer_coordinates import READ_NAMES, CLICK_NAME, TYPE_NAME, KEY_NAME, INPUT_NAMES, POINTER_ACTIONS
+from keystone.computer_coordinates import READ_NAMES, CLICK_NAME, TYPE_NAME, KEY_NAME, INPUT_NAMES, POINTER_ACTIONS, screenshot_content
 
 class ComputerLane:
     def __init__(self, session, *, rows, selection, environment, consent, scope, cancel,
-                 workspace, home, policy, clicks=False, approve=None):
+                 workspace, home, policy, clicks=False, approve=None, input_mode='foreground'):
         self.session, self.scope = session, scope
         self.cancel = TargetCancellation(cancel, session.revoked)
         self.rows, self.selection, self.environment = rows, selection, environment
         self.consent = consent
+        if input_mode not in {'background', 'foreground'}:
+            raise ValueError('未知的窗口输入方式。')
+        self.background = input_mode == 'background'
         self.clicks, self.approve = clicks, approve
+        self.last_frame = None
         registry = ToolRegistry()
-        register_computer_tools(registry)
-        registry.unregister('computer_act')  # Input uses the separately approved screenshot-bound tools.
+        register_computer_tools(registry, background=self.background,
+            approve=(lambda target, args: approve(target, args, None, self.cancel)) if approve else None)
+        if not (self.background and clicks and approve):
+            registry.unregister('computer_act')
+        native_refs = {} if self.background else {
+            'observation_id': {'type': 'string', 'description': 'Native observation ID, required with control_ref'},
+            'control_ref': {'type': 'string', 'description': 'ref of the button or editable field in that observation'}}
         registry.register(ToolSpec('computer_screenshot',
+            'Read the selected window locally. Use target or list_controls for visual recognition. '
+            'To interact in background, use fresh computer_observe refs; pixels are read-only.' if self.background else
             'Capture the selected window locally; returns size, hash and a fresh observation_id, not pixels. '
             'For a classic control, pass the observation_id and control_ref from computer_observe to get '
             'its verified point locally, then use this screenshot\'s new observation_id and point for computer_click. '
-            'For custom-drawn content use computer_vision. '
+            'On Windows the snapshot includes VisFunc accessibility labels/states. Use target to find a named '
+            'control or visible text locally (UI Automation then OCR). Only a unique match returns point; '
+            'role optionally restricts the search to a UI Automation type. Use computer_vision for other visuals. '
             'To only read public web pages, web_search/fetch_url are faster than driving a browser; '
             'use the window when the page needs a login or interaction.',
             self._screenshot, schema={'type': 'object', 'properties': {
-                'observation_id': {'type': 'string', 'description': 'Native observation ID, required with control_ref'},
-                'control_ref': {'type': 'string', 'description': 'ref of the button or editable field in that observation'}},
+                **native_refs,
+                'list_controls': {'type': 'boolean', 'description': 'List the selected window’s local controls'},
+                'target': {'type': 'string', 'maxLength': 256, 'description': 'Control label or visible text'},
+                'role': {'type': 'string', 'maxLength': 40, 'description': 'Optional UIA role, e.g. button or edit'}},
                 'additionalProperties': False}),
             trusted=True, effect=ToolEffect.READ, requires=('computer',))
         registry.register(ToolSpec('computer_vision',
+            'Analyze the selected window using the consented vision model. Visual locations are read-only '
+            'in background mode.' if self.background else
             'Analyze a fresh selected-window screenshot with the explicitly selected vision model. '
             'With target (e.g. "the search box"), returns an ORIGINAL screenshot pixel point plus an '
             'observation_id for computer_click. Use it again after input to verify the result. '
@@ -41,7 +58,7 @@ class ComputerLane:
                 'target': {'type':'string','maxLength':1000, 'description': 'Element to locate for a click'}},
                 'required': ['question'], 'additionalProperties': False}),
             trusted=True, effect=ToolEffect.READ, requires=('computer',))
-        if clicks and approve is not None:
+        if clicks and approve is not None and not self.background:
             observation = {'type':'string','description':'observation_id from the latest screenshot, vision or input result'}
             reason = {'type':'string','maxLength':500,'description':'Short reason shown to the user in the approval prompt'}
             registry.register(ToolSpec(CLICK_NAME,
@@ -95,11 +112,21 @@ class ComputerLane:
         if self.cancel.is_set():
             raise PermissionError('窗口授权已撤销或请求已取消，请重新选择目标')
 
-    def capture(self, control=None):
+    def capture(self, control=None, inspect=None, *, observe=False):
         self.check()
+        if self.background and control:
+            raise ValueError('后台模式请使用 computer_observe 和 computer_act 操作控件。')
         with self.session.operation(self.cancel):
             element = self.session.observed_control(self.scope, control['observation_id'], control['control_ref']) if control else None
-            frame = self.session.driver.screenshot(cancelled=self.cancel)
+            driver = self.session.driver
+            if inspect is not None:
+                if not hasattr(driver, 'inspect_screenshot'):
+                    raise ValueError('当前窗口驱动不支持 VisFunc 本地识别。')
+                frame = driver.inspect_screenshot(inspect, cancelled=self.cancel)
+            elif observe and hasattr(driver, 'observed_screenshot'):
+                frame = driver.observed_screenshot(cancelled=self.cancel)
+            else:
+                frame = driver.screenshot(cancelled=self.cancel)
             if element is not None:
                 frame['point'] = self.session.driver.locate_control(frame, element)
             frame = self.session.visual.remember(frame,self.scope)
@@ -121,12 +148,20 @@ class ComputerLane:
         return result
 
     def _screenshot(self, args, ctx):
-        if args and (set(args) != {'observation_id', 'control_ref'} or
-                     not all(isinstance(v, str) and v for v in args.values())):
-            raise ValueError('本地定位须同时提供 computer_observe 返回的 observation_id 和控件 ref。')
-        frame = self.capture(args)
+        keys = set(args)
+        if not args:
+            frame = self.capture(observe=True)
+        elif keys == {'observation_id', 'control_ref'} and all(isinstance(v, str) and v for v in args.values()):
+            frame = self.capture(control=args)
+        elif keys == {'list_controls'} and args['list_controls'] is True:
+            frame = self.capture(inspect=args)
+        elif (keys in ({'target'}, {'target', 'role'}) and all(isinstance(v, str) and v.strip()
+              and '\0' not in v for v in args.values()) and len(args['target']) <= 256 and len(args.get('role','')) <= 40):
+            frame = self.capture(inspect=args)
+        else:
+            raise ValueError('请使用控件观察 ID 与 ref、list_controls=true，或目标名称和可选角色。')
         self.last_frame = frame
-        return ToolResult(True, json.dumps({k:v for k,v in frame.items() if k != 'png'}))
+        return ToolResult(True, screenshot_content(frame, ctx))
 
     def _vision(self, args, ctx):
         if set(args) not in ({'question'},{'question','target'}): raise ValueError('视觉工具接受 question 和可选 target')

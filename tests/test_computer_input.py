@@ -1,4 +1,4 @@
-"""Approved keyboard input, pointer variants and partial observation. No real input is sent."""
+"""Approved input and partial observations, including real typing in an owned test window."""
 import json
 from pathlib import Path
 import sys
@@ -248,7 +248,10 @@ class ApprovalTextTests(unittest.TestCase):
 @unittest.skipUnless(sys.platform=='win32','Windows selected-window fixture')
 class NativeKeyboardTests(unittest.TestCase):
     def test_real_unicode_typing_and_enter_reach_only_the_owned_window(self):
-        from test_computer_coordinates import OwnedWindow
+        if __package__:
+            from .test_computer_coordinates import OwnedWindow
+        else:
+            from test_computer_coordinates import OwnedWindow
         fixture=OwnedWindow('keyboard',script='fixture_keyboard_window.py')
         scope=SecretScope()
         try:
@@ -256,8 +259,15 @@ class NativeKeyboardTests(unittest.TestCase):
                 computer=ComputerSession(WindowsControlDriver(fixture.target['window'],fixture.target['process_id']))
                 lane=ComputerLane(computer,rows=[],selection=None,environment={},consent=False,scope=scope,
                     cancel=threading.Event(),workspace=Path(tmp),home=Path(tmp)/'control',policy=Policy(workspace=Path(tmp)),
-                    clicks=True,approve=lambda *args:bool(fixture.command('focus')))
-                oid=json.loads(lane.call('computer_screenshot',{})['content'])['observation_id']
+                    clicks=True,approve=lambda *args:True)
+                shot=json.loads(lane.call('computer_screenshot',{})['content'])
+                left,top,right,bottom=shot['client_rect']
+                fx,fy=fixture.target['field_center']
+                focused=lane.call('computer_click',{'observation_id':shot['observation_id'],
+                    'x':round(left-shot['rect'][0]+fx*(right-left)),
+                    'y':round(top-shot['rect'][1]+fy*(bottom-top)), 'reason':'focus owned entry'})
+                self.assertTrue(focused['ok'],focused)
+                oid=json.loads(focused['content'])['observation_id']
                 typed=lane.call('computer_type',{'observation_id':oid,'text':'Hi 你好😀','reason':'type into owned entry'})
                 self.assertTrue(typed['ok'],typed)
                 pressed=lane.call('computer_key',{'observation_id':json.loads(typed['content'])['observation_id'],

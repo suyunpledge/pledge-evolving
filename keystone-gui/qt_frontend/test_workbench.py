@@ -3,6 +3,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 import tempfile
 import threading
@@ -215,6 +216,50 @@ class WorkbenchTests(unittest.TestCase):
             previous = view()['observationId']
             self.assertTrue(view()['image'].startswith('data:image/png;base64,'))
             self.assertEqual(self.workbench._process.processId(), pid)
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows UI Automation')
+    def test_workbench_grants_background_input_to_a_live_window(self):
+        folder = Path(self.temp.name)
+        fixture = ROOT.parents[1] / 'tests/test_visfunc_screen.py'
+        proc = subprocess.Popen([sys.executable, '-B', str(fixture), '--background-fixture', str(folder)],
+                                env={**os.environ, 'QT_QPA_PLATFORM': 'windows'})
+        try:
+            until(lambda: (folder / 'hwnd').exists())
+            hwnd, _ = json.loads((folder / 'hwnd').read_text())
+            self.workbench.navigate('computer')
+            until(lambda: self.workbench.nativePageReady)
+            self.workbench.setPermission('full')
+            until(lambda: self.workbench.permission == 'full')
+            def action(name, **values):
+                self.workbench.pageAction('computer', name, json.dumps(values))
+            def rows():
+                return self.workbench.pageData['computer']['rows']
+            action('windows')
+            until(lambda: not self.workbench.busy and any(r['id'] == str(hwnd) for r in rows()))
+            action('bind', id=str(hwnd))
+            until(lambda: not self.workbench.busy and 'computer_observe' in self.workbench.service_tools())
+            self.assertNotIn('computer_act', self.workbench.service_tools())
+            action('authorize_background')
+            until(lambda: bool(self.workbench.approvals))
+            self.workbench.resolveApproval(self.workbench.approvals[0]['id'], True)
+            until(lambda: not self.workbench.busy and 'computer_act' in self.workbench.service_tools())
+            self.assertNotIn('computer_click', self.workbench.service_tools())
+            action('observe', clicks=True)
+            until(lambda: not self.workbench.busy and any(r['title'] == 'Profile name' for r in rows()))
+            def control(label):
+                return next(r['id'] for r in rows() if r['title'] == label)
+            ref = control('Profile name')
+            action('control_type_text', id=ref, text='Workbench 后台')
+            until(lambda: not self.workbench.busy and control('Profile name') != ref)
+            action('control_click', id=control('Apply profile'))
+            until(lambda: not self.workbench.busy and (folder / 'invocations').exists())
+            self.assertEqual((folder / 'applied').read_text(encoding='utf8'), 'Workbench 后台')
+            self.assertEqual((folder / 'invocations').read_text(), '1')
+            action('revoke')
+            until(lambda: 'computer_act' not in self.workbench.service_tools())
+        finally:
+            (folder / 'close').touch()
+            proc.wait(timeout=8)
 
     def test_computer_preview_maps_only_image_pixels_and_disarms_on_refresh(self):
         from unittest.mock import patch

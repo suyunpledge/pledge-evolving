@@ -25,7 +25,7 @@ TOOL_LABELS = {
     'update_todos': '更新待办清单',
     'computer_observe': '读取窗口控件', 'computer_screenshot': '截取窗口画面',
     'computer_vision': '分析窗口画面', 'computer_click': '窗口鼠标操作',
-    'computer_type': '输入文字', 'computer_key': '发送按键',
+    'computer_type': '输入文字', 'computer_key': '发送按键', 'computer_act': '操作后台控件',
     **{key: row[0] for key, row in productivity_tools.CATALOG.items()},
 }
 

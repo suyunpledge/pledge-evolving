@@ -418,6 +418,59 @@ class NativeServiceTests(unittest.TestCase):
                 service.call('computer_observe', {}, grant=grant)
             driver.return_value.observe.assert_not_called()
 
+    def test_background_actions_and_continuous_approval_belong_to_one_window_grant(self):
+        from contextlib import contextmanager
+        from keystone.computer_use import ComputerSession
+        from .computer_service import ComputerService
+
+        writes = []
+        class Driver:
+            target_id = 'fixture:owned'
+            @contextmanager
+            def background_controls(self):
+                def dispatch(ref, action, text, before_input):
+                    before_input()
+                    writes.append(text)
+                yield {'elements': [{'ref': 'uia:1', 'name': 'Name', 'class': 'edit',
+                                     'actions': ['type_text']}]}, dispatch
+
+        service = self.host.pages.computer = ComputerService(self.host)
+        service.session = ComputerSession(Driver())
+        self.host.profile = 'full'
+        self.host.command({'command': 'computer_settings', 'values': {'clicks': True}})
+        self.assertFalse(service.view()['canInput'])
+        old = service.session.grant_id
+        self.host.approve = lambda *_: False
+        service.action('authorize_background', {})
+        self.assertIsNone(service.automatic_session)
+        service.action('observe', {'clicks': True})
+        ref = service.view()['rows'][0]['id']
+        service.action('control_type_text', {'id': ref, 'text': 'denied'})
+        self.assertEqual(writes, [])
+        self.host.approve = lambda *_: True
+        service.action('authorize_background', {})
+        with self.assertRaises(PermissionError):
+            service.call('computer_observe', {}, grant=old)
+        grant = service.session.grant_id
+        names = {s['function']['name'] for s in service.lane.schemas()}
+        self.assertIn('computer_act', names)
+        self.assertFalse(names & {'computer_key', 'computer_type', 'computer_click'})
+        self.host.approve = lambda *_: self.fail('extra approval within the selected full-access grant')
+        result = service.call('computer_observe', {}, grant=grant)
+        for text in ('one', 'two'):
+            self.assertTrue(result['ok'], result)
+            result = service.call('computer_act', {'observation_id': json.loads(result['content'])['observation_id'],
+                'ref': 'uia:1', 'action': 'type_text', 'text': text}, grant=grant)
+        self.assertEqual(writes, ['one', 'two'])
+        self.assertFalse(service.call('computer_key', {'key': 'enter'}, grant=grant)['ok'])
+        service.action('review_each', {})
+        self.assertIsNone(service.automatic_session)
+        self.assertNotEqual(service.session.grant_id, grant)
+        self.host.command({'command': 'permission', 'profile': 'sandbox'})
+        self.assertIsNone(service.lane)
+        with self.assertRaises(PermissionError):
+            service.action('authorize_background', {})
+
     def test_manual_computer_capture_waits_for_host_approval(self):
         from keystone.computer_use import ComputerSession
         from .computer_service import ComputerService
@@ -465,11 +518,24 @@ class NativeServiceTests(unittest.TestCase):
         self.assertTrue(current['observationId'])
         self.assertTrue(any(kind == 'page' and row['data'].get('observationId') == current['observationId']
                             for kind, row in self.events))
+        with self.assertRaisesRegex(PermissionError, '后台模式'):
+            service.action('click', {'clicks': True, 'observation_id': 'old', 'x': 0, 'y': 0})
+        self.host.approve = lambda *_: True
+        self.host.command({'command': 'computer_settings', 'values': {'inputMode': 'foreground', 'clicks': True}})
+        service.action('capture', {})
         with self.assertRaisesRegex(ValueError, '预览已更新'):
             service.action('click', {'clicks': True, 'observation_id': 'old', 'x': 0, 'y': 0})
         with self.assertRaisesRegex(PermissionError, '窗口授权已变化'):
             service.call('computer_screenshot', {}, grant='previous-window')
-        self.assertEqual(driver.calls, 2)
+        self.assertEqual(driver.calls, 3)
+        self.host.approve = lambda *_: True
+        def inspect(options, **kwargs):
+            self.assertEqual(options, {'target': '保存'})
+            return {**driver.screenshot(**kwargs), 'local': {'source': 'visfunc_uia', 'status': 'found'},
+                    'point': {'found': True, 'label': '保存', 'x': 30, 'y': 40}}
+        with patch.object(driver, 'inspect_screenshot', inspect, create=True):
+            self.host.pages.action('computer', 'local', {'target': '保存', 'consent': False})
+        self.assertEqual(service.view()['point']['x'], 30)
         self.host.command({'command': 'permission', 'profile': 'sandbox'})
         self.assertIsNone(service.lane)
         self.assertEqual(service.view()['observationId'], '')
