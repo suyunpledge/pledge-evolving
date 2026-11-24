@@ -40,6 +40,7 @@ from .store import SessionStore
 BUILTIN_ROOT = Path(__file__).resolve().parent / 'pets'
 DEFAULT_PET = 'crab'
 STATES = ('idle', 'walk', 'sleep', 'think', 'happy', 'worried')
+INTERACTIONS = ('pat', 'belly', 'tail', 'feed', 'pickup', 'greet', 'celebrate')
 AMBIENT = ('idle', 'walk', 'sleep')
 MOODS = ('think', 'happy', 'worried')
 PACK_ID = re.compile(r'[a-z0-9][a-z0-9_-]{0,31}')
@@ -153,11 +154,19 @@ def load_pack(folder, *, builtin=False):
     unknown = sorted(set(faces) - set(STATES))
     if unknown:
         raise PackError('faces 里有未知的状态：' + '、'.join(map(str, unknown)))
+    interactions = data.get('interactions', {})
+    if not isinstance(interactions, dict):
+        raise PackError('interactions 需为 {动作: 图片} 对象')
+    unknown = sorted(set(interactions) - set(INTERACTIONS))
+    if unknown:
+        raise PackError('interactions 里有未知的动作：' + '、'.join(map(str, unknown)))
     return {'id': pack_id, 'name': name.strip()[:MAX_NAME], 'builtin': builtin,
             'folder': str(folder), 'width': width, 'height': height, 'smooth': smooth, 'facing': facing,
             'states': {state: _state(folder, state, value) for state, value in states.items()},
             'faces': {state: QUrl.fromLocalFile(str(_art(folder, value, state))).toString()
-                      for state, value in faces.items()}}
+                      for state, value in faces.items()},
+            'interactions': {act: QUrl.fromLocalFile(str(_art(folder, value, act))).toString()
+                             for act, value in interactions.items()}}
 
 
 def art_for(pack, state):
@@ -443,7 +452,8 @@ class PetController(QObject):
             return {}
         return {'id': pack['id'], 'name': self._display(pack['id']), 'width': pack['width'],
                 'height': pack['height'], 'smooth': pack['smooth'], 'facing': pack['facing'],
-                'faces': pack.get('faces', {}), 'states': {s: art_for(pack, s) for s in STATES}}
+                'faces': pack.get('faces', {}), 'interactions': pack.get('interactions', {}),
+                'states': {s: art_for(pack, s) for s in STATES}}
 
     def _rows(self):
         return [{'id': pack['id'], 'name': self._display(pack['id']), 'defaultName': pack['name'],

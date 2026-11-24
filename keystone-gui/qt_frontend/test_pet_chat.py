@@ -269,6 +269,37 @@ class PetChatWindowTests(unittest.TestCase):
         self.assertFalse(panel.property('visible'))
         self.assertEqual(self.warnings, [])
 
+    def test_double_click_pats_region_and_triple_click_celebrates(self):
+        self.pets.select('mingyue')
+        pet = self.show_pet()
+        body = pet.findChild(QObject, 'petBody')
+        head = QPoint(body.x() + body.width() // 2, body.y() + int(body.height() * 0.2))
+        QTest.mouseClick(pet, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, head)
+        QTest.mouseClick(pet, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, head)
+        until(lambda: pet.property('actionFlash') == 'pat', timeout=4)
+        self.assertIn('react-head', pet.property('shownArt').toVariant()['source'])
+        for _ in range(3):
+            QTest.mouseClick(pet, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, head)
+        until(lambda: pet.property('actionFlash') == 'celebrate', timeout=4)
+        self.assertIn('meme-heart', pet.property('shownArt').toVariant()['source'])
+        self.assertFalse(pet.property('chatOpen'))  # 多击不误开聊天
+
+    def test_feed_action_and_idle_chatter_bubble(self):
+        self.pets.select('mingyue')
+        pet = self.show_pet()
+        from PySide6.QtCore import QMetaObject, Q_ARG
+        QMetaObject.invokeMethod(pet, 'triggerAction', Qt.ConnectionType.DirectConnection, Q_ARG('QVariant', 'feed'))
+        until(lambda: pet.property('actionFlash') == 'feed', timeout=4)
+        self.assertIn('eat.webp', pet.property('shownArt').toVariant()['source'])
+        clock = pet.findChild(QObject, 'chatterClock')
+        clock.setProperty('interval', 60)
+        clock.setProperty('running', True)
+        until(lambda: pet.property('chatter') != '', timeout=4)
+        bubble = pet.findChild(QObject, 'petChatter')
+        self.assertTrue(bubble.property('visible'))
+        lines = json.loads((BUILTIN_ROOT / 'mingyue' / 'lines.json').read_text(encoding='utf-8'))
+        self.assertIn(pet.property('chatter'), lines['idle'])
+
 
 if __name__ == '__main__':
     unittest.main()

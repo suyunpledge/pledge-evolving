@@ -73,6 +73,9 @@ class PetChat(QObject):
     reply = Property(str, lambda self: self._reply, notify=changed)
     error = Property(str, lambda self: self._error, notify=changed)
     greeting = Property(str, lambda self: self._greeting, notify=changed)
+    idleLines = Property('QStringList',
+                         lambda self: [s for s in self._lines().get('idle', []) if isinstance(s, str)],
+                         notify=changed)
     connected = Property(bool, lambda self: bool(self._controller.connected) and not self._controller.demo,
                          notify=changed)
 

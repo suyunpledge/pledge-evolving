@@ -16,5 +16,14 @@
     "think": "curious.webp",
     "happy": "celebrate.webp",
     "worried": "meme-cry.webp"
+  },
+  "interactions": {
+    "pat": "react-head.webp",
+    "belly": "react-belly.webp",
+    "tail": "react-tail.webp",
+    "feed": "eat.webp",
+    "pickup": "pick-up.webp",
+    "greet": "greet.webp",
+    "celebrate": "meme-heart.webp"
   }
 }

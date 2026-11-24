@@ -13,6 +13,10 @@ Window {
     required property bool reduced
     property var petChat: null
     property bool chatOpen: false
+    property string actionFlash: ""
+    property string pressRegion: "head"
+    property int clickCount: 0
+    property string chatter: ""
     signal settingsRequested()
 
     readonly property var info: pets.current
@@ -27,6 +31,14 @@ Window {
     readonly property string animState: pets.animationState(pets.mood, ambient)
     readonly property string artState: blinking && animState === "idle" ? "sleep" : animState
     readonly property var art: info.states ? info.states[artState] : null
+    // 交互姿态（pet.json interactions）：拎起 > 动作闪现 > 状态图。
+    readonly property var acts: info.interactions || ({})
+    readonly property bool held: drag.pressed && drag.moved
+    readonly property var flashArt: actionFlash && acts[actionFlash]
+        ? { "source": acts[actionFlash], "kind": "image", "frames": 1, "fps": 1, "columns": 1 } : null
+    readonly property var heldArt: held && acts.pickup
+        ? { "source": acts.pickup, "kind": "image", "frames": 1, "fps": 1, "columns": 1 } : null
+    readonly property var shownArt: heldArt || flashArt || art
     readonly property bool live: visible && visibility !== Window.Minimized && visibility !== Window.Hidden
     readonly property bool moving: live && !reduced
     readonly property bool mirrored: ambient === "walk" && animState === "walk"
@@ -76,8 +88,19 @@ Window {
         }
     }
     function wake() {
-        if (ambient === "sleep") ambient = "idle"
+        if (ambient === "sleep") {
+            ambient = "idle"
+            if (acts.greet) { actionFlash = "greet"; flashEnd.restart() }
+        }
         drowsy.restart()
+    }
+    function triggerAction(name) {
+        if (!acts[name]) return
+        actionFlash = name
+        flashEnd.restart()
+        stopWalking()
+        wake()
+        if (name === "celebrate" && moving) hop.restart()
     }
     function stopWalking() {
         if (ambient === "walk") {
@@ -114,6 +137,39 @@ Window {
         onTriggered: { pet.blinking = true; blinkEnd.start(); interval = 3200 + Math.random() * 3000 }
     }
     Timer { id: blinkEnd; interval: 150; onTriggered: pet.blinking = false }
+
+    // 交互姿态闪现约 1.5 秒后回到状态图。
+    Timer { id: flashEnd; interval: 1500; onTriggered: pet.actionFlash = "" }
+    // 单击开聊 / 双击分区摸摸 / 三连击庆祝（280ms 内计击数）。
+    Timer {
+        id: clickClock
+        interval: 280
+        onTriggered: {
+            const n = pet.clickCount
+            pet.clickCount = 0
+            if (n >= 3) pet.triggerAction("celebrate")
+            else if (n === 2) pet.triggerAction(pet.pressRegion === "head" ? "pat" : pet.pressRegion)
+            else if (pet.petChat) pet.toggleChat()
+            else pet.activateHost()
+        }
+    }
+    // 待机时每 5–8 分钟冒一句闲聊（台词来自宠物包 lines.json）。
+    Timer {
+        id: chatterClock
+        objectName: "chatterClock"
+        interval: 300000 + Math.random() * 180000
+        repeat: true
+        running: pet.live && pet.animState === "idle" && !pet.chatOpen && !pet.actionFlash
+        onTriggered: {
+            interval = 300000 + Math.random() * 180000
+            const pool = pet.petChat ? pet.petChat.idleLines : []
+            if (pool.length) {
+                pet.chatter = pool[Math.floor(Math.random() * pool.length)]
+                chatterHide.restart()
+            }
+        }
+    }
+    Timer { id: chatterHide; interval: 6000; onTriggered: pet.chatter = "" }
 
     // 空闲一会儿后在屏幕底部横向走几步。
     Timer {
@@ -159,9 +215,9 @@ Window {
     Timer {
         id: frame
         property int index: 0
-        interval: Math.max(33, 1000 / Math.max(1, pet.art ? pet.art.fps : 1))
+        interval: Math.max(33, 1000 / Math.max(1, pet.shownArt ? pet.shownArt.fps : 1))
         repeat: true
-        running: pet.moving && !!pet.art && pet.art.kind === "sheet" && pet.art.frames > 1
+        running: pet.moving && !!pet.shownArt && pet.shownArt.kind === "sheet" && pet.shownArt.frames > 1
         onTriggered: index = (index + 1) % pet.art.frames
         onRunningChanged: if (!running) index = 0
     }
@@ -198,8 +254,8 @@ Window {
         Image {
             objectName: "petStill"
             anchors.fill: parent
-            visible: !!pet.art && pet.art.kind === "image"
-            source: visible ? pet.art.source : ""
+            visible: !!pet.shownArt && pet.shownArt.kind === "image"
+            source: visible ? pet.shownArt.source : ""
             sourceSize: Qt.size(pet.artW, pet.artH)
             fillMode: Image.PreserveAspectFit
             smooth: pet.info.smooth !== false
@@ -208,8 +264,8 @@ Window {
         AnimatedImage {
             objectName: "petAnimated"
             anchors.fill: parent
-            visible: !!pet.art && pet.art.kind === "animated"
-            source: visible ? pet.art.source : ""
+            visible: !!pet.shownArt && pet.shownArt.kind === "animated"
+            source: visible ? pet.shownArt.source : ""
             playing: visible && pet.moving
             fillMode: Image.PreserveAspectFit
             smooth: pet.info.smooth !== false
@@ -217,12 +273,12 @@ Window {
         Item {
             anchors.fill: parent
             clip: true
-            visible: !!pet.art && pet.art.kind === "sheet"
+            visible: !!pet.shownArt && pet.shownArt.kind === "sheet"
             Image {
                 objectName: "petSheet"
-                readonly property int columns: pet.art && pet.art.kind === "sheet" ? pet.art.columns : 1
-                readonly property int rows: pet.art && pet.art.kind === "sheet" ? Math.ceil(pet.art.frames / columns) : 1
-                source: parent.visible ? pet.art.source : ""
+                readonly property int columns: pet.shownArt && pet.shownArt.kind === "sheet" ? pet.shownArt.columns : 1
+                readonly property int rows: pet.shownArt && pet.shownArt.kind === "sheet" ? Math.ceil(pet.shownArt.frames / columns) : 1
+                source: parent.visible ? pet.shownArt.source : ""
                 width: pet.artW * columns; height: pet.artH * rows
                 sourceSize: Qt.size(width, height)
                 x: -(frame.index % columns) * pet.artW
@@ -255,7 +311,7 @@ Window {
                                        : pet.animState === "sleep" ? ["z", "z Z", "z Z z"][bubbleClock.tick]
                                        : pet.animState === "worried" ? "!"
                                        : pet.animState === "happy" ? "✓" : ""
-        visible: !!mark && !pet.face && !pet.chatOpen
+        visible: !!mark && !pet.face && !pet.chatOpen && !pet.chatter
         anchors.horizontalCenter: body.horizontalCenter
         anchors.horizontalCenterOffset: pet.artW * 0.22
         y: 2
@@ -269,6 +325,22 @@ Window {
             text: bubble.mark
             color: pet.animState === "worried" ? "#8a4f00" : pet.animState === "happy" ? "#1d7a46" : "#33404c"
             font.pixelSize: 13; font.weight: Font.DemiBold
+        }
+    }
+
+    Rectangle {
+        objectName: "petChatter"
+        visible: pet.chatter !== "" && !pet.chatOpen
+        anchors.horizontalCenter: body.horizontalCenter
+        y: 2; width: 224; height: chatterLabel.implicitHeight + 12; radius: 10
+        color: "#f2f7f9fb"; border.color: "#7f8c99"; border.width: 1
+        Text {
+            id: chatterLabel
+            anchors.centerIn: parent
+            width: parent.width - 16
+            text: pet.chatter
+            wrapMode: Text.Wrap; font.pixelSize: 11; color: "#33404c"
+            textFormat: Text.PlainText
         }
     }
 
@@ -377,6 +449,8 @@ Window {
             pressAt = mapToGlobal(mouse.x, mouse.y)
             origin = Qt.point(pet.x, pet.y)
             moved = false
+            pet.pressRegion = mouse.y < body.height * 0.45 ? "head"
+                : mouse.y > body.height * 0.75 ? "tail" : "belly"
             pet.stopWalking()
             pet.wake()
         }
@@ -389,11 +463,21 @@ Window {
         }
         onReleased: mouse => {
             if (mouse.button !== Qt.LeftButton) return
-            if (moved) pets.savePosition(pet.x, pet.y + (pet.chatOpen ? 200 : 0))
-            else if (pet.petChat) pet.toggleChat()
-            else pet.activateHost()
+            if (moved) {
+                pets.savePosition(pet.x, pet.y + (pet.chatOpen ? 200 : 0))
+                if (pet.moving) hop.restart()
+            } else {
+                pet.clickCount += 1
+                clickClock.restart()
+            }
             moved = false
         }
+    }
+
+    WheelHandler {
+        objectName: "petWheel"
+        target: body
+        onWheel: pet.triggerAction("pat")
     }
 
     Menu {
@@ -405,6 +489,15 @@ Window {
             text: pet.chatOpen ? "收起聊天" : "聊两句"
             enabled: !!pet.petChat
             onTriggered: pet.toggleChat()
+        }
+        Menu {
+            title: "互动"
+            enabled: Object.keys(pet.acts).length > 0
+            MenuItem { text: "摸摸头"; enabled: !!pet.acts.pat; onTriggered: pet.triggerAction("pat") }
+            MenuItem { text: "挠挠肚皮"; enabled: !!pet.acts.belly; onTriggered: pet.triggerAction("belly") }
+            MenuItem { text: "拍拍尾巴"; enabled: !!pet.acts.tail; onTriggered: pet.triggerAction("tail") }
+            MenuItem { text: "投喂小鱼干"; enabled: !!pet.acts.feed; onTriggered: pet.triggerAction("feed") }
+            MenuItem { text: "庆祝一下"; enabled: !!pet.acts.celebrate; onTriggered: pet.triggerAction("celebrate") }
         }
         Menu {
             id: switchMenu

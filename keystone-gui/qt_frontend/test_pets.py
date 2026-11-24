@@ -89,6 +89,9 @@ class PackTests(unittest.TestCase):
         # DeepSeek：官方鲸鱼标志，其余状态回退 idle。
         self.assertEqual(set(packs['whale']['states']), {'idle'})
         self.assertTrue(QUrl(packs['whale']['states']['idle']['source']).toLocalFile().endswith('.svg'))
+        # 溟月：七个交互动作姿态齐全。
+        self.assertEqual(set(packs['mingyue']['interactions']),
+                         {'pat', 'belly', 'tail', 'feed', 'pickup', 'greet', 'celebrate'})
 
     def test_manifest_validation_rejects_bad_packs(self):
         good = {'name': '猫', 'states': {'idle': 'idle.png'}}
@@ -99,6 +102,9 @@ class PackTests(unittest.TestCase):
             'bad-size-type': ({**good, 'size': '96'}, 'size'),
             'escape': ({'states': {'idle': '../outside.png'}}, '宠物文件夹内'),
             'absolute': ({'states': {'idle': str(self.home / 'x.png')}}, '宠物文件夹内'),
+            'interactions-type': ({**good, 'interactions': []}, 'interactions'),
+            'interactions-unknown': ({**good, 'interactions': {'hug': 'idle.png'}}, '未知的动作'),
+            'interactions-escape': ({**good, 'interactions': {'pat': '../outside.png'}}, '宠物文件夹内'),
             'suffix': ({'states': {'idle': 'idle.exe'}}, '格式不受支持'),
             'missing': ({'states': {'idle': 'nope.png'}}, '找不到'),
             'unknown-state': ({'states': {'idle': 'idle.png', 'dance': 'idle.png'}}, '未知的状态'),
