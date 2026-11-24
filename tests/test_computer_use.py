@@ -1,5 +1,6 @@
 """Observe/act contracts and real native controls in an owned hidden window."""
 import copy
+from contextlib import contextmanager
 import ctypes as c
 from ctypes import wintypes as w
 import json
@@ -62,6 +63,40 @@ class ComputerTests(unittest.TestCase):
         self.assertEqual(after['state']['elements'][0]['text'], 'hello')
         self.assertFalse(self.act(observation).ok)
         self.assertEqual(self.driver.inputs, ['hello'])
+
+    def test_background_menu_pages_keep_late_save_action_inline_and_single_use(self):
+        rows = [{'ref': f'uia:100.{i}.200', 'name': '菜单项' * 9,
+                 'class': 'menu_item', 'actions': ['click']} for i in range(60)]
+        rows[-1]['name'] = '保存'
+        calls = []
+
+        @contextmanager
+        def controls():
+            def dispatch(ref, action, text, before_input):
+                before_input()
+                calls.append((ref, action))
+            yield {'elements': rows}, dispatch
+
+        self.driver.background_controls = controls
+        self.registry = ToolRegistry()
+        register_computer_tools(self.registry, background=True)
+        self.ctx.extras['artifact_inline_limit'] = 900
+        page = self.observe()
+        seen = list(page['state']['elements'])
+        while 'next_offset' in page:
+            result = self.registry.invoke('computer_observe', {'offset': page['next_offset']}, self.ctx)
+            self.assertTrue(result.ok, result.error)
+            self.assertLessEqual(len(result.content), 900)
+            page = json.loads(result.content)
+            seen.extend(page['state']['elements'])
+        self.assertEqual(seen, rows)
+        args = {'observation_id': page['observation_id'], 'ref': seen[-1]['ref'], 'action': 'click'}
+        receipt = self.registry.invoke('computer_act', args, self.ctx)
+        self.assertTrue(receipt.ok, receipt.error)
+        self.assertLessEqual(len(receipt.content), 900)
+        self.assertIn('next_offset', json.loads(receipt.content))
+        self.assertFalse(self.registry.invoke('computer_act', args, self.ctx).ok)
+        self.assertEqual(calls, [(rows[-1]['ref'], 'click')])
 
     def test_stale_state_and_expiry_do_not_send_input(self):
         observation = self.observe(); self.driver.text = 'external edit'

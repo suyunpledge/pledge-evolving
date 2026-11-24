@@ -15,6 +15,9 @@ from .runtime_lock import named_resource_lock, cancellable_lock, LockCancelled
 from .tools import ToolResult, ToolSpec
 from .policy import ToolEffect
 
+NATIVE_ACTIONS = ('click', 'type_text')
+BACKGROUND_ACTIONS = (*NATIVE_ACTIONS, 'expand', 'collapse')
+
 
 class TargetCancellation:
     """Event-like cancellation combining one request and host revocation."""
@@ -86,7 +89,7 @@ class ComputerSession:
         if len(refs) != len(state['elements']) or any(not isinstance(r, str) or not r for r in refs) or len(set(refs)) != len(refs):
             raise ValueError('Computer observation needs unique element refs')
         if any(not isinstance(row.get('actions'), list) or any(
-                not isinstance(action, str) or action not in {'click', 'type_text'}
+                not isinstance(action, str) or action not in (BACKGROUND_ACTIONS if background else NATIVE_ACTIONS)
                 for action in row['actions']) for row in state['elements']):
             raise ValueError('Computer observation needs explicit supported actions')
         digest = hashlib.sha256(json.dumps(state, sort_keys=True).encode()).hexdigest()
@@ -105,10 +108,42 @@ class ComputerSession:
         self._observations[scope] = observation
         return observation
 
-    def observe(self, ctx, *, background=False):
+    @staticmethod
+    def _receipt(ctx, observation, offset=0):
+        payload = ctx.secret_scope.protect(observation)
+        def encode(data):
+            return json.dumps(data, ensure_ascii=False, separators=(',', ':'))
+        if payload.get('input_mode') != 'background':
+            return encode(payload)
+        rows = payload['state']['elements']
+        limit = ctx.extras.get('artifact_inline_limit', 4000)
+        if offset == 0:
+            complete = encode(payload)
+            if len(complete) <= limit:
+                return complete
+        if offset >= len(rows) and offset:
+            raise ValueError('Control page changed. Read again from offset 0.')
+        page = []
+        payload = {**payload, 'state': {**payload['state'], 'elements': page}, 'offset': offset}
+        # Budget the complete serialized receipt so artifact retention never replaces
+        # actionable refs with a plain-text preview. The revision covers all pages.
+        for index in range(offset, len(rows)):
+            payload['next_offset'] = index + 1
+            if index + 1 == len(rows):
+                del payload['next_offset']
+            page.append(rows[index])
+            if len(encode(payload)) > limit:
+                page.pop()
+                if not page:
+                    raise ValueError('A control exceeds the inline receipt budget')
+                payload['next_offset'] = index
+                break
+        return encode(payload)
+
+    def observe(self, ctx, *, background=False, offset=0):
         try:
             with self.operation(ctx.cancellation):
-                return self._observe(ctx, background)
+                return self._observe(ctx, background, offset)
         except LockCancelled as exc:
             return self._failure('cancelled', str(exc))
 
@@ -123,7 +158,7 @@ class ComputerSession:
                     return element
             raise ValueError('当前观察中没有可操作的对应控件。')
 
-    def _observe(self, ctx, background):
+    def _observe(self, ctx, background, offset):
         with self._lock:
             self._observations.pop(ctx.secret_scope, None)
             if self._revoked.is_set():
@@ -135,7 +170,7 @@ class ComputerSession:
                 if self._revoked.is_set() or ctx.cancellation is not None and ctx.cancellation.is_set():
                     self._observations.pop(ctx.secret_scope, None)
                     return self._failure('cancelled', 'Computer observation cancelled')
-                return ToolResult(True, json.dumps(ctx.secret_scope.protect(observation)),
+                return ToolResult(True, self._receipt(ctx, observation, offset),
                                   meta={'execution_state': 'completed'})
             except Exception as exc:
                 self._observations.pop(ctx.secret_scope, None)
@@ -151,12 +186,12 @@ class ComputerSession:
     def _act(self, args, ctx, background, approve):
         if (set(args) - {'observation_id', 'ref', 'action', 'text'}
                 or not isinstance(args.get('action'), str)
-                or args.get('action') not in {'click', 'type_text'}
+                or args.get('action') not in (BACKGROUND_ACTIONS if background else NATIVE_ACTIONS)
                 or background and (args.get('action') == 'type_text') != ('text' in args)
                 or not isinstance(args.get('ref'), str)
                 or not isinstance(args.get('text', ''), str)
                 or len(args.get('text', '')) > 10000 or '\0' in args.get('text', '')):
-            return self._failure('invalid_arguments', 'Use a current ref and click/type_text action')
+            return self._failure('invalid_arguments', 'Use a current ref and one of its advertised actions')
         with self._lock:
             before = self._observations.get(ctx.secret_scope)
             if (before is None or before['observation_id'] != args.get('observation_id')
@@ -207,7 +242,7 @@ class ComputerSession:
                 verification = 'post_observation'
                 if background:
                     verification = 'value_readback' if args['action'] == 'type_text' else 'dispatched_with_post_observation'
-                return ToolResult(True, json.dumps(ctx.secret_scope.protect(after)), meta={
+                return ToolResult(True, self._receipt(ctx, after), meta={
                     'execution_state': 'completed', 'verification': verification,
                     'changed': after['revision'] != before['revision']})
             except Exception as exc:
@@ -226,23 +261,27 @@ class ComputerSession:
 def register_computer_tools(registry, *, background=False, approve=None):
     """Trusted host opt-in only. Missing capability never exposes usable tools."""
     def observe(args, ctx):
-        if args:
-            return ComputerSession._failure('invalid_arguments', 'Observe takes no arguments')
-        return ctx.extras['computer'].observe(ctx, background=background)
+        offset = args.get('offset', 0)
+        if set(args) - ({'offset'} if background else set()) or type(offset) is not int or not 0 <= offset < 256:
+            return ComputerSession._failure('invalid_arguments', 'Use an advertised background control page offset')
+        return ctx.extras['computer'].observe(ctx, background=background, offset=offset)
     def act(args, ctx):
         return ctx.extras['computer'].act(args, ctx, background=background, approve=approve)
     registry.register(ToolSpec('computer_observe',
         'List actionable accessibility controls in the selected background window, with fresh single-use refs. '
-        'Use computer_act only for actions listed on that ref.' if background else
+        'Pass next_offset as offset for more controls. Use computer_act only for actions listed on a current ref.' if background else
         'List classic native controls (buttons, text boxes) of the host-selected window with fresh refs. '
         'For Qt or other custom windows, use computer_screenshot with list_controls=true or target when available.',
-        observe, schema={'type': 'object', 'properties': {}, 'additionalProperties': False}),
+        observe, schema={'type': 'object', 'properties': {
+            'offset': {'type': 'integer', 'minimum': 0, 'maximum': 255}} if background else {},
+            'additionalProperties': False}),
         trusted=True, effect=ToolEffect.READ, requires=('computer',))
     registry.register(ToolSpec('computer_act', 'One approved action on the selected control using a current observation/ref. '
         'type_text replaces the entire value. Returns fresh controls. Button effects may arrive asynchronously; '
         'verify the application result before repeating. If outcome is unknown, inspect before continuing.',
         act, read_only=False, schema={'type': 'object', 'properties': {
             'observation_id': {'type': 'string'}, 'ref': {'type': 'string'},
-            'action': {'type': 'string', 'enum': ['click', 'type_text']}, 'text': {'type': 'string'}},
+            'action': {'type': 'string', 'enum': list(BACKGROUND_ACTIONS if background else NATIVE_ACTIONS)},
+            'text': {'type': 'string'}},
             'required': ['observation_id', 'ref', 'action'], 'additionalProperties': False}),
         trusted=True, effect=ToolEffect.DELEGATED_WRITE, requires=('computer',))

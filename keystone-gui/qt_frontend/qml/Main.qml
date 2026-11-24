@@ -32,11 +32,27 @@ ApplicationWindow {
     }
     function focusWorkComposer() {
         if (chatVisible && !onboarding.opened && !localToolSetup.opened && !mediaModels.opened && !toolCatalog.opened && !modelEditor.opened) {
+            if (!active || !visible || visibility === Window.Minimized) {
+                composerFocusPending = true
+                return
+            }
+            composerFocusPending = false
             editor.forceActiveFocus()
             editorScroll.refreshInputMethod()
         }
     }
     property bool followTail: true
+    property bool composerFocusPending: false
+    onActiveChanged: {
+        if (active && approvalCard && approvalCard.visible)
+            Qt.callLater(focusApproval)
+        else if (active && composerFocusPending)
+            Qt.callLater(focusWorkComposer)
+    }
+    function focusApproval() {
+        if (active && visible && visibility !== Window.Minimized && approvalCard.visible)
+            approvalCard.forceActiveFocus()
+    }
     property bool exitConfirmed: false
     onClosing: event => {
         if (setup.busy) {
@@ -1388,7 +1404,7 @@ ApplicationWindow {
         color: Theme.overlayCard; radius: 20
         border.color: Theme.warningBorder; border.width: 1
         focus: visible
-        onVisibleChanged: visible ? Qt.callLater(() => approvalCard.forceActiveFocus()) : Qt.callLater(window.focusWorkComposer)
+        onVisibleChanged: visible ? Qt.callLater(window.focusApproval) : Qt.callLater(window.focusWorkComposer)
         function resolve(approved) {
             if (current) workbench.resolveApproval(current.id, approved)
         }

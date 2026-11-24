@@ -98,6 +98,22 @@ class HumanFactorsSceneTests(unittest.TestCase):
         self.assertIsNotNone(found, name)
         return found
 
+    def test_background_reply_defers_composer_focus_until_reactivation(self):
+        from PySide6.QtGui import QWindow
+        other = QWindow()
+        self.addCleanup(other.close)
+        other.show()
+        other.requestActivate()
+        QTest.qWait(40)
+        QMetaObject.invokeMethod(self.window, 'focusWorkComposer')
+        self.assertTrue(self.window.property('composerFocusPending'))
+        self.assertTrue(other.isActive())
+        self.window.requestActivate()
+        QTest.qWait(80)
+        self.assertTrue(self.window.isActive())
+        self.assertFalse(self.window.property('composerFocusPending'))
+        self.assertTrue(self.find('messageEditor').property('activeFocus'))
+
     def test_tab_leaves_chat_composer_and_shows_focus_ring(self):
         editor = self.find("messageEditor")
         editor.forceActiveFocus()

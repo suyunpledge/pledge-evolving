@@ -2,8 +2,30 @@
 from contextlib import contextmanager
 import hashlib
 import json
+import time
 
 from ._vendor.visfunc.ui_elements import CONTROL_TYPES
+
+
+def _menu_action(role, available, state):
+    # ExpandCollapseState: Collapsed, Expanded, PartiallyExpanded, LeafNode.
+    if role == 'menu_item' and available is True:
+        return {0: 'expand', 1: 'collapse', 2: 'expand'}.get(state)
+
+
+def _set_value(handle, text, before_input, *, clock=time.monotonic, sleep=time.sleep):
+    if handle.CurrentIsReadOnly:
+        raise ValueError('文本框已变为只读。')
+    before_input()
+    handle.SetValue(text)
+    # Chromium can acknowledge SetValue before its accessibility tree updates.
+    # Poll only the same pattern on the same element; never repeat the write.
+    deadline = clock() + 1.5
+    while handle.CurrentValue != text:
+        remaining = deadline - clock()
+        if remaining <= 0:
+            raise RuntimeError('文本已派发，尚未读回预期值。请检查目标状态后再继续。')
+        sleep(min(.05, remaining))
 
 
 @contextmanager
@@ -39,7 +61,8 @@ def _snapshot(hwnd, pid):
         properties = ('RuntimeId', 'Name', 'ControlType', 'IsEnabled', 'IsPassword',
                       'IsInvokePatternAvailable', 'IsTogglePatternAvailable',
                       'IsSelectionItemPatternAvailable', 'IsValuePatternAvailable',
-                      'ToggleToggleState', 'SelectionItemIsSelected', 'ValueIsReadOnly', 'ValueValue')
+                      'ToggleToggleState', 'SelectionItemIsSelected', 'ValueIsReadOnly', 'ValueValue',
+                      'IsExpandCollapsePatternAvailable', 'ExpandCollapseExpandCollapseState')
         ids = {name: getattr(uia, 'UIA_' + name + 'PropertyId') for name in properties}
         cache = client.CreateCacheRequest()
         for prop in ids.values():
@@ -49,6 +72,9 @@ def _snapshot(hwnd, pid):
         patterns = [('toggle', 'IsTogglePatternAvailable'), ('select', 'IsSelectionItemPatternAvailable'),
                     ('invoke', 'IsInvokePatternAvailable'), ('value', 'IsValuePatternAvailable')]
         supported = [client.CreatePropertyCondition(ids[prop], True) for _, prop in patterns]
+        menu = client.CreatePropertyCondition(ids['ControlType'], uia.UIA_MenuItemControlTypeId)
+        expandable = client.CreatePropertyCondition(ids['IsExpandCollapsePatternAvailable'], True)
+        supported.append(client.CreateAndCondition(menu, expandable))
         condition = supported[0]
         for other in supported[1:]:
             condition = client.CreateOrCondition(condition, other)
@@ -69,11 +95,15 @@ def _snapshot(hwnd, pid):
             role = CONTROL_TYPES.get(get('ControlType'), 'control')
             operations = {}
             row = {'ref': ref, 'class': role, 'name': str(get('Name') or '')[:256]}
+            menu_action = _menu_action(role, get('IsExpandCollapsePatternAvailable'),
+                                       get('ExpandCollapseExpandCollapseState'))
+            if menu_action:
+                operations[menu_action] = menu_action
             for op, available in patterns:
                 if get(available) != True:
                     continue
                 if op == 'value':
-                    if get('ValueIsReadOnly') == False:
+                    if role != 'title_bar' and get('ValueIsReadOnly') == False:
                         operations['type_text'] = op
                         # Keep the value out of the agent response and approval, but
                         # detect concurrent edits, including same-length replacements.
@@ -81,7 +111,8 @@ def _snapshot(hwnd, pid):
                         if isinstance(value, str):
                             values.append((ref, hashlib.sha256(value.encode('utf-8', 'surrogatepass')).hexdigest()))
                 else:
-                    operations.setdefault('click', op)
+                    if not menu_action:
+                        operations.setdefault('click', op)
                     if op == 'toggle':
                         row['checked'] = get('ToggleToggleState')
                     if op == 'select':
@@ -99,16 +130,12 @@ def _snapshot(hwnd, pid):
                 raise ValueError('后台控件已变化，请重新观察。')
             op = operations[action]
             pattern, method = {'toggle': ('Toggle', 'Toggle'), 'select': ('SelectionItem', 'Select'),
-                               'invoke': ('Invoke', 'Invoke'), 'value': ('Value', 'SetValue')}[op]
+                               'invoke': ('Invoke', 'Invoke'), 'value': ('Value', 'SetValue'),
+                               'expand': ('ExpandCollapse', 'Expand'), 'collapse': ('ExpandCollapse', 'Collapse')}[op]
             raw = element.GetCurrentPattern(getattr(uia, 'UIA_' + pattern + 'PatternId'))
             handle = raw.QueryInterface(getattr(uia, 'IUIAutomation' + pattern + 'Pattern'))
             if op == 'value':
-                if handle.CurrentIsReadOnly:
-                    raise ValueError('文本框已变为只读。')
-                before_input()
-                handle.SetValue(text)
-                if handle.CurrentValue != text:
-                    raise RuntimeError('未能确认文本框写入结果，请重新观察。')
+                _set_value(handle, text, before_input)
             else:
                 before_input()
                 getattr(handle, method)()

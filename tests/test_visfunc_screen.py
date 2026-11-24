@@ -22,6 +22,62 @@ from keystone.secrets import SecretScope
 
 
 class RecognitionTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == 'win32', 'Windows Edge launcher')
+    def test_background_edge_uses_its_own_profile_and_does_not_request_activation(self):
+        from qt_frontend.computer_service import launch_background_edge
+        with tempfile.TemporaryDirectory() as folder:
+            home = Path(folder)
+            binary = home / 'Microsoft/Edge/Application/msedge.exe'
+            binary.parent.mkdir(parents=True)
+            binary.touch()
+            with patch.dict(os.environ, {'ProgramFiles(x86)': folder}), patch('subprocess.Popen') as spawn:
+                with self.assertRaises(ValueError):
+                    launch_background_edge(home, 'file:///private')
+                spawn.assert_not_called()
+                launch_background_edge(home, 'https://example.org/form')
+                args, kwargs = spawn.call_args
+                self.assertEqual(args[0][0], str(binary))
+                self.assertIn('--user-data-dir=' + str(home / 'gui/background-edge'), args[0])
+                self.assertIn('--disable-backgrounding-occluded-windows', args[0])
+                self.assertEqual(args[0][-1], '--app=https://example.org/form')
+                self.assertEqual(kwargs['startupinfo'].wShowWindow, 4)
+
+    def test_focus_attribution_distinguishes_other_controls_from_target_activation(self):
+        from scripts.verify_background_focus import classify
+        def sample(top, focus, owner=12):
+            return {'foreground': {'pid': owner, 'hwnd': top},
+                    'focus': {'pid': owner if focus else 0, 'hwnd': focus}}
+        old = sample(1, 2)
+        self.assertEqual(classify(old, sample(1, 4), {9}), 'other_control_focus_change')
+        self.assertEqual(classify(old, sample(1, 0), {9}), 'other_focus_transition_through_null')
+        self.assertEqual(classify(old, sample(3, 4), {9}), 'other_foreground_change')
+        self.assertEqual(classify(old, sample(3, 4, 9), {9}), 'target_foreground')
+
+    def test_menu_headers_offer_state_specific_actions_and_leaves_remain_invokable(self):
+        from keystone.computer_background import _menu_action
+        self.assertEqual(_menu_action('menu_item', True, 0), 'expand')
+        self.assertEqual(_menu_action('menu_item', True, 1), 'collapse')
+        self.assertIsNone(_menu_action('menu_item', True, 3))
+        self.assertIsNone(_menu_action('button', True, 0))
+
+    def test_background_text_readback_waits_without_repeating_the_write(self):
+        from unittest.mock import Mock, PropertyMock
+        from keystone.computer_background import _set_value
+        for updates, verified in ((['old', 'old', 'new'], True), (['old'] * 40, False)):
+            handle = Mock(CurrentIsReadOnly=False)
+            type(handle).CurrentValue = PropertyMock(side_effect=updates)
+            now = [0.]
+            def sleep(seconds):
+                now[0] += seconds
+            before_input = Mock()
+            if verified:
+                _set_value(handle, 'new', before_input, clock=lambda: now[0], sleep=sleep)
+            else:
+                with self.assertRaisesRegex(RuntimeError, '尚未读回'):
+                    _set_value(handle, 'new', before_input, clock=lambda: now[0], sleep=sleep)
+            handle.SetValue.assert_called_once_with('new')
+            before_input.assert_called_once_with()
+
     def test_dense_form_keeps_focus_and_selection_without_field_values(self):
         from types import SimpleNamespace
         driver = SimpleNamespace(window=12, process_id=34)
@@ -194,25 +250,28 @@ class BackgroundTests(unittest.TestCase):
     def test_work_lane_sets_toggles_and_invokes_without_desktop_input(self):
         import ctypes
         from ctypes import wintypes
-        desktop = ctypes.WinDLL('user32', use_last_error=True)
-        desktop.GetForegroundWindow.restype = wintypes.HWND
-        class GuiThreadInfo(ctypes.Structure):
-            _fields_ = [('size', wintypes.DWORD), ('flags', wintypes.DWORD)] + [
-                (name, wintypes.HWND) for name in ('active', 'focus', 'capture', 'menu', 'move', 'caret')
-            ] + [('caret_rect', wintypes.RECT)]
+        from scripts.verify_background_focus import DesktopFocus
+        monitor = DesktopFocus()
+        desktop = monitor.user
         class LastInput(ctypes.Structure):
             _fields_ = [('size', wintypes.UINT), ('tick', wintypes.DWORD)]
 
         def desktop_state():
+            state = monitor.sample()
+            for _ in range(5):
+                if state is not None:
+                    break
+                time.sleep(.01)
+                state = monitor.sample()
+            self.assertIsNotNone(state, 'Requires an interactive foreground desktop')
+            self.assertNotIn(pid, (state['foreground']['pid'], state['focus']['pid']), state)
             pos = wintypes.POINT()
             self.assertTrue(desktop.GetCursorPos(ctypes.byref(pos)))
-            info = GuiThreadInfo()
-            info.size = ctypes.sizeof(info)
-            self.assertTrue(desktop.GetGUIThreadInfo(0, ctypes.byref(info)))
             last = LastInput()
             last.size = ctypes.sizeof(last)
             self.assertTrue(desktop.GetLastInputInfo(ctypes.byref(last)))
-            return desktop.GetForegroundWindow(), pos.x, pos.y, info.focus, last.tick
+            idle_ms = (ctypes.windll.kernel32.GetTickCount() - last.tick) & 0xffffffff
+            return (pos.x, pos.y), last.tick, idle_ms
 
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -225,9 +284,7 @@ class BackgroundTests(unittest.TestCase):
                         break
                     time.sleep(.05)
                 hwnd, pid = json.loads((root / 'hwnd').read_text())
-                previous = desktop_state()
-                self.assertIsNotNone(previous[0], 'This test requires an interactive desktop with a foreground window')
-                self.assertNotEqual(previous[0], hwnd)
+                desktop_state()
                 decisions = []
                 def approve(target, args, frame, token):
                     decisions.append(args['control'])
@@ -244,12 +301,11 @@ class BackgroundTests(unittest.TestCase):
                     result = lane.call(name, args)
                     self.assertTrue(result['ok'], result.get('error'))
                     after = desktop_state()
-                    self.assertNotEqual(after[0], hwnd)
                     # In an interactive session the human may move the pointer or
                     # change apps. Compare positions/focus over idle intervals and
                     # independently check target events even while the human works.
-                    if after[-1] == before[-1]:
-                        self.assertEqual(after, before)
+                    if after[1] == before[1] and min(before[2], after[2]) > 150:
+                        self.assertEqual(after[0], before[0])
                     return json.loads(result['content'])
                 state = call('computer_observe', {})
                 self.assertNotIn('Private password fixture', str(state))
@@ -266,7 +322,7 @@ class BackgroundTests(unittest.TestCase):
                 # UIA Invoke may return before Qt delivers its clicked signal.
                 deadline = time.monotonic() + 3
                 while not (root / 'invocations').exists() and time.monotonic() < deadline:
-                    self.assertNotEqual(desktop_state()[0], hwnd)
+                    desktop_state()
                     time.sleep(.02)
                 self.assertEqual((root / 'applied').read_text(encoding='utf8'), '后台中文 42')
                 self.assertEqual((root / 'invocations').read_text(encoding='ascii'), '1')

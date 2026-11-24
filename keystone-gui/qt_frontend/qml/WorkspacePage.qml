@@ -729,7 +729,9 @@ Item {
                     WorkbenchField {
                         required property var modelData
                         Layout.fillWidth: true; material: page.material; definition: modelData
-                        visible: page.pageKey !== "computer" || definition.key !== "key" || page.viewData.inputMode === "foreground"
+                        visible: page.pageKey !== "computer" ||
+                            ((definition.key !== "key" || page.viewData.inputMode === "foreground") &&
+                             (definition.key !== "backgroundUrl" || !!page.viewData.canLaunchEdge))
                         onEdited: value => {
                             page.values[definition.key] = value
                             if (page.pageKey === "computer" && ["model", "consent", "clicks", "inputMode"].includes(definition.key)) page.invoke("settings", {changed: definition.key})
