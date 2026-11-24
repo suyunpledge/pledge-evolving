@@ -78,7 +78,7 @@ class FileRevisionGuard:
             if write:
                 for target in paths:
                     self._before_text[target] = self._public_text(target)
-                    if self.change_store is not None:
+                    if self.change_store is not None and name != 'delete_file':
                         try:
                             self._undo_before[target] = self.change_store.capture(target)
                         except (ValueError, PermissionError, OSError):
@@ -99,7 +99,8 @@ class FileRevisionGuard:
     def record(self, name, args, result):
         # Failed multi-file writes may still have committed a subset. Capture
         # their actual bytes too, under the executor's existing write lock.
-        if name in WRITES and (name != 'edit_config' or args.get('patch') is not None) and self.change_store is not None:
+        # delete_file persists recovery before unlink, including direct registry calls.
+        if name in WRITES - {'delete_file'} and (name != 'edit_config' or args.get('patch') is not None) and self.change_store is not None:
             receipts = []
             if len(getattr(self, '_undo_before', {})) < len(self.targets(args)):
                 result.meta['change_review_incomplete'] = True

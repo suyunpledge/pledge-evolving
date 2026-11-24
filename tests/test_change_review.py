@@ -1,10 +1,14 @@
+import json
+import os
+from dataclasses import replace
 import tempfile
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
-from keystone.change_review import ChangeReviewStore
+from keystone.change_review import ChangeReviewStore, DELETE_LIMIT, LIMIT
 from keystone.execution import ActionExecutor, ActionRequest, create_execution_context
-from keystone.policy import Policy, Mode
+from keystone.policy import Policy, Mode, Sandbox
 from keystone.tools import build_builtin_registry
 
 
@@ -121,6 +125,140 @@ class ChangeReviewTests(unittest.TestCase):
         for path in ('../outside', '.git/config'):
             with self.assertRaises(ValueError):
                 self.store.capture(path)
+
+    def test_large_deletion_is_durable_before_unlink_and_has_one_copy(self):
+        path = self.ws / 'untracked.txt'
+        original = b'z ' * (LIMIT // 2) + b'!'
+        path.write_bytes(original)
+        prepared = []
+        def observe(event):
+            if event['type'] == 'delete_prepared':
+                prepared.append((event['meta']['change_ids'], path.exists()))
+        ctx = replace(self.context, subscriber=observe)
+        request = ActionRequest('delete_file', {'path': path.name})
+        result = self.executor.execute(ctx, request).as_dict()
+        self.assertTrue(result['ok'], result['error'])
+        ids = result['meta']['change_ids']
+        self.assertEqual(prepared, [(ids, True)])
+        self.assertFalse(path.exists())
+        replay = self.executor.execute(self.context, request).as_dict()
+        self.assertTrue(replay['meta']['deduplicated'])
+        self.assertEqual([p.name for p in self.store.root.rglob('*')], [ids[0] + '.json'])
+        recovered = ChangeReviewStore(self.home, self.ws)
+        self.assertTrue(recovered.review(ids)['canRevert'])
+        path.write_bytes(b'new file')
+        self.assertFalse(recovered.review(ids)['canRevert'])
+        with self.assertRaises(ValueError):
+            recovered.revert(ids, lambda *_: None)
+        self.assertEqual(path.read_bytes(), b'new file')
+        path.unlink()
+        self.assertTrue(recovered.revert(ids, lambda *_: None)['restored'])
+        self.assertEqual(path.read_bytes(), original)
+
+    def test_receipt_failure_uses_one_manual_backup(self):
+        path = self.ws / 'draft.txt'
+        original = b'uncommitted\r\n'
+        path.write_bytes(original)
+        with patch.object(ChangeReviewStore, '_save', side_effect=OSError('receipt unavailable')):
+            result = self.context.registry.invoke('delete_file', {'path': path.name}, self.context.tool_context())
+        self.assertTrue(result.ok, result.error)
+        self.assertFalse(path.exists())
+        backup = Path(result.meta['backup_path'])
+        self.assertEqual(backup.read_bytes(), original)
+        self.assertEqual(json.loads((backup.parents[1] / 'restore.json').read_bytes())['original_path'], str(path.resolve()))
+        self.assertNotIn('change_ids', result.meta)
+        denied = self.context.registry.invoke('read_file', {'path': str(backup)}, self.context.tool_context())
+        self.assertFalse(denied.ok)
+
+    def test_both_recovery_writes_fail_and_source_stays_intact(self):
+        path = self.ws / 'original.txt'
+        path.write_bytes(b'keep')
+        with patch('keystone.change_review.atomic_bytes', side_effect=OSError('disk full')):
+            result = self.executor.execute(self.context, ActionRequest('delete_file', {'path': path.name})).as_dict()
+        self.assertFalse(result['ok'])
+        self.assertEqual(result['meta']['execution_state'], 'not_started')
+        self.assertEqual(path.read_bytes(), b'keep')
+
+    def test_receipt_creation_denied_falls_back_without_retrying_temp_names(self):
+        path = self.ws / 'restricted.txt'
+        path.write_bytes(b'user draft')
+        original_open = os.open
+        attempts = []
+        def deny_receipt(name, flags, *args, **kwargs):
+            if flags & os.O_CREAT and Path(name).parent == self.store.root:
+                attempts.append(name)
+                self.assertEqual(len(attempts), 1, 'ACL denial must not retry temporary names')
+                raise PermissionError('receipt directory denies new files')
+            return original_open(name, flags, *args, **kwargs)
+        with patch('os.open', side_effect=deny_receipt):
+            recovery = self.store.delete(path)
+        self.assertEqual(len(attempts), 1)
+        self.assertFalse(path.exists())
+        self.assertEqual(Path(recovery['backup_path']).read_bytes(), b'user draft')
+
+    def test_interrupted_completion_exposes_prepared_receipt_without_replaying_delete(self):
+        path = self.ws / 'interrupted.txt'
+        path.write_bytes(b'original')
+        request = ActionRequest('delete_file', {'path': path.name})
+        append = self.context.session.append
+        def interrupt(etype, **data):
+            if etype == 'tool_completed':
+                raise OSError('journal interrupted')
+            return append(etype, **data)
+        with patch.object(self.context.session, 'append', side_effect=interrupt):
+            with self.assertRaisesRegex(OSError, 'journal interrupted'):
+                self.executor.execute(self.context, request)
+        self.assertFalse(path.exists())
+        recovered = ActionExecutor()
+        unknown = recovered.query(self.context, request.action_id)
+        self.assertEqual(unknown['meta']['execution_state'], 'unknown')
+        self.store.revert(unknown['meta']['change_ids'], lambda *_: None)
+        retry = recovered.execute(self.context, request).as_dict()
+        self.assertTrue(retry['meta']['deduplicated'])
+        self.assertEqual(path.read_bytes(), b'original')
+
+    def test_restore_does_not_clobber_file_created_during_final_write(self):
+        from keystone.change_review import atomic_bytes
+        path = self.ws / 'race.txt'
+        path.write_bytes(b'original')
+        ids = self.action('delete_file', path=path.name)
+        def late_user_write(target, *args, **kwargs):
+            if kwargs.get('create_only'):
+                target.write_bytes(b'new user file')
+            return atomic_bytes(target, *args, **kwargs)
+        with patch('keystone.change_review.atomic_bytes', side_effect=late_user_write):
+            with self.assertRaises(FileExistsError):
+                self.store.revert(ids, lambda *_: None)
+        self.assertEqual(path.read_bytes(), b'new user file')
+        self.assertFalse(self.store.review(ids)['canRevert'])
+
+    def test_external_delete_backs_up_only_after_authorization(self):
+        path = self.ws.parent / 'external.txt'
+        path.write_bytes(b'outside')
+        ctx = self.context.tool_context()
+        ctx.policy = Policy(workspace=self.ws, mode=Mode.BYPASS, sandbox=Sandbox.WORKSPACE_WRITE)
+        self.assertFalse(self.context.registry.invoke('delete_file', {'path': str(path)}, ctx).ok)
+        self.assertFalse(self.store.root.exists())
+        ctx.policy = Policy(workspace=self.ws, mode=Mode.BYPASS, sandbox=Sandbox.FULL_ACCESS)
+        result = self.context.registry.invoke('delete_file', {'path': str(path)}, ctx)
+        self.assertTrue(result.ok, result.error)
+        self.assertFalse(path.exists())
+        backup = Path(result.meta['backup_path'])
+        self.assertEqual(backup.read_bytes(), b'outside')
+        self.assertIn(str(backup), result.content)
+        self.assertFalse(self.context.registry.invoke('read_file', {'path': str(backup)}, ctx).ok)
+
+    def test_oversize_and_replacement_during_capture_keep_source(self):
+        path = self.ws / 'data.txt'
+        with path.open('wb') as f:
+            f.truncate(DELETE_LIMIT + 1)
+        result = self.executor.execute(self.context, ActionRequest('delete_file', {'path': path.name})).as_dict()
+        self.assertFalse(result['ok'])
+        self.assertEqual(path.stat().st_size, DELETE_LIMIT + 1)
+        path.write_bytes(b'original')
+        with self.assertRaisesRegex(ValueError, '发生变化'):
+            self.store.delete(path, on_prepared=lambda *_: path.write_bytes(b'new user draft'))
+        self.assertEqual(path.read_bytes(), b'new user draft')
 
 
 if __name__ == '__main__':

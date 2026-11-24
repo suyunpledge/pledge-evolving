@@ -44,7 +44,8 @@ class ReplyChanges(QObject):
                 entry['files'].append({'name': value.get('path', ''), 'path': value.get('path', ''),
                     'added': value.get('added'), 'removed': value.get('removed'),
                     'diff': value.get('diff') or '', 'truncated': value.get('diff_truncated', False),
-                    'kind': 'modified'})
+                    'kind': 'deleted' if meta.get('backup_path') else 'modified',
+                    'backupPath': meta.get('backup_path', '')})
 
     def anchor(self):
         if self.active in self.entries:
@@ -100,7 +101,8 @@ class ReplyChanges(QObject):
     def _request(self, key, revert=False):
         entry = self.entries[key]
         if not entry.get('ids'):
-            self._error = '此记录没有回退快照，只能查看已有差异。更新并重启网关后，新文件修改会保存快照。'
+            self._error = ('' if any(f.get('backupPath') for f in entry['files']) else
+                '此记录没有回退快照，只能查看已有差异。更新并重启网关后，新文件修改会保存快照。')
             self.changed.emit()
             return
         self._busy, self._error = True, ''
@@ -138,7 +140,7 @@ class ReplyChanges(QObject):
                 entry.update({k: result[k] for k in ('files', 'canRevert', 'restored')})
                 if entry.get('incomplete'):
                     known = {f['path'] for f in entry['files']}
-                    entry['files'].extend(f for f in previous_files if f.get('path') not in known)
+                    entry['files'].extend(f for f in previous_files if f.get('backupPath') or f.get('path') not in known)
                     entry['canRevert'] = False
                     self._error = '本次包含无法安全保存快照的修改，暂不支持整次回退。'
             else:

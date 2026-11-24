@@ -279,6 +279,8 @@ class ActionExecutor:
                         continue
                     if event.type == 'tool_started':
                         started = event.data
+                    if event.type == 'delete_prepared' and started is not None:
+                        started = {**started, **event.data.get('meta', {})}
                     if event.type == 'tool_completed' and 'action_result' in event.data:
                         value = event.data['action_result']
                         return {**value, 'meta': {**value['meta'], 'event_id': event.data.get('event_id', '')}}
@@ -326,6 +328,10 @@ class ActionExecutor:
             self._active.add(key)
             try:
                 tc = ctx.tool_context()
+                if request.name == 'delete_file':
+                    def record_recovery(path, meta):
+                        ctx.publish('delete_prepared', action_id=request.action_id, path=str(path), meta=meta)
+                    tc.extras['on_delete_prepared'] = record_recovery
                 from .policy import Sandbox
                 if self.trusted_native and tc.policy.sandbox is Sandbox.FULL_ACCESS:
                     tc = replace(tc, isolated=False)

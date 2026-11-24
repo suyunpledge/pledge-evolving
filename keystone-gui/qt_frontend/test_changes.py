@@ -1,10 +1,13 @@
 """Real local gateway/file IO; only the model stream is substituted."""
 import json
 from pathlib import Path
+import shutil
 import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
+from keystone.change_review import ChangeReviewStore
 from keystone.gateway import GatewayConfig, serve
 from keystone.policy import Policy, Mode
 from keystone.tools import build_builtin_registry
@@ -51,18 +54,21 @@ class ReplyChangeTests(unittest.TestCase):
         self.cfg.close_runtime()
         self.temp.cleanup()
 
-    def generate(self, ending='success'):
+    def generate(self, ending='success', tool='write_file'):
         client = KeystoneGatewayClient(self.endpoint)
         # Use the real advertised wire name so this also covers the desktop
         # policy boundary, rather than bypassing it with a canonical test name.
-        write_name = next(t['function']['name'] for t in client.list_tools()
-                          if t['function']['name'] == 'keystone_write_file')
+        tool_name = next(t['function']['name'] for t in client.list_tools()
+                         if t['function']['name'] == 'keystone_' + tool)
+        args = {'path': 'sample.py'}
+        if tool == 'write_file':
+            args['content'] = 'value = 2\n'
         turns = []
         def stream(*_, **kwargs):
             if not turns:
                 turns.append(1)
                 return CompletionResult('', tool_calls=[{'id': 'edit-1', 'type': 'function',
-                    'function': {'name': write_name, 'arguments': json.dumps({'path': 'sample.py', 'content': 'value = 2\n'})}}])
+                    'function': {'name': tool_name, 'arguments': json.dumps(args)}}])
             if ending == 'failure':
                 raise GatewayError('model unavailable after write')
             if ending == 'cancel':
@@ -107,6 +113,37 @@ class ReplyChangeTests(unittest.TestCase):
         self.assertFalse(self.controller.changeReview.data['canRevert'])
         self.controller.changeReview.revert()
         self.assertEqual((self.ws / 'sample.py').read_text(), 'later user edit')
+
+    def test_deleted_file_restored_from_reply_card(self):
+        path = self.ws / 'sample.py'
+        original = path.read_bytes()
+        key = self.generate(tool='delete_file')
+        self.assertFalse(path.exists())
+        self.controller.changeReview.open(key)
+        until(lambda: not self.controller.busy)
+        self.assertEqual(self.controller.changeReview.data['files'][0]['kind'], 'deleted')
+        self.controller.changeReview.revert()
+        until(lambda: not self.controller.busy)
+        self.assertTrue(self.controller.changeReview.data['restored'])
+        self.assertEqual(path.read_bytes(), original)
+
+    def test_deleted_file_can_be_restored_from_backup_after_session_reload(self):
+        path = self.ws / 'sample.py'
+        original = path.read_bytes()
+        with patch.object(ChangeReviewStore, '_save', side_effect=OSError('receipt unavailable')):
+            key = self.generate(tool='delete_file')
+        sid = self.controller.sessionId
+        self.controller.newSession()
+        self.controller.selectSession(sid)
+        self.controller.changeReview.open(key)
+        record = self.controller.changeReview.data
+        self.assertFalse(record['canRevert'])
+        self.assertEqual(record['files'][0]['kind'], 'deleted')
+        self.assertFalse(path.exists())
+        backup = Path(record['files'][0]['backupPath'])
+        with backup.open('rb') as source, path.open('xb') as destination:
+            shutil.copyfileobj(source, destination)
+        self.assertEqual(path.read_bytes(), original)
 
     def test_withdrawal_retains_file_receipt_without_model_history(self):
         key = self.generate()

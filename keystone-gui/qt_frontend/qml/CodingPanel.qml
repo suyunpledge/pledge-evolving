@@ -130,6 +130,12 @@ Item {
                                 id: changeContent; x: 10; y: 10; width: parent.width - 20; spacing: 6
                                 Text { text: modelData.restored ? "已回退本次修改" : modelData.count ? "已修改 " + modelData.count + " 个文件" : "工作区差异"; color: "#e1e8ef"; font.pixelSize: 13 }
                                 Text { width: parent.width; text: modelData.files.join(" · "); elide: Text.ElideRight; color: "#a4b1bf"; font.pixelSize: 12; visible: !!text }
+                                TextEdit {
+                                    width: parent.width; visible: !!text; readOnly: true; selectByMouse: true
+                                    textFormat: TextEdit.PlainText; wrapMode: TextEdit.WrapAnywhere
+                                    text: (modelData.backups || []).length ? "手动恢复备份\n" + modelData.backups.join("\n") : ""
+                                    color: "#b8c4d2"; font.pixelSize: 12
+                                }
                                 Flow {
                                     width: parent.width; spacing: 5
                                     GlassButton { material: pane.material; glyph: "code"; text: "查看修改"; enabled: !pane.stateData.busy; onClicked: pane.run("diff", modelData.id) }

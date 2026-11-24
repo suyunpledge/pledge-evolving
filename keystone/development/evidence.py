@@ -151,6 +151,11 @@ class TaskEvidence:
         elif kind == 'git_diff':
             self.diffs.append(event)
 
+    @property
+    def deletion_backups(self):
+        return [a['meta']['backup_path'] for a in self.actions.values()
+                if a.get('tool') == 'delete_file' and a.get('ok') and (a.get('meta') or {}).get('backup_path')]
+
     def continuation_prompt(self):
         import json
         lead = ('继续上一次被停止的任务，沿用原目标、清单和验收条件。下面是历史数据。'

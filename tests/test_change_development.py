@@ -40,6 +40,23 @@ class CodingReplyChangeTests(unittest.TestCase):
                 rt.review_recorded_changes(ids, revert=True, permission=permission)
         self.assertEqual(self.path.read_text(), 'VALUE = 2\n')
 
+    def test_coding_delete_restores_current_uncommitted_bytes(self):
+        rt = self.runtime()
+        agent = rt.bridge.agent
+        agent.policy = rt.bridge.policy('workspace-write')
+        original = b'# user edits\r\nVALUE = 12\r\n'
+        self.path.write_bytes(original)
+        def run(name):
+            return agent.action_executor.execute(agent.execution_context(), ActionRequest(name, {'path': 'value.py'})).as_dict()
+        self.assertTrue(run('read_file')['ok'])
+        deleted = run('delete_file')
+        self.assertTrue(deleted['ok'], deleted['error'])
+        self.assertFalse(self.path.exists())
+        ids = deleted['meta']['change_ids']
+        self.assertEqual(rt.review_recorded_changes(ids)['files'][0]['kind'], 'deleted')
+        self.assertTrue(rt.review_recorded_changes(ids, revert=True, permission='desktop-sandbox')['restored'])
+        self.assertEqual(self.path.read_bytes(), original)
+
     def test_later_edits_during_approval_are_not_overwritten(self):
         rt = self.runtime()
         ids = self.write(rt)

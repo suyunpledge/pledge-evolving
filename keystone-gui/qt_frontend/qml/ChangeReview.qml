@@ -78,7 +78,17 @@ Popup {
             Text { text: review.currentFile.added == null ? "—" : "+" + review.currentFile.added; color: "#84c9a4"; font.pixelSize: 12 }
             Text { text: review.currentFile.removed == null ? "—" : "−" + review.currentFile.removed; color: "#dc9494"; font.pixelSize: 12 }
             Item { Layout.fillWidth: true }
+            GlassButton {
+                material: review.material; text: "复制备份路径"; quiet: true
+                visible: !!review.currentFile.backupPath
+                onClicked: controller.copyText(review.currentFile.backupPath)
+            }
             GlassButton { material: review.material; text: "复制差异"; quiet: true; enabled: !!review.currentFile.diff; onClicked: controller.copyText(review.currentFile.diff) }
+        }
+        Text {
+            Layout.fillWidth: true; visible: !!review.currentFile.backupPath
+            text: "手动恢复时，将此备份复制回原文件位置。\n" + (review.currentFile.backupPath || "")
+            textFormat: Text.PlainText; wrapMode: Text.WrapAnywhere; color: "#b8c4d2"; font.pixelSize: 12
         }
         Rectangle {
             Layout.fillWidth: true; Layout.fillHeight: true; radius: 10; color: "#10161d"; clip: true

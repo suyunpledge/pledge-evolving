@@ -73,6 +73,7 @@ class CodingService:
             if record.changes or record.diffs:
                 restored = bool(ids) and set(ids).issubset(record.reverted_change_ids)
                 changes.append(dict(id=key, count=len(record.changes), restored=restored,
+                    backups=record.deletion_backups,
                     canRevert=bool(ids) and not restored and not any((a.get('meta') or {}).get('change_review_incomplete') for a in record.actions.values()),
                     files=[Path(c['path']).name for c in list(record.changes.values())[:4]]))
         labels = {rt.catalog[r['id']]: r['label'] for r in self.catalog} if rt else {}

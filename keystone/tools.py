@@ -1092,19 +1092,25 @@ def build_builtin_registry(
 
     @host_tool(
         "delete_file",
-        "Delete a file inside the workspace (sandbox-gated, audit-friendly "
-        "alternative to shell rm). Refuses directories.",
+        "Use for local file deletion. Workspace files get a durable undo receipt. "
+        "Returns a manual backup path when undo is unavailable. Accepts individual files only.",
         read_only=False,
         schema={"path": "string"},
     )
     def delete_file(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+        from .change_review import ChangeReviewStore
+        from .compat import default_home
+
         path = _resolve(ctx.workspace, args.get("path", ""))
-        if path.is_dir():
-            return ToolResult(ok=False, error=f"is a directory (use shell for dirs): {path}")
-        if not path.is_file():
-            return ToolResult(ok=False, error=f"not a file: {path}")
-        path.unlink()
-        return ToolResult(ok=True, content=f"deleted {path}")
+        store = ChangeReviewStore(ctx.extras.get('trusted_control_root') or default_home(), ctx.workspace)
+        try:
+            recovery = store.delete(path, args.get('_expected_revisions'), ctx.extras.get('on_delete_prepared'))
+        except (OSError, ValueError) as exc:
+            return ToolResult(False, error=f'文件未删除：{exc}', meta={'execution_state': 'not_started'})
+        message = f'deleted {path}'
+        if recovery.get('backup_path'):
+            message += f"。手动恢复时，将备份复制回原路径。备份位置：{recovery['backup_path']}"
+        return ToolResult(True, content=message, meta=recovery)
 
     @host_tool(
         "edit_file",
@@ -1302,7 +1308,7 @@ def build_builtin_registry(
 
     @host_tool(
         "shell_exec",
-        "Run a shell command. Denied outright for OS-escape programs.",
+        "Run a shell command. Denied outright for OS-escape programs. Use delete_file for recoverable file deletion.",
         read_only=False,
         result_fields=FIELDS if result_views else (),
         schema={"command": "string"},

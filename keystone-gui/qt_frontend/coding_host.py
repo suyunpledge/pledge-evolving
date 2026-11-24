@@ -34,6 +34,7 @@ class CodingHost:
             restored = bool(ids) and set(ids).issubset(record.reverted_change_ids)
             incomplete = any((a.get('meta') or {}).get('change_review_incomplete') for a in record.actions.values())
             changes.append({'id': key, 'count': len(record.changes), 'restored': restored,
+                            'backups': record.deletion_backups,
                             'canRevert': bool(ids) and not incomplete and not restored,
                             'files': [Path(c['path']).name for c in list(record.changes.values())[:4]]})
         routing = bench._runtime_ctx.get_routing() if bench._runtime_ctx is not None else {}
