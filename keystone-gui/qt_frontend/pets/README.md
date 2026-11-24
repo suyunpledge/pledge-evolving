@@ -1,9 +1,10 @@
 # 桌面宠物包 / Desktop pet packs
 
-Keystone 自带三只原创占位宠物：`crab`（像素小蟹）、`robot`（小机器人）、`whale`（圆滚滚鲸鱼）。
-形象都是为本项目绘制的 SVG，可随时换成你自己的图片或精灵图。
-另附 `mingyue`（溟月·鲸鱼娘）：来自 MIT 开源项目 dsh-whale-musume 的授权立绘与台词，
-署名与许可见 `pets/mingyue/NOTICE.md`。
+Keystone 自带四只宠物，形象均来自官方或授权素材（署名与许可见各包 `NOTICE.md`）：
+`robot`（Codex 小机器人，OpenAI 官方精灵图按状态裁切）、`crab`（Clawd 小螃蟹，
+Claude Code 吉祥物的 MIT 像素图标）、`whale`（DeepSeek 小鲸鱼，官方鲸鱼标志）、
+`mingyue`（溟月·鲸鱼娘，MIT 开源项目 dsh-whale-musume 的授权立绘与台词）。
+可随时换成你自己的图片或精灵图。
 
 ## 放在哪里
 

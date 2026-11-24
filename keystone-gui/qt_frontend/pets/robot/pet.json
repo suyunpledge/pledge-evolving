@@ -1,13 +1,48 @@
 {
   "format": 1,
-  "name": "小机器人",
-  "size": 96,
+  "name": "Codex 小机器人",
+  "size": [
+    96,
+    104
+  ],
+  "smooth": true,
+  "facing": "right",
   "states": {
-    "idle": "idle.svg",
-    "walk": {"sheet": "walk.svg", "frames": 2, "fps": 6},
-    "sleep": "sleep.svg",
-    "think": "think.svg",
-    "happy": "happy.svg",
-    "worried": "worried.svg"
+    "idle": {
+      "sheet": "idle.png",
+      "frames": 6,
+      "fps": 1,
+      "columns": 6
+    },
+    "walk": {
+      "sheet": "walk.png",
+      "frames": 8,
+      "fps": 8,
+      "columns": 8
+    },
+    "sleep": {
+      "sheet": "sleep.png",
+      "frames": 6,
+      "fps": 2,
+      "columns": 6
+    },
+    "think": {
+      "sheet": "think.png",
+      "frames": 6,
+      "fps": 4,
+      "columns": 6
+    },
+    "happy": {
+      "sheet": "happy.png",
+      "frames": 5,
+      "fps": 7,
+      "columns": 5
+    },
+    "worried": {
+      "sheet": "worried.png",
+      "frames": 8,
+      "fps": 7,
+      "columns": 8
+    }
   }
 }

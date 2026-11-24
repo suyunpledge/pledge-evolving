@@ -68,22 +68,27 @@ class PackTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def test_builtin_packs_are_original_svgs_with_every_state(self):
+    def test_builtin_packs_carry_official_mascots_with_attribution(self):
         packs, errors = scan_packs(self.home)
         self.assertEqual(errors, [])
         self.assertEqual(set(packs), {'crab', 'robot', 'whale', 'mingyue'})
         for pack in packs.values():
             self.assertTrue(pack['builtin'])
-            self.assertEqual(set(pack['states']), set(STATES))
-            if pack['id'] == 'mingyue':
-                # 溟月·鲸鱼娘：MIT 授权素材（见 pets/mingyue/NOTICE.md），webp 立绘。
-                self.assertTrue((BUILTIN_ROOT / 'mingyue' / 'NOTICE.md').is_file())
-                for art in pack['states'].values():
-                    self.assertTrue(QUrl(art['source']).toLocalFile().endswith('.webp'))
-                continue
-            self.assertEqual(pack['states']['walk']['kind'], 'sheet')
-            for art in pack['states'].values():
-                self.assertTrue(QUrl(art['source']).toLocalFile().endswith('.svg'))
+            self.assertIn('idle', pack['states'])
+            self.assertTrue((BUILTIN_ROOT / pack['id'] / 'NOTICE.md').is_file())
+        # Codex：官方精灵图按状态裁切的 PNG 动画条。
+        self.assertEqual(set(packs['robot']['states']), set(STATES))
+        self.assertEqual(packs['robot']['states']['walk']['kind'], 'sheet')
+        for art in packs['robot']['states'].values():
+            self.assertTrue(QUrl(art['source']).toLocalFile().endswith('.png'))
+        # Clawd：MIT 像素图标；溟月：MIT 授权 webp 立绘。
+        for pid, suffix in (('crab', '.svg'), ('mingyue', '.webp')):
+            self.assertEqual(set(packs[pid]['states']), set(STATES))
+            for art in packs[pid]['states'].values():
+                self.assertTrue(QUrl(art['source']).toLocalFile().endswith(suffix))
+        # DeepSeek：官方鲸鱼标志，其余状态回退 idle。
+        self.assertEqual(set(packs['whale']['states']), {'idle'})
+        self.assertTrue(QUrl(packs['whale']['states']['idle']['source']).toLocalFile().endswith('.svg'))
 
     def test_manifest_validation_rejects_bad_packs(self):
         good = {'name': '猫', 'states': {'idle': 'idle.png'}}
@@ -128,7 +133,7 @@ class PackTests(unittest.TestCase):
             'name': '我的猫', 'size': [80, 64], 'smooth': False, 'facing': 'left',
             'states': {'idle': 'idle.png', 'walk': {'sheet': 'walk.png', 'frames': 4, 'fps': 8, 'columns': 2},
                        'sleep': 'sleep.gif'}}, images=('idle.png', 'walk.png'))
-        shutil.copy(ROOT / 'pets' / 'crab' / 'idle.svg', folder / 'unused.svg')
+        shutil.copy(ROOT / 'pets' / 'crab' / 'clawd.svg', folder / 'unused.svg')
         from .test_wallpaper import lzw_frames
         (folder / 'sleep.gif').write_bytes(lzw_frames(4, 4, [0, 1]))
         pack = load_pack(folder)
@@ -153,7 +158,7 @@ class PackTests(unittest.TestCase):
         write_pack(self.user / 'broken', '[]')
         packs, errors = scan_packs(self.home)
         self.assertNotIn('custom', packs['crab'])
-        self.assertTrue(packs['crab']['states']['idle']['source'].endswith('/qt_frontend/pets/crab/idle.svg'))
+        self.assertTrue(packs['crab']['states']['idle']['source'].endswith('/qt_frontend/pets/crab/clawd.svg'))
         self.assertNotIn('broken', packs)
         self.assertEqual(len(errors), 2)
         self.assertTrue(any('crab' in e and '已改用内置形象' in e for e in errors))
@@ -332,9 +337,9 @@ class PersistenceTests(unittest.TestCase):
         again = PetController(self.home)
         self.assertTrue(again.enabled)
         self.assertEqual((again.currentId, again.current['name'], again.posX, again.posY), ('whale', '大胖鱼', 120, -40))
-        self.assertEqual(next(r for r in again.packs if r['id'] == 'whale')['defaultName'], '圆滚滚鲸鱼')
+        self.assertEqual(next(r for r in again.packs if r['id'] == 'whale')['defaultName'], 'DeepSeek 小鲸鱼')
         again.rename('whale', '')
-        self.assertEqual(again.current['name'], '圆滚滚鲸鱼')
+        self.assertEqual(again.current['name'], 'DeepSeek 小鲸鱼')
         self.assertEqual(self.config()['pets']['names'], {})
 
     def test_legacy_forge_desktop_file_is_used(self):
@@ -425,7 +430,7 @@ class PetWindowTests(unittest.TestCase):
         self.assertEqual(pet.property('animState'), 'idle')
         self.pets.observe(busy=True, error='', approvals=0)
         self.assertEqual(pet.property('animState'), 'think')
-        self.assertIn('/pets/crab/think.svg', pet.property('art')['source'])
+        self.assertIn('/pets/crab/clawd_think.svg', pet.property('art')['source'])
         bubble = pet.findChild(QObject, 'petBubble')
         self.assertTrue(bubble.property('visible'))
         pet.setProperty('ambient', 'sleep')
@@ -480,7 +485,7 @@ class PetWindowTests(unittest.TestCase):
 
     def test_reduced_motion_and_hidden_window_stop_all_timers(self):
         pet = self.show_pet()
-        self.pets.select('crab')
+        self.pets.select('robot')
         pet.setProperty('ambient', 'walk')
         sheet_timer = lambda: pet.property('moving') and pet.property('art')['kind'] == 'sheet'
         self.assertTrue(sheet_timer())

@@ -1,13 +1,15 @@
 {
   "format": 1,
-  "name": "像素小蟹",
+  "name": "Clawd 小螃蟹",
   "size": 96,
+  "smooth": false,
+  "facing": "right",
   "states": {
-    "idle": "idle.svg",
-    "walk": {"sheet": "walk.svg", "frames": 2, "fps": 6},
-    "sleep": "sleep.svg",
-    "think": "think.svg",
-    "happy": "happy.svg",
-    "worried": "worried.svg"
+    "idle": "clawd.svg",
+    "walk": "clawd_run.svg",
+    "sleep": "clawd_sleep.svg",
+    "think": "clawd_think.svg",
+    "happy": "clawd_happy.svg",
+    "worried": "clawd_confused.svg"
   }
 }
