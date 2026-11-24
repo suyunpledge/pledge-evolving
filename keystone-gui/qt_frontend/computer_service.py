@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 from config_model import load_user_layer
 from keystone.computer_use import ComputerSession, TargetCancellation
 from keystone.computer_coordinates import INPUT_NAMES
-from keystone.computer_win32 import WindowsControlDriver, list_windows
+from keystone.computer_win32 import WindowsControlDriver, is_edge_process, list_windows
 from keystone.secrets import SecretScope
 from computer_runtime import ComputerLane
 from phase_client import model_catalog
@@ -96,7 +96,9 @@ class ComputerService:
                 field('question', '分析问题', kind='multiline'), field('target', '定位目标（可选）'),
                 field('text', '要输入的文字（后台设置会替换整个字段）'), field('key', '前台快捷键，例如 ctrl+s')],
             actions=actions + [button('revoke', '撤销窗口授权')],
-            rows=rows + [dict(id=str(w['window']), title=w['title'], subtitle=f"PID {w['process_id']}", actions=[button('bind', '选择窗口')]) for w in self.windows],
+            rows=rows + [dict(id=str(w['window']), title=w['title'], subtitle=f"PID {w['process_id']}",
+                actions=([button('bind_edge_page', '选择 Edge 网页')] if can_launch_edge and w.get('edge') else [])
+                         + [button('bind', '选择窗口')]) for w in self.windows],
             canLaunchEdge=can_launch_edge, inputMode=self.input_mode, image=self.image(), observationId=(self.frame or {}).get('observation_id', ''),
             point=self.point, canInput=bool(self.lane and not self.lane.background and self.lane.clicks and self.host.profile != 'sandbox'))
 
@@ -136,16 +138,26 @@ class ComputerService:
             return
         if action == 'windows':
             self.windows = list_windows(exclude_pid=os.getpid())
+            for row in self.windows:
+                row['edge'] = is_edge_process(row['process_id'])
             return
         if action == 'revoke':
             self.close()
             return
-        if action == 'bind':
+        if action in {'bind', 'bind_edge_page'}:
             row = next(w for w in self.windows if str(w['window']) == values['id'])
+            if action == 'bind_edge_page' and (self.host.profile == 'sandbox' or self.input_mode != 'background' or not row.get('edge')):
+                raise PermissionError('请选择普通 Edge 网页。')
             with self._grant_lock:
                 self.close()
                 self.scope = SecretScope()
-                self.session = ComputerSession(WindowsControlDriver(row['window'], row['process_id']), ttl=90)
+                driver = (WindowsControlDriver(row['window'], row['process_id'], edge_page=True)
+                          if action == 'bind_edge_page' else WindowsControlDriver(row['window'], row['process_id']))
+                if action == 'bind_edge_page':
+                    # Pin the document the user selected before granting model access.
+                    with driver.background_controls():
+                        pass
+                self.session = ComputerSession(driver, ttl=90)
                 self.target = row['title']
                 self.lane = self._lane({})
                 self.host.emit('form_values', page='computer', values={'consent': False, 'clicks': False, 'inputMode': self.input_mode})

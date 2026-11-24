@@ -141,11 +141,35 @@ def list_windows(*, exclude_pid=None):
     return rows
 
 
+def is_edge_process(pid):
+    if os.name != 'nt':
+        return False
+    kernel = c.WinDLL('kernel32', use_last_error=True)
+    kernel.OpenProcess.argtypes = [w.DWORD, w.BOOL, w.DWORD]
+    kernel.OpenProcess.restype = w.HANDLE
+    kernel.CloseHandle.argtypes = [w.HANDLE]
+    kernel.QueryFullProcessImageNameW.argtypes = [w.HANDLE, w.DWORD, w.LPWSTR, c.POINTER(w.DWORD)]
+    process = kernel.OpenProcess(0x1000, False, pid)
+    if not process:
+        return False
+    try:
+        path = c.create_unicode_buffer(32768)
+        size = w.DWORD(len(path))
+        return bool(kernel.QueryFullProcessImageNameW(process, 0, path, c.byref(size))
+                    and os.path.basename(path.value).lower() == 'msedge.exe')
+    finally:
+        kernel.CloseHandle(process)
+
+
 class WindowsControlDriver:
-    def __init__(self, window, process_id):
+    def __init__(self, window, process_id, *, edge_page=False):
         if os.name != 'nt':
             raise RuntimeError('Windows controls require Windows')
         self.window, self.process_id = int(window), int(process_id)
+        self.edge_page = edge_page
+        self._edge_document_id = None
+        if edge_page and not is_edge_process(self.process_id):
+            raise ValueError('请选择普通 Microsoft Edge 窗口。')
         self.target_id = f'win32:{self.process_id}:{self.window}'
         self.u = c.WinDLL('user32', use_last_error=True)
         self.u.IsWindow.argtypes = [w.HWND]
@@ -165,7 +189,14 @@ class WindowsControlDriver:
     def background_controls(self):
         from .computer_background import window_controls
         self._validate()
+        if self.edge_page:
+            return window_controls(self.window, self.process_id, edge_page=True, verify_document=self._verify_edge_document)
         return window_controls(self.window, self.process_id)
+
+    def _verify_edge_document(self, document_id):
+        if self._edge_document_id is not None and self._edge_document_id != document_id:
+            raise ValueError('已选择的 Edge 网页发生变化，请重新选择网页后再授权。')
+        self._edge_document_id = document_id
 
     def screenshot(self, *, cancelled=None):
         from .computer_capture import capture_window

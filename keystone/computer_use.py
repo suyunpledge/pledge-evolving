@@ -230,7 +230,7 @@ class ComputerSession:
 
                     arguments = (args['ref'], args['action'], args.get('text', ''))
                     if background:
-                        dispatch(*arguments, before_input=start_input)
+                        readback_refresh = dispatch(*arguments, before_input=start_input)
                     else:
                         start_input()
                         dispatch(*arguments)
@@ -242,9 +242,12 @@ class ComputerSession:
                 verification = 'post_observation'
                 if background:
                     verification = 'value_readback' if args['action'] == 'type_text' else 'dispatched_with_post_observation'
-                return ToolResult(True, self._receipt(ctx, after), meta={
+                meta = {
                     'execution_state': 'completed', 'verification': verification,
-                    'changed': after['revision'] != before['revision']})
+                    'changed': after['revision'] != before['revision']}
+                if background and args['action'] == 'type_text' and readback_refresh == 'scroll_into_view':
+                    meta['readback_refresh'] = readback_refresh
+                return ToolResult(True, self._receipt(ctx, after), meta=meta)
             except Exception as exc:
                 self._observations.pop(ctx.secret_scope, None)
                 if not dispatched:

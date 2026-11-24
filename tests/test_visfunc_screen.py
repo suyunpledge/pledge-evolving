@@ -78,6 +78,58 @@ class RecognitionTests(unittest.TestCase):
             handle.SetValue.assert_called_once_with('new')
             before_input.assert_called_once_with()
 
+    def test_occluded_edge_refreshes_only_a_stale_readback_and_never_rewrites(self):
+        from unittest.mock import Mock
+        from keystone.computer_background import _set_value
+        for initial, supported, confirms in [('new', True, True), ('old', True, True),
+                                             ('old', True, False), ('old', False, False)]:
+            with self.subTest(initial=initial, supported=supported, confirms=confirms):
+                now = [0.]
+                handle = Mock(CurrentIsReadOnly=False, CurrentValue=initial)
+                authorize = Mock()
+                def scroll():
+                    if supported and confirms:
+                        handle.CurrentValue = 'new'
+                    return supported
+                refresh = Mock(side_effect=scroll)
+                def wait(seconds):
+                    now[0] += seconds
+                def run():
+                    return _set_value(handle, 'new', authorize, refresh=refresh,
+                                      clock=lambda: now[0], sleep=wait)
+                if confirms:
+                    self.assertEqual(run(), None if initial == 'new' else 'scroll_into_view')
+                else:
+                    with self.assertRaisesRegex(RuntimeError, '尚未读回'):
+                        run()
+                self.assertEqual(refresh.call_count, int(initial == 'old'))
+                authorize.assert_called_once_with()
+                handle.SetValue.assert_called_once_with('new')
+
+    def test_edge_page_binding_rejects_replacement_document(self):
+        driver = WindowsControlDriver.__new__(WindowsControlDriver)
+        driver._edge_document_id = None
+        driver._verify_edge_document((42, 12))
+        driver._verify_edge_document((42, 12))
+        with self.assertRaisesRegex(ValueError, '重新选择网页'):
+            driver._verify_edge_document((42, 15))
+        self.assertEqual(driver._edge_document_id, (42, 12))
+
+    def test_edge_document_excludes_sidebars_and_rejects_ambiguous_pages(self):
+        from unittest.mock import Mock
+        from keystone.computer_background import _edge_document
+        client, uia, window = Mock(), Mock(), Mock(CurrentName='Checkout - Personal - Microsoft Edge')
+        page = Mock(CurrentName='Checkout')
+        sidebar = Mock(CurrentName='Sidebar')
+        def present(*docs):
+            window.FindAll.return_value = Mock(Length=len(docs), GetElement=docs.__getitem__)
+        present(sidebar, page)
+        self.assertIs(_edge_document(window, client, uia, 17), page)
+        for docs in [(sidebar,), (page, page)]:
+            present(*docs)
+            with self.assertRaisesRegex(ValueError, '唯一控件树'):
+                _edge_document(window, client, uia, 17)
+
     def test_dense_form_keeps_focus_and_selection_without_field_values(self):
         from types import SimpleNamespace
         driver = SimpleNamespace(window=12, process_id=34)

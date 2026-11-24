@@ -13,23 +13,32 @@ def _menu_action(role, available, state):
         return {0: 'expand', 1: 'collapse', 2: 'expand'}.get(state)
 
 
-def _set_value(handle, text, before_input, *, clock=time.monotonic, sleep=time.sleep):
+def _set_value(handle, text, before_input, *, refresh=None, clock=time.monotonic, sleep=time.sleep):
     if handle.CurrentIsReadOnly:
         raise ValueError('文本框已变为只读。')
     before_input()
     handle.SetValue(text)
     # Chromium can acknowledge SetValue before its accessibility tree updates.
     # Poll only the same pattern on the same element; never repeat the write.
-    deadline = clock() + 1.5
+    start = clock()
+    deadline = start + 1.5
+    refresh_used = False
     while handle.CurrentValue != text:
-        remaining = deadline - clock()
+        now = clock()
+        if refresh is not None and now - start >= .25:
+            refresh_used = refresh()
+            refresh = None
+            if refresh_used:
+                continue
+        remaining = deadline - now
         if remaining <= 0:
             raise RuntimeError('文本已派发，尚未读回预期值。请检查目标状态后再继续。')
         sleep(min(.05, remaining))
+    return 'scroll_into_view' if refresh_used else None
 
 
 @contextmanager
-def window_controls(hwnd, pid):
+def window_controls(hwnd, pid, *, edge_page=False, verify_document=None):
     """Keep the exact observed COM elements alive until approval revalidation/dispatch finishes."""
     import comtypes
 
@@ -37,12 +46,29 @@ def window_controls(hwnd, pid):
     # initialization and keep apartment-bound interfaces within this operation.
     comtypes.CoInitialize()
     try:
-        yield from _snapshot(hwnd, pid)
+        yield from _snapshot(hwnd, pid, edge_page, verify_document)
     finally:
         comtypes.CoUninitialize()
 
 
-def _snapshot(hwnd, pid):
+def _edge_document(window, client, uia, pid):
+    condition = client.CreateAndCondition(
+        client.CreatePropertyCondition(uia.UIA_ProcessIdPropertyId, pid),
+        client.CreatePropertyCondition(uia.UIA_ControlTypePropertyId, uia.UIA_DocumentControlTypeId))
+    documents = window.FindAll(uia.TreeScope_Descendants, condition)
+    title = window.CurrentName
+    matches = []
+    for i in range(documents.Length):
+        document = documents.GetElement(i)
+        name = document.CurrentName
+        if name and (title == name or title.startswith(name + ' - ') or title.startswith(name + ' – ')):
+            matches.append(document)
+    if len(matches) != 1:
+        raise ValueError('Edge 尚未提供当前网页的唯一控件树。请先选中目标标签页，待网页加载后再切回前台应用，并重新观察。')
+    return matches[0]
+
+
+def _snapshot(hwnd, pid, edge_page=False, verify_document=None):
     import comtypes.client
     comtypes.client.GetModule('UIAutomationCore.dll')
     from comtypes.gen import UIAutomationClient as uia
@@ -58,6 +84,12 @@ def _snapshot(hwnd, pid):
         window = client.ElementFromHandle(hwnd)
         if window.CurrentProcessId != pid or window.CurrentNativeWindowHandle != hwnd:
             raise ValueError('所选窗口已变化，请重新选择。')
+        if edge_page:
+            browser = window
+            window = _edge_document(window, client, uia, pid)
+            document_id = tuple(window.GetRuntimeId())
+            if verify_document:
+                verify_document(document_id)
         properties = ('RuntimeId', 'Name', 'ControlType', 'IsEnabled', 'IsPassword',
                       'IsInvokePatternAvailable', 'IsTogglePatternAvailable',
                       'IsSelectionItemPatternAvailable', 'IsValuePatternAvailable',
@@ -123,6 +155,8 @@ def _snapshot(hwnd, pid):
                 targets[ref] = (element, operations)
         state = {'elements': elements, 'truncated': found.Length > 256,
                  '_value_revision': hashlib.sha256(json.dumps(values).encode()).hexdigest()}
+        if edge_page:
+            state['document_ref'] = document_id
 
         def dispatch(ref, action, text, before_input):
             element, operations = targets[ref]
@@ -135,7 +169,20 @@ def _snapshot(hwnd, pid):
             raw = element.GetCurrentPattern(getattr(uia, 'UIA_' + pattern + 'PatternId'))
             handle = raw.QueryInterface(getattr(uia, 'IUIAutomation' + pattern + 'Pattern'))
             if op == 'value':
-                _set_value(handle, text, before_input)
+                def refresh():
+                    # Chromium can receive the edit while its occluded AX tree
+                    # still advertises the old value. Refresh only its bound item.
+                    current = _edge_document(browser, client, uia, pid)
+                    if tuple(current.GetRuntimeId()) != document_id or element.CurrentIsPassword or not element.CurrentIsEnabled:
+                        raise ValueError('网页或字段已变化，请核对写入结果。')
+                    raw_scroll = element.GetCurrentPattern(uia.UIA_ScrollItemPatternId)
+                    if not raw_scroll:
+                        return False
+                    scroll = raw_scroll.QueryInterface(uia.IUIAutomationScrollItemPattern)
+                    before_input()
+                    scroll.ScrollIntoView()
+                    return True
+                return _set_value(handle, text, before_input, refresh=refresh if edge_page else None)
             else:
                 before_input()
                 getattr(handle, method)()
