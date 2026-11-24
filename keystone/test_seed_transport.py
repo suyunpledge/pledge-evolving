@@ -212,3 +212,47 @@ class SeedTransportTests(unittest.TestCase):
             with self.assertRaises(ConnectionResetError), self.pool.open_coding(request, timings={}, timeout=5):
                 self.fail()
             fallback.assert_not_called()
+
+    def test_gateway_retires_stalled_office_stream_and_retry_has_full_read_budget(self):
+        import json
+        from urllib.request import urlopen
+        from .gateway import GatewayConfig, serve
+
+        release = threading.Event()
+        seen = []
+
+        def stream(handler):
+            handler.rfile.read(int(handler.headers['Content-Length']))
+            seen.append(handler.headers.get('X-Keystone-Retryable-Office'))
+            handler.send_response(200)
+            handler.send_header('Content-Type', 'text/event-stream')
+            handler.send_header('Connection', 'close')
+            handler.end_headers()
+            handler.wfile.write(b'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n')
+            handler.wfile.flush()
+            if len(seen) == 1:
+                release.wait(4)
+            else:
+                # The recovery request outlasts the first attempt's idle limit.
+                threading.Event().wait(.25)
+                handler.wfile.write(b'data: [DONE]\n\n')
+
+        model = 'doubao-seed-evolving'
+        cfg = GatewayConfig(upstream=CHAT_URL.rsplit('/', 2)[0], api_key='', port=0,
+                            models=[model], upstream_wire='openai')
+        server = serve(cfg)
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        self.addCleanup(release.set)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        url = f'http://127.0.0.1:{server.server_port}/v1/chat/completions'
+        body = json.dumps({'model': model, 'stream': True, 'messages': [{'role': 'user', 'content': 'edit'}]}).encode()
+        with patch.object(Handler, 'do_POST', stream), patch('keystone.request_timing.SEED_OFFICE_PROGRESS_TIMEOUT', .1):
+            req = Request(url, data=body, headers={'Content-Type': 'application/json', 'X-Keystone-Retryable-Office': '1'})
+            with urlopen(req, timeout=3) as response:
+                frames = [json.loads(x[5:]) for x in response if x.startswith(b'data:')]
+            self.assertTrue(frames[-1]['error']['retryable'])
+            with urlopen(Request(url, data=body, headers={'Content-Type': 'application/json'}), timeout=3) as response:
+                self.assertIn(b'data: [DONE]', response.read())
+        self.assertEqual(len(self.connections), 2)
+        self.assertEqual(seen, [None, None])

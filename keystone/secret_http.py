@@ -21,7 +21,7 @@ def open_authenticated(request, *, timeout, proxy=None):
     return urllib.request.build_opener(*handlers).open(request, timeout=timeout)
 
 
-def iter_model_sse(response, *, expected_choices=1):
+def iter_model_sse(response, *, expected_choices=1, progress_timeout=None):
     """Drain trailing usage, but do not turn a completed answer into a timeout.
 
 An unfinished text/reasoning/tool stream still raises. The same POST is never
@@ -32,17 +32,19 @@ replayed and partial tool arguments are never promoted to a complete response.
     expected = expected_choices if type(expected_choices) is int and expected_choices > 0 else 1
     completed = False
     finish_deadline = None
+    progress_deadline = None
+    sock = getattr(getattr(getattr(response, 'fp', None), 'raw', None), '_sock', None)
+    read_timeout = sock.gettimeout() if sock is not None else None
     while True:
-        if finish_deadline is not None:
-            remaining = finish_deadline - time.monotonic()
+        deadline = finish_deadline if completed else progress_deadline
+        if deadline is not None:
+            remaining = deadline - time.monotonic()
             if remaining <= 0:
-                return
-            # stdlib HTTPResponse exposes its buffered SocketIO here. Only
-            # shorten this completed response's read; no global socket setting.
-            sock = getattr(getattr(getattr(response, 'fp', None), 'raw', None), '_sock', None)
+                if completed:
+                    return
+                raise TimeoutError('Seed stream stopped making progress')
             if sock is not None:
-                previous = sock.gettimeout()
-                sock.settimeout(min(previous, remaining) if previous is not None else remaining)
+                sock.settimeout(min(read_timeout, remaining) if read_timeout is not None else remaining)
         try:
             line = response.readline(1024 * 1024 + 1)
         except (OSError, urllib.error.URLError) as exc:
@@ -65,6 +67,9 @@ replayed and partial tool arguments are never promoted to a complete response.
                 if isinstance(event, dict):
                     terminal = event.get('type') == 'message_stop'
                     choices = event.get('choices')
+                    if progress_timeout is not None and (progress_deadline is None or
+                            isinstance(choices, list) and any(_choice_progress(c) for c in choices)):
+                        progress_deadline = time.monotonic() + progress_timeout
                     for choice in choices if isinstance(choices, list) else []:
                         if not isinstance(choice, dict):
                             continue
@@ -78,6 +83,22 @@ replayed and partial tool arguments are never promoted to a complete response.
         yield line
         if terminal:
             return
+
+
+def _choice_progress(choice):
+    if not isinstance(choice, dict):
+        return False
+    delta = choice.get('delta')
+    if not isinstance(delta, dict):
+        return False
+    if delta.get('content') or delta.get('reasoning_content') or choice.get('finish_reason'):
+        return True
+    for call in delta.get('tool_calls') or ():
+        if isinstance(call, dict):
+            fn = call.get('function') or {}
+            if call.get('id') or isinstance(fn, dict) and (fn.get('name') or fn.get('arguments')):
+                return True
+    return False
 
 
 def redact_response(data):

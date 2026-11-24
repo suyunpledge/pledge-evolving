@@ -53,6 +53,52 @@ class OfficeTests(unittest.TestCase):
         self.assertEqual(OfficeWorkspace(self.root).load(d["id"])["fields"]["P1"], "")
         self.assertEqual(self.tool("list")[0]["id"], d["id"])
 
+    def test_interrupted_work_generation_reuses_create_and_independent_suggestion(self):
+        from unittest.mock import patch
+        from keystone_client import ChatMessage, CompletionResult, ModelStreamInterrupted
+        from .conversation import run
+
+        tools = self.controller.tools(self.root)
+        attempts, dispatched = [], []
+        def call(name, args):
+            return {"id": f"call_{len(attempts)}_{name}", "type": "function",
+                    "function": {"name": "keystone_office_" + name, "arguments": json.dumps(args)}}
+
+        def dispatch(target, args, cancel):
+            _, key, root = target
+            dispatched.append(key)
+            return self.controller.call(key, root, args, cancel)
+
+        class Client:
+            def list_tools(inner, **_):
+                return []
+
+            def stream_chat(inner, messages, **options):
+                attempts.append(options.get("retryable_office_round", False))
+                create = call("create", {"kind": "spreadsheet", "title": "预算", "fields": {"A2": "80"}})
+                if len(attempts) == 1:
+                    return CompletionResult("", tool_calls=[create])
+                if len(attempts) == 2:
+                    raise ModelStreamInterrupted("stalled before complete tool arguments")
+                if len(attempts) == 5:
+                    return CompletionResult("完成")
+                document = self.store.recent()[0]
+                apply = call("apply", {"id": document["id"], "version": 1, "label": "材料",
+                                      "changes": [{"field": "A2", "before": "80", "value": "90"}]})
+                return CompletionResult("", tool_calls=[create, apply] if len(attempts) == 3 else [apply])
+
+        with patch("qt_frontend.conversation.MODEL_RETRY_DELAYS", (0,)):
+            run(Client(), [ChatMessage("user", "调整预算")], model="Seed", effort=None,
+                cancel=self.cancel, authorize=lambda *_: None, chunk=lambda *_: None,
+                checkpoint=lambda *_: None, status=lambda *_: None, next_round=lambda: None,
+                mcp=(tools, dispatch))
+        self.assertEqual(attempts, [False, True, False, True, True])
+        self.assertEqual(dispatched.count("office_create"), 1)
+        self.assertEqual(len(self.store.recent()), 1)
+        d = self.store.load(self.store.recent()[0]["id"])
+        self.assertEqual(len(d["pending"]), 1)
+        self.assertEqual(d["fields"]["A2"], "80")
+
     def test_conflicting_edits_preserve_user_text(self):
         d = self.tool("create", kind="document", title="说明")
         self.tool(

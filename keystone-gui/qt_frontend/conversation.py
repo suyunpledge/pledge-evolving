@@ -184,6 +184,9 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
     guard = ExecutionGuard()
     exports = productivity_tools.completed_exports(messages)
     retries_left = MAX_GENERATION_RETRIES
+    office_followup = False
+    completed_creates = {}
+    recovered_stream = False
     resume_at = len(messages)
     context_at = len(messages)
     if resuming:
@@ -216,7 +219,7 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
         return current
 
     def stream(current, round_number, prefix=''):
-        nonlocal retries_left
+        nonlocal retries_left, recovered_stream
         for attempt in range(len(MODEL_RETRY_DELAYS) + 1):
             started = False
             if progress is not None:
@@ -241,8 +244,11 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
 
             try:
                 callbacks = {'on_progress': stream_progress} if progress is not None else {}
+                if office_followup and not chat_mode and attempt == 0 and retries_left:
+                    callbacks['retryable_office_round'] = True
                 result = client.stream_chat(current, model=model, reasoning_effort=effort, temperature=temperature,
                                             on_chunk=emit, cancel_event=cancel, tools=tools, **callbacks)
+                recovered_stream = attempt > 0
                 if prefix and not started:
                     chunk(prefix)
                 return result
@@ -288,6 +294,7 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
                                     reasoning_content=result.reasoning_content,
                                     responses_replay=getattr(result, 'responses_replay', None)))
         stopped, switch_reason = None, ''
+        office_followup = False
         for call in calls:
             name = call['function']['name']
             arguments = json.loads(call['function']['arguments'])
@@ -335,8 +342,18 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
                     elif name in mcp_tools:
                         stage('tool', '正在执行 · ' + tool_label(name))
                         target = mcp_tools[name][1]
-                        response = invoke(arguments, lambda: productivity_tools.dispatch_with_exports(
-                            call_mcp, target, arguments, cancel, exports, attachment_folder))
+                        create_key = None
+                        if name == 'keystone_office_create' and target[0] == 'office':
+                            create_key = (target, json.dumps(arguments, sort_keys=True, ensure_ascii=False))
+                        if recovered_stream and create_key in completed_creates:
+                            response = completed_creates[create_key]
+                        else:
+                            response = invoke(arguments, lambda: productivity_tools.dispatch_with_exports(
+                                call_mcp, target, arguments, cancel, exports, attachment_folder))
+                            if create_key is not None and response.get('ok'):
+                                completed_creates[create_key] = response
+                        if name.startswith('keystone_office_') and response.get('ok'):
+                            office_followup = True
                     else:
                         stage('tool', '正在执行 · ' + tool_label(name))
                         response = invoke(arguments, lambda: client.call_tool(name, arguments))

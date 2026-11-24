@@ -15,6 +15,9 @@ GATEWAY_RESPONSE_GRACE = 60.0
 METADATA_RESPONSE_TIMEOUT = 10.0
 TOOL_RESPONSE_TIMEOUT = 90.0
 STREAM_FINISH_GRACE = 5.0
+# First, retryable Seed Office continuations get this long between productive SSE
+# deltas. The next attempt keeps the provider's ordinary inactivity limit.
+SEED_OFFICE_PROGRESS_TIMEOUT = 30.0
 
 # Scoped to one desktop Coding worker. Routers shared with planners and child
 # sessions never inherit another task's socket or timing observer.

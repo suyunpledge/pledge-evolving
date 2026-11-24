@@ -161,6 +161,30 @@ class ModelTimeoutTests(unittest.TestCase):
 
 
 class StreamTimeoutTests(unittest.TestCase):
+    def test_office_stall_after_first_packet_obeys_socket_and_ignores_heartbeats(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+
+        sock = Mock()
+        sock.gettimeout.return_value = 12
+        first = frame({'choices': [{'delta': {'role': 'assistant'}}]}).strip() + b'\n'
+        response = io.BytesIO(first + b': ping\n' * 3)
+        response.fp = SimpleNamespace(raw=SimpleNamespace(_sock=sock))
+        with patch('keystone.secret_http.time.monotonic', side_effect=[0, 1, 20, 31]):
+            with self.assertRaisesRegex(TimeoutError, 'stopped making progress'):
+                list(iter_model_sse(response, progress_timeout=30))
+        self.assertEqual([call.args[0] for call in sock.settimeout.call_args_list], [12, 10])
+
+    def test_active_seed_reasoning_and_partial_tool_calls_renew_office_deadline(self):
+        # A response can run for many progress windows while deltas keep arriving.
+        deltas = [{'role': 'assistant'}, {'reasoning_content': 'still working'},
+                  {'tool_calls': [{'function': {'name': 'tool'}}]},
+                  {'tool_calls': [{'function': {'arguments': '{}'}}]}]
+        lines = [frame({'choices': [{'delta': d}]}).strip() + b'\n' for d in deltas]
+        frames = b''.join(lines) + b'data: [DONE]\n'
+        with patch('keystone.secret_http.time.monotonic', side_effect=[0, 9, 9, 18, 18, 27, 27, 36]):
+            self.assertEqual(b''.join(iter_model_sse(io.BytesIO(frames), progress_timeout=10)), frames)
+
     def test_terminal_delta_preserves_text_order_and_usage_with_buffered_suffix(self):
         from .secrets import SecretScope
         scope = SecretScope()

@@ -362,6 +362,7 @@ class KeystoneGatewayClient:
                     tools: list[dict] | None = None,
                     system: str | None = None,
                     on_progress: Callable[[str, str], None] | None = None,
+                    retryable_office_round: bool = False,
                     ) -> CompletionResult:
         def check_cancelled():
             if cancel_event is not None and cancel_event.is_set():
@@ -383,6 +384,8 @@ class KeystoneGatewayClient:
             body["reasoning_effort"] = reasoning_effort
         req = self._request("POST", "/v1/chat/completions", body)
         full_text_parts: list[str] = []
+        if retryable_office_round:
+            req.add_header('X-Keystone-Retryable-Office', '1')
         reasoning_parts: list[str] = []
         usage = None
         model_name = ""

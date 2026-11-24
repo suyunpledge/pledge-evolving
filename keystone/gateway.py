@@ -735,12 +735,13 @@ def build_handler(cfg: GatewayConfig):
             cfg.log.write(f"{self.command} {self.path} -> {url} (bytes={len(body)})")
             request = urllib.request.Request(url, data=body or None, headers=headers, method=self.command)
             try:
-                from .request_timing import request_timeout
+                from .request_timing import request_timeout, SEED_OFFICE_PROGRESS_TIMEOUT
                 from .seed_transport import CHAT_URL
                 timeout = request_timeout(cfg.provider_options.get('requestTimeout', 0))
                 timings = {}
-                if (not cfg.proxy and url == CHAT_URL and self.command == 'POST' and provider is not None
-                        and provider.wire == 'openai' and payload.get('model') == 'doubao-seed-evolving'):
+                seed = (url == CHAT_URL and self.command == 'POST' and provider is not None
+                        and provider.wire == 'openai' and payload.get('model') == 'doubao-seed-evolving')
+                if seed and not cfg.proxy:
                     upstream = cfg.seed_transport.open(request, timeout=timeout, timings=timings)
                 else:
                     upstream = open_upstream(request, timeout=timeout, proxy=cfg.proxy)
@@ -761,8 +762,11 @@ def build_handler(cfg: GatewayConfig):
                         self._upstream_started = True
                         from .secret_http import SecretSSEFilter, iter_model_sse
                         fence = SecretSSEFilter()
+                        progress_timeout = (SEED_OFFICE_PROGRESS_TIMEOUT if seed and
+                            self.headers.get('X-Keystone-Retryable-Office') == '1' else None)
                         chunks = (openai_responses.stream_chat(response, payload["model"], response_scope) if responses
-                                  else iter_model_sse(response, expected_choices=(payload or {}).get('n', 1)))
+                                  else iter_model_sse(response, expected_choices=(payload or {}).get('n', 1),
+                                                      progress_timeout=progress_timeout))
                         for chunk in chunks:
                             observer.feed(chunk)
                             self.wfile.write(fence.feed(chunk))
