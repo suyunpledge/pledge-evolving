@@ -1,5 +1,6 @@
 """Local Office documents. UI edits and Work tools share versioned transactions."""
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -90,6 +91,8 @@ class OfficeWorkspace:
                 or not isinstance(d["modified"], (float, int))
                 or not isinstance(d["history"], list)
                 or not isinstance(d["pending"], list)
+                or not isinstance(d.get("suggestion_receipts", []), list)
+                or len(d.get("suggestion_receipts", [])) > 64
             ):
                 raise ValueError("办公文件的数据结构无效。")
             validate(d["kind"], "title", d["fields"]["title"])
@@ -191,6 +194,11 @@ class OfficeWorkspace:
                 and args.get("value") in ("suggest", "direct")
             ):
                 d["mode"] = args["value"]
+            elif action == "apply" and "suggestions" in args:
+                if author != "ai" or "changes" in args:
+                    raise ValueError("请单独提交逐项审核的 AI 建议。")
+                if not self._suggest_fields(d, args):
+                    return d
             elif action == "apply":
                 changes = args.get("changes")
                 version = args.get("version")
@@ -246,17 +254,24 @@ class OfficeWorkspace:
                 d["pending"].remove(item)
             elif action == "undo" and author == "user":
                 who = args.get("author")
+                version = args.get("version")
                 entry = next(
                     (
                         x
                         for x in reversed(d["history"])
                         if x["author"] == who and not x.get("undone")
+                        and (version is None or x["version"] == version)
                     ),
                     None,
                 )
                 if entry is None:
                     raise ValueError("没有可撤销的修改。")
-                if any(fields.get(e["field"]) != e["value"] for e in entry["changes"]):
+                touched = {e["field"] for e in entry["changes"]}
+                if any(fields.get(e["field"]) != e["value"] for e in entry["changes"]) or any(
+                    later["version"] > entry["version"] and not later.get("undone")
+                    and any(e["field"] in touched for e in later["changes"])
+                    for later in d["history"]
+                ):
                     raise ValueError("后续编辑使用了相同字段，已保留当前内容。")
                 apply_values(
                     fields,
@@ -273,6 +288,36 @@ class OfficeWorkspace:
                 raise ValueError("操作已取消。")
             self.save(d)
             return d
+
+    @staticmethod
+    def _suggest_fields(d, args):
+        values, version = args["suggestions"], args.get("version")
+        if not isinstance(values, dict) or not 1 <= len(values) <= 64 or type(version) is not int:
+            raise ValueError("请提供文档版本和 1 至 64 项字段建议。")
+        for field, value in values.items():
+            validate(d["kind"], field, value)
+        # A delayed retry can arrive after the user reviewed some of the cards.
+        # Acknowledge the original batch without recreating a rejected suggestion.
+        payload = json.dumps([version, values], sort_keys=True, separators=(",", ":"))
+        digest = hashlib.sha256(payload.encode()).hexdigest()
+        receipts = d.setdefault("suggestion_receipts", [])
+        if digest in receipts:
+            return False
+        if d["mode"] != "suggest" or version != d["version"]:
+            raise ValueError("写入模式或文档版本已变化，请重新读取后再编辑。")
+        pending_count = len(d["pending"])
+        for field, value in values.items():
+            before = d["fields"].get(field)
+            changes = [dict(field=field, before=before, value=value)]
+            if before != value and not any(p["changes"] == changes for p in d["pending"]):
+                d["pending"].append(dict(id=uuid.uuid4().hex, label=field, changes=changes))
+        if len(d["pending"]) > 64:
+            raise ValueError("请先处理待审建议。")
+        if len(d["pending"]) == pending_count:
+            return False
+        receipts.append(digest)
+        del receipts[:-64]
+        return True
 
     @staticmethod
     def record(d, changes, author, label):

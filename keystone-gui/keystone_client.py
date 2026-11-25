@@ -455,6 +455,8 @@ class KeystoneGatewayClient:
                             continue
                         reasoning = delta.get("reasoning_content")
                         if isinstance(reasoning, str) and reasoning:
+                            if not reasoning_parts and on_progress:
+                                on_progress('reasoning', '')
                             reasoning_parts.append(reasoning)
                         if delta.get("responses_replay"):
                             responses_replay.extend(replay_items(delta["responses_replay"]))
@@ -484,7 +486,11 @@ class KeystoneGatewayClient:
                                 if fn.get("name"):
                                     slot["function"]["name"] += str(fn["name"])
                                 if fn.get("arguments"):
+                                    if on_progress and not slot["function"]["arguments"]:
+                                        on_progress('tool_args', slot["function"]["name"])
                                     slot["function"]["arguments"] += str(fn["arguments"])
+                        if choice.get("finish_reason") == "tool_calls" and on_progress:
+                            on_progress('tool_finish', '')
         except RequestCancelled as exc:
             raise GenerationCancelled("已停止生成") from exc
         except urllib.error.HTTPError as e:

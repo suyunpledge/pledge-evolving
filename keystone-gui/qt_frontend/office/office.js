@@ -272,15 +272,21 @@ function updateMeta() {
   if (!doc.pending.length) list.append(el("small", "暂无建议"));
   $("mode").value = doc.mode;
   $("history").replaceChildren(
-    ...doc.history.map((h) =>
-      el(
+    ...doc.history.map((h) => {
+      const row = el(
         "p",
         (h.author === "ai" ? "AI" : "你") +
           " · " +
           h.label +
           (h.undone ? "（已撤销）" : ""),
-      ),
-    ),
+      );
+      if (h.author === "ai" && !h.undone) {
+        const undo = btn("撤销", () => action("undo", { author: "ai", version: h.version }));
+        undo.setAttribute("aria-label", "撤销 " + h.label);
+        row.append(" ", undo);
+      }
+      return row;
+    }),
   );
   $("undo").disabled = !doc.history.some(
     (h) => h.author === "user" && !h.undone,

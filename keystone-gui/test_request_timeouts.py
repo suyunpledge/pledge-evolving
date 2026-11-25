@@ -73,6 +73,22 @@ class ClientTimeoutTests(unittest.TestCase):
         self.assertEqual(result.usage, {'prompt_tokens': 30})
         self.assertEqual(opened.call_count, 1)
 
+    def test_stream_progress_distinguishes_reasoning_and_first_argument_delta(self):
+        deltas = [
+            {'role': 'assistant'}, {'reasoning_content': 'work '}, {'reasoning_content': 'continues'},
+            {'tool_calls': [{'index': 0, 'id': 'call', 'function': {'name': 'office_apply'}}]},
+            {'tool_calls': [{'index': 0, 'function': {'arguments': '{'}}]},
+            {'tool_calls': [{'index': 0, 'function': {'arguments': '}'}}]},
+        ]
+        wire = b''.join(frame({'choices': [{'delta': delta}]}) for delta in deltas)
+        wire += frame({'choices': [{'delta': {}, 'finish_reason': 'tool_calls'}]}) + b'data: [DONE]\n\n'
+        events = []
+        with patch('keystone_client.open_response', return_value=TimedOutStream(wire)):
+            result = KeystoneGatewayClient().stream_chat([], on_progress=lambda kind, detail: events.append((kind, detail)))
+        self.assertEqual(events, [('packet', ''), ('reasoning', ''), ('tool_call', 'office_apply'),
+                                  ('tool_args', 'office_apply'), ('tool_finish', '')])
+        self.assertEqual(result.tool_calls[0]['function']['arguments'], '{}')
+
     def test_partial_tool_stream_stays_failed_and_is_never_replayed(self):
         wire = frame({'choices': [{'delta': {'tool_calls': [{'index': 0, 'id': 'a',
             'function': {'name': 'write_file', 'arguments': '{'}}]}, 'finish_reason': None}]})

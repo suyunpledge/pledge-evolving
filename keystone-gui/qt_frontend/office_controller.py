@@ -39,19 +39,21 @@ CATALOG = {
         obj({"id": STRING, "offset": {"type": "integer", "minimum": 0}}, "id"),
     ),
     "office_apply": (
-        "Edit the shared Office file by field, using the previously read version and exact prior values (null if missing). "
-        "Each batch follows the user-selected suggestion/direct mode. A pending suggestion is already recorded; do not resend.",
+        "After office_read, submit independent edits in suggestion mode in ONE call: "
+        'suggestions maps each field to its new value, e.g. {"B7":"42","D8":"confirmed"}. '
+        "Each field gets its own review and undo. Use changes instead for a single grouped edit or direct mode, "
+        "with exact prior values (null if missing). Finish after a successful submission.",
         obj(
             {
                 "id": STRING,
                 "version": {"type": "integer"},
+                "suggestions": {"type": "object", "additionalProperties": MAYBE_TEXT,
+                                "description": "Independent suggestions at the exact version just read. Use with id and version only."},
                 "changes": array(CHANGE),
                 "label": STRING,
             },
             "id",
             "version",
-            "changes",
-            "label",
         ),
     ),
     "office_export": (

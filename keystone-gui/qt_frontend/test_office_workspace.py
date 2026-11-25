@@ -99,6 +99,42 @@ class OfficeTests(unittest.TestCase):
         self.assertEqual(len(d["pending"]), 1)
         self.assertEqual(d["fields"]["A2"], "80")
 
+    def test_compact_batch_can_be_reviewed_and_undone_in_any_order(self):
+        base = {"A1": "10", "B1": "20", "C1": "30"}
+        doc = self.store.create("spreadsheet", "预算", base)
+        doc_id = doc["id"]
+        batch = dict(id=doc_id, version=1, suggestions={"A1": "11", "B1": "22", "C1": None})
+        self.assertEqual(self.tool("apply", **batch)["pending"], 3)
+        opened = self.ui("open", id=doc_id)
+        cards = {p["label"]: p["id"] for p in opened["pending"]}
+        self.assertEqual(len(set(cards.values())), 3)
+        self.assertEqual(opened["fields"], {"title": "预算", **base})
+        first = self.ui("accept", id=doc_id, args={"id": cards["C1"]})
+        self.assertNotIn("C1", first["fields"])
+        self.ui("reject", id=doc_id, args={"id": cards["B1"]})
+        self.ui("accept", id=doc_id, args={"id": cards["A1"]})
+        saved = self.ui("undo", id=doc_id, args={"author": "ai", "version": first["version"]})
+        self.assertEqual(saved["fields"], {"title": "预算", **base, "A1": "11"})
+        replay = self.tool("apply", **{**batch, "suggestions": dict(reversed(batch["suggestions"].items()))})
+        self.assertEqual((replay["pending"], replay["version"]), (0, saved["version"]))
+
+    def test_compact_batch_rejects_stale_mixed_or_full_requests_atomically(self):
+        doc = self.store.create("spreadsheet", "预算")
+        doc_id = doc["id"]
+        self.tool("apply", id=doc_id, version=1, suggestions={"A1": "1"})
+        for invalid in (dict(version=1, suggestions={"B1": "new"}),
+                        dict(version=2, suggestions={"B1": "new", "B0": "bad address"}),
+                        dict(version=2, suggestions={"B1": "new"}, changes=[]),
+                        dict(version=2, suggestions={f"C{n+1}": "1" for n in range(64)})):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                self.store.change(doc_id, "apply", invalid, "ai")
+            current = self.store.load(doc_id)
+            self.assertEqual((current["version"], len(current["pending"])), (2, 1))
+        direct = self.ui("mode", id=doc_id, args={"value": "direct"})
+        with self.assertRaises(ValueError):
+            self.store.change(doc_id, "apply", dict(version=direct["version"], suggestions={"B1": "1"}), "ai")
+        self.assertNotIn("B1", self.store.load(doc_id)["fields"])
+
     def test_conflicting_edits_preserve_user_text(self):
         d = self.tool("create", kind="document", title="说明")
         self.tool(

@@ -229,9 +229,13 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
             def stream_progress(kind, detail):
                 if kind == 'packet':
                     stage('packet', '已收到首包，模型正在生成' + (' · ' + detail if detail else ''))
-                elif kind == 'tool_call':
-                    label = '正在生成工具参数'
-                    stage('tool_call', label + ' · ' + tool_label(detail) if detail else label)
+                elif kind == 'reasoning':
+                    stage('reasoning', '模型正在思考')
+                elif kind in ('tool_call', 'tool_args'):
+                    label = '已收到工具调用' if kind == 'tool_call' else '正在接收工具参数'
+                    stage(kind, label + ' · ' + tool_label(detail) if detail else label)
+                elif kind == 'tool_finish':
+                    stage(kind, '工具参数已收齐')
 
             def emit(piece):
                 nonlocal started
