@@ -45,6 +45,21 @@ def _thumbnail(image):
     return scaled.copy(x, y, min(scaled.width(), THUMB_SIZE.width()), min(scaled.height(), THUMB_SIZE.height()))
 
 
+def _is_nearly_black(image):
+    """Detect fade-from-black opening video frames so thumbnails show actual content."""
+    if image.isNull() or image.width() <= 0 or image.height() <= 0:
+        return True
+    sample = image.scaled(QSize(24, 16), Qt.AspectRatioMode.IgnoreAspectRatio,
+                          Qt.TransformationMode.FastTransformation)
+    total = 0
+    count = sample.width() * sample.height()
+    for y in range(sample.height()):
+        for x in range(sample.width()):
+            c = sample.pixelColor(x, y)
+            total += (c.red() * 299 + c.green() * 587 + c.blue() * 114) // 1000
+    return (total / max(1, count)) < 10.0
+
+
 class Wallpaper(QObject):
     changed = Signal()
     itemsChanged = Signal()  # only when the library itself changes, so picker tiles persist
@@ -66,6 +81,8 @@ class Wallpaper(QObject):
         self._probe = None
         self._sink = None
         self._probe_loaded = False
+        self._probe_seeked = False
+        self._probe_fallback = None
         self._discard = {}
         self._stop = threading.Event()
         self._copied.connect(self._finish_copy, Qt.ConnectionType.QueuedConnection)
@@ -283,6 +300,8 @@ class Wallpaper(QObject):
         # Probe the copy: it must hold a playable video track. The first decoded frame
         # becomes the thumbnail. No audio output is attached, so nothing is heard.
         self._probe_loaded = False
+        self._probe_seeked = False
+        self._probe_fallback = None
         self._sink = QVideoSink(self)
         self._sink.videoFrameChanged.connect(self._video_frame)
         self._probe = QMediaPlayer(self)
@@ -310,11 +329,21 @@ class Wallpaper(QObject):
         image = frame.toImage()
         if image.isNull():
             return
-        _thumbnail(image).save(str(self.folder / _thumb_name(self._pending['file'])), 'JPG', 86)
+        if (not self._probe_seeked and _is_nearly_black(image)
+                and self._probe.isSeekable() and self._probe.duration() > 600):
+            self._probe_seeked = True
+            self._probe_fallback = image
+            self._probe.setPosition(min(1200, self._probe.duration() // 3))
+            return
+        _thumbnail(image).save(str(self.folder / _thumb_name(self._pending['file'])), 'JPG', 88)
+        self._probe_fallback = None
         self._finish_import('')
 
     def _probe_timeout(self):
-        # Loaded with a video track but no frame in time: accept it without a thumbnail.
+        # Loaded with a video track but no frame in time: accept it (saving fallback frame if any).
+        if self._probe_loaded and self._pending is not None and self._probe_fallback is not None:
+            _thumbnail(self._probe_fallback).save(str(self.folder / _thumb_name(self._pending['file'])), 'JPG', 88)
+        self._probe_fallback = None
         self._finish_import('' if self._probe_loaded else '无法读取该视频。可尝试使用 H.264 编码的 MP4。')
 
     def _video_error(self, *_):
@@ -397,6 +426,15 @@ class Wallpaper(QObject):
             self._broken.add(file)
             self._error = '无法显示所选壁纸（文件可能已损坏），已改用默认背景。'
             self.changed.emit()
+
+    @Slot(float)
+    def previewDim(self, value):
+        """Update dimming in memory for smooth slider dragging without locking disk on each frame."""
+        if math.isfinite(value):
+            clamped = min(0.9, max(0.0, value))
+            if abs(clamped - self._dim) > 1e-4:
+                self._dim = clamped
+                self.changed.emit()
 
     @Slot(float)
     def setDim(self, value):

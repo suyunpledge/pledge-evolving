@@ -84,57 +84,105 @@ ApplicationWindow {
     readonly property bool hasWallpaper: window.wallpaper.kind !== ""
     readonly property string ambientMode: window.codingVisible ? "code" : (window.conversationOnly ? "chat" : "work")
     onAmbientModeChanged: Qt.callLater(refreshBackdrop)
-    // Keep the static ambient capture separate from changing page content.
+    // Keep the ambient capture separate from changing page content while including
+    // both static and animated wallpapers so GlassSurface refracts actual wallpaper colours.
     Item {
         id: ambient
         anchors.fill: parent
+        readonly property bool customOpaque: (stillWallpaperLayer.opacity >= 0.99 && stillWallpaper.loaded)
+            || (motionWallpaper.active && !!motionWallpaper.item && motionWallpaper.item.ready && motionWallpaper.item.opacity >= 0.99)
         Rectangle { anchors.fill: parent; color: Theme.bgBase }
         ShaderEffect {
             id: auroraShader
             anchors.fill: parent
-            visible: gpuEnabled && !stillWallpaper.loaded && !motionWallpaper.active
+            visible: gpuEnabled && !ambient.customOpaque
             property vector2d canvasSize: Qt.vector2d(width, height)
             property real modeAccent: window.codingVisible ? 1.0 : 0.0
             fragmentShader: "../shaders/ambient.frag.qsb"
         }
-        Rectangle { anchors.fill: parent; visible: !gpuEnabled && !stillWallpaper.loaded && !motionWallpaper.active; color: Theme.bgFallback }
+        Rectangle { anchors.fill: parent; visible: !gpuEnabled && !ambient.customOpaque; color: Theme.bgFallback }
         DreamyBackdrop {
             id: dreamyBackdrop
             anchors.fill: parent
-            visible: !window.hasWallpaper && !stillWallpaper.loaded && !motionWallpaper.active
+            visible: !ambient.customOpaque
             sideInset: window.sideWidth
             mode: window.ambientMode
             onPainted: Qt.callLater(window.refreshBackdrop)
         }
-        Image {
-            id: stillWallpaper; objectName: "stillWallpaper"
-            readonly property bool loaded: status === Image.Ready
+        Item {
+            id: stillWallpaperLayer
             anchors.fill: parent
-            source: window.wallpaper.kind === "image" ? window.wallpaper.source : ""
-            asynchronous: true; cache: false; autoTransform: true
-            fillMode: Image.PreserveAspectCrop; clip: true
-            onStatusChanged: {
-                if (status === Image.Error) window.wallpaper.reportFailure(window.wallpaper.currentId)
-                Qt.callLater(window.refreshBackdrop)
+            opacity: stillWallpaper.loaded ? 1.0 : 0.0
+            visible: opacity > 0.001
+            Behavior on opacity {
+                NumberAnimation {
+                    duration: controller.reduceMotion ? 0 : 260
+                    easing.type: Easing.OutCubic
+                    onRunningChanged: if (!running) Qt.callLater(window.refreshBackdrop)
+                }
+            }
+            Image {
+                id: stillWallpaper; objectName: "stillWallpaper"
+                readonly property bool loaded: status === Image.Ready
+                anchors.fill: parent
+                source: window.wallpaper.kind === "image" ? window.wallpaper.source : ""
+                asynchronous: true; cache: false; autoTransform: true; smooth: true
+                fillMode: Image.PreserveAspectCrop; clip: true
+                onStatusChanged: {
+                    if (status === Image.Error) window.wallpaper.reportFailure(window.wallpaper.currentId)
+                    Qt.callLater(window.refreshBackdrop)
+                }
+            }
+            Rectangle {
+                anchors.fill: parent; color: "#080c12"
+                visible: stillWallpaper.loaded
+                opacity: window.wallpaper.dim
+                onOpacityChanged: Qt.callLater(window.refreshBackdrop)
+            }
+            Rectangle {
+                anchors { left: parent.left; right: parent.right; top: parent.top }
+                height: Math.min(110, parent.height * 0.16)
+                visible: stillWallpaper.loaded
+                opacity: Math.min(0.68, 0.14 + window.wallpaper.dim * 0.40)
+                gradient: Gradient {
+                    GradientStop { position: 0.0; color: "#b8060a10" }
+                    GradientStop { position: 1.0; color: "#00060a10" }
+                }
+            }
+            Rectangle {
+                anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
+                height: Math.min(168, parent.height * 0.24)
+                visible: stillWallpaper.loaded
+                opacity: Math.min(0.75, 0.18 + window.wallpaper.dim * 0.45)
+                gradient: Gradient {
+                    GradientStop { position: 0.0; color: "#00060a10" }
+                    GradientStop { position: 1.0; color: "#cc060a10" }
+                }
             }
         }
-        Rectangle {
-            anchors.fill: parent; color: "#080c12"
-            visible: stillWallpaper.loaded
-            opacity: window.wallpaper.dim
-            onOpacityChanged: Qt.callLater(window.refreshBackdrop)
+        Loader {
+            id: motionWallpaper
+            anchors.fill: parent
+            active: window.wallpaper.kind === "gif" || window.wallpaper.kind === "video"
+            sourceComponent: MotionWallpaper {
+                wallpaper: window.wallpaper
+                reducedMotion: controller.reduceMotion
+                // Keep playing beside other apps; stop decoding once nobody can see it.
+                running: window.visible && window.visibility !== Window.Minimized
+                         && window.visibility !== Window.Hidden && !controller.reduceMotion
+                onBackdropReady: Qt.callLater(window.refreshBackdrop)
+                onOpacityChanged: if (opacity >= 0.99) Qt.callLater(window.refreshBackdrop)
+            }
         }
     }
-    Loader {
-        id: motionWallpaper
-        anchors.fill: parent
-        active: window.wallpaper.kind === "gif" || window.wallpaper.kind === "video"
-        sourceComponent: MotionWallpaper {
-            wallpaper: window.wallpaper
-            // Keep playing beside other apps; stop decoding once nobody can see it.
-            running: window.visible && window.visibility !== Window.Minimized
-                     && window.visibility !== Window.Hidden && !controller.reduceMotion
-        }
+    // Low-rate refraction sync (~4.5 fps) while animated wallpaper is actively playing so
+    // GlassSurface catches shifting motion colors with negligible GPU blur overhead.
+    Timer {
+        id: motionGlassSync
+        interval: 220; repeat: true
+        running: gpuEnabled && !controller.solid && motionWallpaper.active
+                 && !!motionWallpaper.item && motionWallpaper.item.running && motionWallpaper.item.ready
+        onTriggered: window.refreshBackdrop()
     }
     Rectangle {
         width: window.sideWidth; height: parent.height

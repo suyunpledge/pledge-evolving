@@ -146,6 +146,9 @@ class LibraryTests(unittest.TestCase):
         chosen = self.wallpaper.currentId
         import_file(self.wallpaper, save_png(self.source / 'b.png', '#00aa66'))
         self.wallpaper.select(chosen)
+        self.wallpaper.previewDim(0.65)
+        self.assertAlmostEqual(self.wallpaper.dim, 0.65)
+        self.assertNotEqual(self.config()['wallpaper']['dim'], 0.65)
         self.wallpaper.setDim(0.3)
         config = self.config()
         self.assertEqual(config['gateway_port'], 9100)
