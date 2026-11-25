@@ -2,6 +2,7 @@
 from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable, Iterable, TYPE_CHECKING
+import os
 import uuid
 from .capability import CapabilityLibrary, default_roots
 from .checkpoint import CheckpointStore
@@ -73,6 +74,20 @@ def build_agent(
     })
 
     registry = build_builtin_registry(expose=expose)
+    topic_root = os.environ.get("KEYSTONE_TOPIC_MEMORY_ROOT", "").strip()
+    if topic_root:
+        if not Path(topic_root).is_absolute():
+            raise ValueError("KEYSTONE_TOPIC_MEMORY_ROOT must be an absolute storage directory")
+        try:
+            from hierarchical_retrieval.core.topic_workspace import TopicWorkspaceStore
+            from hierarchical_retrieval.keystone_topics import keystone_workspace_id, register_topic_tools
+        except ImportError as exc:
+            raise RuntimeError(
+                "KEYSTONE_TOPIC_MEMORY_ROOT requires hierarchical_retrieval with its topic connector "
+                f"in this Python environment ({exc})"
+            ) from exc
+        register_topic_tools(registry, TopicWorkspaceStore(topic_root),
+                             keystone_workspace_id(home, workspace, session_path))
     # H14 (rev.H14-3.7): the cost ledger is REAL here, not optional — priced
     # compaction (T4) needs spend data, and cost accounting that only exists
     # when a host remembers to inject it never records anything. Path matches

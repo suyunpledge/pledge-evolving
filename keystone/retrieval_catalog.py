@@ -36,17 +36,35 @@ INDEX_NAME = 'catalog-index.json'
 INDEX_LIMIT = 512          # newest entries kept in the host-side index
 MAX_ENTRIES = 24           # entries per catalog shown to the brain
 SUMMARY_CHARS = 320
+FILE_TOOLS = {'read_file', 'read_range', 'file_outline', 'file_stats'}
 
 
-def _source_of(tool: str, args: dict[str, Any]) -> str:
+def _file_reference(source):
+    """Split a path from a terminal line range, preserving drive letters and filenames with '#'."""
+    match = re.search(r'(?::|#L)([0-9]{1,12})(?:-L?([0-9]{1,12}))?\Z', source)
+    lines = None
+    if match:
+        lines = [int(match[1]), int(match[2] or match[1])]
+        source = source[:match.start()]
+    return source.replace('\\', '/').removeprefix('./'), lines
+
+
+def _covers(bounds, lines):
+    return not lines or (0 < lines[0] <= lines[1] and
+                         (not bounds or bounds[0] <= lines[0] and lines[1] <= bounds[1]))
+
+
+def _source_of(tool: str, args: dict[str, Any], meta: dict[str, Any]) -> str:
     """Human-citable provenance for one retrieval call."""
     args = args or {}
     if tool == 'fetch_url':
         return str(args.get('url') or '')[:400]
     if tool == 'web_search':
         return 'search: ' + str(args.get('query') or '')[:300]
-    if tool in {'read_file', 'read_range', 'file_outline', 'file_stats'}:
+    if tool in FILE_TOOLS:
         path = str(args.get('path') or args.get('paths') or '')[:300]
+        if tool == 'read_range' and meta.get('start') and meta.get('end'):
+            return f"{path}:{meta['start']}-{meta['end']}"
         start = args.get('start') or args.get('start_line') or args.get('offset')
         end = args.get('end') or args.get('end_line')
         if start and end:
@@ -96,7 +114,7 @@ class EvidenceLedger:
             return result
         protect = getattr(getattr(ctx, 'secret_scope', None), 'protect_text', None)
         text = protect(text) if callable(protect) else text
-        source = _source_of(tool, args)
+        source = _source_of(tool, args, getattr(result, 'meta', {}) or {})
         meta = self.store.put(text, source=f'{self.label}:{tool}', action_id=source[:160])
         with self._lock:
             existing = next((r for r in self.rows if r['artifact'] == meta['id'] and r['source'] == source), None)
@@ -111,18 +129,31 @@ class EvidenceLedger:
     def get(self, evidence_id: str):
         return next((r for r in self.rows if r['id'] == str(evidence_id).strip()), None)
 
-    def match_source(self, source: str):
+    def match_source(self, source: str, lines=None):
         """Fallback binding when the model cited a source but no evidence id."""
         source = str(source or '').strip()
         if not source:
             return None
-        bare = source.split('#')[0]
-        path = re.sub(r':\d+(?:-\d+)?\Z', '', bare)
+        path, cited = _file_reference(source)
+        matches = {}
         for row in reversed(self.rows):
-            if row['source'] == source or row['source'] == bare:
-                return row
-        for row in reversed(self.rows):
-            if path and (path in row['source'] or row['source'].split(':')[0].endswith(path)):
+            if row['tool'] not in FILE_TOOLS:
+                if row['source'] == source or (row['tool'] == 'fetch_url' and
+                                               row['source'] == source.partition('#')[0]):
+                    return row
+                continue
+            name, bounds = _file_reference(row['source'])
+            if name == path or name.endswith('/' + path):
+                matches.setdefault(name, []).append((row, bounds))
+        if path in matches:
+            candidates = matches[path]
+        elif len(matches) == 1:
+            candidates, = matches.values()
+        else:
+            return None
+        requested = lines or cited
+        for row, bounds in candidates:
+            if _covers(bounds, requested) and (requested or not bounds or len(candidates) == 1):
                 return row
         return None
 
@@ -203,11 +234,21 @@ def build_catalog(answer: str, ledger: EvidenceLedger, *, question: str = '') ->
     for row in raw if isinstance(raw, list) else []:
         if not isinstance(row, dict):
             continue
-        evidence = ledger.get(row.get('evidence') or '') or ledger.match_source(row.get('source'))
-        source = str(row.get('source') or (evidence or {}).get('source') or '')[:400]
+        lines = _lines(row.get('lines'))
+        cited = str(row.get('source') or '')[:400].strip()
+        evidence = ledger.get(row.get('evidence') or '') or ledger.match_source(cited, lines)
+        source = cited or (evidence or {}).get('source', '')
+        if evidence and evidence['tool'] in FILE_TOOLS:
+            name, bounds = _file_reference(evidence['source'])
+            path, inline = _file_reference(cited)
+            lines = lines or inline
+            if (path and path != name and not name.endswith('/' + path)) or not _covers(bounds, lines):
+                lines = None
+            source = name if lines else evidence['source']
+        elif evidence and evidence['tool'] == 'fetch_url':
+            source = evidence['source']
         title = re.sub(r'\s+', ' ', str(row.get('title') or source or 'untitled'))[:160]
         summary = re.sub(r'\s+', ' ', str(row.get('summary') or ''))[:SUMMARY_CHARS]
-        lines = _lines(row.get('lines'))
         if lines and source and not re.search(r':\d+(?:-\d+)?\Z', source) and not source.startswith('http'):
             source = f'{source}:{lines[0]}-{lines[1]}'
         artifact = (evidence or {}).get('artifact', '')
@@ -290,9 +331,13 @@ class CatalogIndex:
             self.store._atomic(self.path, json.dumps(data, ensure_ascii=False).encode('utf-8'))
 
     def get(self, entry_id: str):
+        return self._lookup(self._read(), entry_id)
+
+    @staticmethod
+    def _lookup(index, entry_id):
         if not isinstance(entry_id, str) or not ENTRY_ID.fullmatch(entry_id.strip()):
             return None
-        row = self._read().get(entry_id.strip())
+        row = index.get(entry_id.strip())
         return dict(row, id=entry_id.strip()) if isinstance(row, dict) else None
 
     def expand(self, ids, *, offset=None, limit=2000, budget=4000) -> dict[str, Any]:
@@ -307,8 +352,9 @@ class CatalogIndex:
             raise ValueError('limit must be a positive integer')
         share = max(200, min(limit, 3000, (max(600, budget - 200) // len(ids)) - 160))
         parts, rows = [], []
+        index = self._read()
         for raw in ids:
-            entry = self.get(str(raw))
+            entry = self._lookup(index, str(raw))
             if entry is None:
                 parts.append(f'[{raw}] 未知条目 id（不在目录中）')
                 rows.append({'id': str(raw)[:40], 'found': False})

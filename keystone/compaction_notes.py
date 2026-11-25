@@ -1,9 +1,13 @@
 """Bounded tool observations carried across excerpts, never verified state."""
 import json
+import math
 
-from .result_view import REFERENCE_LABEL, retained_handles
+from .result_view import REFERENCE_LABEL, previous_handles, retained_output_id
 
 LABEL = 'Tool observations (unverified; earlier results may be stale): '
+SOURCE_LABEL = 'Observed JSON fields (file is the source; value is the observed scalar. If absent, read the file): '
+SOURCE_BUDGET = 420
+_MISSING = object()
 WRITES = {'write_file', 'edit_file', 'apply_patch', 'delete_file', 'edit_config', 'notebook_edit'}
 
 
@@ -40,28 +44,62 @@ def _add(rows, row):
         rows.pop(_eviction(rows))
 
 
-def _previous(content):
+def _prior_json(content, label, budget):
     if not isinstance(content, str) or not content.startswith('[compacted '):
-        return []
+        return None
     for line in content.splitlines():
-        if not line.startswith(LABEL) or len(line) > 900:
-            continue
-        try:
-            rows = json.loads(line[len(LABEL):])
-            if (isinstance(rows, list) and len(rows) <= 6 and all(
-                    isinstance(r, dict) and set(r) <= {'tool', 'target', 'output'}
-                    and {'tool', 'output'} <= set(r)
-                    and all(isinstance(v, str) for v in r.values())
-                    and len(r['tool']) <= 64 and len(r.get('target', '')) <= 96
-                    and len(r['output']) <= 233 for r in rows)):
-                return rows
-        except (ValueError, TypeError, RecursionError):
-            pass
+        if line.startswith(label) and len(line) - len(label) <= budget:
+            try:
+                return json.loads(line[len(label):])
+            except (ValueError, RecursionError):
+                return None
+
+
+def _previous(content):
+    rows = _prior_json(content, LABEL, 900)
+    if (isinstance(rows, list) and len(rows) <= 6 and all(
+            isinstance(r, dict) and set(r) <= {'tool', 'target', 'output'}
+            and {'tool', 'output'} <= set(r)
+            and all(isinstance(v, str) for v in r.values())
+            and len(r['tool']) <= 64 and len(r.get('target', '')) <= 96
+            and len(r['output']) <= 233 for r in rows)):
+        return rows
     return []
 
 
 def excerpt_messages(head):
     calls, rows = {}, []
+    refs = {}
+    field_sources = {}
+
+    def index_field(key, path, value=_MISSING):
+        if (not isinstance(path, str) or not 0 < len(path) <= 140
+                or not isinstance(key, str) or not 0 < len(key) <= 64):
+            return
+        previous = field_sources.get(key)
+        if previous is not None:
+            # Re-reading one file cannot disambiguate a field also seen elsewhere.
+            old_value = previous.get('value', _MISSING)
+            if previous['file'] != path or type(old_value) is not type(value) or old_value != value:
+                previous.pop('value', None)
+            return
+        row = {'file': path}
+        if (type(value) in (str, int, bool, type(None))
+                or type(value) is float and math.isfinite(value)):
+            if len(json.dumps(value, ensure_ascii=False)) <= 64:
+                row['value'] = value
+        field_sources[key] = row
+        if len(json.dumps(field_sources, ensure_ascii=False)) > SOURCE_BUDGET:
+            row.pop('value', None)
+            if len(json.dumps(field_sources, ensure_ascii=False)) > SOURCE_BUDGET:
+                del field_sources[key]
+
+    def retain(handle):
+        if handle:
+            refs.pop(handle, None)
+            refs[handle] = None
+            if len(refs) > 4:
+                del refs[next(iter(refs))]
 
     def remember(identifier, name, args):
         if isinstance(args, str):
@@ -71,31 +109,57 @@ def excerpt_messages(head):
                 args = {}
         target = next((args[k] for k in ('path', 'file')
                        if isinstance(args, dict) and isinstance(args.get(k), str)), '')
-        calls[identifier] = (str(name or 'tool')[:64], _excerpt(target, 93))
+        requested = args.get('id') if isinstance(args, dict) and name in ('artifact_read', 'artifact_grep') else None
+        if identifier:
+            calls[identifier] = (str(name or 'tool')[:64], target, requested)
 
-    def observe(identifier, output, name=None):
-        tool, target = calls.get(identifier, (str(name or 'tool')[:64], ''))
+    def observe(identifier, output, name=None, *, failed=False):
+        tool, target, requested = calls.pop(identifier, (str(name or 'tool')[:64], '', None))
+        if not failed:
+            retain(retained_output_id(output, requested))
+            if tool in WRITES and target:
+                for key in [key for key, entry in field_sources.items() if entry['file'] == target]:
+                    del field_sources[key]
+            if tool == 'read_file' and target and isinstance(output, str) and output.lstrip().startswith('{'):
+                try:
+                    document = json.loads(output)
+                    if isinstance(document, dict):
+                        for key, value in document.items():
+                            index_field(key, target, value)
+                except (ValueError, RecursionError):
+                    pass
         row = {'tool': tool, 'output': _excerpt(output)}
         if target:
-            row['target'] = target
+            row['target'] = _excerpt(target, 93)
         _add(rows, row)
 
     for message in head:
+        role = message.get('role')
         content = message.get('content', '')
-        for row in (_previous(content) if message.get('role') == 'user' else []):
-            _add(rows, dict(row))
         blocks = content if isinstance(content, list) else []
-        for call in message.get('tool_calls') or []:
-            function = call.get('function') or call
-            remember(call.get('id'), function.get('name'), function.get('arguments', function.get('args', {})))
-        for block in blocks:
-            if isinstance(block, dict) and block.get('type') == 'tool_use':
-                remember(block.get('id'), block.get('name'), block.get('input', {}))
-        if message.get('role') == 'tool':
-            observe(message.get('tool_call_id'), content, message.get('name'))
-        for block in blocks:
-            if isinstance(block, dict) and block.get('type') == 'tool_result':
-                observe(block.get('tool_use_id'), block.get('content', ''))
+        if role == 'user':
+            for row in _previous(content):
+                _add(rows, dict(row))
+            for handle in previous_handles(content):
+                retain(handle)
+            sources = _prior_json(content, SOURCE_LABEL, SOURCE_BUDGET)
+            if isinstance(sources, dict):
+                for key, entry in sources.items():
+                    if isinstance(entry, dict):
+                        index_field(key, entry.get('file'), entry.get('value', _MISSING))
+            for block in blocks:
+                if isinstance(block, dict) and block.get('type') == 'tool_result':
+                    observe(block.get('tool_use_id'), block.get('content', ''), failed=block.get('is_error', False))
+        elif role == 'assistant':
+            for call in message.get('tool_calls') or []:
+                function = call.get('function') or call
+                remember(call.get('id'), function.get('name'), function.get('arguments', function.get('args', {})))
+            for block in blocks:
+                if isinstance(block, dict) and block.get('type') == 'tool_use':
+                    remember(block.get('id'), block.get('name'), block.get('input', {}))
+        elif role == 'tool':
+            observe(message.get('tool_call_id'), content, message.get('name'),
+                    failed=isinstance(content, str) and content.startswith('[error] '))
     if rows:
         def encoded():
             return json.dumps(rows, ensure_ascii=False, separators=(',', ':'))
@@ -110,6 +174,7 @@ def excerpt_messages(head):
     else:
         flat = ' '.join(str(m.get('role', '')) + ': ' + _excerpt(m.get('content', ''), 140)
                         for m in head[-4:])[:800]
-    refs = retained_handles(head)
     suffix = '\n' + REFERENCE_LABEL + ', '.join(refs) if refs else ''
+    if field_sources:
+        suffix += '\n' + SOURCE_LABEL + json.dumps(field_sources, ensure_ascii=False)
     return f'[compacted {len(head)} earlier messages; unverified excerpts]\n{flat}' + suffix

@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch
 
 from keystone.compaction import ContextBudget
-from keystone.compaction_notes import LABEL
+from keystone.compaction_notes import LABEL, SOURCE_LABEL, SOURCE_BUDGET
 from keystone.context_transaction import valid_tool_pairs
 from keystone.loop import Agent, LoopLimits
 from keystone.model import Completion, Usage
@@ -27,6 +27,27 @@ def group(name, output, path='', wire='openai'):
 
 
 class CompactionProgressTests(unittest.TestCase):
+    def test_small_file_field_sources_survive_multiple_compactions(self):
+        for wire in ('openai', 'anthropic'):
+            summary = ContextBudget._excerpt(group('read_file', '{"sample_id":17}', 'first.json', wire))
+            for i in range(14):
+                summary = ContextBudget._excerpt([{'role': 'user', 'content': summary},
+                    *group('read_file', json.dumps({'stage': i, 'payload': 'x'*800}), f'{i}.json', wire)])
+            line = next(line for line in summary.splitlines() if line.startswith(SOURCE_LABEL))
+            sources = json.loads(line[len(SOURCE_LABEL):])
+            self.assertEqual(sources['sample_id'], {'file': 'first.json', 'value': 17})
+            self.assertNotIn('value', sources['stage'])
+            self.assertNotIn('value', sources['payload'])
+            self.assertLessEqual(len(line) - len(SOURCE_LABEL), SOURCE_BUDGET)
+            reread = ContextBudget._excerpt([{'role': 'user', 'content': summary},
+                *group('read_file', '{"stage":0}', '0.json', wire)])
+            line = next(line for line in reread.splitlines() if line.startswith(SOURCE_LABEL))
+            self.assertNotIn('value', json.loads(line[len(SOURCE_LABEL):])['stage'])
+            changed = ContextBudget._excerpt([{'role': 'user', 'content': summary},
+                *group('write_file', 'ok', 'first.json', wire)])
+            line = next(line for line in changed.splitlines() if line.startswith(SOURCE_LABEL))
+            self.assertNotIn('sample_id', json.loads(line[len(SOURCE_LABEL):]))
+
     def test_workspace_changes_keep_identity_head_but_invalidate_private_snapshot(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);home=root/'home';first_ws=root/'first';second_ws=root/'second'

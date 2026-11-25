@@ -34,7 +34,8 @@ class StreakTests(unittest.TestCase):
         self.assertFalse(self.agent._streak_pending)
         self.agent._observe_tool_streak("grep")  # 第 6 次
         self.assertEqual(len(self.agent._streak_pending), 1)
-        self.assertIn("python", self.agent._streak_pending[0])
+        self.assertIn("行号", self.agent._streak_pending[0])
+        self.assertNotIn("shell_exec", self.agent._streak_pending[0])
 
     def test_interleaved_churn_fires_when_window_dominates(self):
         # 3×(grep,artifact_read) + 3×grep = 9 次：窗口(2..9)=a,g,a,g,g,g → grep 5 不触发
@@ -51,7 +52,7 @@ class StreakTests(unittest.TestCase):
         self.agent._streak_pending = []
         fire(["read_file"] * 8, self.agent)     # 换工具的新 churn——应可再触发
         self.assertTrue(self.agent._streak_pending)
-        self.assertIn("python", self.agent._streak_pending[0])
+        self.assertIn("新文件", self.agent._streak_pending[0])
 
     def test_budget_two_per_run(self):
         fire(["grep"] * 6, self.agent)

@@ -5,6 +5,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from keystone import model as kmodel
 from keystone.artifacts import ArtifactStore
@@ -207,7 +208,9 @@ class CatalogUnitTests(unittest.TestCase):
         self.assertIn('is it current?', shown)
         index = CatalogIndex(self.store)
         index.add(catalog['entries'])
-        out = index.expand([doc['id'], ghost['id'], 'c_0000000000'])
+        with patch.object(index, '_read', wraps=index._read) as read_index:
+            out = index.expand([doc['id'], ghost['id'], 'c_0000000000'])
+        read_index.assert_called_once_with()
         self.assertTrue(out['text'].startswith(f"[{doc['id']}] Doc — 来源: doc.txt:50-60"))
         self.assertIn('50\tline 50', out['text'])     # opens on the cited lines
         self.assertNotIn('10\tline 10', out['text'])
@@ -224,6 +227,32 @@ class CatalogUnitTests(unittest.TestCase):
         self.assertFalse(catalog['complied'])
         self.assertEqual(len(catalog['entries']), 1)
         self.assertEqual(catalog['entries'][0]['evidence'], 'e1')
+
+    def test_source_fallback_requires_an_unambiguous_file_and_covering_range(self):
+        self.ledger.rows = [
+            {'id': 'src', 'tool': 'read_range', 'source': 'src/config.py:10-20'},
+            {'id': 'other', 'tool': 'read_range', 'source': 'tests/config.py:10-20'},
+            {'id': 'later', 'tool': 'read_range', 'source': 'src/config.py:90-99'},
+        ]
+        self.assertIsNone(self.ledger.match_source('config.py:12'))
+        self.assertIsNone(self.ledger.match_source('fig.py'))
+        self.assertIsNone(self.ledger.match_source('src/config.py:30'))
+        self.assertEqual(self.ledger.match_source(r'src\config.py:12')['id'], 'src')
+
+    def test_explicit_file_evidence_keeps_its_recorded_source(self):
+        answer = json.dumps({'catalog': [{'evidence': 'e1', 'source': 'unread.txt:900'}]})
+        entry, = build_catalog(answer, self.ledger)['entries']
+        self.assertEqual(entry['source'], 'doc.txt:10-120')
+        self.assertEqual(entry['anchor'], 0)
+
+    def test_range_ending_at_eof_uses_the_lines_actually_read(self):
+        reg = narrow_registry(build_builtin_registry(), ('read_range',))
+        self.ledger.wrap(reg, ('read_range',))
+        workspace = self.root / 'ws'
+        ctx = ToolContext(policy=Policy(workspace=workspace, mode=Mode.PLAN), workspace=workspace)
+        reg._specs['read_range'].handler({'path': 'doc.txt', 'start': 190, 'end': 1000}, ctx)
+        self.assertEqual(self.ledger.match_source('doc.txt#L195')['source'], 'doc.txt:190-199')
+        self.assertIsNone(self.ledger.match_source('doc.txt:200'))
 
 
 class EndToEndTests(SpecialistCase):
