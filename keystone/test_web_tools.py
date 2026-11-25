@@ -45,6 +45,14 @@ class Router:
 
 
 class SearchTests(unittest.TestCase):
+    def test_filtered_results_fall_through_with_source_and_keep_technical_terms(self):
+        poor = rss(('Qt QML ListView', 'https://pan.baidu.com/a', 'Qt all builds'))
+        good = [{'title': 'QML ListView examples', 'url': 'https://doc.qt.io/listview', 'snippet': 'Qt'}]
+        with patch.object(wb, '_duckduckgo', return_value=good) as next_source:
+            rows = wb.search(query='Qt QML ListView 官方文档', open_=Router(**{'cn.bing.com': poor}))
+        self.assertEqual(rows[0]['engine'], 'duckduckgo')
+        self.assertEqual(next_source.call_args.args[0].lower(), 'qt qml listview')
+
     def setUp(self):
         patcher = patch.dict("os.environ", {"BOCHA_API_KEY": "", "BRAVE_API_KEY": ""})
         patcher.start(); self.addCleanup(patcher.stop)
@@ -133,6 +141,24 @@ def dns(mapping):
 
 
 class FetchTests(unittest.TestCase):
+    def test_script_shell_reads_guarded_markdown_alternate(self):
+        page = Resp(b'<html><link rel="alternate" type="text/markdown" href="/guide.md"><script></script></html>')
+        calls = []
+        def open_page(req, timeout):
+            calls.append(req.full_url)
+            return page if len(calls) == 1 else Resp(b'# Guide content', headers={'Content-Type': 'text/plain'})
+        checked = []
+        _, body = wb.fetch(url='https://docs.example/guide', open_=open_page, check=checked.append)
+        self.assertIn('# Guide content', body)
+        self.assertEqual(calls, checked)
+        self.assertEqual(len(calls), 2)
+
+    def test_script_shell_preserves_summary_and_reports_missing_body(self):
+        page = Resp(b'<html><meta name="description" content="Public summary"><script>app()</script></html>')
+        _, body = wb.fetch(url='https://docs.example', open_=lambda *_: page, check=lambda _: None)
+        self.assertIn('Public summary', body)
+        self.assertIn('脚本渲染', body)
+
     PAGE = ("<html><head><title>T &amp; co</title><style>x{}</style></head><body>"
             "<nav>Home | About</nav><div class='site-menu'>Menu</div><div role='navigation'>Links</div>"
             "<main><h1>Heading</h1><p>" + "正文内容。" * 60 + "</p><ul><li>one</li></ul>"

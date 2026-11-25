@@ -155,9 +155,59 @@ def _on_domain(url, domain):
     return host == domain or host.endswith("." + domain)
 
 
-def _one_region(query, count, region, open_, domain=None):
+def _terms(query):
+    query = re.sub(r'\bsite:\S+', '', query)
+    stop = {'the', 'for', 'and', 'how', 'documentation', 'docs', 'official', 'with'}
+    return list(dict.fromkeys(t for t in re.findall(r'[a-z][a-z0-9_.+#-]*', query.lower())
+                              if len(t) > 1 and t not in stop))
+
+
+def _rank(rows, query, domain=None):
+    """Keep an explicit site restriction, then rank topical overlap stably."""
+    blocked = {'pan.baidu.com', 'pan.quark.cn', 'alipan.com', 'lanzou.com', 'downcc.com', 'pc6.com'}
+    blocked.update(h.strip().lower() for h in os.environ.get('KEYSTONE_SEARCH_BLOCKED_DOMAINS', '').split(',') if h.strip())
+    terms = _terms(query)
+    chinese = re.sub(r'官方文档|文档|教程|如何|什么是|怎么', '', query)
+    pairs = {word[i:i+2] for word in re.findall(r'[\u3400-\u9fff]{2,}', chinese) for i in range(len(word)-1)}
+    scored = []
+    for row in rows:
+        url = public_search.safe_target(row.get('url'))
+        if not url or (domain and not _on_domain(url, domain)) or any(_on_domain(url, h) for h in blocked):
+            continue
+        title = (row.get('title', '') + ' ' + urllib.parse.urlsplit(url).path).casefold()
+        snippet = row.get('snippet', '').casefold()
+        matched = sum(t in title or t in snippet for t in terms)
+        if len(terms) >= 3 and matched * 2 < len(terms):
+            continue
+        chinese_hits = sum(pair in title or pair in snippet for pair in pairs)
+        if not terms and len(pairs) >= 2 and not chinese_hits:
+            continue
+        scored.append((matched + sum(t in title for t in terms) + min(3, chinese_hits), row))
+    return [r for _, r in sorted(scored, key=lambda pair: -pair[0])]
+
+
+def _technical_search(query, count, open_):
+    terms = _terms(query)
+    if len(terms) < 2:
+        return []
+    url = 'https://api.stackexchange.com/2.3/search/advanced?' + urllib.parse.urlencode(
+        dict(site='stackoverflow', sort='relevance', order='desc', q=' '.join(terms), pagesize=min(30, count * 5)))
+    with open_(urllib.request.Request(url, headers={'User-Agent': UA}), TIMEOUT) as resp:
+        payload = json.loads(_bounded_search_read(resp))
+    return [dict(title=html.unescape(item['title']), url=item['link'], snippet=' '.join(item.get('tags', [])))
+            for item in payload.get('items', []) if isinstance(item, dict) and item.get('title') and item.get('link')]
+
+
+def _one_region(query, count, region, open_, domain=None, skip=None):
     errors = []
-    for name, provider in PROVIDERS[region]:
+    providers = list(PROVIDERS[region])
+    if len(_terms(query)) >= 2 and not domain:
+        if region == 'cn':
+            providers.append(('duckduckgo', lambda q, n, o: _duckduckgo(' '.join(_terms(q)), n, o)))
+        providers.append(('stackoverflow', _technical_search))
+    for name, provider in providers:
+        if name == skip or (skip == 'bing' and name.startswith('bing-')):
+            continue
         try:
             rows = provider(query, count, open_)
         except Exception as exc:
@@ -165,6 +215,7 @@ def _one_region(query, count, region, open_, domain=None):
             continue
         rows = [r for r in rows or [] if r.get("url", "").startswith(("http://", "https://"))
                 and (domain is None or _on_domain(r["url"], domain))]  # Some engines ignore site:.
+        rows = _rank(rows, query, domain)
         if rows:
             return [{**r, "snippet": r.get("snippet", "")[:300], "engine": name} for r in rows[:count]]
         if rows is not None:
@@ -223,7 +274,19 @@ def search(*, query: str, num: int = 5, site: str = "all", region: str = "auto",
         region = "cn"  # Kept for compatibility: means "Chinese web".
     regions = resolve_region(query, region)
     if engine != "auto":
-        return _public_results(engine, query, num, regions[0], github_kind, open_, domain)
+        try:
+            rows = _rank(_public_results(engine, query, num, regions[0], github_kind, open_, domain), query, domain)
+        except (public_search.SearchUnavailable, RuntimeError) as exc:
+            first_error = str(exc)
+            rows = []
+        else:
+            first_error = f'{engine}: no relevant results'
+        if rows:
+            return rows
+        try:
+            return _one_region(query, num, regions[0], open_, domain, skip=engine)
+        except RuntimeError as exc:
+            raise public_search.SearchUnavailable(f'{first_error}. {exc}') from None
     batches, errors = [], []
     for name in regions:
         try:
@@ -341,6 +404,12 @@ class _Text(HTMLParser):
         self._stack = []  # (tag, skips, is_main) for every open non-void element
         self._skip = self._main = 0
         self._in_title = False
+        self.descriptions = {}
+        self.embedded = []
+        self.noscript = []
+        self.alternate = None
+        self.has_script = False
+        self._json_script = False
 
     def _chrome(self, tag, attrs):
         attrs = dict(attrs)
@@ -357,6 +426,17 @@ class _Text(HTMLParser):
         if self._main: self.main.append(piece)
 
     def handle_starttag(self, tag, attrs):
+        attributes = dict(attrs)
+        if tag == 'meta':
+            key = attributes.get('name') or attributes.get('property')
+            if key in ('description', 'og:description') and attributes.get('content'):
+                self.descriptions[key] = attributes['content'][:2000]
+        if tag == 'link' and 'alternate' in (attributes.get('rel') or '').lower().split():
+            if attributes.get('type') in {'text/markdown', 'text/plain'}:
+                self.alternate = attributes.get('href')
+        if tag == 'script':
+            self.has_script = True
+            self._json_script = attributes.get('type') == 'application/ld+json' or attributes.get('id') == '__NEXT_DATA__'
         if tag in self.VOID:
             if tag in ("br", "hr"): self._emit("\n")
             return
@@ -372,6 +452,8 @@ class _Text(HTMLParser):
         if tag in ("br", "hr"): self._emit("\n")
 
     def handle_endtag(self, tag):
+        if tag == 'script':
+            self._json_script = False
         if tag == "title": self._in_title = False
         if tag in self.BLOCK: self._emit("\n")
         # Real pages leave tags unclosed: unwind to the matching open tag, if any.
@@ -382,6 +464,25 @@ class _Text(HTMLParser):
             if open_tag == tag: break
 
     def handle_data(self, data):
+        if self._json_script and len(data) <= 512000:
+            try:
+                todo = [json.loads(data)]
+                for _ in range(3000):
+                    if not todo:
+                        break
+                    node = todo.pop()
+                    if isinstance(node, dict):
+                        for key, value in node.items():
+                            if key in {'articleBody', 'description', 'headline', 'markdown'} and isinstance(value, str):
+                                self.embedded.append(value[:8000])
+                            elif isinstance(value, (dict, list)):
+                                todo.append(value)
+                    elif isinstance(node, list):
+                        todo.extend(node[:100])
+            except (ValueError, RecursionError):
+                pass
+        elif self._stack and self._stack[-1][0] == 'noscript':
+            self.noscript.append(data)
         if self._in_title: self.title += data
         else: self._emit(data)
 
@@ -415,7 +516,7 @@ def _charset(content_type, raw):
 
 
 def fetch(*, url: str, max_chars: int = 5000, open_: Opener | None = None,
-          check: Callable[[str], str] = check_public) -> tuple[str, str]:
+          check: Callable[[str], str] = check_public, _allow_alternate=True) -> tuple[str, str]:
     for _ in range(6):
         req = urllib.request.Request(url, headers={"User-Agent": UA,
             "Accept": "text/html,application/xhtml+xml,text/plain,application/json;q=0.9,*/*;q=0.5",
@@ -451,6 +552,23 @@ def fetch(*, url: str, max_chars: int = 5000, open_: Opener | None = None,
     if kind in ("text/html", "application/xhtml+xml") or (not kind and "<html" in text[:2000].lower()):
         parser = _Text(); parser.feed(text); parser.close()
         title, body = html.unescape(parser.title).strip(), parser.text()
+        if len(body) < 160 and (parser.has_script or parser.alternate or not body):
+            if parser.alternate and _allow_alternate:
+                alternate = urllib.parse.urljoin(url, parser.alternate)
+                if alternate != url and urllib.parse.urlsplit(alternate)[:2] == urllib.parse.urlsplit(url)[:2]:
+                    try:
+                        alt_title, alt_body = fetch(url=alternate, max_chars=max_chars, open_=open_, check=check,
+                                                    _allow_alternate=False)
+                        return alt_title or title, alt_body
+                    except (OSError, ValueError, http.client.HTTPException):
+                        pass
+            parts = [*parser.embedded, *parser.noscript, parser.descriptions.get('description', ''),
+                     parser.descriptions.get('og:description', '')]
+            extra = '\n'.join(dict.fromkeys(x.strip() for x in parts if x.strip()))
+            if extra:
+                body = (body + '\n' + extra).strip()
+            if parser.has_script and not any(len(v.strip()) >= 160 for v in parser.embedded):
+                body += '\n此页可能需要脚本渲染才能显示完整正文。可尝试该站的文档或 Markdown 页面。'
     else:
         title, body = "", text.strip()
     note = f"\n\n[source: {url}]" + (" [page larger than 3 MB; only the start was read]" if truncated else "")

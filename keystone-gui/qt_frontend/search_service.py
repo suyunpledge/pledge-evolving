@@ -39,7 +39,8 @@ def search_public(query, engine, kind, count, cancel):
             if isinstance(exc, public_search.SearchUnavailable):
                 message = str(exc)
             return {'ok': False, 'error': message, 'search_url': url, 'engine': engine}
-        return {'ok': True, 'results': redact(rows), 'search_url': url, 'engine': engine}
+        return {'ok': True, 'results': redact(rows), 'search_url': url,
+                'engine': rows[0]['engine'] if rows else engine, 'requested_engine': engine}
     finally:
         timer.cancel()
 
