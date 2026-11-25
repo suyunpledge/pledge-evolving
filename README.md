@@ -82,21 +82,23 @@ Every decision is written to `sessions/*.jsonl` (`user_message`, `tool_call`, `s
 
 ### Kernel capabilities
 
-| Area | What actually happens |
-| --- | --- |
-| **Agent loop** | Bounded prompt layers; context compaction that keeps the tail and stays aware of the prompt cache. Step budget: a transient "N turns left" notice that never enters history, and a tool-free progress summary when the budget runs out. Format errors count only when consecutive and refund their step. Acceptance repairs always keep three turns in reserve. Model retries happen at most once per step, three per run, and honour `Retry-After`. |
-| **Tools** | A registry with deferred loading behind `tool_search`. **Result feedback** saves a turn: after a write, `.py` / `.json` / `.toml` files are parsed and conflict markers are flagged in the same result. A missing path gets "did you mean" suggestions. A tool the host refuses as a whole is short-circuited for the rest of the run, with alternatives named once. |
-| **Loop guards** | Repeated action/result cycles are detected and stopped. A same-tool streak gets a nudge. An unknown tool outcome stops the run instead of being replayed. |
-| **Permissions** | Two-dimensional policy: mode × sandbox tier, plus a command blacklist. **Deny always wins.** Subagents are clamped to the parent's ceiling, and managed writes take shadow Git snapshots when checkpoints are enabled. |
-| **Secrets** | A separate store and scope: values are virtualised in prompts, redacted in events and results, and tools cannot read the store. |
-| **Acceptance** | `keystone run TASK --acceptance FILE.json`: file, command and environment-probe criteria, checked by the host. The model cannot edit the checks. |
-| **Model routing** | Economy / balanced / premium tiers, fallback triggered by error class, MoA aggregation, and a premium draft→adjudicate path that falls back to the paid draft. |
-| **Cost & cache** | A per-request pricing table, subagent spend folded into the parent ledger, cross-vendor cache-warmth tracking, and compaction deferred while the cache is hot. |
-| **Memory** | Typed long-term memory written to two places, a curator that archives instead of deleting, and injection that is always bounded. |
-| **Protocol** | A loopback gateway translating Anthropic ↔ OpenAI (Chat and Responses) in both directions, including SSE and tool-call deltas. |
-| **Orchestration** | A dependency-free graph runtime: state channels with reducers, a superstep loop, interrupt/resume, checkpoints, and supervisor/worker. |
-| **Self-evolution** | Signal → candidate → gate → ledger → rollback. Long-term targets always need human approval, and no setting can bypass it. |
-| **Computer use** | The host binds the window, and screenshots stay local (the model sees a digest). Observe/act goes through the same permission chain. Coordinate clicks are tied to a screenshot and confirmed point by point. |
+| Area | What actually happens | Available in |
+| --- | --- | --- |
+| **Agent loop** | Bounded prompt layers; context compaction that keeps the tail and stays aware of the prompt cache. Step budget: a transient "N turns left" notice that never enters history, and a tool-free progress summary when the budget runs out. Format errors count only when consecutive and refund their step. Acceptance repairs always keep three turns in reserve. Model retries happen at most once per step, three per run, and honour `Retry-After`. | CLI, Qt Coding |
+| **Tools** | A registry with deferred loading behind `tool_search`. **Result feedback** saves a turn: after a write, `.py` / `.json` / `.toml` files are parsed and conflict markers are flagged in the same result. A missing path gets "did you mean" suggestions. A tool the host refuses as a whole is short-circuited for the rest of the run, with alternatives named once. | CLI, Qt Coding, Work tool gateway |
+| **Loop guards** | Repeated action/result cycles are detected and stopped. A same-tool streak gets a nudge. An unknown tool outcome stops the run instead of being replayed. | CLI, Qt Coding |
+| **Permissions** | Two-dimensional policy: mode × sandbox tier, plus a command blacklist. **Deny always wins.** Subagents are clamped to the parent's ceiling, and managed writes take shadow Git snapshots when checkpoints are enabled. | Kernel entry points |
+| **Secrets** | A separate store and scope: values are virtualised in prompts, redacted in events and results, and tools cannot read the store. | Kernel entry points |
+| **Acceptance** | `keystone run TASK --acceptance FILE.json`: file, command and environment-probe criteria, checked by the host. The model cannot edit the checks. | CLI run |
+| **Model routing** | Economy / balanced / premium tiers, fallback triggered by error class, MoA aggregation, and a premium draft→adjudicate path that falls back to the paid draft. | CLI, Qt, gateway |
+| **Cost & cache** | A per-request pricing table, subagent spend folded into the parent ledger, cross-vendor cache-warmth tracking, and compaction deferred while the cache is hot. | CLI, Qt Coding |
+| **Memory** | Typed long-term memory written to two places, a curator that archives instead of deleting, and injection that is always bounded. | Kernel agent |
+| **Protocol** | A loopback gateway translating Anthropic ↔ OpenAI (Chat and Responses) in both directions, including SSE and tool-call deltas. | Local gateway |
+| **Orchestration** | A dependency-free graph runtime: state channels with reducers, a superstep loop, interrupt/resume, checkpoints, and supervisor/worker. | CLI, Python API |
+| **Self-evolution** | Signal → candidate → gate → ledger → rollback. Long-term targets always need human approval, and no setting can bypass it. | CLI |
+| **Computer use** | The host binds the window, and screenshots stay local (the model sees a digest). Observe/act goes through the same permission chain. Coordinate clicks are tied to a screenshot and confirmed point by point. | Qt Computer page after window selection and consent |
+
+Subagent delegation needs a running parent agent to own its budget, cancellation and permission ceiling. The CLI and Qt Coding kernel can supply that parent. Standalone tool gateways and desktop Work tool connections have no parent agent. Work team orchestration is configured separately.
 
 ### Engineering principles
 
