@@ -4,6 +4,12 @@
 `WorkbenchController` 启动 `service_host.py`，通过 JSON 行协议收发页面快照、操作、审批与执行事件。
 后台进程不导入 Tk 或创建窗口；网关、定时任务和模型请求不占用 Qt GUI 线程。
 
+### 桌面平台适配
+
+Windows、macOS 和 Linux 共用 `qml/Main.qml`、控件和玻璃着色器。工作台通过子进程的标准输入输出与 Python 服务交换 JSON 行。新增原生能力时，把系统调用放在对应服务或工具的适配器里，让 QML 继续使用已有操作和事件。如果某项能力以后采用 Go 实现，可以在该适配器后接入，由现有 Python 核心继续处理权限审批和会话记录。
+
+macOS 和 Linux 从仓库根目录运行 `bash setup.sh qt`。安装器分别使用 `.venv/qt-darwin` 和 `.venv/qt-linux`，Windows 启动器使用 `.venv/qt`。需要单独验证启动时，可传入 `--demo --page files --smoke /tmp/keystone-files.json`；桌面程序会输出页面状态和同名 PNG。Linux 图形测试需要可用的显示服务与 Qt 平台插件的系统依赖。
+
 - `WorkspacePage.qml` / `WorkbenchField.qml`：延迟创建并保留页面、玻璃表单、文件编辑与结果面板。
 - `workspace_service.py`：文件、配置、插件、Agent 设置、知识、演化、计划任务和账户管理，复用原存储。
 - `coding_service.py`：独立 `DevelopmentRuntime`，保留任务队列、模型角色、审批、历史和代码回退。

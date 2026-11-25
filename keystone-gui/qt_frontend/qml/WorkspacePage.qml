@@ -43,6 +43,16 @@ Item {
         return matches[index] === start && code.editor.selectionEnd - start === findText.text.length ? index : -1
     }
     objectName: "page_" + pageKey
+    Connections {
+        target: workbench
+        enabled: page.visible && page.ide && page.hasDocument
+        function onCodingContextRequested() {
+            const a = code.editor.selectionStart, b = code.editor.selectionEnd
+            const first = page.indexAt(page.lineStarts, a), last = page.indexAt(page.lineStarts, b)
+            workbench.captureCodingFocus(page.editorPath, page.editorVersion, first + 1,
+                a - page.lineStarts[first] + 1, last + 1, b - page.lineStarts[last] + 1)
+        }
+    }
 
     function sync() {
         if (!initialized && viewData.fields) {
@@ -564,6 +574,7 @@ Item {
                             submitOnEnter: false; horizontalScroll: true
                             placeholder: page.ide ? "" : "选择文件开始编辑"
                             editor.readOnly: !page.editorPath || workbench.busy
+                            editor.persistentSelection: page.ide
                             editor.font.family: "Cascadia Code"; editor.font.pixelSize: 13
                             Component.onCompleted: controller.formatCode(editor.textDocument)
                             onTextChanged: {

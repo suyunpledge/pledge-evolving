@@ -79,12 +79,16 @@ class ServiceHost:
             schemas.extend(lane.schemas())
         self.emit('service_tools', schemas=schemas, computerGrant=lane.session.grant_id if lane else '')
 
-    def work(self, fn):
+    def work(self, fn, *, cancel_event=None):
         with self.lock:
+            if self.closed.is_set():
+                raise RuntimeError('服务已关闭。')
             if self.running:
                 raise RuntimeError('请等待当前操作结束。')
             self.running = True
-            self.cancel = threading.Event()
+            # Arm the worker's stop button at admission, before the thread starts.
+            self.cancel = cancel_event if cancel_event is not None else threading.Event()
+            self.cancel.clear()
         self.status()
         def run():
             try:
@@ -245,10 +249,9 @@ class ServiceHost:
                 waiter['approved'] = row.get('approved') is True
                 waiter['done'].set()
         elif command == 'apply_model_setup':
-            if self.running:
-                self.pending_model = dict(row)
-                return
             def setup():
+                if row.get('refreshConfig'):
+                    self.pages.action('config', 'reload', {})
                 try:
                     self.gateway.start(row.get('provider', ''), model=row.get('model', ''))
                 except Exception as exc:
@@ -259,7 +262,14 @@ class ServiceHost:
                     if result:
                         self.coding.catalog = result['models']
                 self.coding.publish()
-            self.work(setup)
+            with self.lock:
+                if self.running:
+                    pending = dict(row)
+                    if self.pending_model and self.pending_model.get('refreshConfig'):
+                        pending['refreshConfig'] = True
+                    self.pending_model = pending
+                else:
+                    self.work(setup)
         elif command == 'connector_account':
             self.pages.account = row['account']
             self.emit('reset_form', page='connector_accounts')
@@ -270,8 +280,9 @@ class ServiceHost:
             self.close()
 
     def close(self):
-        self.closed.set()
-        self.cancel.set()
+        with self.lock:
+            self.closed.set()
+            self.cancel.set()
         for waiter in tuple(self.waiters.values()):
             waiter['done'].set()
         self.terminal.close()

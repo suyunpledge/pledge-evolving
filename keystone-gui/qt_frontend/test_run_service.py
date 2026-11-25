@@ -4,6 +4,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest.mock import Mock
 
 from keystone.config import load_config
 from keystone.desktop_permissions import profile_policy
@@ -49,7 +50,9 @@ class Host:
         self.approvals.append((title, detail))
         return self.answer
 
-    def work(self, fn):
+    def work(self, fn, *, cancel_event):
+        self.cancel = cancel_event
+        self.cancel.clear()
         fn()
 
 
@@ -77,6 +80,16 @@ class RunServiceTests(unittest.TestCase):
         self.assertIn('file.run', [t['id'] for t in state['tasks']])
         self.assertTrue(state['canRun'])
 
+    def test_status_updates_reuse_plan_and_refresh_finds_new_project_tasks(self):
+        self.service.chains = Mock(wraps=self.service.chains)
+        self.service.publish()
+        self.service.command({'action': 'clearProblems'})
+        self.assertEqual(self.service.chains.call_count, 1)
+        (self.project / 'pyproject.toml').write_text('[project]\nname = "example"\n', encoding='utf-8')
+        self.service.command({'action': 'refresh'})
+        self.assertEqual(self.service.chains.call_count, 2)
+        self.assertTrue(any(t['scope'] == 'project' for t in self.host.state()['tasks']))
+
     def test_manual_profile_asks_and_maps_problems(self):
         self.host.profile = 'manual'
         self.service.command({'action': 'run'})
@@ -95,11 +108,30 @@ class RunServiceTests(unittest.TestCase):
         self.host.profile, self.host.answer = 'manual', False
         with self.assertRaises(PermissionError):
             self.service.command({'action': 'run'})
+        self.assertEqual(self.host.state()['running'], '')
         self.host.profile = 'sandbox'
         with self.assertRaises(PermissionError):
             self.service.command({'action': 'run'})
         self.assertFalse((self.project / 'ran.txt').exists())
         self.assertFalse(self.host.state()['canRun'])
+
+    def test_cancel_before_worker_starts_then_run_again(self):
+        self.script.write_text('with open("runs.txt", "a") as f: f.write("1")\n', encoding='utf-8')
+        self.host.profile = 'manual'
+        pending = []
+        self.host.work = lambda fn, **kwargs: pending.append(fn)
+        self.service.command({'action': 'run'})
+        self.service.command({'action': 'cancel'})
+        pending.pop()()
+        self.assertEqual(self.host.state()['last']['status'], 'cancelled')
+        self.assertEqual(self.host.approvals, [])
+        marker = self.project / 'runs.txt'
+        self.assertFalse(marker.exists())
+        del self.host.work
+        self.service.command({'action': 'run'})
+        self.assertEqual(self.host.state()['last']['status'], 'completed')
+        self.assertEqual(len(self.host.approvals), 1)
+        self.assertEqual(marker.read_text(), '1')
 
     def test_unsaved_editor_and_missing_task_are_reported(self):
         self.host.pages.unsaved = True

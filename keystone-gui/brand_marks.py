@@ -16,9 +16,12 @@
 from __future__ import annotations
 
 import sys
-import tkinter as tk
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import tkinter as tk
 
 # ─── 品牌表 ────────────────────────────────────────────────
 
@@ -260,6 +263,7 @@ def _default_root():
     换根就整体丢弃——否则会拿到已销毁的 pyimageNNN，报
     ``image "pyimage123" doesn't exist``。
     """
+    import tkinter as tk
     return getattr(tk, "_default_root", None)
 
 
@@ -279,6 +283,7 @@ def mark_icon(brand: Brand | str | None, size: int = 16, *, master=None):
     """
     if brand is None:
         return None, None
+    import tkinter as tk
     _sync_cache_root(master)
     key = brand.key if isinstance(brand, Brand) else str(brand)
     for candidate in (size, 20, 24, 16, 32):

@@ -33,7 +33,8 @@ CATALOG = {
     'summarize_numbers': ('数值统计', 'Compute count, sum, mean, median, minimum, maximum and population standard deviation.',
                           obj({'values': array(NUMBER)}, 'values')),
     'plot_chart': ('绘制图表', 'Create a PNG attachment. For function give expression and optional x_min/x_max. '
-                   'For line/bar/scatter give y and optional x (numbers or category labels). ' + MATH,
+                   'For line/bar/scatter give y and optional x (numbers or category labels). '
+                   'For live editable worksheet charts use office_create / office_apply with T1.chart and inspect with office_read. ' + MATH,
                    obj({'kind': {'type': 'string', 'enum': ['function', 'line', 'bar', 'scatter']},
                         'title': STRING, 'expression': STRING, 'x_min': NUMBER, 'x_max': NUMBER,
                         'x': array({'anyOf': [NUMBER, STRING]}), 'y': array(NUMBER),
@@ -42,6 +43,7 @@ CATALOG = {
                            'Rows must match the header width. Strings are literal text.',
                            obj({'title': STRING, 'sheets': array(SHEET)}, 'title', 'sheets')),
     'create_slides': ('创建 PowerPoint 幻灯片', 'Create an editable widescreen PPTX attachment with a title slide and content slides. '
+                      'For native Work co-editing, slide layouts, themes, tables or speaker notes use office_create with kind presentation. '
                       'Provide 1–8 bullets per content slide.',
                       obj({'title': STRING, 'subtitle': STRING, 'slides': array(SLIDE)}, 'title', 'slides')),
     'create_document': ('创建 Word 文档', 'Create an editable DOCX attachment. Each section contains paragraphs and/or bullet points.',

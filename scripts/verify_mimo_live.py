@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 import hashlib
 import io
 import json
+import re
 from pathlib import Path
 import sys
 import tempfile
@@ -27,7 +28,7 @@ from keystone.policy import Mode, Policy, Sandbox
 from keystone.secret_http import open_authenticated
 from keystone.secrets import redact
 from keystone.tools import build_builtin_registry, ToolSpec, ToolResult
-from keystone.compat import user_layer
+from keystone.compat import default_home, user_layer
 
 
 MODELS = ('mimo-v2.6-flash', 'mimo-v2.6-pro')
@@ -297,11 +298,78 @@ def compare_tool_order(provider, recorder, root):
     return samples
 
 
+def retrieval_probe(provider, recorder, root, *, compact=False):
+    workspace = root / provider.default_model
+    workspace.mkdir()
+    files = ['start.txt', 'pine92.txt', 'amber13.txt', 'lake87.txt', 'rain63.txt', 'fern49.txt']
+    if compact:
+        files += ['river12.txt', 'sunset48.txt', 'vale35.txt', 'maple96.txt',
+                  'orchid71.txt', 'vine53.txt', 'lime27.txt', 'marsh41.txt']
+    code = 'JASPER-73184'
+    for i, filename in enumerate(files):
+        row = {'stage': i + 1}
+        if compact:
+            row['padding'] = 'xyz ' * 65
+        if i == 1:
+            row['audit_code'] = code
+        if i + 1 < len(files):
+            row['next'] = files[i + 1]
+        else:
+            row['mesh_file'] = 'part19.obj'
+        (workspace / filename).write_text(json.dumps(row), encoding='utf-8')
+    (workspace / 'part19.obj').write_text(
+        'v 0 0 0\nv 1 0 0\nv 0 1 0\nv 0 0 1\nf 1 3 2\nf 1 2 4\nf 2 3 4\nf 3 1 4\n', encoding='ascii')
+    prompts = [
+        '从 start.txt 开始，逐个读取 next 指到的文件，直到最后一条。用工具检查最后给出的 mesh_file 的三角面数，'
+        '先用 tool_search 的关键词“模型检查”找工具。最终只回答“三角面数=数字”，保留中间记录供后续审计。',
+        '现在审计上一轮。直接依据前面读取的 stage 2 工具结果返回 audit_code，并用已发现的网格检查工具再次验证'
+        '最后的模型。只回复 audit_code 和三角面数。']
+    history, samples = [], []
+    for turn, task in enumerate(prompts, 1):
+        recorder.stage = f'retrieval-turn-{turn}'
+        # A warm provider cache can defer soft compaction. On the audit turn,
+        # tighten the test budget so the stress suite actually exercises recovery.
+        context_chars = (6000 if turn == 1 else 3000) if compact else 32000
+        agent = Agent(home=workspace.parent / (workspace.name + '-home'), workspace=workspace,
+            router=router_for(provider, recorder),
+            registry=build_builtin_registry(expose=('tool_search', 'read_file', 'model3d_inspect')),
+            policy=Policy(workspace=workspace, mode=Mode.READ_ONLY),
+            limits=LoopLimits(max_steps=len(files) + 9, context_chars=context_chars))
+        started, requests = time.monotonic(), len(recorder.rows)
+        try:
+            report = agent.run(task, history=history)
+            calls = [s.tool for s in report.steps if s.tool]
+            reads = [s.args.get('path') for s in report.steps if s.tool == 'read_file']
+            compactions = sum(bool(e.get('committed')) for e in report.events if e['type'] == 'compaction')
+            restored = any(e.get('restored_tools') == ['model3d_inspect'] for e in report.events)
+            inspections = [s for s in report.steps if s.tool == 'model3d_inspect']
+            verified = (len(inspections) == 1 and inspections[0].args.get('path') == 'part19.obj'
+                        and inspections[0].meta.get('model3d', {}).get('triangles') == 4)
+            if turn == 1:
+                valid = reads == files and calls.count('tool_search') == 1 and code not in report.text
+            else:
+                valid = restored and calls.count('tool_search') == 0 and code in report.text
+                if compact:
+                    valid = valid and reads in ([], [files[1]]) and compactions + samples[0]['compactions'] > 0
+                else:
+                    valid = valid and not reads
+            count_in_answer = re.search(r'(?<![0-9])4(?![0-9])', report.text.replace(code, ''))
+            samples.append({'turn': turn, 'ok': bool(valid and verified and report.stopped == 'final' and count_in_answer),
+                'tools': calls, 'reads': reads, 'restored': restored, 'compactions': compactions,
+                'requests': len(recorder.rows) - requests,
+                'elapsed_seconds': round(time.monotonic() - started, 2), 'answer': report.text})
+            history.extend([{'role': 'user', 'content': task}, {'role': 'assistant', 'content': report.text}])
+        finally:
+            agent.secret_scope.close()
+    return samples
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--live', action='store_true')
     parser.add_argument('--model', choices=MODELS, action='append')
-    parser.add_argument('--suite', choices=('wire', 'agent', 'compare', 'switch', 'tool-order'), required=True)
+    parser.add_argument('--suite', choices=('wire', 'agent', 'compare', 'switch', 'tool-order', 'retrieval', 'retrieval-stress'),
+                        required=True)
     parser.add_argument('--thinking', choices=('auto', 'on', 'off'), default='auto')
     parser.add_argument('--request-limit', type=int, default=24)
     parser.add_argument('--retries', type=int, choices=(0, 1), default=0)
@@ -326,13 +394,15 @@ def main():
             row = {'model': chosen, 'requests': recorder.rows}
             results['models'].append(row)
             try:
-                provider = provider_for(chosen, Path.home() / '.keystone')
+                provider = provider_for(chosen, default_home())
                 if args.suite == 'compare':
                     row['results'] = compare_reasoning(provider, recorder, root)
                 elif args.suite == 'switch':
                     row['results'] = agent_probe(provider, recorder, root, development=True, mode_schedule=('off', 'on'))
                 elif args.suite == 'tool-order':
                     row['results'] = compare_tool_order(provider, recorder, root)
+                elif args.suite in ('retrieval', 'retrieval-stress'):
+                    row['results'] = retrieval_probe(provider, recorder, root, compact=args.suite == 'retrieval-stress')
                 else:
                     row['results'] = (wire_probe(provider, recorder) if args.suite == 'wire'
                                       else agent_probe(provider, recorder, root))

@@ -30,7 +30,7 @@ You can use the same assistant in several places: a desktop app, VS Code, the co
 | You are on | Do this |
 | --- | --- |
 | **Windows** | Code → Download ZIP → extract → double-click **`setup.cmd`**. It installs Python if needed, creates a desktop shortcut and opens the app. |
-| **macOS / Linux** | Run `./setup.sh` |
+| **macOS / Linux** | Run `bash setup.sh qt` for the shared Qt desktop (Python 3.11–3.14), or `bash setup.sh` for the classic launcher. |
 | **Any machine with Python 3.10+** | `python run.py selftest`. This runs the full offline check suite against the real kernel, with no key and no network needed. |
 
 To connect a model, run `python run.py setup` (a short wizard) or use the setup guide on the app's welcome screen.
@@ -54,7 +54,7 @@ A production-shaped **agent kernel written entirely against Python's standard li
 | Surface | Start it with | Notes |
 | --- | --- | --- |
 | CLI | `python run.py <command>` | Scripting, CI and unattended runs. `run.py` is the portable entry point; `python -m keystone.cli` also works on a standard Python. |
-| Desktop (Qt) | `keystone-gui/Keystone Qt.cmd` (first run `keystone-gui/desktop/install-qt.ps1`) | Primary chat client. Work mode, a model setup guide, a command palette and approval cards. PySide6 is isolated in `.venv/qt`. |
+| Desktop (Qt) | Windows: `keystone-gui/Keystone Qt.cmd` after `keystone-gui/desktop/install-qt.ps1`. macOS / Linux: `bash setup.sh qt`. | Primary chat client with Work mode, model setup, a command palette and approval cards. Each OS has its own Qt environment. |
 | Desktop (Tk) + Coding Mode | `python keystone-gui/keystone_gui_v2.py` | A three-column IDE: file tree and Git, a multi-tab editor, an Agent panel, and diff / test / problem panes. |
 | VS Code | `vscode-extension/` | Sidebar chat plus explain/review selection, over a local JSONL bridge. |
 | IM channel | `python run.py channel weixin serve` | Each inbound message becomes a task; each report becomes a message. |

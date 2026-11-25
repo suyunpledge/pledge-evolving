@@ -11,6 +11,7 @@ from PySide6.QtCore import QObject, Property, QProcess, QProcessEnvironment, QTi
 from keystone.desktop_permissions import LABELS, PROFILES
 from keystone.compat import desktop_config
 from keystone.secrets import redact
+from desktop.runtime_paths import service_python
 from .controller import RowsModel
 from brand_marks import mark_path
 import provider_catalog
@@ -45,6 +46,7 @@ class WorkbenchController(QObject):
     runChanged = Signal()
     codingDraftChanged = Signal()
     codingFocusRequested = Signal()
+    codingContextRequested = Signal()
     terminalChanged = Signal()
     terminalTabsChanged = Signal()
     terminalRevealRequested = Signal()
@@ -107,6 +109,7 @@ class WorkbenchController(QObject):
         self._terminal_timer.timeout.connect(self.terminalChanged)
         self._coding_messages = RowsModel(parent=self)
         self._coding_draft = ''
+        self._coding_focus = {}
         self._draft_version = 0
         self._error, self._status = '', ''
         self._busy = False
@@ -163,6 +166,7 @@ class WorkbenchController(QObject):
     modelRows = Property(QObject, lambda s: s._model_rows, constant=True)
     busy = Property(bool, lambda s: s._busy, notify=changed)
     hasUnsaved = Property(bool, lambda s: s._unsaved or bool(s._form_dirty or s._document_dirty), notify=changed)
+    hasUnsavedDocuments = Property(bool, lambda s: s._unsaved or bool(s._document_dirty), notify=changed)
     pageData = Property('QVariantMap', lambda s: s._pages, notify=pagesChanged)
     error = Property(str, lambda s: s._error, notify=changed)
     status = Property(str, lambda s: s._status, notify=changed)
@@ -334,7 +338,17 @@ class WorkbenchController(QObject):
         if self._page != 'development' or not self._coding.get('ready'):
             return
         self._send_coding_draft()
-        self._send({'command': 'coding', 'action': action, 'value': value})
+        row = {'command': 'coding', 'action': action, 'value': value}
+        if action in {'send', 'delegate'}:
+            self._coding_focus = {}
+            self.codingContextRequested.emit()
+            row['focus'] = self._coding_focus
+        self._send(row)
+
+    @Slot(str, int, int, int, int, int)
+    def captureCodingFocus(self, path, version, start_line, start_column, end_line, end_column):
+        self._coding_focus = {'path': path, 'version': version,
+                              'start': [start_line, start_column], 'end': [end_line, end_column]}
 
     @Slot(str, str)
     def runAction(self, action, value):
@@ -435,7 +449,7 @@ class WorkbenchController(QObject):
 
     def _apply_model_setup(self, row_id):
         self.gatewayChanging.emit()
-        self._request_gateway({'command': 'apply_model_setup', 'provider': row_id})
+        self._request_gateway({'command': 'apply_model_setup', 'provider': row_id, 'refreshConfig': True})
 
     @Slot(str)
     def editModel(self, row_id):
@@ -445,9 +459,7 @@ class WorkbenchController(QObject):
     def _apply_model_edit(self, _row_id):
         # Restart on the saved chat choice; an edited label falls back like any removed model.
         self.gatewayChanging.emit()
-        self._request_gateway({'command': 'apply_model_setup'})
-        if self._page == 'config' and self._service_ready:
-            self._send({'command': 'page_action', 'page': 'config', 'action': 'reload', 'values': {}})
+        self._request_gateway({'command': 'apply_model_setup', 'refreshConfig': True})
 
     @Slot(str)
     def switchChatModel(self, label):
@@ -466,7 +478,7 @@ class WorkbenchController(QObject):
             return
         self._error, self._status = '', '正在载入工作台…'
         gui = Path(__file__).resolve().parents[1]
-        executable = Path(sys.executable).with_name('python.exe')
+        executable = service_python(sys.executable)
         self._process.setProgram(str(executable))
         args = [str(gui / 'qt_frontend' / 'service_host.py'), '--home', str(self.home)]
         if self.demo:

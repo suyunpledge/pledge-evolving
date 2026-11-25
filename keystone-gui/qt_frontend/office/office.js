@@ -10,8 +10,7 @@ let api,
   selected = "",
   section = 1,
   firstRow = 1,
-  firstCol = 1,
-  slideIndex = 0;
+  firstCol = 1;
 let drafts = new Map(),
   sending = null,
   composing = false,
@@ -42,6 +41,7 @@ async function job(fn) {
   }
 }
 function rpc(action, args = {}) {
+  if (doc?.kind === "spreadsheet" && doc.id === args.id) args.chartField = chartKey();
   return new Promise((resolve, reject) =>
     api.request(JSON.stringify({ action, ...args }), (raw) => {
       try {
@@ -82,6 +82,7 @@ function show(d) {
   drafts.clear();
   conflicted = false;
   doc = d;
+  api.presentationOpened(d.kind === "presentation");
   firstRow = firstCol = 1;
   selected = "";
   section = 1;
@@ -93,20 +94,29 @@ function show(d) {
   redraw();
 }
 // Human-readable names for field addresses; raw keys stay internal.
+const SLIDE_PARTS = {
+  "": "标题", body: "正文", right: "右栏", notes: "备注", layout: "版式",
+  hidden: "放映隐藏", transition: "切换效果", table: "表格",
+};
 function fieldLabel(key) {
   let m;
   if (key === "title") return "文件名";
+  if (key === "slideTheme") return "演示主题";
   if ((m = /^P(\d+)(\.style)?$/.exec(key)))
     return "第 " + m[1] + " 段" + (m[2] ? "样式" : "");
-  if ((m = /^S(\d+)(\.body)?$/.exec(key)))
-    return "第 " + m[1] + " 页" + (m[2] ? "正文" : "标题");
+  if ((m = /^S(\d+)(?:\.(\w+))?$/.exec(key)) && (m[2] ?? "") in SLIDE_PARTS) {
+    // Slide ids are stable, not positions: number by the current deck order.
+    const at = doc?.slideOrder?.indexOf("S" + m[1]) ?? -1;
+    return "第 " + (at >= 0 ? at + 1 : m[1]) + " 页" + SLIDE_PARTS[m[2] ?? ""];
+  }
   if ((m = /^T(\d+)\.name$/.exec(key))) return "工作表 " + m[1] + " 名称";
+  if ((m = /^T(\d+)\.chart$/.exec(key))) return "工作表 " + m[1] + " 图表";
   if ((m = /^T(\d+)\.(.+)$/.exec(key))) return "工作表 " + m[1] + " · " + m[2];
   return "单元格 " + key;
 }
 // Per-field AI suggestions are labelled with the raw address (e.g. "B7").
 function readableLabel(label) {
-  return /^(?:title|P\d+(?:\.style)?|S\d+(?:\.body)?|T\d+\.(?:name|[A-Z]{1,2}\d+)|[A-Z]{1,2}\d+)$/.test(label)
+  return /^(?:title|slideTheme|P\d+(?:\.style)?|S\d+(?:\.\w+)?|T\d+\.(?:name|chart|[A-Z]{1,2}\d+)|[A-Z]{1,2}\d+)$/.test(label)
     ? "修改" + fieldLabel(label)
     : label;
 }
@@ -115,6 +125,7 @@ function status() {
   $("saveState").textContent = drafts.size
     ? "编辑中…"
     : "本地已保存 · v" + doc.version;
+
   $("saveState").classList.toggle("dirty", drafts.size > 0);
   let detail = types[doc.kind][1];
   if (doc.kind === "document") {
@@ -129,6 +140,13 @@ function status() {
       ? selected.split(".").pop() + (raw ? " · " + raw : "")
       : "支持 SUM · AVERAGE · MIN · MAX · COUNT";
   }
+  if (doc.kind === "presentation")
+    detail =
+      "第 " +
+      (doc.slideOrder.indexOf("S" + section) + 1) +
+      " / " +
+      doc.slideOrder.length +
+      " 页";
   $("detail").textContent = detail;
   $("selection").textContent =
     "上下文 · " + (selected ? fieldLabel(selected) : "整份文件");
@@ -189,6 +207,7 @@ async function flush() {
       else {
         updateMeta();
         updateCells();
+        refreshChart();
       }
     } catch (error) {
       if (error.message.includes("字段已变化")) {
@@ -233,8 +252,9 @@ function editable(node, key) {
     }
   };
   node.oninput = () => {
-    if (node.tagName === "TEXTAREA") fit(node);
+    if (node.tagName === "TEXTAREA" && doc.kind === "document") fit(node);
     queueEdit(key, node.value);
+    if (doc.kind === "presentation") updateSlidePreview(key);
   };
   node.onblur = () => {
     if (!composing && !conflicted) job(flush);
@@ -270,6 +290,7 @@ async function home() {
   await flush();
   const ticket = ++refreshNumber;
   doc = null;
+  api.presentationOpened(false);
   selected = "";
   $("editor").hidden = true;
   $("home").hidden = false;
@@ -335,6 +356,18 @@ async function reveal(field) {
   node?.scrollIntoView({ block: "center", behavior: "smooth" });
   node?.focus({ preventScroll: true });
 }
+// One reviewed edit: before/after text, or a summary for structured values (charts).
+function changeRow(e, withLabel) {
+  const row = el("div", undefined, "change");
+  if (withLabel) row.append(el("small", fieldLabel(e.field)));
+  const summary = chartChangeText(e);
+  if (summary !== null) row.append(el("p", summary, "summary"));
+  else {
+    if (e.before) row.append(el("del", e.before));
+    row.append(e.value === null ? el("em", "删除此项") : el("ins", e.value));
+  }
+  return row;
+}
 function pendingFields() {
   const fields = new Map();
   for (const p of doc.pending)
@@ -394,21 +427,12 @@ function updateMeta() {
       yes.setAttribute("aria-label", "接受" + readableLabel(p.label));
       no.setAttribute("aria-label", "拒绝" + readableLabel(p.label));
       head.append(jump, yes, no);
-      const row = el("div", undefined, "change");
-      if (e.before) row.append(el("del", e.before));
-      row.append(e.value === null ? el("em", "删除此项") : el("ins", e.value));
-      item.append(head, row);
+      item.append(head, changeRow(e, false));
       list.append(item);
       continue;
     }
     item.append(el("strong", readableLabel(p.label)));
-    for (const e of p.changes.slice(0, 5)) {
-      const row = el("div", undefined, "change");
-      row.append(el("small", fieldLabel(e.field)));
-      if (e.before) row.append(el("del", e.before));
-      row.append(e.value === null ? el("em", "删除此项") : el("ins", e.value));
-      item.append(row);
-    }
+    for (const e of p.changes.slice(0, 5)) item.append(changeRow(e, true));
     if (p.changes.length > 5)
       item.append(el("small", "共 " + p.changes.length + " 处"));
     const acts = el("div", undefined, "actions");
@@ -490,12 +514,16 @@ function redraw() {
   $("kindIcon").textContent = types[kind][0];
   $("style").hidden = kind !== "document";
   $("sheetAddress").hidden = kind !== "spreadsheet";
+  $("chartDesign").hidden = kind !== "spreadsheet";
   $("play").hidden = kind !== "presentation";
+  $("playStart").hidden = $("slideTools").hidden = kind !== "presentation";
   $("add").textContent = {
     document: "添加段落",
     spreadsheet: "添加工作表",
     presentation: "添加幻灯片",
   }[kind];
+  const previousBoard = canvas.querySelector(".deck-board.edit");
+  if (previousBoard) slideResize.unobserve(previousBoard);
   canvas.replaceChildren();
   left.replaceChildren();
   canvas.classList.toggle("grid", kind === "spreadsheet");
@@ -523,49 +551,7 @@ function redraw() {
       left.append(item);
     }
   } else if (kind === "presentation") {
-    left.append(el("h3", "幻灯片"));
-    const ids = parts("S");
-    if (!ids.includes(section)) section = ids[0] || 1;
-    ids.forEach((n, i) => {
-      const item = btn(
-        "",
-        async () => {
-          await flush();
-          section = n;
-          selected = "";
-          redraw();
-        },
-        n === section ? "on" : "",
-      );
-      Object.assign(item.dataset, {
-        outline: "S" + n,
-        empty: "无标题",
-        prefix: "",
-        no: String(i + 1),
-      });
-      item.classList.add("thumb");
-      left.append(item);
-    });
-    const slide = el("div", undefined, "slide");
-    slide.append(
-      el(
-        "span",
-        Math.max(1, ids.indexOf(section) + 1) + " / " + Math.max(1, ids.length),
-        "slide-no",
-      ),
-    );
-    canvas.append(slide);
-    for (const [k, cls, hint] of [
-      ["S" + section, "slide-title", "幻灯片标题"],
-      ["S" + section + ".body", "slide-body", "输入演示内容…"],
-    ]) {
-      const input = editable(el("textarea", undefined, cls), k);
-      input.rows = 1;
-      input.placeholder = hint;
-      input.setAttribute("aria-label", hint);
-      slide.append(input);
-      fit(input);
-    }
+    renderDeck(left, canvas);
   } else {
     left.append(el("h3", "工作表"));
     const ids = [...new Set([1, ...parts("T")])];
@@ -600,7 +586,10 @@ function redraw() {
         tr.insertCell().append(input);
       }
     }
-    canvas.append(table);
+    const chartHost = el("section");
+    chartHost.id = "sheetChart";
+    canvas.append(chartHost, table);
+    refreshChart();
     updateCells();
   }
   updateMeta();
@@ -631,8 +620,9 @@ async function sync() {
 }
 async function appendPart() {
   await flush();
+  if (doc.kind === "presentation") return arrangeSlide("insert");
   const kind = doc.kind,
-    prefix = { document: "P", spreadsheet: "T", presentation: "S" }[kind];
+    prefix = { document: "P", spreadsheet: "T" }[kind];
   const n = Math.max(kind === "spreadsheet" ? 1 : 0, ...parts(prefix)) + 1;
   const key = prefix + n + (kind === "spreadsheet" ? ".name" : "");
   await action("apply", {
@@ -657,22 +647,11 @@ async function ask(form) {
     prompt = input.value.trim();
   if (!prompt) return;
   const result = await new Promise((resolve) =>
-    api.ask(doc?.id || "", selected, prompt, resolve),
+    api.ask(doc?.id || "", selected || (doc?.kind === "presentation" ? "S" + section : ""), prompt, resolve),
   );
   if (result) throw Error(result);
   input.value = "";
   notice("已发送给 Work。");
-}
-function present(delta) {
-  const ids = parts("S");
-  if (!ids.length) throw Error("还没有可放映的幻灯片。");
-  slideIndex = Math.max(0, Math.min(ids.length - 1, slideIndex + delta));
-  const k = "S" + ids[slideIndex];
-  $("screen").replaceChildren(
-    el("h2", doc.fields[k] || ""),
-    el("p", doc.fields[k + ".body"] || ""),
-  );
-  if (!$("presentation").open) $("presentation").showModal();
 }
 function connect() {
   new QWebChannel(qt.webChannelTransport, (channel) => {
@@ -708,6 +687,8 @@ document.querySelectorAll("[data-create]").forEach(
       })),
 );
 $("add").onclick = () => job(appendPart);
+bindChartDesign();
+bindSlideControls();
 $("style").onchange = () =>
   job(async () => {
     const key = /^P\d+$/.test(selected) ? selected : "P1";
@@ -757,15 +738,6 @@ $("goCell").onclick = () =>
 $("cellAddress").onkeydown = (e) => {
   if (e.key === "Enter") $("goCell").click();
 };
-$("play").onclick = () =>
-  job(async () => {
-    await flush();
-    slideIndex = parts("S").indexOf(section);
-    present(0);
-  });
-$("prevSlide").onclick = () => job(() => present(-1));
-$("nextSlide").onclick = () => job(() => present(1));
-$("endShow").onclick = () => $("presentation").close();
 $("useLatest").onclick = () =>
   job(async () => {
     const d = await rpc("open", { id: doc.id });
@@ -786,7 +758,5 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault();
     job(flush);
   }
-  if ($("presentation").open && ["ArrowLeft", "ArrowRight"].includes(e.key))
-    job(() => present(e.key === "ArrowLeft" ? -1 : 1));
 });
 connect();

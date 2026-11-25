@@ -14,8 +14,10 @@ from __future__ import annotations
 import json
 import os
 import difflib
+import re
 import sys
 import subprocess
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -361,22 +363,41 @@ class ToolRegistry:
         """
         return [s for s in self.all_specs() if not self._hidden(s.name)]
 
-    def search(self, query: str, limit: int = 5) -> list[ToolSpec]:
-        query = (query or "").strip().lower()
-        hits: list[tuple[int, ToolSpec]] = []
-        for spec in self._specs.values():
-            if self._hidden(spec.name) or not spec.is_deferred:
+    def discoverable(self, ctx: ToolContext | None = None) -> list[ToolSpec]:
+        if ctx is None:
+            return [spec for spec in self.callable_specs() if spec.is_deferred]
+        return [spec for spec in self.available_specs(ctx) if spec.is_deferred
+                and not Policy._matches(ctx.policy.deny, spec.name)
+                and not (ctx.isolated and self.effect(spec.name) is ToolEffect.NATIVE)]
+
+    def search(self, query: str, limit: int = 5, *, ctx=None) -> list[ToolSpec]:
+        def normalize(text):
+            return unicodedata.normalize('NFKC', text).casefold().strip()
+
+        query = normalize(query or '')
+        terms = set(re.findall(r'[^\W_]+', query))
+        if len(terms) > 1:
+            terms -= {'a', 'an', 'the', 'with', 'for', 'to', 'of', 'and'}
+        if not terms or limit < 1:
+            return []
+        hits = []
+        for spec in self.discoverable(ctx):
+            name = normalize(spec.name)
+            tags = {normalize(tag) for tag in spec.tags}
+            description = normalize(spec.description)
+            keywords = ' '.join([name, *tags])
+            keyword_hits = sum(term in keywords for term in terms)
+            coverage = sum(term in keywords or term in description for term in terms)
+            # A Chinese query often contains the whole catalog tag without word boundaries.
+            embedded_tag = any(len(tag) >= 2 and re.search(r'[\u3400-\u9fff]', tag)
+                               and tag in query for tag in tags)
+            if not coverage and not embedded_tag:
                 continue
-            haystack = f"{spec.name} {spec.description} {' '.join(spec.tags)}".lower()
-            score = 0
-            if query and query in haystack:
-                score = 10 - haystack.index(query) // 20
-            elif query:
-                tokens = [t for t in query.replace(",", " ").split() if t]
-                score = sum(3 for t in tokens if t in haystack)
-            if score > 0:
-                hits.append((score, spec))
-        hits.sort(key=lambda pair: (-pair[0], pair[1].name))
+            rank = (name == query, query in tags, coverage, keyword_hits, embedded_tag,
+                    query in name, query in description)
+            hits.append((rank, spec))
+        # discoverable() is name-sorted, so equal scores have a stable tie break.
+        hits.sort(key=lambda pair: pair[0], reverse=True)
         found = [spec for _, spec in hits[:limit]]
         for spec in found:
             self._activated.add(spec.name)
@@ -1332,11 +1353,17 @@ def build_builtin_registry(
         "tool_search",
         "Discover deferred tools by keyword and load them for this session.",
         no_defer=True,
-        schema={"query": "string"},
+        schema={"query": "string", "limit": {"type": "integer", "minimum": 1, "maximum": 20,
+                "description": "Maximum tools to activate (default 5)."}},
     )
     def tool_search(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         registry = ctx.extras.get("registry")
-        found = registry.search(str(args.get("query", "")))
+        query, limit = args.get("query"), args.get("limit", 5)
+        if not isinstance(query, str) or not query.strip():
+            return ToolResult(False, error="tool_search needs a nonempty query")
+        if type(limit) is not int or not 1 <= limit <= 20:
+            return ToolResult(False, error="tool_search limit must be an integer from 1 to 20")
+        found = registry.search(query, limit, ctx=ctx)
         lines = [f"{s.name}: {s.description}" for s in found] or ["no matching tools"]
         return ToolResult(ok=True, content="\n".join(lines), meta={"activated": [s.name for s in found]})
 

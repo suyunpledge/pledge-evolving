@@ -24,6 +24,10 @@ Popup {
     closePolicy: Popup.CloseOnEscape
     Overlay.modal: Rectangle { color: "#6605080d" }
     background: GlassSurface { material: editor.material; radius: 24; emphasis: 0.6 }
+    onOpened: {
+        if (row && labelField.enabled) labelField.forceActiveFocus(Qt.TabFocusReason)
+        else addModel.forceActiveFocus(Qt.TabFocusReason)
+    }
 
     function openFor(rowId) {
         service.reload()
@@ -90,6 +94,10 @@ Popup {
                 id: item
                 required property var modelData
                 readonly property bool current: editor.currentId === modelData.id
+                Accessible.name: item.modelData.title
+                Accessible.role: Accessible.ListItem
+                Accessible.selectable: true
+                Accessible.selected: current
                 width: list.width; height: 58; hoverEnabled: true
                 leftPadding: 12; rightPadding: 12
                 background: GlassSurface {
@@ -114,6 +122,7 @@ Popup {
             text: "还没有模型。点「添加模型」接入第一个。"; color: Theme.textMuted; font.pixelSize: 12
         }
         GlassButton {
+            id: addModel
             x: 16; y: parent.height - 52; width: 268; material: editor.material; glyph: "plus"; text: "添加模型"
             onClicked: { editor.close(); editor.addRequested() }
         }
@@ -121,7 +130,8 @@ Popup {
         // —— 右：表单 ——
         ScrollView {
             id: formScroll
-            x: 312; y: 80; width: parent.width - x - 20; height: parent.height - y - 68
+            x: 312; y: 80; width: parent.width - x - 20
+            height: Math.max(0, (editorStatus.visible ? editorStatus.y : editorActions.y) - y - 8)
             clip: true
             enabled: editor.row !== null && editor.changesAllowed && !editor.service.busy
             ColumnLayout {
@@ -140,13 +150,14 @@ Popup {
                     ColumnLayout {
                         Layout.fillWidth: true; spacing: 7
                         FieldLabel { text: "显示名称" }
-                        EditField { id: labelField; objectName: "editLabel"; placeholderText: "留空时显示模型 ID" }
+                        EditField { id: labelField; objectName: "editLabel"; Accessible.name: "显示名称"; placeholderText: "留空时显示模型 ID" }
                     }
                     ColumnLayout {
                         Layout.preferredWidth: 170; Layout.maximumWidth: 170; spacing: 7
                         FieldLabel { text: "协议" }
                         ComboBox {
                             id: wireBox; objectName: "editWire"
+                            Accessible.name: "协议"
                             Layout.fillWidth: true; Layout.preferredHeight: 38
                             model: editor.service.wires; textRole: "label"; valueRole: "value"; leftPadding: 12
                             contentItem: Text { text: wireBox.displayText; color: "#edf1f5"; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
@@ -156,18 +167,18 @@ Popup {
                     }
                 }
                 FieldLabel { text: "接口地址" }
-                EditField { id: urlField; objectName: "editEndpoint"; placeholderText: "https://api.example.com/v1"; inputMethodHints: Qt.ImhUrlCharactersOnly | Qt.ImhNoPredictiveText }
+                EditField { id: urlField; objectName: "editEndpoint"; Accessible.name: "接口地址"; placeholderText: "https://api.example.com/v1"; inputMethodHints: Qt.ImhUrlCharactersOnly | Qt.ImhNoPredictiveText }
                 RowLayout {
                     Layout.fillWidth: true; spacing: 12
                     ColumnLayout {
                         Layout.fillWidth: true; spacing: 7
                         FieldLabel { text: "模型 ID" }
-                        EditField { id: modelField; objectName: "editModel"; inputMethodHints: Qt.ImhNoPredictiveText }
+                        EditField { id: modelField; objectName: "editModel"; Accessible.name: "模型 ID"; inputMethodHints: Qt.ImhNoPredictiveText }
                     }
                     ColumnLayout {
                         Layout.preferredWidth: 170; Layout.maximumWidth: 170; spacing: 7
                         FieldLabel { text: "温度（0–2，可留空）" }
-                        EditField { id: temperatureField; objectName: "editTemperature"; inputMethodHints: Qt.ImhFormattedNumbersOnly }
+                        EditField { id: temperatureField; objectName: "editTemperature"; Accessible.name: "温度"; inputMethodHints: Qt.ImhFormattedNumbersOnly }
                     }
                 }
                 FieldLabel { text: "思考强度档位" }
@@ -175,6 +186,7 @@ Popup {
                     Layout.fillWidth: true; spacing: 8
                     ComboBox {
                         id: effortMode; objectName: "editEffortMode"
+                        Accessible.name: "思考强度档位"
                         Layout.preferredWidth: 200; Layout.preferredHeight: 38
                         model: [{value: "auto", label: "自动（按厂商实测）"}, {value: "custom", label: "指定可用档位"}, {value: "none", label: "不支持思考强度"}]
                         textRole: "label"; valueRole: "value"; leftPadding: 12
@@ -199,11 +211,16 @@ Popup {
                         : effortMode.currentValue === "none" ? "主界面的思考强度将停用，请求不带思考参数。"
                         : "只有选中的档位可在主界面选择；网关会拒绝列表之外的档位。"
                 }
-                FieldLabel { text: "API 密钥" }
+                FieldLabel {
+                    id: keyLabel; text: "API 密钥"; Accessible.role: Accessible.StaticText
+                    Accessible.name: text; Accessible.labelFor: keyField
+                }
                 RowLayout {
                     Layout.fillWidth: true; spacing: 10
                     EditField {
                         id: keyField; objectName: "editKey"
+                        Accessible.name: keyLabel.text
+                        Accessible.labelledBy: keyLabel
                         echoMode: TextInput.Password
                         inputMethodHints: Qt.ImhHiddenText | Qt.ImhSensitiveData | Qt.ImhNoPredictiveText
                         placeholderText: editor.row && editor.row.keyState === "saved" ? "已保存（不显示）。留空保持不变，填写则替换" : "填写密钥"
@@ -223,13 +240,16 @@ Popup {
         }
         // —— 底部：状态与操作 ——
         Text {
+            id: editorStatus
             objectName: "modelEditorStatus"
-            x: 312; y: parent.height - 44; width: parent.width - x - 380
-            text: editor.service.status; elide: Text.ElideRight
+            x: 312; y: editorActions.y - height - 6; width: parent.width - x - 20
+            visible: text.length > 0
+            text: editor.service.status; wrapMode: Text.Wrap; textFormat: Text.PlainText
             color: editor.service.success ? Theme.successText : editor.service.busy ? Theme.textSecondary : Theme.dangerText
             font.pixelSize: 12
         }
         Row {
+            id: editorActions
             x: parent.width - width - 20; y: parent.height - 54; spacing: 8
             enabled: editor.row !== null && editor.changesAllowed && !editor.service.busy
             GlassButton {

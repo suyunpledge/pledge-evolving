@@ -7,6 +7,7 @@ the steps run, sequentially, without a shell. Output is bounded and redacted
 by :func:`keystone.development.testing.run_process`; problems are parsed with
 the task's matchers.
 """
+from concurrent.futures import CancelledError
 import os
 from pathlib import Path
 import subprocess
@@ -37,6 +38,11 @@ def _environment(task):
     return extra
 
 
+def _check_cancelled(event):
+    if event is not None and event.is_set():
+        raise CancelledError()
+
+
 def authorize(task, policy, approve, *, workspace, cancel=None):
     """Policy first, then one human approval when any step needs it. Returns the decisions."""
     decisions = []
@@ -51,7 +57,10 @@ def authorize(task, policy, approve, *, workspace, cancel=None):
         detail = {'task': task['label'], 'commands': [command_line(a) for a in task['steps']],
                   'cwd': task['cwd'], 'workspace': str(workspace),
                   'note': '将以当前账户执行项目代码，具有文件和网络访问能力。'}
-        if not approve('运行项目任务：' + task['label'], detail, cancel):
+        _check_cancelled(cancel)
+        approved = approve('运行项目任务：' + task['label'], detail, cancel)
+        _check_cancelled(cancel)
+        if not approved:
             raise PermissionError('未批准运行：' + task['label'])
     return decisions
 
@@ -60,28 +69,36 @@ def execute(task, *, workspace, policy, approve, cancelled, on_output=None, time
     """Authorize and run ``task``; return status, per-step results and parsed problems."""
     workspace = Path(workspace).resolve()
     cwd = Path(task['cwd']).resolve()
-    if not cwd.is_dir():
-        raise FileNotFoundError(f'工作目录不存在：{cwd}')
-    authorize(task, policy, approve, workspace=workspace, cancel=cancelled)
-    for folder in task.get('prepare', ()):
-        target = Path(folder).resolve()
-        target.relative_to(workspace)  # outputs stay inside the project
-        target.mkdir(parents=True, exist_ok=True)
     emit = on_output or (lambda text: None)
-    environment = _environment(task)
     started = time.monotonic()
     steps, outputs, status, exit_code = [], [], 'completed', 0
-    emit(f"\n> {task['label']}\n")
-    for argv in task['steps']:
-        emit(f"$ {command_line(argv)}\n")
-        result = run_process(argv, cwd, cancelled, timeout=timeout, on_output=emit,
-                             extra_env=environment, decode=decode_output)
-        outputs.append(result['output'])
-        steps.append({'command': command_line(argv), 'status': result['status'], 'exit_code': result['exit_code'],
-                      'output_truncated': result['output_truncated']})
-        status, exit_code = result['status'], result['exit_code']
-        if status != 'completed':
-            break
+    try:
+        _check_cancelled(cancelled)
+        if not cwd.is_dir():
+            raise FileNotFoundError(f'工作目录不存在：{cwd}')
+        authorize(task, policy, approve, workspace=workspace, cancel=cancelled)
+        started = time.monotonic()  # Report execution time separately from human approval.
+        for folder in task.get('prepare', ()):
+            _check_cancelled(cancelled)
+            target = Path(folder).resolve()
+            target.relative_to(workspace)  # outputs stay inside the project
+            target.mkdir(parents=True, exist_ok=True)
+        environment = _environment(task)
+        emit(f"\n> {task['label']}\n")
+        for argv in task['steps']:
+            _check_cancelled(cancelled)
+            emit(f"$ {command_line(argv)}\n")
+            result = run_process(argv, cwd, cancelled, timeout=timeout, on_output=emit,
+                                 extra_env=environment, decode=decode_output)
+            status, exit_code = result['status'], result['exit_code']
+            if result['execution_state'] != 'not_started':
+                outputs.append(result['output'])
+                steps.append({'command': command_line(argv), 'status': status, 'exit_code': exit_code,
+                              'output_truncated': result['output_truncated']})
+            if status != 'completed':
+                break
+    except CancelledError:
+        status, exit_code = 'cancelled', None
     output = '\n'.join(outputs)
     found = problem_matchers.parse(output, task.get('matchers', ()), cwd=cwd, workspace=workspace)
     counts = problem_matchers.summary(found)

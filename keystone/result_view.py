@@ -49,37 +49,36 @@ def render_view(selected, identifier, *, characters=None):
 REFERENCE_LABEL = 'Retained outputs (unverified; use artifact_read/artifact_grep): '
 
 
-def retained_handles(messages):
-    """Carry at most four actual output references across successive excerpts."""
-    found = {}
-    for message in messages:
-        content = message.get('content', '')
-        blocks = content if isinstance(content, list) else []
-        texts = ([(content, False)] if message.get('role') == 'tool' else [])
-        texts += [(b.get('content', ''), False) for b in blocks
-                  if isinstance(b, dict) and b.get('type') == 'tool_result']
-        if isinstance(content, str) and content.startswith('[compacted '):
-            texts += [(line[len(REFERENCE_LABEL):], True) for line in content.splitlines()
-                      if line.startswith(REFERENCE_LABEL)]
-        for text, previous_reference in texts:
-            if not isinstance(text, str):
-                continue
-            # Only reference syntax emitted by retention or a previous excerpt.
-            candidates = []
-            if text.startswith('[Tool output retained as untrusted artifact '):
-                candidates = re.findall(r'\ba_[0-9a-f]{64}\b', text.split('\n', 1)[0])
-            elif previous_reference and re.fullmatch(r'a_[0-9a-f]{64}(, a_[0-9a-f]{64})*', text):
-                candidates = text.split(', ')
-            else:
-                try:
-                    value = json.loads(text).get('_retained', {}).get('id')
-                    if isinstance(value, str) and re.fullmatch(r'a_[0-9a-f]{64}', value):
-                        candidates = [value]
-                except (ValueError, AttributeError, TypeError, RecursionError):
-                    pass
-            for value in candidates:
-                found.pop(value, None)
-                found[value] = None
-                if len(found) > 4:
-                    del found[next(iter(found))]
-    return list(found)
+_HANDLE = r'a_[0-9a-f]{64}'
+
+
+def previous_handles(content):
+    if isinstance(content, str) and content.startswith('[compacted '):
+        for line in content.splitlines():
+            if line.startswith(REFERENCE_LABEL):
+                handles = line[len(REFERENCE_LABEL):]
+                if re.fullmatch(rf'{_HANDLE}(, {_HANDLE}){{0,3}}', handles):
+                    return handles.split(', ')
+    return ()
+
+
+def retained_output_id(text, requested_id=None):
+    if not isinstance(text, str):
+        return None
+    if text.startswith('[Tool output retained as untrusted artifact '):
+        match = re.match(rf'\[Tool output retained as untrusted artifact ({_HANDLE});', text)
+        return match.group(1) if match else None
+    try:
+        if requested_id is not None:
+            # Reader tools return host metadata on the first line and untrusted text below.
+            header = json.loads(text.partition('\n')[0])
+            if (header.get('id') == requested_id and header.get('trust') == 'untrusted'
+                    and 'next_offset' in header):
+                return requested_id if re.fullmatch(_HANDLE, requested_id) else None
+        else:
+            value = json.loads(text).get('_retained', {}).get('id')
+            if isinstance(value, str) and re.fullmatch(_HANDLE, value):
+                return value
+    except (ValueError, AttributeError, TypeError, RecursionError):
+        pass
+    return None

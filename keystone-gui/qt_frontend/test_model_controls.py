@@ -6,7 +6,8 @@ import tempfile
 import threading
 import unittest
 
-from PySide6.QtCore import QCoreApplication, QObject, QUrl
+from PySide6.QtCore import QCoreApplication, QMetaObject, QObject, QUrl
+from PySide6.QtGui import QAccessible
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtTest import QTest
 
@@ -331,8 +332,20 @@ class MainScreenControlTests(unittest.TestCase):
         editor = self.window.findChild(QObject, 'modelEditor')
         self.assertIsNotNone(editor)
         self.assertIsNotNone(self.window.findChild(QObject, 'manageModelsButton'))
+        save_user_layer(Path(self.temp.name), ROWS)
         self.workbench.editModel('')
         until(lambda: editor.property('opened'))
+        field = self.window.findChild(QObject, 'editLabel')
+        until(field.hasActiveFocus)
+        self.assertEqual(QAccessible.queryAccessibleInterface(field).text(QAccessible.Text.Name), '显示名称')
+        QMetaObject.invokeMethod(editor, 'close')
+        setup = self.window.findChild(QObject, 'onboardingPopup')
+        QMetaObject.invokeMethod(setup, 'open')
+        until(lambda: setup.property('opened'))
+        key = self.window.findChild(QObject, 'setupKey')
+        accessible = QAccessible.queryAccessibleInterface(key)
+        self.assertTrue(accessible.state().passwordEdit)
+        self.assertIn('API 密钥', [target.text(QAccessible.Text.Name) for target, _ in accessible.relations()])
 
 
 if __name__ == '__main__':

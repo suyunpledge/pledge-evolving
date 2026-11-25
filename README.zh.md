@@ -30,7 +30,7 @@
 | 你的环境 | 这样做 |
 | --- | --- |
 | **Windows** | Code → Download ZIP → 解压 → 双击 **`setup.cmd`**。没有 Python 会自动装上，然后建好桌面快捷方式并打开应用。 |
-| **macOS / Linux** | 运行 `./setup.sh` |
+| **macOS / Linux** | 运行 `bash setup.sh qt` 打开共用的 Qt 桌面（Python 3.11–3.14），或运行 `bash setup.sh` 使用经典启动方式。 |
 | **任何装了 Python 3.10+ 的机器** | `python run.py selftest`：对真实内核跑完整的离线检查，不需要密钥，也不联网。 |
 
 接入模型：运行 `python run.py setup`（几步问答的向导），或者在应用欢迎页按引导填写。
@@ -54,7 +54,7 @@
 | 入口 | 启动方式 | 说明 |
 | --- | --- | --- |
 | 命令行 | `python run.py <命令>` | 脚本、CI、无人值守任务。`run.py` 是通用入口；标准 Python 下 `python -m keystone.cli` 也能用。 |
-| 桌面（Qt） | `keystone-gui/Keystone Qt.cmd`（首次先跑 `keystone-gui/desktop/install-qt.ps1`） | 主力聊天客户端：Work 模式、模型配置引导、命令面板、审批卡片；PySide6 隔离在 `.venv/qt`。 |
+| 桌面（Qt） | Windows 首次运行 `keystone-gui/desktop/install-qt.ps1`，随后使用 `keystone-gui/Keystone Qt.cmd`。macOS / Linux 运行 `bash setup.sh qt`。 | 主力聊天客户端，支持 Work 模式、模型配置引导、命令面板和审批卡片。各系统使用独立的 Qt 环境。 |
 | 桌面（Tk）+ Coding 模式 | `python keystone-gui/keystone_gui_v2.py` | 三栏 IDE：文件树与 Git、多标签编辑器、Agent 面板、diff/测试/问题面板。 |
 | VS Code | `vscode-extension/` | 侧边栏对话、解释/审查选中代码，走本地 JSONL 桥。 |
 | 即时通讯 | `python run.py channel weixin serve` | 收到一条消息就生成一个任务，任务报告再作为消息发回。 |

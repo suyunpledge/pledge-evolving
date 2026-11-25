@@ -111,7 +111,8 @@ class ConversationPrefix:
         try:
             raw = json.loads(self._path.read_text(encoding='utf-8'))
             if (not isinstance(raw, dict) or 'history_digest' not in raw
-                    or 'guard' not in raw or 'messages' not in raw or 'paused_task' in raw):
+                    or 'guard' not in raw or 'messages' not in raw or 'paused_task' in raw
+                    or not isinstance(raw.get('continuation', {}), dict)):
                 return
             messages = raw['messages']
             if (not isinstance(messages, list)
@@ -124,13 +125,26 @@ class ConversationPrefix:
             return
 
     def candidate(self, history, guard, *, task_id=None):
+        saved, _ = self.resolve(history, guard, task_id=task_id)
+        return saved
+
+    def resolve(self, history, guard, *, task_id=None, restore=None):
+        """Validate the display history once, even when checking a reconstructed tool surface."""
         self._load()
         saved = self._saved
         if not saved or not history or digest(history) != saved['history_digest']:
-            return None
-        if guard != saved['guard'] or ('paused_task' in saved and saved['paused_task'] != task_id):
-            return None
-        return copy.deepcopy(saved)
+            return None, None
+        if 'paused_task' in saved and saved['paused_task'] != task_id:
+            return None, None
+        proposal = None
+        if guard != saved['guard']:
+            discovery = saved.get('continuation', {}).get('discovery')
+            if restore is None or not discovery:
+                return None, None
+            proposal = restore(discovery, saved['guard'])
+            if proposal is None:
+                return None, None
+        return copy.deepcopy(saved), proposal
 
     def trim_history(self, history, trimmed):
         """Acknowledge only a host-owned suffix trim of the just-saved chat.

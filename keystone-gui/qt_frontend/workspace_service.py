@@ -143,7 +143,8 @@ class WorkspaceService:
             doc = self.documents.get(self.active_document)
             data.update(hint=str(self.host.workspace), directory=self.directory, rows=entries,
                 actions=[button('chooseProject', '选择项目'), button('parent', '上一级'), button('git', 'Git 变更')],
-                document=dict(path=self.active_document, text=doc.text, dirty=doc.dirty, status=doc.status,
+                document=dict(path=self.active_document, relative=doc.path.relative_to(self.boundary.root).as_posix(),
+                              text=doc.text, dirty=doc.dirty, status=doc.status,
                               original=doc.original, encoding=doc.encoding, newline=repr(doc.newline),
                               version=self.revisions.get(self.active_document, 0)) if doc else {},
                 tabs=[dict(path=p, name=d.path.name, dirty=d.dirty) for p, d in self.documents.items()])
@@ -515,8 +516,23 @@ class WorkspaceService:
             self.revisions[path] = version
             self.host.status()
 
-    def refresh_documents(self):
-        for doc in self.documents.values():
+    def refresh_documents(self, paths=None):
+        if paths is None:
+            self.explorer.children.clear()
+            documents = list(self.documents.values())
+        else:
+            documents = []
+            for value in dict.fromkeys(paths):
+                try:
+                    target = self.boundary.path(value)
+                except (OSError, ValueError):
+                    continue
+                relative = target.relative_to(self.boundary.root)
+                for parent in (relative, *relative.parents):
+                    self.explorer.children.pop(parent.as_posix(), None)
+                if str(target) in self.documents:
+                    documents.append(self.documents[str(target)])
+        for doc in documents:
             doc.reconcile(doc.inspect_external())
         for page in ('development', 'files'):
             self.publish(page)

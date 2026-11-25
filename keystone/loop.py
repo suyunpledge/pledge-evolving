@@ -412,20 +412,23 @@ class Agent:
             parts.append(self.specialists.guidance())
         return "[运行环境]\n" + "\n\n".join(parts)
 
-    def _execution_specs(self):
+    def _execution_specs(self, registry=None):
         # Agent.execution_context always creates an isolated tool context.
         from .request_timing import coding_request
-        specs = [s for s in self.registry.visible()
+        registry = self.registry if registry is None else registry
+        specs = [s for s in registry.visible()
                  if s.name not in {'shell_exec', 'notebook_edit'} and 'native' not in s.tags]
         if coding_request.get() and self.depth == 0 and not self.artifacts.has_retained_output():
-            specs = [s for s in specs if 'artifact_store' not in self.registry.required_extras(s.name)]
+            specs = [s for s in specs if 'artifact_store' not in registry.required_extras(s.name)]
         return specs
 
     def _tool_declarations(self):
         return self._tool_surface.project(self._execution_specs(), self.wire_hint)
 
-    def _conversation_guard(self, head):
+    def _conversation_guard(self, head, *, registry=None, surface=None):
         from .conversation_prefix import digest
+        registry = self.registry if registry is None else registry
+        surface = self._tool_surface if surface is None else surface
         routes = []
         if isinstance(self.router, ModelRouter):
             for name, model in self.router._order(None):
@@ -437,15 +440,34 @@ class Agent:
         return digest({'head': head, 'workspace': str(self.workspace.resolve()),
             'policy': repr(self.policy), 'wire': self.wire_hint,
             'mode': self.context_mode, 'routes': routes,
-            'tools': self._tool_declarations(),
+            'tools': surface.project(self._execution_specs(registry), self.wire_hint),
             # 处理器标识用限定名而非 id()：id 是进程内地址，跨实例/跨进程
             # 必不相等，会把所有跨进程快照复用判死（GUI 每轮新建 Agent 时
             # 永远走回退布局）。限定名同代码跨进程稳定，实现被替换时仍失效。
             'handlers': [(s.name,
                           f"{getattr(s.handler, '__module__', '')}."
                           f"{getattr(s.handler, '__qualname__', repr(s.handler))}",
-                          self.registry.effect(s.name).value, self.registry.result_fields(s.name))
-                         for s in self.registry.visible()]})
+                          registry.effect(s.name).value, registry.result_fields(s.name))
+                         for s in registry.visible()]})
+
+    def _restore_discovery(self, discovery, expected_guard):
+        """Rebuild a prospective tool surface without activating anything on the live agent."""
+        if not isinstance(discovery, dict):
+            return None
+        order, names = discovery.get('order'), discovery.get('names')
+        if not all(isinstance(items, list) and items and all(isinstance(n, str) for n in items)
+                   and len(set(items)) == len(items) for items in (order, names)):
+            return None
+        eligible = {s.name for s in self.registry.discoverable(self._tool_context())}
+        if not set(names).issubset(eligible.intersection(order)):
+            return None
+        registry = self.registry.clone()
+        for name in names:
+            registry.activate(name)
+        surface = self._tool_surface.with_order(self.wire_hint, order)
+        guard = self._conversation_guard(self._conversation_head, registry=registry, surface=surface)
+        if guard == expected_guard:
+            return surface, names
 
     def _inject_memory(self) -> list[dict[str, Any]]:
         """Inject the FROZEN memory snapshot as an early user message.
@@ -1023,15 +1045,19 @@ class Agent:
                     paused['plan_tasks'] = list(self._plan.tasks) if self._plan else []
                     paused['latest_todos'] = next((step.meta['todos'] for step in reversed(report.steps)
                         if step.tool == 'update_todos' and step.meta.get('todos')), [])
+        guard = self._conversation_guard(self._conversation_head)
+        order = self._tool_surface.order(self.wire_hint)
+        discovered = [s.name for s in self._execution_specs() if s.is_deferred]
         return self._conversation_prefix.commit(
             paused_task=paused_task,
             history=[*self._chat_history, {'role': 'user', 'content': task},
                      {'role': 'assistant', 'content': report.text}],
             messages=self.secret_scope.protect(messages),
-            guard=self._conversation_guard(self._conversation_head),
+            guard=guard,
             rule_context=self._rule_context, rule_sources=(self._rule_audit or ([], []))[0],
             targets=self._rule_targets, run_envelope=envelope,
             continuation={'prefix_count': len(self._matching_compaction_prefix(messages)),
+                **({'discovery': {'order': list(order), 'names': discovered}} if discovered else {}),
                 **paused,
                 'rule_fragments': list(self._rule_fragments),
                 'revision': self._context_revision, 'transaction_id': self._context_transaction_id,
@@ -1386,16 +1412,12 @@ class Agent:
     # 同工具连发导航（2026-11-09 MiMo 轨迹实测：23 连 grep 烧穿预算——
     # ExecutionGuard 只拦完全相同的重复环，参数不同的同工具 churn 是盲区）。
     _STREAK_ADVICE = {
-        'grep': 'grep 已连续多次仍未收敛：考虑一次 read_file 读全文件，'
-                '或用 shell_exec 运行一段 python 脚本统一提取/计算。',
-        'artifact_grep': 'artifact_grep 已连续多次：考虑 artifact_read 读出相关区间，'
-                         '或用 shell_exec 运行 python 一步完成汇总。',
-        'read_file': '已连续读取多个文件：若目的是汇总/统计，用 shell_exec 运行 '
-                     'python 脚本一次完成全部读取与计算通常更省步骤。',
-        'read_range': '已连续多段读取：考虑 shell_exec 运行 python 一次性汇总所需内容。',
-        'artifact_read': '已连续多次翻页：考虑 shell_exec 运行 python 直接处理原始数据。',
-        'calculator': '已连续多次小步计算：把整段表达式写进一个 python 脚本用 '
-                      'shell_exec 一次算完，避免中间舍入累积。',
+        'grep': '先核对已有命中的文件和行号。已有答案就汇总；仍缺上下文时只读取相邻行。',
+        'artifact_grep': '先核对检索结果的 artifact ID 和位置，再读取命中的区间。',
+        'read_file': '先汇总已读文件的结果。如果记录指向新文件，继续沿引用读取，避免重读同一路径。',
+        'read_range': '核对已经覆盖的行号，只读取回答问题还缺的区间。',
+        'artifact_read': '沿结果里的 next_offset 继续翻页；已取得所需证据时即可作答。',
+        'calculator': '如果表达式的各个输入已经齐全，可以在一次计算中合并这些步骤。',
     }
 
     def _observe_tool_streak(self, name: str) -> None:
@@ -1421,7 +1443,7 @@ class Agent:
             return  # 同一 churn 已提醒过
         advice = self._STREAK_ADVICE.get(
             hot, f'工具 {hot} 在最近 {len(self._tool_window)} 次调用里占了 {hits} 次：'
-                  '请评估是否有更直接的路径（例如 shell_exec 运行 python 一步完成）。')
+                  '检查已有结果是否足以作答，或是否还有新的输入需要处理。')
         self._streak_pending = [advice]
         self._streak_warned_tool = hot
         self._streak_budget -= 1
@@ -1508,13 +1530,19 @@ class Agent:
         from .request_timing import coding_request, coding_resume_task
         paused_task = self.task_id if coding_request.get() and self.depth == 0 and self._acceptance is None else None
         resume_task = paused_task if paused_task == coding_resume_task.get() else None
-        saved = self._conversation_prefix.candidate(previous, self._conversation_guard_start, task_id=resume_task)
+        saved, recovery = self._conversation_prefix.resolve(previous, self._conversation_guard_start,
+            task_id=resume_task, restore=self._restore_discovery)
         reused = None
         if saved is not None:
             targets = list(dict.fromkeys([*self._rule_targets, *saved['targets']]))[:MAX_TARGETS]
             enabled = self.project_rules_enabled and 'read_file' in self.registry.names()
             snapshot = ProjectRules(self.workspace, self.policy, self.secret_scope, enabled=enabled).load(targets)
             if all(source in snapshot.sources for source in saved['rule_sources']):
+                if recovery is not None:
+                    self._tool_surface, discovered = recovery
+                    for name in discovered:
+                        self.registry.activate(name)
+                    self._conversation_guard_start = saved['guard']
                 reused = saved
                 messages = saved['messages']
                 previous = []  # 已由可信宿主快照包含；客户端仍只能提交普通聊天文本。
@@ -1526,7 +1554,8 @@ class Agent:
                 self._prefix_sent = len(messages)
                 self._refresh_project_rules(messages)
                 self._emit(type='cache_prefix_reused', messages=len(saved['messages']),
-                           scope='same-agent continuation; not proof of vendor cache hit')
+                           restored_tools=recovery[1] if recovery is not None else [],
+                           scope='host-validated conversation continuation')
                 continuation = saved.get('continuation', {})
                 count = continuation.get('prefix_count')
                 if count is None:

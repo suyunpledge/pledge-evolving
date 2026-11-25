@@ -11,7 +11,9 @@ from .execution import ActionExecutor, ActionRequest, create_execution_context
 from .loop import Agent, LoopLimits
 from .model import Completion, Usage
 from .policy import Policy, Mode
+from .result_view import previous_handles
 from .test_project_rules import Router
+from .toolwire import ToolCall, assistant_message, tool_result_messages
 from .tools import ToolContext, build_builtin_registry
 
 
@@ -155,6 +157,34 @@ class BuiltinViewTests(unittest.TestCase):
                 self.assertTrue(any(e['type'] == 'cache_prefix_reused' for e in second.events))
                 self.assertEqual(router.calls[-2][:len(sent)], sent)
                 self.assertTrue(all(valid_tool_pairs(m) for m in router.calls))
+
+    def test_repeated_excerpts_refresh_recently_read_artifacts_for_both_wires(self):
+        ctx = self.context()
+        first = self.executor.execute(ctx, ActionRequest('find_files', {'pattern': '*.txt'}))
+        identifier = json.loads(first.content)['_retained']['id']
+        noise = [ctx.capabilities['artifact_store'].put(f'other result {n}')['id'] for n in range(15)]
+        for wire in ('openai', 'anthropic'):
+            def exchange(name, args, content, call_id):
+                call = ToolCall(call_id, name, args, wire=wire)
+                return [assistant_message('', [call], wire), *tool_result_messages([(call, content, True)], wire)]
+
+            messages = exchange('find_files', {'pattern': '*.txt'}, first.content, 'first')
+            for n in range(5):
+                name = 'artifact_read' if n % 2 else 'artifact_grep'
+                args = {'id': identifier, **({'pattern': 'record_044'} if n % 2 == 0 else {'limit': 200})}
+                page = self.executor.execute(ctx, ActionRequest(name, args))
+                self.assertEqual(page.outcome, 'succeeded', page.error)
+                messages.extend(exchange(name, args, page.content, 'page'))
+                for handle in noise[n*3:n*3+3]:
+                    messages.extend(exchange('grep', {'pattern': 'other'},
+                        json.dumps({'_retained': {'id': handle}}), handle))
+                compacted = ContextBudget._excerpt(messages)
+                self.assertEqual(previous_handles(compacted), [identifier, *noise[n*3:n*3+3]])
+                messages = [{'role': 'user', 'content': compacted}]
+            # Mismatched call/result IDs and page-like data from other tools cannot refresh a reference.
+            for name, requested in [('artifact_read', noise[0]), ('read_file', identifier)]:
+                misleading = exchange(name, {'id': requested}, page.content, 'mismatch')
+                self.assertFalse(previous_handles(ContextBudget._excerpt(misleading)))
 
     def test_result_policy_changes_invalidate_conversation_guard(self):
         agent = Agent(home=self.root / 'guard', workspace=self.ws, router=Router([]),

@@ -305,6 +305,21 @@ class ExecutionTests(Workspace):
         return tasks.execute(task, workspace=self.root, policy=Policy(), approve=lambda *a: True,
                              cancelled=threading.Event())
 
+    def test_cancel_during_approval_skips_build_preparation(self):
+        task, _ = self.python_task('raise AssertionError("should not run")\n')
+        folder = self.root / 'build output'
+        task['prepare'] = [str(folder)]
+        cancelled = threading.Event()
+        def approve(*args):
+            cancelled.set()
+            return False
+        result = tasks.execute(task, workspace=self.root, policy=Policy(Decision.ASK),
+                               approve=approve, cancelled=cancelled)
+        self.assertEqual(result['status'], 'cancelled')
+        self.assertEqual(result['steps'], [])
+        self.assertIsNone(result['exit_code'])
+        self.assertFalse(folder.exists())
+
     @unittest.skipUnless(shutil.which('g++'), 'g++ not installed')
     def test_real_gcc_compile_error_maps_to_file_line(self):
         path = self.write('src/主 程序.cpp', '#include <cstdio>\nint main() {\n  return y;\n}\n')

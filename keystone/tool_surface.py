@@ -13,6 +13,14 @@ class ToolSurface:
         child._orders = dict(self._orders)  # tuple 值不可变；子会话后续更新独立。
         return child
 
+    def order(self, wire):
+        return self._orders.get(wire, ())
+
+    def with_order(self, wire, names):
+        child = self.fork()
+        child._orders[wire] = tuple(names)
+        return child
+
     def project(self, specs, wire):
         current = {spec.name: spec for spec in specs}
         order = [name for name in self._orders.get(wire, ()) if name in current]

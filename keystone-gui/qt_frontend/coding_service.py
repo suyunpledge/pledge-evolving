@@ -12,6 +12,7 @@ from keystone.development.runtime import DevelopmentRuntime
 from keystone.development.state import ModeState
 from keystone.secrets import redact
 from .terminal_service import coding_output
+from .coding_project import ProjectContext, install_project_tool
 
 
 class CodingService:
@@ -27,6 +28,7 @@ class CodingService:
         self.contexts, self.events, self.queue = [], [], []
         self.last_prompt, self.status = '', ''
         self.interrupted_request = None
+        self._project_context = self._last_project = None
         self.cancel = threading.Event()
         self._initialize_lock = threading.Lock()
 
@@ -42,11 +44,20 @@ class CodingService:
             from phase_client import apply_planning_key
             runtime.bridge.agent.prepare_planning_route = partial(apply_planning_key, self.host.home)
             runtime.bridge.agent.action_executor.approver = self.host.approve
+            install_project_tool(runtime.bridge.agent, lambda: self._project_context)
+            runtime.bridge.agent.extra_system += (
+                '\nIn the Coding IDE, use ide_context for the active file, selected lines or unsaved text. '
+                'Project-relative file tools also work on unopened files. If a draft is unsaved this turn is read-only.')
             self.catalog, self.runtime = result['models'], runtime
         self.publish()
 
     def event(self, event):
         data = event.get('data', event)
+        if data.get('type') == 'tool_completed':
+            changed = (data.get('meta') or {}).get('file_changes', ())
+            paths = [c['path'] for c in changed if isinstance(c, dict) and isinstance(c.get('path'), str)]
+            if paths:
+                self.host.pages.refresh_documents(paths)
         output = coding_output(data)
         if output:
             self.terminal.publish(str(redact(output)), reveal=data.get('type') == 'test_started')
@@ -85,7 +96,7 @@ class CodingService:
             contexts=[Path(p).name for p in self.contexts], hasDocument=bool(self.host.pages.active_document),
             tasks='\n'.join(self.events[-10:])[-12000:], events='\n'.join(self.events)[-12000:],
             todos=rt.evidence.todos if rt else [], canResume=bool(self.interrupted_request),
-            taskRunning=bool(rt and rt.busy and self.status == '正在处理…'),
+            taskRunning=bool(rt and rt.busy and self._project_context is not None),
             agents=[{'name': a.get('agent', a.get('name', 'Agent')), 'status': a.get('status', ''), 'output': str(a.get('output', ''))[:4000]}
                     for a in list(rt.evidence.agents.values())[-32:]] if rt else [], changes=changes))
 
@@ -121,7 +132,10 @@ class CodingService:
             from phase_client import planning_selection
             _, planner = planning_selection(load_user_layer(self.host.home))
             planning = self.state.take_planning(prompt)
-            request = (prompt, action == 'delegate', self.model, self.role, planning, tuple(self.contexts), planner)
+            project = self._last_project if action == 'retry' else None
+            if project is None:
+                project = ProjectContext.capture(self.host.pages, self.contexts, row.get('focus'))
+            request = (prompt, action == 'delegate', self.model, self.role, planning, project, planner)
             if self.host.running:
                 self.queue.append(request)
             else:
@@ -179,18 +193,26 @@ class CodingService:
         self.cancel = self.host.cancel
         while request and not self.cancel.is_set():
             prompt, delegate, label, role, planning, contexts, planner = request
-            if self.host.pages.unsaved:
-                raise ValueError('请先保存或放弃编辑器修改，再运行 Agent。')
+            project = contexts if isinstance(contexts, ProjectContext) else ProjectContext.capture(self.host.pages, contexts)
+            if project.boundary.root != self.host.workspace:
+                raise ValueError('Coding 工作区已切换，请在新项目中重新发送任务。')
+            project.read_only |= self.host.pages.unsaved
+            read_only = project.read_only
             self.interrupted_request = None
             self.last_prompt = prompt
+            self._last_project = project
             self.message('user', '继续未完成的任务' if resume_task else prompt)
-            self.runtime.bridge.agent.action_executor.trusted_native = self.host.profile != 'sandbox'
-            self.status = '正在处理…'
+            self.runtime.bridge.agent.action_executor.trusted_native = not read_only and self.host.profile != 'sandbox'
+            self.status = '正在只读分析未保存的项目…' if read_only else '正在处理…'
             self.publish()
-            result = self.runtime.run(prompt, explicit_model=self.pair(label), role=role,
-                permission=self.host.permission_mode, planning=planning, planning_model=planner,
-                contexts=[{'path': p, 'content': self.host.pages.documents[p].text} for p in contexts if p in self.host.pages.documents],
-                delegate=delegate, cancellation=self.cancel, resume_task=resume_task)
+            self._project_context = project
+            try:
+                result = self.runtime.run(prompt, explicit_model=self.pair(label), role=role,
+                    permission='read-only' if read_only else self.host.permission_mode, planning=planning, planning_model=planner,
+                    contexts=project.attachments(), delegate=delegate, cancellation=self.cancel, resume_task=resume_task)
+            finally:
+                self._project_context = None
+                self.host.pages.refresh_documents()
             if result.get('can_resume'):
                 self.interrupted_request = (request, self.runtime.last_task_id)
             resume_task = None
@@ -198,7 +220,6 @@ class CodingService:
             self.status = '已停止' if self.cancel.is_set() else '任务结束'
             if result.get('stopped') == 'error' and self.interrupted_request:
                 self.status = '模型连接中断，可继续'
-            self.host.pages.refresh_documents()
             with self.host.lock:
                 request = self.queue.pop(0) if self.queue and not self.cancel.is_set() else None
         self.publish()
@@ -210,6 +231,7 @@ class CodingService:
             raise ValueError('请先保存或放弃编辑器修改。')
         if action == 'new':
             self.interrupted_request = None
+            self.last_prompt, self._last_project = '', None
             from keystone.session import Session
             from keystone.development.evidence import TaskEvidence
             old = rt.bridge.agent.session
@@ -228,6 +250,7 @@ class CodingService:
         elif action == 'restore':
             result = rt.restore_history(value)
             self.interrupted_request = None
+            self.last_prompt, self._last_project = '', None
             self.host.emit('coding_message', message=None)
             self.message('assistant', json.dumps(result, ensure_ascii=False, indent=2))
         elif action == 'review':

@@ -51,6 +51,8 @@ VENDORS: tuple[Vendor, ...] = (
     Vendor("deepseek", "DeepSeek", "写代码强·便宜", "https://api.deepseek.com",
            ("deepseek-chat", "deepseek-reasoner"), "https://platform.deepseek.com/api_keys",
            badge="推荐", color="#4D6BFE", letter="D"),
+    _catalog_vendor("openai", "GPT 系列模型", ("gpt-6.1-sol",),
+                    "https://platform.openai.com/api-keys", color="#367D71", letter="O"),
     Vendor("moonshot", "Kimi", "长上下文", "https://api.moonshot.cn/v1",
            ("kimi-k2", "kimi-k2-turbo"), "https://platform.moonshot.cn/console/api-keys",
            color="#1F1F1F", letter="K"),
@@ -219,9 +221,10 @@ def probe(address: str, key: str, *, wire: str = "openai", keyless: bool = False
     elif key:
         headers["Authorization"] = f"Bearer {key}"
     request = urllib.request.Request(url, headers=headers, method="GET")
+    max_bytes = 4 * 1024 * 1024
     try:
         with opener(request, timeout=timeout) as response:
-            body = response.read(256 * 1024)
+            body = response.read(max_bytes + 1)
     except urllib.error.HTTPError as exc:
         if exc.code in (401, 403):
             return {"ok": False, "error": "密钥无效或没有权限，请检查是否复制完整"}
@@ -229,9 +232,19 @@ def probe(address: str, key: str, *, wire: str = "openai", keyless: bool = False
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         hint = "本地 Ollama 没有运行" if keyless else "网络连不上该厂商（海外厂商可能需要代理）"
         return {"ok": False, "error": f"{hint}，请检查接口地址。"}
+    if len(body) > max_bytes:
+        return {"ok": False, "error": "模型列表超过 4 MiB，无法验证。可以先保存配置。"}
     try:
-        data = json.loads(body.decode("utf-8", "replace"))
-        count = len(data.get("data") or data.get("models") or [])
-    except (ValueError, AttributeError):
-        count = 0
-    return {"ok": True, "message": f"连接成功{f'，可用模型 {count} 个' if count else ''}"}
+        data = json.loads(body)
+    except (ValueError, RecursionError):
+        data = None
+    models = data.get("data", data.get("models")) if isinstance(data, dict) and not data.get("error") else None
+    if isinstance(models, list):
+        for item in models:
+            if isinstance(item, dict):
+                item = item.get("id") or item.get("name") or item.get("model")
+            if not isinstance(item, str) or not item.strip():
+                break
+        else:
+            return {"ok": True, "message": f"连接成功，可用模型 {len(models)} 个"}
+    return {"ok": False, "error": "接口已响应，但未返回有效的模型列表。请检查接口地址。"}

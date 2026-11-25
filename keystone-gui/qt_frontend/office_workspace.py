@@ -12,12 +12,14 @@ from zipfile import BadZipFile, ZIP_DEFLATED, ZipFile
 
 from keystone.runtime_lock import named_resource_lock
 from .local_tool_runtime import workspace_path
+from .office_charts import CHART_FIELD, parse_chart
+from .office_slides import SLIDE, arrange, slide_order, validate_design
 
 EXTENSIONS = {"document": ".kdoc", "spreadsheet": ".ksheet", "presentation": ".kslides"}
 FIELDS = {
     "document": r"P[1-9][0-9]{0,3}(?:\.style)?",
-    "spreadsheet": r"(?:T[1-9][0-9]?\.)?(?:[A-Z]{1,2}[1-9][0-9]{0,3})|T[1-9][0-9]?\.name",
-    "presentation": r"S[1-9][0-9]{0,2}(?:\.body)?",
+    "spreadsheet": r"(?:T[1-9][0-9]?\.)?(?:[A-Z]{1,2}[1-9][0-9]{0,3})|T[1-9][0-9]?\.(?:name|chart)",
+    "presentation": rf"(?:{SLIDE.pattern}|slideOrder|slideTheme)",
 }
 MAX_BYTES = 6 * 1024 * 1024
 
@@ -27,6 +29,10 @@ def validate(kind, field, value):
         field != "title" and not re.fullmatch(FIELDS[kind], field)
     ):
         raise ValueError("字段地址无效。")
+    if kind == "spreadsheet" and CHART_FIELD.fullmatch(field):
+        if value is not None:
+            parse_chart(value)
+        return
     if kind == "spreadsheet" and field.startswith("T1.") and field != "T1.name":
         raise ValueError("首张工作表请直接使用 A1 等单元格地址。")
     if value is None and field != "title":
@@ -39,6 +45,8 @@ def validate(kind, field, value):
         raise ValueError("字段内容无效或过长。")
     if field == "title" and (not value.strip() or len(value) > 120):
         raise ValueError("文件标题应为 1 至 120 个字符。")
+    if kind == "presentation":
+        validate_design(field, value)
     if field.endswith(".style") and value not in ("paragraph", "heading", "bullet"):
         raise ValueError("请选择正文、标题或列表。")
     if field.endswith(".name") and (
@@ -109,6 +117,16 @@ class OfficeWorkspace:
             json.JSONDecodeError,
         ) as exc:
             raise ValueError("办公文件损坏，无法打开。") from exc
+
+    def read_for_tool(self, doc_id):
+        # Models sometimes copy the full UUID but omit its native file extension.
+        if isinstance(doc_id, str) and re.fullmatch(r"[a-fA-F0-9]{32}", doc_id):
+            names = [doc_id.lower() + ext for ext in EXTENSIONS.values()]
+            matches = [name for name in names if self.location(name).is_file()]
+            if len(matches) != 1:
+                raise ValueError("无法唯一确定办公文件，请使用完整文件编号。")
+            doc_id = matches[0]
+        return self.load(doc_id)
 
     def save(self, doc):
         path = self.location(doc["id"])
@@ -194,6 +212,13 @@ class OfficeWorkspace:
                 and args.get("value") in ("suggest", "direct")
             ):
                 d["mode"] = args["value"]
+            elif action == "arrange" and author == "user":
+                changes = arrange(d, args)
+                if not changes:
+                    return d
+                label = {"insert": "插入幻灯片", "duplicate": "复制幻灯片",
+                         "move": "移动幻灯片", "delete": "删除幻灯片"}[args["command"]]
+                self.record(d, changes, author, label)
             elif action == "apply" and "suggestions" in args:
                 if author != "ai" or "changes" in args:
                     raise ValueError("请单独提交逐项审核的 AI 建议。")
@@ -267,12 +292,19 @@ class OfficeWorkspace:
                 if entry is None:
                     raise ValueError("没有可撤销的修改。")
                 touched = {e["field"] for e in entry["changes"]}
+                membership = set(entry.get("slideMembership", ()))
+                def overlaps(edit):
+                    key = edit["field"]
+                    return key in touched or key.split(".")[0] in membership
+
                 if any(fields.get(e["field"]) != e["value"] for e in entry["changes"]) or any(
                     later["version"] > entry["version"] and not later.get("undone")
-                    and any(e["field"] in touched for e in later["changes"])
+                    and any(overlaps(e) for e in later["changes"])
                     for later in d["history"]
                 ):
                     raise ValueError("后续编辑使用了相同字段，已保留当前内容。")
+                if membership and any(any(overlaps(e) for e in p["changes"]) for p in d["pending"]):
+                    raise ValueError("请先处理该页的待审建议，再撤销页面操作。")
                 apply_values(
                     fields,
                     [
@@ -321,8 +353,15 @@ class OfficeWorkspace:
 
     @staticmethod
     def record(d, changes, author, label):
+        track_pages = d["kind"] == "presentation" and any(
+            (e["before"] is None or e["value"] is None) and SLIDE.fullmatch(e["field"]) for e in changes)
+        prior_pages = set(slide_order(d["fields"])) if track_pages else set()
         apply_values(d["fields"], changes)
         d["history"].append(
             dict(version=d["version"] + 1, label=label, author=author, changes=changes)
         )
+        if track_pages:
+            membership = prior_pages.symmetric_difference(slide_order(d["fields"]))
+            if membership:
+                d["history"][-1]["slideMembership"] = sorted(membership)
         del d["history"][:-60]

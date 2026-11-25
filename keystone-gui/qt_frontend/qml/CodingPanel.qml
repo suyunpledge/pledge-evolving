@@ -51,7 +51,13 @@ Item {
         }
         RowLayout {
             Layout.fillWidth: true
-            Text { Layout.fillWidth: true; text: pane.stateData.project || "尚未打开项目"; color: "#a5b0bf"; font.pixelSize: 12; elide: Text.ElideMiddle }
+            Text {
+                Layout.fillWidth: true
+                readonly property string file: workbench.pageData.development?.document?.relative || ""
+                text: [pane.stateData.project || "尚未打开项目", file].filter(Boolean).join(" / ")
+                color: "#a5b0bf"; font.pixelSize: 12; elide: Text.ElideMiddle
+                Accessible.name: "Agent 工作区 " + text
+            }
             GlassButton {
                 material: pane.material; glyph: "shield"; text: workbench.permissionLabel
                 height: 30; Layout.preferredHeight: 30; selected: true
@@ -153,7 +159,7 @@ Item {
                 Column {
                     id: welcome; x: 10; y: 12; width: parent.width - 20; spacing: 10
                     Text { width: parent.width; text: pane.stateData.ready ? "开始一个任务" : "正在载入 Coding…"; color: "#edf1f6"; font.pixelSize: 20; font.weight: Font.DemiBold }
-                    Text { width: parent.width; text: pane.stateData.locked || "描述要完成的工作，或从下方选一个任务模板。"; color: "#a3b0bf"; font.pixelSize: 13; wrapMode: Text.Wrap }
+                    Text { width: parent.width; text: pane.stateData.locked || "可直接查找和修改项目文件，也可以选中代码后提问。"; color: "#a3b0bf"; font.pixelSize: 13; wrapMode: Text.Wrap }
                     Repeater {
                         model: [{label:"解释项目结构", icon:"book-open"}, {label:"找出并修复测试", icon:"clipboard-check"}, {label:"添加一个功能", icon:"plus"}]
                         GlassButton {
@@ -224,7 +230,9 @@ Item {
         }
         Text {
             Layout.fillWidth: true; elide: Text.ElideRight; color: "#9caaba"; font.pixelSize: 11
-            text: (pane.stateData.queue ? "排队 " + pane.stateData.queue + "/3 · " : "") + (pane.stateData.status || "Enter 发送 · Shift+Enter 换行")
+            text: (pane.stateData.queue ? "排队 " + pane.stateData.queue + "/3 · " : "") +
+                  (workbench.hasUnsavedDocuments && !pane.stateData.busy ? "有未保存的编辑，本轮只读 · 保存后可修改项目" :
+                    pane.stateData.status || "Enter 发送 · Shift+Enter 换行")
         }
     }
 

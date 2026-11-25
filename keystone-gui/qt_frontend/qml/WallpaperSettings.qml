@@ -42,25 +42,47 @@ Popup {
             Rectangle {
                 id: frame
                 anchors { left: parent.left; right: parent.right; top: parent.top }
-                height: 78; radius: 10; clip: true
-                color: "#182230"
-                border.width: tile.current ? 2 : tile.visualFocus || tile.hovered ? 1 : 0
-                border.color: tile.current ? Theme.accent : "#55ffffff"
-                // Built-in background: a small aurora swatch instead of a file preview.
+                height: 80; radius: 11; clip: true
+                color: "#151f2c"
+                scale: tile.pressed ? 0.98 : (tile.hovered && !settings.reduced ? 1.015 : 1.0)
+                Behavior on scale { NumberAnimation { duration: settings.reduced ? 0 : 140; easing.type: Easing.OutCubic } }
+                border.width: tile.current ? 2 : tile.visualFocus ? 2 : tile.hovered ? 1 : 0
+                border.color: tile.current ? Theme.accent : tile.visualFocus ? Theme.focusRing : "#66ffffff"
+                // Built-in background: a polar aurora + starlight swatch matching ambient.frag.
                 gradient: tile.itemId ? null : aurora
                 Gradient {
                     id: aurora
-                    orientation: Gradient.Horizontal
-                    GradientStop { position: 0; color: "#16233a" }
-                    GradientStop { position: 0.55; color: "#24406a" }
-                    GradientStop { position: 1; color: "#3a2b46" }
+                    orientation: Gradient.Vertical
+                    GradientStop { position: 0.0; color: "#0c1528" }
+                    GradientStop { position: 0.52; color: "#15334d" }
+                    GradientStop { position: 1.0; color: "#1a3b44" }
+                }
+                Canvas {
+                    anchors.fill: parent
+                    visible: !tile.itemId
+                    onPaint: {
+                        const ctx = getContext("2d")
+                        ctx.clearRect(0, 0, width, height)
+                        const g = ctx.createRadialGradient(width * 0.72, height * 0.32, 2, width * 0.65, height * 0.55, width * 0.6)
+                        g.addColorStop(0.0, "rgba(110, 228, 215, 0.34)")
+                        g.addColorStop(0.55, "rgba(91, 155, 248, 0.18)")
+                        g.addColorStop(1.0, "rgba(150, 110, 220, 0.0)")
+                        ctx.fillStyle = g
+                        ctx.fillRect(0, 0, width, height)
+                        ctx.fillStyle = "rgba(240, 248, 255, 0.75)"
+                        for (const pt of [[0.22, 0.28, 1.3], [0.78, 0.24, 1.6], [0.58, 0.38, 1.1], [0.35, 0.62, 1.2]]) {
+                            ctx.beginPath()
+                            ctx.arc(width * pt[0], height * pt[1], pt[2], 0, Math.PI * 2)
+                            ctx.fill()
+                        }
+                    }
                 }
                 Image {
                     anchors { fill: parent; margins: frame.border.width }
                     visible: !!tile.itemId && status === Image.Ready
                     source: tile.preview
                     sourceSize: Qt.size(320, 200)
-                    asynchronous: true
+                    asynchronous: true; smooth: true
                     fillMode: Image.PreserveAspectCrop
                 }
                 Glyph {
@@ -71,13 +93,19 @@ Popup {
                 Rectangle {
                     visible: tile.kind === "gif" || tile.kind === "video"
                     anchors { left: parent.left; bottom: parent.bottom; margins: 6 }
-                    width: badge.implicitWidth + 10; height: 18; radius: 6; color: "#b3080c12"
-                    Text { id: badge; anchors.centerIn: parent; text: tile.kind === "gif" ? "GIF" : "视频"; color: "#e6edf5"; font.pixelSize: 10 }
+                    width: badgeRow.implicitWidth + 10; height: 19; radius: 6
+                    color: "#c8080c12"; border.color: "#2affffff"; border.width: 1
+                    Row {
+                        id: badgeRow; anchors.centerIn: parent; spacing: 3
+                        Glyph { visible: tile.kind === "video"; width: 9; height: 9; name: "play"; ink: "#b8d4ff"; anchors.verticalCenter: parent.verticalCenter }
+                        Text { id: badge; text: tile.kind === "gif" ? "GIF" : "视频"; color: "#e6edf5"; font.pixelSize: 10; font.weight: Font.Medium; anchors.verticalCenter: parent.verticalCenter }
+                    }
                 }
                 Rectangle {
                     visible: tile.current
                     anchors { right: parent.right; top: parent.top; margins: 6 }
-                    width: 20; height: 20; radius: 10; color: Theme.accent
+                    width: 21; height: 21; radius: 10.5; color: Theme.accent
+                    border.color: "#88ffffff"; border.width: 1
                     Glyph { anchors.centerIn: parent; width: 12; height: 12; name: "check"; ink: Theme.accentInk }
                 }
                 AbstractButton {
@@ -156,16 +184,49 @@ Popup {
             color: Theme.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
         }
         RowLayout {
-            Layout.fillWidth: true; enabled: !!settings.wallpaper.kind
+            Layout.fillWidth: true; spacing: 10; enabled: !!settings.wallpaper.kind
+            opacity: enabled ? 1.0 : 0.48
             Text { text: "背景压暗"; color: "#c0cad5"; font.pixelSize: 13 }
             Slider {
                 id: dimming; objectName: "wallpaperDim"
-                Layout.fillWidth: true; from: 0; to: 0.9; stepSize: 0.01; live: false
+                Layout.fillWidth: true; from: 0; to: 0.9; stepSize: 0.01; live: true
                 value: settings.wallpaper.dim
                 Accessible.name: "背景压暗"
-                onMoved: settings.wallpaper.setDim(value)
+                onMoved: {
+                    if (pressed) settings.wallpaper.previewDim(value)
+                    else settings.wallpaper.setDim(value)
+                }
+                onPressedChanged: if (!pressed) settings.wallpaper.setDim(value)
+                background: Rectangle {
+                    x: dimming.leftPadding
+                    y: dimming.topPadding + dimming.availableHeight / 2 - 4
+                    width: dimming.availableWidth; height: 8; radius: 4
+                    color: "#26ffffff"; border.color: "#22ffffff"; border.width: 1
+                    Rectangle {
+                        width: dimming.visualPosition * parent.width; height: parent.height; radius: 4
+                        color: Theme.accent; opacity: 0.78
+                    }
+                }
+                handle: Rectangle {
+                    x: dimming.leftPadding + dimming.visualPosition * (dimming.availableWidth - width)
+                    y: dimming.topPadding + dimming.availableHeight / 2 - height / 2
+                    width: 20; height: 20; radius: 10
+                    color: dimming.pressed ? "#ffffff" : "#e9eef5"
+                    border.color: dimming.visualFocus ? Theme.focusRing : Theme.accent
+                    border.width: dimming.visualFocus ? 2 : 1.5
+                }
             }
-            Text { text: Math.round(dimming.value * 100) + "%"; color: "#c0cad5"; font.pixelSize: 13 }
+            Text {
+                Layout.preferredWidth: 36; horizontalAlignment: Text.AlignRight
+                text: Math.round(dimming.value * 100) + "%"
+                color: "#d6e0eb"; font.pixelSize: 13
+            }
+            GlassButton {
+                material: settings.material; quiet: true; implicitHeight: 28
+                visible: !!settings.wallpaper.kind && Math.abs(settings.wallpaper.dim - 0.52) >= 0.015
+                text: "默认"; tip: "恢复 52% 最佳阅读对比度"
+                onClicked: settings.wallpaper.setDim(0.52)
+            }
         }
         Text {
             Layout.fillWidth: true

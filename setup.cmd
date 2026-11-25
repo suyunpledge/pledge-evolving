@@ -113,7 +113,7 @@ exit /b 0
 echo [3/4] 准备 Qt 桌面运行时（首次约需下载 200 MB）...
 if not exist "%QTPY%" "%PYEXE%" -m venv "%~dp0.venv\qt"
 if not exist "%QTPY%" goto :qt_fail
-"%QTPY%" -c "import PySide6" >nul 2>nul && goto :qt_ready
+"%QTPY%" -c "from importlib.util import find_spec; import sys; sys.exit(any(find_spec(n) is None for n in ('PySide6','comtypes','rapidocr_onnxruntime')))" >nul 2>nul && goto :qt_ready
 "%QTPY%" -m pip install --disable-pip-version-check -q -r keystone-gui\requirements-qt.txt
 if errorlevel 1 (
   echo       官方源失败，改用清华镜像重试...
