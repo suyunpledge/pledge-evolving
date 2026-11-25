@@ -21,7 +21,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Callable
 from http_transport import open_response, RequestCancelled
-from keystone.secrets import SecretScope, redact, VendorCredential
+from keystone.secrets import SecretScope, redact, VendorCredential, is_code_path, source_arguments, source_observation
 from keystone.planning import TaskPlan
 from keystone.request_timing import (gateway_client_timeout, request_timeout, transient_disconnect,
                                  METADATA_RESPONSE_TIMEOUT, TOOL_RESPONSE_TIMEOUT)
@@ -214,7 +214,8 @@ class KeystoneGatewayClient:
                   plugin_context: dict | None = None) -> dict:
         """POST /v1/tools/call → gateway 走完整 policy gate 执行一个 keystone 工具。"""
         run_id, action_id = (__import__('uuid').uuid4().hex for _ in range(2))
-        body = {"name": name, "arguments": arguments or {}, 'run_id': run_id, 'action_id': action_id}
+        canonical = name.removeprefix("keystone_")
+        body = {"name": name, "arguments": source_arguments(canonical, arguments or {}), 'run_id': run_id, 'action_id': action_id}
         if plugin_context is not None:
             if self.plugin_policy_version != 1:
                 self.list_tools(timeout=timeout)
@@ -231,7 +232,14 @@ class KeystoneGatewayClient:
             tool_timeout = max(tool_timeout, execution_timeout + 30)
         try:
             with open_response(req, timeout=tool_timeout, cancel_event=None) as resp:
-                return redact(json.loads(resp.read().decode("utf-8", "replace")))
+                result = json.loads(resp.read().decode("utf-8", "replace"))
+                if (canonical in ('read_file', 'read_range') and result.get('ok') and isinstance(result.get('content'), str)
+                        and isinstance(arguments, dict) and isinstance(arguments.get('path'), str) and is_code_path(arguments['path'])):
+                    meta = result.get('meta') or {}
+                    start = meta.get('start')
+                    result['content'] = source_observation(self.secret_scope.protect_text(result['content'], code=True),
+                        start if start == meta.get('end') else None)
+                return redact(result)
         except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException) as e:
             detail = f"HTTP {e.code}: {http_error_detail(e)}" if isinstance(e, urllib.error.HTTPError) else str(e)
             error = GatewayError(detail)

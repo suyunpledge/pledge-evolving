@@ -59,7 +59,7 @@ class ArtifactGatewayTests(unittest.TestCase):
 
     def test_gateway_source_read_edit_round_trip_and_placeholder_rejection(self):
         path = self.ws / 'settings.py'
-        source = "token = args.get('credential')\npassword = cfg.password\n"
+        source = "token = args.get('credential')\npassword = cfg.password\nsecret = value\n"
         path.write_text(source, encoding='utf-8')
         _, base = self.gateway()
 
@@ -68,16 +68,32 @@ class ArtifactGatewayTests(unittest.TestCase):
                 'name': name, 'arguments': arguments})
             return response
 
-        result = call('read_range', {'path': path.name, 'start': 1, 'end': 2})
+        result = call('read_range', {'path': path.name, 'start': 1, 'end': 3})
         self.assertTrue(result['ok'], result)
         rows = [line.split('\t', 1)[1] for line in result['content'].splitlines()]
         self.assertEqual(rows, source.splitlines())
+        from keystone.secrets import SecretScope
+        import json
+        single = call('read_range', {'path': path.name, 'start': 3, 'end': 3})
+        value = {**single, 'content': single['content'].removeprefix('3\t')}
+        outgoing = {'role': 'tool', 'content': json.dumps(value), 'tool_call_id': 'read-source'}
+        consumer = SecretScope()
+        self.addCleanup(consumer.close)
+        self.assertEqual(json.loads(consumer.protect(outgoing)['content'])['content'], 'secret = value')
+        unissued = {**value, 'content': 'secret = anotherprivatevalue'}
+        self.assertNotEqual(consumer.protect(unissued)['content'], unissued['content'])
+        symbolic = call('edit_file', {'path': path.name, 'old': rows[2], 'new': 'secret = value.strip()'})
+        self.assertTrue(symbolic['ok'], symbolic)
         updated = call('edit_file', {'path': path.name, 'old': rows[0], 'new': "token = args.get('session')"})
         self.assertTrue(updated['ok'], updated)
         self.assertIn("args.get('session')", path.read_text(encoding='utf-8'))
         denied = call('write_file', {'path': path.name, 'content': 'token = {{SECRET_REF:placeholder}}'})
         self.assertFalse(denied['ok'])
         self.assertNotIn('SECRET_REF', path.read_text(encoding='utf-8'))
+        shown_marker = call('edit_file', {'path': path.name, 'start': 1, 'end': 1,
+                                          'new': 'value = "[REDACTED_SECRET]"'})
+        self.assertFalse(shown_marker['ok'])
+        self.assertNotIn('[REDACTED_SECRET]', path.read_text(encoding='utf-8'))
 
     def test_builtin_search_view_and_receipt_retain_plain_source(self):
         for i in range(85):

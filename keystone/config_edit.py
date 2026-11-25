@@ -13,7 +13,7 @@ import time
 import weakref
 
 from .policy import Decision
-from .secrets import REF, assert_public_path, secret_field, _restore_config, read_public_bytes
+from .secrets import MARKER, REF, assert_public_path, secret_field, _restore_config, read_public_bytes
 
 _LOCK = threading.RLock()
 _VIEWS = weakref.WeakKeyDictionary()
@@ -310,6 +310,8 @@ def _validate(original, candidate, *, scope=None, target='', revision=''):
                     if not permitted(path, 'secret.delete', None):
                         raise PermissionError('Protected secret cannot be removed, replaced or swapped; use the human credential editor')
     for path, value in new.items():
+        if isinstance(value, str) and MARKER in value and old.get(path) != value:
+            raise PermissionError('Cannot write a redaction placeholder to configuration')
         if isinstance(value, str) and ('SECRET_REF' in value or '{{SECRET' in value):
             if old.get(path) != value or not REF.search(value):
                 if path not in allowed_fields or not REF.fullmatch(value) or not any(

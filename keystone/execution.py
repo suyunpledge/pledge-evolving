@@ -13,7 +13,7 @@ import uuid
 
 from .policy import Policy
 from .runtime_lock import resource_lock
-from .secrets import SecretScope, redact
+from .secrets import SecretScope, redact, source_arguments
 from .tools import ToolContext, ToolResult
 from .protocol import PROTOCOL_VERSION
 
@@ -309,6 +309,7 @@ class ActionExecutor:
 
     def _execute(self, ctx, request, *, preflight=None):
         ctx.validate()
+        request = replace(request, arguments=source_arguments(request.name, request.arguments))
         # The same identity cannot be dispatched concurrently or replayed after
         # process death. This is deduplication of recorded intents, not exactly-once.
         key = (ctx.run.run_id, request.action_id)

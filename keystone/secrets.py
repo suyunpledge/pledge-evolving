@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 import base64
+from collections import OrderedDict
+import hashlib
 import json
 import logging
 import os
@@ -23,6 +25,56 @@ _LOCK = threading.RLock()
 _KNOWN: set[str] = set()
 _NUMERIC_VALUES: set[tuple[type, object]] = set()
 _KNOWN_BYTES = 0
+_SOURCE_DIGESTS = OrderedDict()
+
+
+class ScannedSource(str):
+    """Source text from a host file operation. Slices keep their source context."""
+    def __getitem__(self, key):
+        return ScannedSource(super().__getitem__(key))
+
+
+def source_observation(text, single_line=None):
+    # Store only bounded digests, so re-serializing an issued tool receipt can
+    # recover its context after crossing JSON. Unknown and changed text gets the
+    # regular credential scan. Known credentials are checked again on every use.
+    if not any(secret_field(m['key']) for m in _ASSIGN.finditer(text)):
+        return text
+    rows = [text]
+    if type(single_line) is int and text.startswith(f'{single_line}\t'):
+        rows.append(text.split('\t', 1)[1])
+    with _LOCK:
+        for row in rows:
+            if 0 < len(row) <= 16384:
+                digest = hashlib.sha256(row.encode('utf-8', 'surrogatepass')).digest()
+                _SOURCE_DIGESTS[digest] = None
+                _SOURCE_DIGESTS.move_to_end(digest)
+                if len(_SOURCE_DIGESTS) > 512:
+                    _SOURCE_DIGESTS.popitem(last=False)
+    return ScannedSource(text)
+
+
+def source_arguments(name, args):
+    """Preserve language context only for source fields of typed file operations."""
+    if not isinstance(args, dict) or name not in ('edit_file', 'write_file', 'apply_patch'):
+        return args
+    def tagged(block):
+        if not isinstance(block, dict) or not isinstance(block.get('path'), str) or not is_code_path(block['path']):
+            return block
+        result = dict(block)
+        for key in ('old', 'new', 'content'):
+            value = result.get(key)
+            # This additional exemption is only for a syntactic assignment to a
+            # variable. Comments, configuration values and string literals take
+            # the ordinary credential scan.
+            if isinstance(value, str) and re.fullmatch(r'[ \t]*[A-Za-z_]\w*[ \t]*=[ \t]*[A-Za-z_]\w*[ \t]*\n?', value):
+                result[key] = ScannedSource(value)
+        return result
+    if name == 'apply_patch':
+        return {k: [tagged(b) for b in v] if k in ('edits', 'patches') and isinstance(v, list) else v for k, v in args.items()}
+    return tagged(args)
+
+
 _PATHS: set[Path] = set()
 _IDENTITIES: set[tuple[int, int]] = set()
 _KEYS = {'apikey', 'accesskey', 'secretkey', 'secretaccesskey', 'accesskeysecret',
@@ -120,6 +172,7 @@ def forget_known_secrets() -> None:
     global _KNOWN_BYTES
     with _LOCK:
         _KNOWN.clear()
+        _SOURCE_DIGESTS.clear()
         _KNOWN_BYTES = 0
 
 
@@ -328,6 +381,11 @@ class SecretScope:
             out = {}
             for key, item in value.items():
                 safe_key = self.protect_text(str(key))
+                if (key == 'content' and isinstance(item, str) and 0 < len(item) <= 16384
+                        and (value.get('ok') is True and isinstance(value.get('meta'), dict) or value.get('role') == 'tool')):
+                    with _LOCK:
+                        if hashlib.sha256(item.encode('utf-8', 'surrogatepass')).digest() in _SOURCE_DIGESTS:
+                            item = ScannedSource(item)
                 if key == 'authorization' and isinstance(item, str) and item in {'allow', 'deny', 'ask'}:
                     out[safe_key] = item
                     continue
@@ -343,6 +401,8 @@ class SecretScope:
         if isinstance(value, (list, tuple)):
             return [self.protect(v, vendor=vendor, _depth=_depth + 1,
                                  _container_secret=_container_secret) for v in value]
+        if isinstance(value, ScannedSource) and not _container_secret:
+            return ScannedSource(self.protect_text(str(value), code=True))
         if isinstance(value, str):
             return self.reference(value) if _container_secret else self.protect_text(value)
         if isinstance(value, (int, float, bool)):
@@ -373,6 +433,31 @@ class SecretScope:
             if any(isinstance(item, (int, float, bool)) and protected.get(key) != item
                    for key, item in _leaves(value)):
                 return json.dumps(safe, ensure_ascii=False, default=str)
+        if path.suffix.lower() in ('.py', '.pyi') and any(secret_field(m['key']) for m in _ASSIGN.finditer(text)):
+            # Comments and strings contain data even in Python files. Detect
+            # assignments inside those tokens before treating executable names as expressions.
+            import io
+            import tokenize
+            offsets = [0]
+            for line in text.splitlines(keepends=True):
+                offsets.append(offsets[-1] + len(line))
+            changes = []
+            try:
+                for token in tokenize.generate_tokens(io.StringIO(text).readline):
+                    if token.type not in (tokenize.COMMENT, tokenize.STRING) or not _ASSIGN.search(token.string):
+                        continue
+                    clean = self.protect_text(token.string, code=False)
+                    if clean != token.string:
+                        start, end = token.start, token.end
+                        changes.append((offsets[start[0]-1] + start[1], offsets[end[0]-1] + end[1], clean))
+            except (tokenize.TokenError, IndentationError, SyntaxError):
+                return self.protect_text(text, code=False)
+            if changes:
+                parts, pos = [], 0
+                for begin, end, clean in changes:
+                    parts.extend((text[pos:begin], clean))
+                    pos = end
+                text = ''.join(parts) + text[pos:]
         return self.protect_text(text, code=is_code_path(path))
 
     def close(self):
@@ -394,7 +479,8 @@ def redact(value):
             if isinstance(v, str):
                 for ref in new_refs:
                     v = v.replace(ref, MARKER)
-                return _known_text(v, lambda _: MARKER)
+                clean_text = _known_text(v, lambda _: MARKER)
+                return ScannedSource(clean_text) if isinstance(v, ScannedSource) else clean_text
             if isinstance(v, dict):
                 return {clean(k): clean(item) for k, item in v.items()}
             if isinstance(v, list):

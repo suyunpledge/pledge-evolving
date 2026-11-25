@@ -44,6 +44,15 @@ class CodeAwareDetection(unittest.TestCase):
             with self.subTest(line=line):
                 self.assertEqual(scope.protect_text(line), line)
 
+    def test_comments_are_data_even_when_an_exact_source_receipt_is_carried_forward(self):
+        scope = SecretScope()
+        self.addCleanup(scope.close)
+        raw = 'def f(value):\n    token = value\n    # password = examplecommentvalue\n'
+        scanned = scope.document_text(Path('logic.py'), raw)
+        self.assertIn('token = value', scanned)
+        self.assertNotIn('examplecommentvalue', scanned)
+        self.assertRegex(scope.document_text(Path('data.txt'), 'token = value'), REF)
+
     def test_data_file_and_prefixed_source_literals_keep_their_protection(self):
         scope = SecretScope()
         self.addCleanup(scope.close)

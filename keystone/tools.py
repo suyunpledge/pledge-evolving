@@ -25,7 +25,7 @@ from typing import Any, Callable, Iterable
 from .policy import Decision, Policy, ToolEffect
 from .runtime_lock import resource_lock
 from contextlib import contextmanager, ExitStack
-from .secrets import SecretScope, assert_public_path, redact, read_public_bytes
+from .secrets import MARKER, SecretScope, assert_public_path, is_code_path, redact, read_public_bytes, source_arguments, source_observation
 from .compat import home_roots, workspace_dirs
 
 
@@ -546,6 +546,9 @@ class ToolRegistry:
             from .secrets import FILE_SCANNED_TOOLS
             result.content = ctx.secret_scope.protect_text(
                 result.content, code=name in FILE_SCANNED_TOOLS)
+            if result.ok and name in {'read_range', 'read_file'} and is_code_path((args or {}).get('path', '')):
+                start = result.meta.get('start')
+                result.content = source_observation(result.content, start if start == result.meta.get('end') else None)
             result.error = redact(result.error)
             result.meta = redact(result.meta)
             result.meta.setdefault('outcome', 'unknown' if result.meta.get('execution_state') == 'unknown' else 'cancelled' if result.meta.get('error_code') == 'cancelled' else 'succeeded' if result.ok else 'failed')
@@ -749,8 +752,11 @@ class ToolRegistry:
                     return ToolResult(False, error="Protected configuration requires edit_config; raw rewrite denied",
                                       meta={"authorization": "deny"})
         if name in {"write_file", "edit_file", "apply_patch"}:
-            if 'SECRET_REF' in json.dumps(args) or ctx.secret_scope.protect(args) != args:
-                return ToolResult(False, error="Raw secrets and SecretRefs require the structured config validator")
+            encoded = json.dumps(args)
+            if 'SECRET_REF' in encoded or MARKER in encoded or ctx.secret_scope.protect(source_arguments(name, args)) != args:
+                return ToolResult(False, error="Raw credentials and redaction placeholders cannot be written. "
+                                  "For public code use an exact line range with clean replacement text.",
+                                  meta={'authorization': 'deny', 'error_code': 'protected_content', 'execution_state': 'not_started'})
         # 瘦身 B：授权裁决不再单独发 tool_decision 事件——写进返回值的
         # meta.authorization，由调用方（loop）合并进 tool_call 事件；审计面
         # 不变（每次授权仍可追溯），事件流少一遍 args 复制

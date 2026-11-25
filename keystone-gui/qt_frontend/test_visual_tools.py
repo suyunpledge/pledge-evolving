@@ -68,6 +68,21 @@ class VisualToolsTests(unittest.TestCase):
             self.assertEqual(encoded in str(client.requests[-1]), not chat)
             self.assertNotIn(encoded, str(history))
 
+    def test_client_preserves_single_line_source_through_model_projection(self):
+        import io
+        import json
+        from unittest.mock import patch
+        from keystone_client import ChatMessage, KeystoneGatewayClient
+        from .conversation import model_tool_result
+        row = {'ok': True, 'content': '7\ttoken = value', 'meta': {'start': 7, 'end': 7}}
+        client = KeystoneGatewayClient('http://127.0.0.1:1')
+        self.addCleanup(client.secret_scope.close)
+        with patch('keystone_client.open_response', return_value=io.BytesIO(json.dumps(row).encode())):
+            read = client.call_tool('keystone_read_range', {'path': 'logic.py', 'start': 7, 'end': 7})
+        display = model_tool_result('keystone_read_range', read)
+        msg = ChatMessage('tool', json.dumps(display), tool_call_id='source')
+        self.assertEqual(json.loads(msg.to_dict(client.secret_scope)['content'])['content'], 'token = value')
+
     def test_pdf_text_and_empty_pages(self):
         from PySide6.QtGui import QGuiApplication, QPdfWriter, QPainter
         app = QGuiApplication.instance() or QGuiApplication([])
