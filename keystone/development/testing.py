@@ -45,7 +45,8 @@ def decode_output(raw):
     return raw.decode('utf-8', 'replace')
 
 
-def run_process(argv, workspace, cancelled, *, timeout=120, on_output=None, extra_env=None, decode=None):
+def run_process(argv, workspace, cancelled, *, timeout=120, on_output=None, extra_env=None, decode=None,
+                protect_environment=False):
     """Run an approved, non-interactive command with bounded, merged output.
 
     ``extra_env`` adds named variables a toolchain needs (JAVA_HOME, INCLUDE…);
@@ -64,6 +65,9 @@ def run_process(argv, workspace, cancelled, *, timeout=120, on_output=None, extr
     for key, value in (extra_env or {}).items():
         if isinstance(key, str) and isinstance(value, str) and '\0' not in value:
             environment[key] = value
+    if protect_environment:
+        from keystone.secrets import secret_field
+        environment = {k: v for k, v in environment.items() if not secret_field(k) and redact(v) == v}
     options = {'creationflags': subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == 'nt' else {'start_new_session': True}
     process = subprocess.Popen(argv, cwd=workspace, env=environment, stdin=subprocess.DEVNULL,
                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, shell=False, **options)

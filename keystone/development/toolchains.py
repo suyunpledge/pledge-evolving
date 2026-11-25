@@ -423,6 +423,9 @@ def project_tasks(chains):
             language = 'typescript' if marks['tsconfig'] else 'javascript'
             matchers = ['tsc', 'node']
             rows = []
+            if 'lint' in scripts:
+                rows.append(_task('npm.lint', 'npm run lint', language, 'lint', workspace,
+                                  [[command, 'run', 'lint']], matchers, scope='project'))
             if 'build' in scripts:
                 rows.append(_task('npm.build', 'npm run build', language, 'build', workspace,
                                   [[command, 'run', 'build']], matchers, scope='project'))
@@ -449,7 +452,10 @@ def project_tasks(chains):
                 test = [*interpreter, '-m', 'pytest', '-q']
             else:
                 start = 'tests' if Path(workspace, 'tests').is_dir() else '.'
-                test = [*interpreter, '-m', 'unittest', 'discover', '-s', start, '-t', '.', '-v']
+                test = [*interpreter, '-m', 'unittest', 'discover', '-s', start]
+                if start == '.' or (Path(workspace, start) / '__init__.py').is_file():
+                    test.extend(['-t', '.'])
+                test.append('-v')
             skip = r'[\\/](' + '|'.join(re.escape(d) for d in SKIPPED_DIRS) + r')[\\/]'
             return [_task('python.test', 'Python 测试（pytest）' if 'pytest' in test else 'Python 测试（unittest）',
                           'python', 'test', workspace, [test], ['python', 'pytest'], scope='project'),

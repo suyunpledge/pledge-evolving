@@ -90,11 +90,16 @@ def main(argv=None):
             tools.update(workbench.service_tools())
         tools.update(workbench.localTools.tools())
         tools.update(workbench.office.tools(workspace))
+        if not args.demo:
+            from .project_checks import definition, execute
+            tools['keystone_run_check'] = definition(), ('project_check',)
         tools.update(media_tool_set())
         tools['keystone_public_search'] = workbench.search.work_tool()
         skipped_media = {}
 
         def dispatch(target, arguments, cancel):
+            if target == ('project_check',):
+                return execute(args.home, workspace, workbench.permission, workbench.approve, arguments, cancel)
             if isinstance(target, str):
                 return workbench.search.call_work_tool(target, arguments, cancel)
             if target[0] == 'media':

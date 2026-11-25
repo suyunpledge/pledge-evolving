@@ -44,6 +44,7 @@ class CodingService:
             from phase_client import apply_planning_key
             runtime.bridge.agent.prepare_planning_route = partial(apply_planning_key, self.host.home)
             runtime.bridge.agent.action_executor.approver = self.host.approve
+            runtime.bridge.agent.desktop_checks = True
             install_project_tool(runtime.bridge.agent, lambda: self._project_context)
             runtime.bridge.agent.extra_system += (
                 '\nIn the Coding IDE, use ide_context for the active file, selected lines or unsaved text. '

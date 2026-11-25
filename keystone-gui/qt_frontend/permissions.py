@@ -7,7 +7,7 @@ from .productivity_tools import CATALOG, FILES
 from .office_controller import CATALOG as OFFICE, OFFICE_WRITES
 
 MEDIATED = READ_PATH_TOOLS | set(READERS) | CATALOG.keys() | OFFICE.keys() | {'write_file', 'edit_file', 'apply_patch', 'delete_file', 'tool_search',
-                             'public_search', '7zip_extract', 'generate_image', 'generate_video',
+                             'public_search', 'run_check', '7zip_extract', 'generate_image', 'generate_video',
                              'calculator', 'datetime', 'text_transform', 'unit_convert'}
 
 
@@ -47,6 +47,12 @@ def authorize(profile, workspace, name, args, approve, cancel=None, template=Non
         effect = ToolEffect.FILE_READ
     if name in WRITE_TOOLS or name in FILES or name in OFFICE_WRITES or name in {'7zip_extract', 'comfyui_run', 'generate_image', 'generate_video'}:
         effect = ToolEffect.WRITE
+    if name == 'run_check':
+        # The Work handler uses the composed policy and presents the resolved command
+        # through ActionExecutor. Do not ask twice or approve an unresolved task here.
+        if template and template.own_policy(Path(workspace)).evaluate(name, effect=ToolEffect.DELEGATED_WRITE) is Decision.DENY:
+            raise PermissionError('当前角色不允许运行项目验证。')
+        return
     decision = policy.evaluate(name, args=args, touching=paths, effect=effect)
     decision = policy.resolve_ask(decision)
     if template is not None:

@@ -630,6 +630,8 @@ class Agent:
             secret_scope=self.secret_scope, checkpoints=self.checkpoints, file_guard=self.file_guard,
             subscriber=self._observe_event, tool_emit=self._emit, agent=self.name, depth=self.depth,
             capabilities={'memory': self.memory, 'capabilities': self.capabilities, 'spawn': self._spawn_handler,
+                          'desktop_check_interactive': getattr(self, 'desktop_checks', False),
+                          'check_dialog': self.action_executor.approver if getattr(self, 'desktop_checks', False) or not self.policy.non_interactive else None,
                           'artifact_store': self.artifacts, 'artifact_inline_limit': self.limits.max_tool_result,
                           'catalog': self.catalog_index})
 

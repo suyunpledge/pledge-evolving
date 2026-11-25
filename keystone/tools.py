@@ -41,7 +41,7 @@ BUILTIN_TOOL_NAMES = frozenset({
     "apply_patch", "edit_config", "read_range", "file_outline", "shell_exec",
     "tool_search", "skill_list", "spawn_subagent", "memory_recall",
     "web_search", "fetch_url", "datetime", "calculator",
-    "find_files", "review_changes", "file_stats", "file_export",
+    "find_files", "review_changes", "file_stats", "file_export", "run_check",
     "git_status", "git_add", "git_commit", "git_log",
     "artifact_read", "artifact_grep", "catalog_expand",
     "model3d_build", "model3d_inspect",
@@ -661,6 +661,8 @@ class ToolRegistry:
         if Path(ctx.workspace).resolve() != Path(ctx.policy.workspace).resolve():
             return ToolResult(False, error='Workspace and Policy disagree', meta={'authorization': 'deny', 'error_code': 'invalid_context'})
         if any(ctx.extras.get(k) is None for k in self._requires.get(name, ())):
+            if name == 'run_check':
+                return ToolResult(False, error='需要用户审批；当前入口没有审批窗口。', meta={'authorization': 'deny', 'execution_state': 'not_started'})
             return ToolResult(False, error='Required host capability is not attached', meta={'authorization': 'deny', 'error_code': 'missing_capability'})
         if spec.is_deferred and name not in self._activated:
             return ToolResult(
@@ -804,6 +806,12 @@ def build_builtin_registry(
     from .artifact_tools import HELP, register_artifact_tools
     view_tool = partial(host_tool, result_fields=FIELDS if result_views else ())
     register_artifact_tools(reg)
+    from .development import project_check
+    @host_tool('run_check', project_check.DESCRIPTION, deferred=True, tags=('run tests', 'test', 'lint', 'build', '测试', '构建'),
+               requires=('check_dialog',), read_only=False, effect=ToolEffect.DELEGATED_WRITE,
+               schema=project_check.SCHEMA, required=('task',))
+    def run_check(args, ctx):
+        return project_check.run(ctx.extras.get('approved_check'), ctx)
     from .model3d_tools import register_model3d_tools
     register_model3d_tools(reg)
     from .retrieval_catalog import register_catalog_tools

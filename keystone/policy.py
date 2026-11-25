@@ -321,6 +321,9 @@ class Policy:
         if tool == "shell_exec" and self.sandbox is Sandbox.READ_ONLY:
             return Decision.DENY
 
+        if tool == 'run_check':
+            return Decision.DENY if self.mode in {Mode.PLAN, Mode.READ_ONLY} or self.sandbox is Sandbox.READ_ONLY else Decision.ASK
+
         # 3. explicit asks
         if self._matches(self.ask, tool):
             return Decision.ALLOW if self.mode is Mode.BYPASS else Decision.ASK
@@ -465,7 +468,10 @@ def override_warnings(policy: Policy) -> list[str]:
         else:
             continue
         groups.setdefault(note, []).append(tool)
-    return [f"allow {note}：{'、'.join(names)}。" for note, names in groups.items()]
+    warnings = [f"allow {note}：{'、'.join(names)}。" for note, names in groups.items()]
+    if policy._matches(policy.allow, 'run_check') and not policy._matches(policy.deny, 'run_check'):
+        warnings.append('run_check 每次都需要用户批准；allow 无法免除审批。')
+    return warnings
 
 
 __all__ = [

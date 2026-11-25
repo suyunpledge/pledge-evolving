@@ -328,6 +328,10 @@ class ActionExecutor:
             self._active.add(key)
             try:
                 tc = ctx.tool_context()
+                if request.name == 'run_check' and tc.extras.get('desktop_check_interactive') is True and self.approver is not None:
+                    # Desktop profiles can be headless for ordinary tools while this
+                    # specific tool has a live, one-shot human approval transport.
+                    tc = replace(tc, policy=replace(tc.policy, non_interactive=False))
                 if request.name == 'delete_file':
                     def record_recovery(path, meta):
                         ctx.publish('delete_prepared', action_id=request.action_id, path=str(path), meta=meta)
@@ -338,8 +342,21 @@ class ActionExecutor:
                 denial = preflight or ctx.registry.authorize(request.name, request.arguments, tc)
                 if (denial is not None and denial.meta.get('requires_approval')
                         and self.approver is not None and not ctx.recovered):
-                    if self.approver(request.name, request.arguments, ctx.cancellation) is True:
+                    detail = request.arguments
+                    planned = None
+                    if request.name == 'run_check':
+                        from .development.project_check import plan
+                        try:
+                            planned, detail = plan(ctx.workspace, request.arguments, ctx.policy)
+                        except (ValueError, PermissionError, OSError) as exc:
+                            denial = ToolResult(False, error=str(exc), meta={'execution_state': 'not_started'})
+                        else:
+                            ctx.publish('project_check_requested', action_id=request.action_id, detail=detail)
+                    if denial.meta.get('requires_approval') and self.approver(request.name, detail, ctx.cancellation) is True:
                         from .desktop_permissions import approve_action
+                        if planned is not None:
+                            tc.extras['approved_check'] = planned
+                            ctx.publish('project_check_approved', action_id=request.action_id, detail=detail)
                         tc = replace(tc, policy=approve_action(tc.policy, request.name, request.arguments))
                         denial = ctx.registry.authorize(request.name, request.arguments, tc)
                 if ctx.recovered:
