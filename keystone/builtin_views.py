@@ -29,9 +29,9 @@ def search_result(body, *, summary, rows, notes=()):
     meta = dict(summary)
     if len(body) >= 1400:
         preview, size = [], 0
-        candidates = rows if len(rows) <= 8 else [*rows[:4], '[... omitted rows ...]', *rows[-4:]]
+        candidates = rows if len(rows) <= 24 else [*rows[:16], '[... omitted rows ...]', *rows[-8:]]
         for row in candidates:
-            if size + len(row) + 1 > 800:
+            if size + len(row) + 1 > 2400:
                 continue
             preview.append(row)
             size += len(row) + 1

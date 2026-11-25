@@ -40,6 +40,25 @@ _ASSIGN = re.compile(
 _VALUE = re.compile(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|[^\r\n,;}{\[\]"\']+')
 _COOKIE_VALUE = re.compile(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|[^\r\n"\']+')
 _AUTH = re.compile(r'\bBearer\s+([^\s"\'<>;,]+)', re.I)
+# Source files: an unquoted right-hand side is an expression (``token = args.get(...)``),
+# never a literal credential. Hard-coded secrets in code are quoted and stay protected.
+CODE_SUFFIXES = frozenset({
+    '.py', '.pyi', '.js', '.jsx', '.mjs', '.cjs', '.ts', '.tsx', '.qml', '.java', '.kt', '.kts',
+    '.go', '.rs', '.c', '.h', '.cc', '.cpp', '.hpp', '.cs', '.swift', '.rb', '.php', '.scala',
+    '.lua', '.dart', '.vue', '.svelte'})
+# Tools whose text already passed the file-aware detector (document_text) per file.
+FILE_SCANNED_TOOLS = frozenset({'read_file', 'read_range', 'grep', 'file_outline', 'file_stats',
+                                'review_changes'})
+# Unquoted values that are code rather than data: a call, or an attribute chain
+# (``getpass(``, ``cfg.password``); subscripts are checked at the call site.
+_CODE_ATTR = re.compile(r'[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+')
+_CODE_CALL = re.compile(r'[A-Za-z_][\w.]*\(.*')
+
+
+def is_code_path(path) -> bool:
+    return Path(path).suffix.lower() in CODE_SUFFIXES
+
+
 _URL_PASSWORD = re.compile(r'(?<![a-z0-9+.-])([a-z][a-z0-9+.-]{0,31}://[^\s/@:]+:)([^\s/@]+)(@)', re.I)
 
 
@@ -212,7 +231,10 @@ class SecretScope:
                 self.__refs[lookup] = self._store._put(self._id, value)
             return self.__refs[lookup]
 
-    def protect_text(self, text: str) -> str:
+    def protect_text(self, text: str, *, code: bool = False) -> str:
+        """``code=True``: the text is source code already scanned per file, so unquoted
+        assignment values are expressions. Known secrets, quoted literals, key blocks,
+        Bearer/URL credentials and token formats are still replaced."""
         text = str(text)
         if len(text) > 8 * 1024 * 1024:
             raise ValueError('Content exceeds the 8 MiB secret inspection limit')
@@ -258,6 +280,12 @@ class SecretScope:
             value = raw[1:-1] if quote_char else raw.split(' #', 1)[0].strip()
             if not quote_char and (value in {'null', 'None', 'true', 'false'} or value.isdecimal()):
                 continue  # Structural JSON/Python values are not secret strings.
+            # Code style puts spaces around ``=``; ``KEY=value`` lines (.env, shell)
+            # stay protected even when the value looks like ``abc.def``.
+            spaced = m['head'].rstrip() != m['head'] and '=' in m['head']
+            if not quote_char and (code or _CODE_CALL.fullmatch(value) or spaced and (
+                    _CODE_ATTR.fullmatch(value) or text.startswith('[', match.end()))):
+                continue  # An expression in source code, not a credential literal.
             if not value or REF.fullmatch(value) or value == MARKER:
                 continue
             if quote_char == '"':
@@ -341,7 +369,7 @@ class SecretScope:
             if any(isinstance(item, (int, float, bool)) and protected.get(key) != item
                    for key, item in _leaves(value)):
                 return json.dumps(safe, ensure_ascii=False, default=str)
-        return self.protect_text(text)
+        return self.protect_text(text, code=is_code_path(path))
 
     def close(self):
         with self.__lock:

@@ -370,6 +370,43 @@ class ToolRegistry:
                 and not Policy._matches(ctx.policy.deny, spec.name)
                 and not (ctx.isolated and self.effect(spec.name) is ToolEffect.NATIVE)]
 
+    def unavailable_matches(self, query: str, ctx: ToolContext, limit: int = 3) -> list[tuple[ToolSpec, str]]:
+        """Registered tools that match ``query`` but cannot run here, with the reason.
+
+        tool_search used to answer such queries with unrelated hits, so an agent could
+        not tell "missing in this session" from "does not exist" (agent review 2026-11-25).
+        """
+        text = unicodedata.normalize('NFKC', query or '').casefold()
+        terms = {t for t in re.findall(r'[^\W_]+', text) if len(t) > 1} - {
+            'the', 'with', 'for', 'and', 'tool', 'tools'}
+        if not terms:
+            return []
+        usable = {s.name for s in self.available_specs(ctx)
+                  if not Policy._matches(ctx.policy.deny, s.name)}
+        out = []
+        for spec in self.all_specs():
+            if spec.name in usable:
+                continue
+            haystack = unicodedata.normalize('NFKC', ' '.join(
+                [spec.name, *spec.tags, spec.description])).casefold()
+            if not any(t in haystack for t in terms):
+                continue
+            missing = [k for k in self._requires.get(spec.name, ()) if ctx.extras.get(k) is None]
+            if ctx.isolated and self.native(spec):
+                reason = '受保护模式禁止原生执行；请改用 git_* 等受控工具'
+            elif Policy._matches(ctx.policy.deny, spec.name):
+                reason = '被当前权限规则禁止'
+            elif self._hidden(spec.name):
+                reason = '未在当前会话或角色中开放'
+            elif missing:
+                reason = '当前入口没有提供所需的宿主能力：' + ', '.join(missing)
+            else:
+                reason = '当前不可用'
+            out.append((spec, reason))
+            if len(out) >= limit:
+                break
+        return out
+
     def search(self, query: str, limit: int = 5, *, ctx=None) -> list[ToolSpec]:
         def normalize(text):
             return unicodedata.normalize('NFKC', text).casefold().strip()
@@ -461,9 +498,17 @@ class ToolRegistry:
                     locks.enter_context(resource_lock('file-write', path))
             yield
 
+    def native(self, spec: ToolSpec) -> bool:
+        """Tools that ``_prepare`` always refuses inside a protected (isolated) context."""
+        return (spec.name in {"shell_exec", "notebook_edit"} or "native" in spec.tags
+                or self.effect(spec.name) is ToolEffect.NATIVE)
+
     def available_specs(self, ctx):
+        # Never advertise a tool the gate will refuse: an isolated caller would only
+        # learn that shell_exec is unusable after spending a turn on it.
         return [s for s in self.callable_specs() if all(ctx.extras.get(k) is not None
-                for k in self._requires.get(s.name, ())) and self.effect(s.name) is not ToolEffect.UNKNOWN]
+                for k in self._requires.get(s.name, ())) and self.effect(s.name) is not ToolEffect.UNKNOWN
+                and not (ctx.isolated and self.native(s))]
 
     def authorize(self, name, args, ctx):
         """Preflight only. invoke rechecks under the write lock before dispatch."""
@@ -485,7 +530,9 @@ class ToolRegistry:
             with self.write_guard(name, args, ctx):
                 result = self._invoke(name, args, ctx)
             self._feedback(name, args, ctx, result)
-            result.content = ctx.secret_scope.protect_text(result.content)
+            from .secrets import FILE_SCANNED_TOOLS
+            result.content = ctx.secret_scope.protect_text(
+                result.content, code=name in FILE_SCANNED_TOOLS)
             result.error = redact(result.error)
             result.meta = redact(result.meta)
             result.meta.setdefault('outcome', 'unknown' if result.meta.get('execution_state') == 'unknown' else 'cancelled' if result.meta.get('error_code') == 'cancelled' else 'succeeded' if result.ok else 'failed')
@@ -1077,7 +1124,9 @@ def build_builtin_registry(
             if after is None:
                 blocks.append(f"{shown}: deleted")
                 continue
-            before_text = "" if before is None else ctx.secret_scope.protect_text(before)
+            from .secrets import is_code_path
+            before_text = "" if before is None else ctx.secret_scope.protect_text(
+                before, code=is_code_path(path))
             # splitlines + lineterm=""：CRLF 文件的 diff 也以 \n 输出，不夹带 \r。
             diff = "\n".join(difflib.unified_diff(before_text.splitlines(), after.splitlines(),
                                                   fromfile=f"a/{shown}" if before is not None else "/dev/null",
@@ -1365,7 +1414,13 @@ def build_builtin_registry(
             return ToolResult(False, error="tool_search limit must be an integer from 1 to 20")
         found = registry.search(query, limit, ctx=ctx)
         lines = [f"{s.name}: {s.description}" for s in found] or ["no matching tools"]
-        return ToolResult(ok=True, content="\n".join(lines), meta={"activated": [s.name for s in found]})
+        blocked = registry.unavailable_matches(query, ctx)
+        if blocked:
+            lines.append("\nMatching tools that cannot be used in this session (do not call them):")
+            lines += [f"- {s.name}: {reason}" for s, reason in blocked]
+        return ToolResult(ok=True, content="\n".join(lines), meta={
+            "activated": [s.name for s in found],
+            "unavailable": [{"name": s.name, "reason": reason} for s, reason in blocked]})
 
     @host_tool("skill_list", "List installed capabilities (skills/plugins); pass name to load that "
               "skill's instructions.", no_defer=True, requires=("capabilities",),

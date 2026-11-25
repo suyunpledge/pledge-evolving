@@ -2297,7 +2297,8 @@ def test_global_optimizations() -> None:
             agent3.run("read data.txt")
             server3.shutdown()
             check("tools:result-truncated-in-message",
-                  bool(tool_msgs) and all(l <= 1250 for l in tool_msgs),
+                  # 2000-char preview + recovery note (was 500 before the 2026-11-25 agent review).
+                  bool(tool_msgs) and all(l <= 2600 for l in tool_msgs),
                   f"tool_msg_lens={tool_msgs}")
 
     with tempfile.TemporaryDirectory() as tmp:

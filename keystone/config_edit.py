@@ -228,7 +228,11 @@ def sensitive_config(path: Path, text: str) -> bool:
     try:
         data, _ = _parse(path, text)
     except ValueError:
-        from .secrets import _ASSIGN
+        from .secrets import _ASSIGN, is_code_path
+        if is_code_path(path):
+            # Source code: credential-named variables are not config fields. A literal
+            # secret is still caught by the caller's protected-view comparison.
+            return False
         return any(secret_field(m['key']) for m in _ASSIGN.finditer(text))
     return bool(list(_protected_fields(data)) or list(_control_fields(data)))
 

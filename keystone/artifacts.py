@@ -162,7 +162,8 @@ def retain_result(result, *, store, scope, source, action_id, inline_limit=4000,
     if not result_fields and len(text) <= inline_limit:
         return
     selected = None
-    protected = scope.protect_text(text)
+    from .secrets import FILE_SCANNED_TOOLS
+    protected = scope.protect_text(text, code=source in FILE_SCANNED_TOOLS)
     if (result_fields and (result.ok or view_source is not None) and not result.error
             and result.meta.get('execution_state', 'completed') == 'completed'):
         try:
@@ -194,7 +195,10 @@ def retain_result(result, *, store, scope, source, action_id, inline_limit=4000,
         result.meta['model_view'] = {'fields': list(result_fields), 'source_characters': len(protected),
                                      'view_characters': len(body)}
     else:
-        body = summary(meta, protected, preview=max(0, min(500, inline_limit-240)), readers=readers)
+        # Spend most of the inline budget on content: a 500-character preview forced a
+        # second call for nearly every medium-sized read (agent review 2026-11-25).
+        # Capped at 2000 so a retained result still costs well under the inline limit.
+        body = summary(meta, protected, preview=max(0, min(2000, inline_limit - 400)), readers=readers)
     if result.content:
         result.content = body
     else:

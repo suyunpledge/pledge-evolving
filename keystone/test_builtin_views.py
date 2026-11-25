@@ -51,7 +51,8 @@ class BuiltinViewTests(unittest.TestCase):
                 value = self.executor.execute(ctx, ActionRequest(name, args))
                 view = json.loads(value.content)
                 self.assertEqual(view['summary'][key], count)
-                self.assertEqual(view['summary']['preview_rows'], 8)
+                # 16 head + 8 tail rows (was 4 + 4 before the 2026-11-25 agent review).
+                self.assertEqual(view['summary']['preview_rows'], 24)
                 self.assertIn('record_089', view['preview'])
                 self.assertNotIn('record_044', view['preview'])
                 self.assertLess(len(value.content), len(raw.content))
