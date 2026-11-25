@@ -15,10 +15,10 @@ from verify_deepseek_execution import DeepSeekRecorder, totals
 from keystone.loop import Agent, LoopLimits
 from keystone.compaction import ContextBudget
 from keystone.file_revisions import FileRevisionGuard
-from keystone.policy import Policy, Mode, Sandbox, ToolEffect
-from keystone.tools import build_builtin_registry, ToolSpec, ToolResult
+from keystone.policy import Policy, Mode, Sandbox
+from keystone.tools import build_builtin_registry
 from keystone.probes import ProbeRegistry
-from keystone.builtin_views import command_metadata, FIELDS
+from keystone.development.project_check import attach_console
 
 SOURCE = {
  'pricing.py': '''def line_total(unit_price, quantity, discount="0"):
@@ -41,7 +41,7 @@ build_report(orders) returns currency->two-decimal-string sorted by currency. Sk
 Each paid order adds its rounded line total; each refunded order subtracts it. Never change input dictionaries.
 Only edit pricing.py and reporting.py. Tests and SPEC are host fixtures, never edit them.
 run_checks executes the immutable regression suite; a tool success means execution, inspect passed and exit_code.
-Before editing, reproduce failures with run_checks. Inspect relevant sources using tools.
+Before editing, reproduce failures with run_check(task="test"). Inspect relevant sources using tools.
 Then fix both modules and run_checks again until passed=true. Do not claim success without actual checks.
 '''
 }
@@ -113,30 +113,25 @@ def run_case(provider,recorder,root,output,*,feedback_views=False,budget_cls=Con
             return row
         baseline=check()
         registry=build_builtin_registry(expose=['read_file','list_dir','find_files','grep','file_outline',
-            'read_range','edit_file','apply_patch','write_file','review_changes','artifact_read','artifact_grep','run_checks'])
-        def run_checks(args,ctx):
-            observed=check()
-            return ToolResult(True,json.dumps(observed,ensure_ascii=False),meta=(
-                command_metadata(observed['output'],observed['exit_code']) if feedback_views else {}))
-        registry.register(ToolSpec('run_checks','Execute the fixed local regression suite. Inspect passed and exit_code; fix code on failure.',
-            run_checks,read_only=False,result_fields=FIELDS if feedback_views else (),
-            schema={'type':'object','properties':{},'additionalProperties':False}),trusted=True,effect=ToolEffect.NATIVE)
+            'read_range','edit_file','apply_patch','write_file','review_changes','artifact_read','artifact_grep','run_check'], result_views=feedback_views)
+        registry.activate('run_check')
         probes=ProbeRegistry.defaults().with_probe('fixture','regression',lambda ctx,args:check()['passed'])
         recorder.stage=f'challenge-turn-{turn}'
         start=len(recorder.rows);check_start=len(checks)
         agent=agent_cls(home=root/'home',workspace=workspace,router=router_for(provider,recorder),registry=registry,
             policy=Policy(workspace=workspace,mode=Mode.ACCEPT_EDITS,sandbox=Sandbox.WORKSPACE_WRITE,
-                          allow=('run_checks',),non_interactive=True),project_rules=False,planning='low',probes=probes,
+                          non_interactive=True),project_rules=False,planning='low',probes=probes,
             file_guard=FileRevisionGuard(workspace,require_read=True),
             limits=LoopLimits(max_steps=18,context_chars=12000))
+        attach_console(agent)
         agent.compactor=budget_cls(max_chars=12000,keep_tail=6)
-        task=('Read SPEC.md and inspect the relevant sources. First reproduce the failing suite with run_checks. '
-              'Fix the two billing modules according to SPEC.md using actual tools, then run checks to verify. '
+        task=('Read SPEC.md and inspect the relevant sources. First reproduce the failing suite with run_check(task="test"). '
+              'Fix the two billing modules according to SPEC.md using actual tools, then call run_check(task="test") to verify. '
               'Only pricing.py and reporting.py may change. Keep public signatures compatible. Do not edit tests. '
               'Final reply briefly describe changes and actual tests.' if turn==1 else
               'Extend build_report with optional only_currency=None. None preserves existing behavior; a string '
               'includes only that exact currency. Host tests now include this feature. Reproduce the new failure '
-              'with run_checks, inspect current files, modify only reporting.py, then run_checks until passed. '
+              'with run_check(task="test"), inspect current files, modify only reporting.py, then call run_check(task="test") until passed. '
               'Keep all original behavior and do not edit tests or SPEC.md. Use actual tools.')
         try:
             report=agent.run(task,history=history,acceptance={'max_attempts':2,'criteria':[
@@ -144,15 +139,16 @@ def run_case(provider,recorder,root,output,*,feedback_views=False,budget_cls=Con
             final=check()
             integrity=all(sha(p)==digest for p,digest in immutable.items())
             tools=[{'tool':s.tool,'args':s.args,'decision':s.decision,'result':s.result} for s in report.steps]
-            executed=any(s.tool=='run_checks' for s in report.steps)
+            observed=[(i,s) for i,s in enumerate(report.steps) if s.tool=='run_check' and s.meta.get('task')=='python.test']
+            executed=bool(observed)
             after=snapshot(workspace)
             changed=sorted(p for p in before.keys()|after.keys() if before.get(p)!=after.get(p))
             allowed={'pricing.py','reporting.py'} if turn==1 else {'reporting.py'}
-            first_check=next((i for i,s in enumerate(report.steps) if s.tool=='run_checks'),None)
+            first_check=observed[0][0] if observed else None
             first_write=next((i for i,s in enumerate(report.steps) if s.tool in {
                 'write_file','edit_file','apply_patch','edit_config','delete_file','notebook_edit'}),len(report.steps))
             reproduced=(first_check is not None and first_check<first_write
-                        and bool(checks[check_start:]) and not checks[check_start]['passed'])
+                        and observed[0][1].meta.get('status') == 'failed')
             ok=(report.stopped=='final' and final['passed'] and integrity and executed
                 and reproduced and set(changed)<=allowed)
             directory=output.parent/(output.stem+'-sources');directory.mkdir(exist_ok=True)
@@ -180,6 +176,8 @@ def main():
     parser.add_argument('--baseline-dir',type=Path,help='Explicit local before-edit loop/compaction backup')
     parser.add_argument('--output',type=Path,required=True)
     args=parser.parse_args()
+    if not sys.stdin.isatty() or not sys.stderr.isatty():
+        parser.error('Launch in an interactive terminal to approve each project check.')
     if not args.live or args.output.exists(): parser.error('Requires --live and a new output path')
     chosen=args.model or ('doubao-seed-evolving' if args.vendor=='seed' else 'mimo-v2.6-flash')
     provider=(seed_provider if args.vendor=='seed' else mimo_provider)(chosen,Path.home()/'.keystone')

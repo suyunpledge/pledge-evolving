@@ -517,7 +517,7 @@ class ToolRegistry:
             if ctx.isolated and self.native(spec) or any(ctx.extras.get(k) is None for k in self.required_extras(spec.name)):
                 continue
             decision = ctx.policy.evaluate(spec.name, effect=self.effect(spec.name))
-            if spec.name == 'run_check' and ctx.extras.get('desktop_check_interactive') and decision is Decision.ASK:
+            if spec.name == 'run_check' and ctx.extras.get('check_interactive') and decision is Decision.ASK:
                 result.append(spec)
             elif ctx.policy.resolve_ask(decision) is not Decision.DENY:
                 result.append(spec)
@@ -677,7 +677,7 @@ class ToolRegistry:
             if name == 'run_check':
                 return ToolResult(False, error='需要用户审批；当前入口没有审批窗口。', meta={'authorization': 'deny', 'execution_state': 'not_started'})
             return ToolResult(False, error='Required host capability is not attached', meta={'authorization': 'deny', 'error_code': 'missing_capability'})
-        if name == 'run_check' and ctx.policy.non_interactive and not ctx.extras.get('desktop_check_interactive'):
+        if name == 'run_check' and ctx.policy.non_interactive and not ctx.extras.get('check_interactive'):
             return ToolResult(False, error='需要用户审批；当前为非交互会话。',
                               meta={'authorization': 'deny', 'execution_state': 'not_started'})
         if spec.is_deferred and name not in self._activated:
@@ -836,7 +836,7 @@ def build_builtin_registry(
 
     from .development import project_check
     @host_tool('run_check', project_check.DESCRIPTION, deferred=True, tags=('run tests', 'test', 'lint', 'build', '测试', '构建'),
-               requires=('check_dialog',), read_only=False, effect=ToolEffect.DELEGATED_WRITE,
+               requires=('check_dialog',), read_only=False, effect=ToolEffect.DELEGATED_WRITE, result_fields=FIELDS if result_views else (),
                schema=project_check.SCHEMA, required=('task',))
     def run_check(args, ctx):
         return project_check.run(ctx.extras.get('approved_check'), ctx)

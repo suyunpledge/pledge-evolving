@@ -17,7 +17,7 @@ def execute(home, workspace, profile, approve, arguments, cancel):
     registry = build_builtin_registry()
     registry.activate('run_check')
     ctx = create_execution_context(home=home, workspace=workspace, policy=policy, registry=registry,
-                                   capabilities={'check_dialog': approve, 'desktop_check_interactive': True}, cancellation=cancel)
+                                   capabilities={'check_dialog': approve, 'check_interactive': True}, cancellation=cancel)
     try:
         return ActionExecutor(approver=approve).execute(ctx, ActionRequest('run_check', arguments)).as_tool_result().as_dict()
     finally:

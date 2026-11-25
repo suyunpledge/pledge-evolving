@@ -385,6 +385,9 @@ def cmd_run(args) -> int:
         limits=loop_limits,
         observer=progress,
     )
+    if not args.json:
+        from .development.project_check import attach_console
+        attach_console(agent)
     with agent.session:
         report = agent.run(args.task, acceptance=acceptance) if acceptance else agent.run(args.task)
 

@@ -61,4 +61,30 @@ def run(task, ctx):
             break
     body = ctx.secret_scope.protect_text('\n'.join(outputs))
     meta = {k: result[k] for k in ('status', 'exit_code', 'execution_state', 'output_truncated')}
-    return ToolResult(result['status'] == 'completed', content=f"{task['id']} · {result['status']} · exit {result['exit_code']}\n{body}", meta=meta)
+    from ..builtin_views import command_metadata
+    meta['task'] = task['id']
+    if result['status'] in ('completed', 'failed') and result['exit_code'] is not None:
+        meta.update(command_metadata(body, result['exit_code']))
+    return ToolResult(result['status'] == 'completed', content=body or f"{task['id']} · {result['status']} · exit {result['exit_code']}", meta=meta)
+
+
+def attach_console(agent):
+    """Expose only per-invocation project-check approvals on a real command terminal."""
+    import sys
+    if not (sys.stdin and sys.stdin.isatty() and sys.stderr and sys.stderr.isatty()):
+        return False
+
+    def approve(name, details, cancel):
+        if name != 'run_check' or (cancel and cancel.is_set()):
+            return False
+        commands = '\n'.join(details['commands'])
+        print(f"{commands}\n{details['cwd']} · {details['timeout_seconds']} s\n{details['note']}", file=sys.stderr)
+        print("批准本次项目验证？[y/N] ", end='', file=sys.stderr, flush=True)
+        try:
+            return input().strip().casefold() == 'y' and not (cancel and cancel.is_set())
+        except (EOFError, OSError):
+            return False
+
+    agent.action_executor.approver = approve
+    agent.interactive_checks = True
+    return True

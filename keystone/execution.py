@@ -329,7 +329,8 @@ class ActionExecutor:
             self._active.add(key)
             try:
                 tc = ctx.tool_context()
-                if request.name == 'run_check' and tc.extras.get('desktop_check_interactive') is True and self.approver is not None:
+                tc.extras['tool_call_id'] = request.tool_call_id
+                if request.name == 'run_check' and tc.extras.get('check_interactive') is True and self.approver is not None:
                     # Desktop profiles can be headless for ordinary tools while this
                     # specific tool has a live, one-shot human approval transport.
                     tc = replace(tc, policy=replace(tc.policy, non_interactive=False))

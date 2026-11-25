@@ -18,20 +18,20 @@ class CommandFeedbackTests(unittest.TestCase):
     def context(self,command='',**policy):
         registry=build_builtin_registry()
         shell=next(s for s in registry.all_specs() if s.name=='shell_exec')
-        # The protected executor forbids arbitrary shell commands. This trusted
-        # fixture runner binds a fixed host command, as the live challenge does.
+        # Exercise native command receipts using the explicitly trusted host lane.
+        # The isolated executor rejects native handlers, including fixed test fixtures.
         registry.register(ToolSpec('run_fixture_checks','Fixed fixture command',
             lambda args,ctx:shell.handler({'command':command},ctx),read_only=False,
             result_fields=shell.result_fields),trusted=True,effect=ToolEffect.NATIVE)
         ctx=create_execution_context(home=self.root/'home',workspace=self.root,
             registry=registry,policy=Policy(workspace=self.root,mode=Mode.ACCEPT_EDITS,
-                sandbox=Sandbox.WORKSPACE_WRITE,allow=('run_fixture_checks',),non_interactive=True,**policy))
+                sandbox=Sandbox.FULL_ACCESS,allow=('run_fixture_checks',),non_interactive=True,**policy))
         self.addCleanup(ctx.secret_scope.close)
         return ctx
 
     def test_failed_command_keeps_status_and_exact_output_retrievable(self):
         command=f'"{sys.executable}" -c "import sys; print(\'FAIL: billing_case\'); print(\'z\'*7000); sys.exit(1)"'
-        ctx=self.context(command);executor=ActionExecutor()
+        ctx=self.context(command);executor=ActionExecutor(trusted_native=True)
         result=executor.execute(ctx,ActionRequest('run_fixture_checks',{}))
         self.assertEqual(result.outcome,'failed')
         self.assertEqual(result.execution_state,'completed')
@@ -51,7 +51,7 @@ class CommandFeedbackTests(unittest.TestCase):
         self.assertEqual(''.join(parts),'FAIL: billing_case\n'+'z'*7000+'\n')
 
     def test_invalid_pages_and_denied_reads_are_not_repaired(self):
-        ctx=self.context(f'"{sys.executable}" -c "print(\'v\'*5000)"');executor=ActionExecutor()
+        ctx=self.context(f'"{sys.executable}" -c "print(\'v\'*5000)"');executor=ActionExecutor(trusted_native=True)
         # Use a real output to obtain an authentic handle.
         result=executor.execute(ctx,ActionRequest('run_fixture_checks',{}))
         identifier=json.loads(result.content)['_retained']['id']

@@ -10,6 +10,7 @@ the task's matchers.
 from concurrent.futures import CancelledError
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import time
 
@@ -21,7 +22,7 @@ from .toolchains import check_argv
 
 
 def command_line(argv):
-    return subprocess.list2cmdline(argv) if os.name == 'nt' else ' '.join(map(str, argv))
+    return subprocess.list2cmdline(argv) if os.name == 'nt' else shlex.join(map(str, argv))
 
 
 def _environment(task):

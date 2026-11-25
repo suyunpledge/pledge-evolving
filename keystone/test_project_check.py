@@ -38,13 +38,27 @@ class ApprovedChecks(unittest.TestCase):
         policy = profile_policy(Policy(workspace=self.ws, allow=('run_check',)), profile)
         self.assertTrue(override_warnings(policy))
         registry = build_builtin_registry()
-        flags = {'check_dialog': self.approve, 'desktop_check_interactive': interactive}
+        flags = {'check_dialog': self.approve, 'check_interactive': interactive}
         ctx = create_execution_context(home=self.home, workspace=self.ws, policy=policy,
             registry=registry, capabilities=flags, cancellation=threading.Event())
         self.addCleanup(ctx.secret_scope.close)
         self.addCleanup(ctx.session.close)
         ctx.registry.search('run tests', ctx=ctx.tool_context())
         return ActionExecutor(approver=self.approve).execute(ctx, ActionRequest('run_check', args))
+
+    def test_real_terminal_requires_a_new_yes_and_headless_has_no_callback(self):
+        from types import SimpleNamespace
+        from .development.project_check import attach_console
+        agent = SimpleNamespace(action_executor=ActionExecutor())
+        with patch('sys.stdin.isatty', return_value=False):
+            self.assertFalse(attach_console(agent))
+            self.assertIsNone(agent.action_executor.approver)
+        with patch('sys.stdin.isatty', return_value=True), patch('sys.stderr.isatty', return_value=True), patch('builtins.input', side_effect=['y', '']):
+            self.assertTrue(attach_console(agent))
+            detail = {'commands': ['test'], 'cwd': str(self.ws), 'timeout_seconds': 300, 'note': 'fixture'}
+            self.assertTrue(agent.action_executor.approver('run_check', detail, None))
+            self.assertFalse(agent.action_executor.approver('run_check', detail, None))
+            self.assertFalse(agent.action_executor.approver('shell_exec', detail, None))
 
     def test_work_profiles_each_require_an_actual_approval_and_return_failed_tests(self):
         for mode in ('sandbox', 'manual', 'full'):

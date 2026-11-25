@@ -641,11 +641,11 @@ class Agent:
 
     def _tool_capabilities(self):
         from .visual_input import router_supports
-        interactive = getattr(self, 'desktop_checks', False)
+        interactive = getattr(self, 'interactive_checks', False)
         return {
             'image_observer': self._queue_image if router_supports(self.router, self.wire_hint) else None,
             'memory': self.memory, 'capabilities': self.capabilities, 'spawn': self._spawn_handler,
-            'desktop_check_interactive': interactive,
+            'check_interactive': interactive,
             'check_dialog': self.action_executor.approver if interactive or not self.policy.non_interactive else None,
             'artifact_store': self.artifacts, 'artifact_inline_limit': self.limits.max_tool_result,
             'catalog': self.catalog_index,
