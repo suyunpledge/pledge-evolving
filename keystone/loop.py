@@ -406,7 +406,8 @@ class Agent:
 
     def run_envelope(self) -> str:
         """Per-run volatile context, riding the request tail (never the head)."""
-        parts = [f"Workspace: {self.workspace}\n"
+        import platform
+        parts = [f"OS: {platform.system()}; Workspace: {self.workspace}\n"
                  f"Permission mode: {self.policy.mode.value}; sandbox: {self.policy.sandbox.value}."]
         if self.extra_system:
             parts.append(self.extra_system)
@@ -422,8 +423,9 @@ class Agent:
         # Agent.execution_context always creates an isolated tool context.
         from .request_timing import coding_request
         registry = self.registry if registry is None else registry
-        specs = [s for s in registry.visible()
-                 if s.name not in {'shell_exec', 'notebook_edit'} and 'native' not in s.tags]
+        ctx = ToolContext(self.policy, self.workspace, extras=self._tool_capabilities(), secret_scope=self.secret_scope)
+        available = {s.name for s in registry.available_specs(ctx)}
+        specs = [s for s in registry.visible() if s.name in available]
         from .artifact_tools import READERS, available_readers
         readers = available_readers(registry, self.policy, allow_approval=True)
         specs = [s for s in specs if s.name not in READERS or s.name in readers]
@@ -629,11 +631,14 @@ class Agent:
             session=self.session, cancellation=self.cancellation_event,
             secret_scope=self.secret_scope, checkpoints=self.checkpoints, file_guard=self.file_guard,
             subscriber=self._observe_event, tool_emit=self._emit, agent=self.name, depth=self.depth,
-            capabilities={'memory': self.memory, 'capabilities': self.capabilities, 'spawn': self._spawn_handler,
+            capabilities=self._tool_capabilities())
+
+    def _tool_capabilities(self):
+        return {'memory': self.memory, 'capabilities': self.capabilities, 'spawn': self._spawn_handler,
                           'desktop_check_interactive': getattr(self, 'desktop_checks', False),
                           'check_dialog': self.action_executor.approver if getattr(self, 'desktop_checks', False) or not self.policy.non_interactive else None,
                           'artifact_store': self.artifacts, 'artifact_inline_limit': self.limits.max_tool_result,
-                          'catalog': self.catalog_index})
+                          'catalog': self.catalog_index}
 
     def _tool_context(self) -> ToolContext:
         return self.execution_context().tool_context()

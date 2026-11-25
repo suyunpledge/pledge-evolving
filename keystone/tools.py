@@ -392,7 +392,8 @@ class ToolRegistry:
                 continue
             haystack = unicodedata.normalize('NFKC', ' '.join(
                 [spec.name, *spec.tags, spec.description])).casefold()
-            if not any(t in haystack for t in terms):
+            tag_match = any(len(tag) >= 2 and tag in text for tag in spec.tags)
+            if not tag_match and not any(t in haystack for t in terms):
                 continue
             missing = [k for k in self._requires.get(spec.name, ()) if ctx.extras.get(k) is None]
             if ctx.isolated and self.native(spec):
@@ -401,6 +402,8 @@ class ToolRegistry:
                 reason = '被当前权限规则禁止'
             elif self._hidden(spec.name):
                 reason = '未在当前会话或角色中开放'
+            elif 'image_observer' in missing:
+                reason = '当前模型路由未声明支持图片输入，或当前入口无法传递图片'
             elif missing:
                 reason = '当前入口没有提供所需的宿主能力：' + ', '.join(missing)
             else:
@@ -509,9 +512,16 @@ class ToolRegistry:
     def available_specs(self, ctx):
         # Never advertise a tool the gate will refuse: an isolated caller would only
         # learn that shell_exec is unusable after spending a turn on it.
-        return [s for s in self.callable_specs() if all(ctx.extras.get(k) is not None
-                for k in self._requires.get(s.name, ())) and self.effect(s.name) is not ToolEffect.UNKNOWN
-                and not (ctx.isolated and self.native(s))]
+        result = []
+        for spec in self.callable_specs():
+            if ctx.isolated and self.native(spec) or any(ctx.extras.get(k) is None for k in self.required_extras(spec.name)):
+                continue
+            decision = ctx.policy.evaluate(spec.name, effect=self.effect(spec.name))
+            if spec.name == 'run_check' and ctx.extras.get('desktop_check_interactive') and decision is Decision.ASK:
+                result.append(spec)
+            elif ctx.policy.resolve_ask(decision) is not Decision.DENY:
+                result.append(spec)
+        return result
 
     def authorize(self, name, args, ctx):
         """Preflight only. invoke rechecks under the write lock before dispatch."""
@@ -664,6 +674,9 @@ class ToolRegistry:
             if name == 'run_check':
                 return ToolResult(False, error='需要用户审批；当前入口没有审批窗口。', meta={'authorization': 'deny', 'execution_state': 'not_started'})
             return ToolResult(False, error='Required host capability is not attached', meta={'authorization': 'deny', 'error_code': 'missing_capability'})
+        if name == 'run_check' and ctx.policy.non_interactive and not ctx.extras.get('desktop_check_interactive'):
+            return ToolResult(False, error='需要用户审批；当前为非交互会话。',
+                              meta={'authorization': 'deny', 'execution_state': 'not_started'})
         if spec.is_deferred and name not in self._activated:
             return ToolResult(
                 ok=False,
@@ -1428,7 +1441,14 @@ def build_builtin_registry(
         if type(limit) is not int or not 1 <= limit <= 20:
             return ToolResult(False, error="tool_search limit must be an integer from 1 to 20")
         found = registry.search(query, limit, ctx=ctx)
-        lines = [f"{s.name}: {s.description}" for s in found] or ["no matching tools"]
+        enabled = [s for s in registry.available_specs(ctx) if not s.is_deferred
+                   and (s.name == query or any(tag in query for tag in s.tags))]
+        lines = [f"{s.name}: {s.description}" for s in found]
+        lines += [f"{s.name} (already available): {s.description}" for s in enabled[:limit]]
+        if not lines:
+            lines.append("no matching tools")
+        if any(word in query.lower() for word in ('截图', '窗口操作', 'screenshot', 'window control')):
+            lines.append("桌面窗口观察和操作需要在 Qt 的电脑操作页选择窗口并授权。")
         blocked = registry.unavailable_matches(query, ctx)
         if blocked:
             lines.append("\nMatching tools that cannot be used in this session (do not call them):")
@@ -1466,7 +1486,7 @@ def build_builtin_registry(
         "Spawn a nested agent with its own context window and a permission ceiling. "
         "Optional domain routes the whole subtask to a configured specialist model "
         "(retrieval / coding / computer / ...); constraints, prior and acceptance form its handoff.",
-        read_only=False, effect=ToolEffect.CONTROL, requires=("spawn",),
+        read_only=False, effect=ToolEffect.CONTROL, requires=("spawn",), tags=("子任务", "分派", "助手", "subagent"),
         schema={"task": "string", "mode": "string",
                 "domain": {"type": "string", "description": "Optional specialist domain, e.g. retrieval, coding, computer."},
                 "constraints": {"type": "string", "description": "Optional: limits the subtask must respect."},
@@ -1499,7 +1519,7 @@ def build_builtin_registry(
     @host_tool(
         "git_status",
         "Run git status --short in the workspace. Available even when shell_exec is blocked.",
-        no_defer=True, tags=("git",),
+        no_defer=True, tags=("git", '版本', '状态'),
         schema={},
     )
     def git_status(args, ctx):
@@ -1508,7 +1528,7 @@ def build_builtin_registry(
     @host_tool(
         "git_add",
         "Stage files with git add. 'paths' is a comma-separated list or '.' for all.",
-        no_defer=True, tags=("git",),
+        no_defer=True, tags=("git", '版本', '暂存'),
         schema={"paths": {"type": "string", "description": "Comma-separated paths, or '.' for all."}},
     )
     def git_add(args, ctx):
@@ -1518,7 +1538,7 @@ def build_builtin_registry(
     @host_tool(
         "git_commit",
         "Commit staged changes with git commit -m <message>. Requires a non-empty message.",
-        no_defer=True, tags=("git",),
+        no_defer=True, tags=("git", '版本', '提交'),
         schema={"message": {"type": "string", "description": "Commit message."}},
     )
     def git_commit(args, ctx):
@@ -1530,7 +1550,7 @@ def build_builtin_registry(
     @host_tool(
         "git_log",
         "Show recent commits (git log --oneline -n <count>).",
-        no_defer=True, tags=("git",),
+        no_defer=True, tags=("git", '版本', '历史'),
         schema={"count": {"type": "integer", "description": "Max commits to show. Default 5."}},
     )
     def git_log(args, ctx):

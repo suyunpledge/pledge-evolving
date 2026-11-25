@@ -9,6 +9,7 @@ from __future__ import annotations
 import shutil
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from keystone.policy import Mode, Policy, Sandbox
@@ -43,10 +44,16 @@ class IsolatedSurface(unittest.TestCase):
         unavailable = {row["name"]: row["reason"] for row in result.meta["unavailable"]}
         self.assertIn("shell_exec", unavailable)
         self.assertNotIn("shell_exec", result.meta["activated"])
+        chinese = self.reg.invoke("tool_search", {"query": "子任务 分派"}, ctx)
+        self.assertIn("spawn_subagent", {r["name"] for r in chinese.meta["unavailable"]})
+        self.assertIn("git_commit", self.reg.invoke("tool_search", {"query": "版本 提交"}, ctx).content)
+        self.assertIn("电脑操作页", self.reg.invoke("tool_search", {"query": "窗口操作"}, ctx).content)
         missing = self.reg.invoke("tool_search", {"query": "spawn subagent"}, ctx).meta["unavailable"]
         self.assertIn("spawn_subagent", {row["name"] for row in missing})
 
     def test_trusted_host_still_sees_native_tools(self):
+        self.assertNotIn("shell_exec", self.names(False))
+        self.policy = replace(self.policy, non_interactive=False)
         self.assertIn("shell_exec", self.names(False))
 
 
