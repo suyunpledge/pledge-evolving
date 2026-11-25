@@ -42,7 +42,7 @@ Session send visibility is restricted. Set tools.sessions.visibility=all
    }
    ```
 2. **stepclaw 的实测**：它不在本机 AutoClaw 的 agents.list 里（是独立进程）。若要它参与实测，
-   用 `BRIEFS-ROUND3.md` 里的任务书中转，产出照旧走贡献闸门。
+   用 [第三轮任务书](briefs-round3.md) 中转，产出照旧走贡献闸门。
 
 ## 各轮去哪看结果
 

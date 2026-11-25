@@ -138,6 +138,13 @@ What did not change: the Android application id (`com.forge.android`, so install
 
 ### Repository layout
 
+| Location | Contents |
+| --- | --- |
+| `keystone/`, `keystone-gui/` | Agent runtime and desktop clients |
+| `tests/`, `verify/` | Integration tests and independent checks |
+| [Design decisions](docs/design.md), [project history](docs/history/) | Architecture rationale, earlier plans and contributor briefs |
+| [Module contract](contract.md) | Current contribution interface and admission rules |
+
 ```
 pledge-keystone/
 ├── keystone/              Kernel (stdlib only)

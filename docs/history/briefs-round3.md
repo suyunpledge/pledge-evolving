@@ -1,6 +1,6 @@
 # 第三轮任务书 · forge v3 贡献模块（外部实体）
 
-先读 `CONTRACT.md` 第 1 节（冻结契约，6 条硬性禁令必须遵守）。已入库的四份（`heartbeat.py` / `scheduler.py` / `replay.py` / `toolhost.py`）可当形状参考。
+先读 [模块契约](../../contract.md) 第 1 节（冻结契约，6 条硬性禁令必须遵守）。已入库的四份（`heartbeat.py` / `scheduler.py` / `replay.py` / `toolhost.py`）可当形状参考。
 
 ---
 

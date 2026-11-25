@@ -140,6 +140,13 @@ flowchart LR
 
 ### 目录结构
 
+| 位置 | 内容 |
+| --- | --- |
+| `keystone/`、`keystone-gui/` | Agent 内核和桌面客户端 |
+| `tests/`、`verify/` | 集成测试和独立核验脚本 |
+| [设计取舍](docs/design.md)、[项目历史](docs/history/) | 架构决策、早期计划和贡献任务书 |
+| [模块契约](contract.md) | 现行贡献接口与准入规则 |
+
 ```
 pledge-keystone/
 ├── keystone/              内核（只用标准库）

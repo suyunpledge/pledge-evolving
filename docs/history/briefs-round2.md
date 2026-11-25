@@ -1,6 +1,6 @@
 # 第二轮任务书（详细）· forge v3 贡献模块
 
-先读 `CONTRACT.md` 第 1 节（冻结契约）——下面每个模块都受那 6 条硬性禁令约束。已入库的 `forge/contrib/scheduler.py`（阶跃龙虾）、`replay.py`（zcode）、`toolhost.py`（Trae）可直接当形状参考。
+先读 [模块契约](../../contract.md) 第 1 节（冻结契约）——下面每个模块都受那 6 条硬性禁令约束。已入库的 `forge/contrib/scheduler.py`（阶跃龙虾）、`replay.py`（zcode）、`toolhost.py`（Trae）可直接当形状参考。
 
 ---
 

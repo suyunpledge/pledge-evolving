@@ -5,11 +5,18 @@ Thanks for looking. This repository is early-stage and single-maintainer, so the
 ## Before you open a PR
 
 ```bash
-python run.py selftest     # must be 574/574 (no network, no API key)
+python run.py selftest     # all checks must pass (no network, no API key)
 python run.py doctor       # health / drift / key checks
 ```
 
 If `selftest` fails on a clean checkout of `main`, that is a bug — open an issue with the failing check name and the output of `python run.py doctor`.
+
+Store local test transcripts in the ignored `.codex/logs/` directory or the system temporary directory. For example, in PowerShell:
+
+```powershell
+New-Item -ItemType Directory -Force .codex/logs | Out-Null
+python run.py selftest *> .codex/logs/selftest.log
+```
 
 ## Code rules
 
@@ -24,7 +31,7 @@ These are enforced, not advisory:
 
 If you are an agent or a person writing a module against the frozen API:
 
-1. Read [`CONTRACT.md`](CONTRACT.md) — it defines the module API and the hard prohibitions.
+1. Read [`contract.md`](contract.md) for the module API and the hard prohibitions.
 2. Start from [`keystone/templates/contrib-shell.py`](keystone/templates/contrib-shell.py).
 3. Validate before sending:
 

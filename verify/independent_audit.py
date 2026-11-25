@@ -81,13 +81,9 @@ def module_rows(text: str) -> list[str]:
 # ---------------------------------------------------------------------------
 
 def section_claims() -> None:
-    readme = (ROOT / "readme.md").read_text(encoding="utf-8", errors="replace") if (ROOT / "readme.md").exists() else ""
-    plan = (ROOT / "plan.md").read_text(encoding="utf-8", errors="replace") if (ROOT / "plan.md").exists() else ""
-
-    claimed_checks = None
-    m = re.search(r"离线跑\s*\*\*(\d+)\s*项", readme)
-    if m:
-        claimed_checks = int(m.group(1))
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    badge = re.search(r"selftest-(\d+)%2F(\d+)_pass", readme)
+    claimed_checks = badge.groups() if badge else None
 
     live = run_modules_validate(ROOT)
     live_sum = summary_of(live)
@@ -98,17 +94,17 @@ def section_claims() -> None:
     text = (proc.stdout or "") + (proc.stderr or "")
     # 输出里可能嵌入子进程自己的 "N/N checks passed"，取最后一处（即总账）
     hits = re.findall(r"(\d+)/(\d+)\s+checks passed", text)
-    real_checks = int(hits[-1][1]) if hits else None
+    real_checks = hits[-1] if hits else None
     nested = [h[0] for h in hits[:-1]]
 
     record("1", "claims:selftest", "自检项数（README 声明 vs 实测）",
-           "PASS" if (claimed_checks is None or claimed_checks == real_checks) else "FAIL",
+           "PASS" if proc.returncode == 0 and claimed_checks and claimed_checks == real_checks else "FAIL",
            f"README={claimed_checks} 实测={real_checks} 退出码={proc.returncode}"
            + (f"（另有嵌套自检行 {nested}）" if nested else ""))
 
     # 契约要求的模块数：brief 里点名 10 个 legacy 模块 + 参考实现
-    claimed_mods = len(re.findall(r"^##\s*给", (ROOT / "briefs-round3.md").read_text(encoding="utf-8", errors="replace"), re.M)) \
-        if (ROOT / "briefs-round3.md").exists() else None
+    brief = ROOT / "docs" / "history" / "briefs-round3.md"
+    claimed_mods = len(re.findall(r"^##\s*给", brief.read_text(encoding="utf-8"), re.M))
     record("1", "claims:modules", "贡献模块数（实测）",
            "PASS" if live_sum["contributed"] else "FAIL",
            f"contributed={live_sum['contributed']} healthy={live_sum['healthy']} assertions={live_sum['assertions']} "
