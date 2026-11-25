@@ -64,6 +64,7 @@ def anthropic_to_openai_request(payload: dict[str, Any], model_map: dict[str, st
             continue
 
         texts: list[str] = []
+        visual_blocks = []
         tool_calls: list[dict[str, Any]] = []
         for block in content:
             if not isinstance(block, dict):
@@ -71,6 +72,7 @@ def anthropic_to_openai_request(payload: dict[str, Any], model_map: dict[str, st
             btype = block.get("type")
             if btype == "text":
                 texts.append(str(block.get("text", "")))
+                visual_blocks.append({"type": "text", "text": texts[-1]})
             elif btype == "tool_use":
                 tool_calls.append({
                     "id": block.get("id") or f"call_{uuid.uuid4().hex[:12]}",
@@ -87,15 +89,20 @@ def anthropic_to_openai_request(payload: dict[str, Any], model_map: dict[str, st
                     "tool_call_id": block.get("tool_use_id") or block.get("id") or "unknown",
                     "content": _text_of(block.get("content")) or "(empty)",
                 })
-            elif btype == "image":
-                texts.append("[image omitted by gateway]")
+            elif btype == "image" and role == "user":
+                source = block.get("source") or {}
+                if source.get("type") == "base64" and source.get("media_type") in {"image/png", "image/jpeg", "image/webp", "image/gif"}:
+                    visual_blocks.append({"type": "image_url", "image_url": {
+                        "url": "data:" + source["media_type"] + ";base64," + source.get("data", "")}})
 
-        if tool_calls:
+        if any(b["type"] == "image_url" for b in visual_blocks):
+            messages.append({"role": role, "content": visual_blocks})
+        elif tool_calls:
             messages.append({"role": "assistant", "content": "\n".join(texts) or None,
                              "tool_calls": tool_calls})
         elif texts:
             # merge consecutive same-role plain messages
-            if messages and messages[-1].get("role") == role and "tool_calls" not in messages[-1]:
+            if messages and messages[-1].get("role") == role and "tool_calls" not in messages[-1] and isinstance(messages[-1].get("content"), str):
                 messages[-1]["content"] = f"{messages[-1].get('content', '')}\n{chr(10).join(texts)}"
             else:
                 messages.append({"role": role, "content": "\n".join(texts)})

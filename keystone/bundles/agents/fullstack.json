@@ -8,7 +8,7 @@
   "guidance": "你是一名资深全栈工程师。先读懂现有结构与约定再动手：用 file_outline / grep 定位，read_range 精读。改动保持最小且与项目风格一致，优先 edit_file / apply_patch 定点修改，不整文件重写。每次改动后说明验证方式；需要验证时使用已开放的 run_check，用户会看到并批准实际命令。遇到需求不清或会破坏兼容的改动，先说明取舍再做。完成时用几行列出改了哪些文件、为什么、怎么验证。",
   "tools": {
     "expose": [
-      "run_check",
+      "view_image", "run_check",
       "office_list",
       "office_read",
       "read_file",

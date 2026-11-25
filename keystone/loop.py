@@ -202,6 +202,7 @@ class Agent:
         self.home = Path(home)
         self.workspace = Path(workspace)
         self.router = router
+        self._visual_inputs = []
         if context_mode not in ('compact', 'lossless'):
             raise ValueError('context_mode must be compact or lossless')
         self.context_mode = context_mode
@@ -633,12 +634,22 @@ class Agent:
             subscriber=self._observe_event, tool_emit=self._emit, agent=self.name, depth=self.depth,
             capabilities=self._tool_capabilities())
 
+    def _queue_image(self, observation):
+        if len(self._visual_inputs) >= 3:
+            raise ValueError('每次模型请求最多可查看三张图片。')
+        self._visual_inputs.append(observation)
+
     def _tool_capabilities(self):
-        return {'memory': self.memory, 'capabilities': self.capabilities, 'spawn': self._spawn_handler,
-                          'desktop_check_interactive': getattr(self, 'desktop_checks', False),
-                          'check_dialog': self.action_executor.approver if getattr(self, 'desktop_checks', False) or not self.policy.non_interactive else None,
-                          'artifact_store': self.artifacts, 'artifact_inline_limit': self.limits.max_tool_result,
-                          'catalog': self.catalog_index}
+        from .visual_input import router_supports
+        interactive = getattr(self, 'desktop_checks', False)
+        return {
+            'image_observer': self._queue_image if router_supports(self.router, self.wire_hint) else None,
+            'memory': self.memory, 'capabilities': self.capabilities, 'spawn': self._spawn_handler,
+            'desktop_check_interactive': interactive,
+            'check_dialog': self.action_executor.approver if interactive or not self.policy.non_interactive else None,
+            'artifact_store': self.artifacts, 'artifact_inline_limit': self.limits.max_tool_result,
+            'catalog': self.catalog_index,
+        }
 
     def _tool_context(self) -> ToolContext:
         return self.execution_context().tool_context()
@@ -1417,6 +1428,7 @@ class Agent:
             raise
         finally:
             self._cancel_prefix = None
+            self._visual_inputs.clear()
             if run_request is not None:
                 self.task_id, self.parent_run_id = previous_identity
             self._run_lock.release()
@@ -1818,6 +1830,8 @@ class Agent:
                     request_messages = [*messages, {"role": "user", "content": reminder}]
                     self._emit(type="step_budget_warning", step=index,
                                remaining=self._step_ceiling - index + 1)
+                if self._visual_inputs:
+                    request_messages = [*request_messages, toolwire.visual_message(self._visual_inputs, self.wire_hint)]
                 for _model_attempt in (0, 1):
                     try:
                         if request_options.get('step_owns_seed_retry'):
@@ -1827,6 +1841,7 @@ class Agent:
                             tools=declarations,
                             **request_options,
                         )
+                        self._visual_inputs.clear()
                         break
                     except TransportError as _retry_exc:
                         self._check_cancel()

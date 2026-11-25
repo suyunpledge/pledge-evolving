@@ -89,6 +89,10 @@ _KINDS = (
     _kind("kimi.k2.8", "kimi", "kimi.k2.8", "kimi-k2.8", aliases=("k2.8",),
           prefixes=("kimi-k2.8-",), evidence="registry"),
     _kind("kimi.k2.6", "kimi", "kimi.k2.6", "kimi-k2.6", evidence="configured"),
+    # Explicit, documented image-input models. A route-level vision=false still wins.
+    _kind("openai.gpt4o", "openai", "openai.gpt4o", "gpt-4o", traits=("vision",)),
+    _kind("anthropic.claude.sonnet4.6", "anthropic", "anthropic.claude4", "claude-sonnet-4-6", traits=("vision",)),
+    _kind("anthropic.claude.opus4.6", "anthropic", "anthropic.claude4", "claude-opus-4-6", traits=("vision",)),
     _kind("openai.gpt6.sol", "openai", "openai.gpt6", "gpt-6-sol"),
     _kind("openai.gpt6.1.sol", "openai", "openai.gpt6.1", "gpt-6.1-sol",
           overrides=(("cache_read_multiplier", 0.05),),

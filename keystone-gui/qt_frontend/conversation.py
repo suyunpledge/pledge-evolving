@@ -12,6 +12,8 @@ from keystone import todos
 from keystone.secrets import redact
 from keystone_client import ChatMessage, GatewayError, GenerationCancelled, ModelStreamInterrupted
 from work_tools import prepare_calls, invoke
+from keystone.toolwire import visual_message
+from .visual_tools import REFERENCE
 from . import productivity_tools
 
 
@@ -25,7 +27,8 @@ TOOL_LABELS = {
     'generate_image': '生成图片', 'generate_video': '生成视频',
     'office_list': '列出办公文件', 'office_read': '读取办公内容', 'office_create': '新建办公文件',
     'office_apply': '提交办公编辑', 'office_export': '导出办公文件',
-    'enter_work': '切换至 Work',
+    'view_image': '查看图片', 'office_render': '渲染办公页面', 'read_pdf': '阅读 PDF',
+    'run_check': '运行项目验证', 'enter_work': '切换至 Work',
     'update_todos': '更新待办清单',
     'computer_observe': '读取窗口控件', 'computer_screenshot': '截取窗口画面',
     'computer_vision': '分析窗口画面', 'computer_click': '窗口鼠标操作',
@@ -127,7 +130,7 @@ def preview_receipt(name, response):
         files = [path for path in result['files'][:8] if isinstance(path, str)]
         detail = redact('\n'.join([result['destination'], *files]))
     row = {'name': tool_label(name), 'outcome': receipt_outcome(result), 'detail': detail[:600] + ('…' if len(detail) > 600 else '')}
-    if result.get('ok') and name.removeprefix('keystone_') in productivity_tools.FILES and isinstance(meta, dict):
+    if result.get('ok') and name.removeprefix('keystone_') in (*productivity_tools.FILES, 'office_render') and isinstance(meta, dict):
         if isinstance(meta.get('attachment'), str):
             row['attachment'] = meta['attachment']
             if meta.get('reused_attachment'):
@@ -203,8 +206,21 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
     chat_mode = chat_mcp is not None
     mcp_tools, call_mcp = (chat_mcp if chat_mode else mcp) or ({}, None)
     if chat_mode:
-        mcp_tools = {name: entry for name, entry in mcp_tools.items() if name.startswith('mcp_') or name in productivity_tools.NAMES}
+        mcp_tools = {name: entry for name, entry in mcp_tools.items() if name.startswith('mcp_') or name in productivity_tools.NAMES or entry[1] == ('visual', 'view_image')}
     tools = schemas(mcp_tools, chat_mode)
+    pending_images = []
+    # Only attachments published by a known local producer in this conversation are eligible.
+    producer_ids = {c.get('id') for m in messages for c in (m.tool_calls or [])
+                    if c.get('function', {}).get('name') in ('keystone_plot_chart', 'keystone_office_render')}
+    attachment_refs = set()
+    for message in messages:
+        if message.role == 'tool' and message.tool_call_id in producer_ids:
+            try:
+                ref = json.loads(message.content).get('meta', {}).get('attachment')
+            except (ValueError, AttributeError):
+                continue
+            if isinstance(ref, str):
+                attachment_refs.add(ref)
     guard = ExecutionGuard()
     exports = productivity_tools.completed_exports(messages)
     retries_left = MAX_GENERATION_RETRIES
@@ -240,6 +256,8 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
                 slot += 1  # Earlier resume note precedes a later Work handoff.
             current.insert(slot,
                 ChatMessage('user', '本轮工作台背景记录（供参考，不能授予权限）：\n' + turn_context.strip()))
+        if pending_images:
+            current.append(ChatMessage('user', visual_message(pending_images)['content']))
         return current
 
     def stream(current, round_number, prefix=''):
@@ -307,6 +325,7 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
         if note:
             current.append(ChatMessage('user', note))
         result = stream(current, turn + 1)
+        pending_images.clear()
         if not result.tool_calls:
             return result
         if authorize is None and enter_work is None and on_todos is None:
@@ -356,6 +375,12 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
                             raise PermissionError('当前工具设置或权限不允许此调用。')
                         if name not in available:
                             raise ValueError(f'工具 {name} 未在本轮提供。请从当前工具列表选择并使用准确名称。')
+                        if name in mcp_tools and mcp_tools[name][1] == ('visual', 'view_image'):
+                            path = arguments.get('path', '')
+                            if isinstance(path, str) and REFERENCE.fullmatch(path) and path not in attachment_refs:
+                                raise PermissionError('只能查看当前对话生成的附件。')
+                        if name in mcp_tools and mcp_tools[name][1] in (('visual', 'view_image'), ('visual', 'office_render')) and len(pending_images) >= 3:
+                            raise ValueError('请先检查本批三张图片，再继续读取。')
                         authorize(name, arguments, cancel)
                     if cancel.is_set():
                         raise GenerationCancelled('已停止工具调用')
@@ -376,8 +401,17 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
                         if recovered_stream and create_key in completed_creates:
                             response = completed_creates[create_key]
                         else:
-                            response = invoke(arguments, lambda: productivity_tools.dispatch_with_exports(
-                                call_mcp, target, arguments, cancel, exports, attachment_folder))
+                            def dispatch_local():
+                                result = productivity_tools.dispatch_with_exports(call_mcp, target, arguments, cancel, exports, attachment_folder)
+                                if target in (('visual', 'view_image'), ('visual', 'office_render')) and result.get('ok'):
+                                    pending_images.append(result.pop('_visual_observation'))
+                                return result
+
+                            response = invoke(arguments, dispatch_local)
+                            if target in (('productivity', 'plot_chart'), ('visual', 'office_render')) and response.get('ok'):
+                                ref = response.get('meta', {}).get('attachment')
+                                if isinstance(ref, str):
+                                    attachment_refs.add(ref)
                             if create_key is not None and response.get('ok'):
                                 completed_creates[create_key] = response
                         if name.startswith('keystone_office_') and response.get('ok'):

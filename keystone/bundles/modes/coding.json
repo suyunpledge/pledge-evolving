@@ -36,7 +36,7 @@
     "id": "tools",
     "name": "tools:expose",
     "config": {
-      "expose": ["run_check", "read_file", "list_dir", "grep", "tool_search", "skill_list",
+      "expose": ["view_image", "run_check", "read_file", "list_dir", "grep", "tool_search", "skill_list",
                  "memory_recall", "spawn_subagent", "shell_exec",
                  "write_file", "edit_file", "apply_patch", "edit_config", "delete_file",
                  "read_range", "file_outline", "find_files", "review_changes", "ide_context", "artifact_read", "artifact_grep", "update_todos"]

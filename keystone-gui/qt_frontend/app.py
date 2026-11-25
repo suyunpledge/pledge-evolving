@@ -83,6 +83,12 @@ def main(argv=None):
     controller.tool_authorizer = tool_authorizer
     controller.tool_filter = lambda: partial(tool_available, workbench.permission)
 
+    from . import visual_tools
+    from .gateway_service import chat_model_routes, model_rows
+
+    def active_provider():
+        return chat_model_routes(model_rows(args.home)).get(controller.model, (None, {}))[1]
+
     def mcp_tools():
         workspace = workbench.workspace
         tools = {} if workbench.permission == 'sandbox' else workbench.mcp.chat_tools(workspace)
@@ -90,6 +96,7 @@ def main(argv=None):
             tools.update(workbench.service_tools())
         tools.update(workbench.localTools.tools())
         tools.update(workbench.office.tools(workspace))
+        tools.update(visual_tools.tools(active_provider()))
         if not args.demo:
             from .project_checks import definition, execute
             tools['keystone_run_check'] = definition(), ('project_check',)
@@ -98,6 +105,8 @@ def main(argv=None):
         skipped_media = {}
 
         def dispatch(target, arguments, cancel):
+            if isinstance(target, tuple) and target[0] == 'visual':
+                return visual_tools.call(target, arguments, workspace, controller.store.folder, cancel)
             if target == ('project_check',):
                 return execute(args.home, workspace, workbench.permission, workbench.approve, arguments, cancel)
             if isinstance(target, str):
@@ -123,7 +132,14 @@ def main(argv=None):
     controller.mcp_tools = mcp_tools
     def chat_mcp_tools():
         tools = {} if workbench.permission == 'sandbox' else workbench.mcp.chat_tools(workbench.workspace, remote_only=True)
-        return with_productivity((tools, workbench.mcp.call_chat_tool), controller.store.folder)
+        tools.update(visual_tools.tools(active_provider(), chat=True))
+
+        def dispatch(target, arguments, cancel):
+            if isinstance(target, tuple) and target[0] == 'visual':
+                return visual_tools.call(target, arguments, None, controller.store.folder, cancel, chat=True)
+            return workbench.mcp.call_chat_tool(target, arguments, cancel)
+
+        return with_productivity((tools, dispatch), controller.store.folder)
 
     controller.chat_mcp_tools = chat_mcp_tools
     workbench.pets.bind(controller, workbench)

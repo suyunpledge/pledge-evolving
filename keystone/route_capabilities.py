@@ -57,8 +57,26 @@ def default_output(profile, capabilities, *, adapt=True):
 def request_budget(payload, capabilities):
     """Read-only estimate of the final request, including non-content fields."""
     material = {k: payload[k] for k in ("system", "messages", "tools", "tool_choice") if k in payload}
+    image_count = 0
+    messages = []
+    for message in material.get("messages", []):
+        content = message.get("content")
+        if message.get("role") == "user" and isinstance(content, list):
+            blocks = []
+            for block in content:
+                if isinstance(block, dict) and block.get("type") in {"image", "image_url", "input_image"}:
+                    # Image tokens depend on the model's patch/tile rules, not the size of its Base64 envelope.
+                    blocks.append({"type": "image"})
+                    image_count += 1
+                else:
+                    blocks.append(block)
+            message = {**message, "content": blocks}
+        messages.append(message)
+    if image_count:
+        material["messages"] = messages
     chars = len(json.dumps(material, ensure_ascii=False, separators=(",", ":")))
     estimated = math.ceil(chars / 2.5) + 64 + 8 * len(payload.get("messages") or [])
+    estimated += 4096 * image_count  # Local admission estimate per image, not metered usage.
     outputs = [payload[k] for k in ("max_tokens", "max_completion_tokens") if k in payload]
     if any(type(v) is not int or v <= 0 for v in outputs):
         raise ValueError("output token limit must be a positive integer")
@@ -68,7 +86,7 @@ def request_budget(payload, capabilities):
     return {"estimated_input_tokens": estimated, "output_reserve": reserve,
             "context_window": window, "input_budget": budget,
             "fits": budget is None or estimated <= budget,
-            "estimator": "serialized_chars/2.5+protocol_margin"}
+            "estimator": "serialized_chars/2.5+protocol_margin" + ("+image_allowance" if image_count else "")}
 
 
 def preview_budget(messages, tools, provider, model):

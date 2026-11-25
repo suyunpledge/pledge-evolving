@@ -41,7 +41,7 @@ BUILTIN_TOOL_NAMES = frozenset({
     "apply_patch", "edit_config", "read_range", "file_outline", "shell_exec",
     "tool_search", "skill_list", "spawn_subagent", "memory_recall",
     "web_search", "fetch_url", "datetime", "calculator",
-    "find_files", "review_changes", "file_stats", "file_export", "run_check",
+    "find_files", "review_changes", "file_stats", "file_export", "run_check", "view_image",
     "git_status", "git_add", "git_commit", "git_log",
     "artifact_read", "artifact_grep", "catalog_expand",
     "model3d_build", "model3d_inspect",
@@ -819,6 +819,15 @@ def build_builtin_registry(
     from .artifact_tools import HELP, register_artifact_tools
     view_tool = partial(host_tool, result_fields=FIELDS if result_views else ())
     register_artifact_tools(reg)
+    @host_tool('view_image', 'Inspect a workspace PNG or JPEG using the active vision model (up to 2 MiB).',
+               effect=ToolEffect.FILE_READ, requires=('image_observer',), tags=('图片', '看图', '预览', 'vision'),
+               schema={'path': {'type': 'string', 'description': 'Image path within the active workspace.'}})
+    def view_image(args, ctx):
+        from .visual_input import image_data, image_path
+        observation = image_data(image_path(ctx.workspace, args.get('path')))
+        ctx.extras['image_observer'](observation)
+        return ToolResult(True, content='图片已传至下一次模型请求。')
+
     from .development import project_check
     @host_tool('run_check', project_check.DESCRIPTION, deferred=True, tags=('run tests', 'test', 'lint', 'build', '测试', '构建'),
                requires=('check_dialog',), read_only=False, effect=ToolEffect.DELEGATED_WRITE,
@@ -1449,6 +1458,8 @@ def build_builtin_registry(
             lines.append("no matching tools")
         if any(word in query.lower() for word in ('截图', '窗口操作', 'screenshot', 'window control')):
             lines.append("桌面窗口观察和操作需要在 Qt 的电脑操作页选择窗口并授权。")
+        if any(word in query.casefold() for word in ('office_render', '文档渲染', '幻灯片预览')):
+            lines.append('office_render 需要 Qt Work 和支持图片输入的模型。')
         blocked = registry.unavailable_matches(query, ctx)
         if blocked:
             lines.append("\nMatching tools that cannot be used in this session (do not call them):")
