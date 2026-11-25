@@ -57,6 +57,16 @@ class ArtifactGatewayTests(unittest.TestCase):
         self.assertEqual(result.authorization, 'deny')
         self.assertEqual(store.read(identifier)['text'], 'original')
 
+    def test_medium_explicit_source_range_is_delivered_in_one_request(self):
+        lines = [f"# Row {i} " + 'x' * 80 for i in range(51)]
+        (self.ws / 'medium.py').write_text('\n'.join(lines), encoding='utf-8')
+        _, base = self.gateway()
+        _, response = self.http(base, '/v1/tools/call', {'name': 'read_range',
+            'arguments': {'path': 'medium.py', 'start': 1, 'end': 51}})
+        self.assertTrue(response['ok'], response)
+        self.assertNotIn('artifact', response['meta'])
+        self.assertEqual(response['content'].splitlines()[-1], '51\t' + lines[-1])
+
     def test_gateway_source_read_edit_round_trip_and_placeholder_rejection(self):
         path = self.ws / 'settings.py'
         source = "token = args.get('credential')\npassword = cfg.password\nsecret = value\n"

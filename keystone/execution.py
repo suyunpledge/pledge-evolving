@@ -250,6 +250,9 @@ def create_execution_context(*, home, workspace, registry, policy=None, config=N
     from .artifacts import ArtifactStore
     host_capabilities = dict(capabilities or {})
     host_capabilities.setdefault('artifact_store', ArtifactStore(home, workspace))
+    # A small explicit source range can fit in one gateway reply. A host-supplied
+    # inline limit (including the Agent loop's per-step budget) remains a hard ceiling.
+    host_capabilities.setdefault('range_inline_limit', host_capabilities.get('artifact_inline_limit', 8192))
     host_capabilities.setdefault('artifact_inline_limit', 4000)
     context = ExecutionContext(run, workspace, Path(home).resolve(), policy,
         registry.clone() if isolate_registry else registry, session, cancellation,
@@ -407,9 +410,14 @@ class ActionExecutor:
                 from .artifacts import retain_result
                 fields = ()
                 readers = ()
+                inline_limit = ctx.capabilities['artifact_inline_limit']
+                if request.name == 'read_range' and value.ok:
+                    start, end = value.meta.get('start'), value.meta.get('end')
+                    if type(start) is int and type(end) is int and 0 <= end - start < 100:
+                        inline_limit = ctx.capabilities['range_inline_limit']
                 try:
                     fields = getattr(ctx.registry, 'result_fields', lambda name: ())(request.name)
-                    if fields or len(value.content or value.error) > ctx.capabilities['artifact_inline_limit']:
+                    if fields or len(value.content or value.error) > inline_limit:
                         from .artifact_tools import available_readers
                         readers = available_readers(ctx.registry, ctx.policy)
                         if 'artifact_read' not in readers:
@@ -418,7 +426,7 @@ class ActionExecutor:
                     fields = ()  # Optional presentation must not change an executed action's outcome.
                 retain_result(value, store=ctx.capabilities['artifact_store'], scope=ctx.secret_scope,
                     source=request.name, action_id=request.action_id,
-                    inline_limit=ctx.capabilities['artifact_inline_limit'], result_fields=fields, readers=readers)
+                    inline_limit=inline_limit, result_fields=fields, readers=readers)
                 value.meta['request_digest'] = digest
                 result = ActionResult.from_tool(ctx, request, value)
                 # If recording fails after a side effect, the durable start remains
