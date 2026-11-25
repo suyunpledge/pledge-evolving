@@ -524,7 +524,7 @@ def assert_public_path(path: Path, *, opened=None) -> None:
             pass
 
 
-def read_public_bytes(path: Path, *, limit: int) -> bytes:
+def read_public_bytes(path: Path, *, limit: int, root: Path | None = None) -> bytes:
     """Bound the allocation before decoding/parsing untrusted file content."""
     assert_public_path(path)
     def open_readonly(name, flags):
@@ -534,6 +534,10 @@ def read_public_bytes(path: Path, *, limit: int) -> bytes:
         opened = os.fstat(stream.fileno())
         if not stat.S_ISREG(opened.st_mode):
             raise ValueError('Only regular files can be inspected')
+        if root is not None:
+            resolved = Path(path).resolve(strict=True)
+            if not resolved.is_relative_to(Path(root).resolve(strict=True)) or not os.path.samestat(opened, resolved.stat()):
+                raise PermissionError('The opened file does not belong to the selected workspace.')
         assert_public_path(path, opened=opened)
         data = stream.read(limit + 1)
     if len(data) > limit:

@@ -43,9 +43,9 @@ def image_path(root, reference):
     return path
 
 
-def image_data(path):
+def image_data(path, *, root=None):
     """Strip PNG ancillary text and JPEG application metadata before transport."""
-    raw = read_public_bytes(path, limit=MAX_BYTES)
+    raw = read_public_bytes(path, limit=MAX_BYTES, root=root)
     if path.suffix.lower() == '.png' and raw.startswith(b'\x89PNG\r\n\x1a\n'):
         data = bytearray(raw[:8])
         offset = 8

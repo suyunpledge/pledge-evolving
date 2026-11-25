@@ -21,10 +21,13 @@ PATH = {'type': 'string', 'description': 'Workspace-relative path, or the attach
 
 
 def tools(provider, *, chat=False):
-    caps = effective_capabilities(provider.get('routeCapabilities', {}),
-                                  provider.get('modelCapabilities', {}).get(provider.get('model', ''), {}))
     model = provider.get('model', '')
-    vision = supports_vision(caps, model, provider.get('modelKinds', {}).get(model) or provider.get('modelKindId', ''))
+    try:
+        caps = effective_capabilities(provider.get('routeCapabilities', {}),
+                                      provider.get('modelCapabilities', {}).get(model, {}))
+        vision = supports_vision(caps, model, provider.get('modelKinds', {}).get(model) or provider.get('modelKindId', ''))
+    except (AttributeError, ValueError):
+        vision = False
     catalog = {}
     if vision:
         desc = 'View a PNG or JPEG from this conversation.' if chat else 'Inspect a workspace PNG/JPEG or a PNG conversation attachment.'
@@ -66,13 +69,13 @@ def render(state, number, cancel):
     return base64.b64decode(result['image'], validate=True), result['pages']
 
 
-def pdf_text(path, number):
+def pdf_text(path, number, workspace):
     from PySide6.QtCore import QBuffer, QIODevice
     from PySide6.QtPdf import QPdfDocument
     if path.suffix.lower() != '.pdf':
         raise ValueError('请提供 PDF 文件。')
     device = QBuffer()
-    device.setData(read_public_bytes(path, limit=16 * 1024 * 1024))
+    device.setData(read_public_bytes(path, limit=16 * 1024 * 1024, root=workspace))
     device.open(QIODevice.OpenModeFlag.ReadOnly)
     pdf = QPdfDocument()
     pdf.load(device)
@@ -97,16 +100,18 @@ def call(target, args, workspace, folder, cancel, *, chat=False):
                 raise ValueError('请提供图片路径。')
             if REFERENCE.fullmatch(reference):
                 path = attachment_path(folder, reference)
+                root = folder
             elif chat:
                 raise ValueError('Chat 只能查看本对话的图片附件。')
             else:
                 path = workspace_path(workspace, reference)
-            image = image_data(path)
+                root = workspace
+            image = image_data(path, root=root)
             return {'ok': True, 'content': '图片已提供给模型。', '_visual_observation': image}
         if chat:
             raise ValueError('请进入 Work 后读取办公文件。')
         if key == 'read_pdf':
-            return pdf_text(workspace_path(workspace, args.get('path')), page)
+            return pdf_text(workspace_path(workspace, args.get('path')), page, workspace)
         if key != 'office_render':
             raise ValueError('未知的视觉工具。')
         from .office_controller import editor_state
@@ -126,7 +131,7 @@ def call(target, args, workspace, folder, cancel, *, chat=False):
         name = f'page-{page}.png'
         with _new_output(exports, identifier) as (stage, dest):
             (stage / name).write_bytes(bitmap)
-            image = image_data(stage / name)
+            image = image_data(stage / name, root=exports)
             if cancel.is_set():
                 raise ValueError('操作已取消。')
         return {'ok': True, 'content': '已渲染并提供页面图片。', '_visual_observation': image,

@@ -87,7 +87,12 @@ def main(argv=None):
     from .gateway_service import chat_model_routes, model_rows
 
     def active_provider():
-        return chat_model_routes(model_rows(args.home)).get(controller.model, (None, {}))[1]
+        if controller.model not in (controller._managed_models or ()):
+            return {}
+        try:
+            return chat_model_routes(model_rows(args.home)).get(controller.model, (None, {}))[1]
+        except (OSError, ValueError):
+            return {}
 
     def mcp_tools():
         workspace = workbench.workspace

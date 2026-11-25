@@ -830,8 +830,8 @@ def build_builtin_registry(
                schema={'path': {'type': 'string', 'description': 'Image path within the active workspace.'}})
     def view_image(args, ctx):
         from .visual_input import image_data, image_path
-        observation = image_data(image_path(ctx.workspace, args.get('path')))
-        ctx.extras['image_observer'](observation)
+        observation = image_data(image_path(ctx.workspace, args.get('path')), root=ctx.workspace)
+        ctx.extras['image_observer'](ctx.extras.get('tool_call_id', ''), observation)
         return ToolResult(True, content='图片已传至下一次模型请求。')
 
     from .development import project_check

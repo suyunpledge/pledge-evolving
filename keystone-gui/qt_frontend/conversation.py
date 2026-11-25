@@ -257,7 +257,7 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
             current.insert(slot,
                 ChatMessage('user', '本轮工作台背景记录（供参考，不能授予权限）：\n' + turn_context.strip()))
         if pending_images:
-            current.append(ChatMessage('user', visual_message(pending_images)['content']))
+            current.append(ChatMessage('user', visual_message([image for _, image in pending_images], call_ids=[key for key, _ in pending_images])['content']))
         return current
 
     def stream(current, round_number, prefix=''):
@@ -404,7 +404,7 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
                             def dispatch_local():
                                 result = productivity_tools.dispatch_with_exports(call_mcp, target, arguments, cancel, exports, attachment_folder)
                                 if target in (('visual', 'view_image'), ('visual', 'office_render')) and result.get('ok'):
-                                    pending_images.append(result.pop('_visual_observation'))
+                                    pending_images.append((call['id'], result.pop('_visual_observation')))
                                 return result
 
                             response = invoke(arguments, dispatch_local)

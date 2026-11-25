@@ -634,10 +634,10 @@ class Agent:
             subscriber=self._observe_event, tool_emit=self._emit, agent=self.name, depth=self.depth,
             capabilities=self._tool_capabilities())
 
-    def _queue_image(self, observation):
+    def _queue_image(self, call_id, observation):
         if len(self._visual_inputs) >= 3:
             raise ValueError('每次模型请求最多可查看三张图片。')
-        self._visual_inputs.append(observation)
+        self._visual_inputs.append((call_id, observation))
 
     def _tool_capabilities(self):
         from .visual_input import router_supports
@@ -1831,7 +1831,7 @@ class Agent:
                     self._emit(type="step_budget_warning", step=index,
                                remaining=self._step_ceiling - index + 1)
                 if self._visual_inputs:
-                    request_messages = [*request_messages, toolwire.visual_message(self._visual_inputs, self.wire_hint)]
+                    request_messages = toolwire.with_visual_results(request_messages, self._visual_inputs, self.wire_hint)
                 for _model_attempt in (0, 1):
                     try:
                         if request_options.get('step_owns_seed_retry'):

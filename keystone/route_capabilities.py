@@ -54,29 +54,30 @@ def default_output(profile, capabilities, *, adapt=True):
     return min(default, capabilities.get("maxOutputTokens", default))
 
 
+def _image_blocks(blocks):
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "tool_result" and isinstance(block.get("content"), list):
+            yield from (child for child in block["content"] if isinstance(child, dict)
+                        and child.get("type") in {"image", "image_url", "input_image"})
+        elif block.get("type") in {"image", "image_url", "input_image"}:
+            yield block
+
+
 def request_budget(payload, capabilities):
     """Read-only estimate of the final request, including non-content fields."""
     material = {k: payload[k] for k in ("system", "messages", "tools", "tool_choice") if k in payload}
+    chars = len(json.dumps(material, ensure_ascii=False, separators=(",", ":")))
     image_count = 0
-    messages = []
     for message in material.get("messages", []):
         content = message.get("content")
         if message.get("role") == "user" and isinstance(content, list):
-            blocks = []
-            for block in content:
-                if isinstance(block, dict) and block.get("type") in {"image", "image_url", "input_image"}:
-                    # Image tokens depend on the model's patch/tile rules, not the size of its Base64 envelope.
-                    blocks.append({"type": "image"})
-                    image_count += 1
-                else:
-                    blocks.append(block)
-            message = {**message, "content": blocks}
-        messages.append(message)
-    if image_count:
-        material["messages"] = messages
-    chars = len(json.dumps(material, ensure_ascii=False, separators=(",", ":")))
-    estimated = math.ceil(chars / 2.5) + 64 + 8 * len(payload.get("messages") or [])
-    estimated += 4096 * image_count  # Local admission estimate per image, not metered usage.
+            for block in _image_blocks(content):
+                # An image consumes patch/tile tokens independently of its Base64 encoding.
+                chars -= len(json.dumps(block, ensure_ascii=False, separators=(",", ":")))
+                image_count += 1
+    estimated = math.ceil(chars / 2.5) + 64 + 8 * len(payload.get("messages") or []) + 4096 * image_count
     outputs = [payload[k] for k in ("max_tokens", "max_completion_tokens") if k in payload]
     if any(type(v) is not int or v <= 0 for v in outputs):
         raise ValueError("output token limit must be a positive integer")
@@ -107,8 +108,7 @@ def validate_request(payload, capabilities):
     if capabilities.get("vision") is False:
         for message in payload.get("messages") or []:
             content = message.get("content")
-            if isinstance(content, list) and any(isinstance(b, dict) and b.get("type") in
-                    {"image", "image_url", "input_image"} for b in content):
+            if isinstance(content, list) and any(_image_blocks(content)):
                 raise ValueError("current route does not support images")
     efforts = capabilities.get("reasoningEfforts")
     effort = payload.get("reasoning_effort", (payload.get("output_config") or {}).get("effort"))

@@ -66,6 +66,22 @@ class VisualInputTests(unittest.TestCase):
             router.providers['p'].route_capabilities['vision'] = False
             self.assertNotIn('view_image', {s.name for s in agent._execution_specs()})
 
+    def test_native_claude_tool_results_preserve_ids_on_both_wires(self):
+        from .toolwire import with_visual_results
+        from .route_capabilities import validate_request
+        receipts = [{'type': 'tool_result', 'tool_use_id': key, 'content': 'ok'} for key in ('a', 'b')]
+        original = [{'role': 'user', 'content': receipts}]
+        projected = with_visual_results(original, [('b', ('image/png', 'AAAA'))], 'anthropic')
+        self.assertEqual(receipts[1]['content'], 'ok')
+        self.assertEqual(projected[0]['content'][0], receipts[0])
+        self.assertEqual(projected[0]['content'][1]['content'][-1]['source']['data'], 'AAAA')
+        with self.assertRaisesRegex(ValueError, 'images'):
+            validate_request({'messages': projected}, {'vision': False})
+        converted = anthropic_to_openai_request({'messages': projected})['messages']
+        self.assertEqual([m['role'] for m in converted], ['tool', 'tool', 'user'])
+        self.assertIn('b', converted[-1]['content'][0]['text'])
+        self.assertIn('AAAA', converted[-1]['content'][1]['image_url']['url'])
+
     def test_route_budget_counts_visual_tiles_independently_of_serialized_image_length(self):
         from .route_capabilities import request_budget
         def estimate(size):

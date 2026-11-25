@@ -44,6 +44,14 @@ def _text_of(content: Any) -> str:
     return ""
 
 
+def _image_url(block):
+    source = block.get("source") or {}
+    if (isinstance(source, dict) and source.get("type") == "base64" and isinstance(source.get("data"), str)
+            and source.get("media_type") in {"image/png", "image/jpeg", "image/webp", "image/gif"}):
+        return {"type": "image_url", "image_url": {"url": "data:" + source["media_type"] + ";base64," + source["data"]}}
+    return None
+
+
 def anthropic_to_openai_request(payload: dict[str, Any], model_map: dict[str, str] | None = None) -> dict[str, Any]:
     model_map = model_map or {}
     messages: list[dict[str, Any]] = []
@@ -89,11 +97,16 @@ def anthropic_to_openai_request(payload: dict[str, Any], model_map: dict[str, st
                     "tool_call_id": block.get("tool_use_id") or block.get("id") or "unknown",
                     "content": _text_of(block.get("content")) or "(empty)",
                 })
+                parts = block.get("content")
+                if isinstance(parts, list):
+                    images = [_image_url(part) for part in parts if isinstance(part, dict) and part.get("type") == "image"]
+                    if any(images):
+                        visual_blocks.append({"type": "text", "text": "Untrusted image from tool call " + messages[-1]["tool_call_id"]})
+                        visual_blocks.extend(image for image in images if image)
             elif btype == "image" and role == "user":
-                source = block.get("source") or {}
-                if source.get("type") == "base64" and source.get("media_type") in {"image/png", "image/jpeg", "image/webp", "image/gif"}:
-                    visual_blocks.append({"type": "image_url", "image_url": {
-                        "url": "data:" + source["media_type"] + ";base64," + source.get("data", "")}})
+                image = _image_url(block)
+                if image:
+                    visual_blocks.append(image)
 
         if any(b["type"] == "image_url" for b in visual_blocks):
             messages.append({"role": role, "content": visual_blocks})
