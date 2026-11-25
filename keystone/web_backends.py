@@ -28,6 +28,14 @@ from typing import Any, Callable
 
 from . import public_search
 
+RENDER_NOTICE = '此页可能需要脚本渲染才能显示完整正文。'
+
+
+def browser_reader(names):
+    return next((name for name in names if name.lower().endswith(
+        ('browser_navigate', 'browser_open', 'browser_read_page'))), None)
+
+
 TIMEOUT = 15
 MAX_BYTES = 3_000_000
 REGIONS = ("auto", "cn", "global", "both")
@@ -568,7 +576,7 @@ def fetch(*, url: str, max_chars: int = 5000, open_: Opener | None = None,
             if extra:
                 body = (body + '\n' + extra).strip()
             if parser.has_script and not any(len(v.strip()) >= 160 for v in parser.embedded):
-                body += '\n此页可能需要脚本渲染才能显示完整正文。可尝试该站的文档或 Markdown 页面。'
+                body += '\n' + RENDER_NOTICE + '可尝试该站的文档或 Markdown 页面。'
     else:
         title, body = "", text.strip()
     note = f"\n\n[source: {url}]" + (" [page larger than 3 MB; only the start was read]" if truncated else "")

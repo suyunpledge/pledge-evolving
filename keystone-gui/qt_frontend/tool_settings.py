@@ -9,13 +9,13 @@ from .conversation import tool_label, tool_schemas
 _GROUPS = {
     '计算': ('calculator', 'unit_convert', 'datetime', 'evaluate_math', 'summarize_numbers'),
     '图表与办公': ('plot_chart', 'create_document', 'create_spreadsheet', 'create_slides',
-                 'office_list', 'office_read', 'office_create', 'office_apply', 'office_export'),
+                 'office_list', 'office_read', 'office_create', 'office_apply', 'office_export', 'office_render', 'read_pdf'),
     '文本': ('text_transform',),
     '搜索': ('public_search', 'web_search', 'fetch_url'),
-    '媒体': ('generate_image', 'generate_video', 'comfyui_run'),
+    '媒体': ('generate_image', 'generate_video', 'comfyui_run', 'view_image'),
     '文件与代码': ('read_file', 'read_range', 'file_outline', 'list_dir', 'grep', 'find_files', 'write_file',
                   'edit_file', 'edit_config', 'apply_patch', 'delete_file', 'file_stats', 'file_export',
-                  '7zip_extract', 'review_changes', 'git_status', 'git_log', 'git_add', 'git_commit'),
+                  'run_check', '7zip_extract', 'review_changes', 'git_status', 'git_log', 'git_add', 'git_commit'),
 }
 _CATEGORIES = {name: group for group, names in _GROUPS.items() for name in names}
 

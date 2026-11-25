@@ -80,6 +80,8 @@ def main(argv=None):
         template = controller.templates.active()
         return lambda name, arguments, cancel: authorize(
             profile, workspace, name, arguments, workbench.approve, cancel, template=template)
+    import platform
+    controller.work_environment = lambda: f'系统 {platform.system()}，工作区 {workbench.workspace}，权限 {workbench.permission}。'
     controller.tool_authorizer = tool_authorizer
     controller.tool_filter = lambda: partial(tool_available, workbench.permission)
 

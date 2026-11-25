@@ -1770,9 +1770,15 @@ def build_builtin_registry(
         head = f"# {title}\n\n" if title else ""
         # The backend already bounds the text and appends its own truncation/source note.
         body_text = head + body
-        return ToolResult(ok=True, content=_web_boundary(url, body_text),
-                          meta={"url": url, "chars": len(body_text),
-                                "trust": "untrusted", "source": "fetch_url"})
+        meta = {"url": url, "chars": len(body_text), "trust": "untrusted", "source": "fetch_url"}
+        if fetcher is None and web_backends.RENDER_NOTICE in body:
+            meta['may_need_browser'] = True
+            registry = ctx.extras.get('registry')
+            if registry is not None:
+                reader = web_backends.browser_reader(s.name for s in registry.available_specs(ctx))
+                if reader:
+                    meta['browser_tool'] = reader
+        return ToolResult(ok=True, content=_web_boundary(url, body_text), meta=meta)
 
     @host_tool(
         "datetime",

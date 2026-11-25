@@ -189,6 +189,13 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
         tools = [row for row in tools if row['function']['name'] not in (ENTER_WORK, UPDATE_TODOS, todos.NAME)]
         if tool_filter is not None:
             tools = [row for row in tools if tool_filter(row['function'].get('name'))]
+        # Keep the user's selected desktop search engine and function-capable calculator
+        # when present. Disabling either still leaves its gateway counterpart usable.
+        names = {row['function']['name'] for row in tools}
+        duplicates = {other for preferred, other in (
+            ('keystone_public_search', 'keystone_web_search'),
+            ('keystone_evaluate_math', 'keystone_calculator')) if preferred in names}
+        tools = [row for row in tools if row['function']['name'] not in duplicates]
         if chat_mode and enter_work is not None:
             tools.append(WORK_HANDOFF)
         if on_todos is not None:
@@ -419,6 +426,11 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
                     else:
                         stage('tool', '正在执行 · ' + tool_label(name))
                         response = invoke(arguments, lambda: client.call_tool(name, arguments))
+            if name == 'keystone_fetch_url' and response.get('meta', {}).get('may_need_browser'):
+                from keystone.web_backends import browser_reader
+                reader = browser_reader(row['function']['name'] for row in tools)
+                if reader:
+                    response['meta']['browser_tool'] = reader
             body = json.dumps(model_tool_result(name, response, desktop_readers(tools)), ensure_ascii=False)
             messages.append(ChatMessage('tool', body, tool_call_id=call['id']))
             if receipt is not None:

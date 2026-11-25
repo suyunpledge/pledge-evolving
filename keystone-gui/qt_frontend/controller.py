@@ -87,6 +87,7 @@ class ChatController(QObject):
         self.demo = demo
         self.factory = client_factory
         self.work_context = None
+        self.work_environment = None
         self._code_highlighters = {}
         self._prefs = {} if demo else self.store.preferences()
         self._sessions = RowsModel(parent=self)
@@ -756,6 +757,7 @@ class ChatController(QObject):
         if chat_mode:
             chat_connection = self.chat_mcp_tools() if tools_enabled and self.chat_mcp_tools else ({}, None)
         change_notice = self._changes.notice()
+        environment = self.work_environment() if self.work_environment else ''
         temperature = self._temperature
         # 沉思档：回答前先跑沉思轮（套件走插件席位），笔记只进本轮系统上下文，不写入历史。
         contemplating = self._reasoning == 'contemplate' and not self.demo
@@ -779,8 +781,8 @@ class ChatController(QObject):
         # 角色指引整轮会话不变：走系统上下文（稳定前缀、可缓存）；工作台背景才是逐轮的轮次上下文。
         def work_context(history):
             if self.work_context is None:
-                return '\n'.join(part for part in (thought[0], change_notice) if part)
-            return '\n'.join(part for part in (thought[0], change_notice,
+                return '\n'.join(part for part in (environment, thought[0], change_notice) if part)
+            return '\n'.join(part for part in (environment, thought[0], change_notice,
                                                 self.work_context(history, model, cancel, update_status)) if part)
 
         def enter_work(reason, history):

@@ -41,6 +41,23 @@ def drive(client, **options):
 
 
 class TurnBudgetTests(unittest.TestCase):
+    def test_desktop_duplicate_is_removed_only_when_preferred_tool_is_enabled(self):
+        class Surface(Client):
+            def list_tools(self, **_):
+                return [{'type': 'function', 'function': {'name': 'keystone_calculator'}}]
+
+            def stream_chat(self, messages, on_chunk, **opts):
+                self.names = [row['function']['name'] for row in opts['tools']]
+                return CompletionResult('done')
+
+        key = 'keystone_evaluate_math'
+        client = Surface()
+        local = {key: ({'type': 'function', 'function': {'name': key}}, ('productivity', 'evaluate_math'))}
+        drive(client, mcp=(local, None))
+        self.assertEqual(client.names, [key])
+        drive(client, mcp=(local, None), tool_filter=lambda name: name != key)
+        self.assertEqual(client.names, ['keystone_calculator'])
+
     def test_changing_work_context_follows_shared_history_and_stays_out_of_checkpoints(self):
         old = Client()
         _, _, history = drive(old, system_context='fixed', turn_context='observation A', max_turns=1)
