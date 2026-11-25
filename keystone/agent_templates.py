@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .config import USER_LAYER_NAME
-from .policy import Decision, Mode, Policy, ReadScope, Sandbox, WRITE_TOOLS
+from .policy import Decision, Mode, Policy, ReadScope, Sandbox, WRITE_TOOLS, override_warnings
 
 SCHEMA = 1
 BUILTIN_DIR = Path(__file__).resolve().parent / "bundles" / "agents"
@@ -246,6 +246,9 @@ class AgentTemplate:
                       allow=self.allow, ask=self.ask, deny=self.deny, read_scope=self.read_scope,
                       non_interactive=non_interactive)
 
+    def policy_warnings(self) -> list[str]:
+        return override_warnings(self.own_policy(Path('.')))
+
     def tool_allowed(self, name: str) -> bool:
         """Whether this role exposes ``name`` (kernel or desktop spelling)."""
         if not isinstance(name, str) or not name:
@@ -315,6 +318,7 @@ def load_templates(home: str | Path | None = None) -> tuple[list[AgentTemplate],
                 continue
             seen.add(template.id)
             templates.append(template)
+            problems.extend(f"{path.name} · {warning}" for warning in template.policy_warnings())
     return templates, problems
 
 

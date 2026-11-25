@@ -728,6 +728,15 @@ Item {
             ColumnLayout {
                 width: body.availableWidth; spacing: 14
                 TodoList { Layout.fillWidth: true; items: page.viewData.todos || []; running: workbench.busy }
+                Text {
+                    objectName: "configPolicyWarnings"
+                    Layout.fillWidth: true
+                    visible: page.pageKey === "config" && text.length > 0
+                    text: (page.viewData.policyWarnings || []).join("\n")
+                    textFormat: Text.PlainText
+                    wrapMode: Text.Wrap
+                    color: Theme.warning
+                }
                 ComputerPreview {
                     Layout.fillWidth: true; visible: page.pageKey === "computer" && !!imageSource
                     material: page.material; enabled: !workbench.busy

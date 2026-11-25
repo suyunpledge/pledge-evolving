@@ -10,7 +10,7 @@ from config_model import load_user_layer, save_user_layer
 from keystone.development.editor import Document, ProjectBoundary
 from keystone.desktop_services import DesktopStore, ConnectorService, OPERATIONS
 from keystone.desktop_permissions import profile_policy
-from keystone.policy import Policy
+from keystone.policy import Policy, override_warnings
 from keystone.secrets import MARKER, redact
 from .store import SessionStore
 from .workspace_navigation import Explorer
@@ -166,7 +166,10 @@ class WorkspaceService:
                         field('planningModel', '规划模型', selected, 'choice', models)],
                 actions=[button('run', '开始任务'), button('cancel', '停止')])
         elif page == 'config':
+            from keystone.config import load_config
             self.snapshots.setdefault(page, copy.deepcopy(rows))
+            policy = Policy.from_config(load_config(self.home), workspace=self.host.workspace)
+            data['policyWarnings'] = override_warnings(policy)
             steps = configured_steps(rows)
             data.update(hint='模型按行管理；图片与视频模型使用右上方的生成模型配置。高级配置支持原有 Keystone JSON 格式。'
                              '步数上限默认不限；填 1–1000 可限制每个任务最多调用多少次工具，填 0 或留空恢复不限。',

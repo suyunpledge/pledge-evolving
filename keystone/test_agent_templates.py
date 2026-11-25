@@ -104,6 +104,41 @@ class LibraryTests(unittest.TestCase):
     def setUp(self):
         self.home = Path(self.enterContext(tempfile.TemporaryDirectory()))
 
+    def test_custom_role_warns_at_load_without_changing_its_policy(self):
+        source = raw(policy={"mode": "read-only", "allow": ["write_file"]})
+        at.save_template(self.home, source)
+        templates, notes = at.load_templates(self.home)
+        custom = next(item for item in templates if item.id == "custom")
+        self.assertTrue(any("custom.json" in item and "只读边界" in item for item in notes))
+        self.assertEqual(custom.allow, ("write_file",))
+
+    def test_allow_warnings_follow_real_baseline_and_higher_priority_rules(self):
+        from .policy import override_warnings
+        from dataclasses import replace
+        base = Policy(allow=("write_*", "shell_exec"), ask=("shell_exec",))
+        self.assertEqual(len(override_warnings(base)), 1)
+        self.assertIn("审批改为直接允许", override_warnings(base)[0])
+        self.assertIn("write_file", override_warnings(base)[0])
+        self.assertNotIn("shell_exec", override_warnings(base)[0])
+        self.assertEqual(override_warnings(replace(base, deny=("write_*",))), [])
+        self.assertEqual(override_warnings(replace(base, mode=Mode.ACCEPT_EDITS)), [])
+        readonly = replace(base, sandbox=Sandbox.READ_ONLY)
+        self.assertIn("只读边界仍会拒绝", override_warnings(readonly)[0])
+        network = replace(base, mode=Mode.PLAN, allow=("web_search",))
+        self.assertIn("默认的拒绝改为允许", override_warnings(network)[0])
+
+    def test_doctor_displays_configured_allow_warning(self):
+        from .cli import main
+        import contextlib
+        from .compat import user_layer
+        user_layer(self.home).write_text(json.dumps([{"id": "policy", "name": "policy:core",
+            "config": {"sandbox": "read-only", "allow": ["write_file"]}}]), encoding="utf-8")
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(main(["doctor", "--home", str(self.home)]), 0)
+        self.assertIn("policy:allow-override", output.getvalue())
+        self.assertIn("只读边界仍会拒绝", output.getvalue())
+
     def test_duplicate_customise_persist_delete(self):
         copy = at.duplicate_template(self.home, "reviewer")
         self.assertEqual((copy.id, copy.based_on, copy.builtin), ("reviewer-copy", "reviewer", False))

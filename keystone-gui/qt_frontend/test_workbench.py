@@ -261,6 +261,17 @@ class WorkbenchTests(unittest.TestCase):
             (folder / 'close').touch()
             proc.wait(timeout=8)
 
+    def test_config_shows_warning_from_saved_policy(self):
+        from config_model import save_user_layer
+        save_user_layer(Path(self.temp.name), [{"id": "policy", "name": "policy:core",
+            "config": {"sandbox": "read-only", "allow": ["write_file"]}}])
+        self.workbench.navigate('config')
+        until(lambda: self.workbench.nativePageReady and visual_item(self.window.contentItem(), 'page_config'))
+        page = visual_item(self.window.contentItem(), 'page_config')
+        label = page.findChild(QObject, 'configPolicyWarnings')
+        until(lambda: label.isVisible() and 'write_file' in label.property('text'))
+        self.assertIn('只读边界仍会拒绝', label.property('text'))
+
     def test_computer_preview_maps_only_image_pixels_and_disarms_on_refresh(self):
         from unittest.mock import patch
         from PySide6.QtCore import QPointF

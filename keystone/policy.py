@@ -15,8 +15,9 @@ ceiling, so ``auto``/``dontAsk`` parents cannot be out-permissioned by a child.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
+from functools import cache
 from pathlib import Path
 from typing import Iterable
 
@@ -431,6 +432,42 @@ class Policy:
         return f"{stamp}\tmode={self.mode.value}\tsandbox={self.sandbox.value}\ttool={tool}\t{decision.value}\t{detail}".rstrip()
 
 
+@cache
+def _diagnostic_effects():
+    """Classify shipped tools from their host registrations, including conditional writes."""
+    from .tools import build_builtin_registry
+    registry = build_builtin_registry()
+    effects = []
+    for spec in registry.all_specs():
+        effect = registry.effect(spec.name, {'patch': {}})
+        if effect in {ToolEffect.WRITE, ToolEffect.NATIVE, ToolEffect.DELEGATED_WRITE} or 'network' in spec.tags:
+            effects.append((spec.name, effect))
+    return tuple(effects)
+
+
+def override_warnings(policy: Policy) -> list[str]:
+    """Describe explicit grants against the same policy without grants. Never execute a tool."""
+    if not policy.allow:
+        return []
+    baseline = replace(policy, allow=())
+    groups = {}
+    for tool, effect in _diagnostic_effects():
+        if not policy._matches(policy.allow, tool) or policy._matches(policy.deny, tool):
+            continue
+        args = {'patch': {}} if tool == 'edit_config' else {}
+        before = baseline.evaluate(tool, args=args, effect=effect)
+        after = policy.evaluate(tool, args=args, effect=effect)
+        if after is Decision.ALLOW and before is not Decision.ALLOW:
+            note = '将模式默认的审批改为直接允许' if before is Decision.ASK else '将模式默认的拒绝改为允许'
+        elif (after is Decision.DENY and effect in {ToolEffect.WRITE, ToolEffect.NATIVE, ToolEffect.DELEGATED_WRITE}
+              and (policy.mode is Mode.READ_ONLY or policy.sandbox is Sandbox.READ_ONLY)):
+            note = '声明了写入或执行权限，但只读边界仍会拒绝'
+        else:
+            continue
+        groups.setdefault(note, []).append(tool)
+    return [f"allow {note}：{'、'.join(names)}。" for note, names in groups.items()]
+
+
 __all__ = [
     "Decision",
     "Mode",
@@ -440,4 +477,5 @@ __all__ = [
     "DEFAULT_DENY_PATTERNS",
     "DEFAULT_FORBIDDEN_PROGRAMS",
     "WRITE_TOOLS",
+    "override_warnings",
 ]

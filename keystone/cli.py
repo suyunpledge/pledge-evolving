@@ -30,7 +30,7 @@ from .context_plan import CONTEXT_MODES, ContextPlan
 from .loop import THINKING_MODES, build_agent
 from .loop_limits import primary_profile, resolve_loop_limits, resolve_max_steps
 from .model import ModelRouter, warmth_store
-from .policy import Policy
+from .policy import Policy, override_warnings
 from .routing import STRATEGIES, SmartRouter
 from .vendors import PROFILES, VENDOR_ORDER, profile_for
 from .protocol import PROTOCOL_VERSION, run_payload
@@ -89,6 +89,8 @@ def _apply_template(args, cfg) -> None:
               f"{applied.policy['sandbox']}，步数 {applied.loop.get('maxSteps', '默认')}", file=sys.stderr)
         for note in applied.narrowed:
             print(f"[template] 已按你的策略收窄：{note}", file=sys.stderr)
+        for warning in template.policy_warnings():
+            print(f"[template] 角色自身的策略提示：{warning}", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -493,6 +495,8 @@ def cmd_doctor(args) -> int:
                    "detail": f"{policy.mode.value} / 写={policy.sandbox.value} / 读={read_detail}"})
     checks.append({"check": "policy:forbidden-programs", "ok": len(policy.forbidden_programs) > 0,
                    "detail": ", ".join(policy.forbidden_programs)})
+    for warning in override_warnings(policy):
+        checks.append({"check": "policy:allow-override", "ok": False, "detail": warning})
 
     try:
         import shutil
