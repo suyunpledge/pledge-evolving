@@ -337,14 +337,108 @@ class NativeServiceTests(unittest.TestCase):
         self.host.pages.action('development', 'open', {'path': str(path)})
         self.host.pages.update_document(str(path), 'value = 2\n', 1)
         self.host.demo = False
-        with patch.object(self.host.coding.runtime, 'run') as run:
-            with self.assertRaisesRegex(ValueError, '保存'):
-                self.host.coding.run(('hello', False, '继承配置', 'default', 'none', (str(path),), None))
-            run.assert_not_called()
+        with patch.object(self.host.coding.runtime, 'run', return_value={'text': 'done'}) as run:
+            self.host.coding.run(('hello', False, '继承配置', 'default', 'none', (str(path),), None))
+            self.assertEqual(run.call_args.kwargs['permission'], 'read-only')
+            self.assertEqual(run.call_args.kwargs['contexts'], [{'path': str(path), 'content': 'value = 2\n'}])
+            self.assertEqual(path.read_text(encoding='utf-8'), 'value = 1\n')
         self.host.pages.action('development', 'save', {'path': str(path)})
         with patch.object(self.host.coding.runtime, 'run', return_value={'text': 'done'}) as run:
             self.host.coding.run(('hello', False, '继承配置', 'default', 'none', (str(path),), None))
+            self.assertEqual(run.call_args.kwargs['permission'], 'desktop-sandbox')
             self.assertEqual(run.call_args.kwargs['contexts'], [{'path': str(path), 'content': 'value = 2\n'}])
+
+    def test_coding_context_keeps_submitted_tab_selection_and_unsaved_buffer(self):
+        from keystone.tools import ToolContext
+        path, other = self.project / 'app.py', self.project / 'notes.txt'
+        path.write_text('saved\n', encoding='utf-8')
+        other.write_text('reference', encoding='utf-8')
+        pages, coding = self.host.pages, self.host.coding
+        coding.initialize()
+        registry = coding.runtime.bridge.agent.registry
+        self.assertTrue({'ide_context', 'find_files', 'review_changes'} <= set(registry.names()))
+        pages.action('development', 'open', {'path': str(path)})
+        pages.update_document(str(path), 'header\n🙂选区 after\n', 2)
+        coding.draft = '解释选区'
+        self.host.running = True
+        try:
+            coding.command({'action': 'send', 'focus': {'path': str(path), 'version': 2, 'start': [2, 3], 'end': [2, 5]}})
+        finally:
+            self.host.running = False
+        request = coding.queue.pop()
+        pages.update_document(str(path), 'later draft', 3)
+        pages.action('development', 'open', {'path': str(other)})
+        self.host.demo = False
+        def inspect(prompt, **kwargs):
+            ctx = ToolContext(coding.runtime.bridge.policy(kwargs['permission']), self.project)
+            try:
+                def invoke(**values):
+                    row = registry.invoke('ide_context', values, ctx)
+                    self.assertTrue(row.ok, row.error)
+                    return json.loads(row.content)
+                summary = invoke()
+                self.assertTrue(summary['read_only'])
+                self.assertEqual(summary['active'], 'app.py')
+                self.assertEqual([r['path'] for r in summary['open_tabs']], ['app.py'])
+                buffer = invoke(view='buffer', count=1)
+                self.assertEqual((buffer['source'], buffer['selected_text'], buffer['next_line']), ('unsaved_at_send', '选区', 3))
+                self.assertFalse(registry.invoke('ide_context', {'view': 'buffer', 'path': '../outside'}, ctx).ok)
+                denied = registry.invoke('write_file', {'path': 'app.py', 'content': 'lost'}, ctx)
+                self.assertFalse(denied.ok)
+            finally:
+                ctx.secret_scope.close()
+            return {'text': 'done'}
+        with patch.object(coding.runtime, 'run', side_effect=inspect):
+            coding.run(request)
+        self.assertEqual(path.read_text(encoding='utf-8'), 'saved\n')
+        self.assertEqual(pages.documents[str(path)].text, 'later draft')
+
+    def test_coding_context_checks_revision_bounds_and_protects_whole_buffer(self):
+        from .coding_project import ProjectContext
+        from keystone.tools import ToolContext
+        from keystone.vscode_bridge import MAX_CONTEXT
+        pages = self.host.pages
+        path = self.project / 'settings.json'
+        token = 'opaque-test-fixture-only'
+        content = json.dumps({'apiKey': token, 'copy': token, 'long': 'x' * MAX_CONTEXT}, indent=2)
+        path.write_text(content, encoding='utf-8')
+        pages.action('development', 'open', {'path': str(path)})
+        project = ProjectContext.capture(pages, [str(path)], {'path': str(path), 'version': 99, 'start': [2, 1], 'end': [2, 3]})
+        self.assertEqual(project.attachments(), [])
+        self.assertEqual(project.location, {})
+        ctx = ToolContext(self.host.policy(), self.project)
+        try:
+            result = project.read({'view': 'buffer'}, ctx)
+            self.assertNotIn(token, result.content)
+            data = json.loads(result.content)
+            self.assertTrue(data['redacted_line_map_changed'])
+            self.assertTrue(data['clipped'])
+            path.write_text('{"fresh": true}', encoding='utf-8')
+            updated = json.loads(project.read({'view': 'buffer'}, ctx).content)
+            self.assertEqual(updated['lines'], ['{"fresh": true}'])
+            with self.assertRaises(ValueError):
+                project.read({'view': 'buffer', 'start': 2}, ctx)
+        finally:
+            ctx.secret_scope.close()
+
+    def test_coding_tool_receipts_refresh_open_editors_and_nested_explorer(self):
+        directory = self.project / 'src'
+        directory.mkdir()
+        code, created = directory / 'code.py', directory / 'new.py'
+        code.write_text('before', encoding='utf-8')
+        pages = self.host.pages
+        pages.action('development', 'open', {'path': str(code)})
+        self.assertIn('src/code.py', [r['id'] for r in pages.view('development')['rows']])
+        code.write_text('after', encoding='utf-8')
+        created.write_text('new', encoding='utf-8')
+        self.host.coding.event({'data': {'type': 'tool_completed', 'meta': {
+            'file_changes': [{'path': 'src/code.py'}, {'path': 'src/new.py'}]}}})
+        view = pages.view('development')
+        self.assertEqual(view['document']['text'], 'after')
+        self.assertIn('src/new.py', [r['id'] for r in view['rows']])
+        created.unlink()
+        pages.refresh_documents()
+        self.assertNotIn('src/new.py', [r['id'] for r in pages.view('development')['rows']])
 
     def test_cold_process_imports_no_tk_and_exits_cleanly(self):
         script = Path(__file__).with_name('service_host.py')
@@ -630,6 +724,32 @@ class NativeServiceTests(unittest.TestCase):
             finally:
                 self.host.gateway.close()
                 server.shutdown()
+
+    def test_queued_model_change_refreshes_saved_config_in_the_same_job(self):
+        save_user_layer(self.home, [{'id': 'fixture', 'name': 'provider:fixture', 'config': {
+            'baseURL': 'http://127.0.0.1/v1', 'model': 'qa', 'modelLabel': 'Screen QA'}}])
+        release = threading.Event()
+        with patch.object(self.host.gateway, 'start') as start:
+            self.host.work(lambda: release.wait(5))
+            first = self.host.worker
+            try:
+                self.host.command({'command': 'apply_model_setup', 'provider': 'fixture', 'refreshConfig': True})
+                self.host.command({'command': 'apply_model_setup', 'model': 'Screen QA'})
+            finally:
+                release.set()
+            first.join(5)
+            self.host.worker.join(5)
+            start.assert_called_once_with('', model='Screen QA')
+        configs = [d['data'] for e, d in self.events if e == 'page' and d['page'] == 'config']
+        self.assertEqual([c['rows'][0]['title'] for c in configs], ['Screen QA'])
+        self.assertFalse(any(e == 'error' for e, _ in self.events))
+
+    def test_empty_model_catalog_does_not_set_a_workbench_error(self):
+        self.host.gateway.demo = False
+        self.host.gateway.start()
+        self.assertIn(('gateway_catalog', {'models': []}), self.events)
+        self.assertFalse(any(e == 'error' for e, _ in self.events))
+        self.assertEqual(self.host.gateway.url, '')
 
     def test_chat_selector_keeps_catalog_and_waits_for_matching_gateway(self):
         from .controller import ChatController

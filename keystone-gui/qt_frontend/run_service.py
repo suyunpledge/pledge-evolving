@@ -25,13 +25,14 @@ class RunService:
     def chains(self):
         return toolchains.Toolchains(self.host.workspace)
 
-    def publish(self, *, detect=False):
+    def publish(self, *, detect=False, replan=False):
         path = self.host.pages.active_document or ''
-        chains = self.chains()
-        if detect or self._detected is None:
-            self._detected = chains.detect()
-        self._tasks, self._notes = toolchains.available(chains, path or None)
-        self._for = path
+        if replan or detect or self._for != path:
+            chains = self.chains()
+            if detect or self._detected is None:
+                self._detected = chains.detect()
+            self._tasks, self._notes = toolchains.available(chains, path or None)
+            self._for = path
         self.host.emit('run_state', state=redact({
             'toolchains': self._detected,
             'tasks': [{k: t[k] for k in ('id', 'label', 'language', 'action', 'scope')} for t in self._tasks],
@@ -53,7 +54,7 @@ class RunService:
 
     def start(self, action, value):
         # Plan against the current file and disk state, never a stale UI list.
-        self.publish()
+        self.publish(replan=True)
         if self.host.demo:
             raise PermissionError('预览模式不执行项目代码。')
         if self.host.profile == 'sandbox':
@@ -72,33 +73,24 @@ class RunService:
                 "CMakeLists.txt、package.json 等项目文件。")
             self.host.terminal.publish(f"\n[{names.get(action, '任务')}] {reason}\n", reveal=True)
             raise LookupError(reason)
-        self.host.work(lambda: self.execute(task))
+        self.host.work(lambda: self.execute(task), cancel_event=self.cancel)
 
     def execute(self, task):
-        self.cancel = threading.Event()
-        cancelled = threading.Event()
-        stop = threading.Thread(target=self._watch, args=(cancelled,), daemon=True)
         self.running = task['label']
-        self.publish()
-        stop.start()
+        result = None
         try:
+            self.publish()
             result = task_runner.execute(
                 task, workspace=self.host.workspace, policy=self.host.policy(),
-                approve=lambda title, detail, cancel: self.host.approve(title, detail, cancel),
-                cancelled=cancelled, on_output=lambda text: self.host.terminal.publish(str(redact(text)), reveal=True))
+                approve=self.host.approve, cancelled=self.cancel,
+                on_output=lambda text: self.host.terminal.publish(str(redact(text)), reveal=True))
+            self.problems = result['problems']
+            self.last = {'label': task['label'], 'status': result['status'], 'exitCode': result['exit_code'],
+                         'counts': result['counts'], 'elapsed': result['elapsed'], 'stamp': time.time()}
         except PermissionError as error:
             self.host.terminal.publish(f'\n[未运行] {error}\n', reveal=True)
             raise
         finally:
             self.running = ''
-            cancelled.set()
-        self.problems = result['problems']
-        self.last = {'label': task['label'], 'status': result['status'], 'exitCode': result['exit_code'],
-                     'counts': result['counts'], 'elapsed': result['elapsed'], 'stamp': time.time()}
-        self.publish()
+            self.publish(replan=bool(result and result['steps']))
         self.host.pages.refresh_documents()
-
-    def _watch(self, cancelled):
-        while not cancelled.wait(.05):
-            if self.cancel.is_set() or self.host.cancel.is_set() or self.host.closed.is_set():
-                cancelled.set()

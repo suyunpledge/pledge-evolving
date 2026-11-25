@@ -79,12 +79,16 @@ class ServiceHost:
             schemas.extend(lane.schemas())
         self.emit('service_tools', schemas=schemas, computerGrant=lane.session.grant_id if lane else '')
 
-    def work(self, fn):
+    def work(self, fn, *, cancel_event=None):
         with self.lock:
+            if self.closed.is_set():
+                raise RuntimeError('服务已关闭。')
             if self.running:
                 raise RuntimeError('请等待当前操作结束。')
             self.running = True
-            self.cancel = threading.Event()
+            # Arm the worker's stop button at admission, before the thread starts.
+            self.cancel = cancel_event if cancel_event is not None else threading.Event()
+            self.cancel.clear()
         self.status()
         def run():
             try:
@@ -245,13 +249,10 @@ class ServiceHost:
                 waiter['approved'] = row.get('approved') is True
                 waiter['done'].set()
         elif command == 'apply_model_setup':
-            if self.running:
-                self.pending_model = dict(row)
-                return
             def setup():
-                try:
                 if row.get('refreshConfig'):
                     self.pages.action('config', 'reload', {})
+                try:
                     self.gateway.start(row.get('provider', ''), model=row.get('model', ''))
                 except Exception as exc:
                     self.emit('gateway_error', message=str(redact(str(exc))), active_url=self.gateway.url)
@@ -279,8 +280,9 @@ class ServiceHost:
             self.close()
 
     def close(self):
-        self.closed.set()
-        self.cancel.set()
+        with self.lock:
+            self.closed.set()
+            self.cancel.set()
         for waiter in tuple(self.waiters.values()):
             waiter['done'].set()
         self.terminal.close()

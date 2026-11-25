@@ -46,6 +46,7 @@ class WorkbenchController(QObject):
     runChanged = Signal()
     codingDraftChanged = Signal()
     codingFocusRequested = Signal()
+    codingContextRequested = Signal()
     terminalChanged = Signal()
     terminalTabsChanged = Signal()
     terminalRevealRequested = Signal()
@@ -108,6 +109,7 @@ class WorkbenchController(QObject):
         self._terminal_timer.timeout.connect(self.terminalChanged)
         self._coding_messages = RowsModel(parent=self)
         self._coding_draft = ''
+        self._coding_focus = {}
         self._draft_version = 0
         self._error, self._status = '', ''
         self._busy = False
@@ -164,6 +166,7 @@ class WorkbenchController(QObject):
     modelRows = Property(QObject, lambda s: s._model_rows, constant=True)
     busy = Property(bool, lambda s: s._busy, notify=changed)
     hasUnsaved = Property(bool, lambda s: s._unsaved or bool(s._form_dirty or s._document_dirty), notify=changed)
+    hasUnsavedDocuments = Property(bool, lambda s: s._unsaved or bool(s._document_dirty), notify=changed)
     pageData = Property('QVariantMap', lambda s: s._pages, notify=pagesChanged)
     error = Property(str, lambda s: s._error, notify=changed)
     status = Property(str, lambda s: s._status, notify=changed)
@@ -335,7 +338,17 @@ class WorkbenchController(QObject):
         if self._page != 'development' or not self._coding.get('ready'):
             return
         self._send_coding_draft()
-        self._send({'command': 'coding', 'action': action, 'value': value})
+        row = {'command': 'coding', 'action': action, 'value': value}
+        if action in {'send', 'delegate'}:
+            self._coding_focus = {}
+            self.codingContextRequested.emit()
+            row['focus'] = self._coding_focus
+        self._send(row)
+
+    @Slot(str, int, int, int, int, int)
+    def captureCodingFocus(self, path, version, start_line, start_column, end_line, end_column):
+        self._coding_focus = {'path': path, 'version': version,
+                              'start': [start_line, start_column], 'end': [end_line, end_column]}
 
     @Slot(str, str)
     def runAction(self, action, value):
