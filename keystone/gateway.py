@@ -419,6 +419,8 @@ def build_handler(cfg: GatewayConfig):
                                 if not k.startswith("_")]
                     if spec.name in READERS:
                         required = ['id', 'pattern'] if spec.name == 'artifact_grep' else ['id']
+                    if spec.required is not None:
+                        required = list(spec.required)
                     tools.append({
                         "type": "function",
                         "function": {

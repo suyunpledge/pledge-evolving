@@ -99,7 +99,10 @@ def _spec_schema(spec) -> dict[str, Any]:
                 props[name] = shape
             else:
                 props[name] = {"type": "string"}
-        return {"type": "object", "properties": props}
+        result = {"type": "object", "properties": props}
+        if getattr(spec, "required", None) is not None:
+            result["required"] = list(spec.required)
+        return result
     return schema
 
 

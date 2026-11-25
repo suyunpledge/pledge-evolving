@@ -256,6 +256,11 @@ class ToolWiringTests(unittest.TestCase):
                 self.assertIsInstance(shape["type"], str, f"{tool['function']['name']}.{arg}")
         grep = next(t for t in tools if t["function"]["name"] == "keystone_grep")["function"]["parameters"]
         self.assertIn("regex", grep["properties"]["pattern"]["description"].lower())
+        params = {t["function"]["name"]: t["function"]["parameters"] for t in tools}
+        self.assertEqual(params["keystone_edit_file"]["required"], ["path", "new"])
+        self.assertEqual(params["keystone_edit_config"]["required"], ["path"])
+        self.assertEqual(params["keystone_review_changes"]["required"], [])
+        self.assertEqual(params["keystone_datetime"]["properties"]["action"]["enum"], ["now", "convert", "diff"])
 
 
 if __name__ == "__main__":

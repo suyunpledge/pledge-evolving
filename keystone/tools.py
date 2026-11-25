@@ -210,6 +210,7 @@ class ToolSpec:
     tags: tuple[str, ...] = ()
     schema: dict[str, Any] = field(default_factory=dict)
     result_fields: tuple[str, ...] = ()
+    required: tuple[str, ...] | None = None
 
     @property
     def is_deferred(self) -> bool:
@@ -313,6 +314,7 @@ class ToolRegistry:
         effect: ToolEffect | None = None,
         requires: Iterable[str] = (),
         result_fields: tuple[str, ...] = (),
+        required: tuple[str, ...] | None = None,
     ):
         def deco(fn):
             self.register(ToolSpec(
@@ -325,6 +327,7 @@ class ToolRegistry:
                 tags=tuple(tags),
                 schema=schema or {},
                 result_fields=result_fields,
+                required=required,
             ), trusted=trusted, effect=effect, requires=requires)
             return fn
 
@@ -808,8 +811,10 @@ def build_builtin_registry(
 
     @host_tool("edit_config", "Inspect a protected JSON/YAML/TOML/.env configuration, then apply a structured "
               "patch with its revision. Credentials remain opaque and unchanged.",
-              effect=ToolEffect.CONFIG,
-              schema={"path": "string", "revision": "string", "patch": "array"})
+              effect=ToolEffect.CONFIG, required=("path",),
+              schema={"path": {"type": "string", "description": "Configuration file to inspect or update."},
+                      "revision": {"type": "string", "description": "For updates, copy the revision from the preceding inspection."},
+                      "patch": {"type": "array", "items": {"type": "object"}, "description": "Omit to inspect. To update, send JSON Patch operations and the revision."}})
     def config_editor(args, ctx):
         from .config_edit import edit_config
         return edit_config(args, ctx)
@@ -1094,6 +1099,7 @@ def build_builtin_registry(
         "review_changes",
         "Show a unified diff of every file written in this agent session (including subagents), against its "
         "content before the first write. Use it to self-review before you finish. Read-only.",
+        required=(),
         schema={"path": {"type": "string", "description": "Optional: only this file (relative to the workspace)."}},
     )
     def review_changes(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
@@ -1188,6 +1194,7 @@ def build_builtin_registry(
         "1-indexed inclusive line range (start defaults to 1, end to the last line). "
         "Refuses an absent or ambiguous anchor unless replace_all; pass either 'old' "
         "or a line range, not both.",
+        required=("path", "new"),
         read_only=False,
         schema={"path": {'type': 'string', 'description': "Workspace-relative file path."},
                 "old": {"type": "string", "description": "Exact existing text to replace (copy it from a read; "
@@ -1728,7 +1735,11 @@ def build_builtin_registry(
         "Aligned with Always datetime tool.",
         no_defer=True,
         tags=("time", "utility"),
-        schema={"action": "string", "value": "string", "to_tz": "string", "other": "string"},
+        required=(),
+        schema={"action": {"type": "string", "enum": ["now", "convert", "diff"], "description": "Default now. Convert a timestamp or compare two timestamps."},
+                "value": {"type": "string", "description": "ISO 8601 timestamp for convert or diff."},
+                "to_tz": {"type": "string", "description": "IANA timezone for convert, e.g. Asia/Shanghai."},
+                "other": {"type": "string", "description": "Second ISO 8601 timestamp for diff."}},
     )
     def datetime_tool(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         from datetime import datetime as _dt, timezone as _tz
