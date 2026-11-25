@@ -10,6 +10,8 @@
     <title>办公</title>
     <link rel="stylesheet" href="office.css" />
     <script defer src="qrc:///qtwebchannel/qwebchannel.js"></script>
+    <script defer src="charts.js"></script>
+    <script defer src="slides.js"></script>
     <script defer src="office.js"></script>
   </head>
   <body>
@@ -69,7 +71,15 @@
             转到
           </button></label
         >
-        <button id="play" hidden>放映</button><span class="spacer"></span
+        <button id="chartDesign" hidden>插入图表</button>
+        <div id="slideTools" hidden>
+          <label>版式 <select id="slideLayout"><option value="content">标题正文</option><option value="cover">封面</option><option value="columns">双栏对照</option></select></label>
+          <label>主题 <select id="slideTheme"><option value="paper">暖白</option><option value="midnight">深海</option><option value="sage">青瓷</option></select></label>
+          <label>切换 <select id="slideTransition"><option value="none">无</option><option value="fade">淡入</option></select></label>
+          <button id="editSlideTable" type="button">插入表格</button>
+        </div>
+        <button id="play" hidden title="从当前页放映 · Shift+F5">从当前页放映</button>
+        <button id="playStart" hidden title="从头放映 · F5">从头放映</button><span class="spacer"></span
         ><button id="aiToggle" aria-expanded="true">AI 协作</button>
       </nav>
       <div class="desk">
@@ -115,11 +125,42 @@
       <button id="useLatest">采用已保存内容</button
       ><button id="useDraft">保存我的草稿</button>
     </dialog>
-    <dialog id="presentation">
+    <dialog id="chartDialog" aria-labelledby="chartHeading">
+      <form id="chartForm">
+        <h2 id="chartHeading">图表设计</h2>
+        <label>数据来源<select name="source"><option value="cells">工作表区域</option><option value="function">函数</option></select></label>
+        <fieldset id="rangeSource"><legend>同一工作表内的数值列</legend>
+          <label>X 区域<input name="xRange" required placeholder="A2:A12"></label>
+          <label>Y 区域<input name="yRange" required placeholder="B2:B12"></label>
+        </fieldset>
+        <fieldset id="functionSource"><legend>y = f(x)</legend>
+          <label>函数解析式<input name="expression" required maxlength="256" placeholder="sin(x)"></label>
+          <label>起点<input name="min" type="number" step="any" required></label>
+          <label>终点<input name="max" type="number" step="any" required></label>
+        </fieldset>
+        <label>图表标题<input name="title" maxlength="80"></label>
+        <label>横轴标题<input name="xTitle" maxlength="80"></label>
+        <label>纵轴标题<input name="yTitle" maxlength="80"></label>
+        <label>图表类型<select name="style"><option value="line">连线散点图</option><option value="scatter">散点图</option></select></label>
+        <label>系列颜色<input name="color" type="color"></label>
+        <label>显示数值标签<input name="labels" type="checkbox"></label>
+        <p id="chartError" role="alert" hidden></p>
+        <div class="chart-actions"><button type="button" id="removeChart">移除图表</button><span class="spacer"></span><button type="button" id="closeChart">取消</button><button class="primary">应用</button></div>
+      </form>
+    </dialog>
+    <dialog id="slideTableDialog" aria-labelledby="tableHeading">
+      <h2 id="tableHeading">演示表格</h2>
+      <div class="table-controls"><button id="rowPlus">加行</button><button id="rowMinus">减行</button>
+        <button id="colPlus">加列</button><button id="colMinus">减列</button></div>
+      <div id="tableInputs"></div><p id="tableError" role="alert" hidden></p>
+      <div class="table-controls"><button id="removeSlideTable">移除表格</button><span class="spacer"></span>
+        <button id="closeSlideTable">取消</button><button class="primary" id="saveSlideTable">应用</button></div>
+    </dialog>
+    <dialog id="presentation" aria-label="幻灯片放映">
       <div id="screen"></div>
-      <div>
+      <div class="show-controls">
         <button id="prevSlide">上一页</button
-        ><button id="nextSlide">下一页</button
+        ><output id="showPosition" aria-live="polite"></output><button id="nextSlide">下一页</button
         ><button id="endShow">结束放映</button>
       </div>
     </dialog>

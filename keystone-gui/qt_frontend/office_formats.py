@@ -11,6 +11,8 @@ import uuid
 from zipfile import ZipFile
 
 from .local_tool_runtime import workspace_path
+from .office_charts import CHART_FIELD, chart_scene, parse_chart
+from .office_chart_excel import add_excel_chart, read_excel_chart
 
 FORMATS = {"document": ".docx", "spreadsheet": ".xlsx", "presentation": ".pptx"}
 OPS = {
@@ -185,20 +187,32 @@ def import_file(path):
                 path, read_only=True, data_only=False, keep_links=False
             )
             try:
+                rows = {}
+                total = 0
                 for i, sheet in enumerate(book, 1):
                     if i > 32 or (sheet.max_row or 0) * (sheet.max_column or 0) > 80000:
                         raise ValueError("工作表超出导入容量。")
-                    fields[f"T{i}.name"] = sheet.title
+                    data = rows[sheet.title] = {}
                     for n, row in enumerate(sheet.values, 1):
                         for col, v in enumerate(row, 1):
                             if v is not None:
-                                fields[
-                                    ("" if i == 1 else f"T{i}.")
-                                    + col_name(col)
-                                    + str(n)
-                                ] = str(v)
-                        if len(fields) > 20000:
+                                data[col_name(col) + str(n)] = str(v)
+                                total += 1
+                        if total > 20000:
                             raise ValueError("表格超出导入容量。")
+                helpers = set()
+                charts = {}
+                for sheet in book:
+                    chart = read_excel_chart(book, sheet, rows)
+                    if chart:
+                        charts[sheet.title], helper = chart
+                        helpers.add(helper)
+                for i, name in enumerate((n for n in rows if n not in helpers), 1):
+                    fields[f"T{i}.name"] = name
+                    if name in charts:
+                        fields[f"T{i}.chart"] = charts[name]
+                    prefix = "" if i == 1 else f"T{i}."
+                    fields.update((prefix + k, v) for k, v in rows[name].items())
             finally:
                 book.close()
         else:
@@ -211,17 +225,8 @@ def import_file(path):
                         raise ValueError("表格超出导入容量。")
         return "spreadsheet", fields
     if ext == ".pptx":
-        from pptx import Presentation
-
-        for i, slide in enumerate(Presentation(path).slides, 1):
-            title = slide.shapes.title
-            fields[f"S{i}"] = title.text if title is not None else ""
-            fields[f"S{i}.body"] = "\n".join(
-                s.text
-                for s in slide.shapes
-                if s.has_text_frame and (title is None or s.shape_id != title.shape_id)
-            )
-        return "presentation", fields
+        from .office_powerpoint import read_presentation
+        return "presentation", read_presentation(path)
     raise ValueError("支持 docx、xlsx、pptx、md、txt 和 csv。")
 
 
@@ -239,16 +244,8 @@ def export_file(workspace, d):
             )
             book.add_paragraph(f.get(key, ""), style)
     elif kind == "presentation":
-        from pptx import Presentation
-        from pptx.util import Inches
-
-        book = Presentation()
-        book.slide_width, book.slide_height = Inches(13.3333), Inches(7.5)
-        for i in indices(f, "S") or [1]:
-            key = f"S{i}"
-            slide = book.slides.add_slide(book.slide_layouts[1])
-            slide.shapes.title.text = f.get(key, "")
-            slide.placeholders[1].text = f.get(key + ".body", "")
+        from .office_powerpoint import build_presentation
+        book = build_presentation(f)
     else:
         import openpyxl
 
@@ -259,6 +256,17 @@ def export_file(workspace, d):
             sheet.title = f.get(f"T{i}.name") or f"Sheet{i}"
             sheets[i] = sheet
         formulas = calculated(f)
+        charts = {}
+        plotted_values = {}
+        for key, raw in f.items():
+            match = CHART_FIELD.fullmatch(key)
+            if match:
+                scene = chart_scene(key, parse_chart(raw), f, formulas)
+                charts[int(match[1])] = scene
+                for p in scene["points"]:
+                    for axis in ("x", "y"):
+                        if axis + "Cell" in p and p[axis] is not None:
+                            plotted_values[p[axis + "Cell"]] = p[axis]
         for key, raw in f.items():
             sheet_id, _, ref = key.rpartition(".")
             if not CELL.fullmatch(ref):
@@ -266,11 +274,15 @@ def export_file(workspace, d):
             cell = sheets[int(sheet_id[1:]) if sheet_id else 1][ref]
             if raw.startswith("=") and formulas.get(key) != "#ERROR!":
                 cell.value = raw
+            elif key in plotted_values:
+                cell.value = plotted_values[key]
             elif re.fullmatch(r"-?(?:0|[1-9]\d{0,13})(?:\.\d{1,12})?", raw):
                 cell.value = float(raw) if "." in raw else int(raw)
             else:
                 cell.value = raw
                 cell.data_type = "s"
+        for sheet_id, scene in charts.items():
+            add_excel_chart(book, sheets[sheet_id], scene)
     book.save(out)
     stem = re.sub(r"[^\w -]+", "_", f["title"]).strip()[:64] or "Office"
     filename = stem + "-" + uuid.uuid4().hex[:10] + FORMATS[kind]

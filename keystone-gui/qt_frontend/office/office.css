@@ -305,8 +305,7 @@ details {
   min-height: 0;
   padding: clamp(10px, 2vw, 32px);
 }
-.paper,
-.slide {
+.paper {
   color-scheme: light;
   background: #fff;
   color: #202a39;
@@ -319,8 +318,7 @@ details {
   min-height: 95%;
   max-width: 794px;
 }
-.paper textarea,
-.slide textarea {
+.paper textarea {
   width: 100%;
   display: block;
   line-height: 1.65;
@@ -330,8 +328,7 @@ details {
   padding: 4px;
   color: #202a39;
 }
-.paper .heading,
-.slide .slide-title {
+.paper .heading {
   font-size: clamp(22px, 3vw, 36px);
   font-weight: 700;
 }
@@ -339,19 +336,54 @@ details {
   border-left: 3px solid #7498ca;
   padding-left: 12px;
 }
-.slide {
-  aspect-ratio: 16/9;
-  min-height: 220px;
-  max-width: 960px;
-  border-top: 6px solid #3d7fe0;
+.deck-board {
+  position: relative; display: block; container-type: inline-size; aspect-ratio: 16/9;
+  overflow: hidden; width: 100%; box-sizing: border-box; text-align: left;
 }
-.slide-body {
-  margin-top: 12px;
-  font-size: 17px;
+.deck-board.edit { margin: 0 auto; max-width: 1080px; box-shadow: 0 6px 18px #0004; }
+.deck-accent, .deck-text { position: absolute; display: block; }
+.deck-text {
+  padding: 0; border: 0; margin: 0; color: inherit; border-radius: 0; background: transparent;
+  resize: none; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere;
+  font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif; line-height: 1.12;
 }
+.deck-text::placeholder { color: currentColor; opacity: .52; }
+.deck-text:focus-visible { outline-offset: 2px; outline: 1px dashed currentColor; overflow: auto; }
+.deck-title { font-weight: 700; }
+.deck-table { position: absolute; display: grid; font-size: 2.083cqw; line-height: 1.12; }
+.deck-row { display: contents; }
+.deck-row span { display: grid; align-content: center; border-bottom: .12cqw solid currentColor; overflow: hidden;
+  padding: .1cqw .83cqw; white-space: pre-wrap; overflow-wrap: anywhere; }
+.deck-row:first-child span { font-weight: 700; }
+#slideTableDialog { width: min(680px, 94vw); }
+.table-controls { display: flex; gap: 6px; align-items: center; }
+#tableInputs { display: grid; gap: 4px; margin: 12px 0; }
+#tableInputs textarea { width: 100%; border: 1px solid var(--line); padding: 4px; min-width: 0; }
+#tableError { color: #ffbc9c; }
+#slideTools, .slide-commands, .show-controls { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+#slideTools label { font-size: 12px; color: var(--muted); white-space: nowrap; }
+#slideTools select { color: var(--text); padding: 3px 6px; }
+#outline .slide-commands button { width: auto; padding: 2px 6px; margin: 0; border-color: var(--line); }
+#outline .slide-thumb { white-space: normal; padding: 5px; border-radius: 4px; }
+#outline .slide-thumb.on { border-color: var(--blue); }
+.slide-thumb small { display: block; margin-bottom: 3px; }
+.slide-notes { max-width: 1080px; margin: 18px auto 0; display: grid; gap: 8px; justify-items: start; }
+.slide-notes label { width: 100%; color: var(--muted); }
+.slide-notes textarea { padding: 7px; margin-top: 4px; width: 100%; display: block; border: 1px solid var(--line); border-radius: 4px; }
 #sheetAddress {
   color: var(--muted);
 }
+#sheetChart:empty { display: none; }
+#sheetChart { background: #fafcfe; border-bottom: 1px solid #c8d2dc; }
+#sheetChart svg { width: 100%; max-width: 800px; height: auto; display: block; margin: auto; color: #243448; }
+#sheetChart svg text { fill: currentColor; font: 12px "Segoe UI", "Microsoft YaHei UI", sans-serif; }
+#sheetChart text[data-mark="title"] { font-size: 17px; font-weight: 600; }
+#sheetChart svg:focus-visible { outline-offset: -3px; }
+#chartForm { display: grid; gap: 8px; min-width: min(320px, 78vw); }
+#chartForm label, .chart-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+#chartForm input:not([type="checkbox"]) { border: 1px solid var(--line); border-radius: 4px; padding: 3px 6px; }
+#chartForm fieldset { border: 1px solid var(--line); border-radius: 6px; display: grid; gap: 6px; }
+#chartError { color: #ffbc9c; margin: 0; }
 #cellAddress {
   background: var(--bg);
   width: 64px;
@@ -423,25 +455,18 @@ dialog {
 dialog::backdrop {
   background: #0009;
 }
-#presentation {
-  width: 94vw;
+#presentation[open] {
+  inset: 0; width: 100vw; height: 100vh; max-width: none; max-height: none; border: 0;
+  padding: 0; margin: 0; background: #080a0c; border-radius: 0;
+  display: grid; grid-template-rows: minmax(0, 1fr) 42px;
 }
-#screen {
-  background: white;
-  color: #203049;
-  padding: 7%;
-  aspect-ratio: 16/9;
-  overflow: auto;
-}
-#screen h2 {
-  font-size: 2.2em;
-  margin-bottom: 1em;
-}
-#screen p {
-  white-space: pre-wrap;
-}
-#presentation button {
-  margin-top: 8px;
+#screen { display: grid; place-items: center; }
+#screen .projected { width: min(100vw, calc((100vh - 42px) * 16 / 9)); }
+.show-controls { justify-content: center; }
+#showPosition { min-width: 5em; text-align: center; }
+@media (prefers-reduced-motion: no-preference) {
+  .fade-in { animation: slide-fade .25s ease-out; }
+  @keyframes slide-fade { from { opacity: 0; } to { opacity: 1; } }
 }
 @media (max-width: 720px) {
   .cards {
@@ -464,8 +489,7 @@ dialog::backdrop {
     gap: 5px;
     padding: 4px;
   }
-  .paper,
-  .slide {
+  .paper {
     padding: 16px;
   }
 }
