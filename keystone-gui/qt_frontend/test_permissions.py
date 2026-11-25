@@ -8,6 +8,38 @@ from keystone_client import ChatMessage, CompletionResult, GenerationCancelled
 
 
 class DesktopBoundaryTests(unittest.TestCase):
+    def test_sandbox_can_page_a_real_retained_result(self):
+        from keystone.execution import ActionExecutor, ActionRequest, create_execution_context
+        from keystone.desktop_permissions import profile_policy
+        from keystone.policy import Policy
+        from keystone.tools import build_builtin_registry
+        from .conversation import model_tool_result
+        with tempfile.TemporaryDirectory() as folder:
+            workspace = Path(folder) / 'project'
+            workspace.mkdir()
+            (workspace / 'example.txt').write_text('x' * 5100 + 'second-page', encoding='utf-8')
+            ctx = create_execution_context(home=Path(folder) / 'home', workspace=workspace,
+                registry=build_builtin_registry(), policy=profile_policy(Policy(workspace=workspace), 'sandbox'))
+            try:
+                executor = ActionExecutor()
+                def call(name, args):
+                    self.assertTrue(tool_available('sandbox', 'keystone_' + name))
+                    authorize('sandbox', workspace, 'keystone_' + name, args, self.fail)
+                    result = executor.execute(ctx, ActionRequest(name, args)).as_tool_result()
+                    self.assertTrue(result.ok, result.error)
+                    return result
+                result = call('read_file', {'path': 'example.txt'})
+                identifier = result.meta['artifact']['id']
+                response = {'ok': result.ok, 'content': result.content, 'meta': result.meta}
+                hidden = model_tool_result('keystone_read_file', response, ())
+                self.assertNotIn('artifact_read', hidden['content'])
+                self.assertIn('Narrow', hidden['content'])
+                self.assertIn('second-page', call('artifact_read', {'id': identifier, 'offset': 5100}).content)
+                self.assertIn('5100', call('artifact_grep', {'id': identifier, 'pattern': 'second-page'}).content)
+            finally:
+                ctx.session.close()
+                ctx.secret_scope.close()
+
     def test_sandbox_paths_and_manual_or_full_host_grant(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder) / 'workspace'

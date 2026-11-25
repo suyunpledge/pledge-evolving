@@ -117,6 +117,7 @@ class ToolResultOffloader:
     offload_count: int = 0
     last_path: str = ""
     artifact_store: Any = None
+    artifact_readers: Callable[[], tuple[str, ...]] | None = None
 
     def _file_path(self, tool_name: str, call_id: str) -> Path:
         short = hashlib.md5(f"{call_id}{time.time()}".encode()).hexdigest()[:8]
@@ -138,7 +139,8 @@ class ToolResultOffloader:
                 meta = self.artifact_store.put(text, source=tool_name, action_id=call_id)
                 self.offload_count += 1
                 self.last_path = meta['id']
-                return summary(meta, text, preview=self.policy.summary_length)
+                readers = self.artifact_readers() if self.artifact_readers else ()
+                return summary(meta, text, preview=self.policy.summary_length, readers=readers)
             except (OSError, ValueError):
                 return text
         path = self._file_path(tool_name, call_id)

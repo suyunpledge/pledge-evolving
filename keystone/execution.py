@@ -387,19 +387,19 @@ class ActionExecutor:
                                 'execution_state': 'unknown' if dispatched else 'not_started'})
                 from .artifacts import retain_result
                 fields = ()
+                readers = ()
                 try:
                     fields = getattr(ctx.registry, 'result_fields', lambda name: ())(request.name)
-                    if fields:
-                        from .policy import Decision, ToolEffect
-                        reader_effect = ctx.registry.effect('artifact_read')
-                        if ('artifact_read' not in ctx.registry.names() or reader_effect is not ToolEffect.READ
-                                or ctx.policy.evaluate('artifact_read', args={}, effect=reader_effect) is not Decision.ALLOW):
+                    if fields or len(value.content or value.error) > ctx.capabilities['artifact_inline_limit']:
+                        from .artifact_tools import available_readers
+                        readers = available_readers(ctx.registry, ctx.policy)
+                        if 'artifact_read' not in readers:
                             fields = ()
                 except Exception:
                     fields = ()  # Optional presentation must not change an executed action's outcome.
                 retain_result(value, store=ctx.capabilities['artifact_store'], scope=ctx.secret_scope,
                     source=request.name, action_id=request.action_id,
-                    inline_limit=ctx.capabilities['artifact_inline_limit'], result_fields=fields)
+                    inline_limit=ctx.capabilities['artifact_inline_limit'], result_fields=fields, readers=readers)
                 value.meta['request_digest'] = digest
                 result = ActionResult.from_tool(ctx, request, value)
                 # If recording fails after a side effect, the durable start remains

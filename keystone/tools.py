@@ -750,9 +750,9 @@ def build_builtin_registry(
     reg = ToolRegistry(expose=expose, hide=hide)
     from functools import partial
     host_tool = partial(reg.tool, trusted=True)
-    from .builtin_views import FIELDS, HELP, search_result
+    from .builtin_views import FIELDS, search_result
+    from .artifact_tools import HELP, register_artifact_tools
     view_tool = partial(host_tool, result_fields=FIELDS if result_views else ())
-    from .artifact_tools import register_artifact_tools
     register_artifact_tools(reg)
     from .model3d_tools import register_model3d_tools
     register_model3d_tools(reg)

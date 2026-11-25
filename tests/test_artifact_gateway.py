@@ -18,6 +18,11 @@ class ArtifactGatewayTests(unittest.TestCase):
         _, base = self.gateway(registry=reg, policy=Policy(mode=Mode.READ_ONLY,
             workspace=self.ws, non_interactive=True))
         before = sorted(p.name for p in self.ws.iterdir())
+        _, schema = self.http(base, '/v1/tools')
+        functions = {row['function']['name']: row['function'] for row in schema['data']}
+        for reader, required in [('keystone_artifact_read', ['id']), ('keystone_artifact_grep', ['id', 'pattern'])]:
+            self.assertIn(reader, functions['keystone_grep']['description'])
+            self.assertEqual(functions[reader]['parameters']['required'], required)
         body = {'run_id': 'artifact_run', 'action_id': 'long_action',
                 'name': 'large_observation', 'arguments': {}}
         code, result = self.http(base, '/v1/tools/call', body)

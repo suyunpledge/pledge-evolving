@@ -4,7 +4,6 @@ import re
 
 
 FIELDS = ('summary', 'preview', 'notes')
-HELP = ' Large replies may show a preview; use _retained with artifact_read/artifact_grep for all rows.'
 
 
 def command_metadata(output, exit_code):
@@ -21,8 +20,7 @@ def command_metadata(output, exit_code):
         'summary': {'exit_code': exit_code, 'output_characters': len(output),
                     'nonzero_exit': exit_code != 0},
         'preview': preview[:1000],
-        'notes': ['Preview only. Retrieve exact details with artifact_grep or artifact_read only if needed; '
-                  'continue pages using next_offset. Nonzero exit means command failure.']}, ensure_ascii=False)
+        'notes': ['Preview only. Nonzero exit means command failure.']}, ensure_ascii=False)
     return meta
 
 

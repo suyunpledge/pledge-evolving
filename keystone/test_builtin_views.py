@@ -89,6 +89,21 @@ class BuiltinViewTests(unittest.TestCase):
             self.assertNotIn('_result_view_source', value.meta)
             self.assertNotIn('model_view', value.meta)
 
+    def test_long_grep_only_names_readers_in_the_effective_surface(self):
+        from .toolwire import tool_declarations
+        tools = ['grep', 'find_files', 'list_dir', 'file_outline']
+        for readers in ([], ['artifact_grep'], ['artifact_read', 'artifact_grep']):
+            ctx = self.context(registry=build_builtin_registry(expose=tools + readers),
+                               capabilities={'artifact_inline_limit': 600})
+            value = self.executor.execute(ctx, ActionRequest('grep', {'pattern': 'AUDIT_MATCH'}))
+            self.assertIn('artifact', value.meta)
+            declarations = tool_declarations(ctx.registry.visible(), 'anthropic')
+            descriptions = [d['description'] for d in declarations if d['name'] in tools]
+            self.assertEqual(len(descriptions), 4)
+            for name in ('artifact_read', 'artifact_grep'):
+                for text in [value.content, *descriptions]:
+                    self.assertEqual(name in text, name in readers, text)
+
     def test_truncation_and_secret_masking_survive_the_view(self):
         for i in range(90, 205):
             (self.ws / f'audit_inventory_record_{i:03}.txt').write_text('AUDIT_MATCH\n', encoding='utf-8')

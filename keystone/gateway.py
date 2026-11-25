@@ -402,8 +402,13 @@ def build_handler(cfg: GatewayConfig):
                     return
                 discovery = cfg.execution_context(discovery=True)
                 specs = discovery.registry.available_specs(discovery.tool_context())
+                from .artifact_tools import READERS, available_readers, describe_output
+                readers = available_readers(discovery.registry, discovery.policy, allow_approval=True)
+                public_readers = ['keystone_' + name for name in readers]
                 tools = []
                 for spec in specs:
+                    if spec.name in READERS and spec.name not in readers:
+                        continue
                     props = {}
                     required = []
                     for key, val in (spec.schema or {}).items():
@@ -412,11 +417,13 @@ def build_handler(cfg: GatewayConfig):
                                       else {"type": val, "description": key})
                     required = [k for k, v in (spec.schema or {}).items()
                                 if not k.startswith("_")]
+                    if spec.name in READERS:
+                        required = ['id', 'pattern'] if spec.name == 'artifact_grep' else ['id']
                     tools.append({
                         "type": "function",
                         "function": {
                             "name": f"keystone_{spec.name}",
-                            "description": spec.description,
+                            "description": describe_output(spec.description, public_readers),
                             "parameters": {
                                 "type": "object",
                                 "properties": props,

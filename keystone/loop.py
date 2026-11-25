@@ -322,6 +322,7 @@ class Agent:
         # Applied once at construction — the seat still sees the RAW limit in
         # its budget dict and can always tighten, never loosen.
         self.compactor = ContextBudget(
+            artifact_readers=self._artifact_readers,
             max_chars=max(2000, int(self.limits.context_chars * self._pricing_scale(
                 _ModelProbe(self.router),
                 ledger=self.cost_ledger))))
@@ -346,7 +347,8 @@ class Agent:
         self._streak_budget = 2  # 每 run 至多提醒两次，防提醒本身变噪声
         from .artifacts import ArtifactStore
         self.artifacts = ArtifactStore(self.home, self.workspace)
-        self.offloader = ToolResultOffloader(self.workspace, artifact_store=self.artifacts)
+        self.offloader = ToolResultOffloader(self.workspace, artifact_store=self.artifacts,
+                                            artifact_readers=self._artifact_readers)
         # 专家路由（keystone.specialists）：只有根（主控）持有路由表；未配置 = 今天的行为。
         from .specialists import SpecialistTable
         if specialists is not None and not isinstance(specialists, SpecialistTable):
@@ -412,12 +414,19 @@ class Agent:
             parts.append(self.specialists.guidance())
         return "[运行环境]\n" + "\n\n".join(parts)
 
+    def _artifact_readers(self):
+        from .artifact_tools import available_readers
+        return available_readers(self.registry, self.policy, allow_approval=True)
+
     def _execution_specs(self, registry=None):
         # Agent.execution_context always creates an isolated tool context.
         from .request_timing import coding_request
         registry = self.registry if registry is None else registry
         specs = [s for s in registry.visible()
                  if s.name not in {'shell_exec', 'notebook_edit'} and 'native' not in s.tags]
+        from .artifact_tools import READERS, available_readers
+        readers = available_readers(registry, self.policy, allow_approval=True)
+        specs = [s for s in specs if s.name not in READERS or s.name in readers]
         if coding_request.get() and self.depth == 0 and not self.artifacts.has_retained_output():
             specs = [s for s in specs if 'artifact_store' not in registry.required_extras(s.name)]
         return specs

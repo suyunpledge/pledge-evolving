@@ -25,7 +25,8 @@ class ContextBudget:
     the decision stays auditable.
     """
 
-    def __init__(self, *, max_chars: int = 24000, keep_tail: int = 6) -> None:
+    def __init__(self, *, max_chars: int = 24000, keep_tail: int = 6, artifact_readers=None) -> None:
+        self.artifact_readers = artifact_readers
         self.max_chars = max_chars
         self.keep_tail = keep_tail
 
@@ -108,7 +109,10 @@ class ContextBudget:
             head, tail = rest[:at], rest[at:]
             if not head:
                 return messages
-            summary = summariser(head) if summariser is not None else self._excerpt(head)
+            if summariser is not None:
+                summary = summariser(head)
+            else:
+                summary = self._excerpt(head, self.artifact_readers() if self.artifact_readers else ())
             if prefix_messages:
                 # 保留源消息的相对顺序，尤其不把本轮任务提升到历史前方。
                 # 摘要位于任务之前，避免路由器把摘要误认成最新用户任务。
@@ -141,9 +145,9 @@ class ContextBudget:
         return candidate
 
     @staticmethod
-    def _excerpt(head):
+    def _excerpt(head, readers=()):
         from .compaction_notes import excerpt_messages
-        return excerpt_messages(head)
+        return excerpt_messages(head, readers)
 
 
 __all__ = ["ContextBudget"]

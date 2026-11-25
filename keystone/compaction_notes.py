@@ -2,7 +2,7 @@
 import json
 import math
 
-from .result_view import REFERENCE_LABEL, previous_handles, retained_output_id
+from .result_view import reference_label, previous_handles, retained_output_id
 
 LABEL = 'Tool observations (unverified; earlier results may be stale): '
 SOURCE_LABEL = 'Observed JSON fields (file is the source; value is the observed scalar. If absent, read the file): '
@@ -67,7 +67,7 @@ def _previous(content):
     return []
 
 
-def excerpt_messages(head):
+def excerpt_messages(head, readers=()):
     calls, rows = {}, []
     refs = {}
     field_sources = {}
@@ -174,7 +174,7 @@ def excerpt_messages(head):
     else:
         flat = ' '.join(str(m.get('role', '')) + ': ' + _excerpt(m.get('content', ''), 140)
                         for m in head[-4:])[:800]
-    suffix = '\n' + REFERENCE_LABEL + ', '.join(refs) if refs else ''
+    suffix = '\n' + reference_label(readers) + ', '.join(refs) if refs else ''
     if field_sources:
         suffix += '\n' + SOURCE_LABEL + json.dumps(field_sources, ensure_ascii=False)
     return f'[compacted {len(head)} earlier messages; unverified excerpts]\n{flat}' + suffix

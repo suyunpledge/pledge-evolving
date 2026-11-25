@@ -1,5 +1,34 @@
 """Mediated read/search tools for host-owned, workspace-scoped artifacts."""
 import json
+from .policy import Decision, ToolEffect
+
+
+READERS = ('artifact_read', 'artifact_grep')
+HELP = ' Large replies may show a preview.'
+
+
+def available_readers(registry, policy, *, allow_approval=False):
+    exposed = set(registry.names())
+    result = []
+    for name in READERS:
+        if name in exposed and registry.effect(name) is ToolEffect.READ:
+            verdict = policy.resolve_ask(policy.evaluate(name, effect=ToolEffect.READ))
+            if verdict is Decision.ALLOW or (allow_approval and verdict is Decision.ASK):
+                result.append(name)
+    return tuple(result)
+
+
+def recovery_hint(readers):
+    if not readers:
+        return 'Narrow the original query to the relevant directory, file or lines.'
+    return 'Use ' + ' or '.join(readers) + ' with the retained id; continue pages using next_offset.'
+
+
+def describe_output(description, readers):
+    # Re-project the same suffix after a desktop role or user filter narrows the gateway list.
+    description = description.replace(' Large replies may show a preview; use _retained with artifact_read/artifact_grep for all rows.', HELP)
+    before, marker, _ = description.partition(HELP)
+    return before + marker + ' ' + recovery_hint(readers) if marker else description
 
 
 def register_artifact_tools(reg):

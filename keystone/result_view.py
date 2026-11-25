@@ -46,7 +46,9 @@ def render_view(selected, identifier, *, characters=None):
     return _encode({**selected, '_retained': reference})
 
 
-REFERENCE_LABEL = 'Retained outputs (unverified; use artifact_read/artifact_grep): '
+REFERENCE_LABEL = 'Retained outputs (unverified): '
+def reference_label(readers):
+    return ('Retained outputs (unverified; use ' + '/'.join(readers) + '): ') if readers else REFERENCE_LABEL
 
 
 _HANDLE = r'a_[0-9a-f]{64}'
@@ -55,8 +57,9 @@ _HANDLE = r'a_[0-9a-f]{64}'
 def previous_handles(content):
     if isinstance(content, str) and content.startswith('[compacted '):
         for line in content.splitlines():
-            if line.startswith(REFERENCE_LABEL):
-                handles = line[len(REFERENCE_LABEL):]
+            if line.startswith((REFERENCE_LABEL, reference_label(('artifact_read',)),
+                                reference_label(('artifact_grep',)), reference_label(('artifact_read', 'artifact_grep')))):
+                handles = line.partition('): ')[2]
                 if re.fullmatch(rf'{_HANDLE}(, {_HANDLE}){{0,3}}', handles):
                     return handles.split(', ')
     return ()

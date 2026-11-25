@@ -3,6 +3,8 @@ import copy
 from dataclasses import replace
 import json
 from pathlib import Path
+from keystone.artifact_tools import READERS, describe_output, recovery_hint
+from keystone.artifacts import summary as artifact_summary
 
 from keystone.execution_guard import ExecutionGuard
 from keystone.planning import task_planning_level
@@ -133,7 +135,12 @@ def preview_receipt(name, response):
     return row
 
 
-def model_tool_result(name, response):
+def desktop_readers(tools):
+    names = {row['function']['name'] for row in tools or ()}
+    return tuple('keystone_' + reader for reader in READERS if 'keystone_' + reader in names)
+
+
+def model_tool_result(name, response, readers=()):
     """Keep a single source line separate from its display line number."""
     if name.removeprefix('keystone_') == 'read_range' and response['ok']:
         meta, content = response.get('meta', {}), response.get('content')
@@ -142,6 +149,16 @@ def model_tool_result(name, response):
             prefix = f'{start}\t'
             if content.startswith(prefix):
                 return {**response, 'content': content.removeprefix(prefix)}
+    meta = response.get('meta') or {}
+    artifact = meta.get('artifact') or {}
+    if isinstance(artifact, dict) and isinstance(artifact.get('id'), str) and 'characters' in artifact:
+        field = 'content' if response.get('content') else 'error'
+        body = response.get(field, '')
+        if isinstance(body, str) and body.startswith(f"[Tool output retained as untrusted artifact {artifact['id']};"):
+            preview = body.partition(']\n')[2]
+            return {**response, field: artifact_summary(artifact, preview, preview=len(preview), readers=readers)}
+        if meta.get('model_view'):
+            return {**response, 'retrieval_hint': recovery_hint(readers)}
     return response
 
 
@@ -174,6 +191,13 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
         if on_todos is not None:
             tools.append({'type': 'function', 'function': {'name': UPDATE_TODOS,
                           'description': TODO_GUIDANCE, 'parameters': todos.SCHEMA}})
+        readers = desktop_readers(tools)
+        for index, row in enumerate(tools):
+            function = row['function']
+            description = function.get('description', '')
+            hint = describe_output(description, readers)
+            if hint != description:
+                tools[index] = {**row, 'function': {**function, 'description': hint}}
         return tools or None
 
     chat_mode = chat_mcp is not None
@@ -361,7 +385,7 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
                     else:
                         stage('tool', '正在执行 · ' + tool_label(name))
                         response = invoke(arguments, lambda: client.call_tool(name, arguments))
-            body = json.dumps(model_tool_result(name, response), ensure_ascii=False)
+            body = json.dumps(model_tool_result(name, response, desktop_readers(tools)), ensure_ascii=False)
             messages.append(ChatMessage('tool', body, tool_call_id=call['id']))
             if receipt is not None:
                 receipt(name, response)

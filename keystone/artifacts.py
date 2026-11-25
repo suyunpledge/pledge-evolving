@@ -147,14 +147,13 @@ class ArtifactStore:
                 'trust': 'untrusted'}
 
 
-def summary(meta, text, *, preview=500):
+def summary(meta, text, *, preview=500, readers=()):
+    from .artifact_tools import recovery_hint
     return (f"[Tool output retained as untrusted artifact {meta['id']}; "
-            f"{meta['characters']} characters. Use artifact_read(id, offset, limit) "
-            "or artifact_grep(id, pattern) to retrieve it. For targeted details prefer artifact_grep; "
-            "read pages with limit=2000 and continue using next_offset.]\n" + text[:preview])
+            f"{meta['characters']} characters. {recovery_hint(readers)}]\n" + text[:preview])
 
 
-def retain_result(result, *, store, scope, source, action_id, inline_limit=4000, result_fields=()):
+def retain_result(result, *, store, scope, source, action_id, inline_limit=4000, result_fields=(), readers=()):
     """Retention failure must not change the outcome of an already executed action."""
     view_source = result.meta.pop('_result_view_source', None)
     if source in {'artifact_read', 'artifact_grep'}:
@@ -195,7 +194,7 @@ def retain_result(result, *, store, scope, source, action_id, inline_limit=4000,
         result.meta['model_view'] = {'fields': list(result_fields), 'source_characters': len(protected),
                                      'view_characters': len(body)}
     else:
-        body = summary(meta, protected, preview=max(0, min(500, inline_limit-240)))
+        body = summary(meta, protected, preview=max(0, min(500, inline_limit-240)), readers=readers)
     if result.content:
         result.content = body
     else:

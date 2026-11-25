@@ -107,21 +107,26 @@ def tool_declarations(specs: Iterable, wire: str = "openai", *, sort: bool = Tru
     """Turn registry specs into a wire-shaped tool declaration list."""
     if wire not in WIRES:
         raise ValueError(f"unknown wire {wire!r}; expected one of {WIRES}")
+    from .artifact_tools import READERS, describe_output
+    specs = list(specs)
+    names = {spec.name for spec in specs}
+    readers = [name for name in READERS if name in names]
     out: list[dict[str, Any]] = []
     for spec in specs:
+        description = describe_output(getattr(spec, "description", "") or "", readers)
         if wire == "openai":
             out.append({
                 "type": "function",
                 "function": {
                     "name": spec.name,
-                    "description": getattr(spec, "description", "") or "",
+                    "description": description,
                     "parameters": _spec_schema(spec),
                 },
             })
         else:
             out.append({
                 "name": spec.name,
-                "description": getattr(spec, "description", "") or "",
+                "description": description,
                 "input_schema": _spec_schema(spec),
             })
     # 无会话的调用方仍按字母确定排序；ToolSurface 提供会话内既定顺序，
