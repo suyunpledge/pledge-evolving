@@ -301,12 +301,8 @@ class NativeTests(unittest.TestCase):
 class BackgroundTests(unittest.TestCase):
     def test_work_lane_sets_toggles_and_invokes_without_desktop_input(self):
         import ctypes
-        from ctypes import wintypes
         from scripts.verify_background_focus import DesktopFocus
         monitor = DesktopFocus()
-        desktop = monitor.user
-        class LastInput(ctypes.Structure):
-            _fields_ = [('size', wintypes.UINT), ('tick', wintypes.DWORD)]
 
         def desktop_state():
             state = monitor.sample()
@@ -317,13 +313,9 @@ class BackgroundTests(unittest.TestCase):
                 state = monitor.sample()
             self.assertIsNotNone(state, 'Requires an interactive foreground desktop')
             self.assertNotIn(pid, (state['foreground']['pid'], state['focus']['pid']), state)
-            pos = wintypes.POINT()
-            self.assertTrue(desktop.GetCursorPos(ctypes.byref(pos)))
-            last = LastInput()
-            last.size = ctypes.sizeof(last)
-            self.assertTrue(desktop.GetLastInputInfo(ctypes.byref(last)))
-            idle_ms = (ctypes.windll.kernel32.GetTickCount() - last.tick) & 0xffffffff
-            return (pos.x, pos.y), last.tick, idle_ms
+            position, last_tick = monitor.pointer()
+            idle_ms = (ctypes.windll.kernel32.GetTickCount() - last_tick) & 0xffffffff
+            return position, last_tick, idle_ms
 
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
