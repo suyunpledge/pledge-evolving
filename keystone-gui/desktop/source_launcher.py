@@ -6,6 +6,11 @@ from pathlib import Path
 import subprocess
 import sys
 
+if __package__:
+    from .runtime_paths import install_hint, qt_python
+else:
+    from runtime_paths import install_hint, qt_python
+
 
 def resolve_launch(executable, arguments, environment=None):
     env = os.environ if environment is None else environment
@@ -33,14 +38,14 @@ def resolve_launch(executable, arguments, environment=None):
         if not ((gui / 'keystone_qt.py').is_file() and (root / 'run.py').is_file()
                 and (root / 'keystone' / '__init__.py').is_file()):
             continue
-        runtime = root / '.venv' / 'qt' / 'Scripts' / 'pythonw.exe'
+        runtime = qt_python(root, windowed=True)
         if not runtime.is_file():
-            raise FileNotFoundError(f'Qt runtime is missing. Run {gui / "desktop" / "install-qt.ps1"}')
+            raise FileNotFoundError(f'Qt runtime is missing. Run {install_hint(root)}')
         legacy = '--legacy' in args
         if legacy:
             args.remove('--legacy')
         return [str(runtime), str(gui / ('keystone_gui_v2.py' if legacy else 'keystone_qt.py')), *args], gui
-    raise FileNotFoundError('Keystone source tree was not found. Set sourceRoot in keystone-source.json beside this EXE.')
+    raise FileNotFoundError('Keystone source tree was not found. Set sourceRoot in keystone-source.json beside the launcher.')
 
 
 def main():

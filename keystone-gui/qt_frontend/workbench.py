@@ -11,6 +11,7 @@ from PySide6.QtCore import QObject, Property, QProcess, QProcessEnvironment, QTi
 from keystone.desktop_permissions import LABELS, PROFILES
 from keystone.compat import desktop_config
 from keystone.secrets import redact
+from desktop.runtime_paths import service_python
 from .controller import RowsModel
 from brand_marks import mark_path
 import provider_catalog
@@ -466,7 +467,7 @@ class WorkbenchController(QObject):
             return
         self._error, self._status = '', '正在载入工作台…'
         gui = Path(__file__).resolve().parents[1]
-        executable = Path(sys.executable).with_name('python.exe')
+        executable = service_python(sys.executable)
         self._process.setProgram(str(executable))
         args = [str(gui / 'qt_frontend' / 'service_host.py'), '--home', str(self.home)]
         if self.demo:
