@@ -92,25 +92,67 @@ function show(d) {
   $("collab").hidden = innerWidth < 720;
   redraw();
 }
+// Human-readable names for field addresses; raw keys stay internal.
+function fieldLabel(key) {
+  let m;
+  if (key === "title") return "文件名";
+  if ((m = /^P(\d+)(\.style)?$/.exec(key)))
+    return "第 " + m[1] + " 段" + (m[2] ? "样式" : "");
+  if ((m = /^S(\d+)(\.body)?$/.exec(key)))
+    return "第 " + m[1] + " 页" + (m[2] ? "正文" : "标题");
+  if ((m = /^T(\d+)\.name$/.exec(key))) return "工作表 " + m[1] + " 名称";
+  if ((m = /^T(\d+)\.(.+)$/.exec(key))) return "工作表 " + m[1] + " · " + m[2];
+  return "单元格 " + key;
+}
+// Per-field AI suggestions are labelled with the raw address (e.g. "B7").
+function readableLabel(label) {
+  return /^(?:title|P\d+(?:\.style)?|S\d+(?:\.body)?|T\d+\.(?:name|[A-Z]{1,2}\d+)|[A-Z]{1,2}\d+)$/.test(label)
+    ? "修改" + fieldLabel(label)
+    : label;
+}
 function status() {
   if (!doc) return;
   $("saveState").textContent = drafts.size
-    ? "正在保存…"
+    ? "编辑中…"
     : "本地已保存 · v" + doc.version;
-  $("detail").textContent =
-    doc.kind === "spreadsheet"
-      ? "SUM · AVERAGE · MIN · MAX · COUNT"
-      : types[doc.kind][1];
-  $("selection").textContent = "当前选区 · " + (selected || "整份文件");
+  $("saveState").classList.toggle("dirty", drafts.size > 0);
+  let detail = types[doc.kind][1];
+  if (doc.kind === "document") {
+    let chars = 0;
+    for (const n of parts("P"))
+      chars += fieldValue("P" + n).replace(/\s/g, "").length;
+    detail = "字数 " + chars.toLocaleString("zh-CN");
+  }
+  if (doc.kind === "spreadsheet") {
+    const raw = selected && selected !== "title" ? fieldValue(selected) : "";
+    detail = selected && selected !== "title"
+      ? selected.split(".").pop() + (raw ? " · " + raw : "")
+      : "支持 SUM · AVERAGE · MIN · MAX · COUNT";
+  }
+  $("detail").textContent = detail;
+  $("selection").textContent =
+    "上下文 · " + (selected ? fieldLabel(selected) : "整份文件");
+}
+// Coalesce typing into one saved transaction (and one undo step) per pause.
+const SAVE_DELAY = 700;
+let flushTimer = 0;
+function scheduleFlush() {
+  clearTimeout(flushTimer);
+  flushTimer = setTimeout(() => {
+    flushTimer = 0;
+    if (!composing && !conflicted) job(flush);
+  }, SAVE_DELAY);
 }
 function queueEdit(key, value) {
   if (!drafts.has(key))
     drafts.set(key, { field: key, before: doc.fields[key] ?? null, value });
   else drafts.get(key).value = value;
   status();
-  if (!composing && !conflicted) job(flush);
+  if (!composing && !conflicted) scheduleFlush();
 }
 async function flush() {
+  clearTimeout(flushTimer);
+  flushTimer = 0;
   if (composing) throw Error("请先确认输入法候选词。");
   if (conflicted) throw Error("请先处理编辑冲突。");
   if (sending) {
@@ -129,7 +171,10 @@ async function flush() {
         args: {
           version: submittedVersion,
           changes,
-          label: "编辑 " + changes[0].field,
+          label:
+            "编辑" +
+            fieldLabel(changes[0].field) +
+            (changes.length > 1 ? " 等 " + changes.length + " 处" : ""),
         },
       });
       if (doc?.id !== id) return;
@@ -166,6 +211,7 @@ function editable(node, key) {
   node.dataset.field = key;
   node.value = fieldValue(key);
   node.onfocus = () => {
+    if (doc.kind === "spreadsheet" && key !== "title") crosshair(node);
     selected = key;
     status();
     if (doc.kind === "spreadsheet" && key !== "title") {
@@ -196,9 +242,26 @@ function editable(node, key) {
   };
   return node;
 }
+function crosshair(node) {
+  const cell = node.closest("td"),
+    table = node.closest("table");
+  if (!cell || !table) return;
+  for (const th of table.querySelectorAll("th.active"))
+    th.classList.remove("active");
+  table.rows[0].cells[cell.cellIndex]?.classList.add("active");
+  cell.parentElement.cells[0]?.classList.add("active");
+}
 function fit(node) {
   node.style.height = "auto";
   node.style.height = Math.max(node.scrollHeight, 32) + "px";
+}
+function ago(seconds) {
+  const diff = Date.now() / 1000 - seconds;
+  if (diff < 60) return "刚刚";
+  if (diff < 3600) return Math.floor(diff / 60) + " 分钟前";
+  if (diff < 86400) return Math.floor(diff / 3600) + " 小时前";
+  if (diff < 86400 * 7) return Math.floor(diff / 86400) + " 天前";
+  return new Date(seconds * 1000).toLocaleDateString();
 }
 function typeBadge(kind) {
   return el("b", types[kind][0], "type " + kind);
@@ -223,8 +286,10 @@ async function home() {
     b.append(
       typeBadge(row.kind),
       el("strong", row.title),
-      el("small", row.pending ? row.pending + " 条建议" : "v" + row.version),
-      el("small", new Date(row.modified * 1000).toLocaleDateString()),
+      row.pending
+        ? el("small", row.pending + " 条待审建议", "pill")
+        : el("small", "v" + row.version),
+      el("small", ago(row.modified)),
     );
     root.append(b);
   }
@@ -239,51 +304,140 @@ async function action(kind, args) {
     redraw();
   }
 }
+async function settleAll(kind) {
+  const ids = doc.pending.map((p) => p.id);
+  for (const id of ids) {
+    if (!doc.pending.some((p) => p.id === id)) continue;
+    await action(kind, { id });
+  }
+}
+// Scroll a field into view (switching slide/sheet when needed) and focus it.
+async function reveal(field) {
+  const slide = /^S(\d+)/.exec(field),
+    sheet = /^T(\d+)\./.exec(field);
+  const target = slide ? Number(slide[1]) : sheet ? Number(sheet[1]) : 1;
+  if ((slide || doc.kind === "spreadsheet") && section !== target) {
+    await flush();
+    section = target;
+    redraw();
+  }
+  const find = () =>
+    $("canvas").querySelector('[data-field="' + CSS.escape(field) + '"]');
+  let node = find();
+  const ref = /([A-Z]{1,2})(\d+)$/.exec(field);
+  if (!node && doc.kind === "spreadsheet" && ref) {
+    // Outside the rendered window: scroll the grid to the cell.
+    firstCol = [...ref[1]].reduce((v, ch) => v * 26 + ch.charCodeAt(0) - 64, 0);
+    firstRow = Number(ref[2]);
+    redraw();
+    node = find();
+  }
+  node?.scrollIntoView({ block: "center", behavior: "smooth" });
+  node?.focus({ preventScroll: true });
+}
+function pendingFields() {
+  const fields = new Map();
+  for (const p of doc.pending)
+    for (const e of p.changes) if (!fields.has(e.field)) fields.set(e.field, p);
+  return fields;
+}
 function updateMeta() {
+  const suggested = pendingFields();
   for (const item of $("outline").querySelectorAll("[data-outline]")) {
     const key = item.dataset.outline;
     const label = doc.fields[key] || item.dataset.empty;
-    const prefix =
-      doc.kind === "document" && doc.fields[key + ".style"] === "heading"
-        ? "§ "
-        : item.dataset.prefix;
-    item.textContent = prefix + label.slice(0, 24);
+    const heading =
+      doc.kind === "document" && doc.fields[key + ".style"] === "heading";
+    item.textContent = item.dataset.prefix + label.slice(0, 40);
+    item.classList.toggle("heading", heading);
+    item.classList.toggle(
+      "suggested",
+      suggested.has(key) || suggested.has(key + ".body"),
+    );
+  }
+  for (const node of $("canvas").querySelectorAll("[data-field]")) {
+    const p = suggested.get(node.dataset.field);
+    node.classList.toggle("suggested", Boolean(p));
+    const proposed = p?.changes.find((e) => e.field === node.dataset.field);
+    node.title = p
+      ? "Keystone 建议：" + (proposed?.value ?? "删除") + "（在右侧审阅）"
+      : "";
+    // Empty fields preview the proposed value as ghost text.
+    if (node.dataset.hint === undefined) node.dataset.hint = node.placeholder;
+    node.placeholder =
+      p && !node.value && proposed?.value ? proposed.value : node.dataset.hint;
   }
   const list = $("proposals");
   list.replaceChildren();
+  $("proposalCount").textContent = doc.pending.length
+    ? String(doc.pending.length)
+    : "";
+  if (doc.pending.length > 1) {
+    const bulk = el("div", undefined, "bulk");
+    bulk.append(
+      btn("全部接受", () => settleAll("accept"), "accept"),
+      btn("全部拒绝", () => settleAll("reject")),
+    );
+    list.append(bulk);
+  }
   for (const p of doc.pending) {
-    const item = el("div", undefined, "proposal");
-    item.append(el("strong", p.label));
-    for (const e of p.changes.slice(0, 5))
-      item.append(
-        el(
-          "p",
-          e.field + "：" + (e.before ?? "空") + " → " + (e.value ?? "删除"),
-        ),
-      );
+    const single =
+      p.changes.length === 1 && readableLabel(p.label) !== p.label;
+    const item = el("div", undefined, "proposal" + (single ? " single" : ""));
+    if (single) {
+      const e = p.changes[0],
+        head = el("div", undefined, "single-head");
+      const jump = btn(fieldLabel(e.field), () => reveal(e.field), "field");
+      jump.title = "定位到" + fieldLabel(e.field);
+      const yes = btn("✓", () => action("accept", { id: p.id }), "icon accept");
+      const no = btn("✕", () => action("reject", { id: p.id }), "icon");
+      yes.setAttribute("aria-label", "接受" + readableLabel(p.label));
+      no.setAttribute("aria-label", "拒绝" + readableLabel(p.label));
+      head.append(jump, yes, no);
+      const row = el("div", undefined, "change");
+      if (e.before) row.append(el("del", e.before));
+      row.append(e.value === null ? el("em", "删除此项") : el("ins", e.value));
+      item.append(head, row);
+      list.append(item);
+      continue;
+    }
+    item.append(el("strong", readableLabel(p.label)));
+    for (const e of p.changes.slice(0, 5)) {
+      const row = el("div", undefined, "change");
+      row.append(el("small", fieldLabel(e.field)));
+      if (e.before) row.append(el("del", e.before));
+      row.append(e.value === null ? el("em", "删除此项") : el("ins", e.value));
+      item.append(row);
+    }
     if (p.changes.length > 5)
       item.append(el("small", "共 " + p.changes.length + " 处"));
-    item.append(
-      btn("接受", () => action("accept", { id: p.id })),
+    const acts = el("div", undefined, "actions");
+    acts.append(
+      btn("接受", () => action("accept", { id: p.id }), "accept"),
       btn("拒绝", () => action("reject", { id: p.id })),
     );
+    item.append(acts);
     list.append(item);
   }
-  if (!doc.pending.length) list.append(el("small", "暂无建议"));
+  if (!doc.pending.length) list.append(el("p", "暂无待处理建议", "quiet"));
   $("mode").value = doc.mode;
+  for (const b of document.querySelectorAll("[data-mode]"))
+    b.setAttribute("aria-checked", String(b.dataset.mode === doc.mode));
   $("history").replaceChildren(
     ...doc.history.map((h) => {
-      const row = el(
-        "p",
-        (h.author === "ai" ? "AI" : "你") +
-          " · " +
-          h.label +
-          (h.undone ? "（已撤销）" : ""),
+      const row = el("p", undefined, h.undone ? "undone" : "");
+      row.append(
+        el("b", h.author === "ai" ? "Keystone" : "你", h.author),
+        el("span", readableLabel(h.label) + (h.undone ? "（已撤销）" : "")),
       );
       if (h.author === "ai" && !h.undone) {
-        const undo = btn("撤销", () => action("undo", { author: "ai", version: h.version }));
-        undo.setAttribute("aria-label", "撤销 " + h.label);
-        row.append(" ", undo);
+        const undo = btn(
+          "撤销",
+          () => action("undo", { author: "ai", version: h.version }),
+          "mini",
+        );
+        undo.setAttribute("aria-label", "撤销 " + readableLabel(h.label));
+        row.append(undo);
       }
       return row;
     }),
@@ -299,12 +453,28 @@ function updateMeta() {
 function updateCells() {
   if (doc?.kind !== "spreadsheet") return;
   for (const node of $("canvas").querySelectorAll("input[data-field]")) {
-    if (node !== document.activeElement || !document.hasFocus()) {
-      const k = node.dataset.field;
-      node.value =
-        drafts.get(k)?.value ?? doc.computed[k] ?? doc.fields[k] ?? "";
-    }
+    const k = node.dataset.field,
+      raw = drafts.get(k)?.value ?? doc.fields[k] ?? "",
+      shown = drafts.has(k) ? raw : (doc.computed[k] ?? raw);
+    const numeric = /^-?\d+(?:\.\d+)?$/.test(shown);
+    node.classList.toggle("num", numeric);
+    node.classList.toggle("formula", raw.startsWith("="));
+    node.classList.toggle("error", shown === "#ERROR!");
+    // The focused cell is being edited: refresh it only while the window is
+    // inactive, and then with the raw value so typing never saves "1,920.4".
+    if (node !== document.activeElement)
+      node.value = numeric ? formatNumber(shown) : shown;
+    else if (!document.hasFocus()) node.value = raw;
   }
+}
+// Display-only rounding; the cell keeps its exact value and shows it on focus.
+const numberFormats = [
+  new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 2 }),
+  new Intl.NumberFormat("zh-CN", { maximumSignificantDigits: 4 }),
+];
+function formatNumber(text) {
+  const n = Number(text);
+  return numberFormats[n !== 0 && Math.abs(n) < 1 ? 1 : 0].format(n);
 }
 function redraw() {
   const active = document.activeElement,
@@ -329,6 +499,8 @@ function redraw() {
   canvas.replaceChildren();
   left.replaceChildren();
   canvas.classList.toggle("grid", kind === "spreadsheet");
+  left.className = "k-" + kind;
+  $("editor").dataset.kind = kind;
   if (kind === "document") {
     left.append(el("h3", "文档大纲"));
     const paper = el("div", undefined, "paper");
@@ -368,11 +540,20 @@ function redraw() {
       Object.assign(item.dataset, {
         outline: "S" + n,
         empty: "无标题",
-        prefix: i + 1 + ". ",
+        prefix: "",
+        no: String(i + 1),
       });
+      item.classList.add("thumb");
       left.append(item);
     });
     const slide = el("div", undefined, "slide");
+    slide.append(
+      el(
+        "span",
+        Math.max(1, ids.indexOf(section) + 1) + " / " + Math.max(1, ids.length),
+        "slide-no",
+      ),
+    );
     canvas.append(slide);
     for (const [k, cls, hint] of [
       ["S" + section, "slide-title", "幻灯片标题"],
@@ -484,6 +665,7 @@ async function ask(form) {
 }
 function present(delta) {
   const ids = parts("S");
+  if (!ids.length) throw Error("还没有可放映的幻灯片。");
   slideIndex = Math.max(0, Math.min(ids.length - 1, slideIndex + delta));
   const k = "S" + ids[slideIndex];
   $("screen").replaceChildren(
@@ -533,6 +715,15 @@ $("style").onchange = () =>
     await flush();
     redraw();
   });
+for (const b of document.querySelectorAll("[data-mode]"))
+  b.onclick = () => {
+    $("mode").value = b.dataset.mode;
+    $("mode").onchange();
+  };
+// Leaving the page (workspace switch, hiding Office) saves pending typing.
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden && drafts.size && !composing && !conflicted) job(flush);
+});
 $("mode").onchange = () =>
   job(() => action("mode", { value: $("mode").value }));
 $("undo").onclick = () => job(() => action("undo", { author: "user" }));
@@ -572,8 +763,8 @@ $("play").onclick = () =>
     slideIndex = parts("S").indexOf(section);
     present(0);
   });
-$("prevSlide").onclick = () => present(-1);
-$("nextSlide").onclick = () => present(1);
+$("prevSlide").onclick = () => job(() => present(-1));
+$("nextSlide").onclick = () => job(() => present(1));
 $("endShow").onclick = () => $("presentation").close();
 $("useLatest").onclick = () =>
   job(async () => {
@@ -596,6 +787,6 @@ document.addEventListener("keydown", (e) => {
     job(flush);
   }
   if ($("presentation").open && ["ArrowLeft", "ArrowRight"].includes(e.key))
-    present(e.key === "ArrowLeft" ? -1 : 1);
+    job(() => present(e.key === "ArrowLeft" ? -1 : 1));
 });
 connect();

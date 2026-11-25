@@ -13,15 +13,33 @@
     <script defer src="office.js"></script>
   </head>
   <body>
+    <svg class="sprite" aria-hidden="true">
+      <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3l1.8 4.7 4.7 1.8-4.7 1.8L12 16l-1.8-4.7-4.7-1.8 4.7-1.8z" /><path d="M19 15l.8 2.2 2.2.8-2.2.8L19 21l-.8-2.2-2.2-.8 2.2-.8z" /></symbol>
+      <symbol id="i-send" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6" /></symbol>
+      <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6" /></symbol>
+      <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14L4 9l5-5" /><path d="M4 9h10a6 6 0 0 1 0 12h-3" /></symbol>
+      <symbol id="i-export" viewBox="0 0 24 24"><path d="M12 3v12M7 8l5-5 5 5M5 15v4h14v-4" /></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 5l12 7-12 7z" /></symbol>
+      <symbol id="i-import" viewBox="0 0 24 24"><path d="M12 15V3M7 10l5 5 5-5M5 15v4h14v-4" /></symbol>
+      <symbol id="i-history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5M12 8v4l3 2" /></symbol>
+      <symbol id="i-cell" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="1" /><path d="M3 10h18M9 5v14" /></symbol>
+    </svg>
+
     <main id="home">
-      <h1>办公</h1>
-      <p class="lead">在本地创建文档、表格和演示，与 AI 一起编辑。</p>
-      <form id="homeAsk" class="prompt">
-        <input
-          aria-label="让 AI 创建办公文件"
-          placeholder="让 AI 创建一份报告、表格或演示…"
-        /><button class="primary">发送</button>
-      </form>
+      <section class="hero">
+        <p class="eyebrow">Keystone Office</p>
+        <h1>今天要完成哪份文件？</h1>
+        <p class="lead">在本地创建文档、表格和演示。你和 Keystone 编辑同一份文件，每处 AI 修改都可以审阅和撤销。</p>
+        <form id="homeAsk" class="prompt">
+          <svg class="i spark"><use href="#i-spark" /></svg>
+          <input
+            aria-label="让 AI 创建办公文件"
+            placeholder="让 Keystone 创建一份报告、表格或演示…"
+          /><button class="primary round" aria-label="发送">
+            <svg class="i"><use href="#i-send" /></svg>
+          </button>
+        </form>
+      </section>
       <div class="cards">
         <button data-create="document">
           <b class="type document">W</b><strong>空白文档</strong
@@ -36,91 +54,117 @@
           ><small>幻灯片与汇报</small>
         </button>
         <button id="pick">
-          <b class="type import">↗</b><strong>导入文件</strong
-          ><small>提取文本、单元格或幻灯片文字为副本</small>
+          <b class="type import"><svg class="i"><use href="#i-import" /></svg></b
+          ><strong>导入文件</strong
+          ><small>docx · xlsx · pptx · md · csv，生成可编辑副本</small>
         </button>
       </div>
-      <h2>最近文件</h2>
+      <h2 class="section-title">最近文件</h2>
       <div id="recent"></div>
     </main>
+
     <section id="editor" hidden>
       <header>
-        <button id="back">‹ 办公</button><b id="kindIcon" class="type"></b
-        ><input
-          id="title"
-          data-field="title"
-          aria-label="文件名"
-          maxlength="120"
-        /><span class="spacer"></span><button id="undo">撤销我的编辑</button
-        ><button id="export" class="primary">导出</button>
+        <button id="back" class="ghost" aria-label="返回办公主页">
+          <svg class="i"><use href="#i-back" /></svg>办公
+        </button>
+        <b id="kindIcon" class="type"></b
+        ><input id="title" data-field="title" aria-label="文件名" maxlength="120" />
+        <span id="saveState" class="save" role="status"></span>
+        <span class="spacer"></span>
+        <button id="undo" class="ghost">
+          <svg class="i"><use href="#i-undo" /></svg>撤销我的编辑
+        </button>
+        <button id="export" class="primary">
+          <svg class="i"><use href="#i-export" /></svg>导出
+        </button>
       </header>
       <nav id="toolbar">
-        <button id="add"></button
+        <button id="add" class="ghost"></button
         ><select id="style" aria-label="段落样式">
           <option value="paragraph">正文</option>
           <option value="heading">标题</option>
           <option value="bullet">项目符号</option>
         </select>
         <label id="sheetAddress" hidden
-          >单元格
+          ><svg class="i"><use href="#i-cell" /></svg>
           <input id="cellAddress" value="A1" aria-label="跳转到单元格" /><button
             id="goCell"
+            class="ghost"
           >
             转到
           </button></label
         >
-        <button id="play" hidden>放映</button><span class="spacer"></span
-        ><button id="aiToggle" aria-expanded="true">AI 协作</button>
+        <button id="play" class="ghost" hidden>
+          <svg class="i"><use href="#i-play" /></svg>放映
+        </button>
+        <span class="spacer"></span
+        ><button id="aiToggle" class="ghost ai" aria-expanded="true">
+          <svg class="i"><use href="#i-spark" /></svg>Keystone
+        </button>
       </nav>
       <div class="desk">
         <aside id="outline"></aside>
         <div id="canvas"></div>
-        <aside id="collab">
-          <h2>AI 协作</h2>
-          <label
-            >写入模式
-            <select id="mode">
+        <aside id="collab" aria-label="Keystone 协作">
+          <div class="collab-head">
+            <h2><svg class="i spark"><use href="#i-spark" /></svg>Keystone</h2>
+            <div class="segmented" role="radiogroup" aria-label="AI 写入模式">
+              <button type="button" role="radio" data-mode="suggest" title="AI 的修改需要你确认后才生效">建议</button
+              ><button type="button" role="radio" data-mode="direct" title="AI 的修改立即生效，可按作者撤销">直接编辑</button>
+            </div>
+            <select id="mode" hidden aria-hidden="true" tabindex="-1">
               <option value="suggest">建议</option>
               <option value="direct">直接编辑</option>
-            </select></label
-          >
-          <div class="selection" id="selection">整份文件</div>
-          <form id="ask">
+            </select>
+          </div>
+          <div class="selection" id="selection">上下文 · 整份文件</div>
+          <form id="ask" class="composer">
             <textarea
-              placeholder="描述想要的修改…"
+              placeholder="描述想要的修改，例如：把第二节改得正式一点"
               aria-label="AI 编辑要求"
-            ></textarea
-            ><button class="primary">发送给 AI</button>
+            ></textarea>
+            <div class="composer-row">
+              <span>选中段落或单元格可缩小范围</span
+              ><button class="primary round" aria-label="发送给 Keystone">
+                <svg class="i"><use href="#i-send" /></svg>
+              </button>
+            </div>
           </form>
           <div id="agentState" role="status"></div>
-          <h3>待处理建议</h3>
+          <h3>待处理建议 <span id="proposalCount" class="count"></span></h3>
           <div id="proposals"></div>
           <details>
-            <summary>编辑历史</summary>
+            <summary><svg class="i"><use href="#i-history" /></svg>编辑历史</summary>
             <div id="history"></div>
           </details>
-          <button id="undoAI">撤销 AI 修改</button>
+          <button id="undoAI" class="ghost wide">
+            <svg class="i"><use href="#i-undo" /></svg>撤销 Keystone 的上一次修改
+          </button>
         </aside>
       </div>
       <footer>
-        <span id="saveState" role="status"></span><span id="detail"></span>
+        <span id="detail"></span><span class="hint">Ctrl+S 立即保存</span>
       </footer>
     </section>
+
     <div id="message" role="status" hidden>
       <span></span><button id="dismiss" aria-label="关闭提示">×</button>
     </div>
     <dialog id="conflict">
       <h2>同一字段有更新</h2>
       <p>本地草稿和最新保存的内容不同。</p>
-      <button id="useLatest">采用已保存内容</button
-      ><button id="useDraft">保存我的草稿</button>
+      <div class="dialog-actions">
+        <button id="useLatest">采用已保存内容</button
+        ><button id="useDraft" class="primary">保存我的草稿</button>
+      </div>
     </dialog>
     <dialog id="presentation">
       <div id="screen"></div>
-      <div>
+      <div class="dialog-actions">
         <button id="prevSlide">上一页</button
         ><button id="nextSlide">下一页</button
-        ><button id="endShow">结束放映</button>
+        ><button id="endShow" class="primary">结束放映</button>
       </div>
     </dialog>
   </body>

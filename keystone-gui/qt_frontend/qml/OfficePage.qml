@@ -49,7 +49,8 @@ Item {
         id: view
         objectName: "officeWebView"
         anchors.fill: parent
-        backgroundColor: "#0d1118"
+        // Transparent so the window backdrop (aurora/starfield) shows behind the glass chrome.
+        backgroundColor: "transparent"
         url: page.editorUrl
         webChannel: channel
         profile: WebEngineProfile { offTheRecord: true }
