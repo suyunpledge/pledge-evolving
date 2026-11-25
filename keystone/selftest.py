@@ -2099,46 +2099,26 @@ def test_global_optimizations() -> None:
     check("global:guard-expression-tables-present",
           "ctx" in guard_mod.EXPRESSION_ALLOWED_NAMES and "eval" in guard_mod.FORBIDDEN_CALLS)
 
-    # F4-4/F4-5 文档对齐（3.2）：readme 已知边界必须显式写明读侧不受沙箱
-    # 约束与 allow 恒高于 mode 基线，防止表述回退（repo 形态下守卫）。
-    #
-    # 2026-09-21（全栈维护师审查 ISSUE-2）三处收紧：
-    #   1. 中文留存版 README.zh.md 一并纳入——任一文件同时写明两条即通过
-    #      （旧实现只读 README.md，注释却声称「任一语言」，言行不一）；
-    #   2. 由纯子串存在性改为**非否定语境**判定——「文档声称 X，但这是假的」
-    #      这类句子不再能骗过守卫；
-    #   3. 补上守卫自身的负例断言（见下方 guard-selftest），作者与守卫之间的
-    #      信任缺口收窄一格。
+    # Validate the current path boundary in each shipped language.
     _root = Path(__file__).resolve().parent.parent
-    _readme_candidates = (_root / "README.md", _root / "readme.md", _root / "README.zh.md")
-    _read_side_phrases = ("读取不受沙箱约束", "Reads are not sandboxed")
-    _allow_over_mode_phrases = ("恒高于 mode 基线", "outrank the mode baseline")
-    _checked_readmes: list[str] = []
-    _boundary_ok = False
-    for _rp in _readme_candidates:
-        if not _rp.is_file():
-            continue
-        _checked_readmes.append(_rp.name)
-        _text = _rp.read_text(encoding="utf-8")
-        if (boundary_stated(_text, _read_side_phrases)
-                and boundary_stated(_text, _allow_over_mode_phrases)):
-            _boundary_ok = True
-            break
+    _readme_candidates = (_root / "README.md", _root / "README.zh.md")
+    _read_side_phrases = ("confine reads to the workspace", "只读和工作区可写沙箱都只读工作区")
+    _allow_over_mode_phrases = ("can lift a mode's default prompt or denial", "可以放宽模式默认的询问或拒绝")
+    _stale = ("Reads are not sandboxed", "读取不受沙箱约束")
+    _checked_readmes = {p.name: p.read_text(encoding="utf-8") for p in _readme_candidates if p.is_file()}
     if _checked_readmes:
-        check("global:readme-documents-read-side-boundary",
-              _boundary_ok,
-              "readme 已知边界缺读侧/allow 语义表述，或该表述处于否定语境 "
-              f"(checked={_checked_readmes})")
-        # 守卫自身的负例：证明它对「表述缺失」与「表述被否定」都能翻红，
-        # 而不是永远判绿（旧实现没有任何负例断言）。
+        _invalid = [name for name, text in _checked_readmes.items() if
+                    not (boundary_stated(text, _read_side_phrases) and boundary_stated(text, _allow_over_mode_phrases))
+                    or boundary_stated(text, _stale)]
+        check("global:readme-documents-read-side-boundary", not _invalid,
+              f"Missing or stale readScope / allow guidance: {_invalid}")
         check("global:readme-guard-rejects-missing",
-              not boundary_stated("nothing about sandboxes here", _read_side_phrases))
+              not boundary_stated("Reads are not sandboxed", _read_side_phrases))
         check("global:readme-guard-rejects-denial",
-              not boundary_stated(
-                  "The docs claim Reads are not sandboxed, but that is false.",
-                  _read_side_phrases))
+              not boundary_stated("The docs claim we confine reads to the workspace, but that is false.",
+                                  _read_side_phrases))
         check("global:readme-guard-accepts-assertion",
-              boundary_stated("**Reads are not sandboxed**: details follow.", _read_side_phrases))
+              boundary_stated("The workspace-write settings confine reads to the workspace.", _read_side_phrases))
         # H12（3.2 回执）：readme 计数漂移——硬编码项数（350/228/80）与席位
         # 锚点计数（如 config:* (16)）每次扩断言都会过时；守卫钉死它们不再回来
         # WB P2 修复：扩大拦截范围，不再只盯特定数字，任何 \d+ 项 都进不來

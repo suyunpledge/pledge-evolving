@@ -179,10 +179,11 @@ cd keystone-gui && ../.venv/qt/Scripts/python -m unittest qt_frontend.test_backe
 
 ### 已知限制
 
-- 标准库 HTTP 传输没有连接池；生产部署应换成正式的传输层。
-- 沙箱拦的是**写入**和黑名单程序，不是内核级隔离；**读取不受沙箱约束**，读取侧靠工具声明和权限规则约束，没有路径沙箱。
-- 显式的 `allow` 规则恒高于 mode 基线（禁止规则仍然优先）；需要硬隔离时请用沙箱档位和 `deny` 规则。
-- `capability.install` 不校验签名；记忆检索是精确匹配加时间排序，没有向量召回。
+- 文件读取工具按 `readScope` 检查解析后的路径。选 `auto` 时，只读和工作区可写沙箱都只读工作区，完全访问则可读当前账户可访问的路径。选 `workspace` 时，可读工作区和显式添加的读根。选 `all` 时，路径检查允许读取工作区外的文件。宿主的密钥保护仍然生效。[路径策略](keystone/policy.py)
+- 普通 CLI 任务默认采用均衡档，读取范围为工作区。命令行的 `--read-scope` 优先于配置，配置优先于档位默认值。桌面“沙箱运行”只读当前工作区。“手动批准”和“完全访问”均允许跨目录读取，前者按操作审批。使用角色模板时，实际授权还可能收窄。[CLI 档位](keystone/cli.py) · [桌面授权](keystone/desktop_permissions.py)
+- 上述控制发生在 Keystone 进程内。获准执行的 shell 命令或 MCP 服务可访问其进程和凭据有权访问的资源。显式 `allow` 可以放宽模式默认的询问或拒绝。显式拒绝规则、已分类写工具的只读限制和路径检查优先。[策略判定](keystone/policy.py)
+- 通用 HTTP 传输逐请求建立连接。火山方舟 Seed 网关可在连续工具轮次间复用空闲的 HTTPS 连接。[通用传输](keystone/http_transport.py) · [Seed 传输](keystone/seed_transport.py)
+- 能力包安装会记录来源，目前没有发布者签名校验。记忆召回按类别和有效状态筛选，优先返回置顶记录，再按创建时间倒序排列，目前没有向量检索。[能力包安装](keystone/capability.py) · [记忆召回](keystone/memory.py)
 - 高端两段式会把任务和草稿（不是完整对话历史）发给裁定档模型。
 
 ### 项目状态

@@ -177,10 +177,11 @@ Set `KEYSTONE_NO_AUTOSTART=1` when running GUI tests so they don't start a real 
 
 ### Known limitations
 
-- The standard-library HTTP transport has no connection pooling. A production deployment would swap in a real transport.
-- The sandbox guards **writes** and blacklisted programs. It is not kernel-level isolation. **Reads are not sandboxed**: read tools are constrained by declaration and policy rules, not by a path sandbox.
-- Explicit `allow` rules outrank the mode baseline (deny still wins). Use sandbox tiers and `deny` rules when you need hard isolation.
-- `capability.install` doesn't verify signatures, and memory retrieval is exact match plus recency, with no vector recall.
+- File read tools check resolved paths against `readScope`. With `auto`, read-only and workspace-write sandboxes confine reads to the workspace, while full access permits account-readable paths. With `workspace`, the workspace and explicitly granted read roots are readable. With `all`, the path gate permits reads outside the workspace. Host secret protections still apply. [Path policy](keystone/policy.py)
+- Ordinary CLI runs default to the balanced profile with workspace reads. An explicit `--read-scope` overrides the configured scope, which takes precedence over the profile default. Desktop Sandbox confines reads to the workspace. Manual Approval and Full Access select all-path reads, with per-action approval in Manual. An active role may narrow the grant. [CLI profiles](keystone/cli.py) · [Desktop grants](keystone/desktop_permissions.py)
+- These controls run inside Keystone. An approved shell command or MCP server can access resources available to its process and credentials. Explicit `allow` can lift a mode's default prompt or denial. Explicit denials, read-only write restrictions on classified tools, and path checks take precedence. [Policy evaluation](keystone/policy.py)
+- General HTTP requests open a connection per request. The Ark Seed gateway can reuse an idle HTTPS connection across consecutive tool rounds. [General transport](keystone/http_transport.py) · [Seed transport](keystone/seed_transport.py)
+- Capability installation records provenance without verifying a publisher signature. Memory recall filters by kind and current status, then orders pinned entries first and newer entries next. Vector retrieval is unavailable. [Capability installation](keystone/capability.py) · [Memory recall](keystone/memory.py)
 - The premium two-stage path sends the task and the draft (never the full history) to the adjudicating tier.
 
 ### Status
