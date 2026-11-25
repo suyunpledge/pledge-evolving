@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-测试目标：keystone setup 生成的用户层补丁（NOT 网络行为）
+测试目标：revon setup 生成的用户层补丁（NOT 网络行为）
 样本来源：真实 bug——早期版本写入 tiers=[["lite",模型],["medium",模型]]，
           但只覆盖 medium 的 provider 行，lite 仍指向 base.json 的环回占位
           网关（127.0.0.1:8810），导致 economy 策略打空。
@@ -17,7 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from keystone.cmd_setup import PROVIDERS, _build_patch
+from revon.cmd_setup import PROVIDERS, _build_patch
 
 deepseek = next(p for p in PROVIDERS if p["id"] == "deepseek")
 patch = _build_patch(deepseek, "sk-test")

@@ -10,14 +10,14 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from verify_mimo_long_context import LongRecorder, load_baseline
 from verify_mimo_live import provider_for, router_for, MODELS
-from keystone import model
-from keystone.cache_metrics import cache_coverage
-from keystone.cache_state import CacheWarmth
-from keystone.context_transaction import valid_tool_pairs
-from keystone.loop import Agent, LoopLimits
-from keystone.policy import Policy, Mode
-from keystone.secrets import redact
-from keystone.tools import build_builtin_registry
+from revon import model
+from revon.cache_metrics import cache_coverage
+from revon.cache_state import CacheWarmth
+from revon.context_transaction import valid_tool_pairs
+from revon.loop import Agent, LoopLimits
+from revon.policy import Policy, Mode
+from revon.secrets import redact
+from revon.tools import build_builtin_registry
 
 
 def main():
@@ -31,13 +31,13 @@ def main():
         parser.error('Requires --live and request-limit 1..24')
     backup = Path((ROOT / 'reports/mimo-token-backup.txt').read_text(encoding='utf-8').strip())
     before, _ = load_baseline(backup)
-    provider = provider_for(args.model, Path.home() / '.keystone')
+    provider = provider_for(args.model, Path.home() / '.revon')
     provider.route_capabilities = {'contextWindow': 16000, 'maxOutputTokens': 4096}
     recorder = LongRecorder(args.request_limit, retries=2)
     result = {'model': args.model, 'requests': recorder.rows, 'samples': [], 'baseline_dir': str(backup)}
     args.output.parent.mkdir(parents=True, exist_ok=True)
     try:
-        with tempfile.TemporaryDirectory(prefix='keystone-mimo-pause-') as temporary:
+        with tempfile.TemporaryDirectory(prefix='revon-mimo-pause-') as temporary:
             root = Path(temporary)
             ws = root / 'workspace'
             ws.mkdir()

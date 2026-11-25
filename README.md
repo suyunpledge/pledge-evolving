@@ -1,4 +1,4 @@
-# Pledge Keystone
+# Pledge revon
 
 **An AI assistant that runs on your own computer, does real work for you, and keeps every promise it makes about safety.**
 
@@ -13,7 +13,7 @@
 
 ## In one minute
 
-Most AI chat apps can only *talk*. Pledge Keystone can also *act*: read and edit files, run checks, search the web, operate a chosen window, and hand work to helper agents. It does that within rules you set:
+Most AI chat apps can only *talk*. Pledge revon can also *act*: read and edit files, run checks, search the web, operate a chosen window, and hand work to helper agents. It does that within rules you set:
 
 - **It asks before doing anything risky.** Every action goes through a permission check. A "no" rule always wins.
 - **Mistakes can be undone.** With workspace checkpoints enabled, managed writes first save a recoverable file version.
@@ -37,7 +37,7 @@ To connect a model, run `python run.py setup` (a short wizard) or use the setup 
 
 ## Why the name
 
-A **keystone** is the wedge at the top of an arch that locks every other stone in place. That is this project's job: one small kernel that keeps models, tools, permissions, memory and every app surface standing together. **Pledge** is the promise it keeps: contracts, permission rules and acceptance checks that can be verified, not just hoped for.
+A **revon** is the wedge at the top of an arch that locks every other stone in place. That is this project's job: one small kernel that keeps models, tools, permissions, memory and every app surface standing together. **Pledge** is the promise it keeps: contracts, permission rules and acceptance checks that can be verified, not just hoped for.
 
 The project used to be called both *Forge* and *pledge-evolving*. Those names are retired. Everything existing installs rely on keeps working (see [Migrating from Forge](#migrating-from-forge)).
 
@@ -53,9 +53,9 @@ A production-shaped **agent kernel written entirely against Python's standard li
 
 | Surface | Start it with | Notes | Support level |
 | --- | --- | --- | --- |
-| CLI | `python run.py <command>` | Scripting, CI and unattended runs. `run.py` is the portable entry point; `python -m keystone.cli` also works on a standard Python. | Primary |
-| Desktop (Qt) | Windows: `keystone-gui/Keystone Qt.cmd` after `keystone-gui/desktop/install-qt.ps1`. macOS / Linux: `bash setup.sh qt`. | Primary chat client with Work mode, model setup, a command palette and approval cards. Each OS has its own Qt environment. | Primary |
-| Desktop (Tk) + Coding Mode | `python keystone-gui/keystone_gui_v2.py` | A three-column IDE: file tree and Git, a multi-tab editor, an Agent panel, and diff / test / problem panes. | Experimental |
+| CLI | `python run.py <command>` | Scripting, CI and unattended runs. `run.py` is the portable entry point; `python -m revon.cli` also works on a standard Python. | Primary |
+| Desktop (Qt) | Windows: `revon-gui/revon Qt.cmd` after `revon-gui/desktop/install-qt.ps1`. macOS / Linux: `bash setup.sh qt`. | Primary chat client with Work mode, model setup, a command palette and approval cards. Each OS has its own Qt environment. | Primary |
+| Desktop (Tk) + Coding Mode | `python revon-gui/revon_gui_v2.py` | A three-column IDE: file tree and Git, a multi-tab editor, an Agent panel, and diff / test / problem panes. | Experimental |
 | VS Code | `vscode-extension/` | Sidebar chat plus explain/review selection, over a local JSONL bridge. | Experimental |
 | IM channel | `python run.py channel weixin serve` | Each inbound message becomes a task; each report becomes a message. | Experimental |
 | Android | Release APK `forge-android-v0.4` | Legacy in-repo copy; development moved to the separate `pledge-steward` repository. | Experimental |
@@ -68,7 +68,7 @@ CLI and Qt desktop are the primary surfaces. Experimental surfaces can have part
 
 ```mermaid
 flowchart LR
-    U[CLI · Qt · Tk · VS Code · IM] --> L[Agent loop<br/>keystone/loop.py]
+    U[CLI · Qt · Tk · VS Code · IM] --> L[Agent loop<br/>revon/loop.py]
     L --> C[Context<br/>prompt layers · memory slice · compaction]
     L --> M[Models<br/>routing · fallback · MoA · cache-aware cost]
     L --> T[Tools<br/>registry · deferral · result feedback]
@@ -92,7 +92,7 @@ Every decision is written to `sessions/*.jsonl` (`user_message`, `tool_call`, `s
 | **Loop guards** | Repeated action/result cycles are detected and stopped. A same-tool streak gets a nudge. An unknown tool outcome stops the run instead of being replayed. | CLI, Qt Coding |
 | **Permissions** | Two-dimensional policy: mode × sandbox tier, plus a command blacklist. **Deny always wins.** Subagents are clamped to the parent's ceiling, and managed writes take shadow Git snapshots when checkpoints are enabled. | Kernel entry points |
 | **Secrets** | A separate store and scope: values are virtualised in prompts, redacted in events and results, and tools cannot read the store. | Kernel entry points |
-| **Acceptance** | `keystone run TASK --acceptance FILE.json`: file, command and environment-probe criteria, checked by the host. The model cannot edit the checks. | CLI run |
+| **Acceptance** | `revon run TASK --acceptance FILE.json`: file, command and environment-probe criteria, checked by the host. The model cannot edit the checks. | CLI run |
 | **Model routing** | Economy / balanced / premium tiers, fallback triggered by error class, MoA aggregation, and a premium draft→adjudicate path that falls back to the paid draft. | CLI, Qt, gateway |
 | **Cost & cache** | A per-request pricing table, subagent spend folded into the parent ledger, cross-vendor cache-warmth tracking, and compaction deferred while the cache is hot. | CLI, Qt Coding |
 | **Memory** | Typed long-term memory written to two places, a curator that archives instead of deleting, and injection that is always bounded. | Kernel agent |
@@ -109,13 +109,13 @@ Subagent delegation needs a running parent agent to own its budget, cancellation
 2. **Verifiable by default.** `python run.py selftest` is an offline, end-to-end proof, and the unit suites cover the rest.
 3. **Facts in an append-only log.** Sessions, actions and costs are reconstructible, and interrupted actions are never replayed automatically.
 4. **Repository text grants nothing.** `AGENTS.md`, tool output and web pages are data. They are never treated as permission.
-5. **Contract-gated contributions.** The modules in `keystone/contrib/` were written by seven different AI agents against the frozen [`contract.md`](contract.md). `keystone/registry.py` admits a module only after a static AST scan (no network, subprocess, destructive file APIs or `eval`), an isolated import, and at least eight passing self-checks of its own.
+5. **Contract-gated contributions.** The modules in `revon/contrib/` were written by seven different AI agents against the frozen [`contract.md`](contract.md). `revon/registry.py` admits a module only after a static AST scan (no network, subprocess, destructive file APIs or `eval`), an isolated import, and at least eight passing self-checks of its own.
 
 ### Configuration
 
-Config is an empty root plus ordered patch layers: `keystone/bundles/*.json` → mode bundles (e.g. `modes/coding.json`) → the user layer `~/.keystone/keystone.patch.json` → `--overlay` files. The last write wins by row id. `python run.py dump-config` shows the result, and `dump-default-config` skips the user layer, so a broken user file can never lock you out.
+Config is an empty root plus ordered patch layers: `revon/bundles/*.json` → mode bundles (e.g. `modes/coding.json`) → the user layer `~/.revon/revon.patch.json` → `--overlay` files. The last write wins by row id. `python run.py dump-config` shows the result, and `dump-default-config` skips the user layer, so a broken user file can never lock you out.
 
-Loop limits are resolved in one place for every surface (`keystone/loop_limits.py`):
+Loop limits are resolved in one place for every surface (`revon/loop_limits.py`):
 
 | Key (`loop` row) | Default | Meaning |
 | --- | --- | --- |
@@ -124,7 +124,7 @@ Loop limits are resolved in one place for every surface (`keystone/loop_limits.p
 | `wrapUpOnLimit` | `true` | Budget notices plus a final progress summary (skipped when `maxSteps` < 6) |
 | `contextChars` | 24000 | Compaction budget, further adjusted per vendor profile |
 
-Keys come from environment variables (`KEYSTONE_<NAME>_KEY`) or the secret store, never from inline config. `doctor` warns about any inline `apiKey`.
+Keys come from environment variables (`REVON_<NAME>_KEY`) or the secret store, never from inline config. `doctor` warns about any inline `apiKey`.
 
 ### Migrating from Forge
 
@@ -132,12 +132,12 @@ Nothing on disk is moved or rewritten. Old names are only read when the new ones
 
 | Before | Now | Compatibility |
 | --- | --- | --- |
-| `~/.forge/` | `~/.keystone/` | An existing `~/.forge` is used when `~/.keystone` is absent. `KEYSTONE_HOME` (or the old `FORGE_HOME`) overrides both. |
-| `forge.patch.json`, `forge-desktop.json` | `keystone.patch.json`, `keystone-desktop.json` | The old file is read and written in place until a new one exists |
-| `FORGE_*` environment variables | `KEYSTONE_*` | Mirrored both ways at import time, so `env.FORGE_*` expressions in old configs still resolve |
-| `forge-plugin.json`, `forge.capability.json`, `<project>/.forge/` | `keystone-plugin.json`, `keystone.capability.json`, `<project>/.keystone/` | Both names are recognised and both are protected |
-| `forge` command, `bin/forge.cmd` | `keystone`, `bin/keystone.cmd` | `forge` remains as an alias |
-| `import forge` | `import keystone` | No shim; in-repo callers are updated |
+| `~/.forge/` | `~/.revon/` | An existing `~/.forge` is used when `~/.revon` is absent. `REVON_HOME` (or the old `FORGE_HOME`) overrides both. |
+| `forge.patch.json`, `forge-desktop.json` | `revon.patch.json`, `revon-desktop.json` | The old file is read and written in place until a new one exists |
+| `FORGE_*` environment variables | `REVON_*` | Mirrored both ways at import time, so `env.FORGE_*` expressions in old configs still resolve |
+| `forge-plugin.json`, `forge.capability.json`, `<project>/.forge/` | `revon-plugin.json`, `revon.capability.json`, `<project>/.revon/` | Both names are recognised and both are protected |
+| `forge` command, `bin/forge.cmd` | `revon`, `bin/revon.cmd` | `forge` remains as an alias |
+| `import forge` | `import revon` | No shim; in-repo callers are updated |
 
 What did not change: the Android application id (`com.forge.android`, so installed apps keep upgrading), and archived reports and records (`reports/`, `roundtable/`, `evolution/`, `reviews/` and similar), which keep their historical wording.
 
@@ -145,14 +145,14 @@ What did not change: the Android application id (`com.forge.android`, so install
 
 | Location | Contents |
 | --- | --- |
-| `keystone/`, `keystone-gui/` | Agent runtime and desktop clients |
+| `revon/`, `revon-gui/` | Agent runtime and desktop clients |
 | `tests/`, `verify/` | Integration tests and independent checks |
 | [Design decisions](docs/design.md), [project history](docs/history/) | Architecture rationale, earlier plans and contributor briefs |
 | [Module contract](contract.md) | Current contribution interface and admission rules |
 
 ```
-pledge-keystone/
-├── keystone/              Kernel (stdlib only)
+pledge-revon/
+├── revon/              Kernel (stdlib only)
 │   ├── loop.py            Agent loop: steps, retries, budgets, acceptance
 │   ├── loop_limits.py     One resolver for maxSteps / depth / spawn budget
 │   ├── tools.py           Tool registry and built-in tools
@@ -164,9 +164,9 @@ pledge-keystone/
 │   ├── session.py checkpoint.py memory.py          Event log, snapshots, memory
 │   ├── acceptance.py probes.py                     Host-verified acceptance
 │   ├── graph/ scienceclaw/ channels/ development/ contrib/
-│   ├── compat.py          Forge → Keystone compatibility (homes, files, env)
+│   ├── compat.py          Forge → revon compatibility (homes, files, env)
 │   └── selftest.py cli.py
-├── keystone-gui/          Desktop: Qt front end (qt_frontend/), Tk shell + Coding Mode
+├── revon-gui/          Desktop: Qt front end (qt_frontend/), Tk shell + Coding Mode
 ├── vscode-extension/      VS Code sidebar extension
 ├── client/                Local web client and run server
 ├── forge-android/         Legacy Android copy (now developed in pledge-steward)
@@ -179,21 +179,21 @@ pledge-keystone/
 
 ```bash
 python run.py selftest                                         # offline end-to-end checks
-python -m unittest discover -s keystone -p "test_*.py" -t .    # kernel unit tests
+python -m unittest discover -s revon -p "test_*.py" -t .    # kernel unit tests
 python -m pytest -q tests/                                     # integration tests
 # Qt front end (needs .venv/qt):
-cd keystone-gui && ../.venv/qt/Scripts/python -m unittest qt_frontend.test_backend
+cd revon-gui && ../.venv/qt/Scripts/python -m unittest qt_frontend.test_backend
 ```
 
-Set `KEYSTONE_NO_AUTOSTART=1` when running GUI tests so they don't start a real gateway.
+Set `REVON_NO_AUTOSTART=1` when running GUI tests so they don't start a real gateway.
 
 ### Known limitations
 
-- File read tools check resolved paths against `readScope`. With `auto`, read-only and workspace-write sandboxes confine reads to the workspace, while full access permits account-readable paths. With `workspace`, the workspace and explicitly granted read roots are readable. With `all`, the path gate permits reads outside the workspace. Host secret protections still apply. [Path policy](keystone/policy.py)
-- Ordinary CLI runs default to the balanced profile with workspace reads. An explicit `--read-scope` overrides the configured scope, which takes precedence over the profile default. Desktop Sandbox confines reads to the workspace. Manual Approval and Full Access select all-path reads, with per-action approval in Manual. An active role may narrow the grant. [CLI profiles](keystone/cli.py) · [Desktop grants](keystone/desktop_permissions.py)
-- These controls run inside Keystone. An approved shell command or MCP server can access resources available to its process and credentials. Explicit `allow` can lift a mode's default prompt or denial. Explicit denials, read-only write restrictions on classified tools, and path checks take precedence. [Policy evaluation](keystone/policy.py)
-- General HTTP requests open a connection per request. The Ark Seed gateway can reuse an idle HTTPS connection across consecutive tool rounds. [General transport](keystone/http_transport.py) · [Seed transport](keystone/seed_transport.py)
-- Capability installation records provenance without verifying a publisher signature. Memory recall filters by kind and current status, then orders pinned entries first and newer entries next. Vector retrieval is unavailable. [Capability installation](keystone/capability.py) · [Memory recall](keystone/memory.py)
+- File read tools check resolved paths against `readScope`. With `auto`, read-only and workspace-write sandboxes confine reads to the workspace, while full access permits account-readable paths. With `workspace`, the workspace and explicitly granted read roots are readable. With `all`, the path gate permits reads outside the workspace. Host secret protections still apply. [Path policy](revon/policy.py)
+- Ordinary CLI runs default to the balanced profile with workspace reads. An explicit `--read-scope` overrides the configured scope, which takes precedence over the profile default. Desktop Sandbox confines reads to the workspace. Manual Approval and Full Access select all-path reads, with per-action approval in Manual. An active role may narrow the grant. [CLI profiles](revon/cli.py) · [Desktop grants](revon/desktop_permissions.py)
+- These controls run inside revon. An approved shell command or MCP server can access resources available to its process and credentials. Explicit `allow` can lift a mode's default prompt or denial. Explicit denials, read-only write restrictions on classified tools, and path checks take precedence. [Policy evaluation](revon/policy.py)
+- General HTTP requests open a connection per request. The Ark Seed gateway can reuse an idle HTTPS connection across consecutive tool rounds. [General transport](revon/http_transport.py) · [Seed transport](revon/seed_transport.py)
+- Capability installation records provenance without verifying a publisher signature. Memory recall filters by kind and current status, then orders pinned entries first and newer entries next. Vector retrieval is unavailable. [Capability installation](revon/capability.py) · [Memory recall](revon/memory.py)
 - The premium two-stage path sends the task and the draft (never the full history) to the adjudicating tier.
 
 ### Engineering roadmap
@@ -207,3 +207,7 @@ Set `KEYSTONE_NO_AUTOSTART=1` when running GUI tests so they don't start a real 
 The first commit was on 2026-09-17, and the project is still under heavy development, with one maintainer. The module boundary is frozen by `contract.md`; the public API is not frozen yet. It is published because the design and the contribution gate are worth reading and reusing.
 
 MIT licensed. Project maps: [中文](docs/project-tree.zh.png) · [English](docs/project-tree.en.png).
+
+### Desktop entry points
+
+Use `revon` after installation, or `python run.py` from the checkout. The current-source Windows launcher is `revon-gui/desktop/dist/revon-desktop.exe`. Existing `keystone` commands, Python imports, desktop shortcuts, and local configuration remain supported. New installs use `~/.revon`. An existing `~/.keystone` or `~/.forge` profile is reused in place.

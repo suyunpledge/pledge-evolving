@@ -38,9 +38,9 @@ def main() -> int:
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--home", default="", help="Keystone config dir; empty = ~/.keystone")
+    parser.add_argument("--home", default="", help="revon config dir; empty = ~/.revon")
     parser.add_argument("--name", required=True, help="credential name (secrets.json key)")
-    parser.add_argument("--engine-root", default="", help="Keystone source root for path guards")
+    parser.add_argument("--engine-root", default="", help="revon source root for path guards")
     options = parser.parse_args()
 
     name = options.name.strip()
@@ -53,13 +53,13 @@ def main() -> int:
     if len(value.encode("utf-8")) > 64 * 1024:
         fail("Credential value exceeds the 64 KiB limit")
 
-    home = Path(options.home or (Path.home() / ".keystone")).expanduser().resolve()
+    home = Path(options.home or (Path.home() / ".revon")).expanduser().resolve()
 
     # Reuse the engine's own path protections when we can import it; otherwise
     # fall back to an equivalent local check rather than skipping the guard.
     if options.engine_root:
         root = Path(options.engine_root).expanduser().resolve()
-        if (root / "keystone" / "secrets.py").is_file():
+        if (root / "revon" / "secrets.py").is_file():
             sys.path.insert(0, str(root))
     try:
         from keystone.secrets import protect_store_path

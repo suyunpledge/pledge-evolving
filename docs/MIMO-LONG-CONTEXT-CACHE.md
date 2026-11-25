@@ -66,10 +66,10 @@ B 第二轮继承了真实观测并连续追加，没有重写压缩摘要；最
 新增回归覆盖两种原生协议的完整中部工具证据、推理预算、稳定普通消息前缀、最新任务顺序、完整批量工具交换、过期/换路由/回退/未知/MoA 观测拒绝、跨轮 revision 和热观测恢复，以及真实 Work/Code 入口在 64 KiB / 200 条裁剪后的 HTTP 前缀延续。这里的入口 HTTP 用本地确定性响应替身，不冒充厂商实测。
 
 ```powershell
-python -m unittest keystone.test_long_context_cache keystone.test_backend_context keystone.test_prefix_cache -q
+python -m unittest revon.test_long_context_cache revon.test_backend_context revon.test_prefix_cache -q
 python -m unittest discover -s tests -p test_cache_continuation_entries.py -v
-python -m unittest discover -s keystone -t . -q
-python -m keystone.cli selftest
+python -m unittest discover -s revon -t . -q
+python -m revon.cli selftest
 python scripts/budget_check.py
 git -c core.whitespace=cr-at-eol diff --check
 

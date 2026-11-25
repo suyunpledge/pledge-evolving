@@ -19,16 +19,16 @@ def main():
     args = parser.parse_args()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    bootstrap = ('import sys,runpy; sys.path[:0]=' + repr([str(ROOT), str(ROOT / 'keystone-gui')])
+    bootstrap = ('import sys,runpy; sys.path[:0]=' + repr([str(ROOT), str(ROOT / 'revon-gui')])
         + "; sys.argv[0]='unittest'; runpy.run_module('unittest',run_name='__main__')")
     suites = [('tests', ['-c', bootstrap, 'discover', '-s', 'tests', '-p', 'test*.py']),
-        ('keystone', ['-c', bootstrap, 'discover', '-s', 'keystone', '-p', 'test*.py', '-t', '.']),
+        ('revon', ['-c', bootstrap, 'discover', '-s', 'revon', '-p', 'test*.py', '-t', '.']),
         ('development_gui', ['-c', bootstrap, 'development_mode.test_app', 'development_mode.test_agent_panel', 'development_mode.test_project']),
         ('workspace_wiring', ['-c', bootstrap, 'test_workspace_wiring']),
         ('gui_adapters', ['-c', bootstrap, 'test_phase_models', 'test_task_planning', 'test_runtime_review',
-            'test_sub_agent', 'test_keystone_client', 'test_plugin_capabilities', 'test_plugin_runtime']),
+            'test_sub_agent', 'test_revon_client', 'test_plugin_capabilities', 'test_plugin_runtime']),
         ('selftest', ['run.py', 'selftest'])]
-    paths = [*ROOT.glob('keystone/development/*.py'), *ROOT.glob('keystone-gui/development_mode/*.py'),
+    paths = [*ROOT.glob('revon/development/*.py'), *ROOT.glob('revon-gui/development_mode/*.py'),
         ROOT / 'tests/test_coding_agent_ux.py', Path(__file__)]
     report = {'environment': {'python': sys.version, 'executable': sys.executable,
         'platform': platform.platform(), 'model_transport': 'offline fixtures; no paid provider calls',

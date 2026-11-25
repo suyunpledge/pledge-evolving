@@ -1,4 +1,4 @@
-"""Independent QA regression runner for Keystone.
+"""Independent QA regression runner for revon.
 
 Run every probe in this directory and aggregate pass/fail.
 

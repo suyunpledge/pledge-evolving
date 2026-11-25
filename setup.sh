@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Keystone 一键配置（macOS / Linux）
+# revon 一键配置（macOS / Linux）
 # 唯一前提：能上网。缺 Python 会自动安装（系统包管理器需要 sudo 时会提示输一次密码）。
 # 用法：bash setup.sh [gui|qt|web|check|selftest]
 set -u
@@ -8,7 +8,7 @@ cd "$(dirname "$0")"
 MODE="${1:-gui}"
 
 echo "============================================================"
-echo "  Keystone 一键配置（macOS / Linux）"
+echo "  revon 一键配置（macOS / Linux）"
 echo "  唯一前提：能上网。缺 Python 会自动安装。"
 echo "  用法：bash setup.sh [gui/qt/web/check/selftest]"
 echo "============================================================"
@@ -102,15 +102,15 @@ echo "[1/4] Python 就绪："
 
 if [ "$MODE" = qt ]; then
   shift
-  QT_PY=$(cd keystone-gui && "$PY" -c 'from pathlib import Path; from desktop.runtime_paths import qt_python; print(qt_python(Path.cwd().parent))') || exit 1
+  QT_PY=$(cd revon-gui && "$PY" -c 'from pathlib import Path; from desktop.runtime_paths import qt_python; print(qt_python(Path.cwd().parent))') || exit 1
   if [ ! -x "$QT_PY" ]; then
     "$PY" -m venv "$(dirname "$(dirname "$QT_PY")")" || {
       echo "[错误] 无法创建 Qt 虚拟环境。Debian / Ubuntu 需要与 Python 版本匹配的 venv 软件包。"
       exit 1
     }
   fi
-  "$QT_PY" -m pip --disable-pip-version-check install -r keystone-gui/requirements-qt.txt || exit 1
-  exec "$QT_PY" keystone-gui/keystone_qt.py "$@"
+  "$QT_PY" -m pip --disable-pip-version-check install -r revon-gui/requirements-qt.txt || exit 1
+  exec "$QT_PY" revon-gui/revon_qt.py "$@"
 fi
 
 HAS_TK=0
@@ -137,16 +137,16 @@ if [ "$(uname -s)" = "Linux" ] && command -v mkdir >/dev/null 2>&1; then
   APPS="$HOME/.local/share/applications"
   mkdir -p "$APPS" 2>/dev/null
   REPO="$(pwd)"
-  cat > "$APPS/keystone.desktop" <<EOF 2>/dev/null || true
+  cat > "$APPS/revon.desktop" <<EOF 2>/dev/null || true
 [Desktop Entry]
 Type=Application
-Name=Keystone
-Exec=$PY $REPO/keystone-gui/keystone_gui_v2.py
+Name=revon
+Exec=$PY $REPO/revon-gui/revon_gui_v2.py
 Path=$REPO
 Terminal=false
 Categories=Development;
 EOF
-  [ -f "$APPS/keystone.desktop" ] && echo "[3/4] 应用菜单已创建：Keystone（应用列表中可找到）" || echo "[3/4] 跳过快捷方式创建"
+  [ -f "$APPS/revon.desktop" ] && echo "[3/4] 应用菜单已创建：revon（应用列表中可找到）" || echo "[3/4] 跳过快捷方式创建"
 else
   echo "[3/4] 跳过快捷方式创建（macOS 无需）"
 fi
@@ -166,7 +166,7 @@ if [ "$MODE" = "web" ] || [ "$HAS_TK" = "0" ]; then
   exit 0
 fi
 
-echo "[4/4] 启动 Keystone 桌面窗口..."
-nohup "$PY" keystone-gui/keystone_gui_v2.py >/dev/null 2>&1 &
-echo "已启动。窗口没出现就手动运行：python3 keystone-gui/keystone_gui_v2.py"
+echo "[4/4] 启动 revon 桌面窗口..."
+nohup "$PY" revon-gui/revon_gui_v2.py >/dev/null 2>&1 &
+echo "已启动。窗口没出现就手动运行：python3 revon-gui/revon_gui_v2.py"
 exit 0

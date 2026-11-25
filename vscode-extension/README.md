@@ -1,13 +1,13 @@
-# Keystone for VS Code
+# revon for VS Code
 
-在 VS Code 侧边栏直接使用 Keystone 内核：**装上插件 → 填一次 API 密钥 → 开始对话**。
+在 VS Code 侧边栏直接使用 revon 内核：**装上插件 → 填一次 API 密钥 → 开始对话**。
 
 ## 小白三步上手
 
-1. **安装**：把 `keystone-agent-x.y.z.vsix` 拖进 VS Code 窗口（或扩展面板右上角 `…` → 从 VSIX 安装）。
-2. **打开面板**：点左侧活动栏的 **Keystone** 图标。面板会显示三步向导：
-   - **选 Python**：点「自动检测」按钮即可（扫 PATH 和常见安装位置，自动验证版本 ≥3.10 且能导入 keystone）；扫不到就手动粘贴 `python.exe` 的完整路径。
-   - **填 API 密钥**：下拉选厂商、粘贴密钥、点保存。密钥只写入本机 `~/.keystone/secrets.json`（0600 权限、原子写入），**面板不回显、不进聊天记录、不进任何日志**。
+1. **安装**：把 `revon-agent-x.y.z.vsix` 拖进 VS Code 窗口（或扩展面板右上角 `…` → 从 VSIX 安装）。
+2. **打开面板**：点左侧活动栏的 **revon** 图标。面板会显示三步向导：
+   - **选 Python**：点「自动检测」按钮即可（扫 PATH 和常见安装位置，自动验证版本 ≥3.10 且能导入 revon）；扫不到就手动粘贴 `python.exe` 的完整路径。
+   - **填 API 密钥**：下拉选厂商、粘贴密钥、点保存。密钥只写入本机 `~/.revon/secrets.json`（0600 权限、原子写入），**面板不回显、不进聊天记录、不进任何日志**。
    - **连接内核**：点「连接内核」。连接只读本地配置，不访问厂商、不扣费。
 3. **对话**：在输入框描述任务。选中代码后可右键「解释/审查选中代码」，或用「+ 当前文件」把打开的文件加入上下文。
 
@@ -18,14 +18,14 @@
 | 看到什么 | 原因 | 怎么办 |
 |---|---|---|
 | 错误弹窗带「配置 API 密钥」按钮 | 密钥缺失或 401 | 点按钮回向导第 2 步重填 |
-| 错误弹窗带「检查 Python」按钮 | Python 路径不对 / 装不了 keystone | 点按钮回向导第 1 步重新检测 |
-| `这个解释器导入不了 keystone` | 该 Python 环境没装 Keystone | 在设置里填 `keystone.enginePath` 指向包含 `keystone/vscode_bridge.py` 的源码根目录 |
+| 错误弹窗带「检查 Python」按钮 | Python 路径不对 / 装不了 revon | 点按钮回向导第 1 步重新检测 |
+| `这个解释器导入不了 revon` | 该 Python 环境没装 revon | 在设置里填 `keystone.enginePath` 指向包含 `revon/vscode_bridge.py` 的源码根目录 |
 | 向导不出现 | 工作区未受信任 | 点 VS Code 提示里的「信任」 |
 
 ## 功能
 
 - 多轮对话、真实工具执行进度与 token 用量。
-- 从现有 Keystone 配置读取模型，支持自动路由或明确选择某个模型。
+- 从现有 revon 配置读取模型，支持自动路由或明确选择某个模型。
 - 添加当前文件或选区上下文，支持未保存的编辑器缓冲区。
 - 编辑器右键「解释选中代码」「审查选中代码」。
 - 默认只读，可手动切换工作区编辑。未保存文件在执行修改前需要保存。
@@ -37,13 +37,13 @@
 | 设置 | 说明 |
 |---|---|
 | `keystone.pythonPath` | Python 3.10+ 的 `python.exe`。向导的「自动检测」会自动填好 |
-| `keystone.enginePath` | Keystone 源码根目录（含 `keystone/vscode_bridge.py`）。若该 Python 环境已安装 Keystone 包可留空 |
-| `keystone.homePath` | Keystone 配置目录。留空使用 `~/.keystone` |
+| `keystone.enginePath` | revon 源码根目录（含 `revon/vscode_bridge.py`）。若该 Python 环境已安装 revon 包可留空 |
+| `keystone.homePath` | revon 配置目录。留空使用 `~/.revon` |
 | `keystone.language` | 界面语言，auto 跟随 VS Code |
 
 ## 运行当前源码（开发者）
 
-需要 VS Code 1.96+、Node.js 22+（开发时）、Python 3.10+ 和当前 Keystone 源码。
+需要 VS Code 1.96+、Node.js 22+（开发时）、Python 3.10+ 和当前 revon 源码。
 
 ```powershell
 cd <仓库>\vscode-extension
@@ -60,11 +60,11 @@ code.cmd .
 npm.cmd run compile   # 生成 out/
 # 然后用仓库脚本打包（无需下载 vsce）：
 python <workspace>\build_vsix.py
-code.cmd --install-extension <输出>\keystone-agent-x.y.z.vsix
+code.cmd --install-extension <输出>\revon-agent-x.y.z.vsix
 ```
 
 ## 安全边界
 
 - 密钥永远不进 webview 状态、不进 VS Code 持久化存储、不进模型上下文；面板保存密钥时值走子进程 stdin，不出现在命令行参数里。
-- 工具执行受 Keystone Policy 约束：默认只读；「工作区编辑」也只写当前工作区；原生执行（shell）在受保护代理中被硬拒。
+- 工具执行受 revon Policy 约束：默认只读；「工作区编辑」也只写当前工作区；原生执行（shell）在受保护代理中被硬拒。
 - 输出经全局脱敏注册表过滤；已知密钥的任何编码变体（JSON 转义、URL 编码、base64）都会被替换为标记。

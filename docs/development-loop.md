@@ -1,6 +1,6 @@
 # Development Mode 编程闭环增强
 
-分支：`feature/development-loop`。独立 worktree：`C:\Users\匡溯昀\keystone-development-loop`。
+分支：`feature/development-loop`。独立 worktree：`C:\Users\匡溯昀\revon-development-loop`。
 初始基线为主分支 `39156ae`；开发期间检查了 `c59a66a` 的导航更新，与本轮文件没有重叠。
 不修改通用 GUI、导航、连接器、插件加载、知识库、演化或 Gateway。
 
@@ -9,7 +9,7 @@
 沿用 Tkinter/ttk 工作台、EditorBridge、现有 Agent.run/spawn、ToolRegistry、Policy、SecretScope、Session 和 CheckpointStore。
 不增加 Agent 内核、命令执行器或第三方依赖。
 
-经用户确认，共享 `keystone/loop.py` 只增加两个可选的可信宿主接口：
+经用户确认，共享 `revon/loop.py` 只增加两个可选的可信宿主接口：
 
 ```python
 Agent(..., child_router_factory=None, child_observer=None)
@@ -20,7 +20,7 @@ Agent(..., child_router_factory=None, child_observer=None)
 - 原有深度、预算、dispatch、权限、独立工具激活、异常处理和父任务记账路径保留。回归覆盖了观察器异常以及深度/预算拒绝。
 - 回滚仍通过原有 write_file 与版本检查；未调用可绕过 Policy 的 shadow checkout。
 
-曾怀疑 ToolRegistry 存在 CRLF 误判，用户允许最小换行修复。进一步测试证实实际是测试复用已注册 Secret 字符串导致正确拒绝，因此 **没有修改 keystone/tools.py**。CRLF/Secret 对照测试保留。回滚适配层规范化 LF/CRLF，防止 Windows 写成 CRCRLF。
+曾怀疑 ToolRegistry 存在 CRLF 误判，用户允许最小换行修复。进一步测试证实实际是测试复用已注册 Secret 字符串导致正确拒绝，因此 **没有修改 revon/tools.py**。CRLF/Secret 对照测试保留。回滚适配层规范化 LF/CRLF，防止 Windows 写成 CRCRLF。
 
 ## 实现
 
@@ -46,15 +46,15 @@ Agent(..., child_router_factory=None, child_observer=None)
 独立启动：
 
 ```powershell
-python keystone-gui/run_development.py --project <项目目录> --home <独立配置目录>
+python revon-gui/run_development.py --project <项目目录> --home <独立配置目录>
 ```
 
-不指定 home 时，默认使用 worktree 名称区分的项目外目录 `.keystone-development-<worktree-name>`。
-当集成宿主把 ModeState 放在项目内时，运行目录位于项目父目录的 `.keystone-development-<配置路径哈希>`。
+不指定 home 时，默认使用 worktree 名称区分的项目外目录 `.revon-development-<worktree-name>`。
+当集成宿主把 ModeState 放在项目内时，运行目录位于项目父目录的 `.revon-development-<配置路径哈希>`。
 布局/角色仍保存原 development.json；运行日志的恢复对话框使用实际 runtime.home。
-Provider/Key 继续通过现有 Keystone setup 配置到该独立 home；不读取或复制 General 凭据，不自动迁移旧目录。
+Provider/Key 继续通过现有 revon setup 配置到该独立 home；不读取或复制 General 凭据，不自动迁移旧目录。
 
-子 Agent 默认模型在“模型角色”配置；“独立模型”支持具体名称如 `keystone/sub1`。
+子 Agent 默认模型在“模型角色”配置；“独立模型”支持具体名称如 `revon/sub1`。
 现有 core 使用深度生成 child name，同深度后续 child 复用名称；任务视图另外保留 run_id，独立配置按名称生效。
 “请求子 Agent”仍依赖父模型实际选择原 spawn 工具；不会建立绕过工具、计费和权限的旁路。
 
@@ -71,12 +71,12 @@ Provider/Key 继续通过现有 Keystone setup 配置到该独立 home；不读�
 ## 验证入口
 
 ```powershell
-$env:PYTHONPATH="$PWD;$PWD\keystone-gui"
+$env:PYTHONPATH="$PWD;$PWD\revon-gui"
 python -m unittest discover -s tests -p test_development_loop.py -q
 python -m unittest discover -s tests -p test_development_mode.py -q
 python -m unittest development_mode.test_project -q
 python -m unittest development_mode.test_app -v
-python -m unittest keystone.test_secret_architecture keystone.test_read_scope keystone.test_execution_review keystone.test_phase_models keystone.test_task_planning keystone.test_vscode_bridge -q
+python -m unittest revon.test_secret_architecture revon.test_read_scope revon.test_execution_review revon.test_phase_models revon.test_task_planning revon.test_vscode_bridge -q
 ```
 
 使用临时 project/home、离线模型 transport 和本机测试 HTTP fixture，不访问真实账户。
@@ -99,16 +99,16 @@ Tk pump 有界处理 Tcl/Windows 事件，避免 update() 在持续事件流下�
 
 ## 修改文件
 
-- `keystone/loop.py`：两个批准的兼容接口。
-- `keystone/development/editor.py`：真实外部版本、冲突和三方合并。
-- `keystone/development/runtime.py`：模型冻结与实际子路由、恢复链接、独立运行目录、检查点适配。
-- `keystone/development/state.py`：向后兼容的 agent_models 与不可变任务快照。
-- `keystone/development/evidence.py`：真实执行事件投影。
-- `keystone/development/review.py`：通过既有工具权限恢复单文件。
-- `keystone-gui/development_mode/app.py`：上述工作台交互与队列反馈。
-- `keystone-gui/development_mode/project.py`：真实 Git 视图和子目录路径。
-- `keystone-gui/run_development.py`：避免不同 worktree 默认共享运行目录。
+- `revon/loop.py`：两个批准的兼容接口。
+- `revon/development/editor.py`：真实外部版本、冲突和三方合并。
+- `revon/development/runtime.py`：模型冻结与实际子路由、恢复链接、独立运行目录、检查点适配。
+- `revon/development/state.py`：向后兼容的 agent_models 与不可变任务快照。
+- `revon/development/evidence.py`：真实执行事件投影。
+- `revon/development/review.py`：通过既有工具权限恢复单文件。
+- `revon-gui/development_mode/app.py`：上述工作台交互与队列反馈。
+- `revon-gui/development_mode/project.py`：真实 Git 视图和子目录路径。
+- `revon-gui/run_development.py`：避免不同 worktree 默认共享运行目录。
 - `tests/test_development_loop.py`：核心新回归。
-- `keystone-gui/development_mode/test_app.py`：实际 Tk 行为回归。
-- `keystone-gui/development_mode/test_project.py`：真实临时 Git 回归。
+- `revon-gui/development_mode/test_app.py`：实际 Tk 行为回归。
+- `revon-gui/development_mode/test_project.py`：真实临时 Git 回归。
 - `docs/development-loop.md`：本交付及集成说明。

@@ -3,14 +3,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from keystone.development.editor import Document, ProjectBoundary, ConflictError
-from keystone.development.evidence import TaskEvidence
-from keystone.development.runtime import DevelopmentRuntime
-from keystone.development.state import ModeState
-from keystone.loop import Agent, LoopLimits
-from keystone.policy import Policy, Mode, Sandbox
-from keystone.tools import build_builtin_registry
-from keystone.test_task_planning import Router
+from revon.development.editor import Document, ProjectBoundary, ConflictError
+from revon.development.evidence import TaskEvidence
+from revon.development.runtime import DevelopmentRuntime
+from revon.development.state import ModeState
+from revon.loop import Agent, LoopLimits
+from revon.policy import Policy, Mode, Sandbox
+from revon.tools import build_builtin_registry
+from revon.test_task_planning import Router
 
 
 class DevelopmentLoopTests(unittest.TestCase):
@@ -88,11 +88,11 @@ class DevelopmentLoopTests(unittest.TestCase):
 
     def test_subagent_evidence_scoped_by_real_agent_and_run(self):
         p = TaskEvidence()
-        p.apply({'type': 'workflow_state', 'run_id': 'parent', 'agent': 'keystone', 'phase': 'executing'})
-        p.apply({'type': 'workflow_state', 'run_id': 'child', 'agent': 'keystone/sub1', 'depth': 1, 'phase': 'executing'})
-        p.apply({'type': 'workflow_state', 'run_id': 'child', 'agent': 'keystone/sub1', 'depth': 1, 'phase': 'completed'})
-        self.assertEqual(p.agents['keystone']['status'], 'executing')
-        self.assertEqual(p.agents['keystone/sub1']['status'], 'completed')
+        p.apply({'type': 'workflow_state', 'run_id': 'parent', 'agent': 'revon', 'phase': 'executing'})
+        p.apply({'type': 'workflow_state', 'run_id': 'child', 'agent': 'revon/sub1', 'depth': 1, 'phase': 'executing'})
+        p.apply({'type': 'workflow_state', 'run_id': 'child', 'agent': 'revon/sub1', 'depth': 1, 'phase': 'completed'})
+        self.assertEqual(p.agents['revon']['status'], 'executing')
+        self.assertEqual(p.agents['revon/sub1']['status'], 'completed')
 
     def test_optional_child_router_and_observer_use_existing_spawn(self):
         parent = Router(['parent done'])
@@ -144,14 +144,14 @@ class DevelopmentLoopTests(unittest.TestCase):
 
     def test_agent_models_persist_and_task_snapshot_is_frozen(self):
         state = ModeState(self.home)
-        state.configure_agent_model('keystone/sub1', ('first', 'model'))
+        state.configure_agent_model('revon/sub1', ('first', 'model'))
         snapshot = state.task_snapshot()
-        state.configure_agent_model('keystone/sub1', ('second', 'model'))
-        self.assertEqual(dict(snapshot.agent_models)['keystone/sub1'], ('first', 'model'))
-        self.assertEqual(ModeState(self.home).value('agent_models')['keystone/sub1'], ['second', 'model'])
+        state.configure_agent_model('revon/sub1', ('second', 'model'))
+        self.assertEqual(dict(snapshot.agent_models)['revon/sub1'], ('first', 'model'))
+        self.assertEqual(ModeState(self.home).value('agent_models')['revon/sub1'], ['second', 'model'])
 
     def test_resume_links_old_uncertain_journal_without_replaying_action(self):
-        from keystone.session import Session
+        from revon.session import Session
         rt = self.runtime()
         old = rt.home / 'sessions' / 'old.jsonl'
         with Session(old, meta={'cwd': str(self.project)}) as journal:
@@ -172,14 +172,14 @@ class DevelopmentLoopTests(unittest.TestCase):
         self.assertEqual(links[0].data['workflow']['pending_actions'], ['unknown-write'])
 
     def test_recovery_ignores_child_dialogue_and_keeps_torn_tail_as_evidence(self):
-        from keystone.session import Session
+        from revon.session import Session
         path = self.home / 'sessions' / 'old.jsonl'
         with Session(path, meta={'cwd': str(self.project)}) as s:
-            s.append('user_message', agent='keystone', depth=0, content='parent task')
-            s.append('user_message', agent='keystone/sub1', depth=1, content='child task')
-            s.append('assistant_message', agent='keystone/sub1', depth=1, content='child reply')
-            s.append('workflow_state', agent='keystone', depth=0, run_id='root', phase='executing')
-            s.append('tool_started', agent='keystone', depth=0, run_id='root', action_id='unknown', tool='write_file')
+            s.append('user_message', agent='revon', depth=0, content='parent task')
+            s.append('user_message', agent='revon/sub1', depth=1, content='child task')
+            s.append('assistant_message', agent='revon/sub1', depth=1, content='child reply')
+            s.append('workflow_state', agent='revon', depth=0, run_id='root', phase='executing')
+            s.append('tool_started', agent='revon', depth=0, run_id='root', action_id='unknown', tool='write_file')
         with path.open('ab') as f:
             f.write(b'{"unfinished":')
         before = path.read_bytes()
@@ -201,8 +201,8 @@ class DevelopmentLoopTests(unittest.TestCase):
         return rt
 
     def test_actual_parent_child_parent_routing_and_agent_override(self):
-        from keystone.model import Provider, ModelRouter
-        from keystone.test_phase_models import Transport
+        from revon.model import Provider, ModelRouter
+        from revon.test_phase_models import Transport
         rt = self.runtime()
         reply = '<tool_call>{"tool":"spawn_subagent","args":{"task":"read x.py", "mode":"plan"}}</tool_call>'
         transport = Transport([reply, 'child read result', 'parent done'])
@@ -214,13 +214,13 @@ class DevelopmentLoopTests(unittest.TestCase):
         rt.bridge.models = {p.name: (p.name, p.default_model) for p in providers}
         rt.catalog = dict(rt.bridge.models)
         rt.state.configure_role('subagent', ('helper', 'small'))
-        rt.state.configure_agent_model('keystone/sub1', ('own', 'independent'))
+        rt.state.configure_agent_model('revon/sub1', ('own', 'independent'))
         result = rt.run('inspect', permission='workspace-write', explicit_model=('writer', 'code'), planning='none')
         self.assertTrue(result['ok'], result)
         self.assertEqual([(p, m) for p, m, _, _ in transport.calls],
                          [('writer', 'code'), ('own', 'independent'), ('writer', 'code')])
-        self.assertIn('keystone/sub1', rt.evidence.agents)
-        self.assertEqual(rt.evidence.agents['keystone/sub1']['status'], 'completed')
+        self.assertIn('revon/sub1', rt.evidence.agents)
+        self.assertEqual(rt.evidence.agents['revon/sub1']['status'], 'completed')
         # Existing public report counts the parent; existing ledger folds child
         # tokens once. Preserve that contract instead of changing billing here.
         self.assertEqual(result['usage']['prompt_tokens'], 20)

@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>Keystone 界面重设计 · 设计稿 v1</title>
+<title>revon 界面重设计 · 设计稿 v1</title>
 <script src="icons.js"></script>
 <script src="old_icons.js"></script>
 <style>
@@ -402,8 +402,8 @@ kbd{font:11px var(--mono);color:var(--sub);background:var(--surface2);border:1px
 
 <div class="doc-head">
   <div>
-    <h1>Keystone 界面重设计 · <span>Ember</span> 设计稿 v1</h1>
-    <p>从「通用深蓝」转向贴合品牌火焰的「石墨 + 熔铁」视觉语言；同时新增活动栏、命令面板、运行轨迹、检查器与 Keystone Pulse 状态胶囊，重绘全部 49 个图标并补 19 个新图标。tkinter 可落地：渐变/辉光走预渲染 PNG，图标继续走 ICONS 折线。</p>
+    <h1>revon 界面重设计 · <span>Ember</span> 设计稿 v1</h1>
+    <p>从「通用深蓝」转向贴合品牌火焰的「石墨 + 熔铁」视觉语言；同时新增活动栏、命令面板、运行轨迹、检查器与 revon Pulse 状态胶囊，重绘全部 49 个图标并补 19 个新图标。tkinter 可落地：渐变/辉光走预渲染 PNG，图标继续走 ICONS 折线。</p>
   </div>
   <div class="toc">
     <a href="#b1">01 主页</a><a href="#b2">02 对话 + 检查器</a><a href="#b3">03 命令面板</a><a href="#b4">04 图标系统</a><a href="#b5">05 令牌与组件</a>
@@ -413,7 +413,7 @@ kbd{font:11px var(--mono);color:var(--sub);background:var(--surface2);border:1px
 <div class="principles">
   <div class="principle"><b><i data-i="flame" data-s="16"></i>品牌即主色</b><p>熔铁橙 #FF7A3D 只用于主操作、选中指示与运行状态；钢蓝退为链接/信息色。橙底配深色字，对比度 7.2:1。</p></div>
   <div class="principle"><b><i data-i="layers" data-s="16"></i>三层石墨</b><p>rail / panel / surface 三级背景差 4–6% 亮度，靠层级而不是描边分区，描边只留 1px hairline。</p></div>
-  <div class="principle"><b><i data-i="timeline" data-s="16"></i>过程可见</b><p>工具调用不再是一堆文字：运行轨迹、进度条、检查器把「Keystone 在做什么」变成可扫读的结构。</p></div>
+  <div class="principle"><b><i data-i="timeline" data-s="16"></i>过程可见</b><p>工具调用不再是一堆文字：运行轨迹、进度条、检查器把「revon 在做什么」变成可扫读的结构。</p></div>
   <div class="principle"><b><i data-i="keyboard" data-s="16"></i>键盘优先</b><p>Ctrl K 命令面板统一入口，所有卡片和按钮标出快捷键；焦点环统一 2px 暖色外环。</p></div>
 </div>
 
@@ -423,9 +423,9 @@ kbd{font:11px var(--mono);color:var(--sub);background:var(--surface2);border:1px
   <div class="app">
     <div class="titlebar">
       <div class="icon-btn"><i data-i="sidebar"></i></div>
-      <div class="brand"><div class="brand-mark"><i data-i="anvil" data-s="16"></i></div><span class="wordmark">KEYSTONE</span></div>
+      <div class="brand"><div class="brand-mark"><i data-i="anvil" data-s="16"></i></div><span class="wordmark">REVON</span></div>
       <div class="seg"><span class="on"><i data-i="chat" data-s="15"></i>Work</span><span><i data-i="code" data-s="15"></i>Coding</span></div>
-      <div class="proj"><i data-i="folder_open" data-s="16"></i>keystone-ui-redesign<span class="sep">/</span><span class="br"><i data-i="branch" data-s="13"></i>feature/ui-redesign</span><span class="chg">37</span><i data-i="chevron_down" data-s="13"></i></div>
+      <div class="proj"><i data-i="folder_open" data-s="16"></i>revon-ui-redesign<span class="sep">/</span><span class="br"><i data-i="branch" data-s="13"></i>feature/ui-redesign</span><span class="chg">37</span><i data-i="chevron_down" data-s="13"></i></div>
       <div class="cmdbar"><i data-i="search" data-s="15"></i><span class="grow">搜索会话、文件或输入命令…</span><kbd>Ctrl</kbd><kbd>K</kbd></div>
       <div class="pulse"><span class="live"></span>在线 <span class="mono" style="color:var(--faint)">:9502</span><span class="vr"></span><span class="cache"><i data-i="bolt" data-s="13"></i>缓存 <b>87%</b>
         <svg width="46" height="16" viewBox="0 0 46 16"><polyline points="0,12 6,10 12,11 18,7 24,8 30,5 36,6 42,3 46,3" fill="none" stroke="#47C59B" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/></svg></span></div>
@@ -479,7 +479,7 @@ kbd{font:11px var(--mono);color:var(--sub);background:var(--surface2);border:1px
             <div class="embers"><i style="left:62px;top:4px"></i><i style="left:8px;top:14px;animation-delay:1.1s"></i><i style="left:70px;top:46px;animation-delay:2s;width:3px;height:3px"></i></div>
           </div>
           <h1>晚上好，今天想锻造点什么？</h1>
-          <div class="sub">描述目标，Keystone 会规划、调用工具并把每一步摊开给你看。</div>
+          <div class="sub">描述目标，revon 会规划、调用工具并把每一步摊开给你看。</div>
           <div class="health">
             <span class="hchip"><i data-i="branch" data-s="13"></i><b>feature/ui-redesign</b></span>
             <span class="hchip"><i data-i="diff" data-s="13"></i><b>37</b> 个文件改动</span>
@@ -488,7 +488,7 @@ kbd{font:11px var(--mono);color:var(--sub);background:var(--surface2);border:1px
           </div>
           <div class="starts">
             <div class="start hov"><kbd>1</kbd><div class="tile t-ember"><i data-i="chat"></i></div><h3>开始对话</h3><p>提问、讨论方案或梳理需求</p></div>
-            <div class="start"><kbd>2</kbd><div class="tile t-agent"><i data-i="task"></i></div><h3>交给 Keystone 一个任务</h3><p>自动规划，在运行轨迹里跟踪进度</p></div>
+            <div class="start"><kbd>2</kbd><div class="tile t-agent"><i data-i="task"></i></div><h3>交给 revon 一个任务</h3><p>自动规划，在运行轨迹里跟踪进度</p></div>
             <div class="start"><kbd>3</kbd><div class="tile t-steel"><i data-i="workspace"></i></div><h3>查看项目工作区</h3><p>浏览文件、变更、Diff 与预览</p></div>
           </div>
           <div class="recent">
@@ -507,7 +507,7 @@ kbd{font:11px var(--mono);color:var(--sub);background:var(--surface2);border:1px
               <span class="tok"><i data-i="diff" data-s="13"></i>当前改动 · 37<i data-i="close" data-s="12" class="x"></i></span>
               <span class="tok web"><i data-i="globe" data-s="13"></i>联网<i data-i="close" data-s="12" class="x"></i></span>
             </div>
-            <div class="input">让 Keystone 构建、修复或调查…  输入 <span class="slash">/</span> 调命令，<span class="slash">@</span> 引用文件<span class="caret"></span></div>
+            <div class="input">让 revon 构建、修复或调查…  输入 <span class="slash">/</span> 调命令，<span class="slash">@</span> 引用文件<span class="caret"></span></div>
             <div class="cbar">
               <div class="cbtn"><i data-i="paperclip" data-s="16"></i></div>
               <div class="cbtn"><i data-i="at" data-s="16"></i></div>
@@ -544,7 +544,7 @@ kbd{font:11px var(--mono);color:var(--sub);background:var(--surface2);border:1px
   </div>
   <div class="notes">
     <div class="note"><span class="pin">1</span><div><b>活动栏（新增）</b>：一级入口从侧栏列表抽到 60px 图标栏，左侧熔铁指示条标选中；徽标显示智能体数、紫点提示演化建议；悬停提示附双键快捷键。</div></div>
-    <div class="note"><span class="pin">2</span><div><b>Keystone Pulse（新增）</b>：网关状态、端口与前缀缓存命中率合进一枚胶囊，迷你折线显示最近 10 轮命中走势，点开即原「状态」面板。</div></div>
+    <div class="note"><span class="pin">2</span><div><b>revon Pulse（新增）</b>：网关状态、端口与前缀缓存命中率合进一枚胶囊，迷你折线显示最近 10 轮命中走势，点开即原「状态」面板。</div></div>
     <div class="note"><span class="pin">3</span><div><b>智能会话列表</b>：按 已固定/今天/本周 分组，每条带状态点、自动标题、一行摘要；12 条「你好」自动归并为一行，解决现状里满屏重复。</div></div>
     <div class="note"><span class="pin">4</span><div><b>工作区健康条</b>：分支、改动数、上次测试与当前模型一行看清；三张起步卡标数字快捷键，悬停时熔铁描边 + 顶部暖光。</div></div>
     <div class="note"><span class="pin">5</span><div><b>上下文环</b>：输入卡右侧小环显示上下文占用，悬停给出 token 数与预计缓存命中；模式改成 快速/深度 分段控件。</div></div>
@@ -558,9 +558,9 @@ kbd{font:11px var(--mono);color:var(--sub);background:var(--surface2);border:1px
   <div class="app">
     <div class="titlebar">
       <div class="icon-btn"><i data-i="sidebar"></i></div>
-      <div class="brand"><div class="brand-mark"><i data-i="anvil" data-s="16"></i></div><span class="wordmark">KEYSTONE</span></div>
+      <div class="brand"><div class="brand-mark"><i data-i="anvil" data-s="16"></i></div><span class="wordmark">REVON</span></div>
       <div class="seg"><span class="on"><i data-i="chat" data-s="15"></i>Work</span><span><i data-i="code" data-s="15"></i>Coding</span></div>
-      <div class="proj"><i data-i="folder_open" data-s="16"></i>keystone-ui-redesign<span class="sep">/</span><span class="br"><i data-i="branch" data-s="13"></i>feature/ui-redesign</span><span class="chg">39</span><i data-i="chevron_down" data-s="13"></i></div>
+      <div class="proj"><i data-i="folder_open" data-s="16"></i>revon-ui-redesign<span class="sep">/</span><span class="br"><i data-i="branch" data-s="13"></i>feature/ui-redesign</span><span class="chg">39</span><i data-i="chevron_down" data-s="13"></i></div>
       <div class="cmdbar"><i data-i="search" data-s="15"></i><span class="grow">搜索会话、文件或输入命令…</span><kbd>Ctrl</kbd><kbd>K</kbd></div>
       <div class="pulse"><span class="live" style="background:var(--ember);box-shadow:0 0 0 3px rgba(255,122,61,.2)"></span>运行中 <span class="mono" style="color:var(--faint)">4/7</span><span class="vr"></span><span class="cache"><i data-i="bolt" data-s="13"></i>缓存 <b>91%</b>
         <svg width="46" height="16" viewBox="0 0 46 16"><polyline points="0,12 6,10 12,11 18,7 24,8 30,5 36,6 42,3 46,2" fill="none" stroke="#47C59B" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/></svg></span></div>
@@ -613,7 +613,7 @@ kbd{font:11px var(--mono);color:var(--sub);background:var(--surface2);border:1px
             <div class="a-msg">
               <div class="a-av"><i data-i="anvil" data-s="17"></i></div>
               <div>
-                <div class="a-head"><b>Keystone</b><span class="badge b-agent">Coder</span><span class="tm">21:36</span></div>
+                <div class="a-head"><b>revon</b><span class="badge b-agent">Coder</span><span class="tm">21:36</span></div>
                 <div class="run">
                   <div class="run-h"><i data-i="timeline" data-s="14"></i><b>运行轨迹</b> · 7 步<span class="r"><span class="prog"><i></i></span>6.2s<i data-i="chevron_up" data-s="14"></i></span></div>
                   <div class="step done"><span class="sd"><i data-i="check" data-s="12"></i></span><span class="lb">读取文件 <span class="mono">gui_theme.py · 1587 行</span></span><span class="du">0.2s</span></div>
@@ -624,7 +624,7 @@ kbd{font:11px var(--mono);color:var(--sub);background:var(--surface2);border:1px
                 </div>
                 <div class="a-body">现有 <code>pill_button</code> 有 6 种 kind，其中 <code>subtle</code> 和 <code>ghost</code> 视觉上无法区分。我把它们合并成 <b style="color:var(--text)">primary / secondary / ghost / danger</b> 四种，并让侧栏图标统一走 20px 热区：</div>
                 <div class="codecard">
-                  <div class="ch"><i data-i="diff" data-s="14"></i><span class="fn">keystone-gui/gui_theme.py</span><span class="mono add">+18</span><span class="mono del">−7</span><span class="r"><span class="mini"><i data-i="copy" data-s="13"></i>复制</span><span class="mini"><i data-i="preview" data-s="13"></i>完整 Diff</span><span class="mini pri"><i data-i="check" data-s="13"></i>应用</span></span></div>
+                  <div class="ch"><i data-i="diff" data-s="14"></i><span class="fn">revon-gui/gui_theme.py</span><span class="mono add">+18</span><span class="mono del">−7</span><span class="r"><span class="mini"><i data-i="copy" data-s="13"></i>复制</span><span class="mini"><i data-i="preview" data-s="13"></i>完整 Diff</span><span class="mini pri"><i data-i="check" data-s="13"></i>应用</span></span></div>
                   <div class="diff">
                     <div class="h"><span class="ln"></span><span class="pm"></span>@@ 573,9 @@ def pill_button(parent, text, command, *, kind="ghost"…</div>
                     <div><span class="ln">573</span><span class="pm"></span><span><span class="kw">def</span> <span class="fnc">pill_button</span>(parent, text, command, *, kind=<span class="str">"ghost"</span>):</span></div>
@@ -641,7 +641,7 @@ kbd{font:11px var(--mono);color:var(--sub);background:var(--surface2);border:1px
         </div>
         <div class="composer-wrap" style="padding-top:10px">
           <div class="composer">
-            <div class="input" style="min-height:44px">追加指令，Keystone 会在当前步骤结束后读取…</div>
+            <div class="input" style="min-height:44px">追加指令，revon 会在当前步骤结束后读取…</div>
             <div class="cbar">
               <div class="cbtn"><i data-i="paperclip" data-s="16"></i></div>
               <div class="cbtn"><i data-i="at" data-s="16"></i></div>
@@ -673,7 +673,7 @@ kbd{font:11px var(--mono);color:var(--sub);background:var(--surface2);border:1px
         <div class="insp-sec">
           <h4>改动的文件<em>2</em></h4>
           <div class="ftouch"><i data-i="file" data-s="14"></i>gui_theme.py<span class="r"><span class="add">+18</span> <span class="del">−7</span></span></div>
-          <div class="ftouch"><i data-i="file" data-s="14"></i>keystone_gui_v2.py<span class="r"><span class="add">+4</span> <span class="del">−4</span></span></div>
+          <div class="ftouch"><i data-i="file" data-s="14"></i>revon_gui_v2.py<span class="r"><span class="add">+4</span> <span class="del">−4</span></span></div>
         </div>
         <div class="insp-sec">
           <h4>本轮用量</h4>
@@ -715,7 +715,7 @@ kbd{font:11px var(--mono);color:var(--sub);background:var(--surface2);border:1px
   <div class="app" style="height:640px;grid-template-rows:48px 1fr 26px">
     <div class="titlebar">
       <div class="icon-btn"><i data-i="sidebar"></i></div>
-      <div class="brand"><div class="brand-mark"><i data-i="anvil" data-s="16"></i></div><span class="wordmark">KEYSTONE</span></div>
+      <div class="brand"><div class="brand-mark"><i data-i="anvil" data-s="16"></i></div><span class="wordmark">REVON</span></div>
       <div class="seg"><span class="on"><i data-i="chat" data-s="15"></i>Work</span><span><i data-i="code" data-s="15"></i>Coding</span></div>
       <div class="cmdbar" style="border-color:var(--ember-line)"><i data-i="search" data-s="15"></i><span class="grow">搜索会话、文件或输入命令…</span><kbd>Ctrl</kbd><kbd>K</kbd></div>
       <div class="pulse"><span class="live"></span>在线<span class="vr"></span><span class="cache"><i data-i="bolt" data-s="13"></i>缓存 <b>87%</b></span></div>
@@ -738,8 +738,8 @@ kbd{font:11px var(--mono);color:var(--sub);background:var(--surface2);border:1px
       </div>
       <div class="pal-g" style="border-top:1px solid var(--line)">
         <h5>文件</h5>
-        <div class="pal-r"><span class="ic"><i data-i="file" data-s="15"></i></span><span class="mono" style="font-size:12.5px"><span class="hl">model</span>_picker.py</span><span class="dsc mono">keystone-gui/</span></div>
-        <div class="pal-r"><span class="ic"><i data-i="file" data-s="15"></i></span><span class="mono" style="font-size:12.5px"><span class="hl">model</span>_onboarding.py</span><span class="dsc mono">keystone-gui/</span></div>
+        <div class="pal-r"><span class="ic"><i data-i="file" data-s="15"></i></span><span class="mono" style="font-size:12.5px"><span class="hl">model</span>_picker.py</span><span class="dsc mono">revon-gui/</span></div>
+        <div class="pal-r"><span class="ic"><i data-i="file" data-s="15"></i></span><span class="mono" style="font-size:12.5px"><span class="hl">model</span>_onboarding.py</span><span class="dsc mono">revon-gui/</span></div>
       </div>
       <div class="pal-f"><span><kbd>↑</kbd><kbd>↓</kbd> 选择</span><span><kbd>Enter</kbd> 执行</span><span><kbd>Tab</kbd> 切换范围</span><span><kbd>&gt;</kbd> 命令 <kbd>@</kbd> 文件 <kbd>#</kbd> 会话</span></div>
     </div>
@@ -840,7 +840,7 @@ kbd{font:11px var(--mono);color:var(--sub);background:var(--surface2);border:1px
       <div><i data-i="layers" data-s="16"></i><span><b>tkinter 落地 · 渐变/辉光</b>：主按钮、品牌块、发送键、首页暖光都由 desktop/make_ui_assets.py 预渲染 PNG（已有图集管线），按 DPI 出 1x/1.5x/2x。</span></div>
       <div><i data-i="timeline" data-s="16"></i><span><b>动效</b>：运行环、呼吸点、流光用 after() 帧驱动，统一受 MOTION_MS 开关控制；低性能或「减少动态」时退化为静态。</span></div>
       <div><i data-i="config" data-s="16"></i><span><b>令牌迁移</b>：只改 gui_theme.C 取值 + 新增 ember 系列键；accent 键指向 ember，旧调用不必改名。</span></div>
-      <div><i data-i="code" data-s="16"></i><span><b>新组件</b>：活动栏、命令面板、运行轨迹、检查器各自成为独立模块（不再塞进 8k 行的 keystone_gui_v2.py）。</span></div>
+      <div><i data-i="code" data-s="16"></i><span><b>新组件</b>：活动栏、命令面板、运行轨迹、检查器各自成为独立模块（不再塞进 8k 行的 revon_gui_v2.py）。</span></div>
     </div>
   </div>
 </section>

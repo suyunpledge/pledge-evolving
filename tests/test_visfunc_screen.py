@@ -12,13 +12,13 @@ import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(ROOT), str(ROOT / 'keystone-gui')]
+sys.path[:0] = [str(ROOT), str(ROOT / 'revon-gui')]
 from computer_runtime import ComputerLane
-from keystone import computer_visfunc
-from keystone.computer_use import ComputerSession
-from keystone.computer_win32 import WindowsControlDriver
-from keystone.policy import Policy
-from keystone.secrets import SecretScope
+from revon import computer_visfunc
+from revon.computer_use import ComputerSession
+from revon.computer_win32 import WindowsControlDriver
+from revon.policy import Policy
+from revon.secrets import SecretScope
 
 
 class RecognitionTests(unittest.TestCase):
@@ -54,7 +54,7 @@ class RecognitionTests(unittest.TestCase):
         self.assertEqual(classify(old, sample(3, 4, 9), {9}), 'target_foreground')
 
     def test_menu_headers_offer_state_specific_actions_and_leaves_remain_invokable(self):
-        from keystone.computer_background import _menu_action
+        from revon.computer_background import _menu_action
         self.assertEqual(_menu_action('menu_item', True, 0), 'expand')
         self.assertEqual(_menu_action('menu_item', True, 1), 'collapse')
         self.assertIsNone(_menu_action('menu_item', True, 3))
@@ -62,7 +62,7 @@ class RecognitionTests(unittest.TestCase):
 
     def test_background_text_readback_waits_without_repeating_the_write(self):
         from unittest.mock import Mock, PropertyMock
-        from keystone.computer_background import _set_value
+        from revon.computer_background import _set_value
         for updates, verified in ((['old', 'old', 'new'], True), (['old'] * 40, False)):
             handle = Mock(CurrentIsReadOnly=False)
             type(handle).CurrentValue = PropertyMock(side_effect=updates)
@@ -80,7 +80,7 @@ class RecognitionTests(unittest.TestCase):
 
     def test_occluded_edge_refreshes_only_a_stale_readback_and_never_rewrites(self):
         from unittest.mock import Mock
-        from keystone.computer_background import _set_value
+        from revon.computer_background import _set_value
         for initial, supported, confirms in [('new', True, True), ('old', True, True),
                                              ('old', True, False), ('old', False, False)]:
             with self.subTest(initial=initial, supported=supported, confirms=confirms):
@@ -117,7 +117,7 @@ class RecognitionTests(unittest.TestCase):
 
     def test_edge_document_excludes_sidebars_and_rejects_ambiguous_pages(self):
         from unittest.mock import Mock
-        from keystone.computer_background import _edge_document
+        from revon.computer_background import _edge_document
         client, uia, window = Mock(), Mock(), Mock(CurrentName='Checkout - Personal - Microsoft Edge')
         page = Mock(CurrentName='Checkout')
         sidebar = Mock(CurrentName='Sidebar')
@@ -187,7 +187,7 @@ def fixture(folder, background=False):
             painter.end()
 
     window = QWidget()
-    window.setWindowTitle('Keystone VisFunc test')
+    window.setWindowTitle('revon VisFunc test')
     layout = QVBoxLayout(window)
     edit = QLineEdit()
     edit.setAccessibleName('Profile name')
@@ -212,21 +212,21 @@ def fixture(folder, background=False):
     if background:
         window.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         window.setWindowFlag(Qt.WindowType.WindowStaysOnBottomHint)
+    if background:
+        class InputMonitor(QObject):
+            def eventFilter(self, obj, event):
+                if event.spontaneous() and event.type() in (QEvent.Type.WindowActivate, QEvent.Type.KeyPress,
+                        QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonRelease):
+                    with (folder / 'desktop-input').open('a', encoding='ascii') as log:
+                        log.write(event.type().name + '\n')
+                return False
+        window.monitor = InputMonitor(window)
+        app.installEventFilter(window.monitor)
     window.show()
     if not background:
         window.raise_()
         window.activateWindow()
     def ready():
-        if background:
-            class InputMonitor(QObject):
-                def eventFilter(self, obj, event):
-                    if event.spontaneous() and event.type() in (QEvent.Type.WindowActivate, QEvent.Type.KeyPress,
-                            QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonRelease):
-                        with (folder / 'desktop-input').open('a', encoding='ascii') as log:
-                            log.write(event.type().name + '\n')
-                    return False
-            window.monitor = InputMonitor(window)
-            app.installEventFilter(window.monitor)
         temporary = folder / 'ready.tmp'
         temporary.write_text(json.dumps([int(window.winId()), os.getpid()]))
         temporary.replace(folder / 'hwnd')
@@ -242,6 +242,9 @@ def fixture(folder, background=False):
     for lib in ('PySide6','comtypes','rapidocr_onnxruntime')), 'Windows Qt/VisFunc desktop dependencies')
 class NativeTests(unittest.TestCase):
     def test_owned_qt_window_and_painted_text(self):
+        from scripts.verify_background_focus import DesktopFocus
+        if not DesktopFocus().is_input_desktop():
+            self.skipTest('Physical input requires the active Windows input desktop')
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             proc = subprocess.Popen([sys.executable, '-B', str(Path(__file__).resolve()), '--fixture', folder],
@@ -303,6 +306,8 @@ class BackgroundTests(unittest.TestCase):
         import ctypes
         from scripts.verify_background_focus import DesktopFocus
         monitor = DesktopFocus()
+        if not monitor.is_input_desktop():
+            self.skipTest('Foreground ownership must be witnessed on the active Windows input desktop')
 
         def desktop_state():
             state = monitor.sample()
@@ -313,7 +318,9 @@ class BackgroundTests(unittest.TestCase):
                 state = monitor.sample()
             self.assertIsNotNone(state, 'Requires an interactive foreground desktop')
             self.assertNotIn(pid, (state['foreground']['pid'], state['focus']['pid']), state)
-            position, last_tick = monitor.pointer()
+            pointer = monitor.pointer()
+            self.assertIsNotNone(pointer, 'Requires pointer access on the interactive input desktop')
+            position, last_tick = pointer
             idle_ms = (ctypes.windll.kernel32.GetTickCount() - last_tick) & 0xffffffff
             return position, last_tick, idle_ms
 

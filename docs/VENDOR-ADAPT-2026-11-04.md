@@ -1,4 +1,4 @@
-# keystone 分厂家模型层适配报告 · 2026-11-04
+# revon 分厂家模型层适配报告 · 2026-11-04
 
 ## 接手复核：统一调用入口与实测补证
 
@@ -32,9 +32,9 @@ DeepSeek、MiniMax；随后用户确认凭据更新，本机配置核实 MiMo to
 M3 medium 的负面结果原样保留，不据单题推断档位质量或修改默认档位。
 短提示词命中只证明缓存字段可观察，不作为长会话命中率或费用节省结论。
 
-脱敏记录：`docs/vendor-adapt-2026-11-04/keystone-wire-deepseek.json`、
-`keystone-wire-minimax.json`、`keystone-effort-deepseek.json`、`keystone-effort-minimax.json`。
-新增离线回归：`keystone/test_vendor_wire.py`（18 个测试，含实际发包形态、网关/Batch
+脱敏记录：`docs/vendor-adapt-2026-11-04/revon-wire-deepseek.json`、
+`revon-wire-minimax.json`、`revon-effort-deepseek.json`、`revon-effort-minimax.json`。
+新增离线回归：`revon/test_vendor_wire.py`（18 个测试，含实际发包形态、网关/Batch
 同源、输出预算、截断动作拒绝、usage 优先级与回放字段保护）。
 验证：本机 Python 3.12（已具备可选 PyYAML）内核 unittest 270 项，269 通过、1 跳过；
 框架 selftest 595/595；厂商推理断言 72/72，adapter 68/68，vendor 82/82；
@@ -42,7 +42,7 @@ M3 medium 的负面结果原样保留，不据单题推断档位质量或修改�
 
 ### 凭据更新后的 MiMo / 豆包补测
 
-凭据读取 `~/.keystone/secrets.json`，MiMo 按当前配置使用
+凭据读取 `~/.revon/secrets.json`，MiMo 按当前配置使用
 `https://token-plan-cn.xiaomimimo.com/v1`；未使用旧标准端点或回退通道。
 
 | 型号 | 结果 | 观测 |
@@ -53,8 +53,8 @@ M3 medium 的负面结果原样保留，不据单题推断档位质量或修改�
 | doubao-seed-evolving | 3/3 请求通过 | 工具调用、原样回放、开思考；关闭时 reasoning=0，开启时 reasoning=296 |
 | doubao-seed-2.1-turbo | 3/3 请求通过 | 工具调用、原样回放、开思考；关闭时 reasoning=0，开启时 reasoning=48 |
 
-共 12 次成功请求、2 次型号不可用拒绝。失败记录保留在 `keystone-wire-mimo.json`
-和 `keystone-wire-mimo-ultraspeed.json`，豆包记录为 `keystone-wire-volcengine.json`。
+共 12 次成功请求、2 次型号不可用拒绝。失败记录保留在 `revon-wire-mimo.json`
+和 `revon-wire-mimo-ultraspeed.json`，豆包记录为 `revon-wire-volcengine.json`。
 `scripts/verify_vendor_wire.py` 新增 `--model` 单型号诊断及脱敏错误信息，避免为了诊断一个
 失败型号重跑全部成功型号。型号必须属于该厂商允许列表，不能任意切换端点。
 
@@ -75,7 +75,7 @@ ticket 完成双向 HMAC 校验，后端账号鉴权由 WorkBuddy 附加；ticke
 已完成：
 
 - 简单问答返回 42，HTTP 200 / stop，prompt=34、completion=30、reasoning=27、credit=0。
-- Keystone `_plan_and_shape` 将 hy4free 的显式 low 调整为 high，按该结果生成工具请求。
+- revon `_plan_and_shape` 将 hy4free 的显式 low 调整为 high，按该结果生成工具请求。
 - add(17,25) 原生工具调用：HTTP 200 / tool_calls，prompt=252、completion=217、reasoning=198、credit=0。
 - 原样保留 assistant 的工具调用及 reasoning 字段回放，工具结果为 42；第二轮输出 42，
   HTTP 200 / stop，prompt=283、completion=362、reasoning=359、credit=0。
@@ -86,7 +86,7 @@ ticket 完成双向 HMAC 校验，后端账号鉴权由 WorkBuddy 附加；ticke
 - `tool_choice` 必须为字符串；指定函数对象收到 400 / cannot unmarshal object into ... tool_choice of type string。
   使用字符串 auto 后完成闭环。不据此修改其他厂家或直连混元的 tool_choice 规则。
 - usage 同时含 prompt/completion 两侧 reasoning_tokens，输入侧为 0，输出侧为 198/359；
-  Keystone 的归一结果以精确 completion 路径为准。短提示词缓存读为 0，不作稳态命中率结论。
+  revon 的归一结果以精确 completion 路径为准。短提示词缓存读为 0，不作稳态命中率结论。
 
 脚本：`scripts/verify_workbuddy_hy4.cjs`（默认只读取接口目录，--live 才调用模型）。
 原始请求与脱敏结果：`workbuddy-hy4-request.json`、`workbuddy-hy4-tools.json`；
@@ -94,7 +94,7 @@ ticket 完成双向 HMAC 校验，后端账号鉴权由 WorkBuddy 附加；ticke
 `HunyuanAdapter` 的说明现在随实际型号显示可用档位，并区分 WorkBuddy 配置与官方直连证据。
 
 > 一句话：用本机九家素材（四家直连探针 + AutoClaw 万次调用台账 + WorkBuddy/Kimi Code/Codex 本地配置与轨迹）
-> 把 keystone 的模型层做成「按厂家说方言」——思考参数翻译、usage 精确归一、缓存画像升级、四个专属 adapter，
+> 把 revon 的模型层做成「按厂家说方言」——思考参数翻译、usage 精确归一、缓存画像升级、四个专属 adapter，
 > 全部证据可指认，验证全绿（单测 82/82+43/43、selftest 595/595、四家真 API 端到端冒烟通过）。
 
 ## 一、证据源（全部本机本轮采集，可复核）
@@ -130,11 +130,11 @@ ticket 完成双向 HMAC 校验，后端账号鉴权由 WorkBuddy 附加；ticke
 
 | 文件 | 改动 |
 | --- | --- |
-| `keystone/vendors.py` | ① VendorProfile 新增 reasoning_style / reasoning_efforts / can_disable_thinking 三字段（带 to_raw）② 九家画像填实证值；volcengine unknown→implicit（探针坐实）；新增 hunyuan 画像+域名+模型提示；kimi.com/qianwenaiapi.com 域名 ③ `_BASE_USAGE_ALIASES` 增加 prompt_tokens_details.cached_tokens 等精确路径 + prompt_cache_hit/miss 全局别名 ④ normalize_usage pass-2 跳过 completion_tokens_details.cached_tokens ⑤ 新增 `shape_reasoning()`：effort/thinking_type/enable_thinking 三方言翻译+不支持键摘除+档位钳制 |
-| `keystone/model.py` | HttpTransport 白名单透传后接 `shape_reasoning`（翻译在指纹计算前，signature 对实际发送形态求值）；翻译动作进 plan.actions（reasoning_shaped 标记） |
-| `keystone/adapters.py` | 新增 MiMo/MiniMax/Volcengine/Hunyuan 四个专属 adapter（实证 notes）并注册 |
-| `keystone/test_adapters.py` | 2 条断言随实证更新（volcengine 不再 unknown），新增 2 条 |
-| `keystone/test_vendor_reasoning.py` | 新增 43 断言：识别/画像字段/usage 归一（含防误读回归）/翻译矩阵/adapter 注册 |
+| `revon/vendors.py` | ① VendorProfile 新增 reasoning_style / reasoning_efforts / can_disable_thinking 三字段（带 to_raw）② 九家画像填实证值；volcengine unknown→implicit（探针坐实）；新增 hunyuan 画像+域名+模型提示；kimi.com/qianwenaiapi.com 域名 ③ `_BASE_USAGE_ALIASES` 增加 prompt_tokens_details.cached_tokens 等精确路径 + prompt_cache_hit/miss 全局别名 ④ normalize_usage pass-2 跳过 completion_tokens_details.cached_tokens ⑤ 新增 `shape_reasoning()`：effort/thinking_type/enable_thinking 三方言翻译+不支持键摘除+档位钳制 |
+| `revon/model.py` | HttpTransport 白名单透传后接 `shape_reasoning`（翻译在指纹计算前，signature 对实际发送形态求值）；翻译动作进 plan.actions（reasoning_shaped 标记） |
+| `revon/adapters.py` | 新增 MiMo/MiniMax/Volcengine/Hunyuan 四个专属 adapter（实证 notes）并注册 |
+| `revon/test_adapters.py` | 2 条断言随实证更新（volcengine 不再 unknown），新增 2 条 |
+| `revon/test_vendor_reasoning.py` | 新增 43 断言：识别/画像字段/usage 归一（含防误读回归）/翻译矩阵/adapter 注册 |
 
 ## 四、修掉的真 bug
 
@@ -146,13 +146,13 @@ ticket 完成双向 HMAC 校验，后端账号鉴权由 WorkBuddy 附加；ticke
 
 - 基线（改动前）：内核单测 18/19+1 既有环境性失败（test_execution_review 子进程 import，与本轮无关）；selftest 595/595
 - 改动后：test_adapters 82/82、test_vendor_reasoning 43/43、其余全绿、同一既有环境性失败保持不变；selftest 595/595
-- 真机冒烟（keystone 自身 HttpTransport 全链路）：豆包(effort→auto 翻译+encrypted_content 回放)、GLM(enable_thinking→disabled，
+- 真机冒烟（revon 自身 HttpTransport 全链路）：豆包(effort→auto 翻译+encrypted_content 回放)、GLM(enable_thinking→disabled，
   reasoning=0，二轮 tools 块 cached=128 实测命中)、MiniMax(effort 保留+关思考翻译)、MiMo(关思考 reasoning=0)——四家两轮全通，
   plan.actions 带翻译说明，Usage.cached/reasoning 正确解析
 
 ## 六、遗留与建议
 
-1. **千问 token-plan key 403 Unpurchased**：keystone 里旧 key 订阅失效；画像的 enable_thinking 方言为文档级（无本机直连实证），
+1. **千问 token-plan key 403 Unpurchased**：revon 里旧 key 订阅失效；画像的 enable_thinking 方言为文档级（无本机直连实证），
    档位表留空不钳制。拿到有效 key 后跑一次 `probe_vendors.py` 即可补齐。
 2. **火山折扣率未公布**：缓存命中已实证但按原价保守计（不套用 2.1 Pro 的 20%）。
 3. **Kimi usage 字段**：config 级实证（efforts/端点），usage 形态未直连验证；扁平 hit 字段已全局兼容，如 kimi 另有形状需一次实测确认。
@@ -164,10 +164,10 @@ ticket 完成双向 HMAC 校验，后端账号鉴权由 WorkBuddy 附加；ticke
 
 ---
 
-# 第二轮 · keystone 真实任务实测与修复（同日）
+# 第二轮 · revon 真实任务实测与修复（同日）
 
 > 有 key 的四家（豆包 ark coding / MiMo token-plan / MiniMax / DeepSeek）在隔离试验床
-> （`keystone-e2e/`：scratch KEYSTONE_HOME + 独立任务工作区）用 `run.py run` 无头跑真实多轮工具任务
+> （`revon-e2e/`：scratch REVON_HOME + 独立任务工作区）用 `run.py run` 无头跑真实多轮工具任务
 > （列目录/读文件/统计/写 report.md），实测修复问题；GLM coding key 与 qnaigc（七牛云）按指示未动。
 
 ## 一、四家真实任务结果
@@ -200,23 +200,23 @@ HttpTransport 按画像抬输出下限。7 条新断言。
 
 ## 三、直连实测（无 raw key 的四路）
 
-| 工具 | 结果 | keystone 收获 |
+| 工具 | 结果 | revon 收获 |
 | --- | --- | --- |
 | Antigravity (Gemini 3.8 Flash) | ✅ 无头打通：IDE 内置 `agentapi`（LS 动态端口 + `/csrf` 页取 token），`new-conversation --model=flash` 真实建会话 | 内部模型 id **gemini-3.8-flash-tiered**（分级计费档）入画像 notes；usage 藏 proto 二进制，未解析 |
 | ZCode (GLM) | ✅ 轨迹实证：ZCode 经 **open.bigmodel.cn/api/anthropic**（Anthropic 兼容线）调 GLM，cache_control ephemeral + thinking{type:enabled} 直发可用 | zhipu 画像补注：anthropic wire 接入路径（本轮 GLM key 未烧） |
 | Qoder 国际版 | ⚠️ 无本地 CLI（.qoder 入口 shim 在但 qodercli.exe 未装，IDE 只带 agent-sdk）；推理走 api1/api2.qoder.sh 专有 SSE 协议+账号鉴权 | qwen3.8-flash 仅确认存在于国际版模型列表；enable_thinking/usage 维持文档级 |
-| WorkBuddy (hy3) | 未驱动 GUI：workbuddy 通道发的是它自家协议，验证不了 keystone 发出的参数形态；hy3 画像维持产品配置+轨迹级 | — |
+| WorkBuddy (hy3) | 未驱动 GUI：workbuddy 通道发的是它自家协议，验证不了 revon 发出的参数形态；hy3 画像维持产品配置+轨迹级 | — |
 
 ## 四、本轮变更与验证
 
-- `keystone/compaction.py`：pinned 空串修复（Bug 1）
-- `keystone/toolwire.py`：`strip_think_blocks`（Bug 2①）
-- `keystone/vendors.py`：`min_output_tokens` 字段 + M3=4096（Bug 2②）；zhipu/gemini notes 补证
-- `keystone/model.py`：输出下限接线 + 文本清洗接线
-- `keystone/test_new_modules.py`：+1 回归（Bug 1）；`keystone/test_vendor_reasoning.py`：+7（Bug 2）
+- `revon/compaction.py`：pinned 空串修复（Bug 1）
+- `revon/toolwire.py`：`strip_think_blocks`（Bug 2①）
+- `revon/vendors.py`：`min_output_tokens` 字段 + M3=4096（Bug 2②）；zhipu/gemini notes 补证
+- `revon/model.py`：输出下限接线 + 文本清洗接线
+- `revon/test_new_modules.py`：+1 回归（Bug 1）；`revon/test_vendor_reasoning.py`：+7（Bug 2）
 - 验证：内核单测全绿（82/82+50/50+68/68+31/31…，唯一失败=既有环境性 test_execution_review 子进程 import）；
   selftest 595/595；MiniMax 修复后完整成功一轮（74 条步骤记录、report.md 正确、正文无泄漏）
-- 试验床与证据：`keystone-e2e/`（out-*.json / capture.jsonl / sessions）；全部未提交
+- 试验床与证据：`revon-e2e/`（out-*.json / capture.jsonl / sessions）；全部未提交
 
 
 ---
@@ -252,7 +252,7 @@ reasoning_content 吃掉、content 未起笔，finish=length，空内容被当�
 ### 3. 循环步数随选中模型自动适配 `VendorProfile.steps_hint`
 M3 十二步撞顶两回（验证型走法）→ steps_hint=24。接线时发现 base.json 写死的 maxSteps=12
 会被误判为「用户显式」→ 给 `Config.Row` 加 **source 溯源**（apply_patch 记录最后写入层），
-仅用户层（keystone.patch.json）声明才算显式；显式配置永远赢。实测 `[loop] MiniMax 步数提示 24 生效`。
+仅用户层（revon.patch.json）声明才算显式；显式配置永远赢。实测 `[loop] MiniMax 步数提示 24 生效`。
 
 ### 4. run 报告缓存轨迹投影（运行轨迹贴合）
 `protocol.run_payload` 新增 `usage.cache_trajectory`：逐请求命中率、均值、断点定位（<40% 且骤降
@@ -282,7 +282,7 @@ selftest 595/595；e2e 复测：MiniMax 92.78%/零断点（地板+步数提示 s
 
 ## 一、架构落点
 
-- keystone 侧集成：`keystone-gui/memory_retrieval.py`（桥）+ `keystone_gui_v2.py` 发送点（本轮传 model）。
+- revon 侧集成：`revon-gui/memory_retrieval.py`（桥）+ `revon_gui_v2.py` 发送点（本轮传 model）。
 - 服务侧（未改动）：本机分级检索服务（127.0.0.1:8000，嵌入 bge-m3@8101），
   话题域提示+全局候选合并、THRESH_KEY=0.60 过滤。
 - 评测走**进程内引擎 + 临时存储**（HierarchicalRetrieval 直连，零污染真实库）。
@@ -315,15 +315,15 @@ selftest 595/595；e2e 复测：MiniMax 92.78%/零断点（地板+步数提示 s
 | 默认 | 其余 1500/0.0/0 | 行为与改前一致 |
 
 接线：`MemoryBridge.context_for(query, model=...)` → `retrieval_profile(model)` 经
-`keystone.vendors.profile_for` 单表识别（与请求层适配同源）→ 预算/门槛/top_k 全自动；
+`revon.vendors.profile_for` 单表识别（与请求层适配同源）→ 预算/门槛/top_k 全自动；
 GUI 发送点把本轮实际模型传入。桥内维护话题锚（上一轮 detected_domain + 用户头），
 同对话序列恒同锚 → 查询字节稳定。
 
 ## 四、验证
 
-- 新测试 `keystone-gui/test_memory_adaptation.py` 19/19（增富触发/确定性/门槛/预算/画像映射）
+- 新测试 `revon-gui/test_memory_adaptation.py` 19/19（增富触发/确定性/门槛/预算/画像映射）
 - 旧 `test_memory_retrieval.py` 15 例：11 过 + 4 个 tkinter 环境性错误（既有限制，非回归）
 - 内核单测全绿（唯一失败=既有环境性）+ selftest 595/595
 - 服务侧零改动；真实库零写入（评测全在临时存储）
-- 改动：keystone/vendors.py（三字段+七家档位）、keystone-gui/memory_retrieval.py（增富/门槛/画像化桥）、
-  keystone_gui_v2.py（一行传 model）；全部未提交
+- 改动：revon/vendors.py（三字段+七家档位）、revon-gui/memory_retrieval.py（增富/门槛/画像化桥）、
+  revon_gui_v2.py（一行传 model）；全部未提交

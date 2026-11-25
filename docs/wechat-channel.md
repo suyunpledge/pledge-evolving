@@ -1,6 +1,6 @@
 # 微信 IM 通道
 
-让 keystone 通过微信公众号/机器人收发消息：用户在微信里发一句话，keystone 跑完 agent 再把结果发回去。
+让 revon 通过微信公众号/机器人收发消息：用户在微信里发一句话，revon 跑完 agent 再把结果发回去。
 
 ## 传输与鉴权
 
@@ -30,18 +30,18 @@ python run.py channel weixin import
 python run.py channel weixin import --source "C:\Users\<你>\.openclaw-autoclaw\openclaw-weixin\accounts\<id>-im-bot.json"
 ```
 
-导入会写到 `~/.keystone/channels/weixin/default.json`（权限 600），命令末尾会打印可直接粘贴的配置行。
+导入会写到 `~/.revon/channels/weixin/default.json`（权限 600），命令末尾会打印可直接粘贴的配置行。
 
-**B. 自己扫一次码**：在 OpenClaw 侧完成 `channels login --channel openclaw-weixin` 后，再用方式 A 导入；keystone 本身不内置二维码渲染。
+**B. 自己扫一次码**：在 OpenClaw 侧完成 `channels login --channel openclaw-weixin` 后，再用方式 A 导入；revon 本身不内置二维码渲染。
 
 ### 2. 写配置行
 
-> ⚠️ 如果你用 `keystone setup` 生成配置：它只绑定 **medium** 这一档（因为只有该档的
+> ⚠️ 如果你用 `revon setup` 生成配置：它只绑定 **medium** 这一档（因为只有该档的
 > provider 行被写入了真实凭据）。`lite` / `premium` 保持 base.json 的占位环回地址，
 > 因此在 `--strategy economy` 或 `premium` 下不会打到你的真实 API。
 > 需要多档请手动补 provider 行并加进 `routing.tiers`。
 
-写进用户层 `~/.keystone/keystone.patch.json`（`import` 命令会打印现成的 JSON）：
+写进用户层 `~/.revon/revon.patch.json`（`import` 命令会打印现成的 JSON）：
 
 ```json
 {
@@ -50,9 +50,9 @@ python run.py channel weixin import --source "C:\Users\<你>\.openclaw-autoclaw\
   "config": {
     "enabled": true,
     "accountId": "default",
-    "tokenFile": "~/.keystone/channels/weixin/default.json",
+    "tokenFile": "~/.revon/channels/weixin/default.json",
     "sessionScope": "per-peer",
-    "botAgent": "keystone/0.8.0"
+    "botAgent": "revon/0.8.0"
   }
 }
 ```
@@ -70,7 +70,7 @@ python run.py channel weixin status
   "channel": "weixin",
   "account": "69586441fb75",
   "base_url": "https://ilinkai.weixin.qq.com",
-  "token_source": "file:~/.keystone/channels/weixin/default.json",
+  "token_source": "file:~/.revon/channels/weixin/default.json",
   "token_present": true,
   "reachable": true,
   "ret": 0,
@@ -113,12 +113,12 @@ python run.py channel weixin serve             启动收发循环
 | `tokenEnv` | — | 存放 token 的**环境变量名**（最安全） |
 | `tokenFile` | — | 含 `token` 字段的 JSON 文件 |
 | `token` | — | 内联 token（`doctor` 会告警，最后手段） |
-| `botAgent` | `keystone` | 出站请求的自我声明，仅用于后台日志归因 |
+| `botAgent` | `revon` | 出站请求的自我声明，仅用于后台日志归因 |
 | `sessionScope` | `per-peer` | 会话隔离粒度，见下 |
 | `pollTimeoutMs` | `30000` | 长轮询超时 |
 | `sendTimeoutMs` | `20000` | 发消息超时 |
 | `chunkLimit` | `2000` | 单条消息字符上限，超出自动分片 |
-| `stateDir` | `~/.keystone/channels/weixin` | 游标与去重状态的落盘位置 |
+| `stateDir` | `~/.revon/channels/weixin` | 游标与去重状态的落盘位置 |
 
 **token 解析优先级**：`tokenEnv` → `tokenFile` → `token`。三者都没有时**构造即报错**，而不是起一个发不出消息的通道。
 
@@ -189,7 +189,7 @@ bot 见过过的 peer 数一直增长。`_LaneCache` 是 LRU，默认 128 条，
 session *key* 把会话在逻辑上分开了，但早期所有 key 都写进同一个
 `home/sessions/current.jsonl`——即逻辑隔离、物理混一起。现在每个 key 映射到
 `home/sessions/channels/<key>.jsonl`。`SessionIndex` 扫整个目录，所以
-`keystone sessions` 仍然索引得到。
+`revon sessions` 仍然索引得到。
 
 ### 单实例锁（心跳 + 陈旧判定）
 

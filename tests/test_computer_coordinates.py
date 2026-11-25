@@ -11,15 +11,15 @@ import time
 import unittest
 from unittest.mock import Mock
 
-sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'keystone-gui'))
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'revon-gui'))
 from computer_panel import ComputerLane,TargetCancellation
-from keystone.computer_use import ComputerSession
-from keystone.computer_win32 import WindowsControlDriver, CoordinateNotStarted
-from keystone.execution import ActionRequest
-from keystone.policy import Policy,Mode,Sandbox
-from keystone.secrets import SecretScope
+from revon.computer_use import ComputerSession
+from revon.computer_win32 import WindowsControlDriver, CoordinateNotStarted
+from revon.execution import ActionRequest
+from revon.policy import Policy,Mode,Sandbox
+from revon.secrets import SecretScope
 from phase_client import VisionClient
-from keystone.runtime_lock import named_resource_lock
+from revon.runtime_lock import named_resource_lock
 
 
 class Driver:
@@ -265,7 +265,9 @@ class CoordinateTests(unittest.TestCase):
         self.assertEqual(mouse.dy,round((250+1080)*65535/2159))
 
     def test_covered_or_user_held_input_never_dispatches(self):
-        for kind in ('covered','new_child','modifier','capture'):
+        for kind, message in (('covered', 'covered'), ('new_child', 'control changed'),
+                              ('modifier', 'key is held'), ('capture', 'mouse capture'),
+                              ('no_foreground', 'thread unavailable')):
             driver=WindowsControlDriver.__new__(WindowsControlDriver)
             driver.window,driver.process_id=1,42;driver.u=Mock()
             driver.u.SetThreadDpiAwarenessContext.return_value=123
@@ -275,11 +277,12 @@ class CoordinateTests(unittest.TestCase):
             driver.u.GetAsyncKeyState.return_value=0x8000 if kind=='modifier' else 0
             def info(thread,p):
                 if kind=='capture':p._obj.capture=99
-                return 1
+                return kind != 'no_foreground'
             driver.u.GetGUIThreadInfo.side_effect=info
             prepared={'pixel_x':200,'pixel_y':150,'x':200,'y':150,'window':2}
             driver.prepare_coordinate=Mock(return_value=prepared)
-            with self.assertRaises(CoordinateNotStarted):driver.coordinate_click(prepared,self.driver.screenshot())
+            with self.assertRaisesRegex(CoordinateNotStarted, message):
+                driver.coordinate_click(prepared, self.driver.screenshot())
             driver.u.SendInput.assert_not_called()
 
 
@@ -303,6 +306,9 @@ class OwnedWindow:
 @unittest.skipUnless(os.name=='nt','Windows selected-window fixture')
 class NativeCoordinateTests(unittest.TestCase):
     def test_real_custom_canvas_click_and_dpi_mapping(self):
+        from scripts.verify_background_focus import DesktopFocus
+        if not DesktopFocus().is_input_desktop():
+            self.skipTest('Physical input requires the active Windows input desktop')
         for dpi in ('aware','unaware'):
             with self.subTest(dpi=dpi),tempfile.TemporaryDirectory() as tmp:
                 fixture=OwnedWindow(dpi)

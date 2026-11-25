@@ -9,13 +9,13 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from verify_mimo_live import MODELS, provider_for, router_for
 from verify_mimo_long_context import LongRecorder, dataset, cursor, final_value
-from keystone import model
-from keystone.cache_state import CacheWarmth
-from keystone.context_transaction import valid_tool_pairs
-from keystone.loop import Agent, LoopLimits
-from keystone.policy import Mode, Policy, ToolEffect
-from keystone.secrets import redact
-from keystone.tools import ToolSpec, ToolResult, build_builtin_registry
+from revon import model
+from revon.cache_state import CacheWarmth
+from revon.context_transaction import valid_tool_pairs
+from revon.loop import Agent, LoopLimits
+from revon.policy import Mode, Policy, ToolEffect
+from revon.secrets import redact
+from revon.tools import ToolSpec, ToolResult, build_builtin_registry
 
 
 def main():
@@ -28,10 +28,10 @@ def main():
     if not args.live or not 1 <= args.request_limit <= 12:
         parser.error('Requires --live and request-limit 1..12')
     recorder = LongRecorder(args.request_limit, retries=1)
-    provider = provider_for(args.model, Path.home() / '.keystone')
+    provider = provider_for(args.model, Path.home() / '.revon')
     result = {'model': args.model, 'requests': recorder.rows, 'ok': False}
     try:
-        with tempfile.TemporaryDirectory(prefix='keystone-view-lookup-') as temporary:
+        with tempfile.TemporaryDirectory(prefix='revon-view-lookup-') as temporary:
             root = Path(temporary)
             model._WARMTH = CacheWarmth(root / 'warmth.json')
             items, header = dataset()[0]

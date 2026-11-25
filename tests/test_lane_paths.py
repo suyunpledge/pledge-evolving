@@ -17,8 +17,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from keystone.channels import InboundMessage, session_for
-from keystone.channels.cli import lane_session_path
+from revon.channels import InboundMessage, session_for
+from revon.channels.cli import lane_session_path
 
 with tempfile.TemporaryDirectory() as td:
     sd = Path(td)

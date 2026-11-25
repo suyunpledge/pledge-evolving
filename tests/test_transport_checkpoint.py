@@ -8,19 +8,19 @@ import threading
 import unittest
 import urllib.error
 
-from keystone.context_transaction import valid_tool_pairs
-from keystone.loop import Agent
-from keystone.model import BadRequest, HttpTransport, ModelRouter, Provider, TransportError, Usage
-from keystone.tool_adapter import sanitize_messages
-from keystone.policy import Mode, Policy
-from keystone.request_timing import coding_requests
-from keystone.tools import build_builtin_registry
+from revon.context_transaction import valid_tool_pairs
+from revon.loop import Agent
+from revon.model import BadRequest, HttpTransport, ModelRouter, Provider, TransportError, Usage
+from revon.tool_adapter import sanitize_messages
+from revon.policy import Mode, Policy
+from revon.request_timing import coding_requests
+from revon.tools import build_builtin_registry
 
 
 class TransportCheckpointTests(unittest.TestCase):
     def test_coding_reconnect_retries_only_the_request_after_committed_append(self):
-        from keystone.model import ReconnectSeed
-        from keystone.seed_transport import CHAT_URL
+        from revon.model import ReconnectSeed
+        from revon.seed_transport import CHAT_URL
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             target = root / 'marker.txt'
@@ -54,7 +54,7 @@ class TransportCheckpointTests(unittest.TestCase):
             self.assertEqual([e['wait_seconds'] for e in result.events if e['type'] == 'model_retry'], [.5])
 
     def test_receipt_projection_requires_complete_known_successful_exchanges(self):
-        from keystone.conversation_prefix import compact_file_continuation
+        from revon.conversation_prefix import compact_file_continuation
         objective = 'Read the file and report.'
         task = {'role': 'user', 'content': objective}
         args = {'path': 'input.txt'}
@@ -89,7 +89,7 @@ class TransportCheckpointTests(unittest.TestCase):
                 self.assertIsNone(compact_file_continuation([task, *suffix], objective, []))
 
     def test_seed_receipt_resume_respects_observed_input_and_tool_boundaries(self):
-        from keystone.seed_transport import CHAT_URL
+        from revon.seed_transport import CHAT_URL
         for last_prompt, age, expected in [(3380, 0, 'file_receipts_resumed'),
                                            (4500, 0, 'tool_exchange_resumed'),
                                            (3380, 120, 'tool_exchange_resumed')]:

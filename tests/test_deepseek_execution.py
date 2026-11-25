@@ -6,12 +6,12 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from keystone.model import Provider, HttpTransport, ModelRouter, _plan_and_shape
-from keystone.cache_state import CacheWarmth
-from keystone.loop import Agent
-from keystone.policy import Policy, Mode
-from keystone.tools import build_builtin_registry
-from keystone.planning import token_cap
+from revon.model import Provider, HttpTransport, ModelRouter, _plan_and_shape
+from revon.cache_state import CacheWarmth
+from revon.loop import Agent
+from revon.policy import Policy, Mode
+from revon.tools import build_builtin_registry
+from revon.planning import token_cap
 
 
 class DeepSeekExecutionTests(unittest.TestCase):
@@ -56,7 +56,7 @@ class DeepSeekExecutionTests(unittest.TestCase):
             self.shape({'messages':[]},wire='anthropic',mode='off')
 
     def test_gateway_and_direct_adapter_share_the_same_reasoning_policy(self):
-        from keystone.gateway import GatewayConfig
+        from revon.gateway import GatewayConfig
         for mode in ('auto','on','off'):
             payload = {'model':'deepseek-flash','messages':[{'role':'user','content':'Inspect'}]}
             direct, left = self.shape(payload,mode=mode)

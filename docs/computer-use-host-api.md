@@ -4,7 +4,7 @@
 
 视觉坐标单击另见 [点击协议与 GUI 使用](computer-coordinate-click.md)，使用独立 `computer_click` 能力开关，不复用原生控件 ref 或自动提升 Code 模式权限。
 
-参考 [OpenAI Computer Use 集成流程](https://developers.openai.com/api/docs/guides/tools-computer-use-integration) 的动作后回读，以及 [OpenClaw 浏览器工具](https://docs.openclaw.ai/tools/browser/agent-tools) 的目标绑定/观察引用。本实现使用 Keystone 现有工具协议，不依赖 OpenAI SDK 或 Codex 的私有运行时，不调用外部 Agent CLI。
+参考 [OpenAI Computer Use 集成流程](https://developers.openai.com/api/docs/guides/tools-computer-use-integration) 的动作后回读，以及 [OpenClaw 浏览器工具](https://docs.openclaw.ai/tools/browser/agent-tools) 的目标绑定/观察引用。本实现使用 revon 现有工具协议，不依赖 OpenAI SDK 或 Codex 的私有运行时，不调用外部 Agent CLI。
 
 ## 实际支持
 
@@ -17,10 +17,10 @@
 仅可信宿主从用户选择的窗口记录中取得 HWND/PID，不能从模型参数构造目标。普通 GUI/CLI 启动默认不开放电脑输入控制。其他宿主可按以下接口接线，无需依赖 Agent 内部字段或修改布局框架。
 
 ```python
-from keystone.computer_use import ComputerSession, register_computer_tools
-from keystone.computer_win32 import WindowsControlDriver
-from keystone.gateway import GatewayConfig, serve
-from keystone.tools import build_builtin_registry
+from revon.computer_use import ComputerSession, register_computer_tools
+from revon.computer_win32 import WindowsControlDriver
+from revon.gateway import GatewayConfig, serve
+from revon.tools import build_builtin_registry
 
 # selected_hwnd / selected_pid 来自宿主明确选择，approved_policy 来自现有权限流程。
 driver = WindowsControlDriver(selected_hwnd, selected_pid)
@@ -61,7 +61,7 @@ server = serve(cfg)
 
 成功返回新的观察、`verification=post_observation` 和 `changed`。`changed` 仅描述观察差异，不证明用户任务目标已经完成。`type_text` 是替换完整 Edit 值，不是键盘追加。
 
-任一输入会作废同一 ComputerSession 其他会话持有的观察，即使界面看似没变化。每个动作请求必须使用所属受保护作用域的观察；Gateway 客户端应保持同一 `X-Keystone-Secret-Scope`。既有 KeystoneGatewayClient 已这样工作。
+任一输入会作废同一 ComputerSession 其他会话持有的观察，即使界面看似没变化。每个动作请求必须使用所属受保护作用域的观察；Gateway 客户端应保持同一 `X-Keystone-Secret-Scope`。既有 RevonGatewayClient 已这样工作。
 
 | 状态 | 含义 | 下一步 |
 | --- | --- | --- |

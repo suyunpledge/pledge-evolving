@@ -1,4 +1,4 @@
-"""Small opt-in live probe through Keystone's own transport, with no fallback chain.
+"""Small opt-in live probe through revon's own transport, with no fallback chain.
 
 Credentials are read locally; only a file path/key name is accepted on argv.
 Each model gets at most three requests: tool call, replay, and an on/effort probe.
@@ -16,16 +16,16 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from keystone import model
-from keystone.cache_state import CacheWarmth
-from keystone.secret_http import open_authenticated
-from keystone.secrets import redact
+from revon import model
+from revon.cache_state import CacheWarmth
+from revon.secret_http import open_authenticated
+from revon.secrets import redact
 
 
 TARGETS = {
-    "deepseek": ("https://api.deepseek.com", "KEYSTONE_DEEPSEEK_KEY",
+    "deepseek": ("https://api.deepseek.com", "REVON_DEEPSEEK_KEY",
                  ("deepseek-flash", "deepseek-v4-pro")),
-    "minimax": ("https://api.minimaxi.com/v1", "KEYSTONE_MINIMAX_KEY",
+    "minimax": ("https://api.minimaxi.com/v1", "REVON_MINIMAX_KEY",
                 ("minimax-m3", "minimax-m2.7-highspeed")),
     "mimo": ("https://token-plan-cn.xiaomimimo.com/v1", "",
              ("mimo-v2.6-flash", "mimo-v2.6-pro", "mimo-v2.6-pro-ultraspeed")),
@@ -121,14 +121,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--live", action="store_true")
     parser.add_argument("--vendor", choices=TARGETS, required=True)
-    parser.add_argument("--credential-file", type=Path, default=Path.home() / ".keystone" / "keys.json")
+    parser.add_argument("--credential-file", type=Path, default=Path.home() / ".revon" / "keys.json")
     parser.add_argument("--credential-name", default="")
     parser.add_argument("--effort-only", action="store_true")
     parser.add_argument("--model", default="", help="probe only one model from the selected vendor list")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if not args.live:
-        parser.error("Live calls require --live; use keystone.test_vendor_wire for offline tests")
+        parser.error("Live calls require --live; use revon.test_vendor_wire for offline tests")
     if args.effort_only and args.vendor not in {"deepseek", "minimax"}:
         parser.error("Effort probes are verified only for DeepSeek and MiniMax")
     # No shared home/store writes. Model calls themselves are the only external effect.

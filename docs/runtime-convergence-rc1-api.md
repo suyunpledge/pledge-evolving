@@ -1,7 +1,7 @@
 # Runtime Convergence RC1 — public adapter contract (v1)
 
 RC1 owns the core execution path, not the GUI layout. ZCode owns GUI integration.
-`keystone.execution` is the public boundary. Do not read `Agent._run_id`, mutate its
+`revon.execution` is the public boundary. Do not read `Agent._run_id`, mutate its
 policy/router from a view, or dispatch tools directly from a webview/plugin.
 
 ## Structures
@@ -32,8 +32,8 @@ unknown_actions/requires_inspection and never automatically replay them.
 ## Host registration
 
 ```python
-from keystone.policy import ToolEffect
-from keystone.tools import ToolRegistry, ToolSpec
+from revon.policy import ToolEffect
+from revon.tools import ToolRegistry, ToolSpec
 
 registry = ToolRegistry(expose=["read_file", "approved_reader"])
 # Only maintained/verified HOST code makes this decision.
@@ -64,9 +64,9 @@ use explicit registration rather than adding provenance exceptions.
 ```python
 from pathlib import Path
 from threading import Event
-from keystone.execution import ActionExecutor, ActionRequest, RunRequest, create_execution_context
-from keystone.policy import Policy, Mode
-from keystone.tools import build_builtin_registry
+from revon.execution import ActionExecutor, ActionRequest, RunRequest, create_execution_context
+from revon.policy import Policy, Mode
+from revon.tools import build_builtin_registry
 
 workspace = Path(project).resolve()
 run = RunRequest(entry="coding")
@@ -167,7 +167,7 @@ chat loop or dedicated Development test/restore publications to a new orchestrat
 Those legacy paths retain their existing checks and may still emit older event
 shapes. Modes/layout state remain owned by ZCode.
 
-Keystone locks coordinate cooperating processes, including nested workspace paths.
+revon locks coordinate cooperating processes, including nested workspace paths.
 Uncooperating editors are not locked. CLI/Gateway writes without expected revisions
 remain permitted for compatibility; supply revisions for conflict detection.
 Development's existing read-before-write guard supplies revisions automatically.

@@ -9,7 +9,7 @@ import threading
 import tkinter as tk
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from keystone.computer_win32 import WindowsControlDriver
+from revon.computer_win32 import WindowsControlDriver
 
 
 def main():
@@ -17,7 +17,7 @@ def main():
     u=c.WinDLL('user32')
     u.SetProcessDpiAwarenessContext.argtypes=[w.HANDLE]
     u.SetProcessDpiAwarenessContext(w.HANDLE(-4 if sys.argv[-1]=='aware' else -1))
-    root=tk.Tk();root.title('Keystone owned coordinate fixture');root.geometry('480x300+60+60')
+    root=tk.Tk();root.title('revon owned coordinate fixture');root.geometry('480x300+60+60')
     root.attributes('-topmost',True)  # Test fixture only: never click a covered user app.
     canvas=tk.Canvas(root,bg='white',highlightthickness=0);canvas.pack(fill='both',expand=True)
     canvas.create_rectangle(130,80,350,180,fill='#15944a',outline='black',tags='target')

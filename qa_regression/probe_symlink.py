@@ -14,7 +14,7 @@ from pathlib import Path
 
 from _bootstrap import check, summary  # noqa: E402  (sys.path bootstrap first)
 
-from keystone.development.editor import Document, ProjectBoundary  # noqa: E402
+from revon.development.editor import Document, ProjectBoundary  # noqa: E402
 
 
 def main() -> int:

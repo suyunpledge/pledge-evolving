@@ -2,7 +2,7 @@
 chcp 65001 >nul
 echo.
 echo  =============================
-echo   pledge-keystone 运行任务
+echo   pledge-revon 运行任务
 echo  =============================
 echo.
 cd /d "%~dp0"

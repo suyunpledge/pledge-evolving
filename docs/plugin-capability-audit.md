@@ -7,7 +7,7 @@ compat 实体复制各行（"原行为"列对应该次改动前）。此表只�
 |---|---|---|---|---|
 | 安装即被误认为具备能力 | 目录条目仅声明，界面只显示启用 | 用户误以为功能生效 | 分开显示安装/知悉/启用/授权/可调用；声明条目明确不可执行 | UI pending_confirmation；builtin 生命周期 |
 | 知悉等于全部信任 | Python ack 后可执行任意宿主访问 | 授权粒度过大 | GUI 知悉与 grant 分离，每项能力及每个范围单独选择 | install_ack_enable_grant；grant_dialog |
-| 插件绕过 Policy | GUI 直接调用 Python worker | Python 可访问进程/文件/网络 | Agent 只接入不执行 Python 的 broker，所有 target 调用 Keystone 网关 Policy | python_import_never_runs；real_gateway_policy |
+| 插件绕过 Policy | GUI 直接调用 Python worker | Python 可访问进程/文件/网络 | Agent 只接入不执行 Python 的 broker，所有 target 调用 revon 网关 Policy | python_import_never_runs；real_gateway_policy |
 | 授予 repo.write 覆盖只读策略 | 没有 grant 层 | 插件自行决定权限 | grant 不改变 Policy；真实只读网关返回 deny | grant_cannot_override；real_gateway_policy |
 | Policy 拒绝插件别名但底层 read_file 允许 | 只检查底层工具 | 别名/插件/能力的拒绝规则失效 | 网关逐项裁决别名、plugin 命名空间、能力，再裁决底层 target | real_gateway_policy_and_audit_on_http_path |
 | 旧网关忽略插件上下文 | 原协议没有插件 Policy 上下文 | 新前端误以为拒绝规则生效 | 协议版本探测，旧服务不发送插件 POST 请求 | older_gateway_cannot_silently_ignore_plugin_context |
@@ -26,7 +26,7 @@ compat 实体复制各行（"原行为"列对应该次改动前）。此表只�
 | 修改对话授权但仍继承工作区写权限 | 原来没有逐项授权 | 界面给出虚假的“收窄” | 显示工作区继承提示；逐范围编辑，全部撤销入口 | scope_inheritance UI test |
 | 并发调用与撤销竞态 | 原 worker 使用锁及代次 | revoke 返回后继续新调用 | 新 broker 状态锁线性化，撤销后准入拒绝 | revoke_and_invocation_have_a_linear_order |
 | Audit 无法写入 | 旧显示日志错误静默 | 执行无留痕 | 严格准入审计，写失败不执行；结果失败不能回滚宿主操作 | audit_unavailable；audit_success |
-| 把配置/授权目录包含在 workspace | 文件根授权未区别控制文件 | 插件改写授权或宿主代码 | 禁止访问 Keystone home；禁止改写当前宿主 GUI/框架代码和启动入口 | keystone_control_state；plugin_cannot_rewrite_its_host_source |
+| 把配置/授权目录包含在 workspace | 文件根授权未区别控制文件 | 插件改写授权或宿主代码 | 禁止访问 revon home；禁止改写当前宿主 GUI/框架代码和启动入口 | keystone_control_state；plugin_cannot_rewrite_its_host_source |
 | 结果审计失败或 RPC 失败后的盲目重试 | 错误没有执行阶段信息 | 重复产生副作用 | 已 dispatch 后的异常附 execution_may_have_completed | result_audit_failure_reports_possible_side_effects |
 | import/register 卡死、超时、崩溃 | 原进程树隔离/超时 | 主 GUI 或 worker 失控 | GUI 不 import Python；旧诊断边界保留原故障回归 | python_import_never_runs；原 runtime/adversarial 套件 |
 | 把 RPC timeout 宣称为终止执行 | 旧 Python 20 秒实际能杀 worker 树 | 新 RPC 不可杀宿主 I/O | 明确 3 秒 RPC 仅限制等待；目标只允许有界文件类工具 | request limits；真实 HTTP 路径 |
@@ -41,7 +41,7 @@ compat 实体复制各行（"原行为"列对应该次改动前）。此表只�
 | 技能正文文件被替换 | 无该执行面 | 旧授权读新内容 | token 绑定内容指纹，替换即撤销知悉/授权，工具消失 | file_change_invalidates_skill |
 | 已启用未授权的技能仍出现在模型 schema | 无该执行面 | 越权调用 | names()/openai_schemas() 过滤未授权工具；调用被拒并留审计 | no_grant_no_callable_but_still_discoverable |
 | 技能调用携带参数 | 无该执行面 | 参数 smuggling | 技能工具零参数，传参即拒绝 | skill_arguments_rejected |
-| requires.keystone 版本不满足仍安装 | requires 只进指纹不校验 | 装上不兼容版本运行时崩 | 安装/启用硬检查，fail closed | keystone_version_too_old_blocks_install |
+| requires.revon 版本不满足仍安装 | requires 只进指纹不校验 | 装上不兼容版本运行时崩 | 安装/启用硬检查，fail closed | keystone_version_too_old_blocks_install |
 | 依赖插件缺失或版本过低 | 同上 | 加载期才炸或静默错配 | 安装/启用硬检查 + doctor 复查（卸载依赖后 enable 被拦） | missing/unsatisfied dependency tests |
 | 依赖环（自依赖/互依赖） | 同上 | 安装顺序死锁或无限递归 | check_requirements DFS 环检测，安装即拒 | dependency_cycle_detected；self_dependency_is_a_cycle |
 | 更新重装继承旧知悉/授权 | 原指纹机制已处理 tools | skills 新路径需同样口径 | 重装即清空 ack/grants/enabled，回到待知悉态 | update_over_install_revokes_ack_and_grants |
@@ -52,6 +52,6 @@ compat 实体复制各行（"原行为"列对应该次改动前）。此表只�
 
 签名验证、任意代码的真正系统沙箱、多类型贡献执行器均未实现；不能把“知悉”或进程隔离
 描述成这些能力。旧 Python `PluginRuntime` 是兼容/诊断入口，直接使用该 API 仍是不受 Policy
-限制的本机代码执行；生产 GUI/Agent 路径禁止它。MCP（keystone/contrib/mcp_bridge.py）仍是
+限制的本机代码执行；生产 GUI/Agent 路径禁止它。MCP（revon/contrib/mcp_bridge.py）仍是
 纯规划函数库，无运行席位、不 spawn 进程、不实现客户端协议——Codex MCP 条目只登记存在与
 命令路径，属"仅发现/展示"。

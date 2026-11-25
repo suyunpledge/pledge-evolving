@@ -1,4 +1,4 @@
-# Pledge Keystone
+# Pledge revon
 
 **装在你自己电脑上的 AI 助手：能真正动手干活，也守得住它对安全的每一条承诺。**
 
@@ -13,7 +13,7 @@
 
 ## 一分钟看懂
 
-大多数 AI 聊天软件只会"说"。Pledge Keystone 还会"做"：读写文件、运行检查、上网搜索、操作你指定的窗口，还能把任务分给几个小助手。它做事时守着你定的规矩：
+大多数 AI 聊天软件只会"说"。Pledge revon 还会"做"：读写文件、运行检查、上网搜索、操作你指定的窗口，还能把任务分给几个小助手。它做事时守着你定的规矩：
 
 - **有风险的事先问你。** 每个动作都要过权限检查；只要有一条"禁止"规则，就一定拦下。
 - **改错了能撤回。** 已启用工作区检查点时，受管写入会先保存可回退的文件版本。
@@ -37,9 +37,9 @@
 
 ## 名字的由来
 
-**Keystone（拱心石）** 是拱门顶端正中的那块楔形石：有了它，两边的石头才互相锁住、立得起来。这正是本项目要做的事：用一个小而稳的内核，把模型、工具、权限、记忆和各个使用入口锁成一个整体。**Pledge（承诺）** 是它守的诺言：合同、权限规则和验收条件都可以被检验，而不只是寄希望于模型自觉。
+**revon（拱心石）** 是拱门顶端正中的那块楔形石：有了它，两边的石头才互相锁住、立得起来。这正是本项目要做的事：用一个小而稳的内核，把模型、工具、权限、记忆和各个使用入口锁成一个整体。**Pledge（承诺）** 是它守的诺言：合同、权限规则和验收条件都可以被检验，而不只是寄希望于模型自觉。
 
-项目以前同时叫 *Forge* 和 *pledge-evolving*，现在统一为 Pledge Keystone。已有安装依赖的一切都照常可用（见[从 Forge 迁移](#从-forge-迁移)）。
+项目以前同时叫 *Forge* 和 *pledge-evolving*，现在统一为 Pledge revon。已有安装依赖的一切都照常可用（见[从 Forge 迁移](#从-forge-迁移)）。
 
 ---
 
@@ -53,9 +53,9 @@
 
 | 入口 | 启动方式 | 说明 | 支持级别 |
 | --- | --- | --- | --- |
-| 命令行 | `python run.py <命令>` | 脚本、CI、无人值守任务。`run.py` 是通用入口；标准 Python 下 `python -m keystone.cli` 也能用。 | 主力 |
-| 桌面（Qt） | Windows 首次运行 `keystone-gui/desktop/install-qt.ps1`，随后使用 `keystone-gui/Keystone Qt.cmd`。macOS / Linux 运行 `bash setup.sh qt`。 | 主力聊天客户端，支持 Work 模式、模型配置引导、命令面板和审批卡片。各系统使用独立的 Qt 环境。 | 主力 |
-| 桌面（Tk）+ Coding 模式 | `python keystone-gui/keystone_gui_v2.py` | 三栏 IDE：文件树与 Git、多标签编辑器、Agent 面板、diff/测试/问题面板。 | 实验性 |
+| 命令行 | `python run.py <命令>` | 脚本、CI、无人值守任务。`run.py` 是通用入口；标准 Python 下 `python -m revon.cli` 也能用。 | 主力 |
+| 桌面（Qt） | Windows 首次运行 `revon-gui/desktop/install-qt.ps1`，随后使用 `revon-gui/revon Qt.cmd`。macOS / Linux 运行 `bash setup.sh qt`。 | 主力聊天客户端，支持 Work 模式、模型配置引导、命令面板和审批卡片。各系统使用独立的 Qt 环境。 | 主力 |
+| 桌面（Tk）+ Coding 模式 | `python revon-gui/revon_gui_v2.py` | 三栏 IDE：文件树与 Git、多标签编辑器、Agent 面板、diff/测试/问题面板。 | 实验性 |
 | VS Code | `vscode-extension/` | 侧边栏对话、解释/审查选中代码，走本地 JSONL 桥。 | 实验性 |
 | 即时通讯 | `python run.py channel weixin serve` | 收到一条消息就生成一个任务，任务报告再作为消息发回。 | 实验性 |
 | 安卓 | Release 里的 APK `forge-android-v0.4` | 仓库里是旧副本，开发已迁到独立仓库 `pledge-steward`。 | 实验性 |
@@ -68,7 +68,7 @@ CLI 和 Qt 桌面是主力入口。实验性入口可能只覆盖部分功能，
 
 ```mermaid
 flowchart LR
-    U[命令行 · Qt · Tk · VS Code · 即时通讯] --> L[智能体主循环<br/>keystone/loop.py]
+    U[命令行 · Qt · Tk · VS Code · 即时通讯] --> L[智能体主循环<br/>revon/loop.py]
     L --> C[上下文<br/>提示分层 · 记忆切片 · 压缩]
     L --> M[模型<br/>路由 · 回退 · MoA · 缓存感知计费]
     L --> T[工具<br/>注册 · 延迟加载 · 结果反馈]
@@ -92,7 +92,7 @@ flowchart LR
 | **防打转** | 检测并终止重复的"动作—结果"循环；同一工具连发时给提示；工具结果未知时停下，不自动重放。 | CLI、Qt Coding |
 | **权限** | 二维权限（模式 × 沙箱档位）加命令黑名单；**禁止规则永远优先**；子智能体不得超过父级上限；启用检查点时，受管写入先用影子 Git 保存工作区快照。 | 所有内核调用入口 |
 | **密钥** | 独立的保险箱和作用域：提示词里只放替身，事件和结果里打码，工具读不到保险箱。 | 所有内核调用入口 |
-| **验收** | `keystone run 任务 --acceptance 条件.json`：文件、命令、环境探针等条件由宿主核验，模型改不了检查本身。 | CLI run |
+| **验收** | `revon run 任务 --acceptance 条件.json`：文件、命令、环境探针等条件由宿主核验，模型改不了检查本身。 | CLI run |
 | **模型路由** | 经济 / 均衡 / 高端三档；按错误类型触发回退；MoA 聚合；高端两段式（起草→裁定），失败时退回已付费的草稿。 | CLI、Qt、网关 |
 | **成本与缓存** | 按请求计价；子智能体花费并入父账本；跨厂商记录缓存温度；缓存热时推迟压缩。 | CLI、Qt Coding |
 | **记忆** | 分类长期记忆、双写；整理器只归档不删除；注入量始终有上限。 | 内核 Agent |
@@ -109,13 +109,13 @@ flowchart LR
 2. **默认可验证。** `python run.py selftest` 是离线的端到端证明，其余由单元测试覆盖。
 3. **事实只追加写入。** 会话、动作、成本都可以重建；被打断的动作绝不自动重放。
 4. **仓库里的文字不授予任何权限。** `AGENTS.md`、工具输出、网页内容都只是数据，不会被当成许可。
-5. **贡献要过合同闸门。** `keystone/contrib/` 里的模块由七个不同的 AI 智能体按冻结的 [`contract.md`](contract.md) 编写；`keystone/registry.py` 先做静态 AST 扫描（禁止网络、子进程、破坏性文件操作和 `eval`），再隔离导入，并要求模块自带至少八项自检全部通过，才予以接纳。
+5. **贡献要过合同闸门。** `revon/contrib/` 里的模块由七个不同的 AI 智能体按冻结的 [`contract.md`](contract.md) 编写；`revon/registry.py` 先做静态 AST 扫描（禁止网络、子进程、破坏性文件操作和 `eval`），再隔离导入，并要求模块自带至少八项自检全部通过，才予以接纳。
 
 ### 配置
 
-配置是一个空根加有序的补丁层：`keystone/bundles/*.json` → 模式包（如 `modes/coding.json`）→ 用户层 `~/.keystone/keystone.patch.json` → `--overlay` 文件，同一行 id 以最后写入为准。`python run.py dump-config` 查看合成结果；`dump-default-config` 跳过用户层，所以用户配置写坏了也不会把你锁在门外。
+配置是一个空根加有序的补丁层：`revon/bundles/*.json` → 模式包（如 `modes/coding.json`）→ 用户层 `~/.revon/revon.patch.json` → `--overlay` 文件，同一行 id 以最后写入为准。`python run.py dump-config` 查看合成结果；`dump-default-config` 跳过用户层，所以用户配置写坏了也不会把你锁在门外。
 
-步数相关配置在一个地方统一解析，所有入口共用（`keystone/loop_limits.py`）：
+步数相关配置在一个地方统一解析，所有入口共用（`revon/loop_limits.py`）：
 
 | 键（`loop` 行） | 默认值 | 含义 |
 | --- | --- | --- |
@@ -124,9 +124,9 @@ flowchart LR
 | `wrapUpOnLimit` | `true` | 剩余回合提示与触顶进度小结（`maxSteps` 小于 6 时不启用） |
 | `contextChars` | 24000 | 压缩预算，会再按厂商画像调整 |
 
-**角色模板**：不想从零配置时，可以直接选一个预设角色——全栈开发师、建模设计师、学习助手、智能管家、写作助手、代码审查员、信息调研师。每个角色是 `keystone/bundles/agents/<id>.json` 里的一份数据：角色指引、可用工具、权限与沙箱、步数预算、规划档位、偏好技能和起手提示。命令行用 `python run.py run --template reviewer "审查当前改动"`，`python run.py templates` 列出全部，`templates duplicate <id>` 复制到 `~/.keystone/agents/` 后自行修改；桌面版在新对话页和输入框旁切换。角色只会在你自己的权限之内再收窄：它叠加在用户层和 `--profile` 之后，拒绝和询问规则永远优先，也不能放宽沙箱、读取范围或你在用户层写下的步数（`keystone/agent_templates.py`）。
+**角色模板**：不想从零配置时，可以直接选一个预设角色——全栈开发师、建模设计师、学习助手、智能管家、写作助手、代码审查员、信息调研师。每个角色是 `revon/bundles/agents/<id>.json` 里的一份数据：角色指引、可用工具、权限与沙箱、步数预算、规划档位、偏好技能和起手提示。命令行用 `python run.py run --template reviewer "审查当前改动"`，`python run.py templates` 列出全部，`templates duplicate <id>` 复制到 `~/.revon/agents/` 后自行修改；桌面版在新对话页和输入框旁切换。角色只会在你自己的权限之内再收窄：它叠加在用户层和 `--profile` 之后，拒绝和询问规则永远优先，也不能放宽沙箱、读取范围或你在用户层写下的步数（`revon/agent_templates.py`）。
 
-密钥来自环境变量（`KEYSTONE_<名字>_KEY`）或密钥保险箱，从不写在配置里；`doctor` 发现配置里直接写了 `apiKey` 会报警告。
+密钥来自环境变量（`REVON_<名字>_KEY`）或密钥保险箱，从不写在配置里；`doctor` 发现配置里直接写了 `apiKey` 会报警告。
 
 ### 从 Forge 迁移
 
@@ -134,12 +134,12 @@ flowchart LR
 
 | 以前 | 现在 | 兼容方式 |
 | --- | --- | --- |
-| `~/.forge/` | `~/.keystone/` | 没有 `~/.keystone` 时继续用已有的 `~/.forge`；设置 `KEYSTONE_HOME`（或旧的 `FORGE_HOME`）可以指定位置 |
-| `forge.patch.json`、`forge-desktop.json` | `keystone.patch.json`、`keystone-desktop.json` | 新文件出现之前，原地读写旧文件 |
-| `FORGE_*` 环境变量 | `KEYSTONE_*` | 导入时双向互为别名，旧配置里的 `env.FORGE_*` 表达式照常解析 |
-| `forge-plugin.json`、`forge.capability.json`、`<项目>/.forge/` | `keystone-plugin.json`、`keystone.capability.json`、`<项目>/.keystone/` | 两种名字都能识别，也都受保护 |
-| `forge` 命令、`bin/forge.cmd` | `keystone`、`bin/keystone.cmd` | `forge` 保留为别名 |
-| `import forge` | `import keystone` | 不提供垫片；仓库内的调用方已全部更新 |
+| `~/.forge/` | `~/.revon/` | 没有 `~/.revon` 时继续用已有的 `~/.forge`；设置 `REVON_HOME`（或旧的 `FORGE_HOME`）可以指定位置 |
+| `forge.patch.json`、`forge-desktop.json` | `revon.patch.json`、`revon-desktop.json` | 新文件出现之前，原地读写旧文件 |
+| `FORGE_*` 环境变量 | `REVON_*` | 导入时双向互为别名，旧配置里的 `env.FORGE_*` 表达式照常解析 |
+| `forge-plugin.json`、`forge.capability.json`、`<项目>/.forge/` | `revon-plugin.json`、`revon.capability.json`、`<项目>/.revon/` | 两种名字都能识别，也都受保护 |
+| `forge` 命令、`bin/forge.cmd` | `revon`、`bin/revon.cmd` | `forge` 保留为别名 |
+| `import forge` | `import revon` | 不提供垫片；仓库内的调用方已全部更新 |
 
 保持不变的有：安卓应用 ID（`com.forge.android`，已装的手机应用能继续升级）；以及归档的报告和记录（`reports/`、`roundtable/`、`evolution/`、`reviews/` 等），保留当时的原文。
 
@@ -147,14 +147,14 @@ flowchart LR
 
 | 位置 | 内容 |
 | --- | --- |
-| `keystone/`、`keystone-gui/` | Agent 内核和桌面客户端 |
+| `revon/`、`revon-gui/` | Agent 内核和桌面客户端 |
 | `tests/`、`verify/` | 集成测试和独立核验脚本 |
 | [设计取舍](docs/design.md)、[项目历史](docs/history/) | 架构决策、早期计划和贡献任务书 |
 | [模块契约](contract.md) | 现行贡献接口与准入规则 |
 
 ```
-pledge-keystone/
-├── keystone/              内核（只用标准库）
+pledge-revon/
+├── revon/              内核（只用标准库）
 │   ├── loop.py            主循环：步数、重试、预算、验收
 │   ├── loop_limits.py     maxSteps / 层数 / 子智能体预算的统一解析
 │   ├── tools.py           工具注册与内置工具
@@ -166,9 +166,9 @@ pledge-keystone/
 │   ├── session.py checkpoint.py memory.py          事件日志、快照、记忆
 │   ├── acceptance.py probes.py                     宿主核验的验收
 │   ├── graph/ scienceclaw/ channels/ development/ contrib/
-│   ├── compat.py          Forge → Keystone 兼容（目录、文件、环境变量）
+│   ├── compat.py          Forge → revon 兼容（目录、文件、环境变量）
 │   └── selftest.py cli.py
-├── keystone-gui/          桌面端：Qt 前端（qt_frontend/）、Tk 外壳 + Coding 模式
+├── revon-gui/          桌面端：Qt 前端（qt_frontend/）、Tk 外壳 + Coding 模式
 ├── vscode-extension/      VS Code 侧边栏扩展
 ├── client/                本地网页客户端与运行服务
 ├── forge-android/         安卓旧副本（现在在 pledge-steward 开发）
@@ -181,21 +181,21 @@ pledge-keystone/
 
 ```bash
 python run.py selftest                                         # 离线端到端检查
-python -m unittest discover -s keystone -p "test_*.py" -t .    # 内核单元测试
+python -m unittest discover -s revon -p "test_*.py" -t .    # 内核单元测试
 python -m pytest -q tests/                                     # 集成测试
 # Qt 前端（需要 .venv/qt）：
-cd keystone-gui && ../.venv/qt/Scripts/python -m unittest qt_frontend.test_backend
+cd revon-gui && ../.venv/qt/Scripts/python -m unittest qt_frontend.test_backend
 ```
 
-运行界面测试时设置 `KEYSTONE_NO_AUTOSTART=1`，避免启动真实网关。
+运行界面测试时设置 `REVON_NO_AUTOSTART=1`，避免启动真实网关。
 
 ### 已知限制
 
-- 文件读取工具按 `readScope` 检查解析后的路径。选 `auto` 时，只读和工作区可写沙箱都只读工作区，完全访问则可读当前账户可访问的路径。选 `workspace` 时，可读工作区和显式添加的读根。选 `all` 时，路径检查允许读取工作区外的文件。宿主的密钥保护仍然生效。[路径策略](keystone/policy.py)
-- 普通 CLI 任务默认采用均衡档，读取范围为工作区。命令行的 `--read-scope` 优先于配置，配置优先于档位默认值。桌面“沙箱运行”只读当前工作区。“手动批准”和“完全访问”均允许跨目录读取，前者按操作审批。使用角色模板时，实际授权还可能收窄。[CLI 档位](keystone/cli.py) · [桌面授权](keystone/desktop_permissions.py)
-- 上述控制发生在 Keystone 进程内。获准执行的 shell 命令或 MCP 服务可访问其进程和凭据有权访问的资源。显式 `allow` 可以放宽模式默认的询问或拒绝。显式拒绝规则、已分类写工具的只读限制和路径检查优先。[策略判定](keystone/policy.py)
-- 通用 HTTP 传输逐请求建立连接。火山方舟 Seed 网关可在连续工具轮次间复用空闲的 HTTPS 连接。[通用传输](keystone/http_transport.py) · [Seed 传输](keystone/seed_transport.py)
-- 能力包安装会记录来源，目前没有发布者签名校验。记忆召回按类别和有效状态筛选，优先返回置顶记录，再按创建时间倒序排列，目前没有向量检索。[能力包安装](keystone/capability.py) · [记忆召回](keystone/memory.py)
+- 文件读取工具按 `readScope` 检查解析后的路径。选 `auto` 时，只读和工作区可写沙箱都只读工作区，完全访问则可读当前账户可访问的路径。选 `workspace` 时，可读工作区和显式添加的读根。选 `all` 时，路径检查允许读取工作区外的文件。宿主的密钥保护仍然生效。[路径策略](revon/policy.py)
+- 普通 CLI 任务默认采用均衡档，读取范围为工作区。命令行的 `--read-scope` 优先于配置，配置优先于档位默认值。桌面“沙箱运行”只读当前工作区。“手动批准”和“完全访问”均允许跨目录读取，前者按操作审批。使用角色模板时，实际授权还可能收窄。[CLI 档位](revon/cli.py) · [桌面授权](revon/desktop_permissions.py)
+- 上述控制发生在 revon 进程内。获准执行的 shell 命令或 MCP 服务可访问其进程和凭据有权访问的资源。显式 `allow` 可以放宽模式默认的询问或拒绝。显式拒绝规则、已分类写工具的只读限制和路径检查优先。[策略判定](revon/policy.py)
+- 通用 HTTP 传输逐请求建立连接。火山方舟 Seed 网关可在连续工具轮次间复用空闲的 HTTPS 连接。[通用传输](revon/http_transport.py) · [Seed 传输](revon/seed_transport.py)
+- 能力包安装会记录来源，目前没有发布者签名校验。记忆召回按类别和有效状态筛选，优先返回置顶记录，再按创建时间倒序排列，目前没有向量检索。[能力包安装](revon/capability.py) · [记忆召回](revon/memory.py)
 - 高端两段式会把任务和草稿（不是完整对话历史）发给裁定档模型。
 
 ### 后续工程计划

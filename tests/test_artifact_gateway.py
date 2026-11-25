@@ -2,8 +2,8 @@
 import unittest
 
 import test_runtime_convergence as fixtures
-from keystone.policy import Policy, Mode, ToolEffect
-from keystone.tools import ToolSpec, ToolResult, build_builtin_registry
+from revon.policy import Policy, Mode, ToolEffect
+from revon.tools import ToolSpec, ToolResult, build_builtin_registry
 
 
 class ArtifactGatewayTests(unittest.TestCase):
@@ -43,8 +43,8 @@ class ArtifactGatewayTests(unittest.TestCase):
         self.assertEqual(sorted(p.name for p in self.ws.iterdir()), before)
 
     def test_raw_workspace_write_cannot_overwrite_host_artifacts(self):
-        from keystone.artifacts import ArtifactStore
-        from keystone.execution import ActionExecutor, ActionRequest, create_execution_context
+        from revon.artifacts import ArtifactStore
+        from revon.execution import ActionExecutor, ActionRequest, create_execution_context
         store = ArtifactStore(self.home, self.ws)
         identifier = store.put('original')['id']
         context = create_execution_context(home=self.home, workspace=self.ws,
@@ -82,7 +82,7 @@ class ArtifactGatewayTests(unittest.TestCase):
         self.assertTrue(result['ok'], result)
         rows = [line.split('\t', 1)[1] for line in result['content'].splitlines()]
         self.assertEqual(rows, source.splitlines())
-        from keystone.secrets import SecretScope
+        from revon.secrets import SecretScope
         import json
         single = call('read_range', {'path': path.name, 'start': 3, 'end': 3})
         value = {**single, 'content': single['content'].removeprefix('3\t')}

@@ -10,13 +10,13 @@ import tempfile
 import threading
 import unittest
 import urllib.request
-from keystone.gateway import GatewayConfig, serve
-from keystone.execution import ActionExecutor, ActionRequest, create_execution_context
+from revon.gateway import GatewayConfig, serve
+from revon.execution import ActionExecutor, ActionRequest, create_execution_context
 
-from keystone.computer_use import ComputerSession, register_computer_tools
-from keystone.computer_win32 import WindowsControlDriver
-from keystone.tools import ToolRegistry, ToolContext
-from keystone.policy import Policy, Mode
+from revon.computer_use import ComputerSession, register_computer_tools
+from revon.computer_win32 import WindowsControlDriver
+from revon.tools import ToolRegistry, ToolContext
+from revon.policy import Policy, Mode
 
 
 class Driver:
@@ -263,7 +263,7 @@ class NativeControlTests(unittest.TestCase):
             c.c_int, c.c_int, c.c_int, c.c_int, w.HWND, w.HMENU, w.HINSTANCE, w.LPVOID]
         u.CreateWindowExW.restype = w.HWND
         u.DestroyWindow.argtypes = [w.HWND]
-        parent = u.CreateWindowExW(0, 'Static', 'Keystone private computer fixture', 0, 0,0,300,200,None,None,None,None)
+        parent = u.CreateWindowExW(0, 'Static', 'revon private computer fixture', 0, 0,0,300,200,None,None,None,None)
         self.assertTrue(parent)
         try:
             edit = u.CreateWindowExW(0, 'Edit', '', 0x40000000, 10,10,180,25,parent,None,None,None)
@@ -273,10 +273,10 @@ class NativeControlTests(unittest.TestCase):
             with self.assertRaises(ValueError): WindowsControlDriver(parent, os.getpid()+1)
             state = driver.observe()
             self.assertEqual(len(state['elements']), 2)
-            driver.act(str(edit), 'type_text', 'Keystone 中文验证')
+            driver.act(str(edit), 'type_text', 'revon 中文验证')
             driver.act(str(button), 'click')
             after = driver.observe()
-            self.assertEqual(next(r['text'] for r in after['elements'] if r['ref'] == str(edit)), 'Keystone 中文验证')
+            self.assertEqual(next(r['text'] for r in after['elements'] if r['ref'] == str(edit)), 'revon 中文验证')
             self.assertEqual(next(r['checked'] for r in after['elements'] if r['ref'] == str(button)), 1)
             with tempfile.TemporaryDirectory() as tmp:
                 registry = ToolRegistry(); register_computer_tools(registry)

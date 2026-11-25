@@ -10,8 +10,8 @@ from unittest.mock import patch
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
 from verify_cache_diagnostics import DiagnosticRecorder
-from keystone.cache_metrics import cache_coverage
-from keystone.model import Provider
+from revon.cache_metrics import cache_coverage
+from revon.model import Provider
 
 
 class WireDiagnosticTests(unittest.TestCase):

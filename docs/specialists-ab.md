@@ -6,7 +6,7 @@
 ## 设置
 
 - 主控：`deepseek-v4-pro`。专家：retrieval 和 coding 都用 `deepseek-flash`。
-- 成本按 `keystone/pricing.py` 的目录价计算（CNY，计入缓存命中折扣）。
+- 成本按 `revon/pricing.py` 的目录价计算（CNY，计入缓存命中折扣）。
 - 三组，每组每题各跑 2 次，每次都用全新的工作区和 home：
   - `brain`：今天的运行时，主控也可以自己用普通 `spawn_subagent`。
   - `specialists-prefer`：开启专家路由，`delegation=prefer`，只靠请求尾部的委派指引。

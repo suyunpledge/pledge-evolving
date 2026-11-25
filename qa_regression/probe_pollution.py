@@ -12,8 +12,8 @@ from pathlib import Path
 
 from _bootstrap import check, summary  # noqa: E402
 
-import keystone.phase_models as pm  # noqa: E402
-from keystone.development.state import ModeState  # noqa: E402
+import revon.phase_models as pm  # noqa: E402
+from revon.development.state import ModeState  # noqa: E402
 
 
 def scenario(label: str):
@@ -42,13 +42,13 @@ def main() -> int:
     import importlib
 
     suspects = [
-        "keystone.loop",
-        "keystone.policy",
-        "keystone.tools",
-        "keystone.test_task_planning",
-        "keystone.test_phase_models",
-        "keystone.model",
-        "keystone.session",
+        "revon.loop",
+        "revon.policy",
+        "revon.tools",
+        "revon.test_task_planning",
+        "revon.test_phase_models",
+        "revon.model",
+        "revon.session",
     ]
     changed = None
     for name in suspects:

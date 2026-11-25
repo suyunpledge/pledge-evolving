@@ -1,0 +1,69 @@
+"""Small frozen launcher: load the registered working tree on every launch."""
+import ctypes
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+if __package__:
+    from .runtime_paths import install_hint, qt_python
+else:
+    from runtime_paths import install_hint, qt_python
+
+
+def resolve_launch(executable, arguments, environment=None):
+    env = os.environ if environment is None else environment
+    args = list(arguments)
+    candidates = []
+    if '--source-root' in args:
+        index = args.index('--source-root')
+        if index + 1 >= len(args):
+            raise ValueError('--source-root requires a directory')
+        candidates.append(Path(args[index + 1]))
+        del args[index:index + 2]
+    configured = env.get('REVON_SOURCE_ROOT') or env.get('KEYSTONE_SOURCE_ROOT')
+    if configured:
+        candidates.append(Path(configured))
+    launch_dir = Path(executable).resolve().parent
+    config = launch_dir / 'revon-source.json'
+    if not config.is_file():
+        config = launch_dir / 'keystone-source.json'
+    if config.is_file():
+        value = json.loads(config.read_text(encoding='utf-8-sig')).get('sourceRoot')
+        if value:
+            path = Path(value)
+            candidates.append(path if path.is_absolute() else launch_dir / path)
+    candidates.extend(list(launch_dir.parents)[:5])
+    for candidate in candidates:
+        root = candidate.resolve()
+        gui = root / 'revon-gui'
+        if not ((gui / 'revon_qt.py').is_file() and (root / 'run.py').is_file()
+                and (root / 'revon' / '__init__.py').is_file()):
+            continue
+        runtime = qt_python(root, windowed=True)
+        if not runtime.is_file():
+            raise FileNotFoundError(f'Qt runtime is missing. Run {install_hint(root)}')
+        legacy = '--legacy' in args
+        if legacy:
+            args.remove('--legacy')
+        return [str(runtime), str(gui / ('revon_gui_v2.py' if legacy else 'revon_qt.py')), *args], gui
+    raise FileNotFoundError('revon source tree was not found. Set sourceRoot in revon-source.json beside the launcher.')
+
+
+def main():
+    try:
+        executable = sys.executable if getattr(sys, 'frozen', False) else __file__
+        command, cwd = resolve_launch(executable, sys.argv[1:])
+        return subprocess.call(command, cwd=cwd, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    except Exception as exc:
+        message = str(exc)
+        if sys.platform == 'win32':
+            ctypes.windll.user32.MessageBoxW(None, message, 'revon 启动失败', 0x10)
+        elif sys.stderr:
+            print(message, file=sys.stderr)
+        return 1
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

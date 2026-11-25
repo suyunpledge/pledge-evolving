@@ -7,13 +7,13 @@ import threading
 import unittest
 from unittest.mock import Mock
 
-sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'keystone-gui'))
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'revon-gui'))
 from computer_panel import ComputerLane, NAMES
 from click_approval import describe
-from keystone.computer_use import ComputerSession
-from keystone.computer_win32 import (WindowsControlDriver, CoordinateNotStarted, keyboard_events, parse_key)
-from keystone.policy import Policy, Mode
-from keystone.secrets import SecretScope
+from revon.computer_use import ComputerSession
+from revon.computer_win32 import (WindowsControlDriver, CoordinateNotStarted, keyboard_events, parse_key)
+from revon.policy import Policy, Mode
+from revon.secrets import SecretScope
 
 FRAME={'rect':[100,100,500,400],'client_rect':[110,130,490,390],'dpi':144}
 

@@ -6,12 +6,12 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from keystone.config import ConfigError
-from keystone.development.models import ModelSettingsSource
-from keystone.development.runtime import DevelopmentRuntime
-from keystone.development.state import ModeState
-from keystone.model import Usage
-from keystone.secrets import redact
+from revon.config import ConfigError
+from revon.development.models import ModelSettingsSource
+from revon.development.runtime import DevelopmentRuntime
+from revon.development.state import ModeState
+from revon.model import Usage
+from revon.secrets import redact
 
 
 class ReadinessTests(unittest.TestCase):
@@ -24,7 +24,7 @@ class ReadinessTests(unittest.TestCase):
         self.key = 'sk-synthetic-readiness-key-0123456789'
         self.rows = [
             {'id': 'writer', 'name': 'provider:writer', 'config': {'baseURL': 'https://example.invalid/v1',
-                'model': 'code-one', 'apiKey': {'$expr': "get('env.KEYSTONE_WRITER_KEY', '')"}}},
+                'model': 'code-one', 'apiKey': {'$expr': "get('env.REVON_WRITER_KEY', '')"}}},
             {'id': 'model', 'name': 'model:router', 'config': {'primary': ['writer', 'code-one']}},
             {'id': 'policy', 'name': 'policy:core', 'config': {'mode': 'bypassPermissions', 'sandbox': 'danger-full-access'}},
             {'id': 'tools', 'name': 'tools:core', 'config': {'expose': ['shell_exec']}},
@@ -37,10 +37,10 @@ class ReadinessTests(unittest.TestCase):
         self.addCleanup(self.runtime.close)
 
     def settings(self, rows, home=None):
-        ((home or self.host)/'keystone.patch.json').write_text(json.dumps(rows), encoding='utf-8')
+        ((home or self.host)/'revon.patch.json').write_text(json.dumps(rows), encoding='utf-8')
 
     def test_retryable_model_failure_keeps_resume_but_fatal_error_does_not(self):
-        from keystone.model import BadRequest, TransportError
+        from revon.model import BadRequest, TransportError
         self.runtime.initialize(self.project)
         router = self.runtime.bridge.router
         router.retries_per_provider = 0
@@ -60,7 +60,7 @@ class ReadinessTests(unittest.TestCase):
         self.rows[0]['config']['apiKey'] = {'$expr': "get('env.FORGE_WRITER_KEY', '')"}
         self.settings(self.rows)
         legacy = self.host / 'forge.patch.json'
-        (self.host / 'keystone.patch.json').rename(legacy)
+        (self.host / 'revon.patch.json').rename(legacy)
         before = dict(os.environ)
         self.runtime.initialize(self.project)
         self.assertTrue(self.runtime.bridge.router.providers['writer'].api_key)
@@ -80,7 +80,7 @@ class ReadinessTests(unittest.TestCase):
         self.assertTrue(self.runtime.bridge.router.providers['writer'].api_key)
         self.assertEqual(self.runtime.bridge.agent.policy.mode.value, 'read-only')
         self.assertNotEqual(self.runtime.bridge.agent.policy.sandbox.value, 'danger-full-access')
-        self.assertFalse((self.home/'keystone.patch.json').exists())
+        self.assertFalse((self.home/'revon.patch.json').exists())
         self.assertFalse((self.home/'secrets.json').exists())
         self.assertTrue(self.runtime.bridge.agent.session.path.resolve().is_relative_to(self.home.resolve()))
         self.assertEqual({p:p.read_bytes() for p in self.host.iterdir()}, files)
@@ -94,7 +94,7 @@ class ReadinessTests(unittest.TestCase):
         self.assertTrue(self.runtime.readiness()['ready'])
 
     def test_empty_host_is_model_missing_instead_of_fake_sample_catalog(self):
-        (self.host/'keystone.patch.json').unlink()
+        (self.host/'revon.patch.json').unlink()
         self.runtime.initialize(self.project)
         self.assertEqual(self.runtime.catalog,{})
         self.assertEqual(self.runtime.readiness()['code'],'model_missing')
@@ -106,13 +106,13 @@ class ReadinessTests(unittest.TestCase):
         self.assertTrue(self.runtime.readiness()['ready'])
 
     def test_borrowed_custom_router_keeps_its_own_transport_contract(self):
-        from keystone.test_vscode_bridge import FakeRouter
-        from keystone.development.models import model_readiness
+        from revon.test_vscode_bridge import FakeRouter
+        from revon.development.models import model_readiness
         self.assertTrue(model_readiness(FakeRouter())['ready'])
 
     def test_missing_cloud_key_is_diagnosed_before_model_request(self):
         (self.host/'secrets.json').unlink()
-        with patch.dict(os.environ, {'KEYSTONE_WRITER_KEY':''}):
+        with patch.dict(os.environ, {'REVON_WRITER_KEY':''}):
             self.runtime.initialize(self.project)
         self.assertEqual(self.runtime.readiness()['code'],'credential_missing')
 
@@ -136,7 +136,7 @@ class ReadinessTests(unittest.TestCase):
         self.runtime.initialize(self.project)
         bridge, catalog = self.runtime.bridge, dict(self.runtime.catalog)
         router = bridge.router
-        (self.host/'keystone.patch.json').write_text('{broken')
+        (self.host/'revon.patch.json').write_text('{broken')
         with self.assertRaises(ConfigError): self.runtime.refresh_models()
         self.assertIs(bridge.router,router)
         self.assertEqual(self.runtime.catalog,catalog)

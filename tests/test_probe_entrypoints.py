@@ -9,10 +9,10 @@ from unittest.mock import patch
 import test_client_runtime as http_fixtures
 import test_development_execution as editor_fixtures
 from client import server as client
-from keystone import cli
-from keystone.probes import ProbeRegistry
-from keystone.test_task_planning import Router
-from keystone.test_env_probes import contract
+from revon import cli
+from revon.probes import ProbeRegistry
+from revon.test_task_planning import Router
+from revon.test_env_probes import contract
 
 
 class HTTPProbeTests(unittest.TestCase):
@@ -63,8 +63,8 @@ class HTTPProbeTests(unittest.TestCase):
         spec.write_text(json.dumps(contract()), encoding='utf-8')
         (self.ws / 'result.json').write_text('{"ready":false}', encoding='utf-8')
         stdout, stderr = io.StringIO(), io.StringIO()
-        with patch('keystone.cli.SmartRouter.from_config', side_effect=lambda cfg, **kwargs: smart_factory(cfg, transport=transport)), \
-             patch('keystone.cli.ModelRouter.from_config', side_effect=lambda cfg, **kwargs: model_factory(cfg, transport=transport)), \
+        with patch('revon.cli.SmartRouter.from_config', side_effect=lambda cfg, **kwargs: smart_factory(cfg, transport=transport)), \
+             patch('revon.cli.ModelRouter.from_config', side_effect=lambda cfg, **kwargs: model_factory(cfg, transport=transport)), \
              redirect_stdout(stdout), redirect_stderr(stderr):
             code = cli.main(['run', 'finish', '--home', str(self.root / 'cli-home'),
                 '--workspace', str(self.ws), '--no-user-layer', '--acceptance', str(spec), '--json'])
@@ -88,8 +88,8 @@ class EditorProbeTests(unittest.TestCase):
         self.assertIs(result['acceptance']['results'][0]['evidence']['actual'], False)
 
     def test_host_probe_registry_survives_development_bridge_assembly(self):
-        from keystone.development.runtime import DevelopmentRuntime
-        from keystone.development.state import ModeState
+        from revon.development.runtime import DevelopmentRuntime
+        from revon.development.state import ModeState
         observed = []
         probes = ProbeRegistry.defaults().with_probe('application', 'saved',
             lambda ctx, value: observed.append(ctx.run_id) or {'persisted': True})

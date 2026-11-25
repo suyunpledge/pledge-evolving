@@ -8,7 +8,7 @@
 ## 结论
 
 当前设计具有清晰的入口：文件/消息虚拟化、结构化配置编辑、最后阶段 HTTP 认证、输出脱敏。
-原实现的测试没有覆盖实际 Keystone 配置行、特殊 Secret 容器及完整 LogRecord，导致若干安全承诺强于实现。
+原实现的测试没有覆盖实际 revon 配置行、特殊 Secret 容器及完整 LogRecord，导致若干安全承诺强于实现。
 本轮修复下面可复现的问题，并保留已有 Policy/read-scope、插件生命周期和 UI 实现。
 
 安全保证应限定为：**受保护 Agent 使用受控工具时，已识别或预注册的 Secret 被隔离于模型正文和工具输出；SecretRef 的解析仅由可信配置写入/认证组件完成。**
@@ -19,8 +19,8 @@ Authorization/x-api-key 必须携带真实凭据才能认证；它们不属于�
 
 | 级别 | 场景 | 修复前实际行为 | 风险 | 本轮修复 | 自动化覆盖 |
 |---|---|---|---|---|---|
-| P1 | Keystone 原生配置行 `{id: policy, config: ...}` | 校验只找名为 policy/sandbox 等的字典键，`config.allow` 能被改写 | 后续加载配置时扩大权限；与新增 readScope 接线不一致 | 按行 id/name 识别权限与工具控制行，整行冻结，覆盖禁用、移除、重命名及追加覆盖行 | `test_real_keystone_policy_row_cannot_be_escalated`，并验证普通 model 行仍能改 |
-| P1 | 添加启动期 `$expr` 表达式 | 普通字段允许插入 `get('env.KEYSTONE_...')` | 后续启动求值可越过普通配置数据边界，读取环境；本轮不执行恶意表达式 | 将 `$expr` 纳入宿主控制字段，禁止 Agent 添加/改变/删除 | `test_agent_cannot_add_boot_time_environment_expressions` |
+| P1 | revon 原生配置行 `{id: policy, config: ...}` | 校验只找名为 policy/sandbox 等的字典键，`config.allow` 能被改写 | 后续加载配置时扩大权限；与新增 readScope 接线不一致 | 按行 id/name 识别权限与工具控制行，整行冻结，覆盖禁用、移除、重命名及追加覆盖行 | `test_real_keystone_policy_row_cannot_be_escalated`，并验证普通 model 行仍能改 |
+| P1 | 添加启动期 `$expr` 表达式 | 普通字段允许插入 `get('env.REVON_...')` | 后续启动求值可越过普通配置数据边界，读取环境；本轮不执行恶意表达式 | 将 `$expr` 纳入宿主控制字段，禁止 Agent 添加/改变/删除 | `test_agent_cannot_add_boot_time_environment_expressions` |
 | P1 | `$` 开头密码、夹带假 SecretRef 的密码 | 文本检测跳过；结构化检测跳过所有 `$` 开头值 | 真实值直接进入受保护视图 | 仅完整有效 Ref/遮盖标记保留，其他已声明敏感值统一虚拟化；写回保留原字节值 | `test_declared_secrets_cannot_opt_out_with_dollar_or_ref_substring` |
 | P1 | access_token/password/cookies 的列表和嵌套映射 | 部分标记未下传到标量叶节点 | 非标准厂商凭据漏检 | 敏感字段的容器传播保护，标量叶节点产生 Ref | `test_declared_secret_containers_protect_scalar_leaves` |
 | P1 | Secret 先出现在普通描述、后出现在 password 字段 | 单次从前往后扫描留下先前的原文 | 检测结果取决于字段顺序 | 本次遍历发现新敏感值时，对结果再检查；已有稳定视图不固定重复扫描 | `test_sensitive_mapping_is_independent_of_field_order` |
@@ -29,7 +29,7 @@ Authorization/x-api-key 必须携带真实凭据才能认证；它们不属于�
 | P1 | 日志额外对象、logger/path 等标准元数据 | 对象在下游 default=str 才展开，标准字段未过滤 | 结构化日志可绕过 message 清洗 | 有界地将对象转为日志数据后脱敏，并清洗标准文本字段 | `test_structured_log_objects_and_standard_metadata_are_safe` |
 | P2 | 大文件进入检测器/edit_config | 先 read_text/read_bytes 整个文件，之后才检查大小 | 内存突增、Gateway/GUI 长时间无响应 | 统一有限读取：最多 limit+1 字节；普通检查 8 MiB，配置编辑及提交 CAS 1 MiB | `test_full_file_inspection_does_not_make_an_unbounded_read` |
 
-新增测试位于 `keystone/test_secret_architecture.py`，9 个测试方法。所有负例均在修复前运行并观察到失败。
+新增测试位于 `revon/test_secret_architecture.py`，9 个测试方法。所有负例均在修复前运行并观察到失败。
 首批 5 项、第二批 3 项、表达式 1 项分批完成，避免把修复后的通过误写成预先已有保障。
 
 ## 结构与边界复核
@@ -69,7 +69,7 @@ flowchart LR
 
 | 本轮执行 | 结果 |
 |---|---|
-| `keystone.selftest` | 569 / 569 |
+| `revon.selftest` | 569 / 569 |
 | Secret 新旧测试 + execution_review + model_adaptation | 103 / 103 |
 | GUI Secret、交互、Client、Sub-Agent、Provider 适配 | 48 / 48 |
 | 插件 runtime、adversarial、capabilities | 94 / 94 |
@@ -79,5 +79,5 @@ flowchart LR
 最后一项表达式保护只改配置校验，随后重跑包含新旧 Secret/配置测试的 103 项；核心/GUI/插件结果来自该一行收紧之前。
 本轮没有重新执行付费 T10；此前报告中的厂商请求结果属于此前的验证，不计入本轮。
 
-本轮实现文件仅修改 `keystone/secrets.py`、`keystone/config_edit.py`、`keystone/tools.py`；新增本报告及独立回归测试。
+本轮实现文件仅修改 `revon/secrets.py`、`revon/config_edit.py`、`revon/tools.py`；新增本报告及独立回归测试。
 没有修改 UI 风格、打包、生成 EXE 或创建代码副本。

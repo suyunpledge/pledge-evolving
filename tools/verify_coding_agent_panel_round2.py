@@ -33,7 +33,7 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     output = parser.parse_args().output.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    path = 'keystone-gui/development_mode/app.py'
+    path = 'revon-gui/development_mode/app.py'
     before = subprocess.check_output(['git', 'show', BASE + ':' + path], cwd=ROOT).decode('utf-8')
     def methods(source):
         cls = next(n for n in ast.parse(source).body if isinstance(n, ast.ClassDef))
@@ -48,7 +48,7 @@ def main():
     forbidden = {'layout.py', 'bottom_panel.py', 'explorer.py', 'welcome.py', 'editor_area.py',
                  'workspace.py', 'gui_theme.py', 'chat_widgets.py'}
     assert not any(Path(p).name in forbidden for p in files)
-    bootstrap = ('import sys,unittest,faulthandler; faulthandler.dump_traceback_later(120,repeat=True); sys.path[:0]=' + repr([str(ROOT), str(ROOT / 'keystone-gui')])
+    bootstrap = ('import sys,unittest,faulthandler; faulthandler.dump_traceback_later(120,repeat=True); sys.path[:0]=' + repr([str(ROOT), str(ROOT / 'revon-gui')])
         + "; loader=unittest.TestLoader(); suite=unittest.TestSuite(); "
         + "[suite.addTests(loader.loadTestsFromName(name)) for name in sys.argv[1:]]; "
         + "result=unittest.TextTestRunner(verbosity=2).run(suite); sys.exit(not result.wasSuccessful())")
@@ -61,9 +61,9 @@ def main():
     runs = [('agent_panel', bootstrap, ['development_mode.test_agent_panel'])]
     runs += [(f'four_suites_round_{i}', full,
         ['development_mode.test_agent_panel', 'development_mode.test_app', 'test_workspace_wiring']) for i in (1, 2)]
-    paths = [path, 'keystone-gui/development_mode/agent_panel.py', 'keystone-gui/development_mode/test_agent_panel.py',
-             'keystone-gui/development_mode/test_app.py', 'tests/test_coding_agent_ux.py',
-             'keystone-gui/test_workspace_wiring.py', 'tools/verify_coding_agent_panel_round2.py']
+    paths = [path, 'revon-gui/development_mode/agent_panel.py', 'revon-gui/development_mode/test_agent_panel.py',
+             'revon-gui/development_mode/test_app.py', 'tests/test_coding_agent_ux.py',
+             'revon-gui/test_workspace_wiring.py', 'tools/verify_coding_agent_panel_round2.py']
     report = {'baseline': BASE, 'environment': {'python': sys.version, 'executable': sys.executable,
         'platform': platform.platform(), 'TCL_LIBRARY': os.environ.get('TCL_LIBRARY'),
         'TK_LIBRARY': os.environ.get('TK_LIBRARY'), 'model_transport': 'offline fixtures',

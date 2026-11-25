@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const { PassThrough } = require('node:stream');
-const { FrameReader, KeystoneBridge } = require('../out/bridge');
+const { FrameReader, RevonBridge } = require('../out/bridge');
 const { inside } = require('../out/paths');
 const path = require('node:path');
 
@@ -11,7 +11,7 @@ function fixture() {
   child.stdin = new PassThrough(); child.stdout = new PassThrough(); child.stderr = new PassThrough();
   child.kill = signal => { child.killed = true; child.signal = signal; return true; };
   let options; let args; let command;
-  const bridge = new KeystoneBridge((cmd, argv, opts) => { command = cmd; args = argv; options = opts; return child; });
+  const bridge = new RevonBridge((cmd, argv, opts) => { command = cmd; args = argv; options = opts; return child; });
   bridge.start({ python: 'python executable', launcher: 'launcher path', engine: 'source path', cwd: 'workspace path' });
   let sent = '';
   child.stdin.on('data', chunk => { sent += chunk.toString(); });

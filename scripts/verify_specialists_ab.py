@@ -2,7 +2,7 @@
 
 Arms (same brain model, fresh workspace and home per run):
   brain        — today's runtime: the brain may still use plain spawn_subagent.
-  specialists  — keystone.specialists enabled (delegation=advise): retrieval
+  specialists  — revon.specialists enabled (delegation=advise): retrieval
                  (catalog + catalog_expand) and coding routed to a cheaper model.
   specialists-prefer  — same table with delegation=prefer (firmer routing guidance).
   specialists-require — delegation=require: retrieval/coding tools leave the brain's
@@ -16,8 +16,8 @@ Tasks are local fixtures, so grading is exact and repeatable:
              across long docs; graded by hidden tests the agent never sees.
 
 Reported per run: success, input/output tokens per model, cost (CNY, list
-prices from keystone.pricing), wall time and model requests. Credentials come
-from the user's provider rows in the legacy profile (keystone.compat.default_home);
+prices from revon.pricing), wall time and model requests. Credentials come
+from the user's provider rows in the legacy profile (revon.compat.default_home);
 they are never printed or written.
 
     python scripts/verify_specialists_ab.py --self-check      # fixtures + graders only
@@ -40,15 +40,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from keystone import model as kmodel                       # noqa: E402
-from keystone.compat import default_home                   # noqa: E402
-from keystone.loop import Agent                             # noqa: E402
-from keystone.policy import Mode, Policy, Sandbox          # noqa: E402
-from keystone.pricing import cost_of_usage                 # noqa: E402
-from keystone.runtime_types import LoopLimits              # noqa: E402
-from keystone.session import Session                       # noqa: E402
-from keystone.specialists import SpecialistTable           # noqa: E402
-from keystone.tools import build_builtin_registry          # noqa: E402
+from revon import model as kmodel                       # noqa: E402
+from revon.compat import default_home                   # noqa: E402
+from revon.loop import Agent                             # noqa: E402
+from revon.policy import Mode, Policy, Sandbox          # noqa: E402
+from revon.pricing import cost_of_usage                 # noqa: E402
+from revon.runtime_types import LoopLimits              # noqa: E402
+from revon.session import Session                       # noqa: E402
+from revon.specialists import SpecialistTable           # noqa: E402
+from revon.tools import build_builtin_registry          # noqa: E402
 
 
 # -- fixtures -------------------------------------------------------------------
@@ -416,7 +416,7 @@ def main(argv=None) -> int:
     parser.add_argument('--retrieval-model', default='deepseek-flash')
     parser.add_argument('--coding-model', default='deepseek-flash')
     parser.add_argument('--home', default='', help='profile with provider rows + secrets (read only); '
-                                                    'default keystone.compat.default_home()')
+                                                    'default revon.compat.default_home()')
     parser.add_argument('--tasks', default='research,coding,mixed')
     parser.add_argument('--arms', default='brain,specialists-prefer,specialists-require')
     parser.add_argument('--runs', type=int, default=2)

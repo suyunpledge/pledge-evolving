@@ -6,14 +6,14 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from keystone.compaction import ContextBudget
-from keystone.compaction_notes import LABEL, SOURCE_LABEL, SOURCE_BUDGET
-from keystone.context_transaction import valid_tool_pairs
-from keystone.loop import Agent, LoopLimits
-from keystone.model import Completion, Usage
-from keystone.policy import Mode, Policy, Sandbox, ToolEffect
-from keystone.tools import ToolSpec, ToolResult, build_builtin_registry
-from keystone.test_project_rules import Router
+from revon.compaction import ContextBudget
+from revon.compaction_notes import LABEL, SOURCE_LABEL, SOURCE_BUDGET
+from revon.context_transaction import valid_tool_pairs
+from revon.loop import Agent, LoopLimits
+from revon.model import Completion, Usage
+from revon.policy import Mode, Policy, Sandbox, ToolEffect
+from revon.tools import ToolSpec, ToolResult, build_builtin_registry
+from revon.test_project_rules import Router
 
 
 def group(name, output, path='', wire='openai'):

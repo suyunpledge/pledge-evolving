@@ -8,8 +8,8 @@
 
 | 评审发现 | 核实结果 | 修复 |
 |---|---|---|
-| 读到的源码被打码成 `{{SECRET_REF:…}}` | **属实，影响比评审说的更大。** `secrets.protect_text` 把 `token = args.get(...)` 这类等号右边的代码表达式当成密码替换掉。写入守卫（`tools.py` 中的 `file_text(path) != raw`，以及 `config_edit.sensitive_config`）因此**拒绝改写所有含这类变量名的源码文件**，`tools.py` 本身就改不了。评审担心的"占位符被写回源码"不会发生，写入前已有拦截。 | 密钥检测改为能识别源码：源码文件（`CODE_SUFFIXES`）里等号右边没有引号的值视为表达式，不打码；通用文本里调用表达式不打码，等号两边带空格的属性访问和下标也不打码。带引号的字面量、已知密钥值、私钥块、Bearer 令牌、URL 里的密码、令牌格式仍照常保护；`.env` 风格的 `KEY=value` 不变。新增测试 `keystone/test_secret_code_aware.py` |
-| 受保护模式下 Shell 不能用，却出现在工具列表 | **部分属实。** 内核自己的 Agent 循环已过滤（`loop._execution_specs`），但网关 `/v1/tools` 和 `execution.py` 使用的 `available_specs()` 没有过滤 | `ToolRegistry.native()`；`available_specs()` 在受保护上下文里不再列出原生执行类工具。新增测试 `keystone/test_isolated_surface.py` |
+| 读到的源码被打码成 `{{SECRET_REF:…}}` | **属实，影响比评审说的更大。** `secrets.protect_text` 把 `token = args.get(...)` 这类等号右边的代码表达式当成密码替换掉。写入守卫（`tools.py` 中的 `file_text(path) != raw`，以及 `config_edit.sensitive_config`）因此**拒绝改写所有含这类变量名的源码文件**，`tools.py` 本身就改不了。评审担心的"占位符被写回源码"不会发生，写入前已有拦截。 | 密钥检测改为能识别源码：源码文件（`CODE_SUFFIXES`）里等号右边没有引号的值视为表达式，不打码；通用文本里调用表达式不打码，等号两边带空格的属性访问和下标也不打码。带引号的字面量、已知密钥值、私钥块、Bearer 令牌、URL 里的密码、令牌格式仍照常保护；`.env` 风格的 `KEY=value` 不变。新增测试 `revon/test_secret_code_aware.py` |
+| 受保护模式下 Shell 不能用，却出现在工具列表 | **部分属实。** 内核自己的 Agent 循环已过滤（`loop._execution_specs`），但网关 `/v1/tools` 和 `execution.py` 使用的 `available_specs()` 没有过滤 | `ToolRegistry.native()`；`available_specs()` 在受保护上下文里不再列出原生执行类工具。新增测试 `revon/test_isolated_surface.py` |
 | `tool_search` 找不到窗口操作、子任务分派等能力 | **属实。** 搜索只覆盖当前可加载的工具，命中不了就返回不相关结果，Agent 分不清是"本会话没开放"还是"根本不存在" | `ToolRegistry.unavailable_matches()`：`tool_search` 额外列出"匹配但本会话不能用"的工具和原因（受保护模式、权限禁止、未开放、缺宿主能力），并且不激活它们 |
 | 预览压得太狠 | **属实。** 截断时只预览 500 个字符；`grep`、`find_files`、`list_dir`、`file_outline` 的结果视图只保留 8 行 | 截断预览提高到最多 2000 个字符；结果视图提高到 24 行（前 16 行加后 8 行），字符上限从 800 提高到 2400。selftest 中对应的上限从 1250 调到 2600，并在旁边注明原因 |
 
@@ -28,14 +28,14 @@
 **目标**：新增一个受控工具 `run_check`，只能运行项目里已识别的任务，不接受任意命令。
 
 **设计约束**（第 5 条已由用户选定方案 (b)）：
-1. **任务来源**：复用 `keystone/development/toolchains` 的任务识别（桌面 `run_service.py` 已在用）。参数只接受任务 ID，例如 `test`、`lint`、`build`，以及可选的"测试文件或测试名过滤"。过滤值要做白名单校验，不能拼接 shell。
+1. **任务来源**：复用 `revon/development/toolchains` 的任务识别（桌面 `run_service.py` 已在用）。参数只接受任务 ID，例如 `test`、`lint`、`build`，以及可选的"测试文件或测试名过滤"。过滤值要做白名单校验，不能拼接 shell。
 2. **环境**：子进程环境只保留必要变量（PATH、SYSTEMROOT、TEMP/TMP、HOME/USERPROFILE、LANG，以及工具链声明需要的变量），去掉所有已登记的密钥和名字像凭据的变量。工作目录固定为工作区。不使用 `shell=True`。
 3. **边界**：设置超时（默认 300 秒）、支持取消（沿用 `cancel_event`）、限制输出大小。输出经过 `protect_text` 后再交给模型，大结果走 artifacts。
 4. **审批与记录**：每次运行都走现有审批卡片，写明会执行的实际命令，并记入日志。
-5. **待用户决定**：子进程仍能读取磁盘上的任何文件，包括工作区外的 Keystone 密钥库。可选方案：
+5. **待用户决定**：子进程仍能读取磁盘上的任何文件，包括工作区外的 revon 密钥库。可选方案：
    - (a) 只在 `manual`、`full` 档位开放，`sandbox` 档位不开放；
    - (b) 所有档位都开放，但每次都必须审批；
-   - (c) 第一版先只做 Python 的 `unittest` / `pytest`，并把 `KEYSTONE_HOME` 指到临时目录。
+   - (c) 第一版先只做 Python 的 `unittest` / `pytest`，并把 `REVON_HOME` 指到临时目录。
 
    **用户已决定（2026-11-25）：采用 (b)，所有档位都开放，每次运行都必须逐次审批。** 具体要求：
    - 包括 `full` 档位在内，都不能自动批准，也不能"本会话内记住"。`policy` 中针对 `run_check` 的 `allow` 规则不得跳过审批，需要在 `Policy.resolve_ask` 或工具层强制 ask，并在 `override_warnings` 里提示这条规则无效。
@@ -55,7 +55,7 @@
 **现象**：同一个技术问题，`web_search` 返回的 3 条全是网盘分享链接；`public_search` 没有结果；`fetch_url` 抓 MCP 官网只拿到标题和一行跳转信息，正文为空。
 
 **任务**：
-1. 找到 `web_search`、`public_search` 的默认搜索源和请求方式（`keystone/public_search.py`、`keystone/tools.py`、`qt_frontend/search_service.py`），用 3 到 5 个中英文技术问题实测并记录结果。
+1. 找到 `web_search`、`public_search` 的默认搜索源和请求方式（`revon/public_search.py`、`revon/tools.py`、`qt_frontend/search_service.py`），用 3 到 5 个中英文技术问题实测并记录结果。
 2. 对搜索结果加质量过滤：屏蔽网盘、下载站、内容农场域名（可配置的列表），按标题和摘要与查询的相关度重排；对中文查询，英文技术词保持原样。
 3. 某个搜索源没有结果或失败时，自动换下一个，并在结果里注明用的是哪个源。
 4. `fetch_url` 增加兜底提取：依次尝试 `<meta name=description>`、OpenGraph、JSON-LD、`<noscript>`、`__NEXT_DATA__` 或类似的内嵌 JSON、`<link rel=alternate>` 指向的文档版本。仍然没有正文时，明确返回"该页面需要脚本渲染才能显示正文"。如果当前会话有浏览器工具，就提示改用浏览器；如果没有，就提示换一个文档页面。
@@ -67,7 +67,7 @@
 **现象**：生成图片、视频、PPT 后，Agent 看不到结果，只能盲做。
 
 **任务**：
-1. 新增只读工具 `view_image`，参数是工作区内图片或附件的路径。只在当前模型支持图片输入时才开放，模型能力从 `keystone/model_kinds.py`、`route_capabilities.py` 获取。返回时用各家 API 的图片内容块；`toolwire` 要支持在工具结果里携带图片。
+1. 新增只读工具 `view_image`，参数是工作区内图片或附件的路径。只在当前模型支持图片输入时才开放，模型能力从 `revon/model_kinds.py`、`route_capabilities.py` 获取。返回时用各家 API 的图片内容块；`toolwire` 要支持在工具结果里携带图片。
 2. 办公文件：新增 `office_render`，把文档页或幻灯片渲染成 PNG（桌面端用现有 WebEngine 离屏渲染，`OfficePage.qml` 里已有图表检查机制可以参考），再交给 `view_image` 查看。
 3. 模型不支持图片时，这两个工具不开放；`tool_search` 会通过本分支新增的"不可用原因"说明这一点。
 

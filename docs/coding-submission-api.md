@@ -70,7 +70,7 @@ unknown actions and actual model continue to come from the existing core protoco
 ## Integration boundaries
 
 The minimal production patch touches only DevelopmentWorkbench, policy widgets
-and `keystone/development/runtime.py`. It does not depend on the separate HTTP-client
+and `revon/development/runtime.py`. It does not depend on the separate HTTP-client
 RunStore changes. A reviewed preview combines it with the current uncommitted
 Coding components and original mainline core; the original layout/status methods
 are preserved. Recheck snapshot hashes before applying that patch to a busy worktree.

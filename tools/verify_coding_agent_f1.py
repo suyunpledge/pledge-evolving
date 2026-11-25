@@ -20,11 +20,11 @@ def main():
     args = parser.parse_args()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    bootstrap = ('import sys,unittest; sys.path[:0]=' + repr([str(ROOT), str(ROOT / 'keystone-gui')])
+    bootstrap = ('import sys,unittest; sys.path[:0]=' + repr([str(ROOT), str(ROOT / 'revon-gui')])
         + "; loader=unittest.TestLoader(); suite=unittest.TestSuite(); "
         + "[suite.addTests(loader.loadTestsFromName(name)) for name in sys.argv[1:]]; "
         + "result=unittest.TextTestRunner(verbosity=2).run(suite); sys.exit(not result.wasSuccessful())")
-    full_bootstrap = ('import sys,unittest; sys.path[:0]=' + repr([str(ROOT), str(ROOT / 'keystone-gui')])
+    full_bootstrap = ('import sys,unittest; sys.path[:0]=' + repr([str(ROOT), str(ROOT / 'revon-gui')])
         + "; loader=unittest.TestLoader(); suite=loader.discover('tests',pattern='test_coding_agent_ux.py'); "
         + "[suite.addTests(loader.loadTestsFromName(name)) for name in sys.argv[1:]]; "
         + "result=unittest.TextTestRunner(verbosity=2).run(suite); sys.exit(not result.wasSuccessful())")
@@ -32,9 +32,9 @@ def main():
     runs += [(f'four_suites_round_{i}', full_bootstrap,
               ['development_mode.test_agent_panel', 'development_mode.test_app', 'test_workspace_wiring'])
              for i in range(1, 3)]
-    paths = ['keystone-gui/development_mode/app.py', 'keystone-gui/development_mode/test_agent_panel.py',
-             'tests/test_coding_agent_ux.py', 'keystone-gui/development_mode/test_app.py',
-             'keystone-gui/test_workspace_wiring.py', 'tools/verify_coding_agent_f1.py']
+    paths = ['revon-gui/development_mode/app.py', 'revon-gui/development_mode/test_agent_panel.py',
+             'tests/test_coding_agent_ux.py', 'revon-gui/development_mode/test_app.py',
+             'revon-gui/test_workspace_wiring.py', 'tools/verify_coding_agent_f1.py']
     report = {'environment': {'python': sys.version, 'executable': sys.executable,
         'platform': platform.platform(), 'TCL_LIBRARY': os.environ.get('TCL_LIBRARY'),
         'TK_LIBRARY': os.environ.get('TK_LIBRARY'), 'model_transport': 'offline fixtures'},

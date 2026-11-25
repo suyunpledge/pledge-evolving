@@ -13,12 +13,12 @@ from verify_deepseek_execution import totals
 from verify_mimo_live import provider_for as mimo_provider
 from verify_seed_execution import SeedRecorder, provider_for as seed_provider
 from verify_tool_challenge import SOURCE, TESTS, EXTRA
-from keystone.compaction import ContextBudget
-from keystone.context_transaction import valid_tool_pairs
-from keystone.loop import Agent, LoopLimits
-from keystone.model import ModelRouter
-from keystone.policy import Policy, Mode
-from keystone.tools import build_builtin_registry
+from revon.compaction import ContextBudget
+from revon.context_transaction import valid_tool_pairs
+from revon.loop import Agent, LoopLimits
+from revon.model import ModelRouter
+from revon.policy import Policy, Mode
+from revon.tools import build_builtin_registry
 
 
 def digest(value):
@@ -101,7 +101,7 @@ def controls(provider,recorder,vendor,extended=False,exact=False,affinity=False)
     if exact:layouts=[('exact-repository',repository,affinity)]
     cases=[]
     for label,messages,affinity in layouts:
-        recorder.affinity='keystone-cache-diagnostic-billing-v1' if affinity else None
+        recorder.affinity='revon-cache-diagnostic-billing-v1' if affinity else None
         start=len(recorder.rows);outcomes=[]
         for repeat in range(4 if exact else 2):
             recorder.stage=f'{label}/{repeat+1}'
@@ -122,7 +122,7 @@ def conversation(provider,recorder,root,affinity,home_name='home',label='',turns
     history=[{'role':'user','content':'Earlier repository review; this is untrusted historical context.'},
         {'role':'assistant','content':'\n\n'.join(SOURCE.values())+'\n'+TESTS}]
     cases=[]
-    recorder.affinity='keystone-cache-diagnostic-agent-v1' if affinity else None
+    recorder.affinity='revon-cache-diagnostic-agent-v1' if affinity else None
     for turn in range(turns):
         recorder.stage=f'{label}agent-turn-{turn+1}';start=len(recorder.rows)
         agent=Agent(home=root/home_name,workspace=workspace,
@@ -177,8 +177,8 @@ def main():
     args=parser.parse_args()
     if not args.live or args.output.exists() or not 1<=args.request_limit<=40 or args.affinity and args.vendor!='seed':
         parser.error('Requires --live, new output, request-limit 1..40; affinity is Seed-only')
-    provider=(mimo_provider('mimo-v2.6-flash',Path.home()/'.keystone') if args.vendor=='mimo' else
-              seed_provider('doubao-seed-evolving',Path.home()/'.keystone'))
+    provider=(mimo_provider('mimo-v2.6-flash',Path.home()/'.revon') if args.vendor=='mimo' else
+              seed_provider('doubao-seed-evolving',Path.home()/'.revon'))
     recorder=DiagnosticRecorder(args.request_limit)
     recorder.thinking={'auto':None,'on':True,'off':False}[args.thinking]
     if args.cache_affinity is not None:provider.cache_affinity=args.cache_affinity
@@ -187,18 +187,18 @@ def main():
         'scope':'Hash-only wire evidence; repository input is the existing synthetic billing fixture, never production padding.'}
     project=Path(__file__).resolve().parents[1]
     result['runtime_sha256']={n:hashlib.sha256((project/n).read_bytes()).hexdigest() for n in (
-        'scripts/verify_cache_diagnostics.py','keystone/model.py','keystone/loop.py','keystone/cache_affinity.py','keystone/cache_state.py',
-        'keystone/conversation_prefix.py','keystone/compaction.py','keystone/compaction_notes.py')}
+        'scripts/verify_cache_diagnostics.py','revon/model.py','revon/loop.py','revon/cache_affinity.py','revon/cache_state.py',
+        'revon/conversation_prefix.py','revon/compaction.py','revon/compaction_notes.py')}
     try:
         if args.scenario in ('controls','exact-repeat'):
             result['cases']=controls(provider,recorder,args.vendor,args.extended_repository,
                 exact=args.scenario=='exact-repeat',affinity=args.affinity)
         elif args.scenario=='agent':
-            with tempfile.TemporaryDirectory(prefix='keystone-cache-diagnostics-') as tmp:
+            with tempfile.TemporaryDirectory(prefix='revon-cache-diagnostics-') as tmp:
                 result['cases']=conversation(provider,recorder,Path(tmp),args.affinity)
         elif args.scenario=='agent-compare':
             result['cases']=[]
-            with tempfile.TemporaryDirectory(prefix='keystone-cache-compare-') as tmp:
+            with tempfile.TemporaryDirectory(prefix='revon-cache-compare-') as tmp:
                 for i,mode in enumerate(args.affinity_order):
                     provider.cache_affinity=mode
                     cases=conversation(provider,recorder,Path(tmp),False,home_name=f'home-{i}',label=f'{i+1}-{mode}/',turns=args.turns)
@@ -206,13 +206,13 @@ def main():
                         'ok':len(cases)==args.turns and all(c['ok'] for c in cases)})
         else:
             if args.baseline_dir is None:raise ValueError('trim-compare requires --baseline-dir')
-            source=args.baseline_dir/'keystone/conversation_prefix.py'
+            source=args.baseline_dir/'revon/conversation_prefix.py'
             result['baseline_prefix_sha256']=hashlib.sha256(source.read_bytes()).hexdigest()
-            spec=importlib.util.spec_from_file_location('keystone._diagnostic_before_prefix',source)
+            spec=importlib.util.spec_from_file_location('revon._diagnostic_before_prefix',source)
             module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
-            from keystone.conversation_prefix import ConversationPrefix
+            from revon.conversation_prefix import ConversationPrefix
             result['cases']=[];provider.cache_affinity='off'
-            with tempfile.TemporaryDirectory(prefix='keystone-trim-compare-') as tmp:
+            with tempfile.TemporaryDirectory(prefix='revon-trim-compare-') as tmp:
                 for i,prefix_cls in enumerate((module.ConversationPrefix,ConversationPrefix)):
                     cases=conversation(provider,recorder,Path(tmp),False,home_name=f'home-{i}',label=f'trim-{i}/',
                         turns=args.turns,trim=True,prefix_cls=prefix_cls)

@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'node:path';
 import { realpath } from 'node:fs/promises';
-import { KeystoneBridge, BridgeEvent, Context, Ready, Result, Turn } from './bridge';
+import { RevonBridge, BridgeEvent, Context, Ready, Result, Turn } from './bridge';
 import { inside, validMessage } from './paths';
 import { viewHtml } from './view';
 
@@ -9,9 +9,9 @@ type VisibleTurn = { role: 'user' | 'assistant' | 'error' | 'plan'; text: string
   review?: { loading: boolean; text?: string; error?: string; truncated?: boolean; usage?: string } };
 type Credential = { vendor: string; configured: boolean; name: string; env: string[] };
 
-export class KeystoneView implements vscode.WebviewViewProvider, vscode.Disposable {
+export class RevonView implements vscode.WebviewViewProvider, vscode.Disposable {
   private view?: vscode.WebviewView;
-  private bridge?: KeystoneBridge;
+  private bridge?: RevonBridge;
   private connecting?: Promise<void>;
   private workspace?: vscode.WorkspaceFolder;
   private ready?: Ready & { onboarding?: Credential[]; config_dir?: string };
@@ -40,7 +40,7 @@ export class KeystoneView implements vscode.WebviewViewProvider, vscode.Disposab
     this.planningModel = context.workspaceState?.get<string>('keystone.planningModel', '') || '';
     this.reviewModel = context.workspaceState?.get<string>('keystone.reviewModel', '') || '';
     this.reviewEnabled = context.workspaceState?.get<boolean>('keystone.reviewEnabled', false) === true;
-    this.bar.text = '$(comment-discussion) Keystone'; this.bar.command = 'keystone.open'; this.bar.show();
+    this.bar.text = '$(comment-discussion) revon'; this.bar.command = 'keystone.open'; this.bar.show();
     context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(editor => {
       if (editor?.document.uri.scheme === 'file') { this.editor = editor; }
     }));
@@ -70,12 +70,12 @@ export class KeystoneView implements vscode.WebviewViewProvider, vscode.Disposab
       transcript: this.transcript, attachments: this.contexts.map((c, index) => ({ index, name: path.basename(c.path), selection: c.selection })),
       onboarding: this.ready?.onboarding || [],
       pythonChecked: this.pythonChecked, pythonSaved: this.pythonSaved, keyStatus: this.keyStatus });
-    this.bar.text = this.busy ? '$(sync~spin) Keystone' : '$(comment-discussion) Keystone';
+    this.bar.text = this.busy ? '$(sync~spin) revon' : '$(comment-discussion) revon';
   }
 
   // --- friendly error mapping: pick the right recovery action ---------------------
   private showError(err: unknown): void {
-    const message = err instanceof Error ? err.message : this.text('Keystone 操作失败', 'Keystone operation failed');
+    const message = err instanceof Error ? err.message : this.text('revon 操作失败', 'revon operation failed');
     this.transcript.push({ role: 'error', text: message });
     this.status = this.bridge && this.ready ? 'ready' : 'offline';
     const normalized = message.toLowerCase();
@@ -100,7 +100,7 @@ export class KeystoneView implements vscode.WebviewViewProvider, vscode.Disposab
     // Restricted Mode must never start the engine: an untrusted workspace gets
     // no Python process, no tool execution and no credential reads. This guard
     // was lost when the file was rewritten; host.test.cjs pins it.
-    if (!vscode.workspace.isTrusted) { throw new Error(this.text('请先信任当前工作区，再启动 Keystone。', 'Trust this workspace before starting Keystone.')); }
+    if (!vscode.workspace.isTrusted) { throw new Error(this.text('请先信任当前工作区，再启动 revon。', 'Trust this workspace before starting revon.')); }
     if (this.connecting) { return this.connecting; }
     if (this.bridge && this.status === 'ready') { return; }
     const connecting = this.initialize(this.generation); this.connecting = connecting;
@@ -117,9 +117,9 @@ export class KeystoneView implements vscode.WebviewViewProvider, vscode.Disposab
     const config = vscode.workspace.getConfiguration('keystone');
     let engine = config.get('enginePath', '').trim();
     const python = config.get('pythonPath', 'python').trim();
-    if (!python || python.toLowerCase().endsWith('pythonw.exe')) { throw new Error(this.text('请使用 python.exe，以便读取 Keystone 响应。', 'Use python.exe so Keystone responses can be read.')); }
-    if (engine && !path.isAbsolute(engine)) { throw new Error(this.text('Keystone 源码目录必须为绝对路径。', 'Keystone source directory must be an absolute path.')); }
-    const bridge = new KeystoneBridge(); this.bridge = bridge; this.status = 'connecting'; this.refresh();
+    if (!python || python.toLowerCase().endsWith('pythonw.exe')) { throw new Error(this.text('请使用 python.exe，以便读取 revon 响应。', 'Use python.exe so revon responses can be read.')); }
+    if (engine && !path.isAbsolute(engine)) { throw new Error(this.text('revon 源码目录必须为绝对路径。', 'revon source directory must be an absolute path.')); }
+    const bridge = new RevonBridge(); this.bridge = bridge; this.status = 'connecting'; this.refresh();
     bridge.on('event', (event: BridgeEvent) => {
       if (this.bridge !== bridge) { return; }
       if (event.event === 'user' && typeof event.content === 'string' && typeof event.display === 'string') {
@@ -150,7 +150,7 @@ export class KeystoneView implements vscode.WebviewViewProvider, vscode.Disposab
       bridge.start({ python, engine, launcher: vscode.Uri.joinPath(this.context.extensionUri, 'python', 'launch.py').fsPath, cwd: this.workspace.uri.fsPath });
       const ready = await bridge.request<Ready>('initialize', { workspace: this.workspace.uri.fsPath, home: config.get('homePath', ''), history: this.history }, 30000);
       if (generation !== this.generation || this.bridge !== bridge) { bridge.dispose(); return; }
-      if (!ready || ready.protocol !== 1 || !Array.isArray(ready.models) || !ready.ready) { throw new Error('Keystone bridge protocol is incompatible. Update Keystone and the extension.'); }
+      if (!ready || ready.protocol !== 1 || !Array.isArray(ready.models) || !ready.ready) { throw new Error('revon bridge protocol is incompatible. Update revon and the extension.'); }
       this.ready = ready as Ready & { onboarding?: Credential[]; config_dir?: string };
       if (this.model && !ready.models.some(model => model.id === this.model)) { this.model = ''; }
       this.status = 'ready'; this.pythonChecked = undefined; this.refresh();
@@ -190,7 +190,7 @@ export class KeystoneView implements vscode.WebviewViewProvider, vscode.Disposab
         const dirty = vscode.workspace.textDocuments.filter(d => d.isDirty && d.uri.scheme === 'file' && inside(this.workspace!.uri.fsPath, d.uri.fsPath));
         if (dirty.length) {
           const save = this.text('保存并继续', 'Save and continue');
-          const choice = await vscode.window.showWarningMessage(this.text('Keystone 编辑前需要保存工作区内未保存的文件，以避免冲突。', 'Save unsaved workspace files before Keystone edits them to avoid conflicts.'), { modal: true }, save);
+          const choice = await vscode.window.showWarningMessage(this.text('revon 编辑前需要保存工作区内未保存的文件，以避免冲突。', 'Save unsaved workspace files before revon edits them to avoid conflicts.'), { modal: true }, save);
           if (choice !== save || !(await Promise.all(dirty.map(d => d.save()))).every(Boolean)) { return; }
         }
       }
@@ -205,7 +205,7 @@ export class KeystoneView implements vscode.WebviewViewProvider, vscode.Disposab
       const result = await bridge.request<Result>('run', { prompt, contexts: this.contexts, model: this.model, mode: this.mode,
         planning: this.planning, planningModel: this.planningModel }, seconds * 1000);
       if (generation !== this.generation) { return; }
-      if (!result || typeof result.text !== 'string') { throw new Error('Invalid Keystone result'); }
+      if (!result || typeof result.text !== 'string') { throw new Error('Invalid revon result'); }
       this.history.push({ role: 'assistant', content: result.text });
       this.history = this.history.slice(-40);
       this.transcript.push({ role: result.ok ? 'assistant' : 'error', text: result.text,
@@ -247,7 +247,7 @@ export class KeystoneView implements vscode.WebviewViewProvider, vscode.Disposab
     this.refresh();
   }
   newChat(): void { this.stop(); this.history = []; this.transcript = []; this.contexts = []; this.activity = ''; this.refresh(); }
-  async configure(): Promise<void> { await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:keystone-local.keystone-agent'); }
+  async configure(): Promise<void> { await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:pledgedeveloper0418.keystone-agent'); }
   async reconnect(): Promise<void> { this.stop(); await this.connect(); }
   async action(review: boolean): Promise<void> {
     const generation = this.generation;
@@ -269,8 +269,8 @@ export class KeystoneView implements vscode.WebviewViewProvider, vscode.Disposab
   private assertTrustedForSpawn(what: string): boolean {
     if (vscode.workspace.isTrusted) { return true; }
     void vscode.window.showErrorMessage(
-      this.text('请先信任当前工作区，Keystone 才能启动 Python 或写入密钥。',
-                'Trust this workspace before Keystone can start Python or write credentials.'));
+      this.text('请先信任当前工作区，revon 才能启动 Python 或写入密钥。',
+                'Trust this workspace before revon can start Python or write credentials.'));
     this.transcript.push({ role: 'error',
       text: this.text(`已拒绝 ${what}：工作区未受信任。`, `${what} refused: workspace is not trusted.`) });
     this.refresh();
@@ -320,7 +320,7 @@ export class KeystoneView implements vscode.WebviewViewProvider, vscode.Disposab
   private async checkPython(pythonPath: string): Promise<{ ok: boolean; reason?: string }> {
     // 不走 bridge：向导的「选 Python」必须能在还没有可用连接时运行，
     // 否则就是鸡生蛋——连不上内核恰恰是因为 Python 配错了。
-    // 直接 spawn 候选解释器：①能跑起来 ②版本 ≥ 3.10 ③（若能找到 engine）可导入 keystone。
+    // 直接 spawn 候选解释器：①能跑起来 ②版本 ≥ 3.10 ③（若能找到 engine）可导入 revon。
     const engine = vscode.workspace.getConfiguration('keystone').get('enginePath', '').trim();
     const code = [
       'import importlib.util, json, sys',
@@ -329,7 +329,7 @@ export class KeystoneView implements vscode.WebviewViewProvider, vscode.Disposab
       `root = ${JSON.stringify(engine)}`,
       'if root: sys.path.insert(0, root)',
       'found = {n: bool(importlib.util.find_spec(n)) for n in ["keystone.config","keystone.loop","keystone.policy","keystone.secrets","keystone.routing"]}',
-      'out["keystone"] = found',
+      'out["revon"] = found',
       'out["ok"] = ok and (not root or found.get("keystone.config", False))',
       'print(json.dumps(out))',
     ].join('; ');
@@ -349,10 +349,10 @@ export class KeystoneView implements vscode.WebviewViewProvider, vscode.Disposab
         return { ok: false, reason: (result.stderr || 'python exited non-zero').split('\n')[0].slice(0, 160) };
       }
       const last = result.stdout.trim().split(/\r?\n/).pop() || '';
-      const info = JSON.parse(last) as { ok: boolean; version: string; keystone: Record<string, boolean> };
+      const info = JSON.parse(last) as { ok: boolean; version: string; revon: Record<string, boolean> };
       if (!info.ok) {
-        return { ok: false, reason: info.keystone && !info.keystone['keystone.config']
-          ? this.text('这个 Python 导入不了 keystone——Keystone 未安装或 keystone.enginePath 指错。', 'This Python cannot import keystone — install Keystone or fix keystone.enginePath.')
+        return { ok: false, reason: info.revon && !info.revon['keystone.config']
+          ? this.text('这个 Python 导入不了 revon——revon 未安装或 keystone.enginePath 指错。', 'This Python cannot import revon — install revon or fix keystone.enginePath.')
           : this.text('需要 Python 3.10+（当前 ' + info.version + '）。', 'Requires Python 3.10+ (found ' + info.version + ').') };
       }
       return { ok: true, reason: 'Python ' + info.version };
@@ -427,7 +427,7 @@ export class KeystoneView implements vscode.WebviewViewProvider, vscode.Disposab
           for (const key of ['planningModel', 'reviewModel'] as const) {
             if (typeof message[key] === 'string') {
               this[key] = message[key] as string;
-              await this.context.workspaceState?.update('keystone.' + key, this[key]);
+              await this.context.workspaceState?.update('revon.' + key, this[key]);
             }
           }
           if (typeof message.reviewEnabled === 'boolean') {
@@ -499,16 +499,16 @@ export class KeystoneView implements vscode.WebviewViewProvider, vscode.Disposab
 }
 
 export function activate(context: vscode.ExtensionContext): void {
-  const view = new KeystoneView(context);
+  const view = new RevonView(context);
   const register = (name: string, action: () => void | Promise<void>) => context.subscriptions.push(vscode.commands.registerCommand(name, async () => {
-    try { await action(); } catch (error) { void vscode.window.showErrorMessage(error instanceof Error ? error.message : 'Keystone operation failed'); }
+    try { await action(); } catch (error) { void vscode.window.showErrorMessage(error instanceof Error ? error.message : 'revon operation failed'); }
   }));
   context.subscriptions.push(view, vscode.window.registerWebviewViewProvider('keystone.chat', view));
   register('keystone.open', () => view.open()); register('keystone.newChat', () => view.newChat()); register('keystone.stop', () => view.stop());
   register('keystone.attachFile', () => view.attach()); register('keystone.attachSelection', () => view.attach(true));
   register('keystone.explainSelection', () => view.action(false)); register('keystone.reviewSelection', () => view.action(true));
   register('keystone.configure', () => view.configure()); register('keystone.reconnect', () => view.reconnect());
-  context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => { if (event.affectsConfiguration('keystone')) { view.settingsChanged(); } }),
+  context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => { if (event.affectsConfiguration('revon')) { view.settingsChanged(); } }),
     vscode.workspace.onDidChangeWorkspaceFolders(() => view.newChat()),
     vscode.workspace.onDidGrantWorkspaceTrust(() => view.settingsChanged()));
 }

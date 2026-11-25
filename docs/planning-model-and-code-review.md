@@ -11,7 +11,7 @@
 3. 选中“启用手动复审”，选择复审模型；留空沿用当前执行模型/路由。
 4. 回复或任务完成后，点击该结果下面的“复审”。不会自动请求，不会自动改代码。
 
-独立 Provider 使用原有密钥设置中的凭据，可与执行 Provider 不同；不在这份阶段设置里保存 Key，不向模型传递 API Key。新增对话或切换消息后，旧消息按钮不能审核新的回复。结果保留在对应消息上，并单独记录到 `~/.keystone/sessions/reviews/`，不加入 Agent 对话历史。
+独立 Provider 使用原有密钥设置中的凭据，可与执行 Provider 不同；不在这份阶段设置里保存 Key，不向模型传递 API Key。新增对话或切换消息后，旧消息按钮不能审核新的回复。结果保留在对应消息上，并单独记录到 `~/.revon/sessions/reviews/`，不加入 Agent 对话历史。
 
 设置窗口提供保存、取消和 Escape 退出；运行/复审期间不能修改阶段设置。按钮和弹窗沿用现有主题；不改变 sidebar 的 parent、order 或 dock。
 
@@ -32,7 +32,7 @@ python run.py review "需要审核的代码或完整回复" --review-model revie
 
 ## 与 always 的对应关系
 
-| always 机制 | Keystone 实现 |
+| always 机制 | revon 实现 |
 |---|---|
 | 手动触发、默认关闭 | GUI 与 VSCode 开关；完成回复后按钮；CLI 独立 `review` 命令 |
 | 独立 API 地址、Key、模型；未指定沿用对话配置 | 选择现有 Provider / Model 对，复用其既有凭据与 Secret 边界；不复制另一套明文 Key 设置 |
@@ -68,10 +68,10 @@ GUI 测试使用真实 Tk 与本机 HTTP：两种厂商协议、Key 仅在认证
 复现命令：
 
 ```powershell
-python -m unittest discover -s keystone -t . -p 'test_*.py' -q
-python -m keystone.selftest
-# 在 keystone-gui 目录
-python run_offline_checks.py test_phase_models test_task_planning test_navigation test_keystone_client test_secret_boundary test_i18n.TranslationTests
+python -m unittest discover -s revon -t . -p 'test_*.py' -q
+python -m revon.selftest
+# 在 revon-gui 目录
+python run_offline_checks.py test_phase_models test_task_planning test_navigation test_revon_client test_secret_boundary test_i18n.TranslationTests
 # 在 vscode-extension 目录
 npm test
 ```

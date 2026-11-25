@@ -8,7 +8,7 @@ Agent, ExecutionContext, Policy, ToolRegistry and ActionExecutor.
 
 ```python
 from client.server import ClientServer
-from keystone.client_runs import RunStore
+from revon.client_runs import RunStore
 
 store = RunStore(control_home / 'sessions' / 'client')
 server = ClientServer(('127.0.0.1', 7712), workspace=project, store=store)
@@ -25,7 +25,7 @@ that host-configured directory. Requests cannot provide a control home, registry
 trusted effect or ExecutionContext. Permissions/expose still come from the host's
 existing composed config. Invalid selectors fail before a task is created.
 
-The CLI enables durable projections at `~/.keystone/sessions/client/`. Plain imports
+The CLI enables durable projections at `~/.revon/sessions/client/`. Plain imports
 and programmatic servers default to an in-memory store; inject a persistent store
 explicitly when embedding. Each live execution has one owning server process;
 cross-server cancellation/worker handoff is not provided.

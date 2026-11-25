@@ -11,7 +11,7 @@
 ## 用法
 
 ```bash
-cd agent-keystone
+cd agent-revon
 python verify/independent_audit.py          # 人读输出
 python verify/independent_audit.py --json   # 机读输出
 ```
@@ -33,6 +33,6 @@ python verify/independent_audit.py --json   # 机读输出
 
 ## 纪律
 
-- **只读被验证的代码**：不写 `keystone/` 下任何文件；第 3 组的改写发生在 `tempfile` 副本里。
+- **只读被验证的代码**：不写 `revon/` 下任何文件；第 3 组的改写发生在 `tempfile` 副本里。
 - **不引用作者自检的结论**：第 3、4、5 组的证据全部由本文件自己构造。
 - **测量结果照实写**：探针失败、环境缺失、结论未知，都按 WARN 记录并写明原因，不静默跳过。

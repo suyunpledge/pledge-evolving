@@ -29,7 +29,7 @@ class SeedProbeTests(unittest.TestCase):
             for disabled in (False,True):
                 rows[0]['disabled']=disabled
                 if disabled: rows[0]['config']['baseURL']='https://ark.cn-beijing.volces.com/api/coding/v3'
-                (home/'keystone.patch.json').write_text(json.dumps(rows))
+                (home/'revon.patch.json').write_text(json.dumps(rows))
                 with self.assertRaises(ValueError):
                     probe.provider_for('doubao-seed-evolving',home)
 

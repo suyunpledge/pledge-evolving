@@ -2,7 +2,7 @@
 chcp 65001 >nul
 echo.
 echo  =============================
-echo   pledge-keystone selftest
+echo   pledge-revon selftest
 echo  =============================
 echo.
 cd /d "%~dp0"

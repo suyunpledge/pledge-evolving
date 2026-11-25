@@ -6,10 +6,10 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
-from keystone.change_review import ChangeReviewStore, DELETE_LIMIT, LIMIT
-from keystone.execution import ActionExecutor, ActionRequest, create_execution_context
-from keystone.policy import Policy, Mode, Sandbox
-from keystone.tools import build_builtin_registry
+from revon.change_review import ChangeReviewStore, DELETE_LIMIT, LIMIT
+from revon.execution import ActionExecutor, ActionRequest, create_execution_context
+from revon.policy import Policy, Mode, Sandbox
+from revon.tools import build_builtin_registry
 
 
 class ChangeReviewTests(unittest.TestCase):
@@ -173,7 +173,7 @@ class ChangeReviewTests(unittest.TestCase):
     def test_both_recovery_writes_fail_and_source_stays_intact(self):
         path = self.ws / 'original.txt'
         path.write_bytes(b'keep')
-        with patch('keystone.change_review.atomic_bytes', side_effect=OSError('disk full')):
+        with patch('revon.change_review.atomic_bytes', side_effect=OSError('disk full')):
             result = self.executor.execute(self.context, ActionRequest('delete_file', {'path': path.name})).as_dict()
         self.assertFalse(result['ok'])
         self.assertEqual(result['meta']['execution_state'], 'not_started')
@@ -218,7 +218,7 @@ class ChangeReviewTests(unittest.TestCase):
         self.assertEqual(path.read_bytes(), b'original')
 
     def test_restore_does_not_clobber_file_created_during_final_write(self):
-        from keystone.change_review import atomic_bytes
+        from revon.change_review import atomic_bytes
         path = self.ws / 'race.txt'
         path.write_bytes(b'original')
         ids = self.action('delete_file', path=path.name)
@@ -226,7 +226,7 @@ class ChangeReviewTests(unittest.TestCase):
             if kwargs.get('create_only'):
                 target.write_bytes(b'new user file')
             return atomic_bytes(target, *args, **kwargs)
-        with patch('keystone.change_review.atomic_bytes', side_effect=late_user_write):
+        with patch('revon.change_review.atomic_bytes', side_effect=late_user_write):
             with self.assertRaises(FileExistsError):
                 self.store.revert(ids, lambda *_: None)
         self.assertEqual(path.read_bytes(), b'new user file')

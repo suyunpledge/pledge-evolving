@@ -19,7 +19,7 @@
 ```mermaid
 flowchart TD
     HTTP[HTTP /api/run] --> Validate[验收与参数校验]
-    Validate --> Worker[run_keystone worker]
+    Validate --> Worker[run_revon worker]
     Dev[DevelopmentRuntime.run] --> Editor[EditorBridge.run]
     Editor --> Agent[Agent.run acceptance]
     Worker --> Agent

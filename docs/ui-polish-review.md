@@ -1,4 +1,4 @@
-# Keystone UI 审查与优化（2026-10-05）
+# revon UI 审查与优化（2026-10-05）
 
 基于 `1ff7e31` 的当前源码，保留暖灰 / Indigo 主题、品牌图标、插件权限语义和分批渲染机制。修改范围为桌面端源码、回归测试和本文档；未打包或生成 EXE。
 
@@ -38,8 +38,8 @@
 
 完整批次开始后，日志暴露出既有 Markdown / 历史加载残留回调；随后追加取消与会话隔离修复，并对最终源码运行上述两个专项批次。表中批次存在重复用例，不能直接相加作为独立测试总数。
 
-日志位于忽略的 `keystone-gui/desktop/build/`：`ui-polish-full.log`、`ui-polish-final-lifecycle.log`、`ui-polish-final-navigation.log`。新增测试已纳入 `run_offline_checks.py` 默认列表。
+日志位于忽略的 `revon-gui/desktop/build/`：`ui-polish-full.log`、`ui-polish-final-lifecycle.log`、`ui-polish-final-navigation.log`。新增测试已纳入 `run_offline_checks.py` 默认列表。
 
 ## 使用说明
 
-本次改动位于 `keystone-gui/keystone_gui_v2.py`、`chat_widgets.py`、`gui_theme.py`。已运行的桌面 EXE 不会自动载入这些 Python 源码修改；本次按约束未重新打包。验证时使用 Python 源码入口。
+本次改动位于 `revon-gui/revon_gui_v2.py`、`chat_widgets.py`、`gui_theme.py`。已运行的桌面 EXE 不会自动载入这些 Python 源码修改；本次按约束未重新打包。验证时使用 Python 源码入口。

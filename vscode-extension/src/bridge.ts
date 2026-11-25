@@ -20,19 +20,19 @@ export class FrameReader {
     let newline: number;
     while ((newline = this.buffer.indexOf('\n')) >= 0) {
       const line = this.buffer.slice(0, newline);
-      if (Buffer.byteLength(line) > this.limit) { throw new Error('Keystone response exceeds the protocol limit'); }
+      if (Buffer.byteLength(line) > this.limit) { throw new Error('revon response exceeds the protocol limit'); }
       this.buffer = this.buffer.slice(newline + 1);
       if (!line.trim()) { continue; }
       const value: unknown = JSON.parse(line);
-      if (!value || typeof value !== 'object' || Array.isArray(value)) { throw new Error('Invalid Keystone response'); }
+      if (!value || typeof value !== 'object' || Array.isArray(value)) { throw new Error('Invalid revon response'); }
       this.emit(value as Record<string, unknown>);
     }
-    if (Buffer.byteLength(this.buffer) > this.limit) { throw new Error('Keystone response exceeds the protocol limit'); }
+    if (Buffer.byteLength(this.buffer) > this.limit) { throw new Error('revon response exceeds the protocol limit'); }
   }
 }
 
 type Pending = { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout };
-export class KeystoneBridge extends EventEmitter {
+export class RevonBridge extends EventEmitter {
   private child?: ChildProcessWithoutNullStreams;
   private pending = new Map<string, Pending>();
   private closing = false;
@@ -49,31 +49,31 @@ export class KeystoneBridge extends EventEmitter {
     const frames = new FrameReader(value => this.frame(value));
     child.stdout.on('data', chunk => {
       try { frames.feed(Buffer.from(chunk)); }
-      catch { this.stop('Keystone returned an invalid or oversized response. Reconnect the engine.'); }
+      catch { this.stop('revon returned an invalid or oversized response. Reconnect the engine.'); }
     });
     // Raw diagnostics are never forwarded to the webview or persisted. The
     // structured response contains the trusted layer's sanitized error.
     child.stderr.on('data', () => {});
-    child.on('error', () => this.stop('Cannot start Keystone. Check the Python executable and Keystone source directory.'));
+    child.on('error', () => this.stop('Cannot start revon. Check the Python executable and revon source directory.'));
     child.on('exit', () => {
       if (this.child !== child) { return; }
       this.child = undefined;
-      this.rejectAll(new Error('Keystone engine exited. Check configuration and reconnect.'));
+      this.rejectAll(new Error('revon engine exited. Check configuration and reconnect.'));
       this.emit('closed');
     });
-    child.stdin.on('error', () => this.stop('Keystone engine disconnected.'));
+    child.stdin.on('error', () => this.stop('revon engine disconnected.'));
   }
 
   request<T>(method: 'initialize' | 'run' | 'review' | 'set_credential' | 'python_path_check', params: Record<string, unknown>, timeout: number): Promise<T> {
     const child = this.child;
-    if (!child || this.closing) { return Promise.reject(new Error('Keystone is not connected.')); }
+    if (!child || this.closing) { return Promise.reject(new Error('revon is not connected.')); }
     const id = randomBytes(16).toString('hex');
     const frame = JSON.stringify({ id, method, params }) + '\n';
     if (Buffer.byteLength(frame) > 2 * 1024 * 1024) { return Promise.reject(new Error('Editor context is too large.')); }
     return new Promise<T>((resolve, reject) => {
-      const timer = setTimeout(() => this.stop('Keystone task timed out; execution was terminated.'), timeout);
+      const timer = setTimeout(() => this.stop('revon task timed out; execution was terminated.'), timeout);
       this.pending.set(id, { resolve: value => resolve(value as T), reject, timer });
-      child.stdin.write(frame, error => { if (error) { this.stop('Cannot send a request to Keystone.'); } });
+      child.stdin.write(frame, error => { if (error) { this.stop('Cannot send a request to revon.'); } });
     });
   }
 

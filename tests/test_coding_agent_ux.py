@@ -5,11 +5,11 @@ import subprocess
 import tempfile
 import unittest
 
-from keystone.development.evidence import TaskEvidence
-from keystone.development.guard import FileRevisionGuard
-from keystone.development.runtime import DevelopmentRuntime
-from keystone.development.state import ModeState
-from keystone.test_task_planning import Router
+from revon.development.evidence import TaskEvidence
+from revon.development.guard import FileRevisionGuard
+from revon.development.runtime import DevelopmentRuntime
+from revon.development.state import ModeState
+from revon.test_task_planning import Router
 
 
 def call(name, **args):
@@ -28,17 +28,17 @@ class EvidenceTests(unittest.TestCase):
 
     def test_run_updates_keep_actual_model_parent_and_task(self):
         e = TaskEvidence()
-        e.apply({'type': 'development_agent_config', 'task_id': 't', 'agent': 'keystone/sub1',
+        e.apply({'type': 'development_agent_config', 'task_id': 't', 'agent': 'revon/sub1',
                  'selected_model': ['p', 'm'], 'model_source': 'independent', 'permission': 'read-only'})
-        e.apply({'type': 'user_message', 'task_id': 't', 'agent': 'keystone/sub1', 'run_id': 'child',
+        e.apply({'type': 'user_message', 'task_id': 't', 'agent': 'revon/sub1', 'run_id': 'child',
                  'parent_run_id': 'parent', 'depth': 1, 'content': 'inspect real source'})
-        e.apply({'type': 'workflow_state', 'task_id': 't', 'agent': 'keystone/sub1', 'run_id': 'child',
+        e.apply({'type': 'workflow_state', 'task_id': 't', 'agent': 'revon/sub1', 'run_id': 'child',
                  'parent_run_id': 'parent', 'depth': 1, 'phase': 'executing'})
-        e.apply({'type': 'usage', 'task_id': 't', 'agent': 'keystone/sub1', 'run_id': 'child', 'model': 'actual-model'})
-        e.apply({'type': 'assistant_message', 'task_id': 't', 'agent': 'keystone/sub1', 'run_id': 'child', 'content': 'done'})
-        e.apply({'type': 'workflow_state', 'task_id': 't', 'agent': 'keystone/sub1', 'run_id': 'child',
+        e.apply({'type': 'usage', 'task_id': 't', 'agent': 'revon/sub1', 'run_id': 'child', 'model': 'actual-model'})
+        e.apply({'type': 'assistant_message', 'task_id': 't', 'agent': 'revon/sub1', 'run_id': 'child', 'content': 'done'})
+        e.apply({'type': 'workflow_state', 'task_id': 't', 'agent': 'revon/sub1', 'run_id': 'child',
                  'parent_run_id': 'parent', 'depth': 1, 'phase': 'completed'})
-        row = e.runs[('keystone/sub1', 'child')]
+        row = e.runs[('revon/sub1', 'child')]
         self.assertEqual((row['model'], row['parent_run_id'], row['task'], row['output']),
                          ('actual-model', 'parent', 'inspect real source', 'done'))
         self.assertEqual(row['model_source'], 'independent')
@@ -159,17 +159,17 @@ class RuntimeUXTests(unittest.TestCase):
         self.assertIsNone(guard._public_text(str(self.path)))
 
     def test_future_model_settings_leave_frozen_task_unchanged(self):
-        self.rt.state.configure_agent_model('keystone/sub1', ('p', 'one'))
+        self.rt.state.configure_agent_model('revon/sub1', ('p', 'one'))
         snap = self.rt.state.task_snapshot()
-        self.rt.state.configure_agent_model('keystone/sub1', ('q', 'two'))
-        self.rt.state.configure_agent_model('keystone/sub2', ('p', 'three'))
-        self.assertEqual(dict(snap.agent_models), {'keystone/sub1': ('p', 'one')})
+        self.rt.state.configure_agent_model('revon/sub1', ('q', 'two'))
+        self.rt.state.configure_agent_model('revon/sub2', ('p', 'three'))
+        self.assertEqual(dict(snap.agent_models), {'revon/sub1': ('p', 'one')})
         current = dict(self.rt.state.task_snapshot().agent_models)
-        self.assertEqual(current, {'keystone/sub1': ('q', 'two'), 'keystone/sub2': ('p', 'three')})
+        self.assertEqual(current, {'revon/sub1': ('q', 'two'), 'revon/sub2': ('p', 'three')})
 
     def test_actual_main_child_review_routes_match_configuration_evidence(self):
-        from keystone.model import ModelRouter, Provider
-        from keystone.test_phase_models import Transport
+        from revon.model import ModelRouter, Provider
+        from revon.test_phase_models import Transport
         transport = Transport([call('spawn_subagent', task='inspect source', mode='plan'),
             'actual child output', 'actual main output', 'actual review output'])
         providers = [Provider(p, 'https://' + p + '.invalid', default_model=m)
@@ -178,20 +178,20 @@ class RuntimeUXTests(unittest.TestCase):
         self.rt.bridge.router = self.rt.bridge.agent.phase_catalog = router
         self.rt.catalog = self.rt.bridge.models = {p.name: (p.name, p.default_model) for p in providers}
         self.rt.state.configure_role('default', ('writer', 'code'))
-        self.rt.state.configure_agent_model('keystone/sub1', ('child', 'small'))
+        self.rt.state.configure_agent_model('revon/sub1', ('child', 'small'))
         self.rt.state.configure_role('review', ('reviewer', 'review'))
         result = self.rt.run('delegate through existing runtime', planning='none')
         self.assertTrue(result['ok'], result)
         self.rt.review()
         self.assertEqual([request[0] for request in transport.calls], ['writer', 'child', 'writer', 'reviewer'])
         config = self.rt.evidence.configurations
-        self.assertEqual(config['keystone/sub1']['model_source'], 'independent')
+        self.assertEqual(config['revon/sub1']['model_source'], 'independent')
         self.assertEqual(config['Review Agent']['selected_model'], ['reviewer', 'review'])
-        child = next(row for row in self.rt.evidence.runs.values() if row['agent'] == 'keystone/sub1')
+        child = next(row for row in self.rt.evidence.runs.values() if row['agent'] == 'revon/sub1')
         self.assertEqual(child['model'], 'small')
         self.assertTrue(child['parent_run_id'])
         events = self.rt.recovery(self.rt.bridge.agent.session.path)['events']
-        self.assertTrue(any(e['type'] == 'development_agent_config' and e['agent'] == 'keystone/sub1' for e in events))
+        self.assertTrue(any(e['type'] == 'development_agent_config' and e['agent'] == 'revon/sub1' for e in events))
 
 
 if __name__ == '__main__':

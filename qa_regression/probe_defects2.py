@@ -14,8 +14,8 @@ from pathlib import Path
 
 from _bootstrap import check, summary  # noqa: E402
 
-from keystone.session import Session  # noqa: E402
-from keystone.subagent import BudgetTracker  # noqa: E402
+from revon.session import Session  # noqa: E402
+from revon.subagent import BudgetTracker  # noqa: E402
 
 
 def tmp(label: str) -> Path:

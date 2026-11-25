@@ -47,7 +47,7 @@ registry.register(
 
 本次 Pro 总 token 降低 **40.31%**，Flash 降低 **34.49%**。减少不必要的结果重放后，两臂中的 improved 都避免了本 fixture 原本触发的三次压缩，从而同时减少输入并保留较长的可复用前缀。缓存 token 的绝对数量也有所下降，命中率提升应结合总输入减少一起解读。
 
-Flash baseline 有一次缓存回执未知，涉及 1294 个输入 token：计入总输入，但从已知命中率分母排除，没有算成零命中。这是小样本顺序 A/B，存在缓存状态和模型生成波动；不代表所有 Keystone 任务都能达到同样收益，也没有以发票或延迟数据证明费用、速度改善。
+Flash baseline 有一次缓存回执未知，涉及 1294 个输入 token：计入总输入，但从已知命中率分母排除，没有算成零命中。这是小样本顺序 A/B，存在缓存状态和模型生成波动；不代表所有 revon 任务都能达到同样收益，也没有以发票或延迟数据证明费用、速度改善。
 
 正式证据：
 
@@ -77,4 +77,4 @@ python scripts/verify_mimo_long_context.py --live --model mimo-v2.6-flash --resu
 python scripts/verify_mimo_retained_lookup.py --live --model mimo-v2.6-flash --request-limit 10 --output reports/new-view-lookup.json
 ```
 
-运行时仅从本地 Keystone 配置读取凭据，不将密钥写入报告。改动范围与归一化哈希见 `reports/mimo-view-files.json`，独立增量见 `reports/mimo-view.patch`；原始备份位置记录于 `reports/mimo-view-backup.txt`。
+运行时仅从本地 revon 配置读取凭据，不将密钥写入报告。改动范围与归一化哈希见 `reports/mimo-view-files.json`，独立增量见 `reports/mimo-view.patch`；原始备份位置记录于 `reports/mimo-view-backup.txt`。

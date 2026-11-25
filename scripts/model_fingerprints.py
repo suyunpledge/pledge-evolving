@@ -15,8 +15,8 @@ from urllib.parse import urlsplit, urlunsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from keystone.model_kinds import MODEL_KINDS, resolve_model_kind
-from keystone.vendors import PROFILES, normalize_usage, profile_for
+from revon.model_kinds import MODEL_KINDS, resolve_model_kind
+from revon.vendors import PROFILES, normalize_usage, profile_for
 
 
 def endpoint_scope(value):
@@ -60,8 +60,8 @@ def collect_receipts(directory):
         if kind and source == "model_id":
             observations[kind.id].append({"requested_model": chosen, **receipt})
 
-    # 2026-11 改名前的探针记录沿用 forge- 前缀，新记录用 keystone-。
-    for path in sorted(found for prefix in ("keystone", "forge") for probe in ("wire", "effort")
+    # 2026-11 改名前的探针记录沿用 forge- 前缀，新记录用 revon-。
+    for path in sorted(found for prefix in ("revon", "forge") for probe in ("wire", "effort")
                        for found in directory.glob(f"{prefix}-{probe}-*.json")):
         raw = json.loads(path.read_text(encoding="utf-8-sig"))
         for index, record in enumerate(raw.get("records", [])):

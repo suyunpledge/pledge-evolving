@@ -1,0 +1,771 @@
+"""Trusted secret virtualization; never expose a resolver as an agent tool.
+
+This is a capability boundary inside revon, not an OS sandbox for arbitrary
+Python/native code running as the same user. Protected agents use mediated
+tools only. The store is ephemeral; persisted sessions contain references only.
+"""
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+import base64
+from collections import OrderedDict
+import hashlib
+import json
+import logging
+import os
+from pathlib import Path
+import re
+import stat
+import threading
+from urllib.parse import quote, urlsplit
+
+MARKER = '[REDACTED_SECRET]'
+REF = re.compile(r'\{\{SECRET_REF:([A-F0-9]{32})\}\}')
+_LOCK = threading.RLock()
+_KNOWN: set[str] = set()
+_NUMERIC_VALUES: set[tuple[type, object]] = set()
+_KNOWN_BYTES = 0
+_SOURCE_DIGESTS = OrderedDict()
+
+
+class ScannedSource(str):
+    """Source text from a host file operation. Slices keep their source context."""
+    def __getitem__(self, key):
+        return ScannedSource(super().__getitem__(key))
+
+
+def source_observation(text, single_line=None):
+    # Store only bounded digests, so re-serializing an issued tool receipt can
+    # recover its context after crossing JSON. Unknown and changed text gets the
+    # regular credential scan. Known credentials are checked again on every use.
+    if not any(secret_field(m['key']) for m in _ASSIGN.finditer(text)):
+        return text
+    rows = [text]
+    if type(single_line) is int and text.startswith(f'{single_line}\t'):
+        rows.append(text.split('\t', 1)[1])
+    with _LOCK:
+        for row in rows:
+            if 0 < len(row) <= 16384:
+                digest = hashlib.sha256(row.encode('utf-8', 'surrogatepass')).digest()
+                _SOURCE_DIGESTS[digest] = None
+                _SOURCE_DIGESTS.move_to_end(digest)
+                if len(_SOURCE_DIGESTS) > 512:
+                    _SOURCE_DIGESTS.popitem(last=False)
+    return ScannedSource(text)
+
+
+def source_arguments(name, args):
+    """Preserve language context only for source fields of typed file operations."""
+    if not isinstance(args, dict) or name not in ('edit_file', 'write_file', 'apply_patch'):
+        return args
+    def tagged(block):
+        if not isinstance(block, dict) or not isinstance(block.get('path'), str) or not is_code_path(block['path']):
+            return block
+        result = dict(block)
+        for key in ('old', 'new', 'content'):
+            value = result.get(key)
+            # This additional exemption is only for a syntactic assignment to a
+            # variable. Comments, configuration values and string literals take
+            # the ordinary credential scan.
+            if isinstance(value, str) and re.fullmatch(r'[ \t]*[A-Za-z_]\w*[ \t]*=[ \t]*[A-Za-z_]\w*[ \t]*\n?', value):
+                result[key] = ScannedSource(value)
+        return result
+    if name == 'apply_patch':
+        return {k: [tagged(b) for b in v] if k in ('edits', 'patches') and isinstance(v, list) else v for k, v in args.items()}
+    return tagged(args)
+
+
+_PATHS: set[Path] = set()
+_IDENTITIES: set[tuple[int, int]] = set()
+_KEYS = {'apikey', 'accesskey', 'secretkey', 'secretaccesskey', 'accesskeysecret',
+         'accesstoken', 'refreshtoken', 'authtoken', 'token', 'password', 'passwd',
+         'pwd', 'authorization', 'bearer', 'privatekey', 'cookie', 'cookies',
+         'sessiontoken', 'sessionid', 'clientsecret', 'signingkey', 'credential',
+         'credentials', 'gatewaytoken', 'secret', 'xapikey'}
+_VENDORS = ('openai', 'anthropic', 'deepseek', 'qwen', 'dashscope', 'mimo',
+            'gemini', 'google', 'azure', 'aws', 'github', 'huggingface', 'keystone', 'revon')
+_FORMAT = re.compile(r'(?<![\w-])(?:sk-(?:proj-|ant-)?[A-Za-z0-9_-]{16,}|'
+                     r'gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|'
+                     r'AKIA[A-Z0-9]{16}|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)')
+_ASSIGN = re.compile(
+    r'(?<![\w.-])(?P<head>["\']?(?P<key>[\w.-]{1,128})["\']?\s*[:=]\s*)')
+_VALUE = re.compile(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|[^\r\n,;}{\[\]"\']+')
+_COOKIE_VALUE = re.compile(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|[^\r\n"\']+')
+_AUTH = re.compile(r'\bBearer\s+([^\s"\'<>;,]+)', re.I)
+# Source files: an unquoted right-hand side is an expression (``token = args.get(...)``),
+# never a literal credential. Hard-coded secrets in code are quoted and stay protected.
+CODE_SUFFIXES = frozenset({
+    '.py', '.pyi', '.js', '.jsx', '.mjs', '.cjs', '.ts', '.tsx', '.qml', '.java', '.kt', '.kts',
+    '.go', '.rs', '.c', '.h', '.cc', '.cpp', '.hpp', '.cs', '.swift', '.rb', '.php', '.scala',
+    '.lua', '.dart', '.vue', '.svelte'})
+# Tools whose text already passed the file-aware detector (document_text) per file.
+FILE_SCANNED_TOOLS = frozenset({'read_file', 'read_range', 'grep', 'file_outline', 'file_stats',
+                                'review_changes'})
+# Unquoted values that are code rather than data: a call, or an attribute chain
+# (``getpass(``, ``cfg.password``); subscripts are checked at the call site.
+_CODE_ATTR = re.compile(r'[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+')
+_CODE_CALL = re.compile(r'[A-Za-z_][\w.]*\(.*')
+
+
+def is_code_path(path) -> bool:
+    return Path(path).suffix.lower() in CODE_SUFFIXES
+
+
+_URL_PASSWORD = re.compile(r'(?<![a-z0-9+.-])([a-z][a-z0-9+.-]{0,31}://[^\s/@:]+:)([^\s/@]+)(@)', re.I)
+
+
+def secret_field(name: str, *, vendor: bool = False) -> bool:
+    key = re.sub(r'[^a-z0-9]', '', str(name).lower())
+    return (key in _KEYS or any(key.endswith(t) for t in
+            ('apikey', 'password', 'passwd', 'accesstoken', 'refreshtoken',
+             'clientsecret', 'privatekey', 'sessiontoken', 'accesskeysecret'))
+            or (vendor and key in {'key', 'auth', 'secret'})
+            or any(key.startswith(v) and key.endswith(('key', 'token', 'secret')) for v in _VENDORS))
+
+
+def _variants(value: str) -> set[str]:
+    values = {value}
+    bearer = re.fullmatch(r'Bearer\s+(\S+)', value, re.I)
+    if bearer:
+        values.add(bearer[1])
+    # A declared Cookie/Authorization string can contain multiple credentials.
+    # Also remember their scalar values, so a later echo without its header is safe.
+    for part in value.split(';'):
+        cookie = re.fullmatch(r'\s*[A-Za-z_][\w-]{0,64}=([^\s;]+)\s*', part)
+        if cookie:
+            values.add(cookie[1])
+    return {variant for item in values for variant in
+            (item, json.dumps(item, ensure_ascii=False)[1:-1],
+             json.dumps(item, ensure_ascii=True)[1:-1], quote(item, safe=''),
+             base64.b64encode(item.encode()).decode())}
+
+
+def _remember(value: str) -> None:
+    global _KNOWN_BYTES
+    if value:
+        if len(value.encode('utf-8')) > 64 * 1024:
+            raise ValueError('Secret exceeds the 64 KiB value limit')
+        variants = _variants(value)
+        # QA-06（独立 QA 回归）：短值不进子串匹配集——否则测试/运行期
+        # put 过 'old' 一类占位词后，全局 redact 会把普通单词、合法模型
+        # 标识符和配置值误杀（子串命中即替换）。真实凭据几乎全部 ≥16
+        # 字符；12 以下短值的保护价值远低于全局误伤。REF 精确匹配路径
+        # 不经过 _KNOWN 子串，不受影响。
+        variants = {v for v in variants if len(v) >= 12}
+        if not variants:
+            return
+        with _LOCK:
+            added = variants - _KNOWN
+            size = sum(len(v.encode('utf-8')) for v in added)
+            if _KNOWN_BYTES + size > 16 * 1024 * 1024:
+                raise ValueError('Secret redaction capacity exceeded')
+            _KNOWN.update(added)
+            _KNOWN_BYTES += size
+
+
+def forget_known_secrets() -> None:
+    """Testing/reset hook: drop the in-memory redaction registry.
+
+    Never touches persisted secret stores — only the process-global
+    substring match set built by ``_remember``.
+    """
+    global _KNOWN_BYTES
+    with _LOCK:
+        _KNOWN.clear()
+        _SOURCE_DIGESTS.clear()
+        _KNOWN_BYTES = 0
+
+
+def _known_text(text: str, replace) -> str:
+    with _LOCK:
+        values = sorted(_KNOWN, key=len, reverse=True)
+    # Protect existing opaque references from short-value substitutions.
+    parts = re.split(r'(\{\{SECRET_REF:[A-F0-9]{32}\}\}|\[REDACTED_SECRET\])', text)
+    # A forged syntactically valid ID can itself be a 32-hex credential.
+    # Public reference syntax never exempts an exact known credential value.
+    for i in range(1, len(parts), 2):
+        ref = REF.fullmatch(parts[i])
+        if ref and ref[1] in values:
+            parts[i] = replace(ref[1])
+    present = [v for v in values if v in text]
+    if present:
+        pattern = re.compile('|'.join((r'(?<!\w)' + re.escape(v) + r'(?!\w)')
+                                      if len(v) < 8 else re.escape(v) for v in present))
+        for i in range(0, len(parts), 2):
+            parts[i] = pattern.sub(lambda m: replace(m[0]), parts[i])
+    return ''.join(parts)
+
+
+class SecretStore(ABC):
+    """Local backend contract; intentionally no public get/list/export API."""
+    @abstractmethod
+    def _put(self, scope: str, value: object) -> str: ...
+
+    @abstractmethod
+    def _read(self, grant: '_UseGrant', *, target: str, operation: str) -> object: ...
+
+    @abstractmethod
+    def _revoke(self, scope: str) -> None: ...
+
+    @abstractmethod
+    def _owns(self, scope: str, ref: str) -> bool: ...
+
+
+class MemorySecretStore(SecretStore):
+    def __init__(self):
+        self.__items = {}
+        self.__lock = threading.RLock()
+
+    def _put(self, scope, value):
+        with self.__lock:
+            if len(self.__items) >= 4096:
+                raise ValueError('Secret reference capacity exceeded')
+            ref = '{{SECRET_REF:' + os.urandom(16).hex().upper() + '}}'
+            _remember(value if isinstance(value, str) else json.dumps(value, allow_nan=False))
+            if isinstance(value, (int, float, bool)):
+                with _LOCK:
+                    _NUMERIC_VALUES.add((type(value), value))
+            self.__items[ref] = (scope, value)
+            return ref
+
+    def _read(self, grant, *, target, operation):
+        if (not isinstance(grant, _UseGrant) or grant._seal is not _SEAL
+                or grant.target != target or grant.operation != operation):
+            raise PermissionError('Secret capability denied')
+        with self.__lock:
+            item = self.__items.get(grant.ref)
+            if item is None or item[0] != grant.scope:
+                raise PermissionError('Secret reference expired or belongs to another session')
+            return item[1]
+
+    def _revoke(self, scope):
+        with self.__lock:
+            self.__items = {k: v for k, v in self.__items.items() if v[0] != scope}
+
+    def _owns(self, scope, ref):
+        with self.__lock:
+            return ref in self.__items and self.__items[ref][0] == scope
+
+
+_SEAL = object()
+
+
+class _UseGrant:
+    __slots__ = ('scope', 'ref', 'target', 'operation', '_seal')
+
+    def __init__(self, scope, ref, target, operation, seal):
+        self.scope, self.ref, self.target, self.operation = scope, ref, target, operation
+        self._seal = seal
+
+
+class SecretScope:
+    """Session facade: may create/reference/protect, never resolve or enumerate."""
+    def __init__(self, store: SecretStore | None = None):
+        self._store = store or MemorySecretStore()
+        self._id = os.urandom(16).hex()
+        self.__refs = {}
+        self.__salt = os.urandom(32)
+        self.__lock = threading.RLock()
+        self.__closed = False
+        self._config_grants = {}
+
+    def reference(self, value):
+        if value is None or value == '' or isinstance(value, str) and (REF.fullmatch(value) or value == MARKER):
+            return value
+        if not isinstance(value, (str, int, float, bool)):
+            raise ValueError('Unsupported secret value type')
+        with self.__lock:
+            if self.__closed:
+                raise PermissionError('Secret session is closed')
+            import hashlib, hmac
+            canonical = json.dumps([type(value).__name__, value], ensure_ascii=False, allow_nan=False)
+            lookup = hmac.new(self.__salt, canonical.encode('utf-8'), hashlib.sha256).digest()
+            if lookup not in self.__refs:
+                self.__refs[lookup] = self._store._put(self._id, value)
+            return self.__refs[lookup]
+
+    def protect_text(self, text: str, *, code: bool | None = None) -> str:
+        """``code=True``: the text is source code already scanned per file, so unquoted
+        assignment values are expressions. Known secrets, quoted literals, key blocks,
+        Bearer/URL credentials and token formats are still replaced."""
+        text = str(text)
+        if len(text) > 8 * 1024 * 1024:
+            raise ValueError('Content exceeds the 8 MiB secret inspection limit')
+        # Inspect JSON semantically so punctuation/numeric credentials cannot
+        # replace protocol delimiters or leave unquoted references behind.
+        if text.lstrip().startswith(('{', '[')):
+            try:
+                parsed = json.loads(text)
+            except ValueError:
+                pass
+            else:
+                if isinstance(parsed, (dict, list)):
+                    protected = self.protect(parsed)
+                    return json.dumps(protected, ensure_ascii=False, default=str) if protected != parsed else text
+        text = _known_text(text, self.reference)
+        # Deterministic scanning also protects unterminated private-key blocks.
+        # A regex searching for END repeatedly is quadratic on hostile inputs.
+        start_pattern = re.compile(r'-----BEGIN ([A-Z ]*PRIVATE KEY)-----')
+        pieces, offset = [], 0
+        while True:
+            begin = start_pattern.search(text, offset)
+            if not begin: break
+            end_tag = '-----END ' + begin[1] + '-----'
+            end = text.find(end_tag, begin.end())
+            end = len(text) if end < 0 else end + len(end_tag)
+            pieces.extend((text[offset:begin.start()], self.reference(text[begin.start():end])))
+            offset = end
+        if pieces:
+            text = ''.join(pieces) + text[offset:]
+        pieces, offset = [], 0
+        vendor = any(re.sub(r'[^a-z0-9]', '', m['key'].lower()) in
+                     {'vendor', 'baseurl', 'provider'} for m in _ASSIGN.finditer(text))
+        for m in _ASSIGN.finditer(text):
+            if m.start() < offset or not secret_field(m['key'], vendor=vendor):
+                continue
+            parser = _COOKIE_VALUE if m['key'].lower() in {'cookie', 'cookies'} else _VALUE
+            # Recognise prefixed source literals (e.g. Python raw strings);
+            # a prefix alone must never be interpreted as a variable reference.
+            prefix = re.match(r'''(?i:[rbuf]{1,2})(?=["'])''', text[m.end():m.end()+3]) if code is not False else None
+            match = parser.match(text, m.end() + (len(prefix[0]) if prefix else 0))
+            if not match: continue
+            raw = match[0].strip()
+            # Preserve quoting. A dollar prefix or embedded reference syntax is
+            # not proof of environment indirection: passwords can contain both.
+            quote_char = raw[:1] if raw[:1] in {'"', "'"} else ''
+            value = raw[1:-1] if quote_char else raw.split(' #', 1)[0].strip()
+            if not quote_char and (value in {'null', 'None', 'true', 'false'} or value.isdecimal()):
+                continue  # Structural JSON/Python values are not secret strings.
+            # Code style puts spaces around ``=``; ``KEY=value`` lines (.env, shell)
+            # stay protected even when the value looks like ``abc.def``.
+            spaced = m['head'].rstrip() != m['head'] and '=' in m['head']
+            if not quote_char and code is not False and (code and value.isidentifier()
+                    or _CODE_CALL.fullmatch(value) or spaced and (
+                        _CODE_ATTR.fullmatch(value) or text.startswith('[', match.end()))):
+                continue  # An expression in source code, not a credential literal.
+            if not value or REF.fullmatch(value) or value == MARKER:
+                continue
+            if quote_char == '"':
+                try:
+                    value = json.loads(raw)
+                except ValueError:
+                    pass
+            if m['key'] == 'authorization' and value in {'allow', 'deny', 'ask'}:
+                continue  # revon's Policy decision, not an HTTP credential
+            ref = self.reference(value)
+            pieces.extend((text[offset:m.start()], m['head'] + (prefix[0] if prefix else '') + quote_char + ref + quote_char))
+            offset = match.end()
+        if pieces:
+            text = ''.join(pieces) + text[offset:]
+        text = _AUTH.sub(lambda m: 'Bearer ' + self.reference(m[1]), text)
+        text = _URL_PASSWORD.sub(lambda m: m[1] + self.reference(m[2]) + m[3], text)
+        text = _FORMAT.sub(lambda m: self.reference(m[0]), text)
+        return _known_text(text, self.reference)
+
+    def protect(self, value, *, vendor: bool = False, _depth: int = 0, _container_secret=False):
+        if _depth == 0 and isinstance(value, (dict, list, tuple)):
+            with _LOCK:
+                generation = (_KNOWN_BYTES, len(_NUMERIC_VALUES))
+            safe = self.protect(value, vendor=vendor, _depth=1,
+                                _container_secret=_container_secret)
+            with _LOCK:
+                discovered = generation != (_KNOWN_BYTES, len(_NUMERIC_VALUES))
+            # A declaration at the end of a document can classify a value that
+            # appeared earlier. Revisit only when detection registered values.
+            return (self.protect(safe, vendor=vendor, _depth=1,
+                                 _container_secret=_container_secret) if discovered else safe)
+        if _depth > 64:
+            raise ValueError('Secret inspection nesting exceeds 64 levels')
+        if isinstance(value, dict):
+            is_vendor = vendor or any(k in value for k in ('vendor', 'base_url', 'baseURL', 'provider'))
+            out = {}
+            for key, item in value.items():
+                safe_key = self.protect_text(str(key))
+                if (key == 'content' and isinstance(item, str) and 0 < len(item) <= 16384
+                        and (value.get('ok') is True and isinstance(value.get('meta'), dict) or value.get('role') == 'tool')):
+                    with _LOCK:
+                        if hashlib.sha256(item.encode('utf-8', 'surrogatepass')).digest() in _SOURCE_DIGESTS:
+                            item = ScannedSource(item)
+                if key == 'authorization' and isinstance(item, str) and item in {'allow', 'deny', 'ask'}:
+                    out[safe_key] = item
+                    continue
+                secret = secret_field(str(key), vendor=is_vendor)
+                secret = secret or (_container_secret and str(key).lower() not in
+                                    {'name', 'domain', 'path', 'expires', 'samesite', 'username', 'type'})
+                if secret and isinstance(item, (str, int, float, bool)) and item is not None:
+                    out[safe_key] = self.reference(item)
+                else:
+                    out[safe_key] = self.protect(item, vendor=is_vendor, _depth=_depth + 1,
+                        _container_secret=_container_secret or secret)
+            return out
+        if isinstance(value, (list, tuple)):
+            return [self.protect(v, vendor=vendor, _depth=_depth + 1,
+                                 _container_secret=_container_secret) for v in value]
+        if isinstance(value, ScannedSource) and not _container_secret:
+            return ScannedSource(self.protect_text(str(value), code=True))
+        if isinstance(value, str):
+            return self.reference(value) if _container_secret else self.protect_text(value)
+        if isinstance(value, (int, float, bool)):
+            with _LOCK:
+                known = (type(value), value) in _NUMERIC_VALUES
+            if known:
+                return self.reference(value)
+        return value
+
+    def file_text(self, path: Path) -> str:
+        assert_public_path(path)
+        # Detect the entire file, not a truncated/range fragment of it.
+        text = read_public_bytes(path, limit=8 * 1024 * 1024).decode('utf-8-sig')
+        return self.document_text(path, text)
+
+    def document_text(self, path: Path, text: str) -> str:
+        """Protect a complete editor buffer using the same file-aware detector."""
+        path = Path(path)
+        assert_public_path(path)
+        if not isinstance(text, str) or len(text.encode('utf-8')) > 8 * 1024 * 1024:
+            raise ValueError('Document exceeds the 8 MiB secret inspection limit')
+        if path.suffix.lower() in {'.json', '.yaml', '.yml', '.toml', '.env'} or path.name.startswith('.env'):
+            from .config_edit import _parse
+            value, _ = _parse(path, text)
+            safe = self.protect(value)  # register semantic values, including escaped strings
+            from .config_edit import _leaves
+            protected = dict(_leaves(safe))
+            if any(isinstance(item, (int, float, bool)) and protected.get(key) != item
+                   for key, item in _leaves(value)):
+                return json.dumps(safe, ensure_ascii=False, default=str)
+        if path.suffix.lower() in ('.py', '.pyi') and any(secret_field(m['key']) for m in _ASSIGN.finditer(text)):
+            # Comments and strings contain data even in Python files. Detect
+            # assignments inside those tokens before treating executable names as expressions.
+            import io
+            import tokenize
+            offsets = [0]
+            for line in text.splitlines(keepends=True):
+                offsets.append(offsets[-1] + len(line))
+            changes = []
+            try:
+                for token in tokenize.generate_tokens(io.StringIO(text).readline):
+                    if token.type not in (tokenize.COMMENT, tokenize.STRING) or not _ASSIGN.search(token.string):
+                        continue
+                    clean = self.protect_text(token.string, code=False)
+                    if clean != token.string:
+                        start, end = token.start, token.end
+                        changes.append((offsets[start[0]-1] + start[1], offsets[end[0]-1] + end[1], clean))
+            except (tokenize.TokenError, IndentationError, SyntaxError):
+                return self.protect_text(text, code=False)
+            if changes:
+                parts, pos = [], 0
+                for begin, end, clean in changes:
+                    parts.extend((text[pos:begin], clean))
+                    pos = end
+                text = ''.join(parts) + text[pos:]
+        return self.protect_text(text, code=is_code_path(path))
+
+    def close(self):
+        with self.__lock:
+            self._store._revoke(self._id)
+            self.__refs.clear()
+            self.__closed = True
+            self._config_grants.clear()
+
+
+def redact(value):
+    """Output fence: discovered secrets become markers, never resolvable refs."""
+    scope = SecretScope()
+    try:
+        safe = scope.protect(value)
+        # Existing SecretRefs must remain usable in outputs/sessions.
+        new_refs = set(scope._SecretScope__refs.values())
+        def clean(v):
+            if isinstance(v, str):
+                for ref in new_refs:
+                    v = v.replace(ref, MARKER)
+                clean_text = _known_text(v, lambda _: MARKER)
+                return ScannedSource(clean_text) if isinstance(v, ScannedSource) else clean_text
+            if isinstance(v, dict):
+                return {clean(k): clean(item) for k, item in v.items()}
+            if isinstance(v, list):
+                return [clean(item) for item in v]
+            return v
+        return clean(safe)
+    finally:
+        scope.close()
+
+
+def protect_store_path(path: Path) -> None:
+    path = Path(path).resolve()
+    with _LOCK:
+        _PATHS.add(path)
+        try:
+            st = path.stat()
+            _IDENTITIES.add((st.st_dev, st.st_ino))
+        except OSError:
+            pass
+
+
+def assert_public_path(path: Path, *, opened=None) -> None:
+    path = Path(path).resolve()
+    from .compat import home_roots
+    defaults = {root / 'secrets.json' for root in home_roots()}
+    with _LOCK:
+        roots = _PATHS | {p.resolve() for p in defaults}
+        if any(path == p or p in path.parents for p in roots):
+            raise PermissionError('Secret Store is not accessible to agent tools')
+        for p in roots:
+            try:
+                st = p.stat()
+                _IDENTITIES.add((st.st_dev, st.st_ino))
+            except OSError:
+                pass
+        try:
+            st = opened if opened is not None else path.stat()
+            if (st.st_dev, st.st_ino) in _IDENTITIES:
+                raise PermissionError('Secret Store alias is not accessible to agent tools')
+        except FileNotFoundError:
+            pass
+
+
+def read_public_bytes(path: Path, *, limit: int, root: Path | None = None) -> bytes:
+    """Bound the allocation before decoding/parsing untrusted file content."""
+    assert_public_path(path)
+    def open_readonly(name, flags):
+        return os.open(name, flags | getattr(os, 'O_NONBLOCK', 0))
+
+    with open(path, 'rb', opener=open_readonly) as stream:
+        opened = os.fstat(stream.fileno())
+        if not stat.S_ISREG(opened.st_mode):
+            raise ValueError('Only regular files can be inspected')
+        if root is not None:
+            resolved = Path(path).resolve(strict=True)
+            if not resolved.is_relative_to(Path(root).resolve(strict=True)) or not os.path.samestat(opened, resolved.stat()):
+                raise PermissionError('The opened file does not belong to the selected workspace.')
+        assert_public_path(path, opened=opened)
+        data = stream.read(limit + 1)
+    if len(data) > limit:
+        raise ValueError(f'File exceeds the {limit} byte inspection limit')
+    return data
+
+
+def _grant(scope: SecretScope, ref: str, target: str, operation: str) -> _UseGrant:
+    if not REF.fullmatch(ref):
+        raise PermissionError('Malformed SecretRef')
+    return _UseGrant(scope._id, ref, target, operation, _SEAL)
+
+
+def authorize_config_secret(scope, policy, *, path, revision, pointer, capability, ref=None):
+    """Human/host approval API, deliberately absent from every tool schema.
+
+    Grants bind one capability to one session/file/version/field/reference.
+    A policy wildcard or BYPASS cannot mint these grants. No value is returned.
+    """
+    from .policy import Decision
+    if capability not in {'secret.use', 'secret.create', 'secret.replace', 'secret.delete'}:
+        raise PermissionError('Invalid secret configuration capability')
+    if policy.evaluate(capability) is not Decision.ALLOW:
+        raise PermissionError('An explicit human secret capability grant is required')
+    if ref is not None and (not REF.fullmatch(ref) or not scope._store._owns(scope._id, ref)):
+        raise PermissionError('Reference is not owned by this session')
+    if capability != 'secret.delete' and ref is None:
+        raise PermissionError('Secret use requires an exact owned reference')
+    target = str(policy.abs_path(path).resolve())
+    assert_public_path(Path(target))
+    scope._config_grants[(target, revision, pointer, capability)] = ref
+
+
+def authorize_config_destination(scope, policy, *, path, revision, pointer, value):
+    """Host approval of a credential destination; never registered as a tool."""
+    from .policy import Decision
+    if policy.evaluate('secret.use') is not Decision.ALLOW:
+        raise PermissionError('An explicit human secret.use grant is required')
+    target = str(policy.abs_path(path).resolve())
+    assert_public_path(Path(target))
+    scope._config_grants[(target, revision, pointer, 'secret.destination')] = json.dumps(value, sort_keys=True)
+
+
+def _restore_config(scope, value, target):
+    """Only called after a trusted patch validator approved the exact tree."""
+    if isinstance(value, dict):
+        return {k: _restore_config(scope, v, target) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_restore_config(scope, v, target) for v in value]
+    if isinstance(value, str):
+        if REF.fullmatch(value):
+            return scope._store._read(_grant(scope, value, target, 'config.preserve'),
+                                      target=target, operation='config.preserve')
+        def restore(m):
+            grant = _grant(scope, m[0], target, 'config.preserve')
+            restored = scope._store._read(grant, target=target, operation='config.preserve')
+            if not isinstance(restored, str):
+                raise PermissionError('Typed SecretRef cannot be embedded in a string')
+            return restored
+        return REF.sub(restore, value)
+    return value
+
+
+class VendorCredential:
+    """Endpoint-bound authentication holder. No public value getter."""
+    def __init__(self, value: str, endpoint: str):
+        import hashlib
+        self.__scope = SecretScope()
+        self.ref = self.__scope.reference(value)
+        self.__endpoint = endpoint.rstrip('/')
+        self._account_fingerprint = hashlib.sha256(value.encode()).hexdigest() if value else ''
+
+    @classmethod
+    def from_reference(cls, scope, policy, *, ref, endpoint):
+        """Trusted host binds an owned reference to an approved adapter endpoint.
+
+        No resolution occurs here. The adapter consumes it only in _header().
+        This factory is deliberately absent from the LLM's tool surface.
+        """
+        from .policy import Decision
+        if policy.evaluate('secret.use') is not Decision.ALLOW:
+            raise PermissionError('Vendor secret use requires an explicit human grant')
+        if not REF.fullmatch(ref) or not scope._store._owns(scope._id, ref):
+            raise PermissionError('Reference is not owned by this session')
+        parts = urlsplit(endpoint)
+        if parts.username is not None or parts.fragment or not parts.netloc:
+            raise PermissionError('Invalid credential destination')
+        out = cls.__new__(cls)
+        out.__scope, out.ref, out.__endpoint = scope, ref, endpoint.rstrip('/')
+        import hashlib
+        out._account_fingerprint = hashlib.sha256((scope._id + ref).encode()).hexdigest()
+        return out
+
+    def __repr__(self):
+        return 'VendorCredential(Protected)'
+
+    def _header(self, url: str, *, wire: str):
+        actual, allowed = urlsplit(url), urlsplit(self.__endpoint)
+        if (actual.scheme, actual.netloc) != (allowed.scheme, allowed.netloc):
+            raise PermissionError('Secret use denied for another endpoint')
+        if self.ref and actual.scheme != 'https' and actual.hostname not in {'127.0.0.1', 'localhost', '::1'}:
+            raise PermissionError('Secret use requires TLS or loopback')
+        value = ''
+        if self.ref:
+            grant = _grant(self.__scope, self.ref, self.__endpoint, 'vendor.authenticate')
+            value = str(self.__scope._store._read(grant, target=self.__endpoint, operation='vendor.authenticate'))
+        return ({'x-api-key': value, 'anthropic-version': '2023-06-01'} if wire == 'anthropic'
+                else {'Authorization': 'Bearer ' + value})
+
+
+class SecretLoggingFilter(logging.Filter):
+    def filter(self, record):
+        standard = logging.LogRecord('', 0, '', 0, '', (), None).__dict__
+        extra_keys = set(record.__dict__) - set(standard)
+        try:
+            record.msg = redact(record.getMessage())
+            record.args = ()
+            if record.exc_info:
+                record.exc_text = _exception_text(*record.exc_info)
+                record.exc_info = None
+            elif record.exc_text:
+                record.exc_text = redact(record.exc_text)
+            if record.stack_info:
+                record.stack_info = redact(record.stack_info)
+            def log_value(value, depth=0):
+                if depth > 64:
+                    raise ValueError('Diagnostic nesting limit')
+                if isinstance(value, dict):
+                    return {str(k): log_value(v, depth + 1) for k, v in value.items()}
+                if isinstance(value, (list, tuple)):
+                    return [log_value(v, depth + 1) for v in value]
+                if isinstance(value, (str, int, float, bool)) or value is None:
+                    return value
+                return str(value)
+            extras = {k: record.__dict__[k] for k in extra_keys}
+            safe_extras = redact(log_value(extras))
+            for key in standard:
+                if key != 'msg' and isinstance(record.__dict__.get(key), str):
+                    record.__dict__[key] = redact(record.__dict__[key])
+            # Replace, rather than overlay: a sanitized key must not leave its
+            # original spelling/value available to a structured log handler.
+            for key in extra_keys:
+                record.__dict__.pop(key, None)
+            record.__dict__.update(safe_extras)
+        except Exception:
+            # Failure is a closed output boundary, including structured extras.
+            for key in extra_keys:
+                record.__dict__.pop(key, None)
+            for key in standard:
+                if isinstance(record.__dict__.get(key), str):
+                    record.__dict__[key] = MARKER
+            record.msg, record.args = MARKER + ' (diagnostic suppressed)', ()
+            record.exc_info, record.exc_text, record.stack_info = None, None, None
+        return True
+
+
+def _exception_text(exc_type, value, tb):
+    import traceback
+    try:
+        return redact(''.join(traceback.format_exception(exc_type, value, tb)))
+    except Exception:
+        return MARKER + ' (diagnostic suppressed)\n'
+
+
+def install_tk_exception_redaction(root):
+    previous = root.report_callback_exception
+    if getattr(previous, '_keystone_secrets', False): return
+    def safe_callback(exc_type, value, tb):
+        # Do not hand an unfiltered traceback/exception to a crash reporter.
+        previous(RuntimeError, RuntimeError(_exception_text(exc_type, value, tb)), None)
+    safe_callback._keystone_secrets = True
+    root.report_callback_exception = safe_callback
+
+
+def install_logging_redaction():
+    """Cover later handlers, logger extras, and unhandled process/thread errors."""
+    with _LOCK:
+        import sys
+        if not getattr(sys.excepthook, '_keystone_secrets', False):
+            def safe_error(exc_type, value, tb):
+                sys.stderr.write(_exception_text(exc_type, value, tb))
+            safe_error._keystone_secrets = True
+            sys.excepthook = safe_error
+        if not getattr(threading.excepthook, '_keystone_secrets', False):
+            def safe_thread(args):
+                if args.exc_type is not SystemExit:
+                    sys.stderr.write(_exception_text(args.exc_type, args.exc_value, args.exc_traceback))
+            safe_thread._keystone_secrets = True
+            threading.excepthook = safe_thread
+        make_record = logging.Logger.makeRecord
+        if not getattr(make_record, '_keystone_secrets', False):
+            def safe_record(self, *args, **kwargs):
+                record = make_record(self, *args, **kwargs)
+                SecretLoggingFilter().filter(record)
+                return record
+            safe_record._keystone_secrets = True
+            logging.Logger.makeRecord = safe_record
+        factory = logging.getLogRecordFactory()
+        if getattr(factory, '_keystone_secrets', False):
+            return
+        def safe_factory(*args, **kwargs):
+            record = factory(*args, **kwargs)
+            SecretLoggingFilter().filter(record)
+            return record
+        safe_factory._keystone_secrets = True
+        logging.setLogRecordFactory(safe_factory)
+
+
+class StreamingRedactor:
+    """Hold a possible secret prefix across callbacks before exposing it."""
+    def __init__(self):
+        self.pending = ''
+
+    def feed(self, text: str, *, final=False) -> str:
+        self.pending += text
+        with _LOCK:
+            values = tuple(_KNOWN)
+        for value in sorted(values, key=len, reverse=True):
+            self.pending = self.pending.replace(value, MARKER)
+        keep = 0
+        if not final:
+            for value in values:
+                for n in range(min(len(value) - 1, len(self.pending)), 0, -1):
+                    if self.pending.endswith(value[:n]):
+                        keep = max(keep, n)
+                        break
+        if keep:
+            out, self.pending = self.pending[:-keep], self.pending[-keep:]
+        else:
+            out, self.pending = self.pending, ''
+        return out

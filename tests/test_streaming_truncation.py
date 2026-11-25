@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from keystone.tool_adapter import parse_tool_call_tags, repair_arguments
+from revon.tool_adapter import parse_tool_call_tags, repair_arguments
 
 # Stream 1: mid-JSON truncation
 c1 = '<tools>{"name": "get_weather", "arguments": {"ci'

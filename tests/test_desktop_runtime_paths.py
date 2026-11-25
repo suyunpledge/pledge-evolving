@@ -5,12 +5,12 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-GUI = Path(__file__).resolve().parents[1] / 'keystone-gui'
+GUI = Path(__file__).resolve().parents[1] / 'revon-gui'
 sys.path.insert(0, str(GUI))
 
 from desktop.runtime_paths import qt_python, service_python
 from desktop.source_launcher import resolve_launch
-import keystone_qt
+import revon_qt
 
 
 class DesktopRuntimeTests(unittest.TestCase):
@@ -20,7 +20,7 @@ class DesktopRuntimeTests(unittest.TestCase):
             "assert mark_path('chatgpt', 16).is_file()"], cwd=GUI, check=True)
 
     def test_platforms_can_share_the_same_checkout(self):
-        root = Path('Keystone project')
+        root = Path('revon project')
         for platform, expected in [('win32', 'qt/Scripts/pythonw.exe'),
                                    ('darwin', 'qt-darwin/bin/python'), ('linux', 'qt-linux/bin/python')]:
             with self.subTest(platform=platform):
@@ -37,15 +37,15 @@ class DesktopRuntimeTests(unittest.TestCase):
     def test_launcher_keeps_arguments_and_source_root(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td).resolve() / 'source tree'
-            gui = root / 'keystone-gui'
+            gui = root / 'revon-gui'
             runtime = qt_python(root, windowed=True)
-            for file in (root / 'run.py', gui / 'keystone_qt.py', root / 'keystone/__init__.py', runtime):
+            for file in (root / 'run.py', gui / 'revon_qt.py', root / 'revon/__init__.py', runtime):
                 file.parent.mkdir(parents=True, exist_ok=True)
                 file.touch()
-            command, cwd = resolve_launch(Path(td) / 'Keystone', [
+            command, cwd = resolve_launch(Path(td) / 'revon', [
                 '--source-root', str(root), '--page', 'files', '--home', 'test home'], {})
             self.assertEqual(cwd, gui)
-            self.assertEqual(command, [str(runtime), str(gui / 'keystone_qt.py'),
+            self.assertEqual(command, [str(runtime), str(gui / 'revon_qt.py'),
                                        '--page', 'files', '--home', 'test home'])
 
     @unittest.skipIf(sys.platform == 'win32', 'POSIX venv interpreters are symlinks')
@@ -55,13 +55,13 @@ class DesktopRuntimeTests(unittest.TestCase):
             executable = qt_python(root)
             executable.parent.mkdir(parents=True)
             executable.symlink_to(sys.executable)
-            with (patch.object(keystone_qt, 'HERE', root / 'keystone-gui'),
+            with (patch.object(revon_qt, 'HERE', root / 'revon-gui'),
                   patch.dict(sys.modules, {'PySide6': None}),
-                  patch.object(sys, 'argv', ['keystone_qt.py', '--demo']),
-                  patch.object(keystone_qt.subprocess, 'call', return_value=7) as launch):
-                self.assertEqual(keystone_qt.main(), 7)
+                  patch.object(sys, 'argv', ['revon_qt.py', '--demo']),
+                  patch.object(revon_qt.subprocess, 'call', return_value=7) as launch):
+                self.assertEqual(revon_qt.main(), 7)
                 self.assertEqual(launch.call_args.args[0][0], str(executable))
                 self.assertEqual(launch.call_args.args[0][-1], '--demo')
                 with patch.object(sys, 'prefix', str(executable.parent.parent)), self.assertRaises(SystemExit):
-                    keystone_qt.main()
+                    revon_qt.main()
                 launch.assert_called_once()

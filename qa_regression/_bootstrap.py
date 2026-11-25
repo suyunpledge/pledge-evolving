@@ -1,6 +1,6 @@
 """Shared bootstrap for the independent QA regression suite.
 
-Puts the repository root on sys.path so ``keystone`` imports the same way
+Puts the repository root on sys.path so ``revon`` imports the same way
 ``run.py`` does, and exposes a tiny check-runner that mirrors the
 project's own ``selftest`` reporting style.
 

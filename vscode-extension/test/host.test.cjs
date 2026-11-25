@@ -18,23 +18,23 @@ const vscode = {
   commands: { executeCommand: async () => {} }
 };
 const load = Module._load;
-let KeystoneView;
+let RevonView;
 try {
   Module._load = function (name, ...args) { return name === 'vscode' ? vscode : load.call(this, name, ...args); };
-  ({ KeystoneView } = require('../out/extension'));
+  ({ RevonView } = require('../out/extension'));
 } finally { Module._load = load; }
 
 test('Restricted Mode cannot start the engine', async () => {
-  const view = new KeystoneView({ subscriptions: [] });
+  const view = new RevonView({ subscriptions: [] });
   vscode.workspace.isTrusted = false;
   try { await assert.rejects(view.connect(), /信任/); assert.equal(view.bridge, undefined); }
   finally { vscode.workspace.isTrusted = true; view.dispose(); }
 });
 
 test('stop during a save dialog cannot send an old task to a new engine', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'keystone-vscode-host-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'revon-vscode-host-'));
   const file = path.join(root, 'dirty.txt'); await fs.writeFile(file, 'draft');
-  const view = new KeystoneView({ subscriptions: [] });
+  const view = new RevonView({ subscriptions: [] });
   let calls = 0;
   const engine = () => ({ dispose() {}, request: async () => { calls++; return {}; } });
   view.workspace = { name: 'test', uri: { fsPath: root } }; view.bridge = engine(); view.ready = {};
@@ -49,7 +49,7 @@ test('stop during a save dialog cannot send an old task to a new engine', async 
 });
 
 test('unrecognized webview messages cannot dispatch arbitrary editor commands', async () => {
-  const view = new KeystoneView({ subscriptions: [] }); let commands = 0;
+  const view = new RevonView({ subscriptions: [] }); let commands = 0;
   const previous = vscode.commands.executeCommand;
   vscode.commands.executeCommand = async () => { commands++; };
   try {
@@ -60,7 +60,7 @@ test('unrecognized webview messages cannot dispatch arbitrary editor commands', 
 
 test('planning selection is validated, persisted and forwarded independently of permissions', async () => {
   let saved;
-  const view = new KeystoneView({ subscriptions: [], workspaceState: { get: (_, fallback) => fallback,
+  const view = new RevonView({ subscriptions: [], workspaceState: { get: (_, fallback) => fallback,
     update: async (_, value) => { saved = value; } } });
   let params;
   view.workspace = { name: 'test', uri: { fsPath: os.tmpdir() } };
@@ -81,7 +81,7 @@ test('planning selection is validated, persisted and forwarded independently of 
 
 test('independent phase selections and manual review are validated and bound to a response', async () => {
   const saved = new Map(); let params; let reviews = 0;
-  const view = new KeystoneView({ subscriptions: [], workspaceState: { get: (_, fallback) => fallback,
+  const view = new RevonView({ subscriptions: [], workspaceState: { get: (_, fallback) => fallback,
     update: async (key, value) => saved.set(key, value) } });
   view.workspace = { name: 'test', uri: { fsPath: os.tmpdir() } }; view.connect = async () => {};
   view.ready = { models: [{ id: 'writer' }, { id: 'planner' }] };
@@ -105,7 +105,7 @@ test('independent phase selections and manual review are validated and bound to 
 });
 
 test('a cancelled review cannot attach feedback to a new chat', async () => {
-  const view = new KeystoneView({ subscriptions: [] }); let resolve;
+  const view = new RevonView({ subscriptions: [] }); let resolve;
   view.ready = {}; view.reviewEnabled = true;
   view.transcript = [{ role: 'assistant', id: 'old', text: 'old code' }];
   view.bridge = { dispose() {}, request: () => new Promise(done => { resolve = done; }) };

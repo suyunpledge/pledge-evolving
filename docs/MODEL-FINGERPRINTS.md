@@ -2,8 +2,8 @@
 
 模型身份由 `manufacturer_id → model_family_id → model_kind_id` 表达。供应商配置行的 ID、网关名称和域名不再充当模型种类。适配器按模型种类 ID 分派，同族复用实现，型号卡决定差异参数。
 
-- 运行表：`keystone/model_kinds.py`；配置解析：`keystone/vendors.py`。
-- 适配器：`keystone/adapters.py`；请求接线：`keystone/model.py`、`keystone/gateway.py`。
+- 运行表：`revon/model_kinds.py`；配置解析：`revon/vendors.py`。
+- 适配器：`revon/adapters.py`；请求接线：`revon/model.py`、`revon/gateway.py`。
 - 离线指纹清单：`docs/vendor-adapt-2026-11-04/model-fingerprints.json`。
 - 可重复导出：`python scripts/model_fingerprints.py --output docs/vendor-adapt-2026-11-04/model-fingerprints.json`。
 
@@ -55,7 +55,7 @@ WorkBuddy 的流式要求、tool_choice 限制与零积分观察带通道标记�
 
 `modelKindId` 只作用于该行默认模型；`modelKinds` 按本次实际模型逐一匹配，并优先于默认绑定。切换到其他型号时不会沿用默认模型的种类。网关先完成 `model_map`，再按实际上游 ID 查绑定。多模型网关推荐使用 `modelKinds`。
 
-HTTP 请求、网关与 CLI 首发模型的预算解析共用同一配置。计划日志包含 `adapter_id`、`manufacturer_id`、`model_family_id`、`model_kind_id`、`model_match_source`、`model_evidence` 和 `behavior_fingerprint`；关闭整形后仍报告身份。`keystone vendors --detect` 显示默认模型的种类、家族和指纹。
+HTTP 请求、网关与 CLI 首发模型的预算解析共用同一配置。计划日志包含 `adapter_id`、`manufacturer_id`、`model_family_id`、`model_kind_id`、`model_match_source`、`model_evidence` 和 `behavior_fingerprint`；关闭整形后仍报告身份。`revon vendors --detect` 显示默认模型的种类、家族和指纹。
 
 ## 指纹含义
 

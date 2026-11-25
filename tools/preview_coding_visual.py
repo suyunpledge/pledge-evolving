@@ -13,7 +13,7 @@ import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(ROOT), str(ROOT / 'keystone-gui')]
+sys.path[:0] = [str(ROOT), str(ROOT / 'revon-gui')]
 
 SOURCE = '''"""Local inspection pipeline — isolated visual fixture."""
 from dataclasses import dataclass
@@ -60,17 +60,17 @@ def main():
                         help='Render another checkout for an equivalent before/after fixture')
     args = parser.parse_args()
     source_root = args.source_root.resolve(strict=True)
-    sys.path[:0] = [str(source_root), str(source_root / 'keystone-gui')]
+    sys.path[:0] = [str(source_root), str(source_root / 'revon-gui')]
     import tkinter as tk
     import _tkinter
     from PIL import ImageGrab
     from gui_theme import apply_ttk_theme
-    from keystone.development.state import ModeState
-    from keystone.test_task_planning import Router
+    from revon.development.state import ModeState
+    from revon.test_task_planning import Router
     from development_mode.app import DevelopmentWorkbench
-    with tempfile.TemporaryDirectory(prefix='keystone-visual-') as temporary:
+    with tempfile.TemporaryDirectory(prefix='revon-visual-') as temporary:
         base = Path(temporary)
-        project = base / 'keystone-inspection'
+        project = base / 'revon-inspection'
         (project / 'src').mkdir(parents=True)
         (project / 'tests').mkdir()
         (project / 'docs').mkdir()
@@ -79,10 +79,10 @@ def main():
         (project / 'tests/test_pipeline.py').write_text('import unittest\nfrom pathlib import Path\n'
             'from src.pipeline import build_report\nclass PipelineTests(unittest.TestCase):\n'
             '    def test_read_only(self): self.assertTrue(build_report(Path("src"))["read_only"])\n', encoding='utf-8')
-        (project / 'README.md').write_text('# Keystone inspection\nIsolated visual fixture.\n', encoding='utf-8')
+        (project / 'README.md').write_text('# revon inspection\nIsolated visual fixture.\n', encoding='utf-8')
         (project / 'docs/design.md').write_text('# Design\nNo user data or external services.\n', encoding='utf-8')
         root = tk.Tk()
-        root.title('Keystone · Coding visual verification · isolated fixture')
+        root.title('revon · Coding visual verification · isolated fixture')
         root.geometry(args.size + '+24+24')
         apply_ttk_theme(root)
         state = ModeState(base / 'home')
@@ -160,7 +160,7 @@ def main():
         from test_layout_dpi import isolated_app, pump as pump_main
         with isolated_app(size=(1440, 960)) as (root, app, errors):
             root.attributes('-alpha', 1)
-            root.title('Keystone · Work visual verification · isolated fixture')
+            root.title('revon · Work visual verification · isolated fixture')
             pump_main(root, .8)
             args.work_snapshot.parent.mkdir(parents=True, exist_ok=True)
             ImageGrab.grab(window=int(root.frame(), 0)).save(args.work_snapshot)

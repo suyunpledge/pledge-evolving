@@ -20,15 +20,15 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from keystone import model, toolwire
-from keystone.cache_metrics import cache_coverage
-from keystone.cache_state import CacheWarmth
-from keystone.loop import Agent, LoopLimits
-from keystone.policy import Mode, Policy, Sandbox
-from keystone.secret_http import open_authenticated
-from keystone.secrets import redact
-from keystone.tools import build_builtin_registry, ToolSpec, ToolResult
-from keystone.compat import default_home, user_layer
+from revon import model, toolwire
+from revon.cache_metrics import cache_coverage
+from revon.cache_state import CacheWarmth
+from revon.loop import Agent, LoopLimits
+from revon.policy import Mode, Policy, Sandbox
+from revon.secret_http import open_authenticated
+from revon.secrets import redact
+from revon.tools import build_builtin_registry, ToolSpec, ToolResult
+from revon.compat import default_home, user_layer
 
 
 MODELS = ('mimo-v2.6-flash', 'mimo-v2.6-pro')
@@ -175,7 +175,7 @@ def agent_probe(provider, recorder, root, *, development=False, mode_schedule=No
         encoding='utf-8')
     registry = build_builtin_registry(expose=['read_file', 'write_file', 'list_dir',
         'file_outline', 'read_range', 'grep_files', 'tool_search', 'skill_list'])
-    from keystone.development.runtime import DEVELOPMENT_GUIDANCE
+    from revon.development.runtime import DEVELOPMENT_GUIDANCE
     agent = Agent(home=root / 'home', workspace=workspace, router=router_for(provider, recorder),
         registry=registry, policy=Policy(workspace=workspace, mode=Mode.ACCEPT_EDITS,
             sandbox=Sandbox.WORKSPACE_WRITE, non_interactive=True),
@@ -385,7 +385,7 @@ def main():
     results = {'mode': 'live', 'suite': args.suite, 'thinking': args.thinking, 'selected_models': selected,
         'started_utc': datetime.now(timezone.utc).isoformat(), 'models': []}
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix='keystone-mimo-live-') as tmp:
+    with tempfile.TemporaryDirectory(prefix='revon-mimo-live-') as tmp:
         root = Path(tmp)
         model._WARMTH = CacheWarmth(root / 'warmth.json')
         remaining = args.request_limit

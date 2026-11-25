@@ -8,11 +8,11 @@
 | --- | --- |
 | Loom（`Documents/ChatGPT/Codex/loom`，HEAD `2c8f755`） | `packages/kernel/src/verifier.ts` 的 env_probe：环境暴露观察函数，内核读取并严格比较实际值与期望值。移植其职责边界，增加输入参数和宿主注册快照 |
 | SWE-agent（`Desktop/开发/SWE-agent`，HEAD `3ea751c`） | `sweagent/run/hooks/swe_bench_evaluate.py`：结果提交与外部评测分别处理，不把模型的 submission / exit_status 当成通过评测。吸收独立验收纪律，没有移植 sb-cli、网络提交或容器依赖 |
-| LangGraph（`Desktop/本地工作流/langgraph` 本地源码快照，无 Git 元数据） | `libs/langgraph/langgraph/pregel/_read.py` 的 ChannelRead.do_read：读取来自宿主绑定的函数，未配置即失败，并区分 fresh 读取。Keystone 用固定注册表、每次重新观察实现，不导入 Runnable / LangChain |
+| LangGraph（`Desktop/本地工作流/langgraph` 本地源码快照，无 Git 元数据） | `libs/langgraph/langgraph/pregel/_read.py` 的 ChannelRead.do_read：读取来自宿主绑定的函数，未配置即失败，并区分 fresh 读取。revon 用固定注册表、每次重新观察实现，不导入 Runnable / LangChain |
 
 ## 新能力与实现
 
-`keystone/probes.py` 是独立观察层，`keystone/acceptance.py` 继续负责契约语法和聚合结果，`Agent` 继续负责验收/修复/停止生命周期。原本 file / command 检查保持兼容；本轮也把检查类型的允许字段收口成一份表，防止解析与序列化字段漂移。
+`revon/probes.py` 是独立观察层，`revon/acceptance.py` 继续负责契约语法和聚合结果，`Agent` 继续负责验收/修复/停止生命周期。原本 file / command 检查保持兼容；本轮也把检查类型的允许字段收口成一份表，防止解析与序列化字段漂移。
 
 新增 `env_probe` 契约：
 
@@ -51,8 +51,8 @@ python run.py run "生成 result.json 并将 ready 设为 true" --acceptance tem
 ## 宿主注册真正的环境状态
 
 ```python
-from keystone.probes import ProbeRegistry
-from keystone.assembly import build_agent
+from revon.probes import ProbeRegistry
+from revon.assembly import build_agent
 
 def observe_application(ctx, request):
     ctx.check_cancel()
@@ -73,9 +73,9 @@ report = agent.run("完成保存", acceptance={
 
 宿主扩展入口均为 Python 参数：
 
-- `Agent(..., probes=...)` / `keystone.assembly.build_agent(..., probes=...)`，旧 `keystone.loop.build_agent` 兼容入口也支持。
+- `Agent(..., probes=...)` / `revon.assembly.build_agent(..., probes=...)`，旧 `revon.loop.build_agent` 兼容入口也支持。
 - `EditorBridge(..., probes=...)` / `DevelopmentRuntime(..., probes=...)`；开发模式重建自有桥时保留注册表。借用现有 bridge 时应在原宿主处配置，不隐式更改共享 Agent。
-- `ClientServer(..., probes=...)` / `run_keystone(..., probes=...)`；HTTP 客户端只提交契约中的名字、输入和期望值，不能提交实现。
+- `ClientServer(..., probes=...)` / `run_revon(..., probes=...)`；HTTP 客户端只提交契约中的名字、输入和期望值，不能提交实现。
 
 自定义观察函数属于可信宿主代码，必须自行遵守环境授权、只读和线程约束。回调只收到工作区、run_id、截止时间、取消信号与受控读取方法，不收到 Agent、模型历史或工具注册表。此接口不是对任意 Python 函数的安全沙箱。
 

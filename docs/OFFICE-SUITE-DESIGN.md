@@ -1,4 +1,4 @@
-# Keystone Office 设计稿：Agent 自带的本地办公套件
+# revon Office 设计稿：Agent 自带的本地办公套件
 
 日期：2026-11-24　状态：**基础编辑已接入 Work，以下为完整设计目标**
 界面样稿：[`design/office-suite/index.html`](../design/office-suite/index.html)（`design-mockup` 预览服务，`/office-suite/`）　
@@ -10,7 +10,7 @@
 
 ## 1. 产品定义
 
-Keystone Office 是 Work Mode 里的一个本地办公空间，包含**文档、表格、演示**三种编辑器。
+revon Office 是 Work Mode 里的一个本地办公空间，包含**文档、表格、演示**三种编辑器。
 
 - **用户**像用 WPS / Office 一样直接编辑：打字、改格式、填表、拖动幻灯片元素。
 - **AI** 不生成文件再交给用户，而是走**内部路径**：直接调用文档模型的编辑操作，与用户的键盘输入进入同一条操作总线。用户能实时看到 AI 在哪里改、改了什么，可以逐条接受、拒绝或撤销。
@@ -21,7 +21,7 @@ Keystone Office 是 Work Mode 里的一个本地办公空间，包含**文档、
 ### 1.1 核心体验（验收用的用户故事）
 
 1. 用户在文档里选中一段，输入"改得正式一点"。AI 的修改以**建议**形式出现在原位（删除线 + 新文字），用户按 `Tab` 接受、`Esc` 拒绝。
-2. 用户说"按这份销售表做一份 8 页季度汇报"。演示编辑器里新建文件，幻灯片一页页出现，AI 光标标注"Keystone 正在编辑第 3 页"；用户可以同时修改已完成的第 1 页。
+2. 用户说"按这份销售表做一份 8 页季度汇报"。演示编辑器里新建文件，幻灯片一页页出现，AI 光标标注"revon 正在编辑第 3 页"；用户可以同时修改已完成的第 1 页。
 3. 用户在表格里写到一半，让 AI"把 C 列按地区汇总到新工作表并画柱状图"。AI 新建工作表、写入 `SUMIF` 公式、插入图表；公式由本地引擎实时计算，数值立即可见。
 4. 用户点"撤销 AI 的上一次修改"，只回退 AI 那一批操作，用户之后自己的修改保留。
 5. 打开一份别人发来的 docx，编辑后导出 docx 发回；导入时提示哪些元素无法编辑（已原样保留为只读块）。
@@ -55,7 +55,7 @@ Keystone Office 是 Work Mode 里的一个本地办公空间，包含**文档、
             │ 用户操作（来自编辑器）         │ AI 操作（来自工具）
             │                               │
             │                ┌──────────────┴──────────────┐
-            │                │ keystone/office_tools.py     │
+            │                │ revon/office_tools.py     │
             │                │ office_open / query / apply  │
             │                │ / create / export / render   │
             │                │ → Policy、审批、会话记录      │
@@ -66,7 +66,7 @@ Keystone Office 是 Work Mode 里的一个本地办公空间，包含**文档、
 
 关键原则：
 
-1. **模型在 Python，编辑器只是视图。** 规范模型、排序、公式计算、历史都在 `keystone/office/`（标准库实现）。这样 AI 在不打开界面时也能编辑（CLI、微信、定时任务），界面打开时看到的是同一份实时数据。
+1. **模型在 Python，编辑器只是视图。** 规范模型、排序、公式计算、历史都在 `revon/office/`（标准库实现）。这样 AI 在不打开界面时也能编辑（CLI、微信、定时任务），界面打开时看到的是同一份实时数据。
 2. **一条操作总线。** 用户按键和 AI 工具调用都变成同一种 `Op`，经过同一个 Sequencer。没有"AI 改文件、界面再重新加载"这回事。
 3. **编辑器跑在已有的 QtWebEngine 里。** `BrowserPane.qml` 已经引入 QtWebEngine，富文本编辑、虚拟滚动表格、SVG 幻灯片在 Web 技术栈上成熟得多。编辑器资源随应用打包、完全离线、独立的 `WebEngineProfile`，不加载任何远程内容。
 4. **复用现有内核能力**：Policy / 审批卡片、SecretScope、artifacts、checkpoint、会话记录、子代理，都不另起一套。
@@ -153,7 +153,7 @@ Theme { colors{primary, accent1-6, bg, text}, fonts{heading, body}, spacing }
 {"op": "slide.insert", "after": "sl_3", "layout": "title_bullets", "content": {...}}
 ```
 
-完整操作集按三种编辑器分组定义在 `keystone/office/ops/`，每个 Op 有：参数校验、`apply(model)`、`invert(model)`（用于撤销）、`transform(other)`（用于变更基）。
+完整操作集按三种编辑器分组定义在 `revon/office/ops/`，每个 Op 有：参数校验、`apply(model)`、`invert(model)`（用于撤销）、`transform(other)`（用于变更基）。
 
 ### 4.2 事务
 
@@ -185,7 +185,7 @@ Theme { colors{primary, accent1-6, bg, text}, fonts{heading, body}, spacing }
 
 ## 5. AI 的内部路径
 
-### 5.1 工具（`keystone/office_tools.py`）
+### 5.1 工具（`revon/office_tools.py`）
 
 宿主 `trusted=True` 注册，名字加入 `BUILTIN_TOOL_NAMES`。默认工具面只暴露前三个，其余 deferred。
 
@@ -209,7 +209,7 @@ AI 拿到的上下文永远包括：**用户当前选区**、**当前版本号**
 | 建议 | AI 的修改全部以建议出现，用户逐条接受/拒绝 | 已有文档、合同、正式文件 |
 | 直接编辑 | 立即生效，带 AI 归属标记，可按任务撤销 | AI 新建的文档、空白文档 |
 
-这对应 Keystone 现有权限模型：模式不授予权限。`office_apply` 仍是写工具，经过 Policy 判定；"直接编辑"相当于该文档范围内的写许可，由用户在侧栏明确授予，记录在会话里，可随时收回。
+这对应 revon 现有权限模型：模式不授予权限。`office_apply` 仍是写工具，经过 Policy 判定；"直接编辑"相当于该文档范围内的写许可，由用户在侧栏明确授予，记录在会话里，可随时收回。
 
 ### 5.3 一次 AI 编辑的流程
 
@@ -227,7 +227,7 @@ AI 拿到的上下文永远包括：**用户当前选区**、**当前版本号**
 
 - **结构化而非坐标**：演示用版式和占位符；文档用块；表格用区域写入 `range.set` 一次写几百格。
 - **一次调用拿回证据**：`office_apply` 的返回直接带溢出、公式错误、受影响单元格的新值；第一行是结论（`OK v44` 或 `CONFLICT b_7Kq2 changed by user at v43`）。
-- **技能正文** `keystone/bundled/office/SKILL.md`：Op 速查、常见错误和修法、版式清单。
+- **技能正文** `revon/bundled/office/SKILL.md`：Op 速查、常见错误和修法、版式清单。
 
 ---
 
@@ -277,7 +277,7 @@ SVG 渲染，主题变量驱动。文本自适应规则：先缩小行距，再�
 - AI 侧栏可收起（`Ctrl+J`），宽 360px；收起后在编辑区右下角保留一个浮动输入入口。
 - 选中内容后出现**浮动 AI 条**：改写、扩写、缩写、翻译、解释、自定义指令。
 - 建议的交互：原位显示删除线 + 新文本；悬停出现"接受 / 拒绝 / 查看理由"；侧栏"待处理建议"列表可批量接受。键盘：`Alt+]` / `Alt+[` 在建议间跳转，`Tab` 接受，`Esc` 拒绝（仅在焦点位于建议上时）。
-- AI 光标：带"Keystone"标签的彩色光标，使用 `Theme.ember` 区分用户的 `Theme.accent`；AI 正在修改的块左侧显示细色条和"编辑中"文字（状态不只靠颜色）。
+- AI 光标：带"revon"标签的彩色光标，使用 `Theme.ember` 区分用户的 `Theme.accent`；AI 正在修改的块左侧显示细色条和"编辑中"文字（状态不只靠颜色）。
 
 ### 7.3 三种编辑器
 
@@ -321,7 +321,7 @@ SVG 渲染，主题变量驱动。文本自适应规则：先缩小行距，再�
 ## 10. 模块与文件规划
 
 ```
-keystone/office/
+revon/office/
   model/        document.py  sheet.py  deck.py  ids.py  assets.py
   ops/          text.py  block.py  cell.py  shape.py  slide.py  transform.py
   session.py    DocumentSession：Sequencer、Presence、订阅
@@ -329,9 +329,9 @@ keystone/office/
   formula/      lexer.py  parser.py  graph.py  functions/*.py
   ooxml/        package.py  docx.py  xlsx.py  pptx.py（导入导出）
   lint.py       结构与估算诊断
-keystone/office_tools.py
-keystone/bundled/office/SKILL.md
-keystone-gui/qt_frontend/
+revon/office_tools.py
+revon/bundled/office/SKILL.md
+revon-gui/qt_frontend/
   office_service.py   宿主：会话表、与 gateway/Policy 连接
   office_bridge.py    QWebChannel 对象（Op 提交、订阅、诊断回报）
   qml/OfficePage.qml  主页与编辑页框架、AI 侧栏
@@ -364,7 +364,7 @@ keystone-gui/qt_frontend/
 ## 13. 待定问题
 
 1. **编辑器前端是自研还是基于开源编辑内核**：富文本建议基于 ProseMirror 一类成熟内核（只用其编辑与渲染，模型以 Python 侧为准）；表格网格与幻灯片画布自研。M0 结束时定。
-2. **存储位置**：默认放工作区 `Office/`，还是放 Keystone home 由用户选择是否同步到工作区？建议放工作区，跟随项目备份和 Git。
+2. **存储位置**：默认放工作区 `Office/`，还是放 revon home 由用户选择是否同步到工作区？建议放工作区，跟随项目备份和 Git。
 3. **AI 默认写入模式**：新建文档默认"直接编辑"、打开已有文档默认"建议"——是否需要全局可配置？
 4. **Android 与 VS Code**：第一版只在 Qt 桌面提供编辑器；其他入口可通过工具让 AI 编辑，用户只能导出查看。是否需要移动端只读预览？
 5. **打包体积**：编辑器前端资源预计 3–6 MB（压缩后），QtWebEngine 已随应用分发，不新增运行时。

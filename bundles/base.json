@@ -80,9 +80,9 @@
           "medium",
           "deepseek-flash"
         ],
-        "notes": "三档智能路由（0.7.0）：tiers 按成本升序（lite=经济档，medium=均衡档），premium = 高端集成裁决档。档位 id 抽象、模型名具体；用户通过 keystone setup 或 keystone.patch.json 把档位绑到自己的 provider。strategy 可被 CLI --strategy 覆盖。"
+        "notes": "三档智能路由（0.7.0）：tiers 按成本升序（lite=经济档，medium=均衡档），premium = 高端集成裁决档。档位 id 抽象、模型名具体；用户通过 revon setup 或 revon.patch.json 把档位绑到自己的 provider。strategy 可被 CLI --strategy 覆盖。"
       },
-      "notes": "默认档位命名：lite（经济）/ medium（均衡）/ premium（高端）。model 行的 [provider_id, model] 对要求 model 非空——空串无法解析。用户通过 setup 命令或 keystone.patch.json 覆盖为真实 provider。"
+      "notes": "默认档位命名：lite（经济）/ medium（均衡）/ premium（高端）。model 行的 [provider_id, model] 对要求 model 非空——空串无法解析。用户通过 setup 命令或 revon.patch.json 覆盖为真实 provider。"
     }
   },
   {
@@ -119,7 +119,7 @@
           "model": null
         }
       },
-      "notes": "主控 + 专家模型（keystone.specialists，默认关闭）。enabled=true 后，给某个领域填 model=[provider_id, model] 即为其配置专家：spawn_subagent(domain=…) 把整段子任务交给该模型，工具面按领域收窄、权限不超过主控。retrieval 专家返回目录，主控用 catalog_expand 按需展开全文。未配置 model 的领域退回今天的行为。实测结论见 docs/specialists-ab.md。"
+      "notes": "主控 + 专家模型（revon.specialists，默认关闭）。enabled=true 后，给某个领域填 model=[provider_id, model] 即为其配置专家：spawn_subagent(domain=…) 把整段子任务交给该模型，工具面按领域收窄、权限不超过主控。retrieval 专家返回目录，主控用 catalog_expand 按需展开全文。未配置 model 的领域退回今天的行为。实测结论见 docs/specialists-ab.md。"
     }
   },
   {
@@ -129,10 +129,10 @@
       "wire": "anthropic",
       "baseURL": "http://127.0.0.1:8810",
       "apiKey": {
-        "$expr": "get('env.KEYSTONE_LITE_KEY', 'local')"
+        "$expr": "get('env.REVON_LITE_KEY', 'local')"
       },
       "model": "claude-sonnet-5",
-      "notes": "经济档 provider（占位示例）：本地环回协议翻译网关。用户应通过 keystone setup 或 keystone.patch.json 覆盖为真实 provider。"
+      "notes": "经济档 provider（占位示例）：本地环回协议翻译网关。用户应通过 revon setup 或 revon.patch.json 覆盖为真实 provider。"
     }
   },
   {
@@ -142,11 +142,11 @@
       "wire": "openai",
       "baseURL": "https://api.deepseek.com",
       "apiKey": {
-        "$expr": "get('env.KEYSTONE_MEDIUM_KEY', '')"
+        "$expr": "get('env.REVON_MEDIUM_KEY', '')"
       },
       "model": "deepseek-flash",
       "smallModel": "deepseek-flash",
-      "notes": "均衡档 provider（默认）：官方 OpenAI 兼容接口。凭据由环境变量注入（KEYSTONE_MEDIUM_KEY），不落盘、不进日志。"
+      "notes": "均衡档 provider（默认）：官方 OpenAI 兼容接口。凭据由环境变量注入（REVON_MEDIUM_KEY），不落盘、不进日志。"
     }
   },
   {
@@ -156,7 +156,7 @@
       "wire": "anthropic",
       "baseURL": "http://127.0.0.1:8811",
       "apiKey": {
-        "$expr": "get('env.KEYSTONE_PREMIUM_KEY', 'local')"
+        "$expr": "get('env.REVON_PREMIUM_KEY', 'local')"
       },
       "model": "claude-opus-5",
       "notes": "高端档 provider（占位示例）：独立审查通道。示例指向本地网关，按需替换为你自己的高成本档。"

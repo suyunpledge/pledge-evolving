@@ -1,7 +1,7 @@
 # WeChat IM Channel 代码审查报告 v1
 
 **提交：** `edf649f`  
-**范围：** `keystone/channels/__init__.py`、`keystone/channels/weixin.py`、`keystone/channels/cli.py`、`tests/test_channels_opt.py`  
+**范围：** `revon/channels/__init__.py`、`revon/channels/weixin.py`、`revon/channels/cli.py`、`tests/test_channels_opt.py`
 **重点问题：A – E**
 
 ---
@@ -119,13 +119,13 @@ Unix 上 `os.kill(pid, 0)` 对他人 PID 抛 `PermissionError`，保守返回 Tr
 }
 ```
 
-**遗漏 1（最高风险）：`keystone/routing.py` 或 `model.py` 硬编码旧名称**
+**遗漏 1（最高风险）：`revon/routing.py` 或 `model.py` 硬编码旧名称**
 
 如果路由器 `class Router`、`looks_complex_heuristic` 或 tier 解析逻辑中有 `"mimo"` 或 `"deepseek"` 字符串，`tier not found` 会被抛出，路由降级失败。
 
 **需要执行：**
 ```
-grep -rn "mimo\|deepseek" keystone/ --include="*.py"
+grep -rn "mimo\|deepseek" revon/ --include="*.py"
 ```
 
 **遗漏 2（低风险）：`notes` 字段未同步更新**  
@@ -141,9 +141,9 @@ grep -rn "mimo\|deepseek" keystone/ --include="*.py"
 | **B** | `agents` 无 LRU 上限 | 🟡 P1 | `cli.py:~195` |
 | **C** | `chunk_text` 逐字符切分 | 🟢 安全 | `__init__.py:115` |
 | **D** | `_pid_alive` 三种误判 | 🟡 P1 | `cli.py:260-279` |
-| **E** | `bundles/base.json` 改名后 `routing.py`/`model.py` 可能残留旧名称硬编码 | 🔴 P0（待 grep 验证） | `keystone/` |
+| **E** | `bundles/base.json` 改名后 `routing.py`/`model.py` 可能残留旧名称硬编码 | 🔴 P0（待 grep 验证） | `revon/` |
 
 **最优先操作：**
-1. 验证 E：`grep -rn "mimo\|deepseek" keystone/ --include="*.py"`
+1. 验证 E：`grep -rn "mimo\|deepseek" revon/ --include="*.py"`
 2. 修复 A：`weixin.py:317` 加 `_redact` 包裹 `errmsg`
 3. 修复 B：`agents: dict` → `_LaneCache(max_size=128)`

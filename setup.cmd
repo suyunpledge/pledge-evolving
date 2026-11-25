@@ -7,7 +7,7 @@ set "MODE=%~1"
 if "%MODE%"=="" set "MODE=gui"
 
 echo ============================================================
-echo   Pledge Keystone 一键部署（Windows）
+echo   Pledge revon 一键部署（Windows）
 echo   唯一前提：能上网。缺 Python 会自动静默安装；
 echo   桌面版（Qt）运行时装在本目录 .venv\qt，不改动全局 Python。
 echo   用法：setup.cmd [gui/tk/web/check/selftest]
@@ -56,19 +56,19 @@ set "QTPYW=%~dp0.venv\qt\Scripts\pythonw.exe"
 if /i "%MODE%"=="gui" call :qt_runtime
 
 call :shortcut
-echo [3/4] 桌面快捷方式已创建：Pledge Keystone
+echo [3/4] 桌面快捷方式已创建：Pledge revon
 
 if /i "%MODE%"=="web" goto :web
 if /i "%MODE%"=="tk" goto :tk
 if defined HAS_QT (
-  echo [4/4] 启动 Keystone 桌面版（Qt）...
-  start "" "%QTPYW%" keystone-gui\keystone_qt.py
+  echo [4/4] 启动 revon 桌面版（Qt）...
+  start "" "%QTPYW%" revon-gui\revon_qt.py
   exit /b 0
 )
 :tk
 if not defined HAS_TK goto :web
-echo [4/4] 启动 Keystone 经典桌面窗口...
-start "" "%PYW%" keystone-gui\keystone_gui_v2.py
+echo [4/4] 启动 revon 经典桌面窗口...
+start "" "%PYW%" revon-gui\revon_gui_v2.py
 exit /b 0
 
 :web
@@ -105,8 +105,8 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-curl -L -o "%TEMP%\keystone-py-installer.exe" "https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe"
-"%TEMP%\keystone-py-installer.exe" /quiet InstallAllUsers=0 PrependPath=1 Include_launcher=1 Include_tcltk=1
+curl -L -o "%TEMP%\revon-py-installer.exe" "https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe"
+"%TEMP%\revon-py-installer.exe" /quiet InstallAllUsers=0 PrependPath=1 Include_launcher=1 Include_tcltk=1
 exit /b 0
 
 :qt_runtime
@@ -114,14 +114,14 @@ echo [3/4] 准备 Qt 桌面运行时（首次约需下载 200 MB）...
 if not exist "%QTPY%" "%PYEXE%" -m venv "%~dp0.venv\qt"
 if not exist "%QTPY%" goto :qt_fail
 "%QTPY%" -c "from importlib.util import find_spec; import sys; sys.exit(any(find_spec(n) is None for n in ('PySide6','comtypes','rapidocr_onnxruntime')))" >nul 2>nul && goto :qt_ready
-"%QTPY%" -m pip install --disable-pip-version-check -q -r keystone-gui\requirements-qt.txt
+"%QTPY%" -m pip install --disable-pip-version-check -q -r revon-gui\requirements-qt.txt
 if errorlevel 1 (
   echo       官方源失败，改用清华镜像重试...
-  "%QTPY%" -m pip install --disable-pip-version-check -q -i https://pypi.tuna.tsinghua.edu.cn/simple -r keystone-gui\requirements-qt.txt
+  "%QTPY%" -m pip install --disable-pip-version-check -q -i https://pypi.tuna.tsinghua.edu.cn/simple -r revon-gui\requirements-qt.txt
 )
 "%QTPY%" -c "import PySide6" >nul 2>nul || goto :qt_fail
 :qt_ready
-"%QTPY%" keystone-gui\qt_frontend\build_shaders.py >nul 2>nul
+"%QTPY%" revon-gui\qt_frontend\build_shaders.py >nul 2>nul
 set "HAS_QT=1"
 echo       Qt 运行时就绪。
 exit /b 0
@@ -131,10 +131,10 @@ exit /b 0
 
 :shortcut
 set "SC_TARGET=%PYW%"
-set "SC_SCRIPT=keystone-gui\keystone_gui_v2.py"
+set "SC_SCRIPT=revon-gui\revon_gui_v2.py"
 if defined HAS_QT set "SC_TARGET=%QTPYW%"
-if defined HAS_QT set "SC_SCRIPT=keystone-gui\keystone_qt.py"
-powershell -NoProfile -Command "$repo='%~dp0'; $ws=New-Object -ComObject WScript.Shell; $desk=[Environment]::GetFolderPath('Desktop'); $s=$ws.CreateShortcut((Join-Path $desk 'Pledge Keystone.lnk')); $s.TargetPath='%SC_TARGET%'; $s.Arguments=[char]34+(Join-Path $repo '%SC_SCRIPT%')+[char]34; $s.WorkingDirectory=(Join-Path $repo 'keystone-gui'); $ico=Join-Path $repo 'keystone-gui\desktop\keystone.ico'; if(Test-Path $ico){$s.IconLocation=$ico}; $s.Save()" >nul 2>nul
+if defined HAS_QT set "SC_SCRIPT=revon-gui\revon_qt.py"
+powershell -NoProfile -Command "$repo='%~dp0'; $ws=New-Object -ComObject WScript.Shell; $desk=[Environment]::GetFolderPath('Desktop'); $s=$ws.CreateShortcut((Join-Path $desk 'Pledge revon.lnk')); $s.TargetPath='%SC_TARGET%'; $s.Arguments=[char]34+(Join-Path $repo '%SC_SCRIPT%')+[char]34; $s.WorkingDirectory=(Join-Path $repo 'revon-gui'); $ico=Join-Path $repo 'revon-gui\desktop\revon.ico'; if(Test-Path $ico){$s.IconLocation=$ico}; $s.Save()" >nul 2>nul
 exit /b 0
 
 :py_fail

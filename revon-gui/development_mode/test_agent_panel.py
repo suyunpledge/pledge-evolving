@@ -1,0 +1,607 @@
+"""Actual Windows Tk widgets and Runtime, hidden windows; no visual QA claim."""
+import ast
+from datetime import datetime
+import json
+from pathlib import Path
+import subprocess
+import textwrap
+import copy
+import threading
+import unittest
+from unittest.mock import patch
+from gui_theme import C
+
+from revon.development.evidence import TaskEvidence
+from revon.test_task_planning import Router
+from . import test_app
+
+
+class AgentPanelTests(unittest.TestCase):
+
+    def _view(self, name):
+        """v0.2 页改名后按别名取输出视图（Diff→差异）。"""
+        alias = {'Diff': '差异'}.get(name, name)
+        return self.app.output_views.get(alias) or self.app.output_views[name]
+
+    setUp = test_app.WorkbenchTests.setUp
+    cleanup_tk = test_app.WorkbenchTests.cleanup_tk
+    step = test_app.WorkbenchTests.step
+    pump = test_app.WorkbenchTests.pump
+
+    def emit(self, **data):
+        self.app.handle_event({'event': 'progress', 'data': data})
+        self.pump(lambda: not getattr(self.app, '_agent_render_pending', False))
+
+    def task(self):
+        self.emit(type='development_task_started', task_id='t', phase='executing')
+
+    def recorded_write(self):
+        from revon.execution import ActionRequest
+        self.task()
+        agent = self.app.runtime.bridge.agent
+        agent.task_id = 't'
+        self.app.runtime.last_task_id = 't'
+        agent.policy = self.app.runtime.bridge.policy('workspace-write')
+        agent.action_executor.execute(agent.execution_context(), ActionRequest('read_file', {'path': 'one.py'}))
+        result = agent.action_executor.execute(agent.execution_context(), ActionRequest('write_file',
+            {'path': 'one.py', 'content': 'print(2)\n'})).as_dict()
+        self.assertTrue(result['ok'], result)
+        self.pump(lambda: bool(self.app.task_evidence.changes))
+        self.emit(type='development_task_finished', task_id='t', phase='completed')
+        self.app.permission.set('desktop-sandbox')
+        self.assertEqual(self.app._recorded_change_ids(self.app.task_evidence), result['meta']['change_ids'])
+
+    def test_reply_summary_reverts_only_recorded_changes(self):
+        original = (self.project / 'one.py').read_bytes()
+        self.recorded_write()
+        button = self.app.agent_panel._changes_summary.revert_button
+        self.assertEqual(str(button.cget('state')), 'normal')
+        with patch('development_mode.app.messagebox.askyesno', return_value=True) as confirm:
+            button.invoke()
+            self.pump(lambda: self.app._jobs == 0 and (self.project / 'one.py').read_bytes() == original)
+        self.assertEqual(confirm.call_count, 1)
+        self.pump(lambda: button.cget('text') == '已回退')
+        self.assertEqual(str(button.cget('state')), 'disabled')
+
+    def test_reply_revert_preserves_unsaved_editor_draft(self):
+        self.recorded_write()
+        self.app.open_file(self.project / 'one.py')
+        self.pump(lambda: bool(self.app.documents))
+        row = self.app.current_row()
+        row['widget'].insert('end', '# unsaved user draft\n')
+        self.app.document_changed(row)
+        with patch('development_mode.app.messagebox.askyesno', return_value=True) as confirm:
+            self.app.agent_panel._changes_summary.revert_button.invoke()
+            self.pump(lambda: self.app._jobs == 0)
+        self.assertFalse(confirm.called)
+        self.assertIn('unsaved user draft', row['widget'].get('1.0', 'end'))
+        self.assertEqual((self.project / 'one.py').read_text(), 'print(2)\n')
+
+    def test_three_tabs_events_mount_once_and_no_parallel_event_flow(self):
+        panel = self.app.agent_panel
+        self.assertEqual([panel.notebook.tab(t, 'text') for t in panel.notebook.tabs()],
+                         ['对话', '任务', '子 Agent', '完整事件'])
+        first = panel.mount_events(self.app.output)
+        self.assertIs(first, panel.mount_events(self.app.output))
+        self.task()
+        self.assertIn('development_task_started', self.app.events.get('1.0', 'end'))
+        # v0.2：事件视图挂 AgentPanel 完整事件 Tab（_events_holder），
+        # 不再挂底部 output Notebook。
+        self.assertIs(self.app.events.master.master, self.app._events_holder)
+
+    def test_markdown_code_and_instance_file_links_keep_work_handler(self):
+        import chat_widgets
+        marker = lambda path: False
+        with patch.object(chat_widgets, '_FILE_LINK_HANDLER', marker):
+            chat = self.app.chat
+            chat.message('Coding Agent', '# Finding\n\n**bold** and `inline`\n\n[open](one.py)\n\n```python\nprint(1)\n```')
+            self.assertTrue(chat.tag_ranges('b'))
+            self.assertTrue(chat.tag_ranges('code'))
+            self.assertTrue(chat.tag_ranges('heading'))
+            self.assertTrue(chat.tag_ranges('file1'))
+            self.assertIs(chat_widgets._FILE_LINK_HANDLER, marker)
+            with patch.object(self.app, 'open_file') as opened:
+                chat.open_file('one.py:1')
+                opened.assert_called_once_with((self.project / 'one.py').resolve())
+                chat.open_file('../outside.py')
+                self.assertEqual(opened.call_count, 1)
+
+    def test_tool_summary_collapses_and_updates_existing_status(self):
+        self.task()
+        self.emit(type='tool_started', task_id='t', action_id='a', tool='read_file')
+        summary = self.app.agent_panel._summary
+        self.assertFalse(summary.expanded)
+        self.assertIn('进行中 1', summary.summary.cget('text'))
+        self.emit(type='tool_completed', task_id='t', action_id='a', tool='read_file', ok=False, result='denied')
+        self.assertIn('failed', self.app.workflow.get('1.0', 'end'))
+        self.assertNotIn('running', self.app.workflow.get('1.0', 'end'))
+        summary.button.invoke()
+        self.assertTrue(summary.expanded)
+        self.assertIn('denied', summary.detail.get('1.0', 'end'))
+        self.assertNotIn('denied', self.app.chat.get('1.0', 'end'), 'tool details stay folded by default')
+
+    def test_plan_never_has_fake_completed_stages(self):
+        self.task()
+        self.emit(type='task_plan', task_id='t', plan={'tasks': ['inspect', 'test']})
+        self.emit(type='development_task_finished', task_id='t', phase='completed')
+        text = self.app.workflow.get('1.0', 'end')
+        self.assertIn('☐ inspect', text)
+        self.assertIn('☐ test', text)
+        self.assertNotIn('☑ test', text)
+
+    def test_agent_tree_uses_parent_run_and_distinct_runs(self):
+        self.task()
+        for name, run, parent, depth in [('revon', 'parent', '', 0), ('revon/sub1', 'child', 'parent', 1), ('revon/sub1', 'other', 'parent', 1)]:
+            self.emit(type='development_agent_config', task_id='t', agent=name, selected_model=['p', 'm'],
+                      model_source='independent', permission='read-only', tool_surface=['read_file'])
+            self.emit(type='workflow_state', task_id='t', agent=name, run_id=run, parent_run_id=parent, depth=depth, phase='executing')
+        panel = self.app.agent_panel
+        parent = next(i for i, r in panel.rows.items() if r['run_id'] == 'parent')
+        children = panel.tree.get_children(parent)
+        self.assertEqual(len(children), 2)
+        panel.tree.selection_set(children[0]); panel.show_agent()
+        text = panel.detail.get('1.0', 'end')
+        self.assertIn('independent', text)
+        self.assertIn('read_file', text)
+        self.assertIn('read-only', text)
+        self.emit(type='development_task_started', task_id='next', phase='executing')
+        self.assertFalse(panel.rows)
+        self.assertFalse(panel.tree.get_children())
+
+    def test_review_agent_shows_real_result_and_parent(self):
+        self.task()
+        self.emit(type='workflow_state', task_id='t', agent='revon', run_id='parent', phase='completed')
+        self.emit(type='review_result', task_id='t', run_id='parent', message_id='parent',
+                  review_id='review', review={'model': 'actual', 'text': 'real finding'})
+        panel = self.app.agent_panel
+        identifier = next(i for i, r in panel.rows.items() if r['agent'] == 'Review Agent')
+        panel.tree.selection_set(identifier); panel.show_agent()
+        self.assertIn('real finding', panel.detail.get('1.0', 'end'))
+        self.assertIn('actual', panel.detail.get('1.0', 'end'))
+        self.assertNotEqual(panel.tree.parent(identifier), '')
+
+    def test_diff_states_have_different_operations(self):
+        self.task()
+        self.emit(type='tool_completed', task_id='t', action_id='pending', tool='write_file',
+                  ok=False, args={'path': 'one.py'}, meta={'requires_approval': True})
+        self.emit(type='tool_completed', task_id='t', action_id='written', tool='write_file', ok=True,
+                  meta={'checkpoint': 'a' * 40, 'file_changes': [{'path': 'one.py', 'state': 'written',
+                    'revision': 'hash', 'before_revision': 'old', 'diff': '+changed', 'added': 1, 'removed': 0}]})
+        cards = self.app.agent_panel._cards
+        self.assertIn('pending', cards[('pending', 'one.py')].buttons)
+        self.assertNotIn('revert', cards[('pending', 'one.py')].buttons)
+        written = cards[('written', 'one.py')]
+        self.assertIn('revert', written.buttons)
+        written.fit(180)
+        self.step()
+        self.assertGreater(written.buttons['revert'].grid_info()['row'], 0)
+        written.buttons['view'].invoke()
+        self.assertIn('+changed', self._view('Diff').get('1.0', 'end'))
+        self.emit(type='development_change_state', task_id='t', action_id='written', path='one.py', state='committed', commit='b' * 40)
+        self.assertNotIn('revert', written.buttons)
+        self.assertIn('已提交', written.state_label.cget('text'))
+
+    def run_actual_edit(self):
+        rt = self.app.runtime
+        rt.bridge.router = Router([json.dumps({'tool': 'read_file', 'args': {'path': 'one.py'}}),
+            json.dumps({'tool': 'write_file', 'args': {'path': 'one.py', 'content': 'print(2)\n'}}), '# Done\nChanged one.py'])
+        rt.bridge.agent.thinking = False
+        rt.bridge.agent.thinking_mode = 'off'
+        self.app.permission.set('workspace-write')
+        self.app.planning.set('none')
+        self.app.input.insert('1.0', 'change one.py')
+        self.app.send()
+        self.pump(lambda: self.app._jobs == 0 and bool(self.app.agent_panel._cards)
+                          and self.app.agent_panel._planning_card is not None
+                          and self.app.agent_panel._planning_card.winfo_exists())
+        self.step()
+        return next(iter(self.app.agent_panel._cards.values()))
+
+    def test_actual_agent_edit_card_view_and_authorized_revert(self):
+        card = self.run_actual_edit()
+        PlanningCard = type(self.app.agent_panel._planning_card)
+        self.assertEqual(sum(isinstance(w, PlanningCard) for w in self.app.chat._windows), 1)
+        self.assertIn('已写入', card.state_label.cget('text'))
+        self.assertEqual((card.change['added'], card.change['removed']), (1, 1))
+        card.buttons['view'].invoke()
+        self.assertIn('+print(2)', self._view('Diff').get('1.0', 'end'))
+        with patch('development_mode.app.messagebox.askyesno', return_value=True):
+            card.buttons['revert'].invoke()
+            self.pump(lambda: self.app._jobs == 0 and (self.project / 'one.py').read_text() == 'print(1)\n'
+                      and 'revert' not in card.buttons)
+        self.assertNotIn('revert', card.buttons)
+
+    def test_revert_card_refuses_new_disk_revision(self):
+        card = self.run_actual_edit()
+        (self.project / 'one.py').write_text('new external version\n')
+        with patch.object(self.app.runtime, 'restore_checkpoint') as restore:
+            card.buttons['revert'].invoke()
+            self.pump(lambda: self.app._jobs == 0)
+            restore.assert_not_called()
+        self.assertIn('拒绝', self.app.status.get())
+        # Force the pending scan's completion after the refusal, regardless of
+        # scheduler timing; it must still refresh the tree without hiding why.
+        notice = self.app.status.get()
+        marker = self.project / 'after-refusal.txt'
+        marker.write_text('scan still runs\n')
+        scan = self.app.source.scan(set(self.app.expanded), '')
+        self.app._project_scan(scan, None)
+        self.assertTrue(self.app.tree.exists(str(marker.resolve())))
+        self.assertEqual(self.app.status.get(), notice)
+        self.assertEqual((self.project / 'one.py').read_text(), 'new external version\n')
+
+    def test_project_scan_preserves_notices_for_two_seconds_without_renewal(self):
+        scan = self.app.source.scan(set(self.app.expanded), '')
+        for notice in ('已保存 one.py', '磁盘已变化，拒绝恢复旧卡片版本', '读取文件失败'):
+            with self.subTest(notice=notice):
+                with patch('development_mode.app.time.monotonic', return_value=100.0):
+                    self.app.status.set(notice)
+                for now in (100.0, 100.8, 101.999):
+                    with patch('development_mode.app.time.monotonic', return_value=now):
+                        self.app._project_scan(scan, None)
+                    self.assertEqual(self.app.status.get(), notice)
+                with patch('development_mode.app.time.monotonic', return_value=102.0):
+                    self.app._project_scan(scan, None)
+                self.assertIn('个 Git 变更', self.app.status.get())
+                # A second background refresh must update immediately; it did
+                # not start a new semantic-notice window at the previous write.
+                with patch('development_mode.app.time.monotonic', return_value=102.1):
+                    self.app._project_scan({**scan, 'branch': 'next-branch'}, None)
+                self.assertTrue(self.app.status.get().startswith('next-branch ·'))
+
+    def test_unknown_action_is_not_retried(self):
+        self.task()
+        self.emit(type='tool_completed', task_id='t', action_id='a', tool='write_file', ok=False, execution_state='unknown')
+        self.app._retry_request = {'prompt': 'change source', 'delegate': False}
+        with patch.object(self.app.runtime, 'run') as run:
+            self.app.retry_agent_task()
+            run.assert_not_called()
+        self.assertEqual(self.app.input.get('1.0', 'end-1c'), '')
+
+    def test_retry_sends_restored_original_draft_but_keeps_new_typing(self):
+        self.app._retry_request = {'prompt': 'original', 'delegate': True}
+        self.app.input.insert('1.0', 'original')
+        with patch.object(self.app, 'send') as send:
+            self.app.retry_agent_task()
+            send.assert_called_once_with(delegate=True)
+        self.app.input.delete('1.0', 'end')
+        self.app.input.insert('1.0', 'new human draft')
+        with patch.object(self.app, 'send') as send:
+            self.app.retry_agent_task()
+            send.assert_not_called()
+        self.assertEqual(self.app.input.get('1.0', 'end-1c'), 'new human draft')
+
+    def test_clear_history_removes_cards_and_restoration_renders_markdown(self):
+        self.task()
+        self.emit(type='tool_started', task_id='t', action_id='a', tool='read_file')
+        old = self.app.agent_panel._summary
+        self.app.chat.clear()
+        self.assertFalse(old.winfo_exists())
+        self.app.append(self.app.chat, '\nassistant\n**restored**\n')
+        self.assertTrue(self.app.chat.tag_ranges('b'))
+        self.app.render_evidence()
+        self.pump(lambda: not self.app._agent_render_pending)
+        self.assertIsNot(old, self.app.agent_panel._summary)
+
+    def test_background_task_survives_twenty_mode_and_ide_toggles(self):
+        entered, release = threading.Event(), threading.Event()
+        class BlockingRouter(Router):
+            def complete(self, *args, **kwargs):
+                entered.set()
+                if not release.wait(60):
+                    raise RuntimeError('test wait expired')
+                return super().complete(*args, **kwargs)
+        self.app.runtime.bridge.router = BlockingRouter(['real completion'])
+        agent = self.app.runtime.bridge.agent
+        agent.thinking, agent.thinking_mode = False, 'off'
+        self.app.planning.set('none')
+        self.app.input.insert('1.0', 'background task')
+        self.app.send()
+        try:
+            self.pump(entered.is_set)
+            identity = self.app.runtime.bridge.agent
+            session = identity.session.path
+            self.app.agent_panel.header_buttons['new'].invoke()
+            self.assertEqual(identity.session.path, session, '运行中不能替换 Session')
+            for _ in range(20):
+                self.app.toggle_ide(); self.step()
+            for _ in range(10):
+                self.state.switch('general'); self.step()
+                self.state.switch('development'); self.step()
+            self.assertTrue(self.app.runtime.busy)
+            self.assertIs(identity, self.app.runtime.bridge.agent)
+            self.assertFalse(self.app.runtime._cancel_event.is_set())
+            self.assertEqual(len(self.app.panes.panes()), 3)
+        finally:
+            release.set()
+        self.pump(lambda: self.app._jobs == 0)
+        self.assertIn('real completion', self.app.chat.get('1.0', 'end'))
+
+    def test_model_dialog_starts_with_selected_child_and_invalid_source(self):
+        self.state.configure_agent_model('revon/sub2', ('missing', 'model'))
+        self.app.agent_model_settings('revon/sub2')
+        window = next(w for w in self.app.winfo_children() if w.winfo_class() == 'Toplevel')
+        combos = [w for w in window.winfo_children() if w.winfo_class() == 'TCombobox']
+        self.assertEqual(combos[0].get(), 'revon/sub2')
+        labels = [w.cget('text') for w in window.winfo_children() if w.winfo_class() == 'TLabel']
+        self.assertTrue(any('失效' in text for text in labels))
+        window.destroy()
+
+    def test_permission_badge_tracks_rejected_grant_and_mode_reset(self):
+        self.app.permission.set('workspace-write')
+        self.assertIn('workspace-write', self.app.perm_badge.cget('text'))
+        with patch('development_mode.app.messagebox.askyesno', return_value=False):
+            self.app.permission_changed()
+        self.assertEqual(self.app.permission.get(), 'read-only')
+        self.assertIn('read-only', self.app.perm_badge.cget('text'))
+        self.app.permission.set('workspace-write')
+        self.state.switch('general')
+        self.assertIn('read-only', self.app.perm_badge.cget('text'))
+
+    def test_title_actions_and_new_conversation_preserve_old_journal(self):
+        panel = self.app.agent_panel
+        self.assertEqual(panel.title.cget('text'), 'AI Agent')
+        self.assertEqual(set(panel.header_buttons), {'new', 'history', 'settings', 'approvals'})
+        with patch('development_mode.app.filedialog.askopenfilename', return_value='') as history:
+            panel.header_buttons['history'].invoke()
+            history.assert_called_once()
+        panel.header_buttons['settings'].invoke()
+        window = next(w for w in self.app.winfo_children() if w.winfo_class() == 'Toplevel')
+        self.assertIn('模型', window.title())
+        window.destroy()
+        self.run_actual_edit()
+        self.pump(lambda: self.app._jobs == 0)
+        runtime = self.app.runtime
+        old = runtime.bridge.agent.session.path
+        content = old.read_bytes()
+        self.app.input.insert('1.0', 'keep my draft')
+        panel.header_buttons['new'].invoke()
+        self.pump(lambda: self.app._jobs == 0 and runtime.bridge.agent.session.path != old)
+        self.assertIs(self.app.runtime, runtime)
+        self.assertEqual(old.read_bytes(), content)
+        self.assertTrue(runtime.bridge.agent.session.path.exists())
+        self.assertEqual(runtime.bridge.history, [])
+        self.assertFalse(self.app.task_evidence.changes)
+        self.assertEqual(self.app.permission.get(), 'read-only')
+        self.assertEqual(self.app.input.get('1.0', 'end-1c'), 'keep my draft')
+        self.assertEqual((self.project / 'one.py').read_text(), 'print(2)\n')
+
+    def test_live_and_restored_timestamps_are_real_and_missing_times_unknown(self):
+        chat = self.app.chat
+        stamp = datetime(2026, 10, 13, 9, 7).timestamp()
+        chat.message('Coding Agent', 'live message', timestamp=stamp)
+        self.assertIn('09:07', chat.get('1.0', 'end'))
+        self.assertTrue(chat.tag_ranges('timestamp'))
+        path = self.app.runtime.bridge.agent.session.path.parent / 'timestamp-fixture.jsonl'
+        rows = [dict(type='user_message', depth=0, content='old question', ts=stamp),
+                dict(type='user_message', depth=1, content='child question', ts=stamp),
+                dict(type='assistant_message', depth=0, content='old answer', ts=stamp + 60)]
+        path.write_text('\n'.join(json.dumps(r) for r in rows), encoding='utf-8')
+        history_source = chat.history_source
+        chat.history_source = lambda: str(path)
+        chat.clear()
+        self.app.append(chat, '\nuser\nold question\n')
+        self.app.append(chat, '\nassistant\nold answer\n')
+        self.app.append(chat, '\nassistant\nlegacy without timestamp\n')
+        body = chat.get('1.0', 'end')
+        self.assertIn('09:07', body)
+        self.assertIn('09:08', body)
+        self.assertIn('时间未记录', body)
+        self.assertNotIn('child question', body)
+        chat.history_source = history_source
+        self.app.restore_session(path)
+        self.pump(lambda: self.app._jobs == 0 and '已恢复真实对话' in self.app.status.get())
+        self.assertIn('09:07', chat.get('1.0', 'end'))
+        self.assertIn('09:08', chat.get('1.0', 'end'))
+
+    def test_planning_card_frozen_grant_diff_action_and_task_states(self):
+        self.task()
+        self.app.agent_panel.task_context = {'planning': 'medium', 'permission': 'workspace-write'}
+        # A new task's card must not inherit the previously recovered task's
+        # planning/grant while its first render and worker start interleave.
+        self.app.runtime._resume_evidence = {'task_id': 'old-task', 'events': [
+            {'type': 'task_plan', 'task_id': 'old-task', 'plan': {'level': 'low'}}]}
+        self.emit(type='task_plan', task_id='t', plan={'level': 'medium', 'tasks': ['inspect', 'test']})
+        self.emit(type='development_agent_config', task_id='t', agent='revon', role='default',
+                  permission='workspace-write', selected_model=['fixture', 'actual-model'])
+        card = self.app.agent_panel._planning_card
+        self.assertEqual(card.level.cget('text'), '中等 (Medium)')
+        self.assertIn('已授权', card.authorization.cget('text'))
+        self.assertIn('工作区写', card.permission.cget('text'))
+        self.assertEqual(str(card.view.cget('state')), 'disabled')
+        self.emit(type='task_plan', task_id='old-task', plan={'level': 'low', 'tasks': ['stale plan']})
+        self.assertEqual(card.level.cget('text'), '中等 (Medium)')
+        self.app.permission.set('read-only')
+        self.app.planning.set('high')
+        self.emit(type='tool_started', task_id='t', action_id='a', tool='read_file')
+        self.assertIn('◐ read_file', self.app.workflow.get('1.0', 'end'))
+        self.assertTrue(self.app.workflow.tag_ranges('running'))
+        self.emit(type='tool_completed', task_id='t', action_id='a', tool='read_file', ok=True)
+        self.emit(type='tool_completed', task_id='t', action_id='w', tool='write_file', ok=True,
+            meta={'file_changes': [{'path': 'one.py', 'state': 'written', 'diff': '+actual change', 'added': 1, 'removed': 0}]})
+        self.assertEqual(card.level.cget('text'), '中等 (Medium)')
+        self.assertIn('工作区写', card.permission.cget('text'))
+        card.view.invoke()
+        self.assertEqual(self.app.output.select(), str(self._view('Diff').master))
+        self.assertIn('+actual change', self._view('Diff').get('1.0', 'end'))
+        self.assertIn('☑ read_file', self.app.workflow.get('1.0', 'end'))
+        self.assertIn('☐ inspect', self.app.workflow.get('1.0', 'end'))
+        self.assertTrue(self.app.workflow.tag_ranges('completed'))
+        self.emit(type='tool_completed', task_id='t', action_id='p', tool='write_file', ok=False,
+                  meta={'requires_approval': True})
+        self.assertIn('待逐动作审批', card.authorization.cget('text'))
+        self.emit(type='development_task_started', task_id='next', phase='executing')
+        self.emit(type='tool_completed', task_id='next', action_id='next-write', tool='write_file', ok=True,
+            meta={'file_changes': [{'path': 'next.py', 'state': 'written', 'diff': '+next task', 'added': 1, 'removed': 0}]})
+        card.view.invoke()
+        self.assertIn('+actual change', self._view('Diff').get('1.0', 'end'))
+        self.assertNotIn('+next task', self._view('Diff').get('1.0', 'end'))
+
+    def test_input_placeholder_role_selection_and_real_model_badge(self):
+        self.assertEqual(self.app.input.get('1.0', 'end-1c'), '')
+        self.assertIn('输入任务描述', self.app.input.placeholder.cget('text'))
+        self.assertEqual(self.app.role_choice.get(), 'agent')
+        self.app.role_choice.set('simple')
+        self.app._agent_role_selected()
+        self.assertEqual(self.app.task_role.get(), 'simple')
+        self.app.input.insert('1.0', 'draft')
+        self.pump(lambda: self.app.input.placeholder.winfo_manager() == '')
+        self.assertEqual(self.app.input.placeholder.winfo_manager(), '')
+        self.app.input.delete('1.0', 'end')
+        self.pump(lambda: self.app.input.placeholder.winfo_manager() == 'place')
+        self.assertEqual(self.app.input.placeholder.winfo_manager(), 'place')
+        self.assertEqual(self.app.delegate_button.cget('text'), '创建子 Agent')
+        self.assertEqual(self.app.send_button.cget('background'), C['accent'])
+        self.run_actual_edit()
+        self.assertEqual(self.app.runtime.last_snapshot.role, 'simple')
+        self.task()
+        self.emit(type='workflow_state', task_id='t', agent='revon', run_id='r', phase='executing')
+        self.emit(type='usage', task_id='t', agent='revon', run_id='r', model='configured-actual-model')
+        self.assertIn('configured-actual-model', self.app.run_model.cget('text'))
+
+
+class OwnershipTests(unittest.TestCase):
+    def test_protected_layout_methods_are_byte_identical_to_integration_base(self):
+        root = Path(__file__).resolve().parents[2]
+        path = 'revon-gui/development_mode/app.py'
+        old = subprocess.run(['git', 'show', 'HEAD:' + path], cwd=root, capture_output=True, check=True).stdout.decode('utf-8')
+        # v0.2（MiniMax chrome 扩展）起 _build_project 含注释级演进：
+        # 对该方法改用 AST dump 比对（忽略注释/空白），其余七法保持字节比对。
+        new = (root / path).read_text(encoding='utf-8')
+        def methods(source):
+            lines = source.splitlines()
+            cls = next(n for n in ast.parse(source).body if isinstance(n, ast.ClassDef))
+            return {n.name: '\n'.join(lines[n.lineno - 1:n.end_lineno]) for n in cls.body if isinstance(n, ast.FunctionDef)}
+        before, after = methods(old), methods(new)
+        # v0.2 集成裁决（2026-10-14）：MiniMax chrome 扩展往 _build_project
+        # 注入 4 个 on_show_* kwargs（构造参数追加、不改既有行为）——保护
+        # 语义从字节不变放宽为「既有调用点全部保留」：AST 比对 kwargs 之外
+        # 的语句序列须一致。其余七法仍字节比对。
+        for name in ('_build', '_build_project', '_build_editor', 'apply_layout', 'place_sashes', '_panes_resized', 'capture_layout', 'toggle_ide'):
+            if name in ('_build', '_build_project', '_build_editor'):
+                # W3（2026-10-18）：_build_editor 编辑器工具栏按钮从裸 ttk.Button
+                # 换成统一 dev_button（工单授权的合法演进），从字节比对组
+                # 移入 AST 比对组（与 _build/_build_project 同规则：
+                # 剥离合法演进项后语句序列须一致，防其它改动借机混入）。
+                b = ast.parse(textwrap.dedent(before[name]))
+                a = ast.parse(textwrap.dedent(after[name]))
+                def _strip_p1_editor_empty(node):
+                    """P1-3 / v0.6 合法增量：编辑器空态卡 + 底部空内容
+                    自动折叠接线——语句中含这些名字的整句剔除，两侧
+                    同规则。"""
+                    MARKS = ('_editor_empty', '_empty_state_card',
+                             '_sync_editor_empty', '_editor_visible',
+                             'write_output', '_bottom_content_arrived')
+
+                    def hit(n):
+                        return any(isinstance(x, ast.Name) and x.id in MARKS
+                                   or isinstance(x, ast.Attribute) and x.attr in MARKS
+                                   for x in ast.walk(n))
+                    for container in ast.walk(node):
+                        if isinstance(container, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                                  ast.For, ast.While, ast.If, ast.With,
+                                                  ast.Try)):
+                            container.body = [n for n in container.body if not hit(n)]
+                            if hasattr(container, 'orelse'):
+                                container.orelse = [n for n in container.orelse if not hit(n)]
+                    return node
+
+                def _strip_new_kwargs(tree):
+                    """归一化：剥掉 on_show_* / 徽标 provider kwargs、review
+                    预设值增量（M4-M6 合法演进）与 W3 按钮工厂替换
+                    （ttk.Button → dev_button，两侧同规则；局部 import
+                    在 _body_without_button_import 里先行剔除）。
+                    """
+                    for node in ast.walk(tree):
+                        if isinstance(node, ast.Call):
+                            node.keywords = [k for k in node.keywords
+                                             if k.arg not in ('on_show_tasks', 'on_show_knowledge',
+                                                              'on_show_evolution', 'on_show_approvals',
+                                                              'changes_provider', 'tests_provider',
+                                                              'problems_provider', 'kind', 'tooltip')]
+                            # W3：ttk.Button(...) → dev_button(...) 同参等价
+                            # （text/command/pack 不变，仅新增 kind/tooltip 键）
+                            if (isinstance(node.func, ast.Attribute)
+                                    and node.func.attr == 'Button'):
+                                node.func = ast.Name(id='dev_button', ctx=ast.Load())
+                        if (isinstance(node, (ast.List, ast.Tuple))
+                                and any(isinstance(x, ast.Constant) and x.value == 'review' for x in node.elts)):
+                            node.elts = [x for x in node.elts
+                                         if not (isinstance(x, ast.Constant) and x.value == 'review')]
+                    return tree
+
+                # W3：先在函数体级别剥掉局部 import（buttons.dev_button），
+                # 再逐句归一化比对。
+                def _body_without_button_import(parse_tree):
+                    fn = parse_tree.body[0]
+                    # P1-3（Kimi 审查修复）：编辑器空态卡挂载增量——
+                    # import .bottom_panel._empty_state_card 同规则剥离。
+                    return [n for n in fn.body
+                            if not (isinstance(n, ast.ImportFrom)
+                                    and n.module in ('buttons', 'bottom_panel'))]
+                def _p1_marked(n):
+                    MARKS = ('_editor_empty', '_empty_state_card',
+                             '_sync_editor_empty', '_editor_visible',
+                             'write_output', '_bottom_content_arrived')
+                    return any(isinstance(x, ast.Name) and x.id in MARKS
+                               or isinstance(x, ast.Attribute) and x.attr in MARKS
+                               for x in ast.walk(n))
+                # UI 重设计（2026-10-30，feature/ui-redesign，用户裁决登记）：
+                # 1) style= / padding= 只管视觉分层，两侧剥离；
+                # 2) _build 的 self.vertical.pack 去掉 padx=8 四周留白缝；
+                # 3) _build_editor 的两排工具栏（保存/重新载入/关闭标签、
+                #    编码/文件审查/附加给 Agent）+ 文档状态行收进标签行右侧
+                #    图标组（tool_button + 更多菜单）。工具栏局部名所在语句
+                #    两侧整句剔除，document_state 赋值本身仍受比对。
+                REDESIGN_EDITOR_MARKS = ('bar', 'state_bar', 'menu', 'actions',
+                                         'split', 'more', 'attach', 'save',
+                                         'dev_button', 'tool_button', 'IconButton',
+                                         'attach_tooltip', '_editor_action_widgets')
+
+                def _strip_redesign(tree):
+                    for node in ast.walk(tree):
+                        if isinstance(node, ast.Call):
+                            node.keywords = [k for k in node.keywords
+                                             if k.arg not in ('style', 'padding')]
+                            f = node.func
+                            if (isinstance(f, ast.Attribute) and f.attr == 'pack'
+                                    and isinstance(f.value, ast.Attribute)
+                                    and f.value.attr == 'vertical'):
+                                node.keywords = [k for k in node.keywords if k.arg != 'padx']
+                    return tree
+
+                def _redesign_marked(n):
+                    if name != '_build_editor':
+                        return False
+                    for x in ast.walk(n):
+                        if isinstance(x, ast.Name) and x.id in REDESIGN_EDITOR_MARKS:
+                            return True
+                        # 文档状态行不再 pack（状态并入底部状态行）。
+                        if (isinstance(x, ast.Attribute) and x.attr == 'pack'
+                                and isinstance(x.value, ast.Attribute)
+                                and x.value.attr == 'document_state'):
+                            return True
+                    return False
+
+                def _norm(n):
+                    return ast.dump(_strip_redesign(_strip_p1_editor_empty(
+                        _strip_new_kwargs(copy.deepcopy(n)))))
+                stmts_b = [_norm(n) for n in _body_without_button_import(b)
+                           if not _p1_marked(n) and not _redesign_marked(n)]
+                stmts_a = [_norm(n) for n in _body_without_button_import(a)
+                           if not _p1_marked(n) and not _redesign_marked(n)]
+                self.assertEqual(stmts_b, stmts_a, name)
+            else:
+                source = after[name]
+                if name == 'apply_layout':
+                    # The Qt host renders its own Agent column. The native
+                    # layout algorithm remains identical for other callers.
+                    source = source.replace(
+                        "\n        if self._qt_agent:\n"
+                        "            # The Qt host renders the Agent column beside this native editor surface.\n"
+                        "            wanted = [panel for panel in wanted if panel is not self.agent_frame]", "")
+                self.assertEqual(before[name], source, name)
+
+
+if __name__ == '__main__':
+    unittest.main()

@@ -9,9 +9,9 @@ import threading
 import unittest
 from unittest.mock import Mock, patch
 
-from keystone import config
-from keystone.gateway import build_handler, GatewayConfig
-from keystone.session import Event, Session, SessionIndex
+from revon import config
+from revon.gateway import build_handler, GatewayConfig
+from revon.session import Event, Session, SessionIndex
 
 
 class SessionTests(unittest.TestCase):

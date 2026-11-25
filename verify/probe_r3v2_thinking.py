@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """v2.2 增量复核探针：looks_complex 正确性/最小性 + smart 门控语义 + OBS-1 收口 + _COMPLEX_MIN_LEN 意见。
 
-用法：在 agent-keystone/ 目录下运行  python probe_r3v2_thinking.py
+用法：在 agent-revon/ 目录下运行  python probe_r3v2_thinking.py
 """
 import importlib.util, sys, difflib, ast
 from pathlib import Path
 
 ROOT = Path.cwd()
-assert (ROOT / "keystone" / "loop.py").is_file(), "请在 agent-keystone/ 目录下运行"
+assert (ROOT / "revon" / "loop.py").is_file(), "请在 agent-revon/ 目录下运行"
 sys.path.insert(0, str(ROOT))
 
 failures = []
@@ -16,7 +16,7 @@ def chk(name, cond, detail=""):
         failures.append(f"[FAIL] {name}: {detail}")
 
 # ---------- 1) 模块级：looks_complex 正确性 ----------
-spec = importlib.util.spec_from_file_location("think_v22", ROOT / "keystone" / "contrib" / "thinking.py")
+spec = importlib.util.spec_from_file_location("think_v22", ROOT / "revon" / "contrib" / "thinking.py")
 m = importlib.util.module_from_spec(spec)
 sys.modules["think_v22"] = m
 spec.loader.exec_module(m)
@@ -44,10 +44,10 @@ chk("M7-not-a-hook", "looks_complex" not in h)
 # 自检里也无 looks_complex（验证：它不在 register 的 hooks 中）
 
 # ---------- 2) smart 门控语义（需 Agent/LoopLimits/ThinkingSuite）----------
-from keystone.loop import Agent, LoopLimits, ThinkingSuite, mount_contrib_extensions  # noqa
-from keystone.model import ModelRouter, Provider, Usage  # noqa
-from keystone.policy import Mode, Policy  # noqa
-from keystone.tools import build_builtin_registry  # noqa
+from revon.loop import Agent, LoopLimits, ThinkingSuite, mount_contrib_extensions  # noqa
+from revon.model import ModelRouter, Provider, Usage  # noqa
+from revon.policy import Mode, Policy  # noqa
+from revon.tools import build_builtin_registry  # noqa
 
 class ProbeTransport:
     def __init__(self):
@@ -107,7 +107,7 @@ chk("R5-mode-event-smart-engaged",
     f"s1={ev_s1[:1]} s2={ev_s2[:1]}")
 
 # ---------- 3) CLI ----------
-from keystone.cli import build_parser  # noqa
+from revon.cli import build_parser  # noqa
 args_ok = build_parser().parse_args(["run", "hi", "--thinking", "smart"])
 chk("C1-cli-smart", getattr(args_ok, "thinking", None) == "smart")
 try:
@@ -119,12 +119,12 @@ except SystemExit:
 # ---------- 4) OBS-1 收口核实 ----------
 # looks_complex 是 run-time consumer；_is_word_match 被 looks_complex 消费
 # _looks_like_decimal 仍只在 selftest 消费（新架构无句切分）
-selftest_fn = next(n for n in ast.walk(ast.parse((ROOT/"keystone"/"contrib"/"thinking.py").read_text()))
+selftest_fn = next(n for n in ast.walk(ast.parse((ROOT/"revon"/"contrib"/"thinking.py").read_text()))
                    if isinstance(n,ast.FunctionDef) and n.name=='selftest')
 lo,hi = selftest_fn.lineno, selftest_fn.end_lineno
 # Verify looks_complex is NOT just in selftest (it's consumed by loop.py's _contemplate)
 # Find all calls to looks_complex in contrib/thinking.py
-src_contrib = (ROOT / "keystone" / "contrib" / "thinking.py").read_text()
+src_contrib = (ROOT / "revon" / "contrib" / "thinking.py").read_text()
 looks_calls = [n.lineno for n in ast.walk(ast.parse(src_contrib))
                if isinstance(n,ast.Name) and n.id=='looks_complex']
 chk("OBS1-looks-complex-has-consumer", len(looks_calls) > 1,

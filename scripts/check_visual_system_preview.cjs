@@ -12,13 +12,13 @@ const root = path.resolve(__dirname, '..');
   const errors=[];
   page.on('pageerror', error => errors.push(error.message));
   try {
-    await page.goto(pathToFileURL(path.join(root, 'reports/keystone-visual-system-2-preview.html')).href);
-    await page.screenshot({path:path.join(root,'reports/keystone-visual-system-2-work.png')});
+    await page.goto(pathToFileURL(path.join(root, 'reports/revon-visual-system-2-preview.html')).href);
+    await page.screenshot({path:path.join(root,'reports/revon-visual-system-2-work.png')});
     await page.evaluate(() => {window.originalWork=document.querySelector('[data-workspace=work]');window.originalCode=document.querySelector('[data-buffer=runner]');});
     const workDraft=page.getByRole('textbox',{name:'Work Mode 草稿'});
     await workDraft.fill('Work 模式未保存草稿');
     await page.locator('[data-mode=coding]').click();
-    await page.screenshot({path:path.join(root,'reports/keystone-visual-system-2-coding.png')});
+    await page.screenshot({path:path.join(root,'reports/revon-visual-system-2-coding.png')});
     await page.getByRole('textbox',{name:'runner.py 示例草稿'}).fill('# 未保存代码草稿\n');
     await page.locator('[data-file=models]').click();
     await page.locator('[data-mode=work]').click();
@@ -50,8 +50,8 @@ const root = path.resolve(__dirname, '..');
     const report={local_only:true,retained_drafts:true,retained_dom:true,retained_tabs:true,
       background_callback_continues:true,layout_presets:true,keyboard_panel_resize:true,
       viewport_widths:[920,1100,1360,1920],page_errors:errors,
-      screenshots:'HTML layout specimens, not production Keystone or native Tk screenshots'};
-    fs.writeFileSync(path.join(root,'reports/keystone-visual-system-2-preview-check.json'),JSON.stringify(report,null,2));
+      screenshots:'HTML layout specimens, not production revon or native Tk screenshots'};
+    fs.writeFileSync(path.join(root,'reports/revon-visual-system-2-preview-check.json'),JSON.stringify(report,null,2));
     console.log(JSON.stringify(report));
   }finally{await browser.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});

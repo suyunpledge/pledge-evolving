@@ -4,10 +4,10 @@ const http = require('node:http');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
-const { KeystoneBridge } = require('../out/bridge');
+const { RevonBridge } = require('../out/bridge');
 
-test('real Python bridge calls Keystone tools and carries real history without secret payloads', { timeout: 60000 }, async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'keystone-vscode-test-'));
+test('real Python bridge calls revon tools and carries real history without secret payloads', { timeout: 60000 }, async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'revon-vscode-test-'));
   const home = path.join(root, 'home'); const workspace = path.join(root, 'workspace');
   await fs.mkdir(home); await fs.mkdir(workspace);
   const key = 'sk-vscode-integration-auth-synthetic-33771';
@@ -30,18 +30,18 @@ test('real Python bridge calls Keystone tools and carries real history without s
     });
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  const bridge = new KeystoneBridge();
+  const bridge = new RevonBridge();
   try {
     const port = server.address().port;
     await fs.writeFile(path.join(home, 'secrets.json'), JSON.stringify({ vscode: key }));
     await fs.writeFile(path.join(home, 'keystone.patch.json'), JSON.stringify([
-      { id: 'vscode', name: 'provider:vscode', config: { baseURL: `http://127.0.0.1:${port}/v1`, apiKey: { $expr: "get('env.KEYSTONE_VSCODE_KEY', '')" }, wire: 'openai', model: 'offline-stub', adapt: false } },
+      { id: 'vscode', name: 'provider:vscode', config: { baseURL: `http://127.0.0.1:${port}/v1`, apiKey: { $expr: "get('env.REVON_VSCODE_KEY', '')" }, wire: 'openai', model: 'offline-stub', adapt: false } },
       { id: 'model', config: { primary: ['vscode', 'offline-stub'], fallback: [], moa: false } },
       { id: 'thinking', config: { mode: 'off' } }
     ]));
     await fs.writeFile(path.join(workspace, 'notes.txt'), 'Real workspace note.');
     const events = []; bridge.on('event', event => events.push(event));
-    bridge.start({ python: process.env.KEYSTONE_TEST_PYTHON || 'python',
+    bridge.start({ python: process.env.REVON_TEST_PYTHON || 'python',
       launcher: path.resolve(__dirname, '../python/launch.py'), engine: path.resolve(__dirname, '../..'), cwd: workspace });
     const ready = await bridge.request('initialize', { home, workspace }, 20000);
     assert.equal(ready.protocol, 1); assert.equal(ready.ready, true); assert.equal(requests.length, 0);

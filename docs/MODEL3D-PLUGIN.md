@@ -1,18 +1,18 @@
 # 3D 建模能力（model3d）
 
 目标：用户要一个 3D 模型（"低多边形椅子""12 齿齿轮""能 3D 打印的手机支架"）时，Agent 用更少的回合交出正确、能用的文件。
-沿用 2026-11-09 的结论（`keystone/vendors.py`：`file_stats` / `file_export`）：**工具层介入胜过提示层**。模型不再手写顶点或 STL 文本，而是描述"要什么"，一次工具调用拿回文件、回读证明、实测尺寸和拓扑检查。
+沿用 2026-11-09 的结论（`revon/vendors.py`：`file_stats` / `file_export`）：**工具层介入胜过提示层**。模型不再手写顶点或 STL 文本，而是描述"要什么"，一次工具调用拿回文件、回读证明、实测尺寸和拓扑检查。
 
 ## 接入路线（为什么是"内核工具 + 技能插件"两层）
 
 | 层 | 位置 | 作用 |
 |---|---|---|
-| 几何引擎 | `keystone/model3d/`（纯标准库） | 规格 → 网格 → 校验 → 导出 → 预览 |
-| Agent 工具 | `keystone/model3d_tools.py`，在 `build_builtin_registry` 注册 | `model3d_build`（写）、`model3d_inspect`（读，延迟加载） |
-| 技能（内核） | `keystone/bundled/model3d/SKILL.md`，`capability.BUNDLED_ROOT` | 进能力索引；`skill_list {"name":"model3d"}` 载入正文 |
-| 技能（桌面插件） | `keystone-gui/catalog.builtin.json` 条目 `skill-model3d` | 安装→知悉→启用→授予 `skill.read` 后出现 `keystone_model3d_guide` |
+| 几何引擎 | `revon/model3d/`（纯标准库） | 规格 → 网格 → 校验 → 导出 → 预览 |
+| Agent 工具 | `revon/model3d_tools.py`，在 `build_builtin_registry` 注册 | `model3d_build`（写）、`model3d_inspect`（读，延迟加载） |
+| 技能（内核） | `revon/bundled/model3d/SKILL.md`，`capability.BUNDLED_ROOT` | 进能力索引；`skill_list {"name":"model3d"}` 载入正文 |
+| 技能（桌面插件） | `revon-gui/catalog.builtin.json` 条目 `skill-model3d` | 安装→知悉→启用→授予 `skill.read` 后出现 `keystone_model3d_guide` |
 
-- 桌面插件体系（`keystone-plugin.json`）是**声明式**的：不执行插件 Python（`executes_code` 插件不向 Agent 开放），工具只能别名宿主文件操作或返回技能正文。几何计算放不进插件，只能是宿主代码。
+- 桌面插件体系（`revon-plugin.json`）是**声明式**的：不执行插件 Python（`executes_code` 插件不向 Agent 开放），工具只能别名宿主文件操作或返回技能正文。几何计算放不进插件，只能是宿主代码。
 - 内核工具必须由宿主 `trusted=True` 注册，否则 effect 为 UNKNOWN、不可调用。`model3d_build` 声明为写工具（`read_only=False`，参数名 `path`），因此自动经过：Policy 判定、工作区写锁、`execution.py` 写前检查点快照、写后反馈。附带产物（其它格式、预览 PNG）只能落在同目录同名下。无网络、无子进程。
 - 两个工具名加入 `BUILTIN_TOOL_NAMES`，插件不能遮蔽。
 - `model3d_inspect` 设为 deferred（`tool_search "inspect stl"` 可找到），默认工具面只多 `model3d_build` 一个（约 2.4k 字符声明）。
@@ -40,8 +40,8 @@
 
 ## 验证
 
-- `python -m unittest keystone.test_model3d`（几何、布尔、导出有效性、校验信息、工具权限、技能）
-- `keystone-gui/test_plugin_model3d.py`（插件安装→知悉→启用→授权→加载正文→禁用撤销）
+- `python -m unittest revon.test_model3d`（几何、布尔、导出有效性、校验信息、工具权限、技能）
+- `revon-gui/test_plugin_model3d.py`（插件安装→知悉→启用→授权→加载正文→禁用撤销）
 - `python scripts/verify_model3d_ab.py`：离线脚本模型演示（先把孔放在角上，工具检查判 `through_holes want 1, got 0 [FAIL]`，第二次修正后通过）
 - `python scripts/verify_model3d_ab.py --live --tasks plate,gear,stand`：真实模型前后对照，产物由独立评分器从磁盘重新解析评分
 

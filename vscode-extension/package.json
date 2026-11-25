@@ -1,11 +1,11 @@
 {
   "name": "keystone-agent",
-  "displayName": "pledge-keystone",
-  "description": "Keystone coding agent beside your code: workspace tools, model routing, policy sandbox and secret virtualization.",
+  "displayName": "revon",
+  "description": "revon coding agent beside your code: workspace tools, model routing, policy sandbox and secret virtualization.",
   "version": "0.2.0",
   "publisher": "pledgedeveloper0418",
   "license": "MIT",
-  "icon": "media/keystone-logo.png",
+  "icon": "media/revon-logo.png",
   "engines": {
     "vscode": "^1.96.0"
   },
@@ -14,7 +14,7 @@
     "Other"
   ],
   "keywords": [
-    "keystone",
+    "revon",
     "agent",
     "coding",
     "secret-virtualization"
@@ -42,14 +42,14 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "keystone",
-          "title": "Keystone",
-          "icon": "media/keystone.svg"
+          "id": "revon",
+          "title": "revon",
+          "icon": "media/revon.svg"
         }
       ]
     },
     "views": {
-      "keystone": [
+      "revon": [
         {
           "type": "webview",
           "id": "keystone.chat",
@@ -61,50 +61,50 @@
       {
         "command": "keystone.open",
         "title": "%command.open%",
-        "category": "Keystone"
+        "category": "revon"
       },
       {
         "command": "keystone.newChat",
         "title": "%command.newChat%",
-        "category": "Keystone",
+        "category": "revon",
         "icon": "$(add)"
       },
       {
         "command": "keystone.stop",
         "title": "%command.stop%",
-        "category": "Keystone",
+        "category": "revon",
         "icon": "$(debug-stop)"
       },
       {
         "command": "keystone.attachFile",
         "title": "%command.attachFile%",
-        "category": "Keystone"
+        "category": "revon"
       },
       {
         "command": "keystone.attachSelection",
         "title": "%command.attachSelection%",
-        "category": "Keystone"
+        "category": "revon"
       },
       {
         "command": "keystone.explainSelection",
         "title": "%command.explain%",
-        "category": "Keystone"
+        "category": "revon"
       },
       {
         "command": "keystone.reviewSelection",
         "title": "%command.review%",
-        "category": "Keystone"
+        "category": "revon"
       },
       {
         "command": "keystone.configure",
         "title": "%command.configure%",
-        "category": "Keystone",
+        "category": "revon",
         "icon": "$(gear)"
       },
       {
         "command": "keystone.reconnect",
         "title": "%command.reconnect%",
-        "category": "Keystone",
+        "category": "revon",
         "icon": "$(refresh)"
       }
     ],
@@ -125,22 +125,22 @@
         {
           "command": "keystone.explainSelection",
           "when": "editorHasSelection && resourceScheme == file",
-          "group": "keystone@1"
+          "group": "revon@1"
         },
         {
           "command": "keystone.reviewSelection",
           "when": "editorHasSelection && resourceScheme == file",
-          "group": "keystone@2"
+          "group": "revon@2"
         },
         {
           "command": "keystone.attachFile",
           "when": "resourceScheme == file",
-          "group": "keystone@3"
+          "group": "revon@3"
         }
       ]
     },
     "configuration": {
-      "title": "Keystone",
+      "title": "revon",
       "properties": {
         "keystone.pythonPath": {
           "type": "string",

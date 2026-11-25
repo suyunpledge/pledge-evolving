@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>Keystone Office · 设计样稿</title>
+<title>revon Office · 设计样稿</title>
 <style>
 :root{
   --bg:#0d1118; --side:#0c1017; --surface:#141b25; --surface2:#1a2330; --raised:#202b3a;
@@ -94,7 +94,7 @@ ins.sg{color:#0f6b3a;text-decoration:none;background:#dcf5e6;border-bottom:2px s
 .sgpop button.ok{background:#1f7a4a;border-color:#1f7a4a;color:#fff}
 .kbd{font:11px var(--mono);padding:0 5px;border:1px solid #cfd6df;border-radius:4px;color:var(--inkMuted)}
 .caret-ai{display:inline-block;width:2px;height:20px;background:var(--ember);vertical-align:-4px;position:relative;animation:p 1s infinite}
-.caret-ai::after{content:"Keystone";position:absolute;top:-17px;left:-1px;font:600 10px var(--font);color:#fff;background:var(--ember);padding:0 4px;border-radius:3px 3px 3px 0;white-space:nowrap}
+.caret-ai::after{content:"revon";position:absolute;top:-17px;left:-1px;font:600 10px var(--font);color:#fff;background:var(--ember);padding:0 4px;border-radius:3px 3px 3px 0;white-space:nowrap}
 .caret-user{display:inline-block;width:2px;height:20px;background:#2563eb;vertical-align:-4px}
 .ai-mark{background:rgba(232,157,90,.12);border-bottom:1px dashed rgba(180,95,34,.5)}
 .floatbar{position:absolute;display:flex;gap:2px;padding:4px;background:#1a2330;border:1px solid var(--line2);border-radius:9px;box-shadow:0 8px 22px rgba(0,0,0,.35);color:var(--text2);font-size:12.5px;z-index:4}
@@ -241,7 +241,7 @@ ins.sg{color:#0f6b3a;text-decoration:none;background:#dcf5e6;border-bottom:2px s
 
 <div class="app">
   <header class="appbar">
-    <div class="brand"><b></b>Keystone</div>
+    <div class="brand"><b></b>revon</div>
     <div class="seg" role="tablist" aria-label="工作空间">
       <button class="on">Work Mode</button><button>Coding Mode</button>
     </div>
@@ -268,7 +268,7 @@ ins.sg{color:#0f6b3a;text-decoration:none;background:#dcf5e6;border-bottom:2px s
     <!-- ============ HOME ============ -->
     <main class="home hidden" data-view="home">
       <h1>办公</h1>
-      <div class="lead">文档保存在工作区 <code style="font-family:var(--mono)">Office/</code>，你和 Keystone 都可以直接编辑。</div>
+      <div class="lead">文档保存在工作区 <code style="font-family:var(--mono)">Office/</code>，你和 revon 都可以直接编辑。</div>
       <div class="askbar"><svg class="i" style="color:var(--ember)"><use href="#spark"/></svg>描述你要的文件，例如"根据 销售明细.xlsx 做一份 8 页季度汇报"……<button class="send composer" style="padding:0;border:0"><span class="send" style="width:30px;height:30px;border-radius:50%;background:var(--primary);display:grid;place-items:center;color:#fff"><svg class="i"><use href="#send"/></svg></span></button></div>
       <div class="newrow">
         <button class="newcard"><span class="filetype t-doc">W</span><span class="nm">空白文档</span><span class="ds">报告、方案、合同、纪要</span></button>
@@ -278,9 +278,9 @@ ins.sg{color:#0f6b3a;text-decoration:none;background:#dcf5e6;border-bottom:2px s
       </div>
       <h3>最近</h3>
       <table class="recent">
-        <tr><td><span class="filetype t-doc">W</span>Q3 区域销售复盘</td><td>你和 Keystone · 2 分钟前</td><td><span class="badge">3 条待处理建议</span></td><td>Office/Q3 区域销售复盘.kdoc</td></tr>
-        <tr><td><span class="filetype t-sheet">X</span>销售明细</td><td>Keystone · 10 分钟前</td><td></td><td>Office/销售明细.ksheet</td></tr>
-        <tr><td><span class="filetype t-slides">P</span>Q3 季度汇报</td><td>Keystone 正在编辑</td><td><span class="badge">生成中 5/8</span></td><td>Office/Q3 季度汇报.kslides</td></tr>
+        <tr><td><span class="filetype t-doc">W</span>Q3 区域销售复盘</td><td>你和 revon · 2 分钟前</td><td><span class="badge">3 条待处理建议</span></td><td>Office/Q3 区域销售复盘.kdoc</td></tr>
+        <tr><td><span class="filetype t-sheet">X</span>销售明细</td><td>revon · 10 分钟前</td><td></td><td>Office/销售明细.ksheet</td></tr>
+        <tr><td><span class="filetype t-slides">P</span>Q3 季度汇报</td><td>revon 正在编辑</td><td><span class="badge">生成中 5/8</span></td><td>Office/Q3 季度汇报.kslides</td></tr>
         <tr><td><span class="filetype t-doc">W</span>供应商合同（导入）</td><td>你 · 昨天</td><td style="color:var(--warn)">2 处只读块</td><td>Office/供应商合同.kdoc</td></tr>
       </table>
     </main>
@@ -292,7 +292,7 @@ ins.sg{color:#0f6b3a;text-decoration:none;background:#dcf5e6;border-bottom:2px s
         <span class="fname" id="fname">Q3 区域销售复盘</span>
         <span class="saved"><svg class="i" style="width:14px;height:14px;color:var(--ok)"><use href="#cloud"/></svg><span id="saved">本地已保存 · v44</span></span>
         <div class="spacer"></div>
-        <button class="btn" title="撤销 Keystone 的上一次修改，保留你之后的编辑"><svg class="i"><use href="#undo"/></svg>撤销 AI 修改</button>
+        <button class="btn" title="撤销 revon 的上一次修改，保留你之后的编辑"><svg class="i"><use href="#undo"/></svg>撤销 AI 修改</button>
         <button class="btn"><svg class="i"><use href="#history"/></svg>版本历史</button>
         <button class="btn" id="slideplay" style="display:none"><svg class="i"><use href="#play"/></svg>放映</button>
         <button class="btn primary"><svg class="i"><use href="#export"/></svg>导出</button>
@@ -397,7 +397,7 @@ ins.sg{color:#0f6b3a;text-decoration:none;background:#dcf5e6;border-bottom:2px s
                     </span>。
                   华南、华北分列二、三位，西南增速最快（+27.5%）<span class="caret-ai"></span>。
                 </p>
-                <div class="sgpop" style="left:110px;top:70px"><span class="who"><svg class="i" style="color:var(--ember)"><use href="#spark"/></svg>Keystone 建议 · 改为正式语气</span>
+                <div class="sgpop" style="left:110px;top:70px"><span class="who"><svg class="i" style="color:var(--ember)"><use href="#spark"/></svg>revon 建议 · 改为正式语气</span>
                       <div class="why">口语表述替换为可核对的数据，数值引用自《销售明细》地区汇总!B2:C2。</div>
                       <div class="acts"><button class="ok">接受 <span class="kbd" style="color:#d9f2e3;border-color:#5aa77d">Tab</span></button><button>拒绝 <span class="kbd">Esc</span></button><button>下一条 <span class="kbd">Alt+]</span></button></div>
                     </div>
@@ -413,7 +413,7 @@ ins.sg{color:#0f6b3a;text-decoration:none;background:#dcf5e6;border-bottom:2px s
               <div class="blk" style="position:relative">
                 <p><span class="selection">渠道库存周转天数上升到 46 天，主要因为华北两家经销商压货</span>，回款周期同步拉长。</p>
                 <div class="floatbar" style="left:40px;top:36px">
-                  <button class="ai">✦ 改写</button><button>扩写</button><button>缩写</button><button>翻译</button><button>解释</button><button class="ai">✦ 问 Keystone…</button>
+                  <button class="ai">✦ 改写</button><button>扩写</button><button>缩写</button><button>翻译</button><button>解释</button><button class="ai">✦ 问 revon…</button>
                 </div>
               </div>
               <div class="blk"><h2>四、Q4 行动计划</h2></div>
@@ -443,7 +443,7 @@ ins.sg{color:#0f6b3a;text-decoration:none;background:#dcf5e6;border-bottom:2px s
                 <tr><th>14</th><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
               </table>
               <div class="chartcard">
-                <div class="ct">各地区销售额（万元）<span class="badge">Keystone 插入</span></div>
+                <div class="ct">各地区销售额（万元）<span class="badge">revon 插入</span></div>
                 <svg viewBox="0 0 350 170" width="100%">
                   <g font-size="11" fill="#6b7280" font-family="Segoe UI, Microsoft YaHei UI">
                     <line x1="40" y1="140" x2="340" y2="140" stroke="#d5dbe3"/>
@@ -482,16 +482,16 @@ ins.sg{color:#0f6b3a;text-decoration:none;background:#dcf5e6;border-bottom:2px s
                   <text x="45" y="220" text-anchor="middle">华东</text><text x="120" y="220" text-anchor="middle">华南</text><text x="195" y="220" text-anchor="middle">华北</text><text x="270" y="220" text-anchor="middle">西南</text>
                 </g>
               </svg>
-              <div class="ai-box" style="left:414px;top:118px;width:342px;height:256px"><span class="lbl">Keystone · 关联《销售明细》图表</span></div>
+              <div class="ai-box" style="left:414px;top:118px;width:342px;height:256px"><span class="lbl">revon · 关联《销售明细》图表</span></div>
             </div>
             <div class="notes">备注：先讲结论（华东领跑），再指出西南的增长机会；华北库存问题放到第 6 页展开。</div>
           </div>
         </div>
 
         <!-- AI PANEL -->
-        <aside class="ai" aria-label="Keystone 侧栏">
+        <aside class="ai" aria-label="revon 侧栏">
           <div class="ai-head">
-            <span class="title"><svg class="i" style="color:var(--ember)"><use href="#spark"/></svg>Keystone</span>
+            <span class="title"><svg class="i" style="color:var(--ember)"><use href="#spark"/></svg>revon</span>
             <div class="mode" role="radiogroup" aria-label="AI 写入模式" title="只读：只能查看；建议：修改需你确认；直接编辑：立即生效，可撤销">
               <button>只读</button><button class="on" id="m-sug">建议</button><button id="m-dir">直接编辑</button>
             </div>
@@ -549,7 +549,7 @@ ins.sg{color:#0f6b3a;text-decoration:none;background:#dcf5e6;border-bottom:2px s
               <div class="pending">
                 <div class="ph" style="font-weight:600"><svg class="i" style="color:var(--warn)"><use href="#warn"/></svg>排版体检</div>
                 <div class="prow"><span>第 3 页：图表与要点无重叠，文字对比度 9.6:1</span><span style="color:var(--ok)">通过</span></div>
-                <div class="prow"><span>第 5 页：标题 34 字，超出建议长度</span><span class="acts"><button class="yes" title="让 Keystone 修正"><svg class="i"><use href="#check"/></svg></button></span></div>
+                <div class="prow"><span>第 5 页：标题 34 字，超出建议长度</span><span class="acts"><button class="yes" title="让 revon 修正"><svg class="i"><use href="#check"/></svg></button></span></div>
               </div>
             </div>
           </div>
@@ -559,7 +559,7 @@ ins.sg{color:#0f6b3a;text-decoration:none;background:#dcf5e6;border-bottom:2px s
               <button>总结全文</button><button>检查数据一致性</button><button>生成汇报 PPT</button>
             </div>
             <div class="box">
-              <div class="ph">让 Keystone 修改选区，或描述你要的内容……</div>
+              <div class="ph">让 revon 修改选区，或描述你要的内容……</div>
               <div class="row"><span>@ 引用文件</span><span>上下文：选区</span><button class="send" aria-label="发送"><svg class="i"><use href="#send"/></svg></button></div>
             </div>
           </div>
@@ -568,7 +568,7 @@ ins.sg{color:#0f6b3a;text-decoration:none;background:#dcf5e6;border-bottom:2px s
 
       <footer class="statusbar">
         <span id="st1">字数 1,248 · 选区 38 字</span>
-        <span class="aiwork" id="st2"><span class="pulse"></span>Keystone 正在编辑「二、区域对比」</span>
+        <span class="aiwork" id="st2"><span class="pulse"></span>revon 正在编辑「二、区域对比」</span>
         <span style="margin-left:auto">建议模式 · 你的输入优先</span>
         <span>100%</span>
       </footer>
@@ -576,13 +576,13 @@ ins.sg{color:#0f6b3a;text-decoration:none;background:#dcf5e6;border-bottom:2px s
   </div>
 </div>
 
-<div class="note" id="note"><button aria-label="关闭说明" onclick="this.parentNode.remove()">×</button><b>设计样稿</b>：静态界面示意，非可用编辑器。右上角切换主页 / 文档 / 表格 / 演示。蓝色为你的光标与选区，橙色为 Keystone 的光标、建议与修改标记。</div>
+<div class="note" id="note"><button aria-label="关闭说明" onclick="this.parentNode.remove()">×</button><b>设计样稿</b>：静态界面示意，非可用编辑器。右上角切换主页 / 文档 / 表格 / 演示。蓝色为你的光标与选区，橙色为 revon 的光标、建议与修改标记。</div>
 
 <script>
 const META = {
-  doc:{t:'W',c:'t-doc',n:'Q3 区域销售复盘',s:'本地已保存 · v44',st1:'字数 1,248 · 选区 38 字',st2:'Keystone 正在编辑「二、区域对比」',ctx1:'选区：第二节 · 2 段',ctx2:'引用：销售明细.ksheet',q:['总结全文','检查数据一致性','生成汇报 PPT']},
-  sheet:{t:'X',c:'t-sheet',n:'销售明细',s:'本地已保存 · v118',st1:'选区 C2:C5 · 求和 4,826.5 · 平均 1,206.6 · 计数 4',st2:'Keystone 已完成 · 21 个公式',ctx1:'选区：地区汇总!C2:C5',ctx2:'工作表：明细 · 1,284 行',q:['解释这个公式','找出异常值','按月做透视']},
-  slides:{t:'P',c:'t-slides',n:'Q3 季度汇报',s:'本地已保存 · v27',st1:'第 3 / 8 页 · 已选中文本框',st2:'Keystone 正在生成第 6 页',ctx1:'当前页：第 3 页',ctx2:'来源：复盘文档 · 销售明细',q:['换个主题','精简每页文字','补充演讲备注']}
+  doc:{t:'W',c:'t-doc',n:'Q3 区域销售复盘',s:'本地已保存 · v44',st1:'字数 1,248 · 选区 38 字',st2:'revon 正在编辑「二、区域对比」',ctx1:'选区：第二节 · 2 段',ctx2:'引用：销售明细.ksheet',q:['总结全文','检查数据一致性','生成汇报 PPT']},
+  sheet:{t:'X',c:'t-sheet',n:'销售明细',s:'本地已保存 · v118',st1:'选区 C2:C5 · 求和 4,826.5 · 平均 1,206.6 · 计数 4',st2:'revon 已完成 · 21 个公式',ctx1:'选区：地区汇总!C2:C5',ctx2:'工作表：明细 · 1,284 行',q:['解释这个公式','找出异常值','按月做透视']},
+  slides:{t:'P',c:'t-slides',n:'Q3 季度汇报',s:'本地已保存 · v27',st1:'第 3 / 8 页 · 已选中文本框',st2:'revon 正在生成第 6 页',ctx1:'当前页：第 3 页',ctx2:'来源：复盘文档 · 销售明细',q:['换个主题','精简每页文字','补充演讲备注']}
 };
 function show(v){
   document.querySelectorAll('#views button').forEach(b=>b.classList.toggle('on',b.dataset.v===v));

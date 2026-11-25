@@ -6,12 +6,12 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from keystone.cache_state import CacheWarmth, prefix_fingerprint
-from keystone.config import Config
-from keystone.loop import Agent
-from keystone.model import BadRequest, HttpTransport, ModelRouter, Provider, _plan_and_shape
-from keystone.policy import Mode, Policy
-from keystone.tools import build_builtin_registry
+from revon.cache_state import CacheWarmth, prefix_fingerprint
+from revon.config import Config
+from revon.loop import Agent
+from revon.model import BadRequest, HttpTransport, ModelRouter, Provider, _plan_and_shape
+from revon.policy import Mode, Policy
+from revon.tools import build_builtin_registry
 
 BASE='https://ark.cn-beijing.volces.com/api/coding/v3'
 MODEL='doubao-seed-evolving'

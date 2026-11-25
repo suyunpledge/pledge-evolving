@@ -1,14 +1,14 @@
 # Development Mode v1 — isolated host
 
 Branch: `feature/development-mode`, based on `2cd74e5`. Worktree:
-`C:\Users\匡溯昀\keystone-development-mode`. No main checkout edits or automatic merge/push.
+`C:\Users\匡溯昀\revon-development-mode`. No main checkout edits or automatic merge/push.
 
 ## Architecture
 
-- `keystone/development/state.py`: UI-independent GENERAL/DEVELOPMENT state, versioned independent preferences, layout, project paths, model roles and frozen per-task snapshots.
-- `keystone/development/editor.py`: human-only editable buffers, encoding/newlines, explicit conflicts, atomic staging and project/secret-store boundary checks. Never an Agent tool.
-- `keystone/development/runtime.py`: existing `EditorBridge → build_agent → Agent → ToolRegistry → Policy/Secret/Sandbox → Session/Checkpoint`. One lane; mode changes never mutate a running Agent. No new scheduler.
-- `keystone-gui/development_mode/`: independent ttk host, project adapter over existing `workspace.py`, code tabs, real event and diff/output views.
+- `revon/development/state.py`: UI-independent GENERAL/DEVELOPMENT state, versioned independent preferences, layout, project paths, model roles and frozen per-task snapshots.
+- `revon/development/editor.py`: human-only editable buffers, encoding/newlines, explicit conflicts, atomic staging and project/secret-store boundary checks. Never an Agent tool.
+- `revon/development/runtime.py`: existing `EditorBridge → build_agent → Agent → ToolRegistry → Policy/Secret/Sandbox → Session/Checkpoint`. One lane; mode changes never mutate a running Agent. No new scheduler.
+- `revon-gui/development_mode/`: independent ttk host, project adapter over existing `workspace.py`, code tabs, real event and diff/output views.
 
 No changes to shared GUI, navigation, providers, connectors, plugins, knowledge or evolution. Design tokens are imported from `gui_theme.py`, not forked. Runtime stores and tests use separate homes. No interactive shell; commands remain core tool requests and policy ASK is not bypassed by the output panel. This host defaults to read-only every launch. Explicit human workspace-write selection is separate from work mode and applies only to a future task.
 
@@ -30,12 +30,12 @@ PowerShell, from this isolated checkout:
 
 ```powershell
 & 'C:\Users\匡溯昀\AppData\Local\Programs\Python\Python312\python.exe' `
-  'C:\Users\匡溯昀\keystone-development-mode\keystone-gui\run_development.py' `
-  --home 'C:\Users\匡溯昀\.keystone-development-home' `
+  'C:\Users\匡溯昀\revon-development-mode\revon-gui\run_development.py' `
+  --home 'C:\Users\匡溯昀\.revon-development-home' `
   --project 'C:\path\to\your-project'
 ```
 
-The launcher uses this independent home by default, restores the last project/layout, and never copies General credentials automatically. Configure the existing Keystone provider schema in this home's `keystone.patch.json` (use `python run.py --home <independent-home> setup` for the existing CLI setup). No new provider settings page is created. Keys remain env references or the existing trusted `secrets.json` format. Do not use the AutoClaw runtime home. `pythonw.exe` can run the same launcher if no console window is desired.
+The launcher uses this independent home by default, restores the last project/layout, and never copies General credentials automatically. Configure the existing revon provider schema in this home's `revon.patch.json` (use `python run.py --home <independent-home> setup` for the existing CLI setup). No new provider settings page is created. Keys remain env references or the existing trusted `secrets.json` format. Do not use the AutoClaw runtime home. `pythonw.exe` can run the same launcher if no console window is desired.
 
 On the first launch select `development` in the header. General in this demo host means the same conversation without IDE panels; integration into the complete General desktop is deliberately left to its owner. No files in its source tree have been edited.
 
@@ -50,22 +50,22 @@ On the first launch select `development` in the header. General in this demo hos
 
 ## Verification
 
-Tests were first added before implementation and failed because `keystone.development` did not exist. Subsequent tests cover mode/layout and all-role snapshots, read-only defaults, safe history recovery, unchanged unknown tool actions, opaque Secret payloads, encoding/newlines, dirty buffers, external hash conflicts, failed writes, secret-store paths, three layouts, five Tk scaling values, actual Agent events and Tk callback destruction.
+Tests were first added before implementation and failed because `revon.development` did not exist. Subsequent tests cover mode/layout and all-role snapshots, read-only defaults, safe history recovery, unchanged unknown tool actions, opaque Secret payloads, encoding/newlines, dirty buffers, external hash conflicts, failed writes, secret-store paths, three layouts, five Tk scaling values, actual Agent events and Tk callback destruction.
 
 Use:
 
 ```powershell
 python -m unittest discover -s tests -p test_development_mode.py -q
-$env:PYTHONPATH="$PWD;$PWD\keystone-gui"
+$env:PYTHONPATH="$PWD;$PWD\revon-gui"
 python -m unittest development_mode.test_app -v
-python -m unittest keystone.test_secret_architecture keystone.test_read_scope keystone.test_execution_review keystone.test_phase_models keystone.test_task_planning keystone.test_vscode_bridge -q
+python -m unittest revon.test_secret_architecture revon.test_read_scope revon.test_execution_review revon.test_phase_models revon.test_task_planning revon.test_vscode_bridge -q
 ```
 
 All tests use temporary independent homes, projects and offline routers/local HTTP fixtures. Tk interaction tests create real mapped windows with alpha 0; they are geometry/event checks, not screenshot visual acceptance or actual Windows system-DPI changes.
 
 ## 本轮交付与验收记录
 
-只在 `feature/development-mode` 的独立 worktree 新增源码、测试与本文档；未修改 AutoClaw 的通用 GUI 或其他负责模块，未合并、未推送、未打包。主工作目录随后出现的 `keystone_gui_v2.py`、`memory.py` 与 `knowledge.py` 改动属于并行开发，未触碰。
+只在 `feature/development-mode` 的独立 worktree 新增源码、测试与本文档；未修改 AutoClaw 的通用 GUI 或其他负责模块，未合并、未推送、未打包。主工作目录随后出现的 `revon_gui_v2.py`、`memory.py` 与 `knowledge.py` 改动属于并行开发，未触碰。
 
 | 范围 | 实现与边界 |
 | --- | --- |

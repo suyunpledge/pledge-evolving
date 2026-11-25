@@ -3,12 +3,12 @@ import json
 import unittest
 
 import test_client_runtime as fixtures
-from keystone.execution import ActionExecutor, ActionRequest, create_execution_context
-from keystone.policy import Policy, Mode, Sandbox
-from keystone.tools import build_builtin_registry
-from keystone.loop import Agent
-from keystone.model import Completion, Usage
-from keystone.test_project_rules import Router
+from revon.execution import ActionExecutor, ActionRequest, create_execution_context
+from revon.policy import Policy, Mode, Sandbox
+from revon.tools import build_builtin_registry
+from revon.loop import Agent
+from revon.model import Completion, Usage
+from revon.test_project_rules import Router
 from client import server as client
 
 
@@ -89,7 +89,7 @@ class PlanningExecutionControls(unittest.TestCase):
         self.assertFalse((self.ws / 'blocked.txt').exists())
 
     def test_follow_execution_does_not_silently_select_a_small_model(self):
-        from keystone.model import ModelRouter, Provider
+        from revon.model import ModelRouter, Provider
         calls = []
         class Transport:
             def complete(inner, provider, model, messages, **options):

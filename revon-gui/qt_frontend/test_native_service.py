@@ -1,0 +1,792 @@
+"""Exercise native-page operations against isolated real stores and files."""
+from concurrent.futures import ThreadPoolExecutor
+import json
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from unittest.mock import patch
+
+from config_model import load_user_layer, save_user_layer
+from .service_host import ServiceHost
+from .store import SessionStore
+
+
+class NativeServiceTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.root = Path(self.temp.name).resolve()
+        self.home, self.project = self.root / 'home', self.root / 'project'
+        self.project.mkdir()
+        SessionStore.atomic(self.home / 'revon-desktop.json', {'project_workspace': str(self.project)})
+        self.events = []
+        import secret_store
+        self.old_secrets = secret_store.SECRETS_FILE
+        self.host = ServiceHost(self.home, demo=True, emit=lambda event, **data: self.events.append((event, data)))
+        self.host.approve = lambda *_: True
+
+    def tearDown(self):
+        self.host.close()
+        import secret_store
+        secret_store.SECRETS_FILE = self.old_secrets
+        self.temp.cleanup()
+
+    def values(self, page):
+        return {f['key']: f['value'] for f in self.host.pages.view(page)['fields']}
+
+    def terminal_action(self, session, text='', action='run'):
+        self.host.command({'command': 'terminal', 'root': str(self.project), 'session': session,
+                           'action': action, 'text': text})
+
+    def terminal_wait(self, session, expected, timeout=12):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            for kind, data in list(self.events):
+                if kind == 'terminal' and data.get('session') == session:
+                    if expected in data.get('screen', '') or expected in data['text']:
+                        return
+            time.sleep(.025)
+        self.fail(f'Terminal {session} did not produce {expected!r}')
+
+    def test_terminal_input_is_checked_before_shell_start_and_each_write(self):
+        self.host.demo = False
+        self.terminal_action(1, 'echo first')
+        self.assertFalse(self.host.terminal.sessions)  # Chat cannot start a Code terminal
+        self.host.page = 'development'
+        self.terminal_action(1, 'echo first')
+        self.terminal_wait(1, '当前权限')
+        self.assertIsNone(self.host.terminal.sessions[1].pty)
+        self.host.profile = 'manual'
+        with patch.object(self.host, 'approve', side_effect=[True, False]) as approve:
+            self.terminal_action(1, 'echo first')
+            self.terminal_wait(1, '\nfirst\n')
+            self.terminal_action(1, 'echo second')
+            self.terminal_wait(1, '未执行')
+            self.assertEqual([c.args[1]['command'] for c in approve.call_args_list], ['echo first', 'echo second'])
+        self.host.command({'command': 'permission', 'profile': 'sandbox'})
+        self.assertFalse(self.host.terminal.sessions)
+        self.terminal_wait(1, '已停止')
+
+    def test_terminal_sessions_preserve_directory_environment_and_program_input(self):
+        self.host.demo, self.host.page, self.host.profile = False, 'development', 'full'
+        (self.project / '子 目录').mkdir()
+        win = sys.platform == 'win32'
+        self.terminal_action(1, "cd '子 目录'")
+        self.terminal_action(1, "$env:TERMCHECK='one'" if win else "export TERMCHECK=one")
+        self.terminal_action(1, '"HERE="+(Split-Path -Leaf (Get-Location))+"|"+$env:TERMCHECK' if win
+                             else 'echo "HERE=${PWD##*/}|$TERMCHECK"')
+        self.terminal_wait(1, 'HERE=子 目录|one')
+        self.terminal_action(2, '"OTHER="+(Split-Path -Leaf (Get-Location))+"|"+$env:TERMCHECK' if win
+                             else 'echo "OTHER=${PWD##*/}|$TERMCHECK"')
+        self.terminal_wait(2, 'OTHER=project|')
+        self.terminal_action(1, """$v=Read-Host ('na'+'me'); 'RESULT='+$v""" if win
+                             else """printf 'na%s: ' me; read v; echo "RESULT=$v" """)
+        self.terminal_wait(1, '\nname:')
+        self.terminal_action(2, 'exit 7')
+        self.terminal_wait(2, '退出码 7')
+        self.terminal_action(2, action='close')
+        self.terminal_action(1, '你好')
+        self.terminal_wait(1, 'RESULT=你好')
+        # A native child reads the PTY directly, independently of the shell's built-in prompt.
+        python = Path(sys.executable)
+        prompt = self.project / 'prompt.py'
+        prompt.write_text("print('child?', flush=True)\nprint('CHILD=' + input(), flush=True)", encoding='utf8')
+        command = f"""& '{python}' '../prompt.py'""" if win else f"""'{python}' ../prompt.py"""
+        self.terminal_action(1, command)
+        self.terminal_wait(1, 'child?')
+        self.terminal_action(1, 'from stdin')
+        self.terminal_wait(1, 'CHILD=from stdin')
+        self.assertFalse(self.host.running)
+        self.terminal_action(1, 'Start-Sleep 30' if win else 'sleep 30')
+        time.sleep(.3)
+        self.terminal_action(1, action='interrupt')
+        self.terminal_action(1, """'AFTER='+$env:TERMCHECK""" if win else 'echo AFTER=$TERMCHECK')
+        self.terminal_wait(1, 'AFTER=one')
+        next_project = self.root / 'other'
+        next_project.mkdir()
+        self.host.set_workspace(str(next_project))
+        self.assertFalse(self.host.terminal.sessions)
+        self.terminal_wait(1, '已停止')
+
+    def test_terminal_displays_only_coding_command_and_test_events(self):
+        self.host.coding.event({'event': 'progress', 'data': {
+            'type': 'tool_completed', 'tool': 'shell_exec', 'args': {'command': 'sample'},
+            'ok': True, 'action_result': {'content': 'full output'}, 'meta': {'exit': 0}}})
+        self.host.coding.event({'event': 'progress', 'data': {
+            'type': 'tool_call', 'tool': 'shell_exec', 'result': 'duplicate'}})
+        self.host.coding.event({'event': 'progress', 'data': {
+            'type': 'test_result', 'status': 'failed', 'exit_code': 1, 'output': '1 test failed'}})
+        text = ''.join(d['text'] for k, d in self.events if k == 'terminal')
+        self.assertIn('full output', text)
+        self.assertIn('1 test failed', text)
+        self.assertNotIn('duplicate', text)
+
+    def test_navigation_and_send_share_one_coding_runtime(self):
+        from . import coding_service
+
+        coding = self.host.coding
+        coding.publish()
+        self.assertFalse(self.events[-1][1]['state']['ready'])
+        barrier = threading.Barrier(2)
+
+        def open_coding():
+            barrier.wait(timeout=4)
+            coding.initialize()
+
+        with patch.object(coding_service, 'DevelopmentRuntime', wraps=coding_service.DevelopmentRuntime) as factory:
+            with ThreadPoolExecutor(max_workers=2) as workers:
+                jobs = [workers.submit(open_coding) for _ in range(2)]
+                for job in jobs:
+                    job.result(timeout=12)
+            factory.assert_called_once()
+        self.assertTrue(coding.runtime.ready)
+        self.assertIsNotNone(coding.runtime.bridge.agent)
+
+    def test_file_save_preserves_crlf_and_refuses_external_conflicts(self):
+        path = self.project / 'sample.txt'
+        path.write_bytes(b'first\r\nsecond\r\n')
+        pages = self.host.pages
+        pages.action('files', 'open', {'path': str(path)})
+        pages.update_document(str(path), 'first\nsecond edited\n', 1)
+        self.assertTrue(pages.unsaved)
+        pages.action('files', 'save', {'path': str(path)})
+        self.assertEqual(path.read_bytes(), b'first\r\nsecond edited\r\n')
+        pages.update_document(str(path), 'first\nmy draft\n', 2)
+        path.write_text('external\nsecond edited\n', encoding='utf-8')
+        with self.assertRaisesRegex(RuntimeError, 'changed'):
+            pages.action('files', 'save', {'path': str(path)})
+        self.assertIn('external', path.read_text())
+        pages.action('files', 'merge', {'path': str(path)})
+        self.assertEqual(pages.documents[str(path)].text, 'external\nmy draft\n')
+        pages.action('files', 'save', {'path': str(path)})
+        self.assertFalse(pages.unsaved)
+        copied = self.project / 'copy.txt'
+        pages.action('files', 'saveAs', {'path': str(path), 'target': str(copied)})
+        self.assertEqual(copied.read_text(), 'external\nmy draft\n')
+        self.assertEqual(pages.active_document, str(copied))
+        pages.action('files', 'search', {'query': 'copy'})
+        self.assertEqual([r['title'] for r in pages.view('files')['rows']], ['copy.txt'])
+        with self.assertRaises(PermissionError):
+            pages.action('files', 'open', {'path': '../outside.txt'})
+
+    def test_workspace_queries_use_buffers_git_exclusions_and_editor_limits(self):
+        from .workspace_navigation import project_names, quick_files, text_matches
+        from revon.development.editor import MAX_DOCUMENT
+
+        subprocess.run(['git', 'init', '-q'], cwd=self.project, check=True)
+        (self.project / '.gitignore').write_text('ignored.txt\n', encoding='utf-8')
+        path = self.project / 'notes.md'
+        path.write_text('disk', encoding='utf-8')
+        (self.project / 'ignored.txt').write_text('draft', encoding='utf-8')
+        (self.project / 'binary.bin').write_bytes(b'draft\0')
+        (self.project / 'large.txt').write_bytes(b'draft' + b' ' * MAX_DOCUMENT)
+        (self.project / 'note.md').write_text('unrelated', encoding='utf-8')
+        boundary = self.host.pages.boundary
+        cancel = threading.Event()
+        names = list(project_names(boundary, cancel))
+        self.assertNotIn('ignored.txt', names)
+        self.assertEqual(quick_files(boundary, names, 'notes.md', {}, cancel)[0]['path'], str(path))
+
+        self.host.pages.action('development', 'open', {'path': str(path)})
+        self.host.pages.update_document(str(path), '😀 draft', 1)
+        self.host.command(dict(command='workspace_query', kind='text', query='DRAFT', ticket=19))
+        self.host.queries.pool.shutdown(wait=True)
+        reply = next(value for event, value in reversed(self.events) if event == 'workspace_query')
+        self.assertEqual((reply['ticket'], reply['done'], reply['limited']), (19, True, False))
+        self.assertEqual([(r['relative'], r['line'], r['column'], r['token']) for r in reply['rows']],
+                         [('notes.md', 1, 4, 'draft')])
+        self.assertEqual(path.read_text(), 'disk')
+        cancel.set()
+        self.assertEqual(text_matches(boundary, names, 'disk', {}, cancel, lambda *_: None), ([], False))
+
+    def test_closing_editor_tabs_keeps_selection_and_confirms_dirty_files(self):
+        pages = self.host.pages
+        first, middle, last, end = (str(self.project / (name + '.py')) for name in ('first', 'middle', 'last', 'end'))
+        for path in (first, middle, last, end, last):
+            Path(path).touch()
+            pages.action('development', 'open', {'path': path})
+        pages.update_document(middle, 'unsaved', 1)
+        with patch.object(self.host, 'approve', return_value=False) as approve:
+            pages.action('development', 'close', {'path': middle})
+            approve.assert_called_once()
+        self.assertTrue(pages.documents[middle].dirty)
+
+        pages.action('development', 'close', {'path': middle})
+        self.assertNotIn(middle, pages.documents)
+        self.assertEqual(pages.active_document, last)
+        pages.action('development', 'close', {'path': last})
+        self.assertEqual(pages.active_document, end)
+        pages.action('development', 'close', {'path': end})
+        self.assertEqual(pages.active_document, first)
+        pages.action('development', 'close', {'path': first})
+        self.assertEqual(pages.active_document, '')
+
+    def test_config_optimistic_save_and_model_disable(self):
+        row = dict(id='fixture', name='provider:fixture', config={'baseURL': 'http://127.0.0.1:1/v1', 'model': 'fixture'})
+        save_user_layer(self.home, [row])
+        values = self.values('config')
+        extra = dict(id='feature', config={'enabled': True}, name='feature:test')
+        save_user_layer(self.home, [row, extra])
+        with self.assertRaises(ValueError):
+            self.host.pages.action('config', 'save', values)
+        self.assertEqual(len(load_user_layer(self.home)), 2)
+        self.host.pages.action('config', 'toggle', {'id': 'fixture'})
+        self.assertTrue(load_user_layer(self.home)[0]['disabled'])
+        self.assertEqual(load_user_layer(self.home)[1], extra)
+
+    def test_knowledge_evolution_and_schedule_use_existing_stores(self):
+        pages = self.host.pages
+        pages.action('knowledge', 'record', {'text': 'Always preserve CRLF when editing files.', 'kind': 'lesson'})
+        rows = pages.view('knowledge')['rows']
+        self.assertEqual(len(rows), 1)
+        pages.action('knowledge', 'search', {'text': 'CRLF editing'})
+        self.assertIn('CRLF', pages.results['knowledge'])
+        pages.action('knowledge', 'archive', {'id': rows[0]['id']})
+        self.assertEqual(pages.view('knowledge')['rows'], [])
+        pages.action('evolution', 'nominate', {'text': 'Remember: preserve CRLF line endings.'})
+        self.assertIn('rows', pages.view('evolution'))
+        pages.action('schedules', 'add', {'name': 'Read project', 'prompt': 'List source files', 'model': '["fixture", "model"]', 'delay': '60', 'interval': '0'})
+        jobs = pages.store.jobs()
+        self.assertEqual(len(jobs), 1)
+        pages.action('schedules', 'pause', {'id': jobs[0]['id']})
+        self.assertFalse(pages.store.jobs()[0]['enabled'])
+        self.assertEqual(pages.store.job_runs(jobs[0]['id']), [])
+
+    def test_advanced_config_preserves_redacted_credentials_when_reordered(self):
+        reference = {'$expr': "get('env.REVON_FIXTURE_API_KEY', '')"}
+        rows = [dict(id='first', name='provider:first', config={'baseURL': 'http://127.0.0.1:1/v1', 'apiKey': reference, 'model': 'one'}),
+                dict(id='second', name='provider:second', config={'apiKey': 'fixture-secret-not-for-qml-123456', 'model': 'two'})]
+        save_user_layer(self.home, rows)
+        values = self.values('config')
+        self.assertNotIn('fixture-secret-not-for-qml-123456', values['json'])
+        edited = json.loads(values['json'])
+        edited.reverse()
+        edited[1]['config']['model'] = 'updated'
+        values['json'] = json.dumps(edited)
+        self.host.pages.action('config', 'save', values)
+        saved = {r['id']: r for r in load_user_layer(self.home)}
+        self.assertEqual(saved['first']['config']['apiKey'], reference)
+        self.assertEqual(saved['first']['config']['model'], 'updated')
+        self.assertEqual(saved['second']['config']['apiKey'], rows[1]['config']['apiKey'])
+
+    def test_step_limit_entry_writes_the_user_layer(self):
+        rows = [dict(id='first', name='provider:first', config={'baseURL': 'http://127.0.0.1:1/v1', 'model': 'one'}),
+                dict(id='loop', name='loop:core', config={'maxDepth': 3})]
+        save_user_layer(self.home, rows)
+        view = self.host.pages.view('config')
+        steps = next(f for f in view['fields'] if f['key'] == 'max_steps')
+        self.assertTrue(steps['advanced'])
+        self.assertEqual(steps['value'], '0')
+        self.assertIn('不限', steps['label'])
+        self.assertIn('saveSteps', [a['key'] for a in view['actions']])
+        values = self.values('config')
+        values['max_steps'] = '30'
+        self.host.pages.action('config', 'saveSteps', values)
+        loop = next(r for r in load_user_layer(self.home) if r['id'] == 'loop')
+        self.assertEqual(loop['config'], {'maxDepth': 3, 'maxSteps': 30})
+        self.assertIn('30 步', next(f for f in self.host.pages.view('config')['fields'] if f['key'] == 'max_steps')['label'])
+        # The JSON editor's snapshot follows, so saving it right after is not a false conflict.
+        json_values = self.values('config')
+        self.host.pages.action('config', 'save', json_values)
+        values['max_steps'] = ''
+        self.host.pages.action('config', 'saveSteps', values)
+        self.assertEqual(next(r for r in load_user_layer(self.home) if r['id'] == 'loop')['config']['maxSteps'], 0)
+        for bad in ('-1', '1001', 'many'):
+            values['max_steps'] = bad
+            with self.assertRaisesRegex(ValueError, '步数上限'):
+                self.host.pages.action('config', 'saveSteps', values)
+        from revon.config import load_config
+        from revon.loop_limits import is_unlimited, resolve_loop_limits
+        self.assertTrue(is_unlimited(resolve_loop_limits(load_config(self.home), use_hint=False).max_steps))
+
+    def test_agent_settings_are_scoped_to_home_and_concurrency_checked(self):
+        values = self.values('agents')
+        values.update(mode='on', count='3', cluster=True)
+        self.host.pages.action('agents', 'save', values)
+        import sub_agent
+        self.assertEqual(sub_agent.load_config(self.home / 'agent-cluster.json')['cluster']['count'], 3)
+        self.assertEqual(SessionStore.read(self.home / 'revon-desktop.json', {})['team_mode'], 'on')
+        changed = sub_agent.load_config(self.home / 'agent-cluster.json')
+        changed['memory_mode'] = 'unified'
+        sub_agent.save_config(changed, self.home / 'agent-cluster.json')
+        with self.assertRaisesRegex(ValueError, '外部'):
+            self.host.pages.action('agents', 'save', values)
+
+    def test_connector_credentials_are_not_projected_to_qml_and_grants_persist(self):
+        values = self.values('connector_accounts')
+        values.update(token='fixture-native-credential-123456', read=True, agent=True)
+        self.host.pages.action('connector_accounts', 'save', values)
+        view = json.dumps(self.host.pages.view('connector_accounts'))
+        self.assertNotIn(values['token'], view)
+        self.assertTrue(self.host.pages.store.account('github')['authenticated'])
+        self.assertTrue(self.host.pages.connectors.schemas())
+        self.host.pages.action('connector_accounts', 'disconnect', values)
+        self.assertEqual(self.host.pages.connectors.schemas(), [])
+
+    def test_coding_draft_version_context_and_dirty_buffer_guard(self):
+        self.host.coding.initialize()
+        self.host.coding.command({'action': 'draft', 'value': 'current draft', 'version': 2})
+        self.host.coding.command({'action': 'draft', 'value': 'stale', 'version': 1})
+        self.assertEqual(self.host.coding.draft, 'current draft')
+        path = self.project / 'code.py'
+        path.write_text('value = 1\n', encoding='utf-8')
+        self.host.pages.action('development', 'open', {'path': str(path)})
+        self.host.pages.update_document(str(path), 'value = 2\n', 1)
+        self.host.demo = False
+        with patch.object(self.host.coding.runtime, 'run', return_value={'text': 'done'}) as run:
+            self.host.coding.run(('hello', False, '继承配置', 'default', 'none', (str(path),), None))
+            self.assertEqual(run.call_args.kwargs['permission'], 'read-only')
+            self.assertEqual(run.call_args.kwargs['contexts'], [{'path': str(path), 'content': 'value = 2\n'}])
+            self.assertEqual(path.read_text(encoding='utf-8'), 'value = 1\n')
+        self.host.pages.action('development', 'save', {'path': str(path)})
+        with patch.object(self.host.coding.runtime, 'run', return_value={'text': 'done'}) as run:
+            self.host.coding.run(('hello', False, '继承配置', 'default', 'none', (str(path),), None))
+            self.assertEqual(run.call_args.kwargs['permission'], 'desktop-sandbox')
+            self.assertEqual(run.call_args.kwargs['contexts'], [{'path': str(path), 'content': 'value = 2\n'}])
+
+    def test_coding_context_keeps_submitted_tab_selection_and_unsaved_buffer(self):
+        from revon.tools import ToolContext
+        path, other = self.project / 'app.py', self.project / 'notes.txt'
+        path.write_text('saved\n', encoding='utf-8')
+        other.write_text('reference', encoding='utf-8')
+        pages, coding = self.host.pages, self.host.coding
+        coding.initialize()
+        registry = coding.runtime.bridge.agent.registry
+        self.assertTrue({'ide_context', 'find_files', 'review_changes'} <= set(registry.names()))
+        pages.action('development', 'open', {'path': str(path)})
+        pages.update_document(str(path), 'header\n🙂选区 after\n', 2)
+        coding.draft = '解释选区'
+        self.host.running = True
+        try:
+            coding.command({'action': 'send', 'focus': {'path': str(path), 'version': 2, 'start': [2, 3], 'end': [2, 5]}})
+        finally:
+            self.host.running = False
+        request = coding.queue.pop()
+        pages.update_document(str(path), 'later draft', 3)
+        pages.action('development', 'open', {'path': str(other)})
+        self.host.demo = False
+        def inspect(prompt, **kwargs):
+            ctx = ToolContext(coding.runtime.bridge.policy(kwargs['permission']), self.project)
+            try:
+                def invoke(**values):
+                    row = registry.invoke('ide_context', values, ctx)
+                    self.assertTrue(row.ok, row.error)
+                    return json.loads(row.content)
+                summary = invoke()
+                self.assertTrue(summary['read_only'])
+                self.assertEqual(summary['active'], 'app.py')
+                self.assertEqual([r['path'] for r in summary['open_tabs']], ['app.py'])
+                buffer = invoke(view='buffer', count=1)
+                self.assertEqual((buffer['source'], buffer['selected_text'], buffer['next_line']), ('unsaved_at_send', '选区', 3))
+                self.assertFalse(registry.invoke('ide_context', {'view': 'buffer', 'path': '../outside'}, ctx).ok)
+                denied = registry.invoke('write_file', {'path': 'app.py', 'content': 'lost'}, ctx)
+                self.assertFalse(denied.ok)
+            finally:
+                ctx.secret_scope.close()
+            return {'text': 'done'}
+        with patch.object(coding.runtime, 'run', side_effect=inspect):
+            coding.run(request)
+        self.assertEqual(path.read_text(encoding='utf-8'), 'saved\n')
+        self.assertEqual(pages.documents[str(path)].text, 'later draft')
+
+    def test_coding_context_checks_revision_bounds_and_protects_whole_buffer(self):
+        from .coding_project import ProjectContext
+        from revon.tools import ToolContext
+        from revon.vscode_bridge import MAX_CONTEXT
+        pages = self.host.pages
+        path = self.project / 'settings.json'
+        token = 'opaque-test-fixture-only'
+        content = json.dumps({'apiKey': token, 'copy': token, 'long': 'x' * MAX_CONTEXT}, indent=2)
+        path.write_text(content, encoding='utf-8')
+        pages.action('development', 'open', {'path': str(path)})
+        project = ProjectContext.capture(pages, [str(path)], {'path': str(path), 'version': 99, 'start': [2, 1], 'end': [2, 3]})
+        self.assertEqual(project.attachments(), [])
+        self.assertEqual(project.location, {})
+        ctx = ToolContext(self.host.policy(), self.project)
+        try:
+            result = project.read({'view': 'buffer'}, ctx)
+            self.assertNotIn(token, result.content)
+            data = json.loads(result.content)
+            self.assertTrue(data['redacted_line_map_changed'])
+            self.assertTrue(data['clipped'])
+            path.write_text('{"fresh": true}', encoding='utf-8')
+            updated = json.loads(project.read({'view': 'buffer'}, ctx).content)
+            self.assertEqual(updated['lines'], ['{"fresh": true}'])
+            with self.assertRaises(ValueError):
+                project.read({'view': 'buffer', 'start': 2}, ctx)
+        finally:
+            ctx.secret_scope.close()
+
+    def test_coding_tool_receipts_refresh_open_editors_and_nested_explorer(self):
+        directory = self.project / 'src'
+        directory.mkdir()
+        code, created = directory / 'code.py', directory / 'new.py'
+        code.write_text('before', encoding='utf-8')
+        pages = self.host.pages
+        pages.action('development', 'open', {'path': str(code)})
+        self.assertIn('src/code.py', [r['id'] for r in pages.view('development')['rows']])
+        code.write_text('after', encoding='utf-8')
+        created.write_text('new', encoding='utf-8')
+        self.host.coding.event({'data': {'type': 'tool_completed', 'meta': {
+            'file_changes': [{'path': 'src/code.py'}, {'path': 'src/new.py'}]}}})
+        view = pages.view('development')
+        self.assertEqual(view['document']['text'], 'after')
+        self.assertIn('src/new.py', [r['id'] for r in view['rows']])
+        created.unlink()
+        pages.refresh_documents()
+        self.assertNotIn('src/new.py', [r['id'] for r in pages.view('development')['rows']])
+
+    def test_cold_process_imports_no_tk_and_exits_cleanly(self):
+        script = Path(__file__).with_name('service_host.py')
+        proc = subprocess.run([sys.executable, '-B', str(script), '--home', str(self.root / 'other'), '--demo'],
+            input='{"command":"navigate","page":"knowledge","ticket":1}\n{"command":"close"}\n',
+            text=True, encoding='utf-8', capture_output=True, timeout=12,
+            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn('"backend": "headless"', proc.stdout)
+        # A cold interpreter, rather than this test process where other test suites
+        # may intentionally exercise legacy frontends.
+        code = 'import sys; from qt_frontend.service_host import ServiceHost; assert "tkinter" not in sys.modules'
+        proc = subprocess.run([sys.executable, '-B', '-c', code], capture_output=True, text=True, timeout=12)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def test_coding_queue_resumes_after_other_background_operation(self):
+        release, executed = threading.Event(), threading.Event()
+        with patch.object(self.host.coding, 'run', side_effect=lambda request: executed.set()) as run:
+            self.host.work(lambda: release.wait(3))
+            first_worker = self.host.worker
+            try:
+                self.host.command({'command': 'coding', 'action': 'draft', 'value': 'queued task', 'version': 1})
+                self.host.command({'command': 'coding', 'action': 'send'})
+                self.assertEqual(len(self.host.coding.queue), 1)
+                self.assertFalse(executed.is_set())
+            finally:
+                release.set()
+            self.assertTrue(executed.wait(3))
+            first_worker.join(3)
+            self.host.worker.join(3)
+            self.assertEqual(run.call_args.args[0][0], 'queued task')
+            self.assertEqual(run.call_count, 1)
+            self.assertFalse(self.host.running)
+            self.assertFalse(self.host.coding.queue)
+
+    def test_cancel_during_coding_initialization_does_not_submit_request(self):
+        self.host.coding.initialize()
+        self.host.demo = False
+        entered, release = threading.Event(), threading.Event()
+        def initialize():
+            entered.set()
+            release.wait(3)
+        with patch.object(self.host.coding, 'initialize', side_effect=initialize), patch.object(self.host.coding.runtime, 'run') as run:
+            self.host.command({'command': 'coding', 'action': 'draft', 'value': 'never submit', 'version': 1})
+            self.host.command({'command': 'coding', 'action': 'send'})
+            try:
+                self.assertTrue(entered.wait(3))
+                self.host.command({'command': 'coding', 'action': 'cancel'})
+            finally:
+                release.set()
+            self.host.worker.join(3)
+            run.assert_not_called()
+            self.assertFalse(self.host.running)
+
+    def test_binding_a_window_publishes_local_reads_and_replaces_previous_grants(self):
+        from .computer_service import ComputerService
+        service = self.host.pages.computer = ComputerService(self.host)
+        service.windows = [{'window': 1, 'process_id': 2, 'title': 'Selected'}]
+        self.host.profile = 'full'
+        with patch('qt_frontend.computer_service.WindowsControlDriver') as driver:
+            driver.return_value.target_id = 'owned-window'
+            self.host.pages.action('computer', 'bind', {'id': '1', 'consent': True, 'clicks': True})
+            grant = service.session.grant_id
+            published = next(data for event, data in self.events if event == 'service_tools')
+            names = {row['function']['name'] for row in published['schemas']}
+            self.assertEqual(published['computerGrant'], grant)
+            self.assertTrue({'computer_observe', 'computer_screenshot'} <= names)
+            self.assertTrue({'computer_click', 'computer_type', 'computer_vision'}.isdisjoint(names))
+            self.host.pages.action('computer', 'bind', {'id': '1'})
+            with self.assertRaisesRegex(PermissionError, '窗口授权已变化'):
+                service.call('computer_observe', {}, grant=grant)
+            driver.return_value.observe.assert_not_called()
+
+    def test_background_actions_and_continuous_approval_belong_to_one_window_grant(self):
+        from contextlib import contextmanager
+        from revon.computer_use import ComputerSession
+        from .computer_service import ComputerService
+
+        writes = []
+        class Driver:
+            target_id = 'fixture:owned'
+            @contextmanager
+            def background_controls(self):
+                def dispatch(ref, action, text, before_input):
+                    before_input()
+                    writes.append(text)
+                yield {'elements': [{'ref': 'uia:1', 'name': 'Name', 'class': 'edit',
+                                     'actions': ['type_text']}]}, dispatch
+
+        service = self.host.pages.computer = ComputerService(self.host)
+        service.session = ComputerSession(Driver())
+        self.host.profile = 'full'
+        self.host.command({'command': 'computer_settings', 'values': {'clicks': True}})
+        self.assertFalse(service.view()['canInput'])
+        old = service.session.grant_id
+        self.host.approve = lambda *_: False
+        service.action('authorize_background', {})
+        self.assertIsNone(service.automatic_session)
+        service.action('observe', {'clicks': True})
+        ref = service.view()['rows'][0]['id']
+        service.action('control_type_text', {'id': ref, 'text': 'denied'})
+        self.assertEqual(writes, [])
+        self.host.approve = lambda *_: True
+        service.action('authorize_background', {})
+        with self.assertRaises(PermissionError):
+            service.call('computer_observe', {}, grant=old)
+        grant = service.session.grant_id
+        names = {s['function']['name'] for s in service.lane.schemas()}
+        self.assertIn('computer_act', names)
+        self.assertFalse(names & {'computer_key', 'computer_type', 'computer_click'})
+        self.host.approve = lambda *_: self.fail('extra approval within the selected full-access grant')
+        result = service.call('computer_observe', {}, grant=grant)
+        for text in ('one', 'two'):
+            self.assertTrue(result['ok'], result)
+            result = service.call('computer_act', {'observation_id': json.loads(result['content'])['observation_id'],
+                'ref': 'uia:1', 'action': 'type_text', 'text': text}, grant=grant)
+        self.assertEqual(writes, ['one', 'two'])
+        self.assertFalse(service.call('computer_key', {'key': 'enter'}, grant=grant)['ok'])
+        service.action('review_each', {})
+        self.assertIsNone(service.automatic_session)
+        self.assertNotEqual(service.session.grant_id, grant)
+        self.host.command({'command': 'permission', 'profile': 'sandbox'})
+        self.assertIsNone(service.lane)
+        with self.assertRaises(PermissionError):
+            service.action('authorize_background', {})
+
+    def test_manual_computer_capture_waits_for_host_approval(self):
+        from revon.computer_use import ComputerSession
+        from .computer_service import ComputerService
+
+        class Driver:
+            target_id = 'test:computer-capture'
+            calls = 0
+
+            def screenshot(self, **_):
+                self.calls += 1
+                return {'target': self.target_id, 'png': b'fixture', 'width': 400, 'height': 300,
+                        'rect': [0, 0, 400, 300], 'client_rect': [0, 0, 400, 300], 'dpi': 96,
+                        'sha256': 'fixture', 'client_sha256': 'fixture'}
+
+        driver = Driver()
+        service = self.host.pages.computer = ComputerService(self.host)
+        service.session = ComputerSession(driver)
+        self.host.page = 'computer'
+        self.host.profile = 'manual'
+        decisions = iter((False, True, False, True))
+        requests = []
+
+        def approve(name, arguments, _cancel):
+            requests.append((name, arguments, driver.calls))
+            return next(decisions)
+
+        self.host.approve = approve
+        service.action('capture', {})
+        self.assertIsNone(service.frame)
+        self.assertEqual(driver.calls, 0)
+        service.action('capture', {})
+        self.assertEqual(driver.calls, 1)
+        self.assertIsNotNone(service.frame)
+        for identifier, approved in [('denied', False), ('approved', True)]:
+            self.host.command({'command': 'call_tool', 'id': identifier,
+                               'name': 'computer_screenshot', 'arguments': {}, 'computerGrant': service.session.grant_id})
+            self.host.worker.join(3)
+            self.assertFalse(self.host.worker.is_alive())
+            response = next(row['result'] for kind, row in self.events
+                            if kind == 'call_result' and row['id'] == identifier)
+            self.assertIs(response['ok'], approved, response)
+            self.assertEqual(driver.calls, 2 if approved else 1)
+        self.assertEqual(requests, [('computer_screenshot', {}, before) for before in (0, 0, 1, 1)])
+        current = service.view()
+        self.assertTrue(current['observationId'])
+        self.assertTrue(any(kind == 'page' and row['data'].get('observationId') == current['observationId']
+                            for kind, row in self.events))
+        with self.assertRaisesRegex(PermissionError, '后台模式'):
+            service.action('click', {'clicks': True, 'observation_id': 'old', 'x': 0, 'y': 0})
+        self.host.approve = lambda *_: True
+        self.host.command({'command': 'computer_settings', 'values': {'inputMode': 'foreground', 'clicks': True}})
+        service.action('capture', {})
+        with self.assertRaisesRegex(ValueError, '预览已更新'):
+            service.action('click', {'clicks': True, 'observation_id': 'old', 'x': 0, 'y': 0})
+        with self.assertRaisesRegex(PermissionError, '窗口授权已变化'):
+            service.call('computer_screenshot', {}, grant='previous-window')
+        self.assertEqual(driver.calls, 3)
+        self.host.approve = lambda *_: True
+        def inspect(options, **kwargs):
+            self.assertEqual(options, {'target': '保存'})
+            return {**driver.screenshot(**kwargs), 'local': {'source': 'visfunc_uia', 'status': 'found'},
+                    'point': {'found': True, 'label': '保存', 'x': 30, 'y': 40}}
+        with patch.object(driver, 'inspect_screenshot', inspect, create=True):
+            self.host.pages.action('computer', 'local', {'target': '保存', 'consent': False})
+        self.assertEqual(service.view()['point']['x'], 30)
+        self.host.command({'command': 'permission', 'profile': 'sandbox'})
+        self.assertIsNone(service.lane)
+        self.assertEqual(service.view()['observationId'], '')
+
+    def test_gateway_starts_from_saved_custom_endpoint_and_stops_its_child(self):
+        requests = []
+        class Endpoint(BaseHTTPRequestHandler):
+            def log_message(self, *_):
+                pass
+            def do_POST(self):
+                payload = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+                requests.append((self.path, payload))
+                raw = json.dumps({'choices': [{'message': {'role': 'assistant', 'content': 'gateway-ok'}, 'finish_reason': 'stop'}], 'usage': {}}).encode()
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+        server = ThreadingHTTPServer(('127.0.0.1', 0), Endpoint)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            save_user_layer(self.home, [dict(id='custom', name='provider:custom', config={
+                'baseURL': f'http://127.0.0.1:{server.server_port}/custom/v1', 'model': 'fixture', 'wire': 'openai'})])
+            self.host.gateway.demo = False
+            self.host.gateway.start('custom')
+            proc = self.host.gateway.process
+            self.assertIsNone(proc.poll())
+            from revon_client import RevonGatewayClient, ChatMessage
+            result = RevonGatewayClient(self.host.gateway.url).chat([ChatMessage('user', 'test')], model='fixture')
+            self.assertEqual(result.text, 'gateway-ok')
+            self.assertEqual(requests[0][0], '/custom/v1/chat/completions')
+            self.host.gateway.close()
+            self.assertIsNotNone(proc.poll())
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_chat_catalog_switch_uses_the_selected_provider_and_upstream_model(self):
+        from revon_client import ChatMessage, RevonGatewayClient
+        from .gateway_service import chat_model_routes
+
+        hits = []
+
+        class Endpoint(BaseHTTPRequestHandler):
+            def log_message(self, *_):
+                pass
+
+            def do_POST(self):
+                payload = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+                hits.append((self.path, payload['model'], self.headers.get('Authorization')))
+                raw = b'{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}'
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+
+        with ThreadingHTTPServer(('127.0.0.1', 0), Endpoint) as server:
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            base = f'http://127.0.0.1:{server.server_port}'
+            rows = [
+                {'id': 'one', 'name': 'provider:one', 'config': {
+                    'baseURL': base + '/one/v1', 'model': 'first', 'modelLabel': 'First',
+                    'apiKey': {'$expr': "get('env.REVON_TEST_ONE_KEY', '')"}}},
+                {'id': 'two', 'name': 'provider:two', 'config': {
+                    'baseURL': base + '/two/v1', 'model': 'second', 'models': ['second', 'second-alt'],
+                    'modelLabel': 'Second', 'apiKey': {'$expr': "get('env.REVON_TEST_TWO_KEY', '')"}}},
+                {'id': 'off', 'disabled': True, 'config': {'baseURL': base, 'model': 'disabled'}},
+            ]
+            save_user_layer(self.home, rows)
+            self.assertEqual(list(chat_model_routes(rows)), ['First', 'Second', 'second-alt'])
+            self.host.gateway.demo = False
+            try:
+                with patch.dict('os.environ', {'REVON_TEST_ONE_KEY': 'fixture-one', 'REVON_TEST_TWO_KEY': 'fixture-two'}):
+                    self.host.gateway.start('one')
+                    old = self.host.gateway.process
+                    self.host.command({'command': 'apply_model_setup', 'model': 'second-alt'})
+                    self.host.worker.join(12)
+                    self.assertFalse(self.host.worker.is_alive())
+                    self.assertIsNotNone(old.poll())
+                    self.assertIn(('gateway_catalog', {'models': ['First', 'Second', 'second-alt']}), self.events)
+                    client = RevonGatewayClient(self.host.gateway.url)
+                    self.assertEqual(client.list_models(), ['second-alt'])
+                    client.chat([ChatMessage('user', 'fixture')], model='second-alt')
+                    self.assertEqual(hits, [('/two/v1/chat/completions', 'second-alt', 'Bearer fixture-two')])
+
+                    SessionStore.atomic(self.home / 'gui/qt/onboarding.json', {'provider': 'one'})
+                    SessionStore(self.home).save_preferences({'model': 'Second'})
+                    self.host.gateway.start()
+                    self.assertEqual(RevonGatewayClient(self.host.gateway.url).list_models(), ['Second'])
+            finally:
+                self.host.gateway.close()
+                server.shutdown()
+
+    def test_queued_model_change_refreshes_saved_config_in_the_same_job(self):
+        save_user_layer(self.home, [{'id': 'fixture', 'name': 'provider:fixture', 'config': {
+            'baseURL': 'http://127.0.0.1/v1', 'model': 'qa', 'modelLabel': 'Screen QA'}}])
+        release = threading.Event()
+        with patch.object(self.host.gateway, 'start') as start:
+            self.host.work(lambda: release.wait(5))
+            first = self.host.worker
+            try:
+                self.host.command({'command': 'apply_model_setup', 'provider': 'fixture', 'refreshConfig': True})
+                self.host.command({'command': 'apply_model_setup', 'model': 'Screen QA'})
+            finally:
+                release.set()
+            first.join(5)
+            self.host.worker.join(5)
+            start.assert_called_once_with('', model='Screen QA')
+        configs = [d['data'] for e, d in self.events if e == 'page' and d['page'] == 'config']
+        self.assertEqual([c['rows'][0]['title'] for c in configs], ['Screen QA'])
+        self.assertFalse(any(e == 'error' for e, _ in self.events))
+
+    def test_empty_model_catalog_does_not_set_a_workbench_error(self):
+        self.host.gateway.demo = False
+        self.host.gateway.start()
+        self.assertIn(('gateway_catalog', {'models': []}), self.events)
+        self.assertFalse(any(e == 'error' for e, _ in self.events))
+        self.assertEqual(self.host.gateway.url, '')
+
+    def test_chat_selector_keeps_catalog_and_waits_for_matching_gateway(self):
+        from .controller import ChatController
+
+        chat = ChatController(self.home)
+        chat._model = 'First'
+        chat._draft = 'Keep this draft'
+        chat.setManagedModels(['First', 'Second'])
+        chat._on_worker('connection', (chat._connection_epoch, chat.gateway, True, ['First'], ''))
+        self.assertEqual(chat.models, ['First', 'Second'])
+        self.assertTrue(chat.connected)
+        requests = []
+        chat.modelRequested.connect(requests.append)
+        old_url = chat.gateway
+        chat.setModel('Second')
+        self.assertEqual(requests, ['Second'])
+        self.assertEqual(chat.model, 'First')
+        self.assertFalse(chat.connected)
+        chat.setManagedGateway(old_url, {'model': 'First'})
+        self.assertTrue(chat.modelSwitching)
+
+        chat.gatewayChangeFailed('fixture rejection', old_url)
+        self.assertEqual(chat.model, 'First')
+        self.assertTrue(chat.connected)
+        self.assertFalse(chat.modelSwitching)
+
+        chat.setModel('Second')
+        new_url = 'http://127.0.0.1:49490'
+        with patch.object(chat, 'refreshConnection') as refresh:
+            chat.setManagedGateway(new_url, {'model': 'Second', 'temperature': 0.3})
+            refresh.assert_called_once()
+        self.assertEqual(chat.model, 'Second')
+        self.assertEqual(chat.models, ['First', 'Second'])
+        self.assertEqual(chat.draft, 'Keep this draft')
+        self.assertEqual(SessionStore(self.home).preferences()['model'], 'Second')
+
+
+
+if __name__ == '__main__':
+    unittest.main()

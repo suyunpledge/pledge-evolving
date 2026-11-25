@@ -4,7 +4,7 @@
 这个文件存在的意义：把"结论"变成"可当场重跑的命令"。任何人对下面任何一条有异议，
 跑一遍就能看到同样的输出；不接受"我看过代码所以没问题"这种证据。
 
-用法：cd agent-keystone && python verify/probe_seam.py
+用法：cd agent-revon && python verify/probe_seam.py
 """
 
 from __future__ import annotations
@@ -16,15 +16,15 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from keystone.registry import ContribAPI, ModuleRegistry  # noqa: E402
+from revon.registry import ContribAPI, ModuleRegistry  # noqa: E402
 
 
 def main() -> int:
-    home = Path.home() / ".keystone"
+    home = Path.home() / ".revon"
     api = ContribAPI(home=home, workspace=Path.cwd())
     reg = ModuleRegistry(api, home / "contrib")
     reg.discover()
-    reg.discover(ROOT / "keystone" / "contrib")
+    reg.discover(ROOT / "revon" / "contrib")
     mods = {c.name: c.module for c in reg.healthy()}
     mc, th = mods.get("mcp_bridge"), mods.get("toolhost")
     if mc is None or th is None:

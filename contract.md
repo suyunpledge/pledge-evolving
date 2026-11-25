@@ -1,4 +1,4 @@
-# 贡献契约与分工 · keystone v3（新框架的代码由各家 agent 自己写）
+# 贡献契约与分工 · revon v3（新框架的代码由各家 agent 自己写）
 
 ## 0. 这份文件解决什么
 
@@ -6,7 +6,7 @@
 
 为什么要先冻结：异构 agent 各写各的，如果接口不固定，合的时候只能靠人工重写，"组合"就变成"重做"。所以这里把**拼接缝**先钉死 —— 谁的代码都只能从这条缝里伸出来。
 
-**合并不靠人肉改写，靠机器校验**：`keystone/registry.py` 会静态扫描 + 动态加载 + 跑对方自带的自检，不合规的模块直接隔离（quarantine），不会半挂载进框架。
+**合并不靠人肉改写，靠机器校验**：`revon/registry.py` 会静态扫描 + 动态加载 + 跑对方自带的自检，不合规的模块直接隔离（quarantine），不会半挂载进框架。
 
 ---
 
@@ -14,7 +14,7 @@
 
 ### 1.1 文件与入口
 
-- 路径：`agent-keystone/keystone/contrib/<模块名>.py`（模块名 == 文件名，小写下划线）
+- 路径：`agent-revon/revon/contrib/<模块名>.py`（模块名 == 文件名，小写下划线）
 - 顶部必须：`from __future__ import annotations` 和 `MODULE_API_VERSION = 1`
 - 只暴露两个公开函数：
 
@@ -66,7 +66,7 @@ api.say("...")                                # 写日志
 ### 1.5 交付与验收
 
 - **交付形态**：直接输出一个完整 `.py` 文件的代码块（**不要写成文件**，不要分段给）。
-- **验收**：把文件放进 `keystone/contrib/`，然后
+- **验收**：把文件放进 `revon/contrib/`，然后
   ```bash
   python run.py modules validate     # 一致性检查：不合规会列出原因
   python run.py modules selftests    # 跑你自带的断言
@@ -90,20 +90,20 @@ api.say("...")                                # 写日志
 
 | Agent | 模块 | 文件 | 一句话职责 | 必须提供的 hook |
 | --- | --- | --- | --- | --- |
-| **Step** | 调度器 | `keystone/contrib/scheduler.py` | 周期任务判定 + 实例租约 + 全局暂停闸门 | `due_jobs` / `acquire_lease` / `gate` |
-| **Z Code** | 会话回放 | `keystone/contrib/replay.py` | 从事件流重建时间线、分叉、两次运行 diff | `replay` / `fork_plan` / `diff_runs` |
-| **Trae Work** | 工具宿主 | `keystone/contrib/toolhost.py` | 外部工具/MCP 描述 → 统一工具规格 + 权限挂钩 | `register_tools` / `authorize` |
-| **PI agent** | 模型目录 | `keystone/contrib/catalog.py` | provider 能力矩阵 + 健康状态建模 + 降级链构建 | `catalog` / `build_chain` |
-| **Keystone runtime** | 收敛监督 | `keystone/contrib/supervisor.py` | 工具轨迹的阶段化评分 + 有界 advisory/abort 分流 | `supervise` |
+| **Step** | 调度器 | `revon/contrib/scheduler.py` | 周期任务判定 + 实例租约 + 全局暂停闸门 | `due_jobs` / `acquire_lease` / `gate` |
+| **Z Code** | 会话回放 | `revon/contrib/replay.py` | 从事件流重建时间线、分叉、两次运行 diff | `replay` / `fork_plan` / `diff_runs` |
+| **Trae Work** | 工具宿主 | `revon/contrib/toolhost.py` | 外部工具/MCP 描述 → 统一工具规格 + 权限挂钩 | `register_tools` / `authorize` |
+| **PI agent** | 模型目录 | `revon/contrib/catalog.py` | provider 能力矩阵 + 健康状态建模 + 降级链构建 | `catalog` / `build_chain` |
+| **revon runtime** | 收敛监督 | `revon/contrib/supervisor.py` | 工具轨迹的阶段化评分 + 有界 advisory/abort 分流 | `supervise` |
 
 ## 3. 第二轮（第一轮入库后开工）
 
 | Agent | 模块 | 文件 | 职责 | hook |
 | --- | --- | --- | --- | --- |
-| Hermes（本地） | 知识代谢 | `keystone/contrib/curator.py` | sidecar 状态机 active/stale/archived + pin + 账本 | `curate` |
-| WorkBuddy（本地） | 团队协作 | `keystone/contrib/teams.py` | 成员消息投递 + 共享任务列表 + @寻址 | `deliver` |
+| Hermes（本地） | 知识代谢 | `revon/contrib/curator.py` | sidecar 状态机 active/stale/archived + pin + 账本 | `curate` |
+| WorkBuddy（本地） | 团队协作 | `revon/contrib/teams.py` | 成员消息投递 + 共享任务列表 + @寻址 | `deliver` |
 | Claude Code（MiMo 通道） | 交叉审查 | 只交报告，不写代码 | 逐个审已入库模块的一致性、逻辑漏洞、纸面承诺 | — |
-| OpenCode（DeepSeek Flash） | 上下文压缩 | `keystone/contrib/compactor.py` | 压缩阈值判定 + 保留区选择（它这两轮不稳定，降为备份位） | `should_compact` / `plan` |
+| OpenCode（DeepSeek Flash） | 上下文压缩 | `revon/contrib/compactor.py` | 压缩阈值判定 + 保留区选择（它这两轮不稳定，降为备份位） | `should_compact` / `plan` |
 
 ---
 
@@ -112,11 +112,11 @@ api.say("...")                                # 写日志
 ### 4.1 给 Step —— 调度器模块
 
 ```
-你是 Step。任务：为统一智能体框架 keystone 写一个贡献模块 scheduler.py。直接输出完整代码块，不要写文件、不要反问。
+你是 Step。任务：为统一智能体框架 revon 写一个贡献模块 scheduler.py。直接输出完整代码块，不要写文件、不要反问。
 
 【为什么是你】你的 cron/、runtime/ 与 main-N 多 agent 实例经验，正是这个模块需要的。
 
-【交付】一个 Python 文件全文，模块名 scheduler，路径将是 keystone/contrib/scheduler.py
+【交付】一个 Python 文件全文，模块名 scheduler，路径将是 revon/contrib/scheduler.py
 
 【冻结契约】必须逐条满足：
 1. 顶部：`from __future__ import annotations` 与 `MODULE_API_VERSION = 1`
@@ -146,11 +146,11 @@ api.say("...")                                # 写日志
 ### 4.2 给 Z Code —— 会话回放模块
 
 ```
-你是 Z Code。任务：为统一智能体框架 keystone 写一个贡献模块 replay.py，做「会话即数据」的回放与比对。直接输出完整代码块，不要写文件、不要反问。
+你是 Z Code。任务：为统一智能体框架 revon 写一个贡献模块 replay.py，做「会话即数据」的回放与比对。直接输出完整代码块，不要写文件、不要反问。
 
 【为什么是你】你自己的 rollout 会话目录正是这套能力的实战来源。
 
-【交付】一个 Python 文件全文，模块名 replay，路径将是 keystone/contrib/replay.py
+【交付】一个 Python 文件全文，模块名 replay，路径将是 revon/contrib/replay.py
 
 【背景：框架的事件流格式】
 会话是一份 append-only JSONL，事件形如：
@@ -191,11 +191,11 @@ compaction / checkpoint / loop_stop / model_error
 ### 4.3 给 Trae Work —— 工具宿主模块
 
 ```
-你是 Trae Work。任务：为统一智能体框架 keystone 写一个贡献模块 toolhost.py，把外部工具描述（含 MCP 风格）归一成框架内部工具规格，并挂上权限判定。直接输出完整代码块，不要写文件、不要反问。
+你是 Trae Work。任务：为统一智能体框架 revon 写一个贡献模块 toolhost.py，把外部工具描述（含 MCP 风格）归一成框架内部工具规格，并挂上权限判定。直接输出完整代码块，不要写文件、不要反问。
 
 【为什么是你】你的 toolhost/ 与 mcps/ 正是「工具托管」这一层的实战来源。
 
-【交付】一个 Python 文件全文，模块名 toolhost，路径将是 keystone/contrib/toolhost.py
+【交付】一个 Python 文件全文，模块名 toolhost，路径将是 revon/contrib/toolhost.py
 
 【背景：框架的工具规格（目标形态）】
 {"name": str, "description": str, "schema": dict, "read_only": bool, "deferred": bool}
@@ -239,11 +239,11 @@ compaction / checkpoint / loop_stop / model_error
 ### 4.4 给 PI agent —— 模型目录模块
 
 ```
-你是 PI agent。任务：为统一智能体框架 keystone 写一个贡献模块 catalog.py，维护 provider/模型能力矩阵并据此构建降级链。直接输出完整代码块，不要写文件、不要反问。
+你是 PI agent。任务：为统一智能体框架 revon 写一个贡献模块 catalog.py，维护 provider/模型能力矩阵并据此构建降级链。直接输出完整代码块，不要写文件、不要反问。
 
 【为什么是你】你的 model catalogs 概念正是这一层。
 
-【交付】一个 Python 文件全文，模块名 catalog，路径将是 keystone/contrib/catalog.py
+【交付】一个 Python 文件全文，模块名 catalog，路径将是 revon/contrib/catalog.py
 
 【背景：框架的模型供给】
 provider 即数据：{"name","baseUrl","wire"(openai|anthropic),"models":[...],"defaultModel","smallModel"}。
@@ -283,8 +283,8 @@ provider 即数据：{"name","baseUrl","wire"(openai|anthropic),"models":[...],"
 ## 5. 回传与合并
 
 1. 你把某个 agent 的代码块复制回来（或直接存成文件告诉我路径）。
-2. 我把它落到 `keystone/contrib/<模块名>.py`，跑三条命令：`modules validate` / `modules selftests` / `selftest`。
-3. 通过 → 入库，并在 `keystone/contrib/INDEX.md` 记录作者、能力、断言数；不通过 → 我把**机器给的具体拒绝原因**发回，你转给它重写。
+2. 我把它落到 `revon/contrib/<模块名>.py`，跑三条命令：`modules validate` / `modules selftests` / `selftest`。
+3. 通过 → 入库，并在 `revon/contrib/INDEX.md` 记录作者、能力、断言数；不通过 → 我把**机器给的具体拒绝原因**发回，你转给它重写。
 4. 全部入库后我做一次**跨模块集成自检**：确认各家 hook 在统一调用链上互相不冲突（例如 scheduler 的 due_jobs 与 compactor 的 should_compact 不会互相抢占预算），并把结果写进集成报告。
 
 **一条纪律**：我不替任何 agent 修它的模块代码。代码是谁写的就署谁的名，改也是它的下一版。集成者的工作只有两件 —— 定契约、验契约。
@@ -299,4 +299,4 @@ provider 即数据：{"name","baseUrl","wire"(openai|anthropic),"models":[...],"
 - **readOnlyHint 归一与 authorize 语义（F4-2/F4-3）**：`register_tools` 归一时先剥一层 `server__` 前缀再做只读启发；归一产物的 `read_only` 字段在重新入管时被直接采信（与 `readOnlyHint` 同级）。`authorize` 接受可选 `spec`，`spec["read_only"]` **优先于名字启发**——写工具叫 `read_*` 不能靠名字绕过判定。
 - **§4.3 的 authorize 规则序与 mode 基线是 2026-09-14 的版本**；现行实现叠加了：声明优先、前缀剥离、以及「`allow` 恒高于 mode 基线（deny 除外）」的显式语义（见 readme「已知边界」）。冲突时以实现 + 自测为准。
 - **router/teams 主键（F2-3）**：worker/member 以 `id` 为主键（与 `teams.deliver` 成员寻址同一键空间），`name` 只作显示与排序；`id` 缺失回落 `name`（legacy 名册兼容），两键全缺判非法。任务书写作时未冻结此点，现补记。
-- **贡献模块挂载（F2-2/H11）**：`mount_contrib_extensions` 双注册表——包内 contrib 保底席位，`home/contrib` 同名模块只有自己过闸且钩子可解析才接管；被拒文件不再让席位静默消失，接管/保底记警告并首次 `run()` 发 `mount_warning` 事件。§4.3 的「落进 `keystone/contrib/` 即成为参考实现」仍然成立，但不再是唯一来源。
+- **贡献模块挂载（F2-2/H11）**：`mount_contrib_extensions` 双注册表——包内 contrib 保底席位，`home/contrib` 同名模块只有自己过闸且钩子可解析才接管；被拒文件不再让席位静默消失，接管/保底记警告并首次 `run()` 发 `mount_warning` 事件。§4.3 的「落进 `revon/contrib/` 即成为参考实现」仍然成立，但不再是唯一来源。

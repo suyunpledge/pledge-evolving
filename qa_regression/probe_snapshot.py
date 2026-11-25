@@ -12,7 +12,7 @@ from pathlib import Path
 
 from _bootstrap import check, summary  # noqa: E402
 
-from keystone.development.state import ModeState  # noqa: E402
+from revon.development.state import ModeState  # noqa: E402
 
 
 def main() -> int:

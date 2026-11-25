@@ -6,11 +6,11 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from keystone.conversation_prefix import ConversationPrefix
-from keystone.loop import Agent
-from keystone.model import HttpTransport, ModelRouter, Provider
-from keystone.policy import Mode, Policy
-from keystone.tools import build_builtin_registry
+from revon.conversation_prefix import ConversationPrefix
+from revon.loop import Agent
+from revon.model import HttpTransport, ModelRouter, Provider
+from revon.policy import Mode, Policy
+from revon.tools import build_builtin_registry
 
 
 class TrimPersistenceTests(unittest.TestCase):

@@ -16,15 +16,15 @@ from unittest.mock import patch
 import urllib.request
 import urllib.error
 
-from keystone.config import Config
-from keystone.execution import (ActionExecutor, ActionRequest, EventEnvelope, RunRequest,
+from revon.config import Config
+from revon.execution import (ActionExecutor, ActionRequest, EventEnvelope, RunRequest,
                              create_execution_context)
-from keystone.gateway import GatewayConfig, serve
-from keystone.loop import Agent, build_agent, LoopLimits
-from keystone.policy import Policy, Mode, Sandbox, ToolEffect
-from keystone.session import Session
-from keystone.tools import ToolContext, ToolRegistry, ToolResult, ToolSpec, build_builtin_registry
-from keystone.test_task_planning import Router
+from revon.gateway import GatewayConfig, serve
+from revon.loop import Agent, build_agent, LoopLimits
+from revon.policy import Policy, Mode, Sandbox, ToolEffect
+from revon.session import Session
+from revon.tools import ToolContext, ToolRegistry, ToolResult, ToolSpec, build_builtin_registry
+from revon.test_task_planning import Router
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -210,7 +210,7 @@ class RuntimeConvergenceTests(unittest.TestCase):
     def test_forged_host_filename_does_not_verify_a_tool(self):
         registry = ToolRegistry()
         def attacker(a,c): return ToolResult(True)
-        attacker.__code__ = attacker.__code__.replace(co_filename=str(ROOT / 'keystone-gui' / 'plugin_capabilities.py'),
+        attacker.__code__ = attacker.__code__.replace(co_filename=str(ROOT / 'revon-gui' / 'plugin_capabilities.py'),
             co_qualname='CapabilityRuntime.reload.<locals>.<lambda>')
         registry.register(ToolSpec('forged', '', attacker))
         self.assertFalse(self.execute(self.context(registry=registry), 'forged').ok)
@@ -269,7 +269,7 @@ class RuntimeConvergenceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             create_execution_context(home=self.home, workspace=self.ws, registry=build_builtin_registry(),
                                      policy=Policy(workspace=self.root))
-        from keystone.checkpoint import CheckpointStore
+        from revon.checkpoint import CheckpointStore
         with self.assertRaises(ValueError):
             create_execution_context(home=self.home, workspace=self.ws, registry=build_builtin_registry(),
                 policy=Policy(workspace=self.ws), checkpoints=CheckpointStore(self.home, self.root))
@@ -484,8 +484,8 @@ class RuntimeConvergenceTests(unittest.TestCase):
                 self.assertEqual(self.path.read_text(), 'changed')
 
     def test_unknown_action_prevents_run_success_and_is_recovery_evidence(self):
-        from keystone.loop import RunReport
-        from keystone.execution_guard import workflow_status
+        from revon.loop import RunReport
+        from revon.execution_guard import workflow_status
         events = [{'type': 'workflow_state', 'run_id': 'r', 'phase': 'completed'},
                   {'type': 'tool_completed', 'run_id': 'r', 'action_id': 'a', 'execution_state': 'unknown'}]
         report = RunReport('model ended', [], {}, events=events, run_id='r', task_id='t')
@@ -504,7 +504,7 @@ class RuntimeConvergenceTests(unittest.TestCase):
         self.assertFalse((self.ws / 'missing.txt').exists())
 
     def test_real_checkpoint_can_restore_failed_task_effect(self):
-        from keystone.checkpoint import CheckpointStore
+        from revon.checkpoint import CheckpointStore
         store = CheckpointStore(self.home, self.ws)
         if not store.enabled: self.skipTest('Git unavailable')
         ctx = self.context(checkpoints=store)
@@ -514,7 +514,7 @@ class RuntimeConvergenceTests(unittest.TestCase):
         self.assertEqual(self.path.read_text(), 'old')
 
     def test_parallel_projects_do_not_mix_shadow_git_snapshots(self):
-        from keystone.checkpoint import CheckpointStore
+        from revon.checkpoint import CheckpointStore
         projects = [self.root / 'project-a', self.root / 'project-b']
         stores = []
         for i, project in enumerate(projects):
@@ -661,7 +661,7 @@ class RuntimeConvergenceTests(unittest.TestCase):
         self.assertEqual(len({r['meta']['run_id'] for r in results}), 4)
 
     def test_cli_gateway_permission_and_expose_consistency(self):
-        from keystone import cli
+        from revon import cli
         config = Config()
         config.apply_patch([{'id': 'policy', 'name': 'policy', 'config': {'mode': 'read-only'}},
                             {'id': 'tools', 'name': 'tools', 'config': {'expose': ['read_file', 'write_file']}}])
@@ -671,7 +671,7 @@ class RuntimeConvergenceTests(unittest.TestCase):
         class Server:
             def serve_forever(self): raise KeyboardInterrupt()
             def server_close(self): pass
-        with patch('keystone.cli._compose', return_value=config), patch('keystone.gateway.serve', side_effect=lambda c: captured.append(c) or Server()):
+        with patch('revon.cli._compose', return_value=config), patch('revon.gateway.serve', side_effect=lambda c: captured.append(c) or Server()):
             self.assertEqual(cli.cmd_gateway(args), 0)
         cfg = captured[0]; self.addCleanup(cfg.close_runtime)
         agent = build_agent(home=self.home, workspace=self.ws, config=config, router=Router(['done']),
@@ -685,14 +685,14 @@ class RuntimeConvergenceTests(unittest.TestCase):
             self.assertEqual(results[0].meta['error_code'], results[1].meta['error_code'])
 
     def test_cli_public_result_marks_step_limit_unsuccessful(self):
-        from keystone import cli
+        from revon import cli
         config = Config()
         config.apply_patch([{'id': 'policy', 'name': 'policy', 'config': {'mode': 'acceptEdits'}},
                             {'id': 'loop', 'name': 'loop', 'config': {'maxSteps': 1}}])
         args = cli.build_parser().parse_args(['run', '--home', str(self.home), '--workspace', str(self.ws), '--json', 'read'])
         router = Router(['<tool_call>{"tool":"read_file","args":{"path":"value.txt"}}</tool_call>'])
         output = io.StringIO()
-        with patch('keystone.cli._compose', return_value=config), patch('keystone.cli.ModelRouter.from_config', return_value=router), contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
+        with patch('revon.cli._compose', return_value=config), patch('revon.cli.ModelRouter.from_config', return_value=router), contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
             code = cli.cmd_run(args)
         value = json.loads(output.getvalue())
         self.assertEqual(code, 1); self.assertFalse(value['ok'])
@@ -769,7 +769,7 @@ class RuntimeConvergenceTests(unittest.TestCase):
 
     def test_cross_process_session_append_is_atomic_and_monotonic(self):
         self.processes('''
-from keystone.session import Session
+from revon.session import Session
 root=Path(sys.argv[1]); i=sys.argv[2]
 s=Session(root/'shared.jsonl'); s.open()
 (root/('ready-'+i)).write_text('ready')
@@ -786,8 +786,8 @@ s.close(); print('{}')
 
     def test_cross_process_revision_competition_has_one_winner(self):
         outputs = self.processes('''
-from keystone.tools import build_builtin_registry, ToolContext
-from keystone.policy import Policy,Mode
+from revon.tools import build_builtin_registry, ToolContext
+from revon.policy import Policy,Mode
 import hashlib, json
 root=Path(sys.argv[1]); i=sys.argv[2]; ws=root/'project'; p=ws/'value.txt'
 digest=hashlib.sha256(p.read_bytes()).hexdigest()
@@ -803,7 +803,7 @@ print(json.dumps(r.as_dict()))
     @unittest.skipUnless(os.name == 'nt', 'Windows byte-range locking')
     def test_empty_lock_file_initialization_waits_for_existing_owner(self):
         import msvcrt
-        from keystone.runtime_lock import resource_lock
+        from revon.runtime_lock import resource_lock
         key = 'initialization:' + os.path.normcase(str(self.path.resolve()))
         directory = self.root / 'keystone-runtime-locks'
         directory.mkdir()
@@ -817,7 +817,7 @@ print(json.dumps(r.as_dict()))
                     acquired.set()
             except Exception as exc:
                 errors.append(exc)
-        with target.open('w+b') as owner, patch('keystone.runtime_lock.tempfile.gettempdir', return_value=str(self.root)):
+        with target.open('w+b') as owner, patch('revon.runtime_lock.tempfile.gettempdir', return_value=str(self.root)):
             msvcrt.locking(owner.fileno(), msvcrt.LK_NBLCK, 1)
             worker = threading.Thread(target=contender)
             worker.start()

@@ -8,16 +8,16 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from keystone.checkpoint import CheckpointStore
-from keystone.development.guard import FileRevisionGuard
-from keystone.execution import ActionExecutor
-from keystone.loop import Agent, LoopLimits
-from keystone.model import Completion, Usage, TransportError
-from keystone.policy import Mode, Policy
-from keystone.session import Session
-from keystone.tool_adapter import normalize_text_call, repair_arguments
-from keystone.tools import ToolResult, ToolSpec, build_builtin_registry
-from keystone import toolwire
+from revon.checkpoint import CheckpointStore
+from revon.development.guard import FileRevisionGuard
+from revon.execution import ActionExecutor
+from revon.loop import Agent, LoopLimits
+from revon.model import Completion, Usage, TransportError
+from revon.policy import Mode, Policy
+from revon.session import Session
+from revon.tool_adapter import normalize_text_call, repair_arguments
+from revon.tools import ToolResult, ToolSpec, build_builtin_registry
+from revon import toolwire
 
 
 class Router:
@@ -290,9 +290,9 @@ class AgentStabilityTests(unittest.TestCase):
                 def fail_command(argv, **kwargs):
                     if argv[0] == 'git' and phase in argv:
                         # A real nonzero Git exit; honour the caller's check flag.
-                        argv = [*argv[:3], 'keystone-nonexistent-command']
+                        argv = [*argv[:3], 'revon-nonexistent-command']
                     return run(argv, **kwargs)
-                with patch('keystone.checkpoint.subprocess.run', side_effect=fail_command):
+                with patch('revon.checkpoint.subprocess.run', side_effect=fail_command):
                     report = agent.run('update file')
                 self.assertEqual(report.steps[0].meta['execution_state'], 'not_started')
                 self.assertEqual(report.steps[0].meta['error_code'], 'preparation_failed')
@@ -305,7 +305,7 @@ class AgentStabilityTests(unittest.TestCase):
         store = agent.checkpoints = CheckpointStore(agent.home, agent.workspace)
         if not store.enabled:
             self.skipTest('Git unavailable')
-        with patch('keystone.checkpoint.subprocess.run', side_effect=subprocess.TimeoutExpired('git', 30)) as run:
+        with patch('revon.checkpoint.subprocess.run', side_effect=subprocess.TimeoutExpired('git', 30)) as run:
             report = agent.run('update file')
         self.assertEqual(run.call_args.kwargs['timeout'], 30)
         self.assertEqual(report.steps[0].meta['error_code'], 'preparation_failed')

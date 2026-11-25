@@ -9,7 +9,7 @@
 
 - `retrieval` 专家是一个子代理，只拿到检索工具：`web_search`、`fetch_url`、`grep`、`find_files`、
   `read_file`、`read_range`、`memory_recall`、`file_stats`，外加只读的 `list_dir`、`file_outline`。
-- 专家每次工具调用成功，结果都由 `EvidenceLedger`（`keystone/retrieval_catalog.py`）存进现有的
+- 专家每次工具调用成功，结果都由 `EvidenceLedger`（`revon/retrieval_catalog.py`）存进现有的
   `ArtifactStore`。这个存储在工作区之外，按内容寻址并校验摘要。结果开头会打上 `[evidence eN · 来源]`
   标记，供专家引用。
 - 专家最后只输出 JSON 目录：`evidence` / `title` / `source` / `lines` / `summary` / `relevance`。
@@ -24,7 +24,7 @@
 
 ## 阶段 2：领域 → 专家路由
 
-配置行 `specialists`（`keystone/bundles/base.json` 已声明，默认 `enabled: false`）：
+配置行 `specialists`（`revon/bundles/base.json` 已声明，默认 `enabled: false`）：
 
 ```json
 {"id": "specialists", "name": "specialists:routing", "config": {
@@ -52,7 +52,7 @@
     普通子代理继承主控收窄后的工具面。
   - `advise` 和 `prefer` 只是写在请求尾部的指引。实测中 DeepSeek 主控在这两档下都不委派，所以只有 `require` 才真正走了专家路由（见 A/B 报告）。
 - `autoRoute: true` 时，如果主控没写 `domain`，就按关键词投票选一个已配置的领域；平票或零票不路由。
-- 预留了 `math`、`model3d`（工具 `model3d_build`/`model3d_inspect`，见 `keystone/model3d*`）和 `video`
+- 预留了 `math`、`model3d`（工具 `model3d_build`/`model3d_inspect`，见 `revon/model3d*`）和 `video`
   （暂时没有视频工具）的默认工具面。只要配上 `model` 就能启用。
 
 ### 交接信封（handoff envelope）
@@ -72,6 +72,6 @@
 
 ## 测试与实测
 
-- `keystone/test_specialists.py`：目录与展开、路由表校验、交接信封、权限夹紧（deny 生效、PLAN 模式下不能写）、步数上限、
+- `revon/test_specialists.py`：目录与展开、路由表校验、交接信封、权限夹紧（deny 生效、PLAN 模式下不能写）、步数上限、
   预算共享、未配置时回退、功能关闭时行为与今天一致。
 - `scripts/verify_specialists_ab.py`：真实模型 A/B（`--self-check` 只校验题目和判分器，不调用模型）。

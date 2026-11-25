@@ -1,6 +1,6 @@
-# Keystone 主界面与图标改版 · Product Design QA
+# revon 主界面与图标改版 · Product Design QA
 
-日期：2026-11-11。目标：在现有 Tkinter 产品内整理主界面层级和图标系统，承接此前 Cursor / 天枢的视觉分析。保留真实功能入口与 Keystone 品牌，直接修改生产代码。
+日期：2026-11-11。目标：在现有 Tkinter 产品内整理主界面层级和图标系统，承接此前 Cursor / 天枢的视觉分析。保留真实功能入口与 revon 品牌，直接修改生产代码。
 
 ## 设计依据与范围
 
@@ -33,7 +33,7 @@ Lucide 来源：[官方仓库](https://github.com/lucide-icons/lucide/tree/0.468
 
 首页原版与最终版使用相同测试状态：1440×900 Tk 客户区、相同字体缩放、空对话、相同仓库、工作区关闭。Windows 捕获输出均为 2162×1398 像素（含窗口装饰和系统缩放）。组合图两侧以相同比例缩小；工作区比较采用完全相同的裁剪矩形。仓库变更数量随本次编辑增长，属于实时数据，不作为文案差异。
 
-桌宠、浮动翻译工具栏、指针光晕和 Codex 进度气泡属于其他应用叠加层，不属于 Keystone。未为截图关闭或修改它们。本任务是原生桌面应用，手机浏览器断点不适用。
+桌宠、浮动翻译工具栏、指针光晕和 Codex 进度气泡属于其他应用叠加层，不属于 revon。未为截图关闭或修改它们。本任务是原生桌面应用，手机浏览器断点不适用。
 
 ## 五项视觉检查
 
@@ -65,11 +65,11 @@ Lucide 来源：[官方仓库](https://github.com/lucide-icons/lucide/tree/0.468
 
 ## 交付
 
-最终隔离预览窗口保持打开。已有 Keystone 进程仍运行其启动时加载的代码；重新启动项目中的 Keystone 后使用新界面。
+最终隔离预览窗口保持打开。已有 revon 进程仍运行其启动时加载的代码；重新启动项目中的 revon 后使用新界面。
 
 重开独立预览：`python design/product-design-2026-11-11/preview.py`。可用 `--compact` 或 `--workspace` 查看对应状态。
 
-重新生成图标：安装构建依赖 Pillow 和 `resvg-py==0.5.0`，运行 `python keystone-gui/desktop/make_lucide_assets.py`。运行 Keystone 无需这两个构建依赖。
+重新生成图标：安装构建依赖 Pillow 和 `resvg-py==0.5.0`，运行 `python revon-gui/desktop/make_lucide_assets.py`。运行 revon 无需这两个构建依赖。
 
 ## 第二轮：整体页面结构与图标（2026-11-11）
 
@@ -109,7 +109,7 @@ Lucide 来源：[官方仓库](https://github.com/lucide-icons/lucide/tree/0.468
 
 新增测试覆盖任务入口切换后保留草稿、底部导航与历史空间、选项展开/折叠后保留状态、16px 图标在 32px 点击区居中及键盘/禁用行为。已有布局、导航、规划、图标与视觉组件测试随新的页面结构更新；不会再要求已移除的重复入口，或要求折叠选项默认可见。
 
-隔离窗口已实操验证工作区展开/收起和窄窗口选项展开。未启动真实任务、发送模型请求或改动用户配置。最终主预览窗口为 `Keystone Layout Preview`，保留打开；生产实例重启后才会加载新代码。
+隔离窗口已实操验证工作区展开/收起和窄窗口选项展开。未启动真实任务、发送模型请求或改动用户配置。最终主预览窗口为 `revon Layout Preview`，保留打开；生产实例重启后才会加载新代码。
 
 最终批次 `python -m unittest test_i18n test_layout_structure test_navigation_refresh test_visual_system`：28 项测试全部通过（259.079 秒），包含 10 种语言 × 5 档缩放的控件边界检查。本轮前序分批验证中，图标、规划入口、25 组 DPI/窗口组合、首页反复缩放及导航兼容检查通过；失败项修正后已重跑对应测试。Python 编译检查、`git diff --check` 通过，两个隔离预览错误日志均为空。未构建安装包或验证真实模型链路。
 

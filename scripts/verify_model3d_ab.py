@@ -26,15 +26,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from keystone import model as kmodel                       # noqa: E402
-from keystone.capability import CapabilityLibrary, default_roots  # noqa: E402
-from keystone.loop import Agent                             # noqa: E402
-from keystone.model import Usage                            # noqa: E402
-from keystone.model3d import analyze, decode, format_for   # noqa: E402
-from keystone.policy import Mode, Policy, Sandbox          # noqa: E402
-from keystone.runtime_types import LoopLimits              # noqa: E402
-from keystone.session import Session                       # noqa: E402
-from keystone.tools import build_builtin_registry          # noqa: E402
+from revon import model as kmodel                       # noqa: E402
+from revon.capability import CapabilityLibrary, default_roots  # noqa: E402
+from revon.loop import Agent                             # noqa: E402
+from revon.model import Usage                            # noqa: E402
+from revon.model3d import analyze, decode, format_for   # noqa: E402
+from revon.policy import Mode, Policy, Sandbox          # noqa: E402
+from revon.runtime_types import LoopLimits              # noqa: E402
+from revon.session import Session                       # noqa: E402
+from revon.tools import build_builtin_registry          # noqa: E402
 
 TASKS = {
     "plate": {

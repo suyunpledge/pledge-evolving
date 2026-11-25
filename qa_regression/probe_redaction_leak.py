@@ -2,7 +2,7 @@
 
 Two questions:
   1. After tests/test_development_loop.py runs, what has entered
-     ``keystone.secrets._KNOWN`` that makes ``redact(['reviewer','old'])``
+     ``revon.secrets._KNOWN`` that makes ``redact(['reviewer','old'])``
      stop being a no-op?
   2. Is the match a whole-word match or a raw substring match? That decides
      whether this is a narrow test artifact or a real false-positive risk for
@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from _bootstrap import check, summary  # noqa: E402
 
-import keystone.secrets as sec  # noqa: E402
+import revon.secrets as sec  # noqa: E402
 
 
 def snapshot_known():
