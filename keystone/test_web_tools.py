@@ -266,8 +266,8 @@ class ToolWiringTests(unittest.TestCase):
         import tempfile
         with tempfile.TemporaryDirectory() as home:
             cfg = GatewayConfig(upstream="http://127.0.0.1:1", api_key="", port=0, gateway_token="", models=[],
-                                registry=build_builtin_registry(), workspace=".", home=Path(home),
-                                policy=Policy(workspace=Path("."), non_interactive=True))
+                                registry=build_builtin_registry(), workspace=home, home=Path(home),
+                                policy=Policy(workspace=Path(home), non_interactive=True, allow=('edit_file',)))
             server = serve(cfg)
             threading.Thread(target=server.serve_forever, daemon=True).start()
             try:

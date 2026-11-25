@@ -57,6 +57,28 @@ class ArtifactGatewayTests(unittest.TestCase):
         self.assertEqual(result.authorization, 'deny')
         self.assertEqual(store.read(identifier)['text'], 'original')
 
+    def test_gateway_source_read_edit_round_trip_and_placeholder_rejection(self):
+        path = self.ws / 'settings.py'
+        source = "token = args.get('credential')\npassword = cfg.password\n"
+        path.write_text(source, encoding='utf-8')
+        _, base = self.gateway()
+
+        def call(name, arguments):
+            _, response = self.http(base, '/v1/tools/call', {'run_id': 'code_roundtrip',
+                'name': name, 'arguments': arguments})
+            return response
+
+        result = call('read_range', {'path': path.name, 'start': 1, 'end': 2})
+        self.assertTrue(result['ok'], result)
+        rows = [line.split('\t', 1)[1] for line in result['content'].splitlines()]
+        self.assertEqual(rows, source.splitlines())
+        updated = call('edit_file', {'path': path.name, 'old': rows[0], 'new': "token = args.get('session')"})
+        self.assertTrue(updated['ok'], updated)
+        self.assertIn("args.get('session')", path.read_text(encoding='utf-8'))
+        denied = call('write_file', {'path': path.name, 'content': 'token = {{SECRET_REF:placeholder}}'})
+        self.assertFalse(denied['ok'])
+        self.assertNotIn('SECRET_REF', path.read_text(encoding='utf-8'))
+
     def test_builtin_search_view_and_receipt_retain_plain_source(self):
         for i in range(85):
             (self.ws / f'inventory_inspection_{i:03}.txt').write_text('row', encoding='utf-8')
