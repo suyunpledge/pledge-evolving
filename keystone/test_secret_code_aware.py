@@ -44,6 +44,13 @@ class CodeAwareDetection(unittest.TestCase):
             with self.subTest(line=line):
                 self.assertEqual(scope.protect_text(line), line)
 
+    def test_data_file_and_prefixed_source_literals_keep_their_protection(self):
+        scope = SecretScope()
+        self.addCleanup(scope.close)
+        self.assertRegex(scope.document_text(Path('settings.txt'), 'password = example.value'), REF)
+        for line in ('password = r"only-a-fixture"', 'token = b"test-only"'):
+            self.assertRegex(scope.document_text(Path('app.py'), line), REF)
+
 
 class CodeAwareTools(unittest.TestCase):
     def setUp(self):

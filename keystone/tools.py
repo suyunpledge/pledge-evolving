@@ -673,7 +673,7 @@ class ToolRegistry:
         touching = [str(v) for k, v in args.items() if k in {"path", "file", "target", "root"} and v]
         # These operations have unrestricted filesystem/import/network access.
         # No command blacklist or stdout filter can make them secret-safe.
-        if ctx.isolated and (name in {"shell_exec", "notebook_edit"} or "native" in spec.tags):
+        if ctx.isolated and self.native(spec):
             return ToolResult(False, error="Native execution is unavailable in a protected agent; use mediated tools",
                               meta={"authorization": "deny", "boundary": "secret.isolation"})
         for target in touching:

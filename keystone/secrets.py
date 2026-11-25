@@ -231,7 +231,7 @@ class SecretScope:
                 self.__refs[lookup] = self._store._put(self._id, value)
             return self.__refs[lookup]
 
-    def protect_text(self, text: str, *, code: bool = False) -> str:
+    def protect_text(self, text: str, *, code: bool | None = None) -> str:
         """``code=True``: the text is source code already scanned per file, so unquoted
         assignment values are expressions. Known secrets, quoted literals, key blocks,
         Bearer/URL credentials and token formats are still replaced."""
@@ -271,7 +271,10 @@ class SecretScope:
             if m.start() < offset or not secret_field(m['key'], vendor=vendor):
                 continue
             parser = _COOKIE_VALUE if m['key'].lower() in {'cookie', 'cookies'} else _VALUE
-            match = parser.match(text, m.end())
+            # Recognise prefixed source literals (e.g. Python raw strings);
+            # a prefix alone must never be interpreted as a variable reference.
+            prefix = re.match(r'''(?i:[rbuf]{1,2})(?=["'])''', text[m.end():m.end()+3]) if code is not False else None
+            match = parser.match(text, m.end() + (len(prefix[0]) if prefix else 0))
             if not match: continue
             raw = match[0].strip()
             # Preserve quoting. A dollar prefix or embedded reference syntax is
@@ -283,8 +286,9 @@ class SecretScope:
             # Code style puts spaces around ``=``; ``KEY=value`` lines (.env, shell)
             # stay protected even when the value looks like ``abc.def``.
             spaced = m['head'].rstrip() != m['head'] and '=' in m['head']
-            if not quote_char and (code or _CODE_CALL.fullmatch(value) or spaced and (
-                    _CODE_ATTR.fullmatch(value) or text.startswith('[', match.end()))):
+            if not quote_char and code is not False and (code and value.isidentifier()
+                    or _CODE_CALL.fullmatch(value) or spaced and (
+                        _CODE_ATTR.fullmatch(value) or text.startswith('[', match.end()))):
                 continue  # An expression in source code, not a credential literal.
             if not value or REF.fullmatch(value) or value == MARKER:
                 continue
@@ -296,7 +300,7 @@ class SecretScope:
             if m['key'] == 'authorization' and value in {'allow', 'deny', 'ask'}:
                 continue  # Keystone's Policy decision, not an HTTP credential
             ref = self.reference(value)
-            pieces.extend((text[offset:m.start()], m['head'] + quote_char + ref + quote_char))
+            pieces.extend((text[offset:m.start()], m['head'] + (prefix[0] if prefix else '') + quote_char + ref + quote_char))
             offset = match.end()
         if pieces:
             text = ''.join(pieces) + text[offset:]
