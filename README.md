@@ -16,7 +16,7 @@
 Most AI chat apps can only *talk*. Pledge Keystone can also *act*: read and edit files, run checks, search the web, operate a chosen window, and hand work to helper agents. It does that within rules you set:
 
 - **It asks before doing anything risky.** Every action goes through a permission check. A "no" rule always wins.
-- **Mistakes can be undone.** Before it changes a file, it takes a snapshot that you can roll back to.
+- **Mistakes can be undone.** With workspace checkpoints enabled, managed writes first save a recoverable file version.
 - **Your keys stay secret.** API keys live in a separate store, never in config files, and are masked in every log and reply.
 - **It checks its own work.** You can attach a list of conditions ("the tests pass", "this file contains X"). The task only counts as done when the computer, not the model, confirms them.
 - **It doesn't waste your money.** It picks between cheaper and stronger models, reuses cached prompts, and tells you what each run cost.
@@ -49,18 +49,18 @@ The rest of this file is the engineering view: what the kernel is, how it is bui
 
 ### What it is
 
-A production-shaped **agent kernel written entirely against Python's standard library** (about 42k lines in 129 modules), with front ends on top of it:
+A production-shaped **agent kernel written entirely against Python's standard library**, with front ends on top of it:
 
-| Surface | Start it with | Notes |
-| --- | --- | --- |
-| CLI | `python run.py <command>` | Scripting, CI and unattended runs. `run.py` is the portable entry point; `python -m keystone.cli` also works on a standard Python. |
-| Desktop (Qt) | Windows: `keystone-gui/Keystone Qt.cmd` after `keystone-gui/desktop/install-qt.ps1`. macOS / Linux: `bash setup.sh qt`. | Primary chat client with Work mode, model setup, a command palette and approval cards. Each OS has its own Qt environment. |
-| Desktop (Tk) + Coding Mode | `python keystone-gui/keystone_gui_v2.py` | A three-column IDE: file tree and Git, a multi-tab editor, an Agent panel, and diff / test / problem panes. |
-| VS Code | `vscode-extension/` | Sidebar chat plus explain/review selection, over a local JSONL bridge. |
-| IM channel | `python run.py channel weixin serve` | Each inbound message becomes a task; each report becomes a message. |
-| Android | Release APK `forge-android-v0.4` | Legacy in-repo copy; development moved to the separate `pledge-steward` repository. |
+| Surface | Start it with | Notes | Support level |
+| --- | --- | --- | --- |
+| CLI | `python run.py <command>` | Scripting, CI and unattended runs. `run.py` is the portable entry point; `python -m keystone.cli` also works on a standard Python. | Primary |
+| Desktop (Qt) | Windows: `keystone-gui/Keystone Qt.cmd` after `keystone-gui/desktop/install-qt.ps1`. macOS / Linux: `bash setup.sh qt`. | Primary chat client with Work mode, model setup, a command palette and approval cards. Each OS has its own Qt environment. | Primary |
+| Desktop (Tk) + Coding Mode | `python keystone-gui/keystone_gui_v2.py` | A three-column IDE: file tree and Git, a multi-tab editor, an Agent panel, and diff / test / problem panes. | Experimental |
+| VS Code | `vscode-extension/` | Sidebar chat plus explain/review selection, over a local JSONL bridge. | Experimental |
+| IM channel | `python run.py channel weixin serve` | Each inbound message becomes a task; each report becomes a message. | Experimental |
+| Android | Release APK `forge-android-v0.4` | Legacy in-repo copy; development moved to the separate `pledge-steward` repository. | Experimental |
 
-Every surface goes through the same policy engine, secret boundary and session log. There is no second implementation of "what is allowed".
+CLI and Qt desktop are the primary surfaces. Experimental surfaces can have partial feature coverage and can go through different testing from release to release. Qt has launch scripts for macOS and Linux. This desktop regression run covered Windows.
 
 ![Coding Mode](docs/screenshots/coding-mode.png)
 
@@ -87,7 +87,7 @@ Every decision is written to `sessions/*.jsonl` (`user_message`, `tool_call`, `s
 | **Agent loop** | Bounded prompt layers; context compaction that keeps the tail and stays aware of the prompt cache. Step budget: a transient "N turns left" notice that never enters history, and a tool-free progress summary when the budget runs out. Format errors count only when consecutive and refund their step. Acceptance repairs always keep three turns in reserve. Model retries happen at most once per step, three per run, and honour `Retry-After`. |
 | **Tools** | A registry with deferred loading behind `tool_search`. **Result feedback** saves a turn: after a write, `.py` / `.json` / `.toml` files are parsed and conflict markers are flagged in the same result. A missing path gets "did you mean" suggestions. A tool the host refuses as a whole is short-circuited for the rest of the run, with alternatives named once. |
 | **Loop guards** | Repeated action/result cycles are detected and stopped. A same-tool streak gets a nudge. An unknown tool outcome stops the run instead of being replayed. |
-| **Permissions** | Two-dimensional policy: mode × sandbox tier, plus a command blacklist. **Deny always wins.** Subagents are clamped to the parent's ceiling, and writes are snapshotted with shadow git first. |
+| **Permissions** | Two-dimensional policy: mode × sandbox tier, plus a command blacklist. **Deny always wins.** Subagents are clamped to the parent's ceiling, and managed writes take shadow Git snapshots when checkpoints are enabled. |
 | **Secrets** | A separate store and scope: values are virtualised in prompts, redacted in events and results, and tools cannot read the store. |
 | **Acceptance** | `keystone run TASK --acceptance FILE.json`: file, command and environment-probe criteria, checked by the host. The model cannot edit the checks. |
 | **Model routing** | Economy / balanced / premium tiers, fallback triggered by error class, MoA aggregation, and a premium draft→adjudicate path that falls back to the paid draft. |
@@ -190,6 +190,12 @@ Set `KEYSTONE_NO_AUTOSTART=1` when running GUI tests so they don't start a real 
 - General HTTP requests open a connection per request. The Ark Seed gateway can reuse an idle HTTPS connection across consecutive tool rounds. [General transport](keystone/http_transport.py) · [Seed transport](keystone/seed_transport.py)
 - Capability installation records provenance without verifying a publisher signature. Memory recall filters by kind and current status, then orders pinned entries first and newer entries next. Vector retrieval is unavailable. [Capability installation](keystone/capability.py) · [Memory recall](keystone/memory.py)
 - The premium two-stage path sends the task and the draft (never the full history) to the adjudicating tier.
+
+### Engineering roadmap
+
+- Add per-host connection reuse to the general HTTP transport and cover its interaction with timeouts and retries.
+- Add publisher signature verification for capability packages and vector retrieval for memory.
+- Replay redacted, recorded responses to test HTTP, SSE parsing and provider protocol translation.
 
 ### Status
 
