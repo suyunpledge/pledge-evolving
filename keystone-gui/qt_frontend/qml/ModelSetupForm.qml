@@ -93,13 +93,20 @@ ColumnLayout {
         wrapMode: Text.Wrap
         text: note
     }
-    FieldLabel { visible: !form.keyless; text: "API " + (form.english ? "key" : "密钥") }
+    FieldLabel {
+        id: keyLabel
+        visible: !form.keyless; text: "API " + (form.english ? "key" : "密钥")
+        Accessible.role: Accessible.StaticText
+        Accessible.name: text
+        Accessible.labelFor: keyField
+    }
     SetupField {
         id: keyField; objectName: "setupKey"; visible: !form.keyless
         echoMode: TextInput.Password
         inputMethodHints: Qt.ImhHiddenText | Qt.ImhSensitiveData | Qt.ImhNoPredictiveText
         placeholderText: form.english ? "Enter a key or reuse the saved key for this address" : "填写密钥，或留空使用此地址已保存的密钥"
-        Accessible.name: "API " + (form.english ? "key" : "密钥")
+        Accessible.name: keyLabel.text
+        Accessible.labelledBy: keyLabel
     }
     FieldLabel { text: form.english ? "API base URL" : "自定义接口地址" }
     SetupField {

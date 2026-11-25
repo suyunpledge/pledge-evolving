@@ -76,6 +76,27 @@ class _Response(io.BytesIO):
 
 
 class ConnectionTests(unittest.TestCase):
+    def test_openai_setup_saves_its_own_row_and_custom_endpoint(self):
+        with tempfile.TemporaryDirectory() as root:
+            home = Path(root)
+            creds = home / 'secrets.json'
+            for vendor_id in ('deepseek', 'openai'):
+                result = mo.apply_key(home, vendor_id, 'QA-virtual', model='screen-model',
+                                      base_url='http://127.0.0.1:1234/v1', credential_path=creds)
+                self.assertTrue(result['ok'], result)
+            self.assertEqual({r['id'] for r in load_user_layer(home)}, {'deepseek', 'openai'})
+            self.assertEqual(mo.vendor('openai').base_url, mo.BY_KEY['openai'].plans[0].base_url)
+
+    def test_probe_distinguishes_model_lists_from_other_http_200_responses(self):
+        for raw in (b'<html>Welcome</html>', b'{"error":{"message":"denied"}}',
+                    b'{}', b'{"data":"error"}', b'{"models":[{}]}'):
+            with self.subTest(raw=raw):
+                result = mo.probe('http://127.0.0.1/v1', '', opener=lambda *a, **kw: _Response(raw))
+                self.assertFalse(result['ok'], result)
+        for raw, count in ((b'{"data":[]}', 0), (b'{"models":[{"name":"local"}]}', 1)):
+            result = mo.probe('http://127.0.0.1/v1', '', opener=lambda *a, **kw: _Response(raw))
+            self.assertIn(f'{count} 个', result['message'])
+
     def test_success_reports_model_count_and_sends_bearer(self):
         seen = {}
 
@@ -108,7 +129,7 @@ class ConnectionTests(unittest.TestCase):
         def opener(request, timeout):
             seen["key"] = request.get_header("X-api-key")
             seen["url"] = request.full_url
-            return _Response(b"{}")
+            return _Response(b'{"data":[]}')
         self.assertTrue(mo.test_connection("anthropic", "k", opener=opener)["ok"])
         self.assertEqual(seen, {"key": "k", "url": "https://api.anthropic.com/v1/models"})
 

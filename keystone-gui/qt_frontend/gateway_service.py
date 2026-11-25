@@ -98,7 +98,8 @@ class GatewayService:
             if not label:
                 if model or provider_id:
                     raise ValueError('所选模型已移除、停用或不适用于对话，请重新选择。')
-                self.emit('error', message='请先配置模型。')
+                self.stop()
+                self.emit('gateway_error', message='请先配置模型。', active_url='')
                 return
             _, provider = routes[label]
             environment = {**os.environ, **secret_store.env_for()}

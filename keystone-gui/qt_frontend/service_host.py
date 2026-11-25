@@ -250,6 +250,8 @@ class ServiceHost:
                 return
             def setup():
                 try:
+                if row.get('refreshConfig'):
+                    self.pages.action('config', 'reload', {})
                     self.gateway.start(row.get('provider', ''), model=row.get('model', ''))
                 except Exception as exc:
                     self.emit('gateway_error', message=str(redact(str(exc))), active_url=self.gateway.url)
@@ -259,7 +261,14 @@ class ServiceHost:
                     if result:
                         self.coding.catalog = result['models']
                 self.coding.publish()
-            self.work(setup)
+            with self.lock:
+                if self.running:
+                    pending = dict(row)
+                    if self.pending_model and self.pending_model.get('refreshConfig'):
+                        pending['refreshConfig'] = True
+                    self.pending_model = pending
+                else:
+                    self.work(setup)
         elif command == 'connector_account':
             self.pages.account = row['account']
             self.emit('reset_form', page='connector_accounts')

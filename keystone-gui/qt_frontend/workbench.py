@@ -436,7 +436,7 @@ class WorkbenchController(QObject):
 
     def _apply_model_setup(self, row_id):
         self.gatewayChanging.emit()
-        self._request_gateway({'command': 'apply_model_setup', 'provider': row_id})
+        self._request_gateway({'command': 'apply_model_setup', 'provider': row_id, 'refreshConfig': True})
 
     @Slot(str)
     def editModel(self, row_id):
@@ -446,9 +446,7 @@ class WorkbenchController(QObject):
     def _apply_model_edit(self, _row_id):
         # Restart on the saved chat choice; an edited label falls back like any removed model.
         self.gatewayChanging.emit()
-        self._request_gateway({'command': 'apply_model_setup'})
-        if self._page == 'config' and self._service_ready:
-            self._send({'command': 'page_action', 'page': 'config', 'action': 'reload', 'values': {}})
+        self._request_gateway({'command': 'apply_model_setup', 'refreshConfig': True})
 
     @Slot(str)
     def switchChatModel(self, label):
