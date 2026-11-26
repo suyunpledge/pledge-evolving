@@ -400,6 +400,38 @@ class MainScreenControlTests(unittest.TestCase):
         self.assertEqual(slider.property('value'), 4)
         self.assertIn('沉思', button.property('text'))
 
+    @staticmethod
+    def preset_buttons(field):
+        return [child for sibling in field.parentItem().childItems() for child in sibling.childItems()
+                if child.objectName().startswith(field.objectName() + 'Preset')]
+
+    def test_mimo_context_and_output_presets_survive_reopening_the_editor(self):
+        home = Path(self.temp.name)
+        model_id = 'mimo-v2.6-pro'
+        initial = {model_id: {'contextWindow': 65536, 'outputTokenBudget': 4096}}
+        save_user_layer(home, [provider('mimo-test', model_id, 'https://token-plan-cn.xiaomimimo.com/v1',
+                                        'mimopro', modelCapabilities=initial)])
+        self.workbench._model_rows.demo = False
+        self.workbench.editModel('mimo-test')
+        editor = self.window.findChild(QObject, 'modelEditor')
+        until(lambda: editor.property('opened'))
+        presets = [('contextWindowField', '1M', '1048576'), ('outputTokenBudgetField', '128K', '131072')]
+        for name, label, _ in presets:
+            field = editor.findChild(QObject, name)
+            next(b for b in self.preset_buttons(field) if b.property('text') == label).clicked.emit()
+        editor.findChild(QObject, 'saveModel').clicked.emit()
+        self.assertTrue(self.workbench._model_rows.success, self.workbench._model_rows.status)
+        self.assertEqual(load_user_layer(home)[0]['config']['modelCapabilities'][model_id],
+                         {'contextWindow': 1048576, 'outputTokenBudget': 131072})
+        QMetaObject.invokeMethod(editor, 'close')
+        until(lambda: not editor.property('opened'))
+        self.workbench.editModel('mimo-test')
+        until(lambda: editor.property('opened'))
+        for name, label, value in presets:
+            field = editor.findChild(QObject, name)
+            self.assertEqual(field.property('text'), value)
+            self.assertEqual([b.property('text') for b in self.preset_buttons(field) if b.property('selected')], [label])
+
     def test_token_limit_fields_save_and_reload_independent_wire_models(self):
         home = Path(self.temp.name)
         save_user_layer(home, [provider('multi', 'one', 'https://example.test/v1', 'Multi', models=['two'])])
@@ -412,8 +444,7 @@ class MainScreenControlTests(unittest.TestCase):
         choice = editor.findChild(QObject, 'tokenModelChoice')
         self.assertEqual(choice.property('count'), 2)
         def check_presets(field, expected):
-            buttons = [child for sibling in field.parentItem().childItems() for child in sibling.childItems()
-                       if child.objectName().startswith(field.objectName() + 'Preset')]
+            buttons = self.preset_buttons(field)
             self.assertEqual([(b.property('text'), int(b.property('modelData'))) for b in buttons], expected)
             for button, (_, count) in zip(buttons, expected):
                 button.clicked.emit()
