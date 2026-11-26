@@ -15,6 +15,8 @@ ApplicationWindow {
     readonly property real sideWidth: width < 1000 ? 220 : 252
     readonly property real browserPanelWidth: workbench.browserVisible ? Math.min(workbench.browserWidth, Math.max(300, width - sideWidth - 450)) : 0
     readonly property real mainRight: width - browserPanelWidth
+    // Office in the side panel reuses the one OfficePage (one editor per workspace).
+    readonly property bool officeInPanel: workbench.browserVisible && workbench.sideTool === "office" && workbench.page !== "office"
     readonly property var setup: workbench.onboarding
     readonly property bool english: setup.language === "en"
     function label(zh, en) { return english ? en : zh }
@@ -60,7 +62,7 @@ ApplicationWindow {
             event.accepted = false
             return
         }
-        if (!exitConfirmed && (workbench.hasUnsaved || workbench.busy || workbench.terminalRunning || controller.busy || workbench.mcp.saving || workbench.mediaModels.saving)) {
+        if (!exitConfirmed && (workbench.hasUnsaved || workbench.busy || workbench.terminalRunning || controller.anyBusy || workbench.mcp.saving || workbench.mediaModels.saving)) {
             event.accepted = false
             exitPopup.open()
             return
@@ -529,7 +531,7 @@ ApplicationWindow {
     GlassButton {
         visible: !window.codingVisible && !workbench.navigationOpen
         material: window.material; x: 18; y: 184; width: window.sideWidth - 36; height: 42
-        glyph: "square-pen"; text: window.label("新建对话", "New chat"); enabled: !controller.busy
+        glyph: "square-pen"; text: window.label("新建对话", "New chat"); enabled: !controller.changeReview.busy
         onClicked: { workbench.navigate("chat"); controller.newSession() }
     }
     TextField {
@@ -559,7 +561,7 @@ ApplicationWindow {
             readonly property bool current: controller.sessionId === sessionId
             readonly property bool matches: window.sessionQuery.length === 0 || title.toLowerCase().includes(window.sessionQuery)
             width: history.width; height: matches ? 66 : 0; visible: matches
-            enabled: !controller.busy; hoverEnabled: true
+            enabled: !controller.changeReview.busy; hoverEnabled: true
             leftPadding: 13; rightPadding: 13; topPadding: 14; bottomPadding: 12
             focusPolicy: Qt.StrongFocus
             Accessible.name: title
@@ -672,7 +674,7 @@ ApplicationWindow {
                     material: window.material; glyph: "box"
                     text: controller.model.length > composerBar.modelChars ? controller.model.slice(0, composerBar.modelChars - 1) + "…" : controller.model
                     selected: modelMenu.opened
-                    enabled: !controller.busy; tip: "切换模型：" + controller.model; onClicked: modelMenu.open()
+                    enabled: !controller.anyBusy; tip: (controller.anyBusy ? "有对话正在生成，结束后再切换模型：" : "切换模型：") + controller.model; onClicked: modelMenu.open()
                 }
                 GlassButton {
                     id: effortButton
@@ -864,7 +866,8 @@ ApplicationWindow {
         }
         Connections {
             target: controller
-            function onChartPreviewRequested(url, filename) {
+            function onOfficeDocumentProduced(id) { workbench.showOfficeDocument(id) }
+        function onChartPreviewRequested(url, filename) {
                 chartName.text = filename
                 chartImage.source = url
                 chartPreview.open()
@@ -1273,7 +1276,7 @@ ApplicationWindow {
             GlassButton { material: window.material; width: (parent.parent.width - 8) / 2; text: window.label("功能", "Tools"); glyph: "grid-2x2"; selected: workbench.navigationOpen; onClicked: workbench.toggleNavigation() }
             GlassButton {
                 material: window.material; width: (parent.parent.width - 8) / 2
-                text: workbench.browserVisible ? "收起浏览器" : "浏览器"
+                text: workbench.browserVisible ? "收起侧栏" : "浏览器 · 办公"
                 glyph: workbench.browserVisible ? "chevron-right" : "globe"
                 selected: workbench.browserVisible; onClicked: workbench.toggleBrowser()
             }
@@ -1329,7 +1332,8 @@ ApplicationWindow {
             Item { Layout.fillWidth: true }
             IdeButton { glyph: "search"; text: "快速打开文件    Ctrl+P"; selected: true; enabled: workbench.nativePageReady && !workbench.busy; onClicked: window.quickFileRequested() }
             Item { Layout.fillWidth: true }
-            IdeButton { glyph: "globe"; tip: "内置浏览器"; selected: workbench.browserVisible; onClicked: workbench.toggleBrowser() }
+            IdeButton { glyph: "globe"; tip: "内置浏览器"; selected: workbench.browserVisible && workbench.sideTool === "browser"; onClicked: workbench.toggleSideTool("browser") }
+            IdeButton { glyph: "panels-top-left"; tip: "内置办公"; selected: window.officeInPanel; onClicked: workbench.toggleSideTool("office") }
             IdeButton { glyph: "message-square"; text: "AI 对话"; selected: window.agentPaneOpen; onClicked: window.agentPaneOpen = !window.agentPaneOpen }
             IdeButton { glyph: "settings-2"; tip: "连接与外观"; onClicked: settings.open() }
         }
@@ -1379,11 +1383,14 @@ ApplicationWindow {
     Loader {
         id: officeLoader
         property bool visited: false
-        visible: workbench.page === "office"
+        visible: workbench.page === "office" || window.officeInPanel
         onVisibleChanged: if (visible) visited = true
         active: visited || visible
-        x: window.sideWidth + 8; y: 76
-        width: window.mainRight - x - 8; height: window.height - y - 8
+        x: window.officeInPanel ? browserPanel.x + 1 : window.sideWidth + 8
+        y: window.officeInPanel ? 58 : 76
+        width: window.officeInPanel ? browserPanel.width - 1 : window.mainRight - x - 8
+        height: window.height - y - 8
+        z: window.officeInPanel ? browserPanel.z + 1 : 0
         source: "OfficePage.qml"
     }
 
@@ -1418,7 +1425,29 @@ ApplicationWindow {
         width: workbench.browserExpanded ? window.width - window.sideWidth : window.browserPanelWidth
         height: parent.height; z: workbench.browserExpanded ? 5 : 0
         visible: workbench.browserVisible
-        Loader { anchors.fill: parent; active: workbench.browserLoaded; asynchronous: true; sourceComponent: Component { BrowserPane { material: window.material } } }
+        Loader { anchors.fill: parent; visible: workbench.sideTool === "browser"; active: workbench.browserLoaded; asynchronous: true; sourceComponent: Component { BrowserPane { material: window.material } } }
+        Item {
+            objectName: "officeSideHeader"
+            anchors.fill: parent; visible: workbench.sideTool === "office"
+            Rectangle { anchors.fill: parent; color: "#151b23" }
+            Rectangle { width: 1; height: parent.height; color: "#34404d" }
+            SideToolTabs { x: 12; y: 16; material: window.material }
+            Row {
+                anchors.right: parent.right; anchors.rightMargin: 12; y: 14; spacing: 6
+                GlassButton {
+                    material: window.material
+                    glyph: workbench.browserExpanded ? "panel-left" : "panels-top-left"
+                    tip: workbench.browserExpanded ? "恢复侧栏宽度" : "展开办公"
+                    onClicked: workbench.toggleBrowserWidth()
+                }
+                GlassButton { material: window.material; glyph: "chevron-right"; tip: "收起侧栏"; onClicked: workbench.toggleBrowser() }
+            }
+            Text {
+                visible: workbench.page === "office"
+                x: 16; y: 76; width: parent.width - 32; wrapMode: Text.Wrap
+                text: "办公已在主区域打开。"; color: Theme.textMuted; font.pixelSize: 13
+            }
+        }
         MouseArea {
             enabled: !workbench.browserExpanded
             x: -4; width: 8; height: parent.height; cursorShape: Qt.SplitHCursor

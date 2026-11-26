@@ -10,6 +10,7 @@ Item {
     property bool ready: false
     property bool deckOpen: false
     property bool projecting: false
+    property string pendingDocument: ""
     property int priorVisibility: Window.Windowed
     function project(active) {
         const win = page.Window.window
@@ -60,7 +61,11 @@ Item {
         signal updated()
         signal imported(string result)
         signal agentStatus(string text)
-        function initialized() { page.ready = true }
+        signal openDocument(string id)
+        function initialized() {
+            page.ready = true
+            if (page.pendingDocument) { bridge.openDocument(page.pendingDocument); page.pendingDocument = "" }
+        }
         function presentationOpened(active: bool) { page.deckOpen = active; if (!active) page.endProjection() }
         function setSlideShow(active: bool) { page.project(active) }
         function request(payload: string): string { return workbench.office.request(payload) }
@@ -95,6 +100,13 @@ Item {
                 }
                 workbench.office.finishChartView(token, JSON.stringify(layout))
             })
+        }
+    }
+    Connections {
+        target: workbench
+        function onOfficeDocumentRequested(id) {
+            if (page.ready) bridge.openDocument(id)
+            else page.pendingDocument = id
         }
     }
     Connections {

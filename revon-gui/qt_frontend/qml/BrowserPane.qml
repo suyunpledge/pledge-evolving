@@ -13,8 +13,7 @@ Item {
         storageName: controller.isDemo ? "" : "RevonWork"
         offTheRecord: controller.isDemo
     }
-    Glyph { x: 16; y: 23; name: "globe"; width: 17; height: 17 }
-    Text { x: 42; y: 22; text: "Work 浏览器"; color: "#ecf0f4"; font.pixelSize: 14; font.weight: Font.Medium }
+    SideToolTabs { x: 12; y: 16; material: pane.material }
     Row {
         anchors.right: parent.right; anchors.rightMargin: 12; y: 14; spacing: 6
         GlassButton {
@@ -23,7 +22,7 @@ Item {
             tip: workbench.browserExpanded ? "恢复侧栏宽度" : "展开浏览器"
             onClicked: workbench.toggleBrowserWidth()
         }
-        GlassButton { objectName: "browserCollapse"; material: pane.material; glyph: "chevron-right"; tip: "收起浏览器"; onClicked: workbench.toggleBrowser() }
+        GlassButton { objectName: "browserCollapse"; material: pane.material; glyph: "chevron-right"; tip: "收起侧栏"; onClicked: workbench.toggleBrowser() }
     }
     Row {
         id: actions; x: 14; y: 62; spacing: 5

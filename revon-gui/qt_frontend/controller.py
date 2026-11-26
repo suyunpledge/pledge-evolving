@@ -1,5 +1,6 @@
 """Qt model/controller boundary; reuse revon's real transport and secret scope."""
 import copy
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
@@ -69,6 +70,36 @@ class RowsModel(QAbstractListModel):
         self.dataChanged.emit(self.index(row), self.index(row), roles)
 
 
+_OFFICE_WRITES = {'office_create', 'office_apply'}
+
+
+def _office_document(name, response):
+    """The built-in Office file id a successful create/apply tool call touched."""
+    if not isinstance(response, dict) or not response.get('ok'):
+        return ''
+    if str(name).removeprefix('keystone_').removeprefix('revon_') not in _OFFICE_WRITES:
+        return ''
+    try:
+        data = json.loads(response.get('content') or '{}')
+    except (TypeError, ValueError):
+        return ''
+    value = data.get('id') if isinstance(data, dict) else None
+    return value if isinstance(value, str) else ''
+
+
+# Per-conversation state. A conversation that is still generating when the user
+# switches away keeps these in a _BackgroundRun; its worker events are applied
+# by temporarily swapping them back in (see ChatController._as_run).
+_RUN_FIELDS = ('_sid', '_title', '_history', '_busy', '_cancel', '_generation', '_reply', '_reply_index',
+               '_pending_chunks', '_turn_start', '_client', '_status', '_error', '_messages', '_changes')
+
+
+class _BackgroundRun:
+    def __init__(self, controller):
+        for name in _RUN_FIELDS:
+            setattr(self, name, getattr(controller, name))
+
+
 class ChatController(QObject):
     changed = Signal()
     draftChanged = Signal()
@@ -78,6 +109,7 @@ class ChatController(QObject):
     browseRequested = Signal(str)
     modelRequested = Signal(str)
     chartPreviewRequested = Signal(QUrl, str)
+    officeDocumentProduced = Signal(str)
     commandRequested = Signal(str, str)
     _workerEvent = Signal(str, object)
 
@@ -123,6 +155,11 @@ class ChatController(QObject):
         self._solid = bool(self._prefs.get("solid", False))
         self._cancel = threading.Event()
         self._generation = 0
+        self._generation_seq = 0
+        self._runs = {}            # sid -> _BackgroundRun still generating out of view
+        self._detached = False     # True while a background run's state is swapped in
+        self._turn_start = time.monotonic()
+        self._reply, self._reply_index = "", 0
         self._connection_epoch = 0
         self._closed = False
         self.tool_authorizer = None
@@ -157,6 +194,9 @@ class ChatController(QObject):
     sessionId = Property(str, lambda self: self._sid, notify=changed)
     title = Property(str, lambda self: self._title, notify=changed)
     busy = Property(bool, lambda self: self._busy or self._changes.busy, notify=changed)
+    # Any conversation generating, including ones in the background (exit prompt, gateway switches).
+    anyBusy = Property(bool, lambda self: self.busy or bool(self._runs), notify=changed)
+    backgroundCount = Property(int, lambda self: len(self._runs), notify=changed)
     changeReview = Property(QObject, lambda self: self._changes, constant=True)
     toolSettings = Property(QObject, lambda self: self._tool_settings, constant=True)
     templates = Property(QObject, lambda self: self._templates, constant=True)
@@ -222,8 +262,10 @@ class ChatController(QObject):
         if self.demo:
             return
         rows = self.store.sessions()
+        running = set(self._runs) | ({self._sid} if self._busy and not self._detached else set())
         self._sessions.reset([{"sessionId": str(s["id"]), "title": str(s.get("title", "对话")),
-            "subtitle": time.strftime("%m月%d日", time.localtime(float(s.get("updated", 0))))} for s in rows])
+            "subtitle": "生成中…" if str(s["id"]) in running else
+                        time.strftime("%m月%d日", time.localtime(float(s.get("updated", 0))))} for s in rows])
 
     def _persist(self):
         if self.demo or not (self._history or self._changes.entries):
@@ -239,11 +281,84 @@ class ChatController(QObject):
                                  "changes": self._changes.saved(changes),
                                  "messages": [m.to_session_dict() for m in history]})
 
+    def _detach(self):
+        """Move the generating conversation out of view; its worker keeps running."""
+        self._flush_stream()
+        self._persist()
+        run = _BackgroundRun(self)
+        run._messages = RowsModel(self._messages.rows)
+        from .changes import ReplyChanges
+        run._changes = ReplyChanges(self)
+        run._changes.entries, run._changes.active = self._changes.entries, self._changes.active
+        self._runs[run._sid] = run
+        self._busy, self._cancel = False, threading.Event()
+        self._generation, self._reply, self._pending_chunks = 0, "", []
+        self._status = "就绪" if self._connected else self._status
+
+    def _attach(self, sid):
+        """Bring a background conversation back into view, mid-stream if still generating."""
+        run = self._runs.pop(sid)
+        for name in _RUN_FIELDS:
+            if name not in ('_messages', '_changes'):
+                setattr(self, name, getattr(run, name))
+        self._messages.reset(run._messages.rows)
+        # Share the entries dict: a revert check still in flight lands here too.
+        self._changes.entries, self._changes.active = run._changes.entries, run._changes.active
+        self._draft = self.store.draft(sid)
+        self._attachments = []
+        if self._pending_chunks:
+            self._stream_timer.start()
+
+    @contextmanager
+    def _as_run(self, run):
+        """Apply worker events to a background conversation without touching the view."""
+        saved = {name: getattr(self, name) for name in _RUN_FIELDS}
+        timer_active = self._stream_timer.isActive()
+        blocked = self.blockSignals(True)
+        self._detached = True
+        try:
+            for name in _RUN_FIELDS:
+                setattr(self, name, getattr(run, name))
+            yield
+        finally:
+            for name in _RUN_FIELDS:
+                setattr(run, name, getattr(self, name))
+                setattr(self, name, saved[name])
+            self._detached = False
+            self.blockSignals(blocked)
+            # The view's own stream timer must be left exactly as it was.
+            if timer_active and not self._stream_timer.isActive():
+                self._stream_timer.start()
+            elif not timer_active:
+                self._stream_timer.stop()
+
+    def _run_for_changes(self, changes):
+        return next((r for r in self._runs.values() if r._changes is changes), None)
+
+    def _apply_changes_result(self, changes, apply):
+        """ReplyChanges results belong to the conversation that owns them."""
+        run = self._run_for_changes(changes)
+        if run is None:
+            if changes is self._changes or changes.entries is self._changes.entries:
+                apply()
+            return
+        with self._as_run(run):
+            apply()
+        self._retire(run)
+
+    def _retire(self, run):
+        if not run._busy and not run._changes.busy and self._runs.get(run._sid) is run:
+            del self._runs[run._sid]
+            self._refresh_sessions()
+            self.changed.emit()
+
     @Slot()
     def newSession(self):
-        if self.busy:
+        if self._changes.busy:
             return
         self._save_draft()
+        if self._busy:
+            self._detach()
         self._persist()
         self._sid = "s" + uuid.uuid4().hex
         self._title, self._draft, self._error = "新对话", "", ""
@@ -251,13 +366,26 @@ class ChatController(QObject):
         self._changes.entries = {}
         self._client = None
         self._messages.reset([])
+        self._refresh_sessions()
         self.changed.emit()
         self.draftChanged.emit()
         self.focusComposer.emit()
 
     @Slot(str)
     def selectSession(self, sid):
-        if self.busy or sid == self._sid:
+        if self._changes.busy or sid == self._sid:
+            return
+        if sid in self._runs:
+            self._save_draft()
+            if self._busy:
+                self._detach()
+            self._persist()
+            self._attach(sid)
+            self._refresh_sessions()
+            self.changed.emit()
+            self.draftChanged.emit()
+            self.streamAdvanced.emit()
+            self.focusComposer.emit()
             return
         if self.demo:
             row = next((r for r in self._sessions.rows if r["sessionId"] == sid), None)
@@ -269,6 +397,8 @@ class ChatController(QObject):
         if row is None:
             return
         self._save_draft()
+        if self._busy:
+            self._detach()
         self._persist()
         self._sid, self._title = sid, str(row.get("title", "对话"))
         self._changes.entries = row.get('changes', {}) if isinstance(row.get('changes'), dict) else {}
@@ -279,6 +409,7 @@ class ChatController(QObject):
         self._draft = self.store.draft(sid)
         self._attachments, self._error = [], ""
         self._client = None
+        self._refresh_sessions()
         self.changed.emit()
         self.draftChanged.emit()
         self.focusComposer.emit()
@@ -293,7 +424,8 @@ class ChatController(QObject):
 
     @Slot(str)
     def setModel(self, model):
-        if self.busy or self._switching_model or model not in self._models:
+        # Switching restarts the managed gateway, which would cut background conversations off.
+        if self.busy or self._runs or self._switching_model or model not in self._models:
             return
         if model in (self._managed_models or ()):
             if model != self._model or not self._connected:
@@ -709,8 +841,8 @@ class ChatController(QObject):
 
     def _start_generation(self, *, resuming=False):
         self._changes.begin()
-        self._generation += 1
-        generation = self._generation
+        self._generation_seq += 1
+        self._generation = generation = self._generation_seq
         self._cancel = threading.Event()
         cancel = self._cancel
         self._busy, self._error, self._status = True, "", "正在生成…"
@@ -923,10 +1055,27 @@ class ChatController(QObject):
             self.changed.emit()
             return
         generation, value = payload
-        if generation != self._generation or not self._busy:
+        if generation != self._generation:
+            run = next((r for r in self._runs.values() if r._generation == generation), None)
+            if run is None:
+                return
+            with self._as_run(run):
+                self._on_generation(kind, value)
+                if kind == 'chunk':
+                    self._flush_stream()       # no stream timer for background conversations
+            if kind in {'done', 'cancelled', 'failed'}:
+                self._retire(run)
+            return
+        self._on_generation(kind, value)
+
+    def _on_generation(self, kind, value):
+        if not self._busy:
             return
         if kind == 'enter_work':
             reason, arrived = value
+            if self._detached:
+                arrived.set()              # mode and page belong to the visible conversation
+                return
             if not self._cancel.is_set():
                 self._conversation_mode = 'work'
                 self._status = '已切换至 Work · ' + reason
@@ -949,6 +1098,9 @@ class ChatController(QObject):
             return
         if kind == 'receipt':
             self._changes.record(*value)
+            office_id = _office_document(*value)
+            if office_id and not self._detached:
+                self.officeDocumentProduced.emit(office_id)
             receipts = self._messages.rows[self._reply_index].get('toolReceipts', [])
             self._messages.update(self._reply_index, toolReceipts=[*receipts, preview_receipt(*value)])
             return
@@ -1002,6 +1154,8 @@ class ChatController(QObject):
             self._messages.update(self._reply_index, changeKey=key, changeInfo=self._changes.card(key))
         self._busy = False
         self._status = "已停止" if kind == "cancelled" else "发送失败" if kind == "failed" else "就绪"
+        if not self._detached:
+            self._refresh_sessions()
         self._error = value if kind == "failed" else ""
         self._persist()
         self._changes.finish()
@@ -1112,6 +1266,8 @@ class ChatController(QObject):
         self._persist()
         self._closed = True
         self._cancel.set()
+        for run in self._runs.values():
+            run._cancel.set()
 
     def _load_demo(self):
         self._sid, self._title = "demo-glass", "让界面拥有真实的玻璃质感"

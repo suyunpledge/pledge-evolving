@@ -56,6 +56,7 @@ class WorkbenchController(QObject):
     modelEditRequested = Signal(str)
     pagesChanged = Signal()
     workspaceQueryResult = Signal('QVariantMap')
+    officeDocumentRequested = Signal(str)
     formReset = Signal(str)
     formValues = Signal(str, 'QVariantMap')
     historyRequested = Signal('QVariantList')
@@ -83,6 +84,7 @@ class WorkbenchController(QObject):
         self._page, self._profile = 'chat', 'sandbox'
         self._navigation = False
         self._browser_visible, self._browser_loaded = False, False
+        self._side_tool = 'browser'      # the side panel shows the browser or Office
         self._browser_expanded = False
         self._before_files = 'chat'
         self._browser_url, self._browser_width = 'about:blank', 420.0
@@ -179,6 +181,7 @@ class WorkbenchController(QObject):
     browserVisible = Property(bool, lambda s: s._browser_visible, notify=browserChanged)
     browserExpanded = Property(bool, lambda s: s._browser_expanded, notify=browserChanged)
     browserLoaded = Property(bool, lambda s: s._browser_loaded, notify=browserChanged)
+    sideTool = Property(str, lambda s: s._side_tool, notify=browserChanged)
     browserUrl = Property(str, lambda s: s._browser_url, notify=browserChanged)
     browserWidth = Property(float, lambda s: s._browser_width, notify=browserChanged)
     terminalText = Property(str, lambda s: s._terminals[s._terminal_id]['log'] + s._terminals[s._terminal_id]['screen'], notify=terminalChanged)
@@ -772,6 +775,33 @@ class WorkbenchController(QObject):
         self._browser_loaded = self._browser_loaded or self._browser_visible
         self.browserChanged.emit()
 
+    @Slot(str)
+    def showSideTool(self, name):
+        """Open the side panel on the browser or Office (same slot, one at a time)."""
+        if name not in ('browser', 'office'):
+            return
+        self._side_tool = name
+        self._browser_visible = True
+        self._browser_loaded = self._browser_loaded or name == 'browser'
+        self.browserChanged.emit()
+
+    @Slot(str)
+    def toggleSideTool(self, name):
+        if self._browser_visible and self._side_tool == name:
+            self._browser_visible = False
+            self.browserChanged.emit()
+        else:
+            self.showSideTool(name)
+
+    @Slot(str)
+    def showOfficeDocument(self, doc_id):
+        """Show an Office file Work just created or edited: in the Office page if open, else the side panel."""
+        if not doc_id:
+            return
+        if self._page != 'office':
+            self.showSideTool('office')
+        self.officeDocumentRequested.emit(doc_id)
+
     @Slot()
     def toggleBrowserWidth(self):
         self._browser_expanded = not self._browser_expanded
@@ -818,6 +848,7 @@ class WorkbenchController(QObject):
             self.changed.emit()
             return
         self._browser_url = value or 'about:blank'
+        self._side_tool = 'browser'
         self._browser_visible = self._browser_loaded = True
         self.browserChanged.emit()
 

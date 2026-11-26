@@ -208,6 +208,91 @@ class BackendTests(unittest.TestCase):
         until(lambda: not self.controller._stream_timer.isActive())
         self.assertEqual(self.controller.messages.rows, [])
 
+    def _gated_factory(self):
+        """Replies 'partial-<prompt>' at once, then finish '<prompt> done' when its gate opens."""
+        from revon_client import RevonGatewayClient
+        gates = {}
+
+        def factory(gateway):
+            client = RevonGatewayClient(gateway)
+            def stream(messages, on_chunk, cancel_event=None, **_):
+                prompt = messages[-1].user_text or messages[-1].content
+                gate = gates.setdefault(prompt, threading.Event())
+                on_chunk('partial-' + prompt)
+                while not gate.wait(.02):
+                    if cancel_event is not None and cancel_event.is_set():
+                        raise GenerationCancelled('stopped')
+                on_chunk(' done')
+                return CompletionResult('partial-' + prompt + ' done')
+            client.stream_chat = stream
+            return client
+        return factory, gates
+
+    def _send(self, text):
+        self.controller.draft = text
+        self.controller.send()
+
+    def test_new_chat_while_generating_keeps_the_first_reply_running_in_background(self):
+        factory, gates = self._gated_factory()
+        self.controller.factory, self.controller._client = factory, None
+        self._send('A')
+        until(lambda: self.controller.messages.rows[-1]['textContent'] == 'partial-A')
+        first = self.controller.sessionId
+        self.controller.newSession()
+        self.assertNotEqual(self.controller.sessionId, first)
+        self.assertFalse(self.controller.busy)
+        self.assertTrue(self.controller.anyBusy)
+        self.assertEqual(self.controller.backgroundCount, 1)
+        self.assertEqual(self.controller.messages.rows, [])
+        running = {r['sessionId']: r['subtitle'] for r in self.controller.sessions.rows}
+        self.assertEqual(running[first], '生成中…')
+        # The second conversation runs at the same time and finishes first.
+        gates['B'] = threading.Event(); gates['B'].set()
+        self._send('B')
+        until(lambda: not self.controller.busy)
+        self.assertEqual(self.controller.messages.rows[-1]['textContent'], 'partial-B done')
+        # The background reply finishes into its own conversation, not the visible one.
+        gates['A'].set()
+        until(lambda: self.controller.backgroundCount == 0)
+        self.assertEqual(self.controller.messages.rows[-1]['textContent'], 'partial-B done')
+        saved = {str(r['id']): r for r in self.controller.store.sessions()}
+        self.assertEqual(saved[first]['messages'][-1]['content'], 'partial-A done')
+        self.assertFalse(self.controller.anyBusy)
+        self.assertNotEqual({r['sessionId']: r['subtitle'] for r in self.controller.sessions.rows}[first], '生成中…')
+
+    def test_returning_to_a_background_conversation_resumes_its_live_stream(self):
+        factory, gates = self._gated_factory()
+        self.controller.factory, self.controller._client = factory, None
+        self._send('A')
+        until(lambda: self.controller.messages.rows[-1]['textContent'] == 'partial-A')
+        first = self.controller.sessionId
+        self.controller.newSession()
+        self.controller.draft = '新对话草稿'
+        self.controller.selectSession(first)
+        self.assertEqual(self.controller.sessionId, first)
+        self.assertTrue(self.controller.busy)
+        self.assertEqual(self.controller.backgroundCount, 0)
+        self.assertEqual(self.controller.messages.rows[-1]['textContent'], 'partial-A')
+        gates['A'].set()
+        until(lambda: not self.controller.busy)
+        self.assertEqual(self.controller.messages.rows[-1]['textContent'], 'partial-A done')
+        self.assertEqual(self.controller.messages.rows[-1]['state'], 'complete')
+
+    def test_model_switch_waits_for_background_conversations(self):
+        factory, gates = self._gated_factory()
+        self.controller.factory, self.controller._client = factory, None
+        self._send('A')
+        until(lambda: self.controller.messages.rows[-1]['textContent'] == 'partial-A')
+        self.controller.newSession()
+        before = self.controller.model
+        self.controller._models = [before, 'other-model']
+        self.controller.setModel('other-model')
+        self.assertEqual(self.controller.model, before)
+        gates['A'].set()
+        until(lambda: self.controller.backgroundCount == 0)
+        self.controller.setModel('other-model')
+        self.assertEqual(self.controller.model, 'other-model')
+
     def test_turn_budget_reply_offers_continue_without_eating_the_draft(self):
         from revon_client import RevonGatewayClient
         client = RevonGatewayClient(self.controller.gateway)

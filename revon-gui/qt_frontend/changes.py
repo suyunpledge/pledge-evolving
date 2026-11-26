@@ -133,23 +133,26 @@ class ReplyChanges(QObject):
         self._error = error
         if error and reverting:
             self._error += ' 未自动重试；请重新查看差异确认文件状态。'
-        entry = self.entries.get(key)
-        if entry is not None:
-            if result:
-                previous_files = entry.get('files', [])
-                entry.update({k: result[k] for k in ('files', 'canRevert', 'restored')})
-                if entry.get('incomplete'):
-                    known = {f['path'] for f in entry['files']}
-                    entry['files'].extend(f for f in previous_files if f.get('backupPath') or f.get('path') not in known)
+        def apply():
+            entry = self.entries.get(key)
+            if entry is not None:
+                if result:
+                    previous_files = entry.get('files', [])
+                    entry.update({k: result[k] for k in ('files', 'canRevert', 'restored')})
+                    if entry.get('incomplete'):
+                        known = {f['path'] for f in entry['files']}
+                        entry['files'].extend(f for f in previous_files if f.get('backupPath') or f.get('path') not in known)
+                        entry['canRevert'] = False
+                        self._error = '本次包含无法安全保存快照的修改，暂不支持整次回退。'
+                else:
                     entry['canRevert'] = False
-                    self._error = '本次包含无法安全保存快照的修改，暂不支持整次回退。'
-            else:
-                entry['canRevert'] = False
-            if key == self.selected:
-                self._data = dict(entry)
-            for i, row in enumerate(self.owner._messages.rows):
-                if row.get('changeKey') == key:
-                    self.owner._messages.update(i, changeInfo=self.card(key))
-            self.owner._persist()
+                if key == self.selected:
+                    self._data = dict(entry)
+                for i, row in enumerate(self.owner._messages.rows):
+                    if row.get('changeKey') == key:
+                        self.owner._messages.update(i, changeInfo=self.card(key))
+                self.owner._persist()
+        # A conversation running in the background owns its own messages and session file.
+        self.owner._apply_changes_result(self, apply)
         self.changed.emit()
         self.owner.streamAdvanced.emit()

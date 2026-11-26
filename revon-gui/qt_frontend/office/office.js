@@ -664,6 +664,7 @@ function connect() {
         notice("已导入可编辑副本，原文件保留。");
       } else notice(r.error);
     });
+    api.openDocument.connect((id) => job(async () => show(await rpc("open", { id }))));
     api.agentStatus.connect((s) => {
       $("agentState").textContent = s || "";
     });

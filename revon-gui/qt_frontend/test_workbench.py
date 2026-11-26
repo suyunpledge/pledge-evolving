@@ -88,6 +88,49 @@ class WorkbenchTests(unittest.TestCase):
         self.temp.cleanup()
         self.assertFalse(self.warnings, self.warnings)
 
+    def test_office_and_browser_share_the_side_panel(self):
+        office = lambda: self.window.findChild(QObject, 'officeWebView')
+        self.workbench.showSideTool('office')
+        until(lambda: office() is not None and office().isVisible())
+        panel = visual_item(self.window.contentItem(), 'browserPanel')
+        view = office()
+        left = view.mapToItem(self.window.contentItem(), 0, 0).x()
+        self.assertGreaterEqual(left, panel.x())
+        self.assertLessEqual(view.width(), panel.width())
+        self.assertTrue(visual_item(self.window.contentItem(), 'officeSideHeader').isVisible())
+        # Switching the tab shows the browser in the same slot and hides Office.
+        self.workbench.showSideTool('browser')
+        until(lambda: not office().isVisible())
+        self.assertTrue(self.workbench.browserVisible)
+        self.assertEqual(self.workbench.sideTool, 'browser')
+        # Toggling the active tool closes the panel; the other tool reopens it.
+        self.workbench.toggleSideTool('browser')
+        self.assertFalse(self.workbench.browserVisible)
+        self.workbench.toggleSideTool('office')
+        until(lambda: office().isVisible())
+        if os.environ.get('REVON_SHOT'):
+            self.window.grabWindow().save(os.environ['REVON_SHOT'])
+
+    def test_office_file_from_work_opens_in_side_panel(self):
+        self.workbench._workspace = self.temp.name     # never create documents in the repository
+        created = json.loads(self.workbench.office.request(json.dumps({'action': 'create', 'kind': 'document', 'title': '季度总结'})))
+        self.assertTrue(created['ok'], created)
+        doc_id = created['data']['id']
+        requested = []
+        self.workbench.officeDocumentRequested.connect(requested.append)
+        from .controller import _office_document
+        response = {'ok': True, 'content': json.dumps({'id': doc_id, 'kind': 'document'})}
+        self.assertEqual(_office_document('keystone_office_create', response), doc_id)
+        self.assertEqual(_office_document('keystone_office_read', response), '')
+        self.assertEqual(_office_document('keystone_office_apply', {'ok': False}), '')
+        self.controller.officeDocumentProduced.emit(doc_id)
+        self.assertEqual(requested, [doc_id])
+        self.assertTrue(self.workbench.browserVisible)
+        self.assertEqual(self.workbench.sideTool, 'office')
+        until(lambda: self.window.property('officeReady'))
+        page = self.window.findChild(QObject, 'officeWebView').parent()
+        until(lambda: page.property('pendingDocument') == '')
+
     def test_reply_checklist_renders_counts_status_and_collapses(self):
         rows = [{'text': '检查数据', 'status': 'completed'}, {'text': '核对结果', 'status': 'in_progress'}]
         self.controller.messages.reset([dict(roleName='assistant', textContent='', state='streaming', todos=rows)])
