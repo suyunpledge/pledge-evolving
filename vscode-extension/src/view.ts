@@ -9,8 +9,8 @@ export function viewHtml(webview: VSCode.Webview, root: VSCode.Uri): string {
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}'; img-src ${webview.cspSource};">
 <link rel="stylesheet" href="${asset('chat.css')}"><title>revon</title></head><body>
-<header><div class="brand">REVON <span id="status" role="status" aria-live="polite"></span></div>
-<div class="toolbar"><button id="connect" type="button"></button><button id="settings" type="button"></button></div></header>
+<header><div class="brand"><img class="mark" src="${asset('revon-mark.png')}" alt="" width="22" height="22"><span class="title">revon</span><span id="status" role="status" aria-live="polite"></span></div>
+<div class="toolbar"><button id="connect" class="ide" type="button"></button><button id="settings" class="ide" type="button"></button></div></header>
 <main id="messages" aria-label="Conversation" aria-live="polite" aria-relevant="additions">
 <section id="empty"><h2 id="welcome"></h2><p id="intro"></p>
 <div id="onboard" hidden>
@@ -37,11 +37,11 @@ export function viewHtml(webview: VSCode.Webview, root: VSCode.Uri): string {
 <div class="suggestions">
 <button id="explain" type="button"></button><button id="review" type="button"></button></div><p id="trust"></p></section></main>
 <div id="activity" role="status" aria-live="polite"></div>
-<form id="composer"><div id="attachments"></div><label id="promptLabel" class="sr-only" for="prompt"></label>
-<textarea id="prompt" rows="4" maxlength="16000"></textarea>
-<div class="context-row"><button id="attach" type="button"></button><button id="selection" type="button"></button><button id="changes" type="button"></button></div>
-<div class="options"><label><span id="modelLabel"></span><select id="model"></select></label><label><span id="modeLabel"></span><select id="mode"><option value="read-only"></option><option value="workspace-write"></option></select></label><label><span id="planningLabel"></span><select id="planning"><option value="high"></option><option value="medium"></option><option value="low"></option><option value="none"></option></select></label></div>
+<form id="composer"><div class="composer-card"><div id="attachments"></div><label id="promptLabel" class="sr-only" for="prompt"></label>
+<textarea id="prompt" rows="3" maxlength="16000"></textarea>
+<div class="composer-bar"><div class="context-row"><button id="attach" class="ide" type="button"></button><button id="selection" class="ide" type="button"></button><button id="changes" class="ide" type="button"></button></div>
+<button id="stop" class="secondary" type="button" hidden></button><button id="send" class="primary" type="submit"></button></div></div>
+<div class="options"><label class="pick" data-icon="model"><span id="modelLabel"></span><select id="model"></select></label><label class="pick" data-icon="mode"><span id="modeLabel"></span><select id="mode"><option value="read-only"></option><option value="workspace-write"></option></select></label><label class="pick" data-icon="planning"><span id="planningLabel"></span><select id="planning"><option value="high"></option><option value="medium"></option><option value="low"></option><option value="none"></option></select></label></div>
 <details><summary id="phaseSettings"></summary><div class="options"><label><span id="planningModelLabel"></span><select id="planningModel"></select></label><label><span id="reviewModelLabel"></span><select id="reviewModel"></select></label><label><span id="reviewEnabledLabel"></span><select id="reviewEnabled"><option value="off"></option><option value="on"></option></select></label></div></details>
-<div class="send-row"><span id="hint"></span><button id="stop" class="secondary" type="button" hidden></button><button id="send" class="primary" type="submit"></button></div>
-<p id="boundary"></p></form><script nonce="${nonce}" src="${asset('chat.js')}"></script></body></html>`;
+<p class="footnote"><span id="hint"></span><span id="boundary"></span></p></form><script nonce="${nonce}" src="${asset('chat.js')}"></script></body></html>`;
 }

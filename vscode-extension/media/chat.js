@@ -158,6 +158,10 @@
     $('status').textContent = t[next.busy ? 'busy' : next.status] || t.offline;
     $('status').className = next.busy ? 'busy' : next.status;
     $('activity').textContent = next.activity || '';
+    // Presentation only: tool lines render like the desktop tool timeline row.
+    $('activity').className = (next.busy ? 'busy' : '') + (/^(工具：|Tool: )/.test(next.activity || '') ? ' tool' : '');
+    // Context and send buttons go icon-only in narrow sidebars; keep their names as tooltips.
+    for (const id of ['connect', 'settings', 'attach', 'selection', 'changes', 'stop', 'send']) { $(id).title = $(id).textContent; }
     $('connect').hidden = next.status === 'ready';
     $('connect').disabled = next.busy || next.status === 'connecting' || !next.trusted;
     $('stop').hidden = !next.busy;
