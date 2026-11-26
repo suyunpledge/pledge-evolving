@@ -12,7 +12,16 @@ ColumnLayout {
     signal edited(var value)
     spacing: 7
     Text { visible: !field.definition.advanced; text: field.definition.label; color: "#b9c5d1"; font.pixelSize: 12; Layout.fillWidth: true; wrapMode: Text.Wrap }
-    GlassButton { visible: !!field.definition.advanced; material: field.material; text: field.definition.label; glyph: field.expanded ? "chevron-up" : "chevron-down"; onClicked: field.expanded = !field.expanded }
+    // Advanced groups read as section headings (disclosure + rule), not as one more button.
+    GlassButton {
+        visible: !!field.definition.advanced; material: field.material
+        Layout.fillWidth: true; quiet: true; leftAligned: true; height: 38
+        text: field.definition.label; glyph: field.expanded ? "chevron-down" : "chevron-right"
+        ink: Theme.textSecondary
+        Accessible.description: field.expanded ? "已展开" : "已收起"
+        onClicked: field.expanded = !field.expanded
+        Rectangle { anchors.bottom: parent.bottom; x: 8; width: parent.width - 16; height: 1; color: Theme.divider }
+    }
     Loader {
         Layout.fillWidth: true
         visible: field.expanded

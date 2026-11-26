@@ -294,9 +294,10 @@ Item {
         Flow {
             visible: !page.ide; Layout.fillWidth: true; spacing: 7
             Repeater { model: page.viewData.actions || []
-                PageButton { required property var modelData; material: page.material; text: modelData.label; enabled: !workbench.busy || modelData.key === "cancel" || (page.pageKey === "computer" && modelData.key === "revoke"); ink: modelData.danger ? Theme.danger : Theme.textPrimary; onClicked: page.invoke(modelData.key) }
+                // The page's first action is its main one: solid primary; the rest stay secondary.
+                PageButton { required property var modelData; required property int index; primary: index === 0 && !modelData.danger; material: page.material; text: modelData.label; enabled: !workbench.busy || modelData.key === "cancel" || (page.pageKey === "computer" && modelData.key === "revoke"); ink: modelData.danger ? Theme.danger : index === 0 ? Theme.accentInk : Theme.textPrimary; onClicked: page.invoke(modelData.key) }
             }
-            PageButton { material: page.material; glyph: "refresh-cw"; tip: "刷新"; enabled: !workbench.busy; onClicked: page.invoke("refresh") }
+            PageButton { material: page.material; glyph: "refresh-cw"; tip: "刷新"; quiet: true; enabled: !workbench.busy; onClicked: page.invoke("refresh") }
         }
         Item {
             Layout.fillWidth: true; Layout.fillHeight: true

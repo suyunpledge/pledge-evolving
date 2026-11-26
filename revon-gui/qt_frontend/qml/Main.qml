@@ -535,7 +535,7 @@ ApplicationWindow {
     GlassButton {
         visible: !window.codingVisible && !workbench.navigationOpen
         material: window.material; x: 18; y: 184; width: window.sideWidth - 36; height: 42
-        glyph: "square-pen"; text: window.label("新建对话", "New chat"); enabled: !controller.changeReview.busy
+        glyph: "square-pen"; text: window.label("新建对话", "New chat"); brand: true; enabled: !controller.changeReview.busy
         onClicked: { workbench.navigate("chat"); controller.newSession() }
     }
     TextField {
@@ -562,6 +562,7 @@ ApplicationWindow {
             required property string title
             required property string subtitle
             readonly property bool current: controller.sessionId === sessionId
+            readonly property bool generating: subtitle === "生成中…"
             readonly property bool matches: window.sessionQuery.length === 0 || title.toLowerCase().includes(window.sessionQuery)
             width: history.rowWidth; height: matches ? 66 : 0; visible: matches
             enabled: !controller.changeReview.busy; hoverEnabled: true
@@ -576,6 +577,13 @@ ApplicationWindow {
                 hoverAmount: session.hovered ? 1 : 0
                 pointer: sessionHover.point.position
                 Rectangle {
+                    objectName: "sessionRail"
+                    visible: session.current
+                    x: 3; width: 3; height: 22; radius: 1.5
+                    anchors.verticalCenter: parent.verticalCenter
+                    color: Theme.indicator
+                }
+                Rectangle {
                     visible: session.visualFocus
                     anchors.fill: parent; anchors.margins: -2; radius: 17
                     color: "transparent"; border.color: Theme.focusRing; border.width: Theme.focusRingWidth
@@ -585,7 +593,21 @@ ApplicationWindow {
             contentItem: Column {
                 spacing: 7
                 Text { text: session.title; width: parent.width; elide: Text.ElideRight; color: session.current ? "#f4f5f6" : "#b2bbc6"; font.pixelSize: 13; font.weight: session.current ? Font.Medium : Font.Normal }
-                Text { text: session.subtitle; color: Theme.textMuted; font.pixelSize: Theme.captionSize }
+                Row {
+                    spacing: 6
+                    Rectangle {
+                        objectName: "generatingDot"
+                        visible: session.generating
+                        width: 7; height: 7; radius: 3.5; anchors.verticalCenter: parent.verticalCenter
+                        color: Theme.auroraTeal
+                        SequentialAnimation on opacity {
+                            running: session.generating && !controller.reduceMotion; loops: Animation.Infinite
+                            NumberAnimation { from: 1; to: 0.35; duration: 700 }
+                            NumberAnimation { from: 0.35; to: 1; duration: 700 }
+                        }
+                    }
+                    Text { text: session.subtitle; color: session.generating ? Theme.auroraTeal : Theme.textMuted; font.pixelSize: Theme.captionSize }
+                }
             }
             onClicked: { workbench.navigate("chat"); controller.selectSession(sessionId) }
             Keys.onReturnPressed: clicked()
@@ -593,9 +615,9 @@ ApplicationWindow {
     }
     Column {
         visible: !window.codingVisible; x: 18; y: window.height - 148; width: window.sideWidth - 36; spacing: 8
-        GlassButton { objectName: "permissionButton"; material: window.material; width: parent.width; glyph: "shield"; text: workbench.permissionLabel; selected: true; tip: "切换执行权限"; enabled: !controller.busy && !workbench.busy && workbench.approvals.length === 0; onClicked: permissionPopup.open() }
-        GlassButton { material: window.material; width: parent.width; glyph: "panels-top-left"; text: "Agent 协作设置"; quiet: true; onClicked: workbench.navigate("agents") }
-        GlassButton { material: window.material; objectName: "connectionSettingsEntry"; width: parent.width; glyph: "settings-2"; text: window.label("连接与外观", "Connection & appearance"); quiet: true; onClicked: settings.open() }
+        GlassButton { objectName: "permissionButton"; material: window.material; width: parent.width; glyph: "shield"; text: workbench.permissionLabel; leftAligned: true; tip: "切换执行权限"; enabled: !controller.busy && !workbench.busy && workbench.approvals.length === 0; onClicked: permissionPopup.open() }
+        GlassButton { material: window.material; width: parent.width; glyph: "panels-top-left"; text: "Agent 协作设置"; quiet: true; leftAligned: true; onClicked: workbench.navigate("agents") }
+        GlassButton { material: window.material; objectName: "connectionSettingsEntry"; width: parent.width; glyph: "settings-2"; text: window.label("连接与外观", "Connection & appearance"); quiet: true; leftAligned: true; onClicked: settings.open() }
     }
     Text {
         objectName: "pageTitle"
@@ -758,7 +780,7 @@ ApplicationWindow {
                     id: sendButton
                     objectName: "sendButton"
                     material: window.material; glyph: controller.busy ? "square" : "arrow-up"
-                    Layout.preferredWidth: 40; Layout.preferredHeight: 40; Layout.alignment: Qt.AlignTop; cornerRadius: 20; primary: true
+                    Layout.preferredWidth: 40; Layout.preferredHeight: 40; Layout.alignment: Qt.AlignTop; cornerRadius: 20; primary: true; brand: true
                     enabled: controller.busy || (!controller.modelSwitching && editor.text.trim().length > 0)
                     tip: controller.busy ? "停止生成（Esc）" : "发送消息（Enter）"
                     Accessible.name: controller.busy ? "停止生成" : "发送消息"
@@ -767,7 +789,7 @@ ApplicationWindow {
                         objectName: "busyRing"
                         anchors.fill: parent; anchors.margins: -5
                         radius: width / 2; color: "transparent"
-                        border.color: Theme.accent; border.width: 2
+                        border.color: Theme.auroraTeal; border.width: 2
                         visible: controller.busy
                         opacity: 0.85
                         SequentialAnimation on opacity {
@@ -1297,23 +1319,28 @@ ApplicationWindow {
     FileDialog { id: files; title: "添加文本附件"; nameFilters: ["文本与代码 (*.txt *.md *.py *.js *.ts *.json *.qml *.css *.html)", "所有文件 (*)"]; onAccepted: controller.addAttachment(selectedFile) }
     Column {
         visible: !window.codingVisible; x: 18; y: 82; width: window.sideWidth - 36; spacing: 9
+        Item {
+            objectName: "modeSegments"
+            width: parent.width; height: 42
+            GlassSurface { anchors.fill: parent; material: window.material; radius: 14; tint: Theme.glassTint; emphasis: 0.15 }
         Row {
             id: modeBar
-            width: parent.width; spacing: 6
+            anchors.fill: parent; anchors.margins: 3; spacing: 2
             readonly property real buttonWidth: setup.developer ? (width - 2 * spacing) / 3 : (width - spacing) / 2
             GlassButton {
-                objectName: "selectChatMode"; material: window.material; width: modeBar.buttonWidth
+                objectName: "selectChatMode"; material: window.material; width: modeBar.buttonWidth; height: 36; quiet: true; cornerRadius: 11
                 glyph: modeBar.buttonWidth >= 68 ? "message-square" : ""; text: "Chat"; selected: window.chatVisible && window.conversationOnly
                 tip: "普通对话及 MCP"; enabled: !controller.busy
                 onClicked: { controller.setConversationMode("chat"); workbench.navigate("chat"); window.focusWorkComposer() }
             }
             GlassButton {
-                objectName: "selectWorkMode"; material: window.material; width: modeBar.buttonWidth
+                objectName: "selectWorkMode"; material: window.material; width: modeBar.buttonWidth; height: 36; quiet: true; cornerRadius: 11
                 glyph: modeBar.buttonWidth >= 68 ? "wrench" : ""; text: "Work"; selected: window.chatVisible && !window.conversationOnly
                 tip: "执行任务与使用工具"; enabled: !controller.busy
                 onClicked: { controller.setConversationMode("work"); workbench.navigate("chat"); window.focusWorkComposer() }
             }
-            GlassButton { material: window.material; width: modeBar.buttonWidth; glyph: modeBar.buttonWidth >= 68 ? "code" : ""; text: "Coding"; visible: setup.developer; selected: window.codingVisible; onClicked: workbench.navigate("development") }
+            GlassButton { material: window.material; width: modeBar.buttonWidth; height: 36; quiet: true; cornerRadius: 11; glyph: modeBar.buttonWidth >= 68 ? "code" : ""; text: "Coding"; visible: setup.developer; selected: window.codingVisible; onClicked: workbench.navigate("development") }
+        }
         }
         Row {
             spacing: 8
@@ -1353,6 +1380,7 @@ ApplicationWindow {
                     required property var modelData
                     material: window.material; width: navigation.width
                     text: modelData.label; glyph: modelData.icon; quiet: true
+                    leftAligned: true; rail: true; height: 40
                     selected: workbench.page === modelData.key
                     onClicked: {
                         if (modelData.key === "search") searchPanel.open()

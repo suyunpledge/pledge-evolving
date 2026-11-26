@@ -30,6 +30,23 @@ QtObject {
     readonly property color primaryFillHover: "#4f8ff0"
     readonly property color primaryBorder: "#8ab8ff"
 
+    // Aurora brand (the fox mark's teal → violet). Reserved for the one or two hero
+    // actions per screen (new chat, send) and selection indicators, so it stays rare.
+    // Deep stops keep white text >= 4.5:1 across the whole gradient.
+    readonly property color brandStart: "#12807a"
+    readonly property color brandEnd: "#6a4fd6"
+    readonly property color brandStartHover: "#13837c"
+    readonly property color brandEndHover: "#7a5fe6"
+    readonly property color brandBorder: "#7fe3d6"
+    readonly property color brandGlow: "#5547d6c0"
+    readonly property color auroraTeal: "#4fd8c4"
+    readonly property color auroraViolet: "#a58bff"
+
+    // Depth: section labels and the rail that marks the selected row in a list.
+    readonly property color sectionLabel: "#7f8ea2"
+    readonly property color indicator: "#4fd8c4"
+    readonly property color railTint: "#1cffffff"
+
     // Keyboard focus ring: visible on every surface, never used for anything else.
     readonly property color focusRing: "#a9cbff"
     readonly property int focusRingWidth: 2
