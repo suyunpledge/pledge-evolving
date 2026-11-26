@@ -98,8 +98,8 @@ def gateway_settings(provider, environment):
     parsed = urlsplit(url)
     if parsed.scheme not in ("http", "https") or not parsed.hostname:
         raise ValueError("Provider 上游地址须为 HTTP 或 HTTPS 地址")
-    if provider.get("wire", "openai") != "openai":
-        raise ValueError("当前对话客户端使用 OpenAI 协议；请选择兼容 Provider，或通过任务使用其他协议")
+    if provider.get("wire", "openai") not in ("openai", "google"):
+        raise ValueError("当前对话支持 OpenAI 兼容协议和 Google 原生协议。")
     key = provider.get("apiKey", "")
     if isinstance(key, dict):
         expression = str(key.get("$expr", ""))

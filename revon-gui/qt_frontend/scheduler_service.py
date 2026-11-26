@@ -78,7 +78,8 @@ class SchedulerService:
         workspace = Path(job['workspace'])
         if str(workspace.resolve()) != job['workspace'] or not workspace.is_dir():
             raise PermissionError('Scheduled workspace changed or was removed')
-        client = PhaseClient(rows, job['model'], {**os.environ, **secret_store.env_for()}, scope, cancel)
+        client = PhaseClient(rows, job['model'], {**os.environ, **secret_store.env_for()}, scope, cancel,
+                             history_home=self.host.home)
         agent = build_agent(home=self.host.home, workspace=workspace, config=Config(),
             router=client.router, policy=Policy(mode=Mode.READ_ONLY, sandbox=Sandbox.READ_ONLY, workspace=workspace, non_interactive=True),
             limits=LoopLimits(max_steps=6, spawn_budget=0), mount_contrib=False,

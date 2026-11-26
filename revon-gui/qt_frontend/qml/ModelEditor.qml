@@ -2,8 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-// 管理已有模型：左侧选行，右侧改接口地址、模型 ID、显示名称、协议、思考档位、温度与密钥。
-// 密钥只写不读：输入框永远为空，留空表示保持原密钥。
+// 供应商由请求地址识别。同一供应商的各条配置保留独立的模型、连接参数和密钥。
 Popup {
     id: editor
     objectName: "modelEditor"
@@ -12,6 +11,9 @@ Popup {
     property bool changesAllowed: true
     property string currentId: ""
     property bool confirmDelete: false
+    property bool showHistory: false
+    readonly property real sidebarWidth: Math.min(246, Math.max(172, width * 0.27))
+    readonly property real formX: sidebarWidth + 32
     readonly property var row: {
         const rows = service.rows || []
         for (let i = 0; i < rows.length; ++i) if (rows[i].id === currentId) return rows[i]
@@ -19,7 +21,32 @@ Popup {
     }
     readonly property var effortLevels: ["low", "medium", "high", "max"]
     property var chosenEfforts: []
+    property var tokenEdits: ({})
+    readonly property var tokenModelIds: {
+        const primary = modelField.text.trim()
+        return [primary, ...Object.keys(row?.tokenModels || {}).filter(name => name !== row?.model && name !== primary)].filter(Boolean)
+    }
+    function loadTokenFields() {
+        const id = tokenModelChoice.currentText || modelField.text.trim()
+        tokenLimits.load(Object.assign({}, row?.tokenModels?.[id] || {}, tokenEdits[id] || {}))
+    }
+    readonly property var providers: {
+        const groups = new Map()
+        const query = providerSearch.text.trim().toLowerCase()
+        for (const item of service.rows || []) {
+            const key = item.providerKey || item.id
+            const name = item.providerName || item.title
+            const terms = [name, item.title, item.model, item.modelBrand, item.providerLabel, item.displayBaseURL]
+            if (query && !terms.some(value => String(value || "").toLowerCase().includes(query))) continue
+            if (!groups.has(key)) groups.set(key, { key: key, name: name, icon: item.providerIcon || "", first: item.id, count: 0 })
+            groups.get(key).count++
+        }
+        return Array.from(groups.values())
+    }
+    readonly property var providerModels: row ? (service.rows || []).filter(item =>
+        (item.providerKey || item.id) === (row.providerKey || row.id)) : []
     signal addRequested()
+    signal catalogRequested()
     modal: true; focus: true; padding: 0
     closePolicy: Popup.CloseOnEscape
     Overlay.modal: Rectangle { color: "#6605080d" }
@@ -28,9 +55,12 @@ Popup {
         if (row && labelField.enabled) labelField.forceActiveFocus(Qt.TabFocusReason)
         else addModel.forceActiveFocus(Qt.TabFocusReason)
     }
+    onClosed: keyField.clear()
 
-    function openFor(rowId) {
-        service.reload()
+    function openFor(rowId, rowsReady = false) {
+        showHistory = false
+        providerSearch.clear()
+        if (!rowsReady) service.reload()
         const rows = service.rows || []
         currentId = rowId && rows.some(r => r.id === rowId) ? rowId : (rows.length ? rows[0].id : "")
         load()
@@ -42,9 +72,13 @@ Popup {
         service.clearStatus()
         const r = row
         if (!r) return
+        tokenEdits = ({})
         labelField.text = r.label
+        providerLabel.text = r.providerLabel || ""
         urlField.text = r.baseURL
         modelField.text = r.model
+        tokenModelChoice.currentIndex = 0
+        loadTokenFields()
         temperatureField.text = r.temperature
         wireBox.currentIndex = Math.max(0, wireBox.indexOfValue(r.wire))
         if (r.efforts === "auto") { effortMode.currentIndex = 0; chosenEfforts = [] }
@@ -53,9 +87,12 @@ Popup {
     }
     function values() {
         const mode = effortMode.currentValue
+        const edits = {}
+        for (const name of tokenModelIds) if (tokenEdits[name]) edits[name] = tokenEdits[name]
         return {
-            label: labelField.text, baseURL: urlField.text, model: modelField.text,
+            providerLabel: providerLabel.text, label: labelField.text, baseURL: urlField.text, model: modelField.text,
             wire: wireBox.currentValue, temperature: temperatureField.text,
+            tokenEdits: edits,
             efforts: mode === "custom" ? (chosenEfforts.length ? chosenEfforts.join(",") : "none") : mode
         }
     }
@@ -72,65 +109,122 @@ Popup {
     }
     Connections {
         target: editor.service
-        function onSaved(rowId) { if (rowId === "") editor.openFor("") ; else keyField.clear() }
+        function onSaved(rowId) {
+            if (rowId === "") editor.openFor("")
+            else { editor.tokenEdits = ({}); editor.loadTokenFields(); keyField.clear() }
+        }
     }
 
     contentItem: Item {
         implicitWidth: 860; implicitHeight: 600
-        Text { x: 26; y: 22; text: "模型配置"; color: Theme.textPrimary; font.pixelSize: 20; font.weight: Font.DemiBold }
-        Text { x: 26; y: 52; text: "编辑已添加的模型；密钥保存在本机密钥库，不会在此显示。"; color: Theme.textMuted; font.pixelSize: 12 }
+        Text {
+            x: 22; anchors.verticalCenter: headerTabs.verticalCenter
+            text: "模型与供应商"; color: Theme.textPrimary; font.pixelSize: 21; font.weight: Font.DemiBold
+        }
+        Row {
+            id: headerTabs; x: editor.formX; y: 16; spacing: 6
+            GlassButton { material: editor.material; text: "模型配置"; selected: !editor.showHistory; quiet: true; onClicked: editor.showHistory = false }
+            GlassButton {
+                objectName: "requestHistoryTab"
+                material: editor.material; text: "请求记录"; selected: editor.showHistory; quiet: true
+                onClicked: { editor.showHistory = true; editor.service.refreshHistory() }
+            }
+        }
         GlassButton {
             x: parent.width - width - 18; y: 16; material: editor.material; glyph: "x"; quiet: true; tip: "关闭"
             onClicked: editor.close()
         }
-        // —— 左：模型列表 ——
-        ListView {
-            id: list
-            objectName: "modelEditorList"
-            x: 16; y: 84; width: 268; height: parent.height - y - 66
-            model: editor.service.rows; spacing: 6; clip: true
-            ScrollBar.vertical: ScrollBar { width: 4 }
-            delegate: AbstractButton {
-                id: item
+        Rectangle { x: 0; y: 66; width: parent.width; height: 1; color: Theme.divider }
+        TextField {
+            id: providerSearch; objectName: "modelProviderSearch"; visible: !editor.showHistory
+            x: 16; y: 80; width: editor.sidebarWidth - 12; height: 36
+            placeholderText: "搜索供应商或模型"; Accessible.name: placeholderText
+            onAccepted: {
+                if (editor.providers.length && !editor.service.busy) {
+                    editor.currentId = editor.providers[0].first
+                    editor.load()
+                    routeChoice.forceActiveFocus(Qt.TabFocusReason)
+                }
+            }
+            leftPadding: 12; rightPadding: 8; selectByMouse: true
+            color: Theme.textPrimary; placeholderTextColor: Theme.textMuted
+            background: GlassSurface { material: editor.material; radius: 10; emphasis: providerSearch.activeFocus ? 0.6 : 0 }
+        }
+        AppListView {
+            id: list; objectName: "modelEditorList"; visible: !editor.showHistory
+            x: 16; y: 126; width: providerSearch.width; height: Math.max(0, parent.height - y - 64)
+            model: editor.providers; spacing: 4; clip: true; enabled: !editor.service.busy
+            delegate: GlassRow {
                 required property var modelData
-                readonly property bool current: editor.currentId === modelData.id
-                Accessible.name: item.modelData.title
-                Accessible.role: Accessible.ListItem
-                Accessible.selectable: true
-                Accessible.selected: current
-                width: list.width; height: 58; hoverEnabled: true
-                leftPadding: 12; rightPadding: 12
-                background: GlassSurface {
-                    material: editor.material; radius: 13
-                    visible: item.current || item.hovered
-                    emphasis: item.current ? 1 : 0.2; hoverAmount: item.hovered ? 1 : 0
-                }
-                contentItem: Column {
-                    spacing: 4; topPadding: 9
-                    Text { width: parent.width; text: item.modelData.title; elide: Text.ElideRight; color: item.current ? Theme.textPrimary : Theme.textSecondary; font.pixelSize: 13; font.weight: item.current ? Font.Medium : Font.Normal }
-                    Text {
-                        width: parent.width; elide: Text.ElideRight; font.pixelSize: 11
-                        text: item.modelData.model + (item.modelData.disabled ? " · 已停用" : "") + (item.modelData.keyState === "missing" ? " · 缺少密钥" : "")
-                        color: item.modelData.keyState === "missing" ? Theme.warning : Theme.textMuted
-                    }
-                }
-                onClicked: { editor.currentId = modelData.id; editor.load() }
+                objectName: "providerGroup_" + modelData.key
+                material: editor.material; width: list.rowWidth; height: 44
+                text: modelData.name; iconUrl: modelData.icon; status: String(modelData.count)
+                checked: !!editor.row && (editor.row.providerKey || editor.row.id) === modelData.key
+                actionGlyph: checked ? "check" : "chevron-right"
+                Accessible.role: Accessible.ListItem; Accessible.selectable: true; Accessible.selected: checked
+                onClicked: { if (!checked || providerSearch.text.trim()) { editor.currentId = modelData.first; editor.load() } }
             }
         }
         Text {
-            visible: list.count === 0; x: 28; y: 96; width: 240; wrapMode: Text.Wrap
-            text: "还没有模型。点「添加模型」接入第一个。"; color: Theme.textMuted; font.pixelSize: 12
+            x: list.x; y: list.y + 8; width: list.width
+            visible: list.visible && !list.count
+            text: providerSearch.text ? "没有匹配项" : "还没有配置供应商"
+            color: Theme.textMuted; font.pixelSize: 12; horizontalAlignment: Text.AlignHCenter
         }
-        GlassButton {
-            id: addModel
-            x: 16; y: parent.height - 52; width: 268; material: editor.material; glyph: "plus"; text: "添加模型"
-            onClicked: { editor.close(); editor.addRequested() }
+        RowLayout {
+            visible: !editor.showHistory; x: providerSearch.x; y: parent.height - 54; width: providerSearch.width; spacing: 5
+            GlassButton {
+                id: addModel; material: editor.material; glyph: "plus"; text: "添加模型"; Layout.fillWidth: true
+                onClicked: { editor.close(); editor.addRequested() }
+            }
+            GlassButton {
+                material: editor.material; glyph: "box"; tip: "浏览供应商目录"
+                onClicked: { editor.close(); editor.catalogRequested() }
+            }
         }
-        Rectangle { x: 296; y: 84; width: 1; height: parent.height - 100; color: Theme.divider }
-        // —— 右：表单 ——
-        ScrollView {
+        Rectangle { visible: !editor.showHistory; x: editor.formX - 16; y: 67; width: 1; height: parent.height - y; color: Theme.divider }
+        ColumnLayout {
+            id: routeHeader; visible: !editor.showHistory && !!editor.row
+            x: editor.formX; y: 80; width: parent.width - x - 24; spacing: 5
+            RowLayout {
+                Layout.fillWidth: true; spacing: 12
+                Text {
+                    Layout.fillWidth: true; text: editor.row ? editor.row.providerName || editor.row.title : ""
+                    textFormat: Text.PlainText; color: Theme.textPrimary; font.pixelSize: 20; font.weight: Font.DemiBold; elide: Text.ElideRight
+                }
+                Text {
+                    text: editor.row && editor.row.disabled ? "已停用" : ""; color: Theme.textMuted; font.pixelSize: 12
+                }
+                AppComboBox {
+                    id: routeChoice; objectName: "providerModelChoice"; Layout.preferredWidth: Math.min(220, routeHeader.width * 0.48)
+                    Layout.preferredHeight: 36; Accessible.name: "供应商下的模型配置"
+                    enabled: !editor.service.busy
+                    model: editor.providerModels; textRole: "title"; valueRole: "id"
+                    leftPadding: 12
+                    contentItem: Text {
+                        text: routeChoice.displayText; textFormat: Text.PlainText; color: Theme.textPrimary
+                        verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight
+                    }
+                    background: GlassSurface { material: editor.material; radius: 10; emphasis: routeChoice.activeFocus ? 0.6 : 0 }
+                    currentIndex: editor.providerModels.findIndex(r => r.id === editor.currentId)
+                    onActivated: { editor.currentId = currentValue; editor.load() }
+                }
+            }
+            Text {
+                Layout.fillWidth: true; textFormat: Text.PlainText
+                text: editor.row ? [editor.row.planLabel !== editor.row.protocolLabel ? editor.row.planLabel : "", editor.row.protocolLabel,
+                    editor.row.modelBrand ? "模型品牌 " + editor.row.modelBrand : ""].filter(Boolean).join("  ·  ") : ""
+                color: Theme.textMuted; font.pixelSize: 12; elide: Text.ElideRight
+            }
+        }
+        ProviderRequestHistory {
+            visible: editor.showHistory; x: 20; y: 78; width: parent.width - 40; height: parent.height - y - 18
+            material: editor.material; service: editor.service
+        }
+        AppScrollView {
             id: formScroll
-            x: 312; y: 80; width: parent.width - x - 20
+            visible: !editor.showHistory && !!editor.row
+            x: editor.formX; y: routeHeader.y + routeHeader.height + 12; width: parent.width - x - 20
             height: Math.max(0, (editorStatus.visible ? editorStatus.y : editorActions.y) - y - 8)
             clip: true
             enabled: editor.row !== null && editor.changesAllowed && !editor.service.busy
@@ -155,7 +249,7 @@ Popup {
                     ColumnLayout {
                         Layout.preferredWidth: 170; Layout.maximumWidth: 170; spacing: 7
                         FieldLabel { text: "协议" }
-                        ComboBox {
+                        AppComboBox {
                             id: wireBox; objectName: "editWire"
                             Accessible.name: "协议"
                             Layout.fillWidth: true; Layout.preferredHeight: 38
@@ -166,7 +260,7 @@ Popup {
                         }
                     }
                 }
-                FieldLabel { text: "接口地址" }
+                FieldLabel { text: "接口地址 · Base URL" }
                 EditField { id: urlField; objectName: "editEndpoint"; Accessible.name: "接口地址"; placeholderText: "https://api.example.com/v1"; inputMethodHints: Qt.ImhUrlCharactersOnly | Qt.ImhNoPredictiveText }
                 RowLayout {
                     Layout.fillWidth: true; spacing: 12
@@ -181,10 +275,27 @@ Popup {
                         EditField { id: temperatureField; objectName: "editTemperature"; Accessible.name: "温度"; inputMethodHints: Qt.ImhFormattedNumbersOnly }
                     }
                 }
+                FieldLabel { visible: tokenModelChoice.visible; text: "设置输入输出的模型" }
+                AppComboBox {
+                    id: tokenModelChoice; objectName: "tokenModelChoice"; visible: count > 1
+                    Layout.fillWidth: true; Accessible.name: "设置输入输出的模型"
+                    model: editor.tokenModelIds
+                    onCurrentTextChanged: if (tokenLimits) editor.loadTokenFields()
+                }
+                ModelTokenFields {
+                    id: tokenLimits; material: editor.material
+                    onEdited: {
+                        const name = tokenModelChoice.currentText || modelField.text.trim()
+                        if (name) editor.tokenEdits = Object.assign({}, editor.tokenEdits, { [name]: values() })
+                        editor.service.clearStatus()
+                    }
+                }
+                FieldLabel { text: "供应商备注（此配置）" }
+                EditField { id: providerLabel; objectName: "editProviderLabel"; Accessible.name: "供应商备注"; placeholderText: "选填，例如团队代理或地区" }
                 FieldLabel { text: "思考强度档位" }
                 RowLayout {
                     Layout.fillWidth: true; spacing: 8
-                    ComboBox {
+                    AppComboBox {
                         id: effortMode; objectName: "editEffortMode"
                         Accessible.name: "思考强度档位"
                         Layout.preferredWidth: 200; Layout.preferredHeight: 38
@@ -242,14 +353,14 @@ Popup {
         Text {
             id: editorStatus
             objectName: "modelEditorStatus"
-            x: 312; y: editorActions.y - height - 6; width: parent.width - x - 20
-            visible: text.length > 0
+            x: editor.formX; y: editorActions.y - height - 6; width: parent.width - x - 20
+            visible: !editor.showHistory && text.length > 0
             text: editor.service.status; wrapMode: Text.Wrap; textFormat: Text.PlainText
             color: editor.service.success ? Theme.successText : editor.service.busy ? Theme.textSecondary : Theme.dangerText
             font.pixelSize: 12
         }
         Row {
-            id: editorActions
+            id: editorActions; visible: !editor.showHistory && !!editor.row
             x: parent.width - width - 20; y: parent.height - 54; spacing: 8
             enabled: editor.row !== null && editor.changesAllowed && !editor.service.busy
             GlassButton {

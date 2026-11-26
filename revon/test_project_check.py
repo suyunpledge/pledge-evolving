@@ -67,9 +67,40 @@ class ApprovedChecks(unittest.TestCase):
                 self.assertIn('fixture-intentional-failure', result.content, result.error)
                 self.assertTrue((self.ws / 'ran').is_file())
                 self.assertEqual(result.meta['exit_code'], 1)
+                self.assertEqual(result.error_code, 'process_exit_nonzero')
+                self.assertEqual(result.meta['tests_run'], 1)
+                self.assertEqual(result.meta['test_failures'], 1)
                 self.assertEqual(self.cards[-1]['cwd'], str(self.ws))
                 self.assertIn('unittest', self.cards[-1]['commands'][0])
         self.assertEqual(len(self.cards), 3)
+
+    def test_module_filter_and_temporary_home_at_approved_entry_point(self):
+        (self.ws / 'test_selected.py').write_text(
+            "import unittest\nfrom pathlib import Path\nclass Case(unittest.TestCase):\n"
+            " def test_home(self):\n  home = Path.home()\n  (home/'probe').touch()\n"
+            "  Path('child-home.txt').write_text(str(home),encoding='utf8')\n", encoding='utf8')
+        (self.ws / 'test_broken.py').write_text("raise ImportError('fixture discovery error')\n", encoding='utf8')
+        selected = self.call('sandbox', {'task': 'python.test', 'filter': 'test_selected'})
+        self.assertEqual(selected.meta['exit_code'], 0, selected.content)
+        self.assertEqual(selected.meta['tests_run'], 1)
+        self.assertIn('-p test_selected.py', self.cards[-1]['commands'][0])
+        child_home = Path((self.ws / 'child-home.txt').read_text(encoding='utf8'))
+        self.assertNotEqual(child_home, Path.home())
+        self.assertFalse(child_home.exists())
+        full = self.call('sandbox', {'task': 'python.test'})
+        self.assertEqual(full.meta['discovery_errors'], 1)
+        self.assertEqual(full.meta['test_errors'], 0)
+        self.assertEqual(full.meta['test_failures'], 1)
+
+    def test_gateway_cache_uses_explicit_home_without_global_lookup(self):
+        from .gateway import GatewayConfig
+        with patch('revon.model.warmth_store', side_effect=AssertionError('unexpected global cache')):
+            for override in (None, self.home / 'custom.json'):
+                cfg = GatewayConfig(upstream='http://127.0.0.1:1', home=self.home, warmth_path=override)
+                try:
+                    self.assertEqual(cfg.cache_warmth.path, override or self.home / 'cache-warmth.json')
+                finally:
+                    cfg.close_runtime()
 
     def test_timeout_and_cancellation_stop_an_approved_check(self):
         (self.ws / 'test_example.py').write_text("import time\ntime.sleep(10)\n", encoding='utf8')

@@ -127,7 +127,8 @@ Rectangle {
         }
         ListView {
             id: sessions
-            visible: panel.terminal; Layout.fillWidth: true; Layout.preferredHeight: 28
+            ScrollBar.horizontal: AppScrollBar {}
+            visible: panel.terminal; Layout.fillWidth: true; Layout.preferredHeight: 28 + (contentWidth > width ? ScrollBar.horizontal.implicitHeight : 0)
             orientation: ListView.Horizontal; clip: true; spacing: 2
             model: workbench.terminalTabs
             currentIndex: workbench.terminalTabs.indexOf(workbench.activeTerminal)
@@ -135,7 +136,7 @@ Rectangle {
             delegate: IdeButton {
                 required property int modelData
                 objectName: "terminalSession_" + modelData
-                height: sessions.height
+                height: 28
                 glyph: "square-terminal"
                 text: (Qt.platform.os === "windows" ? "PowerShell " : "sh ") + modelData
                 selected: workbench.activeTerminal === modelData
@@ -144,11 +145,10 @@ Rectangle {
                 onClicked: workbench.selectTerminal(modelData)
             }
         }
-        ListView {
+        AppListView {
             id: problemList; objectName: "codeProblemList"; visible: panel.tab === "problems"
             Layout.fillWidth: true; Layout.fillHeight: true; clip: true; model: panel.problems
             keyNavigationEnabled: true; highlightMoveDuration: 0; boundsBehavior: Flickable.StopAtBounds
-            ScrollBar.vertical: ScrollBar {}
             Keys.onReturnPressed: if (currentIndex >= 0) panel.pickProblem(model[currentIndex])
             Text {
                 anchors.fill: parent; anchors.margins: 14; visible: !problemList.count; wrapMode: Text.Wrap
@@ -158,7 +158,7 @@ Rectangle {
             }
             delegate: ItemDelegate {
                 id: problem; required property int index; required property var modelData
-                width: problemList.width; height: 26; leftPadding: 12; rightPadding: 10; topPadding: 0; bottomPadding: 0
+                width: problemList.rowWidth; height: 26; leftPadding: 12; rightPadding: 10; topPadding: 0; bottomPadding: 0
                 Accessible.name: modelData.severity + " " + modelData.relative + " " + modelData.line + " " + modelData.message
                 ToolTip.text: modelData.path + ":" + modelData.line + ":" + modelData.column + "\n" + modelData.message
                 ToolTip.visible: hovered; ToolTip.delay: 650
@@ -184,7 +184,7 @@ Rectangle {
             id: chains; objectName: "codeToolchains"; visible: panel.tab === "toolchains"
             Layout.fillWidth: true; Layout.fillHeight: true; clip: true; boundsBehavior: Flickable.StopAtBounds
             contentWidth: width; contentHeight: chainColumn.implicitHeight + 16
-            ScrollBar.vertical: ScrollBar {}
+            ScrollBar.vertical: AppScrollBar {}
             Column {
                 id: chainColumn; x: 12; y: 8; width: chains.width - 24; spacing: 8
                 Text {
@@ -229,7 +229,7 @@ Rectangle {
             onContentHeightChanged: Qt.callLater(panel.tail)
             onHeightChanged: { resizeTimer.restart(); Qt.callLater(panel.tail) }
             onWidthChanged: resizeTimer.restart()
-            ScrollBar.vertical: ScrollBar { onPressedChanged: panel.follow = !pressed && scroll.atYEnd }
+            ScrollBar.vertical: AppScrollBar { onPressedChanged: panel.follow = !pressed && scroll.atYEnd }
             TextArea {
                 id: transcript; objectName: "codeTerminalTranscript"; width: scroll.width
                 text: panel.terminal ? workbench.terminalText : [panel.resultText, workbench.terminalOutput].filter(Boolean).join("\n")

@@ -72,7 +72,7 @@ Popup {
                 background: GlassSurface { material: panel.material; radius: 10; emphasis: query.activeFocus ? 0.45 : 0 }
                 onAccepted: panel.start()
             }
-            ComboBox {
+            AppComboBox {
                 id: githubType; objectName: "githubSearchType"
                 visible: panel.activeSource === "github"
                 model: [{name: "仓库", key: "repositories"}, {name: "议题", key: "issues"}, {name: "拉取请求", key: "pullrequests"}]
@@ -95,9 +95,10 @@ Popup {
             Text {
                 Layout.fillWidth: true
                 wrapMode: Text.Wrap
+                objectName: "publicSearchStatus"
                 color: panel.service.error ? "#e2ad9f" : "#a5b1bf"; font.pixelSize: 12
                 text: panel.service.busy ? "正在搜索…" : panel.service.error
-                    || (panel.service.sourceUrl ? panel.service.rows.length + " 条结果" : "无需登录 · 当前来源也用于 Work 对话和浏览器地址栏")
+                    || (panel.service.sourceUrl ? panel.service.sourceNotice + panel.service.rows.length + " 条结果" : "无需登录 · 当前来源也用于 Work 对话和浏览器地址栏")
             }
             GlassButton {
                 material: panel.material; glyph: "external-link"; text: "打开原站"
@@ -111,15 +112,14 @@ Popup {
                 }
             }
         }
-        ListView {
+        AppListView {
             objectName: "publicSearchResults"
             Layout.fillWidth: true; Layout.fillHeight: true
             clip: true; spacing: 7; reuseItems: true
             model: panel.service.rows
-            ScrollBar.vertical: ScrollBar { width: 4 }
             delegate: GlassRow {
                 required property var modelData
-                material: panel.material; width: ListView.view.width
+                material: panel.material; width: ListView.view.rowWidth
                 glyph: modelData.engine === "github" ? "code" : "globe"
                 text: modelData.title; detail: modelData.snippet || modelData.url
                 actionGlyph: "external-link"

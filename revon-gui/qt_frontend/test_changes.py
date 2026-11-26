@@ -82,6 +82,42 @@ class ReplyChangeTests(unittest.TestCase):
         self.assertFalse(self.controller.changeReview.error, self.controller.changeReview.error)
         return self.controller.messages.rows[-1]['changeKey']
 
+    def test_rejected_edits_allow_the_batch_and_model_to_continue(self):
+        a, b = self.ws / 'a.txt', self.ws / 'b.txt'
+        a.write_text('第一行：你好\n重复行\n重复行\n', encoding='utf8')
+        b.write_bytes(b'alpha\r\nbeta\r\n')
+
+        def call(identity, tool, **args):
+            return {'id': identity, 'type': 'function',
+                    'function': {'name': 'keystone_' + tool, 'arguments': json.dumps(args)}}
+
+        rounds = iter([
+            CompletionResult('', tool_calls=[
+                call('ambiguous', 'edit_file', path='a.txt', old='重复行', new='不应写入'),
+                call('unique', 'edit_file', path='a.txt', old='第一行：你好', new='第一行：您好')]),
+            CompletionResult('', tool_calls=[
+                call('range', 'edit_file', path='a.txt', start_line=2, end_line=3, new='第二行\n第三行'),
+                call('missing', 'apply_patch', patches=[
+                    {'path': 'b.txt', 'old': 'alpha', 'new': 'ALPHA'},
+                    {'path': 'a.txt', 'old': '这段文字不存在', 'new': 'x'}])]),
+            CompletionResult('实测完成。')])
+        client = RevonGatewayClient(self.endpoint)
+        client.stream_chat = lambda *args, **kwargs: next(rounds)
+        self.controller._client = client
+        self.controller.draft = '测试文件编辑'
+        self.controller.send()
+        until(lambda: not self.controller.busy)
+        self.assertEqual(self.controller.error, '')
+        self.assertEqual(self.controller._history[-1].content, '实测完成。')
+        receipts = {m.tool_call_id: json.loads(m.content) for m in self.controller._history if m.role == 'tool'}
+        self.assertTrue(receipts['unique']['ok'])
+        self.assertTrue(receipts['range']['ok'])
+        for identity in ('ambiguous', 'missing'):
+            self.assertFalse(receipts[identity]['ok'])
+            self.assertEqual(receipts[identity]['meta']['execution_state'], 'not_started')
+        self.assertEqual(a.read_text(encoding='utf8'), '第一行：您好\n第二行\n第三行\n')
+        self.assertEqual(b.read_bytes(), b'alpha\r\nbeta\r\n')
+
     def test_reply_card_reload_diff_and_revert(self):
         key = self.generate()
         card = self.controller.messages.rows[-1]['changeInfo']

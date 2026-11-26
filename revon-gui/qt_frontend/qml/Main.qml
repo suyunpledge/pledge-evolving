@@ -44,7 +44,7 @@ ApplicationWindow {
             editorScroll.refreshInputMethod()
         }
     }
-    property bool followTail: true
+    property alias followTail: messages.followTail
     property bool composerFocusPending: false
     onActiveChanged: {
         if (active && approvalCard && approvalCard.visible)
@@ -211,23 +211,17 @@ ApplicationWindow {
         id: workBackdrop
         anchors.fill: parent
         visible: window.chatVisible
-        ListView {
+        TranscriptList {
             id: messages
             visible: window.chatVisible
             objectName: "conversationList"
             x: window.columnX; y: 90
-            width: window.columnWidth; height: window.height - y - 10
+            width: window.columnWidth + 17; height: Math.max(0, (errorBanner.visible ? errorBanner.y : composer.y) - y - 12)
             clip: true
             spacing: 26
             topMargin: 18
-            // positionViewAtEnd includes the footer, but not the flickable's bottomMargin.
-            footer: Item { width: messages.width; height: composer.height + 76 }
+            footer: Item { width: 1; height: 8 }
             model: controller.messages
-            boundsBehavior: Flickable.StopAtBounds
-            ScrollBar.vertical: ScrollBar { width: 5; policy: ScrollBar.AsNeeded }
-            onMovementStarted: window.followTail = false
-            onMovementEnded: if (atYEnd) window.followTail = true
-            onContentHeightChanged: if (window.followTail) Qt.callLater(positionViewAtEnd)
             delegate: Item {
                 id: message
                 required property string roleName
@@ -241,7 +235,7 @@ ApplicationWindow {
                 required property var todos
                 required property bool continuable
                 required property var contemplation
-                width: messages.width
+                width: window.columnWidth
                 height: messageBody.height + (roleName === "user" ? 24 : 0)
                     + (messageActions.visible ? messageActions.height + 4 : 0)
                 Rectangle {
@@ -405,78 +399,88 @@ ApplicationWindow {
                 GradientStop { position: 1.0; color: "#00090d14" }
             }
         }
-        Column {
+        Flickable {
             id: welcome
             objectName: "welcome"
             visible: window.chatVisible && messages.count === 0
+            readonly property real bottomEdge: (errorBanner.visible ? errorBanner.y : composer.y) - 18
             x: window.columnX + 16
-            // 欢迎区始终落在输入框（及其上方的错误提示）之上，不与之重叠。
-            y: Math.max(96, Math.min(window.height * 0.24, (errorBanner.visible ? errorBanner.y : composer.y) - height - 28))
+            y: Math.max(96, Math.min(window.height * 0.24, bottomEdge - welcomeContent.height - 10))
             width: window.columnWidth - 32
-            spacing: 16
-            Item {
-                width: 48; height: 48
-                Canvas {
-                    id: brandHalo
-                    anchors.centerIn: parent; width: 112; height: 112
-                    property bool warm: !window.conversationOnly
-                    onWarmChanged: requestPaint()
-                    onPaint: {
-                        const ctx = getContext("2d")
-                        ctx.clearRect(0, 0, width, height)
-                        const g = ctx.createRadialGradient(width / 2, height / 2, 4, width / 2, height / 2, width / 2)
-                        const rgb = warm ? "232, 157, 90" : "91, 155, 248"
-                        g.addColorStop(0.0, `rgba(${rgb}, 0.28)`)
-                        g.addColorStop(0.45, `rgba(${rgb}, 0.10)`)
-                        g.addColorStop(1.0, `rgba(${rgb}, 0.0)`)
-                        ctx.fillStyle = g
-                        ctx.fillRect(0, 0, width, height)
+            height: Math.max(0, Math.min(welcomeContent.height, bottomEdge - y))
+            contentWidth: width
+            contentHeight: welcomeContent.height
+            clip: contentHeight > height
+            boundsBehavior: Flickable.StopAtBounds
+            ScrollBar.vertical: AppScrollBar {}
+            Column {
+                id: welcomeContent
+                width: welcome.width - welcome.ScrollBar.vertical.implicitWidth
+                spacing: 16
+                Item {
+                    width: 48; height: 48
+                    Canvas {
+                        id: brandHalo
+                        anchors.centerIn: parent; width: 112; height: 112
+                        property bool warm: !window.conversationOnly
+                        onWarmChanged: requestPaint()
+                        onPaint: {
+                            const ctx = getContext("2d")
+                            ctx.clearRect(0, 0, width, height)
+                            const g = ctx.createRadialGradient(width / 2, height / 2, 4, width / 2, height / 2, width / 2)
+                            const rgb = warm ? "232, 157, 90" : "91, 155, 248"
+                            g.addColorStop(0.0, `rgba(${rgb}, 0.28)`)
+                            g.addColorStop(0.45, `rgba(${rgb}, 0.10)`)
+                            g.addColorStop(1.0, `rgba(${rgb}, 0.0)`)
+                            ctx.fillStyle = g
+                            ctx.fillRect(0, 0, width, height)
+                        }
+                    }
+                    Image { anchors.centerIn: parent; source: brandUrl; width: 42; height: 42; smooth: true }
+                }
+                Text { text: window.conversationOnly ? "今天想聊些什么？" : "今天想完成什么？"; color: "#f0f1f3"; font.pixelSize: 30; font.weight: Font.DemiBold }
+                Text { text: window.conversationOnly ? "可以使用已连接且获准的 MCP。需要实际操作时，AI 可切换到 Work。" : "描述目标，带上上下文，让想法成为下一步。"; color: "#9fa8b4"; font.pixelSize: 15; wrapMode: Text.Wrap; width: parent.width }
+                Item { width: 1; height: 4 }
+                Text { text: "选择角色"; color: Theme.textMuted; font.pixelSize: 12 }
+                // 角色模板：一键换成预设角色（指引、工具、权限上限、步数预算都随之切换）。
+                Flow {
+                    objectName: "templatePicker"
+                    width: parent.width; spacing: 8
+                    GlassButton {
+                        material: window.material; glyph: "bot"; text: "通用"; height: 34
+                        selected: controller.templates.activeId === ""; enabled: !controller.busy
+                        onClicked: controller.templates.select("")
+                    }
+                    Repeater {
+                        model: controller.templates.rows
+                        GlassButton {
+                            required property var modelData
+                            objectName: "templateChip_" + modelData.id
+                            material: window.material; glyph: modelData.icon; text: modelData.name; height: 34
+                            selected: modelData.active; enabled: !controller.busy; tip: modelData.description
+                            onClicked: controller.templates.select(modelData.id)
+                        }
+                    }
+                    GlassButton {
+                        material: window.material; glyph: "sliders-horizontal"; text: "管理"; quiet: true; height: 34
+                        tip: "复制并自定义角色"; onClicked: rolePicker.open()
                     }
                 }
-                Image { anchors.centerIn: parent; source: brandUrl; width: 42; height: 42; smooth: true }
-            }
-            Text { text: window.conversationOnly ? "今天想聊些什么？" : "今天想完成什么？"; color: "#f0f1f3"; font.pixelSize: 30; font.weight: Font.DemiBold }
-            Text { text: window.conversationOnly ? "可以使用已连接且获准的 MCP。需要实际操作时，AI 可切换到 Work。" : "描述目标，带上上下文，让想法成为下一步。"; color: "#9fa8b4"; font.pixelSize: 15; wrapMode: Text.Wrap; width: parent.width }
-            Item { width: 1; height: 4 }
-            Text { text: "选择角色"; color: Theme.textMuted; font.pixelSize: 12 }
-            // 角色模板：一键换成预设角色（指引、工具、权限上限、步数预算都随之切换）。
-            Flow {
-                objectName: "templatePicker"
-                width: parent.width; spacing: 8
-                GlassButton {
-                    material: window.material; glyph: "bot"; text: "通用"; height: 34
-                    selected: controller.templates.activeId === ""; enabled: !controller.busy
-                    onClicked: controller.templates.select("")
+                Text {
+                    text: controller.templates.activeDescription; color: "#a9b4c1"; font.pixelSize: 13
+                    wrapMode: Text.Wrap; width: parent.width
                 }
-                Repeater {
-                    model: controller.templates.rows
-                    GlassButton {
-                        required property var modelData
-                        objectName: "templateChip_" + modelData.id
-                        material: window.material; glyph: modelData.icon; text: modelData.name; height: 34
-                        selected: modelData.active; enabled: !controller.busy; tip: modelData.description
-                        onClicked: controller.templates.select(modelData.id)
-                    }
-                }
-                GlassButton {
-                    material: window.material; glyph: "sliders-horizontal"; text: "管理"; quiet: true; height: 34
-                    tip: "复制并自定义角色"; onClicked: rolePicker.open()
-                }
-            }
-            Text {
-                text: controller.templates.activeDescription; color: "#a9b4c1"; font.pixelSize: 13
-                wrapMode: Text.Wrap; width: parent.width
-            }
-            Flow {
-                objectName: "templateStarters"
-                visible: controller.templates.activeStarters.length > 0
-                width: parent.width; spacing: 6
-                Repeater {
-                    model: controller.templates.activeStarters
-                    GlassButton {
-                        required property string modelData
-                        material: window.material; glyph: "sparkles"; text: modelData; quiet: true; height: 32
-                        tip: "填入输入框"; onClicked: controller.templates.useStarter(modelData)
+                Flow {
+                    objectName: "templateStarters"
+                    visible: controller.templates.activeStarters.length > 0
+                    width: parent.width; spacing: 6
+                    Repeater {
+                        model: controller.templates.activeStarters
+                        GlassButton {
+                            required property string modelData
+                            material: window.material; glyph: "sparkles"; text: modelData; quiet: true; height: 32
+                            tip: "填入输入框"; onClicked: controller.templates.useStarter(modelData)
+                        }
                     }
                 }
             }
@@ -545,14 +549,13 @@ ApplicationWindow {
         Glyph { x: 11; anchors.verticalCenter: parent.verticalCenter; name: "search"; ink: search.activeFocus ? Theme.accent : Theme.textMuted; width: 15; height: 15 }
     }
     Text { visible: !window.codingVisible && !workbench.navigationOpen; x: 24; y: 298; text: window.label("最近对话", "Recent chats"); color: Theme.textMuted; font.pixelSize: Theme.captionSize }
-    ListView {
+    AppListView {
         id: history
         visible: !window.codingVisible && !workbench.navigationOpen
         objectName: "sessionList"
         x: 12; y: 324; width: window.sideWidth - 24; height: window.height - y - 163
         clip: true; spacing: 7
         model: controller.sessions
-        ScrollBar.vertical: ScrollBar { width: 3 }
         delegate: AbstractButton {
             id: session
             required property string sessionId
@@ -560,7 +563,7 @@ ApplicationWindow {
             required property string subtitle
             readonly property bool current: controller.sessionId === sessionId
             readonly property bool matches: window.sessionQuery.length === 0 || title.toLowerCase().includes(window.sessionQuery)
-            width: history.width; height: matches ? 66 : 0; visible: matches
+            width: history.rowWidth; height: matches ? 66 : 0; visible: matches
             enabled: !controller.changeReview.busy; hoverEnabled: true
             leftPadding: 13; rightPadding: 13; topPadding: 14; bottomPadding: 12
             focusPolicy: Qt.StrongFocus
@@ -666,74 +669,96 @@ ApplicationWindow {
             RowLayout {
                 id: composerBar
                 width: parent.width; spacing: 6
-                readonly property bool roomy: window.columnWidth > 640
-                readonly property int modelChars: window.columnWidth < 560 ? 10 : window.columnWidth < 700 ? 16 : 24
-                GlassButton {
-                    id: modelButton
-                    objectName: "modelButton"
-                    material: window.material; glyph: "box"
-                    text: controller.model.length > composerBar.modelChars ? controller.model.slice(0, composerBar.modelChars - 1) + "…" : controller.model
-                    selected: modelMenu.opened
-                    enabled: !controller.anyBusy; tip: (controller.anyBusy ? "有对话正在生成，结束后再切换模型：" : "切换模型：") + controller.model; onClicked: modelMenu.open()
+                Flickable {
+                    id: toolsViewport; objectName: "composerToolsViewport"
+                    Layout.fillWidth: true; Layout.minimumWidth: 0
+                    Layout.preferredHeight: composerTools.implicitHeight + (contentWidth > width ? ScrollBar.horizontal.implicitHeight : 0)
+                    contentWidth: composerTools.width; contentHeight: height
+                    boundsBehavior: Flickable.StopAtBounds; flickableDirection: Flickable.HorizontalFlick
+                    clip: true
+                    ScrollBar.horizontal: AppScrollBar {}
+                    Connections {
+                        target: window
+                        function onActiveFocusItemChanged() {
+                            const button = window.activeFocusItem
+                            if (!button || button.parent !== composerTools) return
+                            if (button.x < toolsViewport.contentX) toolsViewport.contentX = button.x
+                            else if (button.x + button.width > toolsViewport.contentX + toolsViewport.width)
+                                toolsViewport.contentX = button.x + button.width - toolsViewport.width
+                        }
+                    }
+                    RowLayout {
+                        id: composerTools; spacing: 6
+                        width: Math.max(implicitWidth, toolsViewport.width)
+                        readonly property bool roomy: toolsViewport.width > 680
+                        readonly property int modelChars: window.columnWidth < 560 ? 10 : window.columnWidth < 700 ? 16 : 24
+                        GlassButton {
+                            id: modelButton
+                            objectName: "modelButton"
+                            material: window.material; glyph: "box"
+                            text: controller.model.length > composerTools.modelChars ? controller.model.slice(0, composerTools.modelChars - 1) + "…" : controller.model
+                            selected: modelMenu.opened
+                            enabled: !controller.anyBusy; tip: (controller.anyBusy ? "有对话正在生成，结束后再切换模型：" : "切换模型：") + controller.model; onClicked: modelMenu.open()
+                        }
+                        GlassButton {
+                            id: effortButton
+                            objectName: "effortButton"
+                            readonly property var names: ({off: "默认", low: "轻量", medium: "标准", high: "深入", contemplate: "沉思"})
+                            material: window.material; glyph: "gauge"
+                            text: (window.columnWidth > 520 ? "思考 · " : "") + names[controller.effectiveReasoning]
+                            selected: effortPicker.opened
+                            readonly property bool contemplating: controller.effectiveReasoning === "contemplate"
+                            ink: controller.reasoningSupported || contemplating ? "#dce3ec" : Theme.textMuted
+                            glyphInk: contemplating ? Theme.ember : controller.reasoningSupported ? (controller.effectiveReasoning === "off" ? "#dce3ec" : Theme.accent) : Theme.textDim
+                            enabled: !controller.busy
+                            tip: contemplating ? "沉思：最高强度推理并开启任务沉思（点击调整）" : controller.reasoningSupported ? "思考强度（点击调整）" : "当前模型不支持强度分档，可选「默认」或「沉思」"
+                            onClicked: effortPicker.open()
+                        }
+                        GlassButton {
+                            id: roleButton
+                            objectName: "templateButton"
+                            material: window.material; glyph: controller.templates.activeIcon
+                            text: window.columnWidth > 600 ? controller.templates.activeName : ""
+                            selected: controller.templates.activeId !== ""
+                            enabled: !controller.busy; tip: "当前角色：" + controller.templates.activeName + "（点击切换）"
+                            onClicked: rolePicker.open()
+                        }
+                        GlassButton {
+                            id: optionsButton
+                            material: window.material; glyph: "list-checks"; text: window.columnWidth > 600 ? "规划" : ""
+                            selected: options.opened; tip: "事前规划与外观"; onClicked: options.open()
+                        }
+                        Item { Layout.fillWidth: true }
+                        GlassButton { objectName: "attachButton"; material: window.material; glyph: "paperclip"; quiet: true; tip: "添加文本附件"; enabled: !controller.busy; onClicked: files.open() }
+                        GlassButton {
+                            objectName: "publicSearchButton"
+                            visible: !window.conversationOnly
+                            material: window.material; glyph: "search"; quiet: true
+                            text: composerTools.roomy ? "搜索" : ""
+                            tip: "联网搜索"; onClicked: searchPanel.open()
+                        }
+                        GlassButton {
+                            objectName: "workToolCatalogButton"
+                            material: window.material; glyph: "wrench"; quiet: true
+                            text: composerTools.roomy ? "工具" : ""
+                            tip: controller.toolSettings.enabled ? "管理当前模式的工具" : "工具调用已关闭"
+                            onClicked: toolCatalog.open()
+                        }
+                        GlassButton {
+                            objectName: "chatMcpButton"
+                            visible: window.conversationOnly
+                            material: window.material; glyph: "plug"; text: "MCP"; quiet: true
+                            tip: "管理 Chat 可用的远程 MCP"; onClicked: workbench.navigate("connectors")
+                        }
+                    }
                 }
-                GlassButton {
-                    id: effortButton
-                    objectName: "effortButton"
-                    readonly property var names: ({off: "默认", low: "轻量", medium: "标准", high: "深入", contemplate: "沉思"})
-                    material: window.material; glyph: "gauge"
-                    text: (window.columnWidth > 520 ? "思考 · " : "") + names[controller.effectiveReasoning]
-                    selected: effortPicker.opened
-                    readonly property bool contemplating: controller.effectiveReasoning === "contemplate"
-                    ink: controller.reasoningSupported || contemplating ? "#dce3ec" : Theme.textMuted
-                    glyphInk: contemplating ? Theme.ember : controller.reasoningSupported ? (controller.effectiveReasoning === "off" ? "#dce3ec" : Theme.accent) : Theme.textDim
-                    enabled: !controller.busy
-                    tip: contemplating ? "沉思：最高强度推理并开启任务沉思（点击调整）" : controller.reasoningSupported ? "思考强度（点击调整）" : "当前模型不支持强度分档，可选「默认」或「沉思」"
-                    onClicked: effortPicker.open()
-                }
-                GlassButton {
-                    id: roleButton
-                    objectName: "templateButton"
-                    material: window.material; glyph: controller.templates.activeIcon
-                    text: window.columnWidth > 600 ? controller.templates.activeName : ""
-                    selected: controller.templates.activeId !== ""
-                    enabled: !controller.busy; tip: "当前角色：" + controller.templates.activeName + "（点击切换）"
-                    onClicked: rolePicker.open()
-                }
-                GlassButton {
-                    id: optionsButton
-                    material: window.material; glyph: "list-checks"; text: window.columnWidth > 600 ? "规划" : ""
-                    selected: options.opened; tip: "事前规划与外观"; onClicked: options.open()
-                }
-                Item { Layout.fillWidth: true }
-                GlassButton { objectName: "attachButton"; material: window.material; glyph: "paperclip"; quiet: true; tip: "添加文本附件"; enabled: !controller.busy; onClicked: files.open() }
-                GlassButton {
-                    objectName: "publicSearchButton"
-                    visible: !window.conversationOnly
-                    material: window.material; glyph: "search"; quiet: true
-                    text: composerBar.roomy ? "搜索" : ""
-                    tip: "联网搜索"; onClicked: searchPanel.open()
-                }
-                GlassButton {
-                    objectName: "workToolCatalogButton"
-                    material: window.material; glyph: "wrench"; quiet: true
-                    text: composerBar.roomy ? "工具" : ""
-                    tip: controller.toolSettings.enabled ? "管理当前模式的工具" : "工具调用已关闭"
-                    onClicked: toolCatalog.open()
-                }
-                GlassButton {
-                    objectName: "chatMcpButton"
-                    visible: window.conversationOnly
-                    material: window.material; glyph: "plug"; text: "MCP"; quiet: true
-                    tip: "管理 Chat 可用的远程 MCP"; onClicked: workbench.navigate("connectors")
-                }
-                Item { width: 2 }
                 // Send and stop share one 40px target in the same place (Fitts); both are
                 // solid primary so "stop" is as easy to find mid-turn as "send" was.
                 GlassButton {
                     id: sendButton
                     objectName: "sendButton"
                     material: window.material; glyph: controller.busy ? "square" : "arrow-up"
-                    width: 40; height: 40; cornerRadius: 20; primary: true
+                    Layout.preferredWidth: 40; Layout.preferredHeight: 40; Layout.alignment: Qt.AlignTop; cornerRadius: 20; primary: true
                     enabled: controller.busy || (!controller.modelSwitching && editor.text.trim().length > 0)
                     tip: controller.busy ? "停止生成（Esc）" : "发送消息（Enter）"
                     Accessible.name: controller.busy ? "停止生成" : "发送消息"
@@ -812,12 +837,18 @@ ApplicationWindow {
         contentItem: Column {
             spacing: 5
             Text { text: "模型"; color: "#9aa7b5"; font.pixelSize: 12; padding: 6 }
-            ListView {
-                id: modelList
+            AppListView {
+                id: modelList; objectName: "modelChoiceList"
                 width: parent.width; height: modelMenu.availableHeight - 78
                 model: controller.models; spacing: 5; clip: true
-                ScrollBar.vertical: ScrollBar { width: 4 }
-                delegate: GlassButton { required property string modelData; material: window.material; width: ListView.view.width; text: modelData.length > 33 ? modelData.slice(0, 32) + "…" : modelData; selected: controller.model === modelData; enabled: !controller.modelSwitching; quiet: true; onClicked: {controller.setModel(modelData); modelMenu.close()} }
+                delegate: GlassRow {
+                    required property string modelData
+                    material: window.material; width: modelList.rowWidth; height: 36; padding: 7
+                    text: modelData; glyph: "box"; checked: controller.model === modelData
+                    status: controller.routeProviders[modelData] || ""
+                    actionGlyph: checked ? "check" : "chevron-right"; enabled: !controller.modelSwitching
+                    onClicked: { controller.setModel(modelData); modelMenu.close() }
+                }
             }
             Rectangle { width: parent.width; height: 1; color: Theme.divider }
             Row {
@@ -877,7 +908,7 @@ ApplicationWindow {
     EffortPicker {
         id: effortPicker
         parent: Overlay.overlay
-        x: Math.max(16, Math.min(composer.x + 18 + effortButton.x, window.width - width - 16))
+        x: Math.max(16, Math.min(effortButton.mapToItem(window.contentItem, 0, 0).x, window.width - width - 16))
         y: Math.max(16, composer.y - height - 10)
         material: window.material
         service: controller
@@ -887,16 +918,16 @@ ApplicationWindow {
         id: modelEditor
         parent: Overlay.overlay
         x: Math.round((parent.width - width) / 2); y: Math.round((parent.height - height) / 2)
-        width: Math.min(860, window.width - 48)
-        height: Math.min(600, window.height - 48)
+        width: Math.min(960, window.width - 32)
+        height: Math.min(690, window.height - 32)
         material: window.material
         service: workbench.modelRows
         changesAllowed: !controller.busy
         onAddRequested: onboarding.showSetup()
+        onCatalogRequested: workbench.showProviderCatalog("")
         onClosed: if (window.chatVisible) window.focusWorkComposer()
     }
     function openModelEditor(rowId) {
-        workbench.modelRows.reload()
         modelEditor.openFor(rowId)
     }
     RolePicker {
@@ -929,55 +960,62 @@ ApplicationWindow {
         x: Math.min(composer.x + 170, window.width - width - 20)
         y: Math.max(8, Math.min(window.height - height - 8, composer.y - height - 12))
         width: 348; padding: 20
+        height: Math.min(optionsFields.height + topPadding + bottomPadding, window.height - 24)
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         background: GlassSurface { objectName: "optionsGlass"; material: window.material; radius: 22; emphasis: 0.4 }
         onClosed: if (window.chatVisible) window.focusWorkComposer()
-        contentItem: Column {
-            spacing: 12
-            Text { text: "对话选项"; color: "#eef1f4"; font.pixelSize: 16; font.weight: Font.DemiBold }
-            Text { text: "事前规划"; color: Theme.textSecondary; font.pixelSize: 12 }
-            Row {
-                spacing: 7
-                Repeater { model: [{key:"auto",label:"自动判断"},{key:"manual",label:"手动开启"}]
-                    GlassButton { required property var modelData; material: window.material; width: 124; text: modelData.label
-                        selected: controller.planning.policy === modelData.key; enabled: !controller.busy
-                        onClicked: controller.planning.save("policy", modelData.key) }
+        contentItem: AppScrollView {
+            id: optionsScroll
+            clip: true; contentWidth: availableWidth
+            Column {
+                id: optionsFields
+                width: optionsScroll.availableWidth
+                spacing: 12
+                Text { text: "对话选项"; color: "#eef1f4"; font.pixelSize: 16; font.weight: Font.DemiBold }
+                Text { text: "事前规划"; color: Theme.textSecondary; font.pixelSize: 12 }
+                Row {
+                    spacing: 7
+                    Repeater { model: [{key:"auto",label:"自动判断"},{key:"manual",label:"手动开启"}]
+                        GlassButton { required property var modelData; material: window.material; width: 124; text: modelData.label
+                            selected: controller.planning.policy === modelData.key; enabled: !controller.busy
+                            onClicked: controller.planning.save("policy", modelData.key) }
+                    }
                 }
-            }
-            Text { text: controller.planning.policy === "auto" ? "多步骤或复杂任务先规划，简单任务直接执行。" : "下一条消息的规划"; color: Theme.textSecondary; font.pixelSize: 12 }
-            Row {
-                visible: controller.planning.policy === "manual"; spacing: 7
-                Repeater { model: [{key:"none",label:"关闭"},{key:"low",label:"简要"},{key:"medium",label:"标准"},{key:"high",label:"深入"}]
-                    GlassButton { required property var modelData; material: window.material; width: 70; text: modelData.label
-                        selected: controller.planning.level === modelData.key; enabled: !controller.busy
-                        onClicked: controller.planning.save("level", modelData.key) }
+                Text { text: controller.planning.policy === "auto" ? "多步骤或复杂任务先规划，简单任务直接执行。" : "下一条消息的规划"; color: Theme.textSecondary; font.pixelSize: 12 }
+                Row {
+                    width: parent.width; visible: controller.planning.policy === "manual"; spacing: 7
+                    Repeater { model: [{key:"none",label:"关闭"},{key:"low",label:"简要"},{key:"medium",label:"标准"},{key:"high",label:"深入"}]
+                        GlassButton { required property var modelData; material: window.material; width: (parent.width - 21) / 4; text: modelData.label
+                            selected: controller.planning.level === modelData.key; enabled: !controller.busy
+                            onClicked: controller.planning.save("level", modelData.key) }
+                    }
                 }
+                WorkbenchField {
+                    width: parent.width; material: window.material; enabled: !controller.busy
+                    definition: ({key: "planningModel", label: "规划模型", kind: "choice",
+                                  value: controller.planning.model, options: controller.planning.options})
+                    onDefinitionChanged: value = definition.value
+                    onEdited: value => controller.planning.save("model", value)
+                }
+                GlassButton {
+                    width: parent.width; material: window.material; glyph: "sliders-horizontal"
+                    objectName: "managePlanningKey"
+                    text: controller.planning.hasKey ? "管理独立规划密钥" : "设置独立规划密钥"
+                    enabled: !!controller.planning.endpoint && !controller.busy && !controller.isDemo
+                    onClicked: { options.close(); plannerKey.open() }
+                }
+                Text { text: "外观"; color: Theme.textSecondary; font.pixelSize: 12; topPadding: 4 }
+                Text { text: "玻璃通透度"; color: "#a9b3bf"; font.pixelSize: 12 }
+                Slider {
+                    id: materialSlider
+                    width: parent.width; from: 0; to: 1; value: controller.material
+                    onMoved: controller.setMaterial(value)
+                    background: GlassSurface { material: window.material; x: materialSlider.leftPadding; y: materialSlider.topPadding + materialSlider.availableHeight / 2 - 4; width: materialSlider.availableWidth; height: 8; radius: 4 }
+                    handle: Rectangle { x: materialSlider.leftPadding + materialSlider.visualPosition * (materialSlider.availableWidth - width); y: materialSlider.topPadding + materialSlider.availableHeight / 2 - height / 2; width: 22; height: 22; radius: 11; color: "#e7eaed"; border.color: "#7f919ca9" }
+                }
+                GlassButton { material: window.material; width: parent.width; text: controller.solid ? "✓  降低透明度" : "降低透明度"; selected: controller.solid; onClicked: controller.setSolid(!controller.solid) }
+                GlassButton { material: window.material; width: parent.width; text: controller.reduceMotion ? "✓  减少动态效果" : "减少动态效果"; selected: controller.reduceMotion; onClicked: controller.setReduceMotion(!controller.reduceMotion) }
             }
-            WorkbenchField {
-                width: parent.width; material: window.material; enabled: !controller.busy
-                definition: ({key: "planningModel", label: "规划模型", kind: "choice",
-                              value: controller.planning.model, options: controller.planning.options})
-                onDefinitionChanged: value = definition.value
-                onEdited: value => controller.planning.save("model", value)
-            }
-            GlassButton {
-                width: parent.width; material: window.material; glyph: "sliders-horizontal"
-                objectName: "managePlanningKey"
-                text: controller.planning.hasKey ? "管理独立规划密钥" : "设置独立规划密钥"
-                enabled: !!controller.planning.endpoint && !controller.busy && !controller.isDemo
-                onClicked: { options.close(); plannerKey.open() }
-            }
-            Text { text: "外观"; color: Theme.textSecondary; font.pixelSize: 12; topPadding: 4 }
-            Text { text: "玻璃通透度"; color: "#a9b3bf"; font.pixelSize: 12 }
-            Slider {
-                id: materialSlider
-                width: parent.width; from: 0; to: 1; value: controller.material
-                onMoved: controller.setMaterial(value)
-                background: GlassSurface { material: window.material; x: materialSlider.leftPadding; y: materialSlider.topPadding + materialSlider.availableHeight / 2 - 4; width: materialSlider.availableWidth; height: 8; radius: 4 }
-                handle: Rectangle { x: materialSlider.leftPadding + materialSlider.visualPosition * (materialSlider.availableWidth - width); y: materialSlider.topPadding + materialSlider.availableHeight / 2 - height / 2; width: 22; height: 22; radius: 11; color: "#e7eaed"; border.color: "#7f919ca9" }
-            }
-            GlassButton { material: window.material; width: parent.width; text: controller.solid ? "✓  降低透明度" : "降低透明度"; selected: controller.solid; onClicked: controller.setSolid(!controller.solid) }
-            GlassButton { material: window.material; width: parent.width; text: controller.reduceMotion ? "✓  减少动态效果" : "减少动态效果"; selected: controller.reduceMotion; onClicked: controller.setReduceMotion(!controller.reduceMotion) }
         }
     }
     Popup {
@@ -1029,7 +1067,7 @@ ApplicationWindow {
         objectName: "connectionSettings"
         parent: Overlay.overlay
         width: Math.min(480, window.width - 48); padding: 24
-        height: Math.min(implicitHeight, window.height - 48)
+        height: Math.min(settingsFields.height + topPadding + bottomPadding, window.height - 48)
         x: Math.round((parent.width - width) / 2); y: Math.round((parent.height - height) / 2)
         modal: true; focus: true
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
@@ -1039,39 +1077,45 @@ ApplicationWindow {
         onClosed: if (window.chatVisible) window.focusWorkComposer()
         // Three labelled groups (connection / models / appearance) instead of eight
         // equal-weight rows: grouping cuts scan time (Hick) and shows what belongs together.
-        contentItem: Column {
-            spacing: 10
-            Text { text: "连接与外观"; color: Theme.textPrimary; font.pixelSize: 20; font.weight: Font.DemiBold; bottomPadding: 4 }
-            Text { objectName: "settingsGroupConnection"; text: "连接"; color: Theme.textMuted; font.pixelSize: Theme.captionSize; font.weight: Font.DemiBold }
-            Row {
-                width: parent.width; spacing: 8
-                TextField { id: endpoint; width: parent.width - applyGateway.width - 8; height: 40; color: "#e2e7ec"; selectByMouse: true; leftPadding: 12
-                    placeholderText: "revon 网关地址"; placeholderTextColor: Theme.textMuted
-                    Accessible.name: "revon 网关地址"
-                    background: GlassSurface { material: window.material; radius: 12; emphasis: endpoint.activeFocus ? 0.8 : 0 } }
-                GlassButton { id: applyGateway; material: window.material; height: 40; text: "应用并连接"; glyph: "plug"; enabled: !controller.busy; onClicked: {controller.setGateway(endpoint.text); settings.close()} }
-            }
-            Text { width: parent.width; text: "沿用现有 revon 网关。Coding、工具和连接器均在当前工作台内打开。"; color: Theme.textMuted; wrapMode: Text.Wrap; font.pixelSize: Theme.captionSize; bottomPadding: 8 }
-            Text { objectName: "settingsGroupModels"; text: "模型"; color: Theme.textMuted; font.pixelSize: Theme.captionSize; font.weight: Font.DemiBold }
-            Row {
-                width: parent.width; spacing: 8
-                GlassButton { objectName: "manageModelsEntry"; material: window.material; width: (parent.width - 8) / 2; text: "管理已添加的模型"; glyph: "settings-2"; enabled: !controller.isDemo; tip: controller.isDemo ? "预览模式下不可编辑模型" : ""; onClicked: { settings.close(); window.openModelEditor("") } }
-                GlassButton { objectName: "quickSetupEntry"; material: window.material; width: (parent.width - 8) / 2; text: window.label("一键配置模型", "Quick model setup"); glyph: "plug"; onClicked: { settings.close(); onboarding.showSetup() } }
-            }
-            GlassButton { objectName: "welcomeGuideEntry"; material: window.material; width: parent.width; quiet: true; text: window.label("重新运行首次引导", "Run setup guide"); glyph: "sparkles"; onClicked: { settings.close(); onboarding.showGuide() } }
-            Item { width: 1; height: 4 }
-            Text { objectName: "settingsGroupAppearance"; text: "外观"; color: Theme.textMuted; font.pixelSize: Theme.captionSize; font.weight: Font.DemiBold }
-            Row {
-                width: parent.width; spacing: 8
-                GlassButton { material: window.material; width: (parent.width - 16) / 3; text: "壁纸"; glyph: "image"; onClicked: { settings.close(); wallpaperSettings.open() } }
-                GlassButton { objectName: "petSettingsEntry"; material: window.material; width: (parent.width - 16) / 3; text: "桌面宠物"; glyph: "sparkles"; onClicked: { settings.close(); petSettings.open() } }
-                GlassButton { material: window.material; width: (parent.width - 16) / 3; text: "玻璃外观"; glyph: "sliders-horizontal"; onClicked: {settings.close(); options.open()} }
-            }
-            Rectangle { width: parent.width; height: 1; color: Theme.divider }
-            Row {
-                width: parent.width
-                Text { width: parent.width - fullBench.width; anchors.verticalCenter: parent.verticalCenter; text: gpuEnabled ? "GPU 渲染 · 原生文本输入" : "兼容渲染 · 玻璃光学效果不可用"; color: Theme.textMuted; font.pixelSize: Theme.captionSize; elide: Text.ElideRight }
-                GlassButton { id: fullBench; material: window.material; text: "打开完整工作台"; glyph: "panels-top-left"; quiet: true; onClicked: controller.openWorkbench("config") }
+        contentItem: AppScrollView {
+            id: settingsScroll
+            clip: true; contentWidth: availableWidth
+            Column {
+                id: settingsFields
+                width: settingsScroll.availableWidth
+                spacing: 10
+                Text { text: "连接与外观"; color: Theme.textPrimary; font.pixelSize: 20; font.weight: Font.DemiBold; bottomPadding: 4 }
+                Text { objectName: "settingsGroupConnection"; text: "连接"; color: Theme.textMuted; font.pixelSize: Theme.captionSize; font.weight: Font.DemiBold }
+                Row {
+                    width: parent.width; spacing: 8
+                    TextField { id: endpoint; width: parent.width - applyGateway.width - 8; height: 40; color: "#e2e7ec"; selectByMouse: true; leftPadding: 12
+                        placeholderText: "revon 网关地址"; placeholderTextColor: Theme.textMuted
+                        Accessible.name: "revon 网关地址"
+                        background: GlassSurface { material: window.material; radius: 12; emphasis: endpoint.activeFocus ? 0.8 : 0 } }
+                    GlassButton { id: applyGateway; material: window.material; height: 40; text: "应用并连接"; glyph: "plug"; enabled: !controller.busy; onClicked: {controller.setGateway(endpoint.text); settings.close()} }
+                }
+                Text { width: parent.width; text: "沿用现有 revon 网关。Coding、工具和连接器均在当前工作台内打开。"; color: Theme.textMuted; wrapMode: Text.Wrap; font.pixelSize: Theme.captionSize; bottomPadding: 8 }
+                Text { objectName: "settingsGroupModels"; text: "模型"; color: Theme.textMuted; font.pixelSize: Theme.captionSize; font.weight: Font.DemiBold }
+                Row {
+                    width: parent.width; spacing: 8
+                    GlassButton { objectName: "manageModelsEntry"; material: window.material; width: (parent.width - 8) / 2; text: "管理已添加的模型"; glyph: "settings-2"; enabled: !controller.isDemo; tip: controller.isDemo ? "预览模式下不可编辑模型" : ""; onClicked: { settings.close(); window.openModelEditor("") } }
+                    GlassButton { objectName: "quickSetupEntry"; material: window.material; width: (parent.width - 8) / 2; text: window.label("一键配置模型", "Quick model setup"); glyph: "plug"; onClicked: { settings.close(); onboarding.showSetup() } }
+                }
+                GlassButton { objectName: "welcomeGuideEntry"; material: window.material; width: parent.width; quiet: true; text: window.label("重新运行首次引导", "Run setup guide"); glyph: "sparkles"; onClicked: { settings.close(); onboarding.showGuide() } }
+                Item { width: 1; height: 4 }
+                Text { objectName: "settingsGroupAppearance"; text: "外观"; color: Theme.textMuted; font.pixelSize: Theme.captionSize; font.weight: Font.DemiBold }
+                Row {
+                    width: parent.width; spacing: 8
+                    GlassButton { material: window.material; width: (parent.width - 16) / 3; text: "壁纸"; glyph: "image"; onClicked: { settings.close(); wallpaperSettings.open() } }
+                    GlassButton { objectName: "petSettingsEntry"; material: window.material; width: (parent.width - 16) / 3; text: "桌面宠物"; glyph: "sparkles"; onClicked: { settings.close(); petSettings.open() } }
+                    GlassButton { material: window.material; width: (parent.width - 16) / 3; text: "玻璃外观"; glyph: "sliders-horizontal"; onClicked: {settings.close(); options.open()} }
+                }
+                Rectangle { width: parent.width; height: 1; color: Theme.divider }
+                Row {
+                    width: parent.width
+                    Text { width: parent.width - fullBench.width; anchors.verticalCenter: parent.verticalCenter; text: gpuEnabled ? "GPU 渲染 · 原生文本输入" : "兼容渲染 · 玻璃光学效果不可用"; color: Theme.textMuted; font.pixelSize: Theme.captionSize; elide: Text.ElideRight }
+                    GlassButton { id: fullBench; material: window.material; text: "打开完整工作台"; glyph: "panels-top-left"; quiet: true; onClicked: controller.openWorkbench("config") }
+                }
             }
         }
     }
@@ -1197,7 +1241,7 @@ ApplicationWindow {
                     : "重新发送会替换这条消息，并从这里重新生成回复。之后的对话将被移除。"
                 color: "#a7b3c0"; font.pixelSize: 13
             }
-            ScrollView {
+            AppScrollView {
                 visible: !reviseMessage.withdrawing
                 Layout.fillWidth: true; Layout.preferredHeight: 160
                 clip: true
@@ -1286,7 +1330,7 @@ ApplicationWindow {
         visible: !window.codingVisible && workbench.navigationOpen
         x: 18; y: 184; width: window.sideWidth - 36; height: window.height - y - 164
         contentHeight: navigation.height; clip: true; boundsBehavior: Flickable.StopAtBounds
-        ScrollBar.vertical: ScrollBar { width: 3 }
+        ScrollBar.vertical: AppScrollBar {}
         Column {
             id: navigation; width: parent.width; spacing: 7
             Repeater {
@@ -1313,7 +1357,11 @@ ApplicationWindow {
                     onClicked: {
                         if (modelData.key === "search") searchPanel.open()
                         else if (modelData.key === "files") workbench.toggleFiles()
-                        else if (modelData.key === "config" && !setup.developer) onboarding.showSetup()
+                        else if (modelData.key === "config" && !setup.developer) {
+                            workbench.modelRows.reload()
+                            if (workbench.modelRows.rows.length) modelEditor.openFor("", true)
+                            else onboarding.showSetup()
+                        }
                         else workbench.navigate(modelData.key)
                     }
                 }
@@ -1518,7 +1566,7 @@ ApplicationWindow {
                 }
             }
             Text { Layout.fillWidth: true; text: approvalCard.current ? approvalCard.current.title : ""; color: Theme.textPrimary; font.pixelSize: 16; wrapMode: Text.Wrap }
-            ScrollView {
+            AppScrollView {
                 Layout.fillWidth: true; Layout.fillHeight: true; clip: true
                 background: Rectangle { radius: 12; color: "#0b1017"; border.color: Theme.divider; border.width: 1 }
                 TextArea { readOnly: true; selectByMouse: true; wrapMode: TextEdit.Wrap; color: Theme.textSecondary; font.pixelSize: 13; font.family: "Cascadia Code"; padding: 14; text: approvalCard.current ? approvalCard.current.detail : ""; background: null }
@@ -1545,9 +1593,9 @@ ApplicationWindow {
         background: GlassSurface { material: window.material; radius: 20 }
         contentItem: ColumnLayout {
             Text { text: "Coding 对话历史"; color: "#edf1f5"; font.pixelSize: 18 }
-            ListView {
+            AppListView {
                 Layout.fillWidth: true; Layout.fillHeight: true; model: codingHistory.rows; clip: true; spacing: 7
-                delegate: GlassButton { required property var modelData; width: ListView.view.width; material: window.material; text: modelData.stamp + " · " + modelData.label; onClicked: {workbench.codingAction("restore", modelData.path); codingHistory.close()} }
+                delegate: GlassButton { required property var modelData; width: ListView.view.rowWidth; material: window.material; text: modelData.stamp + " · " + modelData.label; onClicked: {workbench.codingAction("restore", modelData.path); codingHistory.close()} }
             }
             GlassButton { material: window.material; text: "关闭"; onClicked: codingHistory.close() }
         }
@@ -1652,7 +1700,7 @@ ApplicationWindow {
             }
         }
         function onFocusComposer() { window.focusWorkComposer(); window.followTail = true; messages.positionViewAtEnd() }
-        function onStreamAdvanced() { if (window.followTail) Qt.callLater(messages.positionViewAtEnd) }
+        function onStreamAdvanced() { if (window.followTail) Qt.callLater(messages.followLatest) }
     }
     Component.onCompleted: {
         if (setup.needsGuide && (typeof smokeMode === "undefined" || !smokeMode)) onboarding.showGuide()

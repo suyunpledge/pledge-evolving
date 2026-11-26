@@ -9,9 +9,10 @@ from __future__ import annotations
 import copy
 import json
 import math
+from urllib.parse import urlsplit
 
 
-_LIMITS = {"contextWindow", "maxOutputTokens"}
+_LIMITS = {"contextWindow", "maxInputTokens", "maxOutputTokens", "outputTokenBudget"}
 _FLAGS = {"tools", "vision", "stream"}
 _FIELDS = _LIMITS | _FLAGS | {"reasoningEfforts", "cacheTailRule"}
 
@@ -49,8 +50,21 @@ def effective_capabilities(route, model):
     return out
 
 
+def native_token_limits(base_url, model):
+    """Published context and output ceilings on Xiaomi's own MiMo V2.6 endpoints."""
+    if model in ("mimo-v2.6-pro", "mimo-v2.6-flash", "mimo-v2.6-pro-ultraspeed"):
+        try:
+            address = urlsplit(base_url)
+            host = address.hostname or ""
+        except ValueError:
+            return {}
+        if address.scheme == "https" and host.endswith(".xiaomimimo.com"):
+            return {"contextWindow": 1048576, "maxOutputTokens": 131072}
+    return {}
+
+
 def default_output(profile, capabilities, *, adapt=True):
-    default = (profile.min_output_tokens if adapt else 0) or 2048
+    default = capabilities.get("outputTokenBudget") or (profile.min_output_tokens if adapt else 0) or 2048
     return min(default, capabilities.get("maxOutputTokens", default))
 
 
@@ -65,7 +79,7 @@ def _image_blocks(blocks):
             yield block
 
 
-def request_budget(payload, capabilities):
+def request_budget(payload, capabilities, *, automatic_output=False):
     """Read-only estimate of the final request, including non-content fields."""
     material = {k: payload[k] for k in ("system", "messages", "tools", "tool_choice") if k in payload}
     chars = len(json.dumps(material, ensure_ascii=False, separators=(",", ":")))
@@ -83,7 +97,12 @@ def request_budget(payload, capabilities):
         raise ValueError("output token limit must be a positive integer")
     reserve = max(outputs, default=capabilities.get("maxOutputTokens", 2048))
     window = capabilities.get("contextWindow")
+    if automatic_output and window is not None:
+        reserve = min(reserve, max(1, window - estimated))
     budget = max(0, window - reserve) if window is not None else None
+    if "maxInputTokens" in capabilities:
+        ceiling = capabilities["maxInputTokens"]
+        budget = min(budget, ceiling) if budget is not None else ceiling
     return {"estimated_input_tokens": estimated, "output_reserve": reserve,
             "context_window": window, "input_budget": budget,
             "fits": budget is None or estimated <= budget,
@@ -97,10 +116,10 @@ def preview_budget(messages, tools, provider, model):
     if provider.wire == "anthropic":
         payload["system"] = "\n".join(str(m.get("content", "")) for m in messages if m.get("role") == "system")
         payload["messages"] = [m for m in messages if m.get("role") != "system"]
-    return request_budget(payload, caps)
+    return request_budget(payload, caps, automatic_output=True)
 
 
-def validate_request(payload, capabilities):
+def validate_request(payload, capabilities, *, automatic_output=False):
     if capabilities.get("tools") is False and payload.get("tools"):
         raise ValueError("current route does not support tools")
     if capabilities.get("stream") is False and payload.get("stream"):
@@ -114,9 +133,17 @@ def validate_request(payload, capabilities):
     effort = payload.get("reasoning_effort", (payload.get("output_config") or {}).get("effort"))
     if efforts is not None and effort is not None and effort not in efforts:
         raise ValueError("requested reasoning effort is not supported by current route")
-    budget = request_budget(payload, capabilities)
+    budget = request_budget(payload, capabilities, automatic_output=automatic_output)
     if budget["output_reserve"] > capabilities.get("maxOutputTokens", budget["output_reserve"]):
         raise ValueError("requested output exceeds current route maxOutputTokens")
+    if budget["estimated_input_tokens"] > capabilities.get("maxInputTokens", budget["estimated_input_tokens"]):
+        raise ValueError(f"预计输入 {budget['estimated_input_tokens']} tokens，超过当前模型的输入上限 "
+                         f"{capabilities['maxInputTokens']} tokens。请缩短对话或在模型配置中调整。")
     if not budget["fits"]:
-        raise ValueError("estimated request exceeds current route contextWindow (including output reserve)")
+        raise ValueError(f"输入约 {budget['estimated_input_tokens']} tokens，预留输出 {budget['output_reserve']} tokens，"
+                         f"超出当前上下文长度（contextWindow）{budget['context_window']} tokens。")
+    if automatic_output:
+        for key in ("max_tokens", "max_completion_tokens"):
+            if key in payload:
+                payload[key] = min(payload[key], budget["output_reserve"])
     return budget

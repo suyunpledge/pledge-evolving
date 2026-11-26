@@ -68,7 +68,7 @@ Popup {
                     clip: true; implicitHeight: contentHeight
                     model: fileSelector.popup.visible ? fileSelector.delegateModel : null
                     currentIndex: fileSelector.highlightedIndex
-                    ScrollIndicator.vertical: ScrollIndicator {}
+                    ScrollBar.vertical: AppScrollBar {}
                 }
             }
             Accessible.name: "修改的文件"
@@ -99,8 +99,8 @@ Popup {
                 contentWidth: Math.max(width, Math.min(20000, review.diffLines.reduce((n, line) => Math.max(n, line.length), 0) * 8 + 30))
                 flickableDirection: Flickable.AutoFlickDirection
                 boundsBehavior: Flickable.StopAtBounds
-                ScrollBar.vertical: ScrollBar {}
-                ScrollBar.horizontal: ScrollBar {}
+                ScrollBar.vertical: AppScrollBar {}
+                ScrollBar.horizontal: AppScrollBar {}
                 delegate: Rectangle {
                     required property string modelData
                     width: diff.contentWidth; height: 23

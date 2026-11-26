@@ -997,7 +997,8 @@ class Agent:
             return {}
         name, model = order[0]
         provider = self.router.providers.get(name)
-        if provider is None or not provider.capabilities_for_model(model).get("contextWindow"):
+        caps = provider.capabilities_for_model(model) if provider else {}
+        if not ("contextWindow" in caps or "maxInputTokens" in caps):
             return {}
         from .route_capabilities import preview_budget
         return {**preview_budget(messages, tools, provider, model), "provider": name, "model": model}
@@ -1412,7 +1413,9 @@ class Agent:
             self._run_model = 'unknown'
             self._run_scope = False
             self._check_cancel()
-            return self._run(task, history=history)
+            from .opencode import conversation
+            with conversation(str(self.session.path) if self.session is not None else self._context_id):
+                return self._run(task, history=history)
         except RunCancelled:
             report = self._finish(RunReport(text='[cancelled: inspect files and diff before continuing]',
                 steps=self._cancel_steps, usage=self._cancel_usage, stopped='cancelled', events=self.events))

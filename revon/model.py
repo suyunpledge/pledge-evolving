@@ -231,8 +231,12 @@ class Provider:
         return self.profile_for_model(self.default_model or (self.models[0] if self.models else ""))
 
     def capabilities_for_model(self, model: str) -> dict[str, Any]:
-        from .route_capabilities import effective_capabilities
-        return effective_capabilities(self.route_capabilities, self.model_capabilities.get(model, {}))
+        from .route_capabilities import effective_capabilities, native_token_limits
+        caps = effective_capabilities(self.route_capabilities, self.model_capabilities.get(model, {}))
+        native = native_token_limits(self.base_url, model)
+        if native and self.adapt:
+            caps = effective_capabilities({**native, "outputTokenBudget": native["maxOutputTokens"]}, caps)
+        return caps
 
     def profile_for_model(self, model: str) -> VendorProfile:
         """按**本次实际调用的模型**识别厂商。
@@ -268,6 +272,8 @@ class Provider:
         """Public inspection returns opaque references, never credentials."""
         if self.wire == "anthropic":
             return {"x-api-key": self.api_key, "anthropic-version": "2023-06-01", **self.headers}
+        if self.wire == "google":
+            return {"x-goog-api-key": self.api_key, **self.headers}
         return {"Authorization": f"Bearer {self.api_key}", **self.headers}
 
     def _execution_headers(self, url: str) -> dict[str, str]:
@@ -395,14 +401,21 @@ def _plan_and_shape(payload: dict[str, Any], messages: list[dict[str, Any]],
         reasoning_default = {'mode': provider.reasoning_mode, 'source': 'request' if explicit else 'provider'}
     if "reasoning_effort" in payload and "thinking_budget" in payload:
         raise ValueError("reasoning_effort and thinking_budget cannot be combined")
-    if (provider.adapt and profile.min_output_tokens
-            and "max_tokens" not in payload and "max_completion_tokens" not in payload):
-        from .route_capabilities import default_output
-        payload["max_tokens"] = default_output(profile, capabilities)
-    if (("contextWindow" in capabilities or "maxOutputTokens" in capabilities)
-            and "max_tokens" not in payload and "max_completion_tokens" not in payload):
+    automatic_output = "max_tokens" not in payload and "max_completion_tokens" not in payload
+    if ((provider.adapt and profile.min_output_tokens or
+            any(key in capabilities for key in ("contextWindow", "maxOutputTokens", "outputTokenBudget")))
+            and automatic_output):
         from .route_capabilities import default_output
         payload["max_tokens"] = default_output(profile, capabilities, adapt=provider.adapt)
+    if "outputTokenBudget" in capabilities:
+        for key in ("max_tokens", "max_completion_tokens"):
+            if type(payload.get(key)) is int:
+                payload[key] = min(payload[key], capabilities["outputTokenBudget"])
+    if provider.wire == "openai" and "max_tokens" in payload:
+        from .route_capabilities import native_token_limits
+        if native_token_limits(provider.base_url, model):
+            legacy_limit = payload.pop("max_tokens")
+            payload.setdefault("max_completion_tokens", legacy_limit)
     if options.get("flex", provider.flex) and provider.wire != "openai":
         raise ValueError("Flex requires an OpenAI-compatible wire")
     from .request_execution import prepare_execution
@@ -419,7 +432,7 @@ def _plan_and_shape(payload: dict[str, Any], messages: list[dict[str, Any]],
     if not provider.adapt:
         from .route_capabilities import validate_request
         try:
-            budget = validate_request(payload, capabilities) if capabilities else {}
+            budget = validate_request(payload, capabilities, automatic_output=automatic_output) if capabilities else {}
         except ValueError as exc:
             raise BadRequest(str(exc)) from None
         return payload, {"vendor": profile.id, "actions": ["适配器已关闭"],
@@ -451,7 +464,7 @@ def _plan_and_shape(payload: dict[str, Any], messages: list[dict[str, Any]],
         execution['cache_affinity'] = affinity
     from .route_capabilities import validate_request
     try:
-        budget = validate_request(payload, capabilities) if capabilities else {}
+        budget = validate_request(payload, capabilities, automatic_output=automatic_output) if capabilities else {}
     except ValueError as exc:
         raise BadRequest(str(exc)) from None
 
@@ -499,7 +512,7 @@ def _plan_and_shape(payload: dict[str, Any], messages: list[dict[str, Any]],
 
     if capabilities:
         try:
-            budget = validate_request(payload, capabilities)
+            budget = validate_request(payload, capabilities, automatic_output=automatic_output)
         except ValueError as exc:
             raise BadRequest(str(exc)) from None
     raw = plan.to_raw()
@@ -598,10 +611,11 @@ class _ProviderRateLimiter:
 class HttpTransport:
     """Minimal stdlib transport for OpenAI- and Anthropic-shaped endpoints."""
 
-    def __init__(self, timeout: float | None = None, *, response_opener=None) -> None:
+    def __init__(self, timeout: float | None = None, *, response_opener=None, history_home=None) -> None:
         from .request_timing import request_timeout
         self.timeout = request_timeout(timeout)
         self._response_opener = response_opener  # trusted host injection, never a model option
+        self._history_home = history_home
         self._limiter = _ProviderRateLimiter()
 
     def complete(self, provider: Provider, model: str, messages: list[dict[str, Any]],
@@ -623,7 +637,7 @@ class HttpTransport:
         messages = sanitize_messages(messages, provider.wire)
         profile = provider.profile_for_model(model)
         from .route_capabilities import default_output as route_default_output
-        default_output = route_default_output(profile, provider.capabilities_for_model(model), adapt=provider.adapt)
+        caps = provider.capabilities_for_model(model)
         # Gemini 兼容网关要求每条 tool 消息带 name（hermes-agent #16478）
         if profile.manufacturer_id == "gemini":
             messages = fill_gemini_name_fields(messages)
@@ -632,7 +646,6 @@ class HttpTransport:
             chat = [m for m in messages if m.get("role") != "system"]
             payload: dict[str, Any] = {
                 "model": model,
-                "max_tokens": int(options.get("max_tokens", default_output)),
                 "messages": chat,
             }
             if system:
@@ -642,12 +655,13 @@ class HttpTransport:
             # Claude 协议只认 model / max_tokens / messages / system / tools：
             # 采样参数一律摘掉（带上去会 400）。
             sampling.strip_extra_params(payload, model, provider.wire)
-            url = provider.url("/v1/messages")
+            from .opencode import anthropic_base
+            base = anthropic_base(provider.base_url, provider.wire)
+            url = base + "/messages" if base else provider.url("/v1/messages")
         else:
             payload = {
                 "model": model,
                 "messages": messages,
-                "max_tokens": int(options.get("max_tokens", default_output)),
             }
             requested = options.get("temperature")
             if requested is None:
@@ -663,6 +677,10 @@ class HttpTransport:
             url = provider.url(chat_request_path(provider.service, provider.wire,
                                                 provider.base_url))
 
+        if "max_tokens" in options:
+            payload["max_tokens"] = int(options["max_tokens"])
+        elif "contextWindow" not in caps:
+            payload["max_tokens"] = route_default_output(profile, caps, adapt=provider.adapt)
         for key in ("reasoning_effort", "thinking", "thinking_budget", "enable_thinking", "service_tier", "tool_choice"):
             if key in options:
                 payload[key] = copy.deepcopy(options[key])
@@ -700,6 +718,11 @@ class HttpTransport:
                 plan_raw["execution"]["transport"] = "responses"
             else:
                 payload = openai_responses.strip_replay(payload)
+                if provider.wire == 'google':
+                    from . import google_native
+                    payload = google_native.to_request(payload)
+                    url = google_native.endpoint(provider.base_url, model)
+                    plan_raw["execution"]["transport"] = "generateContent"
         except (ValueError, TypeError, KeyError) as exc:
             _model_wait(0, cancel_event)
             raise BadRequest(str(exc)) from exc
@@ -707,6 +730,8 @@ class HttpTransport:
         payload = scope.protect(payload)
         body = json.dumps(payload, ensure_ascii=False).encode()
         headers = {"content-type": "application/json", **provider._execution_headers(url)}
+        from .opencode import request_headers
+        headers.update(request_headers(url))
         request = urllib.request.Request(url, data=body, headers=headers, method="POST")
         from .http_transport import RequestCancelled, open_response
         from .request_timing import coding_request
@@ -733,7 +758,9 @@ class HttpTransport:
                     opener = desktop[0].open_coding
                     cancel_options = {'cancel_event': cancel_event, 'timings': timings,
                                       'probe_reuse': options.get('probe_seed_reuse', False)}
-            with opener(request, timeout=effective_timeout, **cancel_options) as response:
+            from .provider_requests import open_recorded
+            with open_recorded(opener, request, home=self._history_home, provider_id=provider.name,
+                               base_url=provider.base_url, source='direct', timeout=effective_timeout, **cancel_options) as response:
                 headers_ms = round((time.monotonic() - wire_start) * 1000)
                 from .secrets import redact
                 data = response.read(2 * 1024 * 1024 + 1)
@@ -742,6 +769,8 @@ class HttpTransport:
                 raw = redact(json.loads(data.decode("utf-8", "replace")))
                 if responses:
                     raw = openai_responses.to_chat(raw, response_scope)
+                elif provider.wire == 'google':
+                    raw = google_native.to_chat(raw, model)
                 wire_status = 'ok'
         except urllib.error.HTTPError as exc:
             headers_ms = round((time.monotonic() - wire_start) * 1000)
@@ -839,16 +868,17 @@ class HttpTransport:
         _remember_warmth(provider, plan_raw, usage)
 
         from .toolwire import parse_tool_calls
+        agent_wire = "openai" if provider.wire == "google" else provider.wire
 
         # model 必须透传：repair_arguments 的 MODEL_QUIRKS 按模型名开关，
         # 丢掉它等于怪癖表永不生效（旧 _model 属性全树无写入点）。
         # A truncated function argument is not a complete action, even if a
         # repair heuristic could close its JSON braces.
         calls = ([] if finish_reason in {"length", "max_tokens", "repetition_truncation", "content_filter"} else
-                 parse_tool_calls(message, provider.wire, model=model))
+                 parse_tool_calls(message, agent_wire, model=model))
         return text, usage, {
             "tool_calls": [call.to_raw() for call in calls],
-            "wire": provider.wire,
+            "wire": agent_wire,
             "assistant_message": message,
             "plan": plan_raw,
             "finish_reason": finish_reason,
@@ -927,7 +957,7 @@ class ModelRouter:
         panel = [tuple(pair) for pair in (cfg.get("model", "moaModels", []) or [])]
         return cls(
             providers,
-            transport=transport,
+            transport=transport if transport is not None else HttpTransport(history_home=getattr(cfg, 'home', None)),
             chain=chain,
             moa=bool(cfg.get("model", "moa", False)),
             moa_panel=panel,

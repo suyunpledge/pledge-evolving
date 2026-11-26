@@ -8,7 +8,6 @@ Item {
     required property var material
     readonly property var stateData: workbench.coding
     property string tab: "chat"
-    property bool followTail: true
     signal permissionRequested()
     signal plannerKeyRequested()
     readonly property var planningModes: [
@@ -81,21 +80,16 @@ Item {
         }
         Item {
             Layout.fillHeight: true; Layout.fillWidth: true; Layout.minimumHeight: 80
-            ListView {
-                id: transcript
+            TranscriptList {
+                id: transcript; objectName: "codingTranscript"
                 anchors.fill: parent; visible: pane.tab === "chat"
                 model: workbench.codingMessages; clip: true; spacing: 12
-                boundsBehavior: Flickable.StopAtBounds
-                ScrollBar.vertical: ScrollBar { width: 4 }
-                onMovementStarted: pane.followTail = false
-                onMovementEnded: pane.followTail = atYEnd
-                onContentHeightChanged: if (pane.followTail) Qt.callLater(positionViewAtEnd)
                 delegate: Item {
                     required property string roleName
                     required property string textContent
                     required property string stamp
                     readonly property bool fromUser: roleName === "你" || roleName === "user"
-                    width: transcript.width; height: bubble.height + 3
+                    width: transcript.textWidth; height: bubble.height + 3
                     Item {
                         id: bubble
                         x: fromUser ? 24 : 1; width: parent.width - 25
@@ -124,7 +118,7 @@ Item {
                     }
                 }
                 footer: Column {
-                    width: transcript.width; spacing: 10
+                    width: transcript.textWidth; spacing: 10
                     TodoList { width: parent.width; items: pane.stateData.todos || []; running: !!pane.stateData.taskRunning }
                     Repeater {
                         model: pane.stateData.changes || []
@@ -156,6 +150,7 @@ Item {
                 anchors.fill: parent; clip: true
                 visible: pane.tab === "chat" && transcript.count === 0 && !(pane.stateData.changes || []).length
                 contentWidth: width; contentHeight: welcome.height + 24
+                ScrollBar.vertical: AppScrollBar {}
                 Column {
                     id: welcome; x: 10; y: 12; width: parent.width - 20; spacing: 10
                     Text { width: parent.width; text: pane.stateData.ready ? "开始一个任务" : "正在载入 Coding…"; color: "#edf1f6"; font.pixelSize: 20; font.weight: Font.DemiBold }
@@ -171,7 +166,7 @@ Item {
                     }
                 }
             }
-            ScrollView {
+            AppScrollView {
                 id: details; anchors.fill: parent; visible: pane.tab !== "chat"; clip: true
                 contentWidth: availableWidth
                 Column {
@@ -252,7 +247,7 @@ Item {
         contentItem: ListView {
             id: optionList
             spacing: 5; clip: true
-            ScrollBar.vertical: ScrollBar { width: 4 }
+            ScrollBar.vertical: AppScrollBar {}
             model: choices.kind === "planning" ? [
                     {value:"auto", label:"自动判断", action:"planningPolicy", selected:pane.stateData.planningPolicy === "auto"},
                     {value:"manual", label:"手动开启", action:"planningPolicy", selected:pane.stateData.planningPolicy === "manual"},
@@ -277,7 +272,7 @@ Item {
                    {label:"创建子 Agent", action:"delegate"}, {label:"模型角色设置", submenu:"roles"}, {label:"审批记录", action:"approvals"}]
             delegate: GlassButton {
                 required property var modelData
-                material: pane.material; width: ListView.view.width; height: 37
+                material: pane.material; width: optionList.width - (optionList.ScrollBar.vertical.visible ? optionList.ScrollBar.vertical.width + 2 : 0); height: 37
                 text: modelData.label.length > 32 ? modelData.label.slice(0, 29) + "…" : modelData.label
                 selected: !!modelData.selected
                 glyph: modelData.submenu ? "chevron-right" : modelData.selected ? "check" : ""

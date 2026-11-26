@@ -348,13 +348,12 @@ Item {
                         background: PageSurface { material: page.material; radius: 9 }
                         onAccepted: page.invoke("search", {query:text})
                     }
-                    ListView {
+                    AppListView {
                         id: tree; objectName: "projectFiles"; Layout.fillWidth: true; Layout.fillHeight: true
                         model: page.viewData.rows || []; clip: true; spacing: 3
-                        ScrollBar.vertical: ScrollBar {}
                         delegate: PageButton {
                             required property var modelData
-                            width: tree.width - 6; material: page.material; text: modelData.title; glyph: modelData.directory ? "folder" : "file"
+                            width: tree.rowWidth; material: page.material; text: modelData.title; glyph: modelData.directory ? "folder" : "file"
                             quiet: true; selected: page.editorPath.endsWith(modelData.id.replace(/\//g, "\\")) || page.editorPath.endsWith(modelData.id)
                             tip: modelData.title; enabled: !workbench.busy
                             contentItem: Text { text: modelData.title; color: "#c7d0db"; font.pixelSize: 12; verticalAlignment: Text.AlignVCenter; elide: Text.ElideMiddle; leftPadding: 8 }
@@ -366,11 +365,12 @@ Item {
                     Layout.fillWidth: true; Layout.fillHeight: true; spacing: page.ide ? 0 : 9
                     Rectangle {
                         visible: !page.ide || tabs.width > 0
-                        Layout.fillWidth: true; Layout.preferredHeight: page.ide ? 35 : 34
+                        Layout.fillWidth: true; Layout.preferredHeight: (page.ide ? 35 : 34) + (tabStrip.contentWidth > tabStrip.width ? tabStrip.ScrollBar.horizontal.implicitHeight : 0)
                         color: page.ide ? "#0f141e" : "transparent"
                         Rectangle { visible: page.ide; anchors.bottom: parent.bottom; width: parent.width; height: 1; color: "#1e2736" }
                         Flickable {
                             id: tabStrip
+                            ScrollBar.horizontal: AppScrollBar {}
                             anchors.fill: parent; contentWidth: tabs.width; clip: true
                             boundsBehavior: Flickable.StopAtBounds
                             flickableDirection: Flickable.HorizontalFlick
@@ -584,8 +584,6 @@ Item {
                                                              text !== (page.viewData.document || {}).original)
                                 }
                             }
-                            ScrollBar.vertical: ScrollBar {}
-                            ScrollBar.horizontal: ScrollBar {}
                         }
                         // VS Code style empty editor watermark & shortcut guide
                         Column {
@@ -631,8 +629,6 @@ Item {
                             text: (page.viewData.document || {}).original || ""; submitOnEnter: false; horizontalScroll: true
                             editor.readOnly: true; editor.font.family: "Cascadia Code"; editor.font.pixelSize: 13
                             Component.onCompleted: controller.formatCode(editor.textDocument)
-                            ScrollBar.vertical: ScrollBar {}
-                            ScrollBar.horizontal: ScrollBar {}
                         }
                     }
                     Rectangle {
@@ -722,7 +718,7 @@ Item {
                 }
             }
         }
-        ScrollView {
+        AppScrollView {
             id: body; visible: !page.files; Layout.fillWidth: true; Layout.fillHeight: true
             contentWidth: availableWidth; clip: true
             ColumnLayout {
@@ -768,8 +764,12 @@ Item {
                         GlassSurface { anchors.fill: parent; material: page.material; radius: 14; tint: "#252c3743" }
                         RowLayout {
                             visible: parent.compact; anchors.fill: parent; anchors.margins: 12; spacing: 14
-                            Text { Layout.preferredWidth: Math.min(180, parent.width * 0.3); text: modelData.title; color: "#e1e7ee"; font.pixelSize: 14; elide: Text.ElideRight }
-                            Text { Layout.fillWidth: true; text: modelData.subtitle || ""; color: "#8e9daf"; font.pixelSize: 12; elide: Text.ElideMiddle }
+                            Image {
+                                source: modelData.providerIcon || ""; visible: status === Image.Ready
+                                Layout.preferredWidth: 22; Layout.preferredHeight: 22; fillMode: Image.PreserveAspectFit
+                            }
+                            Text { Layout.preferredWidth: Math.min(180, parent.width * 0.27); text: modelData.title; textFormat: Text.PlainText; color: Theme.textPrimary; font.pixelSize: 14; elide: Text.ElideRight }
+                            Text { Layout.fillWidth: true; text: modelData.subtitle || ""; textFormat: Text.PlainText; color: Theme.textMuted; font.pixelSize: 12; elide: Text.ElideRight }
                             Repeater {
                                 model: modelData.actions || []
                                 GlassButton { required property var modelData; material: page.material; text: modelData.label; height: 32; enabled: !workbench.busy; onClicked: page.invoke(modelData.key, {id:parent.parent.modelData.id}) }
@@ -800,7 +800,7 @@ Item {
         ColumnLayout {
             visible: !page.ide && !!page.viewData.result; Layout.fillWidth: true; spacing: 7
             PageButton { material: page.material; text: page.outputOpen ? "收起结果" : "展开结果"; onClicked: page.outputOpen = !page.outputOpen }
-            ScrollView {
+            AppScrollView {
                 visible: page.outputOpen; Layout.fillWidth: true; Layout.preferredHeight: Math.min(240, page.height * 0.3); clip: true
                 TextArea { text: page.viewData.result || ""; readOnly: true; selectByMouse: true; wrapMode: TextEdit.Wrap; color: "#c5d1dd"; font.family: "Cascadia Code"; font.pixelSize: 12; background: null }
             }

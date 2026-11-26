@@ -1,5 +1,6 @@
 """Plan a project verification before approval and execute exactly those argv vectors."""
 import re
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -11,7 +12,7 @@ from .testing import run_process, decode_output
 DESCRIPTION = "Run a detected project test, lint or build task. Each invocation requires human approval. No shell command input."
 SCHEMA = {
     'task': {'type': 'string', 'description': 'test, lint, build, or a detected project task ID such as python.test.'},
-    'filter': {'type': 'string', 'description': 'Optional Python test name substring, e.g. test_parser.'},
+    'filter': {'type': 'string', 'description': 'Optional Python test name filter. With unittest, an exact module name in the discovery directory also narrows the discovery filename, e.g. test_parser. Other names use -k.'},
 }
 TIMEOUT = 300
 
@@ -30,7 +31,12 @@ def plan(workspace, arguments, policy):
         text = arguments['filter']
         if task['id'] != 'python.test' or not isinstance(text, str) or not re.fullmatch(r'[\w.]{1,100}', text):
             raise ValueError('filter must be a Python test name (letters, digits, underscores or dots).')
-        task['steps'][0].extend(['-k', text])
+        step = task['steps'][0]
+        if 'unittest' in step and text.isidentifier() and text.startswith('test'):
+            start = Path(workspace) / step[step.index('-s') + 1]
+            if (start / (text + '.py')).is_file():
+                step.extend(['-p', text + '.py'])
+        step.extend(['-k', text])
     commands = [command_line(toolchains.check_argv(step)) for step in task['steps']]
     if policy._matches(policy.deny, 'shell_exec') or any(policy._command_denied(cmd) for cmd in commands):
         raise PermissionError('The host policy denies this project command.')
@@ -50,21 +56,41 @@ def run(task, ctx):
         target = Path(folder).resolve()
         target.relative_to(ctx.workspace.resolve())
         target.mkdir(parents=True, exist_ok=True)
-    for argv in task['steps']:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            return ToolResult(False, error='Project check timed out.', meta={'status': 'timed_out'})
-        result = run_process(argv, ctx.workspace, stop, timeout=remaining, extra_env=_environment(task),
-                             decode=decode_output, protect_environment=True)
-        outputs.append(result['output'])
-        if result['status'] != 'completed':
-            break
+    # Tools and test modules can resolve ~ without loading the desktop user's
+    # configuration. All approved steps in this invocation share the same home.
+    with tempfile.TemporaryDirectory(prefix='revon-check-home-') as check_home:
+        env = {**_environment(task), 'HOME': check_home, 'USERPROFILE': check_home}
+        for argv in task['steps']:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                result = {'status': 'timed_out', 'exit_code': None, 'output_truncated': False,
+                          'execution_state': 'completed' if outputs else 'not_started'}
+                break
+            result = run_process(argv, ctx.workspace, stop, timeout=remaining, extra_env=env,
+                                 decode=decode_output, protect_environment=True)
+            outputs.append(result['output'])
+            if result['status'] != 'completed':
+                break
     body = ctx.secret_scope.protect_text('\n'.join(outputs))
     meta = {k: result[k] for k in ('status', 'exit_code', 'execution_state', 'output_truncated')}
     from ..builtin_views import command_metadata
     meta['task'] = task['id']
+    codes = {'failed': 'process_exit_nonzero', 'timed_out': 'timed_out', 'cancelled': 'cancelled',
+             'unknown': 'tool_outcome_unknown'}
+    if result['status'] in codes:
+        meta['error_code'] = codes[result['status']]
     if result['status'] in ('completed', 'failed') and result['exit_code'] is not None:
-        meta.update(command_metadata(body, result['exit_code']))
+        counts = {}
+        if task['id'] == 'python.test' and 'unittest' in argv and not result['output_truncated']:
+            runs = re.findall(r'(?m)^Ran (\d+) tests? in ', body)
+            if runs:
+                errors = re.findall(r'(?m)^={10,}\r*\n(ERROR|FAIL): ([^\r\n]+)', body)
+                counts = {'tests_run': int(runs[-1]),
+                          'discovery_errors': sum(k == 'ERROR' and 'unittest.loader._FailedTest.' in v for k, v in errors),
+                          'test_errors': sum(k == 'ERROR' and 'unittest.loader._FailedTest.' not in v for k, v in errors),
+                          'test_failures': sum(k == 'FAIL' for k, v in errors)}
+        meta.update(counts)
+        meta.update(command_metadata(body, result['exit_code'], summary=counts))
     return ToolResult(result['status'] == 'completed', content=body or f"{task['id']} · {result['status']} · exit {result['exit_code']}", meta=meta)
 
 

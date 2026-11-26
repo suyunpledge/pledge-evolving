@@ -1259,7 +1259,7 @@ def build_parser() -> argparse.ArgumentParser:
     gateway.add_argument("--port", type=int, default=8799)
     gateway.add_argument("--models", default="")
     gateway.add_argument("--log")
-    gateway.add_argument("--upstream-wire", choices=["anthropic", "openai"], default="anthropic",
+    gateway.add_argument("--upstream-wire", choices=["anthropic", "openai", "google"], default="anthropic",
                          help="wire format the upstream speaks; 'openai' enables translation")
     gateway.add_argument("--client-wire", choices=["anthropic", "openai"], default="anthropic",
                          help="client wire format; selects the upstream authentication header for direct proxying")

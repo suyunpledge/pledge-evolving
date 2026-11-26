@@ -85,7 +85,7 @@ Popup {
         enabled: !panel.service.saving
         background: GlassSurface { material: panel.material; radius: 10; tint: "#57212d3a" }
     }
-    component ConfigChoice: ComboBox {
+    component ConfigChoice: AppComboBox {
         Layout.fillWidth: true; Layout.preferredHeight: 38
         textRole: "name"; valueRole: "id"; leftPadding: 11
         enabled: !panel.service.saving
@@ -128,7 +128,7 @@ Popup {
             Layout.fillWidth: true; wrapMode: Text.Wrap; color: "#a5b5c7"; font.pixelSize: 13
             text: panel.tr("保存后会继续当前生成请求。选择跳过可返回对话。", "Save to continue this request, or skip to return to chat.")
         }
-        ScrollView {
+        AppScrollView {
             id: fieldsScroll
             readonly property real otherHeight: heading.implicitHeight + actions.implicitHeight + content.spacing * 2
                 + (tabs.visible ? tabs.implicitHeight + content.spacing : 0)

@@ -52,6 +52,26 @@ class StreamRecoveryTests(unittest.TestCase):
     def drive(self):
         return run(self.client, self.messages, **self.options)
 
+    def test_explicit_credit_refusals_stop_after_one_request(self):
+        cases = [(400, {'message': 'Your credit balance is too low to access the API.'}),
+                 (429, {'code': 'insufficient_quota'}), (402, {}), (502, {'code': 'insufficient_balance'})]
+        for status, error in cases:
+            detail = io.BytesIO(json.dumps({'error': error}).encode())
+            with self.subTest(status=status), patch('revon_client.open_response', side_effect=HTTPError(
+                    'http://localhost', status, 'failure', {}, detail)) as opened:
+                with self.assertRaisesRegex(GatewayError, '余额或可用额度不足'):
+                    self.drive()
+                opened.assert_called_once()
+        event = {'error': {'code': 'keystone_upstream_failure', 'retryable': True, 'message': 'Insufficient credits'}}
+        with patch('revon_client.open_response', return_value=io.BytesIO(('data: ' + json.dumps(event) + '\n\n').encode())) as opened:
+            with self.assertRaisesRegex(GatewayError, '可用额度不足'):
+                self.drive()
+            opened.assert_called_once()
+        with patch('revon_client.open_response', side_effect=HTTPError(
+                'http://localhost', 429, 'failure', {}, io.BytesIO(b'{"error":{"code":"rate_limit_exceeded"}}'))):
+            with self.assertRaisesRegex(GatewayError, 'rate_limit_exceeded'):
+                self.drive()
+
     def test_partial_tool_arguments_then_502_after_file_publication(self):
         partial = document('discarded')
         partial['function']['arguments'] = '{"title":'

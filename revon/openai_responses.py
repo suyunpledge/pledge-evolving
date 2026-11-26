@@ -3,15 +3,23 @@ from __future__ import annotations
 
 import json
 
-from .cache_affinity import GPT61_MODELS, official_openai_endpoint
+from .cache_affinity import GPT61_MODELS, official_openai_base, official_openai_endpoint
 
 REPLAY = "responses_replay"
 TOOL_MODELS = GPT61_MODELS | {"gpt-6-sol"}
 
 
 def uses_responses(payload, provider):
+    if not official_openai_endpoint(provider):
+        return False
+    if provider.base_url.rstrip("/").endswith("/v1/responses"):
+        return True
+    if not provider.adapt:
+        return False
+    if payload.get("model") == "gpt-6.2-astra":
+        return True
     messages = payload.get("messages") or []
-    return (provider.adapt and payload.get("model") in TOOL_MODELS and official_openai_endpoint(provider)
+    return (payload.get("model") in TOOL_MODELS
             and bool(payload.get("tools") or any(
                 m.get("role") == "tool" or m.get("tool_calls") or m.get(REPLAY)
                 for m in messages if isinstance(m, dict))))
@@ -22,8 +30,10 @@ def replay_scope(provider, model):
 
 
 def endpoint(provider):
-    base = provider.base_url.rstrip("/")
-    return base + ("/responses" if base.endswith("/v1") else "/v1/responses")
+    base = official_openai_base(provider.base_url, provider.wire)
+    if base is None:
+        raise ValueError("Native OpenAI Responses requires an official OpenAI API address")
+    return base + "/responses"
 
 
 def _content_parts(content):
@@ -86,6 +96,11 @@ def to_request(payload, scope):
     shaped = {k: payload[k] for k in ("model", "stream", "service_tier", "parallel_tool_calls",
                                      "prompt_cache_key", "prompt_cache_options") if k in payload}
     shaped.update(input=items, store=False, include=["reasoning.encrypted_content"])
+    output_format = payload.get("response_format")
+    if isinstance(output_format, dict):
+        if output_format.get("type") == "json_schema":
+            output_format = {**output_format["json_schema"], "type": "json_schema"}
+        shaped["text"] = {"format": output_format}
     for key in ("max_completion_tokens", "max_tokens"):
         if key in payload:
             shaped["max_output_tokens"] = payload[key]

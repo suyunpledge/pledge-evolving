@@ -85,7 +85,7 @@ Rectangle {
             text: side.rootPath.replace(/\\/g, "/").split("/").pop() || side.rootPath
             color: "#e0e5eb"; font.pixelSize: 12; font.weight: Font.DemiBold; elide: Text.ElideMiddle
         }
-        ListView {
+        AppListView {
             id: tree; objectName: "codeProjectTree"; visible: side.mode === "explorer"
             Layout.fillWidth: true; Layout.fillHeight: true; clip: true; keyNavigationEnabled: true
             model: side.viewData.rows || []; highlightMoveDuration: 0
@@ -106,10 +106,9 @@ Rectangle {
                     if (model[i].depth < node.depth) { currentIndex = i; break }
                 }
             }
-            ScrollBar.vertical: ScrollBar {}
             delegate: ItemDelegate {
                 id: item; required property int index; required property var modelData
-                width: tree.width; height: 25; leftPadding: 8 + 13 * modelData.depth; rightPadding: 6
+                width: tree.rowWidth; height: 25; leftPadding: 8 + 13 * modelData.depth; rightPadding: 6
                 // Basic ItemDelegate pads 12px top and bottom; with a 25px row that left a 1px content box,
                 // so labels overflowed downward onto the next row's selection. Let the row own the height.
                 topPadding: 0; bottomPadding: 0
@@ -149,19 +148,18 @@ Rectangle {
             text: side.failure || (side.searching ? "正在搜索…" : side.limited ? "显示前 " + hits.count + " 处匹配" : hits.count ? hits.count + " 处匹配，" + side.fileCount + " 个文件" : query.text ? "没有匹配结果" : "")
             elide: Text.ElideRight; color: "#a5afbc"; font.pixelSize: 11
         }
-        ListView {
+        AppListView {
             id: hits; objectName: "workspaceSearchResults"; visible: side.mode === "search"; Layout.fillWidth: true; Layout.fillHeight: true
             clip: true; model: side.results; keyNavigationEnabled: true; highlightMoveDuration: 0
             section.property: "relative"; section.criteria: ViewSection.FullString
             section.delegate: Rectangle {
-                required property string section; width: hits.width; height: 25; color: "#262a30"
+                required property string section; width: hits.rowWidth; height: 25; color: "#262a30"
                 Text { anchors.fill: parent; leftPadding: 10; rightPadding: 6; text: section; elide: Text.ElideMiddle; color: "#e2e7ee"; font.pixelSize: 12; font.weight: Font.DemiBold; verticalAlignment: Text.AlignVCenter }
             }
             Keys.onReturnPressed: side.openHit(currentIndex)
-            ScrollBar.vertical: ScrollBar {}
             delegate: ItemDelegate {
                 id: hit; required property int index; required property var modelData
-                width: hits.width; height: 25; leftPadding: 12; rightPadding: 8; topPadding: 0; bottomPadding: 0
+                width: hits.rowWidth; height: 25; leftPadding: 12; rightPadding: 8; topPadding: 0; bottomPadding: 0
                 Accessible.name: modelData.relative + " 行 " + modelData.line + " 列 " + modelData.column + " " + modelData.before + modelData.token + modelData.after
                 ToolTip.text: Accessible.name; ToolTip.visible: hovered; ToolTip.delay: 650
                 background: Rectangle { color: hit.ListView.isCurrentItem ? "#304156" : hit.hovered ? "#292e35" : "transparent" }

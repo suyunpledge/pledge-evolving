@@ -6018,8 +6018,9 @@ class RevonGuiApp:
                         catalog.SOURCE_USER: C["ok"],
                         catalog.SOURCE_DOCS: C["muted"]}.get(
                     preset.source, C["warn"])
-                i18n.Label(top, text=f"· {preset.source_label}", bg=C["surface"],
-                         fg=tone, font=FONT_MICRO).pack(side=tk.LEFT, padx=(7, 0))
+                if preset.source_label:
+                    i18n.Label(top, text=f"· {preset.source_label}", bg=C["surface"],
+                               fg=tone, font=FONT_MICRO).pack(side=tk.LEFT, padx=(7, 0))
                 if preset.docs:
                     i18n.Label(top, text=preset.docs, bg=C["surface"], fg=C["muted"],
                              font=FONT_CAPTION).pack(side=tk.RIGHT)
@@ -7079,6 +7080,11 @@ class RevonGuiApp:
         def worker():
             import urllib.request
             import urllib.error
+            if conf.get("wire") == "google":
+                import model_onboarding
+                result = model_onboarding.probe(url, key, wire="google")
+                done(result.get("message") or result.get("error"), result["ok"])
+                return
             endpoint = url.rstrip("/") + "/chat/completions"
             body = json.dumps({"model": model, "messages": [{"role": "user", "content": "1+1=?"}], "max_tokens": 30}).encode()
             headers = {"Content-Type": "application/json", "Authorization": "Bearer " + key}
@@ -7471,7 +7477,7 @@ class RevonGuiApp:
                      if served_model and served_model != upstream_model else "")
         # Keep credentials in the child environment, never command-line arguments.
         cmd = [_python_exe(), str(self.run_py), "gateway",
-               "--upstream", upstream_url, "--upstream-wire", "openai",
+               "--upstream", upstream_url, "--upstream-wire", upstream.get("wire", "openai"),
                "--client-wire", "openai", "--models", served_model,
                "--port", str(port), "--home", str(self.home),
                # 工具桥：不带 --tools 时 gateway 的 /v1/tools 404、
@@ -7490,7 +7496,7 @@ class RevonGuiApp:
         provider_conf = upstream.get("config") or upstream
         adaptation = {key: provider_conf[key] for key in
                       ("vendor", "cacheControl", "expectedCalls", "callGapSeconds", "adapt", "thinkBudget",
-                       "flex", "defer", "maxDeferSeconds", "requestTimeout")
+                       "flex", "defer", "maxDeferSeconds", "requestTimeout", "routeCapabilities", "modelCapabilities")
                       if key in provider_conf}
         if adaptation:
             cmd.extend(["--provider-options", json.dumps(adaptation, ensure_ascii=False)])

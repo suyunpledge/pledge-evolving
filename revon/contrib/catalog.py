@@ -19,7 +19,7 @@ from typing import Any
 
 MODULE_API_VERSION = 1
 
-_WIRE_KINDS = ("openai", "anthropic")
+_WIRE_KINDS = ("openai", "anthropic", "google")
 _NON_RETRYABLE_ERRORS = {"bad_request", "invalid", "400"}
 _RETRYABLE_ERRORS = {"rate_limit", "overloaded", "timeout", "connection"}
 
@@ -89,7 +89,7 @@ def catalog(providers: list[dict], observations: list[dict] | None = None) -> di
         if default and default not in models:
             warnings.append(f"provider '{name}': defaultModel '{default}' not in models")
         if wire not in _WIRE_KINDS:
-            warnings.append(f"provider '{name}': wire '{wire}' is not openai/anthropic")
+            warnings.append(f"provider '{name}': wire '{wire}' is not one of {', '.join(_WIRE_KINDS)}")
         for mid in models:
             model_rows[f"{name}/{mid}"] = {
                 "provider": name,

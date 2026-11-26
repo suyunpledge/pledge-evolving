@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 
 os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
-from PySide6.QtCore import QCoreApplication, QMetaObject, QObject, Qt, QUrl
+from PySide6.QtCore import QCoreApplication, QMetaObject, QObject, QPoint, QPointF, Qt, QUrl
 from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent, QQmlExpression
 from PySide6.QtTest import QTest
 from .controller import ChatController
@@ -97,6 +97,66 @@ class HumanFactorsSceneTests(unittest.TestCase):
         found = self.window.findChild(QObject, name)
         self.assertIsNotNone(found, name)
         return found
+
+    def drag_scrollbar(self, bar, to_end):
+        thumb = bar.property("contentItem")
+        self.assertTrue(bar.isVisible())
+        self.assertTrue(thumb.isVisible())
+        self.assertEqual(thumb.opacity(), 1)
+        self.assertGreaterEqual(thumb.width(), 8)
+        start = thumb.mapToScene(QPointF(thumb.width() / 2, thumb.height() / 2)).toPoint()
+        end = bar.mapToScene(QPointF(bar.width() / 2, bar.height() - 1 if to_end else 1)).toPoint()
+        QTest.mousePress(self.window, Qt.MouseButton.LeftButton, pos=start)
+        self.assertTrue(bar.property("pressed"))
+        QTest.mouseMove(self.window, end, 35)
+        QTest.mouseRelease(self.window, Qt.MouseButton.LeftButton, pos=end)
+        QTest.qWait(80)
+
+    def test_model_menu_has_idle_draggable_rail_only_for_overflow(self):
+        self.window.resize(860, 640)
+        self.controller._models = [f"model-{i}" for i in range(40)]
+        self.controller.changed.emit()
+        self.find("modelButton").clicked.emit()
+        QTest.qWait(850)
+        bar = self.js("modelList.ScrollBar.vertical")
+        self.drag_scrollbar(bar, True)
+        self.assertTrue(self.js("modelList.atYEnd"))
+        self.assertEqual(self.js("modelList.itemAtIndex(39).text"), "model-39")
+        self.drag_scrollbar(bar, False)
+        self.assertTrue(self.js("modelList.atYBeginning"))
+        self.controller._models = ["only model"]
+        self.controller.changed.emit()
+        QTest.qWait(100)
+        self.assertFalse(bar.isVisible())
+
+    def test_dragging_transcript_holds_reading_position_through_stream_updates(self):
+        row = dict(roleName="assistant", textContent="一条测试消息", state="complete")
+        self.controller.messages.reset([dict(row) for _ in range(60)])
+        QTest.qWait(850)
+        bar = self.js("messages.ScrollBar.vertical")
+        self.assertTrue(self.js("messages.atYEnd"))
+        self.assertLess(bar.mapToScene(QPointF(0, bar.height())).y(), self.find("composer").y())
+        listing = self.find("conversationList")
+        # QTest injects wheel coordinates at the platform boundary in physical pixels.
+        point = listing.mapToScene(QPointF(60, 80)) * self.window.devicePixelRatio()
+        QTest.wheelEvent(self.window, point, QPoint(0, 360))
+        QTest.qWait(350)
+        self.assertFalse(self.js("messages.atYEnd"))
+        self.assertFalse(self.window.property("followTail"))
+        self.drag_scrollbar(bar, False)
+        self.assertTrue(self.js("messages.atYBeginning"))
+        before = self.js("messages.contentY")
+        self.controller.messages.append(dict(row, textContent="流式更新\n" * 6))
+        self.controller.streamAdvanced.emit()
+        QTest.qWait(140)
+        self.assertFalse(self.window.property("followTail"))
+        self.assertAlmostEqual(self.js("messages.contentY"), before, delta=2)
+        self.drag_scrollbar(bar, True)
+        self.assertTrue(self.js("messages.atYEnd"))
+        self.assertTrue(self.window.property("followTail"))
+        self.controller.messages.reset([row])
+        QTest.qWait(100)
+        self.assertFalse(bar.isVisible())
 
     def test_background_reply_defers_composer_focus_until_reactivation(self):
         from PySide6.QtGui import QWindow

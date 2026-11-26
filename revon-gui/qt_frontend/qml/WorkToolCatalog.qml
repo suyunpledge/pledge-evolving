@@ -68,14 +68,13 @@ Popup {
                 color: "#b5c0cd"; font.pixelSize: 12; elide: Text.ElideRight
             }
         }
-        ListView {
+        AppListView {
             id: tools
             Layout.fillWidth: true; Layout.fillHeight: true
             model: panel.filtered; clip: true; spacing: 7
-            ScrollBar.vertical: ScrollBar {}
             delegate: Item {
                 required property var modelData
-                width: tools.width - 8; height: 62
+                width: tools.rowWidth; height: 62
                 GlassSurface { anchors.fill: parent; material: panel.material; radius: 12; tint: "#25384350" }
                 RowLayout {
                     anchors.fill: parent; anchors.margins: 10; spacing: 12

@@ -47,11 +47,45 @@ class ApplyKeyTests(unittest.TestCase):
         self.assertEqual(rows["deepseek"]["config"]["baseURL"], "https://api.deepseek.com")
         self.assertEqual(rows["deepseek"]["config"]["smallModel"], "keep-me")
 
+    def test_setup_token_limits_are_validated_and_saved_per_model(self):
+        limits = {'contextWindow': '1M', 'outputTokenBudget': '384k'}
+        self.assertTrue(mo.apply_key(self.home, 'ollama', '', model='one', token_limits=limits)['ok'])
+        config = load_user_layer(self.home)[0]['config']
+        self.assertEqual(config['modelCapabilities'], {'one': {'contextWindow': 1048576, 'outputTokenBudget': 384000}})
+        for value in ('-1', '0', '1.5K', 'unlimited'):
+            self.assertFalse(mo.apply_key(self.home, 'ollama', '', model='one',
+                             token_limits={'outputTokenBudget': value})['ok'])
+        self.assertEqual(load_user_layer(self.home)[0]['config'], config)
+        self.assertTrue(mo.apply_key(self.home, 'ollama', '', model='one',
+                        token_limits={'outputTokenBudget': ''})['ok'])
+        self.assertEqual(load_user_layer(self.home)[0]['config']['modelCapabilities'], {'one': {'contextWindow': 1048576}})
+
+    def test_window_replaces_legacy_input_only_after_explicit_edit(self):
+        conf = {'modelCapabilities': {'one': {'maxInputTokens': 60000}, 'two': {'maxInputTokens': 70000}}}
+        self.assertEqual(mo.token_fields(conf, 'one')['legacyInput'], '60000')
+        mo.set_token_fields(conf, 'one', {'contextWindow': '', 'outputTokenBudget': '4K'})
+        self.assertEqual(conf['modelCapabilities']['one']['maxInputTokens'], 60000)
+        mo.set_token_fields(conf, 'one', {'contextWindow': '128K'})
+        self.assertEqual(conf['modelCapabilities'], {'one': {'contextWindow': 131072, 'outputTokenBudget': 4096},
+                                                    'two': {'maxInputTokens': 70000}})
+        with self.assertRaisesRegex(ValueError, '上下文长度'):
+            mo.set_token_fields(conf, 'one', {'contextWindow': '2000'})
+        self.assertEqual(conf['modelCapabilities']['one']['contextWindow'], 131072)
+
     def test_keyless_local_model_needs_no_secret(self):
         self.assertTrue(mo.apply_key(self.home, "ollama", "")["ok"])
         row = load_user_layer(self.home)[0]
         self.assertNotIn("apiKey", row["config"])
         self.assertFalse((self.home / "secrets.json").exists())
+
+    def test_opencode_plans_keep_separate_keys_and_settings(self):
+        from provider_catalog import route_fields
+        for plan in ('go', 'zen'):
+            self.assertTrue(mo.apply_key(self.home, 'opencode-' + plan, 'test-' + plan)['ok'])
+        rows = load_user_layer(self.home)
+        self.assertEqual([r['id'] for r in rows], ['opencode-go', 'opencode-zen'])
+        self.assertEqual([route_fields(r['config'])['providerName'] for r in rows], ['OpenCode Go', 'OpenCode Zen'])
+        self.assertNotEqual(rows[0]['config']['apiKey'], rows[1]['config']['apiKey'])
 
     def test_rejects_empty_or_broken_keys_without_writing(self):
         for key in ("", "   ", "sk-a b"):
@@ -76,6 +110,42 @@ class _Response(io.BytesIO):
 
 
 class ConnectionTests(unittest.TestCase):
+    def test_google_native_and_compatible_presets_save_and_probe_the_same_wire(self):
+        for plan in mo.BY_KEY['google'].plans:
+            with self.subTest(wire=plan.wire), tempfile.TemporaryDirectory() as folder:
+                home = Path(folder)
+                saved = mo.apply_key(home, 'google', 'fixture', base_url=plan.base_url,
+                                     credential_path=home / 'secrets.json')
+                self.assertEqual(saved['wire'], plan.wire)
+                self.assertEqual(load_user_layer(home)[0]['config']['wire'], plan.wire)
+                def opener(request, **_):
+                    if plan.wire == 'google':
+                        self.assertEqual(request.full_url, plan.base_url + '/v1beta/models')
+                        self.assertEqual(request.get_header('X-goog-api-key'), 'fixture')
+                        self.assertIsNone(request.get_header('Authorization'))
+                    else:
+                        self.assertEqual(request.full_url, plan.base_url + '/models')
+                        self.assertEqual(request.get_header('Authorization'), 'Bearer fixture')
+                    return _Response(b'{"models":[{"name":"models/gemini-test"}]}')
+                self.assertTrue(mo.test_connection('google', 'fixture', base_url=plan.base_url, opener=opener)['ok'])
+
+    def test_opencode_discovery_uses_public_plan_catalog_and_preserves_custom_hosts(self):
+        seen = []
+        def opener(req, timeout):
+            if req.host == 'opencode.ai':
+                self.assertTrue(req.get_header('User-agent', '').startswith('revon/'))
+            seen.append((req.full_url, req.get_header('Authorization'), req.get_header('X-api-key')))
+            return _Response(b'{"data":[{"id":"test"}]}')
+        for plan, root in [('go', 'inference/go'), ('zen', 'inference')]:
+            with self.subTest(plan=plan):
+                result = mo.test_connection('opencode-' + plan, '', opener=opener)
+                self.assertTrue(result['ok'])
+                self.assertIn('公开目录', result['message'])
+                self.assertEqual(seen[-1], ('https://opencode.ai/' + root + '/v1/models', None, None))
+        self.assertTrue(mo.test_connection('opencode-go', 'test-key', base_url='https://proxy.test/zen/go/v1',
+                                           opener=opener)['ok'])
+        self.assertEqual(seen[-1], ('https://proxy.test/zen/go/v1/models', 'Bearer test-key', None))
+
     def test_openai_setup_saves_its_own_row_and_custom_endpoint(self):
         with tempfile.TemporaryDirectory() as root:
             home = Path(root)
@@ -122,6 +192,15 @@ class ConnectionTests(unittest.TestCase):
         self.assertFalse(mo.test_connection("deepseek", "sk-test", base_url="",
                                             opener=opener)["ok"])
         self.assertEqual(len(seen), 1)
+
+    def test_official_responses_address_probes_model_list_at_api_root(self):
+        seen = []
+        def opener(request, timeout):
+            seen.append(request.full_url)
+            return _Response(b'{"data": [{"id": "gpt-6.2-astra"}]}')
+        result = mo.probe("https://api.openai.com/v1/responses/", "test-key", opener=opener)
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(seen, ["https://api.openai.com/v1/models"])
 
     def test_anthropic_uses_its_own_header(self):
         seen = {}

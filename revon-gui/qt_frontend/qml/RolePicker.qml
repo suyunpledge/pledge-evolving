@@ -49,20 +49,19 @@ Popup {
         }
 
         // -- list -------------------------------------------------------------
-        ListView {
+        AppListView {
             id: roleList
             objectName: "roleList"
             visible: panel.editing === ""
             Layout.fillWidth: true; Layout.fillHeight: true
             clip: true; spacing: 8
-            ScrollBar.vertical: ScrollBar { width: 4 }
             model: [{id: "", name: "通用助手", icon: "bot", description: "不使用角色模板，按你的权限与工具设置工作。",
                      builtin: true, permission: "沿用执行权限", maxSteps: 0, active: panel.service.activeId === ""}].concat(panel.service.rows)
             delegate: Item {
                 id: entry
                 required property var modelData
                 readonly property bool custom: modelData.id !== "" && !modelData.builtin
-                width: roleList.width; height: 72
+                width: roleList.rowWidth; height: 72
                 Rectangle {
                     anchors.fill: parent; radius: 16
                     color: entry.modelData.active ? "#2a3f5a78" : entryHover.hovered ? "#1affffff" : "#0dffffff"
@@ -128,7 +127,7 @@ Popup {
                 background: GlassSurface { material: panel.material; radius: 10; emphasis: descriptionField.activeFocus ? 0.65 : 0 }
             }
             Text { text: "角色指引"; color: "#a9b3bf"; font.pixelSize: 12 }
-            ScrollView {
+            AppScrollView {
                 Layout.fillWidth: true; Layout.fillHeight: true; clip: true
                 background: GlassSurface { material: panel.material; radius: 10 }
                 TextArea {
@@ -138,7 +137,7 @@ Popup {
                 }
             }
             Text { text: "起手提示（每行一条，最多 8 条）"; color: "#a9b3bf"; font.pixelSize: 12 }
-            ScrollView {
+            AppScrollView {
                 Layout.fillWidth: true; Layout.preferredHeight: 92; clip: true
                 background: GlassSurface { material: panel.material; radius: 10 }
                 TextArea {

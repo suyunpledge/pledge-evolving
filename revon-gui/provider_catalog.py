@@ -16,6 +16,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from types import SimpleNamespace
+from urllib.parse import urlsplit
+from revon import opencode
 
 SOURCE_CONFIRMED = "confirmed"     # 用户直接给定的地址（最权威）
 SOURCE_USER = "user-config"        # 取自本机正在用的配置
@@ -24,7 +27,7 @@ SOURCE_UNVERIFIED = "unverified"   # 未核到一手来源
 
 SOURCE_LABEL = {
     SOURCE_CONFIRMED: "用户确认",
-    SOURCE_USER: "本机配置在用",
+    SOURCE_USER: "",
     SOURCE_DOCS: "官方文档",
     SOURCE_UNVERIFIED: "待确认",
 }
@@ -99,6 +102,8 @@ PRESETS: tuple[ProviderPreset, ...] = (
                  note="使用中国香港地域的 API Key", source=SOURCE_DOCS),
             Plan("美国", "https://dashscope-us.aliyuncs.com/compatible-mode/v1",
                  note="使用美国地域的 API Key", source=SOURCE_DOCS),
+            Plan("Token Plan · 北京", "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1", source=SOURCE_USER),
+            Plan("千问 Token Plan", "https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1", source=SOURCE_USER),
         ),
     ),
     ProviderPreset(
@@ -170,6 +175,7 @@ PRESETS: tuple[ProviderPreset, ...] = (
         source=SOURCE_USER, docs="https://api.xiaomimimo.com",
         plans=(
             Plan("标准 API", "https://api.xiaomimimo.com/v1"),
+            Plan("Token Plan · 中国", "https://token-plan-cn.xiaomimimo.com/v1", source=SOURCE_USER),
         ),
     ),
     ProviderPreset(
@@ -191,6 +197,20 @@ PRESETS: tuple[ProviderPreset, ...] = (
         ),
     ),
     # ── 海外 ──────────────────────────────────────────────
+    ProviderPreset(
+        "opencode-go", "OpenCode Go", "opencode",
+        aliases=("opencode go", "opencode-go", "Go 订阅"),
+        source=SOURCE_DOCS, docs="https://opencode.ai/docs/console/go/",
+        plans=(Plan("Go 订阅 · OpenAI 兼容", opencode.GO + "/openai/v1"),
+               Plan("Go 订阅 · Anthropic Messages", opencode.GO + "/anthropic/v1", wire="anthropic")),
+    ),
+    ProviderPreset(
+        "opencode-zen", "OpenCode Zen", "opencode",
+        aliases=("opencode zen", "opencode-zen", "OpenCode Console", "按量付费"),
+        source=SOURCE_DOCS, docs="https://opencode.ai/docs/console/models/",
+        plans=(Plan("按量付费 · OpenAI 兼容", opencode.ZEN + "/openai/v1"),
+               Plan("按量付费 · Anthropic Messages", opencode.ZEN + "/anthropic/v1", wire="anthropic")),
+    ),
     ProviderPreset(
         "openrouter", "OpenRouter", "openrouter",
         aliases=("openrouter", "模型路由", "模型聚合"),
@@ -224,6 +244,7 @@ PRESETS: tuple[ProviderPreset, ...] = (
         source=SOURCE_USER, docs="https://platform.openai.com",
         plans=(
             Plan("标准 API", "https://api.openai.com/v1"),
+            Plan("Responses API", "https://api.openai.com/v1/responses", source=SOURCE_USER),
         ),
     ),
     ProviderPreset(
@@ -231,19 +252,11 @@ PRESETS: tuple[ProviderPreset, ...] = (
         aliases=("google", "gemini", "googleai"),
         source=SOURCE_CONFIRMED, docs="https://aistudio.google.com",
         plans=(
-            # 原生协议：revon 的 wire 只支持 openai / anthropic，选了也跑不通——
-            # 置灰并说清原因，比给一份装不上的模板诚实。
-            Plan("原生协议（本框架不支持）",
-                 "https://generativelanguage.googleapis.com",
-                 usable=False,
-                 note="原生 generateContent 协议：完整形式为 "
-                      "/v1beta/models/<model>:generateContent。revon 的 wire "
-                      "只支持 openai / anthropic，无法直连此端点"),
+            Plan("Google 原生 · generateContent",
+                 "https://generativelanguage.googleapis.com", wire="google", source=SOURCE_DOCS),
             Plan("OpenAI 兼容端点",
                  "https://generativelanguage.googleapis.com/v1beta/openai",
-                 source=SOURCE_UNVERIFIED,
-                 note="需核实。另：Vertex AI 的 OpenAI 兼容端点需要 GCP 项目，"
-                      "不适合普通 API Key 直连"),
+                 source=SOURCE_DOCS),
         ),
     ),
     ProviderPreset(
@@ -285,6 +298,109 @@ PRESETS: tuple[ProviderPreset, ...] = (
 )
 
 BY_KEY: dict[str, ProviderPreset] = {p.key: p for p in PRESETS}
+
+
+def _origin(address: str):
+    try:
+        parts = urlsplit(address)
+        host = parts.hostname
+        port = parts.port
+        if parts.scheme not in ("http", "https") or not host or parts.username is not None or parts.password is not None:
+            return ""
+        host = f"[{host}]" if ":" in host else host
+        if port is not None and port != (443 if parts.scheme == "https" else 80):
+            host += f":{port}"
+        return f"{parts.scheme}://{host}"
+    except ValueError:
+        return ""
+
+
+_ORIGINS = {_origin(plan.base_url): preset for preset in PRESETS for plan in preset.plans
+            if _origin(plan.base_url) != opencode.ORIGIN}
+
+# Additional public origins from Cherry Studio 2.1.8's bundled provider registry.
+# These labels identify a configured route. They do not select a protocol or create a preset.
+_PROVIDER_LABELS = {
+    "https://ai-gateway.vercel.sh": "Vercel AI Gateway",
+    "https://ai.burncloud.com": "BurnCloud",
+    "https://aihubmix.com": "AiHubMix",
+    "https://api-inference.modelscope.cn": "ModelScope",
+    "https://api.302.ai": "302.AI",
+    "https://api.aiionly.com": "AIOnly",
+    "https://api.baichuan-ai.com": "百川 Baichuan",
+    "https://api.cerebras.ai": "Cerebras AI",
+    "https://api.fireworks.ai": "Fireworks",
+    "https://api.githubcopilot.com": "GitHub Copilot",
+    "https://api.groq.com": "Groq",
+    "https://api.jina.ai": "Jina",
+    "https://api.longcat.chat": "LongCat",
+    "https://api.moonshot.ai": "Moonshot 国际",
+    "https://api.ocoolai.com": "ocoolAI",
+    "https://api.perplexity.ai": "Perplexity",
+    "https://api.poe.com": "Poe",
+    "https://api.ppinfra.com": "PPIO",
+    "https://api.voyageai.com": "Voyage AI",
+    "https://api.z.ai": "Z.ai",
+    "https://chatgpt.com": "OpenAI · ChatGPT",
+    "https://cli-chat-proxy.grok.com": "Grok CLI",
+    "https://deepseek.alayanew.com": "AlayaNew",
+    "https://developer.amd.com.cn": "AMD GPU Cloud",
+    "https://integrate.api.nvidia.com": "NVIDIA",
+    "https://maas-api.lanyun.net": "LANYUN",
+    "https://open.cherryin.net": "CherryIN",
+    "https://opencode.ai": "OpenCode",
+    "https://ph8.co": "PH8",
+    "https://qianfan.baidubce.com": "百度千帆",
+    "https://router.huggingface.co": "Hugging Face",
+    "https://tokendance.space": "TokenDance",
+    "https://tokenhub.tencentmaas.com": "腾讯 TokenHub",
+    "https://wishub-x1.ctyun.cn": "天翼云息壤",
+    "https://www.dmxapi.cn": "DMXAPI",
+    "https://www.sophnet.com": "SophNet",
+}
+
+
+def route_identity(address: str, wire: str = "") -> dict:
+    """Identify the access platform from the configured origin, independently of the model ID."""
+    origin = _origin(address)
+    preset = _ORIGINS.get(origin)
+    if origin == opencode.ORIGIN:
+        plan = opencode.plan_root(address)
+        if plan:
+            preset = BY_KEY["opencode-go" if plan == opencode.GO else "opencode-zen"]
+    if preset is None:
+        host = urlsplit(origin).netloc
+        return {"providerKey": "custom:" + origin, "providerName": _PROVIDER_LABELS.get(origin, host or "未知供应商"),
+                "providerBrandKey": "", "planLabel": ""}
+    path = urlsplit(address).path.rstrip("/")
+    matches = [plan for plan in preset.plans if _origin(plan.base_url) == origin
+               and urlsplit(plan.base_url).path.rstrip("/") == path and (not wire or plan.wire == wire)]
+    return {"providerKey": preset.key, "providerName": preset.name, "providerBrandKey": preset.brand,
+            "planLabel": matches[0].label if len(matches) == 1 else ""}
+
+
+def route_fields(config: dict) -> dict:
+    """Safe list and card fields shared by the workspace and model settings."""
+    from brand_marks import detect, mark_path
+    from revon.openai_responses import uses_responses
+    from revon.provider_requests import safe_url
+    from revon.secrets import redact
+
+    wire = str(config.get("wire") or "openai")
+    model = str(config.get("model") or "")
+    address = safe_url(config.get("baseURL"))
+    identity = route_identity(address, wire)
+    brand = detect(model=model.rsplit("/", 1)[-1])
+    icon = mark_path(identity["providerBrandKey"], 32) if identity["providerBrandKey"] else None
+    protocol = {"openai": "OpenAI 兼容", "anthropic": "Anthropic Messages",
+                "google": "Google 原生 · generateContent"}.get(wire, "未知协议")
+    transport = SimpleNamespace(base_url=address, wire=wire, adapt=bool(config.get("adapt", True)))
+    if uses_responses({"model": model}, transport):
+        protocol = "OpenAI Responses"
+    note = config.get("providerLabel")
+    return {**identity, "providerIcon": icon.as_uri() if icon else "",
+            "modelBrand": brand.label if brand else "", "protocolLabel": protocol,
+            "displayBaseURL": address, "providerLabel": redact(note) if isinstance(note, str) else ""}
 
 
 def all_plans() -> list[tuple[ProviderPreset, Plan]]:

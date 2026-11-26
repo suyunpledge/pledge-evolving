@@ -133,7 +133,7 @@ Popup {
                 onClicked: panel.experience = "developer"
             }
         }
-        ScrollView {
+        AppScrollView {
             id: formScroll
             visible: panel.showForm
             Layout.fillWidth: true

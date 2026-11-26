@@ -108,6 +108,10 @@ class GatewayConfig:
         computer=None,
     ) -> None:
         self.upstream = upstream.rstrip("/")
+        from .cache_affinity import official_openai_base
+        from .opencode import anthropic_base
+        self.api_base = (official_openai_base(self.upstream, upstream_wire)
+                         or anthropic_base(self.upstream, upstream_wire) or self.upstream)
         from .secrets import VendorCredential, install_logging_redaction
         self._credential = _credential or VendorCredential(api_key, self.upstream)
         self.api_key = self._credential.ref
@@ -148,6 +152,8 @@ class GatewayConfig:
         self.provider_options = dict(provider_options or {})
         from .cache_state import CacheWarmth
         from .model import warmth_store
+        if warmth_path is None and self.home is not None:
+            warmth_path = self.home / 'cache-warmth.json'
         self.cache_warmth = CacheWarmth(warmth_path) if warmth_path else warmth_store()
         self._auth_lock = threading.Lock()
         self._secret_lock = threading.Lock()
@@ -170,7 +176,7 @@ class GatewayConfig:
             if discovery:
                 return create_execution_context(home=self.home, workspace=self.workspace,
                     registry=self.registry, policy=self.policy, secret_scope=secret_scope, journal=False,
-                    capabilities={'computer': self.computer})
+                    capabilities={'computer': self.computer, 'policy_source': 'gateway'})
             if run_id:
                 validate_id(run_id)
                 if run_id in self._contexts:
@@ -211,7 +217,7 @@ class GatewayConfig:
             ctx = create_execution_context(home=self.home, workspace=self.workspace,
                 registry=self.registry, policy=self.policy, run=run, session=journal,
                 cancellation=threading.Event(), secret_scope=secret_scope, recovered=recovered,
-                capabilities={'computer': self.computer})
+                capabilities={'computer': self.computer, 'policy_source': 'gateway'})
             self._contexts[run.run_id] = ctx
             if secret_scope is not None:
                 self._protected_runs.add(run.run_id)
@@ -306,6 +312,8 @@ class GatewayConfig:
 
 
 def build_handler(cfg: GatewayConfig):
+    from .model import BadRequest
+
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
         server_version = "revon-gateway/0.1"
@@ -679,6 +687,11 @@ def build_handler(cfg: GatewayConfig):
             finally:
                 context.session.close()
 
+        def _opencode_headers(self, url):
+            from .opencode import request_headers
+            session = self.headers.get('X-Revon-Conversation') or self.headers.get('X-Keystone-Secret-Scope')
+            return request_headers(url, session)
+
         def _proxy(self, body: bytes) -> None:
             self._upstream_started = False
             payload = {}
@@ -704,7 +717,11 @@ def build_handler(cfg: GatewayConfig):
             body = self._apply_model_map(body)
             plan = provider = None
             responses = False
-            from . import openai_responses
+            google = cfg.upstream_wire == 'google'
+            from . import google_native, openai_responses
+            if google and self.path.split('?')[0].rstrip('/') != '/v1/chat/completions':
+                self._json(400, {'error': {'message': 'Google upstream accepts Chat Completions on this gateway'}})
+                return
             if self.path.split("?")[0].rstrip("/").endswith(("/chat/completions", "/messages")):
                 try:
                     payload, plan, provider = cfg.prepare_request(json.loads(body),
@@ -717,8 +734,12 @@ def build_handler(cfg: GatewayConfig):
                         plan["execution"]["transport"] = "responses"
                     else:
                         upstream_payload = openai_responses.strip_replay(payload)
+                        if google:
+                            upstream_payload = google_native.to_request(upstream_payload)
+                            google_url = google_native.endpoint(cfg.upstream, payload['model'], payload.get('stream', False))
+                            plan["execution"]["transport"] = "generateContent"
                     body = json.dumps(upstream_payload, ensure_ascii=False).encode("utf-8")
-                except (ValueError, TypeError, KeyError) as exc:
+                except (BadRequest, ValueError, TypeError, KeyError) as exc:
                     self._json(400, {"error": {"message": str(exc)}})
                     return
 
@@ -729,7 +750,9 @@ def build_handler(cfg: GatewayConfig):
             stripped = self.path
             if stripped.startswith("/v1/"):
                 stripped = stripped[len("/v1"):]
-            url = openai_responses.endpoint(provider) if responses else cfg.upstream + stripped
+            url = openai_responses.endpoint(provider) if responses else cfg.api_base + stripped
+            if google:
+                url = google_url
             headers = {k: v for k, v in self.headers.items()
                        if k.lower() in {'content-type', 'accept', 'user-agent', 'anthropic-version', 'anthropic-beta'}}
             headers.pop("Authorization", None)
@@ -738,8 +761,9 @@ def build_handler(cfg: GatewayConfig):
                 headers["x-api-key"] = cfg._credential._header(url, wire='anthropic')['x-api-key']
                 headers["anthropic-version"] = headers.get("anthropic-version", "2023-06-01")
             else:
-                headers.update(cfg._credential._header(url, wire='openai'))
+                headers.update(cfg._credential._header(url, wire=cfg.upstream_wire))
             headers["accept-encoding"] = "identity"
+            headers.update(self._opencode_headers(url))
 
             cfg.log.write(f"{self.command} {self.path} -> {url} (bytes={len(body)})")
             request = urllib.request.Request(url, data=body or None, headers=headers, method=self.command)
@@ -750,11 +774,16 @@ def build_handler(cfg: GatewayConfig):
                 timings = {}
                 seed = (url == CHAT_URL and self.command == 'POST' and provider is not None
                         and provider.wire == 'openai' and payload.get('model') == 'doubao-seed-evolving')
+                from .provider_requests import open_recorded
                 if seed and not cfg.proxy:
-                    upstream = cfg.seed_transport.open(request, timeout=timeout, timings=timings)
+                    opener, options = cfg.seed_transport.open, {'timings': timings}
                 else:
-                    upstream = open_upstream(request, timeout=timeout, proxy=cfg.proxy)
-                with upstream as response:
+                    opener, options = open_upstream, {'proxy': cfg.proxy}
+                is_model_request = self.command == 'POST' and self.path.split('?')[0].rstrip('/').endswith(
+                    ('/chat/completions', '/messages', '/responses'))
+                with open_recorded(opener, request, home=cfg.home if is_model_request else None,
+                                   provider_id=cfg.provider_options.get('providerId'), base_url=cfg.upstream,
+                                   source='gateway', timeout=timeout, **options) as response:
                     from .request_execution import UsageObserver
                     observer = UsageObserver()
                     ctype = response.headers.get("content-type", "")
@@ -773,9 +802,13 @@ def build_handler(cfg: GatewayConfig):
                         fence = SecretSSEFilter()
                         progress_timeout = (SEED_OFFICE_PROGRESS_TIMEOUT if seed and
                             self.headers.get('X-Keystone-Retryable-Office') == '1' else None)
-                        chunks = (openai_responses.stream_chat(response, payload["model"], response_scope) if responses
-                                  else iter_model_sse(response, expected_choices=(payload or {}).get('n', 1),
-                                                      progress_timeout=progress_timeout))
+                        if google:
+                            chunks = google_native.stream_chat(response, payload["model"])
+                        elif responses:
+                            chunks = openai_responses.stream_chat(response, payload["model"], response_scope)
+                        else:
+                            chunks = iter_model_sse(response, expected_choices=(payload or {}).get('n', 1),
+                                                    progress_timeout=progress_timeout)
                         for chunk in chunks:
                             observer.feed(chunk)
                             self.wfile.write(fence.feed(chunk))
@@ -788,6 +821,9 @@ def build_handler(cfg: GatewayConfig):
                         data = redact_response(response.read())
                         if responses:
                             data = json.dumps(openai_responses.to_chat(json.loads(data), response_scope),
+                                              ensure_ascii=False).encode("utf-8")
+                        elif google:
+                            data = json.dumps(google_native.to_chat(json.loads(data), payload["model"]),
                                               ensure_ascii=False).encode("utf-8")
                         try:
                             observer.observe(json.loads(data))
@@ -855,6 +891,7 @@ def build_handler(cfg: GatewayConfig):
 
         def _proxy_translated(self, body: bytes) -> None:
             self._upstream_started = False
+            from . import openai_responses
             from .wire import OpenAIStreamTranslator, anthropic_to_openai_request, openai_to_anthropic_response
 
             try:
@@ -869,13 +906,20 @@ def build_handler(cfg: GatewayConfig):
             try:
                 upstream_payload, plan, provider = cfg.prepare_request(upstream_payload,
                     secret_scope=cfg.secret_scope(self.headers.get('X-Keystone-Secret-Scope', '')))
-            except (ValueError, TypeError) as exc:
+                responses = openai_responses.uses_responses(upstream_payload, provider)
+                model = upstream_payload["model"]
+                if responses:
+                    scope = openai_responses.replay_scope(provider, model)
+                    upstream_payload = openai_responses.to_request(upstream_payload, scope)
+                    plan["execution"]["transport"] = "responses"
+            except (BadRequest, ValueError, TypeError, KeyError) as exc:
                 self._json(400, {"error": {"message": str(exc)}})
                 return
-            url = cfg.upstream.rstrip("/") + "/chat/completions"
+            url = openai_responses.endpoint(provider) if responses else cfg.api_base + "/chat/completions"
             headers = {
                 "content-type": "application/json",
                 **cfg._credential._header(url, wire='openai'),
+                **self._opencode_headers(url),
                 "accept-encoding": "identity",
             }
             cfg.log.write(f"TRANSLATE {requested} -> {upstream_payload.get('model')} @ {url} "
@@ -888,10 +932,15 @@ def build_handler(cfg: GatewayConfig):
                 headers=headers, method="POST")
             try:
                 from .request_timing import request_timeout
-                with open_upstream(request, timeout=request_timeout(provider.request_timeout), proxy=cfg.proxy) as response:
+                from .provider_requests import open_recorded
+                with open_recorded(open_upstream, request, home=cfg.home, provider_id=cfg.provider_options.get('providerId'),
+                                   base_url=cfg.upstream, source='gateway', timeout=request_timeout(provider.request_timeout),
+                                   proxy=cfg.proxy) as response:
                     if not upstream_payload.get("stream"):
                         from .secrets import redact
                         raw = redact(json.loads(response.read().decode("utf-8", "replace")))
+                        if responses:
+                            raw = openai_responses.to_chat(raw, scope)
                         cfg.record_usage(provider, plan, raw.get("usage"), raw.get("service_tier"))
                         translated = openai_to_anthropic_response(raw, requested)
                         cfg.log.write(f"TRANSLATE reply ok: stop={translated['stop_reason']} "
@@ -911,7 +960,9 @@ def build_handler(cfg: GatewayConfig):
                     observer = UsageObserver()
                     from .secret_http import SecretSSEFilter, iter_model_sse
                     fence = SecretSSEFilter()
-                    for raw_line in iter_model_sse(response, expected_choices=upstream_payload.get('n', 1)):
+                    chunks = (openai_responses.stream_chat(response, model, scope) if responses else
+                              iter_model_sse(response, expected_choices=upstream_payload.get('n', 1)))
+                    for raw_line in chunks:
                         observer.feed(raw_line)
                         safe_lines = fence.feed(raw_line).decode('utf-8', 'replace').splitlines()
                         for safe_line in safe_lines:

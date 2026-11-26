@@ -203,7 +203,8 @@ def _boot_ctx(ctx: dict[str, Any] | None) -> dict[str, Any]:
 class Config:
     """Composable configuration tree."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, home=None) -> None:
+        self.home = Path(home) if home is not None else None
         self.rows: dict[str, Row] = {}
         self.order: list[str] = []
         self.history: list[str] = []
@@ -398,7 +399,7 @@ def load_config(
     否则用户只看到 ``Expecting ',' delimiter`` 而不知道是哪个文件出的错。
     """
     home = Path(home)
-    cfg = Config()
+    cfg = Config(home=home)
 
     def _apply(path: Path, label: str) -> None:
         try:
@@ -440,7 +441,7 @@ def load_config(
 
 def replace_row(cfg: Config, row: Row) -> Config:
     """Convenience for tests: return a copy with one row replaced."""
-    out = Config()
+    out = Config(home=cfg.home)
     out.apply_patch([r.to_raw() for r in cfg._ordered()], label="copy")
     out.apply_patch([row.to_raw()], label="replace")
     return out
@@ -448,7 +449,7 @@ def replace_row(cfg: Config, row: Row) -> Config:
 
 def insert_row(cfg: Config, row: Row, before: str | None = None) -> Config:
     rows = cfg._ordered()
-    out = Config()
+    out = Config(home=cfg.home)
     if before is None:
         out.apply_patch([r.to_raw() for r in rows], label="copy")
         out.apply_patch([row.to_raw()], label="append")

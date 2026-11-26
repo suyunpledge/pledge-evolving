@@ -56,7 +56,7 @@ def apply_planning_key(home, pair, router, *, secrets=None):
 
 
 class PhaseClient:
-    def __init__(self, rows, selection, environment, scope, cancel_event=None):
+    def __init__(self, rows, selection, environment, scope, cancel_event=None, *, history_home=None):
         pair = model_pair(selection)
         if pair is None:
             raise ValueError('Select an independent phase model first')
@@ -68,7 +68,7 @@ class PhaseClient:
         conf = resolve(row.get('config') or {}, {'env': environment})
         config.apply_patch([{'id': pair[0], 'name': 'provider:phase', 'config': conf}])
         opener = lambda request, **kw: open_response(request, cancel_event=cancel_event, **kw)
-        router = ModelRouter.from_config(config, transport=HttpTransport(response_opener=opener))
+        router = ModelRouter.from_config(config, transport=HttpTransport(response_opener=opener, history_home=history_home))
         self.router = phase_router(router, pair, router)
         self.router.retries_per_provider = 0  # No transport retries or fallback to another provider.
         self.scope, self.cancel_event = scope, cancel_event
@@ -127,8 +127,8 @@ class VisionClient(PhaseClient):
                     '/api/coding/v3', '/api/coding'}:
                 raise ValueError('豆包视觉请选择 Coding Plan 端点，避免进入标准 API 计费')
         self.wire = conf.get('wire', 'openai')
-        if self.wire not in {'openai', 'anthropic'}:
-            raise ValueError('窗口视觉目前支持 OpenAI 与 Anthropic 兼容协议')
+        if self.wire not in {'openai', 'anthropic', 'google'}:
+            raise ValueError('窗口视觉支持 OpenAI 兼容、Anthropic 和 Google 原生协议')
         super().__init__(rows, selection, environment, scope, cancel_event)
 
     def analyze(self, frame, prompt, *, consent=False):

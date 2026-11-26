@@ -323,6 +323,11 @@ class SecretScope:
         for m in _ASSIGN.finditer(text):
             if m.start() < offset or not secret_field(m['key'], vendor=vendor):
                 continue
+            # An inline audit receipt has an explicit closing backtick. Only
+            # the three complete literal decisions qualify; scan the prose after it normally.
+            if (m.start() > 0 and text[m.start() - 1] == '`' and m['head'] == 'authorization='
+                    and text.startswith(('allow`', 'deny`', 'ask`'), m.end())):
+                continue
             parser = _COOKIE_VALUE if m['key'].lower() in {'cookie', 'cookies'} else _VALUE
             # Recognise prefixed source literals (e.g. Python raw strings);
             # a prefix alone must never be interpreted as a variable reference.
@@ -644,6 +649,8 @@ class VendorCredential:
         if self.ref:
             grant = _grant(self.__scope, self.ref, self.__endpoint, 'vendor.authenticate')
             value = str(self.__scope._store._read(grant, target=self.__endpoint, operation='vendor.authenticate'))
+        if wire == 'google':
+            return {'x-goog-api-key': value}
         return ({'x-api-key': value, 'anthropic-version': '2023-06-01'} if wire == 'anthropic'
                 else {'Authorization': 'Bearer ' + value})
 

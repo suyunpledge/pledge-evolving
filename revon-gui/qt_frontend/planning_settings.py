@@ -17,12 +17,14 @@ def make_plan(home, rows, pair, client, messages, level, model, cancel):
     if pair:
         secrets = secret_store.load(path=home / 'secrets.json', strict=True)
         env = {**os.environ, **secret_store.env_for(secrets)}
-        planner = PhaseClient(rows, pair, env, client.secret_scope, cancel)
+        planner = PhaseClient(rows, pair, env, client.secret_scope, cancel, history_home=home)
         apply_planning_key(home, pair, planner.router, secrets=secrets)
     # Native tool-call blocks from earlier rounds belong to the executor's wire protocol.
     from revon_client import ChatMessage
     history = [ChatMessage(m.role, m.content) for m in messages if m.role in {'user', 'assistant'} and m.content]
-    plan, _ = planner.plan_task(history, level, model=model, cancel_event=cancel)
+    from revon.opencode import conversation
+    with conversation(getattr(client, 'conversation_id', '') or getattr(client, 'secret_session', '')):
+        plan, _ = planner.plan_task(history, level, model=model, cancel_event=cancel)
     return plan
 
 

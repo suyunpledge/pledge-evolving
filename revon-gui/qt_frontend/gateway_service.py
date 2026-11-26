@@ -48,7 +48,7 @@ def chat_model_routes(rows):
         primary = provider.get('model')
         name = row.get('name') or ''
         if (row.get('disabled') or (name and not name.startswith('provider:'))
-                or provider.get('wire', 'openai') != 'openai'
+                or provider.get('wire', 'openai') not in ('openai', 'google')
                 or not provider.get('baseURL') or not isinstance(primary, str) or not primary.strip()):
             continue
         extras = provider.get('models')
@@ -101,7 +101,7 @@ class GatewayService:
                 self.stop()
                 self.emit('gateway_error', message='请先配置模型。', active_url='')
                 return
-            _, provider = routes[label]
+            provider_id, provider = routes[label]
             environment = {**os.environ, **secret_store.env_for()}
             base, key, upstream_model = gateway_settings(provider, environment)
             self.stop()
@@ -116,16 +116,17 @@ class GatewayService:
                 port = probe.getsockname()[1]
             repo = Path(__file__).resolve().parents[2]
             command = [sys.executable, str(repo / 'run.py'), 'gateway',
-                       '--upstream', base, '--upstream-wire', 'openai', '--client-wire', 'openai',
+                       '--upstream', base, '--upstream-wire', provider.get('wire', 'openai'), '--client-wire', 'openai',
                        '--models', label, '--port', str(port), '--home', str(self.home),
                        '--tools', '--workspace', str(self.workspace), '--profile', 'balanced',
                        '--read-scope', settings.get('read_scope', 'workspace')]
             if label != upstream_model:
                 command += ['--model-map', label + '=' + upstream_model]
             options = {k: provider[k] for k in ('vendor', 'cacheControl', 'expectedCalls', 'callGapSeconds',
-                       'adapt', 'thinkBudget', 'flex', 'defer', 'maxDeferSeconds', 'requestTimeout') if k in provider}
-            if options:
-                command += ['--provider-options', json.dumps(options)]
+                       'adapt', 'thinkBudget', 'flex', 'defer', 'maxDeferSeconds', 'requestTimeout',
+                       'routeCapabilities', 'modelCapabilities') if k in provider}
+            options['providerId'] = provider_id
+            command += ['--provider-options', json.dumps(options)]
             self.process = process = subprocess.Popen(
                 command, env=environment, cwd=repo, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace',

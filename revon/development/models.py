@@ -78,7 +78,9 @@ class ModelSettingsSource:
             pass
         except (OSError, ValueError):
             raise ValueError('模型密钥文件不可读或格式损坏，请在模型设置中修复：' + str(path)) from None
-        projection = Config()
+        # Route evidence belongs to the desktop that sent the request, including
+        # when this workspace overrides the provider settings.
+        projection = Config(home=self.home)
         projection.apply_patch([{'id': row_id, 'name': name, 'config': conf}
                                 for row_id, name, conf in _resolved(rows, mirror_env(env))], label='host models only')
         cls = SmartRouter if projection.get('model', 'routing', None) is not None else ModelRouter

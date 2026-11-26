@@ -166,18 +166,27 @@ class WorkspaceService:
                         field('planningModel', '规划模型', selected, 'choice', models)],
                 actions=[button('run', '开始任务'), button('cancel', '停止')])
         elif page == 'config':
+            from provider_catalog import route_fields
             from revon.config import load_config
             self.snapshots.setdefault(page, copy.deepcopy(rows))
             policy = Policy.from_config(load_config(self.home), workspace=self.host.workspace)
             data['policyWarnings'] = override_warnings(policy)
             steps = configured_steps(rows)
+            model_cards = []
+            for row in rows:
+                config = row['config']
+                if 'baseURL' not in config:
+                    continue
+                details = route_fields(config)
+                subtitle = ' · '.join(filter(None, (details['providerName'], details['protocolLabel'],
+                                                     details['displayBaseURL'], '已停用' if row.get('disabled') else '')))
+                model_cards.append(dict(details, id=row['id'], title=config.get('modelLabel') or config.get('model') or row['id'],
+                                        subtitle=subtitle, actions=[button('editModel', '编辑'),
+                                            button('toggle', '启用' if row.get('disabled') else '停用')]))
             data.update(hint='模型按行管理；图片与视频模型使用右上方的生成模型配置。高级配置支持原有 revon JSON 格式。'
                              '步数上限默认不限；填 1–1000 可限制每个任务最多调用多少次工具，填 0 或留空恢复不限。',
                 actions=[button('modelSetup', '添加或配置模型'), button('providerCatalog', '提供商目录'), button('reload', '重新读取')],
-                rows=[dict(id=r['id'], title=r['config'].get('modelLabel') or r['config'].get('model') or r['id'],
-                    subtitle=(r['config'].get('baseURL') or r.get('name', '')) + (' · 已停用' if r.get('disabled') else ''),
-                    actions=[button('editModel', '编辑'), button('toggle', '启用' if r.get('disabled') else '停用')])
-                    for r in rows if 'baseURL' in r['config']],
+                rows=model_cards,
                 fields=[field('json', '高级配置', json.dumps(redact(rows), ensure_ascii=False, indent=2), 'code')])
             data['fields'][0]['advanced'] = True
             data['fields'].append(field('max_steps', f"步数上限（当前：{'不限' if steps == 0 else f'{steps} 步'}）",

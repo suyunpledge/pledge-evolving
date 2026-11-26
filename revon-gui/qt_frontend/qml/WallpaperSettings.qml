@@ -152,9 +152,9 @@ Popup {
             id: grid; objectName: "wallpaperGrid"
             Layout.fillWidth: true
             Layout.preferredHeight: Math.min(Math.ceil(count / 3) * cellHeight, 2 * cellHeight + 8)
-            cellWidth: Math.floor(width / 3); cellHeight: 124
+            cellWidth: Math.max(1, Math.floor((width - ScrollBar.vertical.implicitWidth) / 3)); cellHeight: 124
             clip: true; boundsBehavior: Flickable.StopAtBounds
-            ScrollBar.vertical: ScrollBar { width: 5; policy: ScrollBar.AsNeeded }
+            ScrollBar.vertical: AppScrollBar {}
             model: [{ id: "", name: "默认背景", kind: "", thumb: "", source: "" }].concat(settings.wallpaper.items)
             delegate: Tile {
                 required property var modelData

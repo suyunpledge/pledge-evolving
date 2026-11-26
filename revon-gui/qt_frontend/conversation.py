@@ -13,6 +13,7 @@ from revon.secrets import redact
 from revon_client import ChatMessage, GatewayError, GenerationCancelled, ModelStreamInterrupted
 from work_tools import prepare_calls, invoke
 from revon.toolwire import visual_message
+from revon.tools import rank_tool_matches
 from .visual_tools import REFERENCE
 from . import productivity_tools
 
@@ -23,6 +24,7 @@ TOOL_LABELS = {
     'read_file': '读取文件', 'read_range': '读取文件片段', 'file_outline': '查看文件结构',
     'grep': '搜索文件内容', 'write_file': '写入文件', 'edit_file': '编辑文件',
     'apply_patch': '应用补丁', 'delete_file': '删除文件', 'public_search': '联网搜索',
+    'fetch_url': '读取网页正文', 'tool_search': '查找可用工具',
     '7zip_extract': '7-Zip 解压', 'comfyui_run': 'ComfyUI',
     'generate_image': '生成图片', 'generate_video': '生成视频',
     'office_list': '列出办公文件', 'office_read': '读取办公内容', 'office_create': '新建办公文件',
@@ -91,7 +93,7 @@ def turn_limit(home, template=None):
 
 WORK_CONTEXT = ('当前已切换至 Work，继续处理同一条用户消息。Work 工具定义已随本轮请求提供，'
                 '直接调用列表中的匹配工具。读取项目文件时优先使用已提供的 keystone_read_range 或 '
-                'keystone_read_file。keystone_tool_search 只用于发现尚未加载的工具。')
+                'keystone_read_file。可用 keystone_tool_search 查找本轮提供的工具及其准确名称。')
 TOOL_CONTEXT = ('需要工具时，通过本轮提供的函数接口调用最匹配的工具。'
                 '删除本机文件时使用 Work 的 keystone_delete_file。若删除被拒绝，保留原文件并向用户说明原因。'
                 '处理应用或连接器中的删除请求时优先移入回收站；只能永久删除时，先确认已保存可恢复的副本。'
@@ -117,6 +119,8 @@ def tool_schemas(gateway, local):
 def receipt_outcome(result):
     meta = result.get('meta')
     execution = meta.get('execution_state') if isinstance(meta, dict) else None
+    if isinstance(meta, dict) and meta.get('error_code') == 'process_exit_nonzero' and type(meta.get('exit_code')) is int:
+        return f"检查失败（退出码 {meta['exit_code']}）"
     return ('结果未知' if execution == 'unknown' else '已完成' if result.get('ok') is True
             else '未执行' if execution == 'not_started' else '未完成')
 
@@ -126,6 +130,9 @@ def preview_receipt(name, response):
     meta = result.get('meta')
     value = result.get('error') or result.get('content') or result.get('result')
     detail = str(redact(value)) if isinstance(value, (str, int, float)) else ''
+    if isinstance(meta, dict) and meta.get('policy_source') == 'gateway' and meta.get('error_code') == 'policy_denied':
+        detail = (f"网关策略拒绝 · {meta.get('policy_mode')} / {meta.get('sandbox')}，读取范围 {meta.get('read_scope')}。\n"
+                  + detail)
     if not detail and isinstance(result.get('destination'), str) and isinstance(result.get('files'), list):
         files = [path for path in result['files'][:8] if isinstance(path, str)]
         detail = redact('\n'.join([result['destination'], *files]))
@@ -141,6 +148,43 @@ def preview_receipt(name, response):
 def desktop_readers(tools):
     names = {row['function']['name'] for row in tools or ()}
     return tuple('keystone_' + reader for reader in READERS if 'keystone_' + reader in names)
+
+
+def desktop_discovery(response, arguments, tools):
+    """Project the successful gateway lookup onto the actual post-filter desktop catalog."""
+    entries = []
+    functions = {}
+    search_tags = {'keystone_public_search': ('web_search', 'web', 'search', '网页', '搜索'),
+                   'keystone_fetch_url': ('search', '网页', '正文', '打开链接', '读取网页')}
+    for row in tools:
+        fn = row['function']
+        name = fn['name']
+        if name == 'keystone_tool_search':
+            continue
+        functions[name] = fn
+        tags = (*row.get('x-keystone-meta', {}).get('tags', ()), tool_label(name), *search_tags.get(name, ()))
+        entries.append((name, fn.get('description', ''), tags))
+    found = rank_tool_matches(arguments['query'], entries, arguments.get('limit', 5))
+    lines = []
+    for name in found:
+        required = functions[name].get('parameters', {}).get('required', [])
+        lines.append(name + (' · 必填参数 ' + ', '.join(required) if required else ''))
+    meta = dict(response.get('meta') or {})
+    for field in ('activated', 'artifact', 'model_view'):
+        meta.pop(field, None)
+    meta['available'] = found
+    body = '本轮可调用：\n' + '\n'.join(lines) if lines else '本轮提供的工具中没有匹配项。'
+    meta['unavailable'] = [item for item in meta.get('unavailable', [])
+                           if isinstance(item, dict) and isinstance(item.get('name'), str)
+                           and item.get('reason') and 'keystone_' + item['name'] not in functions]
+    for item in meta['unavailable']:
+        body += f"\n当前不可用：{item['name']} · {item['reason']}"
+    if not found:
+        body = '\n'.join([body, *meta.get('availability_hints', [])])
+    if ('keystone_fetch_url' not in functions and
+            ('keystone_public_search' in found or 'fetch_url' in arguments['query'].casefold())):
+        body += '\n当前工具列表未开放网页正文读取。可在 Work 工具设置中检查权限和「搜索」分组。'
+    return {**response, 'content': body, 'meta': meta}
 
 
 def model_tool_result(name, response, readers=()):
@@ -205,8 +249,14 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
         for index, row in enumerate(tools):
             function = row['function']
             description = function.get('description', '')
+            if function['name'] == 'keystone_tool_search':
+                description = 'Find matching tools offered in this desktop turn, with exact callable names and required arguments.'
+            if function['name'] in ('keystone_public_search', 'keystone_web_search'):
+                description = description.removesuffix(' Then read promising pages with fetch_url.')
+                if 'keystone_fetch_url' in names:
+                    description += ' Read a result page with keystone_fetch_url.'
             hint = describe_output(description, readers)
-            if hint != description:
+            if hint != function.get('description', ''):
                 tools[index] = {**row, 'function': {**function, 'description': hint}}
         return tools or None
 
@@ -388,13 +438,14 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
                                 raise PermissionError('只能查看当前对话生成的附件。')
                         if name in mcp_tools and mcp_tools[name][1] in (('visual', 'view_image'), ('visual', 'office_render')) and len(pending_images) >= 3:
                             raise ValueError('请先检查本批三张图片，再继续读取。')
-                        authorize(name, arguments, cancel)
+                        desktop_grant = authorize(name, arguments, cancel)
                     if cancel.is_set():
                         raise GenerationCancelled('已停止工具调用')
                 except GenerationCancelled as exc:
                     stopped = exc
                 except (PermissionError, ValueError) as exc:
                     response['error'] = str(exc)
+                    response['meta'].update(getattr(exc, 'receipt_meta', {}))
                 else:
                     if name == ENTER_WORK:
                         response = {'ok': True, 'content': '已接受 Work 切换请求。请使用下一轮提供的 Work 工具继续。' + switch_reason,
@@ -426,6 +477,13 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
                     else:
                         stage('tool', '正在执行 · ' + tool_label(name))
                         response = invoke(arguments, lambda: client.call_tool(name, arguments))
+                        meta = response.setdefault('meta', {})
+                        if isinstance(desktop_grant, dict) and (meta.get('policy_source') == 'gateway' or
+                                                              name == 'keystone_tool_search'):
+                            meta.update({k: desktop_grant[k] for k in ('desktop_profile', 'desktop_role')
+                                         if k in desktop_grant})
+                        if name == 'keystone_tool_search' and response.get('ok'):
+                            response = desktop_discovery(response, arguments, tools)
             if name == 'keystone_fetch_url' and response.get('meta', {}).get('may_need_browser'):
                 from revon.web_backends import browser_reader
                 reader = browser_reader(row['function']['name'] for row in tools)

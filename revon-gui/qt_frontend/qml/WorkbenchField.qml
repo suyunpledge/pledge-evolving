@@ -38,7 +38,7 @@ ColumnLayout {
             popup: Popup {
                 y: choice.height + 5; width: choice.width; height: Math.min(300, contentItem.implicitHeight + 12); padding: 6
                 background: GlassSurface { material: field.material; radius: 12; tint: "#e3202934" }
-                contentItem: ListView { clip: true; implicitHeight: contentHeight; model: choice.popup.visible ? choice.delegateModel : null; currentIndex: choice.highlightedIndex; ScrollIndicator.vertical: ScrollIndicator {} }
+                contentItem: ListView { clip: true; implicitHeight: contentHeight; model: choice.popup.visible ? choice.delegateModel : null; currentIndex: choice.highlightedIndex; ScrollBar.vertical: AppScrollBar {} }
             }
             delegate: ItemDelegate {
                 width: choice.width - 12; height: 36

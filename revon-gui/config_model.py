@@ -26,6 +26,7 @@ import tempfile
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlsplit
 from revon.compat import user_layer
 
 
@@ -70,7 +71,7 @@ _MODEL_RE = re.compile(
     r"(?P<m>(?:gpt|claude|deepseek|mimo|gemini|qwen|llama|mistral)[\w\-.:]*[a-z0-9])",
     re.IGNORECASE,
 )
-_WIRE_RE = re.compile(r"(?P<w>openai|anthropic)", re.IGNORECASE)
+_WIRE_RE = re.compile(r"\b(?:wire|protocol)\s*[:=]\s*['\"]?(openai|anthropic|google)\b", re.IGNORECASE)
 
 
 def _sniff_text(text: str) -> dict[str, str]:
@@ -86,7 +87,9 @@ def _sniff_text(text: str) -> dict[str, str]:
     if (m := _MODEL_RE.search(text)):
         out["model"] = m.group("m").lower()
     if (m := _WIRE_RE.search(text)):
-        out["wire"] = m.group("w").lower()
+        out["wire"] = m.group(1).lower()
+    elif (m := re.search(r"\b(openai|anthropic)\b", _URL_RE.sub("", text), re.IGNORECASE)):
+        out["wire"] = m.group(1).lower()
     return out
 
 
@@ -131,9 +134,16 @@ def _safe_id(raw: str, fallback: str) -> str:
 def _infer_wire(conf: dict[str, Any], warnings: list[str]) -> str:
     """根据 baseURL/字段猜 wire 协议。"""
     w = (conf.get("wire") or "").strip().lower()
-    if w in ("openai", "anthropic"):
+    if w in ("openai", "anthropic", "google"):
         return w
     url = (conf.get("baseURL") or "").lower()
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        parsed = None
+    if (parsed and parsed.hostname == "generativelanguage.googleapis.com"
+            and not parsed.path.rstrip("/").endswith("/openai")):
+        return "google"
     if "anthropic" in url or "/v1/messages" in url:
         return "anthropic"
     if "/v1" in url or "openai" in url or "deepseek" in url or url.startswith("http://127"):
@@ -174,7 +184,7 @@ def _normalize_provider_row(raw: dict[str, Any], warnings: list[str], seen_ids: 
               "model", "smallModel", "notes", "vendor", "cacheControl",
               "expectedCalls", "callGapSeconds", "adapt", "service", "rpm",
               "temperature", "headers", "models", "thinkBudget", "flex", "defer", "maxDeferSeconds",
-              "requestTimeout"):
+              "requestTimeout", "routeCapabilities", "modelCapabilities"):
         if k in raw and k not in conf:
             conf[k] = raw[k]
     # 字段别名

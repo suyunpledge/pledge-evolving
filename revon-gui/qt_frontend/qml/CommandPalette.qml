@@ -53,19 +53,18 @@ Popup {
             visible: paletteRoot.matches.length === 0
             text: "没有匹配项"; color: Theme.textMuted; font.pixelSize: 12; leftPadding: 10
         }
-        ListView {
+        AppListView {
             id: list
             objectName: "paletteList"
             width: parent.width; height: paletteRoot.availableHeight - field.height - 8
             model: paletteRoot.matches; clip: true; spacing: 2
             currentIndex: paletteRoot.current
             onCurrentIndexChanged: positionViewAtIndex(currentIndex, ListView.Contain)
-            ScrollBar.vertical: ScrollBar { width: 4 }
             delegate: AbstractButton {
                 id: entry
                 required property var modelData
                 required property int index
-                width: list.width; height: 40; hoverEnabled: true
+                width: list.rowWidth; height: 40; hoverEnabled: true
                 // The Enter target must be obvious: selected tint plus an accent bar.
                 background: Rectangle {
                     radius: 10
@@ -80,7 +79,7 @@ Popup {
                     spacing: 10; leftPadding: 10
                     Glyph { name: entry.modelData.icon || "sparkles"; ink: Theme.textSecondary; width: 16; height: 16; anchors.verticalCenter: parent.verticalCenter }
                     Text {
-                        width: list.width - 190; elide: Text.ElideRight
+                        width: list.rowWidth - 190; elide: Text.ElideRight
                         text: entry.modelData.label; color: Theme.textPrimary; font.pixelSize: 13
                         anchors.verticalCenter: parent.verticalCenter
                     }

@@ -30,7 +30,7 @@ class Onboarding(QObject):
         self._status = ""
         configured = models.configured_models(self.home)
         self._has_models = bool(configured)
-        available = {v.id for v in models.VENDORS if v.wire == "openai"}
+        available = {v.id for v in models.VENDORS if v.wire in ("openai", "google")}
         preferred = self._prefs.get("provider")
         self._preferred_vendor = preferred if preferred in available else next(
             (vendor for vendor in configured if vendor in available), models.DEFAULT_VENDOR)
@@ -49,7 +49,7 @@ class Onboarding(QObject):
     preferredVendor = Property(str, lambda self: self._preferred_vendor, notify=changed)
     vendors = Property("QVariantList", lambda self: [
         {"id": v.id, "name": v.name, "keyless": v.keyless}
-        for v in models.VENDORS if v.wire == "openai"
+        for v in models.VENDORS if v.wire in ("openai", "google")
     ], constant=True)
 
     @Slot(str, result="QVariantMap")
@@ -64,10 +64,11 @@ class Onboarding(QObject):
             config = {}
         preset = BY_KEY.get(vendor_id)
         plans = [{"label": plan.label, "url": plan.base_url, "note": plan.note}
-                 for plan in preset.plans if plan.usable and plan.wire == v.wire] if preset else []
+                 for plan in preset.plans if plan.usable and plan.wire in (v.wire, "openai")] if preset else []
         return {"url": config.get("baseURL") or v.base_url,
                 "model": config.get("model") or v.models[0],
                 "exampleModel": v.models[0], "plans": plans,
+                "tokenModels": {name: models.token_fields(config, name) for name in config.get("modelCapabilities", {})},
                 "temperature": str(config["temperature"] if config.get("temperature") is not None
                                    else models.DEFAULT_TEMPERATURE),
                 "keyless": v.keyless, "console": v.console}
@@ -102,7 +103,8 @@ class Onboarding(QObject):
         self._run("test", vendor_id, lambda secret: models.test_connection(vendor_id, secret, base_url=url), key, url)
 
     @Slot(str, str, str, str, str)
-    def saveModel(self, vendor_id, key, url, model, temperature):
+    @Slot(str, str, str, str, str, 'QVariantMap')
+    def saveModel(self, vendor_id, key, url, model, temperature, token_limits=None):
         if self._busy:
             return
         if not self.can_save():
@@ -110,14 +112,14 @@ class Onboarding(QObject):
             return
         self._run("save", vendor_id, lambda secret: models.apply_key(
             self.home, vendor_id, secret, base_url=url, model=model,
-            temperature=temperature, credential_path=self.credential_path), key, url)
+            temperature=temperature, credential_path=self.credential_path, token_limits=token_limits), key, url)
 
     def _run(self, operation, vendor_id, action, key, url):
         if self._busy:
             return
         vendor = models.vendor(vendor_id)
-        if self.demo or vendor is None or vendor.wire != "openai":
-            self._complete("", {"ok": False, "error": "此处需要正式工作台和 OpenAI 兼容厂商。"})
+        if self.demo or vendor is None or vendor.wire not in ("openai", "google"):
+            self._complete("", {"ok": False, "error": "请在正式工作台选择支持对话的供应商。"})
             return
         self._busy, self._ok, self._status = True, False, ""
         self.changed.emit()
@@ -125,7 +127,8 @@ class Onboarding(QObject):
         def worker():
             try:
                 secret = key
-                if not key.strip() and not vendor.keyless:
+                public_probe = operation == "test" and models.model_list_url(url)
+                if not key.strip() and not vendor.keyless and not public_probe:
                     config = next((row.get("config", {}) for row in load_user_layer(self.home)
                                    if row.get("id") == vendor_id), {})
                     if str(config.get("baseURL", "")).rstrip("/") == url.strip().rstrip("/"):

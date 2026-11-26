@@ -28,6 +28,14 @@ SOURCE = (
 
 
 class CodeAwareDetection(unittest.TestCase):
+    def test_markdown_permission_receipt_preserves_explanation_and_masks_real_credentials(self):
+        from .secrets import redact
+        for decision in ('ask', 'allow', 'deny'):
+            line = f'回执 `authorization={decision}`，进程退出码为 1。'
+            self.assertEqual(redact(line), line)
+            self.assertNotIn('sample-credential', redact(line + ' Authorization: Bearer sample-credential'))
+        self.assertNotIn('allow-private-value', redact('回执 `authorization=allow-private-value`'))
+
     def test_source_expressions_survive_and_literals_do_not(self):
         scope = SecretScope()
         self.assertEqual(scope.protect_text(SOURCE, code=True), SOURCE)

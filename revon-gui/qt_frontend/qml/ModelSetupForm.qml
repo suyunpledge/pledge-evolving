@@ -38,6 +38,7 @@ ColumnLayout {
         modelField.text = defaults.model || ""
         urlField.text = defaults.url || ""
         temperatureField.text = defaults.temperature || "0.7"
+        loadTokenFields()
         syncPlan()
         keyField.clear()
         service.clearStatus()
@@ -46,7 +47,11 @@ ColumnLayout {
         service.testConnection(vendorId, keyField.text, urlField.text)
     }
     function saveModel() {
-        service.saveModel(vendorId, keyField.text, urlField.text, modelField.text, temperatureField.text)
+        service.saveModel(vendorId, keyField.text, urlField.text, modelField.text, temperatureField.text,
+                          advanced ? tokenLimits.values() : ({}))
+    }
+    function loadTokenFields() {
+        if (tokenLimits) tokenLimits.load(defaults.tokenModels?.[modelField.text.trim()] || {})
     }
     function clearKey() { keyField.clear() }
 
@@ -63,7 +68,7 @@ ColumnLayout {
     }
 
     FieldLabel { text: form.english ? "Provider" : "模型厂商" }
-    ComboBox {
+    AppComboBox {
         id: vendors; objectName: "setupVendor"
         Layout.fillWidth: true; Layout.preferredHeight: 38
         model: form.service.vendors; textRole: "name"; valueRole: "id"
@@ -74,7 +79,7 @@ ColumnLayout {
         onActivated: form.loadVendor()
     }
     FieldLabel { visible: plans.visible; text: form.english ? "Endpoint preset" : "地区或套餐" }
-    ComboBox {
+    AppComboBox {
         id: plans; objectName: "setupPlan"
         visible: model.length > 1
         Layout.fillWidth: true; Layout.preferredHeight: 38
@@ -119,6 +124,7 @@ ColumnLayout {
     FieldLabel { text: form.english ? "Model ID" : "模型 ID" }
     SetupField {
         id: modelField; objectName: "setupModel"
+        onTextChanged: form.loadTokenFields()
         Accessible.name: form.english ? "Model ID" : "模型 ID"
         inputMethodHints: Qt.ImhNoPredictiveText
     }
@@ -127,5 +133,9 @@ ColumnLayout {
         id: temperatureField; objectName: "setupTemperature"; visible: form.advanced
         Accessible.name: form.english ? "Temperature" : "温度"
         inputMethodHints: Qt.ImhFormattedNumbersOnly
+    }
+    ModelTokenFields {
+        id: tokenLimits; visible: form.advanced; material: form.material; english: form.english
+        onEdited: form.service.clearStatus()
     }
 }

@@ -929,7 +929,7 @@ class RefactorAcceptance(unittest.TestCase):
                 for plan in preset.plans:
                     self.assertTrue(plan.base_url.startswith("https://"),
                                     f"{preset.key}/{plan.label} 地址不合法")
-                    self.assertIn(plan.wire, ("openai", "anthropic"))
+                    self.assertIn(plan.wire, ("openai", "anthropic", "google"))
         # 订阅套餐要单独列，而不是和标准 API 混成一档
         zhipu = catalog.BY_KEY["zhipu"]
         labels = [pl.label for pl in zhipu.plans]
@@ -946,20 +946,15 @@ class RefactorAcceptance(unittest.TestCase):
         # 来源要如实分层：用户确认 > 本机配置 > 官方文档 > 待确认
         self.assertTrue(any(p.source == catalog.SOURCE_CONFIRMED
                             for p in catalog.PRESETS), "应有用户确认的条目")
-        self.assertTrue(any(pl.effective_source(p) == catalog.SOURCE_UNVERIFIED
-                            for p, pl in catalog.all_plans()),
-                        "未核实的端点必须标「待确认」，不能装作已核对")
+        unknown = catalog.Plan("custom", "https://example.org", source=catalog.SOURCE_UNVERIFIED)
+        self.assertIn("未经核实", catalog.config_snippet(zhipu, unknown))
         # 用不了的方式要置灰（usable=False），不能生成装不上的模板
-        unusable = [(p.key, pl.label) for p, pl in catalog.all_plans()
-                    if not getattr(pl, "usable", True)]
-        self.assertTrue(unusable, "应有明确标记为不可用的接入方式")
-        for key, _label in unusable:
-            with self.subTest(provider=key):
-                self.assertEqual(key, "google")
+        google = catalog.BY_KEY["google"]
+        self.assertEqual({p.wire for p in google.plans if p.usable}, {"openai", "google"})
+        self.assertIn("wire: google", catalog.config_snippet(google, google.plans[0]))
+        self.assertEqual(catalog.SOURCE_LABEL[catalog.SOURCE_USER], "")
         with self.assertRaises(ValueError):
-            preset, plan = next((p, pl) for p, pl in catalog.all_plans()
-                                if not getattr(pl, "usable", True))
-            catalog.config_snippet(preset, plan)
+            catalog.config_snippet(google, catalog.Plan("unsupported", "https://example.org", usable=False))
         # 用户直接给定的地址必须原样落库
         expected = {
             ("minimax_global", "https://api.minimax.io/v1"),

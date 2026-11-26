@@ -13,8 +13,10 @@ Flickable {
     signal submit()
     clip: true
     boundsBehavior: Flickable.StopAtBounds
-    contentWidth: horizontalScroll ? Math.max(width, input.contentWidth) : width
+    contentWidth: horizontalScroll ? Math.max(width, input.contentWidth + input.rightPadding) : width
     contentHeight: input.height
+    ScrollBar.vertical: AppScrollBar {}
+    ScrollBar.horizontal: AppScrollBar { policy: field.horizontalScroll ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff }
 
     // Resize and scroll can move the cursor without changing its local rect.
     readonly property point sceneOrigin: {
@@ -29,14 +31,16 @@ Flickable {
             controller.syncInputMethod(input.mapToItem(null, 0, 0), input.width, input.height)
     }
     function scrollToRect(rect) {
+        const viewportHeight = height - (ScrollBar.horizontal.visible ? ScrollBar.horizontal.height : 0)
+        const viewportWidth = width - input.rightPadding
         if (rect.y < contentY)
             contentY = rect.y
-        else if (rect.y + rect.height > contentY + height)
-            contentY = rect.y + rect.height - height
+        else if (rect.y + rect.height > contentY + viewportHeight)
+            contentY = rect.y + rect.height - viewportHeight
         if (horizontalScroll && rect.x < contentX)
             contentX = rect.x
-        else if (horizontalScroll && rect.x + rect.width > contentX + width)
-            contentX = rect.x + rect.width - width
+        else if (horizontalScroll && rect.x + rect.width > contentX + viewportWidth)
+            contentX = rect.x + rect.width - viewportWidth
     }
     function revealPosition(position) {
         scrollToRect(input.positionToRectangle(position))
@@ -58,7 +62,8 @@ Flickable {
         color: "#edf0f4"; placeholderTextColor: "#97a2b0"
         font.pixelSize: 15
         wrapMode: field.horizontalScroll ? TextEdit.NoWrap : TextEdit.Wrap; selectByMouse: true
-        leftPadding: 0; rightPadding: 0; topPadding: 4; bottomPadding: 4
+        leftPadding: 0; rightPadding: field.ScrollBar.vertical.implicitWidth; topPadding: 4
+        bottomPadding: 4 + (field.ScrollBar.horizontal.visible ? field.ScrollBar.horizontal.height : 0)
         background: null
         selectionColor: "#526477"; selectedTextColor: "white"
         onActiveFocusChanged: Qt.callLater(field.refreshInputMethod)

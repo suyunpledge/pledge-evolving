@@ -139,6 +139,7 @@ class ChatController(QObject):
         self._temperature = 0.7
         self._models = ["default"]
         self._managed_models = None
+        self._route_providers = {}
         self._pending_model = ''
         self._switching_model = False
         self._model = str(self._prefs.get("model", "default"))
@@ -209,6 +210,7 @@ class ChatController(QObject):
     model = Property(str, lambda self: self._model, notify=changed)
     models = Property("QStringList", lambda self: self._models, notify=changed)
     modelSwitching = Property(bool, lambda self: self._switching_model, notify=changed)
+    routeProviders = Property('QVariantMap', lambda self: self._route_providers if self._managed_models is not None else {}, notify=changed)
     reasoning = Property(str, lambda self: self._reasoning, notify=changed)
     planning = Property(QObject, lambda self: self._planning, constant=True)
 
@@ -448,14 +450,24 @@ class ChatController(QObject):
     def refreshModelChoices(self):
         if self._managed_models is None:
             return
-        from config_model import load_user_layer
+        from provider_catalog import route_identity
+        from revon.provider_requests import safe_url
         from .gateway_service import chat_model_routes, model_rows
         try:
-            models = list(chat_model_routes(model_rows(self.store.home)))
+            routes = chat_model_routes(model_rows(self.store.home))
         except (OSError, ValueError):
+            self._route_providers = {}
+            self.changed.emit()
             return
+        providers = {label: route_identity(safe_url(config.get('baseURL')))['providerName']
+                     for label, (_, config) in routes.items()}
+        changed_providers = providers != self._route_providers
+        self._route_providers = providers
+        models = list(routes)
         if models != self._managed_models:
             self.setManagedModels(models)
+        elif changed_providers:
+            self.changed.emit()
 
     def _effort_info(self):
         model = self._model
@@ -880,6 +892,8 @@ class ChatController(QObject):
         from . import effort as effort_levels
         effort = effort_levels.wire_effort(effort, self._effort_info()['levels'])
         client = self._client or self.factory(self._gateway)
+        if isinstance(client, RevonGatewayClient) and self._managed_models is not None:
+            client.conversation_id = uuid.uuid5(uuid.NAMESPACE_URL, 'revon:chat:' + self._sid).hex
         self._client = client
         authorize = self.tool_authorizer() if self.tool_authorizer is not None else None
         tools_enabled, tool_filter = self._tool_settings.snapshot()

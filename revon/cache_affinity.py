@@ -9,11 +9,18 @@ from .context_plan import estimate_text
 GPT61_MODELS = frozenset({"gpt-6.1-sol", "gpt-6.1-terra"})
 
 
-def official_openai_endpoint(provider):
-    endpoint = urlsplit(provider.base_url)
-    return (provider.wire == "openai"
+def official_openai_base(address, wire):
+    """Resolve official API roots and the full Responses URL entered in model settings."""
+    endpoint = urlsplit(address)
+    if (wire == "openai"
             and endpoint.scheme == "https" and endpoint.netloc.lower() in {"api.openai.com", "api.openai.com:443"}
-            and endpoint.path.rstrip("/") in {"", "/v1"} and not (endpoint.query or endpoint.fragment))
+            and endpoint.path.rstrip("/") in {"", "/v1", "/v1/responses"} and not (endpoint.query or endpoint.fragment)):
+        return endpoint._replace(path="/v1").geturl()
+    return None
+
+
+def official_openai_endpoint(provider):
+    return official_openai_base(provider.base_url, provider.wire) is not None
 
 
 def apply_openai_breakpoint(payload, provider, model):

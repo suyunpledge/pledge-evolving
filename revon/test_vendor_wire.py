@@ -96,7 +96,8 @@ class VendorWireTests(unittest.TestCase):
         for chosen in ("minimax-m3", "deepseek-flash", "doubao-seed-evolving", "mimo-v2.6-flash"):
             with self.subTest(model=chosen):
                 (_, payload), _ = self.transport_call(chosen, max_tokens=128, enable_thinking=False)
-                self.assertEqual(payload["max_tokens"], 128)
+                field = "max_completion_tokens" if chosen == "mimo-v2.6-flash" else "max_tokens"
+                self.assertEqual(payload[field], 128)
 
     def test_default_output_reserves_room_for_reasoning(self):
         (_, payload), _ = self.transport_call("minimax-m3")

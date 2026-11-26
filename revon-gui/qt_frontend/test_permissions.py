@@ -1,3 +1,4 @@
+import json
 import tempfile
 import threading
 import unittest
@@ -8,6 +9,86 @@ from revon_client import ChatMessage, CompletionResult, GenerationCancelled
 
 
 class DesktopBoundaryTests(unittest.TestCase):
+    def start_gateway(self, root):
+        from revon.gateway import GatewayConfig, serve
+        from revon.policy import Mode, Policy
+        from revon.tools import build_builtin_registry
+        from revon_client import RevonGatewayClient
+        cfg = GatewayConfig(upstream='http://127.0.0.1:1', port=0, home=root / 'home', workspace=str(root),
+                            registry=build_builtin_registry(),
+                            policy=Policy(mode=Mode.ACCEPT_EDITS, workspace=root, non_interactive=True))
+        server = serve(cfg)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(cfg.close_runtime)
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        return RevonGatewayClient(f'http://127.0.0.1:{server.server_address[1]}')
+
+    def test_work_discovery_uses_current_permissions_and_real_gateway_schema(self):
+        from .search_service import SearchService
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        client = self.start_gateway(root)
+        search = SearchService(root).work_tool()
+        for profile in ('sandbox', 'manual'):
+            observed = []
+            def stream(messages, *, tools, **_):
+                declarations = {row['function']['name']: row['function'] for row in tools}
+                self.assertEqual(declarations['keystone_grep']['parameters']['required'], ['pattern'])
+                self.assertEqual(declarations['keystone_tool_search']['parameters']['required'], ['query'])
+                if messages[-1].role == 'tool':
+                    result = json.loads(messages[-1].content)
+                    self.assertTrue(result['ok'], result)
+                    observed.extend(result['meta']['available'])
+                    self.assertLessEqual(set(observed), declarations.keys())
+                    self.assertNotIn('web_search (already available)', result['content'])
+                    self.assertEqual('未开放网页正文' in result['content'], profile == 'sandbox')
+                    return CompletionResult('ok')
+                if profile == 'manual':
+                    self.assertEqual(declarations['keystone_fetch_url']['parameters']['required'], ['url'])
+                return CompletionResult('', tool_calls=[{'id': 'lookup', 'type': 'function', 'function': {
+                    'name': 'keystone_tool_search', 'arguments': '{"query":"search"}'}}])
+            client.stream_chat = stream
+            run(client, [ChatMessage('user', '查找搜索工具')], model='test', effort=None, cancel=threading.Event(),
+                mcp=({'keystone_public_search': search}, None),
+                authorize=lambda n, a, c: authorize(profile, root, n, a, lambda *_: True, c),
+                tool_filter=lambda n: tool_available(profile, n), chunk=lambda _: None,
+                checkpoint=lambda _: None, status=lambda _: None, next_round=lambda: None)
+            self.assertIn('keystone_public_search', observed)
+            self.assertEqual('keystone_fetch_url' in observed, profile == 'manual')
+            self.assertNotIn('keystone_web_search', observed)
+
+    def test_full_desktop_reports_role_and_gateway_denials_separately(self):
+        from revon.agent_templates import AgentTemplate
+        from .conversation import preview_receipt
+        parent = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        root = parent / 'workspace'
+        root.mkdir()
+        outside = parent / 'outside.txt'
+        outside.write_text('outside fixture', encoding='utf8')
+        client = self.start_gateway(root)
+        role = AgentTemplate('test', '工作区角色', '', '', '')
+        for template, source in ((role, 'role'), (None, 'gateway')):
+            def stream(messages, **kwargs):
+                if messages[-1].role == 'tool':
+                    result = json.loads(messages[-1].content)
+                    self.assertFalse(result['ok'])
+                    meta = result['meta']
+                    self.assertEqual((meta['policy_source'], meta['desktop_profile']), (source, 'full'))
+                    self.assertEqual((meta['error_code'], meta['execution_state']), ('policy_denied', 'not_started'))
+                    if template:
+                        self.assertEqual(meta['role_name'], role.name)
+                    else:
+                        self.assertTrue(meta['action_id'])
+                        self.assertFalse(meta['read_allows_anywhere'])
+                        self.assertIn('网关策略拒绝', preview_receipt('keystone_read_range', result)['detail'])
+                    return CompletionResult('done')
+                return CompletionResult('', tool_calls=[{'id': 'read', 'type': 'function', 'function': {
+                    'name': 'keystone_read_range', 'arguments': json.dumps({'path': str(outside), 'start': 1, 'end': 1})}}])
+            client.stream_chat = stream
+            run(client, [ChatMessage('user', '检查读取回执')], model='test', effort=None, cancel=threading.Event(),
+                authorize=lambda n, a, c: authorize('full', root, n, a, self.fail, c, template=template),
+                chunk=lambda _: None, checkpoint=lambda _: None, status=lambda _: None, next_round=lambda: None)
+
     def test_sandbox_can_page_a_real_retained_result(self):
         from revon.execution import ActionExecutor, ActionRequest, create_execution_context
         from revon.desktop_permissions import profile_policy

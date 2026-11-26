@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from revon import toolwire
 from revon.policy import Mode, Policy, Sandbox
@@ -45,6 +47,45 @@ class _Workspace(unittest.TestCase):
 
 
 class GrepTests(_Workspace):
+    def test_pages_count_matching_lines_and_stop_at_exact_boundary(self):
+        path = self.ws / "中文.txt"
+        path.write_text("".join(f"item {n}\n" for n in range(1, 201)), encoding="utf-8")
+        args = dict(root=path.name, pattern=r"^item ", context=1)
+        first = self.call("grep", **args)
+        self.assertEqual(first.meta["next_offset"], 100)
+        second = self.call("grep", offset=first.meta["next_offset"], **args)
+        self.assertFalse(second.meta["truncated"])
+        self.assertNotIn("next_offset", second.meta)
+        self.assertEqual(second.meta["matches"], 100)
+        self.assertIn("中文.txt:101: item 101", second.content)
+        self.assertNotIn("中文.txt:100:", second.content)
+        self.assertEqual(self.call("grep", offset=200, **args).meta["matches"], 0)
+        self.assertFalse(self.call("grep", offset=-1, **args).ok)
+
+    @unittest.skipUnless(shutil.which("git"), "requires Git")
+    def test_git_ignored_files_hidden_except_tracked_and_reincluded(self):
+        def git(*args):
+            subprocess.run(["git", *args], cwd=self.ws, check=True, capture_output=True)
+        git("init", "-q")
+        (self.ws / ".gitignore").write_text(".openclaw/\nbuild/\n", encoding="utf8")
+        files = ("build/lib/copy.txt", "build/tracked.txt", ".openclaw/tmp/noise.txt",
+                 "中文/keep.txt", "中文/skip.txt")
+        for name in files:
+            path = self.ws / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("unique_marker\n", encoding="utf8")
+        (self.ws / "中文/.gitignore").write_text("*.txt\n!keep.txt\n", encoding="utf8")
+        git("add", "-f", "build/tracked.txt")
+        for tool, args in (("grep", {"pattern": "unique_marker"}), ("find_files", {"pattern": "*.txt"})):
+            result = self.call(tool, **args)
+            for name in files:
+                self.assertEqual(name in result.content, name in ("build/tracked.txt", "中文/keep.txt"), name)
+            nested = self.call(tool, root="中文", **args)
+            self.assertIn("中文/keep.txt", nested.content)
+            self.assertNotIn("skip.txt", nested.content)
+            ignored_root = self.call(tool, root=".openclaw", **args)
+            self.assertNotIn("noise.txt", ignored_root.content)
+
     def test_jsonc_file_is_skipped_with_a_note_instead_of_failing_the_search(self):
         result = self.call("grep", pattern="greet")
         self.assertTrue(result.ok, result.error)
@@ -96,6 +137,34 @@ class FindFilesTests(_Workspace):
         self.assertNotIn("node_modules", everything)
         self.assertNotIn(".venv", everything)
         self.assertEqual(self.call("find_files", pattern="*.rs").content, "(no files matched)")
+
+
+class EditReceiptTests(_Workspace):
+    def test_patch_conflict_reports_whether_a_previous_file_was_committed(self):
+        mkstemp = tempfile.mkstemp
+
+        for conflict_index in (0, 1):
+            with self.subTest(conflict_index=conflict_index):
+                paths = [self.ws / 'one.txt', self.ws / 'two.txt']
+                for path in paths:
+                    path.write_bytes(b'original')
+                edits = [dict(path=path.name, old='original', new='patched') for path in paths]
+                target = paths[conflict_index]
+
+                def start_write(**kwargs):
+                    if kwargs['prefix'] == f'.{target.name}.':
+                        target.write_bytes(b'user edit')
+                    return mkstemp(**kwargs)
+
+                with patch('tempfile.mkstemp', side_effect=start_write):
+                    result = self.call('apply_patch', patches=edits)
+                self.assertFalse(result.ok)
+                self.assertEqual(result.meta['error_code'], 'revision_conflict')
+                self.assertEqual(result.meta['execution_state'], 'unknown' if conflict_index else 'not_started')
+                self.assertEqual(result.meta['committed'], [str(path.resolve()) for path in paths[:conflict_index]])
+                self.assertEqual(target.read_bytes(), b'user edit')
+                other = paths[1 - conflict_index]
+                self.assertEqual(other.read_bytes(), b'patched' if conflict_index else b'original')
 
 
 class ReviewChangesTests(_Workspace):

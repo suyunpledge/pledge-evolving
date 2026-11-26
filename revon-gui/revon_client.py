@@ -132,6 +132,28 @@ class ModelStreamInterrupted(GatewayError):
     """A model request may be repeated with the same committed tool history."""
 
 
+def check_model_credit(detail, status=None):
+    """Distinguish explicit provider billing refusals from throttling and interrupted streams."""
+    if isinstance(detail, str):
+        try:
+            detail = json.loads(detail)
+        except ValueError:
+            pass
+    if isinstance(detail, dict):
+        detail = detail.get('error', detail)
+    if isinstance(detail, dict):
+        codes = (detail.get('code'), detail.get('type'))
+        message = str(detail.get('message', ''))
+    else:
+        codes, message = (), str(detail or '')
+    if (status == 402 or any(code in ('insufficient_quota', 'insufficient_balance', 'billing_hard_limit_reached')
+                             for code in codes)
+            or any(marker in message.casefold() for marker in
+                   ('credit balance is too low', 'insufficient credits', 'insufficient balance', '账户余额不足'))):
+        label = f'HTTP {status} · ' if status else ''
+        raise GatewayError(label + '模型服务商报告余额或可用额度不足。请检查该模型账户的账单或切换模型。')
+
+
 def http_error_detail(error, limit=500):
     try:
         if hasattr(error, "_keystone_detail"):
@@ -157,6 +179,7 @@ class RevonGatewayClient:
         self.api_key = self._credential.ref
         self.secret_scope = SecretScope()
         self.secret_session = __import__('uuid').uuid4().hex
+        self.conversation_id = ''
         self._explicit_timeout = timeout is not None
         self.timeout = request_timeout(timeout, default=gateway_client_timeout())
         self.plugin_policy_version = 0
@@ -177,6 +200,8 @@ class RevonGatewayClient:
         data = None
         headers = {"Content-Type": "application/json",
                    "User-Agent": "revon-gui/0.1", "X-Keystone-Secret-Scope": self.secret_session}
+        if self.conversation_id and path == '/v1/chat/completions':
+            headers['X-Revon-Conversation'] = self.conversation_id
         if self.api_key:
             headers.update(self._credential._header(url, wire='openai'))
         if body is not None:
@@ -301,6 +326,7 @@ class RevonGatewayClient:
             raise GenerationCancelled("已停止生成") from None
         except urllib.error.HTTPError as e:
             err_body = http_error_detail(e)
+            check_model_credit(err_body, e.code)
             raise GatewayError(f"HTTP {e.code}: {err_body}") from None
         except (urllib.error.URLError, socket.timeout) as e:
             if cancel_event is not None and cancel_event.is_set():
@@ -316,6 +342,8 @@ class RevonGatewayClient:
         except json.JSONDecodeError as e:
             raise GatewayError(f"非 JSON 响应：{raw_text[:200]}") from None
 
+        if isinstance(data, dict) and data.get('error'):
+            check_model_credit(data['error'])
         choices = data.get("choices") if isinstance(data, dict) else None
         if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
             raise GatewayError(f"响应无 choices：{raw_text[:300]}")
@@ -427,6 +455,7 @@ class RevonGatewayClient:
                         continue
                     if ev.get("error"):
                         detail = ev['error']
+                        check_model_credit(detail)
                         if (isinstance(detail, dict) and detail.get('code') == 'keystone_upstream_failure'
                                 and detail.get('retryable') is True):
                             if completed:
@@ -489,6 +518,8 @@ class RevonGatewayClient:
                                       "function": {"name": "", "arguments": ""}})
                             if item.get("id"):
                                 slot["id"] = str(item["id"])
+                            if isinstance(item.get("extra_content"), dict) and "google" in item["extra_content"]:
+                                slot["extra_content"] = {"google": item["extra_content"]["google"]}
                             fn = item.get("function") or {}
                             if isinstance(fn, dict):
                                 if fn.get("name"):
@@ -504,6 +535,7 @@ class RevonGatewayClient:
         except urllib.error.HTTPError as e:
             check_cancelled()
             err_body = http_error_detail(e)
+            check_model_credit(err_body, e.code)
             if e.code in (502, 504) and (e.headers or {}).get('X-Keystone-Retryable') != '0':
                 raise ModelStreamInterrupted(f"HTTP {e.code}: {err_body}") from None
             raise GatewayError(f"HTTP {e.code}: {err_body}") from None

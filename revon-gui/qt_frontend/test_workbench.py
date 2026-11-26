@@ -454,6 +454,28 @@ class WorkbenchTests(unittest.TestCase):
         QMetaObject.invokeMethod(panel, 'close')
         until(lambda: not panel.property('visible'))
 
+    def test_search_fallback_is_visible_in_panel_and_work_receipt(self):
+        from unittest.mock import patch
+        service = self.workbench.search
+        service.demo = False
+        panel = self.window.findChild(QObject, 'publicSearchPanel')
+        self.window.findChild(QObject, 'publicSearchButton').clicked.emit()
+        until(lambda: panel.property('opened'))
+        status = panel.findChild(QObject, 'publicSearchStatus')
+        for actual in ('duckduckgo', 'google'):
+            rows = [{'title': 'Example', 'url': 'https://example.org/', 'engine': actual}]
+            with patch('revon.web_backends.search', return_value=rows):
+                service.run('python', 'google', 'repositories')
+                until(lambda: not service.busy)
+                receipt = service.call_work_tool('google', {'query': 'python'}, threading.Event())
+            self.assertEqual(receipt['requested_engine'], 'google')
+            self.assertEqual(receipt['engine'], actual)
+            self.assertIn(f'<web-data source="{actual} public search">', receipt['content'])
+            for content in (status.property('text'), receipt['content']):
+                self.assertEqual('已改用 DuckDuckGo' in content, actual != 'google')
+        service.reset()
+        self.assertEqual(service.sourceNotice, '')
+
     def test_china_catalog_filters_and_opens_provider_setup(self):
         self.workbench.navigate('connectors')
         until(lambda: self.workbench.mcp.loaded and self.window.findChild(QObject, 'connectorsPage') is not None)

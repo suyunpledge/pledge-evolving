@@ -313,7 +313,7 @@ class HostedApp(legacy.RevonGuiApp):
         if not row_id:
             return False
         row = next((row for row in self.user_rows if row['id'] == row_id and not row.get('disabled')), None)
-        if row is None or row['config'].get('wire', 'openai') != 'openai':
+        if row is None or row['config'].get('wire', 'openai') not in ('openai', 'google'):
             return False
         self._suppress_model_trace = True
         try:

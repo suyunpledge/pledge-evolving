@@ -125,7 +125,7 @@ function status() {
   $("saveState").textContent = drafts.size
     ? "编辑中…"
     : "本地已保存 · v" + doc.version;
-
+  $("saveState").title = $("saveState").textContent;
   $("saveState").classList.toggle("dirty", drafts.size > 0);
   let detail = types[doc.kind][1];
   if (doc.kind === "document") {
@@ -212,7 +212,7 @@ async function flush() {
     } catch (error) {
       if (error.message.includes("字段已变化")) {
         conflicted = true;
-        $("saveState").textContent = "草稿待处理";
+        $("saveState").textContent = $("saveState").title = "草稿待处理";
         if (!$("conflict").open) $("conflict").showModal();
       }
       throw error;

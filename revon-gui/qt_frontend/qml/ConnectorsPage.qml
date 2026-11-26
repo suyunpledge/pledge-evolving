@@ -89,7 +89,7 @@ Item {
         }
         Item {
             Layout.fillWidth: true; Layout.fillHeight: true
-            ListView {
+            AppListView {
                 id: servers; objectName: "mcpServerRows"
                 anchors.fill: parent; visible: !page.selected && page.service.loaded
                 model: page.region === "all" ? page.service.rows.filter(row => {
@@ -97,18 +97,15 @@ Item {
                     return row.name.toLowerCase().includes(query) || row.url.toLowerCase().includes(query)
                 }) : []
                 clip: true; spacing: 8; reuseItems: true
-                ScrollBar.vertical: ScrollBar {
-                    width: 4; policy: servers.contentHeight > servers.height ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
-                }
                 delegate: GlassRow {
                     required property var modelData
-                    material: page.material; width: ListView.view.width
+                    material: page.material; width: ListView.view.rowWidth
                     text: modelData.name; detail: modelData.url; status: modelData.status; glyph: "plug"
                     statusColor: modelData.status === "连接失败" ? "#e2ad9f" : modelData.tools.length ? "#9cceb5" : "#9eacbd"
                     onClicked: page.selectedId = modelData.id
                 }
                 footer: Column {
-                    width: servers.width; spacing: 8
+                    width: servers.rowWidth; spacing: 8
                     Item { width: 1; height: 4 }
                     Text { visible: page.showAccounts; text: "内置连接器"; color: "#aab5c4"; font.pixelSize: 13; topPadding: 14; bottomPadding: 4 }
                     Repeater {
@@ -255,14 +252,13 @@ Item {
                           : "本次已获取的工具可在 Work 对话的手动批准或完全访问模式使用。"
                     color: "#9eacbd"; font.pixelSize: 12; wrapMode: Text.Wrap
                 }
-                ListView {
+                AppListView {
                     Layout.fillWidth: true; Layout.fillHeight: true
                     model: page.selected ? page.selected.tools : []
                     clip: true; spacing: 8; reuseItems: true
-                    ScrollBar.vertical: ScrollBar { width: 4 }
                     delegate: GlassRow {
                         required property var modelData
-                        material: page.material; width: ListView.view.width
+                        material: page.material; width: ListView.view.rowWidth
                         text: modelData.name; detail: modelData.description; glyph: "puzzle"
                         iconUrl: page.icon(page.selected?.icon)
                         onClicked: toolInfo.inspect(modelData)
@@ -606,7 +602,7 @@ Item {
                 Text { Layout.fillWidth: true; text: toolInfo.tool.name || ""; color: "#e9eef4"; font.pixelSize: 17; elide: Text.ElideRight }
                 GlassButton { material: page.material; glyph: "x"; tip: "关闭工具详情"; onClicked: toolInfo.close() }
             }
-            ScrollView {
+            AppScrollView {
                 Layout.fillWidth: true; Layout.fillHeight: true; clip: true; contentWidth: availableWidth
                 TextArea {
                     readOnly: true; selectByMouse: true; wrapMode: TextEdit.Wrap; background: null
@@ -617,7 +613,7 @@ Item {
                           : JSON.stringify(toolInfo.tool.schema || {}, null, 2))
                 }
             }
-            ScrollView {
+            AppScrollView {
                 Layout.fillWidth: true; Layout.preferredHeight: 96; clip: true
                 background: GlassSurface { material: page.material; radius: 10 }
                 TextArea {

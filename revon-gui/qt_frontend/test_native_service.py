@@ -653,15 +653,24 @@ class NativeServiceTests(unittest.TestCase):
         thread.start()
         try:
             save_user_layer(self.home, [dict(id='custom', name='provider:custom', config={
-                'baseURL': f'http://127.0.0.1:{server.server_port}/custom/v1', 'model': 'fixture', 'wire': 'openai'})])
+                'baseURL': f'http://127.0.0.1:{server.server_port}/custom/v1', 'model': 'fixture', 'wire': 'openai',
+                'modelCapabilities': {'fixture': {'outputTokenBudget': 131072, 'contextWindow': 131584}}})])
             self.host.gateway.demo = False
             self.host.gateway.start('custom')
             proc = self.host.gateway.process
             self.assertIsNone(proc.poll())
-            from revon_client import RevonGatewayClient, ChatMessage
-            result = RevonGatewayClient(self.host.gateway.url).chat([ChatMessage('user', 'test')], model='fixture')
+            from revon_client import RevonGatewayClient, ChatMessage, GatewayError
+            client = RevonGatewayClient(self.host.gateway.url)
+            result = client.chat([ChatMessage('user', 'test')], model='fixture')
             self.assertEqual(result.text, 'gateway-ok')
             self.assertEqual(requests[0][0], '/custom/v1/chat/completions')
+            self.assertEqual(requests[0][1]['max_tokens'], 131072)
+            client.chat([ChatMessage('user', 'more text ' * 400)], model='fixture')
+            self.assertLess(requests[1][1]['max_tokens'], 131072)
+            self.assertGreater(requests[1][1]['max_tokens'], 0)
+            with self.assertRaisesRegex(GatewayError, '131584'):
+                client.chat([ChatMessage('user', 'x' * 400000)], model='fixture')
+            self.assertEqual(len(requests), 2)
             self.host.gateway.close()
             self.assertIsNotNone(proc.poll())
         finally:

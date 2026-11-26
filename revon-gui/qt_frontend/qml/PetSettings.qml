@@ -46,10 +46,11 @@ Popup {
         }
         GridView {
             id: grid
+            ScrollBar.vertical: AppScrollBar {}
             objectName: "petGrid"
             Layout.fillWidth: true
             Layout.preferredHeight: Math.min(2, Math.ceil(count / 3)) * cellHeight
-            cellWidth: Math.floor(width / 3); cellHeight: 124
+            cellWidth: Math.max(1, Math.floor((width - ScrollBar.vertical.implicitWidth) / 3)); cellHeight: 124
             clip: true; interactive: contentHeight > height
             model: settings.pets.packs
             delegate: AbstractButton {

@@ -64,14 +64,13 @@ Popup {
             visible: !choices.count; Layout.fillWidth: true; leftPadding: 8; topPadding: 4; bottomPadding: 5
             text: picker.failure || (picker.loading ? "正在查找文件…" : "没有匹配的文件"); color: "#b4becb"
         }
-        ListView {
+        AppListView {
             id: choices; objectName: "quickOpenResults"; Layout.fillWidth: true
             Layout.preferredHeight: Math.min(count * 30, 300, picker.parent.height * 0.5)
             model: picker.rows; clip: true; highlightMoveDuration: 0
-            ScrollBar.vertical: ScrollBar {}
             delegate: ItemDelegate {
                 id: option; required property int index; required property var modelData
-                width: choices.width; height: 30; leftPadding: 8; rightPadding: 12; topPadding: 0; bottomPadding: 0
+                width: choices.rowWidth; height: 30; leftPadding: 8; rightPadding: 12; topPadding: 0; bottomPadding: 0
                 Accessible.name: modelData.relative
                 background: Rectangle { radius: 5; color: option.ListView.isCurrentItem ? "#2b4364" : option.hovered ? "#253042" : "transparent" }
                 contentItem: RowLayout {

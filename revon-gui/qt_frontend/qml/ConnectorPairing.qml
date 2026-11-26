@@ -74,16 +74,15 @@ Popup {
                            ? [] : dialog.choices.map(row => row.id)
             }
         }
-        ListView {
+        AppListView {
             id: options
             objectName: "pairOptions"
             Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 100
             model: dialog.choices; spacing: 6; clip: true
-            ScrollBar.vertical: ScrollBar { width: 5; policy: options.contentHeight > options.height ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff }
             delegate: GlassRow {
                 required property var modelData
                 objectName: "pairOption_" + modelData.id
-                material: dialog.material; width: ListView.view.width - 8; height: 42
+                material: dialog.material; width: ListView.view.rowWidth; height: 42
                 text: modelData.name; detail: modelData.detail; glyph: modelData.glyph
                 iconUrl: Qt.resolvedUrl("../../assets/connectors/" + modelData.icon + ".svg")
                 status: modelData.paired ? "已配对" : ""

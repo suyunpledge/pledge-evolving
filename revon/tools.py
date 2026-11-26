@@ -60,11 +60,38 @@ def _walk_files(root: Path):
     """Deterministic, pruned file walk (sorted dirs and names)."""
     import os
 
+    ignored = set()
+    repo = next((p for p in (root, *root.parents) if (p / ".git").exists()), None)
+    if repo is not None:
+        # Ask Git about ignored *untracked* entries. A force-added source
+        # remains searchable, including inside an otherwise ignored folder.
+        # Resolve the host executable from absolute PATH entries. A same-named
+        # executable shipped in the searched repository must never run on a read.
+        name = "git.exe" if os.name == "nt" else "git"
+        candidates = (Path(entry) / name for entry in os.get_exec_path() if os.path.isabs(entry))
+        try:
+            git = next((p for p in candidates if p.is_file() and os.access(p, os.X_OK)
+                        and not p.resolve().is_relative_to(repo)), None)
+            if git is not None:
+                listing = subprocess.run(
+                    [str(git), "--no-optional-locks", "-c", "core.fsmonitor=false", "ls-files", "--others", "--ignored",
+                     "--exclude-standard", "--directory", "-z", "--", "."],
+                    cwd=root, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=5,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), check=True)
+                ignored = {root / os.fsdecode(raw) for raw in listing.stdout.split(b"\0") if raw}
+                if root in ignored:
+                    return
+        except (OSError, subprocess.SubprocessError):
+            pass  # Plain directories and hosts without Git use the ordinary walk.
     for dirpath, dirnames, filenames in os.walk(root):
+        folder = Path(dirpath)
         dirnames[:] = sorted(d for d in dirnames
-                             if d not in SEARCH_SKIP_DIRS and not d.endswith(".egg-info"))
+                             if d not in SEARCH_SKIP_DIRS and not d.endswith(".egg-info")
+                             and folder / d not in ignored)
         for name in sorted(filenames):
-            yield Path(dirpath) / name
+            path = folder / name
+            if path not in ignored:
+                yield path
 
 
 def _web_boundary(source: str, body: str) -> str:
@@ -194,6 +221,12 @@ class ToolContext:
     isolated: bool = True
     cancellation: Any | None = None
 
+    def policy_details(self):
+        return {'policy_source': self.extras.get('policy_source', 'host'),
+                'policy_mode': self.policy.mode.value, 'sandbox': self.policy.sandbox.value,
+                'read_scope': self.policy.read_scope.value, 'read_allows_anywhere': self.policy.read_allows_anywhere(),
+                'isolated': self.isolated}
+
     def fire(self, **event: Any) -> None:
         if self.emit is not None:
             self.emit(**redact(event))
@@ -215,6 +248,38 @@ class ToolSpec:
     @property
     def is_deferred(self) -> bool:
         return self.deferred and not self.no_defer
+
+
+def rank_tool_matches(query, entries, limit):
+    """Rank catalog entries by name, tags and description, retaining their public identifiers."""
+    def normalize(text):
+        return unicodedata.normalize('NFKC', text).casefold().strip()
+
+    query = normalize(query or '').removeprefix('keystone_')
+    terms = set(re.findall(r'[^\W_]+', query))
+    if len(terms) > 1:
+        terms -= {'a', 'an', 'the', 'with', 'for', 'to', 'of', 'and'}
+    if not terms or limit < 1:
+        return []
+    hits = []
+    for identifier, description, labels in entries:
+        name = normalize(identifier.removeprefix("keystone_"))
+        tags = {normalize(tag) for tag in labels}
+        description = normalize(description)
+        keywords = ' '.join([name, *tags])
+        keyword_hits = sum(term in keywords for term in terms)
+        coverage = sum(term in keywords or term in description for term in terms)
+        # A Chinese query often contains the whole catalog tag without word boundaries.
+        embedded_tag = any(len(tag) >= 2 and re.search(r'[\u3400-\u9fff]', tag)
+                           and tag in query for tag in tags)
+        if not coverage and not embedded_tag:
+            continue
+        rank = (name == query, query in tags, coverage, keyword_hits, embedded_tag,
+                query in name, query in description)
+        hits.append((rank, identifier))
+    # Preserve caller order for equally relevant tools.
+    hits.sort(key=lambda pair: pair[0], reverse=True)
+    return [identifier for _, identifier in hits[:limit]]
 
 
 class ToolRegistry:
@@ -414,34 +479,8 @@ class ToolRegistry:
         return out
 
     def search(self, query: str, limit: int = 5, *, ctx=None) -> list[ToolSpec]:
-        def normalize(text):
-            return unicodedata.normalize('NFKC', text).casefold().strip()
-
-        query = normalize(query or '')
-        terms = set(re.findall(r'[^\W_]+', query))
-        if len(terms) > 1:
-            terms -= {'a', 'an', 'the', 'with', 'for', 'to', 'of', 'and'}
-        if not terms or limit < 1:
-            return []
-        hits = []
-        for spec in self.discoverable(ctx):
-            name = normalize(spec.name)
-            tags = {normalize(tag) for tag in spec.tags}
-            description = normalize(spec.description)
-            keywords = ' '.join([name, *tags])
-            keyword_hits = sum(term in keywords for term in terms)
-            coverage = sum(term in keywords or term in description for term in terms)
-            # A Chinese query often contains the whole catalog tag without word boundaries.
-            embedded_tag = any(len(tag) >= 2 and re.search(r'[\u3400-\u9fff]', tag)
-                               and tag in query for tag in tags)
-            if not coverage and not embedded_tag:
-                continue
-            rank = (name == query, query in tags, coverage, keyword_hits, embedded_tag,
-                    query in name, query in description)
-            hits.append((rank, spec))
-        # discoverable() is name-sorted, so equal scores have a stable tie break.
-        hits.sort(key=lambda pair: pair[0], reverse=True)
-        found = [spec for _, spec in hits[:limit]]
+        entries = ((spec.name, spec.description, spec.tags) for spec in self.discoverable(ctx))
+        found = [self._specs[name] for name in rank_tool_matches(query, entries, limit)]
         for spec in found:
             self._activated.add(spec.name)
         return found
@@ -705,13 +744,13 @@ class ToolRegistry:
             permission_gate = 'write_file'
             raw_decision = ctx.policy.evaluate("write_file", args=args, touching=touching)
             decision = ctx.policy.resolve_ask(raw_decision)
-        details = {'permission_gate': permission_gate, 'policy_mode': ctx.policy.mode.value,
-                   'sandbox': ctx.policy.sandbox.value, 'execution_state': 'not_started',
+        details = {**ctx.policy_details(), 'permission_gate': permission_gate, 'execution_state': 'not_started',
                    'raw_authorization': raw_decision.value}
         if decision is Decision.DENY:
             hint = ('Approval is required but this run has no interactive approver.' if raw_decision is Decision.ASK
                     else 'The current permission rules or workspace boundary prohibit this action.')
-            return ToolResult(ok=False, error=f"denied by policy: {name} ({permission_gate}). {hint} Do not retry unchanged.",
+            source = ' Gateway policy.' if details['policy_source'] == 'gateway' else ''
+            return ToolResult(ok=False, error=f"denied by policy: {name} ({permission_gate}).{source} {hint} Do not retry unchanged.",
                               meta={**details, "decision": "deny", "authorization": decision.value,
                                     'error_code': 'approval_unavailable' if raw_decision is Decision.ASK else 'policy_denied'})
         if decision is Decision.ASK:
@@ -992,14 +1031,16 @@ def build_builtin_registry(
     @view_tool(
         "grep",
         "Search file contents with a Python regular expression in a file or directory (default: the workspace). "
-        "Returns up to 100 matches as 'path:line: text'. Skips version-control, dependency and cache folders "
-        "(.git, node_modules, .venv, __pycache__, ...) and binary files. Narrow results with glob or root." + HELP,
+        "Returns up to 100 matching lines as 'path:line: text'. Pass next_offset as offset for the next page. "
+        "Directory searches skip Git-ignored untracked files, dependency/cache folders and binary files." + HELP,
+        required=("pattern",),
         schema={
             "pattern": {"type": "string", "description": "Python regex, e.g. 'def \\w+_cache' or 'TODO|FIXME'."},
             "root": {"type": "string", "description": "File or directory to search, relative to the workspace. Default '.'."},
             "glob": {"type": "string", "description": "Only search files whose name matches, e.g. '*.py' or 'test_*.ts'."},
             "ignore_case": {"type": "boolean", "description": "Case-insensitive match. Default false."},
             "context": {"type": "integer", "description": "Lines of context around each match, 0-3. Default 0."},
+            "offset": {"type": "integer", "minimum": 0, "description": "Number of matching lines to skip. Default 0."},
         },
     )
     def grep(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
@@ -1029,6 +1070,10 @@ def build_builtin_registry(
         prefilter = None if ("\\A" in raw_text or "\\Z" in raw_text) else re.compile(
             raw_text, pattern.flags | re.MULTILINE)
         hits: list[str] = []
+        offset = args.get("offset", 0)
+        if type(offset) is not int or offset < 0:
+            return ToolResult(ok=False, error="offset must be a nonnegative integer")
+        remaining_skip = offset
         matches = 0
         skipped: list[str] = []
         limit_hit = False
@@ -1063,6 +1108,12 @@ def build_builtin_registry(
             for number, line in enumerate(lines, 1):
                 if not pattern.search(line):
                     continue
+                if remaining_skip:
+                    remaining_skip -= 1
+                    continue
+                if matches == 100:
+                    limit_hit = True
+                    break
                 matches += 1
                 if context:
                     if hits:
@@ -1072,26 +1123,25 @@ def build_builtin_registry(
                         hits.append(f"{shown}{mark}{other}{mark} {lines[other - 1].strip()[:160]}")
                 else:
                     hits.append(f"{shown}:{number}: {line.strip()[:160]}")
-                if matches >= 100:
-                    limit_hit = True
-                    break
             if limit_hit:
                 break
         notes = []
         if limit_hit:
-            notes.append("[stopped at 100 matches; narrow with glob, root or a more specific pattern]")
+            notes.append(f"[stopped at 100 matches; continue with the same search and offset={offset + matches}]")
         if skipped:
             notes.append(f"[skipped {len(skipped)} file(s) that could not be parsed for secret masking "
                          f"(e.g. JSON with comments): {', '.join(skipped[:5])}]")
         body = "\n".join(hits + notes) if hits or notes else ""
         return search_result(body, rows=hits, notes=notes,
-                             summary={'matches': matches, 'truncated': limit_hit,
+                             summary={'matches': matches, 'offset': offset, 'truncated': limit_hit,
+                                      **({'next_offset': offset + matches} if limit_hit else {}),
                                       'skipped_unparseable': len(skipped)})
 
     @view_tool(
         "find_files",
         "Find files by name under a directory (default: the workspace) and list their paths relative to the "
-        "workspace, up to 200. Skips version-control, dependency and cache folders. Use grep to search contents." + HELP,
+        "workspace, up to 200. Skips Git-ignored untracked files and dependency/cache folders. Use grep to search contents." + HELP,
+        required=("pattern",),
         schema={
             "pattern": {"type": "string", "description": "Glob on the file name, e.g. 'test_*.py' or '*.tsx'. "
                                                          "Include '/' to match the relative path, e.g. 'src/**/*.py'."},
@@ -1224,6 +1274,9 @@ def build_builtin_registry(
             message += f"。手动恢复时，将备份复制回原路径。备份位置：{recovery['backup_path']}"
         return ToolResult(True, content=message, meta=recovery)
 
+    def edit_not_started(error: str, code: str = "invalid_arguments") -> ToolResult:
+        return ToolResult(False, error=error, meta={"execution_state": "not_started", "error_code": code})
+
     @host_tool(
         "edit_file",
         "Replace an exact anchor (old -> new) inside a UTF-8 file, or overwrite a "
@@ -1243,15 +1296,17 @@ def build_builtin_registry(
     def edit_file(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         path = _resolve(ctx.workspace, args.get("path", ""))
         if not path.is_file():
-            return ToolResult(ok=False, error=f"not a file: {path}")
-        original = path.read_text(encoding="utf-8", errors="replace")
+            return edit_not_started(f"not a file: {path}", "file_not_found")
+        try:
+            original = path.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            return edit_not_started(f"Cannot read {path.name}: {exc}", "read_failed")
         new = str(args.get("new", ""))
         old = str(args.get("old", ""))
         start_line, end_line = args.get("start_line"), args.get("end_line")
         has_range = start_line is not None or end_line is not None
         if has_range and old:
-            return ToolResult(ok=False,
-                              error="edit_file: pass either 'old' (anchor) or start_line/end_line (range), not both")
+            return edit_not_started("edit_file: pass either 'old' (anchor) or start_line/end_line (range), not both")
         if has_range:
             def _line_no(value: Any) -> int | None:
                 if value is None or isinstance(value, bool):
@@ -1266,23 +1321,23 @@ def build_builtin_registry(
             s = _line_no(start_line) if start_line is not None else 1
             e = _line_no(end_line) if end_line is not None else None
             if s is None or (end_line is not None and e is None):
-                return ToolResult(ok=False, error="edit_file: start_line/end_line must be integers")
+                return edit_not_started("edit_file: start_line/end_line must be integers")
             lines = original.splitlines(keepends=True)
             if e is None:
                 e = len(lines)
             if s < 1 or e < s or e > len(lines):
-                return ToolResult(ok=False, error=f"line range {s}-{e} out of bounds (file has {len(lines)} lines)")
+                return edit_not_started(f"line range {s}-{e} out of bounds (file has {len(lines)} lines)")
             body = new if (not new or new.endswith("\n")) else new + "\n"
             updated = "".join(lines[: s - 1]) + body + "".join(lines[e:])
             _atomic_text(path,updated)
             return ToolResult(ok=True, content=f"replaced lines {s}-{e} of {path}", meta={"lines": len(lines)})
         if not old:
-            return ToolResult(ok=False, error="edit_file needs 'old' (or start_line/end_line)")
+            return edit_not_started("edit_file needs 'old' (or start_line/end_line)")
         replace_all = bool(args.get("replace_all"))
         updated, count, match_mode, error = _replace_anchor(
             original, old, new, replace_all=replace_all, label=path.name)
         if error:
-            return ToolResult(ok=False, error=error)
+            return edit_not_started(error, "anchor_ambiguous" if count else "anchor_not_found")
         _atomic_text(path,updated)
         return ToolResult(ok=True, content=f"edited {path} ({count if replace_all else 1} replacement(s))",
                           meta={"matches": count, "match_mode": match_mode})
@@ -1303,7 +1358,7 @@ def build_builtin_registry(
     def apply_patch(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         blocks = args.get("patches") or args.get("edits") or []
         if not isinstance(blocks, list) or not blocks:
-            return ToolResult(ok=False, error="apply_patch needs a non-empty 'patches' list of {path, old, new}")
+            return edit_not_started("apply_patch needs a non-empty 'patches' list of {path, old, new}")
         import os as _os
         import tempfile as _tempfile
         from .file_revisions import fingerprint
@@ -1314,30 +1369,32 @@ def build_builtin_registry(
         match_modes: list[str] = []
         for i, block in enumerate(blocks):
             if not isinstance(block, dict):
-                return ToolResult(ok=False, error=f"patch block {i} is not an object")
+                return edit_not_started(f"patch block {i} is not an object")
             path = _resolve(ctx.workspace, block.get("path", "")).resolve()
             # defence-in-depth: handler-side sandbox assert. The policy layer also
             # collects patches[].path, but a write tool must not trust one layer alone.
             if not ctx.policy.allows_write(path):
-                return ToolResult(ok=False, error=f"patch {i}: path escapes sandbox: {path}")
+                return edit_not_started(f"patch {i}: path escapes sandbox: {path}", "boundary_violation")
             current = buffers.get(path)
             if current is None:
                 if not path.is_file():
-                    return ToolResult(ok=False, error=f"patch {i}: not a file: {path}")
-                raw = read_public_bytes(path, limit=8 * 1024 * 1024)
+                    return edit_not_started(f"patch {i}: not a file: {path}", "file_not_found")
+                try:
+                    raw = read_public_bytes(path, limit=8 * 1024 * 1024)
+                except (OSError, ValueError) as exc:
+                    return edit_not_started(f"patch {i}: cannot read {path.name}: {exc}", "read_failed")
                 if str(path) in revisions and fingerprint(raw) != revisions[str(path)]:
-                    return ToolResult(False, error="File changed since preview; regenerate the change",
-                                      meta={"error_code": "revision_conflict"})
+                    return edit_not_started("File changed since preview; regenerate the change", "revision_conflict")
                 originals[path] = raw
                 current = raw.decode("utf-8", "replace").replace("\r\n", "\n").replace("\r", "\n")
             old = str(block.get("old", ""))
             if not old:
-                return ToolResult(ok=False, error=f"patch {i}: empty 'old' anchor")
+                return edit_not_started(f"patch {i}: empty 'old' anchor")
             new = str(block.get("new", ""))
             updated, count, match_mode, error = _replace_anchor(
                 current, old, new, replace_all=bool(block.get("replace_all")), label=path.name)
             if error:
-                return ToolResult(ok=False, error=f"patch {i}: {error}")
+                return edit_not_started(f"patch {i}: {error}", "anchor_ambiguous" if count else "anchor_not_found")
             buffers[path] = updated
             match_modes.append(match_mode)
         committed: list[str] = []
@@ -1354,7 +1411,8 @@ def build_builtin_registry(
                     if (not ctx.policy.allows_write(path)
                             or read_public_bytes(path, limit=8 * 1024 * 1024) != originals[path]):
                         return ToolResult(False, error="File changed before patch write",
-                                          meta={"error_code": "revision_conflict", "committed": committed})
+                                          meta={"error_code": "revision_conflict", "committed": committed,
+                                                "execution_state": "unknown" if committed else "not_started"})
                     _os.replace(tmp_name, path)
                 finally:
                     try:
@@ -1445,6 +1503,7 @@ def build_builtin_registry(
         "tool_search",
         "Discover deferred tools by keyword and load them for this session.",
         no_defer=True,
+        required=("query",),
         schema={"query": "string", "limit": {"type": "integer", "minimum": 1, "maximum": 20,
                 "description": "Maximum tools to activate (default 5)."}},
     )
@@ -1462,16 +1521,20 @@ def build_builtin_registry(
         lines += [f"{s.name} (already available): {s.description}" for s in enabled[:limit]]
         if not lines:
             lines.append("no matching tools")
+        hints = []
         if any(word in query.lower() for word in ('截图', '窗口操作', 'screenshot', 'window control')):
-            lines.append("桌面窗口观察和操作需要在 Qt 的电脑操作页选择窗口并授权。")
+            hints.append("桌面窗口观察和操作需要在 Qt 的电脑操作页选择窗口并授权。")
         if any(word in query.casefold() for word in ('office_render', '文档渲染', '幻灯片预览')):
-            lines.append('office_render 需要 Qt Work 和支持图片输入的模型。')
+            hints.append('office_render 需要 Qt Work 和支持图片输入的模型。')
+        lines.extend(hints)
         blocked = registry.unavailable_matches(query, ctx)
         if blocked:
             lines.append("\nMatching tools that cannot be used in this session (do not call them):")
             lines += [f"- {s.name}: {reason}" for s, reason in blocked]
         return ToolResult(ok=True, content="\n".join(lines), meta={
             "activated": [s.name for s in found],
+            "execution_policy": ctx.policy_details(),
+            **({"availability_hints": hints} if hints else {}),
             "unavailable": [{"name": s.name, "reason": reason} for s, reason in blocked]})
 
     @host_tool("skill_list", "List installed capabilities (skills/plugins); pass name to load that "
@@ -1743,6 +1806,7 @@ def build_builtin_registry(
         "Chinese encodings handled. Local and private-network addresses are refused. Not for PDFs or "
         "pages that need a login; for those, operate the user's browser with the computer tools.",
         no_defer=True,
+        required=("url",),
         tags=("web", "fetch", "network"),
         schema={
             "url": {"type": "string", "description": "Full http(s) address, e.g. from web_search results."},

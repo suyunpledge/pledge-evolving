@@ -128,6 +128,30 @@ class RouteCapabilityTests(unittest.TestCase):
         return model.Provider("p", "https://example.invalid/v1", default_model="deployment",
                               model_kind_ids={"deployment": "deepseek.v4.flash"}, **options)
 
+    def test_official_mimo_output_and_model_overrides_reach_the_wire(self):
+        name = 'mimo-v2.6-pro'
+        body = {'model': name, 'messages': [{'role': 'user', 'content': 'hi'}]}
+        for url, caps, request_options, field, limit in (
+            ('https://token-plan-cn.xiaomimimo.com/v1', {}, {}, 'max_completion_tokens', 131072),
+            ('https://token-plan-cn.xiaomimimo.com/v1', {'outputTokenBudget': 16384}, {}, 'max_completion_tokens', 16384),
+            ('https://api.xiaomimimo.com/v1', {'outputTokenBudget': 16384}, {'max_tokens': 80}, 'max_completion_tokens', 80),
+            ('https://relay.example/v1', {}, {}, 'max_tokens', 4096),
+        ):
+            with self.subTest(url=url, caps=caps, limit=limit):
+                p = model.Provider('test', url, wire='openai', model_capabilities={name: caps})
+                shaped, _ = model._plan_and_shape({**body, **request_options}, body['messages'], p, name)
+                self.assertEqual({k: shaped[k] for k in ('max_tokens', 'max_completion_tokens') if k in shaped},
+                                 {field: limit})
+
+    def test_smaller_context_fits_mimo_automatic_output_after_input(self):
+        name = "mimo-v2.6-pro"
+        provider = model.Provider("direct", "https://api.xiaomimimo.com/v1", wire="openai",
+                                  model_capabilities={name: {"contextWindow": 65536}})
+        messages = [{"role": "user", "content": "hello"}]
+        shaped, plan = model._plan_and_shape({"messages": messages}, messages, provider, name)
+        self.assertEqual(shaped["max_completion_tokens"] + plan["request_budget"]["estimated_input_tokens"], 65536)
+        self.assertEqual(plan["request_budget"]["output_reserve"], shaped["max_completion_tokens"])
+
     def test_metadata_does_not_rewrite_payload_or_cache_key(self):
         payload = {"model": "deployment", "messages": [{"role": "system", "content": "stable"},
                     {"role": "user", "content": "hi"}], "max_tokens": 200}

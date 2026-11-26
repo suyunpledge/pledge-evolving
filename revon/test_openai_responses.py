@@ -1,7 +1,12 @@
 """Offline checks for the GPT function round-trip and terminal stream handling."""
 import io
 import json
+from pathlib import Path
+import tempfile
+import threading
 import unittest
+from unittest.mock import patch
+import urllib.request
 
 from . import openai_responses as native
 from .model import HttpTransport, Provider
@@ -20,6 +25,77 @@ def response(status="completed"):
 
 
 class ResponsesTests(unittest.TestCase):
+    def test_astra_text_and_explicit_response_url_use_native_wire(self):
+        urls = []
+        def opener(request, **_):
+            body = json.loads(request.data)
+            self.assertNotIn("messages", body)
+            self.assertEqual(body["input"], [{"role": "user", "content": "hello"}])
+            urls.append(request.full_url)
+            return io.BytesIO(json.dumps(response()).encode())
+
+        model = "gpt-6.2-astra"
+        for base in ("https://api.openai.com", "https://api.openai.com/v1", "https://api.openai.com/v1/responses/"):
+            with self.subTest(base=base):
+                provider = Provider("fixture", base, default_model=model)
+                HttpTransport(response_opener=opener).complete(provider, model, [{"role": "user", "content": "hello"}])
+        self.assertEqual(urls, ["https://api.openai.com/v1/responses"] * 3)
+        payload = {"model": MODEL, "messages": []}
+        explicit = Provider("fixture", urls[0], adapt=False)
+        self.assertTrue(native.uses_responses(payload, explicit))
+        for base in ("https://elsewhere.invalid/v1/responses", "https://api.openai.com.example/v1/responses"):
+            self.assertFalse(native.uses_responses({"model": model, "messages": []}, Provider("other", base)))
+
+    def test_json_output_format_survives_text_request_conversion(self):
+        payload = {"model": MODEL, "messages": []}
+        for fmt, expected in [({"type": "json_object"}, {"type": "json_object"}),
+                ({"type": "json_schema", "json_schema": {"name": "plan", "schema": {"type": "object"}}},
+                 {"type": "json_schema", "name": "plan", "schema": {"type": "object"}})]:
+            self.assertEqual(native.to_request({**payload, "response_format": fmt}, "")["text"]["format"], expected)
+
+    def test_gateway_full_endpoint_for_native_chat_and_messages_clients(self):
+        from .gateway import GatewayConfig, serve
+        url = "https://api.openai.com/v1/responses"
+        model = "gpt-6.2-astra"
+        reply = {"status": "completed", "model": model, "output": [
+            {"type": "message", "content": [{"type": "output_text", "text": "OK"}]}]}
+        captured = []
+        def upstream(request, **_):
+            captured.append((request.full_url, json.loads(request.data)))
+            result = io.BytesIO(json.dumps(reply).encode())
+            result.status = 200
+            result.headers = {"content-type": "application/json"}
+            return result
+
+        with tempfile.TemporaryDirectory() as temp, patch("revon.gateway.open_upstream", upstream):
+            cfg = GatewayConfig(upstream=url, upstream_wire="openai", port=0, home=Path(temp),
+                                model_map={"gpt": model}, warmth_path=Path(temp) / "warmth.json")
+            server = serve(cfg)
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            try:
+                cases = [("responses", {"input": "hello"}),
+                         ("chat/completions", {"messages": [{"role": "user", "content": "hello"}]}),
+                         ("messages", {"max_tokens": 32, "messages": [{"role": "user", "content": "hello"}]})]
+                for path, fields in cases:
+                    with self.subTest(path=path):
+                        req = urllib.request.Request(f"http://127.0.0.1:{server.server_port}/v1/{path}",
+                            data=json.dumps({"model": "gpt", **fields}).encode(), headers={"Content-Type": "application/json"})
+                        with urllib.request.urlopen(req, timeout=5) as res:
+                            body = json.load(res)
+                        target, sent = captured[-1]
+                        self.assertEqual((target, sent["model"]), (url, model))
+                        self.assertIn("input", sent)
+                        if path == "responses":
+                            self.assertEqual(body, reply)
+                        elif path == "messages":
+                            self.assertEqual(body["content"][0]["text"], "OK")
+                        else:
+                            self.assertEqual(body["choices"][0]["message"]["content"], "OK")
+            finally:
+                server.shutdown()
+                server.server_close()
+                cfg.close_runtime()
+
     def test_direct_transport_uses_responses_and_preserves_replay(self):
         received = []
 

@@ -158,19 +158,25 @@ p {
   margin: 0;
 }
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 14px;
+  height: 14px;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.14);
+  background: #8193a8;
   border-radius: 10px;
-  border: 2px solid transparent;
+  border: 3px solid transparent;
   background-clip: padding-box;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(255, 255, 255, 0.24);
+  background-color: #afbed0;
 }
-::-webkit-scrollbar-track,
+::-webkit-scrollbar-thumb:active {
+  background-color: #a9cbff;
+}
+::-webkit-scrollbar-track {
+  background: #202a37;
+  border-radius: 7px;
+}
 ::-webkit-scrollbar-corner {
   background: transparent;
 }
@@ -1300,6 +1306,45 @@ dialog::backdrop {
   .paper,
   .hint {
     display: none;
+  }
+}
+/* Narrow side panel: the document header keeps every action reachable as icons. */
+header > * {
+  flex-shrink: 0;
+}
+header input {
+  flex-shrink: 1;
+}
+#editor {
+  grid-template-columns: minmax(0, 1fr);   /* the header must never widen the page */
+}
+@media (max-width: 720px) {
+  header input {
+    width: 0;                               /* an input's intrinsic size would not shrink */
+    min-width: 48px;
+    flex: 1 1 60px;
+  }
+  header .spacer {
+    display: none;
+  }
+  #undo .label,
+  #export .label {
+    display: none;
+  }
+  #undo,
+  #export {
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+}
+@media (max-width: 480px) {
+  #back .label {
+    display: none;
+  }
+  /* Keep the status dot; the full text stays in the tooltip. */
+  .save {
+    font-size: 0;
+    gap: 0;
   }
 }
 @media (prefers-reduced-motion: reduce) {

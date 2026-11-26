@@ -19,15 +19,19 @@ import os
 import re
 import threading
 from pathlib import Path
+from urllib.parse import unquote
 
 from PySide6.QtCore import QObject, Property, Signal, Slot
 
 from config_model import load_user_layer, save_user_layer
 import model_onboarding
+from provider_catalog import route_fields
 import secret_store
 from revon.compat import default_home
+from revon.provider_requests import recent_requests
+from revon.secrets import redact
 
-WIRES = ('openai', 'anthropic')
+WIRES = ('openai', 'anthropic', 'google')
 EFFORTS = ('low', 'medium', 'high', 'max')
 _ENV = re.compile(r"""^get\(\s*['"]env\.([A-Za-z_][A-Za-z0-9_]*)['"]\s*(?:,\s*['"]{2}\s*)?\)$""")
 
@@ -83,12 +87,23 @@ def parse_efforts(text):
 
 def project(row, env):
     config = row['config']
+    try:
+        editable = model_onboarding.check_address(config.get('baseURL', ''))
+        decoded = unquote(editable)
+        if redact(decoded) != decoded or any(value and value in decoded for value in env.values()):
+            editable = ''
+    except ValueError:
+        editable = ''
     return {
+        **route_fields(config),
         'id': row['id'], 'label': str(config.get('modelLabel') or ''),
         'title': str(config.get('modelLabel') or config.get('model') or row['id']),
-        'model': str(config.get('model') or ''), 'baseURL': str(config.get('baseURL') or ''),
+        'model': str(config.get('model') or ''), 'baseURL': editable,
         'wire': str(config.get('wire') or 'openai'),
         'temperature': '' if config.get('temperature') is None else str(config['temperature']),
+        'tokenModels': {name: model_onboarding.token_fields(config, name)
+                        for name in [config.get('model'), *(config.get('models') or [])]
+                        if isinstance(name, str) and name},
         'efforts': efforts_text(config), 'disabled': bool(row.get('disabled')),
         'keyState': key_state(config, env), 'keyRef': env_ref(config),
     }
@@ -108,9 +123,20 @@ def edited_rows(rows, row_id, values, *, new_key=False):
     label = str(values.get('label', '')).strip()
     if any(ch in label for ch in ('\r', '\n')) or len(label) > 80:
         raise ValueError('显示名称需为一行、不超过 80 个字符。')
+    if 'providerLabel' in values:
+        note = str(values.get('providerLabel') or '').strip()
+        if len(note) > 80 or any(ord(ch) < 32 for ch in note) or redact(note) != note:
+            raise ValueError('供应商备注需为一行、不超过 80 个字符，请勿填写密钥。')
+        if note:
+            config['providerLabel'] = note
+        else:
+            config.pop('providerLabel', None)
     wire = str(values.get('wire', config.get('wire', 'openai')))
     if wire not in WIRES:
-        raise ValueError('协议只能是 OpenAI 兼容或 Anthropic。')
+        raise ValueError('请选择 OpenAI 兼容、Anthropic 或 Google 原生协议。')
+    if wire == 'google':
+        from revon.google_native import endpoint
+        endpoint(address, model)
     temperature = str(values.get('temperature', '')).strip()
     if temperature:
         try:
@@ -125,6 +151,10 @@ def edited_rows(rows, row_id, values, *, new_key=False):
     if config.get('smallModel') == config.get('model'):
         config['smallModel'] = model
     config.update(baseURL=address, model=model, wire=wire)
+    for name, fields in values.get('tokenEdits', {}).items():
+        if name not in [model, *(config.get('models') or [])] or not isinstance(fields, dict):
+            raise ValueError('请为当前配置中的模型设置输入输出上限。')
+        model_onboarding.set_token_fields(config, name, fields)
     if label:
         config['modelLabel'] = label
     else:
@@ -163,6 +193,7 @@ def removed_rows(rows, row_id):
 
 class ModelRows(QObject):
     changed = Signal()
+    historyChanged = Signal()
     saved = Signal(str)
     _finished = Signal(object)
 
@@ -173,14 +204,17 @@ class ModelRows(QObject):
         self.credential_path = self.home / 'secrets.json' if self.home != default_home() else None
         self.can_save = lambda: True
         self._rows, self._status, self._ok, self._busy = [], '', False, False
+        self._history = []
         self._finished.connect(self._complete)
 
     rows = Property('QVariantList', lambda self: self._rows, notify=changed)
+    requestHistory = Property('QVariantList', lambda self: self._history, notify=historyChanged)
     status = Property(str, lambda self: self._status, notify=changed)
     success = Property(bool, lambda self: self._ok, notify=changed)
     busy = Property(bool, lambda self: self._busy, notify=changed)
     wires = Property('QVariantList', lambda self: [
-        {'value': 'openai', 'label': 'OpenAI 兼容'}, {'value': 'anthropic', 'label': 'Anthropic'}], constant=True)
+        {'value': 'openai', 'label': 'OpenAI 兼容'}, {'value': 'anthropic', 'label': 'Anthropic'},
+        {'value': 'google', 'label': 'Google 原生 · generateContent'}], constant=True)
 
     def _secrets_env(self):
         try:
@@ -204,6 +238,18 @@ class ModelRows(QObject):
         self._rows = [project(r, env) for r in rows if is_model_row(r)]
         self._ok, self._status = False, ''
         self.changed.emit()
+
+    @Slot()
+    def refreshHistory(self):
+        labels = {row['id']: row['title'] for row in self._rows}
+        history = []
+        for record in recent_requests(self.home):
+            fields = route_fields({'baseURL': record['request_url']})
+            history.append({**record, 'providerName': fields['providerName'],
+                            'providerKey': fields['providerKey'], 'providerIcon': fields['providerIcon'],
+                            'rowLabel': labels.get(record['provider_id'], '')})
+        self._history = history
+        self.historyChanged.emit()
 
     @Slot()
     def clearStatus(self):
@@ -283,8 +329,8 @@ class ModelRows(QObject):
             address = model_onboarding.check_address(values.get('baseURL', ''))
             wire = str(values.get('wire', 'openai'))
             if wire not in WIRES:
-                raise ValueError('协议只能是 OpenAI 兼容或 Anthropic。')
-            if not key:
+                raise ValueError('请选择 OpenAI 兼容、Anthropic 或 Google 原生协议。')
+            if not key and not model_onboarding.model_list_url(address):
                 row = next((r for r in load_user_layer(self.home) if r.get('id') == row_id), None)
                 ref = env_ref((row or {}).get('config', {}))
                 key = (self._secrets_env().get(ref) or os.environ.get(ref, '')) if ref else ''

@@ -39,8 +39,14 @@ def search_public(query, engine, kind, count, cancel):
             if isinstance(exc, public_search.SearchUnavailable):
                 message = str(exc)
             return {'ok': False, 'error': message, 'search_url': url, 'engine': engine}
-        return {'ok': True, 'results': redact(rows), 'search_url': url,
-                'engine': rows[0]['engine'] if rows else engine, 'requested_engine': engine}
+        actual = rows[0]['engine'] if rows else engine
+        notice = ''
+        if actual != engine:
+            requested_name = public_search.SOURCES[engine][0]
+            actual_name = public_search.SOURCES.get(actual, (actual,))[0]
+            notice = f'{requested_name} 未返回可用结果，已改用 {actual_name}。'
+        return {'ok': True, 'results': redact(rows), 'search_url': url, 'source_notice': notice,
+                'engine': actual, 'requested_engine': engine}
     finally:
         timer.cancel()
 
@@ -58,7 +64,7 @@ class SearchService(QObject):
         engine = settings.get('engine') if isinstance(settings, dict) else ''
         self._engine = engine if isinstance(engine, str) and engine in public_search.SOURCES else 'bing'
         self._cancel = None
-        self._error, self._url, self._rows = '', '', []
+        self._error, self._url, self._notice, self._rows = '', '', '', []
         self._completed.connect(self._receive, Qt.ConnectionType.QueuedConnection)
 
     sources = Property('QVariantList', lambda s: [{'id': key, 'name': item[0]}
@@ -68,6 +74,7 @@ class SearchService(QObject):
     busy = Property(bool, lambda s: s._cancel is not None, notify=changed)
     error = Property(str, lambda s: s._error, notify=changed)
     sourceUrl = Property(str, lambda s: s._url, notify=changed)
+    sourceNotice = Property(str, lambda s: s._notice, notify=changed)
 
     @Slot(str)
     def setEngine(self, engine):
@@ -95,7 +102,7 @@ class SearchService(QObject):
     @Slot()
     def reset(self):
         self.cancel()
-        self._error, self._url, self._rows = '', '', []
+        self._error, self._url, self._notice, self._rows = '', '', '', []
         self.changed.emit()
 
     @Slot(str, str, str)
@@ -103,7 +110,7 @@ class SearchService(QObject):
         if self._cancel is not None:
             self._cancel.set()
         cancel = self._cancel = threading.Event()
-        self._error, self._url, self._rows = '', '', []
+        self._error, self._url, self._notice, self._rows = '', '', '', []
         self.changed.emit()
 
         def worker():
@@ -126,6 +133,7 @@ class SearchService(QObject):
         self._error = result.get('error', '')
         self._rows = result.get('results', [])
         self._url = result.get('search_url', '')
+        self._notice = result.get('source_notice', '')
         self.changed.emit()
 
     @Slot()
@@ -139,8 +147,8 @@ class SearchService(QObject):
         default_source = self._engine
         function = {
             'name': 'keystone_public_search',
-            'description': ('Search a single public source without credentials. Default source chosen by the user: '
-                            + default_source + '. Cite real result URLs. If the source returns an error, report it '
+            'description': ('Search without credentials. Preferred source chosen by the user: '
+                            + default_source + '. Report any source fallback and cite real result URLs. If search fails, report it '
                             'and offer the original search URL. GitHub only searches public repositories, '
                             'issues and pull requests.'),
             'parameters': {'type': 'object', 'required': ['query'], 'properties': {
@@ -167,7 +175,8 @@ class SearchService(QObject):
             # Mark remote page text as untrusted, consistent with gateway web tools.
             rows = result.pop('results', None)
             if rows is not None:
-                result['content'] = _web_boundary(engine + ' public search', json.dumps(rows, ensure_ascii=False))
+                body = _web_boundary(result['engine'] + ' public search', json.dumps(rows, ensure_ascii=False))
+                result['content'] = '\n'.join(filter(None, (result.pop('source_notice', ''), body)))
             return {**result, 'meta': {'execution_state': 'completed'}}
         except (ValueError, OSError) as exc:
             return {'ok': False, 'error': str(exc) if isinstance(exc, ValueError) else '无法连接搜索源。',

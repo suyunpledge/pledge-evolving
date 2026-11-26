@@ -6,7 +6,7 @@ import re
 FIELDS = ('summary', 'preview', 'notes')
 
 
-def command_metadata(output, exit_code):
+def command_metadata(output, exit_code, *, summary=None):
     """Keep command outcome visible while retaining the exact complete output."""
     meta = {'exit': exit_code, 'execution_state': 'completed'}
     if len(output) < 1400:
@@ -18,7 +18,7 @@ def command_metadata(output, exit_code):
     preview = '\n'.join(chosen)
     meta['_result_view_source'] = json.dumps({
         'summary': {'exit_code': exit_code, 'output_characters': len(output),
-                    'nonzero_exit': exit_code != 0},
+                    'nonzero_exit': exit_code != 0, **(summary or {})},
         'preview': preview[:1000],
         'notes': ['Preview only. Nonzero exit means command failure.']}, ensure_ascii=False)
     return meta

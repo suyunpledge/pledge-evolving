@@ -5,6 +5,7 @@ from pathlib import Path
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 
 from PySide6.QtCore import QCoreApplication, QMetaObject, QObject, QUrl
 from PySide6.QtGui import QAccessible
@@ -121,6 +122,16 @@ class ControllerEffortTests(unittest.TestCase):
         self.assertEqual(list(self.controller.reasoningLevels), ['off', 'high', 'contemplate'])
         self.assertEqual(self.send().get('reasoning_effort'), 'high')
 
+    def test_picker_disambiguates_shared_route_labels_and_clears_external_attribution(self):
+        rows = [provider('a', 'gpt-4', 'https://api.openai.com/v1', 'Shared', models=['also-a']),
+                provider('b', 'gpt-4', 'https://alt.example.test/v1', 'Shared', models=['also-a'])]
+        save_user_layer(self.home, rows)
+        self.controller.refreshModelChoices()
+        self.assertEqual(self.controller.routeProviders, {
+            'Shared': 'OpenAI', 'also-a': 'OpenAI', 'Shared (2)': 'alt.example.test', 'also-a (2)': 'alt.example.test'})
+        self.controller.setGateway(self.url)
+        self.assertEqual(self.controller.routeProviders, {})
+
     def thinking_mode(self):
         row = next((r for r in load_user_layer(self.home) if r['id'] == 'thinking'), {})
         return row.get('config', {}).get('mode', 'off')
@@ -211,6 +222,67 @@ class ModelRowEditingTests(unittest.TestCase):
         self.assertEqual(rows['proxy-1']['efforts'], 'high')
         self.assertNotIn('sk-original', json.dumps(self.service.rows))
         self.assertNotIn('planning', rows)
+
+    def test_access_provider_is_independent_from_model_name_and_note(self):
+        self.service.save('proxy-1', self.values('proxy-1', model='anthropic/claude-sonnet',
+            baseURL='https://openrouter.ai/api/v1', providerLabel='团队订阅'), '')
+        row = next(r for r in self.service.rows if r['id'] == 'proxy-1')
+        self.assertEqual((row['providerName'], row['modelBrand'], row['providerLabel']),
+                         ('OpenRouter', 'Claude', '团队订阅'))
+        self.service.save('proxy-1', self.values('proxy-1', baseURL='https://api.openai.com.proxy.test/development/v1'), '')
+        row = next(r for r in self.service.rows if r['id'] == 'proxy-1')
+        self.assertEqual(row['providerName'], 'api.openai.com.proxy.test')
+        self.assertEqual(row['providerLabel'], '团队订阅')
+        self.assertEqual(row['baseURL'], 'https://api.openai.com.proxy.test/development/v1')
+        self.assertEqual(row['displayBaseURL'], 'https://api.openai.com.proxy.test/…/v1')
+        self.assertEqual(row['providerIcon'], '')
+
+    def test_protocol_follows_actual_transport_rules_for_responses(self):
+        rows = [provider('official', 'gpt-6.2-astra', 'https://api.openai.com/v1', 'GPT'),
+                provider('relay', 'gpt-6.2-astra', 'https://proxy.example/v1/responses', 'GPT')]
+        save_user_layer(self.home, rows)
+        self.service.reload()
+        official, relay = self.service.rows
+        self.assertEqual((official['protocolLabel'], relay['protocolLabel']), ('OpenAI Responses', 'OpenAI 兼容'))
+
+    def test_history_uses_observed_url_even_after_row_is_changed_or_removed(self):
+        records = [{'provider_id': pid, 'base_url': 'https://configured.example.test/v1',
+                    'request_url': 'https://openrouter.ai/api/v1/chat/completions', 'source': 'gateway',
+                    'http_status': 200, 'last_seen': 1.5, 'attempts': 3} for pid in ('ds-1', 'deleted')]
+        with patch('qt_frontend.model_rows.recent_requests', return_value=records):
+            self.service.refreshHistory()
+        first, removed = self.service.requestHistory
+        self.assertEqual((first['providerName'], first['rowLabel'], first['attempts']), ('OpenRouter', 'ds', 3))
+        self.assertEqual((removed['providerName'], removed['rowLabel']), ('OpenRouter', ''))
+
+    def test_cherryin_label_requires_the_registered_origin(self):
+        from provider_catalog import route_fields
+        for url, expected in [('https://open.cherryin.net/v1', 'CherryIN'),
+                              ('https://open.cherryin.net.relay.example/v1', 'open.cherryin.net.relay.example')]:
+            fields = route_fields({'baseURL': url, 'model': 'agent/deepseek-v4-flash'})
+            self.assertEqual((fields['providerName'], fields['modelBrand']), (expected, 'DeepSeek'))
+
+    def test_opencode_current_and_cherry_routes_keep_distinct_history_labels(self):
+        from provider_catalog import route_fields
+        from revon.provider_requests import safe_url
+        for path, name in [('inference/go/openai/v1', 'OpenCode Go'), ('zen/go/v1', 'OpenCode Go'),
+                           ('inference/openai/v1', 'OpenCode Zen'), ('zen/v1', 'OpenCode Zen'),
+                           ('inference/goose/v1', 'OpenCode'), ('account', 'OpenCode')]:
+            url = 'https://opencode.ai/' + path
+            fields = route_fields({'baseURL': url, 'model': 'deepseek-v4-pro'})
+            self.assertEqual((fields['providerName'], fields['modelBrand']), (name, 'DeepSeek'))
+            if name != 'OpenCode':
+                self.assertEqual(safe_url(url + '/chat/completions'), url + '/chat/completions')
+
+    def test_old_credential_bearing_addresses_never_enter_editor_or_preview(self):
+        for address in ('https://user:testpass@host.example/v1?token=x',
+                        'https://host.example/sk-original-key-000000/v1'):
+            save_user_layer(self.home, [provider('old', 'gpt-4', address, 'Legacy')])
+            self.service.reload()
+            row, = self.service.rows
+            self.assertEqual(row['baseURL'], '')
+            self.assertNotIn('testpass', json.dumps(row))
+            self.assertNotIn('sk-original', json.dumps(row))
 
     def test_edit_round_trips_and_keeps_legacy_reference_without_new_key(self):
         before = self.row('ds-1')
@@ -328,6 +400,40 @@ class MainScreenControlTests(unittest.TestCase):
         self.assertEqual(slider.property('value'), 4)
         self.assertIn('沉思', button.property('text'))
 
+    def test_token_limit_fields_save_and_reload_independent_wire_models(self):
+        home = Path(self.temp.name)
+        save_user_layer(home, [provider('multi', 'one', 'https://example.test/v1', 'Multi', models=['two'])])
+        self.workbench._model_rows.demo = False
+        self.workbench.editModel('multi')
+        editor = self.window.findChild(QObject, 'modelEditor')
+        until(lambda: editor.property('opened'))
+        context_field = editor.findChild(QObject, 'contextWindowField')
+        output_field = editor.findChild(QObject, 'outputTokenBudgetField')
+        choice = editor.findChild(QObject, 'tokenModelChoice')
+        self.assertEqual(choice.property('count'), 2)
+        def check_presets(field, expected):
+            buttons = [child for sibling in field.parentItem().childItems() for child in sibling.childItems()
+                       if child.objectName().startswith(field.objectName() + 'Preset')]
+            self.assertEqual([(b.property('text'), int(b.property('modelData'))) for b in buttons], expected)
+            for button, (_, count) in zip(buttons, expected):
+                button.clicked.emit()
+                self.assertEqual(field.property('text'), str(count))
+                self.assertTrue(button.property('selected'))
+        check_presets(context_field, [('64K', 65536), ('128K', 131072), ('256K', 262144), ('1M', 1048576)])
+        context_field.setProperty('text', '300000')
+        context_field.textEdited.emit()
+        choice.setProperty('currentIndex', 1)
+        self.assertEqual(context_field.property('text'), '')
+        check_presets(output_field, [('4K', 4096), ('8K', 8192), ('16K', 16384), ('32K', 32768),
+                                     ('64K', 65536), ('128K', 131072), ('384K', 384000)])
+        editor.findChild(QObject, 'saveModel').clicked.emit()
+        self.assertTrue(self.workbench._model_rows.success, self.workbench._model_rows.status)
+        self.assertEqual(load_user_layer(home)[0]['config']['modelCapabilities'],
+                         {'one': {'contextWindow': 300000}, 'two': {'outputTokenBudget': 384000}})
+        self.assertEqual(output_field.property('text'), '384000')
+        choice.setProperty('currentIndex', 0)
+        self.assertEqual(context_field.property('text'), '300000')
+
     def test_model_editor_and_entry_points_exist(self):
         editor = self.window.findChild(QObject, 'modelEditor')
         self.assertIsNotNone(editor)
@@ -346,6 +452,60 @@ class MainScreenControlTests(unittest.TestCase):
         accessible = QAccessible.queryAccessibleInterface(key)
         self.assertTrue(accessible.state().passwordEdit)
         self.assertIn('API 密钥', [target.text(QAccessible.Text.Name) for target, _ in accessible.relations()])
+
+    def test_editor_reopens_with_google_native_protocol_selected(self):
+        from .gateway_service import chat_model_routes
+        base = 'https://generativelanguage.googleapis.com'
+        row = provider('google', 'gemini-test', base, 'Gemini', wire='google')
+        save_user_layer(Path(self.temp.name), [row])
+        self.workbench.editModel('google')
+        editor = self.window.findChild(QObject, 'modelEditor')
+        until(lambda: editor.property('opened'))
+        choice = self.window.findChild(QObject, 'editWire')
+        self.assertEqual(choice.property('currentValue'), 'google')
+        self.assertIn('Google 原生', choice.property('displayText'))
+        self.assertEqual(chat_model_routes([row])['Gemini'][1]['wire'], 'google')
+
+    def test_searching_a_model_selects_its_provider_and_history_displays_observed_routes(self):
+        relay = 'https://openrouter.ai/api/v1'
+        save_user_layer(Path(self.temp.name), [
+            *ROWS, provider('first', 'anthropic/claude-sonnet', relay, 'Design'),
+            provider('second', 'openai/gpt-4', relay, 'Review', providerLabel='我的备用线路')])
+        editor = self.window.findChild(QObject, 'modelEditor')
+        self.workbench.editModel('ds-1')
+        until(lambda: editor.property('opened'))
+        groups = self.window.findChild(QObject, 'modelEditorList')
+        self.assertEqual(groups.property('count'), 4)
+        search = self.window.findChild(QObject, 'modelProviderSearch')
+        search.setProperty('text', '备用')
+        until(lambda: groups.property('count') == 1)
+        search.accepted.emit()
+        until(lambda: editor.property('currentId') == 'second')
+        choice = self.window.findChild(QObject, 'providerModelChoice')
+        self.assertEqual((choice.property('count'), choice.property('displayText')), (2, 'Review'))
+        self.assertEqual(self.window.findChild(QObject, 'editEndpoint').property('text'), relay)
+        self.assertEqual(self.window.findChild(QObject, 'editProviderLabel').property('text'), '我的备用线路')
+        tab = self.window.findChild(QObject, 'requestHistoryTab')
+        tab.clicked.emit()
+        requests = self.window.findChild(QObject, 'providerRequestList')
+        self.assertEqual(requests.property('count'), 0)
+        record = {'provider_id': 'second', 'base_url': relay, 'request_url': relay + '/chat/completions',
+                  'source': 'gateway', 'http_status': 429, 'last_seen': 42, 'attempts': 2}
+        with patch('qt_frontend.model_rows.recent_requests', return_value=[record]):
+            tab.clicked.emit()
+        def visual_texts(item):
+            result = []
+            for child in item.childItems():
+                if child.isVisible() and child.metaObject().indexOfProperty('text') >= 0:
+                    result.append(child.property('text'))
+                result.extend(visual_texts(child))
+            return result
+        until(lambda: '最近 HTTP 429' in visual_texts(requests))
+        displayed = visual_texts(requests)
+        self.assertIn('OpenRouter  ·  Review', displayed)
+        self.assertIn('最近 HTTP 429', displayed)
+        self.assertIn(relay, displayed)
+        self.assertIn(relay + '/chat/completions', displayed)
 
 
 if __name__ == '__main__':
