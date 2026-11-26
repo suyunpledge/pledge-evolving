@@ -8,7 +8,7 @@ from unittest.mock import patch
 GUI = Path(__file__).resolve().parents[1] / 'revon-gui'
 sys.path.insert(0, str(GUI))
 
-from desktop.runtime_paths import qt_python, service_python
+from desktop.runtime_paths import default_workspace, qt_python, service_python
 from desktop.source_launcher import resolve_launch
 import revon_qt
 
@@ -28,6 +28,23 @@ class DesktopRuntimeTests(unittest.TestCase):
                 self.assertEqual(executable, root / '.venv' / expected)
                 self.assertEqual(service_python(executable, platform=platform),
                                  qt_python(root, platform=platform))
+
+    def test_installed_build_runs_children_with_its_console_twin(self):
+        with tempfile.TemporaryDirectory() as td:
+            gui = Path(td) / 'Revon.exe'
+            gui.touch()
+            # Without the twin (e.g. a renamed copy) the executable itself is used.
+            self.assertEqual(service_python(gui, platform='win32'), gui)
+            (Path(td) / 'revon-python.exe').touch()
+            self.assertEqual(service_python(gui, platform='win32'), Path(td) / 'revon-python.exe')
+
+    def test_installed_build_starts_in_documents_not_the_program_folder(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / 'checkout'
+            self.assertEqual(default_workspace(repo), repo)
+            with patch.object(sys, 'frozen', True, create=True), patch.object(Path, 'home', return_value=Path(td)):
+                self.assertEqual(default_workspace(repo), Path(td) / 'Documents' / 'Revon')
+            self.assertTrue((Path(td) / 'Documents' / 'Revon').is_dir())
 
     def test_service_preserves_the_actual_posix_interpreter(self):
         executable = Path('/path with spaces/venv/bin/python3.12')

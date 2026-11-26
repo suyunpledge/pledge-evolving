@@ -55,3 +55,9 @@ revon-gui/.secret_store.json
 .keystone-development-home/
 keystone-desktop.json
 keystone-gui/.secret_store.json
+
+# Windows installer build output (revon-gui/desktop/installer/build-installer.ps1)
+revon-gui/desktop/installer/build/
+revon-gui/desktop/installer/dist/
+revon-gui/desktop/installer/output/
+revon-gui/desktop/installer/openwith.iss

@@ -131,7 +131,8 @@ class WorkbenchController(QObject):
                         'usable': plan.usable, 'note': plan.note} for plan in preset.plans]}
             for preset in provider_catalog.PRESETS
         ]
-        default_workspace = Path(__file__).resolve().parents[2]
+        from desktop.runtime_paths import default_workspace as initial_workspace
+        default_workspace = initial_workspace(Path(__file__).resolve().parents[2])
         prefs = SessionStore.read(desktop_config(self.home), {})
         selected = Path(prefs.get('project_workspace') or default_workspace).resolve()
         self._workspace = str(selected if selected.is_dir() else default_workspace)

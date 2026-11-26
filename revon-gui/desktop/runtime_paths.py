@@ -17,8 +17,24 @@ def service_python(executable, *, platform=None):
     path = Path(executable)
     if platform == 'win32' and path.name.lower() == 'pythonw.exe':
         return path.with_name('python.exe')
+    # Installed build: the windowed Revon.exe has a console twin for child processes.
+    if platform == 'win32' and path.name.lower() == 'revon.exe' and path.with_name('revon-python.exe').is_file():
+        return path.with_name('revon-python.exe')
     # On POSIX this can be a venv symlink. Preserve its path and site-packages.
     return path
+
+
+def default_workspace(repo_root):
+    """Project folder used until the user picks one.
+
+    A checkout opens on itself; the installed build's program folder is not a
+    project, so it starts in Documents/Revon instead.
+    """
+    if getattr(sys, 'frozen', False):
+        path = Path.home() / 'Documents' / 'Revon'
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+    return Path(repo_root)
 
 
 def install_hint(root):

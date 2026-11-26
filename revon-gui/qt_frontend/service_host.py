@@ -30,8 +30,10 @@ class ServiceHost:
         secret_store.SECRETS_FILE = self.home / 'secrets.json'
         secret_store.load()
         prefs = SessionStore.read(desktop_config(self.home), {})
-        selected = Path(prefs.get('project_workspace') or GUI.parent).resolve()
-        self.workspace = selected if selected.is_dir() else GUI.parent
+        from desktop.runtime_paths import default_workspace
+        fallback = default_workspace(GUI.parent)
+        selected = Path(prefs.get('project_workspace') or fallback).resolve()
+        self.workspace = selected if selected.is_dir() else fallback
         self.profile, self.page = 'sandbox', 'chat'
         self.running, self.closed = False, threading.Event()
         self.cancel = threading.Event()
