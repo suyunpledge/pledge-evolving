@@ -77,14 +77,14 @@ def icon_tile(shapes, size, color):
     return tile.resize((size, size), Image.Resampling.LANCZOS)
 
 
-BRAND_MASTER = GUI / "desktop" / "revon-logo.png"
+BRAND_MASTER = GUI / "desktop" / "revon-mark.png"
 
 
 def brand_mark(size, *, glow=0):
-    """品牌块：优先用 Revon 极光狐母版（desktop/revon-logo.png，make_icon.py 产出）。
+    """品牌标志：Revon 极光狐主体（desktop/revon-mark.png，透明底，make_icon.py 产出）。
 
-    glow > 0 时四周留出 glow 像素的极光色光晕（首页 hero 用）。Tk 无渐变/
-    模糊能力，所以在构建期烘焙成 PNG，运行时只读 PhotoImage。
+    glow > 0 时四周留出 glow 像素、沿狐狸轮廓的极光色光晕（首页 hero 用）。
+    Tk 无渐变/模糊能力，所以在构建期烘焙成 PNG，运行时只读 PhotoImage。
     母版缺失时回退到旧的 Ember 熔铁 + 铁砧程序化品牌块。
     """
     from PIL import ImageFilter
@@ -92,20 +92,21 @@ def brand_mark(size, *, glow=0):
         scale = 4
         full = (size + glow * 2) * scale
         out = Image.new("RGBA", (full, full))
-        tile_px = size * scale
+        mark_px = size * scale
         origin = glow * scale
+        master = Image.open(BRAND_MASTER).convert("RGBA").resize((mark_px, mark_px), Image.Resampling.LANCZOS)
         if glow:
-            # 青绿→紫的极光晕，与磁贴里的极光带同色系
-            halo = Image.new("RGBA", (full, full))
-            hd = ImageDraw.Draw(halo)
-            hd.rounded_rectangle((origin + tile_px * .06, origin + tile_px * .14,
-                                  origin + tile_px * .62, origin + tile_px * 1.02),
-                                 radius=tile_px * .3, fill=(64, 224, 196, 170))
-            hd.rounded_rectangle((origin + tile_px * .38, origin + tile_px * .10,
-                                  origin + tile_px * .94, origin + tile_px * 1.0),
-                                 radius=tile_px * .3, fill=(150, 104, 255, 190))
-            out.alpha_composite(halo.filter(ImageFilter.GaussianBlur(glow * scale * .42)))
-        master = Image.open(BRAND_MASTER).convert("RGBA").resize((tile_px, tile_px), Image.Resampling.LANCZOS)
+            # 紫（左）→ 青绿（右）的极光晕，形状取狐狸轮廓
+            silhouette = Image.new("L", (full, full))
+            silhouette.paste(master.getchannel("A"), (origin, origin))
+            silhouette = silhouette.filter(ImageFilter.GaussianBlur(glow * scale * .45))
+            silhouette = silhouette.point(lambda v: min(255, int(v * 1.6)))
+            colour = Image.linear_gradient("L").rotate(90).resize((full, full))
+            halo = Image.composite(Image.new("RGBA", (full, full), (150, 104, 255, 255)),
+                                   Image.new("RGBA", (full, full), (64, 224, 196, 255)),
+                                   colour.transpose(Image.Transpose.FLIP_LEFT_RIGHT))
+            halo.putalpha(silhouette.point(lambda v: v * 200 // 255))
+            out.alpha_composite(halo)
         out.alpha_composite(master, (origin, origin))
         out = out.resize((size + glow * 2, size + glow * 2), Image.Resampling.LANCZOS)
         if size <= 64:
