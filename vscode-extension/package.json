@@ -268,10 +268,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/suyunpledge/pledge-keystone"
+    "url": "https://github.com/suyunpledge/pledge-revon"
   },
-  "homepage": "https://github.com/suyunpledge/pledge-keystone#readme",
+  "homepage": "https://github.com/suyunpledge/pledge-revon#readme",
   "bugs": {
-    "url": "https://github.com/suyunpledge/pledge-keystone/issues"
+    "url": "https://github.com/suyunpledge/pledge-revon/issues"
   }
 }

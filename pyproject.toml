@@ -27,7 +27,7 @@ keystone = "revon.cli:main"
 forge = "revon.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/suyunpledge/pledge-keystone"
+Homepage = "https://github.com/suyunpledge/pledge-revon"
 
 [tool.setuptools.packages.find]
 include = ["revon", "revon.*", "keystone"]
