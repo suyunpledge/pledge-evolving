@@ -20,5 +20,11 @@
   "onboard.step1": "1. 选一个 Python 解释器",
   "onboard.step2": "2. 填一份 API 密钥",
   "onboard.step3": "3. 连接 revon 内核",
-  "onboard.help": "这三步都只存在本机，不会发给任何人。"
+  "onboard.help": "这三步都只存在本机，不会发给任何人。",
+  "color.accent": "revon 品牌强调色：链接、选中、规划卡片色条与聚焦的输入框。",
+  "color.primaryBackground": "revon 主操作（如“发送”）的背景色。",
+  "color.primaryHoverBackground": "revon 主操作悬停时的背景色。",
+  "color.primaryForeground": "revon 主操作的文字与图标颜色。",
+  "color.primaryBorder": "revon 主操作的边框颜色。",
+  "color.ember": "revon 辅助色（余烬橙），用于复审意见。"
 }

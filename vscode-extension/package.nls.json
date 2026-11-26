@@ -20,5 +20,11 @@
   "onboard.step1": "1. Pick a Python interpreter",
   "onboard.step2": "2. Add an API key",
   "onboard.step3": "3. Connect to the engine",
-  "onboard.help": "All three are stored only on this machine and never sent to anyone."
+  "onboard.help": "All three are stored only on this machine and never sent to anyone.",
+  "color.accent": "revon brand accent: links, selection, the plan rail and the focused composer.",
+  "color.primaryBackground": "Background of revon primary actions such as Send.",
+  "color.primaryHoverBackground": "Background of revon primary actions on hover.",
+  "color.primaryForeground": "Text and icon colour of revon primary actions.",
+  "color.primaryBorder": "Border of revon primary actions.",
+  "color.ember": "revon secondary (ember) colour used for review feedback."
 }

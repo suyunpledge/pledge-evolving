@@ -6,6 +6,10 @@
   "publisher": "pledgedeveloper0418",
   "license": "MIT",
   "icon": "media/revon-logo.png",
+  "galleryBanner": {
+    "color": "#0d1118",
+    "theme": "dark"
+  },
   "engines": {
     "vscode": "^1.96.0"
   },
@@ -53,7 +57,8 @@
         {
           "type": "webview",
           "id": "keystone.chat",
-          "name": "%view.title%"
+          "name": "%view.title%",
+          "icon": "media/revon.svg"
         }
       ]
     },
@@ -61,7 +66,8 @@
       {
         "command": "keystone.open",
         "title": "%command.open%",
-        "category": "revon"
+        "category": "revon",
+        "icon": "$(comment-discussion)"
       },
       {
         "command": "keystone.newChat",
@@ -78,22 +84,26 @@
       {
         "command": "keystone.attachFile",
         "title": "%command.attachFile%",
-        "category": "revon"
+        "category": "revon",
+        "icon": "$(file-add)"
       },
       {
         "command": "keystone.attachSelection",
         "title": "%command.attachSelection%",
-        "category": "revon"
+        "category": "revon",
+        "icon": "$(selection)"
       },
       {
         "command": "keystone.explainSelection",
         "title": "%command.explain%",
-        "category": "revon"
+        "category": "revon",
+        "icon": "$(book)"
       },
       {
         "command": "keystone.reviewSelection",
         "title": "%command.review%",
-        "category": "revon"
+        "category": "revon",
+        "icon": "$(checklist)"
       },
       {
         "command": "keystone.configure",
@@ -139,6 +149,68 @@
         }
       ]
     },
+    "colors": [
+      {
+        "id": "revon.accent",
+        "description": "%color.accent%",
+        "defaults": {
+          "dark": "#5b9bf8",
+          "light": "#2563c9",
+          "highContrast": "#a9cbff",
+          "highContrastLight": "#0f4a9e"
+        }
+      },
+      {
+        "id": "revon.primaryBackground",
+        "description": "%color.primaryBackground%",
+        "defaults": {
+          "dark": "#3574d6",
+          "light": "#2563c9",
+          "highContrast": "button.background",
+          "highContrastLight": "button.background"
+        }
+      },
+      {
+        "id": "revon.primaryHoverBackground",
+        "description": "%color.primaryHoverBackground%",
+        "defaults": {
+          "dark": "#3d7fe0",
+          "light": "#1f56b0",
+          "highContrast": "button.hoverBackground",
+          "highContrastLight": "button.hoverBackground"
+        }
+      },
+      {
+        "id": "revon.primaryForeground",
+        "description": "%color.primaryForeground%",
+        "defaults": {
+          "dark": "#ffffff",
+          "light": "#ffffff",
+          "highContrast": "button.foreground",
+          "highContrastLight": "button.foreground"
+        }
+      },
+      {
+        "id": "revon.primaryBorder",
+        "description": "%color.primaryBorder%",
+        "defaults": {
+          "dark": "#8ab8ff",
+          "light": "#1f56b0",
+          "highContrast": "contrastBorder",
+          "highContrastLight": "contrastBorder"
+        }
+      },
+      {
+        "id": "revon.ember",
+        "description": "%color.ember%",
+        "defaults": {
+          "dark": "#e89d5a",
+          "light": "#9a5a1c",
+          "highContrast": "#f3d8ad",
+          "highContrastLight": "#7a4210"
+        }
+      }
+    ],
     "configuration": {
       "title": "revon",
       "properties": {

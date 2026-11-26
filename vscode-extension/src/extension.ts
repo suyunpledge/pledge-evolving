@@ -37,8 +37,9 @@ export class RevonView implements vscode.WebviewViewProvider, vscode.Disposable 
   constructor(private context: vscode.ExtensionContext) {
     const saved = context.workspaceState?.get<string>('keystone.planning', 'none');
     if (['none', 'low', 'medium', 'high'].includes(saved || '')) { this.planning = saved!; }
-    this.planningModel = context.workspaceState?.get<string>('keystone.planningModel', '') || '';
-    this.reviewModel = context.workspaceState?.get<string>('keystone.reviewModel', '') || '';
+    // Builds made right after the rename saved these under revon.*; read those as a fallback.
+    this.planningModel = context.workspaceState?.get<string>('keystone.planningModel', '') || context.workspaceState?.get<string>('revon.planningModel', '') || '';
+    this.reviewModel = context.workspaceState?.get<string>('keystone.reviewModel', '') || context.workspaceState?.get<string>('revon.reviewModel', '') || '';
     this.reviewEnabled = context.workspaceState?.get<boolean>('keystone.reviewEnabled', false) === true;
     this.bar.text = '$(comment-discussion) revon'; this.bar.command = 'keystone.open'; this.bar.show();
     context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(editor => {
@@ -427,7 +428,7 @@ export class RevonView implements vscode.WebviewViewProvider, vscode.Disposable 
           for (const key of ['planningModel', 'reviewModel'] as const) {
             if (typeof message[key] === 'string') {
               this[key] = message[key] as string;
-              await this.context.workspaceState?.update('revon.' + key, this[key]);
+              await this.context.workspaceState?.update('keystone.' + key, this[key]);
             }
           }
           if (typeof message.reviewEnabled === 'boolean') {
