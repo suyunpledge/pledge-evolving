@@ -77,13 +77,40 @@ def icon_tile(shapes, size, color):
     return tile.resize((size, size), Image.Resampling.LANCZOS)
 
 
-def brand_mark(size, *, glow=0):
-    """Ember 品牌块：圆角方 + 熔铁斜向渐变 + 顶部高光 + 深色铁砧火花。
+BRAND_MASTER = GUI / "desktop" / "revon-logo.png"
 
-    glow > 0 时四周留出 glow 像素的暖色光晕（首页 hero 用）。Tk 无渐变/
+
+def brand_mark(size, *, glow=0):
+    """品牌块：优先用 Revon 极光狐母版（desktop/revon-logo.png，make_icon.py 产出）。
+
+    glow > 0 时四周留出 glow 像素的极光色光晕（首页 hero 用）。Tk 无渐变/
     模糊能力，所以在构建期烘焙成 PNG，运行时只读 PhotoImage。
+    母版缺失时回退到旧的 Ember 熔铁 + 铁砧程序化品牌块。
     """
     from PIL import ImageFilter
+    if BRAND_MASTER.is_file():
+        scale = 4
+        full = (size + glow * 2) * scale
+        out = Image.new("RGBA", (full, full))
+        tile_px = size * scale
+        origin = glow * scale
+        if glow:
+            # 青绿→紫的极光晕，与磁贴里的极光带同色系
+            halo = Image.new("RGBA", (full, full))
+            hd = ImageDraw.Draw(halo)
+            hd.rounded_rectangle((origin + tile_px * .06, origin + tile_px * .14,
+                                  origin + tile_px * .62, origin + tile_px * 1.02),
+                                 radius=tile_px * .3, fill=(64, 224, 196, 170))
+            hd.rounded_rectangle((origin + tile_px * .38, origin + tile_px * .10,
+                                  origin + tile_px * .94, origin + tile_px * 1.0),
+                                 radius=tile_px * .3, fill=(150, 104, 255, 190))
+            out.alpha_composite(halo.filter(ImageFilter.GaussianBlur(glow * scale * .42)))
+        master = Image.open(BRAND_MASTER).convert("RGBA").resize((tile_px, tile_px), Image.Resampling.LANCZOS)
+        out.alpha_composite(master, (origin, origin))
+        out = out.resize((size + glow * 2, size + glow * 2), Image.Resampling.LANCZOS)
+        if size <= 64:
+            out = out.filter(ImageFilter.UnsharpMask(radius=0.6, percent=60, threshold=2))
+        return out
     scale = 4
     full = (size + glow * 2) * scale
     out = Image.new("RGBA", (full, full))

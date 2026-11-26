@@ -1,9 +1,14 @@
 """从品牌原图生成图标与界面标志（可重复执行）。
 
-输入：desktop/revon-logo.png（品牌原图，正方形，黑底）
+输入：品牌原图——已画好的圆角磁贴（Revon 极光狐），四周纯黑底。
+      显式传入外部原图时，抠掉黑底、裁成正方形后存为 desktop/revon-logo.png（母版）。
 输出：
-    desktop/revon.ico                     打包用应用图标（黑底圆角磁贴 + 居中标志，多尺寸）
-    ../assets/revon-logo-{52,78,104}.png  界面用标志（黑底抠透明，供 tk.PhotoImage）
+    desktop/revon.ico                     打包用应用图标（磁贴本身，圆角外透明，多尺寸）
+    desktop/revon.png                     256px 预览
+    ../assets/revon-logo-{52,78,104}.png  界面用标志（同一磁贴，供 tk.PhotoImage / QML）
+    ../../vscode-extension/media/revon-logo.png  VS Code 扩展图标（256px）
+
+界面里的 brand-mark / brand-hero 由 make_ui_assets.py 从同一母版派生。
 
 若原图不存在，回退到程序化绘制的 Indigo「F」图标（保持老行为）。
 
@@ -16,7 +21,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 HERE = Path(__file__).resolve().parent
 ASSETS = HERE.parent / "assets"
@@ -27,11 +32,11 @@ UI_SIZES = (52, 78, 104)
 
 ACCENT = (79, 70, 229, 255)          # #4F46E5（回退图标）
 ACCENT_LIGHT = (109, 99, 240, 255)   # #6D63F0
-TILE_BG = (0, 0, 0, 255)             # 原图底色：纯黑
+VSCODE_ICON = HERE.parent.parent / "vscode-extension" / "media" / "revon-logo.png"
 
-# 亮度抠图阈值：<=BG_KEEP 视为背景（全透明），>=BG_CLEAR 视为实体（全不透明）
-BG_KEEP = 8
-BG_CLEAR = 38
+# 从四角泛洪抠黑底：亮度 <= BG_THRESHOLD 且与图边连通的像素视为背景。
+# 只抠与边缘连通的黑，磁贴内部的深色夜空不受影响。
+BG_THRESHOLD = 14
 
 
 # ─── 回退：程序化 Indigo「F」 ─────────────────────────────
@@ -74,104 +79,82 @@ def render_fallback(size: int) -> Image.Image:
 # ─── 品牌原图处理 ─────────────────────────────────────────
 
 
-def content_box(im: Image.Image, thr: int = 20):
-    gray = im.convert("L")
-    return gray.point(lambda v: 255 if v > thr else 0).getbbox()
-
-
-def square_crop(im: Image.Image, pad_ratio: float = 0.04) -> Image.Image:
-    """按内容包围盒裁成正方形（居中），四周留 pad_ratio 边距。"""
-    box = content_box(im)
+def tile_master(raw: Image.Image) -> Image.Image:
+    """黑底上的圆角磁贴 → 圆角外透明的正方形母版。"""
+    rgb = raw.convert("RGB")
+    w, h = rgb.size
+    # 泛洪标记：先把亮度图二值化（背景候选=0），再从四角把连通的 0 涂成 128。
+    lum = rgb.convert("L").point(lambda v: 0 if v <= BG_THRESHOLD else 255)
+    for corner in ((0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)):
+        if lum.getpixel(corner) == 0:
+            ImageDraw.floodfill(lum, corner, 128)
+    alpha = lum.point(lambda v: 0 if v == 128 else 255)
+    # 边缘羽化（约 0.1% 边长），避免缩小后锯齿
+    alpha = alpha.filter(ImageFilter.GaussianBlur(max(1.0, w / 900)))
+    out = rgb.convert("RGBA")
+    out.putalpha(alpha)
+    box = alpha.point(lambda v: 255 if v > 16 else 0).getbbox()
     if box is None:
-        return im
-    x0, y0, x1, y1 = box
-    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
-    side = max(x1 - x0, y1 - y0) * (1 + pad_ratio * 2)
-    half = side / 2
-    left, top = int(round(cx - half)), int(round(cy - half))
-    right, bottom = int(round(cx + half)), int(round(cy + half))
-    out = Image.new("RGBA", (int(round(side)), int(round(side))), (0, 0, 0, 0))
-    out.paste(im.crop((left, top, right, bottom)), (0, 0))
+        raise ValueError("原图里找不到磁贴（全是黑底？）")
+    out = out.crop(box)
+    side = max(out.size)
+    square = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+    square.alpha_composite(out, ((side - out.width) // 2, (side - out.height) // 2))
+    return square
+
+
+def scaled(master: Image.Image, size: int) -> Image.Image:
+    """缩放到目标尺寸；小尺寸补一点锐化，免得插画糊成一团。"""
+    out = master.resize((size, size), Image.LANCZOS)
+    if size <= 64:
+        out = out.filter(ImageFilter.UnsharpMask(radius=0.6, percent=60, threshold=2))
     return out
-
-
-def key_out_background(im: Image.Image) -> Image.Image:
-    """把纯黑底抠成透明（亮度越低越透明；深灰金属受影响很小，且界面底色也近黑）。"""
-    out = im.convert("RGBA")
-    gray = out.convert("L")
-    span = max(1, BG_CLEAR - BG_KEEP)
-
-    def alpha(v: int) -> int:
-        if v <= BG_KEEP:
-            return 0
-        if v >= BG_CLEAR:
-            return 255
-        return int((v - BG_KEEP) * 255 / span)
-
-    alpha_ch = gray.point(alpha)
-    out.putalpha(alpha_ch)
-    return out
-
-
-def make_icon(master: Image.Image, size: int) -> Image.Image:
-    """黑底圆角磁贴 + 居中标志（保留原图设计里的黑底观感）。"""
-    scale = 4
-    s = size * scale
-    tile = Image.new("RGBA", (s, s), (0, 0, 0, 0))
-    ImageDraw.Draw(tile).rounded_rectangle((0, 0, s - 1, s - 1),
-                                           radius=int(s * 0.22), fill=TILE_BG)
-    inner = int(s * 0.80)
-    logo = master.resize((inner, inner), Image.LANCZOS)
-    off = (s - inner) // 2
-    tile.alpha_composite(logo, (off, off))
-    return tile.resize((size, size), Image.LANCZOS)
 
 
 def main() -> int:
     src = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_SOURCE
     # 防降质：输入必须是原始位图，绝不能拿生成出来的 .ico 当源
-    # （否则每跑一次就把上一步的图标再裁一遍，分辨率逐轮缩水）。
     if src.suffix.lower() == ".ico":
         print(f"拒绝：{src.name} 是生成产物，不能当输入图。"
               f"请传原始品牌图，或省略参数使用 {DEFAULT_SOURCE.name}")
         return 2
-    use_brand = src.is_file()
+    out_ico = HERE / "revon.ico"
+    preview = HERE / "revon.png"
 
-    if use_brand:
-        raw = Image.open(src).convert("RGBA")
-        master = square_crop(raw)
-        print(f"source : {src}  ({raw.size[0]}x{raw.size[1]})")
-        print(f"cropped: {master.size[0]}x{master.size[1]}  -> {DEFAULT_SOURCE.name}")
-        # 只在显式给了外部源图时才回写 master；默认路径（无参数）不覆盖，
-        # 避免「读 master → 裁 → 写回 master」这种自发收敛降质。
-        if src.resolve() != DEFAULT_SOURCE.resolve():
-            master.save(DEFAULT_SOURCE)
-            print(f"  saved master: {DEFAULT_SOURCE}")
-
-        out_ico = HERE / "revon.ico"
-        frames = [make_icon(master, n) for n in ICO_SIZES]
-        frames[0].save(out_ico, format="ICO", sizes=[(n, n) for n in ICO_SIZES],
-                       append_images=frames[1:])
-        print(f"icon   : {out_ico}  ({out_ico.stat().st_size} bytes, "
-              f"{len(ICO_SIZES)} sizes)")
-
-        ASSETS.mkdir(parents=True, exist_ok=True)
-        keyed = key_out_background(master)
-        for n in UI_SIZES:
-            out = ASSETS / f"revon-logo-{n}.png"
-            keyed.resize((n, n), Image.LANCZOS).save(out)
-            print(f"ui     : {out}  ({out.stat().st_size} bytes)")
-    else:
+    if not src.is_file():
         print(f"no brand source at {src}; 回退到程序化 Indigo「F」")
-        out_ico = HERE / "revon.ico"
         frames = [render_fallback(n) for n in ICO_SIZES]
         frames[0].save(out_ico, format="ICO", sizes=[(n, n) for n in ICO_SIZES],
                        append_images=frames[1:])
+        frames[0].save(preview)
         print(f"icon   : {out_ico}  ({out_ico.stat().st_size} bytes)")
+        return 0
 
-    preview = HERE / "revon.png"
-    (frames[0] if use_brand else render_fallback(256)).save(preview)
+    raw = Image.open(src)
+    print(f"source : {src}  ({raw.size[0]}x{raw.size[1]})")
+    if src.resolve() == DEFAULT_SOURCE.resolve():
+        # 母版已是处理后的透明磁贴：直接用，不再二次抠图
+        master = raw.convert("RGBA")
+    else:
+        master = tile_master(raw)
+        master.save(DEFAULT_SOURCE, optimize=True)
+        print(f"master : {DEFAULT_SOURCE}  ({master.size[0]}x{master.size[1]})")
+
+    frames = [scaled(master, n) for n in ICO_SIZES]
+    frames[0].save(out_ico, format="ICO", sizes=[(n, n) for n in ICO_SIZES],
+                   append_images=frames[1:])
+    print(f"icon   : {out_ico}  ({out_ico.stat().st_size} bytes, {len(ICO_SIZES)} sizes)")
+    frames[0].save(preview)
     print(f"preview: {preview}")
+
+    ASSETS.mkdir(parents=True, exist_ok=True)
+    for n in UI_SIZES:
+        out = ASSETS / f"revon-logo-{n}.png"
+        scaled(master, n).save(out, optimize=True)
+        print(f"ui     : {out}  ({out.stat().st_size} bytes)")
+    if VSCODE_ICON.parent.is_dir():
+        scaled(master, 256).save(VSCODE_ICON, optimize=True)
+        print(f"vscode : {VSCODE_ICON}")
     return 0
 
 
