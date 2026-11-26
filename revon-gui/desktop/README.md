@@ -25,24 +25,41 @@ powershell -NoProfile -ExecutionPolicy Bypass -File desktop\build-desktop.ps1
 
 | 文件 | 作用 |
 |---|---|
-| `revon-logo.png` | **品牌原图**（正方形、黑底）。换标志改这张，然后重跑 `make_icon.py` |
-| `make_icon.py` | 从原图生成 `revon.ico`（多尺寸应用图标）+ `../assets/revon-logo-*.png`（界面用，黑底已抠透明） |
+| `revon-logo.png` | **磁贴母版**：极光狐圆角磁贴（含夜空背景，磁贴外透明） |
+| `revon-mark.png` | **主体母版**：只有狐狸、透明底，供界面内标志使用 |
+| `make_icon.py` | 从两个母版生成 `revon.ico`、VS Code 扩展图标和 `../assets/revon-logo-*.png` |
 | `revon-desktop.spec` | PyInstaller 配方：单文件、无控制台、内嵌 `assets/*.png`、排除用不到的重型包 |
 | `build-desktop.ps1` | 一键构建（探测构建 Python → 生成图标/资源 → 打包 → SHA256 → 冒烟启动） |
+| `build-source-launcher.ps1` | 构建源码启动器 `dist/revon-desktop.exe`（每次启动都加载当前源码） |
+| `install-shell-integration.ps1` | 注册到资源管理器：「打开方式」、文件夹右键「用 Revon 打开」、桌面快捷方式 |
 | `revon.ico` | 已生成的应用图标 |
 
 ## 换标志怎么做
 
-1. 用新图替换 `desktop/revon-logo.png`（正方形最好，黑底或透明底都行；脚本会按内容自动裁正方形）
-2. 跑 `python desktop/make_icon.py`（若换了文件名，把路径作为参数传入）
-3. 重新打包：`powershell -File desktop\build-desktop.ps1 -SkipIcon`
+1. 跑 `python desktop/make_icon.py <新原图>`：原图是画好的圆角磁贴，放在纯黑底上
+   - 先抠掉磁贴外的黑底，存为 `revon-logo.png`
+   - 再抠出只有主体的透明图，存为 `revon-mark.png`（这一步需要 numpy + opencv-python）
+2. 跑 `REVON_BRAND_ONLY=1 python desktop/make_ui_assets.py`，重建界面里的 brand-mark / brand-hero
+3. 重建启动器 `desktop\build-source-launcher.ps1`，再跑 `desktop\install-shell-integration.ps1` 刷新桌面图标
 
-脚本会一并更新三处品牌位置：
-- **应用图标**：`revon.ico`（黑底圆角磁贴 + 居中标志，7 档尺寸 16→256）
-- **界面顶栏标志**：`assets/revon-logo-{52,78,104}.png`（黑底抠透明，按 DPI 选最接近的尺寸）
-- **对话里的 revon 头像**：同一张界面资源（由主程序注入 `chat_widgets.set_brand_avatar`）
+两张母版用在不同地方：
+- **完整磁贴**：桌面快捷方式、任务栏、exe（`revon.ico`，7 档尺寸 16→256），以及 VS Code 扩展的商店图标
+- **透明主体**：界面里的标志 `assets/revon-logo-{52,78,104}.png`、`assets/ui/brand-mark-*` 和 `brand-hero-*`
 
-原图缺失时自动回退到程序化绘制的 Indigo「F」图标，构建不会失败。
+只想按现有磁贴重抠主体时，跑 `python desktop/make_icon.py --recut`。
+
+## 资源管理器集成（打开方式 / 文件夹右键）
+
+```powershell
+powershell -ExecutionPolicy Bypass -File desktop\install-shell-integration.ps1
+```
+
+- 写在当前用户下（HKCU），不需要管理员权限；加 `-Uninstall` 可以撤销
+- 常见代码和文本文件的「打开方式」里会出现 **Revon**；文件夹右键（以及文件夹空白处右键）会出现「用 Revon 打开」
+- 打开文件时，Coding 先切换到该文件所在的 Git 仓库根目录（不在仓库里就用它所在的文件夹），再打开这个文件
+  - 未开启开发者模式时，文件改在「文件与项目」里打开
+  - Revon 已经在运行时，文件交给已打开的窗口，不会再开一个
+- 资源管理器按路径缓存图标，所以脚本把图标复制成带哈希的文件（`%LOCALAPPDATA%\Revon\icons\revon-<hash>.ico`）。换图标后重跑一次脚本，桌面就会显示新图标
 
 ## gateway 的启动与自愈（打开即用，无需手动点）
 

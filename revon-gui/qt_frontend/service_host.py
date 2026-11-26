@@ -40,6 +40,7 @@ class ServiceHost:
         self.active_call = ''
         self.worker = None
         self.pending_model = None
+        self.pending_open = None
         self.navigation = ThreadPoolExecutor(max_workers=1, thread_name_prefix="revon-page-loader")
         self._emitter = emit
         self.gateway = GatewayService(self.home, self.workspace, self.emit, demo=demo)
@@ -104,6 +105,9 @@ class ServiceHost:
                         if self.pending_model is not None:
                             selected, self.pending_model = self.pending_model, None
                             self.command(selected)
+                        elif self.pending_open is not None:
+                            request, self.pending_open = self.pending_open, None
+                            self.command(request)
                         elif self.coding.queue:
                             request = self.coding.queue.pop(0)
                             self.work(lambda: self.coding.run(request))
@@ -174,6 +178,17 @@ class ServiceHost:
             self.coding.initialize()
         self.status()
 
+    def open_paths(self, row):
+        """Explorer "Open with": switch to the file's project, then open the files."""
+        project = Path(row['project']).resolve()
+        if project != Path(self.workspace).resolve():
+            self.set_workspace(str(project))
+        opened = []
+        for path in row.get('files', ()):
+            self.pages.file_action('development', 'open', {'path': path})
+            opened.append(path)
+        self.emit('opened', project=str(self.workspace), files=opened)
+
     def command(self, row):
         command = row.get('command')
         if command == 'navigate':
@@ -197,6 +212,14 @@ class ServiceHost:
                 self.publish_tools()
             else:
                 self.work(lambda: self.pages.action(page, action, values))
+        elif command == 'open_paths':
+            # One work item: switching project and opening files must not interleave.
+            # While another operation runs (e.g. start-up setup), the latest request waits.
+            with self.lock:
+                if self.running:
+                    self.pending_open = dict(row)
+                else:
+                    self.work(lambda: self.open_paths(row))
         elif command == 'document':
             self.pages.update_document(row['path'], row['text'], row['version'])
         elif command == 'call_tool':

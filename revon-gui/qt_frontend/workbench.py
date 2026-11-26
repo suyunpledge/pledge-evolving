@@ -88,6 +88,7 @@ class WorkbenchController(QObject):
         self._browser_url, self._browser_width = 'about:blank', 420.0
         self._window = None
         self._service_ready = False
+        self._pending_open = None
         self._pages = {}
         self._form_dirty = set()
         self._document_dirty = set()
@@ -375,6 +376,30 @@ class WorkbenchController(QObject):
         self._error = ''
         self.changed.emit()
 
+    @Slot('QVariantList')
+    def openPaths(self, paths):
+        """Open files/folders from Explorer: switch to their project, open files, show Coding."""
+        from .open_paths import project_for
+        paths = [str(p) for p in paths or () if p]
+        if not paths or self.demo:
+            return
+        project = Path(project_for(paths[0]))
+        files = []
+        for raw in paths:
+            path = Path(raw)
+            if path.is_file() and (path == project or project in path.parents):
+                files.append(str(path))
+        self._pending_open = {'command': 'open_paths', 'project': str(project), 'files': files}
+        if self._service_ready:
+            self._flush_open()
+        else:
+            self.start_host()
+
+    def _flush_open(self):
+        if self._pending_open and self._service_ready:
+            request, self._pending_open = self._pending_open, None
+            self._send(request)
+
     @Slot(str)
     def navigate(self, page):
         if page == 'work':
@@ -523,6 +548,7 @@ class WorkbenchController(QObject):
                 request, self._model_setup_pending = self._model_setup_pending, None
                 self._send(request)
             self._send_navigation()
+            self._flush_open()
         elif kind == 'page':
             self._pages[row['page']] = row['data']
             document = row['data'].get('document') or {}
@@ -629,6 +655,9 @@ class WorkbenchController(QObject):
             self.gatewayCatalog.emit(row['models'])
         elif kind == 'gateway_error':
             self.gatewayFailed.emit(row['message'], row.get('active_url', ''))
+        elif kind == 'opened':
+            # Coding needs developer mode; without it the file still opens in 文件与项目.
+            self.navigate('development' if self._onboarding.developer else 'files')
         elif kind == 'error':
             self._error = str(row.get('message', '工作台载入失败'))
             self.changed.emit()

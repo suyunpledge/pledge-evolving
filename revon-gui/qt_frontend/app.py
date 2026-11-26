@@ -28,6 +28,7 @@ def main(argv=None):
     parser.add_argument("--smoke", type=Path, help="write renderer diagnostics and screenshot, then exit")
     parser.add_argument("--page", default="chat", help="initial integrated workbench page")
     parser.add_argument("--browser", default="", help="open URL in the browser side panel")
+    parser.add_argument("paths", nargs="*", help="files or folders to open in Coding (Explorer \"Open with\")")
     args = parser.parse_args(argv)
     render_messages = []
     if args.smoke:
@@ -52,6 +53,11 @@ def main(argv=None):
     app.setApplicationName("Keystone")
     app.setApplicationDisplayName("revon")
     app.setOrganizationName("Keystone")  # Existing QSettings and WebEngine profiles
+    from .open_paths import OpenRequests, forward, normalize
+    args.paths = normalize(args.paths)
+    # A window for this home is already open: hand it the files instead of starting a second one.
+    if args.paths and not (args.demo or args.smoke) and forward(args.paths, args.home):
+        return 0
     ui_font = QFont()
     ui_font.setFamilies(["Segoe UI", "Microsoft YaHei UI", "Noto Sans SC"])
     ui_font.setPointSize(10)
@@ -195,6 +201,17 @@ def main(argv=None):
     app.aboutToQuit.connect(pet_chat.shutdown)
     if not args.demo:
         QTimer.singleShot(250, workbench.start_host)
+    if not (args.demo or args.smoke):
+        def open_requested(paths):
+            workbench.openPaths(paths)
+            if window.windowState() & Qt.WindowState.WindowMinimized or not window.isVisible():
+                window.showNormal()
+            window.raise_()
+            window.requestActivate()
+        open_requests = OpenRequests(args.home, app)
+        open_requests.received.connect(open_requested)
+        if args.paths:
+            QTimer.singleShot(0, lambda: workbench.openPaths(args.paths))
     if args.page != 'chat':
         QTimer.singleShot(100, lambda: workbench.navigate(args.page))
     if args.browser:
