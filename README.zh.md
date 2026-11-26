@@ -39,7 +39,7 @@
 
 **revon（拱心石）** 是拱门顶端正中的那块楔形石：有了它，两边的石头才互相锁住、立得起来。这正是本项目要做的事：用一个小而稳的内核，把模型、工具、权限、记忆和各个使用入口锁成一个整体。**Pledge（承诺）** 是它守的诺言：合同、权限规则和验收条件都可以被检验，而不只是寄希望于模型自觉。
 
-项目以前同时叫 *Forge* 和 *pledge-evolving*，现在统一为 Pledge revon。已有安装依赖的一切都照常可用（见[从 Forge 迁移](#从-forge-迁移)）。
+项目以前叫过 *Forge*、*pledge-evolving* 和 *Keystone*（仓库 `pledge-keystone`），现在统一为 Pledge revon。已有安装依赖的一切都照常可用（见[从 Forge 迁移](#从-forge-迁移)）。
 
 ---
 
@@ -209,3 +209,7 @@ cd revon-gui && ../.venv/qt/Scripts/python -m unittest qt_frontend.test_backend
 首次提交于 2026-09-17，仍在密集开发，目前一名维护者。`contract.md` 冻结的是模块边界，公开 API 还未冻结。之所以公开，是因为这套设计和贡献闸门值得阅读和复用。
 
 MIT 许可。项目结构图：[中文](docs/project-tree.zh.png) · [English](docs/project-tree.en.png)。
+
+### 桌面入口
+
+安装后用 `revon` 命令，或者在源码目录里运行 `python run.py`。Windows 上的源码启动器是 `revon-gui/desktop/dist/revon-desktop.exe`。原来的 `keystone` 命令、Python 导入、桌面快捷方式和本地配置都继续可用。新安装使用 `~/.revon`；已有的 `~/.keystone` 或 `~/.forge` 配置目录会原地继续使用。

@@ -39,7 +39,7 @@ To connect a model, run `python run.py setup` (a short wizard) or use the setup 
 
 A **revon** is the wedge at the top of an arch that locks every other stone in place. That is this project's job: one small kernel that keeps models, tools, permissions, memory and every app surface standing together. **Pledge** is the promise it keeps: contracts, permission rules and acceptance checks that can be verified, not just hoped for.
 
-The project used to be called both *Forge* and *pledge-evolving*. Those names are retired. Everything existing installs rely on keeps working (see [Migrating from Forge](#migrating-from-forge)).
+The project used to be called *Forge*, *pledge-evolving* and *Keystone* (repository `pledge-keystone`). Those names are retired. Everything existing installs rely on keeps working (see [Migrating from Forge](#migrating-from-forge)).
 
 ---
 
