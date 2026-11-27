@@ -105,6 +105,8 @@ def main(argv=None):
         except (OSError, ValueError):
             return {}
 
+    controller.active_provider = active_provider
+
     def mcp_tools():
         workspace = workbench.workspace
         tools = {} if workbench.permission == 'sandbox' else workbench.mcp.chat_tools(workspace)

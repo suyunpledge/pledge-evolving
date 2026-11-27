@@ -2,6 +2,7 @@
 import copy
 from dataclasses import replace
 import json
+import re
 from pathlib import Path
 from revon.artifact_tools import READERS, describe_output, recovery_hint
 from revon.artifacts import summary as artifact_summary
@@ -104,6 +105,30 @@ TOOL_CONTEXT = ('需要工具时，通过本轮提供的函数接口调用最匹
 
 def tool_label(name):
     return TOOL_LABELS.get(name.removeprefix('keystone_'), name or '工具调用')
+
+
+def standalone_svg_drawing(messages):
+    """A first-turn request to draw a new SVG; leave edits and multi-step briefs alone."""
+    if len(messages) != 1 or messages[0].role != 'user' or messages[0].attachment_names:
+        return False
+    text = messages[0].content
+    if not isinstance(text, str) or messages[0].task_plan:
+        return False
+    text = text.strip().casefold()
+    if len(text) > 160 or not re.search(r'(?<![a-z0-9_.])svg(?![a-z0-9_])', text):
+        return False
+    if re.search(r'[\n?？;；]|已有|现有|修改|基于|参考|不要|不必|只(?:需|要|给|输出|展示)|代码|解释|分析|思考|然后|再将|并且'
+                 r"|\b(existing|edit|update|reference|only|inline|code|explain|think|then|without|do not|don't)\b", text):
+        return False
+    return bool(re.match(r'(?:(?:请|麻烦)?(?:帮我)?\s*)(?:(?:用|使用|以)\s*svg\s*(?:动画)?\s*)?'
+                         r'(?:绘制|制作|生成|创作|画)|(?:please\s+)?(?:draw|create|make|illustrate|generate)\b', text))
+
+
+def direct_svg_provider(provider):
+    from revon.route_capabilities import native_token_limits
+    return (provider.get('wire', 'openai') == 'openai' and provider.get('adapt', True)
+            and provider.get('reasoningMode', 'auto') in ('auto', 'off') and provider.get('thinkBudget') is None
+            and bool(native_token_limits(provider.get('baseURL', ''), provider.get('model'))))
 
 
 def tool_schemas(gateway, local):
@@ -212,7 +237,7 @@ def model_tool_result(name, response, readers=()):
 def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint, status, next_round,
         receipt=None, system_context='', mcp=None, temperature=0.7, tool_filter=None, tools_enabled=True,
         chat_mcp=None, enter_work=None, max_turns=MAX_TURNS, attachment_folder=None, progress=None,
-        on_todos=None, resuming=False, turn_context=''):
+        on_todos=None, resuming=False, turn_context='', direct_svg=False):
     role_context = system_context  # 调用方的稳定指引（如角色模板），切换到 Work 后仍要带上
     def stage(kind, label):
         if progress is not None:
@@ -265,6 +290,14 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
     if chat_mode:
         mcp_tools = {name: entry for name, entry in mcp_tools.items() if name.startswith('mcp_') or name in productivity_tools.NAMES or entry[1] == ('visual', 'view_image')}
     tools = schemas(mcp_tools, chat_mode)
+    direct_svg = (direct_svg and not effort and not resuming and not chat_mode
+                  and any(row['function']['name'] == 'keystone_write_file' for row in tools or ()))
+    if direct_svg:
+        turn_context = '\n'.join(filter(None, (turn_context,
+            '本轮是独立 SVG 绘制。直接用已提供的 keystone_write_file 一次写入完整的 .svg 文件。'
+            '先在 SVG 的 title 和 desc 中写明原句的主体、动作和对象，再按这个关系安排形状的上下位置与运动。'
+            '反常识的主客顺序和承载关系也要逐字尊重。用简洁、可复用的矢量形状表达，无需检索建模或办公工具。'
+            '收到成功回执后简短回复并给出文件路径。')))
     pending_images = []
     # Only attachments published by a known local producer in this conversation are eligible.
     producer_ids = {c.get('id') for m in messages for c in (m.tool_calls or [])
@@ -347,6 +380,8 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
 
             try:
                 callbacks = {'on_progress': stream_progress} if progress is not None else {}
+                if direct_svg:
+                    callbacks['disable_thinking'] = True
                 if office_followup and not chat_mode and attempt == 0 and retries_left:
                     callbacks['retryable_office_round'] = True
                 result = client.stream_chat(current, model=model, reasoning_effort=effort, temperature=temperature,

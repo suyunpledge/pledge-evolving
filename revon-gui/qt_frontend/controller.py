@@ -120,6 +120,7 @@ class ChatController(QObject):
         self.factory = client_factory
         self.work_context = None
         self.work_environment = None
+        self.active_provider = None
         self._code_highlighters = {}
         self._prefs = {} if demo else self.store.preferences()
         self._sessions = RowsModel(parent=self)
@@ -907,6 +908,10 @@ class ChatController(QObject):
         temperature = self._temperature
         # 沉思档：回答前先跑沉思轮（套件走插件席位），笔记只进本轮系统上下文，不写入历史。
         contemplating = self._reasoning == 'contemplate' and not self.demo
+        from .conversation import direct_svg_provider, standalone_svg_drawing
+        direct_svg = (self._conversation_mode == 'work' and not resuming and self._reasoning == 'off'
+                      and standalone_svg_drawing(messages) and self.active_provider is not None
+                      and direct_svg_provider(self.active_provider()))
         task = next((m.content for m in reversed(messages)
                      if m.role == 'user' and isinstance(m.content, str)), '')
         home = self.store.home
@@ -985,7 +990,7 @@ class ChatController(QObject):
                     chat_mcp=chat_connection, enter_work=enter_work if chat_mode else None,
                     max_turns=max_turns, attachment_folder=self.store.folder, progress=progress,
                     on_todos=show_todos if authorize is not None else None,
-                    resuming=resuming,
+                    resuming=resuming, direct_svg=direct_svg and messages[task_index].task_plan is None,
                     chunk=lambda chunk: self._workerEvent.emit('chunk', (generation, chunk)),
                     checkpoint=lambda history: self._workerEvent.emit('checkpoint', (generation, history)),
                     receipt=lambda name, response: self._workerEvent.emit('receipt', (generation, (name, response))),

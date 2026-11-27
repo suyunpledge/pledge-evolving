@@ -399,6 +399,7 @@ class RevonGatewayClient:
                     system: str | None = None,
                     on_progress: Callable[[str, str], None] | None = None,
                     retryable_office_round: bool = False,
+                    disable_thinking: bool = False,
                     ) -> CompletionResult:
         def check_cancelled():
             if cancel_event is not None and cancel_event.is_set():
@@ -418,6 +419,8 @@ class RevonGatewayClient:
             body["tools"] = tools
         if reasoning_effort:
             body["reasoning_effort"] = reasoning_effort
+        elif disable_thinking:
+            body["thinking"] = {"type": "disabled"}
         req = self._request("POST", "/v1/chat/completions", body)
         full_text_parts: list[str] = []
         if retryable_office_round:
