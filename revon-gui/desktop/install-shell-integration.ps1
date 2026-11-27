@@ -8,7 +8,7 @@
     - Desktop shortcut that uses the current Revon icon
 
     Explorer caches icons by file path. So the icon is copied to a versioned
-    file under %LOCALAPPDATA%\Revon\icons\revon-<hash>.ico; after an icon change,
+    file under %ProgramData%\Revon\icons\revon-<hash>.ico (an ASCII path); after an icon change,
     re-running this script switches to a new path and the old icon goes away.
 
     Opening a file switches Coding to that file's project (its Git root, or else
@@ -62,8 +62,25 @@ $sourceIcon = Join-Path $PSScriptRoot 'revon.ico'
 if (-not (Test-Path -LiteralPath $sourceIcon)) { throw "Icon not found: $sourceIcon" }
 
 # Versioned icon copy: a new path makes Explorer drop the old cached icon.
-$iconDir = Join-Path $env:LOCALAPPDATA 'Revon\icons'
-[IO.Directory]::CreateDirectory($iconDir) | Out-Null
+# Prefer an ASCII-only folder: a shortcut stores icons under the user profile as
+# %USERPROFILE%\..., and with a non-ASCII user name the "Change Icon" dialog
+# (and sometimes the desktop) cannot resolve it, so the icon shows blank.
+$legacyDir = Join-Path $env:LOCALAPPDATA 'Revon\icons'
+$iconDir = $null
+foreach ($candidate in @((Join-Path $env:ProgramData 'Revon\icons'), $legacyDir)) {
+    try {
+        [IO.Directory]::CreateDirectory($candidate) | Out-Null
+        $probe = Join-Path $candidate '.write-test'
+        [IO.File]::WriteAllText($probe, '')
+        Remove-Item -LiteralPath $probe -Force
+        $iconDir = $candidate
+        if ($candidate -notmatch '[^\x00-\x7F]') { break }
+    } catch { }
+}
+if (-not $iconDir) { throw 'No writable folder for the Revon icon.' }
+if ($legacyDir -ne $iconDir -and (Test-Path -LiteralPath $legacyDir)) {
+    Remove-Item -LiteralPath $legacyDir -Recurse -Force -ErrorAction SilentlyContinue
+}
 $hash = (Get-FileHash -LiteralPath $sourceIcon -Algorithm SHA256).Hash.Substring(0, 12).ToLower()
 $icon = Join-Path $iconDir "revon-$hash.ico"
 Copy-Item -LiteralPath $sourceIcon -Destination $icon -Force
