@@ -41,6 +41,29 @@ class ConversationPrefixTests(unittest.TestCase):
     def history(self, task, report):
         return [{'role': 'user', 'content': task}, {'role': 'assistant', 'content': report.text}]
 
+    def test_thinking_and_reflection_reach_coding_and_ledger_once(self):
+        from types import SimpleNamespace
+        from .pricing import CostLedger
+        from .request_timing import coding_requests
+        self.agent.thinking, self.agent.thinking_mode = True, 'on'
+        self.agent.cost_ledger = CostLedger()
+        self.agent.extensions['thinking'] = SimpleNamespace(
+            estimate_budget=lambda *a, **kw: SimpleNamespace(round_types=('draft',)),
+            should_think=lambda *a, **kw: True,
+            build_thinking_task=lambda phase, *_: {'messages': [{'role': 'user', 'content': phase}]})
+        completions = [Completion(text, Usage(n, 2, model, 'fixture', cached_tokens=n-1, cache_observed=True))
+                       for text, n, model in [('note', 12, 'small'), ('finished', 50, 'large'), ('review', 8, 'small')]]
+        events = []
+        with coding_requests(lambda **row: events.append(row)):
+            report = self.chat(completions)
+        self.assertEqual(report.stopped, 'final')
+        self.assertEqual((report.usage['prompt_tokens'], report.usage['completion_tokens'], report.usage['cached_tokens']),
+                         (70, 6, 67))
+        self.assertEqual([r.get('phase') for r in report.usage['requests']], ['thinking', None, 'reflection'])
+        self.assertEqual([(r['executor'], r['usage']['prompt_tokens']) for r in events
+                          if r['type'] == 'model_request_usage'], [(False, 12), (True, 50), (False, 8)])
+        self.assertEqual({e.model: e.tokens for e in self.agent.cost_ledger.entries}, {'small': 24, 'large': 52})
+
     def test_continuation_keeps_entire_previous_request_including_tools(self):
         first = self.chat([call('read_file', path='a.txt'), 'answer'])
         sent = copy.deepcopy(self.router.calls[-1])

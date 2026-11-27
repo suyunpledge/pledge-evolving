@@ -29,6 +29,7 @@ def until(predicate, timeout=5):
 class Gateway(BaseHTTPRequestHandler):
     requests = []
     fail = False
+    usage = None
 
     def log_message(self, *_):
         pass
@@ -49,6 +50,8 @@ class Gateway(BaseHTTPRequestHandler):
         for piece in ("真实流式", " reply 123"):
             self.wfile.write(("data: " + json.dumps({"choices":[{"delta":{"content":piece}}]}, ensure_ascii=False) + "\n\n").encode())
             self.wfile.flush()
+        if self.usage is not None:
+            self.wfile.write(('data: ' + json.dumps({'choices': [], 'usage': self.usage}) + '\n\n').encode())
         self.wfile.write(b'data: [DONE]\n\n')
 
 
@@ -56,7 +59,7 @@ class BackendTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.home = Path(self.temp.name)
-        Gateway.requests, Gateway.fail = [], False
+        Gateway.requests, Gateway.fail, Gateway.usage = [], False, None
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Gateway)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -74,6 +77,7 @@ class BackendTests(unittest.TestCase):
         self.temp.cleanup()
 
     def test_real_sse_and_legacy_compatible_history(self):
+        Gateway.usage = {'prompt_tokens': 90, 'completion_tokens': 8, 'prompt_tokens_details': {'cached_tokens': 0}}
         self.controller.draft = "中文 English 123"
         self.controller.send()
         until(lambda: not self.controller.busy)
@@ -88,6 +92,10 @@ class BackendTests(unittest.TestCase):
         sid = self.controller.sessionId
         self.controller.newSession()
         self.controller.selectSession(sid)
+        self.assertEqual(self.controller.turnUsage['input'], 90)
+        self.assertEqual(self.controller.turnUsage['cached'], 0)
+        self.assertEqual(self.controller.turnUsage['cacheReports'], 1)
+        self.assertNotIn('turn_usage', self.controller._history[0].to_dict())
         self.assertEqual(self.controller.messages.rows[-1]['steps'], steps)
         self.assertNotIn('steps', self.controller._history[-1].to_dict())
         self.assertFalse((self.home / "gui" / "sessions.json").exists())

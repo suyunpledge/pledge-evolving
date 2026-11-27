@@ -146,6 +146,7 @@ class ChatController(QObject):
         self._model = str(self._prefs.get("model", "default"))
         self._reasoning = str(self._prefs.get("reasoning", "medium"))
         self._effort_cache = {}
+        self._context_limits = {}
         desktop = {} if demo else self.store.read(desktop_config(Path(home)), {})
         port = desktop.get('gateway_port', 8799) if isinstance(desktop, dict) else 8799
         port = port if isinstance(port, int) and 1024 <= port <= 65535 else 8799
@@ -209,6 +210,18 @@ class ChatController(QObject):
     status = Property(str, lambda self: self._status, notify=changed)
     error = Property(str, lambda self: self._error, notify=changed)
     model = Property(str, lambda self: self._model, notify=changed)
+    @Property('QVariantMap', notify=changed)
+    def turnUsage(self):
+        from .turn_usage import context_limit, saved
+        last = next((m for m in reversed(self._history) if m.role == 'user'), None)
+        summary = saved(last.turn_usage if last else None)
+        if not summary and self.active_provider is not None:
+            if self._model not in self._context_limits:
+                self._context_limits[self._model] = context_limit(self.active_provider() or {})
+            if self._context_limits[self._model]:
+                summary['limit'] = self._context_limits[self._model]
+        return summary
+
     models = Property("QStringList", lambda self: self._models, notify=changed)
     modelSwitching = Property(bool, lambda self: self._switching_model, notify=changed)
     routeProviders = Property('QVariantMap', lambda self: self._route_providers if self._managed_models is not None else {}, notify=changed)
@@ -442,6 +455,7 @@ class ChatController(QObject):
 
     @Slot(object)
     def setManagedModels(self, models):
+        self._context_limits.clear()
         self._managed_models = list(models)
         self._models = self._managed_models or ["default"]
         self._effort_cache.clear()
@@ -449,6 +463,7 @@ class ChatController(QObject):
 
     @Slot()
     def refreshModelChoices(self):
+        self._context_limits.clear()
         if self._managed_models is None:
             return
         from provider_catalog import route_identity
@@ -907,11 +922,26 @@ class ChatController(QObject):
         environment = self.work_environment() if self.work_environment else ''
         temperature = self._temperature
         # 沉思档：回答前先跑沉思轮（套件走插件席位），笔记只进本轮系统上下文，不写入历史。
+        from .turn_usage import add_request, add_report, context_limit
+        provider = (self.active_provider() or {}) if self.active_provider else {}
+        window = context_limit(provider)
+
+        def record_usage(raw, executor=True):
+            task_message = messages[task_index]
+            if isinstance(raw, dict) and isinstance(raw.get('requests'), list):
+                updated = add_report(task_message.turn_usage or {}, raw, executor=executor)
+            else:
+                updated = add_request(task_message.turn_usage, raw, model=provider.get('model') or model,
+                                      window=window, executor=executor)
+            if not executor and window and 'limit' not in updated:
+                updated = {**updated, 'limit': window}
+            task_message.turn_usage = updated
+            self._workerEvent.emit('usage', (generation, (task_index, updated)))
+
         contemplating = self._reasoning == 'contemplate' and not self.demo
         from .conversation import direct_svg_provider, standalone_svg_drawing
         direct_svg = (self._conversation_mode == 'work' and not resuming and self._reasoning == 'off'
-                      and standalone_svg_drawing(messages) and self.active_provider is not None
-                      and direct_svg_provider(self.active_provider()))
+                      and standalone_svg_drawing(messages) and direct_svg_provider(provider))
         task = next((m.content for m in reversed(messages)
                      if m.role == 'user' and isinstance(m.content, str)), '')
         home = self.store.home
@@ -956,7 +986,8 @@ class ChatController(QObject):
                 level = messages[task_index].requested_planning or level
                 if level != 'none' and messages[task_index].task_plan is None:
                     progress('planning', '正在规划 · ' + (' / '.join(pair) if pair else model))
-                    plan = make_plan(self.store.home, rows, pair, client, messages, level, model, cancel)
+                    plan = make_plan(self.store.home, rows, pair, client, messages, level, model, cancel,
+                                     on_usage=lambda raw: record_usage(raw, executor=False))
                     if cancel.is_set():
                         raise GenerationCancelled('已停止规划')
                     messages[task_index].task_plan = plan
@@ -975,7 +1006,8 @@ class ChatController(QObject):
                 if contemplating:
                     from .contemplation import contemplate, thinking_suite
                     notes = contemplate(client, thinking_suite(home), task, model=model, effort=effort,
-                                        temperature=temperature, cancel=cancel, status=update_status)
+                                        temperature=temperature, cancel=cancel, status=update_status,
+                                        on_usage=lambda raw: record_usage(raw, executor=False))
                     thought[0] = '\n'.join(part for part in (thought[0], notes.context()) if part)
                     if notes.rounds:
                         self._workerEvent.emit('contemplation', (generation, notes.summary()))
@@ -991,6 +1023,7 @@ class ChatController(QObject):
                     max_turns=max_turns, attachment_folder=self.store.folder, progress=progress,
                     on_todos=show_todos if authorize is not None else None,
                     resuming=resuming, direct_svg=direct_svg and messages[task_index].task_plan is None,
+                    on_usage=record_usage,
                     chunk=lambda chunk: self._workerEvent.emit('chunk', (generation, chunk)),
                     checkpoint=lambda history: self._workerEvent.emit('checkpoint', (generation, history)),
                     receipt=lambda name, response: self._workerEvent.emit('receipt', (generation, (name, response))),
@@ -1106,6 +1139,12 @@ class ChatController(QObject):
             self._history = value
             self._changes.anchor()
             self._persist()
+            return
+        if kind == 'usage':
+            index, summary = value
+            self._history[index].turn_usage = summary
+            if not self._detached:
+                self.changed.emit()
             return
         if kind == 'todos':
             index, items, plan = value

@@ -39,6 +39,16 @@ def coding_requests(observer, *, resume_task=None):
         pool.close()
 
 
+def publish_coding_usage(completion, *, executor=True):
+    scope = coding_request.get()
+    if scope and scope[1]:
+        for row in getattr(completion, 'requests', ()):
+            budget = (row.get('plan') or {}).get('request_budget') or {}
+            scope[1](type='model_request_usage', model=row.get('model') or '',
+                     usage=row.get('usage') or {}, context_window=budget.get('context_window'),
+                     executor=executor and row.get('stage') != 'integrate')
+
+
 def request_timeout(value=0, *, default=MODEL_RESPONSE_TIMEOUT):
     """Zero/None inherits the host default; explicit positive limits are honored."""
     if value is None:

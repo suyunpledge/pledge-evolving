@@ -7,6 +7,7 @@ Item {
     objectName: "codingGlassPanel"
     required property var material
     readonly property var stateData: workbench.coding
+    PageSnapshot { id: project; pageKey: "development" }
     property string tab: "chat"
     signal permissionRequested()
     signal plannerKeyRequested()
@@ -52,7 +53,7 @@ Item {
             Layout.fillWidth: true
             Text {
                 Layout.fillWidth: true
-                readonly property string file: workbench.pageData.development?.document?.relative || ""
+                readonly property string file: project.data.document?.relative || ""
                 text: [pane.stateData.project || "尚未打开项目", file].filter(Boolean).join(" / ")
                 color: "#a5b0bf"; font.pixelSize: 12; elide: Text.ElideMiddle
                 Accessible.name: "Agent 工作区 " + text
@@ -229,6 +230,7 @@ Item {
                   (workbench.hasUnsavedDocuments && !pane.stateData.busy ? "有未保存的编辑，本轮只读 · 保存后可修改项目" :
                     pane.stateData.status || "Enter 发送 · Shift+Enter 换行")
         }
+        UsageFooter { objectName: "codingUsageFooter"; Layout.fillWidth: true; usage: pane.stateData.turnUsage || ({}) }
     }
 
     Popup {

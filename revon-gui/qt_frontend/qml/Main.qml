@@ -654,7 +654,7 @@ ApplicationWindow {
         visible: window.chatVisible
         objectName: "composer"
         x: window.columnX; width: window.columnWidth
-        y: window.height - height - 42
+        y: window.height - height - 42 - chatUsage.height
         height: composerColumn.height + 32
         GlassSurface {
             id: composerGlass
@@ -818,7 +818,7 @@ ApplicationWindow {
     Row {
         objectName: "turnStatus"
         visible: window.chatVisible
-        x: composer.x + 4; y: window.height - 30; spacing: 7
+        x: composer.x + 4; y: window.height - 30 - chatUsage.height; spacing: 7
         Rectangle {
             visible: controller.busy
             width: 7; height: 7; radius: 4; color: Theme.accent
@@ -831,7 +831,12 @@ ApplicationWindow {
             elide: Text.ElideRight; width: Math.min(implicitWidth, composer.width - (shortcutHint.visible ? shortcutHint.width + 24 : 0) - 20)
         }
     }
-    Text { id: shortcutHint; visible: window.chatVisible && window.columnWidth > 520 && !controller.busy; anchors.right: composer.right; y: window.height - 30; text: "Enter 发送  ·  Shift + Enter 换行  ·  Tab 移到按钮"; color: Theme.textMuted; font.pixelSize: Theme.captionSize }
+    Text { id: shortcutHint; visible: window.chatVisible && window.columnWidth > 520 && !controller.busy; anchors.right: composer.right; y: window.height - 30 - chatUsage.height; text: "Enter 发送  ·  Shift + Enter 换行  ·  Tab 移到按钮"; color: Theme.textMuted; font.pixelSize: Theme.captionSize }
+    UsageFooter {
+        id: chatUsage; objectName: "chatUsageFooter"; visible: window.chatVisible
+        x: composer.x + 4; width: composer.width - 8; y: window.height - height - 8
+        usage: controller.turnUsage
+    }
 
     Rectangle {
         id: errorBanner
@@ -1432,12 +1437,24 @@ ApplicationWindow {
             GlassButton { material: window.material; glyph: "x"; x: parent.width - width - 8; y: 8; tip: "关闭提示"; onClicked: workbench.clearError() }
         }
         Column {
-            visible: !workbench.nativePageReady; anchors.centerIn: parent; width: parent.width - 64; spacing: 16
-            Text { width: parent.width; text: workbench.error || "正在载入 " + workbench.pageTitle + "…"; color: "#b9c4d0"; wrapMode: Text.Wrap; horizontalAlignment: Text.AlignHCenter }
+            visible: !workbench.nativePageReady || (market.selected && market.status !== Loader.Ready); anchors.centerIn: parent; width: parent.width - 64; spacing: 16
+            Text { width: parent.width; text: workbench.error || (market.selected && market.status === Loader.Error ? "插件市场界面加载失败" : "正在载入 " + workbench.pageTitle + "…"); color: Theme.textSecondary; wrapMode: Text.Wrap; horizontalAlignment: Text.AlignHCenter }
             GlassButton { material: window.material; text: "重新载入"; visible: workbench.error !== ""; anchors.horizontalCenter: parent.horizontalCenter; onClicked: workbench.navigate(workbench.page) }
         }
+        Loader {
+            id: market
+            property bool selected: workbench.page === "tools"
+            property bool visited: false
+            onSelectedChanged: if (selected) visited = true
+            active: selected || visited
+            asynchronous: true
+            anchors.fill: parent
+            anchors.topMargin: hostError.visible ? hostError.height + 8 : 0
+            visible: selected && workbench.nativePageReady && status === Loader.Ready
+            source: "PluginMarketPage.qml"
+        }
         Repeater {
-            model: ["development", "task", "files", "tools", "config", "agents", "knowledge", "evolution", "schedules", "preview", "computer", "connector_accounts"]
+            model: ["development", "task", "files", "config", "agents", "knowledge", "evolution", "schedules", "preview", "computer", "connector_accounts"]
             Loader {
                 required property string modelData
                 property bool selected: workbench.page === modelData

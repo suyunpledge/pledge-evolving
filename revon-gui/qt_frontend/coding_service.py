@@ -26,6 +26,7 @@ class CodingService:
         self.draft, self.version = '', 0
         self.role, self.model, self.simple = 'default', '继承配置', True
         self.contexts, self.events, self.queue = [], [], []
+        self.turn_usage = {}
         self.last_prompt, self.status = '', ''
         self.interrupted_request = None
         self._project_context = self._last_project = None
@@ -54,6 +55,12 @@ class CodingService:
 
     def event(self, event):
         data = event.get('data', event)
+        if data.get('type') == 'model_request_usage':
+            from .turn_usage import add_request
+            self.turn_usage = add_request(self.turn_usage, data.get('usage'), model=data.get('model') or '',
+                                          window=data.get('context_window'), executor=data.get('executor', True))
+            self.publish()
+            return
         if data.get('type') == 'tool_completed':
             changed = (data.get('meta') or {}).get('file_changes', ())
             paths = [c['path'] for c in changed if isinstance(c, dict) and isinstance(c.get('path'), str)]
@@ -89,7 +96,7 @@ class CodingService:
                     canRevert=bool(ids) and not restored and not any((a.get('meta') or {}).get('change_review_incomplete') for a in record.actions.values()),
                     files=[Path(c['path']).name for c in list(record.changes.values())[:4]]))
         labels = {rt.catalog[r['id']]: r['label'] for r in self.catalog} if rt else {}
-        self.host.emit('coding_state', state=dict(ready=bool(rt and rt.ready), status=self.status,
+        self.host.emit('coding_state', state=dict(ready=bool(rt and rt.ready), status=self.status, turnUsage=self.turn_usage,
             project=self.host.workspace.name, locked='', busy=self.host.running, loading=False,
             queue=len(self.queue), planning=self.state.value('planning'), planningPolicy=self.state.value('planningPolicy'), model=self.model,
             role=self.role, simple=self.simple, models=['继承配置', *labels.values()],
@@ -200,6 +207,9 @@ class CodingService:
             project.read_only |= self.host.pages.unsaved
             read_only = project.read_only
             self.interrupted_request = None
+            if not resume_task:
+                self.turn_usage = {}
+            starting_usage = self.turn_usage
             self.last_prompt = prompt
             self._last_project = project
             self.message('user', '继续未完成的任务' if resume_task else prompt)
@@ -214,6 +224,9 @@ class CodingService:
             finally:
                 self._project_context = None
                 self.host.pages.refresh_documents()
+            if self.turn_usage is starting_usage and result.get('usage'):
+                from .turn_usage import add_report
+                self.turn_usage = add_report(starting_usage, result['usage'])
             if result.get('can_resume'):
                 self.interrupted_request = (request, self.runtime.last_task_id)
             resume_task = None
@@ -246,10 +259,12 @@ class CodingService:
             self.state.remember_session(fresh.path)
             self.host.emit('coding_message', message=None)
             self.events.clear()
+            self.turn_usage = {}
         elif action == 'history':
             self.host.pages.show_history(rt.home / 'sessions')
         elif action == 'restore':
             result = rt.restore_history(value)
+            self.turn_usage = {}
             self.interrupted_request = None
             self.last_prompt, self._last_project = '', None
             self.host.emit('coding_message', message=None)

@@ -23,6 +23,15 @@ def names(declarations):
 
 
 class ToolSurfaceTests(unittest.TestCase):
+    def test_discovery_separates_scripts_and_matches_identifier_boundaries(self):
+        from .tools import rank_tool_matches
+        entries = [('digital_clock', 'Local clock', ()), ('git_status', 'Project changes', ()),
+                   ('write_file', 'Create an SVG or HTML file', ())]
+        self.assertEqual(rank_tool_matches('git', entries, 5), ['git_status'])
+        self.assertEqual(rank_tool_matches('生成ＳＶＧ动画', entries, 5), ['write_file'])
+        self.assertEqual(rank_tool_matches('生成ＳＶＧ动画', entries[:2], 5), [])
+        self.assertEqual(rank_tool_matches('the tool for', entries, 5), [])
+
     def test_search_ranks_exact_names_and_late_multilingual_tags(self):
         registry = build_builtin_registry()
         registry.register(spec('mesh_preview', deferred=True, tags=('mesh',)), trusted=True)

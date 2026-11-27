@@ -25,6 +25,14 @@ def sse(*events):
 
 
 class GoogleTransportTests(unittest.TestCase):
+    def test_usage_preserves_missing_counts(self):
+        from .google_native import _usage
+        self.assertEqual(_usage({}), {})
+        self.assertEqual(_usage({'usageMetadata': {'promptTokenCount': 0}}), {'prompt_tokens': 0})
+        counts = _usage({'usageMetadata': {'candidatesTokenCount': 3, 'thoughtsTokenCount': 2}})
+        self.assertEqual(counts['completion_tokens'], 5)
+        self.assertNotIn('prompt_tokens_details', counts)
+
     base = 'https://generativelanguage.googleapis.com'
     model = 'gemini-test'
     call = {'functionCall': {'name': 'sum', 'args': {'a': 3}}, 'thoughtSignature': 'fixture-sig'}

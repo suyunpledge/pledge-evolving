@@ -256,19 +256,29 @@ def rank_tool_matches(query, entries, limit):
         return unicodedata.normalize('NFKC', text).casefold().strip()
 
     query = normalize(query or '').removeprefix('keystone_')
-    terms = set(re.findall(r'[^\W_]+', query))
-    if len(terms) > 1:
-        terms -= {'a', 'an', 'the', 'with', 'for', 'to', 'of', 'and'}
+    # Preserve boundaries between Latin identifiers and Chinese prose (e.g. 生成SVG动画).
+    words = re.compile(r'[a-z0-9]+|[^\W_a-z0-9]+')
+    terms = set(words.findall(query)) - {'a', 'an', 'the', 'with', 'for', 'to', 'of', 'and', 'tool', 'tools'}
     if not terms or limit < 1:
         return []
+
+    def matches(term, tokens):
+        if term in tokens:
+            return True
+        if not term.isascii():
+            return any(term in word for word in tokens)
+        return len(term) >= 4 and any(word.startswith(term) for word in tokens)
+
     hits = []
     for identifier, description, labels in entries:
         name = normalize(identifier.removeprefix("keystone_"))
         tags = {normalize(tag) for tag in labels}
         description = normalize(description)
-        keywords = ' '.join([name, *tags])
-        keyword_hits = sum(term in keywords for term in terms)
-        coverage = sum(term in keywords or term in description for term in terms)
+        keywords = set(words.findall(' '.join([name, *tags])))
+        description_words = set(words.findall(description))
+        matched = {term for term in terms if matches(term, keywords)}
+        keyword_hits = len(matched)
+        coverage = keyword_hits + sum(matches(term, description_words) for term in terms - matched)
         # A Chinese query often contains the whole catalog tag without word boundaries.
         embedded_tag = any(len(tag) >= 2 and re.search(r'[\u3400-\u9fff]', tag)
                            and tag in query for tag in tags)
@@ -444,22 +454,12 @@ class ToolRegistry:
         tool_search used to answer such queries with unrelated hits, so an agent could
         not tell "missing in this session" from "does not exist" (agent review 2026-11-25).
         """
-        text = unicodedata.normalize('NFKC', query or '').casefold()
-        terms = {t for t in re.findall(r'[^\W_]+', text) if len(t) > 1} - {
-            'the', 'with', 'for', 'and', 'tool', 'tools'}
-        if not terms:
-            return []
         usable = {s.name for s in self.available_specs(ctx)
                   if not Policy._matches(ctx.policy.deny, s.name)}
+        entries = ((s.name, s.description, s.tags) for s in self.all_specs() if s.name not in usable)
         out = []
-        for spec in self.all_specs():
-            if spec.name in usable:
-                continue
-            haystack = unicodedata.normalize('NFKC', ' '.join(
-                [spec.name, *spec.tags, spec.description])).casefold()
-            tag_match = any(len(tag) >= 2 and tag in text for tag in spec.tags)
-            if not tag_match and not any(t in haystack for t in terms):
-                continue
+        for name in rank_tool_matches(query, entries, limit):
+            spec = self._specs[name]
             missing = [k for k in self._requires.get(spec.name, ()) if ctx.extras.get(k) is None]
             if ctx.isolated and self.native(spec):
                 reason = '受保护模式禁止原生执行；请改用 git_* 等受控工具'
@@ -474,8 +474,6 @@ class ToolRegistry:
             else:
                 reason = '当前不可用'
             out.append((spec, reason))
-            if len(out) >= limit:
-                break
         return out
 
     def search(self, query: str, limit: int = 5, *, ctx=None) -> list[ToolSpec]:
@@ -1234,7 +1232,7 @@ def build_builtin_registry(
 
     @host_tool(
         "write_file",
-        "Write UTF-8 text, creating parent folders. For partial edits use edit_file or apply_patch.",
+        "Write a complete UTF-8 file (including SVG or HTML), creating parent folders. For partial edits use edit_file or apply_patch.",
         read_only=False,
         schema={"path": {'type': 'string', 'description': "Workspace-relative file path."},
                 "content": {"type": "string", "description": "Complete new file content."},

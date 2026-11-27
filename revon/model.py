@@ -295,6 +295,8 @@ class Usage:
     cache_write_tokens: int = 0     # 写入缓存的输入 token
     reasoning_tokens: int = 0       # 思考 token（多数厂商按输出价计费）
     cache_observed: bool | None = None  # False = upstream omitted cache telemetry
+    input_observed: bool | None = None
+    output_observed: bool | None = None
 
     @property
     def total(self) -> int:
@@ -859,6 +861,8 @@ class HttpTransport:
                 reasoning_tokens=_safe_count(norm.get("reasoning_tokens", 0)),
             )
 
+        usage.input_observed = 'input_tokens' in norm
+        usage.output_observed = 'output_tokens' in norm
         # 缓存命中后刷新温暖度：下一次同前缀的请求才知道这里还热着。
         flex = plan_raw.get("execution", {}).get("flex")
         if flex:

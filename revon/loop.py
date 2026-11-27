@@ -31,6 +31,7 @@ from .checkpoint import CheckpointStore
 from .local_service import resolve_thinking_mode, service_from_config, thinking_token_cap
 from .memory import ContextBudget, MemoryStore  # noqa: F401
 from .model import Completion, ModelRouter, ReconnectSeed, TransportError, _safe_count
+from .request_timing import publish_coding_usage
 from .protocol import PROTOCOL_VERSION
 from . import projector
 from .pricing import CostLedger, cost_of, rate_for
@@ -305,7 +306,6 @@ class Agent:
         # 本地引擎 + 沉思启用时附加的输出预算上限（None = 不动请求）。
         self._thinking_cap_configured = thinking_token_cap
         self._run_task = ""
-        self._run_thinking_tokens = 0
         self._child_tokens = 0
         self._run_thinking_active = False
         # H14: run-scoped pricing state (set per run()); _run_scope marks "an
@@ -786,7 +786,6 @@ class Agent:
         # consumed for free. report.usage is the child's own rollup.
         child_delta = (int(report.usage.get("prompt_tokens", 0))
                        + int(report.usage.get("completion_tokens", 0)))
-        child_delta += int(getattr(child, "_run_thinking_tokens", 0) or 0)
         child_delta += int(getattr(child, "_child_tokens", 0) or 0)
         self._child_tokens = int(getattr(self, "_child_tokens", 0)) + child_delta
         clean = sanitise_child_output(report.text)
@@ -1214,7 +1213,15 @@ class Agent:
                        error=f"{type(exc).__name__}: {exc}")
             return _SEAT_FAILED
 
-    def _contemplate(self, phase: str, task: str, *, last_outputs: list[str]) -> "str | None":
+    @staticmethod
+    def _account_auxiliary(completion, totals, phase):
+        """Include each planning or contemplation request without replacing the executor's context."""
+        for key in ('prompt_tokens', 'completion_tokens', 'cached_tokens', 'cache_write_tokens', 'reasoning_tokens'):
+            totals[key] = totals.get(key, 0) + _safe_count(getattr(completion.usage, key, 0))
+        totals.setdefault('requests', []).extend({**redact(r), 'phase': phase} for r in getattr(completion, 'requests', ()))
+        publish_coding_usage(completion, executor=False)
+
+    def _contemplate(self, phase: str, task: str, *, last_outputs: list[str], usage_total: dict) -> "str | None":
         """Run one phase's contemplation rounds (estimate→should→build→split→converged).
 
         轮型序列取自模块 Budget（单一序列源）；相邻轮收敛判定消费模块公开的
@@ -1274,6 +1281,7 @@ class Agent:
                 break
             usage = getattr(completion, "usage", None)
             if usage is not None:
+                self._account_auxiliary(completion, usage_total, phase)
                 tokens += int(getattr(usage, "prompt_tokens", 0)) + int(getattr(usage, "completion_tokens", 0))
             split = self._thinking_call("split_thinking", getattr(completion, "text", "") or "")
             if isinstance(split, tuple) and len(split) == 2:
@@ -1290,7 +1298,6 @@ class Agent:
                     break
             prev = produced
         notes = "\n\n".join(texts).strip()
-        self._run_thinking_tokens += tokens
         self._emit(type="thinking_engaged", phase=phase, rounds=len(texts),
                    budget=len(round_types), stopped=stopped, chars=len(notes), tokens=tokens)
         return notes or None
@@ -1533,7 +1540,6 @@ class Agent:
         self._run_model = probe.model or "unknown"
         self._run_scope = self.cost_ledger is not None
         self._run_task = str(task)
-        self._run_thinking_tokens = 0
         # H11：挂载期席位接管/保底记录浮出到事件流，而不是静默换席。
         # WB P2：只在首次 run() 时发。
         if not self._mount_warnings_emitted:
@@ -1628,6 +1634,11 @@ class Agent:
         # 启动沉思（phase=thinking）：三档门控——off 不起；on 直接起；smart 由
         # 模块库函数 looks_complex 决定（有运行期消费者，非装饰）。沉思文本
         # 注入任务消息的 <contemplation> 段——消费者不是摆设，主跑真的用到它。
+        steps: list[Step] = []
+        usage_total = {"prompt_tokens": 0, "completion_tokens": 0,
+                       "cached_tokens": 0, "cache_write_tokens": 0,
+                       "reasoning_tokens": 0}
+        self._cancel_steps, self._cancel_usage = steps, usage_total
         self._run_thinking_active = False
         if self.thinking and "thinking" in self.extensions:
             active = True
@@ -1637,7 +1648,7 @@ class Agent:
             self._emit(type="thinking_mode", mode=self.thinking_mode, engaged=active)
             if active:
                 try:
-                    notes = self._contemplate("thinking", str(task), last_outputs=[])
+                    notes = self._contemplate("thinking", str(task), last_outputs=[], usage_total=usage_total)
                 except Exception as exc:
                     notes = None
                     self._emit(type="extension_error", module="thinking",
@@ -1645,11 +1656,6 @@ class Agent:
                 if notes:
                     messages[-1] = {"role": "user",
                                    "content": f"{task}\n\n<contemplation>\n{notes[:4000]}\n</contemplation>"}
-        steps: list[Step] = []
-        usage_total = {"prompt_tokens": 0, "completion_tokens": 0,
-                       "cached_tokens": 0, "cache_write_tokens": 0,
-                       "reasoning_tokens": 0}
-        self._cancel_steps, self._cancel_usage = steps, usage_total
         self._check_cancel()
         pinned_task = str(messages[-1].get("content", task))
         # The desktop Continue button supplied only a fallback receipt summary.
@@ -1723,12 +1729,7 @@ class Agent:
                         **({'coding_plan_format': form} if coding_plan and self.planning_level == 'low' else {}),
                         **({'cancel_event': self.cancellation_event}
                            if self.cancellation_event is not None and isinstance(planner, ModelRouter) else {}))
-                    usage_total["prompt_tokens"] += plan_completion.usage.prompt_tokens
-                    usage_total["completion_tokens"] += plan_completion.usage.completion_tokens
-                    usage_total["cached_tokens"] += _safe_count(getattr(plan_completion.usage, "cached_tokens", 0))
-                    usage_total["cache_write_tokens"] += _safe_count(getattr(plan_completion.usage, "cache_write_tokens", 0))
-                    usage_total["reasoning_tokens"] += _safe_count(getattr(plan_completion.usage, "reasoning_tokens", 0))
-                    usage_total.setdefault("requests", []).extend(getattr(plan_completion, "requests", []))
+                    self._account_auxiliary(plan_completion, usage_total, 'planning')
                     if getattr(plan_completion, "tool_calls", None):
                         raise PlanningError("Planner attempted to call tools")
                     if getattr(plan_completion, "finish_reason", None) in {'length', 'max_tokens'}:
@@ -1916,6 +1917,7 @@ class Agent:
             # A premium/MoA completion may contain several paid requests.
             # Preserve their own plans and usage in the report; reuse-window
             # estimates cannot be added into a real invoice.
+            publish_coding_usage(completion)
             from .cache_metrics import annotate_requests
             usage_total.setdefault("requests", []).extend(annotate_requests(
                 getattr(completion, "requests", []), self._context_revision,
@@ -2169,6 +2171,7 @@ class Agent:
         usage_total.setdefault("requests", []).extend(annotate_requests(
             getattr(completion, "requests", []), self._context_revision,
             self._context_transaction_id, self._cache_revisions))
+        publish_coding_usage(completion)
         text = (completion.text or "").strip()
         if text and (toolwire.parse_text_protocol_calls(text, self._run_model)
                      or toolwire.looks_like_tool_attempt(text)):
@@ -2252,7 +2255,7 @@ class Agent:
         if report.stopped not in {'cancelled', 'unknown_outcome'} and self._run_thinking_active and "thinking" in self.extensions:
             try:
                 self._contemplate("reflection", self._run_task or "",
-                                  last_outputs=[str(report.text or "")])
+                                  last_outputs=[str(report.text or "")], usage_total=report.usage)
             except Exception as exc:
                 self._emit(type="extension_error", module="thinking",
                            error=f"{type(exc).__name__}: {exc}")
@@ -2287,9 +2290,7 @@ class Agent:
 
         if self.cost_ledger is not None and self._run_scope:
             delta = _p + _c
-            delta += self._run_thinking_tokens  # 沉思轮 token 并入本跑步账
             delta += int(getattr(self, "_child_tokens", 0))  # S3: 子代理子树 token
-            self._run_thinking_tokens = 0
             self._child_tokens = 0
             if delta > 0:
                 per_model = {}

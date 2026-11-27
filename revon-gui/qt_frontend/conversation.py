@@ -237,7 +237,7 @@ def model_tool_result(name, response, readers=()):
 def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint, status, next_round,
         receipt=None, system_context='', mcp=None, temperature=0.7, tool_filter=None, tools_enabled=True,
         chat_mcp=None, enter_work=None, max_turns=MAX_TURNS, attachment_folder=None, progress=None,
-        on_todos=None, resuming=False, turn_context='', direct_svg=False):
+        on_todos=None, resuming=False, turn_context='', direct_svg=False, on_usage=None):
     role_context = system_context  # 调用方的稳定指引（如角色模板），切换到 Work 后仍要带上
     def stage(kind, label):
         if progress is not None:
@@ -386,6 +386,8 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
                     callbacks['retryable_office_round'] = True
                 result = client.stream_chat(current, model=model, reasoning_effort=effort, temperature=temperature,
                                             on_chunk=emit, cancel_event=cancel, tools=tools, **callbacks)
+                if on_usage:
+                    on_usage(getattr(result, 'usage', None))
                 recovered_stream = attempt > 0
                 if prefix and not started:
                     chunk(prefix)

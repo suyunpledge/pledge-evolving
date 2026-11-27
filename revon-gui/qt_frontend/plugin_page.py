@@ -125,7 +125,8 @@ def view(home, market, workspace, query=''):
         rows.append(dict(id='seat:' + seat, title=f'⚙ {name}（运行席位）', subtitle=f'{summary} · {status}',
                          actions=[button('seatOn', '启用') if state == 'off' else button('seatOff', '停用')]))
     plugins = []
-    for plugin in market.catalog():
+    catalog = market.catalog()
+    for plugin in catalog:
         state, label = plugin_state(plugin, workspace)
         contributes = contribution_text(plugin)
         bits = [plugin.kind_label, f'v{plugin.version}', label]
@@ -134,14 +135,15 @@ def view(home, market, workspace, query=''):
         if plugin.error:
             bits.append(plugin.error[:80])
         plugins.append((ORDER[state], plugin.name.lower(), dict(
-            id=plugin.id, title=f'{plugin.icon} {plugin.name or plugin.id}',
+            id=plugin.id, installed=plugin.installed, state=state, title=f'{plugin.icon} {plugin.name or plugin.id}',
             subtitle=(plugin.summary or plugin.description)[:120] + ' · ' + ' · '.join(bits),
             actions=plugin_actions(plugin, state))))
     rows += [row for *_, row in sorted(plugins, key=lambda item: item[:2])]
     if query:
         rows = [r for r in rows if query in (r['id'] + r['title'] + r['subtitle']).lower()]
-    enabled = sum(1 for p in market.catalog() if p.enabled)
-    layers = market.sync_plugin_layers()
+    from revon.config import plugin_layers
+    enabled = sum(1 for p in catalog if p.enabled)
+    layers = plugin_layers(home)
     return dict(
         hint=('一切皆插件：运行席位、工具、技能、智能体与配置补丁层都在这里管理。'
               f'已启用 {enabled} 个插件，{len(layers)} 个补丁层参与配置合成（位于内置配置与你的用户层之间，用户层优先）。'
@@ -160,6 +162,8 @@ def act(home, market, workspace, action, values, approve):
     from pathlib import Path
     key = str(values.get('id', ''))
     if key.startswith('seat:'):
+        if action not in {'seatOn', 'seatOff'}:
+            raise ValueError('未知的运行席位操作。')
         set_seat(Path(home), key[5:], action == 'seatOn')
         return {'seat': key[5:], 'enabled': action == 'seatOn', 'note': '新开的对话与任务生效'}
     if action == 'filter':

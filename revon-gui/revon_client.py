@@ -44,6 +44,7 @@ class ChatMessage:
     task_plan: TaskPlan | None = None
     interrupted: bool = False
     requested_planning: str | None = None
+    turn_usage: dict | None = None
 
     def to_dict(self, secret_scope=None) -> dict:
         d: dict = {"role": self.role, "content": self.content}
@@ -59,6 +60,8 @@ class ChatMessage:
 
     def to_session_dict(self) -> dict:
         data = self.to_dict()
+        if self.role == "user" and self.turn_usage:
+            data["turn_usage"] = self.turn_usage
         if self.role == "user" and self.requested_planning is not None:
             data["requested_planning"] = self.requested_planning
         if self.role == "user" and self.todos:
@@ -102,6 +105,7 @@ class ChatMessage:
                    reasoning_content=str(data.get("reasoning_content") or ""),
                    user_text=text, attachment_names=names,
                    todos=saved_todos, task_plan=plan,
+                   turn_usage=data.get("turn_usage") if data["role"] == "user" and isinstance(data.get("turn_usage"), dict) else None,
                    requested_planning=data.get('requested_planning') if data['role'] == 'user'
                        and data.get('requested_planning') in ('none', 'low', 'medium', 'high') else None,
                    interrupted=data['role'] == 'user' and data.get('interrupted') is True,
@@ -359,7 +363,7 @@ class RevonGatewayClient:
             reasoning_content=str(message.get("reasoning_content") or ""),
         )
 
-    def plan_task(self, messages, level, *, model="default", cancel_event=None):
+    def plan_task(self, messages, level, *, model="default", cancel_event=None, on_usage=None):
         """GUI's streaming path uses the same bounded, tool-free plan contract."""
         from revon.planning import planning_level, planning_prompt, token_cap, TaskPlan, PlanningError
         planning_level(level)
@@ -368,6 +372,8 @@ class RevonGatewayClient:
         inputs = [ChatMessage('system', planning_prompt(level)),
                   *[m for m in messages if m.role in {'user', 'assistant'}]]
         result = self.chat(inputs, model=model, max_tokens=token_cap(level), cancel_event=cancel_event)
+        if on_usage:
+            on_usage(result.usage)
         raw = result.raw or {}
         choices = raw.get('choices') or []
         if choices and choices[0].get('finish_reason') in {'length', 'max_tokens'}:

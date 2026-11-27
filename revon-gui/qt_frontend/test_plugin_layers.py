@@ -102,7 +102,14 @@ class PluginLayerTests(unittest.TestCase):
         self.install('plug', [PROVIDER])
         write_plugin(self.src, 'pending', [PROVIDER | {'id': 'other'}])
         self.market.install_from_dir(self.src / 'pending')
-        data = plugin_page.view(self.home, self.market, self.home)
+        from unittest.mock import patch
+        with patch.object(self.market, 'catalog', wraps=self.market.catalog) as catalog, \
+                patch.object(self.market, 'sync_plugin_layers', side_effect=AssertionError('read-only view')):
+            data = plugin_page.view(self.home, self.market, self.home)
+        catalog.assert_called_once()
+        with self.assertRaises(ValueError):
+            plugin_page.act(self.home, self.market, self.home, 'inspect', {'id': 'seat:thinking'}, None)
+        self.assertNotIn('thinking', disabled_seats(self.home))
         ids = [r['id'] for r in data['rows']]
         self.assertTrue(all(i.startswith('seat:') for i in ids[:8]))
         self.assertEqual(ids[8:], ['pending', 'plug'])

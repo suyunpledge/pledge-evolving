@@ -136,9 +136,10 @@ def _choice(raw):
 
 def _usage(raw):
     data = raw.get('usageMetadata') or {}
-    result = {'prompt_tokens': data.get('promptTokenCount', 0),
-              'completion_tokens': data.get('candidatesTokenCount', 0) + data.get('thoughtsTokenCount', 0),
-              'total_tokens': data.get('totalTokenCount', 0)}
+    result = {target: data[source] for source, target in (
+        ('promptTokenCount', 'prompt_tokens'), ('totalTokenCount', 'total_tokens')) if source in data}
+    if 'candidatesTokenCount' in data:
+        result['completion_tokens'] = data['candidatesTokenCount'] + data.get('thoughtsTokenCount', 0)
     if 'cachedContentTokenCount' in data:
         result['prompt_tokens_details'] = {'cached_tokens': data['cachedContentTokenCount']}
     if 'thoughtsTokenCount' in data:

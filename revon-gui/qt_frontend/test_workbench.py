@@ -599,6 +599,22 @@ class WorkbenchTests(unittest.TestCase):
             self.workbench.setPermission(profile)
             until(lambda: self.workbench.permission == profile)
 
+    def test_market_filters_plugins_and_seats_without_reloading_service(self):
+        self.workbench.navigate('tools')
+        root = self.window.contentItem()
+        until(lambda: self.workbench.nativePageReady and visual_item(root, 'marketEntry') is not None)
+        listing = visual_item(root, 'marketList')
+        search = visual_item(root, 'marketSearch')
+        page = visual_item(root, 'page_tools')
+        total = listing.property('count')
+        self.assertGreater(total, 0)
+        search.setProperty('text', 'no-such-plugin-937')
+        until(lambda: listing.property('count') == 0)
+        search.setProperty('text', '')
+        until(lambda: listing.property('count') == total)
+        page.setProperty('section', 'seats')
+        until(lambda: listing.property('count') == 8)
+
     def test_coding_panel_keeps_draft_and_routes_options_to_host(self):
         self.workbench.navigate('development')
         until(lambda: self.workbench.coding.get('ready'))

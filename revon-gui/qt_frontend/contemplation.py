@@ -68,7 +68,7 @@ def round_types(suite, task, explicit):
     return list(dict.fromkeys(rounds))
 
 
-def contemplate(client, suite, task, *, model, effort, temperature, cancel, status, explicit=True):
+def contemplate(client, suite, task, *, model, effort, temperature, cancel, status, explicit=True, on_usage=None):
     """Run the rounds through the same gateway/model as the answer. Never raises except on cancel."""
     result = Contemplation()
     if suite is None or not str(task or '').strip():
@@ -94,6 +94,8 @@ def contemplate(client, suite, task, *, model, effort, temperature, cancel, stat
                 break
             reply = client.stream_chat(messages, model=model, reasoning_effort=effort,
                                        temperature=temperature, cancel_event=cancel)
+            if on_usage:
+                on_usage(getattr(reply, 'usage', None))
             thinking, answer = suite.split_thinking(getattr(reply, 'text', '') or '')
         except GenerationCancelled:
             raise

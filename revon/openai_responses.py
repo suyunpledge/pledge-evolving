@@ -139,11 +139,10 @@ def to_chat(response, scope):
     return {"id": response.get("id"), "object": "chat.completion", "model": response.get("model"),
             "service_tier": response.get("service_tier"),
             "choices": [{"index": 0, "message": message, "finish_reason": finish}],
-            "usage": {"prompt_tokens": usage.get("input_tokens", 0),
-                      "completion_tokens": usage.get("output_tokens", 0),
-                      "prompt_tokens_details": usage.get("input_tokens_details") or {},
-                      "completion_tokens_details": usage.get("output_tokens_details") or {},
-                      "total_tokens": usage.get("total_tokens", 0)}}
+            "usage": {target: usage[source] for source, target in (
+                ("input_tokens", "prompt_tokens"), ("output_tokens", "completion_tokens"),
+                ("input_tokens_details", "prompt_tokens_details"), ("output_tokens_details", "completion_tokens_details"),
+                ("total_tokens", "total_tokens")) if source in usage}}
 
 
 def stream_chat(response, model, scope):

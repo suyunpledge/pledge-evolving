@@ -7,7 +7,8 @@ Item {
     id: page
     required property var material
     required property string pageKey
-    readonly property var viewData: workbench.pageData[pageKey] || ({})
+    PageSnapshot { id: source; pageKey: page.pageKey }
+    readonly property var viewData: source.data
     readonly property bool files: pageKey === "files" || pageKey === "development"
     readonly property bool ide: pageKey === "development"
     property bool sidebarOpen: true

@@ -12,7 +12,7 @@ from phase_client import PhaseClient, apply_planning_key, model_catalog, plannin
 import secret_store
 
 
-def make_plan(home, rows, pair, client, messages, level, model, cancel):
+def make_plan(home, rows, pair, client, messages, level, model, cancel, on_usage=None):
     planner = client
     if pair:
         secrets = secret_store.load(path=home / 'secrets.json', strict=True)
@@ -24,7 +24,7 @@ def make_plan(home, rows, pair, client, messages, level, model, cancel):
     history = [ChatMessage(m.role, m.content) for m in messages if m.role in {'user', 'assistant'} and m.content]
     from revon.opencode import conversation
     with conversation(getattr(client, 'conversation_id', '') or getattr(client, 'secret_session', '')):
-        plan, _ = planner.plan_task(history, level, model=model, cancel_event=cancel)
+        plan, _ = planner.plan_task(history, level, model=model, cancel_event=cancel, on_usage=on_usage)
     return plan
 
 

@@ -86,7 +86,7 @@ class PhaseClient:
             raise GenerationCancelled('已停止请求')
         return result
 
-    def plan_task(self, messages, level, **_kwargs):
+    def plan_task(self, messages, level, *, on_usage=None, **_kwargs):
         if level == 'none': return None, None
         def request():
             contract = planning_prompt(level)
@@ -100,6 +100,8 @@ class PhaseClient:
                 usage['prompt_tokens'] += result.usage.prompt_tokens
                 usage['completion_tokens'] += result.usage.completion_tokens
                 usage['requests'].extend(result.requests)
+                if on_usage:
+                    on_usage({'requests': result.requests})
                 if result.finish_reason in {'length', 'max_tokens'}:
                     raise PlanningError('Planner exhausted its output budget; no execution started')
                 if result.tool_calls:

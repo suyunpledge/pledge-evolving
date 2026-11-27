@@ -143,7 +143,6 @@ class ExecutionReviewTests(unittest.TestCase):
         loop.extension_calls = {}
         loop.cost_ledger = CostLedger()
         loop._run_scope = True
-        loop._run_thinking_tokens = 0
         loop._child_tokens = 0
         loop._run_model = "final"
         loop._run_probe = SimpleNamespace(model="final")

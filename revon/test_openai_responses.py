@@ -25,6 +25,13 @@ def response(status="completed"):
 
 
 class ResponsesTests(unittest.TestCase):
+    def test_usage_omission_is_distinct_from_reported_zero(self):
+        event = response()
+        event.pop('usage')
+        self.assertEqual(native.to_chat(event, 'fixture')['usage'], {})
+        event['usage'] = {'output_tokens': 0}
+        self.assertEqual(native.to_chat(event, 'fixture')['usage'], {'completion_tokens': 0})
+
     def test_astra_text_and_explicit_response_url_use_native_wire(self):
         urls = []
         def opener(request, **_):

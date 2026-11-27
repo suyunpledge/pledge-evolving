@@ -55,6 +55,7 @@ class WorkbenchController(QObject):
     modelSetupRequested = Signal()
     modelEditRequested = Signal(str)
     pagesChanged = Signal()
+    pageUpdated = Signal(str)
     workspaceQueryResult = Signal('QVariantMap')
     officeDocumentRequested = Signal(str)
     formReset = Signal(str)
@@ -172,6 +173,10 @@ class WorkbenchController(QObject):
     hasUnsaved = Property(bool, lambda s: s._unsaved or bool(s._form_dirty or s._document_dirty), notify=changed)
     hasUnsavedDocuments = Property(bool, lambda s: s._unsaved or bool(s._document_dirty), notify=changed)
     pageData = Property('QVariantMap', lambda s: s._pages, notify=pagesChanged)
+    @Slot(str, result='QVariantMap')
+    def pageSnapshot(self, key):
+        return self._pages.get(key, {})
+
     error = Property(str, lambda s: s._error, notify=changed)
     status = Property(str, lambda s: s._status, notify=changed)
     workspace = Property(str, lambda s: s._workspace, notify=changed)
@@ -561,6 +566,7 @@ class WorkbenchController(QObject):
             if document and not document.get('dirty') and document.get('version', 0) >= self._document_versions.get(document['path'], 0):
                 self._document_dirty.discard(document['path'])
             self.pagesChanged.emit()
+            self.pageUpdated.emit(row['page'])
             self.changed.emit()
         elif kind == 'terminal' and row['root'] == self._workspace:
             self._terminal_event(row)
