@@ -30,6 +30,13 @@ def js_rows(value, *keys):
 
 
 class SlashParseTests(unittest.TestCase):
+    def test_model_command_matches_visible_ids_without_guessing_the_provider(self):
+        titles = {'short': 'vendor/model:free', 'other': 'vendor/model:paid'}
+        self.assertEqual(slash.parse('/model vendor/model:free', models=titles, model_titles=titles), ('model', 'short'))
+        titles['backup'] = titles['short']
+        self.assertEqual(slash.parse('/model vendor/model:free', models=titles, model_titles=titles)[0], 'error')
+        self.assertEqual(slash.parse('/model backup', models=titles, model_titles=titles), ('model', 'backup'))
+
     def test_known_commands(self):
         roles = [('fullstack', '全栈开发师'), ('writer', '写作助手')]
         models = ['deepseekpro', 'deepseekflash', 'mimo']

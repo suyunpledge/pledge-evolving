@@ -149,15 +149,14 @@ class WorkspaceService:
                               version=self.revisions.get(self.active_document, 0)) if doc else {},
                 tabs=[dict(path=p, name=d.path.name, dirty=d.dirty) for p, d in self.documents.items()])
         elif page == 'task':
-            from phase_client import model_catalog, planning_config, planning_selection
+            from phase_client import model_options, planning_config, planning_selection
             level, planner = planning_selection(rows)
             if planning_config(rows).get('policy') == 'auto':
                 level = 'auto'
-            models = [{'label': '沿用执行模型', 'value': ''}, *[
-                {'label': label, 'value': json.dumps(pair, ensure_ascii=False)} for pair, label in model_catalog(rows)]]
+            models = [{'label': '沿用执行模型', 'value': ''}, *model_options(rows, ensure_ascii=False)]
             selected = json.dumps(planner, ensure_ascii=False) if planner else ''
             if planner and not any(m['value'] == selected for m in models):
-                models.append({'label': '已移除 · ' + ' / '.join(planner), 'value': selected})
+                models.append({'label': '已移除 · ' + planner[1], 'value': selected})
             data.update(hint='在当前工作区运行任务，沿用当前权限；输出与执行状态保留在此页。',
                 todos=self.task_todos,
                 fields=[field('prompt', '任务内容', kind='multiline'), field('planning', '本次规划', level, 'choice', [
@@ -180,7 +179,7 @@ class WorkspaceService:
                 details = route_fields(config)
                 subtitle = ' · '.join(filter(None, (details['providerName'], details['protocolLabel'],
                                                      details['displayBaseURL'], '已停用' if row.get('disabled') else '')))
-                model_cards.append(dict(details, id=row['id'], title=config.get('modelLabel') or config.get('model') or row['id'],
+                model_cards.append(dict(details, id=row['id'], title=config.get('model') or '未设置模型 ID',
                                         subtitle=subtitle, actions=[button('editModel', '编辑'),
                                             button('toggle', '启用' if row.get('disabled') else '停用')]))
             data.update(hint='模型按行管理；图片与视频模型使用右上方的生成模型配置。高级配置支持原有 revon JSON 格式。'
@@ -231,8 +230,8 @@ class WorkspaceService:
             data.update(plugin_page.view(self.home, Marketplace(self.home), self.host.workspace,
                                          getattr(self, 'plugin_query', '')))
         elif page == 'schedules':
-            from phase_client import model_catalog
-            models = [{'label': label, 'value': json.dumps(pair)} for pair, label in model_catalog(rows)]
+            from phase_client import model_options
+            models = model_options(rows)
             data.update(hint='定时任务在 revon 运行时执行，独立会话、只读权限；不会自动重放未完成的运行。',
                 fields=[field('name', '任务名称'), field('prompt', '任务内容', kind='multiline'),
                     field('model', '执行模型', models[0]['value'] if models else '', 'choice', models),

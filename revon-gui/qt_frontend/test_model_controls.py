@@ -129,8 +129,11 @@ class ControllerEffortTests(unittest.TestCase):
         self.controller.refreshModelChoices()
         self.assertEqual(self.controller.routeProviders, {
             'Shared': 'OpenAI', 'also-a': 'OpenAI', 'Shared (2)': 'alt.example.test', 'also-a (2)': 'alt.example.test'})
+        self.assertEqual(self.controller.routeTitles, {
+            'Shared': 'gpt-4', 'also-a': 'also-a', 'Shared (2)': 'gpt-4', 'also-a (2)': 'also-a'})
         self.controller.setGateway(self.url)
         self.assertEqual(self.controller.routeProviders, {})
+        self.assertEqual(self.controller.routeTitles, {})
 
     def thinking_mode(self):
         row = next((r for r in load_user_layer(self.home) if r['id'] == 'thinking'), {})
@@ -252,7 +255,7 @@ class ModelRowEditingTests(unittest.TestCase):
         with patch('qt_frontend.model_rows.recent_requests', return_value=records):
             self.service.refreshHistory()
         first, removed = self.service.requestHistory
-        self.assertEqual((first['providerName'], first['rowLabel'], first['attempts']), ('OpenRouter', 'ds', 3))
+        self.assertEqual((first['providerName'], first['rowLabel'], first['attempts']), ('OpenRouter', 'deepseek-v4-pro', 3))
         self.assertEqual((removed['providerName'], removed['rowLabel']), ('OpenRouter', ''))
 
     def test_cherryin_label_requires_the_registered_origin(self):
@@ -378,6 +381,65 @@ class MainScreenControlTests(unittest.TestCase):
         self.temp.cleanup()
         self.assertFalse(self.warnings, self.warnings)
 
+    def test_composer_and_picker_display_upstream_id_and_select_by_route(self):
+        from .store import SessionStore
+        home = Path(self.temp.name)
+        model = 'vendor/model-with-a-long-name:free'
+        save_user_layer(home, [provider('custom_123abc', model, 'https://first.example/v1', 'Short'),
+                               provider('custom_456def', model, 'https://second.example/v1', 'Short')])
+        SessionStore(home).save_preferences({'model': 'Short'})
+        live = ChatController(home)
+        context = self.engine.rootContext()
+        try:
+            live.setManagedModels(['Short', 'Short (2)'])
+            context.setContextProperty('controller', live)
+            button = self.window.findChild(QObject, 'modelButton')
+            self.assertEqual(button.property('text'), model)
+            self.assertIn(model, button.property('tip'))
+            label = button.findChild(QObject, 'glassButtonLabel')
+            self.window.resize(820, 620)
+            QTest.qWait(100)
+            self.assertFalse(label.property('truncated'))
+            self.assertGreaterEqual(button.height(), label.height())
+            requested = []
+            live.modelRequested.connect(requested.append)
+            button.clicked.emit()
+            listing = self.window.findChild(QObject, 'modelChoiceList')
+            def options():
+                return [item for item in listing.property('contentItem').childItems()
+                        if item.metaObject().indexOfProperty('actionGlyph') >= 0]
+            until(lambda: len(options()) == 2)
+            self.assertEqual([(o.property('text'), o.property('status')) for o in options()],
+                             [(model, 'first.example'), (model, 'second.example')])
+            options()[1].clicked.emit()
+            self.assertEqual(requested, ['Short (2)'])
+            with patch.object(live, 'refreshConnection', side_effect=live.changed.emit):
+                live.setManagedGateway('http://localhost:1', {'model': requested[0]})
+            self.assertEqual(button.property('text'), model)
+            self.assertEqual(SessionStore(home).preferences()['model'], 'Short (2)')
+            save_user_layer(home, [provider('custom_123abc', model, 'https://first.example/v1', 'Short'),
+                                   provider('custom_456def', 'new-model-id', 'https://second.example/v1', 'Short')])
+            live.setManagedModels(['Short', 'Short (2)'])
+            self.assertEqual(button.property('text'), 'new-model-id')
+        finally:
+            context.setContextProperty('controller', self.controller)
+            live.shutdown()
+
+    def test_coding_long_model_id_fits_the_narrow_composer(self):
+        self.window.resize(820, 620)
+        self.workbench.navigate('development')
+        until(lambda: self.workbench.coding.get('ready') and self.window.findChild(QObject, 'codingModelButton'))
+        button = self.window.findChild(QObject, 'codingModelButton')
+        label = button.findChild(QObject, 'glassButtonLabel')
+        for model in ('mimo-v2.6-pro-ultraspeed', 'vendor/' + 'long-model-id-' * 5 + ':free'):
+            self.workbench._receive({'event': 'coding_state', 'state': {'activeModelId': model}})
+            until(lambda: button.property('text') == model)
+            QTest.qWait(80)
+            self.assertFalse(label.property('truncated'))
+            self.assertTrue(label.property('lineCount') > 1 or label.width() + 1 >= label.implicitWidth())
+            self.assertGreaterEqual(button.height(), label.height())
+            self.assertLessEqual(button.width(), button.parentItem().width())
+
     def test_effort_button_sits_in_the_composer_and_follows_the_controller(self):
         button = self.window.findChild(QObject, 'effortButton')
         composer = self.window.findChild(QObject, 'composer')
@@ -472,9 +534,9 @@ class MainScreenControlTests(unittest.TestCase):
         save_user_layer(Path(self.temp.name), ROWS)
         self.workbench.editModel('')
         until(lambda: editor.property('opened'))
-        field = self.window.findChild(QObject, 'editLabel')
+        field = self.window.findChild(QObject, 'editModel')
         until(field.hasActiveFocus)
-        self.assertEqual(QAccessible.queryAccessibleInterface(field).text(QAccessible.Text.Name), '显示名称')
+        self.assertEqual(QAccessible.queryAccessibleInterface(field).text(QAccessible.Text.Name), '模型 ID')
         QMetaObject.invokeMethod(editor, 'close')
         setup = self.window.findChild(QObject, 'onboardingPopup')
         QMetaObject.invokeMethod(setup, 'open')
@@ -513,7 +575,7 @@ class MainScreenControlTests(unittest.TestCase):
         search.accepted.emit()
         until(lambda: editor.property('currentId') == 'second')
         choice = self.window.findChild(QObject, 'providerModelChoice')
-        self.assertEqual((choice.property('count'), choice.property('displayText')), (2, 'Review'))
+        self.assertEqual((choice.property('count'), choice.property('displayText')), (2, 'openai/gpt-4'))
         self.assertEqual(self.window.findChild(QObject, 'editEndpoint').property('text'), relay)
         self.assertEqual(self.window.findChild(QObject, 'editProviderLabel').property('text'), '我的备用线路')
         tab = self.window.findChild(QObject, 'requestHistoryTab')
@@ -533,7 +595,7 @@ class MainScreenControlTests(unittest.TestCase):
             return result
         until(lambda: '最近 HTTP 429' in visual_texts(requests))
         displayed = visual_texts(requests)
-        self.assertIn('OpenRouter  ·  Review', displayed)
+        self.assertIn('OpenRouter  ·  openai/gpt-4', displayed)
         self.assertIn('最近 HTTP 429', displayed)
         self.assertIn(relay, displayed)
         self.assertIn(relay + '/chat/completions', displayed)

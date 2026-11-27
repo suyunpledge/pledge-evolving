@@ -285,7 +285,7 @@ class ServiceHost:
                 if self.coding.runtime:
                     result = self.coding.runtime.refresh_models()
                     if result:
-                        self.coding.catalog = result['models']
+                        self.coding.set_catalog(result['models'])
                 self.coding.publish()
             with self.lock:
                 if self.running:

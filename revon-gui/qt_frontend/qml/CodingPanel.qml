@@ -21,6 +21,7 @@ Item {
         {value:"subagent", label:"子 Agent 默认模型"}
     ]
     function run(action, value = "") { workbench.codingAction(action, value) }
+    function modelOption(value) { return pane.stateData.modelChoices?.[value]?.label || "继承配置" }
     function focusComposer() {
         if (visible) {
             composer.editor.forceActiveFocus()
@@ -206,20 +207,30 @@ Item {
                     onTextChanged: workbench.setCodingDraft(text)
                     onSubmit: if (text.trim() && pane.stateData.ready && !pane.stateData.loading) { pane.tab = "chat"; pane.run("send") }
                 }
-                RowLayout {
-                    width: parent.width; spacing: 5
-                    GlassButton { material: pane.material; glyph: "paperclip"; tip: "附加当前编辑器"; enabled: !!pane.stateData.hasDocument; onClicked: pane.run("attach") }
-                    GlassButton { material: pane.material; glyph: "box"; text: pane.width > 340 ? (pane.stateData.model || "继承配置").slice(0, 11) : ""; tip: "切换 Coding 模型"; onClicked: choices.showChoices("model") }
-                    GlassButton { material: pane.material; glyph: "sliders-horizontal"; tip: "事前规划"; text: pane.width > 390 ? (pane.stateData.planningPolicy === "auto" ? "自动规划" : (pane.planningModes.find(m => m.value === pane.stateData.planning) || pane.planningModes[0]).label) : ""; onClicked: choices.showChoices("planning") }
-                    Item { Layout.fillWidth: true }
-                    GlassButton { objectName: "continueCoding"; material: pane.material; text: "继续"; tip: "继续已停止的任务"
-                        visible: !!pane.stateData.canResume && !pane.stateData.busy; onClicked: pane.run("resume") }
-                    GlassButton { material: pane.material; glyph: "square"; tip: "停止任务并清除队列"; visible: !!pane.stateData.busy || !!pane.stateData.queue; onClicked: pane.run("cancel") }
+                GridLayout {
+                    id: composerActions; width: parent.width; columnSpacing: 5; rowSpacing: 5
+                    columns: modelButton.implicitWidth + actionButtons.implicitWidth + columnSpacing <= width ? 2 : 1
                     GlassButton {
-                        material: pane.material; glyph: "arrow-up"; primary: true
-                        cornerRadius: 19; enabled: !!pane.stateData.ready && !pane.stateData.loading && composer.text.trim().length > 0 && !composer.editor.inputMethodComposing
-                        tip: pane.stateData.busy ? "排队发送" : "发送任务"
-                        onClicked: composer.submit()
+                        id: modelButton; objectName: "codingModelButton"; material: pane.material; glyph: "box"
+                        text: pane.stateData.activeModelId || "继承配置"
+                        wrapLabel: true; maximumTextWidth: Math.max(48, composerActions.width - 52)
+                        Layout.alignment: Qt.AlignLeft
+                        tip: "切换 Coding 模型：" + text; onClicked: choices.showChoices("model")
+                    }
+                    RowLayout {
+                        id: actionButtons; Layout.fillWidth: true; spacing: 5
+                        GlassButton { material: pane.material; glyph: "paperclip"; tip: "附加当前编辑器"; enabled: !!pane.stateData.hasDocument; onClicked: pane.run("attach") }
+                        GlassButton { material: pane.material; glyph: "sliders-horizontal"; tip: "事前规划"; text: pane.width > 390 ? (pane.stateData.planningPolicy === "auto" ? "自动规划" : (pane.planningModes.find(m => m.value === pane.stateData.planning) || pane.planningModes[0]).label) : ""; onClicked: choices.showChoices("planning") }
+                        Item { Layout.fillWidth: true }
+                        GlassButton { objectName: "continueCoding"; material: pane.material; text: "继续"; tip: "继续已停止的任务"
+                            visible: !!pane.stateData.canResume && !pane.stateData.busy; onClicked: pane.run("resume") }
+                        GlassButton { material: pane.material; glyph: "square"; tip: "停止任务并清除队列"; visible: !!pane.stateData.busy || !!pane.stateData.queue; onClicked: pane.run("cancel") }
+                        GlassButton {
+                            material: pane.material; glyph: "arrow-up"; primary: true
+                            cornerRadius: 19; enabled: !!pane.stateData.ready && !pane.stateData.loading && composer.text.trim().length > 0 && !composer.editor.inputMethodComposing
+                            tip: pane.stateData.busy ? "排队发送" : "发送任务"
+                            onClicked: composer.submit()
+                        }
                     }
                 }
             }
@@ -254,7 +265,7 @@ Item {
                     {value:"auto", label:"自动判断", action:"planningPolicy", selected:pane.stateData.planningPolicy === "auto"},
                     {value:"manual", label:"手动开启", action:"planningPolicy", selected:pane.stateData.planningPolicy === "manual"},
                     ...(pane.stateData.planningPolicy === "manual" ? pane.planningModes.map(m => ({value:m.value, label:"下个任务 · " + m.label, action:"planning", selected:pane.stateData.planning === m.value})) : [])]
-                : choices.kind === "model" ? (pane.stateData.models || []).map(m => ({value: m, label: m, action: "model", selected: pane.stateData.model === m}))
+                : choices.kind === "model" ? (pane.stateData.models || []).map(m => ({value: m, label: pane.modelOption(m), action: "model", selected: pane.stateData.model === m}))
                 : choices.kind === "planner" ? controller.planning.options.map(m => ({
                       value: m.value, label: m.label, action: "planner", selected: controller.planning.model === m.value}))
                 : choices.kind === "role" ? [
@@ -262,10 +273,10 @@ Item {
                     {value:"complex", label:"复杂任务"}, {value:"review", label:"代码复审"}
                 ].map(m => ({value: m.value, label: m.label, action:"role", selected: pane.stateData.role === m.value}))
                 : choices.kind === "roles" ? pane.modelRoles.map(m => ({
-                    label: m.label + " · " + ((pane.stateData.roleModels || {})[m.value] || "继承配置"),
+                    label: m.label + " · " + pane.modelOption((pane.stateData.roleModels || {})[m.value]),
                     submenu: "roleModel", role: m.value}))
                 : choices.kind === "roleModel" ? (pane.stateData.models || []).map(m => ({
-                    label: m, value: choices.roleModel + "\n" + m, action: "roleModel",
+                    label: pane.modelOption(m), value: choices.roleModel + "\n" + m, action: "roleModel",
                     selected: (pane.stateData.roleModels || {})[choices.roleModel] === m}))
                 : [{label:"事前规划", submenu:"planning"}, {label:"执行模型", submenu:"model"}, {label:"规划模型", submenu:"planner"},
                    ...(controller.planning.endpoint && !controller.isDemo ? [{label:"独立规划密钥", action:"plannerKey"}] : []), {label:"任务角色", submenu:"role"},
@@ -275,7 +286,7 @@ Item {
             delegate: GlassButton {
                 required property var modelData
                 material: pane.material; width: optionList.width - (optionList.ScrollBar.vertical.visible ? optionList.ScrollBar.vertical.width + 2 : 0); height: 37
-                text: modelData.label.length > 32 ? modelData.label.slice(0, 29) + "…" : modelData.label
+                text: modelData.label; maximumTextWidth: width - 52; tip: text
                 selected: !!modelData.selected
                 glyph: modelData.submenu ? "chevron-right" : modelData.selected ? "check" : ""
                 onClicked: {

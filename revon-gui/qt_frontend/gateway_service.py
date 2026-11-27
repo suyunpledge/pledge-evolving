@@ -41,7 +41,7 @@ def model_rows(home):
 
 
 def chat_model_routes(rows):
-    """Match each displayed model to one configured provider and upstream ID."""
+    """Match each stable gateway alias to one configured provider and upstream ID."""
     routes = {}
     for row in rows:
         provider = row.get('config', {})
@@ -66,6 +66,12 @@ def chat_model_routes(rows):
     return routes
 
 
+def chat_model_choices(routes):
+    from provider_catalog import model_choice_labels
+    choices = model_choice_labels({(rid, config['model']): config['baseURL'] for rid, config in routes.values()})
+    return {key: choices[rid, config['model']] for key, (rid, config) in routes.items()}
+
+
 class GatewayService:
     def __init__(self, home, workspace, emit, *, demo=False):
         self.home, self.workspace, self.emit = Path(home), Path(workspace), emit
@@ -81,7 +87,7 @@ class GatewayService:
         with self.lock:
             rows = model_rows(self.home)
             routes = chat_model_routes(rows)
-            self.emit('gateway_catalog', models=list(routes))
+            self.emit('gateway_catalog', models=list(routes), choices=chat_model_choices(routes))
             prefs = SessionStore.read(self.home / 'gui/qt/onboarding.json', {})
             chat = SessionStore(self.home).preferences()
             if model:

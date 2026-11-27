@@ -17,10 +17,12 @@ AbstractButton {
     // Destructive/irreversible choice: danger-coloured text so it never reads as the default.
     property bool danger: false
     property string tip: ""
+    property real maximumTextWidth: -1
+    property bool wrapLabel: false
     property real cornerRadius: 12
     property color ink: brand ? "#ffffff" : primary ? Theme.accentInk : danger ? Theme.dangerText : selected ? Theme.textPrimary : "#dce3ec"
     property color glyphInk: brand ? "#ffffff" : primary ? Theme.accentInk : danger ? Theme.danger : selected ? Theme.accent : ink
-    implicitHeight: 36
+    implicitHeight: wrapLabel ? Math.max(36, contentRow.implicitHeight + 12) : 36
     implicitWidth: Math.max(36, content.implicitWidth + 24)
     hoverEnabled: true
     focusPolicy: Qt.StrongFocus
@@ -111,7 +113,12 @@ AbstractButton {
             glowing: control.selected || control.primary || control.brand
         }
         Text {
+            objectName: "glassButtonLabel"
             text: control.text
+            width: control.maximumTextWidth < 0 ? implicitWidth : Math.min(implicitWidth, control.maximumTextWidth)
+            wrapMode: control.wrapLabel ? Text.WrapAnywhere : Text.NoWrap
+            elide: control.wrapLabel ? Text.ElideNone : Text.ElideRight
+            textFormat: Text.PlainText
             color: control.ink
             font.pixelSize: content.compact ? 12 : 13
             anchors.verticalCenter: parent.verticalCenter

@@ -29,7 +29,7 @@ def _pick(query, options):
     return near[0] if len(near) == 1 else None
 
 
-def parse(text, *, models=(), roles=()):
+def parse(text, *, models=(), model_titles=None, roles=()):
     """``(action, argument)`` for a local command, an ``('error', message)``, or None to send as chat.
 
     ``roles`` are ``(id, name)`` pairs.
@@ -52,6 +52,14 @@ def parse(text, *, models=(), roles=()):
     if command == '/model':
         if not argument:
             return ('models', '')
+        if model_titles:
+            titles = {key: model_titles.get(key, key) for key in models}
+            title = _pick(argument, list(dict.fromkeys(titles.values())))
+            matches = [key for key, value in titles.items() if value == title]
+            if len(matches) == 1:
+                return ('model', matches[0])
+            if matches:
+                return ('error', f'多个供应商配置了「{title}」，请在模型列表中选择供应商。')
         chosen = _pick(argument, list(models))
         return ('model', chosen) if chosen else ('error', f'没有找到唯一匹配「{argument}」的模型。')
     if command == '/effort':

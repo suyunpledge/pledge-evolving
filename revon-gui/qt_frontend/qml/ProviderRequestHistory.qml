@@ -36,7 +36,7 @@ ColumnLayout {
                     Layout.fillWidth: true; spacing: 10
                     Text {
                         Layout.fillWidth: true; textFormat: Text.PlainText; elide: Text.ElideRight
-                        text: [item.modelData.providerName, item.modelData.rowLabel || item.modelData.provider_id].filter(Boolean).join("  ·  ")
+                        text: [item.modelData.providerName, item.modelData.rowLabel].filter(Boolean).join("  ·  ")
                         color: Theme.textPrimary; font.pixelSize: 14; font.weight: Font.DemiBold
                     }
                     Text {

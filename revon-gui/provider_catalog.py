@@ -15,6 +15,7 @@
 """
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from urllib.parse import urlsplit
@@ -377,6 +378,26 @@ def route_identity(address: str, wire: str = "") -> dict:
                and urlsplit(plan.base_url).path.rstrip("/") == path and (not wire or plan.wire == wire)]
     return {"providerKey": preset.key, "providerName": preset.name, "providerBrandKey": preset.brand,
             "planLabel": matches[0].label if len(matches) == 1 else ""}
+
+
+def model_choice_labels(endpoints):
+    """Presentation for (provider row, upstream model) pairs; row IDs stay private to selection."""
+    from revon.provider_requests import safe_url
+
+    providers = {pair: route_identity(safe_url(url))["providerName"] for pair, url in endpoints.items()}
+    model_counts = Counter(model for _, model in providers)
+    provider_counts = Counter((pair[1], provider) for pair, provider in providers.items())
+    seen = Counter()
+    choices = {}
+    for pair, provider in providers.items():
+        model = pair[1]
+        group = (model, provider)
+        if provider_counts[group] > 1:
+            seen[group] += 1
+            provider = f"{provider} ({seen[group]})"
+        choices[pair] = dict(model=model, provider=provider,
+                             label=f"{model} · {provider}" if model_counts[model] > 1 else model)
+    return choices
 
 
 def route_fields(config: dict) -> dict:

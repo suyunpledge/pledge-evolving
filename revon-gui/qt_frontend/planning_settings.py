@@ -8,7 +8,7 @@ from PySide6.QtCore import QObject, Property, Signal, Slot
 from config_model import load_user_layer, save_user_layer
 from revon.phase_models import model_pair
 from revon.planning import planning_level, planning_policy, task_planning_level
-from phase_client import PhaseClient, apply_planning_key, model_catalog, planning_config, planning_key_id, planning_selection
+from phase_client import PhaseClient, apply_planning_key, model_catalog, model_options, planning_config, planning_key_id, planning_selection
 import secret_store
 
 
@@ -71,10 +71,9 @@ class PlanningSettings(QObject):
             self._endpoint = self._address(rows, pair)
             self._has_key = bool(self._endpoint and self._preview_rows is None and
                 secret_store.load(path=self.home / 'secrets.json', strict=True).get(planning_key_id(pair, self._endpoint)))
-            self._options = [{'label': '沿用执行模型', 'value': ''},
-                *[{'label': label, 'value': json.dumps(key)} for key, label in model_catalog(rows)]]
+            self._options = [{'label': '沿用执行模型', 'value': ''}, *model_options(rows)]
             if pair and self._model not in {row['value'] for row in self._options}:
-                self._options.append({'label': '已移除 · ' + ' / '.join(pair), 'value': self._model})
+                self._options.append({'label': '已移除 · ' + pair[1], 'value': self._model})
             self.changed.emit()
         except (ValueError, OSError) as exc:
             self.failed.emit(str(exc))

@@ -36,7 +36,7 @@ Popup {
         for (const item of service.rows || []) {
             const key = item.providerKey || item.id
             const name = item.providerName || item.title
-            const terms = [name, item.title, item.model, item.modelBrand, item.providerLabel, item.displayBaseURL]
+            const terms = [name, item.title, item.label, item.modelBrand, item.providerLabel, item.displayBaseURL]
             if (query && !terms.some(value => String(value || "").toLowerCase().includes(query))) continue
             if (!groups.has(key)) groups.set(key, { key: key, name: name, icon: item.providerIcon || "", first: item.id, count: 0 })
             groups.get(key).count++
@@ -52,7 +52,7 @@ Popup {
     Overlay.modal: Rectangle { color: "#6605080d" }
     background: GlassSurface { material: editor.material; radius: 24; emphasis: 0.6 }
     onOpened: {
-        if (row && labelField.enabled) labelField.forceActiveFocus(Qt.TabFocusReason)
+        if (row && modelField.enabled) modelField.forceActiveFocus(Qt.TabFocusReason)
         else addModel.forceActiveFocus(Qt.TabFocusReason)
     }
     onClosed: keyField.clear()
@@ -199,7 +199,7 @@ Popup {
                     id: routeChoice; objectName: "providerModelChoice"; Layout.preferredWidth: Math.min(220, routeHeader.width * 0.48)
                     Layout.preferredHeight: 36; Accessible.name: "供应商下的模型配置"
                     enabled: !editor.service.busy
-                    model: editor.providerModels; textRole: "title"; valueRole: "id"
+                    model: editor.providerModels; textRole: "choiceTitle"; valueRole: "id"
                     leftPadding: 12
                     contentItem: Text {
                         text: routeChoice.displayText; textFormat: Text.PlainText; color: Theme.textPrimary
@@ -243,8 +243,8 @@ Popup {
                     Layout.fillWidth: true; spacing: 12
                     ColumnLayout {
                         Layout.fillWidth: true; spacing: 7
-                        FieldLabel { text: "显示名称" }
-                        EditField { id: labelField; objectName: "editLabel"; Accessible.name: "显示名称"; placeholderText: "留空时显示模型 ID" }
+                        FieldLabel { text: "模型 ID" }
+                        EditField { id: modelField; objectName: "editModel"; Accessible.name: "模型 ID"; inputMethodHints: Qt.ImhNoPredictiveText }
                     }
                     ColumnLayout {
                         Layout.preferredWidth: 170; Layout.maximumWidth: 170; spacing: 7
@@ -266,8 +266,8 @@ Popup {
                     Layout.fillWidth: true; spacing: 12
                     ColumnLayout {
                         Layout.fillWidth: true; spacing: 7
-                        FieldLabel { text: "模型 ID" }
-                        EditField { id: modelField; objectName: "editModel"; Accessible.name: "模型 ID"; inputMethodHints: Qt.ImhNoPredictiveText }
+                        FieldLabel { text: "网关别名（可选）" }
+                        EditField { id: labelField; objectName: "editLabel"; Accessible.name: "网关别名"; placeholderText: "留空时沿用模型 ID" }
                     }
                     ColumnLayout {
                         Layout.preferredWidth: 170; Layout.maximumWidth: 170; spacing: 7

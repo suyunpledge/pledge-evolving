@@ -20,6 +20,10 @@ ApplicationWindow {
     readonly property var setup: workbench.onboarding
     readonly property bool english: setup.language === "en"
     function label(zh, en) { return english ? en : zh }
+    function modelTitle(key) {
+        const title = controller.routeTitles[key]
+        return typeof title === "string" ? title : key
+    }
     readonly property bool chatVisible: workbench.page === "chat"
     readonly property bool officeReady: officeLoader.item ? officeLoader.item.ready : false
     readonly property bool conversationOnly: controller.conversationMode === "chat"
@@ -713,14 +717,15 @@ ApplicationWindow {
                         id: composerTools; spacing: 6
                         width: Math.max(implicitWidth, toolsViewport.width)
                         readonly property bool roomy: toolsViewport.width > 680
-                        readonly property int modelChars: window.columnWidth < 560 ? 10 : window.columnWidth < 700 ? 16 : 24
                         GlassButton {
                             id: modelButton
                             objectName: "modelButton"
                             material: window.material; glyph: "box"
-                            text: controller.model.length > composerTools.modelChars ? controller.model.slice(0, composerTools.modelChars - 1) + "…" : controller.model
+                            text: window.modelTitle(controller.model)
+                            wrapLabel: true
+                            maximumTextWidth: Math.max(48, Math.min(toolsViewport.width - 52, 300))
                             selected: modelMenu.opened
-                            enabled: !controller.anyBusy; tip: (controller.anyBusy ? "有对话正在生成，结束后再切换模型：" : "切换模型：") + controller.model; onClicked: modelMenu.open()
+                            enabled: !controller.anyBusy; tip: (controller.anyBusy ? "有对话正在生成，结束后再切换模型：" : "切换模型：") + text; onClicked: modelMenu.open()
                         }
                         GlassButton {
                             id: effortButton
@@ -871,8 +876,9 @@ ApplicationWindow {
                 delegate: GlassRow {
                     required property string modelData
                     material: window.material; width: modelList.rowWidth; height: 36; padding: 7
-                    text: modelData; glyph: "box"; checked: controller.model === modelData
+                    text: window.modelTitle(modelData); glyph: "box"; checked: controller.model === modelData
                     status: controller.routeProviders[modelData] || ""
+                    ToolTip.visible: hovered; ToolTip.delay: 650; ToolTip.text: text
                     actionGlyph: checked ? "check" : "chevron-right"; enabled: !controller.modelSwitching
                     onClicked: { controller.setModel(modelData); modelMenu.close() }
                 }
@@ -1069,7 +1075,7 @@ ApplicationWindow {
             spacing: 12
             Text { text: "独立规划密钥"; color: Theme.textPrimary; font.pixelSize: 17; font.weight: Font.DemiBold }
             Text { width: parent.width; color: Theme.textSecondary; wrapMode: Text.WrapAnywhere; textFormat: Text.PlainText
-                   text: (plannerKey.selection ? JSON.parse(plannerKey.selection).join(" / ") : "") + "\n" + plannerKey.address }
+                   text: (plannerKey.selection ? JSON.parse(plannerKey.selection)[1] : "") + "\n" + plannerKey.address }
             TextField {
                 id: plannerPassword; objectName: "plannerPassword"; width: parent.width
                 echoMode: TextInput.Password; inputMethodHints: Qt.ImhHiddenText | Qt.ImhSensitiveData | Qt.ImhNoPredictiveText
@@ -1714,7 +1720,7 @@ ApplicationWindow {
             if (setup.developer || (page[0] !== "development" && page[0] !== "evolution"))
                 add("打开 " + page[1], "页面", page[2], () => window.go(page[0]), page[0])
         for (const model of controller.models)
-            add(model, "模型", "box", () => controller.setModel(model), "model 模型", controller.model === model ? "当前模型" : "模型")
+            add(window.modelTitle(model), "模型", "box", () => controller.setModel(model), "model 模型 " + (controller.routeProviders[model] || ""), [controller.model === model ? "当前模型" : "", controller.routeProviders[model]].filter(Boolean).join(" · "))
         const efforts = [["off", "默认"], ["low", "轻量"], ["medium", "标准"], ["high", "深入"], ["contemplate", "沉思"]]
         for (const level of efforts)
             if (controller.reasoningLevels.indexOf(level[0]) >= 0)

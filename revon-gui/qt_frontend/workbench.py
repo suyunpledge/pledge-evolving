@@ -662,7 +662,7 @@ class WorkbenchController(QObject):
         elif kind == 'gateway':
             self.gatewayChanged.emit(row['url'], {'temperature': row.get('temperature'), 'model': row.get('model')})
         elif kind == 'gateway_catalog':
-            self.gatewayCatalog.emit(row['models'])
+            self.gatewayCatalog.emit(row.get('choices', row['models']))
         elif kind == 'gateway_error':
             self.gatewayFailed.emit(row['message'], row.get('active_url', ''))
         elif kind == 'opened':

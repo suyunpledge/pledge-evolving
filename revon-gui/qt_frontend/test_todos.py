@@ -199,7 +199,7 @@ class DesktopTodoTests(unittest.TestCase):
 
     def enable_planner(self):
         settings = self.chat.planning
-        value = next(r['value'] for r in settings.options if r['label'] == 'planner / planning-model')
+        value = next(r['value'] for r in settings.options if r['label'] == 'planning-model')
         settings.save('model', value)
         settings.save('level', 'low')
         self.assertEqual(load_user_layer(self.home)[-1]['config'], {

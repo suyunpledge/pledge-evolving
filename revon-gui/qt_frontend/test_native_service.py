@@ -38,6 +38,35 @@ class NativeServiceTests(unittest.TestCase):
     def values(self, page):
         return {f['key']: f['value'] for f in self.host.pages.view(page)['fields']}
 
+    def test_model_selectors_hide_internal_ids_and_keep_provider_bindings(self):
+        from phase_client import model_options
+        model = 'vendor/real-id'
+        ids = ['custom_ab12', 'custom_cd34']
+        rows = [{'id': rid, 'name': 'provider:' + rid, 'config': {
+            'model': model, 'modelLabel': 'nickname', 'baseURL': 'http://127.0.0.1:1/v1'}} for rid in ids]
+        save_user_layer(self.home, rows)
+        options = model_options(rows)
+        self.assertEqual([json.loads(o['value']) for o in options], [[rid, model] for rid in ids])
+        titles = [o['label'] for o in options]
+        self.assertEqual(len(set(titles)), 2)
+        self.assertTrue(all(t.startswith(model) and 'custom_' not in t for t in titles))
+        for page, field in [('task', 'planningModel'), ('schedules', 'model'), ('computer', 'model')]:
+            definition = next(f for f in self.host.pages.view(page)['fields'] if f['key'] == field)
+            self.assertEqual([o['label'] for o in definition['options'] if o['value']], titles)
+        coding = self.host.coding
+        coding.initialize()
+        keys = [f'{rid} / {model}' for rid in ids]
+        for key, rid, title in zip(keys, ids, titles):
+            coding.command({'action': 'model', 'value': key})
+            state = self.events[-1][1]['state']
+            self.assertEqual(state['activeModelId'], model)
+            self.assertEqual(state['modelChoices'][key]['label'], title)
+            self.assertEqual(coding.pair(state['model']), (rid, model))
+        coding.command({'action': 'roleModel', 'value': 'default\n' + keys[1]})
+        coding.command({'action': 'model', 'value': '继承配置'})
+        self.assertEqual(self.events[-1][1]['state']['activeModelId'], model)
+        self.assertEqual(self.events[-1][1]['state']['roleModels']['default'], keys[1])
+
     def terminal_action(self, session, text='', action='run'):
         self.host.command({'command': 'terminal', 'root': str(self.project), 'session': session,
                            'action': action, 'text': text})
@@ -702,7 +731,7 @@ class NativeServiceTests(unittest.TestCase):
             base = f'http://127.0.0.1:{server.server_port}'
             rows = [
                 {'id': 'one', 'name': 'provider:one', 'config': {
-                    'baseURL': base + '/one/v1', 'model': 'first', 'modelLabel': 'First',
+                    'baseURL': base + '/one/v1', 'model': 'first', 'modelLabel': 'First', 'models': ['second-alt'],
                     'apiKey': {'$expr': "get('env.REVON_TEST_ONE_KEY', '')"}}},
                 {'id': 'two', 'name': 'provider:two', 'config': {
                     'baseURL': base + '/two/v1', 'model': 'second', 'models': ['second', 'second-alt'],
@@ -710,21 +739,26 @@ class NativeServiceTests(unittest.TestCase):
                 {'id': 'off', 'disabled': True, 'config': {'baseURL': base, 'model': 'disabled'}},
             ]
             save_user_layer(self.home, rows)
-            self.assertEqual(list(chat_model_routes(rows)), ['First', 'Second', 'second-alt'])
+            self.assertEqual(list(chat_model_routes(rows)), ['First', 'second-alt', 'Second', 'second-alt (2)'])
             self.host.gateway.demo = False
             try:
                 with patch.dict('os.environ', {'REVON_TEST_ONE_KEY': 'fixture-one', 'REVON_TEST_TWO_KEY': 'fixture-two'}):
-                    self.host.gateway.start('one')
+                    self.host.gateway.start(model='second-alt')
                     old = self.host.gateway.process
-                    self.host.command({'command': 'apply_model_setup', 'model': 'second-alt'})
+                    RevonGatewayClient(self.host.gateway.url).chat([ChatMessage('user', 'fixture')], model='second-alt')
+                    self.host.command({'command': 'apply_model_setup', 'model': 'second-alt (2)'})
                     self.host.worker.join(12)
                     self.assertFalse(self.host.worker.is_alive())
                     self.assertIsNotNone(old.poll())
-                    self.assertIn(('gateway_catalog', {'models': ['First', 'Second', 'second-alt']}), self.events)
+                    catalog = next(data for event, data in self.events if event == 'gateway_catalog')
+                    self.assertEqual(catalog['models'], ['First', 'second-alt', 'Second', 'second-alt (2)'])
+                    self.assertEqual({key: c['model'] for key, c in catalog['choices'].items()},
+                                     {'First': 'first', 'Second': 'second', 'second-alt': 'second-alt', 'second-alt (2)': 'second-alt'})
                     client = RevonGatewayClient(self.host.gateway.url)
-                    self.assertEqual(client.list_models(), ['second-alt'])
-                    client.chat([ChatMessage('user', 'fixture')], model='second-alt')
-                    self.assertEqual(hits, [('/two/v1/chat/completions', 'second-alt', 'Bearer fixture-two')])
+                    self.assertEqual(client.list_models(), ['second-alt (2)'])
+                    client.chat([ChatMessage('user', 'fixture')], model='second-alt (2)')
+                    self.assertEqual(hits, [('/one/v1/chat/completions', 'second-alt', 'Bearer fixture-one'),
+                                            ('/two/v1/chat/completions', 'second-alt', 'Bearer fixture-two')])
 
                     SessionStore.atomic(self.home / 'gui/qt/onboarding.json', {'provider': 'one'})
                     SessionStore(self.home).save_preferences({'model': 'Second'})
@@ -750,13 +784,13 @@ class NativeServiceTests(unittest.TestCase):
             self.host.worker.join(5)
             start.assert_called_once_with('', model='Screen QA')
         configs = [d['data'] for e, d in self.events if e == 'page' and d['page'] == 'config']
-        self.assertEqual([c['rows'][0]['title'] for c in configs], ['Screen QA'])
+        self.assertEqual([c['rows'][0]['title'] for c in configs], ['qa'])
         self.assertFalse(any(e == 'error' for e, _ in self.events))
 
     def test_empty_model_catalog_does_not_set_a_workbench_error(self):
         self.host.gateway.demo = False
         self.host.gateway.start()
-        self.assertIn(('gateway_catalog', {'models': []}), self.events)
+        self.assertIn(('gateway_catalog', {'models': [], 'choices': {}}), self.events)
         self.assertFalse(any(e == 'error' for e, _ in self.events))
         self.assertEqual(self.host.gateway.url, '')
 

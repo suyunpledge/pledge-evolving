@@ -23,6 +23,8 @@ class CodingService:
         self.state.switch('development')
         self.runtime = None
         self.catalog = []
+        self.model_choices = {}
+        self.selected_model_id = ''
         self.draft, self.version = '', 0
         self.role, self.model, self.simple = 'default', '继承配置', True
         self.contexts, self.events, self.queue = [], [], []
@@ -50,8 +52,17 @@ class CodingService:
             runtime.bridge.agent.extra_system += (
                 '\nIn the Coding IDE, use ide_context for the active file, selected lines or unsaved text. '
                 'Project-relative file tools also work on unopened files. If a draft is unsaved this turn is read-only.')
-            self.catalog, self.runtime = result['models'], runtime
+            self.runtime = runtime
+            self.set_catalog(result['models'])
         self.publish()
+
+    def set_catalog(self, rows):
+        from provider_catalog import model_choice_labels
+        self.catalog = rows
+        router = self.runtime.bridge.router
+        pairs = {r['label']: self.runtime.catalog[r['id']] for r in rows}
+        choices = model_choice_labels({pair: router.providers[pair[0]].base_url for pair in pairs.values()})
+        self.model_choices = {key: choices[pair] for key, pair in pairs.items()}
 
     def event(self, event):
         data = event.get('data', event)
@@ -96,11 +107,15 @@ class CodingService:
                     canRevert=bool(ids) and not restored and not any((a.get('meta') or {}).get('change_review_incomplete') for a in record.actions.values()),
                     files=[Path(c['path']).name for c in list(record.changes.values())[:4]]))
         labels = {rt.catalog[r['id']]: r['label'] for r in self.catalog} if rt else {}
+        roles = self.state.value('roles')
+        inherited = roles.get(self.role) or roles.get('default') or (rt.bridge.router.primary if rt else None)
+        active_model_id = self.selected_model_id or (inherited[1] if inherited else '')
         self.host.emit('coding_state', state=dict(ready=bool(rt and rt.ready), status=self.status, turnUsage=self.turn_usage,
             project=self.host.workspace.name, locked='', busy=self.host.running, loading=False,
             queue=len(self.queue), planning=self.state.value('planning'), planningPolicy=self.state.value('planningPolicy'), model=self.model,
             role=self.role, simple=self.simple, models=['继承配置', *labels.values()],
-            roleModels={r: labels.get(tuple(p or ()), '继承配置') for r, p in self.state.value('roles').items()},
+            modelChoices=self.model_choices, activeModelId=active_model_id,
+            roleModels={r: labels.get(tuple(p or ()), '继承配置') for r, p in roles.items()},
             contexts=[Path(p).name for p in self.contexts], hasDocument=bool(self.host.pages.active_document),
             tasks='\n'.join(self.events[-10:])[-12000:], events='\n'.join(self.events)[-12000:],
             todos=rt.evidence.todos if rt else [], canResume=bool(self.interrupted_request),
@@ -157,7 +172,8 @@ class CodingService:
         elif action == 'role' and value in self.state.ROLES:
             self.role = value
         elif action == 'model':
-            self.pair(value)
+            selected = self.pair(value)
+            self.selected_model_id = selected[1] if selected else ''
             self.model = value
         elif action == 'roleModel':
             role, _, label = value.partition('\n')

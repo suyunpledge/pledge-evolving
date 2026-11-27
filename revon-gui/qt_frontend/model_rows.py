@@ -25,7 +25,7 @@ from PySide6.QtCore import QObject, Property, Signal, Slot
 
 from config_model import load_user_layer, save_user_layer
 import model_onboarding
-from provider_catalog import route_fields
+from provider_catalog import model_choice_labels, route_fields
 import secret_store
 from revon.compat import default_home
 from revon.provider_requests import recent_requests
@@ -97,7 +97,7 @@ def project(row, env):
     return {
         **route_fields(config),
         'id': row['id'], 'label': str(config.get('modelLabel') or ''),
-        'title': str(config.get('modelLabel') or config.get('model') or row['id']),
+        'title': str(config.get('model') or '未设置模型 ID'),
         'model': str(config.get('model') or ''), 'baseURL': editable,
         'wire': str(config.get('wire') or 'openai'),
         'temperature': '' if config.get('temperature') is None else str(config['temperature']),
@@ -122,7 +122,7 @@ def edited_rows(rows, row_id, values, *, new_key=False):
         raise ValueError('请输入有效的模型 ID。')
     label = str(values.get('label', '')).strip()
     if any(ch in label for ch in ('\r', '\n')) or len(label) > 80:
-        raise ValueError('显示名称需为一行、不超过 80 个字符。')
+        raise ValueError('网关别名需为一行、不超过 80 个字符。')
     if 'providerLabel' in values:
         note = str(values.get('providerLabel') or '').strip()
         if len(note) > 80 or any(ord(ch) < 32 for ch in note) or redact(note) != note:
@@ -236,6 +236,9 @@ class ModelRows(QObject):
             return
         env = self._secrets_env()
         self._rows = [project(r, env) for r in rows if is_model_row(r)]
+        choices = model_choice_labels({(r['id'], r['title']): r['displayBaseURL'] for r in self._rows})
+        for row in self._rows:
+            row['choiceTitle'] = choices[row['id'], row['title']]['label']
         self._ok, self._status = False, ''
         self.changed.emit()
 

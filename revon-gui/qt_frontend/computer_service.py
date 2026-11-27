@@ -13,7 +13,7 @@ from revon.computer_coordinates import INPUT_NAMES
 from revon.computer_win32 import WindowsControlDriver, is_edge_process, list_windows
 from revon.secrets import SecretScope
 from computer_runtime import ComputerLane
-from phase_client import model_catalog
+from phase_client import model_options
 import secret_store
 from .workspace_service import field, button
 
@@ -58,7 +58,7 @@ class ComputerService:
         self._grant_lock = threading.RLock()
 
     def view(self):
-        models = [{'label': label, 'value': json.dumps(pair)} for pair, label in model_catalog(load_user_layer(self.host.home))]
+        models = model_options(load_user_layer(self.host.home))
         actions = [button('windows', '刷新窗口'), button('capture', '截图'), button('local', '本地识别 / 定位'),
                    button('analyze', '视觉模型分析')]
         rows = []

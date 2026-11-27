@@ -40,6 +40,14 @@ def planning_key_id(pair, address):
     return 'planning-key-' + hashlib.sha256(binding).hexdigest()
 
 
+def model_options(rows, *, ensure_ascii=True):
+    from provider_catalog import model_choice_labels
+    addresses = {str(row['id']): (row.get('config') or {}).get('baseURL') for row in rows}
+    choices = model_choice_labels({pair: addresses[pair[0]] for pair, _ in model_catalog(rows)})
+    return [{'value': json.dumps(pair, ensure_ascii=ensure_ascii), 'label': choice['label']}
+            for pair, choice in choices.items()]
+
+
 def apply_planning_key(home, pair, router, *, secrets=None):
     """Only the explicit, single-provider planning route may receive this key."""
     if pair:

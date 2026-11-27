@@ -141,6 +141,7 @@ class ChatController(QObject):
         self._models = ["default"]
         self._managed_models = None
         self._route_providers = {}
+        self._route_titles = {}
         self._pending_model = ''
         self._switching_model = False
         self._model = str(self._prefs.get("model", "default"))
@@ -225,6 +226,7 @@ class ChatController(QObject):
     models = Property("QStringList", lambda self: self._models, notify=changed)
     modelSwitching = Property(bool, lambda self: self._switching_model, notify=changed)
     routeProviders = Property('QVariantMap', lambda self: self._route_providers if self._managed_models is not None else {}, notify=changed)
+    routeTitles = Property('QVariantMap', lambda self: self._route_titles if self._managed_models is not None else {}, notify=changed)
     reasoning = Property(str, lambda self: self._reasoning, notify=changed)
     planning = Property(QObject, lambda self: self._planning, constant=True)
 
@@ -455,35 +457,29 @@ class ChatController(QObject):
 
     @Slot(object)
     def setManagedModels(self, models):
+        choices = models if isinstance(models, dict) else (self._read_model_choices() or {})
+        self._route_titles = {key: choice['model'] for key, choice in choices.items()}
+        self._route_providers = {key: choice['provider'] for key, choice in choices.items()}
         self._context_limits.clear()
         self._managed_models = list(models)
         self._models = self._managed_models or ["default"]
         self._effort_cache.clear()
         self.changed.emit()
 
+    def _read_model_choices(self):
+        from .gateway_service import chat_model_choices, chat_model_routes, model_rows
+        try:
+            return chat_model_choices(chat_model_routes(model_rows(self.store.home)))
+        except (OSError, ValueError):
+            return None
+
     @Slot()
     def refreshModelChoices(self):
-        self._context_limits.clear()
         if self._managed_models is None:
             return
-        from provider_catalog import route_identity
-        from revon.provider_requests import safe_url
-        from .gateway_service import chat_model_routes, model_rows
-        try:
-            routes = chat_model_routes(model_rows(self.store.home))
-        except (OSError, ValueError):
-            self._route_providers = {}
-            self.changed.emit()
-            return
-        providers = {label: route_identity(safe_url(config.get('baseURL')))['providerName']
-                     for label, (_, config) in routes.items()}
-        changed_providers = providers != self._route_providers
-        self._route_providers = providers
-        models = list(routes)
-        if models != self._managed_models:
-            self.setManagedModels(models)
-        elif changed_providers:
-            self.changed.emit()
+        choices = self._read_model_choices()
+        if choices is not None:
+            self.setManagedModels(choices)
 
     def _effort_info(self):
         model = self._model
@@ -507,7 +503,7 @@ class ChatController(QObject):
         """斜杠命令：本地处理并清空输入框；识别不了的按普通消息发送。"""
         from . import slash
         roles = [(t.id, t.name) for t in getattr(self._templates, '_templates', [])]
-        command = slash.parse(text, models=self._models, roles=roles)
+        command = slash.parse(text, models=self._models, model_titles=self.routeTitles, roles=roles)
         if command is None:
             return False
         action, argument = command
@@ -619,7 +615,8 @@ class ChatController(QObject):
         self._connected = False
         self._client = None
         self._error = ""
-        self._status = f"正在连接 {self._pending_model}…" if self._pending_model else "正在重新启动网关…"
+        title = self.routeTitles.get(self._pending_model, self._pending_model)
+        self._status = f"正在连接 {title}…" if title else "正在重新启动网关…"
         self.changed.emit()
 
     @Slot(str, str)
@@ -876,6 +873,7 @@ class ChatController(QObject):
         self._busy, self._error, self._status = True, "", "正在生成…"
         self._turn_start = time.monotonic()
         messages, model, effort = copy.deepcopy(self._history), self._model, self._effective_reasoning()
+        model_title = self.routeTitles.get(model, model)
         task_index = next(i for i in reversed(range(len(messages))) if messages[i].role == 'user')
         steps = []
         if resuming:
@@ -985,7 +983,7 @@ class ChatController(QObject):
                 level, pair = planning_selection(rows)
                 level = messages[task_index].requested_planning or level
                 if level != 'none' and messages[task_index].task_plan is None:
-                    progress('planning', '正在规划 · ' + (' / '.join(pair) if pair else model))
+                    progress('planning', '正在规划 · ' + (pair[1] if pair else model_title))
                     plan = make_plan(self.store.home, rows, pair, client, messages, level, model, cancel,
                                      on_usage=lambda raw: record_usage(raw, executor=False))
                     if cancel.is_set():
