@@ -35,7 +35,7 @@ from .compat import mirror_env as _mirror_env
 # Pledge revon 旧名 Forge：旧的 FORGE_* 环境变量与新的 REVON_* 互为别名（显式设置的值优先）。
 _mirror_env()
 
-__version__ = "0.8.0"  # 0.8.0: module extraction + security hardening
+__version__ = "0.9.0"  # 0.9.0: Revon desktop — installer, concurrent chats, Office side panel
 
 from .config import Config, Row, load_config  # noqa: F401
 from .policy import Policy, Decision, Mode, Sandbox  # noqa: F401

@@ -160,6 +160,36 @@ def scaled(master: Image.Image, size: int) -> Image.Image:
     return out
 
 
+
+def save_ico(frames, out_ico):
+    """写多尺寸 .ico：小尺寸用 BMP 帧，只有 256 用 PNG。
+
+    Pillow 默认把每一帧都存成 PNG；桌面/资源管理器的部分取图路径读不了
+    小尺寸 PNG 帧，快捷方式就会显示成空白文档图标。
+    """
+    import struct
+    from io import BytesIO
+    blobs = []
+    for im in frames:
+        n = im.size[0]
+        buf = BytesIO()
+        if n >= 256:
+            im.save(buf, format="PNG", optimize=True)
+        else:
+            im.save(buf, format="ICO", sizes=[(n, n)], bitmap_format="bmp")
+            data = buf.getvalue()
+            off = struct.unpack("<I", data[18:22])[0]
+            buf = BytesIO(data[off:])
+        blobs.append((n, buf.getvalue()))
+    head = struct.pack("<HHH", 0, 1, len(blobs))
+    offset = 6 + 16 * len(blobs)
+    entries, body = b"", b""
+    for n, blob in blobs:
+        entries += struct.pack("<BBBBHHII", n % 256, n % 256, 0, 0, 1, 32,
+                               len(blob), offset + len(body))
+        body += blob
+    out_ico.write_bytes(head + entries + body)
+
 def main() -> int:
     args = [a for a in sys.argv[1:] if a != "--recut"]
     recut = "--recut" in sys.argv[1:]
@@ -175,8 +205,7 @@ def main() -> int:
     if not src.is_file():
         print(f"no brand source at {src}; 回退到程序化 Indigo「F」")
         frames = [render_fallback(n) for n in ICO_SIZES]
-        frames[0].save(out_ico, format="ICO", sizes=[(n, n) for n in ICO_SIZES],
-                       append_images=frames[1:])
+        save_ico(frames, out_ico)
         frames[0].save(preview)
         print(f"icon   : {out_ico}  ({out_ico.stat().st_size} bytes)")
         return 0
@@ -199,8 +228,7 @@ def main() -> int:
         figure = Image.open(FIGURE_MASTER).convert("RGBA")
 
     frames = [scaled(master, n) for n in ICO_SIZES]
-    frames[0].save(out_ico, format="ICO", sizes=[(n, n) for n in ICO_SIZES],
-                   append_images=frames[1:])
+    save_ico(frames, out_ico)
     print(f"icon   : {out_ico}  ({out_ico.stat().st_size} bytes, {len(ICO_SIZES)} sizes)")
     frames[0].save(preview)
     print(f"preview: {preview}")
